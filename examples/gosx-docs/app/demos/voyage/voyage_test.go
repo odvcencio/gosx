@@ -2,6 +2,7 @@ package docs
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"reflect"
@@ -140,5 +141,24 @@ func TestVoyageIsPureGoWithAPhysicalSkyAndNoPageScript(t *testing.T) {
 	}
 	if props.Presentation.InitialPeriod != "storm-1000x" || props.Presentation.InitialView != "waterline" {
 		t.Errorf("presentation starts at %s/%s", props.Presentation.InitialView, props.Presentation.InitialPeriod)
+	}
+}
+
+func TestVoyageDrawsAWakeBehindTheExpeditionShip(t *testing.T) {
+	hull := vessel.Expedition()
+	for _, state := range voyageStates {
+		for _, speed := range voyageSpeeds {
+			props := VoyageProgram("quarter", state+"-"+fmt.Sprint(speed)+"x")
+			ocean := props.Environment.Ocean
+			if ocean.Wake == nil || !ocean.Wake.Enabled {
+				t.Fatalf("%s %dx: no wake", state, speed)
+			}
+			if props.Vessel == nil || ocean.Wake.NodeID != props.Vessel.NodeID || ocean.Wake.NodeID != "ship" {
+				t.Errorf("%s %dx: the wake follows %q, the vessel is %+v", state, speed, ocean.Wake.NodeID, props.Vessel)
+			}
+			if ocean.Wake.Length != hull.Length || ocean.Wake.Beam != hull.Beam {
+				t.Errorf("%s %dx: wake hull %v x %v, want the expedition hull %v x %v", state, speed, ocean.Wake.Length, ocean.Wake.Beam, hull.Length, hull.Beam)
+			}
+		}
 	}
 }

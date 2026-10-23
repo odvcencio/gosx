@@ -95,6 +95,9 @@ func voyageOcean(state string, speed int) *scene.Ocean {
 		DeepColor: "#04202e", ShallowColor: "#1f6f78", ScatterColor: "#2fa58f",
 		Reflections: &scene.OceanReflections{Mode: "ssr+planar", Resolution: 0.5, Strength: 0.8},
 		Spectrum:    &spectrum,
+		// The expedition ship leaves a wake. The ship stands still in the scene and the water drifts past it, so the runtime measures the
+		// hull's speed through the water against the drift below.
+		Wake: &scene.OceanWake{NodeID: "ship", Enabled: true, Length: vessel.Expedition().Length, Beam: vessel.Expedition().Beam},
 		Presentation: &scene.OceanPresentation{
 			// Waves always evolve at natural time, whatever the game speed.
 			TimeScale:   1,

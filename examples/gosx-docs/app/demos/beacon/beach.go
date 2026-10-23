@@ -165,6 +165,8 @@ func blackglassBeachProgram(viewID, periodID string, interactive bool) scene.Pro
 				Clarity: 2.8, Roughness: 0.19, Foam: 0.48, Surf: 0.65, Extent: 4000,
 				Reflections: &scene.OceanReflections{Mode: "ssr+planar", Resolution: 0.5, Strength: 0.8},
 				Spectrum:    blackglassBeachSpectrum(),
+				// The clipper leaves a wake when it sails (its length and beam are the vessel's).
+				Wake: &scene.OceanWake{NodeID: "clipper", Enabled: true, Length: 22, Beam: 5},
 				Bathymetry: &scene.OceanBathymetry{
 					Src:  blackglassOffshoreHeightSrc,
 					MinX: beachgen.OffshoreMinX, MinZ: beachgen.OffshoreMinZ, MaxX: beachgen.OffshoreMaxX, MaxZ: beachgen.OffshoreMaxZ,
