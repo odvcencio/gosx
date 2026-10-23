@@ -136,7 +136,7 @@ func validTrackValue(value any, arity ValueArity, unitQuaternion bool) bool {
 		if !finiteTrackNumber(component) {
 			return false
 		}
-		norm += component * component
+		norm += float64(component * component)
 	}
 	return !unitQuaternion || arity != ArityQuat || math.Abs(norm-1) <= 1e-6
 }
