@@ -228,7 +228,14 @@
       const minDistance = finite(orbit.minDistance) ? Math.max(0.001, orbit.minDistance) : controls.minDistance;
       const maxDistance = Math.max(minDistance, finite(orbit.maxDistance) ? orbit.maxDistance : controls.maxDistance);
       const pitchLimit = finite(orbit.pitchLimit) ? sceneOrbitPitchLimit(orbit.pitchLimit) : controls.pitchLimit;
-      changed = changed || minDistance !== controls.minDistance || maxDistance !== controls.maxDistance || pitchLimit !== controls.pitchLimit;
+      // @ts-ignore TS7006 -- plain JavaScript fixture
+      const number = (value, current) => typeof value === "number" && Number.isFinite(value) ? value : current;
+      const minPitch = number(orbit.minPitch, controls.minPitch), maxPitch = number(orbit.maxPitch, controls.maxPitch), minHeight = number(orbit.minHeight, controls.minHeight);
+      changed = changed || minDistance !== controls.minDistance || maxDistance !== controls.maxDistance || pitchLimit !== controls.pitchLimit ||
+        minPitch !== controls.minPitch || maxPitch !== controls.maxPitch || minHeight !== controls.minHeight;
+      controls.minPitch = minPitch;
+      controls.maxPitch = maxPitch;
+      controls.minHeight = minHeight;
       controls.minDistance = minDistance;
       controls.maxDistance = maxDistance;
       controls.pitchLimit = pitchLimit;
@@ -288,6 +295,21 @@
       0.1,
       SCENE_ORBIT_MAX_PITCH_LIMIT,
     );
+  }
+
+  // The pitch an orbit may take at its radius. PitchLimit is the symmetric default; MinPitch and MaxPitch
+  // (either may be zero or negative) replace its two sides; MinHeight raises the lower side so the camera
+  // stays at or above that world height. limits is the controls or an orbit state.
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneOrbitClampPitch(limits, orbit, pitch) {
+    const limit = sceneOrbitPitchLimit(limits.pitchLimit), cap = SCENE_ORBIT_MAX_PITCH_LIMIT;
+    let min = sceneClamp(sceneNumber(limits.minPitch, -limit), -cap, cap);
+    const max = sceneClamp(sceneNumber(limits.maxPitch, limit), -cap, cap);
+    if (Number.isFinite(limits.minHeight)) {
+      const ratio = (limits.minHeight - sceneNumber(orbit.target && orbit.target.y, 0)) / Math.max(sceneNumber(orbit.radius, 1), 0.001);
+      min = Math.max(min, Math.asin(sceneClamp(ratio, -1, 1)));
+    }
+    return sceneClamp(pitch, min, Math.max(min, max));
   }
 
   function sceneControlsRotateMode(props) {
@@ -440,9 +462,8 @@
     const minDistance = Math.max(0.001, sceneNumber(controls && controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
     const maxDistance = Math.max(minDistance, sceneNumber(controls && controls.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));
     const radius = sceneClamp(Math.hypot(offsetX, offsetY, offsetZ), minDistance, maxDistance);
-    const pitchLimit = sceneOrbitPitchLimit(controls && controls.pitchLimit);
-    const pitchRatioLimit = Math.sin(pitchLimit);
-    return {
+    const limits = controls || {};
+    const state = {
       target: {
         x: sceneNumber(orbitTarget.x, 0),
         y: sceneNumber(orbitTarget.y, 0),
@@ -451,9 +472,12 @@
       radius,
       minDistance,
       maxDistance,
-      pitchLimit,
+      pitchLimit: sceneOrbitPitchLimit(limits.pitchLimit),
+      minPitch: limits.minPitch,
+      maxPitch: limits.maxPitch,
+      minHeight: limits.minHeight,
       yaw: Math.atan2(offsetX, offsetZ),
-      pitch: Math.asin(sceneClamp(offsetY / Math.max(radius, 0.001), -pitchRatioLimit, pitchRatioLimit)),
+      pitch: Math.asin(sceneClamp(offsetY / Math.max(radius, 0.001), -1, 1)),
       kind: normalized.kind,
       fov: normalized.fov,
       left: normalized.left,
@@ -464,6 +488,8 @@
       near: normalized.near,
       far: normalized.far,
     };
+    state.pitch = sceneOrbitClampPitch(state, state, state.pitch);
+    return state;
   }
 
   function sceneOrbitCamera(state, fallbackCamera) {
@@ -472,8 +498,7 @@
     const minDistance = Math.max(0.001, sceneNumber(orbit.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
     const maxDistance = Math.max(minDistance, sceneNumber(orbit.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));
     const radius = sceneClamp(sceneNumber(orbit.radius, 6), minDistance, maxDistance);
-    const pitchLimit = sceneOrbitPitchLimit(orbit.pitchLimit);
-    const pitch = sceneClamp(sceneNumber(orbit.pitch, 0), -pitchLimit, pitchLimit);
+    const pitch = sceneOrbitClampPitch(orbit, Object.assign({}, orbit, { radius }), sceneNumber(orbit.pitch, 0));
     const yaw = sceneNumber(orbit.yaw, 0);
     const target = orbit.target || { x: 0, y: 0, z: 0 };
     const cosPitch = Math.cos(pitch);
@@ -562,13 +587,9 @@
     if (!controls.orbit) return false;
     const seconds = Math.max(0.001, Math.min(0.05, sceneNumber(deltaSeconds, 0)));
     controls.orbit.yaw += sceneNumber(controls.orbitVelocityYaw, 0) * seconds;
-    const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
-    const nextPitch = sceneClamp(
-      controls.orbit.pitch + sceneNumber(controls.orbitVelocityPitch, 0) * seconds,
-      -pitchLimit,
-      pitchLimit,
-    );
-    if (nextPitch === -pitchLimit || nextPitch === pitchLimit) {
+    const wanted = controls.orbit.pitch + sceneNumber(controls.orbitVelocityPitch, 0) * seconds;
+    const nextPitch = sceneOrbitClampPitch(controls, controls.orbit, wanted);
+    if (nextPitch !== wanted) {
       controls.orbitVelocityPitch = 0;
     }
     controls.orbit.pitch = nextPitch;
@@ -801,13 +822,8 @@
     const deltaPitch = controls.rotateMode === "pixel-degrees"
       ? sample.deltaY * pixelRadians * pitchDirection
       : (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * rotateSpeed * pitchDirection;
-    const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
     controls.orbit.yaw += deltaYaw;
-    controls.orbit.pitch = sceneClamp(
-      controls.orbit.pitch + deltaPitch,
-      -pitchLimit,
-      pitchLimit,
-    );
+    controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch + deltaPitch);
     controls.orbitVelocityYaw = sceneClamp(deltaYaw / seconds, -SCENE_ORBIT_MAX_SPEED, SCENE_ORBIT_MAX_SPEED);
     controls.orbitVelocityPitch = sceneClamp(deltaPitch / seconds, -SCENE_ORBIT_MAX_SPEED, SCENE_ORBIT_MAX_SPEED);
     controls.orbitLastMoveMS = now;
@@ -859,6 +875,7 @@
       Math.max(0.001, sceneNumber(controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE)),
       Math.max(sceneNumber(controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE), sceneNumber(controls.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE)),
     );
+    controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch);
     if (event && typeof event.preventDefault === "function") {
       event.preventDefault();
     }
@@ -1049,12 +1066,7 @@
       return true;
     }
     if (key === "up" || key === "down") {
-      const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
-      controls.orbit.pitch = sceneClamp(
-        controls.orbit.pitch + (key === "up" ? -1 : 1) * (Math.PI / 36) * controls.rotateSpeed,
-        -pitchLimit,
-        pitchLimit,
-      );
+      controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch + (key === "up" ? -1 : 1) * (Math.PI / 36) * controls.rotateSpeed);
       return true;
     }
     const zoomScale = Math.exp((key === "zoom-in" ? -1 : 1) * 0.12 * controls.zoomSpeed);
@@ -1063,6 +1075,7 @@
       controls.minDistance,
       controls.maxDistance,
     );
+    controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch);
     return true;
   }
 

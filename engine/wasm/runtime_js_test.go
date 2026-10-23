@@ -102,6 +102,12 @@ func TestSceneCommandsCameraAndCancellation(t *testing.T) {
 	if orbit := host.Get("payload").Get("orbit"); orbit.Get("target").Get("z").Int() != -260 || orbit.Get("maxDistance").Int() != 300 || orbit.Get("target").Get("x").Int() != 0 {
 		t.Fatal("camera orbit lost")
 	}
+	if err = target.SetOrbit(context.Background(), scene.Orbit{Target: scene.Vec3(1, 2, 3), MinPitch: scene.Float(0), MinHeight: scene.Float(2)}); err != nil {
+		t.Fatal(err)
+	}
+	if p := host.Get("payload"); p.Get("minPitch").Type() != js.TypeNumber || p.Get("minPitch").Float() != 0 || p.Get("minHeight").Float() != 2 || !p.Get("maxPitch").IsUndefined() {
+		t.Fatal("pitch range or floor lost")
+	}
 	if err = target.SetOrbit(context.Background(), scene.Orbit{Target: scene.Vec3(1, 2, 3), PitchLimit: .5}); err != nil {
 		t.Fatal(err)
 	}

@@ -79,3 +79,32 @@ func TestChangingTheControlTargetEmitsACameraCommandWithTheNewOrbit(t *testing.T
 		t.Fatal("a scene without orbit controls carries an orbit")
 	}
 }
+
+func TestOrbitPitchRangeAndFloorSerializeAndCopy(t *testing.T) {
+	orbit := Orbit{Target: Vec3(0, 5, 0), PitchLimit: 1.4, MinPitch: Float(0), MaxPitch: Float(0.9), MinHeight: Float(2)}
+	raw, err := json.Marshal(SetCameraCommand(PerspectiveCamera{FOV: 50, Orbit: &orbit}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// MinPitch of zero is a value, not an omission.
+	for _, want := range []string{`"minPitch":0`, `"maxPitch":0.9`, `"minHeight":2`, `"pitchLimit":1.4`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("missing %s in %s", want, raw)
+		}
+	}
+	plain, _ := json.Marshal(Orbit{Target: Vec3(1, 2, 3)})
+	for _, field := range []string{"minPitch", "maxPitch", "minHeight"} {
+		if strings.Contains(string(plain), field) {
+			t.Fatalf("unset %s was sent: %s", field, plain)
+		}
+	}
+	var back Orbit
+	if err = json.Unmarshal(plain, &back); err != nil || back.MinPitch != nil {
+		t.Fatalf("round trip = %+v, %v", back, err)
+	}
+	ir := CameraIR(PerspectiveCamera{Orbit: &orbit})
+	*orbit.MinPitch = -1 // the camera record owns copies of the pointers
+	if ir.Orbit.MinPitch == nil || *ir.Orbit.MinPitch != 0 {
+		t.Fatalf("IR shares the caller's MinPitch: %v", ir.Orbit.MinPitch)
+	}
+}

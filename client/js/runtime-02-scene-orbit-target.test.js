@@ -117,3 +117,75 @@ test("a zero limit in an orbit update leaves that limit as it is", async () => {
   const camera = mounted.handle.getCamera();
   assert.ok(Math.abs(Math.asin((camera.y - target.y) / distance(camera, target))) <= 0.3 + 1e-6, "pitch limit was reset by a zero");
 });
+
+const elevation = (camera, target) => Math.asin((camera.y - target.y) / distance(camera, target));
+async function dragDown(mounted, canvas, times = 4) { // the camera goes down when the pointer moves up
+  for (let i = 0; i < times; i++) { drag(canvas, [320, 700], [320, 100]); await flushAsyncWork(); }
+  return mounted.handle.getCamera();
+}
+async function dragUp(mounted, canvas, times = 4) {
+  for (let i = 0; i < times; i++) { drag(canvas, [320, 100], [320, 700]); await flushAsyncWork(); }
+  return mounted.handle.getCamera();
+}
+
+test("MinPitch and MaxPitch bound the orbit separately, and zero is a valid MinPitch", async () => {
+  const { mounted, canvas } = await mountScene({ controls: "orbit", controlTarget: { x: 0, y: 0, z: 0 }, controlMinDistance: 1, controlMaxDistance: 400, controlPitchLimit: 1.4 });
+  const target = { x: 0, y: 5, z: 0 };
+  mounted.handle.setCamera({ kind: "perspective", x: 0, y: 25, z: 60, fov: 55, orbit: { target, minPitch: 0, maxPitch: 0.9 } });
+  await flushAsyncWork();
+  const low = await dragDown(mounted, canvas);
+  assert.ok(elevation(low, target) >= -1e-6, "camera went below the target's horizon: " + elevation(low, target));
+  assert.ok(elevation(low, target) < 0.05, "the drag did not reach MinPitch 0: " + elevation(low, target));
+  const high = await dragUp(mounted, canvas);
+  assert.ok(Math.abs(elevation(high, target) - 0.9) < 1e-6, "MaxPitch not reached or passed: " + elevation(high, target));
+});
+
+test("PitchLimit stays the symmetric shorthand when MinPitch and MaxPitch are absent", async () => {
+  const { mounted, canvas } = await mountScene({ controls: "orbit", controlTarget: { x: 0, y: 0, z: 0 }, controlMinDistance: 1, controlMaxDistance: 400 });
+  const target = { x: 0, y: 5, z: 0 };
+  mounted.handle.setCamera({ kind: "perspective", x: 0, y: 25, z: 60, fov: 55, orbit: { target, pitchLimit: 0.5 } });
+  await flushAsyncWork();
+  assert.ok(Math.abs(elevation(await dragDown(mounted, canvas), target) + 0.5) < 1e-6);
+  assert.ok(Math.abs(elevation(await dragUp(mounted, canvas), target) - 0.5) < 1e-6);
+});
+
+test("MinHeight keeps the camera above a floor at any radius", async () => {
+  const { mounted, canvas } = await mountScene({ controls: "orbit", controlTarget: { x: 0, y: 0, z: 0 }, controlMinDistance: 1, controlMaxDistance: 400 });
+  const target = { x: 0, y: 3, z: 0 };
+  mounted.handle.setCamera({ kind: "perspective", x: 0, y: 30, z: 100, fov: 55, orbit: { target, minHeight: 2 } });
+  await flushAsyncWork();
+  let camera = await dragDown(mounted, canvas);
+  assert.ok(camera.y >= 2 - 1e-6, "camera under the floor: y " + camera.y);
+  assert.ok(camera.y < 2.5, "the drag did not reach the floor: y " + camera.y);
+  assert.ok(Math.abs(distance(camera, target) - distance({ x: 0, y: 30, z: 100 }, target)) < 1e-6, "the floor changed the radius");
+  for (const deltaY of [-300, 300, 800]) {
+    canvas.dispatchEvent({ type: "wheel", deltaY, preventDefault() {}, stopPropagation() {} });
+    await flushAsyncWork();
+    camera = mounted.handle.getCamera();
+    assert.ok(camera.y >= 2 - 1e-6, "zoom put the camera under the floor: y " + camera.y);
+  }
+  // A camera command that places the camera under the floor is lifted onto it.
+  mounted.handle.setCamera({ kind: "perspective", x: 0, y: -50, z: 100, fov: 55, orbit: { target, minHeight: 2 } });
+  await flushAsyncWork();
+  assert.ok(mounted.handle.getCamera().y >= 2 - 1e-6);
+});
+
+test("a preset camera with an orbit lands exactly on its pose after a flick, and stays there", async () => {
+  const { mounted, canvas } = await mountScene({ controls: "orbit", controlTarget: { x: 0, y: 3, z: 0 }, controlMinDistance: 1, controlMaxDistance: 400 });
+  const preset = { kind: "perspective", x: 0, y: 27.4, z: -37.6, rotationX: -0.033, rotationY: 0, fov: 68, near: 0.5, far: 20000, orbit: { target: { x: 0, y: 20, z: -260 } } };
+  mounted.handle.setCamera(preset);
+  await flushAsyncWork();
+  // A fast drag, released with momentum, then the preset at once.
+  const base = { button: 0, pointerId: 6, preventDefault() {}, stopPropagation() {} };
+  canvas.dispatchEvent({ ...base, type: "pointerdown", clientX: 320, clientY: 180, timeStamp: 1000 });
+  canvas.dispatchEvent({ ...base, type: "pointermove", buttons: 1, clientX: 420, clientY: 190, timeStamp: 1008 });
+  canvas.dispatchEvent({ ...base, type: "pointermove", buttons: 1, clientX: 560, clientY: 200, timeStamp: 1016 });
+  canvas.dispatchEvent({ ...base, type: "pointerup", clientX: 560, clientY: 200, timeStamp: 1017 });
+  mounted.handle.setCamera(Object.assign({}, preset, { x: 54, y: 4.8, z: 66, rotationY: 0.555 }, { orbit: { target: { x: -3, y: 6, z: -26 } } }));
+  mounted.handle.setCamera(preset);
+  for (let i = 0; i < 6; i++) await flushAsyncWork();
+  const c = mounted.handle.getCamera();
+  assert.ok(Math.abs(c.x - preset.x) < 1e-9 && Math.abs(c.y - preset.y) < 1e-9 && Math.abs(c.z - preset.z) < 1e-9, "not on the pose: " + JSON.stringify(c));
+  assert.ok(aimError(c, preset.orbit.target) < 1e-9, "residual yaw after a flick: " + c.rotationY);
+  assert.equal(JSON.stringify(mounted.handle.getCamera()), JSON.stringify(c), "the camera kept moving: drag momentum survived the camera command");
+});
