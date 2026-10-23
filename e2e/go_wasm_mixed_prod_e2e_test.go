@@ -280,6 +280,63 @@ return {
 	if managedState.CurrentPath != "/managed" || !managedState.StandardGoDOMLoaded || !managedState.ConstructorsIsolated || managedState.StandardGoScriptLoadMode != "dom" {
 		t.Fatalf("managed-navigation mixed runtime state = %#v\nconsole:\n%s\npage errors: %v", managedState, managedPage.Console(), managedPage.PageErrors())
 	}
+	t.Run("EachFrame keeps main and worker loops responsive", func(t *testing.T) {
+		verifyMixedFrameLoops(t, chrome, baseURL)
+	})
+}
+
+func verifyMixedFrameLoops(t *testing.T, chrome, baseURL string) {
+	t.Helper()
+	init := `window.__gosx_frame_proof = {};
+document.addEventListener("gosx:engine:frame", event => {
+  const frame = event.detail && event.detail.detail;
+  if (!frame || !frame.thread) return;
+  const previous = window.__gosx_frame_proof[frame.thread];
+  window.__gosx_frame_proof[frame.thread] = {...frame, firstDelta: previous ? previous.firstDelta : frame.delta};
+});`
+	page := newBrowserPage(t, chrome, nil, 1280, 900, init, 90*time.Second)
+	if status := page.navigate(t, baseURL+"/frames"); status != http.StatusOK {
+		t.Fatalf("frame fixture status %d", status)
+	}
+	if err := chromedp.Run(page.ctx, chromedp.Poll(`(() => {
+const proof = window.__gosx_frame_proof;
+return proof.main && proof.worker && proof.main.count >= 3 && proof.worker.count >= 3;
+})()`, nil, chromedp.WithPollingTimeout(30*time.Second))); err != nil {
+		t.Fatalf("wait for main/worker frames: %v\nconsole:\n%s\npage errors: %v", err, page.Console(), page.PageErrors())
+	}
+	type frameState struct {
+		EngineID    string  `json:"engineID"`
+		HasDocument bool    `json:"hasDocument"`
+		Count       int     `json:"count"`
+		FirstDelta  float64 `json:"firstDelta"`
+	}
+	var before map[string]frameState
+	page.eval(t, `window.__gosx_frame_proof`, &before)
+	if !before["main"].HasDocument || before["worker"].HasDocument || before["main"].FirstDelta != 0 || before["worker"].FirstDelta != 0 {
+		t.Fatalf("incorrect frame contexts or initial deltas: %#v", before)
+	}
+	// A real browser click must reach the TinyGo island while both standard-Go
+	// frame loops continue. This catches page starvation across runtime modes.
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(`.counter button:last-child`, chromedp.ByQuery),
+		chromedp.Poll(fmt.Sprintf(`document.querySelector(".counter").textContent.includes("1") && window.__gosx_frame_proof.main.count > %d && window.__gosx_frame_proof.worker.count > %d`, before["main"].Count, before["worker"].Count), nil, chromedp.WithPollingTimeout(10*time.Second)),
+	); err != nil {
+		t.Fatalf("island input or frame loops stalled: %v\nconsole:\n%s", err, page.Console())
+	}
+	page.eval(t, `(() => {
+for (const frame of Object.values(window.__gosx_frame_proof)) window.__gosx_dispose_engine(frame.engineID);
+window.__gosx_disposed_frame_counts = JSON.stringify(window.__gosx_frame_proof);
+requestAnimationFrame(() => requestAnimationFrame(() => { window.__gosx_frame_disposal_settled = true; }));
+})()`, nil)
+	if err := chromedp.Run(page.ctx, chromedp.Poll(`window.__gosx_frame_disposal_settled === true`, nil, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		t.Fatalf("browser stopped drawing after frame disposal: %v", err)
+	}
+	var stopped bool
+	page.eval(t, `JSON.stringify(window.__gosx_frame_proof) === window.__gosx_disposed_frame_counts`, &stopped)
+	if !stopped || len(page.PageErrors()) != 0 {
+		t.Fatalf("disposed loops emitted more frames or page errors: stopped=%v errors=%v", stopped, page.PageErrors())
+	}
+	t.Logf("Actual browser main/worker frames, first-delta reset, concurrent TinyGo island input and disposal passed: %#v", before)
 }
 
 func waitMixedFixtureReady(t *testing.T, page *browserPage) {
