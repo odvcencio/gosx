@@ -11,7 +11,9 @@
   // Texture units of the spectral samplers. Units 0 to 3 belong to the ocean pass (bathymetry, reflection inputs).
   const UNIT = { disp: 4, slope: 8, foam: 12, wake: 13 };
   // Surface-side wake tuning (not simulation), as in the WGSL variant: the window edge fade in cells, the wake's shoaling wavenumber (rad/m) and foam gain.
-  const WAKE = { edgeCells: 8, k: 0.2, slope: 3, slickLo: 0.04, slickHi: 0.4, slickFine: 0.85, slickMid: 0.4, glow: 0.3, ragged: 0.7, thin: 0.72, density: 0.55 };
+  const WAKE = { edgeCells: 8, k: 0.2, slope: 3, slickLo: 0.04, slickHi: 0.4, slickFine: 0.85, slickMid: 0.4, glow: 0.3,
+    // Foam opacity: thin foam 0.12 to 0.42 (lace strands lift it), the dense core 0.45 to 0.75; the lace line widths (noise units) at three scales.
+    thinBase: 0.12, thinLace: 0.30, bodyBase: 0.4, bodyLace: 0.3, fadeNear: 120, fadeFar: 700 };
 
   function swap(src: string, from: string, to: string): string {
     if (src.indexOf(from) < 0) throw new Error("ocean-fft: anchor not found: " + from.slice(0, 48));
@@ -71,8 +73,9 @@
   function fragmentBlock(): string {
     let s = "  float sGx = 0., sGz = 0., sXX = 0., sZZ = 0., sXZ = 0.;\n";
     s += "  vec2 wxz = v_rest - u_sp[5].yz;\n";
+    s += "  vec2 sFw = fwidth(wxz);\n";
     // The wake first: the slick (calmer water where it churned, T = swf.w) damps the small cascades' slopes below.
-    s += "  float sShade = 1.;\n";
+    s += "  float sOp = 0., sAlb = 1.;\n";
     s += "  vec3 swv = spWake(v_rest, u_ocean[7].xz);\n";
     s += "  vec4 swf = texture(u_spWake, swv.xy);\n";
     s += "  float sSlick = swv.z * smoothstep(" + WAKE.slickLo.toFixed(2) + ", " + WAKE.slickHi.toFixed(2) + ", swf.w);\n";
@@ -98,12 +101,42 @@
     "    float sStateless = clamp((u_sp[4].z - sJf) * u_sp[4].w, 0., 1.) * lace * bu;\n" +
     "    float sKept = smoothstep(0.04, 0.6, sPersist) * (0.55 + 0.45 * lace);\n" +
     "    foam = mix(sStateless, sKept, sNear);\n" +
-    // The wake's foam: the foam texture's wake lane (the kernel's streaky coverage) near the camera, the wake's own turbulence beyond that window.
-    "    float sWake = mix(smoothstep(0.35, 0.9, swf.w) * swv.z, sFoamTex.b, sNear);\n" +
-    // Dissolve the kernel's coverage per pixel with fine noise so the edges are ragged below the foam texel; thin foam is greyer.
-    "    float sDis = smoothstep(0.3, 0.6, sWake + (of(wxz * 2.3 + 7.) - 0.5) * " + WAKE.ragged.toFixed(2) + ");\n" +
-    "    sShade = mix(" + WAKE.thin.toFixed(2) + ", 1., smoothstep(0.35, 1., sWake)) * (0.72 + 0.28 * of(wxz * 1.7 + 13.));\n" +
-    "    foam = max(foam, sDis * (" + WAKE.density.toFixed(2) + " + " + (1 - 0.55).toFixed(2) + " * smoothstep(0.3, 0.9, sWake)) * (0.92 + 0.08 * lace));\n";
+    // The wake's foam, composited after the crest foam (see the colour step): its density is the foam texture's wake lane near the camera, the
+    // wake's own turbulence beyond that window. Density maps to opacity on a curve (thin foam 0.12 to 0.42, the core up to 0.75), and the lace
+    // strands lift it, so the foam is translucent and its edges fade over a wide band with the strands breaking up.
+    "    float sDen = mix(smoothstep(0.1, 0.9, swf.w) * swv.z, sFoamTex.b, sNear);\n" +
+    "    float sStr = mix(0.4, spLace(wxz, t, sFw), 1. - smoothstep(" + WAKE.fadeNear.toFixed(1) + ", " + WAKE.fadeFar.toFixed(1) + ", dist));\n" +
+    "    sStr *= mix(0.55, 1., smoothstep(0.1, 0.6, sDen));\n" +
+    "    float sThin = smoothstep(0.02, 0.5, sDen), sBody = smoothstep(0.5, 1., sDen);\n" +
+    "    sOp = sThin * mix(" + WAKE.thinBase.toFixed(2) + " + " + WAKE.thinLace.toFixed(2) + " * sStr, " + WAKE.bodyBase.toFixed(2) + " + " + WAKE.bodyLace.toFixed(2) + " * sStr, sBody);\n" +
+    "    sOp *= (1. - smoothstep(1500., 6000., dist)) * min(u_ocean[3].w, 1.);\n" +
+    "    sAlb = mix(0.8, 1., sStr);\n";
+
+  // Wake foam lace (fragment shader only: it needs the base shader's value noise `on`). spLine is one scale of cellular lines (the edges of a jittered cell grid, width w in cells) that fades to its mean coverage when the pattern is finer than a pixel; spLace joins three scales
+  // (0.3 m, 0.9 m, 2.7 m) over a slowly warped, slowly cross-faded domain, so the lace advects with the water and dissolves and re-forms.
+  function laceFunctions(): string {
+    let s = "";
+    s += "float spLine(vec2 p, float sc, float w, vec2 fw) {\n";
+    s += "  vec2 q = p * sc; q += 0.55 * (vec2(on(q * 0.8 + 3.1), on(q * 0.8 + 9.7)) - 0.5);\n";
+    s += "  vec2 i = floor(q), f = fract(q); float d1 = 8., d2 = 8.;\n";
+    s += "  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {\n";
+    s += "    vec2 g = vec2(float(x), float(y)), c = i + g; vec2 r = g + vec2(oh(c), oh(c + vec2(37.7, 11.3))) - f;\n";
+    s += "    float d = dot(r, r); if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }\n";
+    s += "  }\n";
+    s += "  float line = 1. - smoothstep(0., w, sqrt(d2) - sqrt(d1));\n";
+    s += "  return mix(1.2 * w, line, 1. - smoothstep(0.35, 0.9, length(fw) * sc));\n";
+    s += "}\n";
+    s += "float spStrand(vec2 q, vec2 o, vec2 fw) {\n";
+    s += "  float a = spLine(q + o, 3.3, 0.14, fw), b = spLine(q + o * 1.7, 1.1, 0.12, fw), c = spLine(q + o * 0.6, 0.4, 0.09, fw);\n";
+    s += "  return 1. - (1. - 0.85 * a) * (1. - 0.6 * b) * (1. - 0.4 * c);\n";
+    s += "}\n";
+    s += "float spLace(vec2 p, float t, vec2 fw) {\n";
+    s += "  vec2 q = p + 0.7 * (vec2(on(p * 0.55 + vec2(t * 0.13, 3.1)), on(p * 0.55 + vec2(8.7, -t * 0.11))) - 0.5);\n";
+    s += "  float k = floor(t / 4.);\n";
+    s += "  return mix(spStrand(q, vec2(17.3, 5.1) * k, fw), spStrand(q, vec2(17.3, 5.1) * (k + 1.), fw), smoothstep(0., 1., fract(t / 4.)));\n";
+    s += "}\n";
+    return s;
+  }
 
   // glsl returns the spectral variant of the base ocean vertex and fragment shaders.
   function glsl(vertex: string, fragment: string): any {
@@ -114,7 +147,7 @@
     v = swap(v, "v_d0 = depth0;", "v_d0 = depth0; v_rest = xz;");
     let f = fragment;
     f = swap(f, "in float v_d0;", "in float v_d0; in vec2 v_rest;");
-    f = swap(f, "void main() {", declarations() + "void main() {");
+    f = swap(f, "void main() {", declarations() + laceFunctions() + "void main() {");
     f = swap(f, "  vec3 N = od(normalize(v_n), v_w.xz, t, u_ocean[9].xy);\n", fragmentBlock());
     f = swap(f, "  if (dist < 250.) {", "  if (dist < 6000.) {");
     f = swap(f, "    foam = (1. - smoothstep(0.12, 0.35, v_j)) * lace * bu;\n", FOAM_LINE);
@@ -122,7 +155,9 @@
     // Debug view: the wake height as a colour ramp (blue below rest, red above, grey outside the wake window), unlit, replacing the colour.
     f = swap(f, "  fragColor = vec4(color, alpha);", "  if (u_sp[11].w > 0.) { float hh = clamp(swf.x / u_sp[11].w, -1., 1.); color = swv.z > 0. ? (hh < 0. ? mix(vec3(1.), vec3(.1, .3, 1.), -hh) : mix(vec3(1.), vec3(1., .15, .1), hh)) : vec3(.25); alpha = 1.; }\n  fragColor = vec4(color, alpha);");
     // Aerated water: a turquoise glow where the wake is freshly churned (T from the wake texture), under the foam.
-    f = swap(f, "  color = mix(color, fl, foam); alpha = mix(alpha, 1., foam);", "  float sAer = swv.z * smoothstep(0.45, 1.0, swf.w);\n  vec3 sTurq = vec3(0.05, 0.42, 0.44) * (ambient * 0.9 + sunCol * 0.05);\n  color = mix(color, sTurq, sAer * " + WAKE.glow.toFixed(2) + " * (1. - foam)); alpha = mix(alpha, 1., sAer * 0.5);\n  color = mix(color, fl * sShade, foam); alpha = mix(alpha, 1., foam);");
+    f = swap(f, "  color = mix(color, fl, foam); alpha = mix(alpha, 1., foam);", "  float sAer = swv.z * smoothstep(0.45, 1.0, swf.w);\n  vec3 sTurq = vec3(0.05, 0.42, 0.44) * (ambient * 0.9 + sunCol * 0.05);\n  color = mix(color, sTurq, sAer * " + WAKE.glow.toFixed(2) + " * (1. - foam)); alpha = mix(alpha, 1., sAer * 0.5);\n  color = mix(color, fl, foam); alpha = mix(alpha, 1., foam);\n" +
+      // Wake foam: lit white where the sun reaches it, blue-grey where it faces away or is shadowed; the sun glint still shows through thin foam.
+      "  float sSun = smoothstep(0., 0.55, dot(N, L));\n  vec3 sWfl = fl * mix(vec3(0.66, 0.76, 0.9), vec3(1.), sSun) * sAlb + u_ocean[4].xyz * sunCol * 0.2 * max(dot(N, L), 0.) * sAlb;\n  color = mix(color, sWfl, sOp) + spec * sOp * 0.25; alpha = mix(alpha, 1., sOp);");
     // Foam is lit like the base shader lights it, with the sky term lifted so it reads as white foam under a bright sky.
     f = swap(f, "(ambient * 0.55 + sunCol * 0.04 * max(dot(N, L), 0.))", "(ambient * 1.4 + sunCol * 0.2 * max(dot(N, L), 0.) + vec3(0.05))");
     return { vertex: v, fragment: f };

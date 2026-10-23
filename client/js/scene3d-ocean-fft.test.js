@@ -441,7 +441,9 @@ test("the renderer encodes the ocean graph before the main pass and samples the 
   assert.match(module.code, /let swk = textureSampleLevel\(spWakeTex[^\n]*\n[^\n]*\n[^\n]*p\.y \+= swk\.x/, "vertex: height");
   assert.match(module.code, /dx\.y \+= swk\.y[^\n]*dz\.y \+= swk\.z|dx\.y \+= swk\.y/, "vertex: slopes into the tangents");
   assert.match(module.code, /sGx \+= swf\.y \* swm \* 3\.00; sGz \+= swf\.z \* swm \* 3\.00/, "fragment: slopes into the normal, with the surface-side slope gain");
-  assert.match(module.code, /foam = max\(foam, sDis \* /, "fragment: the wake's foam, dissolved per pixel");
+  assert.match(module.code, /sOp = sThin \* mix\(/, "fragment: the wake's foam opacity curve");
+  assert.match(module.code, /spLace\(wxz, t, sFw\)/, "fragment: the lace strands, animated and filtered by pixel size");
+  assert.match(module.code, /color = mix\(color, sWfl, sOp\) \+ spec \* sOp/, "fragment: the wake foam over the water, the sun glint still showing");
   assert.match(module.code, /sFoamTex\.b/, "fragment: the foam texture's wake lane");
   assert.match(module.code, /sSlick/, "fragment: the slick damps the small cascades");
   assert.match(module.code, /sTurq/, "fragment: the aerated-water glow");

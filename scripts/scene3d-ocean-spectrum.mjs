@@ -88,7 +88,7 @@ for (const wake of [true, false]) {
 const wakeRun = argv.includes('--wake');
 const selected = cases.filter(c => (wakeRun ? c.name.startsWith('wake-') : !c.name.startsWith('wake-')) && (!only || c.name.includes(only)));
 
-const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam, wakeDebug, profiling, throttle, throttleMatch]) => {
+const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam, wakeDebug, profiling, throttle, throttleMatch, seqCount, seqStep]) => {
   const api = window.__gosx_scene3d_api;
   const diag = window.__gosx_elio_diagnostics = {};
   // --profile: the page times every graph pass with its own timer query, so the renderer must not see the timer extension (one query at a time).
@@ -236,6 +236,11 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       if (webgl && i === Math.floor(frames / 2)) { samples.length = 0; profiled.length = 0; }
       if (!webgl && i >= frames / 2) { const ms = parseFloat(canvas.parentNode.getAttribute('data-gosx-scene3d-webgpu-gpu-ms')); if (Number.isFinite(ms)) gpu.push(ms); }
       // The canvas is copied in the same task as the last render, while its texture is still current.
+      // --sequence N --sequence-step K: also keep the N frames that end the run, K frames apart (the last one is the final frame), for motion checks.
+      if (seqCount > 1 && (frames - 1 - i) % seqStep === 0 && (frames - 1 - i) / seqStep < seqCount && i !== frames - 1) {
+        copyContext.clearRect(0, 0, W, H); copyContext.drawImage(canvas, 0, 0);
+        images.push({ name: c.name + '-seq' + (seqCount - 1 - (frames - 1 - i) / seqStep), url: copy.toDataURL('image/png') });
+      }
       if (i === frames - 1) { copyContext.clearRect(0, 0, W, H); copyContext.drawImage(canvas, 0, 0); break; }
       await frame();
     }
@@ -260,7 +265,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     if (c.knots && c.wakeOn) { const wi = wakeImage(); if (wi) { images.push({ name: c.name + '-texture', url: wi.url }); out[out.length - 1].wakeStats = wi.stats; } }
   }
   return { results: out, images, adapter };
-}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9')), argv.includes('--wake-debug'), argv.includes('--profile'), Number(arg('--throttle', '1')), arg('--throttle-match', '^wake\\.')]);
+}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9')), argv.includes('--wake-debug'), argv.includes('--profile'), Number(arg('--throttle', '1')), arg('--throttle-match', '^wake\\.'), Number(arg('--sequence', '0')), Number(arg('--sequence-step', '15'))]);
 await browser.close();
 if (adapter) console.log('adapter', JSON.stringify(adapter));
 if (outDir) for (const image of images) fs.writeFileSync(path.join(outDir, image.name + '.png'), Buffer.from(image.url.split(',')[1], 'base64'));
