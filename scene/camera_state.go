@@ -12,7 +12,7 @@ func CameraIR(camera PerspectiveCamera) IRCamera { return cameraToIR(camera) }
 
 // Perspective returns the typed perspective lens and pose of a camera snapshot.
 func (camera IRCamera) Perspective() PerspectiveCamera {
-	return PerspectiveCamera{Position: Vec3(camera.X, camera.Y, camera.Z), Rotation: Rotate(camera.RotationX, camera.RotationY, camera.RotationZ), FOV: camera.FOV, PortraitFOV: camera.PortraitFOV, Near: camera.Near, Far: camera.Far, TransitionMS: camera.TransitionMS}
+	return PerspectiveCamera{Position: Vec3(camera.X, camera.Y, camera.Z), Rotation: Rotate(camera.RotationX, camera.RotationY, camera.RotationZ), FOV: camera.FOV, PortraitFOV: camera.PortraitFOV, Near: camera.Near, Far: camera.Far, TransitionMS: camera.TransitionMS, Orbit: camera.Orbit.clone()}
 }
 
 // SameCameraPose compares effective poses, excluding transition metadata.
@@ -82,5 +82,9 @@ func completeCamera(c IRCamera) map[string]any {
 	if c.Far == 0 {
 		c.Far = 128
 	}
-	return map[string]any{"kind": c.Kind, "x": c.X, "y": c.Y, "z": c.Z, "rotationX": c.RotationX, "rotationY": c.RotationY, "rotationZ": c.RotationZ, "fov": c.FOV, "portraitFOV": c.PortraitFOV, "left": c.Left, "right": c.Right, "top": c.Top, "bottom": c.Bottom, "zoom": c.Zoom, "near": c.Near, "far": c.Far, "transitionMS": c.TransitionMS}
+	camera := map[string]any{"kind": c.Kind, "x": c.X, "y": c.Y, "z": c.Z, "rotationX": c.RotationX, "rotationY": c.RotationY, "rotationZ": c.RotationZ, "fov": c.FOV, "portraitFOV": c.PortraitFOV, "left": c.Left, "right": c.Right, "top": c.Top, "bottom": c.Bottom, "zoom": c.Zoom, "near": c.Near, "far": c.Far, "transitionMS": c.TransitionMS}
+	if c.Orbit != nil {
+		camera["orbit"] = c.Orbit
+	}
+	return camera
 }

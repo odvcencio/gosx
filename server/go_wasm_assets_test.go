@@ -16,6 +16,10 @@ import (
 )
 
 func TestGoWASMURLRelocatedBundleAndCompressedServing(t *testing.T) {
+	// Hashed Go WASM files are immutable in production. Development serves the
+	// current file instead (TestDevServerServesTheCurrentGoWASMBuild).
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("GOSX_DEV", "")
 	parent := t.TempDir()
 	root := filepath.Join(parent, "original")
 	body := append([]byte("\x00asm\x01\x00\x00\x00"), bytes.Repeat([]byte("module bytes"), 100)...)

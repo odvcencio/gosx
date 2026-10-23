@@ -96,6 +96,18 @@ func TestSceneCommandsCameraAndCancellation(t *testing.T) {
 	if host.Get("payload").Length() != 1 {
 		t.Fatal("commands not forwarded")
 	}
+	if err = target.SetCamera(context.Background(), scene.PerspectiveCamera{FOV: 50, Orbit: &scene.Orbit{Target: scene.Vec3(0, 20, -260), MaxDistance: 300}}); err != nil {
+		t.Fatal(err)
+	}
+	if orbit := host.Get("payload").Get("orbit"); orbit.Get("target").Get("z").Int() != -260 || orbit.Get("maxDistance").Int() != 300 || orbit.Get("target").Get("x").Int() != 0 {
+		t.Fatal("camera orbit lost")
+	}
+	if err = target.SetOrbit(context.Background(), scene.Orbit{Target: scene.Vec3(1, 2, 3), PitchLimit: .5}); err != nil {
+		t.Fatal(err)
+	}
+	if host.Get("method").String() != "setOrbit" || host.Get("payload").Get("target").Get("y").Int() != 2 || host.Get("payload").Get("pitchLimit").Float() != .5 {
+		t.Fatal("orbit payload lost")
+	}
 	if err = target.Live(context.Background(), "attack", map[string]any{"rig": map[string]any{"animationSeq": "hit-1"}}); err != nil {
 		t.Fatal(err)
 	}

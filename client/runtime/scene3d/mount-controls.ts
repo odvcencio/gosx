@@ -197,6 +197,65 @@
     };
   }
 
+  // sceneControlsApplyOrbit changes the orbit target and its distance and
+  // pitch limits after mount. orbit is {target?, minDistance?, maxDistance?,
+  // pitchLimit?}; a field left out keeps its current value. It reports whether
+  // anything changed. The caller then re-derives the orbit state from the
+  // camera (applySceneControlsCamera), so the orbit continues from the new
+  // target without a jump. A limit that is not a positive number keeps its
+  // value. Controllers with no orbit (walk, vessel, fly) ignore it.
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneControlsApplyOrbit(controls, orbit) {
+    if (!controls || (controls.mode !== "orbit" && controls.mode !== "fixed") || !sceneIsPlainObject(orbit)) {
+      return false;
+    }
+    let changed = false;
+    if (sceneIsPlainObject(orbit.target)) {
+      const current = controls.target || { x: 0, y: 0, z: 0 };
+      const next = {
+        x: sceneNumber(orbit.target.x, current.x),
+        y: sceneNumber(orbit.target.y, current.y),
+        z: sceneNumber(orbit.target.z, current.z),
+      };
+      changed = next.x !== current.x || next.y !== current.y || next.z !== current.z;
+      controls.target = next;
+    }
+    if (controls.mode === "orbit") {
+      // @ts-ignore TS7006 -- plain JavaScript fixture
+      const finite = (value) => typeof value === "number" && Number.isFinite(value) && value > 0; // zero leaves a limit as it is
+      const minDistance = finite(orbit.minDistance) ? Math.max(0.001, orbit.minDistance) : controls.minDistance;
+      const maxDistance = Math.max(minDistance, finite(orbit.maxDistance) ? orbit.maxDistance : controls.maxDistance);
+      const pitchLimit = finite(orbit.pitchLimit) ? sceneOrbitPitchLimit(orbit.pitchLimit) : controls.pitchLimit;
+      changed = changed || minDistance !== controls.minDistance || maxDistance !== controls.maxDistance || pitchLimit !== controls.pitchLimit;
+      controls.minDistance = minDistance;
+      controls.maxDistance = maxDistance;
+      controls.pitchLimit = pitchLimit;
+    }
+    return changed;
+  }
+
+  // sceneControlsFollowCameraCommands runs after SetCamera commands wrote the
+  // scene camera (applySceneCommands writes only the scene state). Built-in
+  // controls keep their own orbit or fly state, so the last camera command,
+  // with its orbit settings, goes through them as handle.setCamera does. It
+  // reports whether a camera command was present.
+  // @ts-ignore TS7006 -- plain JavaScript fixture
+  function sceneControlsFollowCameraCommands(controls, sceneState, commands) {
+    let last = null;
+    for (const command of commands) if (command && command.kind === 5) last = command;
+    if (!last) return false;
+    sceneControlsApplyOrbit(controls, last.data && last.data.orbit);
+    applySceneControlsCamera(controls, sceneState.camera);
+    return true;
+  }
+
+  // The orbit target now in effect: the controller's, which a camera command or
+  // pan may have moved since mount, else the mount-time prop.
+  // @ts-ignore TS7006 -- plain JavaScript fixture
+  function sceneControlsCurrentTarget(controls, props) {
+    return controls && controls.target ? Object.assign({}, controls.target) : sceneControlsTarget(props);
+  }
+
   function sceneControlsRotateSpeed(props) {
     return Math.max(0.1, sceneNumber(props && props.controlRotateSpeed, 1));
   }
