@@ -197,7 +197,7 @@
   // anything changed. The caller then re-derives the orbit state from the
   // camera (applySceneControlsCamera), so the orbit continues from the new
   // target without a jump. Controllers with no orbit (walk, vessel, fly) ignore it.
-  function sceneControlsApplyOrbit(controls, orbit) {
+  function sceneControlsApplyOrbit(controls: any, orbit: any) {
     if (!controls || (controls.mode !== "orbit" && controls.mode !== "fixed") || !sceneIsPlainObject(orbit)) {
       return false;
     }
@@ -213,7 +213,7 @@
       controls.target = next;
     }
     if (controls.mode === "orbit") {
-      const finite = (value) => typeof value === "number" && Number.isFinite(value);
+      const finite = (value: any) => typeof value === "number" && Number.isFinite(value);
       const minDistance = finite(orbit.minDistance) ? Math.max(0.001, orbit.minDistance) : controls.minDistance;
       const maxDistance = Math.max(minDistance, finite(orbit.maxDistance) ? orbit.maxDistance : controls.maxDistance);
       const pitchLimit = finite(orbit.pitchLimit) ? sceneOrbitPitchLimit(orbit.pitchLimit) : controls.pitchLimit;

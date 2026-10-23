@@ -2506,6 +2506,10 @@
       scheduleRender("signal-gizmo-mode");
     }
 
+    function mountedSceneController(): any {
+      return sceneControlHandle && sceneControlHandle.controller;
+    }
+
     function currentMountedSceneCamera(sourceCamera) {
       return sceneRenderCamera(sceneViewportCamera(sceneCurrentControlCamera(
         sceneControlHandle && sceneControlHandle.controller,
@@ -2561,7 +2565,7 @@
 	      const nextCamera = normalizeSceneCamera(camera, currentCamera);
 	      // An orbit target and limits change before the controls re-derive
 	      // their state from the camera, so the orbit continues from the new target.
-	      const controller = sceneControlHandle && sceneControlHandle.controller;
+	      const controller = mountedSceneController();
 	      const orbitChanged = sceneControlsApplyOrbit(controller, camera.orbit);
 	      if (!orbitChanged && sceneCameraEquivalent(currentCamera, nextCamera)) {
 	        return false;
@@ -2855,7 +2859,7 @@
             return applyMountedSceneCamera(camera, "managed-control-forms-camera");
           },
           getControlTarget: function() {
-            const controller = sceneControlHandle && sceneControlHandle.controller;
+            const controller = mountedSceneController();
             return controller && controller.target ? Object.assign({}, controller.target) : sceneControlsTarget(props);
           },
           stopCameraInertia: function() {
@@ -3488,13 +3492,13 @@
       });
     }
 
-    function applyMountedCameraCommands(commands, reason) {
-      let last = null;
+    function applyMountedCameraCommands(commands: any[], reason: string) {
+      let last: any = null;
       for (const command of commands) {
         if (command && command.kind === 5) last = command;
       }
       if (!last) return;
-      const controller = sceneControlHandle && sceneControlHandle.controller;
+      const controller = mountedSceneController();
       sceneControlsApplyOrbit(controller, last.data && last.data.orbit);
       applySceneControlsCamera(controller, sceneState.camera);
       publishMountedSceneCamera(sceneState.camera, reason || "commands");
@@ -3608,8 +3612,8 @@
       // setOrbit moves the orbit target and the distance and pitch limits
       // without moving the camera: the camera keeps its position and turns to
       // face the new target. orbit is {target?, minDistance?, maxDistance?, pitchLimit?}.
-      setOrbit(orbit) {
-        return applyMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(), { orbit }), "handle-orbit");
+      setOrbit(orbit: any) {
+        return applyMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit");
       },
       async applyTextureProfile(requests: any[], profile: string, signal: AbortSignal, module: any) {
         return sceneApplyMountedTextureProfile(sceneState, mount, requests, profile, signal, module, {
