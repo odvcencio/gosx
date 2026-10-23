@@ -173,6 +173,9 @@ type InstancedGLBMeshIR struct {
 	// ParentNode names the scene node whose world matrix carries the batch;
 	// see InstancedGLBMesh.ParentNode.
 	ParentNode string `json:"parentNode,omitempty"`
+	// Palette lists the distinct instance colours of the batch, in first-use
+	// order. MeshInstanceIR.Tint indexes it, 1-based.
+	Palette []string `json:"palette,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
@@ -191,6 +194,8 @@ type MeshInstanceIR struct {
 	RotationY     float64   `json:"rotationY,omitempty"`
 	RotationZ     float64   `json:"rotationZ,omitempty"`
 	ParentMatrix  []float64 `json:"parentMatrix,omitempty"`
+	// Tint is a 1-based index into the batch's Palette; 0 means untinted.
+	Tint int `json:"tint,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
@@ -2634,6 +2639,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 		record["sharedAppearance"] = true
 	}
 	setString(record, "parentNode", item.ParentNode)
+	if len(item.Palette) > 0 {
+		record["palette"] = append([]string(nil), item.Palette...)
+	}
 	if len(item.Instances) > 0 {
 		instances := make([]map[string]any, 0, len(item.Instances))
 		for _, inst := range item.Instances {
@@ -2658,6 +2666,7 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 			if len(inst.ParentMatrix) > 0 {
 				instRecord["parentMatrix"] = append([]float64(nil), inst.ParentMatrix...)
 			}
+			setInt(instRecord, "tint", inst.Tint)
 			instances = append(instances, instRecord)
 		}
 		record["instances"] = instances

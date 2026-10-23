@@ -1623,6 +1623,9 @@
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scale, 1))),
       parentMatrix: sceneNormalizeParentMatrix(current.parentMatrix),
     };
+    // 1-based index into the batch palette; absent means untinted.
+    const tint = Math.floor(sceneNumber(current.tint, 0));
+    if (tint > 0) instance.tint = tint;
     // Preserve absence for legacy rigid declarations. Explicit empty clip is
     // still meaningful (bind pose), so check property presence, not truthiness.
     if (["animation", "animationTime", "animationLoop"].some(key => Object.prototype.hasOwnProperty.call(current, key))) {
@@ -1705,6 +1708,11 @@
       }),
       ...lifecycle,
     };
+    // Instance colours ship once per batch; instance.tint indexes this list, 1-based.
+    const rawPalette = Array.isArray(raw.palette) ? raw.palette : (Array.isArray(current.palette) ? current.palette : null);
+    if (rawPalette && rawPalette.length) {
+      batch.palette = rawPalette.map(function(color) { return typeof color === "string" ? color.trim() : ""; });
+    }
     for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "specularFragmentGLSL", "specularFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
       if (sceneObjectMaterialHasValue(raw, key)) {
         batch[key] = sceneCloneData(sceneObjectMaterialValue(raw, key));
@@ -1769,11 +1777,30 @@
   const sceneInstancedGLBHydrationTemplates = new WeakMap();
   const sceneInstancedGLBBatchIDs = new WeakMap();
   const sceneInstancedGLBBatchParents = new WeakMap();
+  // The tint of an instance's crowd agents: a Float32Array(4) in linear light, set only for tinted instances.
+  const sceneInstancedGLBTints = new WeakMap();
+
+  function sceneSRGBChannelToLinear(value) {
+    const channel = Math.max(0, Math.min(1, sceneNumber(value, 0)));
+    return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+  }
+
+  // One Float32Array per palette entry per expansion, shared by its instances.
+  function sceneInstancedGLBPaletteTints(palette) {
+    if (!Array.isArray(palette) || !palette.length) return null;
+    return palette.map(function(color) {
+      if (typeof color !== "string" || !color) return null;
+      const rgba = sceneColorRGBA(color, [1, 1, 1, 1]);
+      return new Float32Array([sceneSRGBChannelToLinear(rgba[0]), sceneSRGBChannelToLinear(rgba[1]), sceneSRGBChannelToLinear(rgba[2]), rgba[3]]);
+    });
+  }
 
   function sceneCloneHydrationModel(model) {
     const copy = sceneCloneData(model);
     const template = sceneInstancedGLBHydrationTemplates.get(model);
     if (template) sceneInstancedGLBHydrationTemplates.set(copy, template);
+    const tint = sceneInstancedGLBTints.get(model);
+    if (tint) sceneInstancedGLBTints.set(copy, tint);
     return copy;
   }
 
@@ -1798,6 +1825,7 @@
     const declaration = Object.assign({}, template);
     for (const key of ["id", "x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) delete declaration[key];
     const hydrationTemplate = JSON.stringify(declaration);
+    const paletteTints = sceneInstancedGLBPaletteTints(batch.palette);
     const models = [];
     for (let index = 0; index < batch.instances.length; index += 1) {
       const instance = batch.instances[index];
@@ -1817,6 +1845,9 @@
       // the crowd batch record this agent's render objects join.
       sceneInstancedGLBBatchIDs.set(model, batch.id);
       if (batch.parentNode) sceneInstancedGLBBatchParents.set(model, batch.parentNode);
+      // Colour is not a hydration input either: it rides the agent's crowd record.
+      const tint = paletteTints && instance.tint > 0 ? paletteTints[instance.tint - 1] : null;
+      if (tint) sceneInstancedGLBTints.set(model, tint);
       models.push(model);
     }
     return models;
@@ -5678,6 +5709,9 @@
       dirty: [], dirtyEpoch: 0, dirtyFull: true,
       objects: [], skins: [], matrices: [], motions: [], revs: [],
       transforms: null, poses: null,
+      // Per-agent tints (linear RGBA, 4 floats per slot) or null when no agent has one.
+      // tintRefs holds each slot's skin.tint to spot a recolour; colorGen advances on a repack.
+      tintRefs: [], colors: null, colorsDirty: false, colorGen: 0,
       bounds: { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 },
       record: null,
     };
@@ -5740,6 +5774,28 @@
       group.transforms.set(group.matrices[i], i * 16);
       group.poses.set(group.skins[i].rows, i * 3);
     }
+  }
+
+  // Packs each agent's tint (4 floats per slot, linear RGBA) into group.colors, or
+  // clears it when no agent has one. colorGen tells the renderers to upload again.
+  function sceneCrowdBatchPackColors(group) {
+    const count = group.n;
+    let any = false;
+    for (let i = 0; i < count; i += 1) {
+      if (group.tintRefs[i]) { any = true; break; }
+    }
+    if (!any) {
+      if (group.colors !== null) { group.colors = null; group.colorGen += 1; }
+      return;
+    }
+    if (!group.colors || group.colors.length !== count * 4) group.colors = new Float32Array(count * 4);
+    const out = group.colors;
+    for (let i = 0; i < count; i += 1) {
+      const tint = group.tintRefs[i];
+      if (tint) out.set(tint, i * 4);
+      else { out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = out[i * 4 + 3] = 1; }
+    }
+    group.colorGen += 1;
   }
 
   // ---- Batch parent ------------------------------------------------------
@@ -5859,6 +5915,10 @@
             known.matrices[slot] === object.parentMatrix && object.visible !== false &&
             (object.selected !== true || Boolean(skin.parent)) && !object._modelHidden) {
           if (!rest) rest = list.slice(0, i);
+          if (known.tintRefs[slot] !== (skin.tint || null)) {
+            known.tintRefs[slot] = skin.tint || null;
+            known.colorsDirty = true;
+          }
           if (known.revs[slot] !== skin.rev) {
             known.revs[slot] = skin.rev;
             known.changed = true;
@@ -5920,6 +5980,10 @@
         group.changed = true;
         group.reshaped = true;
       }
+      if (group.tintRefs[slot] !== (skin.tint || null)) {
+        group.tintRefs[slot] = skin.tint || null;
+        group.colorsDirty = true;
+      }
       group.objects[slot] = object;
       group.n = slot + 1;
     }
@@ -5938,7 +6002,12 @@
         group.reshaped = true;
         group.count = group.n;
         group.objects.length = group.skins.length = group.motions.length = group.matrices.length =
-          group.revs.length = group.n;
+          group.revs.length = group.tintRefs.length = group.n;
+        group.colorsDirty = true;
+      }
+      if (group.colorsDirty || group.reshaped) {
+        group.colorsDirty = false;
+        sceneCrowdBatchPackColors(group);
       }
       if (parentMoved && !group.changed) sceneCrowdBatchWorldBounds(group);
       if (group.changed && group.count > 0) {
@@ -5960,7 +6029,7 @@
           const stale = groups[i];
           stale.alive = false;
           stale.objects.length = stale.skins.length = stale.motions.length = stale.matrices.length =
-            stale.revs.length = 0;
+            stale.revs.length = stale.tintRefs.length = 0;
           groups.splice(i, 1);
         }
       }
@@ -6074,6 +6143,9 @@
       record.crowdShape = group.shape;
       record.crowdTransforms = group.transforms;
       record.crowdPoses = group.poses;
+      // Per-agent tints: linear RGBA per slot, null when none. crowdColorGen changes when they do.
+      record.crowdColors = group.colors;
+      record.crowdColorGen = group.colorGen;
       record.crowdMotion = motion;
       record.crowdParentMatrix = group.parentMatrix;
       record.crowdCut = group.cut || null;

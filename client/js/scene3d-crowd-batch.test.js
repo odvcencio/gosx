@@ -535,6 +535,18 @@ test("an InstancedGLB batch keeps its parentNode through normalization", async (
   assert.equal(api.normalizeSceneInstancedGLBMeshEntry({ id: "x", src: "/p.glb", parentNode: 7, instances: [] }, 0, null).parentNode, "");
 });
 
+test("an InstancedGLB batch keeps its palette and each instance's tint index through normalization", async () => {
+  const api = await makeSceneApiEnv();
+  const batch = api.normalizeSceneInstancedGLBMeshEntry({ id: "shirts", src: "/p.glb", palette: [" #d8a373 ", "#3a5a8c", 7],
+    instances: [{ id: "a", tint: 2 }, { id: "b" }, { id: "c", tint: 1.9 }, { id: "d", tint: -3 }, { id: "e", tint: "x" }] }, 0, null);
+  assert.deepEqual(Array.from(batch.palette), ["#d8a373", "#3a5a8c", ""]);
+  assert.deepEqual(batch.instances.map(instance => instance.tint), [2, undefined, 1, undefined, undefined]);
+  assert.equal(api.normalizeSceneInstancedGLBMeshEntry({ id: "plain", src: "/p.glb", instances: [{ id: "a" }] }, 0, null).palette, undefined);
+  // An update that omits the palette keeps the mounted one.
+  const kept = api.normalizeSceneInstancedGLBMeshEntry({ id: "shirts", src: "/p.glb", instances: [{ id: "a", tint: 1 }] }, 0, batch);
+  assert.deepEqual(Array.from(kept.palette), ["#d8a373", "#3a5a8c", ""]);
+});
+
 test("a selected agent leaves its batch, unless the batch rides a parent", async () => {
   const api = await makeSceneApiEnv();
   const free = makeCrowd(api, 6);

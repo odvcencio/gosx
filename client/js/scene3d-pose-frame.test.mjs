@@ -205,6 +205,7 @@ test("retained pose application reaches the existing crowd animation rows", () =
   context.sceneReusableRigidInstance = () => true;
   context.sceneRigidMembershipScopeKey = () => "";
   context.sceneInstancedGLBHydrationTemplates = new WeakMap();
+  context.sceneInstancedGLBTints = new WeakMap();
   const expand = context.sceneInstancedGLBMeshToModels;
   context.sceneInstancedGLBMeshToModels = batch => expand(batch).map(model => {
     context.sceneInstancedGLBHydrationTemplates.set(model, 'hero-template');

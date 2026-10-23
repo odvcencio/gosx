@@ -91,6 +91,43 @@ Limits:
   `docs/scene3d-powered-vessels.md`. Agents are not constrained to a deck by the
   renderer: keeping them on floors is simulation logic (`vessel.Layout`).
 
+## Colour one agent at a time
+
+Set `MeshInstance.Color` (a CSS hex or `rgb()` colour) and one batch can draw a
+crowd whose agents differ only by colour. A body part that comes in five colours
+is then one batch, not five.
+
+```go
+scene.InstancedGLBMesh{
+    ID: "shirts", Src: "/models/shirt.glb",
+    Material:  scene.StandardMaterial{Color: "#ffffff"}, // white shows the instance colour as written
+    Instances: []scene.MeshInstance{
+        {ID: "a", Color: "#d8a373"},
+        {ID: "b", Color: "#3a5a8c"},
+        {ID: "c"}, // no Color: drawn in the batch colour
+    },
+}
+```
+
+The instance colour multiplies the batch material's colour and texture in linear
+light, so a white material shows the colour you wrote and a coloured material
+darkens it. On the wire the batch lists each distinct colour once (`palette`) and
+each instance carries a 1-based index (`tint`). For 1,000 agents that adds about
+9 bytes per coloured agent (`,"tint":3`), against 18 for a colour string on every
+agent. A batch with no colours keeps its old wire form. A recolour reaches the
+renderer as an ordinary pose patch, uploads one small stream and does not
+rebuild the batch.
+
+Limits:
+
+- Only the opaque crowd path tints: WebGL (pose and motion modes) and WebGPU.
+  A translucent crowd, which draws one record per agent for depth sorting, and
+  the Canvas fallback ignore `Color`.
+- An agent that leaves its batch because its transform is not a plain matrix or
+  its appearance differs still draws on the crowd shader, and keeps its colour.
+- Vertex colours are not read. The PBR mesh path of both renderers has no
+  vertex-colour attribute, for batches or for ordinary meshes.
+
 ## Cost
 
 `client/js/scene3d-crowd-partial.bench.mjs` measures the main thread for 5,000

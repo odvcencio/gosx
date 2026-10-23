@@ -34,7 +34,8 @@ function fixture(count, options = {}) {
       skin: null, static: false,
       parentMatrix: new F32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, index * .2 - 0.2 * count / 2, 0, 0, 1]),
     }, options.object);
-    object._crowdSkin = { atlas, bounds, rows: new F32([1, 2, .5]), poseRows: null, batchID: "swarm", rev: 0, group: null };
+    object._crowdSkin = { atlas, bounds, rows: new F32([1, 2, .5]), poseRows: null, batchID: "swarm", rev: 0, group: null,
+      tint: options.tint ? options.tint(index) : null };
     return object;
   });
   const build = (camera = { x: 0, y: 0, z: 6, fov: 72, near: .05, far: 128 }, source = objects) =>
@@ -55,7 +56,17 @@ function fixture(count, options = {}) {
   if (typeof gl.getError !== "function") gl.getError = () => 0;
   const getParameter = gl.getParameter.bind(gl);
   gl.getParameter = param => (answers.has(param) ? answers.get(param) : getParameter(param));
-  return { ...h, api, F32, objects, build, gl, atlas };
+  // The fake context keeps only the last upload per buffer id; keep every array-buffer upload's values.
+  const uploads = [];
+  for (const name of ["bufferData", "bufferSubData"]) {
+    const original = gl[name].bind(gl);
+    gl[name] = (...args) => {
+      const data = name === "bufferData" ? args[1] : args[2];
+      if (args[0] === gl.ARRAY_BUFFER && data && typeof data.length === "number") uploads.push(Array.from(data));
+      return original(...args);
+    };
+  }
+  return { ...h, api, F32, objects, build, gl, atlas, uploads };
 }
 
 function drawn(gl, from = 0) {
@@ -139,5 +150,120 @@ test("a GPU-motion crowd draws as one call and uploads motion records only after
   assert.equal(uploads[0][3], 10 * 24 * 4, "the range starts at the first changed agent");
   assert.equal(uploads[0][4], 3 * 24, "and covers only the three changed agents");
   assert.equal(drawn(h.gl, mark).length, 1);
+  h.renderer.dispose();
+});
+
+// Linear RGBA, as the hydration path stores a palette entry.
+const tintOf = (h, r, g, b) => new h.F32([r, g, b, 1]);
+
+function uploadedWith(h, values) {
+  return h.uploads.some(data => data.length === values.length && values.every((v, i) => Math.abs(data[i] - v) < 1e-6));
+}
+
+function colorBinding(gl, from) {
+  const ops = gl.ops.slice(from);
+  return {
+    pointer: ops.filter(op => op[0] === "vertexAttribPointer" && op[1] === 9),
+    divisor: ops.filter(op => op[0] === "vertexAttribDivisor" && op[1] === 9).map(op => op[2]),
+    flags: ops.filter(op => op[0] === "uniform1i" && op[1] === "u_hasInstanceColor").map(op => op[2]),
+  };
+}
+
+test("a tinted pose crowd binds one colour per agent and uploads it only when a colour changes", () => {
+  const h = fixture(6);
+  const palette = [tintOf(h, 1, 0, 0), tintOf(h, 0, 1, 0), tintOf(h, 0, 0, 1)];
+  h.objects.forEach((object, i) => { object._crowdSkin.tint = i === 4 ? null : palette[i % 3]; });
+  const expected = [];
+  h.objects.forEach((object, i) => expected.push(...(i === 4 ? [1, 1, 1, 1] : palette[i % 3])));
+
+  const first = h.build();
+  const [record] = first.meshObjects;
+  const revision = record.crowdRevision;
+  assert.deepEqual(Array.from(record.crowdColors), expected, "the record carries 4 floats per agent, white for an untinted one");
+  h.renderer.render(first, viewport);
+  const bound = colorBinding(h.gl, 0);
+  assert.equal(bound.pointer.length, 1, "one instance-colour attribute binding for the batch");
+  assert.equal(bound.pointer[0][2], 4, "four components");
+  assert.deepEqual(bound.divisor.slice(0, 1), [1], "advanced once per instance");
+  assert.ok(bound.flags.includes(1), "u_hasInstanceColor is on for the draw");
+  assert.ok(uploadedWith(h, expected), "the colour stream reached the GPU");
+  assert.equal(drawn(h.gl).length, 1, "tints add no draw call");
+
+  // An unchanged crowd (camera moves) uploads nothing, colours included.
+  let mark = h.gl.ops.length;
+  h.renderer.render(h.build({ x: 1, y: .5, z: 6.5, fov: 72, near: .05, far: 128 }), viewport);
+  assert.equal(streamUploads(h.gl, mark), 0);
+
+  // A pose change repacks transforms and poses but not colours.
+  h.objects[2]._crowdSkin.rows[2] = .9;
+  h.objects[2]._crowdSkin.rev += 1;
+  mark = h.gl.ops.length;
+  const posed = h.build();
+  assert.equal(posed.meshObjects[0].crowdColorGen, record.crowdColorGen, "poses do not touch colours");
+  assert.equal(posed.meshObjects[0].crowdRevision, revision + 1);
+  h.renderer.render(posed, viewport);
+  const uploadsAfterPose = h.gl.ops.slice(mark).filter(op => op[0] === "bufferSubData" && op[4] === 4 * 6);
+  assert.equal(uploadsAfterPose.length, 0, "no 24-float colour upload on a pose change");
+
+  // Recolouring one agent in place repacks colours without a pose revision.
+  const posedRevision = record.crowdRevision;
+  h.objects[1]._crowdSkin.tint = tintOf(h, .5, .25, .125);
+  expected.splice(4, 4, .5, .25, .125, 1);
+  mark = h.gl.ops.length;
+  const recolored = h.build();
+  assert.equal(recolored.meshObjects[0], record);
+  assert.equal(record.crowdRevision, posedRevision, "a recolour is not a pose revision");
+  assert.deepEqual(Array.from(record.crowdColors), expected);
+  h.renderer.render(recolored, viewport);
+  const colorUploads = h.gl.ops.slice(mark).filter(op => (op[0] === "bufferSubData" || op[0] === "bufferData") && (op[4] === 24 || op[3] === 24));
+  assert.equal(colorUploads.length, 1, "exactly one colour upload after the recolour");
+  assert.equal(drawn(h.gl, mark).length, 1);
+  h.renderer.dispose();
+});
+
+test("a crowd without tints draws with the colour attribute off", () => {
+  const h = fixture(5);
+  const bundle = h.build();
+  assert.equal(bundle.meshObjects[0].crowdColors, null);
+  h.renderer.render(bundle, viewport);
+  const bound = colorBinding(h.gl, 0);
+  assert.equal(bound.pointer.length, 0, "no instance-colour stream");
+  assert.ok(bound.flags.length > 0 && bound.flags.every(flag => flag === 0), "u_hasInstanceColor stays off");
+  h.renderer.dispose();
+});
+
+test("a tinted GPU-motion crowd binds its colours beside the motion records", () => {
+  const h = fixture(8);
+  const table = { count: 1, data: new h.F32(4) };
+  const red = tintOf(h, 1, 0, 0), blue = tintOf(h, 0, 0, 1);
+  for (const [index, object] of h.objects.entries()) {
+    const x = object.parentMatrix[12];
+    object._crowdMotion = { atlas: object._crowdSkin.atlas, clipTable: table, record: new h.F32(24), dirty: true,
+      bounds: { minX: x - .2, minY: 0, minZ: -.2, maxX: x + .2, maxY: .3, maxZ: .2 } };
+    object._crowdSkin.tint = index % 2 ? blue : red;
+  }
+  h.renderer.prepareCrowdMotionShaders();
+  const bundle = h.build();
+  assert.equal(bundle.meshObjects[0].crowdMotion, true);
+  h.renderer.render(bundle, viewport);
+  const bound = colorBinding(h.gl, 0);
+  assert.equal(bound.pointer.length, 1);
+  assert.ok(bound.flags.includes(1), "the motion program turns the colour attribute on");
+  const expected = [];
+  for (let i = 0; i < 8; i++) expected.push(...(i % 2 ? blue : red));
+  assert.ok(uploadedWith(h, expected));
+  assert.equal(drawn(h.gl).length, 1);
+  h.renderer.dispose();
+});
+
+test("an agent that left its batch keeps its tint on the crowd shader", () => {
+  const h = fixture(4);
+  const green = tintOf(h, 0, 1, 0);
+  h.objects.forEach(object => { object._crowdSkin.tint = green; });
+  h.objects[2].color = "#ff0000";
+  const bundle = h.build();
+  assert.equal(bundle.meshObjects.length, 2, "the batch and the agent whose appearance differs");
+  h.renderer.render(bundle, viewport);
+  assert.equal(colorBinding(h.gl, 0).pointer.length, 2, "both draws bind a colour stream");
   h.renderer.dispose();
 });

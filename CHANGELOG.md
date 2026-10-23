@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Colour crowd agents one by one. `MeshInstance.Color` tints an instance of an
+  animated `InstancedGLBMesh`, so a body part that comes in five colours is one
+  batch instead of five. The batch ships a palette and each instance a 1-based
+  index (about 9 bytes per coloured agent for 1,000 agents; a colour string per
+  agent would take 18), and a batch without colours keeps its old wire form. The
+  WebGL pose and motion shaders read the tint as an instance attribute and the
+  WebGPU crowd colour shader as a storage buffer; a colour uploads only when it
+  changes. Vertex colours are not read: neither renderer's mesh path has them.
+
 - Carry instanced meshes on a moving scene node. `InstancedMesh.ParentNode`
   names the node (a `Vessel.NodeID`, a model ID or an object ID); instance
   positions are then relative to it, and each render bundle composes the node's
