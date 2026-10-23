@@ -5753,36 +5753,6 @@
     }
   }
 
-  // Per-distinct-string cache for sceneColorRGBA() results, consumed by
-  // sceneInstancedColorBuffer() (createScenePBRRenderer's instanced-mesh
-  // draw path, below). A hex/rgba() string is re-parsed through regex
-  // matching and parseInt on every call; an instanced mesh commonly reuses
-  // a small, fixed palette across hundreds of instances, so memoizing by
-  // the raw color value turns an O(instanceCount) parse into an O(distinct
-  // colors) parse per rebuild. sceneColorRGBA's result only depends on
-  // `value` here because every call below passes the same literal
-  // fallback; the loop only reads the returned array's components, so
-  // handing back the shared cached reference is safe. A color string
-  // always parses to the same RGBA, so this cache needs no invalidation
-  // (bounded defensively in case a caller streams unbounded distinct
-  // values instead of reusing a palette).
-  var sceneInstancedColorRGBACache = new Map();
-  var SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX = 512;
-
-  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
-  function sceneCachedInstancedColorRGBA(value, fallback) {
-    var cached = sceneInstancedColorRGBACache.get(value);
-    if (cached) {
-      return cached;
-    }
-    var rgba = sceneColorRGBA(value, fallback);
-    if (sceneInstancedColorRGBACache.size >= SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX) {
-      sceneInstancedColorRGBACache.clear();
-    }
-    sceneInstancedColorRGBACache.set(value, rgba);
-    return rgba;
-  }
-
   // prepareRigidMeshBatches (createScenePBRRenderer's rigid-batch grouping
   // path, below) groups rigid mesh records into shared-VBO batches keyed
   // by everything that must match for a group to share one draw: material,
@@ -8245,12 +8215,7 @@
     function uploadInstancedStream(mesh, index, slot, data, activeLength = data.length, dirtyRanges = null) {
       // Commands replace JS arrays frequently. Their identity is not a GPU
       // lifetime: own mutable streams by batch ID, with frame retirement.
-      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
-      let record = instancedStreamRecords.get(key);
-      if (!record) {
-        record = {};
-        instancedStreamRecords.set(key, record);
-      }
+      const record = instancedStreamOwner(mesh, index);
       let stream = record[slot];
       if (!stream) {
         stream = { buffer: gl.createBuffer(), bytes: 0, epoch: 0 };
@@ -8313,6 +8278,13 @@
         snapshot.set(start === 0 && end === words.length ? words : words.subarray(start, end), start);
       }
       stream.validLength = Math.max(valid, length);
+    }
+
+    function instancedStreamOwner(mesh: any, index: number) {
+      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
+      let owner = instancedStreamRecords.get(key);
+      if (!owner) { owner = {}; instancedStreamRecords.set(key, owner); }
+      return owner;
     }
 
     // Crowd batches repack only when their revision changes (_packGeneration),
@@ -8898,6 +8870,7 @@
       beginWebGLDirectMeshBufferFrame(bundle);
       if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
+        retireInstancedStreams();
         return "empty";
       }
 
@@ -10753,45 +10726,10 @@
       return geom;
     }
 
-    // Draw all instanced meshes from the render bundle.
-    function sceneInstancedColorBuffer(mesh, count) {
-      if (!mesh || count <= 0) {
-        return null;
-      }
-      if (mesh._cachedInstanceColors && mesh._cachedInstanceColors.length >= count * 4) {
-        return mesh._cachedInstanceColors;
-      }
-      mesh._cachedInstanceColors = null;
-      var rawColors = mesh.colors;
-      if (!rawColors || typeof rawColors.length !== "number") {
-        return null;
-      }
-      if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-        mesh._cachedInstanceColors = new Float32Array(count * 4);
-        for (var ci = 0; ci < count; ci++) {
-          var rgba = sceneCachedInstancedColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
-          mesh._cachedInstanceColors[ci * 4] = rgba[0];
-          mesh._cachedInstanceColors[ci * 4 + 1] = rgba[1];
-          mesh._cachedInstanceColors[ci * 4 + 2] = rgba[2];
-          mesh._cachedInstanceColors[ci * 4 + 3] = rgba[3];
-        }
-        return mesh._cachedInstanceColors;
-      }
-      if (rawColors.length >= count * 4) {
-        mesh._cachedInstanceColors = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
-        return mesh._cachedInstanceColors;
-      }
-      if (rawColors.length >= count * 3) {
-        mesh._cachedInstanceColors = new Float32Array(count * 4);
-        for (var ni = 0; ni < count; ni++) {
-          mesh._cachedInstanceColors[ni * 4] = rawColors[ni * 3];
-          mesh._cachedInstanceColors[ni * 4 + 1] = rawColors[ni * 3 + 1];
-          mesh._cachedInstanceColors[ni * 4 + 2] = rawColors[ni * 3 + 2];
-          mesh._cachedInstanceColors[ni * 4 + 3] = 1;
-        }
-        return mesh._cachedInstanceColors;
-      }
-      return null;
+    function sceneInstancedColorBuffer(mesh: any, count: number, owner: object) {
+      if (!mesh || count <= 0) return null;
+      if (mesh._cachedInstanceColors && mesh._cachedInstanceColors.length >= count * 4) return mesh._cachedInstanceColors;
+      return mesh._cachedInstanceColors = scenePrepareInstancedColors(owner, mesh.colors, count);
     }
 
     function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, renderPass) {
@@ -10876,15 +10814,8 @@
         bindInstancedVertexAttribute(ip.attributes.uv, geom.uvs, 2, [0, 0]);
         bindInstancedVertexAttribute(ip.attributes.tangent, geom.tangents, 4, [1, 0, 0, 1]);
 
-        // Preserve normalized transform arrays across draws when their source
-        // identity is unchanged; convert ordinary arrays on the first draw.
-        if (!mesh._cachedTransforms) {
-          if (mesh.transforms instanceof Float32Array) {
-            mesh._cachedTransforms = mesh.transforms;
-          } else if (Array.isArray(mesh.transforms)) {
-            mesh._cachedTransforms = new Float32Array(mesh.transforms);
-          }
-        }
+        const preparationOwner = instancedStreamOwner(mesh, i);
+        if (!mesh._cachedTransforms) mesh._cachedTransforms = scenePrepareInstancedTransforms(preparationOwner, mesh.transforms);
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
         instanceCount = Math.min(instanceCount, sceneInstancedAttributeCapacity(transformData, 16));
@@ -10895,7 +10826,7 @@
         // the same retained instance streams. Unconfigured meshes draw all.
         var hasCullConfig = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
         // Fetch full color buffer (indexed by original instance) before compaction.
-        var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount);
+        var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount, preparationOwner);
         if (hasCullConfig) {
           var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0) ? mesh.cullRadius : 2.0;
           var planes = extractFrustumPlanesJS(scratchSelenaViewProjection);
