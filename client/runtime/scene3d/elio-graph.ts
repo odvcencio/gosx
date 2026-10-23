@@ -92,7 +92,8 @@
   // params evaluates a graph's parameters. State (tweens, accumulators, the previous frame's values) lives here.
   function createParams(decls: any[]): any {
     const current: any = {}, prev: any = {}, tweens: any = {}, accum: any = {}, targets: any = {};
-    let first = true;
+    let first = true, tweenOverride: number | null = null;
+    const tweenOf = function (d: any): number { return d.tween > 0 ? (tweenOverride === null ? d.tween : tweenOverride) : 0; };
     for (const d of decls) {
       const src = d.source || { kind: "value", value: 0 };
       if (src.kind === "value") targets[d.name] = coerce(d.type, /\[\]$/.test(d.type) ? src.value : (src.value || 0));
@@ -104,6 +105,8 @@
     };
     const api: any = {
       current: current, changed: {},
+      // setTween is the scene's graph-level override: every parameter the graph tweens uses these seconds (0 means no tween).
+      setTween: function (seconds: number) { tweenOverride = Number.isFinite(seconds) && seconds >= 0 ? seconds : null; },
       // set records a scene update of a "value" parameter; its tween (if any) starts on the next frame.
       set: function (name: string, v: number) {
         const d = decls.find(function (x: any) { return x.name === name; });
@@ -112,7 +115,7 @@
         if (n === targets[name]) return;
         if (typeof n !== "number") { targets[name] = n; return; } // an array parameter: a new array object marks it changed
         targets[name] = n;
-        if (d.tween > 0 && !first) tweens[name] = { from: current[name], start: null };
+        if (tweenOf(d) > 0 && !first) tweens[name] = { from: current[name], start: null };
         else delete tweens[name];
       },
       evaluate: function (frame: any) {
@@ -125,7 +128,7 @@
             const tw = tweens[d.name];
             if (tw) {
               if (tw.start === null) tw.start = time;
-              const k = Math.min(1, Math.max(0, (time - tw.start) / d.tween));
+              const k = Math.min(1, Math.max(0, (time - tw.start) / tweenOf(d)));
               if (k >= 1) delete tweens[d.name]; else n = tw.from + (n - tw.from) * k;
             }
           } else if (src.kind === "frame") {
@@ -260,7 +263,7 @@
   // create builds a runner for one graph. options: module (the generated kernel set), backend, tier, graph (optional override), host.
   function create(options: any): any {
     const backend = options.backend, module = options.module, host = options.host || {};
-    const runner: any = { graph: null, backend: backend, ready: false, failed: null, disposed: false, buildCount: 0, run: run, setValue: setValue, params: null, exportParams: exportParams, export: exportTexture, dispose: dispose, fail: fail };
+    const runner: any = { graph: null, backend: backend, ready: false, failed: null, disposed: false, buildCount: 0, run: run, setValue: setValue, setTween: setTween, value: value, hasParam: hasParam, params: null, exportParams: exportParams, export: exportTexture, dispose: dispose, fail: fail };
     let executor: any = null, evaluator: any = null;
     const disable = function (error: any): void {
       if (runner.failed) return;
@@ -284,6 +287,10 @@
       runner.ready = executor.isReady();
     } catch (error) { disable(error); }
 
+    function hasParam(name: string): boolean { return Boolean(runner.graph && runner.graph.params.some(function (p: any) { return p.name === name; })); }
+    function setTween(seconds: number): void { if (evaluator) evaluator.setTween(seconds); }
+    // value reads a parameter as of the last frame (float64), for surfaces and CPU queries that must agree with the graph.
+    function value(name: string): number { return evaluator && name in evaluator.current ? evaluator.current[name] : 0; }
     // setValue is how a scene update reaches a "value" parameter.
     function setValue(name: string, v: number): void {
       if (!evaluator || runner.failed) return;

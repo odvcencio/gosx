@@ -24,9 +24,11 @@
   }
 
   // u_sp[i] = (tile size m, band centre rad/m, texels, enabled) for cascade i; u_sp[4] = (foam uv scale, persistent foam on,
-  // J threshold, gain); u_sp[5] = (crest amplitude m, water offset x, water offset z, persistent radius m).
+  // J threshold, gain); u_sp[5] = (crest amplitude m, foam water offset x, foam water offset z, persistent radius m); u_sp[6 + i].xy = the
+  // water offset wrapped by cascade i's tile (the graph's waterMod<c> parameters).
+  // u_sp[4].y is the foam lambda over the authored lambda, as in the WGSL variant.
   function declarations(): string {
-    let s = "uniform vec4 u_sp[6];\n";
+    let s = "uniform vec4 u_sp[10];\n";
     for (let i = 0; i < 4; i++) s += "uniform sampler2D u_spDisp" + i + ";\n";
     for (let i = 0; i < 4; i++) s += "uniform sampler2D u_spSlope" + i + ";\n";
     s += "uniform sampler2D u_spFoam;\n";
@@ -38,10 +40,9 @@
     let s = "  vec3 p = vec3(xz.x, level, xz.y), dx = vec3(1., 0., 0.), dz = vec3(0., 0., 1.);\n";
     s += "  float amp = u_sp[5].x;\n";
     s += "  float spacing = max(u_ocean[8].z * u_ocean[8].w * exp(u_ocean[8].w * float(ring)), r * 6.2831853 / float(segs));\n";
-    s += "  vec2 wxz = xz - u_sp[5].yz;\n";
     for (let i = 0; i < 4; i++) {
       s += "  if (u_sp[" + i + "].w > 0.5) {\n";
-      s += "    vec2 suv = wxz / u_sp[" + i + "].x; float slod = spLod(u_sp[" + i + "], spacing); float sk = smoothstep(0., 1.2, depth0 * u_sp[" + i + "].y);\n";
+      s += "    vec2 suv = (xz - u_sp[" + (6 + i) + "].xy) / u_sp[" + i + "].x; float slod = spLod(u_sp[" + i + "], spacing); float sk = smoothstep(0., 1.2, depth0 * u_sp[" + i + "].y);\n";
       s += "    vec4 sa = textureLod(u_spDisp" + i + ", suv, slod), sb = textureLod(u_spSlope" + i + ", suv, slod);\n";
       s += "    p += sa.xyz * sk; dx += vec3(sb.z, sb.x, sa.w) * sk; dz += vec3(sa.w, sb.y, sb.w) * sk;\n";
       s += "  }\n";
@@ -54,7 +55,7 @@
     s += "  vec2 wxz = v_rest - u_sp[5].yz;\n";
     for (let i = 0; i < 4; i++) {
       s += "  if (u_sp[" + i + "].w > 0.5) {\n";
-      s += "    vec2 suv = wxz / u_sp[" + i + "].x; float sk = smoothstep(0., 1.2, v_d0 * u_sp[" + i + "].y);\n";
+      s += "    vec2 suv = (v_rest - u_sp[" + (6 + i) + "].xy) / u_sp[" + i + "].x; float sk = smoothstep(0., 1.2, v_d0 * u_sp[" + i + "].y);\n";
       s += "    vec4 sa = texture(u_spDisp" + i + ", suv), sb = texture(u_spSlope" + i + ", suv);\n";
       s += "    sGx += sb.x * sk; sGz += sb.y * sk; sXX += sb.z * sk; sZZ += sb.w * sk; sXZ += sa.w * sk;\n";
       s += "  }\n";
@@ -66,9 +67,10 @@
   }
 
   const FOAM_LINE = "    float sNear = 1. - smoothstep(0.7 * u_sp[5].w, u_sp[5].w, length(v_w.xz - u_ocean[7].xz));\n" +
-    "    float sStateless = clamp((u_sp[4].z - sJ) * u_sp[4].w, 0., 1.) * lace * bu;\n" +
+    "    float sJf = (1. + u_sp[4].y * sXX) * (1. + u_sp[4].y * sZZ) - u_sp[4].y * u_sp[4].y * sXZ * sXZ;\n" +
+    "    float sStateless = clamp((u_sp[4].z - sJf) * u_sp[4].w, 0., 1.) * lace * bu;\n" +
     "    float sKept = smoothstep(0.04, 0.6, sPersist) * (0.55 + 0.45 * lace);\n" +
-    "    foam = mix(sStateless, u_sp[4].y > 0.5 ? sKept : sStateless, sNear);\n";
+    "    foam = mix(sStateless, sKept, sNear);\n";
 
   // glsl returns the spectral variant of the base ocean vertex and fragment shaders.
   function glsl(vertex: string, fragment: string): any {
@@ -84,6 +86,8 @@
     f = swap(f, "  if (dist < 250.) {", "  if (dist < 6000.) {");
     f = swap(f, "    foam = (1. - smoothstep(0.12, 0.35, v_j)) * lace * bu;\n", FOAM_LINE);
     f = swap(f, "(1. - smoothstep(80., 250., dist))", "(1. - smoothstep(1500., 6000., dist))");
+    // Foam is lit like the base shader lights it, with the sky term lifted so it reads as white foam under a bright sky.
+    f = swap(f, "(ambient * 0.55 + sunCol * 0.04 * max(dot(N, L), 0.))", "(ambient * 1.4 + sunCol * 0.2 * max(dot(N, L), 0.) + vec3(0.05))");
     return { vertex: v, fragment: f };
   }
 

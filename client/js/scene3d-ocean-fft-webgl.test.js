@@ -1,12 +1,12 @@
 "use strict";
 // WebGL2 ocean surface hooks for a spectral ocean: the GLSL patch of the base ocean shaders, the call that runs the
 // graph before the ocean draw, and the Gerstner fallbacks. The pass scheduling itself is the generic Elio graph runner
-// (elio-graph*.test.js); here a stub stands in for the engine the ocean adapter will supply.
+// (elio-graph*.test.js); the ocean glue (ocean-fft.ts) is tested against the recording WebGL2 double, and the renderer hooks against a stub engine.
 const test = require("node:test"), assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 const { execFileSync } = require("node:child_process");
 const { createWebGLRendererForPost, makePointsBundle } = require("./runtime-test-harness.js");
-const { GLC, loadSources } = require("./elio-graph-test-support.js");
+const { GLC, RecordingGL, loadSources, floatCaps, runnerContext } = require("./elio-graph-test-support.js");
 
 function glContext() {
   const context = vm.createContext({ Math, Number, Object, Array, Error, console });
@@ -69,7 +69,7 @@ test("a spectral ocean asks the graph for a frame first, then draws the patched 
   assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "surface+spectrum");
   const all = oceanSources(gl).join("\n");
   assert.match(all, /textureLod\(u_spDisp0/);
-  assert.match(all, /uniform vec4 u_sp\[6\]/);
+  assert.match(all, /uniform vec4 u_sp\[10\]/);
   assert.doesNotMatch(all, /for \(int i = 0; i < 6; i\+\+\) \{\n    if \(i >= waves\)/, "the Gerstner loop is gone");
   assert.equal(calls.bind.length, 1, "the ocean program gets the cascade samplers");
   assert.equal(calls.bind[0], gl.programMatching("u_ocean[35]"));
@@ -143,4 +143,80 @@ test("the shipped (packed) WebGL bundle still accepts the spectral surface patch
   assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "surface+spectrum");
   assert.deepEqual(calls.fail, []);
   h.renderer.dispose();
+});
+
+// --- the ocean glue on the recording WebGL2 double -----------------------------------------------------------------
+
+const CHUNK = ["ocean-fft-surface.ts", "ocean-fft-surface-gl.ts", "ocean-fft.ts"];
+function glue(glOptions) {
+  const context = runnerContext();
+  loadSources(context, CHUNK);
+  const gl = new RecordingGL(glOptions), api = context.window.__gosx_scene3d_ocean_fft_gl_api, ocean = context.window.__gosx_scene3d_ocean_fft_api;
+  const mount = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } }, textureCache = { _sceneTextureEpoch: 0 };
+  const resources = {};
+  const frame = (env, extra) => api.frame(resources, gl, Object.assign({ ocean: env, tier: "high", time: 0, camera: { x: 0, y: 30, z: 0 }, textureCache, mount, caps: floatCaps }, extra));
+  return { context, gl, api, ocean, mount, textureCache, resources, frame };
+}
+const spectral = (extra) => Object.assign({ level: 0, spectrum: { windSpeed: 9 }, graphParams: { windSpeed: 9, foamThreshold: 0.3, driftX: 2, driftZ: 0 }, graphTween: 0 }, extra);
+const drawsOf = (gl) => gl.draws.filter((d) => d.kind === "draw");
+
+test("glue (WebGL2): without float render targets nothing is created and the reason is on the mount", () => {
+  const g = glue({ extensions: [] });
+  assert.equal(g.frame(spectral()), null);
+  assert.equal(g.resources.fftDisabled, "EXT_color_buffer_float");
+  assert.equal(g.mount.attrs["data-gosx-scene3d-ocean-fft-fallback"], "EXT_color_buffer_float");
+  for (const kind of Object.keys(g.gl.created)) assert.equal(g.gl.created[kind].length, 0);
+  assert.equal(g.frame(spectral()), null, "remembered: no retry every frame");
+});
+
+test("glue (WebGL2): the graph runs on the first frame, graphParams reach it, and bind() hands the surface its textures and uniform", () => {
+  const g = glue();
+  const engine = g.frame(spectral(), { time: 100 });
+  assert.ok(engine, "engine");
+  assert.ok(drawsOf(g.gl).length > 60, "the gather passes ran: " + drawsOf(g.gl).length);
+  assert.ok(g.textureCache._sceneTextureEpoch >= 1);
+  for (let i = 1; i <= 60; i++) g.frame(spectral(), { time: 100 + i / 60 });
+  const water = g.ocean.water();
+  assert.ok(Math.abs(water.x - 2) < 1e-6, "driftX 2 m/s for one second: " + water.x);
+  const program = g.gl.createProgram();
+  program.shaders.push({ source: "uniform vec4 u_sp[10]; uniform sampler2D u_spDisp0, u_spDisp1, u_spDisp2, u_spDisp3, u_spSlope0, u_spSlope1, u_spSlope2, u_spSlope3, u_spFoam;" });
+  engine.bind(g.gl, program);
+  const d = Array.from(program.uniforms.get("u_sp[0]"));
+  assert.equal(d.length, 40);
+  assert.deepEqual([d[3], d[7], d[11], d[15]], [1, 1, 1, 1]);
+  assert.equal(Math.fround(d[18]), Math.fround(0.3), "foam threshold from graphParams");
+  assert.ok(Math.abs(d[24] - 2) < 1e-4 && d[25] === 0, "cascade 0's wrapped water offset");
+  assert.deepEqual([0, 1, 2, 3].map((i) => program.uniforms.get("u_spDisp" + i)), [4, 5, 6, 7]);
+  assert.deepEqual([0, 1, 2, 3].map((i) => program.uniforms.get("u_spSlope" + i)), [8, 9, 10, 11]);
+  assert.equal(program.uniforms.get("u_spFoam"), 12);
+  engine.dispose();
+  for (const kind of Object.keys(g.gl.created)) assert.equal(g.gl.live(kind).filter((o) => o !== program).length, kind === "program" ? 0 : 0, kind + " leaked");
+});
+
+test("glue (WebGL2): the low tier builds three cascades; a tier change rebuilds the graph; a lost context does no work", () => {
+  const g = glue();
+  const low = g.frame(spectral(), { tier: "low" });
+  const program = g.gl.createProgram();
+  program.shaders.push({ source: "uniform vec4 u_sp[10]; uniform sampler2D u_spDisp0, u_spDisp1, u_spDisp2, u_spDisp3, u_spSlope0, u_spSlope1, u_spSlope2, u_spSlope3, u_spFoam;" });
+  low.bind(g.gl, program);
+  assert.deepEqual([3, 7, 11, 15].map((i) => program.uniforms.get("u_sp[0]")[i]), [1, 1, 1, 0]);
+  const high = g.frame(spectral(), { tier: "high" });
+  assert.notEqual(high, low);
+  assert.ok(low.disposed, "the old graph is released");
+  g.gl.contextLost = true;
+  const draws = g.gl.draws.length;
+  assert.equal(g.frame(spectral(), { tier: "high" }), null);
+  assert.equal(g.gl.draws.length, draws);
+});
+
+test("glue (WebGL2): a surface that cannot be built disables the graph with the reason", () => {
+  const g = glue();
+  const engine = g.frame(spectral());
+  engine.fail("surface-compile");
+  assert.equal(g.frame(spectral()), null);
+  assert.equal(g.resources.fftDisabled, "surface-compile");
+  assert.equal(g.mount.attrs["data-gosx-scene3d-ocean-fft-fallback"], "surface-compile");
+  assert.equal(g.resources.fft, null);
+  for (const kind of Object.keys(g.gl.created)) assert.equal(g.gl.live(kind).length, 0, kind + " leaked");
+  assert.equal(g.ocean.water(), null);
 });

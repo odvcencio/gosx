@@ -24,14 +24,15 @@
   }
 
   function declarations(group: number): string {
-    let s = "struct OceanSpec { c: array<vec4f, 4>, f: vec4f, m: vec4f };\n";
+    let s = "struct OceanSpec { c: array<vec4f, 4>, f: vec4f, m: vec4f, w: array<vec4f, 4> };\n";
     s += "@group(" + group + ") @binding(" + SLOT.uniform + ") var<uniform> sp: OceanSpec;\n";
     s += "@group(" + group + ") @binding(" + SLOT.sampler + ") var spSampler: sampler;\n";
     for (let i = 0; i < 4; i++) s += "@group(" + group + ") @binding(" + (SLOT.disp + i) + ") var spDisp" + i + ": texture_2d<f32>;\n";
     for (let i = 0; i < 4; i++) s += "@group(" + group + ") @binding(" + (SLOT.slope + i) + ") var spSlope" + i + ": texture_2d<f32>;\n";
     s += "@group(" + group + ") @binding(" + SLOT.foam + ") var spFoam: texture_2d<f32>;\n";
     // c[i] = (tile size m, band centre rad/m, texels, enabled); f = (foam uv scale, foam lambda / authored lambda, J threshold, gain);
-    // m = (crest amplitude m, water offset x, water offset z, persistent radius m).
+    // m = (crest amplitude m, foam water offset x, foam water offset z, persistent radius m); w[i].xy = the water offset wrapped by cascade
+    // i's tile (the graph's waterMod<c> parameters), so a cascade is sampled at (position - w[i].xy) / tile.
     s += "fn spLod(c: vec4f, spacing: f32) -> f32 { return max(log2(max(spacing, 1e-3) * c.z / c.x), 0.0); }\n";
     return s;
   }
@@ -40,10 +41,9 @@
     let s = "  var p = vec3f(xz.x, level, xz.y); var dx = vec3f(1.0, 0.0, 0.0); var dz = vec3f(0.0, 0.0, 1.0);\n";
     s += "  var amp = sp.m.x;\n";
     s += "  let spacing = max(ocean.p[8].z * ocean.p[8].w * exp(ocean.p[8].w * f32(ring)), r * 6.2831853 / f32(segs));\n";
-    s += "  let wxz = xz - sp.m.yz;\n";
     for (let i = 0; i < 4; i++) {
       s += "  if (sp.c[" + i + "].w > 0.5) {\n";
-      s += "    let uv = wxz / sp.c[" + i + "].x; let lod = spLod(sp.c[" + i + "], spacing); let k = smoothstep(0.0, 1.2, depth0 * sp.c[" + i + "].y);\n";
+      s += "    let uv = (xz - sp.w[" + i + "].xy) / sp.c[" + i + "].x; let lod = spLod(sp.c[" + i + "], spacing); let k = smoothstep(0.0, 1.2, depth0 * sp.c[" + i + "].y);\n";
       s += "    let a = textureSampleLevel(spDisp" + i + ", spSampler, uv, lod); let b = textureSampleLevel(spSlope" + i + ", spSampler, uv, lod);\n";
       s += "    p += a.xyz * k; dx += vec3f(b.z, b.x, a.w) * k; dz += vec3f(a.w, b.y, b.w) * k;\n";
       s += "  }\n";
@@ -56,7 +56,7 @@
     s += "  let wxz = in.rest - sp.m.yz;\n";
     for (let i = 0; i < 4; i++) {
       s += "  if (sp.c[" + i + "].w > 0.5) {\n";
-      s += "    let uv = wxz / sp.c[" + i + "].x; let k = smoothstep(0.0, 1.2, in.depth0 * sp.c[" + i + "].y);\n";
+      s += "    let uv = (in.rest - sp.w[" + i + "].xy) / sp.c[" + i + "].x; let k = smoothstep(0.0, 1.2, in.depth0 * sp.c[" + i + "].y);\n";
       s += "    let a = textureSample(spDisp" + i + ", spSampler, uv); let b = textureSample(spSlope" + i + ", spSampler, uv);\n";
       s += "    sGx += b.x * k; sGz += b.y * k; sXX += b.z * k; sZZ += b.w * k; sXZ += a.w * k;\n";
       s += "  }\n";

@@ -144,7 +144,7 @@ test("check rejects graphs the runner cannot run, before any GPU object exists",
 test("a graph that cannot be built is disabled with a reason, not thrown", () => {
   const ctx = runnerContext(), g = ctx.window.__gosx_elio_graph, module = ctx.window.__gosx_scene3d_elio_ocean;
   const failures = [];
-  const r = g.create({ module, backend: "webgl2", tier: "high", host: {}, onFail: (reason) => failures.push(reason) });
+  const r = g.create({ module, backend: "webgl2", tier: "ultra", host: {}, onFail: (reason) => failures.push(reason) });
   assert.equal(r.failed, "no-graph");
   assert.equal(r.run(frame(0)), false);
   assert.equal(r.export("disp0"), null);

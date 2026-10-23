@@ -8,7 +8,7 @@
       if (["toneMapping", "colorGrade", "contactShadows", "ssao", "dof", "fxaa", "vignette"].includes(name)) return name;
     }
     if (/^(gosx-post|post-|gosx-transmission)/.test(label)) return "post";
-    if (/^gosx-(?:planar-)?reflection/.test(label)) return "reflections"; if (/^gosx-ocean-fft-/.test(label)) return "oceanFFT";
+    if (/^gosx-(?:planar-)?reflection/.test(label)) return "reflections"; if (/^gosx-ocean-fft-/.test(label)) return "oceanFFT"; if (/^gosx-elio-/.test(label)) return "elioGraph";
     return "";
   }
   function wgpuRecoverPipeline(guard: any, canvas: any, truth: any, label: string, message: string) {

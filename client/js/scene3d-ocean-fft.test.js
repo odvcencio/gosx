@@ -1,5 +1,5 @@
 "use strict";
-// Spectral (FFT) ocean on WebGPU: the compute scheduler, the surface shader patch and the renderer hooks.
+// Spectral (FFT) ocean on WebGPU: the glue between the scene, the Elio graph runner and the surface shader, and the renderer hooks.
 // Runs against the repository's fake WebGPU device; the real-GPU frames come from scripts/scene3d-ocean-spectrum.mjs.
 const test = require("node:test"), assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
@@ -9,7 +9,7 @@ const ts = createRequire(path.join(__dirname, "..", "runtime", "package.json"))(
 const { createBoardWebGPUHarness, makeFakeGPUDevice, makePointsBundle } = require("./runtime-test-harness.js");
 
 const scene3d = path.join(__dirname, "..", "runtime", "scene3d");
-const CHUNK_FILES = ["ocean-fft-kernels.ts", "ocean-fft-surface.ts", "ocean-fft.ts"];
+const CHUNK_FILES = ["ocean-fft-kernels.ts", "elio-graph.ts", "elio-graph-gather.ts", "elio-graph-compute.ts", "ocean-fft-surface.ts", "ocean-fft-surface-gl.ts", "ocean-fft.ts"];
 const transpile = (file) => ts.transpileModule(fs.readFileSync(path.join(scene3d, file), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
 function loadChunk(context) {
@@ -20,144 +20,137 @@ function loadChunk(context) {
   for (const file of CHUNK_FILES) vm.runInContext(transpile(file), context, { filename: file });
   return context.window.__gosx_scene3d_ocean_fft_api;
 }
+
 function standalone() {
-  const context = vm.createContext({ Math, Number, Object, Array, Float32Array, Uint32Array, ArrayBuffer, DataView, Error, Set, Map, JSON });
+  const context = vm.createContext({ Math, Number, Object, Array, Float32Array, Uint32Array, Uint8Array, ArrayBuffer, DataView, Error, Set, Map, JSON, Promise, console });
   const api = loadChunk(context);
   const fake = makeFakeGPUDevice();
   // Pipelines become ready when the test says so, as after asynchronous validation.
   const validation = new Map();
   const host = (extra) => Object.assign({
-    device: fake.device, validation, guard: { disabled: new Set(), failures: [], fail(label, message) { this.failures.push({ label, message }); this.disabled.add("oceanFFT"); } }, environment: null, camera: { x: 0, z: 0 }, time: 0, tier: "high",
+    device: fake.device, validation, guard: { disabled: new Set(), failures: [], fail(label, message) { this.failures.push({ label, message }); this.disabled.add(/^gosx-elio-/.test(label) ? "elioGraph" : "oceanFFT"); } },
+    environment: null, camera: { x: 0, y: 30, z: 0 }, time: 0, tier: "high",
     create(device, kind, descriptor) { const handle = { label: descriptor.label }; validation.set(handle, { ready: false, label: descriptor.label }); return handle; },
   }, extra);
   const settle = () => { for (const state of validation.values()) state.ready = true; };
-  return { api, fake, host, validation, settle, context };
+  return { api, fake, host, validation, settle, context, graphs: context.window.__gosx_scene3d_elio_ocean.graphs, G: context.window.__gosx_elio_graph };
 }
-const ocean = (spectrum, extra) => Object.assign({ level: 0, choppiness: 0.6, windDirection: 0, spectrum }, extra);
-const frame = (api, resources, h, env, extra) => api.frame(resources, Object.assign({}, h, { environment: { ocean: env }, encoder: h.encoder || h.device.createCommandEncoder() }, extra));
-
-test("the chunk's resolve step applies defaults, tiers and the single wind-angle conversion", () => {
-  const { api } = standalone();
-  const r = api.resolve(ocean({}), "high");
-  assert.deepEqual([r.windSpeed, r.fetchKm, r.gamma, r.spread, r.swell, r.seed], [9, 300, 3.3, 8, 0, 0]);
-  assert.deepEqual(Array.from(r.cascades, (c) => c.n), [64, 256, 256, 256]);
-  assert.deepEqual(Array.from(r.cascades, (c) => c.size), [1600, 250, 37, 5.3]);
-  assert.deepEqual(Array.from(api.resolve(ocean({}), "medium").cascades, (c) => c.n), [64, 128, 128, 128]);
-  assert.deepEqual(Array.from(api.resolve(ocean({}), "low").cascades, (c) => c.n), [64, 64, 64], "low drops cascade 3");
-  // Scene3D degrees: 0 travels toward +Z; positive turns toward +X. Kernel angle: toward (cos t, sin t) in (x, z).
-  assert.equal(api.travelAngle(0), Math.PI / 2);
-  assert.ok(Math.abs(api.travelAngle(90)) < 1e-15);
-  assert.equal(api.resolve(ocean({}, { windDirection: 90 }), "high").windDir, api.travelAngle(90));
-  assert.equal(api.resolve(ocean({ swellDirection: 45 }, { windDirection: 90 }), "high").swellDir, api.travelAngle(45));
-  assert.equal(api.resolve(ocean({ seed: 0 }), "high").seed, 0, "0 is a seed");
-  assert.equal(api.resolve(ocean({ seed: 2 ** 32 + 5 }), "high").seed, 5);
-  assert.equal(api.resolve(ocean({ windSpeed: 400, fetch: 5000, spread: 99, peakEnhancement: 99 }), "high").windSpeed, 40);
-  // A band edge above the cascade's lowest Nyquist wavenumber would leave the Nyquist line non-empty.
-  const custom = api.resolve(ocean({ cascades: [{ size: 100, kMin: 0, kMax: 9 }] }), "high").cascades[0];
-  assert.ok(custom.kMax < Math.PI * 64 / 100);
-});
-
-test("uniform packing follows the generated layouts and rejects typos", () => {
-  const { api, context } = standalone();
-  const layout = context.window.__gosx_scene3d_elio_ocean.kernels.oceanEvolve.uniforms[0];
-  const view = new DataView(api.pack(layout, { n: 64, t: 12.5, tile: 250, loopPeriod: 1000 }));
-  const field = (name) => layout.fields.find((f) => f.name === name);
-  assert.equal(view.getUint32(field("n").offset, true), 64);
-  assert.equal(view.getFloat32(field("t").offset, true), 12.5);
-  assert.throws(() => api.pack(layout, { n: 64, t: 1, tile: 1 }), /loopPeriod/);
-  assert.throws(() => api.pack(layout, { n: 64, t: 1, tile: 1, loopPeriod: 1, tt: 2 }), /no field tt/);
-});
+const ocean = (extra) => Object.assign({ level: 0, choppiness: 0.6, windDirection: 0, spectrum: { windSpeed: 9 } }, extra);
+const frame = (s, resources, h, env, extra) => s.api.frame(resources, Object.assign({}, h, { environment: { ocean: env }, encoder: h.encoder || h.device.createCommandEncoder() }, extra));
+// The graph's pipelines are created by the first frame and become ready afterwards, as after asynchronous validation.
+const warm = (s, resources, h, env, extra) => { frame(s, resources, h, env, extra); s.settle(); return frame(s, resources, h, env, extra); };
+const surfaceWrites = (s) => s.fake.state.writeBufferCalls.filter((w) => w.buffer.size === 160);
+const lastSurface = (s) => { const w = surfaceWrites(s).pop(); return w ? Array.from(new Float32Array(w.data.buffer || w.data, w.data.byteOffset || 0, 40)) : null; };
+const labels = (pass) => pass.dispatches.map((d) => d.pipeline.label);
 
 test("frame() does nothing without a spectrum and tears down when the spectrum goes away", () => {
   const s = standalone(), resources = {}, h = s.host();
-  assert.equal(frame(s.api, resources, h, { level: 0 }), null);
+  assert.equal(frame(s, resources, h, { level: 0 }), null);
   assert.equal(s.fake.state.buffers.length, 0);
-  frame(s.api, resources, h, ocean({}));
+  frame(s, resources, h, ocean());
   assert.ok(resources.fft && s.fake.state.buffers.length > 0);
-  const owned = s.fake.state.buffers.slice();
-  assert.equal(frame(s.api, resources, h, { level: 0 }), null);
+  const owned = [...s.fake.state.buffers, ...s.fake.state.textures];
+  assert.equal(frame(s, resources, h, { level: 0 }), null);
   assert.equal(resources.fft, null);
-  assert.ok(owned.every((b) => b.destroyed));
+  assert.ok(owned.every((r) => r.destroyed), "every buffer and texture is released");
+  assert.equal(s.api.water(), null, "no water frame once the graph is gone");
 });
 
-test("nothing is encoded until every pipeline has validated; then one compute pass runs in kernel order", () => {
+test("nothing is encoded until every pipeline has validated; then the graph's kernel passes run in graph order in the frame encoder", () => {
   const s = standalone(), resources = {}, h = s.host();
-  frame(s.api, resources, h, ocean({}));
+  frame(s, resources, h, ocean());
   assert.equal(resources.fft.ready, false);
   assert.equal(s.fake.state.computePasses.length, 0, "pipelines pending: the Gerstner ocean keeps drawing");
   s.settle();
-  frame(s.api, resources, h, ocean({}));
+  frame(s, resources, h, ocean());
   assert.equal(resources.fft.ready, true);
-  const [pass] = s.fake.state.computePasses;
-  assert.equal(s.fake.state.computePasses.length, 1);
-  assert.ok(pass.ended);
-  const names = pass.dispatches.map((d) => d.pipeline.label.replace("gosx-ocean-fft-", ""));
-  // Per cascade: spectrum (first frame only), evolve, rows and cols on A and B, assemble, mips; then foam.
-  const per = (n) => ["spectrum", "evolve", "fft-rows-" + n, "fft-cols-" + n, "fft-rows-" + n, "fft-cols-" + n, "assemble"];
-  const expected = [];
-  for (const [i, n] of [64, 256, 256, 256].entries()) {
-    expected.push(...per(n));
-    for (let level = 1; level < Math.log2(n) - 1; level++) expected.push("mip", "mip");
-  }
-  expected.push("foam");
-  assert.deepEqual(names, expected);
-  assert.ok(pass.dispatches.every((d) => d.pipeline.label.startsWith("gosx-ocean-fft-")));
-  const fftRows = pass.dispatches.filter((d) => d.pipeline.label === "gosx-ocean-fft-fft-rows-256");
-  assert.ok(fftRows.every((d) => d.workgroupCountX === 256), "one workgroup per line");
+  const passes = s.fake.state.computePasses;
+  assert.ok(passes.length > 40 && passes.every((p) => p.ended));
+  assert.ok(passes.every((p) => /^gosx-elio-ocean-/.test(labels(p)[0])), "labelled gosx-elio-<graph>-<kernel>");
+  const kernels = passes.map((p) => labels(p)[0].replace("gosx-elio-ocean-", ""));
+  const expected = Array.from(s.G.expand(s.graphs["webgpu/high"])).filter((p) => p.type === "kernel").map((p) => p.kernel);
+  assert.deepEqual(kernels, expected, "one compute pass per kernel pass, in order (every changed: pass runs on the first frame)");
+  assert.ok(kernels.indexOf("ocean_spectrum") < kernels.indexOf("ocean_evolve") && kernels.lastIndexOf("ocean_assemble") < kernels.indexOf("ocean_foam"));
+  const before = passes.length;
+  frame(s, resources, h, ocean(), { time: 1 / 60 });
+  const second = s.fake.state.computePasses.slice(before).map((p) => labels(p)[0].replace("gosx-elio-ocean-", ""));
+  assert.ok(!second.includes("ocean_spectrum"), "an unchanged spectrum does not rerun ocean_spectrum");
+  assert.ok(second.includes("ocean_evolve") && second.includes("ocean_foam"));
 });
 
-test("resources are created once, spectrum changes rerun only ocean_spectrum, tier changes rebuild, dispose releases all", () => {
+test("graphParams reach the graph's uniforms; graphTween overrides the graph's tween; the app's setting wins", () => {
   const s = standalone(), resources = {}, h = s.host();
-  frame(s.api, resources, h, ocean({ windSpeed: 9 }));
   s.settle();
-  frame(s.api, resources, h, ocean({ windSpeed: 9 }));
-  const state = s.fake.state, buffers = state.buffers.length, textures = state.textures.length;
-  assert.equal(resources.fft.buildCount, 1);
-  const dispatchesOf = (label) => state.computePasses.flatMap((p) => p.dispatches).filter((d) => d.pipeline.label === "gosx-ocean-fft-" + label).length;
-  assert.equal(dispatchesOf("spectrum"), 4);
-  frame(s.api, resources, h, ocean({ windSpeed: 9 }), { time: 5 });
-  frame(s.api, resources, h, ocean({ windSpeed: 9 }), { time: 6 });
-  assert.equal(dispatchesOf("spectrum"), 4, "an unchanged spectrum does not rerun ocean_spectrum");
-  assert.equal([state.buffers.length, state.textures.length].join(), [buffers, textures].join(), "no allocation per frame");
-  const quick = { presentation: { transitionSeconds: 0.1 } };
-  frame(s.api, resources, h, ocean({ windSpeed: 15 }, quick), { time: 7 });
-  frame(s.api, resources, h, ocean({ windSpeed: 15 }, quick), { time: 8 });
-  assert.equal(dispatchesOf("spectrum"), 8, "a changed spectrum reruns it once per cascade once its transition ends");
-  assert.equal([state.buffers.length, state.textures.length].join(), [buffers, textures].join(), "spectrum change keeps buffers and textures");
-  assert.equal(resources.fft.buildCount, 1);
-  const before = state.buffers.filter((b) => b.usage & 128), beforeTextures = state.textures.filter((t) => !/dummy/.test(t.desc.label));
-  frame(s.api, resources, h, ocean({ windSpeed: 15 }), { tier: "low", time: 8 });
-  assert.equal(resources.fft.buildCount, 2, "a tier change rebuilds");
-  assert.ok(before.every((b) => b.destroyed) && beforeTextures.every((t) => t.destroyed), "the old resources are released");
-  s.settle();
-  frame(s.api, resources, h, ocean({ windSpeed: 15 }), { tier: "low", time: 9 });
-  const live = () => [...state.buffers, ...state.textures].filter((r) => !r.destroyed);
-  assert.ok(live().length > 0);
-  resources.fft.dispose();
-  assert.equal(live().length, 0, "dispose releases every buffer and texture");
+  const spectrumSeed = () => {
+    const fields = s.context.window.__gosx_scene3d_elio_ocean.kernels.oceanSpectrum.uniforms[0].fields;
+    const seed = fields.find((f) => f.name === "seed").offset, wind = fields.find((f) => f.name === "windSpeed").offset;
+    const writes = s.fake.state.writeBufferCalls.filter((w) => w.buffer.size === 64 && new DataView(w.data.buffer || w.data, w.data.byteOffset || 0).getUint32(0, true) === 64);
+    const v = new DataView(writes[writes.length - 1].data.buffer || writes[writes.length - 1].data, writes[writes.length - 1].data.byteOffset || 0);
+    return [v.getUint32(seed, true), v.getFloat32(wind, true)];
+  };
+  warm(s, resources, h, ocean({ graphParams: { seed: 7, windSpeed: 9, lambda: 0.6, foamThreshold: 0.25 }, graphTween: 10 }), { time: 100 });
+  assert.deepEqual(spectrumSeed(), [7, 9]);
+  const runner = resources.fft.runner;
+  assert.equal(runner.value("foamThreshold"), 0.25);
+  // The sea moves to 29 m/s over graphTween = 10 s of presentation time, not the graph's 20 s.
+  const to = ocean({ graphParams: { seed: 7, windSpeed: 29, lambda: 0.6, foamThreshold: 0.25 }, graphTween: 10 });
+  frame(s, resources, h, to, { time: 101 });
+  assert.equal(runner.value("windSpeed"), 9, "the tween clock starts on the first frame after the update");
+  frame(s, resources, h, to, { time: 106 });
+  assert.ok(Math.abs(runner.value("windSpeed") - 19) < 1e-9, "half way after 5 of 10 seconds: " + runner.value("windSpeed"));
+  frame(s, resources, h, to, { time: 111 });
+  assert.equal(runner.value("windSpeed"), 29);
+  assert.equal(spectrumSeed()[1], 29, "the spectrum pass reran with the arriving value");
+  // graphTween 0: a weather change that must not blend.
+  const snap = ocean({ graphParams: { seed: 7, windSpeed: 5, lambda: 0.6, foamThreshold: 0.25 }, graphTween: 0 });
+  frame(s, resources, h, snap, { time: 112 });
+  frame(s, resources, h, snap, { time: 112.1 });
+  assert.equal(runner.value("windSpeed"), 5);
 });
 
-test("the evolve kernel gets the scene time modulo the loop period", () => {
-  const s = standalone(), resources = {}, h = s.host();
-  frame(s.api, resources, h, ocean({}), { time: 1234.5 });
-  s.settle();
-  frame(s.api, resources, h, ocean({}), { time: 1234.5 });
-  const layout = s.context.window.__gosx_scene3d_elio_ocean.kernels.oceanEvolve.uniforms[0];
-  const t = layout.fields.find((f) => f.name === "t").offset;
-  const evolveBuffers = new Set(s.fake.state.bindGroups.filter((g) => g.desc.entries.length === 5 && g.desc.entries.every((e) => e.resource.buffer)).map((g) => g.desc.entries[0].resource.buffer));
-  const writes = s.fake.state.writeBufferCalls.filter((w) => evolveBuffers.has(w.buffer));
-  assert.ok(writes.length >= 4);
-  const view = new DataView(writes[writes.length - 1].data instanceof ArrayBuffer ? writes[writes.length - 1].data : writes[writes.length - 1].data.buffer);
-  assert.ok(Math.abs(view.getFloat32(t, true) - 234.5) < 1e-3);
+test("the low tier draws three cascades; the surface uniform carries tile, band centre, wrapped water offsets and the foam window", () => {
+  const s = standalone(), resources = {}, h = s.host({ tier: "low" });
+  const env = ocean({ graphParams: { windSpeed: 12, driftX: 3.3, driftZ: -1.7, foamThreshold: 0.4 }, graphTween: 0 });
+  warm(s, resources, h, env, { time: 100 });
+  for (let i = 1; i < 61; i++) frame(s, resources, h, env, { time: 100 + i / 60 });
+  const d = lastSurface(s);
+  const graph = s.graphs["webgpu/low"], info = s.api.describe(graph);
+  assert.equal(info.cascades.length, 3);
+  assert.deepEqual([d[3], d[7], d[11], d[15]], [1, 1, 1, 0], "three cascades enabled, the fourth bound to the dummy texture");
+  assert.deepEqual([d[0], d[4], d[8]], Array.from(info.cascades, (c) => c.tile));
+  assert.ok(Math.abs(d[1] - Math.sqrt(info.cascades[0].kMin * info.cascades[0].kMax)) < 1e-6);
+  // One second of drift at 3.3 and -1.7 m/s: the offsets wrapped by each tile (floored), in float64 until the upload.
+  const wx = 3.3 * 1, wz = -1.7 * 1, wrap = (v, m) => v - Math.floor(v / m) * m;
+  info.cascades.forEach((c, i) => {
+    assert.ok(Math.abs(d[24 + i * 4] - wrap(wx, c.tile)) < 1e-4, `cascade ${i} x: ${d[24 + i * 4]} vs ${wrap(wx, c.tile)}`);
+    assert.ok(Math.abs(d[25 + i * 4] - wrap(wz, c.tile)) < 1e-4);
+  });
+  assert.ok(d[25] >= 0 && d[25] < info.cascades[0].tile, "wrapped offsets are never negative");
+  assert.ok(Math.abs(d[16] - 1 / (info.foam.cell * info.foam.width)) < 1e-9);
+  assert.equal(Math.fround(d[18]), Math.fround(0.4), "the foam threshold is the graph parameter, not a JS constant");
+  const water = s.api.water();
+  assert.ok(Math.abs(water.x - 3.3) < 1e-6 && Math.abs(water.z + 1.7) < 1e-6 && water.time > 0.9 && water.time < 1.1, JSON.stringify(water));
+  const high = standalone(), r2 = {}, h2 = high.host();
+  warm(high, r2, h2, env, { time: 1 }); frame(high, r2, h2, env, { time: 1.02 });
+  assert.deepEqual([lastSurface(high)[3], lastSurface(high)[15]], [1, 1], "the high tier enables all four");
 });
 
-test("a disabled oceanFFT pass or a changed device disposes the engine", () => {
-  const s = standalone(), resources = {}, h = s.host();
-  frame(s.api, resources, h, ocean({}));
-  const first = resources.fft;
-  assert.equal(frame(s.api, resources, Object.assign({}, h, { guard: { disabled: new Set(["oceanFFT"]) } }), ocean({})), null);
-  assert.equal(resources.fft, null);
-  assert.ok(first.disposed);
+test("a graph that fails after its first frame stops the ocean: not ready, the guard hears of it, and the Gerstner ocean takes over", () => {
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const s = standalone(), resources = {}, h = s.host();
+    warm(s, resources, h, ocean(), { time: 1 });
+    assert.equal(resources.fft.ready, true);
+    const device = h.device, begin = device.createCommandEncoder.bind(device);
+    const encoder = begin();
+    encoder.beginComputePass = () => { throw new Error("device error"); };
+    frame(s, resources, h, ocean(), { time: 2, encoder });
+    assert.equal(resources.fft.ready, false);
+    assert.equal(resources.fft.group, null);
+    assert.ok(h.guard.failures.some((f) => /^gosx-elio-ocean/.test(f.label)), JSON.stringify(h.guard.failures));
+    assert.equal(frame(s, resources, h, ocean(), { time: 3 }), null, "the guard disabled the graph pass");
+    assert.equal(resources.fft, null);
+  } finally { console.warn = warn; }
 });
 
 function nagaPath() {
@@ -178,10 +171,7 @@ test("every Elio kernel and the downsample pass the WGSL validator", { skip: nag
   const s = standalone();
   const kernels = s.context.window.__gosx_scene3d_elio_ocean.kernels;
   for (const name of ["oceanSpectrum", "oceanEvolve", "oceanAssemble", "oceanMip", "oceanFoam", "oceanProbe", "fftCompute64", "fftCompute128", "fftCompute256"]) validateWGSL(kernels[name].wgsl, name);
-  validateWGSL(s.api.MIP_WGSL, "downsample");
 });
-
-// --- the full renderer: hook order, surface variant, fallback -----------------------------------------------------
 
 function sceneBundle(spectrum) {
   const b = makePointsBundle(null);
@@ -209,7 +199,8 @@ async function renderSettled(h, bundle, frames = 6) {
   return status;
 }
 
-test("the renderer encodes the ocean compute pass before the main pass and samples the cascades", async () => {
+
+test("the renderer encodes the ocean graph before the main pass and samples the cascades", async () => {
   const h = await rendererWithChunk();
   h.canvas.width = h.canvas.height = 64;
   const b = sceneBundle({ windSpeed: 12 });
@@ -218,23 +209,18 @@ test("the renderer encodes the ocean compute pass before the main pass and sampl
   const module = state.shaderModules.find((m) => m.label === "gosx-ocean-fft-surface");
   assert.ok(module, "the spectral surface variant is compiled");
   assert.match(module.code, /textureSampleLevel\(spDisp0/);
+  assert.match(module.code, /sp\.w\[0\]\.xy/, "each cascade is sampled at its own wrapped water offset");
   assert.doesNotMatch(module.code, /for \(var i = 0; i < 6; i\+\+\) \{\n    if \(i >= waves\)/, "the Gerstner loop is replaced");
   if (naga) validateWGSL(module.code, "ocean-fft-surface");
   const pipeline = state.renderPipelines.find((p) => p.desc.label === "gosx-ocean-fft-surface");
   assert.ok(pipeline);
   assert.equal(pipeline.desc.layout.desc.bindGroupLayouts.length, 3, "ocean, reflection and spectral groups");
-  const oceanPass = state.renderPasses.find((p) => p.draws.some((d) => d.pipeline && d.pipeline.desc && d.pipeline.desc.label === "gosx-ocean-fft-surface"));
-  assert.ok(oceanPass, "the main pass draws the spectral ocean");
-  const compute = state.computePasses.filter((p) => p.descriptor && p.descriptor.label === "gosx-ocean-fft-pass");
-  assert.ok(compute.length >= 1);
-  // Command order: the ocean compute pass is recorded before the render pass that samples it.
-  const order = [];
-  const done = h.fake.device.createCommandEncoder;
-  assert.ok(typeof done === "function");
+  assert.ok(state.renderPasses.find((p) => p.draws.some((d) => d.pipeline && d.pipeline.desc && d.pipeline.desc.label === "gosx-ocean-fft-surface")), "the main pass draws the spectral ocean");
+  assert.ok(state.computePasses.some((p) => p.descriptor && /^gosx-elio-ocean-/.test(p.descriptor.label)));
   h.renderer.dispose();
 });
 
-test("encoding order inside one frame: compute passes precede render passes", async () => {
+test("encoding order inside one frame: the graph's compute passes precede the render passes", async () => {
   const h = await rendererWithChunk();
   h.canvas.width = h.canvas.height = 64;
   const events = [];
@@ -248,52 +234,48 @@ test("encoding order inside one frame: compute passes precede render passes", as
   };
   await renderSettled(h, sceneBundle({}), 8);
   const lastFrame = events.slice(events.lastIndexOf("finish", events.length - 2) + 1);
-  const fft = lastFrame.indexOf("gosx-ocean-fft-pass"), render = lastFrame.indexOf("render");
-  assert.ok(fft >= 0 && render > fft, "ocean compute before the main pass: " + lastFrame.join(","));
+  const graph = lastFrame.findIndex((e) => /^gosx-elio-ocean-/.test(e)), render = lastFrame.indexOf("render");
+  assert.ok(graph >= 0 && render > graph, "graph passes before the main pass: " + lastFrame.slice(0, 6).join(","));
   h.renderer.dispose();
 });
 
-test("scenes without a spectrum render exactly as before: no FFT resources, Gerstner shader", async () => {
+test("scenes without a spectrum render exactly as before: no graph resources, Gerstner shader", async () => {
   const h = await rendererWithChunk();
   h.canvas.width = h.canvas.height = 64;
   await renderSettled(h, sceneBundle(null));
   const { state } = h.fake;
   assert.ok(state.shaderModules.some((m) => m.label === "gosx-ocean"));
-  assert.ok(!state.shaderModules.some((m) => /ocean-fft/.test(m.label || "")));
-  assert.ok(!state.computePipelines.some((p) => /ocean-fft/.test(p.label || "")));
+  assert.ok(!state.shaderModules.some((m) => /ocean-fft|elio/.test(m.label || "")));
+  assert.ok(!state.computePipelines.some((p) => /ocean-fft|elio/.test(p.label || "")));
   h.renderer.dispose();
 });
 
-test("a failed FFT pipeline falls back to the Gerstner ocean instead of a core error", async () => {
+test("a rejected graph pipeline disables the graph pass and the ocean falls back to Gerstner waves, not a core error", async () => {
   const h = await createBoardWebGPUHarness({ fresh: true });
   const createRender = h.fake.device.createRenderPipeline.bind(h.fake.device);
   h.fake.device.createRenderPipeline = (d) => Object.assign(createRender(d), { getBindGroupLayout: () => h.fake.device.createBindGroupLayout({ entries: [] }) });
   const createCompute = h.fake.device.createComputePipeline.bind(h.fake.device);
-  h.fake.device.createComputePipeline = (d) => { if (/ocean-fft-foam/.test(d.label)) throw new Error("injected validation failure"); return createCompute(d); };
+  h.fake.device.createComputePipeline = (d) => { if (/gosx-elio-ocean-ocean_foam/.test(d.label)) throw new Error("injected validation failure"); return createCompute(d); };
   loadChunk(h.env.context);
   h.canvas.width = h.canvas.height = 64;
   const status = await renderSettled(h, sceneBundle({}), 10);
   assert.notEqual(status, "failed");
   const failure = JSON.parse(h.mount.getAttribute("data-gosx-scene3d-webgpu-pipeline-failed") || "[]");
-  assert.ok(failure.some((f) => f.label === "gosx-ocean-fft-foam" && f.pass === "oceanFFT"), JSON.stringify(failure));
+  assert.ok(failure.some((f) => f.label === "gosx-elio-ocean-ocean_foam" && f.pass === "elioGraph"), JSON.stringify(failure));
   assert.ok(failure.every((f) => f.pass !== "core"));
-  const { state } = h.fake;
-  const draws = state.renderPasses.flatMap((p) => p.draws).filter((d) => d.pipeline && d.pipeline.desc && /^gosx-ocean/.test(d.pipeline.desc.label));
+  const draws = h.fake.state.renderPasses.flatMap((p) => p.draws).filter((d) => d.pipeline && d.pipeline.desc && /^gosx-ocean/.test(d.pipeline.desc.label));
   assert.ok(draws.length > 0 && /^gosx-ocean$/.test(draws[draws.length - 1].pipeline.desc.label), "the last ocean draw is the Gerstner pipeline");
   h.renderer.dispose();
 });
 
-test("renderer dispose releases the FFT buffers and textures", async () => {
+test("renderer dispose releases the graph's buffers and textures", async () => {
   const h = await rendererWithChunk();
   h.canvas.width = h.canvas.height = 64;
   await renderSettled(h, sceneBundle({}));
-  const mine = () => [...h.fake.state.buffers.filter((b) => b.size > 0), ...h.fake.state.textures.filter((t) => /ocean-fft/.test(t.desc.label || ""))];
-  assert.ok(h.fake.state.textures.some((t) => /ocean-fft-disp/.test(t.desc.label || "")));
+  assert.ok(h.fake.state.textures.some((t) => /gosx-elio-ocean-dispTex0/.test(t.desc.label || "")));
   h.renderer.dispose();
-  assert.ok(h.fake.state.textures.filter((t) => /ocean-fft/.test(t.desc.label || "")).every((t) => t.destroyed));
-  const storage = h.fake.state.buffers.filter((b) => b.usage & 128);
-  assert.ok(storage.length >= 16 && storage.every((b) => b.destroyed), "storage buffers: " + storage.length);
-  assert.ok(mine().length > 0);
+  assert.ok(h.fake.state.textures.filter((t) => /gosx-elio-ocean|ocean-fft/.test(t.desc.label || "")).every((t) => t.destroyed));
+  assert.ok(h.fake.state.buffers.filter((b) => b.usage & 128).every((b) => b.destroyed), "storage buffers");
 });
 
 test("the surface patch fails loudly when a base-shader anchor disappears", () => {
@@ -326,50 +308,54 @@ test("the shipped (packed) WebGPU bundle still accepts the spectral surface patc
   h.renderer.dispose();
 });
 
-// --- the Go contract: normalized SceneIR in, shared wind direction and time -------------------------------------
+// --- the Go contract: normalized SceneIR in, graph parameters out --------------------------------------------------
 
-test("the browser reads the spectrum from the normalized scene the Go side emits", async () => {
+test("the browser carries the spectrum, swell waves, graphParams and graphTween from the normalized scene unchanged", async () => {
   const h = await createBoardWebGPUHarness({ fresh: true });
-  const { api } = standalone();
-  const raw = { spectrum: { windSpeed: 12, fetch: 100, peakEnhancement: 2, spread: 4, swell: 0.3, swellDirection: 15, seed: 0 }, swellWaves: [{ dx: 0, dz: 1, k: 0.1, omega: 1, amplitude: 0.1, phase: 0 }], masks: ["hull", 3] };
+  const raw = { spectrum: { windSpeed: 12, fetch: 100, peakEnhancement: 2, spread: 4, swell: 0.3, swellDirection: 15, seed: 0 }, swellWaves: [{ dx: 0, dz: 1, k: 0.1, omega: 1, amplitude: 0.1, phase: 0 }],
+    masks: ["hull", 3], graphParams: { windSpeed: 12, seed: 0, bogus: "x" }, graphTween: 5 };
   const state = h.env.context.__gosx_scene3d_api.createSceneState({ scene: { environment: { ocean: raw } } });
   const ocean = state.environment.ocean;
   assert.equal(ocean.spectrum.windSpeed, 12);
   assert.equal(ocean.spectrum.seed, 0);
   assert.equal(ocean.swellWaves.length, 1);
   assert.deepEqual(Array.from(ocean.masks), ["hull"]);
-  const resolved = api.resolve(JSON.parse(JSON.stringify(ocean)), "high");
-  assert.deepEqual([resolved.windSpeed, resolved.fetchKm, resolved.gamma, resolved.spread, resolved.swell], [12, 100, 2, 4, 0.3]);
+  assert.deepEqual(JSON.parse(JSON.stringify(ocean.graphParams)), { windSpeed: 12, seed: 0 }, "non-numeric values are dropped");
+  assert.equal(ocean.graphTween, 5);
   h.renderer.dispose();
 });
 
-test("GPU spectrum and Go swell waves share wind direction and loop time", () => {
-  const { api } = standalone();
+test("Go's graph parameters are exactly the graph's value parameters, and its swell waves share the graph's wind direction and loop time", () => {
+  const s = standalone();
+  const graph = s.graphs["webgpu/high"];
+  const golden = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-graph-params.json"), "utf8"));
+  const valuesOf = (g) => Array.from(g.params).filter((p) => p.source.kind === "value" && !/\[\]$/.test(p.type)).map((p) => p.name).sort();
+  for (const entry of golden) {
+    assert.deepEqual(Object.keys(entry.graphParams).sort(), valuesOf(graph), entry.preset + ": Go's values are the WebGPU graph's value parameters (probePoints is a buffer the vessel fills)");
+    for (const name of valuesOf(s.graphs["webgl2/high"])) assert.ok(name in entry.graphParams, "webgl2 parameter " + name);
+  }
+  const loop = graph.params.find((p) => p.name === "loopPeriod").source.value;
   const cases = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-spectrum-query-parity.json"), "utf8"));
-  const omega0 = 2 * Math.PI / api.LOOP_PERIOD;
+  const omega0 = 2 * Math.PI / loop;
   let checked = 0;
   for (const c of cases) {
     const waves = c.ocean.swellWaves || [];
-    for (const w of waves) {
-      // The Go swell waves quantize omega to whole cycles per loop, exactly as ocean_spectrum does, so the
-      // query (scene time) and the GPU (scene time modulo the loop) agree at every time.
-      const cycles = w.omega / omega0;
-      assert.ok(Math.abs(cycles - Math.round(cycles)) < 1e-6, `omega ${w.omega} is not a whole number of cycles per ${api.LOOP_PERIOD} s`);
-    }
-    const s = c.ocean.spectrum || {};
-    if (!waves.length || (s.swell || 0) > 0.2 || s.swellDirection) continue;
-    // Direction of the strongest wind-sea wave against the kernel angle the GPU gets for the same wind direction.
-    const wanted = api.resolve(c.ocean, "high").windDir;
+    // The Go swell waves quantize omega to whole cycles per loop, exactly as ocean_spectrum does, so the CPU query and the GPU agree at every time.
+    for (const w of waves) { const cycles = w.omega / omega0; assert.ok(Math.abs(cycles - Math.round(cycles)) < 1e-6, `omega ${w.omega} is not a whole number of cycles per ${loop} s`); }
+    const sp = c.ocean.spectrum || {};
+    if (!waves.length || (sp.swell || 0) > 0.2 || sp.swellDirection) continue;
+    // The graph turns windDirDeg into the kernels' travel angle (windDir); the strongest Go wave must travel that way.
+    const params = s.G.createParams(graph.params);
+    params.set("windDirDeg", c.ocean.windDirection || 0);
+    params.evaluate({ time: 0, dt: 0 });
+    const wanted = params.current.windDir;
     const top = waves.slice().sort((a, b) => b.amplitude - a.amplitude)[0];
     const got = Math.atan2(top.dz, top.dx);
-    const delta = Math.abs(Math.atan2(Math.sin(got - wanted), Math.cos(got - wanted)));
-    assert.ok(delta < 0.9, `strongest wave travels at ${got.toFixed(2)} rad, the GPU wind angle is ${wanted.toFixed(2)} (windDirection ${c.ocean.windDirection})`);
+    assert.ok(Math.abs(Math.atan2(Math.sin(got - wanted), Math.cos(got - wanted))) < 0.9, `strongest wave travels at ${got.toFixed(2)} rad, the graph's wind angle is ${wanted.toFixed(2)} (windDirection ${c.ocean.windDirection})`);
     checked++;
   }
   assert.ok(checked >= 3, "enough fixture cases carry a pure wind sea: " + checked);
 });
-
-// --- environment updates ------------------------------------------------------------------------------------------
 
 test("an environment update that adds a spectrum loads the FFT chunk once; one that removes it releases the GPU resources", async () => {
   const { FakeElement, createContext, installManualRAF, runScript, flushAsyncWork, bootstrapSource } = require("./runtime-test-harness.js");
@@ -402,46 +388,3 @@ test("an environment update that adds a spectrum loads the FFT chunk once; one t
   handle.dispose();
 });
 
-test("removing the spectrum releases every FFT buffer and texture and returns to the Gerstner shader", async () => {
-  const h = await rendererWithChunk();
-  h.canvas.width = h.canvas.height = 64;
-  const b = sceneBundle(null);
-  await renderSettled(h, b, 3);
-  const { state } = h.fake;
-  const baseline = new Set([...state.buffers, ...state.textures]);
-  b.environment.ocean.spectrum = { windSpeed: 9 };
-  await renderSettled(h, b, 8);
-  const spectral = [...state.buffers, ...state.textures].filter((r) => !baseline.has(r));
-  assert.ok(spectral.length > 16, "the spectral ocean allocated resources: " + spectral.length);
-  const live = () => spectral.filter((r) => !r.destroyed);
-  delete b.environment.ocean.spectrum;
-  await renderSettled(h, b, 4);
-  assert.deepEqual(live().map((r) => r.desc ? r.desc.label : "buffer " + r.size), [], "resources released");
-  const draws = state.renderPasses.flatMap((p) => p.draws).filter((d) => d.pipeline && d.pipeline.desc && /^gosx-ocean/.test(d.pipeline.desc.label));
-  assert.equal(draws[draws.length - 1].pipeline.desc.label, "gosx-ocean");
-  h.renderer.dispose();
-});
-
-test("foam: Go's graph parameters win, and the fallback table equals Go's golden values", () => {
-  const { api } = standalone();
-  const golden = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-graph-params.json"), "utf8"));
-  for (const entry of golden) {
-    const g = entry.graphParams;
-    const fallback = api.foamOf({}, { windSpeed: g.windSpeed, lambda: g.lambda });
-    assert.ok(Math.abs(fallback.threshold - g.foamThreshold) < 1e-9, `${entry.preset}: threshold ${fallback.threshold} vs Go ${g.foamThreshold}`);
-    assert.equal(fallback.tau, g.foamTau);
-    assert.equal(fallback.gain, g.foamGain);
-    assert.deepEqual(JSON.parse(JSON.stringify(api.foamOf({ graphParams: g }, { windSpeed: 1, lambda: 1 }))), { tau: g.foamTau, threshold: g.foamThreshold, gain: g.foamGain });
-  }
-  // No foam on a glassy sea, whitecaps from about 10 m/s, and a monotone rise with the wind.
-  assert.equal(api.foamThreshold(0.5, 0.6), 0);
-  assert.equal(api.foamThreshold(5, 1), 0);
-  assert.ok(api.foamThreshold(10, 1) >= api.FOAM.maxThreshold * 0.95, "whitecaps at 10 m/s");
-  let last = -1;
-  for (let u = 0; u <= 40; u += 0.5) { const t = api.foamThreshold(u, 1); assert.ok(t >= last); last = t; }
-});
-
-test("an absent swell direction is 0 degrees, as in Go, not the wind direction", () => {
-  const { api } = standalone();
-  assert.equal(api.resolve(ocean({}, { windDirection: 90 }), "high").swellDir, api.travelAngle(0));
-});

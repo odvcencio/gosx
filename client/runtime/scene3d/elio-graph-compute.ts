@@ -16,7 +16,7 @@
     const prefix = "gosx-elio-" + ctx.label + "-";
     const buffers: any[] = [], textures: any[] = [];
     const resources: any = Object.create(null), pipelines: any = Object.create(null), layouts: any = Object.create(null);
-    const groups = new Map();
+    const groups = new Map(), views = new Map(); // views: one texture view per texture, so a surface can compare them by identity
     const state = { disposed: false };
     let seq = 0;
     const exported: any = {};
@@ -116,7 +116,7 @@
       for (const b of buffers) b.destroy();
       for (const t of textures) t.destroy();
       buffers.length = textures.length = 0;
-      groups.clear();
+      groups.clear(); views.clear();
     }
 
     return {
@@ -149,7 +149,10 @@
       export: function (name: string) {
         const r = resources[graph.exports[name]];
         if (r && r.buffer) return { buffer: r.buffer };
-        return r ? { texture: r.texture, view: r.texture.createView(), width: r.w, height: r.h, levels: r.levels } : null;
+        if (!r) return null;
+        let view = views.get(r.texture);
+        if (!view) { view = r.texture.createView(); views.set(r.texture, view); }
+        return { texture: r.texture, view: view, width: r.w, height: r.h, levels: r.levels };
       },
       dispose: dispose,
     };

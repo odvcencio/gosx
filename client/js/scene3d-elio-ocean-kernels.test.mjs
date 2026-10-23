@@ -22,13 +22,24 @@ function embeddedSources(text) {
   return out;
 }
 
+function embeddedGraphs(text) {
+  const out = [];
+  const re = /^ {6}"((?:webgpu|webgl2)\/(?:high|medium|low))": (\{.*?\}),?$/gm;
+  for (let m; (m = re.exec(text)); ) out.push([m[1], m[2]]);
+  return out;
+}
+
 test("generated Elio ocean kernels match their embedded SHA-256 header", () => {
   const header = /^\/\/ sha256: ([0-9a-f]{64}) /m.exec(source);
   assert.ok(header, "file lacks the sha256 header");
   const sources = embeddedSources(source);
-  assert.ok(sources.length === 19, `expected the ocean set's WGSL and GLSL sources, found ${sources.length}`);
+  assert.equal(sources.length, 20, `expected the ocean set's WGSL and GLSL sources, found ${sources.length}`);
   const hash = crypto.createHash("sha256");
   for (const s of sources) hash.update(s);
+  // Then each graph: its key, a newline, its compact JSON and a newline, in file order.
+  const graphs = embeddedGraphs(source);
+  assert.deepEqual(graphs.map(([key]) => key), ["webgpu/high", "webgpu/medium", "webgpu/low", "webgl2/high", "webgl2/medium", "webgl2/low"]);
+  for (const [key, literal] of graphs) hash.update(key + "\n" + literal + "\n");
   assert.equal(hash.digest("hex"), header[1], "edited by hand? regenerate with scripts/generate-elio-ocean.sh <elio-dir>");
 });
 
@@ -39,6 +50,8 @@ test("generated Elio ocean kernels assign one frozen global", () => {
   const set = window.__gosx_scene3d_elio_ocean;
   assert.ok(set && Object.isFrozen(set) && Object.isFrozen(set.kernels));
   assert.equal(set.sha256, /^\/\/ sha256: ([0-9a-f]{64}) /m.exec(source)[1]);
+  assert.deepEqual(Object.keys(set.graphs).sort(), ["webgl2/high", "webgl2/low", "webgl2/medium", "webgpu/high", "webgpu/low", "webgpu/medium"]);
+  assert.ok(Object.isFrozen(set.graphs));
   for (const name of ["oceanSpectrum", "oceanEvolve", "oceanAssemble", "oceanMip", "oceanFoam", "oceanProbe", "fftCompute64", "fftCompute128", "fftCompute256"]) {
     const k = set.kernels[name];
     assert.ok(k, `${name} missing`);

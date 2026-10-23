@@ -214,7 +214,7 @@ test("a mip pass may read level L-1 and write level L of one texture; the same l
   const mipGraph = (srcLevel, dstLevel) => (g) => {
     g.passes = [{ name: "mip", type: "kernel", kernel: "ocean_mip", entry: "ocean_mip", when: "always", target: { width: 32, height: 32, elioWidth: 32 },
       bindings: [{ name: "src", resource: "disp", level: srcLevel }, { name: "dst", resource: "disp", level: dstLevel }],
-      uniforms: [{ name: "mip", values: { srcWidth: 64, srcHeight: 64, dstWidth: 32, dstHeight: 32 } }] }];
+      uniforms: [{ name: "mip", values: { srcLevel: srcLevel, dstWidth: 32, dstHeight: 32, pad: 0 } }] }];
   };
   const ok = setup(undefined, mipGraph(0, 1));
   assert.equal(ok.step(), true);
