@@ -39,6 +39,20 @@
     "TBODY", "THEAD", "TFOOT", "COLGROUP",
   ]);
 
+  // Namespaces for elements created after load. document.createElement always
+  // makes an HTML element, so <svg> and <path> created that way draw nothing.
+  var HTML_NS = "http://www.w3.org/1999/xhtml";
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+  var XLINK_NS = "http://www.w3.org/1999/xlink";
+  var XML_NS = "http://www.w3.org/XML/1998/namespace";
+  var XMLNS_NS = "http://www.w3.org/2000/xmlns/";
+
+  // Children of these elements are HTML again (the HTML parser's integration
+  // points): foreignObject, desc and title in SVG, and the MathML text leaves.
+  var SVG_HTML_INTEGRATION = new Set(["foreignObject", "desc", "title"]);
+  var MATHML_HTML_INTEGRATION = new Set(["mi", "mo", "mn", "ms", "mtext"]);
+
   // HTML presence attributes. A SetAttr means present regardless of op.text;
   // a RemoveAttr means absent. String states such as hidden="until-found"
   // arrive only from SSR; typed island bools reconcile as presence changes.
@@ -704,13 +718,56 @@
    * Returns true when the node landed after every existing child.
    */
   function applyCreateElement(target, op) {
-    var el = document.createElement(op.tag);
+    var el = createElementIn(target, op.tag);
 
     if (op.text) {
       el.textContent = op.text;
     }
 
     return insertChildAt(target, el, op);
+  }
+
+  /**
+   * Namespace for a new element named `tag` under `parent`. <svg> and <math>
+   * switch namespace wherever they appear; every other tag keeps its parent's
+   * namespace, except below an HTML integration point (foreignObject and the
+   * like), where content is HTML again. A missing parent means HTML.
+   *
+   * @param {Node|null} parent
+   * @param {string} tag
+   * @returns {string}
+   */
+  function namespaceFor(parent, tag) {
+    var lower = String(tag).toLowerCase();
+    if (lower === "svg") return SVG_NS;
+    if (lower === "math") return MATHML_NS;
+    var ns = parent && parent.nodeType === Node.ELEMENT_NODE ? parent.namespaceURI : null;
+    if (ns === SVG_NS) {
+      var svgName = String(parent.localName || parent.tagName);
+      return SVG_HTML_INTEGRATION.has(svgName) ? HTML_NS : SVG_NS;
+    }
+    if (ns === MATHML_NS) {
+      var mathName = String(parent.localName || parent.tagName);
+      return MATHML_HTML_INTEGRATION.has(mathName) ? HTML_NS : MATHML_NS;
+    }
+    return HTML_NS;
+  }
+
+  /**
+   * Create an element for `tag` in the namespace its parent implies. HTML tags
+   * still go through createElement, which lowercases the name; foreign tags go
+   * through createElementNS, which keeps names such as "foreignObject".
+   *
+   * @param {Node|null} parent
+   * @param {string} tag
+   * @returns {Element}
+   */
+  function createElementIn(parent, tag) {
+    var ns = namespaceFor(parent, tag);
+    if (ns !== HTML_NS && typeof document.createElementNS === "function") {
+      return document.createElementNS(ns, tag);
+    }
+    return document.createElement(tag);
   }
 
   /**
@@ -765,7 +822,7 @@
    * op.text — optional text content for the replacement.
    */
   function applyReplaceElement(target, op) {
-    var newEl = document.createElement(op.tag);
+    var newEl = createElementIn(target.parentNode, op.tag);
 
     if (op.text) {
       newEl.textContent = op.text;
@@ -861,6 +918,23 @@
       return;
     }
     if (name === "value") el.value = value;
+    else setAttributeNamespaced(el, name, value);
+  }
+
+  /**
+   * Set an attribute, using the right namespace for the prefixes that foreign
+   * content needs. On an SVG element setAttribute keeps case ("viewBox"), but
+   * xlink:href, xml:lang and xmlns:* only work as namespaced attributes.
+   */
+  function setAttributeNamespaced(el, name, value) {
+    var ns = null;
+    if (el.namespaceURI && el.namespaceURI !== HTML_NS && typeof el.setAttributeNS === "function") {
+      var text = String(name);
+      if (text.indexOf("xlink:") === 0) ns = XLINK_NS;
+      else if (text.indexOf("xml:") === 0) ns = XML_NS;
+      else if (text === "xmlns" || text.indexOf("xmlns:") === 0) ns = XMLNS_NS;
+    }
+    if (ns !== null) el.setAttributeNS(ns, name, value);
     else el.setAttribute(name, value);
   }
 
