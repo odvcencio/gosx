@@ -1,6 +1,10 @@
 package geom
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // Capsule resolves a Y-axis capsule whose straight cylindrical body runs
 // Length along Y between two hemispherical caps of the given Radius. The
@@ -34,7 +38,7 @@ func Capsule(radius, length float64, capSegments, radialSegments int, want Attri
 	sines := make([]float64, radialSegments+1)
 	for j := 0; j < radialSegments; j++ {
 		phi := 2 * math.Pi * float64(j) / float64(radialSegments)
-		cosines[j], sines[j] = math.Cos(phi), math.Sin(phi)
+		cosines[j], sines[j] = det.Cos(phi), det.Sin(phi)
 	}
 	cosines[radialSegments], sines[radialSegments] = cosines[0], sines[0]
 
@@ -57,18 +61,18 @@ func Capsule(radius, length float64, capSegments, radialSegments int, want Attri
 	// outermost cap ring never coincides with the body ring it joins.
 	emitCapRing := func(centerY, sign, angle, v float64) int {
 		start := -1
-		sinA, cosA := math.Sin(angle), math.Cos(angle)
+		sinA, cosA := det.Sin(angle), det.Cos(angle)
 		for j := 0; j <= radialSegments; j++ {
 			index := b.emit(vertex{
 				position: vec3{
-					X: radius * sinA * cosines[j],
-					Y: centerY + sign*radius*cosA,
-					Z: radius * sinA * sines[j],
+					X: float64(radius * sinA * cosines[j]),
+					Y: centerY + float64(sign*radius*cosA),
+					Z: float64(radius * sinA * sines[j]),
 				},
 				normal: normalize(vec3{
-					X: sinA * cosines[j],
-					Y: sign * cosA,
-					Z: sinA * sines[j],
+					X: float64(sinA * cosines[j]),
+					Y: float64(sign * cosA),
+					Z: float64(sinA * sines[j]),
 				}),
 				uv: vec2{U: float64(j) / float64(radialSegments), V: v},
 			})
@@ -84,7 +88,7 @@ func Capsule(radius, length float64, capSegments, radialSegments int, want Attri
 		start := -1
 		for j := 0; j <= radialSegments; j++ {
 			index := b.emit(vertex{
-				position: vec3{X: radius * cosines[j], Y: y, Z: radius * sines[j]},
+				position: vec3{X: float64(radius * cosines[j]), Y: y, Z: float64(radius * sines[j])},
 				normal:   normalize(vec3{X: cosines[j], Y: 0, Z: sines[j]}),
 				uv:       vec2{U: float64(j) / float64(radialSegments), V: v},
 			})
@@ -101,7 +105,7 @@ func Capsule(radius, length float64, capSegments, radialSegments int, want Attri
 	step := (math.Pi / 2) / float64(capSegments)
 	rowStarts := make([]int, 0, rings)
 	for i := 1; i < capSegments; i++ {
-		angle := step * float64(i)
+		angle := float64(step * float64(i))
 		rowStarts = append(rowStarts, emitCapRing(-half, -1, angle, radius*angle/totalArc))
 	}
 	rowStarts = append(rowStarts, emitEquatorRing(-half, capArc/totalArc))
@@ -110,8 +114,8 @@ func Capsule(radius, length float64, capSegments, radialSegments int, want Attri
 	// hemisphere, so every band joins two strictly rising rows and one shared
 	// winding rule covers the whole mesh. UV V keeps climbing with each row.
 	for i := capSegments - 1; i >= 1; i-- {
-		angle := step * float64(i)
-		v := (capArc + length + radius*(math.Pi/2-angle)) / totalArc
+		angle := float64(step * float64(i))
+		v := (capArc + length + float64(radius*(math.Pi/2-angle))) / totalArc
 		rowStarts = append(rowStarts, emitCapRing(half, 1, angle, v))
 	}
 	topPole := emitPole(half+radius, 1, 1)

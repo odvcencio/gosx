@@ -398,9 +398,9 @@ func raycastSurface(ray pickRay, surface engine.RenderSurface) (primitiveHit, bo
 			triangleIndex: tri / 3,
 			localPosition: barycentric3(p0, p1, p2, w, u, v),
 			worldPosition: [3]float32{
-				ray.origin[0] + ray.dir[0]*dist,
-				ray.origin[1] + ray.dir[1]*dist,
-				ray.origin[2] + ray.dir[2]*dist,
+				ray.origin[0] + float32(ray.dir[0]*dist),
+				ray.origin[1] + float32(ray.dir[1]*dist),
+				ray.origin[2] + float32(ray.dir[2]*dist),
 			},
 			uv:    barycentric2(surfaceUVAt(surface, tri), surfaceUVAt(surface, tri+1), surfaceUVAt(surface, tri+2), w, u, v),
 			depth: dist,

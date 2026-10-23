@@ -76,6 +76,7 @@ func programValueArities(signals []SignalSpec) (map[SignalRef]ValueArity, error)
 		arities[ref] = arity
 		return arity, nil
 	}
+	//gosx:allow map-range validation only; any unresolved reference rejects the specs
 	for ref := range specs {
 		if _, err := resolve(ref, 0); err != nil {
 			return nil, err

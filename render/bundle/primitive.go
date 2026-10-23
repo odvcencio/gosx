@@ -184,11 +184,11 @@ func instanceCullRadius(baseRadius float32, model mat4) float32 {
 	if scale <= 0 {
 		return baseRadius
 	}
-	return baseRadius * scale
+	return float32(baseRadius * scale)
 }
 
 func columnLength(x, y, z float32) float32 {
-	return float32(math.Sqrt(float64(x*x + y*y + z*z)))
+	return float32(math.Sqrt(float64(float32(x*x) + float32(y*y) + float32(z*z))))
 }
 
 // primitiveCullRadiusMargin pads the tight bounding sphere. The pad covers the
@@ -211,17 +211,17 @@ func triangleNormal(a, b, c [3]float32) [3]float32 {
 	ab := [3]float32{b[0] - a[0], b[1] - a[1], b[2] - a[2]}
 	ac := [3]float32{c[0] - a[0], c[1] - a[1], c[2] - a[2]}
 	return normalize3(
-		ab[1]*ac[2]-ab[2]*ac[1],
-		ab[2]*ac[0]-ab[0]*ac[2],
-		ab[0]*ac[1]-ab[1]*ac[0],
+		float32(ab[1]*ac[2])-float32(ab[2]*ac[1]),
+		float32(ab[2]*ac[0])-float32(ab[0]*ac[2]),
+		float32(ab[0]*ac[1])-float32(ab[1]*ac[0]),
 	)
 }
 
 func normalize3(x, y, z float32) [3]float32 {
-	length := math.Sqrt(float64(x*x + y*y + z*z))
+	length := math.Sqrt(float64(float32(x*x) + float32(y*y) + float32(z*z)))
 	if length <= 0 || math.IsNaN(length) || math.IsInf(length, 0) {
 		return [3]float32{0, 1, 0}
 	}
 	inv := float32(1 / length)
-	return [3]float32{x * inv, y * inv, z * inv}
+	return [3]float32{float32(x * inv), float32(y * inv), float32(z * inv)}
 }

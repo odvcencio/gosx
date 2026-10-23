@@ -19,7 +19,9 @@ import "encoding/json"
 // valid value (MinPitch of zero keeps the camera from going below the target).
 // MinHeight is a floor in world units: the camera never goes below that y at any
 // distance, so a drag or a zoom stops on it. A fixed height is a floor for a flat
-// sea; it does not follow the waves. Nil leaves each of the three as it is.
+// sea; it does not follow the waves. A floor above the target raises the
+// effective minimum radius when needed. MinHeight takes precedence over
+// conflicting distance and pitch limits. Nil leaves each of the three as it is.
 type Orbit struct {
 	Target      Vector3
 	MinDistance float64

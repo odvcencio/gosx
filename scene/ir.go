@@ -541,6 +541,7 @@ func (ir *IR) Validate() error {
 			problems = append(problems, problem)
 		}
 		variantNames := make([]string, 0, len(material.Variants))
+		//gosx:allow map-range names are sorted on the next lines
 		for name := range material.Variants {
 			variantNames = append(variantNames, name)
 		}

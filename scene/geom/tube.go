@@ -1,6 +1,10 @@
 package geom
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // This file sweeps a circular cross section along an arbitrary 3D path. The
 // result is the tube body Three.js builds with TubeGeometry: one vertex ring
@@ -75,7 +79,7 @@ func Tube(path []float64, radius float64, radialSegments int, closed bool, want 
 	for i := 1; i <= steps; i++ {
 		a := centers[i-1]
 		b := centers[i%points]
-		total += math.Sqrt((b.X-a.X)*(b.X-a.X) + (b.Y-a.Y)*(b.Y-a.Y) + (b.Z-a.Z)*(b.Z-a.Z))
+		total += math.Sqrt(float64((b.X-a.X)*(b.X-a.X)) + float64((b.Y-a.Y)*(b.Y-a.Y)) + float64((b.Z-a.Z)*(b.Z-a.Z)))
 		distances[i] = total
 	}
 	if total <= 0 {
@@ -97,7 +101,7 @@ func Tube(path []float64, radius float64, radialSegments int, closed bool, want 
 		v := distances[minInt(i, steps)] / total
 		for j := 0; j < stride; j++ {
 			theta := 2 * math.Pi * float64(j) / float64(radial)
-			cos, sin := math.Cos(theta), math.Sin(theta)
+			cos, sin := det.Cos(theta), det.Sin(theta)
 			out := addVec(scaleVec(normals[i], cos), scaleVec(binormals[i], sin))
 			b.emit(vertex{
 				position: addVec(center, scaleVec(out, radius)),
@@ -207,10 +211,10 @@ func transportFrames(centers []vec3, closed bool, frameCount int) ([]vec3, []vec
 
 	if closed {
 		last, first := normals[frameCount-1], normals[0]
-		turn := math.Atan2(dotVec(crossVec(last, first), tangents[frameCount-1]), dotVec(last, first))
+		turn := det.Atan2(dotVec(crossVec(last, first), tangents[frameCount-1]), dotVec(last, first))
 		for i := 1; i < frameCount; i++ {
 			angle := turn * float64(i) / float64(frameCount-1)
-			cos, sin := math.Cos(angle), math.Sin(angle)
+			cos, sin := det.Cos(angle), det.Sin(angle)
 			normal, binormal := normals[i], binormals[i]
 			normals[i] = addVec(scaleVec(normal, cos), scaleVec(binormal, sin))
 			binormals[i] = subVec(scaleVec(binormal, cos), scaleVec(normal, sin))
@@ -224,7 +228,7 @@ func transportFrames(centers []vec3, closed bool, frameCount int) ([]vec3, []vec
 	return normals, binormals
 }
 
-func lengthSquared(v vec3) float64 { return v.X*v.X + v.Y*v.Y + v.Z*v.Z }
+func lengthSquared(v vec3) float64 { return float64(v.X*v.X) + float64(v.Y*v.Y) + float64(v.Z*v.Z) }
 
 func isFiniteVec(v vec3) bool {
 	return !(math.IsNaN(v.X) || math.IsNaN(v.Y) || math.IsNaN(v.Z) ||

@@ -1,6 +1,10 @@
 package motion
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // SpringDT is the fixed internal timestep used by the spring integrator (seconds).
 // Both native Go and WASM use this constant to guarantee deterministic output.
@@ -64,9 +68,9 @@ func (s Spring) Value(from, to, t float64) float64 {
 	x := from
 	v := p.Velocity
 	for i := 0; i < steps; i++ {
-		F := -p.Stiffness*(x-to) - p.Damping*v
-		v += (F / p.Mass) * SpringDT
-		x += v * SpringDT
+		F := float64(-p.Stiffness*(x-to)) - float64(p.Damping*v)
+		v += float64((F / p.Mass) * SpringDT)
+		x += float64(v * SpringDT)
 	}
 	return x
 }
@@ -116,16 +120,16 @@ func (s Spring) Duration(from, to float64) float64 {
 	c := p.Damping
 
 	omega0 := math.Sqrt(k / m)
-	zeta := c / (2 * math.Sqrt(k*m))
+	zeta := c / (2 * math.Sqrt(float64(k*m)))
 
 	var rate float64
 	if zeta >= 1 {
 		// Critically damped or overdamped: slower pole dominates.
 		// At zeta == 1, sqrt(zeta²-1) == 0 so rate = omega0 (correct limit).
-		rate = omega0 * (zeta - math.Sqrt(zeta*zeta-1))
+		rate = float64(omega0 * (zeta - math.Sqrt(float64(zeta*zeta)-1)))
 	} else {
 		// Underdamped: envelope decays as exp(-zeta*omega0*t).
-		rate = zeta * omega0
+		rate = float64(zeta * omega0)
 	}
 
 	if rate <= 0 {
@@ -135,10 +139,10 @@ func (s Spring) Duration(from, to float64) float64 {
 	var ts float64
 	if zeta >= 1 {
 		// Polynomial prefactor correction (one Newton step from the pure-exponential estimate).
-		t0 := -math.Log(settleTol) / rate
-		ts = safety * ((-math.Log(settleTol) + math.Log(1+rate*t0)) / rate)
+		t0 := -det.Log(settleTol) / rate
+		ts = float64(safety * ((-det.Log(settleTol) + det.Log(1+float64(rate*t0))) / rate))
 	} else {
-		ts = safety * (-math.Log(settleTol) / rate)
+		ts = float64(safety * (-det.Log(settleTol) / rate))
 	}
 
 	if ts > springMaxTime {

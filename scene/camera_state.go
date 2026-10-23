@@ -51,11 +51,11 @@ func (move CameraTransition) Sample(elapsed time.Duration) (IRCamera, bool) {
 		return target, false
 	}
 	t := (motion.Ease{Kind: motion.EaseCubicBezier, Args: []float64{.4, 0, .2, 1}}).Apply(math.Max(0, float64(elapsed)/float64(move.Duration)))
-	mix := func(a, b float64) float64 { return a + (b-a)*t }
+	mix := func(a, b float64) float64 { return a + float64((b-a)*t) }
 	c := target
 	c.X, c.Y, c.Z = mix(move.From.X, c.X), mix(move.From.Y, c.Y), mix(move.From.Z, c.Z)
 	c.RotationX, c.RotationY, c.RotationZ = mix(move.From.RotationX, c.RotationX), mix(move.From.RotationY, c.RotationY), mix(move.From.RotationZ, c.RotationZ)
-	c.FOV = mix(move.From.FOV, c.FOV) + math.Max(0, move.FOVArc)*4*t*(1-t)
+	c.FOV = mix(move.From.FOV, c.FOV) + float64(math.Max(0, move.FOVArc)*4*t*(1-t))
 	c.PortraitFOV = mix(move.From.PortraitFOV, c.PortraitFOV)
 	c.Left, c.Right = mix(move.From.Left, c.Left), mix(move.From.Right, c.Right)
 	c.Top, c.Bottom = mix(move.From.Top, c.Top), mix(move.From.Bottom, c.Bottom)

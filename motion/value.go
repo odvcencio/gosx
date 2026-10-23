@@ -59,7 +59,7 @@ func LerpValueInto(dst []float64, a, b Value, t float64) {
 	}
 	n := a.Arity.Width()
 	for i := 0; i < n; i++ {
-		dst[i] = a.F[i] + t*(b.F[i]-a.F[i])
+		dst[i] = a.F[i] + float64(t*(b.F[i]-a.F[i]))
 	}
 }
 
@@ -85,16 +85,16 @@ func StepInto(dst []float64, a Value) {
 // are interpolated independently then normalized (per the glTF spec). NO heap
 // allocation — all scalars are stack locals.
 func CubicHermiteInto(dst []float64, vK, bK, vK1, aK1 Value, delta, s float64) {
-	s2 := s * s
-	s3 := s2 * s
+	s2 := float64(s * s)
+	s3 := float64(s2 * s)
 	// Hermite basis coefficients.
-	h00 := 2*s3 - 3*s2 + 1 // for vK
-	h10 := s3 - 2*s2 + s   // for delta·bK
-	h01 := -2*s3 + 3*s2    // for vK1
-	h11 := s3 - s2         // for delta·aK1
+	h00 := 2*s3 - float64(3*s2) + 1 // for vK
+	h10 := s3 - 2*s2 + s            // for delta·bK
+	h01 := -2*s3 + float64(3*s2)    // for vK1
+	h11 := s3 - s2                  // for delta·aK1
 	n := vK.Arity.Width()
 	for i := 0; i < n; i++ {
-		dst[i] = h00*vK.F[i] + delta*h10*bK.F[i] + h01*vK1.F[i] + delta*h11*aK1.F[i]
+		dst[i] = float64(h00*vK.F[i]) + float64(delta*h10*bK.F[i]) + float64(h01*vK1.F[i]) + float64(delta*h11*aK1.F[i])
 	}
 	if vK.Arity == ArityQuat {
 		q := Quat{X: dst[0], Y: dst[1], Z: dst[2], W: dst[3]}.Normalize()

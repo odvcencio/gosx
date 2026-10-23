@@ -145,3 +145,55 @@ func TestEachFrameStopsOnCancelErrorAndHiddenPage(t *testing.T) {
 		t.Fatal("cancel left a frame request")
 	}
 }
+
+func TestEachFrameWorkerWithoutDocumentResumesAndReleasesVisibility(t *testing.T) {
+	bridge := installWorkerBridge(t)
+	global := js.Global()
+	previous := global.Get("document")
+	global.Delete("document")
+	t.Cleanup(func() {
+		if previous.IsUndefined() {
+			global.Delete("document")
+		} else {
+			global.Set("document", previous)
+		}
+	})
+	global.Call("eval", `(bridge => {
+	 let next=0; const timers=new Map();
+	 bridge.requestFrame=callback=>{const id=++next;timers.set(id,setTimeout(()=>{timers.delete(id);callback(performance.now())},4));return id};
+	 bridge.cancelFrame=id=>{clearTimeout(timers.get(id));timers.delete(id)};
+	 bridge.pending=()=>timers.size;
+	 bridge.setHidden=hidden=>{bridge.hidden=hidden;for(const callback of [...bridge.visibility])callback(hidden)};
+	 bridge.hideFor=ms=>{bridge.setHidden(true);setTimeout(()=>bridge.setHidden(false),ms)};
+	})`).Invoke(bridge)
+	var frames []Frame
+	if err := EachFrame(context.Background(), func(frame Frame) error {
+		frames = append(frames, frame)
+		if len(frames) == 2 {
+			bridge.Call("hideFor", 20)
+		}
+		if len(frames) == 4 {
+			return StopFrames
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if frames[0].Delta != 0 || frames[2].Delta != 0 {
+		t.Fatalf("first/resumed frame delta = %v/%v", frames[0].Delta, frames[2].Delta)
+	}
+	if bridge.Call("pending").Int() != 0 || bridge.Get("visibility").Get("size").Int() != 0 {
+		t.Fatal("stopped worker retained a frame or visibility subscription")
+	}
+	bridge.Call("setHidden", true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(10*time.Millisecond, cancel)
+	steps := 0
+	if err := EachFrame(ctx, func(Frame) error { steps++; return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("hidden worker cancellation = %v", err)
+	}
+	if steps != 0 || bridge.Call("pending").Int() != 0 || bridge.Get("visibility").Get("size").Int() != 0 {
+		t.Fatal("hidden worker stepped or cancellation retained a frame/subscription")
+	}
+}

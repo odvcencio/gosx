@@ -118,7 +118,7 @@ func (s *frameStatsRecorder) snapshot() FrameStats {
 	out := FrameStats{
 		FrameCount:        s.totalFrames,
 		MaterialFallbacks: append([]engine.RenderDiagnostic(nil), s.materialFallbacks...),
-		LastFrameMS:       s.lastFrameSec * 1000,
+		LastFrameMS:       float64(s.lastFrameSec * 1000),
 		DroppedCount:      s.droppedCount,
 		DeviceLost:        s.deviceLost,
 		DeviceLostReason:  s.deviceLostReason,
@@ -133,7 +133,7 @@ func (s *frameStatsRecorder) snapshot() FrameStats {
 	for _, v := range samples {
 		sum += v
 	}
-	out.AvgFrameMS = (sum / float64(active)) * 1000
+	out.AvgFrameMS = float64((sum / float64(active)) * 1000)
 
 	sort.Float64s(samples)
 	p := func(pct float64) float64 {
@@ -144,7 +144,7 @@ func (s *frameStatsRecorder) snapshot() FrameStats {
 		if idx >= active {
 			idx = active - 1
 		}
-		return samples[idx] * 1000
+		return float64(samples[idx] * 1000)
 	}
 	out.P50FrameMS = p(0.50)
 	out.P95FrameMS = p(0.95)

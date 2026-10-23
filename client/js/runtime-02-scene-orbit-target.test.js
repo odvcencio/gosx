@@ -189,3 +189,33 @@ test("a preset camera with an orbit lands exactly on its pose after a flick, and
   assert.ok(aimError(c, preset.orbit.target) < 1e-9, "residual yaw after a flick: " + c.rotationY);
   assert.equal(JSON.stringify(mounted.handle.getCamera()), JSON.stringify(c), "the camera kept moving: drag momentum survived the camera command");
 });
+
+
+test("a floor above the target survives zoom, even with conflicting distance and pitch bounds", async () => {
+  for (const bounds of [{}, { minDistance: 1, maxDistance: 1, maxPitch: 0.3 }]) {
+    const { mounted, canvas } = await mountScene({ controls: "orbit", controlTarget: { x: 0, y: 0, z: 0 }, controlMinDistance: 1, controlMaxDistance: 400 });
+    mounted.handle.setCamera({ kind: "perspective", x: 0, y: 10, z: 20, fov: 55,
+      orbit: { target: { x: 0, y: 0, z: 0 }, minHeight: 2, ...bounds } });
+    await flushAsyncWork();
+    for (const deltaY of [-100000, 100000, -100000]) {
+      canvas.dispatchEvent({ type: "wheel", deltaY, preventDefault() {}, stopPropagation() {} });
+      await flushAsyncWork();
+      const camera = mounted.handle.getCamera();
+      assert.ok(camera.y >= 2 - 1e-6, "zoom crossed the floor: " + JSON.stringify(camera));
+      assert.ok([camera.x, camera.y, camera.z, camera.rotationX, camera.rotationY].every(Number.isFinite));
+    }
+  }
+});
+
+test("camera batches preserve earlier orbit updates when a later camera omits orbit", async () => {
+  const { mounted } = await mountScene({ controls: "orbit", controlTarget: { x: 0, y: 0, z: 0 }, controlMinDistance: 1, controlMaxDistance: 400 });
+  const target = { x: 10, y: 3, z: -20 };
+  const camera = { kind: "perspective", x: 10, y: 9, z: 30, fov: 55, near: 0.1, far: 400 };
+  await mounted.handle.applyCommands([
+    { kind: SET_CAMERA, data: { ...camera, orbit: { target, minDistance: 2, maxDistance: 50 } } },
+    { kind: SET_CAMERA, data: { ...camera, x: 12 } },
+  ]);
+  await flushAsyncWork();
+  assert.equal(JSON.stringify(mounted.handle.getTelemetry().orbit.target), JSON.stringify(target));
+  assert.ok(aimError(mounted.handle.getCamera(), target) < 1e-6);
+});

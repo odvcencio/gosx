@@ -2,11 +2,14 @@ package scene
 
 import (
 	"encoding/json"
+	"maps"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/motion"
 )
@@ -1809,6 +1812,7 @@ func cloneSceneAnyMap(values map[string]any) map[string]any {
 		return nil
 	}
 	out := make(map[string]any, len(values))
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for key, value := range values {
 		out[key] = value
 	}
@@ -1820,6 +1824,7 @@ func cloneSceneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(values))
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for key, value := range values {
 		out[key] = value
 	}
@@ -1832,7 +1837,9 @@ func mapStringMapValue(value any) (map[string]string, bool) {
 		return cloneSceneStringMap(typed), len(typed) > 0
 	case map[string]any:
 		out := make(map[string]string, len(typed))
-		for key, raw := range typed {
+		// Sorted so that two keys that trim to one name resolve the same way every run.
+		for _, key := range slices.Sorted(maps.Keys(typed)) {
+			raw := typed[key]
 			stringValue, ok := mapStringValue(raw)
 			if !ok {
 				continue
@@ -1853,8 +1860,10 @@ func cloneFloat64Slices(values map[string][]float64) map[string][]float64 {
 		return nil
 	}
 	out := make(map[string][]float64, len(values))
-	for key, value := range values {
-		key = strings.TrimSpace(key)
+	// Sorted so that two keys that trim to one name resolve the same way every run.
+	for _, rawKey := range slices.Sorted(maps.Keys(values)) {
+		value := values[rawKey]
+		key := strings.TrimSpace(rawKey)
 		if key == "" {
 			continue
 		}
@@ -2777,7 +2786,7 @@ func (l *graphLowerer) lowerGridHelper(helper GridHelper, parent worldTransform)
 	points := make([]Vector3, 0, (divisions+1)*4)
 	segments := make([][2]int, 0, (divisions+1)*2)
 	for i := 0; i <= divisions; i++ {
-		offset := -half + float64(i)*step
+		offset := -half + float64(float64(i)*step)
 		base := len(points)
 		points = append(points,
 			Vector3{X: -half, Z: offset},
@@ -2944,7 +2953,7 @@ func (l *graphLowerer) lowerGizmoAxesHelper(id string, position Vector3, rotatio
 // control.Rotation, consistent with this being an overlay helper rather than
 // a physically-accurate handle.
 func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotation Euler, size, width float64, visible bool, parent worldTransform) {
-	handle := size * 0.16
+	handle := float64(size * 0.16)
 	if handle <= 0 {
 		handle = 0.2
 	}
@@ -3640,6 +3649,7 @@ func cloneWaterShaderDescriptors(in map[string]json.RawMessage) map[string]json.
 		return nil
 	}
 	out := make(map[string]json.RawMessage, len(in))
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for k, v := range in {
 		clone := make(json.RawMessage, len(v))
 		copy(clone, v)
@@ -4510,7 +4520,7 @@ func helperRingGeometry(radius float64, segments int, lineWidth float64) LinesGe
 	links := make([][2]int, 0, segments)
 	for i := 0; i < segments; i++ {
 		angle := (float64(i) / float64(segments)) * math.Pi * 2
-		points = append(points, Vector3{X: math.Cos(angle) * radius, Y: math.Sin(angle) * radius})
+		points = append(points, Vector3{X: float64(det.Cos(angle) * radius), Y: float64(det.Sin(angle) * radius)})
 		links = append(links, [2]int{i, (i + 1) % segments})
 	}
 	return LinesGeometry{Points: points, Segments: links, Width: lineWidth}
@@ -5082,17 +5092,17 @@ func axisAngleQuaternion(axis Vector3, angle float64) quaternion {
 		return quaternion{W: 1}
 	}
 	half := angle / 2
-	sine := math.Sin(half)
+	sine := det.Sin(half)
 	return quaternion{
-		X: axis.X * sine,
-		Y: axis.Y * sine,
-		Z: axis.Z * sine,
-		W: math.Cos(half),
+		X: float64(axis.X * sine),
+		Y: float64(axis.Y * sine),
+		Z: float64(axis.Z * sine),
+		W: det.Cos(half),
 	}
 }
 
 func (q quaternion) normalized() quaternion {
-	length := math.Sqrt((q.X * q.X) + (q.Y * q.Y) + (q.Z * q.Z) + (q.W * q.W))
+	length := math.Sqrt((float64(q.X * q.X)) + (float64(q.Y * q.Y)) + (float64(q.Z * q.Z)) + (float64(q.W * q.W)))
 	if length == 0 {
 		return quaternion{W: 1}
 	}
@@ -5110,10 +5120,10 @@ func (q quaternion) conjugate() quaternion {
 
 func (q quaternion) mul(other quaternion) quaternion {
 	return quaternion{
-		X: (q.W * other.X) + (q.X * other.W) + (q.Y * other.Z) - (q.Z * other.Y),
-		Y: (q.W * other.Y) - (q.X * other.Z) + (q.Y * other.W) + (q.Z * other.X),
-		Z: (q.W * other.Z) + (q.X * other.Y) - (q.Y * other.X) + (q.Z * other.W),
-		W: (q.W * other.W) - (q.X * other.X) - (q.Y * other.Y) - (q.Z * other.Z),
+		X: (float64(q.W * other.X)) + (float64(q.X * other.W)) + (float64(q.Y * other.Z)) - (float64(q.Z * other.Y)),
+		Y: (float64(q.W * other.Y)) - (float64(q.X * other.Z)) + (float64(q.Y * other.W)) + (float64(q.Z * other.X)),
+		Z: (float64(q.W * other.Z)) + (float64(q.X * other.Y)) - (float64(q.Y * other.X)) + (float64(q.Z * other.W)),
+		W: (float64(q.W * other.W)) - (float64(q.X * other.X)) - (float64(q.Y * other.Y)) - (float64(q.Z * other.Z)),
 	}
 }
 
@@ -5125,27 +5135,27 @@ func (q quaternion) rotate(vector Vector3) Vector3 {
 
 func eulerFromQuaternion(q quaternion) Euler {
 	q = q.normalized()
-	m00 := 1 - (2 * ((q.Y * q.Y) + (q.Z * q.Z)))
-	m10 := 2 * ((q.X * q.Y) + (q.Z * q.W))
-	m20 := 2 * ((q.X * q.Z) - (q.Y * q.W))
-	m21 := 2 * ((q.Y * q.Z) + (q.X * q.W))
-	m22 := 1 - (2 * ((q.X * q.X) + (q.Y * q.Y)))
-	m01 := 2 * ((q.X * q.Y) - (q.Z * q.W))
-	m11 := 1 - (2 * ((q.X * q.X) + (q.Z * q.Z)))
+	m00 := 1 - (2 * ((float64(q.Y * q.Y)) + (float64(q.Z * q.Z))))
+	m10 := 2 * ((float64(q.X * q.Y)) + (float64(q.Z * q.W)))
+	m20 := 2 * ((float64(q.X * q.Z)) - (float64(q.Y * q.W)))
+	m21 := 2 * ((float64(q.Y * q.Z)) + (float64(q.X * q.W)))
+	m22 := 1 - (2 * ((float64(q.X * q.X)) + (float64(q.Y * q.Y))))
+	m01 := 2 * ((float64(q.X * q.Y)) - (float64(q.Z * q.W)))
+	m11 := 1 - (2 * ((float64(q.X * q.X)) + (float64(q.Z * q.Z))))
 
-	y := math.Asin(clamp(-m20, -1, 1))
-	cosY := math.Cos(y)
+	y := det.Asin(clamp(-m20, -1, 1))
+	cosY := det.Cos(y)
 	if math.Abs(cosY) > 1e-9 {
 		return Euler{
-			X: math.Atan2(m21, m22),
+			X: det.Atan2(m21, m22),
 			Y: y,
-			Z: math.Atan2(m10, m00),
+			Z: det.Atan2(m10, m00),
 		}
 	}
 	return Euler{
 		X: 0,
 		Y: y,
-		Z: math.Atan2(-m01, m11),
+		Z: det.Atan2(-m01, m11),
 	}
 }
 

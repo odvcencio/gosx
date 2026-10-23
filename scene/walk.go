@@ -66,7 +66,7 @@ func NewWalkGround(minX, minZ, sizeX, sizeZ float64, cols, rows int, heights []f
 	for i, h := range heights {
 		var v uint16
 		if hi > lo {
-			v = uint16(math.Round((h - lo) / (hi - lo) * 65535))
+			v = uint16(math.Round(float64((h - lo) / (hi - lo) * 65535)))
 		}
 		binary.LittleEndian.PutUint16(data[2*i:], v)
 	}

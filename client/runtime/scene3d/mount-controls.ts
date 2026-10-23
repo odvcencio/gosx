@@ -244,10 +244,13 @@
   // reports whether a camera command was present.
   // @ts-ignore TS7006 -- plain JavaScript fixture
   function sceneControlsFollowCameraCommands(controls, sceneState, commands) {
-    let last = null;
-    for (const command of commands) if (command && command.kind === 5) last = command;
-    if (!last) return false;
-    sceneControlsApplyOrbit(controls, last.data && last.data.orbit);
+    let hasCamera = false;
+    for (const command of commands) {
+      if (!command || command.kind !== 5) continue;
+      hasCamera = true;
+      sceneControlsApplyOrbit(controls, command.data && command.data.orbit);
+    }
+    if (!hasCamera) return false;
     applySceneControlsCamera(controls, sceneState.camera);
     return true;
   }
@@ -280,6 +283,7 @@
   const SCENE_ORBIT_STOP_SPEED = (Math.PI / 180) * 0.01;
   const SCENE_ORBIT_DEFAULT_PITCH_LIMIT = 1.4;
   const SCENE_ORBIT_MAX_PITCH_LIMIT = Math.PI / 2 - (Math.PI / 180) * 0.001;
+  const SCENE_ORBIT_MAX_PITCH_SINE = Math.sin(SCENE_ORBIT_MAX_PITCH_LIMIT);
   const SCENE_ORBIT_DEFAULT_MIN_DISTANCE = 0.6;
   const SCENE_ORBIT_DEFAULT_MAX_DISTANCE = 256;
 
@@ -289,6 +293,18 @@
       0.1,
       SCENE_ORBIT_MAX_PITCH_LIMIT,
     );
+  }
+
+  // A floor above the target needs enough radius to reach it without a pole
+  // singularity. The floor wins when authored distance/pitch bounds conflict.
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneOrbitClampRadius(limits, target, radius) {
+    let min = Math.max(0.001, sceneNumber(limits.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
+    if (Number.isFinite(limits.minHeight)) {
+      const height = limits.minHeight - sceneNumber(target && target.y, 0);
+      min = Math.max(min, height / SCENE_ORBIT_MAX_PITCH_SINE);
+    }
+    return sceneClamp(radius, min, Math.max(min, sceneNumber(limits.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE)));
   }
 
   // The pitch an orbit may take at its radius. PitchLimit is the symmetric default; MinPitch and MaxPitch
@@ -455,7 +471,7 @@
     const offsetZ = worldPosition.z - sceneNumber(orbitTarget.z, 0);
     const minDistance = Math.max(0.001, sceneNumber(controls && controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
     const maxDistance = Math.max(minDistance, sceneNumber(controls && controls.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));
-    const radius = sceneClamp(Math.hypot(offsetX, offsetY, offsetZ), minDistance, maxDistance);
+    const radius = sceneOrbitClampRadius(controls || {}, orbitTarget, Math.hypot(offsetX, offsetY, offsetZ));
     const limits = controls || {};
     const state = {
       target: {
@@ -489,9 +505,7 @@
   function sceneOrbitCamera(state, fallbackCamera) {
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const base = sceneRenderCamera(fallbackCamera);
     const orbit = state || sceneOrbitStateFromCamera(base, { x: 0, y: 0, z: 0 });
-    const minDistance = Math.max(0.001, sceneNumber(orbit.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
-    const maxDistance = Math.max(minDistance, sceneNumber(orbit.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));
-    const radius = sceneClamp(sceneNumber(orbit.radius, 6), minDistance, maxDistance);
+    const radius = sceneOrbitClampRadius(orbit, orbit.target, sceneNumber(orbit.radius, 6));
     const pitch = sceneOrbitClampPitch(orbit, Object.assign({}, orbit, { radius }), sceneNumber(orbit.pitch, 0));
     const yaw = sceneNumber(orbit.yaw, 0);
     const target = orbit.target || { x: 0, y: 0, z: 0 };
@@ -864,11 +878,8 @@
     syncSceneControlsFromSource(controls, readSourceCamera);
     sceneOrbitStopInertia(controls);
     controls.touched = true;
-    controls.orbit.radius = sceneClamp(
-      controls.orbit.radius * Math.exp(sceneNumber(event && event.deltaY, 0) * 0.001 * controls.zoomSpeed),
-      Math.max(0.001, sceneNumber(controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE)),
-      Math.max(sceneNumber(controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE), sceneNumber(controls.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE)),
-    );
+    controls.orbit.radius = sceneOrbitClampRadius(controls.orbit, controls.orbit.target,
+      controls.orbit.radius * Math.exp(sceneNumber(event && event.deltaY, 0) * 0.001 * controls.zoomSpeed));
     controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch);
     if (event && typeof event.preventDefault === "function") {
       event.preventDefault();
@@ -1064,11 +1075,7 @@
       return true;
     }
     const zoomScale = Math.exp((key === "zoom-in" ? -1 : 1) * 0.12 * controls.zoomSpeed);
-    controls.orbit.radius = sceneClamp(
-      controls.orbit.radius * zoomScale,
-      controls.minDistance,
-      controls.maxDistance,
-    );
+    controls.orbit.radius = sceneOrbitClampRadius(controls.orbit, controls.orbit.target, controls.orbit.radius * zoomScale);
     controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch);
     return true;
   }

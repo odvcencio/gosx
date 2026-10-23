@@ -44,7 +44,7 @@ var Analyzer = &analysis.Analyzer{
 // detReplacement maps math functions to the det function that replaces them.
 var detReplacement = map[string]string{
 	"Exp": "det.Exp", "Exp2": "det.Exp2", "Log": "det.Log", "Log2": "det.Log2",
-	"Log10": "det.Log10", "Pow": "det.Pow", "Sin": "det.Sin", "Cos": "det.Cos",
+	"Log10": "det.Log10", "Cbrt": "det.Cbrt", "Pow": "det.Pow", "Sin": "det.Sin", "Cos": "det.Cos",
 	"Tan": "det.Tan", "Asin": "det.Asin", "Acos": "det.Acos", "Atan": "det.Atan",
 	"Atan2": "det.Atan2", "Hypot": "det.Hypot", "Sinh": "det.Sinh",
 	"Cosh": "det.Cosh", "Tanh": "det.Tanh",
@@ -54,7 +54,7 @@ var detReplacement = map[string]string{
 // mathNoReplacement lists math functions that can differ between platforms and
 // have no det version yet.
 var mathNoReplacement = map[string]bool{
-	"Acosh": true, "Asinh": true, "Atanh": true, "Cbrt": true, "Erf": true,
+	"Acosh": true, "Asinh": true, "Atanh": true, "Erf": true,
 	"Erfc": true, "Erfcinv": true, "Erfinv": true, "Expm1": true, "Gamma": true,
 	"Lgamma": true, "Log1p": true, "J0": true, "J1": true, "Jn": true,
 	"Y0": true, "Y1": true, "Yn": true, "Pow10": false,

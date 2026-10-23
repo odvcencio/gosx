@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Retain renderer-owned instance matrix and color preparation storage across
+  fresh SceneIR bundles in WebGL2 and WebGPU. Preserve mutable inputs, palette
+  changes, GPU-driven updates, palette reads bounded by the active count, and
+  retirement when the last batch disappears.
+
+- Retain WebGL2 instance stream snapshots across camera-only frames and upload
+  only changed spans, preserving in-place edits, dirty ranges and buffer retirement.
+
+- Reuse retired dependency storage for derived values and effects without
+  recycling lists still read by a refresh. Avoid TinyGo WASM goroutine-identity
+  lookups and a constant-key tracking map while preserving native Go isolation.
+
+- Compile authored Selena vertex texture sampling through SceneIR. Expose only
+  vertex-sampled textures to the WebGPU vertex stage and reject unsupported
+  WebGL device limits before shader compilation, retaining material fallbacks.
 - Bound an orbit's pitch on each side, and give it a floor. `scene.Orbit` gains
   `MinPitch` and `MaxPitch` (radians of camera elevation above the target's
   horizon; pointers, because zero is valid) and `MinHeight` (a world y the
