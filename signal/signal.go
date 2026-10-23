@@ -438,10 +438,13 @@ func (c *Computed[T]) onDepChange() {
 	}
 }
 
-// subscribeToDepsLocked replaces subscriptions while c.mu is held.
+// subscribeToDepsLocked reconciles subscriptions while c.mu is held.
 func (c *Computed[T]) subscribeToDepsLocked(deps []dependency) {
 	old := c.deps
 	c.deps = deps
+	if reuseDependencySubscriptions(old, deps) {
+		return
+	}
 	for _, dep := range old {
 		dep.unsubscribe()
 	}
@@ -508,4 +511,25 @@ func (e *Effect) run() {
 		e.unsubs = append(e.unsubs, dep.source.subscribe(e.run, nil))
 	}
 	e.mu.Unlock()
+}
+
+// Keep live subscriptions when a recomputation reads the same ordered sources.
+// Revisions belong to the new evaluation; only the cancellation functions carry
+// over. A changed dependency list takes the existing replacement path.
+// Keep this helper shared across value types to bound browser runtime code size.
+//
+//go:noinline
+func reuseDependencySubscriptions(previous, next []dependency) bool {
+	if len(previous) != len(next) {
+		return false
+	}
+	for i := range previous {
+		if previous[i].source != next[i].source {
+			return false
+		}
+	}
+	for i := range previous {
+		next[i].unsubscribe = previous[i].unsubscribe
+	}
+	return true
 }
