@@ -26,6 +26,7 @@
   const crestAmplitude = function (windSpeed: number): number { return Math.max(0.3, 0.14 * windSpeed * windSpeed / 9.81); };
   const SURFACE_FLOATS = 40; // c[4], f, m, w[4]: ten vec4s, the layout both surface variants declare
   const CASCADES = 4;
+  let timingSource: any = null; // the running WebGPU graph, for timing()
   let lastWater: any = null; // the most recent running graph's water frame, for CPU queries (see water())
 
   function tierOf(tier: any): string { return tier === "low" || tier === "medium" ? tier : "high"; }
@@ -76,6 +77,9 @@
   // water is the running graph's water frame, in float64: the origin of the water (what the drift has integrated) and the wave
   // time. A CPU query samples the wave field at (position - origin) at that time to agree with what is drawn.
   function water(): any { return lastWater; }
+  // timing is the WebGPU graph's own GPU time (its compute passes, which the renderer's frame stamps do not cover): the latest sample and the
+  // last 120, in milliseconds, or null without timestamp-query. The renderer reports its render passes separately.
+  function timing(): any { return timingSource && !timingSource.failed ? timingSource.gpuTiming() : null; }
   function publish(runner: any): void {
     lastWater = runner.failed ? null : { x: runner.value("waterX"), z: runner.value("waterZ"), time: runner.value("simTime") };
   }
@@ -234,7 +238,7 @@
       bindGroup();
       surfaceData(runner, state.info, data);
       device.queue.writeBuffer(uniform, 0, data);
-      publish(runner);
+      publish(runner); timingSource = runner;
       engine.ready = true;
       return true;
     }
@@ -242,7 +246,7 @@
       if (engine.disposed) return;
       engine.disposed = true; engine.ready = false; engine.group = null;
       if (state.runner) state.runner.dispose();
-      lastWater = null; probe.latest = probe.previous = null;
+      lastWater = null; timingSource = null; probe.latest = probe.previous = null;
       ring.dispose(); uniform.destroy(); dummy.destroy();
     }
     Object.defineProperty(engine, "runner", { get: function () { return state.runner; } });
@@ -330,7 +334,7 @@
     if (host && host.mount && host.mount.setAttribute) host.mount.setAttribute("data-gosx-scene3d-ocean-fft-fallback", reason);
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, timing: timing, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
   // The WebGL chunk's minifier renames some property names (frame among them); the method the two chunks share is called run.
   window.__gosx_scene3d_ocean_fft_gl_api = { run: frameGL, fail: failGL };
 })();

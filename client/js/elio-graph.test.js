@@ -248,3 +248,62 @@ test("exportParams are read from the runner in float64; a buffer may be exported
   p.evaluate(frame(0));
   assert.equal(p.current.w, 1234.56789012345);
 });
+
+test("sin and cos are unary expr ops over radians", () => {
+  const e = (name, op, ...args) => decl(name, { kind: "expr", op, args });
+  const p = evaluator([decl("h", { kind: "value", value: Math.PI / 6 }), e("s", "sin", "param:h"), e("c", "cos", "param:h"), e("s0", "sin", 0), e("c0", "cos", 0),
+    e("fwdX", "mul", "param:s", 10), e("fwdZ", "mul", "param:c", 10)]);
+  p.evaluate(frame(0));
+  assert.ok(Math.abs(p.current.s - 0.5) < 1e-12 && Math.abs(p.current.c - Math.sqrt(3) / 2) < 1e-12);
+  assert.deepEqual([p.current.s0, p.current.c0], [0, 1]);
+  assert.ok(Math.abs(p.current.fwdX - 5) < 1e-12, "forward is (sin, cos) in (x, z)");
+});
+
+test("bool parameters read as 0 and 1 in expr, delta and accumulate", () => {
+  const p = evaluator([{ name: "on", type: "bool", source: { kind: "value", value: 0 } }, decl("dt", { kind: "frame", name: "dt" }),
+    decl("scaled", { kind: "expr", op: "mul", args: ["param:on", 5] }), { name: "edge", type: "i32", source: { kind: "delta", of: "param:on" } },
+    { name: "reset", type: "u32", source: { kind: "expr", op: "max", args: ["param:edge", 0] } }, decl("age", { kind: "accumulate", of: "param:on" })]);
+  p.evaluate(frame(0, 0.5));
+  assert.deepEqual([p.current.scaled, p.current.edge, p.current.reset, p.current.age], [0, 0, 0, 0]);
+  p.set("on", true);
+  p.evaluate(frame(1, 0.5));
+  assert.deepEqual([p.current.on, p.current.scaled, p.current.edge, p.current.reset, p.current.age], [1, 5, 1, 1, 0.5], "switching on is a rising edge of 1 and the accumulator integrates 1 per second");
+  p.evaluate(frame(2, 0.5));
+  assert.deepEqual([p.current.edge, p.current.reset, p.current.age], [0, 0, 1]);
+  p.set("on", 0);
+  p.evaluate(frame(3, 0.5));
+  assert.deepEqual([p.current.edge, p.current.reset], [-1, 0], "switching off is a falling edge; reset is its positive part");
+});
+
+test("node sources read a scene node's pose from the host each frame; speed is the horizontal velocity of its last two poses unless the node reports one", () => {
+  const p = evaluator([decl("hullX", { kind: "node", node: "hull", field: "x" }), decl("hullZ", { kind: "node", node: "hull", field: "z" }),
+    decl("hullHeading", { kind: "node", node: "hull", field: "heading" }), decl("hullSpeed", { kind: "node", node: "hull", field: "speed" }),
+    decl("otherX", { kind: "node", node: "other", field: "x" })]);
+  const poses = { ship: { x: 10, z: -5, heading: 1.5 }, tug: { x: 3, z: 4, heading: 0, speed: 7 } };
+  const f = (time, dt, extra) => Object.assign(frame(time, dt), { nodePose: (id) => poses[id] || null }, extra);
+  p.setNodes({ hull: "ship", other: "tug" });
+  p.evaluate(f(0, 0.5));
+  assert.deepEqual([p.current.hullX, p.current.hullZ, p.current.hullHeading, p.current.hullSpeed, p.current.otherX], [10, -5, 1.5, 0, 3], "no earlier pose, no speed");
+  poses.ship = { x: 13, z: -1, heading: 1.5 };
+  p.evaluate(f(0.5, 0.5));
+  assert.equal(p.current.hullSpeed, 10, "(3, 4) metres in 0.5 s is 10 m/s");
+  poses.ship = { x: 13, z: -1, heading: 1.5 };
+  p.evaluate(f(1, 0.5));
+  assert.equal(p.current.hullSpeed, 0, "stopped");
+  poses.ship = { x: 13, z: -1, heading: 1.5, speed: 4.5 };
+  p.evaluate(f(1.5, 0.5));
+  assert.equal(p.current.hullSpeed, 4.5, "a reported speed wins");
+  // A node that is not there holds its last value; an unmapped logical name is taken as a node id.
+  delete poses.ship;
+  p.evaluate(f(2, 0.5));
+  assert.deepEqual([p.current.hullX, p.current.hullZ, p.current.hullSpeed], [13, -1, 0], "missing node: last position, no speed");
+  p.setNodes({});
+  const q = evaluator([decl("x", { kind: "node", node: "tug", field: "x" })]);
+  q.evaluate(f(0, 0.5));
+  assert.equal(q.current.x, 3, "unmapped name is the node id itself");
+  assert.throws(() => evaluator([decl("x", { kind: "node", node: "a", field: "roll" })]).evaluate(f(0, 0.5)), /unknown node field/);
+  // Without a host lookup every node field is 0 (a graph on a host that has no scene nodes still runs).
+  const r = evaluator([decl("x", { kind: "node", node: "a", field: "x" })]);
+  r.evaluate(frame(0));
+  assert.equal(r.current.x, 0);
+});

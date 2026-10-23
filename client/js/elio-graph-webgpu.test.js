@@ -5,13 +5,13 @@ const test = require("node:test"), assert = require("node:assert/strict");
 const { runnerContext, testGraph } = require("./elio-graph-test-support.js");
 const { makeFakeGPUDevice } = require("./runtime-test-harness.js");
 
-function setup(graphEdit, deviceExtra) {
+function setup(graphEdit, deviceExtra, fakeOptions) {
   const context = runnerContext({
     GPUBufferUsage: { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128, INDIRECT: 256, QUERY_RESOLVE: 512 },
     GPUTextureUsage: { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 }, GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 },
   });
   const g = context.window.__gosx_elio_graph, module = context.window.__gosx_scene3d_elio_ocean;
-  const fake = makeFakeGPUDevice();
+  const fake = makeFakeGPUDevice(fakeOptions);
   let lose;
   fake.device.lost = new Promise((resolve) => { lose = resolve; });
   Object.assign(fake.device, deviceExtra);
@@ -173,4 +173,103 @@ test("a fed buffer is uploaded from its parameter each frame, and a buffer expor
   assert.equal(fed[0].data.length, 8);
   const exported = s.runner.export("probeBuffer");
   assert.equal(exported.buffer.size, 4096 * 16);
+});
+
+// --- GPU time of the graph's compute passes ------------------------------------------------------------------------------
+
+function timedSetup(graphEdit) {
+  const s = setup(graphEdit, undefined, { timestampQuery: true });
+  const resolved = [], copies = [];
+  const create = s.fake.device.createCommandEncoder.bind(s.fake.device);
+  s.stamps = [0n, 0n];
+  s.fake.device.createCommandEncoder = () => {
+    const encoder = create();
+    encoder.resolveQuerySet = (querySet, first, count, buffer, offset) => resolved.push({ querySet, first, count, buffer, offset });
+    encoder.copyBufferToBuffer = (source, so, destination, doff, size) => { copies.push({ source, destination, size }); new BigUint64Array(destination._backing).set(s.stamps); };
+    return encoder;
+  };
+  s.resolved = resolved; s.copies = copies;
+  return s;
+}
+const settledTick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("timing: the graph's first executed compute pass writes the begin stamp and its last the end stamp, in one query set", () => {
+  const s = timedSetup();
+  s.settle();
+  s.step();
+  const passes = s.fake.state.computePasses;
+  const writes = passes.map((p) => p.descriptor.timestampWrites);
+  assert.equal(writes[0].beginningOfPassWriteIndex, 0);
+  assert.equal(writes[0].endOfPassWriteIndex, undefined);
+  assert.equal(writes[writes.length - 1].endOfPassWriteIndex, 1);
+  assert.ok(writes.slice(1, -1).every((w) => !w), "middle passes carry no stamp");
+  assert.equal(new Set(writes.filter(Boolean).map((w) => w.querySet)).size, 1);
+  assert.equal(s.resolved.length, 1);
+  assert.deepEqual([s.resolved[0].first, s.resolved[0].count, s.resolved[0].offset], [0, 2, 0]);
+  // Frame 2 skips the evolve pass (its changed: condition did not fire): the first pass that runs carries the begin stamp.
+  const before = passes.length;
+  s.step();
+  const second = s.fake.state.computePasses.slice(before);
+  assert.ok(second.length < passes.length);
+  assert.equal(second[0].descriptor.timestampWrites.beginningOfPassWriteIndex, 0);
+  assert.equal(second[second.length - 1].descriptor.timestampWrites.endOfPassWriteIndex, 1);
+});
+
+test("timing: a one-pass frame writes both stamps on that pass", () => {
+  const s = timedSetup((g) => { g.passes = [g.passes.find((p) => p.name === "assemble")]; });
+  s.settle();
+  s.step();
+  const w = s.fake.state.computePasses[0].descriptor.timestampWrites;
+  assert.deepEqual([w.beginningOfPassWriteIndex, w.endOfPassWriteIndex], [0, 1]);
+});
+
+test("timing: the stamps are copied to a ring of three staging buffers, polled on later frames, and reported in milliseconds", async () => {
+  const s = timedSetup();
+  s.settle();
+  assert.equal(s.runner.gpuTiming().ms, null, "no sample before the first readback");
+  s.stamps = [1000n, 1000n + 2_500_000n];
+  s.step();
+  assert.equal(s.copies.length, 1);
+  assert.equal(s.copies[0].size, 16);
+  assert.equal(s.runner.gpuTiming().ms, null, "the copy is mapped on a later frame, never awaited");
+  s.step();
+  await settledTick();
+  assert.equal(s.runner.gpuTiming().ms, 2.5);
+  s.stamps = [0n, 1_000_000n];
+  s.step(); s.step();
+  await settledTick();
+  const t = s.runner.gpuTiming();
+  assert.equal(t.ms, 1);
+  assert.deepEqual(Array.from(t.samples), [2.5, 2.5, 1], "one copy per frame, each mapped a frame later");
+  assert.equal(new Set(s.copies.map((c) => c.destination)).size <= 3, true, "a ring of three");
+  assert.ok(s.fake.state.buffers.filter((b) => b.usage & 1).length === 3, "three mappable staging buffers");
+});
+
+test("timing: with every staging buffer still mapping, the frame skips its copy instead of waiting", () => {
+  const s = timedSetup();
+  const create = s.fake.device.createBuffer.bind(s.fake.device);
+  s.fake.device.createBuffer = (d) => { const b = create(d); if (d.usage & 1) b.mapAsync = () => new Promise(() => {}); return b; };
+  const runner = s.g.create({ module: s.module, backend: "webgpu", graph: s.graph, host: Object.assign({}, s.host) });
+  s.settle();
+  for (let i = 0; i < 6; i++) runner.run({ time: i / 60, dt: 1 / 60, cameraX: 0, cameraY: 0, cameraZ: 0, encoder: s.encoder() });
+  assert.ok(s.copies.length <= 3, "at most three copies in flight: " + s.copies.length);
+});
+
+test("timing: without the timestamp-query feature nothing is created and gpuTiming is null", () => {
+  const s = setup();
+  s.settle();
+  s.step();
+  assert.equal(s.runner.gpuTiming(), null);
+  assert.ok(s.fake.state.computePasses.every((p) => !p.descriptor.timestampWrites));
+  const on = timedSetup();
+  const opted = on.g.create({ module: on.module, backend: "webgpu", graph: on.graph, host: Object.assign({}, on.host, { timing: false }) });
+  assert.equal(opted.gpuTiming(), null, "the host can opt out");
+  assert.ok(on.runner.gpuTiming(), "and by default the feature turns timing on");
+});
+
+test("timing: dispose releases the query set's buffers", () => {
+  const s = timedSetup();
+  s.settle(); s.step();
+  s.runner.dispose();
+  assert.ok(s.fake.state.buffers.every((b) => b.destroyed));
 });

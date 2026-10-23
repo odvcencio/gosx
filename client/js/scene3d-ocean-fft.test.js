@@ -166,7 +166,7 @@ function probeRig() {
   const create = fake.device.createCommandEncoder.bind(fake.device);
   fake.device.createCommandEncoder = () => {
     const encoder = create();
-    encoder.copyBufferToBuffer = (source, so, destination, doff, size) => { s.copies.push({ source, destination, size }); new Float32Array(destination._backing).set(s.heights); };
+    encoder.copyBufferToBuffer = (source, so, destination, doff, size) => { if (size !== 64 * 16) return; s.copies.push({ source, destination, size }); new Float32Array(destination._backing).set(s.heights); }; // the graph's own timestamp copies are 16 bytes
     return encoder;
   };
   return s;
@@ -228,13 +228,13 @@ test("probe: the ring holds three staging buffers; with all three in flight the 
   const env = ocean({ graphParams: {} });
   const stuck = [];
   const create = s.fake.device.createBuffer.bind(s.fake.device);
-  s.fake.device.createBuffer = (d) => { const b = create(d); if (d.usage & 1) b.mapAsync = () => new Promise(() => stuck.push(b)); return b; };
+  s.fake.device.createBuffer = (d) => { const b = create(d); if ((d.usage & 1) && d.size === 64 * 16) b.mapAsync = () => new Promise(() => stuck.push(b)); return b; };
   warm(s, resources, h, env, { time: 1 });
   for (let i = 0; i < 6; i++) { probe.begin(); probe.sample(1, 1, 0, 5); frame(s, resources, h, env, { time: 1.02 + i * 0.02 }); }
   assert.equal(s.copies.length, 3, "a copy per free slot, then none: " + s.copies.length);
   assert.equal(new Set(s.copies.map((c) => c.destination)).size, 3);
   assert.equal(stuck.length, 3, "every copy was polled for mapping on a later frame");
-  const staging = s.fake.state.buffers.filter((b) => b.usage & 1);
+  const staging = s.fake.state.buffers.filter((b) => (b.usage & 1) && b.size === 64 * 16);
   assert.equal(staging.length, 3);
   resources.fft.dispose();
   assert.ok(staging.every((b) => b.destroyed));
@@ -261,6 +261,21 @@ test("sampler: CPU swell waves are evaluated in the water frame at the graph's w
   assert.equal(gone, null);
   assert.equal(s.api.sampler(query, { data: [3] }, 7).sample(1, 2).x, 1.5);
   assert.deepEqual(calls.pop(), [1, 2, 7], "after the graph is gone the query is plain again");
+});
+
+test("timing(): the WebGPU graph's compute time is reported separately, and absent without timestamp-query", async () => {
+  const plain = standalone(), r1 = {}, h1 = plain.host();
+  warm(plain, r1, h1, ocean());
+  assert.equal(plain.api.timing(), null, "no timestamp-query on the default fake device");
+  const s = probeRig(), resources = {}, h = s.host();
+  assert.equal(s.api.timing(), null, "no graph yet");
+  warm(s, resources, h, ocean(), { time: 1 });
+  assert.ok(s.api.timing(), "a graph on a device with timestamp-query has timing");
+  assert.equal(s.api.timing().ms, null, "before the first readback");
+  const rig = s.fake.state.computePasses.map((p) => p.descriptor.timestampWrites).filter(Boolean);
+  assert.ok(rig.length >= 2, "the graph's compute passes carry the stamps");
+  resources.fft.dispose();
+  assert.equal(s.api.timing(), null, "gone with the graph");
 });
 
 function nagaPath() {

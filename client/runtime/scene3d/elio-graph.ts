@@ -71,12 +71,14 @@
   }
 
 
+  const NODE_FIELDS: any = { x: 1, z: 1, heading: 1, speed: 1 };
   const FRAME_SOURCES: any = { time: 1, dt: 1, cameraX: 1, cameraY: 1, cameraZ: 1 };
   const OPS: any = {
     add: function (a: number, b: number) { return a + b; }, sub: function (a: number, b: number) { return a - b; },
     mul: function (a: number, b: number) { return a * b; }, div: function (a: number, b: number) { return b === 0 ? 0 : a / b; },
     mod: function (a: number, b: number) { return b === 0 ? 0 : a - Math.floor(a / b) * b; }, // GLSL/WGSL mod: the sign follows b
-    floor: function (a: number) { return Math.floor(a); }, min: function (a: number, b: number) { return Math.min(a, b); }, max: function (a: number, b: number) { return Math.max(a, b); },
+    floor: function (a: number) { return Math.floor(a); }, sin: function (a: number) { return Math.sin(a); }, cos: function (a: number) { return Math.cos(a); }, // radians
+    min: function (a: number, b: number) { return Math.min(a, b); }, max: function (a: number, b: number) { return Math.max(a, b); },
   };
   // f32 parameters stay in float64 here and round when a uniform is packed, so chained expressions (a wrapped water offset)
   // lose nothing; integers and bools are coerced as their GPU types would be.
@@ -92,7 +94,8 @@
   // params evaluates a graph's parameters. State (tweens, accumulators, the previous frame's values) lives here.
   function createParams(decls: any[]): any {
     const current: any = {}, prev: any = {}, tweens: any = {}, accum: any = {}, targets: any = {};
-    let first = true, tweenOverride: number | null = null;
+    let first = true, tweenOverride: number | null = null, nodeMap: any = {};
+    const lastPose: any = {}, held: any = {}; // per node id: the pose of the previous frame; per parameter: the last value read
     const tweenOf = function (d: any): number { return d.tween > 0 ? (tweenOverride === null ? d.tween : tweenOverride) : 0; };
     for (const d of decls) {
       const src = d.source || { kind: "value", value: 0 };
@@ -105,6 +108,8 @@
     };
     const api: any = {
       current: current, changed: {},
+      // setNodes maps the graph's logical node names to scene node ids (the scene's graphNodes); an unmapped name is taken as an id.
+      setNodes: function (map: any) { nodeMap = map || {}; },
       // setTween is the scene's graph-level override: every parameter the graph tweens uses these seconds (0 means no tween).
       setTween: function (seconds: number) { tweenOverride = Number.isFinite(seconds) && seconds >= 0 ? seconds : null; },
       // set records a scene update of a "value" parameter; its tween (if any) starts on the next frame.
@@ -120,6 +125,16 @@
       },
       evaluate: function (frame: any) {
         const time = Number(frame.time) || 0, dt = Number(frame.dt) || 0;
+        const poses: any = {}; // this frame's pose per node id, with a derived speed
+        const poseOf = function (id: string): any {
+          if (id in poses) return poses[id];
+          const raw = typeof frame.nodePose === "function" ? frame.nodePose(id) : null;
+          if (!raw) return poses[id] = null;
+          const before = lastPose[id];
+          let speed = Number(raw.speed);
+          if (!Number.isFinite(speed)) speed = before && dt > 0 ? Math.hypot(raw.x - before.x, raw.z - before.z) / dt : 0;
+          return poses[id] = { x: Number(raw.x) || 0, z: Number(raw.z) || 0, heading: Number(raw.heading) || 0, speed: speed };
+        };
         for (const d of decls) {
           const src = d.source || { kind: "value", value: 0 };
           let n = 0;
@@ -138,6 +153,12 @@
             const op = OPS[src.op];
             if (!op) throw new Error("elio-graph: unknown op " + src.op);
             n = op(ref(src.args[0]), src.args.length > 1 ? ref(src.args[1]) : 0);
+          } else if (src.kind === "node") {
+            if (!NODE_FIELDS[src.field]) throw new Error("elio-graph: unknown node field " + src.field);
+            const pose = poseOf(src.node in nodeMap ? nodeMap[src.node] : src.node);
+            // A missing node holds its last position and stands still.
+            n = pose ? pose[src.field] : src.field === "speed" ? 0 : (held[d.name] || 0);
+            held[d.name] = n;
           } else if (src.kind === "delta") {
             const of = String(src.of).replace(/^param:/, "");
             n = first ? 0 : (current[of] || 0) - (prev[of] || 0);
@@ -147,6 +168,7 @@
           } else throw new Error("elio-graph: unknown parameter source " + src.kind);
           current[d.name] = /\[\]$/.test(d.type) ? targets[d.name] : coerce(d.type, n);
         }
+        for (const id of Object.keys(poses)) if (poses[id]) lastPose[id] = { x: poses[id].x, z: poses[id].z };
         for (const d of decls) api.changed[d.name] = first || current[d.name] !== prev[d.name];
         for (const d of decls) prev[d.name] = current[d.name];
         first = false;
@@ -263,7 +285,7 @@
   // create builds a runner for one graph. options: module (the generated kernel set), backend, tier, graph (optional override), host.
   function create(options: any): any {
     const backend = options.backend, module = options.module, host = options.host || {};
-    const runner: any = { graph: null, backend: backend, ready: false, failed: null, disposed: false, buildCount: 0, run: run, setValue: setValue, setTween: setTween, value: value, hasParam: hasParam, params: null, exportParams: exportParams, export: exportTexture, dispose: dispose, fail: fail };
+    const runner: any = { graph: null, backend: backend, ready: false, failed: null, disposed: false, buildCount: 0, run: run, gpuTiming: gpuTiming, setValue: setValue, setNodes: setNodes, setTween: setTween, value: value, hasParam: hasParam, params: null, exportParams: exportParams, export: exportTexture, dispose: dispose, fail: fail };
     let executor: any = null, evaluator: any = null;
     const disable = function (error: any): void {
       if (runner.failed) return;
@@ -288,6 +310,9 @@
     } catch (error) { disable(error); }
 
     function hasParam(name: string): boolean { return Boolean(runner.graph && runner.graph.params.some(function (p: any) { return p.name === name; })); }
+    // gpuTiming is the graph's GPU time where the executor can measure it (WebGPU with timestamp-query), else null.
+    function gpuTiming(): any { return executor && executor.gpuTiming ? executor.gpuTiming() : null; }
+    function setNodes(map: any): void { if (evaluator) evaluator.setNodes(map); }
     function setTween(seconds: number): void { if (evaluator) evaluator.setTween(seconds); }
     // value reads a parameter as of the last frame (float64), for surfaces and CPU queries that must agree with the graph.
     function value(name: string): number { return evaluator && name in evaluator.current ? evaluator.current[name] : 0; }
@@ -303,7 +328,7 @@
       try {
         runner.ready = executor.isReady();
         if (!runner.ready) return false;
-        const f = frame || {};
+        const f = frame && !frame.nodePose && host.nodePose ? Object.assign({}, frame, { nodePose: host.nodePose }) : (frame || {});
         evaluator.evaluate(f);
         return executor.run(evaluator.current, f, evaluator.changed) !== false;
       } catch (error) { disable(error); return false; }

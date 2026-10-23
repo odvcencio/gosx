@@ -107,6 +107,48 @@
 
     function exchange(pairs: any[]): void { for (const pair of pairs) { const a = resources[pair[0]]; resources[pair[0]] = resources[pair[1]]; resources[pair[1]] = a; } }
 
+
+    // GPU time of the graph: one query set stamps the start of the first compute pass that runs and the end of the last, the two stamps are
+    // resolved into a buffer, copied into a ring of three mappable buffers, and read a frame or two later (a result is never awaited).
+    // It exists when the device offers timestamp-query and the host does not opt out with host.timing = false.
+    const RING = 3, TIME_SAMPLES = 120;
+    let timing: any = null;
+    if (host.timing !== false && device.features && device.features.has && device.features.has("timestamp-query")) {
+      try {
+        const slots: any[] = [];
+        const querySet = device.createQuerySet({ label: prefix + "time", type: "timestamp", count: 2 });
+        const resolve = device.createBuffer({ label: prefix + "time-resolve", size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+        buffers.push(resolve);
+        for (let i = 0; i < RING; i++) { const b = device.createBuffer({ label: prefix + "time-" + i, size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }); buffers.push(b); slots.push({ buffer: b, state: "free" }); }
+        timing = { querySet: querySet, resolve: resolve, slots: slots, samples: [] as number[], ms: null as any };
+      } catch (_e) { timing = null; }
+    }
+    function pollTiming(): void {
+      if (!timing) return;
+      for (const slot of timing.slots) {
+        if (slot.state !== "copied") continue;
+        slot.state = "mapping";
+        slot.buffer.mapAsync(1 /* GPUMapMode.READ */).then(function () {
+          if (state.disposed || slot.state !== "mapping") return;
+          const t = new BigUint64Array(slot.buffer.getMappedRange().slice(0, 16));
+          slot.buffer.unmap();
+          slot.state = "free";
+          if (t[1] > t[0]) {
+            timing.ms = Number(t[1] - t[0]) / 1e6;
+            timing.samples.push(timing.ms);
+            if (timing.samples.length > TIME_SAMPLES) timing.samples.shift();
+          }
+        }, function () { slot.state = "free"; });
+      }
+    }
+    function recordTiming(encoder: any): void {
+      const slot = timing.slots.find(function (x: any) { return x.state === "free"; });
+      encoder.resolveQuerySet(timing.querySet, 0, 2, timing.resolve, 0);
+      if (!slot) return; // every staging buffer is still in flight: skip this frame's copy
+      encoder.copyBufferToBuffer(timing.resolve, 0, slot.buffer, 0, 16);
+      slot.state = "copied";
+    }
+
     const lost = device.lost && device.lost.then ? device.lost : null;
     if (lost) lost.then(function () { dispose(); }, function () { dispose(); });
 
@@ -117,6 +159,7 @@
       for (const t of textures) t.destroy();
       buffers.length = textures.length = 0;
       groups.clear(); views.clear();
+      if (timing) { timing.querySet.destroy && timing.querySet.destroy(); }
     }
 
     return {
@@ -129,19 +172,27 @@
         const encoder = frame.encoder;
         if (!encoder) throw new Error("elio-graph: a webgpu frame needs frame.encoder");
         for (const r of graph.resources) if (r.feed) queue.writeBuffer(resources[r.name].buffer, 0, params[r.feed]);
-        for (const plan of plans) {
+        pollTiming();
+        const running = plans.filter(function (plan: any) { return ctx.holds(plan.pass.when, params, changed); });
+        running.forEach(function (plan: any, index: number) {
           const pass = plan.pass;
-          if (!ctx.holds(pass.when, params, changed)) continue;
           for (const b of plan.blocks) {
             if (b.constant && b.written) continue;
             queue.writeBuffer(b.buffer, 0, new Uint8Array(ctx.pack(b.layout, b.values, params, pass.name)));
             b.written = true;
           }
-          const cp = encoder.beginComputePass({ label: prefix + pass.name });
+          const descriptor: any = { label: prefix + pass.name };
+          if (timing && (index === 0 || index === running.length - 1)) {
+            descriptor.timestampWrites = { querySet: timing.querySet };
+            if (index === 0) descriptor.timestampWrites.beginningOfPassWriteIndex = 0;
+            if (index === running.length - 1) descriptor.timestampWrites.endOfPassWriteIndex = 1;
+          }
+          const cp = encoder.beginComputePass(descriptor);
           cp.setPipeline(validated(plan.p)); cp.setBindGroup(0, bindGroup(plan));
           cp.dispatchWorkgroups(pass.dispatch[0], pass.dispatch[1] || 1, pass.dispatch[2] || 1);
           cp.end();
-        }
+        });
+        if (timing && running.length) recordTiming(encoder);
         exchange(graph.frameSwaps || []);
         return true;
       },
@@ -154,6 +205,8 @@
         if (!view) { view = r.texture.createView(); views.set(r.texture, view); }
         return { texture: r.texture, view: view, width: r.w, height: r.h, levels: r.levels };
       },
+      // gpuTiming reports the graph's GPU milliseconds (null without timestamp-query): the latest sample and the last 120.
+      gpuTiming: function () { return timing ? { ms: timing.ms, samples: timing.samples.slice() } : null; },
       dispose: dispose,
     };
   }
