@@ -25,8 +25,10 @@ type sharedComponentTarget struct {
 
 // loadSharedDirComponents compiles every .gsx file in dir through the same
 // stat-keyed cache (loadCachedGSXProgram) a file-routed page renders
-// through, and returns every STRICT component any of them declares, keyed
-// by name. Only files whose package clause matches the alphabetically
+// through, and returns every STRICT component and every island any of them
+// declares, keyed by name. An island is included whatever its syntax,
+// because a call to it must reach the island renderer and not the inline
+// component path; its program is lowered from the target's own ir.Program. Only files whose package clause matches the alphabetically
 // first .gsx file's package are included, mirroring
 // transpile.LoadPackageDir's "one file selects the package" rule — the
 // check seam (strictcheck) and this render seam must resolve the identical
@@ -42,6 +44,15 @@ type sharedComponentTarget struct {
 // with no second, harder-to-invalidate cache layer sitting in front of the
 // first one.
 func loadSharedDirComponents(dir string) (map[string]sharedComponentTarget, error) {
+	return loadSharedDirComponentsExcept(dir, "", false)
+}
+
+// loadSharedDirComponentsExcept is loadSharedDirComponents with two options
+// for the sibling-file lookup. A file equal to self still selects the package
+// but contributes no components, because the caller already resolved its own
+// declarations. With tolerant set, a file that does not compile is skipped
+// instead of failing the whole directory.
+func loadSharedDirComponentsExcept(dir, self string, tolerant bool) (map[string]sharedComponentTarget, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read shared directory %s: %w", dir, err)
@@ -60,20 +71,26 @@ func loadSharedDirComponents(dir string) (map[string]sharedComponentTarget, erro
 
 	targets := make(map[string]sharedComponentTarget)
 	targetPackage := ""
-	for i, name := range names {
+	for _, name := range names {
 		path := filepath.Join(dir, name)
 		prog, err := loadCachedGSXProgram(path)
 		if err != nil {
+			if tolerant {
+				continue
+			}
 			return nil, fmt.Errorf("compile %s: %w", path, err)
 		}
-		if i == 0 {
+		if targetPackage == "" {
 			targetPackage = prog.Package
 		} else if prog.Package != targetPackage {
 			continue
 		}
+		if self != "" && filepath.Clean(path) == filepath.Clean(self) {
+			continue
+		}
 		for c := range prog.Components {
 			comp := &prog.Components[c]
-			if comp.Syntax != ir.ComponentSyntaxStrict {
+			if comp.Syntax != ir.ComponentSyntaxStrict && !comp.IsIsland {
 				continue
 			}
 			if _, exists := targets[comp.Name]; exists {
@@ -139,7 +156,11 @@ func (r *fileProgramRenderer) writeSharedComponent(b *strings.Builder, node *ir.
 	}
 	target, ok := targets[name]
 	if !ok {
-		r.err = fmt.Errorf("render shared component %s: %s declares no strict component named %s", node.Tag, rawPath, name)
+		r.err = fmt.Errorf("render shared component %s: %s declares no strict component or island named %s", node.Tag, rawPath, name)
+		return true
+	}
+	if target.comp.IsIsland {
+		r.writeTargetIsland(b, name, target, node, env)
 		return true
 	}
 	// Fail closed instead of truncating silently, the same guarantee
@@ -183,4 +204,85 @@ func (r *fileProgramRenderer) writeSharedComponent(b *strings.Builder, node *ir.
 		r.replaced = true
 	}
 	return true
+}
+
+// writeTargetIsland renders a call to an island that another .gsx file
+// declares. The call site's attributes evaluate against the caller's env, as
+// for a same-file island; the island program is lowered from the target's own
+// ir.Program, so the renderer that owns the island's body is the one bound to
+// it. Children are not accepted: an island's markup comes from its own body.
+func (r *fileProgramRenderer) writeTargetIsland(b *strings.Builder, name string, target sharedComponentTarget, node *ir.Node, env fileRenderEnv) {
+	if len(node.Children) > 0 {
+		r.err = fmt.Errorf("render island %s: an island renders no children; remove the child content", node.Tag)
+		return
+	}
+	child := newFileProgramRenderer(target.prog, fileRenderOptions{Profile: r.opts.Profile, SourceFile: target.file})
+	b.WriteString(child.renderLocalIsland(name, node, env))
+	if child.err != nil {
+		r.err = child.err
+	}
+	if child.replaced {
+		r.replaced = true
+	}
+}
+
+// writeSiblingComponent resolves a capitalized tag that the current file does
+// not declare against the other .gsx files of the same directory and package,
+// the way Go resolves a name declared in another file of one package. Only
+// strict components and islands resolve, the same set a shared (./ prefixed)
+// import reaches. It reports handled=false when no sibling declares the name,
+// so the caller's fallback (an unresolved-tag placeholder) is unchanged.
+//
+// A sibling that fails to compile is skipped here: the route or build that
+// owns that file reports its error, and a page must not start failing because
+// an unrelated neighbour is broken.
+func (r *fileProgramRenderer) writeSiblingComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) bool {
+	if strings.TrimSpace(r.opts.SourceDir) == "" || strings.Contains(node.Tag, ".") {
+		return false
+	}
+	if !r.siblingsLoaded {
+		r.siblingsLoaded = true
+		r.siblings = loadSiblingComponents(r.opts.SourceDir, r.opts.SourceFile)
+	}
+	target, ok := r.siblings[node.Tag]
+	if !ok {
+		return false
+	}
+	if target.comp.IsIsland {
+		r.writeTargetIsland(b, node.Tag, target, node, env)
+		return true
+	}
+	if len(node.Children) > 0 && !target.comp.AcceptsChildren {
+		r.err = fmt.Errorf("render component %s: %s renders no children; remove the child content or render {children} in %s's body", node.Tag, node.Tag, node.Tag)
+		return true
+	}
+	for slotName := range node.Slots {
+		if !target.comp.AcceptsSlot(slotName) {
+			r.err = fmt.Errorf("render component %s: %s declares no slot named %q; declare {%s} in its body or remove the slot=%q attribute", node.Tag, node.Tag, slotName, strictcomponent.SlotBindingName(slotName), slotName)
+			return true
+		}
+	}
+	childrenNode := gosx.RawHTML(r.renderChildren(node.Children, env))
+	slotNodes := r.renderCallSlots(node.Slots, env)
+	child := newFileProgramRenderer(target.prog, fileRenderOptions{Profile: r.opts.Profile, SourceFile: target.file, SourceDir: filepath.Dir(target.file)})
+	child.writeLocalComponentWithChildren(b, target.comp, node, env, childrenNode, slotNodes)
+	if child.err != nil {
+		r.err = child.err
+	}
+	if child.replaced {
+		r.replaced = true
+	}
+	return true
+}
+
+// loadSiblingComponents returns the strict components and islands that the
+// other .gsx files in dir declare, keyed by name. It applies the package rule
+// of loadSharedDirComponents and skips the calling file and any file that does
+// not compile.
+func loadSiblingComponents(dir, self string) map[string]sharedComponentTarget {
+	targets, err := loadSharedDirComponentsExcept(dir, self, true)
+	if err != nil {
+		return nil
+	}
+	return targets
 }
