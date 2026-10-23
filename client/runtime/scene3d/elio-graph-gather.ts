@@ -21,7 +21,7 @@
     };
   }
   function restoreState(gl: any, s: any): void {
-    gl.bindBuffer(gl.UNIFORM_BUFFER, null); gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, null);
+    gl.bindBuffer(gl.UNIFORM_BUFFER, null); gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, null); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, s.draw); gl.bindFramebuffer(gl.READ_FRAMEBUFFER, s.read);
     gl.viewport(s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3]);
     gl.useProgram(s.program); gl.bindVertexArray(s.vao); gl.activeTexture(s.active);
@@ -50,7 +50,7 @@
     const state: any = { split: false, disposed: false };
     let vertexShader: any = null;
     const resources: any = Object.create(null); // name -> resource object; frameSwaps exchange these
-    const fboCache = new Map();
+    const fboCache = new Map(), views = new Map(); // views: buffers re-laid out at another width (see viewAt)
     let seq = 0;
 
     const FORMATS: any = { rgba16float: gl.RGBA16F, rgba32float: gl.RGBA32F, r32float: gl.R32F };
@@ -103,13 +103,13 @@
         let res: any;
         if (r.kind === "buffer") {
           const h = Math.ceil(r.count / r.width);
-          res = { name: r.name, id: ++seq, w: r.width, h: h, levels: 1, tex: texture(r.width, h, gl.RGBA32F, 1, false) };
+          res = { name: r.name, id: ++seq, kind: "buffer", version: 0, w: r.width, h: h, levels: 1, tex: texture(r.width, h, gl.RGBA32F, 1, false) };
         } else {
           const levels = r.mipLevels || 1, internal = FORMATS[r.format];
           if (!internal) throw new Error("elio-graph: unsupported format " + r.format);
           // Only 16-bit formats filter without an extension; surfaces sample exported and mipmapped ones.
           const filtered = r.format === "rgba16float" && (levels > 1 || Boolean(exported[r.name]));
-          res = { name: r.name, id: ++seq, w: r.width, h: r.height, levels: levels, tex: texture(r.width, r.height, internal, levels, filtered) };
+          res = { name: r.name, id: ++seq, kind: "texture", version: 0, w: r.width, h: r.height, levels: levels, tex: texture(r.width, r.height, internal, levels, filtered) };
         }
         resources[r.name] = res;
       }
@@ -156,7 +156,7 @@
       for (const sh of shaders) gl.deleteShader(sh);
       gl.deleteVertexArray(vao);
       textures.length = fbos.length = buffers.length = 0;
-      fboCache.clear();
+      fboCache.clear(); views.clear();
     }
 
     // Per-pass plan: resolved once; resource objects are looked up by name each frame because swaps exchange them.
@@ -192,6 +192,32 @@
     build();
     } catch (error) { teardown(); throw error; } finally { restoreState(gl, saved); }
 
+    // A gather kernel indexes every buffer as an elio_width-wide texture. A buffer that a pass reads at another width than it was written (the
+    // foam kernel reads each cascade's n-wide FFT field at the foam window's width) is copied, GPU to GPU through a pixel buffer, into a
+    // texture of the pass's width; the copy is redone only when a pass has written the buffer since.
+    function viewAt(r: any, width: number): any {
+      const total = r.w * r.h;
+      if (total % width) throw new Error("elio-graph: buffer " + r.name + " of " + total + " elements cannot be viewed " + width + " wide");
+      const key = r.id + "@" + width;
+      let v = views.get(key);
+      if (!v) {
+        const pbo = gl.createBuffer();
+        buffers.push(pbo);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, total * 16, gl.STREAM_COPY); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        v = { name: r.name, w: width, h: total / width, tex: texture(width, total / width, gl.RGBA32F, 1, false), pbo: pbo, version: -1 };
+        views.set(key, v);
+      }
+      if (v.version !== r.version) {
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, targetFor([{ res: r, level: 0, location: 0 }])[0].fbo);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, v.pbo); gl.readPixels(0, 0, r.w, r.h, gl.RGBA, gl.FLOAT, 0); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, v.pbo);
+        gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, v.tex);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, v.w, v.h, gl.RGBA, gl.FLOAT, 0);
+        gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
+        v.version = r.version;
+      }
+      return v;
+    }
     function exchange(pairs: any[]): void { for (const pair of pairs) { const a = resources[pair[0]]; resources[pair[0]] = resources[pair[1]]; resources[pair[1]] = a; } }
     // feed uploads each fed parameter (a buffer parameter, such as probe points) into its resource.
     function feed(params: any): void {
@@ -207,13 +233,14 @@
       const pass = plan.pass, p = plan.p, t = pass.target;
       const outs = plan.outputs.map(function (o: any) { return { res: resources[o.binding.resource], level: o.binding.level || 0, location: o.location }; });
       const ins = plan.inputs.map(function (b: any) { return resources[b.resource]; });
+      const sampled = ins.map(function (r: any) { return r.kind === "buffer" && r.w !== t.elioWidth ? viewAt(r, t.elioWidth) : r; });
       // A pass may read level L-1 of a texture and write level L (mip passes); the same image is a feedback loop WebGL2 rejects.
       plan.inputs.forEach(function (b: any, k: number) {
         for (const o of outs) if (o.res === ins[k] && o.level === (b.level || 0)) throw new Error("elio-graph: pass " + pass.name + " reads " + o.res.name + ", which it writes");
       });
       gl.useProgram(p.handle);
       gl.uniform1ui(p.width, t.elioWidth);
-      ins.forEach(function (r: any, i: number) {
+      sampled.forEach(function (r: any, i: number) {
         gl.activeTexture(gl.TEXTURE0 + firstUnit + i); gl.bindTexture(gl.TEXTURE_2D, r.tex);
         if (p.lens[i]) gl.uniform1ui(p.lens[i], r.w * r.h);
       });
@@ -225,6 +252,7 @@
         }
         gl.bindBufferRange(gl.UNIFORM_BUFFER, b.index, b.buffer, 0, b.size);
       }
+      for (const o of outs) o.res.version++;
       gl.viewport(0, 0, t.width, t.height);
       for (const f of targetFor(outs)) { gl.bindFramebuffer(gl.FRAMEBUFFER, f.fbo); gl.drawArrays(gl.TRIANGLES, 0, 3); }
     }

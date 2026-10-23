@@ -230,7 +230,7 @@ test("glue (WebGL2): there is no probe on WebGL2; the vessel's points are record
   assert.equal(g.ocean.probe.sample(1, 1, 0, 0), null);
   assert.ok(g.frame(env, { time: 1.02 }));
   assert.equal(g.resources.fft.runner.failed, null);
-  assert.equal(g.gl.ops.filter((o) => o[0] === "readPixels").length, 0, "no readback of any kind on WebGL2");
+  assert.ok(g.gl.ops.filter((o) => o[0] === "readPixels").every((o) => o[5]), "the only readPixels calls are the foam relayout's GPU-side copies into a pixel buffer: no readback to the CPU on WebGL2");
 });
 
 // The lazy WebGL chunk is minified with property mangling that the monolith and the fresh sources do not get. The two chunks share

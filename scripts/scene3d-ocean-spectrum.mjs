@@ -9,8 +9,8 @@
 // Windows Chrome with a GPU (Linux browsers cannot run on the development host):
 //   C:\Temp\showcase-tools\node.exe scripts\scene3d-ocean-spectrum.mjs --out C:\Temp\gosx-cypress\out
 // SCENE3D_JS_DIR must hold bootstrap.js, bootstrap-feature-scene3d-webgpu.js (or -webgl.js with --backend webgl) and
-// bootstrap-feature-scene3d-ocean-fft.js (client/js after `make build-bootstrap`). On WebGL2 the GPU time comes from
-// EXT_disjoint_timer_query_webgl2: the whole frame, and the gather passes alone (the spectral scheduler's frame call).
+// bootstrap-feature-scene3d-ocean-fft.js (client/js after `make build-bootstrap`). On WebGL2 the GPU time of the whole
+// render comes from EXT_disjoint_timer_query_webgl2 (compare spectrum cases with Gerstner cases for the ocean graph's cost).
 //
 // The page is served from http://localhost (WebGPU needs a secure context). One WebGPU
 // renderer draws every case in turn, so spectrum, tier and ocean-kind changes go through
@@ -41,7 +41,6 @@ const [W, H] = arg('--size', '1280x720').split('x').map(Number);
 const frames = Number(arg('--frames', '240'));
 const only = arg('--only', '');
 const backendName = arg('--backend', 'webgpu');
-const timeMode = arg('--time', 'gather'); // WebGL2: 'gather' times the spectral passes, 'frame' the whole render (GL allows one timer query at a time)
 const tier = arg('--tier', 'high');
 if (backendName !== 'webgpu' && backendName !== 'webgl') throw new Error('--backend must be webgpu or webgl');
 const realProfile = process.env.SCENE3D_REAL_GPU_PROFILE;
@@ -78,7 +77,7 @@ for (const height of [30, 120, 300]) {
 }
 const selected = cases.filter(c => !only || c.name.includes(only));
 
-const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, timeMode, tier, foam]) => {
+const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam]) => {
   const api = window.__gosx_scene3d_api;
   const canvas = document.getElementById('c');
   let adapter = null, renderer, gl = null, timer = null;
@@ -119,11 +118,6 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       if (!bad) samples.push(ns / 1e6);
     }
   };
-  const gather = window.__gosx_scene3d_ocean_fft_gl_api; // the WebGL2 ocean glue: run() executes the graph's gather passes
-  if (webgl && timeMode === 'gather' && gather) {
-    const inner = gather.run;
-    gather.run = function () { return timed(() => inner.apply(this, arguments)); };
-  }
   const copy = document.createElement('canvas');
   copy.width = W; copy.height = H;
   const copyContext = copy.getContext('2d', { willReadFrequently: true });
@@ -134,7 +128,16 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
   for (const c of cases) {
     const camera = { x: 0, y: c.height, z: 0, rotationX: -0.045 - 0.25 * Math.min(1, c.height / 300), rotationY: 0.6, fov: 62, near: 0.5, far: 20000 };
     const ocean = Object.assign({ level: 0, extent: 8000, choppiness: 0.7, windDirection: 20, foam }, c.gerstner || {});
-    if (c.spectrum) ocean.spectrum = c.spectrum;
+    if (c.spectrum) {
+      ocean.spectrum = c.spectrum;
+      // What Go's normalization (scene/ocean_graph.go) would put in environment.ocean.graphParams for this scene; the graph's own defaults
+      // are for a different sea. Foam follows the wind: none below 5 m/s, full whitecaps from 9 m/s.
+      const t = Math.min(1, Math.max(0, (c.spectrum.windSpeed - 5) / 4)), base = 0.64 * t * t * (3 - 2 * t);
+      ocean.graphParams = { windSpeed: c.spectrum.windSpeed, fetch: c.spectrum.fetch, gamma: c.spectrum.peakEnhancement, spread: c.spectrum.spread, swell: c.spectrum.swell,
+        windDirDeg: ocean.windDirection, swellDirDeg: c.spectrum.swellDirection, seed: c.spectrum.seed, loopPeriod: 1000, lambda: ocean.choppiness, timeScale: 1, driftX: 0, driftZ: 0,
+        foamTau: 6, foamGain: 0.9, foamThreshold: base === 0 ? 0 : 1 - ocean.choppiness * (1 - base) };
+      ocean.graphTween = 0;
+    }
     let status = '', first = null;
     const gpu = [];
     const t0 = performance.now();
@@ -146,7 +149,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       time += 1 / 30;
       // Drift the camera a little so the foam window moves in whole texels, as under a ship.
       camera.x += 0.15; camera.z += 0.1;
-      status = webgl && timeMode === 'frame' ? timed(() => renderer.render(bundle, viewport, { sceneTime: time, oceanTier: tier })) : renderer.render(bundle, viewport, { sceneTime: time, oceanTier: tier });
+      status = webgl ? timed(() => renderer.render(bundle, viewport, { sceneTime: time, oceanTier: tier })) : renderer.render(bundle, viewport, { sceneTime: time, oceanTier: tier });
       drain();
       if (first === null && status === 'submitted' && String(canvas.parentNode.getAttribute('data-gosx-scene3d-ocean')).endsWith(c.spectrum ? '+spectrum' : 'surface')) first = i;
       if (webgl && i === Math.floor(frames / 2)) samples.length = 0;
@@ -164,11 +167,11 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       failed: mount.getAttribute('data-gosx-scene3d-webgpu-pipeline-failed'), fallback: mount.getAttribute('data-gosx-scene3d-ocean-fft-fallback'), meanLuma: sum / (pixels.length / 4) / 3, brightPixels: bright,
       wallMsPerFrame: (performance.now() - t0) / frames, gpuSamples: gpu.length,
       gpuMsP50: gpu.length ? gpu.slice().sort((a, b) => a - b)[Math.floor(gpu.length * 0.5)] : null,
-      gpuMsP95: gpu.length ? gpu.slice().sort((a, b) => a - b)[Math.min(gpu.length - 1, Math.floor(gpu.length * 0.95))] : null });
+      gpuMsMin: gpu.length ? Math.min(...gpu) : null, gpuMsMax: gpu.length ? Math.max(...gpu) : null, gpuMsP95: gpu.length ? gpu.slice().sort((a, b) => a - b)[Math.min(gpu.length - 1, Math.floor(gpu.length * 0.95))] : null });
     images.push({ name: c.name, url: copy.toDataURL('image/png') });
   }
   return { results: out, images, adapter };
-}, [selected, W, H, frames, webgl, timeMode, tier, Number(arg('--foam', '0.9'))]);
+}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9'))]);
 await browser.close();
 if (adapter) console.log('adapter', JSON.stringify(adapter));
 if (outDir) for (const image of images) fs.writeFileSync(path.join(outDir, image.name + '.png'), Buffer.from(image.url.split(',')[1], 'base64'));
@@ -177,6 +180,6 @@ for (const r of results) {
   const spectral = r.name.startsWith('spectrum');
   const ok = r.status === 'submitted' && !r.failed && (spectral ? /\+spectrum$/.test(r.ocean) : r.ocean === 'surface');
   if (!ok) failed = true;
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${r.name}: status ${r.status}, ocean ${r.ocean}, first spectral frame ${r.firstSubmitted}, mean luma ${r.meanLuma.toFixed(1)}, ${r.brightPixels} bright pixels, ${r.wallMsPerFrame.toFixed(2)} ms/frame wall, GPU frame ${r.gpuSamples ? 'p50 ' + r.gpuMsP50.toFixed(3) + ' / p95 ' + r.gpuMsP95.toFixed(3) + ' ms (' + r.gpuSamples + ' samples)' : 'n/a'}${r.failed ? ', pipeline failures ' + r.failed : ''}${r.fallback ? ', fft fallback ' + r.fallback : ''}`);
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${r.name}: status ${r.status}, ocean ${r.ocean}, first spectral frame ${r.firstSubmitted}, mean luma ${r.meanLuma.toFixed(1)}, ${r.brightPixels} bright pixels, ${r.wallMsPerFrame.toFixed(2)} ms/frame wall, GPU frame ${r.gpuSamples ? 'p50 ' + r.gpuMsP50.toFixed(3) + ' / p95 ' + r.gpuMsP95.toFixed(3) + ' / min ' + r.gpuMsMin.toFixed(3) + ' / max ' + r.gpuMsMax.toFixed(3) + ' ms (' + r.gpuSamples + ' samples)' : 'n/a'}${r.failed ? ', pipeline failures ' + r.failed : ''}${r.fallback ? ', fft fallback ' + r.fallback : ''}`);
 }
 process.exit(failed ? 1 : 0);

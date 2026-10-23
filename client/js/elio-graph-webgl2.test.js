@@ -239,3 +239,23 @@ test("a resource fed by a buffer parameter is uploaded from it every frame", () 
   assert.equal(uploads.length, 2);
   assert.equal(uploads[0][1], s.tex("h0"));
 });
+
+test("a buffer read at another width than it was written is copied into a view of the pass's width, and only when it changed", () => {
+  const s = setup(undefined, (g) => { const p = g.passes.find((x) => x.name === "assemble"); p.target = Object.assign({}, p.target, { elioWidth: 32 }); });
+  assert.equal(s.runner.failed, null);
+  s.step();
+  const reads = () => s.gl.ops.filter((o) => o[0] === "readPixels"), writes = () => s.gl.ops.filter((o) => o[0] === "texSubImage2D");
+  assert.equal(reads().length, 2, "fieldA and fieldB are copied");
+  assert.deepEqual(writes().map((o) => o[2] + "x" + o[3]), ["32x128", "32x128"], "same 4,096 texels, 32 per row");
+  assert.deepEqual(reads().map((o) => o[2] + "x" + o[3]), ["64x64", "64x64"]);
+  assert.ok(reads().every((o, i) => o[5] && o[5] === writes()[i][5]), "packed and unpacked through the same pixel buffer");
+  const assemble = draws(s.gl).find((d) => d.kernel === "assemble");
+  assert.equal(assemble.elioWidth, 32);
+  assert.deepEqual([assemble.inputs[0].w, assemble.inputs[0].h, assemble.inputs[1].w], [32, 128, 32], "the kernel samples the views");
+  assert.notEqual(assemble.inputs[0], s.tex("a0"));
+  s.step();
+  assert.equal(reads().length, 3, "frame 2: the FFT rewrote fieldA, nothing rewrote fieldB (evolve waits for a parameter change)");
+  for (const target of [GLC.PIXEL_PACK_BUFFER, GLC.PIXEL_UNPACK_BUFFER]) assert.equal(s.gl.buffers[target], null);
+  s.runner.dispose();
+  for (const kind of Object.keys(s.gl.created)) assert.equal(s.gl.live(kind).length, 0, kind + " leaked");
+});
