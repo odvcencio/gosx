@@ -2,6 +2,7 @@ package scene
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -50,5 +51,54 @@ func TestShaderLayoutKeepsVertexTextureDescriptorKeys(t *testing.T) {
 	}
 	if len(wire.Materials) != 1 || !reflect.DeepEqual(wire.Materials[0].ShaderLayout, layout) {
 		t.Fatalf("shaderLayout changed on the wire:\n got %#v\nwant %#v", wire.Materials, layout)
+	}
+}
+
+// Exercise the authored material compiler, its cache and canonical wire path.
+// A hand-built layout cannot prove that the pinned compiler emits the contract.
+func TestCompiledSelenaVertexTextureLayoutReachesSceneIR(t *testing.T) {
+	source, err := os.ReadFile("testdata/selena_vertex_texture.sel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"compile", "cache-hit"} {
+		t.Run(phase, func(t *testing.T) {
+			material, _, err := CompileSelenaMaterial(source, SelenaMaterialOptions{
+				Uniforms: map[string]any{"heightMap": "/height.png", "tint": "/tint.png"},
+			})
+			if err != nil {
+				t.Fatalf("authored vertex-texture material: %v", err)
+			}
+			lowered := (Props{Graph: NewGraph(Mesh{
+				ID: "displaced", Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1}, Material: material,
+			})}).CanonicalIR()
+			encoded, err := json.Marshal(lowered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire struct {
+				Materials []struct {
+					ShaderLayout struct {
+						Textures []struct {
+							Name        string `json:"name"`
+							VertexStage bool   `json:"vertexStage"`
+						} `json:"textures"`
+						Requires struct {
+							Units int `json:"glVertexTextureUnits"`
+						} `json:"requires"`
+					} `json:"shaderLayout"`
+				} `json:"materials"`
+			}
+			if err := json.Unmarshal(encoded, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if len(wire.Materials) != 1 {
+				t.Fatalf("materials=%d, want1", len(wire.Materials))
+			}
+			layout := wire.Materials[0].ShaderLayout
+			if len(layout.Textures) != 2 || layout.Textures[0].Name != "heightMap" || !layout.Textures[0].VertexStage || layout.Textures[1].Name != "tint" || layout.Textures[1].VertexStage || layout.Requires.Units != 1 {
+				t.Fatalf("compiled descriptor lost vertex-stage contract: %+v", layout)
+			}
+		})
 	}
 }

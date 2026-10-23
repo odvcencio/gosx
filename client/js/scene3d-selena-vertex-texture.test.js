@@ -32,45 +32,49 @@ test("compiled Selena descriptor marks only the vertex-sampled texture vertexSta
   assert.equal(fixture.layout.requires.glVertexTextureUnits, 1);
 });
 
-test("WebGPU Selena bind group layout shows vertex textures to the vertex stage", async () => {
-  const harness = await createBoardWebGPUHarness({ fresh: true, fakeDeviceOptions: { validateBindings: true } });
-  const api = harness.env.context.__gosx_scene3d_api;
-  const state = api.createSceneState({
-    scene: {
-      materials: [{
-        name: "height-displace",
-        kind: "custom",
-        shaderBackend: "selena",
-        customVertex: fixture.glslVertex,
-        customFragment: fixture.glslFragment,
-        customVertexWGSL: fixture.wgsl,
-        customFragmentWGSL: fixture.wgsl,
-        shaderLayout: fixture.layout,
-        customUniforms: { heightMap: "/height.png", tint: "/tint.png", scale: 0.25, lod: 0 },
-      }],
-      objects: [{ id: "plane", kind: "box", width: 1, height: 1, depth: 1, x: 0, y: 0, z: 0, material: "height-displace", wireframe: false }],
-    },
-  }, { tier: "full" });
-  const bundle = api.createSceneRenderBundle(
-    64, 64, "#000000",
-    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
-    api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], [], 0, false, { retainedGeometry: true },
-  );
-  for (let frame = 0; frame < 3; frame++) {
-    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 16, active: true });
-    await flushAsyncWork();
-  }
+for (const stageConstants of [true, false]) {
+  test(`WebGPU Selena vertex texture visibility with${stageConstants ? "" : "out"} stage constants`, async () => {
+    const harness = await createBoardWebGPUHarness({ fresh: true, fakeDeviceOptions: { validateBindings: true } });
+    if (!stageConstants) delete harness.env.context.GPUShaderStage;
+    const api = harness.env.context.__gosx_scene3d_api;
+    const state = api.createSceneState({
+      scene: {
+        materials: [{
+          name: "height-displace",
+          kind: "custom",
+          shaderBackend: "selena",
+          customVertex: fixture.glslVertex,
+          customFragment: fixture.glslFragment,
+          customVertexWGSL: fixture.wgsl,
+          customFragmentWGSL: fixture.wgsl,
+          shaderLayout: fixture.layout,
+          customUniforms: { heightMap: "/height.png", tint: "/tint.png", scale: 0.25, lod: 0 },
+        }],
+        objects: [{ id: "plane", kind: "box", width: 1, height: 1, depth: 1, x: 0, y: 0, z: 0, material: "height-displace", wireframe: false }],
+      },
+    }, { tier: "full" });
+    const bundle = api.createSceneRenderBundle(
+      64, 64, "#000000",
+      { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+      api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], [], 0, false, { retainedGeometry: true },
+    );
+    for (let frame = 0; frame < 3; frame++) {
+      harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 16, active: true });
+      await flushAsyncWork();
+    }
 
-  const pipeline = harness.fake.state.renderPipelines.find((p) => p.desc && String(p.desc.label || "").indexOf("gosx-selena-") === 0);
-  assert.ok(pipeline, "expected a compiled gosx-selena-* render pipeline");
-  const entries = pipeline.desc.layout.desc.bindGroupLayouts[0].desc.entries;
-  const at = (binding) => entries.find((e) => e.binding === binding);
-  // heightMap texture(1)+sampler(2): vertex-visible. tint texture(3)+sampler(4): fragment only.
-  assert.equal(at(1).visibility, VERTEX | FRAGMENT, "heightMap texture");
-  assert.equal(at(2).visibility, VERTEX | FRAGMENT, "heightMap sampler");
-  assert.equal(at(3).visibility, FRAGMENT, "tint texture");
-  assert.equal(at(4).visibility, FRAGMENT, "tint sampler");
-});
+    const pipeline = harness.fake.state.renderPipelines.find((p) => p.desc && String(p.desc.label || "").indexOf("gosx-selena-") === 0);
+    assert.ok(pipeline, "expected a compiled gosx-selena-* render pipeline");
+    const entries = pipeline.desc.layout.desc.bindGroupLayouts[0].desc.entries;
+    const at = (binding) => entries.find((e) => e.binding === binding);
+    // heightMap texture(1)+sampler(2): vertex-visible. tint texture(3)+sampler(4): fragment only.
+    assert.equal(at(1).visibility, VERTEX | FRAGMENT, "heightMap texture");
+    assert.equal(at(2).visibility, VERTEX | FRAGMENT, "heightMap sampler");
+    assert.equal(at(3).visibility, FRAGMENT, "tint texture");
+    assert.equal(at(4).visibility, FRAGMENT, "tint sampler");
+  });
+
+}
 
 // Renders one Selena mesh with the vertex-texture fixture on a fake WebGL2
 // context that reports `vertexUnits` for MAX_VERTEX_TEXTURE_IMAGE_UNITS, and

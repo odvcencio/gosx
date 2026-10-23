@@ -103,6 +103,10 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // 1,775 raw / 464 gzip / 596 Brotli bytes to the monolith and
 // 1,765 / 481 / 171 to Scene3D core. Only exhausted targets below move to their
 // measured minimum; warning/error allowances and route fractions stay fixed.
+// Authored vertex texture sampling and the WebGL device gate add 74 raw /
+// 264 gzip / 316 Brotli bytes to the monolith. Paired stage selection reduces
+// the combined lazy renderer Brotli by 50 bytes. Only exhausted targets move
+// to exact measured minima; allowances and route fractions remain fixed.
 const budgets = [
   // Optional document views; no new payload on pages without the binding.
   { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
@@ -883,9 +887,8 @@ const budgets = [
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     // Portable U8 KTX2 upload grows the combined bootstrap by 557 measured
     // raw bytes; keep the existing 65,536-byte allowance fixed.
-    // Selena vertex textures (vertex-stage visibility and the WebGL vertex texture unit gate) add 232 raw, 165 gzip and 148 Brotli measured bytes; only the three targets move.
-    file: "bootstrap.js", raw: 1978853, gzip: 552993,
-    brotli: 451349 },
+    file: "bootstrap.js", raw: 1978695, gzip: 553092,
+    brotli: 451517 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1648,9 +1651,9 @@ const budgets = [
     // Merged WebGPU sources measure 118,032 gzip bytes; raise only this target by 1,411 B under the unchanged 5% allowance.
     // Explicit failed-texture retry adds 74 gzip bytes to this chunk; retain
     // its other targets and the governed allowance.
-    raw: 466856, gzip: 123354,
+    raw: 466708, gzip: 123303,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
-    brotli: 104508 },
+    brotli: 104437 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -2153,13 +2156,12 @@ const routeBudgets = [
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     // The same two-backend retry adds 74 gzip bytes to this route after the
     // cache-hit lookup reduction; retain the 16,384 B cap.
-    // Selena vertex textures add 148 raw, 64 gzip and 71 Brotli measured bytes to this route; only the three targets move.
-    raw: 1438165,
-    gzip: 399444,
+    raw: 1438017,
+    gzip: 399394,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    brotli: 342111,
+    brotli: 342040,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2357,7 +2359,7 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
-    raw: 1244894,
+    raw: 1244890,
     gzip: 357200,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
@@ -2556,12 +2558,12 @@ const routeBudgets = [
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
     // WebGPU detail lifecycle adds 1,086 raw, 314 gzip and 280 Brotli bytes.
     // Raise only breached targets; keep shared governed allowances fixed.
-    raw: 1731791,
-    gzip: 486394,
+    raw: 1731628,
+    gzip: 486344,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 417774,
+    brotli: 417696,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2729,11 +2731,11 @@ const routeBudgets = [
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // The same WebGPU chunk adds 74 gzip bytes to this route; retain its
     // other targets and the governed allowance.
-    raw: 1282688,
-    gzip: 355744,
+    raw: 1282541,
+    gzip: 355694,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
-    brotli: 303479,
+    brotli: 303408,
   },
 
 ];

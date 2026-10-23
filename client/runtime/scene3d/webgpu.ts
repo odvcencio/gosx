@@ -8943,14 +8943,18 @@
         // entry; every other texture (the overwhelming majority) keeps the
         // existing "2d" default.
         var texDimension = textures[i] && textures[i].dimension === "cube" ? "cube" : "2d";
+        // Resolve stage visibility once for the paired texture/sampler entries.
+        var textureVisibility = textures[i] && textures[i].vertexStage === true
+          ? visibility
+          : (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2);
         entries.push({
           binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? (textures[i] && textures[i].vertexStage === true ? GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT : GPUShaderStage.FRAGMENT) : 2, // vertexStage: vertex() samples it
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
           texture: { sampleType: "float", viewDimension: texDimension },
         });
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? (textures[i] && textures[i].vertexStage === true ? GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT : GPUShaderStage.FRAGMENT) : 2, // vertexStage: vertex() samples it
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
           sampler: { type: "filtering" },
         });
       }
