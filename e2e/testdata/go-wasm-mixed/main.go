@@ -47,12 +47,12 @@ func main() {
 			ctx.Engine(engine.Config{
 				Name: "GoWASMFrameFixture", Kind: engine.KindSurface,
 				Runtime: engine.RuntimeGoWASM, WASMPath: "__ENGINE_WASM_PATH__",
-			}),
+			}, gosx.El("div", gosx.Text("Main frame loop"))),
 			ctx.Engine(engine.Config{
 				Name: "GoWASMFrameWorkerFixture", Kind: engine.KindWorker,
 				Runtime: engine.RuntimeGoWASM, WASMPath: "__ENGINE_WASM_PATH__",
 				Thread: engine.ThreadWorker, Worker: engine.WorkerRequired,
-			}),
+			}, gosx.El("div", gosx.Text("Worker frame loop"))),
 		)
 	})
 	port := os.Getenv("PORT")
