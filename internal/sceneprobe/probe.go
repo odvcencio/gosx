@@ -165,11 +165,15 @@ type Probe struct {
 		EnvMap string
 		IBL    struct{ Radiance, Irradiance, BRDFLUT Texture }
 	}
-	Walk                            map[string]json.RawMessage
-	Vessel                          *struct{ NodeID string }
-	Poster                          string
-	PosterWidth, PosterHeight       float64
-	PosterAlt                       string
+	Walk                      map[string]json.RawMessage
+	Vessel                    *struct{ NodeID string }
+	Poster                    string
+	PosterWidth, PosterHeight float64
+	PosterAlt                 string
+	// Defer is the author's deferred-mount request; nil when absent.
+	Defer *DeferProbe
+	// DeferVariants are media-query alternatives of a deferred scene's props.
+	DeferVariants                   []DeferVariantProbe
 	Err                             error `json:"-"`
 	ChunkErr, PreloadErr, PosterErr error `json:"-"`
 }
@@ -255,4 +259,20 @@ func (p *Presence) UnmarshalJSON(raw []byte) error {
 	p.NonNull = !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 	p.Truthy = TruthyJSON(raw)
 	return nil
+}
+
+// DeferProbe mirrors scene.Defer without importing the scene package.
+type DeferProbe struct {
+	Until     string `json:"until"`
+	TimeoutMS int    `json:"timeoutMs"`
+	DelayMS   int    `json:"delayMs"`
+	Inline    bool   `json:"inline"`
+	Public    bool   `json:"public"`
+}
+
+// DeferVariantProbe is one media-query alternative; Props is the variant's
+// complete props JSON.
+type DeferVariantProbe struct {
+	Media string
+	Props json.RawMessage
 }

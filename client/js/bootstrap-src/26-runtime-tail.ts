@@ -216,7 +216,7 @@
       names.push("engines");
       // Check if any engine is GoSXScene3D
       for (var i = 0; i < manifest.engines.length; i++) {
-        if (manifest.engines[i].component === "GoSXScene3D") {
+        if (manifest.engines[i].component === "GoSXScene3D" && !manifest.engines[i].defer) {
           names.push("scene3d");
           break;
         }

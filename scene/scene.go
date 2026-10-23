@@ -212,6 +212,8 @@ type Props struct {
 	ModelPreparation *bool `json:"modelPreparation,omitempty"`
 	// RenderBeforeModels lets the scene draw the first frame without waiting for models; models appear when loaded.
 	RenderBeforeModels *bool `json:"renderBeforeModels,omitempty"`
+	// Defer mounts the scene after first paint and idle from a cacheable URL.
+	Defer *Defer `json:"defer,omitempty"`
 	// FramePacing selects the render-loop pacing policy.
 	//
 	// The only recognized value is "vsync-divisor". The client measures
@@ -2038,6 +2040,19 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
 	setBool(out, "renderBeforeModels", p.RenderBeforeModels)
+	if p.Defer != nil {
+		out["defer"] = p.Defer
+		var variants []map[string]any
+		for _, v := range p.Defer.Variants {
+			if v.Props == nil || strings.TrimSpace(v.Media) == "" {
+				continue
+			}
+			variants = append(variants, map[string]any{"media": v.Media, "props": v.Props.RawPropsJSON()})
+		}
+		if len(variants) > 0 {
+			out["deferVariants"] = variants
+		}
+	}
 	setBool(out, "modelPreparation", p.ModelPreparation)
 	setString(out, "framePacing", p.FramePacing)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)

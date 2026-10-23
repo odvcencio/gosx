@@ -194,6 +194,10 @@ type EngineEntry struct {
 
 	// Props is the JSON-serialized props snapshot.
 	Props json.RawMessage `json:"props"`
+	// PropsRef is the URL of the props when they are not inline (deferred scenes).
+	PropsRef string `json:"propsRef,omitempty"`
+	// Defer schedules the mount after first paint and idle.
+	Defer *EngineDefer `json:"defer,omitempty"`
 
 	// Capabilities declares what browser APIs the engine can use.
 	Capabilities []string `json:"capabilities,omitempty"`

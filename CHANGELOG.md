@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Mount a Scene3D after first paint and idle with `scene.Props.Defer`. The page
+  paints the mount's poster or fallback first; the server keeps the props out of
+  the page at `/gosx/scene3d/<hash>.json` (immutable, content-addressed) and the
+  browser downloads no scene chunk, props or model until two animation frames and
+  an idle callback have passed. `Defer.Variants` picks another snapshot by media
+  query. Three new engine capabilities gate a scene before any download:
+  `hardware-gpu`, `full-motion` and `full-data`; a failed gate keeps the poster
+  and publishes the result. A deferred or gated scene, a failed gate and the
+  opt-in `RequireFeature("renderer-probe")` chunk publish the renderer the
+  browser uses (`webgpu`, `webgl2`, `canvas2d`, `none`) on
+  `<html data-gosx-renderer>`, the `$gosx.renderer` signal and the
+  `gosx:renderer` event. Selective pages now emit
+  `<script defer data-gosx-script="feature-engines|hubs|controllers|islands">`
+  tags instead of preload links, so an app writes no runtime `<script>` tag.
+  The scheduler, the gates and the publisher are the new
+  bootstrap-feature-scene3d-defer.js (7,034 raw, 2,762 gzip, 2,446 Brotli),
+  which loads only on pages with a deferred or gated scene. Pages without one
+  change by under 25 raw bytes (two one-line hooks). The new
+  bootstrap-feature-renderer-probe.js is 953 raw (476 gzip, 424 Brotli) and
+  loads
+  only on pages that require it. Props leave the page only for a scene marked
+  `Defer.Public`; otherwise they stay inline with the page's cache policy. With
+  `App.SetSceneEntrySecret` (or `GOSX_SCENE_ENTRY_SECRET`) a props URL carries
+  its page path and an HMAC, so a server that never stored the props renders the
+  path again as an anonymous visitor (at most four at once, otherwise a 503) and
+  serves them when the hash matches. Stored props carry the base path, and
+  `gosx export` keeps deferred props inline in each page. See
+  docs/scene3d-performance.
+
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,
   schema-checked ObjectIR equality proofs, including embedded model records.
   Transform and interaction updates

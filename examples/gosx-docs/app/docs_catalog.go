@@ -217,10 +217,10 @@ var docsCatalog = []DocSection{
 			{
 				Title:       "Scene3D performance",
 				Href:        "/docs/scene3d-performance",
-				Description: "Automatic scene preloads, parallel shaders, and phone canvas resolution limits.",
+				Description: "Automatic scene preloads, deferred scenes, capability gates, parallel shaders, and phone canvas resolution limits.",
 				Section:     "visual",
 				Source:      "examples/gosx-docs/app/docs/scene3d-performance/page.gsx",
-				Keywords:    []string{"scene3d", "performance", "preload", "webgl", "mobile"},
+				Keywords:    []string{"scene3d", "performance", "preload", "webgl", "mobile", "defer", "capability gates", "renderer"},
 			},
 			{
 				Title:       "Debugging Scene3D",

@@ -44,6 +44,8 @@ import (
 type Renderer struct {
 	fixturePreview                        bool
 	basePath                              string
+	route                                 string
+	sceneSecret                           []byte
 	manifest                              *hydrate.Manifest
 	counter                               int
 	bundleID                              string
@@ -1185,6 +1187,14 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 	}
 	manifest := *r.manifest
 	manifest.Features = r.explicitFeatures()
+	manifest.Engines = append([]hydrate.EngineEntry(nil), r.manifest.Engines...)
+	for i := range manifest.Engines {
+		if d := manifest.Engines[i].Defer; d != nil && strings.EqualFold(manifest.Engines[i].Component, "GoSXScene3D") {
+			copyD := *d
+			copyD.Preloads = r.scene3DEntryPreloads(&manifest.Engines[i])
+			manifest.Engines[i].Defer = &copyD
+		}
+	}
 	manifest.Preview = r.clientRuntimePlan().Mode == "preview"
 	if len(r.manifest.Bundles) > 0 {
 		manifest.Bundles = make(map[string]hydrate.BundleRef, len(r.manifest.Bundles))
@@ -1329,6 +1339,25 @@ func (r *Renderer) requiredFeatureNames() []string {
 // SetBasePath selects the public prefix for client manifest URLs.
 func (r *Renderer) SetBasePath(prefix string) { r.basePath = prefix }
 
+// SetRoute names the request path (no query, no base path) that is
+// rendering this page. A deferred scene's props URL carries it, so a server
+// that never stored the props can render the route again and rebuild them.
+func (r *Renderer) SetRoute(path string) { r.route = path }
+
+// SetSceneEntrySecret sets the key that signs the route in a props URL. Without
+// it a props URL names no route and a store miss cannot be rebuilt.
+func (r *Renderer) SetSceneEntrySecret(secret []byte) { r.sceneSecret = secret }
+
+// sceneEntryRef stores body and returns the URL the page names it by.
+func (r *Renderer) sceneEntryRef(store *SceneEntryStore, body []byte) string {
+	hash := store.Put(body)
+	ref := SceneEntryPath(hash)
+	if route := r.route; len(r.sceneSecret) > 0 && ValidSceneEntryRoute(route) {
+		ref += "?r=" + neturl.QueryEscape(route) + "&s=" + SignSceneEntry(r.sceneSecret, route, hash)
+	}
+	return ref
+}
+
 // ManifestJSON returns the manifest as a JSON string.
 func (r *Renderer) ManifestJSON() (string, error) {
 	manifest := r.clientManifest()
@@ -1424,11 +1453,41 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	}
 	bootstrapPath := r.selectedBootstrapPath()
 	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s"`, plan.Mode))
-	if r.hasSceneEngines() && bootstrapPath == r.bootstrapPath {
+	eager := r.scene3DHasEagerEngine()
+	scene3dPath := r.selectedBootstrapFeaturePath("scene3d")
+	if r.hasSceneEngines() && (bootstrapPath == r.bootstrapPath || !eager) {
+		if scene3dPath != "" && !eager {
+			// A deferred or gated page withholds the chunk tag; the runtime
+			// inserts it after the schedule and the gates pass.
+			b.WriteString(` data-gosx-scene3d-url="` + html.EscapeString(scene3dPath) + `"`)
+			integrity := r.compatRuntimeIntegrity(scene3dPath)
+			if integrity == "" {
+				integrity = sriIntegrity(r.compatRuntimeHash(scene3dPath))
+			}
+			if integrity != "" {
+				b.WriteString(` data-gosx-scene3d-integrity="` + html.EscapeString(integrity) + `"`)
+			}
+		}
 		r.writeScene3DChunkURLs(&b)
 	}
 	b.WriteString(fmt.Sprintf(` src="%s"%s></script>`, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
-	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+	// Selective pages: declare the feature chunks the page needs as deferred
+	// script tags. The preload scanner starts them at parse time and the loader
+	// finds their factories registered when bootstrapPage runs, so the
+	// bootstrap-then-insert round trip disappears. Each chunk registers into the
+	// shared window.__gosx_bootstrap_features object when it runs before the
+	// runtime (see 26b-feature-engines-prefix.ts), so order is not load-bearing.
+	if plan.Selective {
+		for _, name := range []string{"islands", "engines", "hubs", "controllers"} {
+			path := r.selectedBootstrapFeaturePath(name)
+			if strings.TrimSpace(path) == "" {
+				continue
+			}
+			b.WriteByte('\n')
+			b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="feature-%s" src="%s"%s></script>`, name, html.EscapeString(path), r.runtimeScriptAttrs(path, nonce)))
+		}
+	}
+	if scene3dPath != "" && eager {
 		// The strict hydrate decoder is not part of the initial Scene3D route.
 		// Emit it only for a shared-runtime Scene3D program, ordered before the
 		// main deferred scene bundle so the factory observes its published API.
@@ -1553,10 +1612,49 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		}
 	}
 
+	deferMode := ""
 	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
 		entry := &r.manifest.Engines[len(r.manifest.Engines)-1]
 		entry.Scene3DProbe = cfg.Scene3DProbe
 		cfg.Scene3DProbe = sceneProbe(entry)
+		if d := cfg.Scene3DProbe.Defer; d != nil {
+			deferMode = "idle"
+			if strings.EqualFold(strings.TrimSpace(d.Until), "load") {
+				deferMode = "load"
+			}
+			entry.Defer = &hydrate.EngineDefer{Until: deferMode, TimeoutMS: d.TimeoutMS, DelayMS: d.DelayMS}
+			store := DefaultSceneEntryStore()
+			variants := cfg.Scene3DProbe.DeferVariants
+			if store != nil && d.Public && !d.Inline && len(entry.Props) > 0 {
+				// The stored bytes are served as they are, so they carry the
+				// base path the manifest would otherwise add.
+				base := hydrate.EnginePropsWithBasePath(r.basePath, *entry)
+				if len(variants) > 0 {
+					base = withoutDeferVariants(base)
+					for _, v := range variants {
+						if len(v.Props) > 0 && strings.TrimSpace(v.Media) != "" {
+							entry.Defer.Variants = append(entry.Defer.Variants, hydrate.EngineDeferVariant{Media: v.Media, PropsRef: r.sceneEntryRef(store, hydrate.EnginePropsWithBasePath(r.basePath, hydrate.EngineEntry{Component: entry.Component, Kind: entry.Kind, Props: v.Props}))})
+						}
+					}
+				}
+				entry.PropsRef = r.sceneEntryRef(store, base)
+				entry.Props = json.RawMessage("null")
+			} else if len(variants) > 0 {
+				// Inline props carry no variants: the runtime has no URL to switch to.
+				entry.Props = withoutDeferVariants(entry.Props)
+			}
+		} else if scene3DHasEnvironmentGate(entry.RequiredCapabilities) {
+			// A gated scene runs through the same scheduler with no wait: the
+			// runtime checks the gates before it downloads any scene byte.
+			entry.Defer = &hydrate.EngineDefer{Until: "now"}
+		}
+		if entry.Defer != nil {
+			// The scheduler, probes and renderer publisher are their own chunk;
+			// only pages with such a scene load it.
+			if err := r.manifest.RequireFeature("scene3d-defer"); err != nil {
+				return renderEngineError(err)
+			}
+		}
 	}
 
 	if !engine.KindNeedsMount(cfg.Kind) {
@@ -1578,6 +1676,9 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	poster, hasPoster := scenePosterFromEngine(cfg)
 	if hasPoster {
 		attrs = append(attrs, gosx.Attr("data-gosx-scene3d-poster", poster.Poster))
+	}
+	if deferMode != "" {
+		attrs = append(attrs, gosx.Attr("data-gosx-scene3d-defer", deferMode))
 	}
 	mountStyle := ""
 	// mountNames iterates in sorted order (gosx#204, mirroring gosx#188): Go's
@@ -2213,6 +2314,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 		// server-rendered as <script> tags, so preloading them still
 		// starts the fetch earlier than the dynamic loader otherwise would.
 		emittedScriptSrcs := r.bootstrapScriptSrcs()
+		scene3dChunk := r.selectedBootstrapFeaturePath("scene3d")
 		for _, path := range []string{
 			r.selectedBootstrapFeaturePath("engines"),
 			r.selectedBootstrapFeaturePath("hubs"),
@@ -2220,7 +2322,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			r.selectedBootstrapFeaturePath("islands"),
 			r.selectedBootstrapFeaturePath("scene3d"),
 		} {
-			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
+			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] || (path == scene3dChunk && !r.scene3DHasEagerEngine()) {
 				continue
 			}
 			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
@@ -2310,8 +2412,15 @@ func (r *Renderer) bootstrapScriptSrcs() map[string]bool {
 	if bootstrapPath := r.selectedBootstrapPath(); bootstrapPath != "" {
 		srcs[bootstrapPath] = true
 	}
-	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" && r.scene3DHasEagerEngine() {
 		srcs[scene3dPath] = true
+	}
+	if plan.Selective {
+		for _, name := range []string{"islands", "engines", "hubs", "controllers"} {
+			if path := r.selectedBootstrapFeaturePath(name); path != "" {
+				srcs[path] = true
+			}
+		}
 	}
 	return srcs
 }
@@ -2695,7 +2804,7 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
 			continue
 		}
-		if len(entry.Props) == 0 {
+		if len(entry.Props) == 0 && entry.Scene3DProbe == nil {
 			continue
 		}
 		probe := sceneProbe(entry)
@@ -2788,6 +2897,54 @@ func (r *Renderer) scene3DNeedsWalkChunk() bool {
 		}
 		props := sceneProbe(entry)
 		if props.Walk != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutDeferVariants drops the top-level deferVariants key from scene props.
+// Only the top level is decoded; every other value stays a raw message.
+func withoutDeferVariants(props json.RawMessage) json.RawMessage {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(props, &top) != nil {
+		return props
+	}
+	delete(top, "deferVariants")
+	out, err := json.Marshal(top)
+	if err != nil {
+		return props
+	}
+	return out
+}
+
+// scene3DEnvironmentGates are the capabilities the browser can only answer
+// at run time. A scene that requires one must not download its chunk before
+// the answer, so the server never emits its chunk tag or preloads eagerly.
+var scene3DEnvironmentGates = map[string]bool{
+	string(engine.CapHardwareGPU): true, string(engine.CapFullMotion): true, string(engine.CapFullData): true,
+}
+
+// scene3DLoadsEagerly reports whether an entry's scene chunk may start at
+// parse time: not deferred and no environment gate.
+func scene3DLoadsEagerly(entry *hydrate.EngineEntry) bool {
+	return entry.Defer == nil && !scene3DHasEnvironmentGate(entry.RequiredCapabilities)
+}
+
+func scene3DHasEnvironmentGate(names []string) bool {
+	for _, name := range names {
+		if scene3DEnvironmentGates[strings.ToLower(strings.TrimSpace(name))] {
+			return true
+		}
+	}
+	return false
+}
+
+// scene3DHasEagerEngine reports whether any Scene3D on the page loads eagerly.
+func (r *Renderer) scene3DHasEagerEngine() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && scene3DLoadsEagerly(entry) {
 			return true
 		}
 	}

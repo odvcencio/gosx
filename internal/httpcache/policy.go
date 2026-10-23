@@ -19,7 +19,10 @@ type policyKey struct{}
 // Only framework handlers serving session-independent bytes may mark an asset.
 type Policy struct {
 	immutableAsset bool
-	contentType    string
+	// contentAddressedJSON admits application/json for a handler that serves
+	// session-independent JSON under a URL derived from the body's hash.
+	contentAddressedJSON bool
+	contentType          string
 }
 
 func WithPolicy(r *http.Request) (*http.Request, *Policy) {
@@ -42,6 +45,27 @@ func MarkImmutableAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", Immutable)
 }
 
+// MarkImmutableContentAddressedJSON classifies a JSON body served under a URL
+// that is the hash of that body, such as a deferred Scene3D props snapshot.
+// Only handlers whose bytes are independent of the session may call it.
+func MarkImmutableContentAddressedJSON(w http.ResponseWriter, r *http.Request) {
+	if policy, ok := r.Context().Value(policyKey{}).(*Policy); ok {
+		policy.immutableAsset = true
+		policy.contentAddressedJSON = true
+		policy.contentType = w.Header().Get("Content-Type")
+	}
+	if disallowsSharedCache(w.Header()) || !jsonContentType(w.Header().Get("Content-Type")) {
+		w.Header().Set("Cache-Control", Private)
+		return
+	}
+	w.Header().Set("Cache-Control", Immutable)
+}
+
+func jsonContentType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && mediaType == "application/json"
+}
+
 func (p *Policy) IsImmutableAsset() bool {
 	return p != nil && p.immutableAsset
 }
@@ -62,7 +86,7 @@ func (p *Policy) AllowsImmutable(headers http.Header, status int) bool {
 		// net/http removes representation headers on a 304 response.
 		contentType = p.contentType
 	}
-	return assetContentType(contentType)
+	return assetContentType(contentType) || p.contentAddressedJSON && jsonContentType(contentType)
 }
 
 func disallowsSharedCache(headers http.Header) bool {

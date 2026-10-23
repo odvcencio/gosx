@@ -99,12 +99,24 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // exhausted target (monolith, WebGL Brotli, WebGPU chunk, and the four Scene3D
 // route totals) moves to the smallest value that passes under the unchanged
 // allowance policy; the larger of the two sides' targets was the starting point.
+// Deferred Scene3D, capability gates and the renderer publisher live in the
+// scene3d-defer chunk, which loads only for a page with such a scene. The
+// shared bundles carry two one-line hooks (the engines chunk skips deferred
+// entries; the feature loader leaves their scene chunk to the defer chunk):
+// bootstrap.js +18 raw / +21 gzip, runtime +21 / +4, engines +18 / +5. Only the
+// exhausted targets move, by the measured excess; allowances stay fixed.
 const budgets = [
   // Optional document views; no new payload on pages without the binding.
   { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
   // Netplay's browser binding loads only for a page that calls RequireFeature("netplay");
   // no existing bundle changed size (measured 4353 raw / 1772 gzip / 1639 Brotli).
   { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
+  // Deferred and gated Scene3D (schedule, environment gates, renderer publisher) loads only for
+  // a page with such a scene. Measured 7034 raw / 2762 gzip / 2446 brotli bytes.
+  { file: "bootstrap-feature-scene3d-defer.js", raw: 7050, gzip: 2800, brotli: 2500 },
+  // The renderer probe loads only for RequireFeature("renderer-probe"); it borrows the
+  // scene3d-defer chunk's gates and publisher. Measured 953 raw / 476 gzip / 424 brotli bytes.
+  { file: "bootstrap-feature-renderer-probe.js", raw: 1000, gzip: 500, brotli: 450 },
   // The engine-worker host loads only for a page with a Thread: worker engine, so no other
   // bundle or route changed. It had no entry before. Call watchdog, status signal, worker
   // policy, view acknowledgements and vessel forwarding grew it from 28462 / 9351 / 8682 to
@@ -877,7 +889,7 @@ const budgets = [
     // 166 gzip and 111 Brotli bytes after the cache-hit lookup reduction.
     // Retain the governed allowances and all other targets.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
-    file: "bootstrap.js", raw: 1970890, gzip: 550495,
+    file: "bootstrap.js", raw: 1970908, gzip: 550516,
     brotli: 449670 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
@@ -1958,7 +1970,7 @@ const routeBudgets = [
     // passing value; compressed targets and the governed allowance stay fixed.
     // The engine worker thread hook adds 246 raw bytes to the engines chunk
     // (measured 308,317 raw, 78,760 Brotli); only the exhausted raw and Brotli minimums move.
-    raw: 293646,
+    raw: 293673,
     gzip: 83400,
     brotli: 75016,
     maxMonolithFraction: 0.25,
@@ -2144,8 +2156,8 @@ const routeBudgets = [
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     // The same two-backend retry adds 74 gzip bytes to this route after the
     // cache-hit lookup reduction; retain the 16,384 B cap.
-    raw: 1433126,
-    gzip: 397908,
+    raw: 1433165,
+    gzip: 397917,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2546,8 +2558,8 @@ const routeBudgets = [
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
     // WebGPU detail lifecycle adds 1,086 raw, 314 gzip and 280 Brotli bytes.
     // Raise only breached targets; keep shared governed allowances fixed.
-    raw: 1726668,
-    gzip: 484818,
+    raw: 1726707,
+    gzip: 484827,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -2719,8 +2731,8 @@ const routeBudgets = [
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // The same WebGPU chunk adds 74 gzip bytes to this route; retain its
     // other targets and the governed allowance.
-    raw: 1277882,
-    gzip: 354208,
+    raw: 1277903,
+    gzip: 354212,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     brotli: 302383,

@@ -4811,7 +4811,7 @@
       if (engineExportName(entry) !== name) continue;
       const engineID = String(entry.id || "");
       if (!engineID) continue;
-      if (window.__gosx.engines.has(engineID)) continue;
+      if (entry.defer || window.__gosx.engines.has(engineID)) continue;
       if (pendingEngineRuntimes.has(engineID)) continue;
       console.info("[gosx] mounting engine after late factory registration:", engineID);
       mountEngine(entry).catch(function(err) {
@@ -4885,6 +4885,7 @@
         // unchanged, so there is nothing to (re)mount here.
         return Promise.resolve();
       }
+      if (entry.defer) return Promise.resolve(); // the scene3d-defer chunk mounts it
       const promise = mountEngine(entry, invalidEntries.get(entry) || null).catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });

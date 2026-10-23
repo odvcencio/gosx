@@ -20,6 +20,116 @@ func Page() Node {
 				The server cannot discover textures or external buffers inside a model before the model arrives. Those resources still load through the model loader.
 			</p>
 		</section>
+		<section id="deferred">
+			<h2>Deferred scenes</h2>
+			<p>
+				Set
+				<span class="inline-code">scene.Props.Defer</span>
+				to mount a scene after first paint. The page paints the mount's poster or fallback children first. The browser downloads no scene chunk, props or model until two animation frames and an idle callback have passed.
+			</p>
+			<p>
+				<span class="inline-code">Until</span>
+				is
+				<span class="inline-code">"idle"</span>
+				(the default) or
+				<span class="inline-code">"load"</span>
+				, which also waits for the window load event.
+				<span class="inline-code">DelayMS</span>
+				adds a wait before the idle step, and
+				<span class="inline-code">TimeoutMS</span>
+				caps the idle wait (1800 ms by default).
+				<span class="inline-code">Inline</span>
+				keeps the props in the page manifest. <span class="inline-code">gosx export</span> does this for every page on its own, because a static site has no server for the props URL.
+			</p>
+			<p>
+				Set
+				<span class="inline-code">Public</span>
+				when the scene's props do not depend on the visitor (no session, account or per-user data). The server then keeps the props out of the page: it stores them by content hash and serves them at
+				<span class="inline-code">/gosx/scene3d/&lt;hash&gt;.json</span>
+				with an immutable, shared-cacheable header. Without
+				<span class="inline-code">Public</span>
+				the props stay in the page and follow the page's own cache policy, so one visitor's data can never sit behind a public URL.
+			</p>
+			<p>
+				The store lives in server memory. Give the app a secret with
+				<span class="inline-code">App.SetSceneEntrySecret</span>
+				(or
+				<span class="inline-code">GOSX_SCENE_ENTRY_SECRET</span>
+				, at least 16 bytes, the same on every pod) and each props URL carries its page path and a signature. A server that has not stored the hash, after a restart or when another pod rendered the page, then renders that path again as an anonymous visitor and serves the props if the hash matches. At most four such renders run at once; a fifth request gets a 503 that is not cached. A hash the path does not produce is a 404. A refill cannot reproduce a page that checks authentication (an anonymous render redirects or denies) or whose props change with the query string. Public deferred scenes on such pages should use
+				<span class="inline-code">Inline</span>
+				, because only the path is signed. Without a secret a miss is a 404 and the poster stays. Raise the store bound with
+				<span class="inline-code">GOSX_SCENE_ENTRY_MAX_ENTRIES</span>
+				(256 by default).
+			</p>
+			<p>
+				When the deferred load starts, the runtime emits the preload hints for the scene chunk, the one renderer chunk the browser will use, and the scene's first assets. It then fetches the props, inserts the scene chunk tag and mounts. The mount element reports its progress in
+				<span class="inline-code">data-gosx-scene3d-defer-state</span>
+				: scheduled, loading, mounting, mounted, gated or failed.
+			</p>
+			<p>
+				<span class="inline-code">Variants</span>
+				give a scene another props snapshot for a media query, such as a smaller scene for phones. The first matching query wins, and the server stores each variant under its own hash.
+			</p>
+			<p>
+				Pages that use selective runtime bundles now receive the feature chunk script tags from the server. An app no longer writes its own tags for the engines, hubs, controllers or islands chunks.
+			</p>
+		</section>
+		<section id="gates">
+			<h2>Capability gates</h2>
+			<p>
+				List environment gates in
+				<span class="inline-code">RequiredCapabilities</span>
+				. The runtime checks them before it downloads any scene byte.
+			</p>
+			<p>
+				<span class="inline-code">hardware-gpu</span>
+				needs WebGL2 with no major performance caveat and a renderer that is not a software rasterizer.
+				<span class="inline-code">full-motion</span>
+				needs
+				<span class="inline-code">prefers-reduced-motion</span>
+				to be anything but
+				<span class="inline-code">reduce</span>
+				.
+				<span class="inline-code">full-data</span>
+				needs no Save-Data request, no
+				<span class="inline-code">prefers-reduced-data</span>
+				and no 2G-class connection.
+			</p>
+			<p>
+				When a gate fails, nothing downloads and the poster stays. A deferred scene reports
+				<span class="inline-code">gated</span>
+				. A scene that is not deferred but has a gate loads its chunk only after the gate passes, which adds one serial step to its first load.
+			</p>
+		</section>
+		<section id="renderer">
+			<h2>The published renderer</h2>
+			<p>
+				A deferred or gated scene publishes the renderer it mounted on, and a failed gate publishes the refusal, on
+				<span class="inline-code">&lt;html data-gosx-renderer&gt;</span>
+				as
+				<span class="inline-code">webgpu</span>
+				,
+				<span class="inline-code">webgl2</span>
+				,
+				<span class="inline-code">canvas2d</span>
+				or
+				<span class="inline-code">none</span>
+				. The reason is in
+				<span class="inline-code">data-gosx-renderer-reason</span>
+				. The same value is the
+				<span class="inline-code">$gosx.renderer</span>
+				signal, and a
+				<span class="inline-code">gosx:renderer</span>
+				event fires when it changes.
+			</p>
+			<p>
+				The scene code for this lives in a small chunk that loads only on pages with a deferred or gated scene; a scene with neither pays nothing for it. A page that has no such scene can ask for the answer with
+				<span class="inline-code">RequireFeature("renderer-probe")</span>
+				. That small chunk loads only on pages that require it. Style from the answer in CSS, for example
+				<span class="inline-code">html[data-gosx-renderer="webgpu"] .answer-webgpu {"{"} display: inline {"}"}</span>
+				.
+			</p>
+		</section>
 		<section id="shaders">
 			<h2>Parallel shader compilation</h2>
 			<p>

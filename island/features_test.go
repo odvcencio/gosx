@@ -192,10 +192,12 @@ func TestExplicitLegacyRequirementsAreAdvertised(t *testing.T) {
 			t.Errorf("FeaturePaths[%s] = %q, want %q", name, got, path)
 		}
 	}
-	hints := gosx.RenderHTML(r.PreloadHints())
+	// The server declares each required chunk as a deferred script tag, so the
+	// preload scanner starts it; a preload link would repeat the request.
+	head := gosx.RenderHTML(r.BootstrapScript())
 	for _, name := range []string{"hubs", "controllers", "islands"} {
-		if !strings.Contains(hints, "bootstrap-feature-"+name) {
-			t.Errorf("preload hints lack %s: %s", name, hints)
+		if !strings.Contains(head, `data-gosx-script="feature-`+name+`"`) {
+			t.Errorf("bootstrap script lacks the %s chunk tag: %s", name, head)
 		}
 	}
 	// No entries of that kind: the explicit name alone selects the chunk, and
