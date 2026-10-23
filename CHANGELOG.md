@@ -48,6 +48,11 @@
   animation frame, pauses while the page is hidden, and ends with its context.
   See docs/engine-frame-loop.md.
 
+- Boot multi-component Go WASM modules in engine workers. Worker startup
+  accepts each module-local factory and mounts only the requested component,
+  matching page-side registration. Wrong tokens, duplicate names and factory
+  registrations after synchronous module startup are rejected.
+
 - Serve the current Go WASM build from a development server. A hashed Go WASM
   module is revalidated on each reload (`no-cache` with an ETag), a compressed
   sidecar older than its file is not used, and a request for an older hash gets

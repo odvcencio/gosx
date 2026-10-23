@@ -302,7 +302,11 @@ document.addEventListener("gosx:engine:frame", event => {
 const proof = window.__gosx_frame_proof;
 return proof.main && proof.worker && proof.main.count >= 3 && proof.worker.count >= 3;
 })()`, nil, chromedp.WithPollingTimeout(30*time.Second))); err != nil {
-		t.Fatalf("wait for main/worker frames: %v\nconsole:\n%s\npage errors: %v", err, page.Console(), page.PageErrors())
+		var state string
+		page.eval(t, `JSON.stringify({proof:window.__gosx_frame_proof,visibility:document.visibilityState,
+engines:[...(window.__gosx?.engines || [])].map(([id,r])=>({id,keys:Object.keys(r),component:r.entry?.component,hasHandle:!!r.handle})),
+scripts:[...document.scripts].map(s=>s.src).filter(Boolean),body:document.body.innerText.slice(0,2000)})`, &state)
+		t.Fatalf("wait for main/worker frames: %v\nstate: %s\nconsole:\n%s\npage errors: %v", err, state, page.Console(), page.PageErrors())
 	}
 	type frameState struct {
 		EngineID    string  `json:"engineID"`
