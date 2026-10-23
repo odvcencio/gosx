@@ -853,11 +853,16 @@
     });
   }
 
-  // Delay until the next wall-clock multiple of periodMs plus offsetMs.
+  // Delay until the next wall-clock multiple of periodMs plus offsetMs,
+  // including the current window when its slot is still ahead, plus random
+  // jitter of up to 10 percent of the period (at most 5 s) so many clients do
+  // not request state at the same instant.
   function nextHubResyncDelay(periodMs, offsetMs) {
     const now = Date.now();
-    const next = Math.floor(now / periodMs) * periodMs + periodMs + offsetMs;
-    return Math.max(offsetMs, Math.min(next - now, periodMs + offsetMs));
+    let slot = Math.floor(now / periodMs) * periodMs + offsetMs;
+    if (slot <= now) slot += periodMs;
+    const jitter = Math.floor(Math.random() * Math.min(5000, periodMs * 0.1));
+    return Math.max(1, slot - now) + jitter;
   }
 
   function scheduleHubResyncPeriod(record) {

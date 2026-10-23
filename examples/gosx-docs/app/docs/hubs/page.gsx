@@ -151,7 +151,13 @@ func Page() Node {
 			<span class="inline-code">__gosx_visual_seed</span>
 			query parameter. It never removes a property, and it skips values that are not a string, a finite number or a boolean. An invalid mapping is dropped when the manifest is built and reported by
 			<span class="inline-code">Manifest.Validate()</span>
-			. The code loads in its own chunk, only on pages with a
+			. Values are checked in the browser before they are written. By default a value may not contain parentheses, backslashes, quotes, semicolons or control characters, and it may not exceed 256 characters, so a payload cannot build a
+			<span class="inline-code">url()</span>
+			for a stylesheet that reads the variable. Set
+			<span class="inline-code">Kind</span>
+			on a variable to a stricter grammar: number, length, color, ident or string (written as a quoted CSS string). The browser also re-checks the
+			<span class="inline-code">--</span>
+			prefix. The code loads in its own chunk, only on pages with a
 			<span class="inline-code">CSSVars</span>
 			binding.
 		</p>
@@ -194,7 +200,13 @@ func Page() Node {
 			<span class="inline-code">Latch</span>
 			can answer with
 			<span class="inline-code">ReplayLatched</span>
-			.
+			. Scheduled resyncs add random jitter of up to 10 percent of the period (at most 5 s), so clients do not all ask at once. Only the first hub entry that shares a socket supplies the resync settings. 
+			<span class="inline-code">ReplayLatched</span>
+			answers one client at most once per second, because any browser can send
+			<span class="inline-code">resync</span>
+			as fast as its connection allows and
+			<span class="inline-code">MaxMessagesPerSecond</span>
+			defaults to unlimited. Set it on hubs that accept resync from the public.
 		</p>
 		<CodeBlock lang="go" source={data.resyncSample} />
 		<h2 id="security">Origin and authorization boundaries</h2>

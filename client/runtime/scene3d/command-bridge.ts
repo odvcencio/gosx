@@ -56,9 +56,16 @@
   function requestWebGLRecovery(options) {
     var reload = options && options.reload === true;
     window.__gosx_scene3d_force_webgl = true;
+    // The reload needs the flag to survive it. If the write does not stick,
+    // skip the reload instead of loading WebGPU again.
+    var stored = false;
     try {
-      if (window.sessionStorage) window.sessionStorage.setItem(recoveryKey, "1");
+      if (window.sessionStorage) {
+        window.sessionStorage.setItem(recoveryKey, "1");
+        stored = window.sessionStorage.getItem(recoveryKey) === "1";
+      }
     } catch (_e) {}
+    if (reload && !stored) reload = false;
     if (reload && window.location && typeof window.location.reload === "function") window.location.reload();
     return { forceWebGL: true, reload: reload };
   }

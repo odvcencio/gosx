@@ -107,3 +107,72 @@ test("a target selector other than :root, and a payload for another event, are h
   assert.equal(card.style.getPropertyValue("--core"), "#yes", "dispose keeps the values");
   assert.equal(card.classList.contains("arrival"), false, "dispose clears the flash class and its timer");
 });
+
+const hostile = [
+  ["url()", "url(https://evil.example/beacon)"],
+  ["image-set()", 'image-set("https://evil.example/a.png" 1x)'],
+  ["escaped url", "u\\72l(https://evil.example/beacon)"],
+  ["escaped url without parenthesis", "u\\72l"],
+  ["quote", 'a"b'],
+  ["single quote", "a'b"],
+  ["backtick", "a`b"],
+  ["semicolon", "red;background:red"],
+  ["control character", "red\u0007"],
+  ["newline", "red\nblue"],
+  ["200 KB string", "a".repeat(200 * 1024)],
+  ["257 characters", "a".repeat(257)],
+];
+
+for (const [label, value] of hostile) {
+  test("plain kind rejects " + label, async () => {
+    const h = await boot({ vars: [{ name: "--v", path: "v" }] });
+    h.send({ v: value });
+    assert.equal(h.root.style.getPropertyValue("--v"), "");
+  });
+}
+
+test("every kind accepts its grammar and rejects hostile values", async () => {
+  const kinds = [
+    { name: "--n", path: "n", kind: "number" },
+    { name: "--l", path: "l", kind: "length" },
+    { name: "--c", path: "c", kind: "color" },
+    { name: "--i", path: "i", kind: "ident" },
+    { name: "--s", path: "s", kind: "string" },
+  ];
+  const good = await boot({ vars: kinds });
+  good.send({ n: 12.5, l: "12px", c: "rgb(1, 2, 3)", i: "slow-fade", s: "Hello" });
+  assert.equal(good.root.style.getPropertyValue("--n"), "12.5");
+  assert.equal(good.root.style.getPropertyValue("--l"), "12px");
+  assert.equal(good.root.style.getPropertyValue("--c"), "rgb(1, 2, 3)");
+  assert.equal(good.root.style.getPropertyValue("--i"), "slow-fade");
+  assert.equal(good.root.style.getPropertyValue("--s"), '"Hello"');
+  const bad = await boot({ vars: kinds });
+  bad.send({ n: "url(x)", l: "1px url(x)", c: "url(https://evil.example/x)", i: "u\\72l", s: 'x"; background: url(y)' });
+  for (const name of ["--n", "--l", "--c", "--i", "--s"]) assert.equal(bad.root.style.getPropertyValue(name), "", name);
+  const nested = await boot({ vars: kinds });
+  nested.send({ c: "rgb(url(x))" });
+  assert.equal(nested.root.style.getPropertyValue("--c"), "");
+});
+
+test("the client re-checks the -- prefix, paths and kinds from the manifest", async () => {
+  const h = await boot({ vars: [
+    { name: "background", path: "v" },
+    { name: "--p", path: "a[0]" },
+    { name: "--k", path: "v", kind: "url" },
+    { name: "--ok", path: "v" },
+  ] });
+  h.send({ v: "red", a: ["x"] });
+  assert.equal(h.root.style.getPropertyValue("background"), "");
+  assert.equal(h.root.style.getPropertyValue("--p"), "");
+  assert.equal(h.root.style.getPropertyValue("--k"), "");
+  assert.equal(h.root.style.getPropertyValue("--ok"), "red");
+});
+
+test("dispose removes the live class", async () => {
+  const h = await boot({ vars: [{ name: "--v", path: "v" }], liveClass: "live" });
+  h.send({ v: "red" });
+  h.raf.flush();
+  assert.equal(h.root.classList.contains("live"), true);
+  await h.env.context.__gosx_dispose_page();
+  assert.equal(h.root.classList.contains("live"), false);
+});

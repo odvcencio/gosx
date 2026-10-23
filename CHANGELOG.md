@@ -38,7 +38,10 @@
   Invalid names are dropped when the manifest is built and reported by
   `Manifest.Validate()`. The code ships in `bootstrap-feature-hub-css-vars.js`
   (2,325 bytes raw, 1,119 gzip, 976 Brotli), loaded only for pages that use it;
-  production builds list and serve it.
+  production builds list and serve it. The browser checks every value before
+  it writes it: no parentheses, backslashes, quotes, semicolons or control
+  characters, at most 256 characters, and an optional per-variable `Kind`
+  (number, length, color, ident, string) for a stricter grammar.
 
 - Publish hub connection state and resync. `HubEntry.ConnectionSignal` receives
   `connecting`, `open`, `reconnecting` or `error`; elements with

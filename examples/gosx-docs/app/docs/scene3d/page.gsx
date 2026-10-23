@@ -343,7 +343,9 @@ func Page() Node {
 				<span class="inline-code">Strikes</span>
 				(3 by default) the scene swaps to WebGL in place. With
 				<span class="inline-code">Reload</span>
-				it reloads once per tab session with WebGL forced instead. The mount publishes
+				it reloads once per tab session with WebGL forced instead. The reload needs a working
+				<span class="inline-code">sessionStorage</span>
+				; when the guard cannot be written and read back, the scene swaps in place and never reloads. A lost device, a failed pipeline, a failed init and a renderer that is not ready each count as a strike. The mount publishes
 				<span class="inline-code">data-gosx-scene3d-webgpu-recovery</span>
 				as inactive, armed, fallback, reloading or webgl-forced.
 			</p>

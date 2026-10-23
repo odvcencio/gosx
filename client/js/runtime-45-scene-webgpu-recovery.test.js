@@ -167,3 +167,54 @@ test("a scene without webgpuRecovery publishes nothing", async () => {
   h.diag.frameErrorStreak = 1; await h.check(); await h.check(); await h.check();
   assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery-strikes"), null);
 });
+
+for (const [label, patch] of [
+  ["a lost device", { deviceLost: true }],
+  ["a failed pipeline", { pipelineCoreError: "bad pipeline" }],
+  ["a failed init", { initFailed: true }],
+  ["a renderer that is not ready", { ready: false }],
+]) {
+  test("hard failure (" + label + ") counts as a strike and reloads at the threshold, never swaps first", async () => {
+    const h = await mountWithRecovery({ strikes: 3, reload: true }, { sessionStorage: {} });
+    const requests = [];
+    h.env.context.__gosx_scene3d_request_webgl_recovery = (o) => { requests.push(o); return { forceWebGL: true, reload: true }; };
+    Object.assign(h.diag, patch);
+    await h.check(); await h.check();
+    assert.equal(requests.length, 0, "no reload before the third strike");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "armed");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery-strikes"), "2");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu", "no in-place swap while strikes accumulate");
+    await h.check();
+    assert.equal(requests.length, 1);
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "reloading");
+  });
+}
+
+test("hard failure without reload swaps in place only at the threshold", async () => {
+  const h = await mountWithRecovery({ strikes: 2 });
+  h.diag.deviceLost = true;
+  await h.check();
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "armed");
+  await h.check();
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "fallback");
+});
+
+test("a storage that reads but cannot write never reloads and falls back in place", async () => {
+  const h = await mountWithRecovery({ strikes: 1, reload: true }, {});
+  h.env.context.sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  const requests = [];
+  h.env.context.__gosx_scene3d_request_webgl_recovery = (o) => { requests.push(o); };
+  h.diag.frameErrorStreak = 1; await h.check();
+  assert.equal(requests.length, 0);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "fallback");
+});
+
+test("a storage whose write throws never reloads", async () => {
+  const h = await mountWithRecovery({ strikes: 1, reload: true }, {});
+  h.env.context.sessionStorage = { getItem: () => null, setItem: () => { throw new Error("quota"); }, removeItem: () => {} };
+  const requests = [];
+  h.env.context.__gosx_scene3d_request_webgl_recovery = (o) => { requests.push(o); };
+  h.diag.frameErrorStreak = 1; await h.check();
+  assert.equal(requests.length, 0);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "fallback");
+});

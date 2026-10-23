@@ -103,6 +103,8 @@ type Hub struct {
 	textDropped      atomic.Uint64
 	binaryDropped    atomic.Uint64
 	snapshotReplaced atomic.Uint64
+	// lastReplayNanos is the time of the last ReplayLatched to this client.
+	lastReplayNanos atomic.Int64
 
 	// MaxClients limits the number of concurrent connections. 0 = unlimited.
 	MaxClients int
@@ -175,6 +177,8 @@ type Client struct {
 	snapshotReplaced atomic.Uint64
 	syncStates       *peerSyncState
 	mu               sync.Mutex
+	// lastReplayNanos is the time of the last ReplayLatched to this client.
+	lastReplayNanos atomic.Int64
 	// closed is set under mu by removeClient before it closes send/binarySend.
 	// trySend/tryBinarySend check it under the same mu before writing, so a
 	// send can never race with the close of the same channel — see trySend.
@@ -507,10 +511,24 @@ func (h *Hub) SetState(key string, value any) {
 	h.state[key] = value
 }
 
+// ReplayLatchedMinInterval is the shortest time between two replays to one
+// client. A "resync" handler can be called by any browser as fast as the
+// connection allows, and MaxMessagesPerSecond defaults to unlimited, so
+// ReplayLatched answers a repeat inside this window with 0 and sends nothing.
+// Join replays count: a resync that arrives right after join finds the state
+// already sent.
+const ReplayLatchedMinInterval = time.Second
+
 // ReplayLatched sends every latched payload to one connected client and
 // returns how many it queued. Join uses it; a "resync" handler can call it so
 // a client that resumed from a hidden tab or the back-forward cache sees the
-// current state without a reconnect. A full buffer drops a frame, as in Broadcast.
+// current state without a reconnect. A full buffer drops a frame, as in
+// Broadcast. A call within ReplayLatchedMinInterval of the previous replay to
+// the same client returns 0.
+//
+// The read lock stays held while the frames are queued (trySend never blocks),
+// so a concurrent Broadcast to a latched topic cannot store and deliver its
+// newer payload ahead of the older one being replayed.
 func (h *Hub) ReplayLatched(clientID string) int {
 	h.mu.RLock()
 	client := h.clients[clientID]
@@ -518,23 +536,23 @@ func (h *Hub) ReplayLatched(clientID string) int {
 	if client == nil {
 		return 0
 	}
-	// Snapshot payload pointers under the read lock and send after unlocking,
-	// so a slow consumer cannot hold latchedMu.
+	now := time.Now().UnixNano()
+	last := client.lastReplayNanos.Load()
+	if last != 0 && now-last < int64(ReplayLatchedMinInterval) {
+		return 0
+	}
+	client.lastReplayNanos.Store(now)
+	sent := 0
 	h.latchedMu.RLock()
-	payloads := make([][]byte, 0, len(h.latched))
 	for _, payload := range h.latched {
 		if payload == nil {
 			continue // declared but never broadcast
 		}
-		payloads = append(payloads, payload)
-	}
-	h.latchedMu.RUnlock()
-	sent := 0
-	for _, payload := range payloads {
 		if client.trySend(payload) {
 			sent++
 		}
 	}
+	h.latchedMu.RUnlock()
 	return sent
 }
 

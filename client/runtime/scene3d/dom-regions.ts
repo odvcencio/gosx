@@ -368,16 +368,30 @@
       }
       var classList = documentClassList();
       if (classList) {
+        // Scenes can share a presence class. The document element keeps a
+        // count per class, so one scene going away leaves the class in place
+        // while another scene still needs it.
+        var root = document.documentElement;
+        var counts = Reflect.get(root, "__gosxPresenceCounts");
+        if (!counts) {
+          counts = Object.create(null);
+          Reflect.set(root, "__gosxPresenceCounts", counts);
+        }
         for (var applied in appliedClasses) {
           if (!wanted[applied]) {
-            classList.remove(applied);
             delete appliedClasses[applied];
+            counts[applied] = (counts[applied] || 1) - 1;
+            if (counts[applied] <= 0) {
+              delete counts[applied];
+              classList.remove(applied);
+            }
           }
         }
         for (var cls in wanted) {
           if (!appliedClasses[cls]) {
-            classList.add(cls);
             appliedClasses[cls] = true;
+            counts[cls] = (counts[cls] || 0) + 1;
+            classList.add(cls);
           }
         }
       }

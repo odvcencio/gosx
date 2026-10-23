@@ -11,7 +11,18 @@ type HubCSSVar struct {
 	Path   string `json:"path"`             // "coreInner" or "palette.core.inner", relative to HubCSSVars.Root
 	Unit   string `json:"unit,omitempty"`   // appended to numbers only: "deg", "px"
 	Digits int    `json:"digits,omitempty"` // round numbers to this many decimals; 0 keeps the number as sent
+	// Kind limits what the browser writes: "" (plain token), "number",
+	// "length", "color", "ident" or "string". Every kind rejects control
+	// characters and values over 256 characters. The plain token and ident
+	// kinds also reject parentheses, backslashes and quotes, so a payload can
+	// never build a url(), image-set() or escaped function name. "color"
+	// accepts a hex or named color or a rgb, hsl, hwb, lab, lch, oklab or
+	// oklch function. "string" writes a quoted CSS string.
+	Kind string `json:"kind,omitempty"`
 }
+
+// HubCSSVarKinds lists the accepted HubCSSVar.Kind values.
+var HubCSSVarKinds = []string{"", "number", "length", "color", "ident", "string"}
 
 // HubCSSVars writes fields of a hub event payload to CSS custom properties.
 //
@@ -75,6 +86,15 @@ func (c HubCSSVars) Validate() error {
 			return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '%')
 		}) >= 0 {
 			return fmt.Errorf("cssVars vars[%d] unit %q must be at most 16 letters or %%", i, v.Unit)
+		}
+		kindOK := false
+		for _, kind := range HubCSSVarKinds {
+			if v.Kind == kind {
+				kindOK = true
+			}
+		}
+		if !kindOK {
+			return fmt.Errorf("cssVars vars[%d] kind %q is not one of number, length, color, ident, string", i, v.Kind)
 		}
 		if v.Digits < 0 || v.Digits > 10 {
 			return fmt.Errorf("cssVars vars[%d] digits %d is outside 0..10", i, v.Digits)

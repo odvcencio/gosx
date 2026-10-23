@@ -168,3 +168,23 @@ test("a config without presenceClass never touches the document class list or th
   assert.equal(root.length, 0);
   assert.equal(h.mount.getAttribute("data-gosx-scene3d-dom-region-presence"), null);
 });
+
+test("two scenes sharing one presence class keep it until the last one leaves", async () => {
+  const a = createDOMRegionTrackerHarness({ presenceClass: "glass-live" });
+  const root = stubClassList(a.env.context.document.documentElement);
+  a.mount.setAttribute("data-gosx-scene3d-backend", "webgl");
+  a.raf.flush();
+  // A second tracker in the same document: same context, its own mount.
+  const mountB = new FakeElement("div", null);
+  mountB.id = "second-scene";
+  mountB.getBoundingClientRect = a.mount.getBoundingClientRect;
+  mountB.setAttribute("data-gosx-scene3d-backend", "webgl");
+  const stateB = { postEffects: JSON.parse(JSON.stringify(a.state.postEffects)) };
+  const trackerB = a.env.context.__gosx_scene3d_dom_regions.createTracker(mountB, () => a.canvasA, stateB, () => {});
+  a.raf.flush();
+  assert.equal(root.contains("glass-live"), true);
+  a.tracker.dispose();
+  assert.equal(root.contains("glass-live"), true, "the second scene still needs the class");
+  trackerB.dispose();
+  assert.equal(root.contains("glass-live"), false);
+});

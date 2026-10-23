@@ -23,6 +23,7 @@ func TestHubCSSVarsValidateRejectsBadInput(t *testing.T) {
 		"flash with space": {Vars: []HubCSSVar{{Name: "--a", Path: "a"}}, FlashClass: "x y"},
 		"flash too short":  {Vars: []HubCSSVar{{Name: "--a", Path: "a"}}, FlashClass: "x", FlashMS: 5},
 		"digits too big":   {Vars: []HubCSSVar{{Name: "--a", Path: "a", Digits: 11}}},
+		"unknown kind":     {Vars: []HubCSSVar{{Name: "--a", Path: "a", Kind: "url"}}},
 		"duplicate name":   {Vars: []HubCSSVar{{Name: "--a", Path: "a"}, {Name: "--a", Path: "b"}}},
 	}
 	for name, cfg := range cases {

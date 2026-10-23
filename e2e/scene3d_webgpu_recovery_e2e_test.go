@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,7 +25,9 @@ import (
 //
 // Headless Chrome with SwiftShader has no WebGPU adapter, so the strike
 // counter cannot run here. runtime-45-scene-webgpu-recovery.test.js covers it
-// with fake diagnostics.
+// with fake diagnostics, including the reload guard when storage cannot be
+// written. This test calls the bridge directly and counts document loads on
+// the server.
 func TestSceneWebGPURecoveryReloadsIntoWebGLInBrowser(t *testing.T) {
 	chrome := findChrome(t)
 	pageRuntime := server.NewPageRuntime()
@@ -44,7 +47,11 @@ func TestSceneWebGPURecoveryReloadsIntoWebGLInBrowser(t *testing.T) {
 		gosx.RenderHTML(pageRuntime.Head()) + "</body></html>"
 	app := server.New()
 	app.SetRuntimeRoot(e2eRepoRoot(t))
-	app.Mount("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var pageLoads atomic.Int32
+	app.Mount("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			pageLoads.Add(1)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(page))
 	}))
@@ -59,6 +66,9 @@ func TestSceneWebGPURecoveryReloadsIntoWebGLInBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForBrowserCondition(t, ctx, `document.getElementById("scene").getAttribute("data-gosx-scene3d-ready") === "true"`)
+	if got := pageLoads.Load(); got != 1 {
+		t.Fatalf("page loads at first boot = %d, want 1", got)
+	}
 	var state string
 	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.getElementById("scene").getAttribute("data-gosx-scene3d-webgpu-recovery")`, &state)); err != nil {
 		t.Fatal(err)
@@ -91,12 +101,13 @@ func TestSceneWebGPURecoveryReloadsIntoWebGLInBrowser(t *testing.T) {
 	if !flag {
 		t.Fatal("the one-shot force-webgl flag must be consumed on the reloaded boot")
 	}
-	time.Sleep(3 * time.Second)
-	var navigations int
-	if err := chromedp.Run(ctx, chromedp.Evaluate(`performance.getEntriesByType("navigation").length`, &navigations)); err != nil {
-		t.Fatal(err)
+	// The server counts document loads, so a reload loop would show here:
+	// one load at first boot, one after the reload, and no more.
+	if got := pageLoads.Load(); got != 2 {
+		t.Fatalf("page loads after the reload = %d, want 2", got)
 	}
-	if navigations != 1 {
-		t.Fatalf("navigation entries = %d, want 1 (no reload loop)", navigations)
+	time.Sleep(3 * time.Second)
+	if got := pageLoads.Load(); got != 2 {
+		t.Fatalf("page loads after waiting = %d, want still 2 (no reload loop)", got)
 	}
 }

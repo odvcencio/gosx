@@ -68,14 +68,14 @@ test("schedules a resync after each wall-clock period boundary plus the offset, 
   let now = 10000;
   const h = await boot({ resync }, { performanceNow: () => now });
   // 1 s after a period boundary. The vm context has its own Date.
-  runScript("globalThis.__realDateNow = Date.now; Date.now = () => 180000 * 5 + 1000;", h.env.context, "date-stub.js");
+  runScript("globalThis.__realDateNow = Date.now; globalThis.__realRandom = Math.random; Date.now = () => 180000 * 5 + 1000; Math.random = () => 0;", h.env.context, "date-stub.js");
   try {
     const before = h.timers.count();
     h.socket().readyState = 1; h.socket().onopen();
     assert.ok(h.timers.count() > before, "period and initial timers armed");
-    now += 5000; h.timers.runDelay(180000 - 1000 + 2200);
+    now += 5000; h.timers.runDelay(2200 - 1000);
     assert.equal(h.socket().sent.at(-1).data.reason, "period");
-  } finally { runScript("Date.now = globalThis.__realDateNow;", h.env.context, "date-restore.js"); }
+  } finally { runScript("Date.now = globalThis.__realDateNow; Math.random = globalThis.__realRandom;", h.env.context, "date-restore.js"); }
 });
 
 test("a hub without resync never sends resync", async () => {
@@ -84,4 +84,16 @@ test("a hub without resync never sends resync", async () => {
   h.timers.runDelay(5000);
   h.env.context.window.dispatchEvent({ type: "online" });
   assert.equal(h.socket().sent.filter((m) => m.event === "resync").length, 0);
+});
+
+test("the period slot in the current window still counts, and jitter spreads clients", async () => {
+  const h = await boot({ resync }, { performanceNow: () => 10000 });
+  runScript("globalThis.__realDateNow = Date.now; globalThis.__realRandom = Math.random; Date.now = () => 180000 * 5 + 3000; Math.random = () => 0.5;", h.env.context, "date-stub.js");
+  try {
+    h.socket().readyState = 1; h.socket().onopen();
+    // Slot is boundary + 2200 ms, already past at +3000 ms, so the next one is one period later.
+    // Jitter is 0.5 * min(5000, 18000) = 2500 ms.
+    h.timers.runDelay(180000 - 3000 + 2200 + 2500);
+    assert.equal(h.socket().sent.at(-1).data.reason, "period");
+  } finally { runScript("Date.now = globalThis.__realDateNow; Math.random = globalThis.__realRandom;", h.env.context, "date-restore.js"); }
 });

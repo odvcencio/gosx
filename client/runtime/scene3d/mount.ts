@@ -1113,6 +1113,17 @@
     function sceneWebGPURecoveryReloadAllowed() {
       return sceneWebGPURecoveryReloads() === 0;
     }
+    // Records the reload in sessionStorage and reads it back. If the write did
+    // not stick, the reload guard cannot work, so the caller swaps in place and
+    // never reloads.
+    function sceneWebGPURecoveryMarkReload() {
+      try {
+        window.sessionStorage.setItem(SCENE_WEBGPU_RECOVERY_RELOADS_KEY, "1");
+        return window.sessionStorage.getItem(SCENE_WEBGPU_RECOVERY_RELOADS_KEY) === "1";
+      } catch (_error) {
+        return false;
+      }
+    }
     function sceneWebGPURecoveryStrike(diagnostics: any, failureReason: string) {
       if (!webgpuRecovery || webgpuRecoveryDone || !renderer || renderer.kind !== "webgpu") return false;
       const erroring = Boolean(failureReason) ||
@@ -1120,7 +1131,10 @@
         Boolean(diagnostics && diagnostics.deviceLost);
       webgpuRecoveryStrikes = erroring ? webgpuRecoveryStrikes + 1 : 0;
       setAttrValue(mount, sceneAttr("webgpu-recovery-strikes"), webgpuRecoveryStrikes || "");
-      if (webgpuRecoveryStrikes < webgpuRecovery.strikes) return false;
+      // A hard failure (lost device, failed pipeline, init failure, not ready)
+      // is a strike too. Below the threshold it must not take the immediate
+      // in-place swap, or a lost device would skip the reload.
+      if (webgpuRecoveryStrikes < webgpuRecovery.strikes) return Boolean(failureReason);
       const detail = {
         strikes: webgpuRecoveryStrikes,
         reason: failureReason || "webgpu-frame-errors",
@@ -1128,10 +1142,7 @@
       };
       webgpuRecoveryDone = true;
       const request = typeof window !== "undefined" ? window.__gosx_scene3d_request_webgl_recovery : null;
-      if (webgpuRecovery.reload && typeof request === "function" && sceneWebGPURecoveryReloadAllowed()) {
-        try {
-          window.sessionStorage.setItem(SCENE_WEBGPU_RECOVERY_RELOADS_KEY, "1");
-        } catch (_error) {}
+      if (webgpuRecovery.reload && typeof request === "function" && sceneWebGPURecoveryReloadAllowed() && sceneWebGPURecoveryMarkReload()) {
         publishSceneWebGPURecoveryState("reloading");
         gosxSceneEmit("error", "webgpu-recovery-reload", detail);
         request({ reload: true });
