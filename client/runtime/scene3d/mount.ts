@@ -3483,6 +3483,17 @@
       });
     }
 
+    function applyMountedCameraCommands(commands, reason) {
+      let last = null;
+      for (const command of commands) {
+        if (command && command.kind === 5) last = command;
+      }
+      if (!last) return;
+      const controller = sceneControlHandle && sceneControlHandle.controller;
+      applySceneControlsCamera(controller, sceneState.camera);
+      publishMountedSceneCamera(sceneState.camera, reason || "commands");
+    }
+
     function applyMountedSceneCommands(commands, reason) {
       const setModelsCommands = sceneCommandsSetModels(commands);
       if (setModelsCommands) {
@@ -3490,6 +3501,10 @@
       }
       const postSource = sceneState._adaptiveSourcePostEffects;
       const result = applySceneCommands(sceneState, commands);
+      // applySceneCommands writes the camera into the scene state only. Built-in
+      // controls keep their own orbit or fly state and would never see it, so
+      // route the last camera command through the controls, as setCamera does.
+      applyMountedCameraCommands(commands, reason);
       if (postSource !== sceneState._adaptiveSourcePostEffects) sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
