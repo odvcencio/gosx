@@ -88,7 +88,7 @@ for (const wake of [true, false]) {
 const wakeRun = argv.includes('--wake');
 const selected = cases.filter(c => (wakeRun ? c.name.startsWith('wake-') : !c.name.startsWith('wake-')) && (!only || c.name.includes(only)));
 
-const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam, wakeDebug, profiling, throttle, throttleMatch, seqCount, seqStep]) => {
+const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam, wakeDebug, profiling, throttle, throttleMatch, seqCount, seqStep, staticCamera]) => {
   const api = window.__gosx_scene3d_api;
   const diag = window.__gosx_elio_diagnostics = {};
   // --profile: the page times every graph pass with its own timer query, so the renderer must not see the timer extension (one query at a time).
@@ -223,7 +223,13 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       time += 1 / 30;
       if (hull) {
         // The hull advances along -Z; the camera keeps its offset from it.
-        hull.z -= hull.speed / 30; camera.z -= hull.speed / 30;
+        hull.z -= hull.speed / 30;
+        if (!staticCamera) camera.z -= hull.speed / 30;
+        else if (i === frames - 2 - Math.max(seqCount - 1, 0) * seqStep) {
+          // --static-camera: from the first frame of the sequence the camera stays put in the world, beside the track, 40 m behind the hull, so the
+          // trail passes by a fixed view and any change in the lace is the foam's own, not the camera's.
+          Object.assign(camera, { x: 16, y: 12, z: hull.z + 40, rotationX: -0.45, rotationY: 1.5708 });
+        }
         (window.__gosx_scene3d_node_poses ||= {}).ship = { x: hull.x, z: hull.z, heading: Math.PI, speed: hull.speed };
       } else {
         // Drift the camera a little so the foam window moves in whole texels, as under a ship.
@@ -265,7 +271,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     if (c.knots && c.wakeOn) { const wi = wakeImage(); if (wi) { images.push({ name: c.name + '-texture', url: wi.url }); out[out.length - 1].wakeStats = wi.stats; } }
   }
   return { results: out, images, adapter };
-}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9')), argv.includes('--wake-debug'), argv.includes('--profile'), Number(arg('--throttle', '1')), arg('--throttle-match', '^wake\\.'), Number(arg('--sequence', '0')), Number(arg('--sequence-step', '15'))]);
+}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9')), argv.includes('--wake-debug'), argv.includes('--profile'), Number(arg('--throttle', '1')), arg('--throttle-match', '^wake\\.'), Number(arg('--sequence', '0')), Number(arg('--sequence-step', '15')), argv.includes('--static-camera')]);
 await browser.close();
 if (adapter) console.log('adapter', JSON.stringify(adapter));
 if (outDir) for (const image of images) fs.writeFileSync(path.join(outDir, image.name + '.png'), Buffer.from(image.url.split(',')[1], 'base64'));
