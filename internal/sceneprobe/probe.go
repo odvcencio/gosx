@@ -267,6 +267,7 @@ type DeferProbe struct {
 	TimeoutMS int    `json:"timeoutMs"`
 	DelayMS   int    `json:"delayMs"`
 	Inline    bool   `json:"inline"`
+	Public    bool   `json:"public"`
 }
 
 // DeferVariantProbe is one media-query alternative; Props is the variant's

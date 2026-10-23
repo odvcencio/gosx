@@ -7,7 +7,7 @@ import (
 )
 
 func TestDeferLowersIntoProps(t *testing.T) {
-	p := Props{Defer: &Defer{Until: "load", TimeoutMS: 2500, DelayMS: 300}}
+	p := Props{Defer: &Defer{Until: "load", TimeoutMS: 2500, DelayMS: 300, Public: true}}
 	raw := p.RawPropsJSON()
 	var got struct {
 		Defer *Defer `json:"defer"`
@@ -15,7 +15,7 @@ func TestDeferLowersIntoProps(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Defer == nil || got.Defer.Until != "load" || got.Defer.TimeoutMS != 2500 || got.Defer.DelayMS != 300 {
+	if got.Defer == nil || got.Defer.Until != "load" || got.Defer.TimeoutMS != 2500 || got.Defer.DelayMS != 300 || !got.Defer.Public {
 		t.Fatalf("defer did not lower: %s", raw)
 	}
 	if bytes.Contains(Props{}.RawPropsJSON(), []byte(`"defer"`)) {

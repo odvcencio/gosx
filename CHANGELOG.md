@@ -22,10 +22,13 @@
   change by under 25 raw bytes (two one-line hooks). The new
   bootstrap-feature-renderer-probe.js is 953 raw (476 gzip, 424 Brotli) and
   loads
-  only on pages that require it. A props URL carries the route that produced
-  it, so a server that never stored the props (a restart, another pod) renders
-  the route again and serves them when the hash matches. Stored props carry the
-  base path, and `gosx export` keeps deferred props inline in each page. See
+  only on pages that require it. Props leave the page only for a scene marked
+  `Defer.Public`; otherwise they stay inline with the page's cache policy. With
+  `App.SetSceneEntrySecret` (or `GOSX_SCENE_ENTRY_SECRET`) a props URL carries
+  its page path and an HMAC, so a server that never stored the props renders the
+  path again as an anonymous visitor (at most four at once, otherwise a 503) and
+  serves them when the hash matches. Stored props carry the base path, and
+  `gosx export` keeps deferred props inline in each page. See
   docs/scene3d-performance.
 
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,

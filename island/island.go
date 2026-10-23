@@ -45,6 +45,7 @@ type Renderer struct {
 	fixturePreview                        bool
 	basePath                              string
 	route                                 string
+	sceneSecret                           []byte
 	manifest                              *hydrate.Manifest
 	counter                               int
 	bundleID                              string
@@ -1338,16 +1339,21 @@ func (r *Renderer) requiredFeatureNames() []string {
 // SetBasePath selects the public prefix for client manifest URLs.
 func (r *Renderer) SetBasePath(prefix string) { r.basePath = prefix }
 
-// SetRoute names the request (path and query, without the base path) that is
+// SetRoute names the request path (no query, no base path) that is
 // rendering this page. A deferred scene's props URL carries it, so a server
 // that never stored the props can render the route again and rebuild them.
-func (r *Renderer) SetRoute(requestURI string) { r.route = requestURI }
+func (r *Renderer) SetRoute(path string) { r.route = path }
+
+// SetSceneEntrySecret sets the key that signs the route in a props URL. Without
+// it a props URL names no route and a store miss cannot be rebuilt.
+func (r *Renderer) SetSceneEntrySecret(secret []byte) { r.sceneSecret = secret }
 
 // sceneEntryRef stores body and returns the URL the page names it by.
 func (r *Renderer) sceneEntryRef(store *SceneEntryStore, body []byte) string {
-	ref := SceneEntryPath(store.Put(body))
-	if route := r.route; route != "" && ValidSceneEntryRoute(route) {
-		ref += "?r=" + neturl.QueryEscape(route)
+	hash := store.Put(body)
+	ref := SceneEntryPath(hash)
+	if route := r.route; len(r.sceneSecret) > 0 && ValidSceneEntryRoute(route) {
+		ref += "?r=" + neturl.QueryEscape(route) + "&s=" + SignSceneEntry(r.sceneSecret, route, hash)
 	}
 	return ref
 }
@@ -1619,7 +1625,7 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 			entry.Defer = &hydrate.EngineDefer{Until: deferMode, TimeoutMS: d.TimeoutMS, DelayMS: d.DelayMS}
 			store := DefaultSceneEntryStore()
 			variants := cfg.Scene3DProbe.DeferVariants
-			if store != nil && !d.Inline && len(entry.Props) > 0 {
+			if store != nil && d.Public && !d.Inline && len(entry.Props) > 0 {
 				// The stored bytes are served as they are, so they carry the
 				// base path the manifest would otherwise add.
 				base := hydrate.EnginePropsWithBasePath(r.basePath, *entry)

@@ -83,6 +83,7 @@ type statusCoder interface {
 type App struct {
 	// sceneRender serves a route for a props-URL refill; see refillSceneEntry.
 	sceneRender     http.Handler
+	sceneSecret     []byte
 	sceneRefill     *sceneRefill
 	sceneRefillOnce sync.Once
 
@@ -973,7 +974,7 @@ func RequestID(r *http.Request) string {
 }
 
 func (a *App) wrap(handler http.Handler) http.Handler {
-	wrapped := handler
+	wrapped := a.withSceneSecret(handler)
 	for i := len(a.middleware) - 1; i >= 0; i-- {
 		wrapped = a.middleware[i](wrapped)
 	}

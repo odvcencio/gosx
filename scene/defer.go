@@ -16,6 +16,12 @@ type Defer struct {
 	// Inline keeps the props in the page manifest instead of a
 	// content-addressed URL. A static export needs it; a server does not.
 	Inline bool `json:"inline,omitempty"`
+	// Public lets the props leave the page: the server stores them under a
+	// content hash and serves them at an immutable, shared-cacheable URL to
+	// any client. Set it only when the scene's props do not depend on who is
+	// asking (no session, account or per-user data). Without it the props stay
+	// inline in the page, which carries the page's own cache policy.
+	Public bool `json:"public,omitempty"`
 	// Variants pick a different props snapshot by media query; the first
 	// match wins. The server stores each variant content-addressed.
 	Variants []DeferVariant `json:"-"`

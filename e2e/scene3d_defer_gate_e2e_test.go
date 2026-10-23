@@ -17,8 +17,19 @@ var softwareGL = map[string]any{"enable-unsafe-swiftshader": true, "use-angle": 
 func sceneBytesRequested(page *browserPage) bool {
 	return page.anyRequest(func(u string) bool {
 		// The scene3d-defer chunk holds the gates, so it must load to decide.
-		return (strings.Contains(u, "bootstrap-feature-scene3d") && !strings.Contains(u, "bootstrap-feature-scene3d-defer")) || strings.Contains(u, "/gosx/scene3d/")
+		return strings.Contains(u, "sun-grotto-arch.glb") || (strings.Contains(u, "bootstrap-feature-scene3d") && !strings.Contains(u, "bootstrap-feature-scene3d-defer")) || strings.Contains(u, "/gosx/scene3d/")
 	})
+}
+
+func modelRequested(page *browserPage, within time.Duration) bool {
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if page.anyRequest(func(u string) bool { return strings.Contains(u, "sun-grotto-arch.glb") }) {
+			return true
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return false
 }
 
 func TestScene3DGateKeepsPosterAndRequestsNoSceneBytes(t *testing.T) {
@@ -71,6 +82,9 @@ func TestScene3DDeferMountsAfterIdleAndSurvivesNavigation(t *testing.T) {
 	if !sceneBytesRequested(page) {
 		t.Fatal("the deferred scene must have fetched its props and chunk")
 	}
+	if !modelRequested(page, 30*time.Second) {
+		t.Fatalf("the mounted scene must fetch its model:\n%s", strings.Join(page.Requests(), "\n"))
+	}
 	var hints int
 	page.eval(t, `document.querySelectorAll('link[rel="preload"][href*="bootstrap-feature-scene3d.js"]').length`, &hints)
 	if hints < 1 {
@@ -84,6 +98,15 @@ func TestScene3DDeferMountsAfterIdleAndSurvivesNavigation(t *testing.T) {
 	page.eval(t, `document.querySelectorAll('#defer-scene-a').length`, &leftovers)
 	if leftovers != 0 {
 		t.Fatalf("the previous mount must be gone after navigation, found %d", leftovers)
+	}
+	// Back to the first scene: it mounts again from the same props URL.
+	if err := chromedp.Run(page.ctx, chromedp.Click("#defer-next", chromedp.ByQuery)); err != nil {
+		t.Fatal(err)
+	}
+	page.waitFor(t, `!location.search.includes('scene=b') && document.querySelector('#defer-scene-a')?.getAttribute('data-gosx-scene3d-defer-state') === 'mounted'`, 45*time.Second, "first scene mounted again after navigating back")
+	page.eval(t, `document.querySelectorAll('#defer-scene-b').length`, &leftovers)
+	if leftovers != 0 {
+		t.Fatalf("the second mount must be gone after navigating back, found %d", leftovers)
 	}
 	if errs := page.PageErrors(); len(errs) > 0 {
 		t.Fatalf("page errors: %v", errs)

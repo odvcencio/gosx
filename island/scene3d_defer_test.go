@@ -13,7 +13,7 @@ import (
 
 func deferredSceneConfig(mountID string, gates ...string) engine.Config {
 	p := scene.Props{
-		Defer:                &scene.Defer{},
+		Defer:                &scene.Defer{Public: true},
 		RequiredCapabilities: gates,
 		Graph:                scene.NewGraph(scene.Model{ID: "m-" + mountID, Src: "/models/" + mountID + ".glb"}),
 	}
@@ -138,7 +138,7 @@ func TestDeferVariantsAreStoredAndListedByMedia(t *testing.T) {
 	base := scene.Props{Graph: scene.NewGraph(scene.Model{ID: "m", Src: "/models/a.glb"})}
 	small := base
 	small.Width = 320
-	base.Defer = &scene.Defer{Variants: []scene.DeferVariant{{Media: "(max-width: 767px), (pointer: coarse)", Props: &small}}}
+	base.Defer = &scene.Defer{Public: true, Variants: []scene.DeferVariant{{Media: "(max-width: 767px), (pointer: coarse)", Props: &small}}}
 	cfg := base.EngineConfig()
 	cfg.MountID = "hero"
 	r.RenderEngine(cfg, gosx.Text(""))
@@ -175,7 +175,7 @@ func TestDeferVariantsAreDroppedWhenStoreDisabled(t *testing.T) {
 	SetSceneEntryStore(nil)
 	r := NewRenderer("main")
 	small := scene.Props{Width: 320}
-	base := scene.Props{Defer: &scene.Defer{Variants: []scene.DeferVariant{{Media: "(max-width: 767px)", Props: &small}}}}
+	base := scene.Props{Defer: &scene.Defer{Public: true, Variants: []scene.DeferVariant{{Media: "(max-width: 767px)", Props: &small}}}}
 	cfg := base.EngineConfig()
 	cfg.MountID = "hero"
 	r.RenderEngine(cfg, gosx.Text(""))
@@ -199,14 +199,16 @@ func TestPlainSceneDoesNotRequireTheDeferChunk(t *testing.T) {
 func TestDeferredPropsRefNamesItsRoute(t *testing.T) {
 	useTestSceneEntryStore(t)
 	r := NewRenderer("main")
-	r.SetRoute("/galaxy?profile=mobile")
+	r.SetRoute("/galaxy")
+	r.SetSceneEntrySecret([]byte("0123456789abcdef"))
 	r.RenderEngine(deferredSceneConfig("hero"), gosx.Text(""))
 	manifest, _ := r.ManifestJSON()
-	if !strings.Contains(manifest, `.json?r=%2Fgalaxy%3Fprofile%3Dmobile"`) {
+	if !strings.Contains(manifest, `.json?r=%2Fgalaxy\u0026s=`) {
 		t.Fatalf("props URL must name its route: %s", manifest)
 	}
 	r = NewRenderer("main")
 	r.SetRoute("/gosx/scene3d/x.json")
+	r.SetSceneEntrySecret([]byte("0123456789abcdef"))
 	r.RenderEngine(deferredSceneConfig("hero"), gosx.Text(""))
 	manifest, _ = r.ManifestJSON()
 	if strings.Contains(manifest, "?r=") {
@@ -221,7 +223,7 @@ func TestStoredDeferredPropsCarryTheBasePath(t *testing.T) {
 	small := scene.Props{Graph: scene.NewGraph(scene.Model{ID: "m", Src: "/models/small.glb"})}
 	base := scene.Props{
 		Graph: scene.NewGraph(scene.Model{ID: "m", Src: "/models/hero.glb"}),
-		Defer: &scene.Defer{Variants: []scene.DeferVariant{{Media: "(max-width: 767px)", Props: &small}}},
+		Defer: &scene.Defer{Public: true, Variants: []scene.DeferVariant{{Media: "(max-width: 767px)", Props: &small}}},
 	}
 	cfg := base.EngineConfig()
 	cfg.MountID = "hero"
@@ -251,5 +253,81 @@ func TestStoredDeferredPropsCarryTheBasePath(t *testing.T) {
 	}
 	if !strings.Contains(manifest, `"href":"/.proxy/game/models/hero.glb"`) {
 		t.Fatalf("preload hint lost the base path: %s", manifest)
+	}
+}
+
+func TestNonPublicDeferKeepsPropsInline(t *testing.T) {
+	store := useTestSceneEntryStore(t)
+	r := NewRenderer("main")
+	r.SetRoute("/account")
+	r.SetSceneEntrySecret([]byte("0123456789abcdef"))
+	cfg := scene.Props{Label: "for alice", Defer: &scene.Defer{}, Graph: scene.NewGraph(scene.Model{ID: "m", Src: "/models/a.glb"})}.EngineConfig()
+	cfg.MountID = "hero"
+	r.RenderEngine(cfg, gosx.Text(""))
+	manifest, _ := r.ManifestJSON()
+	if strings.Contains(manifest, "propsRef") || !strings.Contains(manifest, "for alice") || !strings.Contains(manifest, `"defer":{"until":"idle"`) {
+		t.Fatalf("non-public props must stay inline and still defer: %s", manifest)
+	}
+	if _, ok := store.Get(SceneEntryHash(cfg.Props)); ok {
+		t.Fatal("non-public props must not enter the shared store")
+	}
+}
+
+func TestSceneEntrySignatureBindsRouteAndHash(t *testing.T) {
+	secret := []byte("0123456789abcdef")
+	hash := SceneEntryHash([]byte("x"))
+	sig := SignSceneEntry(secret, "/galaxy", hash)
+	if !VerifySceneEntry(secret, "/galaxy", hash, sig) {
+		t.Fatal("valid signature rejected")
+	}
+	for name, ok := range map[string]bool{
+		"route":  VerifySceneEntry(secret, "/other", hash, sig),
+		"hash":   VerifySceneEntry(secret, "/galaxy", SceneEntryHash([]byte("y")), sig),
+		"secret": VerifySceneEntry([]byte("another-secret-key"), "/galaxy", hash, sig),
+		"empty":  VerifySceneEntry(nil, "/galaxy", hash, sig),
+		"short":  VerifySceneEntry(secret, "/galaxy", hash, "abc"),
+	} {
+		if ok {
+			t.Fatalf("signature accepted for a changed %s", name)
+		}
+	}
+	r := NewRenderer("main")
+	r.SetRoute("/galaxy")
+	r.SetSceneEntrySecret(secret)
+	useTestSceneEntryStore(t)
+	r.RenderEngine(deferredSceneConfig("hero"), gosx.Text(""))
+	manifest, _ := r.ManifestJSON()
+	if !strings.Contains(manifest, `?r=%2Fgalaxy\u0026s=`) {
+		t.Fatalf("props URL must carry the signed route: %s", manifest)
+	}
+}
+
+func TestSceneEntryWatchCapturesWhatTheStoreEvicts(t *testing.T) {
+	s := NewSceneEntryStore(2, 1<<20)
+	target := SceneEntryHash([]byte("target"))
+	w := s.Watch(target)
+	defer w.Close()
+	s.Put([]byte("target"))
+	for i := 0; i < 5; i++ {
+		s.Put([]byte{byte('a' + i)})
+	}
+	if _, ok := s.Get(target); ok {
+		t.Fatal("test setup: the entry should be evicted")
+	}
+	if body, ok := w.Body(); !ok || string(body) != "target" {
+		t.Fatalf("watch lost the bytes: %q %v", body, ok)
+	}
+}
+
+func TestSceneEntryStoreBoundsComeFromTheEnvironment(t *testing.T) {
+	env := func(name string) string {
+		return map[string]string{"GOSX_SCENE_ENTRY_MAX_ENTRIES": "3", "GOSX_SCENE_ENTRY_MAX_BYTES": "100"}[name]
+	}
+	s := sceneEntryStoreFromEnv(env)
+	if s.maxEntries != 3 || s.maxBytes != 100 {
+		t.Fatalf("bounds = %d, %d", s.maxEntries, s.maxBytes)
+	}
+	if d := sceneEntryStoreFromEnv(func(string) string { return "" }); d.maxEntries < 256 {
+		t.Fatalf("default bound %d is too small for a page with many scenes", d.maxEntries)
 	}
 }

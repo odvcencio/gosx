@@ -21,15 +21,15 @@ func init() {
 					gates = append(gates, g)
 				}
 			}
-			mountID := "defer-scene-a"
+			mountID, next := "defer-scene-a", "/test/scene3d-defer?scene=b"
 			if query.Get("scene") == "b" {
-				mountID = "defer-scene-b"
+				mountID, next = "defer-scene-b", "/test/scene3d-defer"
 			}
 			props := scene.Props{
 				Label:                "Deferred Scene3D fixture",
 				AriaLabel:            "Deferred Scene3D fixture",
 				Background:           "#10131a",
-				Defer:                &scene.Defer{TimeoutMS: 800},
+				Defer:                &scene.Defer{TimeoutMS: 800, Public: true},
 				RequiredCapabilities: gates,
 				RequireWebGL:         scene.Bool(true), // headless Chrome has no WebGPU adapter
 				Responsive:           scene.Bool(true),
@@ -46,6 +46,9 @@ func init() {
 						Intensity: 1.2,
 						Direction: scene.Vector3{X: -0.4, Y: -1, Z: -0.6},
 					},
+					// A real model, so the browser tests can prove no model byte is
+					// requested before the gates pass.
+					scene.Model{ID: "fixture-model", Src: "/models/blackglass/sun-grotto-arch.glb"},
 					scene.Mesh{
 						ID:       "defer-box",
 						Geometry: scene.BoxGeometry{Width: 1.6, Height: 1.6, Depth: 1.6},
@@ -53,7 +56,7 @@ func init() {
 					},
 				),
 			}
-			return map[string]any{"scene": props, "mountID": mountID, "next": "/test/scene3d-defer?scene=b"}, nil
+			return map[string]any{"scene": props, "mountID": mountID, "next": next}, nil
 		},
 	})
 }

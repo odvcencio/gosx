@@ -1,9 +1,11 @@
 package island
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,7 +15,7 @@ import (
 const SceneEntryPathPrefix = "/gosx/scene3d/"
 
 const (
-	sceneEntryMaxEntries = 64
+	sceneEntryMaxEntries = 256
 	sceneEntryMaxBytes   = 64 << 20
 	sceneEntryHashLen    = 32 // hex characters of SHA-256; 128 bits is enough for a cache key
 )
@@ -28,6 +30,45 @@ type SceneEntryStore struct {
 	maxEntries int
 	maxBytes   int64
 	bytes      int64
+	watches    map[string]*SceneWatch
+}
+
+// SceneWatch captures one hash as it is stored, so a caller that renders a
+// page to rebuild an entry gets the bytes even if a page with many scenes
+// evicts them from the bounded store before the render ends.
+type SceneWatch struct {
+	store *SceneEntryStore
+	hash  string
+	body  []byte
+	found bool
+}
+
+// Watch starts capturing hash. Close it when done.
+func (s *SceneEntryStore) Watch(hash string) *SceneWatch {
+	w := &SceneWatch{store: s, hash: hash}
+	s.mu.Lock()
+	if s.watches == nil {
+		s.watches = map[string]*SceneWatch{}
+	}
+	s.watches[hash] = w
+	s.mu.Unlock()
+	return w
+}
+
+// Body returns the captured bytes, if hash was stored since Watch.
+func (w *SceneWatch) Body() ([]byte, bool) {
+	w.store.mu.Lock()
+	defer w.store.mu.Unlock()
+	return w.body, w.found
+}
+
+// Close stops capturing.
+func (w *SceneWatch) Close() {
+	w.store.mu.Lock()
+	if w.store.watches[w.hash] == w {
+		delete(w.store.watches, w.hash)
+	}
+	w.store.mu.Unlock()
 }
 
 // NewSceneEntryStore returns a store bounded by entry count and total bytes.
@@ -76,6 +117,9 @@ func (s *SceneEntryStore) Put(body []byte) string {
 	hash := SceneEntryHash(body)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if w := s.watches[hash]; w != nil && !w.found {
+		w.body, w.found = append([]byte(nil), body...), true
+	}
 	if _, ok := s.entries[hash]; !ok {
 		s.entries[hash] = append([]byte(nil), body...)
 		s.bytes += int64(len(body))
@@ -114,7 +158,14 @@ func sceneEntryStoreFromEnv(getenv func(string) string) *SceneEntryStore {
 	if getenv("GOSX_STATIC_EXPORT") == "1" {
 		return nil
 	}
-	return NewSceneEntryStore(sceneEntryMaxEntries, sceneEntryMaxBytes)
+	entries, bytes := sceneEntryMaxEntries, int64(sceneEntryMaxBytes)
+	if n, err := strconv.Atoi(getenv("GOSX_SCENE_ENTRY_MAX_ENTRIES")); err == nil && n > 0 {
+		entries = n
+	}
+	if n, err := strconv.ParseInt(getenv("GOSX_SCENE_ENTRY_MAX_BYTES"), 10, 64); err == nil && n > 0 {
+		bytes = n
+	}
+	return NewSceneEntryStore(entries, bytes)
 }
 
 // DefaultSceneEntryStore returns the process store; nil when disabled, in which
@@ -137,4 +188,21 @@ func ValidSceneEntryRoute(route string) bool {
 		}
 	}
 	return true
+}
+
+// SignSceneEntry returns the signature that lets a server rebuild the entry
+// for (route, hash) after a store miss. Only a server that holds secret can
+// make it, so a client cannot choose which route a miss renders.
+func SignSceneEntry(secret []byte, route, hash string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte("gosx-scene-entry\x00" + route + "\x00" + hash))
+	return hex.EncodeToString(mac.Sum(nil))[:sceneEntryHashLen]
+}
+
+// VerifySceneEntry checks a signature from SignSceneEntry in constant time.
+func VerifySceneEntry(secret []byte, route, hash, sig string) bool {
+	if len(secret) == 0 || !ValidSceneEntryHash(sig) {
+		return false
+	}
+	return hmac.Equal([]byte(SignSceneEntry(secret, route, hash)), []byte(sig))
 }
