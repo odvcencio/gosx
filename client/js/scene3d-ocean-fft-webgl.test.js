@@ -281,3 +281,19 @@ test("the shipped lazy chunks render a spectral ocean on WebGL2: the packed GLSL
   assert.ok(draws > 60, "the gather passes ran: " + draws);
   renderer.dispose();
 });
+
+test("glue (WebGL2): a graph that fails after its first frame returns null, releases its GL objects, and stays off", () => {
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const g = glue();
+    assert.ok(g.frame(spectral(), { time: 1 }));
+    g.gl.drawArrays = () => { throw new Error("device error"); };
+    assert.equal(g.frame(spectral(), { time: 2 }), null);
+    assert.equal(g.resources.fftDisabled, "error");
+    assert.equal(g.mount.attrs["data-gosx-scene3d-ocean-fft-fallback"], "error");
+    assert.equal(g.resources.fft, null);
+    for (const kind of Object.keys(g.gl.created)) assert.equal(g.gl.live(kind).length, 0, kind + " leaked");
+    assert.equal(g.ocean.water(), null);
+    assert.equal(g.frame(spectral(), { time: 3 }), null, "it does not retry every frame");
+  } finally { console.warn = warn; }
+});
