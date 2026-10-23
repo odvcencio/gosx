@@ -634,6 +634,16 @@ type InstancedMesh struct {
 	OutState      *InstancedMeshProps
 	Live          []string
 
+	// ParentNode names a scene node (a Model ID, a Vessel.NodeID, an object ID)
+	// whose world transform carries the whole batch. Positions, rotations and
+	// scales are then relative to that node, and the renderer applies the
+	// node's current world matrix each frame, so a ship that heaves, pitches
+	// and rolls under pose frames carries its windows, rails and lifeboats.
+	// The node must exist in the same scene; while it is absent the batch
+	// draws in world space. An object whose ID equals ParentNode wins over
+	// one whose ID starts with ParentNode + "/".
+	ParentNode string
+
 	// Optional Elio GPU cull kernel. When set, the browser runtime (slice 2)
 	// will run a compute pass to cull instances before drawing. Absent here
 	// ⇒ byte-identical payload (pure additive).
@@ -685,9 +695,10 @@ type InstancedGLBMesh struct {
 	// renderer applies the node's current world matrix once per frame instead
 	// of every agent being re-sent in world space. Use it for crowds that ride
 	// a moving ship. The node must exist in the same scene; while it is absent
-	// the batch draws in world space. Only the WebGL crowd path (animated
-	// agents sharing one primitive) follows the parent; leave it empty
-	// elsewhere.
+	// the batch draws in world space. Only the crowd path (animated agents
+	// sharing one primitive, on WebGL and WebGPU) follows the parent; a batch
+	// of static instances ignores it, so use InstancedMesh.ParentNode for
+	// those. Leave it empty elsewhere.
 	ParentNode string
 }
 
@@ -701,6 +712,13 @@ type MeshInstance struct {
 	Position      Vector3
 	Scale         Vector3
 	Rotation      Euler
+	// Color tints this instance of an animated crowd batch (a CSS hex or rgb()
+	// colour). It multiplies the batch material's colour and texture in linear
+	// light, so a batch whose Material is white shows the instance colour as
+	// written. Empty leaves the instance untinted. A crowd that differs only
+	// by colour then needs one batch per body part, not one per colour. Only
+	// the opaque crowd path on WebGL and WebGPU tints; other draws ignore it.
+	Color string
 }
 
 // ComputeParticles declares a GPU-computed particle system.
@@ -3137,6 +3155,7 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		CullKernelEntry: im.CullKernelEntry,
 		CullRadius:      im.CullRadius,
 		CullBackend:     im.CullBackend,
+		ParentNode:      strings.TrimSpace(im.ParentNode),
 	}
 	// Apply geometry dimensions.
 	if geometryProps != nil {
@@ -3724,10 +3743,24 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		id = "scene-instanced-glb-" + intString(l.nextInstancedGLBID)
 	}
 	instances := make([]MeshInstanceIR, 0, len(igm.Instances))
+	// Colours ship once per batch as a palette; each instance carries a
+	// 1-based index (0, omitted on the wire, means untinted).
+	var palette []string
+	paletteIndex := map[string]int{}
 	for _, inst := range igm.Instances {
 		world := combineTransforms(parent, localTransform(inst.Position, inst.Rotation))
+		tint := 0
+		if color := strings.TrimSpace(inst.Color); color != "" {
+			tint = paletteIndex[color]
+			if tint == 0 {
+				palette = append(palette, color)
+				tint = len(palette)
+				paletteIndex[color] = tint
+			}
+		}
 		record := MeshInstanceIR{
 			Animation: inst.Animation, AnimationTime: inst.AnimationTime, AnimationLoop: inst.AnimationLoop,
+			Tint:   tint,
 			ID:     strings.TrimSpace(inst.ID),
 			ScaleX: inst.Scale.X,
 			ScaleY: inst.Scale.Y,
@@ -3752,6 +3785,7 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		Static:           igm.Static,
 		SharedAppearance: igm.SharedAppearance,
 		ParentNode:       strings.TrimSpace(igm.ParentNode),
+		Palette:          palette,
 		Instances:        instances,
 	}
 	applyMaterialToInstancedGLBIR(&record, igm.Material)

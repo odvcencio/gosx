@@ -5,6 +5,24 @@
 - Compile authored Selena vertex texture sampling through SceneIR. Expose only
   vertex-sampled textures to the WebGPU vertex stage and reject unsupported
   WebGL device limits before shader compilation, retaining material fallbacks.
+- Colour crowd agents one by one. `MeshInstance.Color` tints an instance of an
+  animated `InstancedGLBMesh`, so a body part that comes in five colours is one
+  batch instead of five. The batch ships a palette and each instance a 1-based
+  index (about 9 bytes per coloured agent for 1,000 agents; a colour string per
+  agent would take 18), and a batch without colours keeps its old wire form. The
+  WebGL pose and motion shaders read the tint as an instance attribute and the
+  WebGPU crowd colour shader as a storage buffer; a colour uploads only when it
+  changes. Vertex colours are not read: neither renderer's mesh path has them.
+
+- Carry instanced meshes on a moving scene node. `InstancedMesh.ParentNode`
+  names the node (a `Vessel.NodeID`, a model ID or an object ID); instance
+  positions are then relative to it, and each render bundle composes the node's
+  current world matrix into the transforms the WebGL2 and WebGPU renderers read.
+  A ship that heaves, pitches and rolls under `DispatchVesselPose` now carries
+  its windows, rails and lifeboats; before, the instances stayed where the scene
+  first placed them. For 20,000 instances the composition costs about 0.5 ms
+  per bundle (measured 1.0 ms without a parent, 1.5 ms with a moving one). The same parent search no longer picks a crowd agent as the node, so a
+  crowd batch ID may start with its parent's ID.
 
 - Reuse live computed-value subscriptions when a recomputation reads the same
   ordered dependencies. Retain freshly tracked revisions, the replacement path

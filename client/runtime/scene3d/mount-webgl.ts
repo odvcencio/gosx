@@ -3705,7 +3705,7 @@
           object.vertices = primitive.vertices;
           object._modelLocalVertices = primitive.vertices;
           object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
-          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows, batchID: sceneInstancedGLBBatchIDs.get(model) || "", parent: sceneInstancedGLBBatchParents.get(model) || "", rev: 0, group: null };
+          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows, batchID: sceneInstancedGLBBatchIDs.get(model) || "", parent: sceneInstancedGLBBatchParents.get(model) || "", tint: sceneInstancedGLBTints.get(model) || null, rev: 0, group: null };
           object.static = false;
           staged.objects.push(object);
         }
@@ -3888,12 +3888,13 @@
       matrix = sceneModelTransformMatrix(model);
     }
     let crowdRows = null;
+    const tint = sceneInstancedGLBTints.get(model) || null;
     for (const object of staged.objects) {
       if (!object._crowdSkin) continue;
       const rows = object._crowdSkin.poseRows(object._crowdSkin.atlas, model._crowdPose, new Float32Array(3));
       if (!rows || rows.length !== object._crowdSkin.rows.length) return null;
       if (!crowdRows) crowdRows = [];
-      crowdRows.push({ object, rows });
+      crowdRows.push({ object, rows, tint });
     }
     // InstancedGLB expansion creates an immutable command-owned model, so its
     // cached matrix is already a transaction snapshot. Ordinary Model entries
@@ -3913,7 +3914,15 @@
       for (const object of staged.objects) object.parentMatrix = matrix;
     }
     if (crowdRows) {
-      for (const update of crowdRows) { update.object._crowdSkin.rows.set(update.rows); update.object._crowdSkin.rev += 1; }
+      for (const update of crowdRows) {
+        const skin = update.object._crowdSkin;
+        skin.rows.set(update.rows);
+        skin.rev += 1;
+        // A recolour arrives as a pose patch. Keep the reference while the colour is unchanged:
+        // the crowd batch compares references to find the agents it must repack.
+        const tint = update.tint, held = skin.tint;
+        if (tint !== held && !(tint && held && tint[0] === held[0] && tint[1] === held[1] && tint[2] === held[2] && tint[3] === held[3])) skin.tint = tint;
+      }
     }
     staged.rigidInstanceModel = staged.model = model;
   }
