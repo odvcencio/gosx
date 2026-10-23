@@ -105,11 +105,30 @@ test("planner vertex scans hit by revision and invalidate on resize and material
   assert.notEqual(api.scenePreparedSignature(bundle, camera, viewport), signature);
 });
 
-test("WebGL constant, color, and rigid key caches hit and invalidate", () => {
+test("shared instance color parsing retains cache hits and bounds string entries", () => {
   let parses = 0;
   const api = vm.createContext({
     sceneColorRGBA: value => { parses += 1; return [value, 1, 1, 1]; },
   });
+  const ts = require("../runtime/node_modules/typescript");
+  const source = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/instanced-data.ts"), "utf8");
+  vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, api);
+  const first = api.sceneInstancedPreparedColor("#112233");
+  assert.equal(api.sceneInstancedPreparedColor("#112233"), first);
+  assert.equal(parses, 1);
+  api.sceneInstancedPreparedColor("#445566");
+  assert.equal(parses, 2);
+  for (let i = 0; i < 512; i++) api.sceneInstancedPreparedColor("color-" + i);
+  assert.notEqual(api.sceneInstancedPreparedColor("#112233"), first);
+  assert.equal(parses, 515, "a bounded cache reparses an evicted color");
+  const mutableColor = {};
+  api.sceneInstancedPreparedColor(mutableColor);
+  api.sceneInstancedPreparedColor(mutableColor);
+  assert.equal(parses, 517, "mutable non-string colors cannot reuse a parsed snapshot");
+});
+
+test("WebGL constant and rigid key caches hit and invalidate", () => {
+  const api = vm.createContext({});
   sourceSection(readSceneRendererBackendSrc("webgl"), "  var sceneGLConstantCache = new WeakMap();",
     "  function scenePBRHDRIBLTextureMinimum(", api);
   let queries = 0;
@@ -125,12 +144,6 @@ test("WebGL constant, color, and rigid key caches hit and invalidate", () => {
   const restoredGL = { getParameter: () => ++queries };
   api.sceneCachedGLParameter(restoredGL, 1);
   assert.equal(queries, 4);
-
-  assert.equal(api.sceneCachedInstancedColorRGBA("#112233", [1, 1, 1, 1]),
-    api.sceneCachedInstancedColorRGBA("#112233", [1, 1, 1, 1]));
-  assert.equal(parses, 1);
-  api.sceneCachedInstancedColorRGBA("#445566", [1, 1, 1, 1]);
-  assert.equal(parses, 2);
 
   const owner = Object.freeze({});
   const rigid = { resourceOwner: owner, materialIndex: 0, vertexCount: 12,
