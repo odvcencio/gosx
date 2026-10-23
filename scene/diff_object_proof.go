@@ -2,6 +2,7 @@ package scene
 
 import (
 	"math"
+	"reflect"
 	"sync"
 )
 
@@ -39,6 +40,9 @@ func objectPatchFieldsEqual(previous, next *ObjectIR, omitted objectProofOmissio
 	if objectProofEnabled() && finiteObjectTransform(next) && provenObjectFieldsEqual(previous, next, omitted) {
 		return true
 	}
+	if fields := objectPatchScalarFields(omitted); fields != nil && objectRecordJSONDifferentOnFields(previous, next, fields) {
+		return false
+	}
 	return objectPatchFieldsJSONEqual(previous, next, omitted)
 }
 
@@ -56,4 +60,32 @@ func objectPatchFieldsJSONEqual(previous, next *ObjectIR, omitted objectProofOmi
 		probe.Pickable, probe.Visible, probe.Selected = next.Pickable, next.Visible, next.Selected
 	}
 	return sceneRecordPointerJSONEqual(&probe, next)
+}
+
+// Cache the non-patch scalar fields from the authored patch declarations. A
+// known wire difference can reject a patch before copying a full ObjectIR.
+var objectPatchScalarOnce sync.Once
+var objectPatchScalarPlans [2][]int
+
+func objectPatchScalarFields(omitted objectProofOmissions) []int {
+	if omitted != objectProofOmitTransform && omitted != (objectProofOmitTransform|objectProofOmitState) {
+		return nil
+	}
+	objectPatchScalarOnce.Do(func() {
+		object, transform, state := reflect.TypeFor[ObjectIR](), reflect.TypeFor[TransformPatch](), reflect.TypeFor[ObjectStatePatch]()
+		for _, index := range objectScalarFields {
+			name := object.Field(index).Name
+			if _, ok := transform.FieldByName(name); ok {
+				continue
+			}
+			objectPatchScalarPlans[0] = append(objectPatchScalarPlans[0], index)
+			if _, ok := state.FieldByName(name); !ok {
+				objectPatchScalarPlans[1] = append(objectPatchScalarPlans[1], index)
+			}
+		}
+	})
+	if omitted&objectProofOmitState != 0 {
+		return objectPatchScalarPlans[1]
+	}
+	return objectPatchScalarPlans[0]
 }

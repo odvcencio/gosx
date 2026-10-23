@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Reuse live computed-value subscriptions when a recomputation reads the same
+  ordered dependencies. Retain freshly tracked revisions, the replacement path
+  for changed dependencies, batched reads, and disposal while reducing
+  subscription allocation churn in islands and engines.
+
+- Reject SceneIR transform and state patches with known non-patch edits before
+  copying large mesh records. Cache scalar comparison fields from the authored
+  patch types, retaining the JSON fallback for ambiguous comparisons.
+
 - Match SceneIR records with one ID table instead of building two maps.
   Preserve the handling of repeated and empty IDs, sorted removals, and the
   order of updates and optional patches without mutating either snapshot.
