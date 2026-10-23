@@ -102,7 +102,7 @@
     "    float sWake = mix(smoothstep(0.35, 0.9, swf.w) * swv.z, sFoamTex.b, sNear);\n" +
     // Dissolve the kernel's coverage per pixel with fine noise so the edges are ragged below the foam texel; thin foam is greyer.
     "    float sDis = smoothstep(0.3, 0.6, sWake + (of(wxz * 2.3 + 7.) - 0.5) * " + WAKE.ragged.toFixed(2) + ");\n" +
-    "    sShade = mix(" + WAKE.thin.toFixed(2) + ", 1., smoothstep(0.35, 1., sWake)) * (0.86 + 0.14 * of(wxz * 3.1 + 13.));\n" +
+    "    sShade = mix(" + WAKE.thin.toFixed(2) + ", 1., smoothstep(0.35, 1., sWake)) * (0.72 + 0.28 * of(wxz * 1.7 + 13.));\n" +
     "    foam = max(foam, sDis * (" + WAKE.density.toFixed(2) + " + " + (1 - 0.55).toFixed(2) + " * smoothstep(0.3, 0.9, sWake)) * (0.92 + 0.08 * lace));\n";
 
   // glsl returns the spectral variant of the base ocean vertex and fragment shaders.
