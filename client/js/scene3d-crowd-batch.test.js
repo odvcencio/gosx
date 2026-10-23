@@ -415,6 +415,28 @@ test("a parent name matches a node or its parts, not a longer name", async () =>
   assert.equal(batchRecords(build(api, [other, exact, ...crowd]))[0].crowdParentMatrix[12], 7);
 });
 
+test("a crowd named under its parent's id never resolves one of its own agents as the parent", async () => {
+  const api = await makeSceneApiEnv();
+  const pose = yawPose(0, 70, 0, 0);
+  // Batch "ship/riders" rides node "ship": its agent ids start with "ship/", the node's part prefix.
+  const crowd = makeCrowd(api, 4, { parent: "ship" });
+  crowd.forEach((object, i) => {
+    object.id = `ship/riders/agent-${i}/0`;
+    object._crowdSkin.batchID = "ship/riders";
+    object.specularColor = Array.from(object.specularColor || [1, 1, 1]);
+  });
+  // An agent that differs from its batch draws on its own record, which lands in the list the parent search reads.
+  crowd[1].color = "#ff0000";
+  crowd[1].parentMatrix = matrixAt(500, 500);
+  const ship = makeShip(api, pose);
+  const [record] = batchRecords(build(api, [...crowd, ship]));
+  assert.equal(record.instanceCount, 3);
+  assert.equal(record.crowdParentMatrix[12], 70, "the batch rides the ship's pose, not its stray agent at x=500");
+  // With no ship in the scene the crowd must draw in world space, not ride its own agent.
+  const alone = batchRecords(build(api, crowd))[0];
+  assert.equal(alone.crowdParentMatrix, null);
+});
+
 test("agents with different parents do not share a record", async () => {
   const api = await makeSceneApiEnv();
   const a = makeCrowd(api, 4, { parent: "ship" });

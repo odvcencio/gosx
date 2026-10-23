@@ -62,7 +62,9 @@ scene.InstancedGLBMesh{
 ```
 
 The node is any scene object whose ID equals `ParentNode`, or starts with
-`ParentNode + "/"` (the parts of a model). The renderer reads its model matrix
+`ParentNode + "/"` (the parts of a model). An object with exactly that ID wins
+over a part. Crowd agents never count as the node, so a batch may carry an ID
+under its parent's ("ship/riders" on node "ship"). The renderer reads its model matrix
 every frame, so a pose computed in the browser needs no message: the vessel
 writes its pose into its parts' matrix each frame and a parented crowd follows.
 While no such object exists, the batch draws in world space.

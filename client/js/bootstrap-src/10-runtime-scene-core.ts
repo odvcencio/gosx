@@ -5705,15 +5705,25 @@
   // still draws on its own record, in world space.
   // group.localBounds holds the agents' union in the parent's space and
   // group.bounds the world-space box the renderer culls and sorts with.
-  function sceneCrowdBatchParentObject(rest, id) {
+  //
+  // A crowd batch id may itself sit under the node's id ("ship/riders" on node
+  // "ship"), so its own agents match the node's prefix. The search skips every
+  // crowd agent and everything under the searching batch's own id, and an
+  // object with exactly the node's id wins over a part.
+  function sceneCrowdBatchParentObject(rest, id, ownBatchID) {
     if (!rest) return null;
     const prefix = id + "/";
+    const ownPrefix = ownBatchID ? ownBatchID + "/" : "";
+    let part = null;
     for (let i = 0; i < rest.length; i += 1) {
       const object = rest[i];
       const name = object && object.id;
-      if (typeof name === "string" && (name === id || name.startsWith(prefix))) return object;
+      if (typeof name !== "string" || object._crowdSkin) continue;
+      if (ownPrefix !== "" && name.startsWith(ownPrefix)) continue;
+      if (name === id) return object;
+      if (part === null && name.startsWith(prefix)) part = object;
     }
-    return null;
+    return part;
   }
 
   // Returns true when the world matrix or its presence changed.
@@ -5865,7 +5875,7 @@
       // A parented group follows its node every bundle, even when no agent changed.
       let parentMoved = false;
       if (group.parentNode !== "") {
-        const node = sceneCrowdBatchParentObject(rest, group.parentNode);
+        const node = sceneCrowdBatchParentObject(rest, group.parentNode, group.batchID);
         parentMoved = sceneCrowdBatchSetParent(group, node ? sceneObjectModelMatrix(node, timeSeconds) : null);
         group.cut = node && node.cutawayCrowd || null; // vessel cutaway: Float32Array(8) clip planes (see vessel-cutaway)
       }
