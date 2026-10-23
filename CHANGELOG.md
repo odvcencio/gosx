@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+- Reuse live computed-value subscriptions when a recomputation reads the same
+  ordered dependencies. Retain freshly tracked revisions, the replacement path
+  for changed dependencies, batched reads, and disposal while reducing
+  subscription allocation churn in islands and engines.
+
+- Reject SceneIR transform and state patches with known non-patch edits before
+  copying large mesh records. Cache scalar comparison fields from the authored
+  patch types, retaining the JSON fallback for ambiguous comparisons.
+
+- Match SceneIR records with one ID table instead of building two maps.
+  Preserve the handling of repeated and empty IDs, sorted removals, and the
+  order of updates and optional patches without mutating either snapshot.
+
+- Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
+  Identical negative thresholds and standalone omitted values still reach the
+  JSON rejection path instead of silently suppressing the update. Carrying
+  omitzero fields keep their omission semantics, including nested records.
+
+- Compare lowered material texture descriptors with generated typed field proofs
+  during SceneIR updates, avoiding repeated reflection over texture slots.
+  Nested schema and named-scalar checks retain the JSON fallback when a proof
+  is stale or a comparison is ambiguous.
+
+## v0.57.19
+
+- Select Scene3D model-map variants by each mount's delivery profile and actual
+  WebGL or WebGPU texture capabilities. Low and standard require compatible
+  built KTX2 maps, including bounded uncompressed variants on devices without
+  BC support; unsupported or failed variants return preparation errors rather
+  than loading full-size authored images. Preserve material role and color-space
+  metadata for external, embedded, and data-URI glTF images. One sRGB image can
+  serve base color and emissive maps; transparent materials require a
+  four-channel alpha-preserving variant.
+- Add `Surface.ApplyTextureProfile` to prepare target maps and rehydrate active
+  models before committing a live quality change. Failed, canceled, superseded,
+  or stale changes retain the last working textured scene. Existing cached maps
+  from the old profile may remain resident after a switch. BC5 normal maps are
+  rejected until the shaders reconstruct their missing Z channel.
+
+- Reuse mount-owned decoded model scopes when revisiting the same texture
+  profile, backend, capabilities and manifest. Retire obsolete manifest scopes
+  and evict their model-cache entries on disposal; late asynchronous decodes
+  cannot repopulate a retired scope.
+
+- Recover failed material textures through explicit Scene3D model preparation on
+  the existing WebGL or WebGPU renderer. Concurrent preparations share one retry;
+  normal drawing keeps settled cache behavior without repeated image requests.
+  Retain cached records and ignore superseded image callbacks.
+
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,
   schema-checked ObjectIR equality proofs, including embedded model records.
   Transform and interaction updates
