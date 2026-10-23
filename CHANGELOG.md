@@ -4,7 +4,8 @@
 
 - Retain renderer-owned instance matrix and color preparation storage across
   fresh SceneIR bundles in WebGL2 and WebGPU. Preserve mutable inputs, palette
-  changes, GPU-driven updates, and retirement when the last batch disappears.
+  changes, GPU-driven updates, palette reads bounded by the active count, and
+  retirement when the last batch disappears.
 
 - Retain WebGL2 instance stream snapshots across camera-only frames and upload
   only changed spans, preserving in-place edits, dirty ranges and buffer retirement.

@@ -46,7 +46,7 @@ function sceneInstancedPreparedColor(value: any): number[] {
 function sceneInstancedColorSourceMatches(previous: unknown[] | null | undefined, source: any, length: number): boolean {
   if (!previous || previous.length !== length) return false;
   for (let i = 0; i < length; i++) {
-    const value = source[i];
+    const value = source[i] || source[source.length - 1];
     // NaN payloads and coercible objects cannot be validated by value equality.
     if (value !== value || !Object.is(previous[i], value) || value !== null && (typeof value === "object" || typeof value === "function")) return false;
   }
@@ -75,7 +75,7 @@ function scenePrepareInstancedColors(owner: object, source: any, count: number, 
   }
   cached = cached || sceneInstancedPreparedOwner(owner);
   const previous = cached.colorSource;
-  if (format === 1 && cached.colors && cached.colorCount === count && sceneInstancedColorSourceMatches(previous, source, length)) return cached.colors;
+  if (format === 1 && cached.colors && cached.colorCount === count && sceneInstancedColorSourceMatches(previous, source, Math.min(length, count))) return cached.colors;
   const needed = format === 4 ? length : count * 4;
   if (!cached.colors || cached.colors.length !== needed) cached.colors = new Float32Array(needed);
   const data = cached.colors;
@@ -97,10 +97,12 @@ function scenePrepareInstancedColors(owner: object, source: any, count: number, 
   }
   // Numeric inputs copy into retained storage, just like transforms. Only
   // expensive palette conversion needs a snapshot, reused on later edits.
+  // Read only consumed palette entries, including their last-color fallback;
+  // lowering the active count must not scan the remainder of a large palette.
   if (format === 1) {
     const snapshot = previous || [];
-    snapshot.length = length;
-    for (let i = 0; i < length; i++) snapshot[i] = source[i];
+    snapshot.length = Math.min(length, count);
+    for (let i = 0; i < snapshot.length; i++) snapshot[i] = source[i] || source[length - 1];
     cached.colorSource = snapshot;
   } else cached.colorSource = undefined;
   cached.colorCount = count;

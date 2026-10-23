@@ -210,3 +210,28 @@ test("a conversion failure cannot poison a previously cached palette", () => {
   assert.throws(() => api.scenePrepareInstancedColors(owner, invalid, 1), /transient numeric conversion/);
   assert.deepEqual(Array.from(api.scenePrepareInstancedColors(owner, palette, 1)), [1,0,0,1]);
 });
+
+test("palette preparation scales with active instances and follows the last-color fallback", () => {
+  const { api } = preparation(), owner = {};
+  const palette = Array(10000).fill("#00ff00");
+  palette[1] = "#0000ff";
+  let reads = 0;
+  const source = new Proxy(palette, { get(target, key, receiver) {
+    if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+    return Reflect.get(target, key, receiver);
+  } });
+  const first = api.scenePrepareInstancedColors(owner, source, 2);
+  assert.deepEqual(Array.from(first), [0,1,0,1, 0,0,1,1]);
+  assert.ok(reads < 20, `two active instances must not scan 10,000 palette entries (${reads} reads)`);
+  reads = 0;
+  palette[5000] = "#ff0000";
+  assert.equal(api.scenePrepareInstancedColors(owner, source, 2), first);
+  assert.ok(reads < 20, `unused palette edits must not force a full scan (${reads} reads)`);
+  palette[1] = "";
+  palette[9999] = "#ff0000";
+  assert.deepEqual(Array.from(api.scenePrepareInstancedColors(owner, source, 2)), [0,1,0,1, 1,0,0,1]);
+  palette[9999] = "#0000ff";
+  assert.deepEqual(Array.from(api.scenePrepareInstancedColors(owner, source, 2)), [0,1,0,1, 0,0,1,1]);
+  palette.length = 1;
+  assert.deepEqual(Array.from(api.scenePrepareInstancedColors(owner, source, 3)), [0,1,0,1, 0,1,0,1, 0,1,0,1]);
+});
