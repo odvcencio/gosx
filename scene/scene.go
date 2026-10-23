@@ -695,9 +695,10 @@ type InstancedGLBMesh struct {
 	// renderer applies the node's current world matrix once per frame instead
 	// of every agent being re-sent in world space. Use it for crowds that ride
 	// a moving ship. The node must exist in the same scene; while it is absent
-	// the batch draws in world space. Only the WebGL crowd path (animated
-	// agents sharing one primitive) follows the parent; leave it empty
-	// elsewhere.
+	// the batch draws in world space. Only the crowd path (animated agents
+	// sharing one primitive, on WebGL and WebGPU) follows the parent; a batch
+	// of static instances ignores it, so use InstancedMesh.ParentNode for
+	// those. Leave it empty elsewhere.
 	ParentNode string
 }
 

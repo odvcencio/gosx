@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Carry instanced meshes on a moving scene node. `InstancedMesh.ParentNode`
+  names the node (a `Vessel.NodeID`, a model ID or an object ID); instance
+  positions are then relative to it, and each render bundle composes the node's
+  current world matrix into the transforms the WebGL2 and WebGPU renderers read.
+  A ship that heaves, pitches and rolls under `DispatchVesselPose` now carries
+  its windows, rails and lifeboats; before, the instances stayed where the scene
+  first placed them. For 20,000 instances the composition costs about 0.8 ms per
+  bundle. The same parent search no longer picks a crowd agent as the node, so a
+  crowd batch ID may start with its parent's ID.
+
 - Reuse live computed-value subscriptions when a recomputation reads the same
   ordered dependencies. Retain freshly tracked revisions, the replacement path
   for changed dependencies, batched reads, and disposal while reducing

@@ -5348,7 +5348,7 @@
     for (const entry of html || []) {
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
-    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes);
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds);
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
     bundle.vertexCount = bundle.positions.length / 2;
@@ -5371,7 +5371,46 @@
     return bundle;
   }
 
-  function appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes) {
+  // ---- Instanced mesh parent ---------------------------------------------
+  //
+  // An InstancedMesh with a parentNode keeps its instance transforms in that
+  // node's space. The bundle entry the renderers read carries them composed
+  // with the node's current world matrix (the node's parentMatrix, which a
+  // vessel pose writes every frame), so WebGL2 and WebGPU draw, cull, shadow
+  // and pick the batch where the node is without a message and without a
+  // renderer change. The source record keeps its local transforms. The
+  // composed array is owned per source record and rewritten in place on
+  // every build: the node may move, and the local array may change in place.
+  const sceneInstancedParentTransforms = new WeakMap();
+
+  function sceneInstancedMeshParentTransforms(mesh, parent) {
+    const local = mesh.transforms;
+    const count = Math.min(
+      Math.max(0, Math.floor(sceneNumber(mesh.count, 0))),
+      Math.floor((local && typeof local.length === "number" ? local.length : 0) / 16));
+    if (count <= 0) return null;
+    let out = sceneInstancedParentTransforms.get(mesh);
+    if (!out || out.length !== count * 16) {
+      out = new Float32Array(count * 16);
+      sceneInstancedParentTransforms.set(mesh, out);
+    }
+    const p0 = parent[0], p1 = parent[1], p2 = parent[2], p3 = parent[3];
+    const p4 = parent[4], p5 = parent[5], p6 = parent[6], p7 = parent[7];
+    const p8 = parent[8], p9 = parent[9], p10 = parent[10], p11 = parent[11];
+    const p12 = parent[12], p13 = parent[13], p14 = parent[14], p15 = parent[15];
+    for (let i = 0, base = 0; i < count; i += 1, base += 16) {
+      for (let c = 0; c < 16; c += 4) {
+        const a = local[base + c], b = local[base + c + 1], d = local[base + c + 2], e = local[base + c + 3];
+        out[base + c] = p0 * a + p4 * b + p8 * d + p12 * e;
+        out[base + c + 1] = p1 * a + p5 * b + p9 * d + p13 * e;
+        out[base + c + 2] = p2 * a + p6 * b + p10 * d + p14 * e;
+        out[base + c + 3] = p3 * a + p7 * b + p11 * d + p15 * e;
+      }
+    }
+    return out;
+  }
+
+  function appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds) {
     const meshes = Array.isArray(instancedMeshes) ? instancedMeshes : [];
     for (let index = 0; index < meshes.length; index += 1) {
       const mesh = meshes[index];
@@ -5386,6 +5425,16 @@
         renderPass: material.renderPass || mesh.renderPass,
         _renderPassDerived: (mesh && mesh._renderPassDerived) === true,
       });
+      if (typeof mesh.parentNode === "string" && mesh.parentNode !== "") {
+        const node = sceneCrowdBatchParentObject(objects, mesh.parentNode, mesh.id);
+        const world = node ? sceneObjectModelMatrix(node, timeSeconds) : null;
+        const composed = world && world.length >= 16 ? sceneInstancedMeshParentTransforms(mesh, world) : null;
+        if (composed) {
+          entry.transforms = composed;
+          // Both renderers read _cachedTransforms before transforms.
+          entry._cachedTransforms = composed;
+        }
+      }
       bundle.instancedMeshes.push(entry);
     }
   }

@@ -32,3 +32,105 @@ test("an instanced mesh keeps its parentNode through normalization and carries i
   assert.equal(api.normalizeSceneInstancedMeshEntry(entry, 0, parented).parentNode, "ship");
   assert.equal(api.normalizeSceneInstancedMeshEntry(Object.assign({ parentNode: "" }, entry), 0, parented).parentNode, "");
 });
+
+const identity = () => new Float32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+function yawRollPose(yaw, roll, x, y, z) {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), cr = Math.cos(roll), sr = Math.sin(roll);
+  // Column-major: yaw about Y, then roll about Z, translation last.
+  const yawM = [cy, 0, -sy, 0, 0, 1, 0, 0, sy, 0, cy, 0, 0, 0, 0, 1];
+  const rollM = [cr, sr, 0, 0, -sr, cr, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  const out = new Float32(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    let sum = 0;
+    for (let k = 0; k < 4; k++) sum += yawM[k * 4 + r] * rollM[c * 4 + k];
+    out[c * 4 + r] = sum;
+  }
+  out[12] = x; out[13] = y; out[14] = z;
+  return out;
+}
+
+function apply(m, x, y, z) {
+  return [m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]];
+}
+
+function translation(x, y, z) {
+  const m = identity();
+  m[12] = x; m[13] = y; m[14] = z;
+  return m;
+}
+
+function shipPart(api, id, pose) {
+  const part = api.normalizeSceneObject({ id, kind: "cube", size: 1 }, 0);
+  Object.assign(part, { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, parentMatrix: pose, static: false });
+  return part;
+}
+
+function bundleOf(api, objects, instanced, time = 0) {
+  return api.createSceneRenderBundle(640, 360, "#000000", { x: 0, y: 2, z: 10, fov: 60, near: .1, far: 500 }, objects,
+    [], [], [], [], {}, time, [], instanced, [], [], [], 0, false, {});
+}
+
+function windows(api, extra = {}) {
+  // Two instances in the ship's own frame: (1, 0, 2) and (-3, 4, 5).
+  const transforms = [...translation(1, 0, 2), ...translation(-3, 4, 5)];
+  return api.normalizeSceneInstancedMeshEntry(Object.assign({ id: "ship/windows", count: 2, kind: "box", size: 1, transforms }, extra), 0, null);
+}
+
+function assertNear(actual, expected, message) {
+  for (let i = 0; i < 3; i++) assert.ok(Math.abs(actual[i] - expected[i]) < 1e-4, `${message}: ${Array.from(actual)} vs ${Array.from(expected)}`);
+}
+
+test("an instanced mesh with a parentNode follows the node's pose frame by frame", async () => {
+  const api = await makeSceneApiEnv();
+  const pose = yawRollPose(0.4, 0.1, 100, 3, -20);
+  const hull = shipPart(api, "ship/hull", pose);
+  const mesh = windows(api, { parentNode: "ship" });
+  let bundle = bundleOf(api, [hull], [mesh]);
+  let [entry] = bundle.instancedMeshes;
+  assert.equal(entry.transforms.length, 32);
+  assertNear(apply(entry.transforms.subarray(0, 16), 0, 0, 0), apply(pose, 1, 0, 2), "frame 0, instance 0");
+  assertNear(apply(entry.transforms.subarray(16, 32), 0, 0, 0), apply(pose, -3, 4, 5), "frame 0, instance 1");
+  assert.equal(entry._cachedTransforms, entry.transforms, "both renderers read _cachedTransforms first");
+
+  // The vessel mutates its pose in place; the next bundle carries the batch with it.
+  pose.set(yawRollPose(-0.3, -0.12, 140, 3.4, -10));
+  bundle = bundleOf(api, [hull], [mesh], 1);
+  [entry] = bundle.instancedMeshes;
+  assertNear(apply(entry.transforms.subarray(0, 16), 0, 0, 0), apply(pose, 1, 0, 2), "frame 1, instance 0");
+  assertNear(apply(entry.transforms.subarray(16, 32), 0, 0, 0), apply(pose, -3, 4, 5), "frame 1, instance 1");
+  // The source record keeps its ship-local transforms for the next frame.
+  assert.deepEqual(Array.from(mesh.transforms.slice(12, 15)), [1, 0, 2]);
+});
+
+test("an instanced mesh draws in world space until its node exists, and again when it goes", async () => {
+  const api = await makeSceneApiEnv();
+  const mesh = windows(api, { parentNode: "ship" });
+  const hull = shipPart(api, "ship/hull", translation(50, 0, 0));
+  assert.equal(bundleOf(api, [], [mesh]).instancedMeshes[0].transforms[12], 1);
+  assert.equal(bundleOf(api, [hull], [mesh]).instancedMeshes[0].transforms[12], 51);
+  assert.equal(bundleOf(api, [], [mesh]).instancedMeshes[0].transforms[12], 1);
+  const other = shipPart(api, "ship-two/hull", translation(9, 0, 0));
+  assert.equal(bundleOf(api, [other], [mesh]).instancedMeshes[0].transforms[12], 1, "a longer name is not the node");
+});
+
+test("an instanced mesh without a parentNode keeps its transforms untouched", async () => {
+  const api = await makeSceneApiEnv();
+  const mesh = windows(api);
+  const hull = shipPart(api, "ship/hull", translation(50, 0, 0));
+  const [entry] = bundleOf(api, [hull], [mesh]).instancedMeshes;
+  assert.equal(entry.transforms, mesh.transforms);
+  assert.equal(entry.transforms[12], 1);
+});
+
+test("a parented instanced mesh named under its node's id does not parent itself", async () => {
+  const api = await makeSceneApiEnv();
+  const mesh = windows(api, { parentNode: "ship" });
+  // Objects hydrated under the mesh's own ID, and a crowd agent under the node, are not the node.
+  const own = shipPart(api, "ship/windows/0", translation(900, 0, 0));
+  const agent = shipPart(api, "ship/riders/a/0", translation(700, 0, 0));
+  agent._crowdSkin = { batchID: "ship/riders", parent: "ship" };
+  const hull = shipPart(api, "ship/hull", translation(50, 0, 0));
+  const [entry] = bundleOf(api, [own, agent, hull], [mesh]).instancedMeshes;
+  assert.equal(entry.transforms[12], 51);
+});

@@ -149,8 +149,10 @@ err := scene.DispatchVesselPose("scene-mount-id", scene.VesselPoseFrame{
 The target is the mount element's ID. `DispatchVesselPose` returns an error until
 the vessel has mounted, so ignore errors for the first ticks. In the browser, the
 vessel stops integrating physics and shows the pose, blended between ticks. The
-model parts, the walker, the wake and `InstancedGLBMesh{ParentNode: "liner"}`
-crowds follow the pose as for a sailing vessel. There is no helm, navigation or
+model parts, the walker, the wake, `InstancedGLBMesh{ParentNode: "liner"}`
+crowds and `InstancedMesh{ParentNode: "liner"}` batches (windows, rails,
+lifeboats) follow the pose as for a sailing vessel. Instance positions in a
+parented batch are in the ship's own frame. There is no helm, navigation or
 wind. Set `VesselPose.Snap` for the first pose and for teleports.
 
 The frame (`GSV1`, little-endian) is `"GSV1"`, a `u16` ship count, then per ship
