@@ -1,4 +1,4 @@
-(function(){"use strict";function N(M){if(M&&typeof M=="object"){for(const F of Object.keys(M))N(M[F]);Object.freeze(M)}return M}window.__gosx_scene3d_elio_ocean=N({elio:"v0.4.3+ocean",set:"ocean",sha256:"efc13ce13905f1766837c903ba0f251bab62d33750029fca8943bb9b11e1e7a0",kernels:{oceanSpectrum:{wgsl:`struct OceanSpectrumParams {
+(function(){"use strict";function N(M){if(M&&typeof M=="object"){for(const F of Object.keys(M))N(M[F]);Object.freeze(M)}return M}window.__gosx_scene3d_elio_ocean=N({elio:"v0.4.3+ocean",set:"ocean",sha256:"6e076842ca6b45c5cc1cbe7fb2d6a630450b9e6e9db9db7379276b5c6a1a64db",kernels:{oceanSpectrum:{wgsl:`struct OceanSpectrumParams {
   n : u32,
   cascade : u32,
   seed : u32,
@@ -893,18 +893,18 @@ fn ocean_foam(@builtin(global_invocation_id) gid : vec3<u32>) {
       let gb = ((gx * fwz) - (gz * fwx));
       var nsum = 0.0;
       for (var o : u32 = 0u; (o < 3u); o = (o + 1u)) {
-        var sa = 24.0;
-        var sb = 1.3;
-        var amp = 0.55;
+        var sa = 16.0;
+        var sb = 1.6;
+        var amp = 0.35;
         if ((o == 1u)) {
           sa = 6.0;
-          sb = 3.0;
-          amp = 0.3;
+          sb = 3.5;
+          amp = 0.4;
         }
         if ((o == 2u)) {
-          sa = 1.3;
-          sb = 1.3;
-          amp = 0.15;
+          sa = 1.4;
+          sb = 1.4;
+          amp = 0.25;
         }
         let qa = (ga / sa);
         let qb = (gb / sb);
@@ -1187,18 +1187,18 @@ void main() {
       float gb = ((gx * fwz) - (gz * fwx));
       float nsum = 0.0;
       for (uint o = 0u; (o < 3u); o = (o + 1u)) {
-        float sa = 24.0;
-        float sb = 1.3;
-        float amp = 0.55;
+        float sa = 16.0;
+        float sb = 1.6;
+        float amp = 0.35;
         if ((o == 1u)) {
           sa = 6.0;
-          sb = 3.0;
-          amp = 0.3;
+          sb = 3.5;
+          amp = 0.4;
         }
         if ((o == 2u)) {
-          sa = 1.3;
-          sb = 1.3;
-          amp = 0.15;
+          sa = 1.4;
+          sb = 1.4;
+          amp = 0.25;
         }
         float qa = (ga / sa);
         float qb = (gb / sb);
@@ -2500,7 +2500,7 @@ void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2
     foam = mix(sStateless, sKept, sNear);
     let sWake = mix(smoothstep(0.35, 0.9, swf.w) * swv.z, sFoamTex.b, sNear);
     let sDis = smoothstep(0.3, 0.6, sWake + (ob(wxz * 2.3 + vec2f(7.0)) - 0.5) * `+M.ragged.toFixed(2)+`);
-    sShade = mix(`+M.thin.toFixed(2)+`, 1.0, smoothstep(0.35, 1.0, sWake)) * (0.86 + 0.14 * ob(wxz * 3.1 + vec2f(13.0)));
+    sShade = mix(`+M.thin.toFixed(2)+`, 1.0, smoothstep(0.35, 1.0, sWake)) * (0.72 + 0.28 * ob(wxz * 1.7 + vec2f(13.0)));
     foam = max(foam, sDis * (`+M.density.toFixed(2)+" + "+(1-.55).toFixed(2)+` * smoothstep(0.3, 0.9, sWake)) * (0.92 + 0.08 * lace));
 `;function K(r,u){let k=r;return k=L(k,"@location(4) depth0: f32 };","@location(4) depth0: f32, @location(5) rest: vec2f };"),k=F(k,"  var p = vec3f(xz.x, level, xz.y);","  let ph = fract(t * ocean.p[0].w / 9.0",e()),k=L(k,"out.depth0 = depth0;","out.depth0 = depth0; out.rest = xz;"),k=L(k,`  let N = od(normalize(in.normal), in.world.xz, t, ocean.p[9].xy);
 `,H()),k=L(k,"  if (dist < 250.0) {","  if (dist < 6000.0) {"),k=L(k,`    foam = (1.0 - smoothstep(0.12, 0.35, in.jacobian)) * lace * bu;
@@ -2559,7 +2559,7 @@ void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2
     foam = mix(sStateless, sKept, sNear);
     float sWake = mix(smoothstep(0.35, 0.9, swf.w) * swv.z, sFoamTex.b, sNear);
     float sDis = smoothstep(0.3, 0.6, sWake + (of(wxz * 2.3 + 7.) - 0.5) * `+M.ragged.toFixed(2)+`);
-    sShade = mix(`+M.thin.toFixed(2)+`, 1., smoothstep(0.35, 1., sWake)) * (0.86 + 0.14 * of(wxz * 3.1 + 13.));
+    sShade = mix(`+M.thin.toFixed(2)+`, 1., smoothstep(0.35, 1., sWake)) * (0.72 + 0.28 * of(wxz * 1.7 + 13.));
     foam = max(foam, sDis * (`+M.density.toFixed(2)+" + "+(1-.55).toFixed(2)+` * smoothstep(0.3, 0.9, sWake)) * (0.92 + 0.08 * lace));
 `;function K(r,u){let k=r;k=F(k,"out float v_d0;","out float v_d0; out vec2 v_rest;"),k=F(k,"void main() {",c()+"void main() {"),k=L(k,"  vec3 p = vec3(xz.x, level, xz.y), dx","  float ph = fract(t * u_ocean[0].w / 9.",e()),k=F(k,"v_d0 = depth0;","v_d0 = depth0; v_rest = xz;");let R=u;return R=F(R,"in float v_d0;","in float v_d0; in vec2 v_rest;"),R=F(R,"void main() {",c()+"void main() {"),R=F(R,`  vec3 N = od(normalize(v_n), v_w.xz, t, u_ocean[9].xy);
 `,H()),R=F(R,"  if (dist < 250.) {","  if (dist < 6000.) {"),R=F(R,`    foam = (1. - smoothstep(0.12, 0.35, v_j)) * lace * bu;
