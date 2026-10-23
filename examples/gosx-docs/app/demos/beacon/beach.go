@@ -164,6 +164,7 @@ func blackglassBeachProgram(viewID, periodID string, interactive bool) scene.Pro
 				DeepColor: "#03121b", ShallowColor: "#123b43", ScatterColor: "#16695e", FoamColor: "#dde9e5",
 				Clarity: 2.8, Roughness: 0.19, Foam: 0.48, Surf: 0.65, Extent: 4000,
 				Reflections: &scene.OceanReflections{Mode: "ssr+planar", Resolution: 0.5, Strength: 0.8},
+				Spectrum:    blackglassBeachSpectrum(),
 				Bathymetry: &scene.OceanBathymetry{
 					Src:  blackglassOffshoreHeightSrc,
 					MinX: beachgen.OffshoreMinX, MinZ: beachgen.OffshoreMinZ, MaxX: beachgen.OffshoreMaxX, MaxZ: beachgen.OffshoreMaxZ,
@@ -259,4 +260,15 @@ func BlackglassBeachExperience(viewID, periodID string) scene.Experience {
 			InputSignal: "$blackglass.timeAutomatic", OutputSignal: "$blackglass.day",
 		},
 	}
+}
+
+// blackglassBeachSpectrum is the sea state of the sheltered black-sand cove: the "moderate" preset with
+// less wind and fetch (the headland and the stacks break the open sea) and a modest offshore swell that
+// reaches the beach along the cove's wind direction. Shoaling and run-up come from the bathymetry.
+func blackglassBeachSpectrum() *scene.OceanSpectrum {
+	spectrum := scene.OceanPreset("moderate")
+	spectrum.WindSpeed, spectrum.Fetch = 6, 60
+	spectrum.Swell, spectrum.SwellDirection = 0.3, -20
+	spectrum.Seed = 11
+	return &spectrum
 }

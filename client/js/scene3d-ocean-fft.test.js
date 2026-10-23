@@ -119,8 +119,10 @@ test("resources are created once, spectrum changes rerun only ocean_spectrum, ti
   frame(s.api, resources, h, ocean({ windSpeed: 9 }), { time: 6 });
   assert.equal(dispatchesOf("spectrum"), 4, "an unchanged spectrum does not rerun ocean_spectrum");
   assert.equal([state.buffers.length, state.textures.length].join(), [buffers, textures].join(), "no allocation per frame");
-  frame(s.api, resources, h, ocean({ windSpeed: 15 }), { time: 7 });
-  assert.equal(dispatchesOf("spectrum"), 8, "a changed spectrum reruns it once per cascade");
+  const quick = { presentation: { transitionSeconds: 0.1 } };
+  frame(s.api, resources, h, ocean({ windSpeed: 15 }, quick), { time: 7 });
+  frame(s.api, resources, h, ocean({ windSpeed: 15 }, quick), { time: 8 });
+  assert.equal(dispatchesOf("spectrum"), 8, "a changed spectrum reruns it once per cascade once its transition ends");
   assert.equal([state.buffers.length, state.textures.length].join(), [buffers, textures].join(), "spectrum change keeps buffers and textures");
   assert.equal(resources.fft.buildCount, 1);
   const before = state.buffers.filter((b) => b.usage & 128), beforeTextures = state.textures.filter((t) => !/dummy/.test(t.desc.label));
@@ -322,4 +324,124 @@ test("the shipped (packed) WebGPU bundle still accepts the spectral surface patc
   assert.ok(module, "built bundle: spectral surface compiled");
   if (naga) validateWGSL(module.code, "ocean-fft-surface-shipped");
   h.renderer.dispose();
+});
+
+// --- the Go contract: normalized SceneIR in, shared wind direction and time -------------------------------------
+
+test("the browser reads the spectrum from the normalized scene the Go side emits", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const { api } = standalone();
+  const raw = { spectrum: { windSpeed: 12, fetch: 100, peakEnhancement: 2, spread: 4, swell: 0.3, swellDirection: 15, seed: 0 }, swellWaves: [{ dx: 0, dz: 1, k: 0.1, omega: 1, amplitude: 0.1, phase: 0 }], masks: ["hull", 3] };
+  const state = h.env.context.__gosx_scene3d_api.createSceneState({ scene: { environment: { ocean: raw } } });
+  const ocean = state.environment.ocean;
+  assert.equal(ocean.spectrum.windSpeed, 12);
+  assert.equal(ocean.spectrum.seed, 0);
+  assert.equal(ocean.swellWaves.length, 1);
+  assert.deepEqual(Array.from(ocean.masks), ["hull"]);
+  const resolved = api.resolve(JSON.parse(JSON.stringify(ocean)), "high");
+  assert.deepEqual([resolved.windSpeed, resolved.fetchKm, resolved.gamma, resolved.spread, resolved.swell], [12, 100, 2, 4, 0.3]);
+  h.renderer.dispose();
+});
+
+test("GPU spectrum and Go swell waves share wind direction and loop time", () => {
+  const { api } = standalone();
+  const cases = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-spectrum-query-parity.json"), "utf8"));
+  const omega0 = 2 * Math.PI / api.LOOP_PERIOD;
+  let checked = 0;
+  for (const c of cases) {
+    const waves = c.ocean.swellWaves || [];
+    for (const w of waves) {
+      // The Go swell waves quantize omega to whole cycles per loop, exactly as ocean_spectrum does, so the
+      // query (scene time) and the GPU (scene time modulo the loop) agree at every time.
+      const cycles = w.omega / omega0;
+      assert.ok(Math.abs(cycles - Math.round(cycles)) < 1e-6, `omega ${w.omega} is not a whole number of cycles per ${api.LOOP_PERIOD} s`);
+    }
+    const s = c.ocean.spectrum || {};
+    if (!waves.length || (s.swell || 0) > 0.2 || s.swellDirection) continue;
+    // Direction of the strongest wind-sea wave against the kernel angle the GPU gets for the same wind direction.
+    const wanted = api.resolve(c.ocean, "high").windDir;
+    const top = waves.slice().sort((a, b) => b.amplitude - a.amplitude)[0];
+    const got = Math.atan2(top.dz, top.dx);
+    const delta = Math.abs(Math.atan2(Math.sin(got - wanted), Math.cos(got - wanted)));
+    assert.ok(delta < 0.9, `strongest wave travels at ${got.toFixed(2)} rad, the GPU wind angle is ${wanted.toFixed(2)} (windDirection ${c.ocean.windDirection})`);
+    checked++;
+  }
+  assert.ok(checked >= 3, "enough fixture cases carry a pure wind sea: " + checked);
+});
+
+// --- environment updates ------------------------------------------------------------------------------------------
+
+test("an environment update that adds a spectrum loads the FFT chunk once; one that removes it releases the GPU resources", async () => {
+  const { FakeElement, createContext, installManualRAF, runScript, flushAsyncWork, bootstrapSource } = require("./runtime-test-harness.js");
+  const chunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-ocean-fft.js"), "utf8");
+  const mount = new FakeElement("div", null);
+  mount.id = "ocean-update"; mount.setAttribute("data-gosx-engine", "GoSXScene3D");
+  const camera = { x: 0, y: 20, z: 0, rotationX: -0.1, rotationY: 0, fov: 60, near: 0.1, far: 2000 };
+  const props = { camera, scene: { camera, objects: [], environment: { ocean: { level: 0 } } } };
+  const env = createContext({ elements: [mount], enableWebGL: true, disableCanvas2D: true, performanceNow: () => 0, fetchRoutes: { "/ocean-fft.js": { text: chunk } },
+    manifest: { engines: [{ id: "ocean-update", component: "GoSXScene3D", kind: "surface", mountId: mount.id, props }] } });
+  const script = env.document.createElement("script");
+  script.setAttribute("data-gosx-script", "feature-scene3d");
+  script.setAttribute("data-gosx-scene3d-ocean-fft-url", "/ocean-fft.js");
+  env.document.head.appendChild(script);
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  env.document.dispatchEvent({ type: "DOMContentLoaded" });
+  for (let i = 0; i < 8; i++) { await flushAsyncWork(); raf.flush(i * 17); }
+  const handle = env.context.__gosx.engines.get("ocean-update").handle;
+  const fetched = () => (env.fetchCalls || []).filter((c) => /ocean-fft\.js/.test(String(c.url || c))).length;
+  assert.equal(fetched(), 0, "a scene without a spectrum never fetches the chunk");
+  assert.equal(env.context.__gosx_scene3d_ocean_fft_api, undefined);
+  await handle.applyCommands([{ kind: 13, data: { environment: { ocean: { level: 0, spectrum: { windSpeed: 10 } } }, shape: "sceneIR" } }]);
+  for (let i = 0; i < 8; i++) { await flushAsyncWork(); raf.flush(200 + i * 17); }
+  assert.equal(fetched(), 1, "adding a spectrum fetches the chunk");
+  assert.ok(env.context.__gosx_scene3d_ocean_fft_api, "and publishes the API");
+  await handle.applyCommands([{ kind: 13, data: { environment: { ocean: { level: 0, spectrum: { windSpeed: 12 } } }, shape: "sceneIR" } }]);
+  for (let i = 0; i < 4; i++) { await flushAsyncWork(); raf.flush(400 + i * 17); }
+  assert.equal(fetched(), 1, "a later update does not fetch again");
+  handle.dispose();
+});
+
+test("removing the spectrum releases every FFT buffer and texture and returns to the Gerstner shader", async () => {
+  const h = await rendererWithChunk();
+  h.canvas.width = h.canvas.height = 64;
+  const b = sceneBundle(null);
+  await renderSettled(h, b, 3);
+  const { state } = h.fake;
+  const baseline = new Set([...state.buffers, ...state.textures]);
+  b.environment.ocean.spectrum = { windSpeed: 9 };
+  await renderSettled(h, b, 8);
+  const spectral = [...state.buffers, ...state.textures].filter((r) => !baseline.has(r));
+  assert.ok(spectral.length > 16, "the spectral ocean allocated resources: " + spectral.length);
+  const live = () => spectral.filter((r) => !r.destroyed);
+  delete b.environment.ocean.spectrum;
+  await renderSettled(h, b, 4);
+  assert.deepEqual(live().map((r) => r.desc ? r.desc.label : "buffer " + r.size), [], "resources released");
+  const draws = state.renderPasses.flatMap((p) => p.draws).filter((d) => d.pipeline && d.pipeline.desc && /^gosx-ocean/.test(d.pipeline.desc.label));
+  assert.equal(draws[draws.length - 1].pipeline.desc.label, "gosx-ocean");
+  h.renderer.dispose();
+});
+
+test("foam: Go's graph parameters win, and the fallback table equals Go's golden values", () => {
+  const { api } = standalone();
+  const golden = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-graph-params.json"), "utf8"));
+  for (const entry of golden) {
+    const g = entry.graphParams;
+    const fallback = api.foamOf({}, { windSpeed: g.windSpeed, lambda: g.lambda });
+    assert.ok(Math.abs(fallback.threshold - g.foamThreshold) < 1e-9, `${entry.preset}: threshold ${fallback.threshold} vs Go ${g.foamThreshold}`);
+    assert.equal(fallback.tau, g.foamTau);
+    assert.equal(fallback.gain, g.foamGain);
+    assert.deepEqual(JSON.parse(JSON.stringify(api.foamOf({ graphParams: g }, { windSpeed: 1, lambda: 1 }))), { tau: g.foamTau, threshold: g.foamThreshold, gain: g.foamGain });
+  }
+  // No foam on a glassy sea, whitecaps from about 10 m/s, and a monotone rise with the wind.
+  assert.equal(api.foamThreshold(0.5, 0.6), 0);
+  assert.equal(api.foamThreshold(5, 1), 0);
+  assert.ok(api.foamThreshold(10, 1) >= api.FOAM.maxThreshold * 0.95, "whitecaps at 10 m/s");
+  let last = -1;
+  for (let u = 0; u <= 40; u += 0.5) { const t = api.foamThreshold(u, 1); assert.ok(t >= last); last = t; }
+});
+
+test("an absent swell direction is 0 degrees, as in Go, not the wind direction", () => {
+  const { api } = standalone();
+  assert.equal(api.resolve(ocean({}, { windDirection: 90 }), "high").swellDir, api.travelAngle(0));
 });

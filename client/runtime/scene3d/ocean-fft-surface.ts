@@ -30,7 +30,7 @@
     for (let i = 0; i < 4; i++) s += "@group(" + group + ") @binding(" + (SLOT.disp + i) + ") var spDisp" + i + ": texture_2d<f32>;\n";
     for (let i = 0; i < 4; i++) s += "@group(" + group + ") @binding(" + (SLOT.slope + i) + ") var spSlope" + i + ": texture_2d<f32>;\n";
     s += "@group(" + group + ") @binding(" + SLOT.foam + ") var spFoam: texture_2d<f32>;\n";
-    // c[i] = (tile size m, band centre rad/m, texels, enabled); f = (foam uv scale, persistent foam on, J threshold, gain);
+    // c[i] = (tile size m, band centre rad/m, texels, enabled); f = (foam uv scale, foam lambda / authored lambda, J threshold, gain);
     // m = (crest amplitude m, water offset x, water offset z, persistent radius m).
     s += "fn spLod(c: vec4f, spacing: f32) -> f32 { return max(log2(max(spacing, 1e-3) * c.z / c.x), 0.0); }\n";
     return s;
@@ -68,9 +68,10 @@
   }
 
   const FOAM_LINE = "    let sNear = 1.0 - smoothstep(0.7 * sp.m.w, sp.m.w, length(in.world.xz - ocean.p[7].xz));\n" +
-    "    let sStateless = clamp((sp.f.z - sJ) * sp.f.w, 0.0, 1.0) * lace * bu;\n" +
+    "    let sJf = (1.0 + sp.f.y * sXX) * (1.0 + sp.f.y * sZZ) - sp.f.y * sp.f.y * sXZ * sXZ;\n" +
+    "    let sStateless = clamp((sp.f.z - sJf) * sp.f.w, 0.0, 1.0) * lace * bu;\n" +
     "    let sKept = smoothstep(0.04, 0.6, sPersist) * (0.55 + 0.45 * lace);\n" +
-    "    foam = mix(sStateless, select(sStateless, sKept, sp.f.y > 0.5), sNear);\n";
+    "    foam = mix(sStateless, sKept, sNear);\n";
 
   // wgsl returns the spectral variant of the base ocean shader. group is the bind group index of the spectral resources.
   function wgsl(base: string, group: number): string {
@@ -82,6 +83,8 @@
     s = swap(s, "  if (dist < 250.0) {", "  if (dist < 6000.0) {");
     s = swap(s, "    foam = (1.0 - smoothstep(0.12, 0.35, in.jacobian)) * lace * bu;\n", FOAM_LINE);
     s = swap(s, "(1.0 - smoothstep(80.0, 250.0, dist))", "(1.0 - smoothstep(1500.0, 6000.0, dist))");
+    // Foam is lit like the base shader lights it, with the sky term lifted so it reads as white foam under a bright sky.
+    s = swap(s, "(ambient * 0.55 + sunCol * 0.04 * max(dot(N, L), 0.0))", "(ambient * 1.4 + sunCol * 0.2 * max(dot(N, L), 0.0) + vec3f(0.05))");
     return s + "\n" + declarations(group);
   }
 

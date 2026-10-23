@@ -22,8 +22,22 @@
     { size: 37, kMin: 0.8, kMax: 5.4 },
     { size: 5.3, kMin: 5.4, kMax: 37 },
   ];
-  // threshold is the Jacobian below which crests inject foam; gain is per 1/60 s; statelessGain drives the distant, stateless foam.
-  const FOAM = { tau: 5, threshold: 0.72, gain: 1, statelessGain: 3.5 };
+  // Foam. Go owns the constants (scene.OceanFoam, documented in scene/ocean_graph.go) and ships the values for the
+  // current sea in ocean.graphParams: foamTau, foamThreshold (wind-driven, scaled for the authored choppiness) and
+  // foamGain. This table is only the fallback for an ocean that did not come through Go normalization (a hand-built
+  // scene in a test or tool); a test holds it equal to Go's golden values. statelessGain is shader-side only: it
+  // drives the distant foam the surface derives from J beyond the persistent window.
+  const FOAM = { tau: 6, maxThreshold: 0.64, windLow: 5, windHigh: 9, gain: 0.9, statelessGain: 3.5 };
+  function foamThreshold(windSpeed: number, lambda: number): number {
+    const t = Math.min(1, Math.max(0, (windSpeed - FOAM.windLow) / (FOAM.windHigh - FOAM.windLow)));
+    const base = FOAM.maxThreshold * t * t * (3 - 2 * t);
+    return base === 0 ? 0 : 1 - lambda * (1 - base);
+  }
+  function foamOf(ocean: any, r: any): any {
+    const g = ocean.graphParams;
+    if (g && Number.isFinite(g.foamTau) && Number.isFinite(g.foamThreshold) && Number.isFinite(g.foamGain)) return { tau: g.foamTau, threshold: g.foamThreshold, gain: g.foamGain };
+    return { tau: FOAM.tau, threshold: foamThreshold(r.windSpeed, r.lambda), gain: FOAM.gain };
+  }
   // Four-corner WGSL downsample. Elio's ocean_mip reads a storage buffer and writes a texture, so it cannot
   // chain levels on WebGPU; this reads the previous level as a texture instead (same 2x2 box filter).
   const MIP_WGSL = [
@@ -75,7 +89,8 @@
       spread: finite(s.spread, 8, 1, 32),
       swell: Math.min(1, Math.max(0, Number.isFinite(s.swell) ? s.swell : 0)),
       windDir: travelAngle(Number.isFinite(ocean.windDirection) ? ocean.windDirection : 0),
-      swellDir: travelAngle(Number.isFinite(s.swellDirection) ? s.swellDirection : (Number.isFinite(ocean.windDirection) ? ocean.windDirection : 0)),
+      // Zero is a direction (toward +Z), as in Go: an absent swellDirection does not follow the wind.
+      swellDir: travelAngle(Number.isFinite(s.swellDirection) ? s.swellDirection : 0),
       seed: (s.seed >>> 0),
       lambda: Math.max(0, Number.isFinite(ocean.choppiness) ? ocean.choppiness : 0.6),
       cascades: cascades,
@@ -86,6 +101,26 @@
   function paramKey(r: any): string {
     return [r.windSpeed, r.fetchKm, r.gamma, r.spread, r.swell, r.windDir, r.swellDir, r.seed].join(",") + "|" +
       r.cascades.map(function (c: any) { return c.kMin + ":" + c.kMax; }).join(",");
+  }
+
+  // presentationOf reads scene.OceanPresentation from the normalized ocean: wave time scale, water drift (m/s) and the
+  // seconds a changed sea state takes. Missing or invalid fields mean the documented defaults.
+  function presentationOf(ocean: any): any {
+    const p = ocean.presentation || {};
+    const num = function (v: any, fallback: number): number { return Number.isFinite(v) ? v : fallback; };
+    return { timeScale: num(p.timeScale, 1) > 0 ? Math.min(4, num(p.timeScale, 1)) : 1, driftX: num(p.waterDriftX, 0), driftZ: num(p.waterDriftZ, 0),
+      transition: num(p.transitionSeconds, 20) > 0 ? num(p.transitionSeconds, 20) : 20 };
+  }
+  // mixResolved is the sea state u of the way from a to b (u in 0..1). Numbers move linearly and directions by the
+  // short way round; the layout, band edges and seed come from b.
+  function mixResolved(a: any, b: any, u: number): any {
+    const out = Object.assign({}, b);
+    for (const key of ["windSpeed", "fetchKm", "gamma", "spread", "swell", "lambda"]) out[key] = a[key] + (b[key] - a[key]) * u;
+    for (const key of ["windDir", "swellDir"]) {
+      const d = Math.atan2(Math.sin(b[key] - a[key]), Math.cos(b[key] - a[key]));
+      out[key] = a[key] + d * u;
+    }
+    return out;
   }
 
   // pack writes values into a uniform block laid out as the generated metadata says; a typo or a missing field throws.
@@ -127,6 +162,8 @@
     let res: any = null; // buffers, textures and bind groups of the current layout
     let key = "", pkey = "", resolved: any = null;
     let lastTime: number | null = null, foamOrigin: number[] | null = null, foamFlip = 0;
+    let shown: any = null, foamP: any = null, tween: any = null, targetKey = "", pres: any = presentationOf({});
+    const offset = [0, 0]; // the water frame's origin in world metres: the integral of the drift
     const engine: any = {
       device: device, ready: false, layout: null, group: null, resolved: null, disposed: false,
       update: update, encode: encode, dispose: dispose, buildCount: 0, fail: fail,
@@ -270,10 +307,25 @@
 
     // update builds or refreshes resources for this frame's spectrum and tier and decides readiness.
     function update(frame: any): boolean {
-      const r = resolve(frame.ocean, frame.tier);
+      const target = resolve(frame.ocean, frame.tier);
+      pres = presentationOf(frame.ocean);
+      foamP = foamOf(frame.ocean, target);
+      const lk = layoutKey(target), tk = paramKey(target) + "|" + target.lambda;
+      let r = target;
+      if (!shown || !res || lk !== key) { tween = null; shown = target; targetKey = tk; }
+      else {
+        if (tk !== targetKey) { tween = { from: shown, to: target, start: frame.time, seconds: pres.transition }; targetKey = tk; }
+        if (tween) {
+          const u = Math.min(1, Math.max(0, (frame.time - tween.start) / tween.seconds));
+          if (tween.to !== target) tween.to = target; // the sea state moved again: keep heading for the latest target
+          shown = u >= 1 ? tween.to : mixResolved(tween.from, tween.to, u);
+          if (u >= 1) tween = null;
+        } else shown = target;
+        r = shown;
+      }
       resolved = engine.resolved = r;
       pipelinesFor(r);
-      const lk = layoutKey(r), pk = paramKey(r);
+      const pk = paramKey(r);
       if (!res || lk !== key) { key = lk; build(r); pkey = pk; }
       else if (pk !== pkey) { pkey = pk; res.needSpectrum = true; }
       engine.ready = allReady();
@@ -284,10 +336,12 @@
     function encode(encoder: any, frame: any): void {
       if (!engine.ready || !res) return;
       const r = resolved, q = device.queue;
-      let t = frame.time % LOOP_PERIOD;
+      let t = (frame.time * pres.timeScale) % LOOP_PERIOD;
       if (!(t >= 0)) t = t < 0 ? t + LOOP_PERIOD : 0;
       const dt = lastTime === null ? 0 : Math.min(0.1, Math.max(0, frame.time - lastTime));
+      const driftDt = lastTime === null ? 0 : Math.min(0.25, Math.max(0, frame.time - lastTime));
       lastTime = frame.time;
+      offset[0] += pres.driftX * driftDt; offset[1] += pres.driftZ * driftDt;
       const spectrumLayout = layoutOf(K.oceanSpectrum), evolveLayout = layoutOf(K.oceanEvolve), assembleLayout = layoutOf(K.oceanAssemble);
       const pass = encoder.beginComputePass({ label: label + "pass" });
       const run = function (p: any, group: any, x: number, y: number = 1) { pass.setPipeline(validated(p)); pass.setBindGroup(0, group); pass.dispatchWorkgroups(x, y, 1); };
@@ -311,13 +365,14 @@
       res.needSpectrum = false;
       // Persistent foam: the window origin follows the camera in whole cells.
       const f = res.foam, cam = frame.camera || {};
-      const ox = Math.floor((cam.x || 0) / f.cell) - f.width / 2, oz = Math.floor((cam.z || 0) / f.cell) - f.width / 2;
+      // The foam state lives in the water frame, so its window follows the camera's position in that frame.
+      const ox = Math.floor(((cam.x || 0) - offset[0]) / f.cell) - f.width / 2, oz = Math.floor(((cam.z || 0) - offset[1]) / f.cell) - f.width / 2;
       const prev = foamOrigin || [ox, oz];
       foamOrigin = [ox, oz];
       const cs = res.cascades, sz = [1, 1, 1, 1], ns = [1, 1, 1, 1];
       for (let i = 0; i < cs.length; i++) { sz[i] = cs[i].c.size; ns[i] = cs[i].n; }
       q.writeBuffer(f.u, 0, pack(layoutOf(K.oceanFoam), { width: f.width, cascades: cs.length, originX: ox, originZ: oz, shiftX: ox - prev[0], shiftZ: oz - prev[1],
-        dt: dt, tau: FOAM.tau, threshold: FOAM.threshold, gain: FOAM.gain * dt * 60, lambda: r.lambda, cell: f.cell,
+        dt: dt, tau: foamP.tau, threshold: foamP.threshold, gain: foamP.gain * dt * 60, lambda: r.lambda, cell: f.cell,
         n0: ns[0], n1: ns[1], n2: ns[2], n3: ns[3], size0: sz[0], size1: sz[1], size2: sz[2], size3: sz[3] }));
       run(pipelines.foam, f.groups[foamFlip], Math.ceil(f.width * f.width / 64));
       foamFlip = 1 - foamFlip;
@@ -328,8 +383,8 @@
       for (let i = 0; i < cs.length; i++) {
         d[i * 4] = cs[i].c.size; d[i * 4 + 1] = Math.sqrt(Math.max(cs[i].c.kMin, 1e-6) * cs[i].c.kMax); d[i * 4 + 2] = cs[i].n; d[i * 4 + 3] = 1;
       }
-      d[16] = 1 / (f.cell * f.width); d[17] = 1; d[18] = FOAM.threshold; d[19] = FOAM.statelessGain;
-      d[20] = Math.max(0.3, 0.14 * r.windSpeed * r.windSpeed / 9.81); d[23] = FOAM_RADIUS;
+      d[16] = 1 / (f.cell * f.width); d[17] = 1; d[18] = foamP.threshold; d[19] = FOAM.statelessGain;
+      d[20] = Math.max(0.3, 0.14 * r.windSpeed * r.windSpeed / 9.81); d[21] = offset[0]; d[22] = offset[1]; d[23] = FOAM_RADIUS;
       q.writeBuffer(surfaceUniform, 0, d);
     }
 
@@ -357,7 +412,5 @@
     return eng;
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, resolve: resolve, pack: pack, travelAngle: travelAngle, MIP_WGSL: MIP_WGSL, LOOP_PERIOD: LOOP_PERIOD };
-  // What the WebGL2 scheduler (ocean-fft-gl.ts) shares with this file: one set of defaults, keys and foam constants.
-  window.__gosx_scene3d_ocean_fft_api.shared = { layoutKey: layoutKey, paramKey: paramKey, FOAM: FOAM, FOAM_WINDOW: FOAM_WINDOW, FOAM_RADIUS: FOAM_RADIUS, LOOP_PERIOD: LOOP_PERIOD };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, resolve: resolve, pack: pack, travelAngle: travelAngle, foamThreshold: foamThreshold, foamOf: foamOf, FOAM: FOAM, MIP_WGSL: MIP_WGSL, LOOP_PERIOD: LOOP_PERIOD };
 })();
