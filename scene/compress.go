@@ -151,7 +151,7 @@ func compressFloat64Array(data []float64, bitWidth int) []CompressedArray {
 		// Quantize each value to b-bit index
 		indices := make([]int, count)
 		for i, v := range chunk {
-			idx := int(math.Round((v - minVal) * scale))
+			idx := int(math.Round(float64((v - minVal) * scale)))
 			if idx < 0 {
 				idx = 0
 			}
@@ -198,7 +198,7 @@ func DecompressFloat64Array(chunks []CompressedArray) []float64 {
 		unpackIndicesScene(indices, chunk.Packed, chunk.Count, chunk.BitWidth)
 
 		for _, idx := range indices {
-			result = append(result, minVal+float64(idx)*step)
+			result = append(result, minVal+float64(float64(idx)*step))
 		}
 	}
 	return result

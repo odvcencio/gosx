@@ -212,6 +212,7 @@ func transitionCommandMap(commands []Command) (map[string]*Command, []string, er
 }
 
 func transitionDefaults(data, defaults map[string]any) {
+	//gosx:allow map-range fills each missing key independently
 	for key, value := range defaults {
 		if _, exists := data[key]; !exists {
 			data[key] = value
@@ -226,6 +227,7 @@ func validateCommandTransitionValue(value any, depth int, budget *int) error {
 	}
 	switch v := value.(type) {
 	case map[string]any:
+		//gosx:allow map-range validation only; any unsafe key rejects the value
 		for key, child := range v {
 			if key == "__proto__" || key == "prototype" || key == "constructor" {
 				return fmt.Errorf("scene transition contains an unsafe data key")
@@ -290,9 +292,11 @@ func compileCommandTransitionValue(a any, ap bool, b any, bp bool, key string, d
 	} else if aa, ok := a.(map[string]any); ok {
 		if bb, ok := b.(map[string]any); ok {
 			node.kind = 'o'
+			//gosx:allow map-range keys are sorted after both loops
 			for k := range aa {
 				node.keys = append(node.keys, k)
 			}
+			//gosx:allow map-range keys are sorted after both loops
 			for k := range bb {
 				if _, exists := aa[k]; !exists {
 					node.keys = append(node.keys, k)
@@ -317,6 +321,7 @@ func cloneTransitionValue(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(v))
+		//gosx:allow map-range copies each entry independently
 		for k, x := range v {
 			out[k] = cloneTransitionValue(x)
 		}
@@ -341,9 +346,9 @@ func (node *commandTransitionValue) sample(t float64) (any, bool) {
 	}
 	switch node.kind {
 	case 'n':
-		return node.a.(float64)*(1-t) + node.b.(float64)*t, true
+		return float64(node.a.(float64)*(1-t)) + float64(node.b.(float64)*t), true
 	case 'c':
-		return fmt.Sprintf("#%02x%02x%02x", int(math.Round(node.color[0]*(1-t)+node.color[3]*t)), int(math.Round(node.color[1]*(1-t)+node.color[4]*t)), int(math.Round(node.color[2]*(1-t)+node.color[5]*t))), true
+		return fmt.Sprintf("#%02x%02x%02x", int(math.Round(float64(node.color[0]*(1-t))+float64(node.color[3]*t))), int(math.Round(float64(node.color[1]*(1-t))+float64(node.color[4]*t))), int(math.Round(float64(node.color[2]*(1-t))+float64(node.color[5]*t)))), true
 	case 'a':
 		out := make([]any, len(node.children))
 		for i, child := range node.children {

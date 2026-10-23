@@ -4,6 +4,8 @@ import (
 	"math"
 	"slices"
 	"strings"
+
+	"m31labs.dev/gosx/det"
 )
 
 // Ray is a world-space ray used for scene queries such as hitscan weapons,
@@ -254,7 +256,7 @@ func raycastMesh(mesh Mesh, parent worldTransform, ray Ray, opts RaycastOptions,
 	// Broadphase: reject the mesh before the exact test when the ray misses its
 	// world-space bounding sphere. This costs about ten arithmetic operations
 	// and skips a quaternion inverse plus the geometry intersection.
-	if rayMissesSphere(ray, world.Position, radius*factor+strokes*threshold, opts.MaxDistance) {
+	if rayMissesSphere(ray, world.Position, float64(radius*factor)+float64(strokes*threshold), opts.MaxDistance) {
 		trace.BroadphaseRejected++
 		raycastNodes(mesh.Children, world, ray, opts, trace)
 		return
@@ -291,7 +293,7 @@ func raycastInstancedMesh(mesh InstancedMesh, parent worldTransform, ray Ray, op
 		// sphere, so this test needs the world center only. Rejected instances
 		// never pay for a quaternion inverse or a geometry intersection.
 		center := world.Position
-		if rayMissesSphere(ray, center, localRadius*factor+strokes*threshold, opts.MaxDistance) {
+		if rayMissesSphere(ray, center, float64(localRadius*factor)+float64(strokes*threshold), opts.MaxDistance) {
 			trace.BroadphaseRejected++
 			continue
 		}
@@ -383,7 +385,7 @@ func raycastSprite(sprite Sprite, parent worldTransform, ray Ray, opts RaycastOp
 		return
 	}
 	center := combineTransforms(parent, localTransform(sprite.Position, Euler{})).Position
-	radius := pointHitRadius(opts) * spriteRadiusScale(sprite)
+	radius := float64(pointHitRadius(opts) * spriteRadiusScale(sprite))
 	if rayMissesSphere(ray, center, radius, opts.MaxDistance) {
 		trace.BroadphaseRejected++
 		return
@@ -417,7 +419,7 @@ func raycastModel(model Model, parent worldTransform, ray Ray, opts RaycastOptio
 	world := combineTransforms(parent, localTransform(model.Position, model.Rotation))
 	scale := meshScaleOrUnit(model.Scale)
 	half := model.Bounds / 2
-	if rayMissesSphere(ray, world.Position, half*math.Sqrt(3)*worldScaleBound(world, scale), opts.MaxDistance) {
+	if rayMissesSphere(ray, world.Position, float64(half*math.Sqrt(3)*worldScaleBound(world, scale)), opts.MaxDistance) {
 		trace.BroadphaseRejected++
 		return
 	}
@@ -456,8 +458,8 @@ func spriteRadiusScale(sprite Sprite) float64 {
 func intersectWorldSphere(ray Ray, center Vector3, radius float64) (RayHit, bool) {
 	oc := subVectors(ray.Origin, center)
 	b := dotVector(oc, ray.Direction)
-	c := dotVector(oc, oc) - radius*radius
-	discriminant := b*b - c
+	c := dotVector(oc, oc) - float64(radius*radius)
+	discriminant := float64(b*b) - c
 	if discriminant < 0 {
 		return RayHit{}, false
 	}
@@ -483,14 +485,14 @@ func rayMissesSphere(ray Ray, center Vector3, radius, maxDistance float64) bool 
 	}
 	oc := subVectors(center, ray.Origin)
 	along := dotVector(oc, ray.Direction)
-	squaredRadius := radius * radius
+	squaredRadius := float64(radius * radius)
 	squaredCenter := dotVector(oc, oc)
 	// The whole sphere sits behind the ray origin.
 	if along < 0 && squaredCenter > squaredRadius {
 		return true
 	}
 	// The ray line passes outside the sphere.
-	if squaredCenter-along*along > squaredRadius {
+	if squaredCenter-float64(along*along) > squaredRadius {
 		return true
 	}
 	// The nearest reachable point on the sphere lies past the distance cap.
@@ -527,26 +529,26 @@ func geometryBounds(geometry Geometry) (radius float64, strokes float64) {
 	case TorusKnotGeometry:
 		// The knot center curve reaches 1.5*radius from the origin, at the turn
 		// where the curve leaves the Z axis, so the tube adds its whole radius.
-		return torusKnotRadius(g)*1.5 + torusKnotTube(g), 0
+		return float64(torusKnotRadius(g)*1.5) + torusKnotTube(g), 0
 	case LinesGeometry:
 		min, max := lineBounds(g)
 		return boxCornerRadius(min, max), 1
 	case CubeGeometry:
 		size := positiveOr(g.Size, 1)
-		return size / 2 * math.Sqrt(3), 0
+		return float64(size / 2 * math.Sqrt(3)), 0
 	case BoxGeometry:
 		min, max := boxBounds(g.Width, g.Height, g.Depth)
 		return boxCornerRadius(min, max), 0
 	case PlaneGeometry:
 		width := positiveOr(g.Width, 1)
 		height := positiveOr(g.Height, 1)
-		return math.Hypot(width, height) / 2, 0
+		return det.Hypot(width, height) / 2, 0
 	case PyramidGeometry:
 		min, max := boxBounds(g.Width, g.Height, g.Depth)
 		return boxCornerRadius(min, max), 0
 	case CylinderGeometry:
 		radiusTop, radiusBottom := cylinderRadii(g.RadiusTop, g.RadiusBottom)
-		return math.Hypot(math.Max(radiusTop, radiusBottom), positiveOr(g.Height, 1)/2), 0
+		return det.Hypot(math.Max(radiusTop, radiusBottom), positiveOr(g.Height, 1)/2), 0
 	case BufferGeometry:
 		return bufferBoundingRadius(g), 0
 	case *BufferGeometry:
@@ -567,7 +569,7 @@ func bufferBoundingRadius(geometry BufferGeometry) float64 {
 	positions := geometry.Positions
 	for index := 0; index+3 <= len(positions); index += 3 {
 		x, y, z := positions[index], positions[index+1], positions[index+2]
-		if squared := x*x + y*y + z*z; squared > longest {
+		if squared := float64(x*x) + float64(y*y) + float64(z*z); squared > longest {
 			longest = squared
 		}
 	}
@@ -603,7 +605,7 @@ func localDistanceBound(world worldTransform, scale Vector3, distance float64) f
 	if !ok {
 		return 0
 	}
-	return distance * affineLinearBound(inverse)
+	return float64(distance * affineLinearBound(inverse))
 }
 
 // boxCornerRadius returns the radius of the sphere that encloses a box.
@@ -611,7 +613,7 @@ func boxCornerRadius(min, max Vector3) float64 {
 	x := math.Max(math.Abs(min.X), math.Abs(max.X))
 	y := math.Max(math.Abs(min.Y), math.Abs(max.Y))
 	z := math.Max(math.Abs(min.Z), math.Abs(max.Z))
-	return math.Sqrt(x*x + y*y + z*z)
+	return math.Sqrt(float64(x*x) + float64(y*y) + float64(z*z))
 }
 
 // raycastTransformedGeometry runs the exact geometry test in local space.
@@ -758,8 +760,8 @@ func raycastGeometry(geometry Geometry, ray Ray, localThreshold float64) (RayHit
 func intersectSphere(ray Ray, radius float64) (RayHit, bool) {
 	oc := ray.Origin
 	b := dotVector(oc, ray.Direction)
-	c := dotVector(oc, oc) - radius*radius
-	discriminant := b*b - c
+	c := dotVector(oc, oc) - float64(radius*radius)
+	discriminant := float64(b*b) - c
 	if discriminant < 0 {
 		return RayHit{}, false
 	}
@@ -805,10 +807,10 @@ func intersectCylinder(ray Ray, radiusTop, radiusBottom, height float64) (RayHit
 	const epsilon = 1e-9
 	half := height / 2
 	slope := (radiusTop - radiusBottom) / height
-	radiusAtOrigin := radiusBottom + slope*(ray.Origin.Y+half)
-	a := ray.Direction.X*ray.Direction.X + ray.Direction.Z*ray.Direction.Z - slope*slope*ray.Direction.Y*ray.Direction.Y
-	b := 2 * (ray.Origin.X*ray.Direction.X + ray.Origin.Z*ray.Direction.Z - radiusAtOrigin*slope*ray.Direction.Y)
-	c := ray.Origin.X*ray.Origin.X + ray.Origin.Z*ray.Origin.Z - radiusAtOrigin*radiusAtOrigin
+	radiusAtOrigin := radiusBottom + float64(slope*(ray.Origin.Y+half))
+	a := float64(ray.Direction.X*ray.Direction.X) + float64(ray.Direction.Z*ray.Direction.Z) - float64(slope*slope*ray.Direction.Y*ray.Direction.Y)
+	b := 2 * (float64(ray.Origin.X*ray.Direction.X) + float64(ray.Origin.Z*ray.Direction.Z) - float64(radiusAtOrigin*slope*ray.Direction.Y))
+	c := float64(ray.Origin.X*ray.Origin.X) + float64(ray.Origin.Z*ray.Origin.Z) - float64(radiusAtOrigin*radiusAtOrigin)
 
 	bestT := math.Inf(1)
 	bestNormal := Vector3{}
@@ -820,15 +822,15 @@ func intersectCylinder(ray Ray, radiusTop, radiusBottom, height float64) (RayHit
 		if point.Y < -half-epsilon || point.Y > half+epsilon {
 			return
 		}
-		radius := radiusBottom + slope*(point.Y+half)
+		radius := radiusBottom + float64(slope*(point.Y+half))
 		bestT = t
-		bestNormal = normalizeVector(Vector3{X: point.X, Y: -radius * slope, Z: point.Z})
+		bestNormal = normalizeVector(Vector3{X: point.X, Y: float64(-radius * slope), Z: point.Z})
 	}
 	if math.Abs(a) < epsilon {
 		if math.Abs(b) >= epsilon {
 			considerSide(-c / b)
 		}
-	} else if discriminant := b*b - 4*a*c; discriminant >= 0 {
+	} else if discriminant := float64(b*b) - float64(4*a*c); discriminant >= 0 {
 		root := math.Sqrt(discriminant)
 		t0, t1 := (-b-root)/(2*a), (-b+root)/(2*a)
 		if t0 > t1 {
@@ -847,7 +849,7 @@ func intersectCylinder(ray Ray, radiusTop, radiusBottom, height float64) (RayHit
 			return
 		}
 		point := addVectors(ray.Origin, scaleVector(ray.Direction, t))
-		if point.X*point.X+point.Z*point.Z <= radius*radius+epsilon {
+		if float64(point.X*point.X)+float64(point.Z*point.Z) <= float64(radius*radius)+epsilon {
 			bestT, bestNormal = t, normal
 		}
 	}
@@ -891,7 +893,7 @@ func intersectTorus(ray Ray, radius, tube float64) (RayHit, bool) {
 	shift := -dotVector(ray.Origin, ray.Direction)
 	nearest := addVectors(ray.Origin, scaleVector(ray.Direction, shift))
 	offset := dotVector(nearest, nearest)
-	chord := outer*outer - offset
+	chord := float64(outer*outer) - offset
 	if chord <= 0 {
 		// The ray line stays outside the bounding sphere of the torus.
 		return RayHit{}, false
@@ -902,7 +904,7 @@ func intersectTorus(ray Ray, radius, tube float64) (RayHit, bool) {
 	// surface reads as zero, which would hide the crossing from the sign scan
 	// below. Widening the bracket cannot invent a hit: every real root of the
 	// quartic is a point of the surface, and the surface stays inside the sphere.
-	half := math.Sqrt(chord) + 1e-6*(outer+1)
+	half := math.Sqrt(chord) + float64(1e-6*(outer+1))
 	low, high := -half, half
 	// The ray parameter may not go below zero, so the shifted parameter may not
 	// go below -shift.
@@ -916,14 +918,14 @@ func intersectTorus(ray Ray, radius, tube float64) (RayHit, bool) {
 	// Depressed quartic s⁴ + second*s² + first*s + constant in the shifted
 	// parameter. The cubic term vanishes because the shifted origin is
 	// perpendicular to the direction.
-	spread := offset + radius*radius - tube*tube
-	planar := nearest.X*nearest.X + nearest.Z*nearest.Z
-	along := nearest.X*ray.Direction.X + nearest.Z*ray.Direction.Z
-	slab := ray.Direction.X*ray.Direction.X + ray.Direction.Z*ray.Direction.Z
-	ring := 4 * radius * radius
-	second := 2*spread - ring*slab
-	first := -2 * ring * along
-	constant := spread*spread - ring*planar
+	spread := offset + float64(radius*radius) - float64(tube*tube)
+	planar := float64(nearest.X*nearest.X) + float64(nearest.Z*nearest.Z)
+	along := float64(nearest.X*ray.Direction.X) + float64(nearest.Z*ray.Direction.Z)
+	slab := float64(ray.Direction.X*ray.Direction.X) + float64(ray.Direction.Z*ray.Direction.Z)
+	ring := float64(4 * radius * radius)
+	second := 2*spread - float64(ring*slab)
+	first := float64(-2 * ring * along)
+	constant := float64(spread*spread) - float64(ring*planar)
 
 	root, ok := smallestQuarticRoot(second, first, constant, low, high)
 	if !ok {
@@ -940,7 +942,7 @@ func intersectTorus(ray Ray, radius, tube float64) (RayHit, bool) {
 // nearest point on the center circle sits at radius R in the XZ plane, so the
 // normal points away from it.
 func torusNormal(point Vector3, radius float64) Vector3 {
-	planar := math.Hypot(point.X, point.Z)
+	planar := det.Hypot(point.X, point.Z)
 	if planar < 1e-12 {
 		// Only a self-intersecting torus (tube >= radius) reaches the Y axis.
 		if point.Y < 0 {
@@ -949,7 +951,7 @@ func torusNormal(point Vector3, radius float64) Vector3 {
 		return Vector3{Y: 1}
 	}
 	pull := radius / planar
-	return normalizeVector(Vector3{X: point.X * (1 - pull), Y: point.Y, Z: point.Z * (1 - pull)})
+	return normalizeVector(Vector3{X: float64(point.X * (1 - pull)), Y: point.Y, Z: float64(point.Z * (1 - pull))})
 }
 
 // smallestQuarticRoot returns the smallest root of
@@ -996,12 +998,12 @@ func smallestQuarticRoot(second, first, constant, low, high float64) (float64, b
 
 // quarticAt evaluates s⁴ + second*s² + first*s + constant.
 func quarticAt(second, first, constant, s float64) float64 {
-	return ((s*s+second)*s+first)*s + constant
+	return float64((float64((float64(s*s)+second)*s)+first)*s) + constant
 }
 
 // quarticSlopeAt evaluates 4s³ + 2*second*s + first.
 func quarticSlopeAt(second, first, s float64) float64 {
-	return (4*s*s+2*second)*s + first
+	return float64((float64(4*s*s)+2*second)*s) + first
 }
 
 // polishQuarticRoot finds the single root inside a bracket that holds one sign
@@ -1039,14 +1041,14 @@ func polishQuarticRoot(second, first, constant, low, lowValue, high float64) flo
 // increasing order, and returns how many it wrote.
 func depressedCubicRoots(p, q float64, out *[3]float64) int {
 	if p == 0 {
-		out[0] = -math.Cbrt(q)
+		out[0] = -det.Cbrt(q)
 		return 1
 	}
 	discriminant := q*q/4 + p*p*p/27
 	if discriminant > 0 {
 		// One real root. Cardano's formula needs no complex arithmetic here.
 		root := math.Sqrt(discriminant)
-		out[0] = math.Cbrt(-q/2+root) + math.Cbrt(-q/2-root)
+		out[0] = det.Cbrt(-q/2+root) + det.Cbrt(-q/2-root)
 		return 1
 	}
 	// Three real roots, two of which may coincide. p is negative in this branch,
@@ -1059,11 +1061,11 @@ func depressedCubicRoots(p, q float64, out *[3]float64) int {
 	if argument > 1 {
 		argument = 1
 	}
-	angle := math.Acos(argument) / 3
+	angle := det.Acos(argument) / 3
 	const third = 2 * math.Pi / 3
-	out[0] = spread * math.Cos(angle)
-	out[1] = spread * math.Cos(angle-third)
-	out[2] = spread * math.Cos(angle-2*third)
+	out[0] = float64(spread * det.Cos(angle))
+	out[1] = float64(spread * det.Cos(angle-third))
+	out[2] = float64(spread * det.Cos(angle-2*third))
 	if out[0] > out[1] {
 		out[0], out[1] = out[1], out[0]
 	}
@@ -1154,16 +1156,16 @@ func triangleHit(ray Ray, first, second, third Vector3) (float64, Vector3, bool)
 	}
 	inverse := 1 / determinant
 	toFirst := subVectors(ray.Origin, first)
-	distance := dotVector(toFirst, normal) * inverse
+	distance := float64(dotVector(toFirst, normal) * inverse)
 	if distance < 0 {
 		return 0, Vector3{}, false
 	}
 	swept := crossVector(toFirst, ray.Direction)
-	u := dotVector(edge2, swept) * inverse
+	u := float64(dotVector(edge2, swept) * inverse)
 	if u < 0 {
 		return 0, Vector3{}, false
 	}
-	v := -dotVector(edge1, swept) * inverse
+	v := float64(-dotVector(edge1, swept) * inverse)
 	if v < 0 || u+v > 1 {
 		return 0, Vector3{}, false
 	}
@@ -1221,7 +1223,7 @@ func (s *strokeSearch) consider(index int, from, to Vector3) {
 	// sphere's squared radius, so the whole test needs no square root.
 	axis := subVectors(to, from)
 	middle := scaleVector(addVectors(from, to), 0.5)
-	reachSquared := 2 * (dotVector(axis, axis)/4 + s.threshold*s.threshold)
+	reachSquared := 2 * (dotVector(axis, axis)/4 + float64(s.threshold*s.threshold))
 	toMiddle := subVectors(middle, s.ray.Origin)
 	along := dotVector(toMiddle, s.ray.Direction)
 	gap := dotVector(toMiddle, toMiddle)
@@ -1229,7 +1231,7 @@ func (s *strokeSearch) consider(index int, from, to Vector3) {
 		// The whole capsule sits behind the ray origin.
 		return
 	}
-	if gap-along*along > reachSquared {
+	if gap-float64(along*along) > reachSquared {
 		// The ray line passes outside the capsule.
 		return
 	}
@@ -1301,17 +1303,17 @@ func intersectSegmentCapsule(ray Ray, from, to Vector3, radius float64) (float64
 
 	// Side surface. Multiplying the cylinder equation by the squared axis length
 	// keeps the coefficients free of a divide.
-	sideA := length - axisAlongRay*axisAlongRay
+	sideA := length - float64(axisAlongRay*axisAlongRay)
 	if sideA > 0 {
-		sideB := length*dotVector(offset, ray.Direction) - axisAtOrigin*axisAlongRay
-		sideC := length*(dotVector(offset, offset)-radius*radius) - axisAtOrigin*axisAtOrigin
-		if discriminant := sideB*sideB - sideA*sideC; discriminant >= 0 {
+		sideB := float64(length*dotVector(offset, ray.Direction)) - float64(axisAtOrigin*axisAlongRay)
+		sideC := float64(length*(dotVector(offset, offset)-float64(radius*radius))) - float64(axisAtOrigin*axisAtOrigin)
+		if discriminant := float64(sideB*sideB) - float64(sideA*sideC); discriminant >= 0 {
 			root := math.Sqrt(discriminant)
 			for _, distance := range [2]float64{(-sideB - root) / sideA, (-sideB + root) / sideA} {
 				if distance < 0 || distance >= best {
 					continue
 				}
-				span := axisAtOrigin + distance*axisAlongRay
+				span := axisAtOrigin + float64(distance*axisAlongRay)
 				if span >= 0 && span <= length {
 					best, found = distance, true
 				}
@@ -1326,7 +1328,7 @@ func intersectSegmentCapsule(ray Ray, from, to Vector3, radius float64) (float64
 			if distance < 0 || distance >= best {
 				continue
 			}
-			if axisAtOrigin+distance*axisAlongRay <= 0 {
+			if axisAtOrigin+float64(distance*axisAlongRay) <= 0 {
 				best, found = distance, true
 			}
 		}
@@ -1336,7 +1338,7 @@ func intersectSegmentCapsule(ray Ray, from, to Vector3, radius float64) (float64
 			if distance < 0 || distance >= best {
 				continue
 			}
-			if axisAtOrigin+distance*axisAlongRay >= length {
+			if axisAtOrigin+float64(distance*axisAlongRay) >= length {
 				best, found = distance, true
 			}
 		}
@@ -1349,8 +1351,8 @@ func intersectSegmentCapsule(ray Ray, from, to Vector3, radius float64) (float64
 func sphereRoots(ray Ray, center Vector3, radius float64) (float64, float64, bool) {
 	offset := subVectors(ray.Origin, center)
 	along := dotVector(offset, ray.Direction)
-	gap := dotVector(offset, offset) - radius*radius
-	discriminant := along*along - gap
+	gap := dotVector(offset, offset) - float64(radius*radius)
+	discriminant := float64(along*along) - gap
 	if discriminant < 0 {
 		return 0, 0, false
 	}
@@ -1432,7 +1434,7 @@ func lineBounds(g LinesGeometry) (Vector3, Vector3) {
 		max.Y = math.Max(max.Y, point.Y)
 		max.Z = math.Max(max.Z, point.Z)
 	}
-	padding := math.Max(0.01, positiveOr(g.Width, 1)*0.01)
+	padding := math.Max(0.01, float64(positiveOr(g.Width, 1)*0.01))
 	min = subVectors(min, Vector3{X: padding, Y: padding, Z: padding})
 	max = addVectors(max, Vector3{X: padding, Y: padding, Z: padding})
 	return min, max
@@ -1457,18 +1459,18 @@ func subVectors(left, right Vector3) Vector3 {
 }
 
 func scaleVector(value Vector3, scalar float64) Vector3 {
-	return Vector3{X: value.X * scalar, Y: value.Y * scalar, Z: value.Z * scalar}
+	return Vector3{X: float64(value.X * scalar), Y: float64(value.Y * scalar), Z: float64(value.Z * scalar)}
 }
 
 func dotVector(left, right Vector3) float64 {
-	return left.X*right.X + left.Y*right.Y + left.Z*right.Z
+	return float64(left.X*right.X) + float64(left.Y*right.Y) + float64(left.Z*right.Z)
 }
 
 func crossVector(left, right Vector3) Vector3 {
 	return Vector3{
-		X: left.Y*right.Z - left.Z*right.Y,
-		Y: left.Z*right.X - left.X*right.Z,
-		Z: left.X*right.Y - left.Y*right.X,
+		X: float64(left.Y*right.Z) - float64(left.Z*right.Y),
+		Y: float64(left.Z*right.X) - float64(left.X*right.Z),
+		Z: float64(left.X*right.Y) - float64(left.Y*right.X),
 	}
 }
 
@@ -1520,7 +1522,7 @@ func eulerAt(values []Euler, index int, fallback Euler) Euler {
 }
 
 func multiplyVector(left, right Vector3) Vector3 {
-	return Vector3{X: left.X * right.X, Y: left.Y * right.Y, Z: left.Z * right.Z}
+	return Vector3{X: float64(left.X * right.X), Y: float64(left.Y * right.Y), Z: float64(left.Z * right.Z)}
 }
 
 func divideVector(left, right Vector3) Vector3 {
