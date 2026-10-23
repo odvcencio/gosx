@@ -13,7 +13,7 @@
   // Surface-side wake tuning (not simulation), as in the WGSL variant: the window edge fade in cells, the wake's shoaling wavenumber (rad/m) and foam gain.
   const WAKE = { edgeCells: 8, k: 0.2, slope: 3, slickLo: 0.04, slickHi: 0.4, slickFine: 0.85, slickMid: 0.4, glow: 0.3,
     // Foam opacity: thin foam 0.12 to 0.42 (lace strands lift it), the dense core 0.45 to 0.75; the lace line widths (noise units) at three scales.
-    thinBase: 0.12, thinLace: 0.30, bodyBase: 0.4, bodyLace: 0.3, fadeNear: 120, fadeFar: 700 };
+    thinBase: 0.12, thinLace: 0.30, bodyBase: 0.32, bodyLace: 0.3, fadeNear: 120, fadeFar: 700 };
 
   function swap(src: string, from: string, to: string): string {
     if (src.indexOf(from) < 0) throw new Error("ocean-fft: anchor not found: " + from.slice(0, 48));
@@ -116,19 +116,19 @@
   // (0.3 m, 0.9 m, 2.7 m) over a slowly warped, slowly cross-faded domain, so the lace advects with the water and dissolves and re-forms.
   function laceFunctions(): string {
     let s = "";
-    s += "float spLine(vec2 p, float sc, float w, vec2 fw) {\n";
-    s += "  vec2 q = p * sc; q += 0.55 * (vec2(on(q * 0.8 + 3.1), on(q * 0.8 + 9.7)) - 0.5);\n";
+    s += "float spLine(vec2 p, float sc, float w, float pw, float mean, vec2 fw) {\n";
+    s += "  vec2 q = p * sc; q += 0.8 * (vec2(on(q * 0.8 + 3.1), on(q * 0.8 + 9.7)) - 0.5);\n";
     s += "  vec2 i = floor(q), f = fract(q); float d1 = 8., d2 = 8.;\n";
     s += "  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {\n";
     s += "    vec2 g = vec2(float(x), float(y)), c = i + g; vec2 r = g + vec2(oh(c), oh(c + vec2(37.7, 11.3))) - f;\n";
     s += "    float d = dot(r, r); if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }\n";
     s += "  }\n";
-    s += "  float line = 1. - smoothstep(0., w, sqrt(d2) - sqrt(d1));\n";
-    s += "  return mix(1.2 * w, line, 1. - smoothstep(0.35, 0.9, length(fw) * sc));\n";
+    s += "  float line = pow(1. - smoothstep(0., w, sqrt(d2) - sqrt(d1)), pw);\n";
+    s += "  return mix(mean, line, 1. - smoothstep(0.35, 0.9, length(fw) * sc));\n";
     s += "}\n";
     s += "float spStrand(vec2 q, vec2 o, vec2 fw) {\n";
-    s += "  float a = spLine(q + o, 3.3, 0.14, fw), b = spLine(q + o * 1.7, 1.1, 0.12, fw), c = spLine(q + o * 0.6, 0.4, 0.09, fw);\n";
-    s += "  return 1. - (1. - 0.85 * a) * (1. - 0.6 * b) * (1. - 0.4 * c);\n";
+    s += "  float a = spLine(q + o, 3.3, 0.65, 2.2, 0.22, fw), b = spLine(q + o * 1.7, 1.1, 0.12, 1., 0.15, fw), c = spLine(q + o * 0.6, 0.4, 0.09, 1., 0.11, fw);\n";
+    s += "  return 1. - (1. - 0.5 * a) * (1. - 0.6 * b) * (1. - 0.4 * c);\n";
     s += "}\n";
     s += "float spLace(vec2 p, float t, vec2 fw) {\n";
     s += "  vec2 q = p + 0.7 * (vec2(on(p * 0.55 + vec2(t * 0.13, 3.1)), on(p * 0.55 + vec2(8.7, -t * 0.11))) - 0.5);\n";

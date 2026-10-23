@@ -14,7 +14,7 @@
   // cascade's band centre), and how strongly wake turbulence reads as foam.
   const WAKE = { edgeCells: 8, k: 0.2, slope: 3, slickLo: 0.04, slickHi: 0.4, slickFine: 0.85, slickMid: 0.4, glow: 0.3,
     // Foam opacity: thin foam 0.12 to 0.42 (lace strands lift it), the dense core 0.45 to 0.75; see the GLSL variant.
-    thinBase: 0.12, thinLace: 0.30, bodyBase: 0.4, bodyLace: 0.3, fadeNear: 120, fadeFar: 700 };
+    thinBase: 0.12, thinLace: 0.30, bodyBase: 0.32, bodyLace: 0.3, fadeNear: 120, fadeFar: 700 };
 
   function between(src: string, from: string, to: string, replacement: string): string {
     const a = src.indexOf(from);
@@ -118,19 +118,19 @@
   // Wake foam lace; see the GLSL variant. spLine is one scale of cellular lines, spLace joins three over a slowly warped, cross-faded domain.
   function laceFunctions(): string {
     let s = "";
-    s += "fn spLine(p: vec2f, sc: f32, w: f32, fw: vec2f) -> f32 {\n";
-    s += "  var q = p * sc; q += 0.55 * (vec2f(on(q * 0.8 + vec2f(3.1)), on(q * 0.8 + vec2f(9.7))) - vec2f(0.5));\n";
+    s += "fn spLine(p: vec2f, sc: f32, w: f32, pw: f32, mean: f32, fw: vec2f) -> f32 {\n";
+    s += "  var q = p * sc; q += 0.8 * (vec2f(on(q * 0.8 + vec2f(3.1)), on(q * 0.8 + vec2f(9.7))) - vec2f(0.5));\n";
     s += "  let i = floor(q); let f = fract(q); var d1 = 8.0; var d2 = 8.0;\n";
     s += "  for (var y = -1; y <= 1; y++) { for (var x = -1; x <= 1; x++) {\n";
     s += "    let g = vec2f(f32(x), f32(y)); let c = i + g; let r = g + vec2f(oh(c), oh(c + vec2f(37.7, 11.3))) - f;\n";
     s += "    let d = dot(r, r); if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }\n";
     s += "  } }\n";
-    s += "  let line = 1.0 - smoothstep(0.0, w, sqrt(d2) - sqrt(d1));\n";
-    s += "  return mix(1.2 * w, line, 1.0 - smoothstep(0.35, 0.9, length(fw) * sc));\n";
+    s += "  let line = pow(1.0 - smoothstep(0.0, w, sqrt(d2) - sqrt(d1)), pw);\n";
+    s += "  return mix(mean, line, 1.0 - smoothstep(0.35, 0.9, length(fw) * sc));\n";
     s += "}\n";
     s += "fn spStrand(q: vec2f, o: vec2f, fw: vec2f) -> f32 {\n";
-    s += "  let a = spLine(q + o, 3.3, 0.14, fw); let b = spLine(q + o * 1.7, 1.1, 0.12, fw); let c = spLine(q + o * 0.6, 0.4, 0.09, fw);\n";
-    s += "  return 1.0 - (1.0 - 0.85 * a) * (1.0 - 0.6 * b) * (1.0 - 0.4 * c);\n";
+    s += "  let a = spLine(q + o, 3.3, 0.65, 2.2, 0.22, fw); let b = spLine(q + o * 1.7, 1.1, 0.12, 1.0, 0.15, fw); let c = spLine(q + o * 0.6, 0.4, 0.09, 1.0, 0.11, fw);\n";
+    s += "  return 1.0 - (1.0 - 0.5 * a) * (1.0 - 0.6 * b) * (1.0 - 0.4 * c);\n";
     s += "}\n";
     s += "fn spLace(p: vec2f, t: f32, fw: vec2f) -> f32 {\n";
     s += "  let q = p + 0.7 * (vec2f(on(p * 0.55 + vec2f(t * 0.13, 3.1)), on(p * 0.55 + vec2f(8.7, -t * 0.11))) - vec2f(0.5));\n";
