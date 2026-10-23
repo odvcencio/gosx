@@ -1,0 +1,79 @@
+name: determinism-arm64
+
+# The deterministic scene, motion and harness code on real Apple Silicon.
+#
+# The arm64 Go compiler fuses x*y + z into one fused multiply-add (FMA)
+# instruction. The amd64 default does not, and the golden files were generated
+# on amd64. A bare product that feeds an addition therefore gives different
+# last bits on the two. This lane runs the golden tests natively on arm64 and
+# runs the deterministic linter that finds the unrounded products.
+#
+# It runs only when a path it covers changes, on any branch push and on pull
+# requests, and cancels a superseded run. It is separate from ci.yml so the
+# macOS queue never blocks the required `test` aggregate.
+
+on:
+  pull_request:
+    paths:
+      - 'det/**'
+      - 'motion/**'
+      - 'scene/**'
+      - 'render/**'
+      - 'internal/sceneaffine/**'
+      - 'physics/**'
+      - 'vessel/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/determinism-arm64.yml'
+  push:
+    paths:
+      - 'det/**'
+      - 'motion/**'
+      - 'scene/**'
+      - 'render/**'
+      - 'internal/sceneaffine/**'
+      - 'physics/**'
+      - 'vessel/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/determinism-arm64.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: determinism-arm64-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: 'off'
+  CGO_ENABLED: '0'
+
+jobs:
+  arm64-goldens:
+    name: Deterministic goldens (arm64, macos-15)
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Confirm the runner is arm64
+        run: test "$(go env GOARCH)" = arm64
+
+      - name: Deterministic linter
+        run: make lint-deterministic
+
+      - name: Deterministic goldens on arm64
+        run: go test -count=1 -p 4 ./det/... ./motion/... ./scene/... ./render/gpu/headless ./render/bundle ./internal/sceneaffine ./physics ./vessel

@@ -197,41 +197,6 @@ jobs:
           path: artifacts/desktop-macos
           if-no-files-found: error
 
-  # determinism-arm64: the deterministic scene, motion and harness code on real
-  # Apple Silicon. The arm64 compiler fuses x*y + z into one fused multiply-add
-  # (FMA) instruction and the amd64 default does not, so a bare product that
-  # feeds an addition gives different last bits on the two. The golden files
-  # were generated on amd64. This lane runs their tests natively on arm64, and
-  # runs the deterministic linter that finds the unrounded products. It is not
-  # in the required `test` aggregate yet: macos-15 queues can be long.
-  determinism-arm64:
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
-    name: Deterministic goldens (arm64, macos-15)
-    runs-on: macos-15
-    timeout-minutes: 20
-    env:
-      GOWORK: "off"
-      CGO_ENABLED: "0"
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Confirm the runner is arm64
-        run: test "$(go env GOARCH)" = arm64
-
-      - name: Deterministic linter
-        run: make lint-deterministic
-
-      - name: Deterministic goldens on arm64
-        run: go test -count=1 -p 4 ./det/... ./motion/... ./scene/... ./render/gpu/headless ./render/bundle ./internal/sceneaffine ./physics ./vessel
-
   # go-race-tests: the race detector gates split out of go-tests so they run
   # in parallel instead of serializing after the unit lane. Pushes need TinyGo
   # for cmd/gosx production-build tests; neither path needs Node. Pull requests
