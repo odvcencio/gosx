@@ -71,7 +71,7 @@ var manifestFieldPolicies = func() map[string]manifestFieldPolicy {
 	add("hubs[].bindings[].", "sceneCommandsWhen sceneCommandsWhenTimeoutMs", manifestMetadata, true, "client/runtime/host/hubs.ts", "Reveal gate and its timeout for Scene3D command batches; no URL value.")
 	add("hubs[].bindings[].", "refresh", manifestFetchedGated, false, "client/runtime/host/hubs.ts:151,225-264", "Inbound-event gate revalidates the current document; repeated navigation is not modelled.")
 	add("hubs[].bindings[].cssVars.", "target root flashClass flashMs flashWhen liveClass", manifestMetadata, true, "client/runtime/host/hub-css-vars.ts", "Selector, payload root, flash and live class names and timing; no URL value.")
-	add("hubs[].bindings[].cssVars.vars[].", "name path unit digits", manifestMetadata, true, "client/runtime/host/hub-css-vars.ts", "Custom property name, payload path, unit suffix and rounding; no URL value.")
+	add("hubs[].bindings[].cssVars.vars[].", "name path unit digits kind", manifestMetadata, true, "client/runtime/host/hub-css-vars.ts", "Custom property name, payload path, unit suffix, rounding and value kind; no URL value.")
 	add("hubs[].", "connectionSignal", manifestMetadata, true, "client/runtime/host/hubs.ts", "Shared-signal name that receives connection state; no URL value.")
 	add("hubs[].resync.", "event minIntervalMs on periodMs offsetMs initialDelayMs", manifestMetadata, true, "client/runtime/host/hubs.ts", "Resync event name, rate limit, triggers and schedule on the existing socket; no new URL.")
 	add("hubs[].roundTrip.", "signal pingEvent pongEvent intervalMs", manifestMetadata, true, "client/runtime/host/hubs.ts:84-145", "Heartbeat events and cadence on an existing socket; no new URL.")
