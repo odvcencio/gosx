@@ -112,8 +112,8 @@ const budgets = [
   // no existing bundle changed size (measured 4353 raw / 1772 gzip / 1639 Brotli).
   { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
   // Deferred and gated Scene3D (schedule, environment gates, renderer publisher) loads only for
-  // a page with such a scene. Measured 6690 raw / 2608 gzip / 2317 brotli bytes.
-  { file: "bootstrap-feature-scene3d-defer.js", raw: 6700, gzip: 2650, brotli: 2350 },
+  // a page with such a scene. Measured 6951 raw / 2722 gzip / 2411 brotli bytes.
+  { file: "bootstrap-feature-scene3d-defer.js", raw: 7000, gzip: 2750, brotli: 2450 },
   // The renderer probe loads only for RequireFeature("renderer-probe"); it borrows the
   // scene3d-defer chunk's gates and publisher. Measured 953 raw / 476 gzip / 424 brotli bytes.
   { file: "bootstrap-feature-renderer-probe.js", raw: 1000, gzip: 500, brotli: 450 },

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -45,6 +46,10 @@ func (a *App) serveSceneEntry(w http.ResponseWriter, r *http.Request, file strin
 			sceneEntryStatus(w, r, http.StatusServiceUnavailable)
 			return
 		case sceneRefillGone:
+			// The client left; nobody reads this, but net/http would send an
+			// empty 200 for a handler that wrote nothing.
+			w.Header().Set("Retry-After", "1")
+			sceneEntryStatus(w, r, http.StatusServiceUnavailable)
 			return
 		default:
 			sceneEntryStatus(w, r, http.StatusNotFound)
@@ -92,12 +97,21 @@ const (
 // render that route again and serve them when the hash matches. Without one
 // (and without GOSX_SCENE_ENTRY_SECRET) the URL names no route and a miss is a
 // 404. Every process that serves the same site must use the same key.
-func (a *App) SetSceneEntrySecret(secret []byte) {
+//
+// It returns an error after Build: the key is copied into each page's signed
+// URLs and read by the miss handler, so changing it later would break them.
+func (a *App) SetSceneEntrySecret(secret []byte) error {
+	if a.configurationClosed.Load() {
+		return errSceneSecretAfterBuild
+	}
 	if len(secret) < sceneSecretMinLen {
 		secret = nil
 	}
 	a.sceneSecret = append([]byte(nil), secret...)
+	return nil
 }
+
+var errSceneSecretAfterBuild = errors.New("server: SetSceneEntrySecret must be called before Build")
 
 func (a *App) sceneEntrySecret() []byte {
 	if len(a.sceneSecret) > 0 {
@@ -129,10 +143,9 @@ func (a *App) withSceneSecret(next http.Handler) http.Handler {
 
 // sceneFlight is one render in progress for a (route, hash) key.
 type sceneFlight struct {
-	done    chan struct{}
-	body    []byte
-	found   bool
-	aborted bool
+	done  chan struct{}
+	body  []byte
+	found bool
 }
 
 // sceneRefill bounds the re-renders a props-URL miss can start.
@@ -181,11 +194,8 @@ func (a *App) refillSceneEntry(r *http.Request, store *island.SceneEntryStore, h
 		case <-r.Context().Done():
 			return nil, sceneRefillGone
 		}
-		switch {
-		case f.found:
+		if f.found {
 			return f.body, sceneRefillOK
-		case f.aborted:
-			return nil, sceneRefillBusy
 		}
 		return nil, sceneRefillMiss
 	}
@@ -207,7 +217,10 @@ func (a *App) refillSceneEntry(r *http.Request, store *island.SceneEntryStore, h
 		watch.Close()
 		rf.mu.Lock()
 		delete(rf.flight, key)
-		if !f.found && !f.aborted {
+		// A finished render that did not produce the hash is remembered, even
+		// if the client that started it left: a stale signed URL replayed by
+		// impatient clients must cost one render, not one per request.
+		if !f.found {
 			if len(rf.missed) >= sceneRefillMissMax {
 				rf.missed = map[string]time.Time{}
 			}
@@ -219,16 +232,16 @@ func (a *App) refillSceneEntry(r *http.Request, store *island.SceneEntryStore, h
 	}()
 	a.renderSceneRoute(ctx, r, route)
 	f.body, f.found = watch.Body()
+	if !f.found {
+		// Another request may have stored it while this one rendered.
+		f.body, f.found = store.Get(hash)
+	}
 	if f.found {
 		store.Put(f.body)
 		return f.body, sceneRefillOK
 	}
-	if ctx.Err() != nil {
-		f.aborted = true
-		if r.Context().Err() != nil {
-			return nil, sceneRefillGone
-		}
-		return nil, sceneRefillBusy
+	if r.Context().Err() != nil {
+		return nil, sceneRefillGone
 	}
 	return nil, sceneRefillMiss
 }
@@ -251,8 +264,8 @@ func (d *discardResponse) WriteHeader(int)             {}
 // user agent are copied so rate limits, locale and host-based routing see the
 // visitor. Cookie and Authorization are dropped on purpose, so props that
 // depend on a session never reach a public URL. Origin is dropped because a
-// page navigation sends none, and Sec-Fetch-* is set to describe a document
-// navigation, not the props fetch that triggered it.
+// page navigation sends none, and Sec-Fetch-* is set to describe a same-origin
+// document navigation, not the props fetch that triggered it.
 func (a *App) renderSceneRoute(ctx context.Context, from *http.Request, route string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, route, nil)
 	if err != nil {
@@ -269,7 +282,7 @@ func (a *App) renderSceneRoute(ctx context.Context, from *http.Request, route st
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Sec-Fetch-Dest", "document")
 	req.Header.Set("Sec-Fetch-Mode", "navigate")
-	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set(sceneRefillHeader, "1")
 	if from.TLS != nil {
 		req.TLS = from.TLS

@@ -68,6 +68,21 @@ func newRefillFixture(t *testing.T, secret []byte, scenes int) *refillFixture {
 		}
 		return one(ctx, "slow", true, "")
 	})
+	// Two routes that render the same layout-level scene: one hash, two routes.
+	for _, route := range []string{"/a", "/b"} {
+		app.Page(route, func(ctx *Context) gosx.Node {
+			f.renders.Add(1)
+			f.entered <- struct{}{}
+			if f.gate != nil {
+				select {
+				case <-f.gate:
+				case <-ctx.Request.Context().Done():
+				case <-time.After(5 * time.Second):
+				}
+			}
+			return one(ctx, "shared", true, "")
+		})
+	}
 	app.Page("/many", func(ctx *Context) gosx.Node {
 		f.renders.Add(1)
 		var nodes []gosx.Node
@@ -328,10 +343,11 @@ func TestSceneEntryRefillStopsWhenTheClientLeaves(t *testing.T) {
 
 	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
 	waiterDone := make(chan struct{})
+	waiterResp := httptest.NewRecorder()
 	go func() {
 		defer close(waiterDone)
 		req := httptest.NewRequest(http.MethodGet, ref, nil).WithContext(waiterCtx)
-		f.handler.ServeHTTP(httptest.NewRecorder(), req)
+		f.handler.ServeHTTP(waiterResp, req)
 	}()
 	time.Sleep(50 * time.Millisecond)
 	cancelWaiter()
@@ -340,6 +356,8 @@ func TestSceneEntryRefillStopsWhenTheClientLeaves(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("a waiter whose client left must return")
 	}
+	// net/http would send an empty 200 for a handler that wrote nothing.
+	assertNoStore(t, waiterResp, http.StatusServiceUnavailable)
 
 	cancelLeader()
 	select {
@@ -403,5 +421,77 @@ func TestSceneEntryErrorsAreNotCacheable(t *testing.T) {
 	f := newRefillFixture(t, testSceneSecret, 0)
 	for _, ref := range []string{"/gosx/scene3d/short.json", "/gosx/scene3d/" + strings.Repeat("a", 32), island.SceneEntryPath(strings.Repeat("a", 32))} {
 		assertNoStore(t, f.get(ref), http.StatusNotFound)
+	}
+}
+
+// A layout-level public scene has the same hash on every route. Refills for
+// two routes that start together both succeed, each from its own render.
+func TestSceneEntryTwoRoutesOneHash(t *testing.T) {
+	storeA := island.NewSceneEntryStore(8, 1<<20)
+	island.SetSceneEntryStore(storeA)
+	f := newRefillFixture(t, testSceneSecret, 0)
+	refA, refB := f.refs(t, "/a"), f.refs(t, "/b")
+	if len(refA) != 1 || len(refB) != 1 || refHash(refA[0]) != refHash(refB[0]) || refA[0] == refB[0] {
+		t.Fatalf("setup: same hash, different routes expected: %v %v", refA, refB)
+	}
+	for i := 0; i < 5; i++ {
+		island.SetSceneEntryStore(island.NewSceneEntryStore(8, 1<<20))
+		f.renders.Store(0)
+		for len(f.entered) > 0 {
+			<-f.entered
+		}
+		f.gate = make(chan struct{})
+		var wg sync.WaitGroup
+		codes := make([]int, 2)
+		for j, ref := range []string{refA[0], refB[0]} {
+			wg.Add(1)
+			go func(j int, ref string) {
+				defer wg.Done()
+				codes[j] = f.get(ref).Code
+			}(j, ref)
+			time.Sleep(10 * time.Millisecond)
+		}
+		<-f.entered
+		<-f.entered
+		close(f.gate)
+		wg.Wait()
+		if codes[0] != 200 || codes[1] != 200 {
+			t.Fatalf("run %d: /a=%d /b=%d, want both 200", i, codes[0], codes[1])
+		}
+		if n := f.renders.Load(); n != 2 {
+			t.Fatalf("run %d: renders = %d, want 2 (one per route)", i, n)
+		}
+	}
+}
+
+// Clients that give up quickly still leave a remembered miss behind, so a
+// stale signed URL costs one render, not one per request.
+func TestSceneEntryStaleURLRemembersTheMissAfterClientsLeave(t *testing.T) {
+	island.SetSceneEntryStore(island.NewSceneEntryStore(8, 1<<20))
+	f := newRefillFixture(t, testSceneSecret, 0)
+	f.gate = make(chan struct{}) // /slow waits until its request ends
+	stale := signedRef(strings.Repeat("5a", 16), "/slow")
+	for i := 0; i < 10; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		w := httptest.NewRecorder()
+		f.handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, stale, nil).WithContext(ctx))
+		cancel()
+	}
+	if n := f.renders.Load(); n != 1 {
+		t.Fatalf("a stale URL replayed by 10 impatient clients rendered %d times, want 1", n)
+	}
+}
+
+func TestSetSceneEntrySecretIsRefusedAfterBuild(t *testing.T) {
+	app := New()
+	if err := app.SetSceneEntrySecret(testSceneSecret); err != nil {
+		t.Fatal(err)
+	}
+	app.Build()
+	if err := app.SetSceneEntrySecret([]byte("another-secret-0123456789")); err == nil {
+		t.Fatal("changing the secret after Build must fail")
+	}
+	if string(app.sceneEntrySecret()) != string(testSceneSecret) {
+		t.Fatal("the secret changed after Build")
 	}
 }

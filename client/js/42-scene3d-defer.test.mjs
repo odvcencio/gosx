@@ -165,3 +165,49 @@ test("a matching media variant fetches its own props instead of the base", async
     assert.ok(!urls().includes(other), "media=" + matches + " must not fetch " + other);
   }
 });
+
+async function retryRun(responses) {
+  let calls = 0;
+  const { env, mounts, raf, timers, urls } = page([deferredEntry("hero")], {
+    fetchRoutes: {
+      [DEFER_CHUNK]: { text: deferChunkSource },
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      [SCENE_CHUNK]: { text: STUB_SCENE_CHUNK },
+      [PROPS_URL]: () => responses[Math.min(calls++, responses.length - 1)],
+    },
+  });
+  env.context.Math = Object.assign(Object.create(Math), { random: () => 0 });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await reachIdle(raf, timers);
+  return { env, mounts, timers, calls: () => calls };
+}
+
+test("a 503 for the props is retried once after Retry-After, then the scene mounts", async () => {
+  const ok = { text: JSON.stringify({ scene: { objects: [] } }) };
+  const { env, mounts, timers, calls } = await retryRun([{ status: 503, headers: { "Retry-After": "2" }, text: "busy" }, ok]);
+  assert.equal(calls(), 1, "no second request before the wait");
+  assert.equal(timers.runDelay(2000), 1, "the wait is Retry-After seconds plus jitter");
+  await flushAsyncWork(); await flushAsyncWork();
+  assert.equal(calls(), 2);
+  assert.equal(mounts[0].getAttribute("data-gosx-scene3d-defer-state"), "mounted");
+  assert.equal(env.context.__stub_scene_mounts.length, 1);
+});
+
+test("a second 503 keeps the poster and the wait is capped", async () => {
+  const busy = { status: 503, headers: { "Retry-After": "120" }, text: "busy" };
+  const { env, mounts, timers, calls } = await retryRun([busy, busy, busy]);
+  assert.equal(timers.runDelay(3000), 1, "Retry-After is capped at 3 seconds");
+  await flushAsyncWork(); await flushAsyncWork();
+  assert.equal(calls(), 2, "one retry only");
+  assert.equal(mounts[0].getAttribute("data-gosx-scene3d-defer-state"), "failed");
+  assert.ok(mounts[0].children.some((c) => c.getAttribute && c.getAttribute("data-poster") === "1"), "the poster stays");
+  assert.equal(env.context.__stub_scene_mounts, undefined);
+});
+
+test("a 404 for the props is not retried", async () => {
+  const { mounts, calls } = await retryRun([{ status: 404, text: "no" }]);
+  await flushAsyncWork();
+  assert.equal(calls(), 1);
+  assert.equal(mounts[0].getAttribute("data-gosx-scene3d-defer-state"), "failed");
+});

@@ -331,3 +331,21 @@ func TestSceneEntryStoreBoundsComeFromTheEnvironment(t *testing.T) {
 		t.Fatalf("default bound %d is too small for a page with many scenes", d.maxEntries)
 	}
 }
+
+func TestSceneEntryWatchersForTheSameHashAllReceiveIt(t *testing.T) {
+	s := NewSceneEntryStore(8, 1<<20)
+	hash := SceneEntryHash([]byte("shared"))
+	a, b := s.Watch(hash), s.Watch(hash)
+	a.Close() // the first watcher leaves; the second must keep its place
+	s.Put([]byte("shared"))
+	if _, ok := a.Body(); ok {
+		t.Fatal("a closed watcher must not capture")
+	}
+	if body, ok := b.Body(); !ok || string(body) != "shared" {
+		t.Fatalf("second watcher = %q %v", body, ok)
+	}
+	b.Close()
+	if len(s.watches) != 0 {
+		t.Fatalf("watch lists leaked: %d", len(s.watches))
+	}
+}

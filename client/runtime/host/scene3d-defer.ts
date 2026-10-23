@@ -117,10 +117,19 @@
       }
       return entry.propsRef || "";
     }
+    // A busy server answers 503 with Retry-After. Wait that long (at most 3 s,
+    // plus up to 250 ms of jitter so a crowd does not return together) and try
+    // once more; after that the poster stays.
     async function fetchProps(entry) {
       const ref = propsRef(entry);
       if (!ref) return entry.props || {};
-      const response = await fetch(ref, { credentials: "same-origin" });
+      let response = await fetch(ref, { credentials: "same-origin" });
+      if (response.status === 503) {
+        const after = Number(response.headers && response.headers.get && response.headers.get("Retry-After"));
+        const wait = Math.min(Number.isFinite(after) && after > 0 ? after * 1000 : 1000, 3000) + Math.floor(Math.random() * 250);
+        await new Promise(function(resolve) { setTimeout(resolve, wait); });
+        response = await fetch(ref, { credentials: "same-origin" });
+      }
       if (!response.ok) throw new Error("scene props " + ref + " returned " + response.status);
       return response.json();
     }

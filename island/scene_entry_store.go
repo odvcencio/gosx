@@ -30,7 +30,7 @@ type SceneEntryStore struct {
 	maxEntries int
 	maxBytes   int64
 	bytes      int64
-	watches    map[string]*SceneWatch
+	watches    map[string][]*SceneWatch
 }
 
 // SceneWatch captures one hash as it is stored, so a caller that renders a
@@ -48,9 +48,11 @@ func (s *SceneEntryStore) Watch(hash string) *SceneWatch {
 	w := &SceneWatch{store: s, hash: hash}
 	s.mu.Lock()
 	if s.watches == nil {
-		s.watches = map[string]*SceneWatch{}
+		s.watches = map[string][]*SceneWatch{}
 	}
-	s.watches[hash] = w
+	// Several routes can render the same scene (a layout-level scene has one
+	// hash on every page), so a hash keeps a list of watchers.
+	s.watches[hash] = append(s.watches[hash], w)
 	s.mu.Unlock()
 	return w
 }
@@ -65,8 +67,17 @@ func (w *SceneWatch) Body() ([]byte, bool) {
 // Close stops capturing.
 func (w *SceneWatch) Close() {
 	w.store.mu.Lock()
-	if w.store.watches[w.hash] == w {
+	list := w.store.watches[w.hash]
+	for i, other := range list {
+		if other == w {
+			list = append(list[:i:i], list[i+1:]...)
+			break
+		}
+	}
+	if len(list) == 0 {
 		delete(w.store.watches, w.hash)
+	} else {
+		w.store.watches[w.hash] = list
 	}
 	w.store.mu.Unlock()
 }
@@ -117,8 +128,10 @@ func (s *SceneEntryStore) Put(body []byte) string {
 	hash := SceneEntryHash(body)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if w := s.watches[hash]; w != nil && !w.found {
-		w.body, w.found = append([]byte(nil), body...), true
+	for _, w := range s.watches[hash] {
+		if !w.found {
+			w.body, w.found = append([]byte(nil), body...), true
+		}
 	}
 	if _, ok := s.entries[hash]; !ok {
 		s.entries[hash] = append([]byte(nil), body...)

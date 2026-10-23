@@ -55,7 +55,7 @@ func Page() Node {
 				<span class="inline-code">App.SetSceneEntrySecret</span>
 				(or
 				<span class="inline-code">GOSX_SCENE_ENTRY_SECRET</span>
-				, at least 16 bytes, the same on every pod) and each props URL carries its page path and a signature. A server that has not stored the hash, after a restart or when another pod rendered the page, then renders that path again as an anonymous visitor and serves the props if the hash matches. At most four such renders run at once; a fifth request gets a 503 that is not cached. A hash the path does not produce is a 404. Pages whose props change with the query string should use
+				, at least 16 bytes, the same on every pod) and each props URL carries its page path and a signature. A server that has not stored the hash, after a restart or when another pod rendered the page, then renders that path again as an anonymous visitor and serves the props if the hash matches. At most four such renders run at once; a fifth request gets a 503 that is not cached. A hash the path does not produce is a 404. A refill cannot reproduce a page that checks authentication (an anonymous render redirects or denies) or whose props change with the query string. Public deferred scenes on such pages should use
 				<span class="inline-code">Inline</span>
 				, because only the path is signed. Without a secret a miss is a 404 and the poster stays. Raise the store bound with
 				<span class="inline-code">GOSX_SCENE_ENTRY_MAX_ENTRIES</span>
