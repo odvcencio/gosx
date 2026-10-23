@@ -40,6 +40,7 @@ const [W, H] = arg('--size', '1440x900').split('x').map(Number);
 const wait = Number(arg('--wait', '20000'));
 const only = arg('--only', '');
 const prefix = arg('--prefix', 'frame');
+const sail = argv.includes('--sail');
 const profile = process.env.SCENE3D_REAL_GPU_PROFILE;
 if (!profile) throw new Error('set SCENE3D_REAL_GPU_PROFILE (and SCENE3D_BROWSER) to run on a real GPU');
 
@@ -61,6 +62,8 @@ for (const view of ['shore', 'cliff', 'ship']) {
     // The page shows a poster until the scene mounts. Wait for the ocean pass to publish its state, then let
     // the foam and the presentation settle for --wait ms.
     await page.waitForFunction(() => document.querySelector('[data-gosx-scene3d-ocean]'), null, { timeout: 90000 }).catch(() => console.error('[warn] no ocean pass state published for ' + name));
+    // --sail: take the helm and trim the sails so the clipper moves and leaves a wake.
+    if (sail) await page.evaluate(() => { const mount = document.querySelector('[data-gosx-scene3d-vessel]') || document.querySelector('[data-gosx-engine="GoSXScene3D"]'); for (const detail of [{ nodeId: 'clipper', action: 'helm' }, { nodeId: 'clipper', action: 'trim', trim: 1 }]) mount.dispatchEvent(new CustomEvent('gosx:scene3d:vessel-command', { detail })); });
     await page.waitForTimeout(wait);
     const state = await page.evaluate(() => {
       const mount = document.querySelector('[data-gosx-scene3d-ocean]') || document.querySelector('[data-gosx-engine="GoSXScene3D"]') || document.body;
