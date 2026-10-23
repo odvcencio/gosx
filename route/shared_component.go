@@ -44,15 +44,17 @@ type sharedComponentTarget struct {
 // with no second, harder-to-invalidate cache layer sitting in front of the
 // first one.
 func loadSharedDirComponents(dir string) (map[string]sharedComponentTarget, error) {
-	return loadSharedDirComponentsExcept(dir, "", false)
+	return loadSharedDirComponentsExcept(dir, "", "", false)
 }
 
-// loadSharedDirComponentsExcept is loadSharedDirComponents with two options
-// for the sibling-file lookup. A file equal to self still selects the package
-// but contributes no components, because the caller already resolved its own
-// declarations. With tolerant set, a file that does not compile is skipped
-// instead of failing the whole directory.
-func loadSharedDirComponentsExcept(dir, self string, tolerant bool) (map[string]sharedComponentTarget, error) {
+// loadSharedDirComponentsExcept is loadSharedDirComponents with options for
+// the sibling-file lookup. A file equal to self contributes no components,
+// because the caller already resolved its own declarations. A non-empty
+// wantPackage fixes the package to that name instead of the alphabetically
+// first file's, so a sibling lookup follows the calling file's own package.
+// With tolerant set, a file that does not compile is skipped instead of
+// failing the whole directory.
+func loadSharedDirComponentsExcept(dir, self, wantPackage string, tolerant bool) (map[string]sharedComponentTarget, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read shared directory %s: %w", dir, err)
@@ -70,7 +72,7 @@ func loadSharedDirComponentsExcept(dir, self string, tolerant bool) (map[string]
 	sort.Strings(names)
 
 	targets := make(map[string]sharedComponentTarget)
-	targetPackage := ""
+	targetPackage := wantPackage
 	for _, name := range names {
 		path := filepath.Join(dir, name)
 		prog, err := loadCachedGSXProgram(path)
@@ -242,7 +244,7 @@ func (r *fileProgramRenderer) writeSiblingComponent(b *strings.Builder, node *ir
 	}
 	if !r.siblingsLoaded {
 		r.siblingsLoaded = true
-		r.siblings = loadSiblingComponents(r.opts.SourceDir, r.opts.SourceFile)
+		r.siblings = loadSiblingComponents(r.opts.SourceDir, r.opts.SourceFile, r.prog.Package)
 	}
 	target, ok := r.siblings[node.Tag]
 	if !ok {
@@ -276,11 +278,11 @@ func (r *fileProgramRenderer) writeSiblingComponent(b *strings.Builder, node *ir
 }
 
 // loadSiblingComponents returns the strict components and islands that the
-// other .gsx files in dir declare, keyed by name. It applies the package rule
-// of loadSharedDirComponents and skips the calling file and any file that does
-// not compile.
-func loadSiblingComponents(dir, self string) map[string]sharedComponentTarget {
-	targets, err := loadSharedDirComponentsExcept(dir, self, true)
+// other .gsx files in dir declare, keyed by name. Only files in the calling
+// file's package count. It skips the calling file and any file that does not
+// compile.
+func loadSiblingComponents(dir, self, pkg string) map[string]sharedComponentTarget {
+	targets, err := loadSharedDirComponentsExcept(dir, self, pkg, true)
 	if err != nil {
 		return nil
 	}

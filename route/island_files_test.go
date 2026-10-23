@@ -157,3 +157,25 @@ func Page() Node {
 		t.Fatalf("expected %q in %q", want, body)
 	}
 }
+
+// TestRouterAddDirSiblingLookupKeepsThePagePackage pins that sibling
+// resolution follows the page's own package even when the alphabetically
+// first sibling does not compile. A neighbour in another package that declares
+// the same name must not win.
+func TestRouterAddDirSiblingLookupKeepsThePagePackage(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "a_broken.gsx", "package app\n\nfunc Broken() Node {\n\treturn <div>\n}\n")
+	writeRouteFile(t, root, "b_other.gsx", "package other\n\n//gosx:island\nfunc Counter() Node {\n\tcount := signal.New(9)\n\treturn <div class=\"wrong-package\"><span>{count.Get()}</span></div>\n}\n")
+	writeRouteFile(t, root, "counter.gsx", islandFileCounter)
+	writeRouteFile(t, root, "page.gsx", `package app
+
+func Page() Node {
+	return <main class="demo-page"><Counter Initial={2} /></main>
+}
+`)
+	body := serveIslandFixture(t, root)
+	requireHydratingIsland(t, body)
+	if strings.Contains(body, "wrong-package") {
+		t.Fatalf("resolved Counter from another package: %s", body)
+	}
+}
