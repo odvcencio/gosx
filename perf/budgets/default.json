@@ -50,9 +50,9 @@
       ]
     },
     "water-ci": {
-      "description": "Water route under CI software rasterization. The network limit covers 1845.26 KiB measured in PR #727 CI run 39834210179: the Scene3D chunk grew by 4891 raw bytes from the 1840.48 KiB baseline in PR #724 CI run 39747737518. The limit is the measurement rounded up to the next KiB. Load and blocking time remain separate experience gates. Long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary; real-GPU cadence is certified separately.",
+      "description": "Water route under CI software rasterization. The network limit covers 1845.26 KiB measured in PR #727 CI run 39834210179: the Scene3D chunk grew by 4891 raw bytes from the 1840.48 KiB baseline in PR #724 CI run 39747737518. The limit is the measurement rounded up to the next KiB. PR #742 CI run 39918091577 measured 1848.83 KiB: parent-following instanced meshes and crowd tint palettes add about 3.6 KiB to the Scene3D chunks; the limit rounds that up to 1849. Load and blocking time remain separate experience gates. Long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary; real-GPU cadence is certified separately.",
       "assertions": [
-        "network_kb <= 1846",
+        "network_kb <= 1849",
         "lcp <= 2000",
         "tbt <= 18000"
       ]
