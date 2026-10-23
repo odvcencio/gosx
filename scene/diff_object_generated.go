@@ -4,143 +4,222 @@ package scene
 
 import "reflect"
 
-// Validate names and types lazily before using generated field accesses. A stale
-// proof declines and leaves the reflective/reference comparison in control.
+// Validate names and types lazily before using generated field accesses.
+// Nested texture declarations participate so stale proofs fail closed.
 func objectProofSchemaMatches() bool {
-	return objectProofSchemaMatchesType(reflect.TypeFor[ObjectIR]())
+	return objectProofSchemaMatchesType(reflect.TypeFor[ObjectIR]()) && materialTextureDescriptorsProofSchemaMatchesType(reflect.TypeFor[MaterialTextureDescriptors]()) && textureDescriptorProofSchemaMatchesType(reflect.TypeFor[TextureDescriptor]()) && textureScalarProofSchemaMatches(reflect.TypeFor[TextureColorSpace](), reflect.TypeFor[TextureRole]())
+}
+
+func textureScalarProofSchemaMatches(types ...reflect.Type) bool {
+	expected := [...]reflect.Kind{
+		reflect.TypeFor[string]().Kind(),
+		reflect.TypeFor[string]().Kind(),
+	}
+	if len(types) != len(expected) {
+		return false
+	}
+	for i, typ := range types {
+		if typ == nil || typ.Kind() != expected[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func objectProofSchemaMatchesType(t reflect.Type) bool {
-	if t.Kind() != reflect.Struct {
+	if t.Kind() != reflect.Struct || sceneRecordHasJSONMarshaler(t) {
 		return false
 	}
 	fields := [...]struct {
 		name string
 		typ  reflect.Type
+		tag  reflect.StructTag
 	}{
-		{"VerticesURL", reflect.TypeFor[string]()},
-		{"Detail", reflect.TypeFor[*Detail]()},
-		{"ID", reflect.TypeFor[string]()},
-		{"Kind", reflect.TypeFor[string]()},
-		{"Size", reflect.TypeFor[float64]()},
-		{"Width", reflect.TypeFor[float64]()},
-		{"Height", reflect.TypeFor[float64]()},
-		{"Depth", reflect.TypeFor[float64]()},
-		{"Radius", reflect.TypeFor[float64]()},
-		{"Segments", reflect.TypeFor[int]()},
-		{"LineSegments", reflect.TypeFor[[][2]int]()},
-		{"LineWidth", reflect.TypeFor[float64]()},
-		{"RadiusTop", reflect.TypeFor[float64]()},
-		{"RadiusBottom", reflect.TypeFor[float64]()},
-		{"Tube", reflect.TypeFor[float64]()},
-		{"RadialSegments", reflect.TypeFor[int]()},
-		{"TubularSegments", reflect.TypeFor[int]()},
-		{"MaterialKind", reflect.TypeFor[string]()},
-		{"Color", reflect.TypeFor[string]()},
-		{"Texture", reflect.TypeFor[string]()},
-		{"Opacity", reflect.TypeFor[*float64]()},
-		{"Emissive", reflect.TypeFor[*float64]()},
-		{"EmissiveColor", reflect.TypeFor[*[3]float64]()},
-		{"NormalScale", reflect.TypeFor[*float64]()},
-		{"OcclusionStrength", reflect.TypeFor[*float64]()},
-		{"BlendMode", reflect.TypeFor[string]()},
-		{"RenderPass", reflect.TypeFor[string]()},
-		{"Wireframe", reflect.TypeFor[*bool]()},
-		{"LineDash", reflect.TypeFor[*bool]()},
-		{"DashSize", reflect.TypeFor[float64]()},
-		{"GapSize", reflect.TypeFor[float64]()},
-		{"CustomVertex", reflect.TypeFor[string]()},
-		{"CustomFragment", reflect.TypeFor[string]()},
-		{"CustomVertexWGSL", reflect.TypeFor[string]()},
-		{"CustomFragmentWGSL", reflect.TypeFor[string]()},
-		{"SpecularFragmentGLSL", reflect.TypeFor[string]()},
-		{"SpecularFragmentWGSL", reflect.TypeFor[string]()},
-		{"CustomVertexRef", reflect.TypeFor[string]()},
-		{"CustomFragmentRef", reflect.TypeFor[string]()},
-		{"CustomVertexWGSLRef", reflect.TypeFor[string]()},
-		{"CustomFragmentWGSLRef", reflect.TypeFor[string]()},
-		{"SpecularFragmentGLSLRef", reflect.TypeFor[string]()},
-		{"SpecularFragmentWGSLRef", reflect.TypeFor[string]()},
-		{"CustomUniforms", reflect.TypeFor[map[string]any]()},
-		{"ShaderBackend", reflect.TypeFor[string]()},
-		{"ShaderLayout", reflect.TypeFor[map[string]any]()},
-		{"ShaderSource", reflect.TypeFor[string]()},
-		{"ShaderSourceFiles", reflect.TypeFor[map[string]string]()},
-		{"Pickable", reflect.TypeFor[*bool]()},
-		{"Interactive", reflect.TypeFor[bool]()},
-		{"Label", reflect.TypeFor[string]()},
-		{"InteractiveOrder", reflect.TypeFor[int]()},
-		{"Visible", reflect.TypeFor[*bool]()},
-		{"Selected", reflect.TypeFor[bool]()},
-		{"GizmoRing", reflect.TypeFor[bool]()},
-		{"GizmoHelper", reflect.TypeFor[bool]()},
-		{"GizmoFormMode", reflect.TypeFor[string]()},
-		{"QualityGroup", reflect.TypeFor[string]()},
-		{"OutlineColor", reflect.TypeFor[string]()},
-		{"OutlineWidth", reflect.TypeFor[float64]()},
-		{"CastShadow", reflect.TypeFor[bool]()},
-		{"ReceiveShadow", reflect.TypeFor[bool]()},
-		{"DepthWrite", reflect.TypeFor[*bool]()},
-		{"Roughness", reflect.TypeFor[float64]()},
-		{"Metalness", reflect.TypeFor[float64]()},
-		{"Clearcoat", reflect.TypeFor[float64]()},
-		{"Sheen", reflect.TypeFor[float64]()},
-		{"Transmission", reflect.TypeFor[float64]()},
-		{"Thickness", reflect.TypeFor[float64]()},
-		{"ThicknessMap", reflect.TypeFor[string]()},
-		{"SpecularAA", reflect.TypeFor[*GeometricSpecularAA]()},
-		{"AttenuationDistance", reflect.TypeFor[float64]()},
-		{"AttenuationColor", reflect.TypeFor[*[3]float64]()},
-		{"Iridescence", reflect.TypeFor[float64]()},
-		{"Anisotropy", reflect.TypeFor[float64]()},
-		{"SpecularIntensity", reflect.TypeFor[*float64]()},
-		{"SpecularColor", reflect.TypeFor[*[3]float64]()},
-		{"IOR", reflect.TypeFor[*float64]()},
-		{"NormalMap", reflect.TypeFor[string]()},
-		{"RoughnessMap", reflect.TypeFor[string]()},
-		{"MetalnessMap", reflect.TypeFor[string]()},
-		{"OcclusionMap", reflect.TypeFor[string]()},
-		{"EmissiveMap", reflect.TypeFor[string]()},
-		{"AlphaCutoff", reflect.TypeFor[AlphaCutoff]()},
-		{"RimColor", reflect.TypeFor[*[3]float64]()},
-		{"RimPower", reflect.TypeFor[float64]()},
-		{"RimStrength", reflect.TypeFor[float64]()},
-		{"TextureDescriptors", reflect.TypeFor[MaterialTextureDescriptors]()},
-		{"LODGroup", reflect.TypeFor[string]()},
-		{"LODLevel", reflect.TypeFor[int]()},
-		{"LODMinDistance", reflect.TypeFor[float64]()},
-		{"LODMaxDistance", reflect.TypeFor[float64]()},
-		{"X", reflect.TypeFor[float64]()},
-		{"Y", reflect.TypeFor[float64]()},
-		{"Z", reflect.TypeFor[float64]()},
-		{"RotationX", reflect.TypeFor[float64]()},
-		{"RotationY", reflect.TypeFor[float64]()},
-		{"RotationZ", reflect.TypeFor[float64]()},
-		{"ScaleX", reflect.TypeFor[float64]()},
-		{"ScaleY", reflect.TypeFor[float64]()},
-		{"ScaleZ", reflect.TypeFor[float64]()},
-		{"ParentMatrix", reflect.TypeFor[[]float64]()},
-		{"SpinX", reflect.TypeFor[float64]()},
-		{"SpinY", reflect.TypeFor[float64]()},
-		{"SpinZ", reflect.TypeFor[float64]()},
-		{"ShiftX", reflect.TypeFor[float64]()},
-		{"ShiftY", reflect.TypeFor[float64]()},
-		{"ShiftZ", reflect.TypeFor[float64]()},
-		{"DriftSpeed", reflect.TypeFor[float64]()},
-		{"DriftPhase", reflect.TypeFor[float64]()},
-		{"Transition", reflect.TypeFor[TransitionIR]()},
-		{"InState", reflect.TypeFor[map[string]any]()},
-		{"OutState", reflect.TypeFor[map[string]any]()},
-		{"Live", reflect.TypeFor[[]string]()},
-		{"Vertices", reflect.TypeFor[*MeshVertices]()},
-		{"Points", reflect.TypeFor[LinePoints]()},
+		{"VerticesURL", reflect.TypeFor[string](), "json:\"verticesURL,omitempty\""},
+		{"Detail", reflect.TypeFor[*Detail](), "json:\"detail,omitempty\""},
+		{"ID", reflect.TypeFor[string](), "json:\"id\""},
+		{"Kind", reflect.TypeFor[string](), "json:\"kind\""},
+		{"Size", reflect.TypeFor[float64](), "json:\"size,omitempty\""},
+		{"Width", reflect.TypeFor[float64](), "json:\"width,omitempty\""},
+		{"Height", reflect.TypeFor[float64](), "json:\"height,omitempty\""},
+		{"Depth", reflect.TypeFor[float64](), "json:\"depth,omitempty\""},
+		{"Radius", reflect.TypeFor[float64](), "json:\"radius,omitempty\""},
+		{"Segments", reflect.TypeFor[int](), "json:\"segments,omitempty\""},
+		{"LineSegments", reflect.TypeFor[[][2]int](), "json:\"lineSegments,omitempty\""},
+		{"LineWidth", reflect.TypeFor[float64](), "json:\"lineWidth,omitempty\""},
+		{"RadiusTop", reflect.TypeFor[float64](), "json:\"radiusTop,omitempty\""},
+		{"RadiusBottom", reflect.TypeFor[float64](), "json:\"radiusBottom,omitempty\""},
+		{"Tube", reflect.TypeFor[float64](), "json:\"tube,omitempty\""},
+		{"RadialSegments", reflect.TypeFor[int](), "json:\"radialSegments,omitempty\""},
+		{"TubularSegments", reflect.TypeFor[int](), "json:\"tubularSegments,omitempty\""},
+		{"MaterialKind", reflect.TypeFor[string](), "json:\"materialKind,omitempty\""},
+		{"Color", reflect.TypeFor[string](), "json:\"color,omitempty\""},
+		{"Texture", reflect.TypeFor[string](), "json:\"texture,omitempty\""},
+		{"Opacity", reflect.TypeFor[*float64](), "json:\"opacity,omitempty\""},
+		{"Emissive", reflect.TypeFor[*float64](), "json:\"emissive,omitempty\""},
+		{"EmissiveColor", reflect.TypeFor[*[3]float64](), "json:\"emissiveColor,omitempty\""},
+		{"NormalScale", reflect.TypeFor[*float64](), "json:\"normalScale,omitempty\""},
+		{"OcclusionStrength", reflect.TypeFor[*float64](), "json:\"occlusionStrength,omitempty\""},
+		{"BlendMode", reflect.TypeFor[string](), "json:\"blendMode,omitempty\""},
+		{"RenderPass", reflect.TypeFor[string](), "json:\"renderPass,omitempty\""},
+		{"Wireframe", reflect.TypeFor[*bool](), "json:\"wireframe,omitempty\""},
+		{"LineDash", reflect.TypeFor[*bool](), "json:\"lineDash,omitempty\""},
+		{"DashSize", reflect.TypeFor[float64](), "json:\"dashSize,omitempty\""},
+		{"GapSize", reflect.TypeFor[float64](), "json:\"gapSize,omitempty\""},
+		{"CustomVertex", reflect.TypeFor[string](), "json:\"customVertex,omitempty\""},
+		{"CustomFragment", reflect.TypeFor[string](), "json:\"customFragment,omitempty\""},
+		{"CustomVertexWGSL", reflect.TypeFor[string](), "json:\"customVertexWGSL,omitempty\""},
+		{"CustomFragmentWGSL", reflect.TypeFor[string](), "json:\"customFragmentWGSL,omitempty\""},
+		{"SpecularFragmentGLSL", reflect.TypeFor[string](), "json:\"specularFragmentGLSL,omitempty\""},
+		{"SpecularFragmentWGSL", reflect.TypeFor[string](), "json:\"specularFragmentWGSL,omitempty\""},
+		{"CustomVertexRef", reflect.TypeFor[string](), "json:\"customVertexRef,omitempty\""},
+		{"CustomFragmentRef", reflect.TypeFor[string](), "json:\"customFragmentRef,omitempty\""},
+		{"CustomVertexWGSLRef", reflect.TypeFor[string](), "json:\"customVertexWGSLRef,omitempty\""},
+		{"CustomFragmentWGSLRef", reflect.TypeFor[string](), "json:\"customFragmentWGSLRef,omitempty\""},
+		{"SpecularFragmentGLSLRef", reflect.TypeFor[string](), "json:\"specularFragmentGLSLRef,omitempty\""},
+		{"SpecularFragmentWGSLRef", reflect.TypeFor[string](), "json:\"specularFragmentWGSLRef,omitempty\""},
+		{"CustomUniforms", reflect.TypeFor[map[string]any](), "json:\"customUniforms,omitempty\""},
+		{"ShaderBackend", reflect.TypeFor[string](), "json:\"shaderBackend,omitempty\""},
+		{"ShaderLayout", reflect.TypeFor[map[string]any](), "json:\"shaderLayout,omitempty\""},
+		{"ShaderSource", reflect.TypeFor[string](), "json:\"shaderSource,omitempty\""},
+		{"ShaderSourceFiles", reflect.TypeFor[map[string]string](), "json:\"shaderSourceFiles,omitempty\""},
+		{"Pickable", reflect.TypeFor[*bool](), "json:\"pickable,omitempty\""},
+		{"Interactive", reflect.TypeFor[bool](), "json:\"interactive,omitempty\""},
+		{"Label", reflect.TypeFor[string](), "json:\"label,omitempty\""},
+		{"InteractiveOrder", reflect.TypeFor[int](), "json:\"interactiveOrder,omitempty\""},
+		{"Visible", reflect.TypeFor[*bool](), "json:\"visible,omitempty\""},
+		{"Selected", reflect.TypeFor[bool](), "json:\"selected,omitempty\""},
+		{"GizmoRing", reflect.TypeFor[bool](), "json:\"gizmoRing,omitempty\""},
+		{"GizmoHelper", reflect.TypeFor[bool](), "json:\"gizmoHelper,omitempty\""},
+		{"GizmoFormMode", reflect.TypeFor[string](), "json:\"gizmoFormMode,omitempty\""},
+		{"QualityGroup", reflect.TypeFor[string](), "json:\"qualityGroup,omitempty\""},
+		{"OutlineColor", reflect.TypeFor[string](), "json:\"outlineColor,omitempty\""},
+		{"OutlineWidth", reflect.TypeFor[float64](), "json:\"outlineWidth,omitempty\""},
+		{"CastShadow", reflect.TypeFor[bool](), "json:\"castShadow,omitempty\""},
+		{"ReceiveShadow", reflect.TypeFor[bool](), "json:\"receiveShadow,omitempty\""},
+		{"DepthWrite", reflect.TypeFor[*bool](), "json:\"depthWrite,omitempty\""},
+		{"Roughness", reflect.TypeFor[float64](), "json:\"roughness,omitempty\""},
+		{"Metalness", reflect.TypeFor[float64](), "json:\"metalness,omitempty\""},
+		{"Clearcoat", reflect.TypeFor[float64](), "json:\"clearcoat,omitempty\""},
+		{"Sheen", reflect.TypeFor[float64](), "json:\"sheen,omitempty\""},
+		{"Transmission", reflect.TypeFor[float64](), "json:\"transmission,omitempty\""},
+		{"Thickness", reflect.TypeFor[float64](), "json:\"thickness,omitempty\""},
+		{"ThicknessMap", reflect.TypeFor[string](), "json:\"thicknessMap,omitempty\""},
+		{"SpecularAA", reflect.TypeFor[*GeometricSpecularAA](), "json:\"specularAA,omitempty\""},
+		{"AttenuationDistance", reflect.TypeFor[float64](), "json:\"attenuationDistance,omitempty\""},
+		{"AttenuationColor", reflect.TypeFor[*[3]float64](), "json:\"attenuationColor,omitempty\""},
+		{"Iridescence", reflect.TypeFor[float64](), "json:\"iridescence,omitempty\""},
+		{"Anisotropy", reflect.TypeFor[float64](), "json:\"anisotropy,omitempty\""},
+		{"SpecularIntensity", reflect.TypeFor[*float64](), "json:\"specularIntensity,omitempty\""},
+		{"SpecularColor", reflect.TypeFor[*[3]float64](), "json:\"specularColor,omitempty\""},
+		{"IOR", reflect.TypeFor[*float64](), "json:\"ior,omitempty\""},
+		{"NormalMap", reflect.TypeFor[string](), "json:\"normalMap,omitempty\""},
+		{"RoughnessMap", reflect.TypeFor[string](), "json:\"roughnessMap,omitempty\""},
+		{"MetalnessMap", reflect.TypeFor[string](), "json:\"metalnessMap,omitempty\""},
+		{"OcclusionMap", reflect.TypeFor[string](), "json:\"occlusionMap,omitempty\""},
+		{"EmissiveMap", reflect.TypeFor[string](), "json:\"emissiveMap,omitempty\""},
+		{"AlphaCutoff", reflect.TypeFor[AlphaCutoff](), "json:\"alphaCutoff,omitzero\""},
+		{"RimColor", reflect.TypeFor[*[3]float64](), "json:\"rimColor,omitempty\""},
+		{"RimPower", reflect.TypeFor[float64](), "json:\"rimPower,omitempty\""},
+		{"RimStrength", reflect.TypeFor[float64](), "json:\"rimStrength,omitempty\""},
+		{"TextureDescriptors", reflect.TypeFor[MaterialTextureDescriptors](), "json:\"textureDescriptors,omitzero\""},
+		{"LODGroup", reflect.TypeFor[string](), "json:\"lodGroup,omitempty\""},
+		{"LODLevel", reflect.TypeFor[int](), "json:\"lodLevel,omitempty\""},
+		{"LODMinDistance", reflect.TypeFor[float64](), "json:\"lodMinDistance,omitempty\""},
+		{"LODMaxDistance", reflect.TypeFor[float64](), "json:\"lodMaxDistance,omitempty\""},
+		{"X", reflect.TypeFor[float64](), "json:\"x,omitempty\""},
+		{"Y", reflect.TypeFor[float64](), "json:\"y,omitempty\""},
+		{"Z", reflect.TypeFor[float64](), "json:\"z,omitempty\""},
+		{"RotationX", reflect.TypeFor[float64](), "json:\"rotationX,omitempty\""},
+		{"RotationY", reflect.TypeFor[float64](), "json:\"rotationY,omitempty\""},
+		{"RotationZ", reflect.TypeFor[float64](), "json:\"rotationZ,omitempty\""},
+		{"ScaleX", reflect.TypeFor[float64](), "json:\"scaleX,omitempty\""},
+		{"ScaleY", reflect.TypeFor[float64](), "json:\"scaleY,omitempty\""},
+		{"ScaleZ", reflect.TypeFor[float64](), "json:\"scaleZ,omitempty\""},
+		{"ParentMatrix", reflect.TypeFor[[]float64](), "json:\"parentMatrix,omitempty\""},
+		{"SpinX", reflect.TypeFor[float64](), "json:\"spinX,omitempty\""},
+		{"SpinY", reflect.TypeFor[float64](), "json:\"spinY,omitempty\""},
+		{"SpinZ", reflect.TypeFor[float64](), "json:\"spinZ,omitempty\""},
+		{"ShiftX", reflect.TypeFor[float64](), "json:\"shiftX,omitempty\""},
+		{"ShiftY", reflect.TypeFor[float64](), "json:\"shiftY,omitempty\""},
+		{"ShiftZ", reflect.TypeFor[float64](), "json:\"shiftZ,omitempty\""},
+		{"DriftSpeed", reflect.TypeFor[float64](), "json:\"driftSpeed,omitempty\""},
+		{"DriftPhase", reflect.TypeFor[float64](), "json:\"driftPhase,omitempty\""},
+		{"Transition", reflect.TypeFor[TransitionIR](), "json:\"transition,omitzero\""},
+		{"InState", reflect.TypeFor[map[string]any](), "json:\"inState,omitempty\""},
+		{"OutState", reflect.TypeFor[map[string]any](), "json:\"outState,omitempty\""},
+		{"Live", reflect.TypeFor[[]string](), "json:\"live,omitempty\""},
+		{"Vertices", reflect.TypeFor[*MeshVertices](), "json:\"vertices,omitempty\""},
+		{"Points", reflect.TypeFor[LinePoints](), "json:\"points,omitempty\""},
 	}
 	if t.NumField() != len(fields) {
 		return false
 	}
 	for i, expected := range fields {
 		actual := t.Field(i)
-		if actual.Name != expected.name || actual.Type != expected.typ {
+		if actual.Name != expected.name || actual.Type != expected.typ || actual.Tag != expected.tag {
+			return false
+		}
+	}
+	return true
+}
+
+func materialTextureDescriptorsProofSchemaMatchesType(t reflect.Type) bool {
+	if t.Kind() != reflect.Struct || sceneRecordHasJSONMarshaler(t) {
+		return false
+	}
+	fields := [...]struct {
+		name string
+		typ  reflect.Type
+		tag  reflect.StructTag
+	}{
+		{"BaseColor", reflect.TypeFor[TextureDescriptor](), "json:\"baseColor,omitzero\""},
+		{"Normal", reflect.TypeFor[TextureDescriptor](), "json:\"normal,omitzero\""},
+		{"Roughness", reflect.TypeFor[TextureDescriptor](), "json:\"roughness,omitzero\""},
+		{"Metalness", reflect.TypeFor[TextureDescriptor](), "json:\"metalness,omitzero\""},
+		{"Occlusion", reflect.TypeFor[TextureDescriptor](), "json:\"occlusion,omitzero\""},
+		{"Emissive", reflect.TypeFor[TextureDescriptor](), "json:\"emissive,omitzero\""},
+		{"Thickness", reflect.TypeFor[TextureDescriptor](), "json:\"thickness,omitzero\""},
+		{"Data", reflect.TypeFor[map[string]TextureDescriptor](), "json:\"data,omitempty\""},
+	}
+	if t.NumField() != len(fields) {
+		return false
+	}
+	for i, expected := range fields {
+		actual := t.Field(i)
+		if actual.Name != expected.name || actual.Type != expected.typ || actual.Tag != expected.tag {
+			return false
+		}
+	}
+	return true
+}
+
+func textureDescriptorProofSchemaMatchesType(t reflect.Type) bool {
+	if t.Kind() != reflect.Struct || sceneRecordHasJSONMarshaler(t) {
+		return false
+	}
+	fields := [...]struct {
+		name string
+		typ  reflect.Type
+		tag  reflect.StructTag
+	}{
+		{"URI", reflect.TypeFor[string](), "json:\"uri\""},
+		{"Role", reflect.TypeFor[TextureRole](), "json:\"role\""},
+		{"ColorSpace", reflect.TypeFor[TextureColorSpace](), "json:\"colorSpace\""},
+		{"Channels", reflect.TypeFor[string](), "json:\"channels,omitempty\""},
+		{"View", reflect.TypeFor[string](), "json:\"view,omitempty\""},
+		{"Format", reflect.TypeFor[string](), "json:\"format,omitempty\""},
+		{"MipLevels", reflect.TypeFor[int](), "json:\"mipLevels,omitempty\""},
+		{"Width", reflect.TypeFor[int](), "json:\"width,omitempty\""},
+		{"Height", reflect.TypeFor[int](), "json:\"height,omitempty\""},
+		{"Faces", reflect.TypeFor[int](), "json:\"faces,omitempty\""},
+	}
+	if t.NumField() != len(fields) {
+		return false
+	}
+	for i, expected := range fields {
+		actual := t.Field(i)
+		if actual.Name != expected.name || actual.Type != expected.typ || actual.Tag != expected.tag {
 			return false
 		}
 	}
@@ -475,7 +554,7 @@ func provenObjectFieldsEqual(a, b *ObjectIR, omitted objectProofOmissions) bool 
 	if a.EmissiveMap != b.EmissiveMap {
 		return false
 	}
-	if !provenJSONEqual(reflect.ValueOf(&a.AlphaCutoff).Elem(), reflect.ValueOf(&b.AlphaCutoff).Elem()) {
+	if !provenAlphaCutoffFieldEqual(a.AlphaCutoff, b.AlphaCutoff) {
 		return false
 	}
 	if a.RimColor != nil || b.RimColor != nil {
@@ -489,7 +568,7 @@ func provenObjectFieldsEqual(a, b *ObjectIR, omitted objectProofOmissions) bool 
 	if !provenFloatEqual(a.RimStrength, b.RimStrength) {
 		return false
 	}
-	if !provenJSONEqual(reflect.ValueOf(&a.TextureDescriptors).Elem(), reflect.ValueOf(&b.TextureDescriptors).Elem()) {
+	if !provenMaterialTextureDescriptorsEqual(&a.TextureDescriptors, &b.TextureDescriptors) {
 		return false
 	}
 	if a.LODGroup != b.LODGroup {
@@ -552,6 +631,70 @@ func provenObjectFieldsEqual(a, b *ObjectIR, omitted objectProofOmissions) bool 
 		}
 	}
 	if !provenJSONEqual(reflect.ValueOf(&a.Points).Elem(), reflect.ValueOf(&b.Points).Elem()) {
+		return false
+	}
+	return true
+}
+
+func provenMaterialTextureDescriptorsEqual(a, b *MaterialTextureDescriptors) bool {
+	if !provenTextureDescriptorEqual(&a.BaseColor, &b.BaseColor) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Normal, &b.Normal) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Roughness, &b.Roughness) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Metalness, &b.Metalness) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Occlusion, &b.Occlusion) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Emissive, &b.Emissive) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Thickness, &b.Thickness) {
+		return false
+	}
+	if a.Data != nil || b.Data != nil {
+		if !provenJSONEqual(reflect.ValueOf(&a.Data).Elem(), reflect.ValueOf(&b.Data).Elem()) {
+			return false
+		}
+	}
+	return true
+}
+
+func provenTextureDescriptorEqual(a, b *TextureDescriptor) bool {
+	if a.URI != b.URI {
+		return false
+	}
+	if a.Role != b.Role {
+		return false
+	}
+	if a.ColorSpace != b.ColorSpace {
+		return false
+	}
+	if a.Channels != b.Channels {
+		return false
+	}
+	if a.View != b.View {
+		return false
+	}
+	if a.Format != b.Format {
+		return false
+	}
+	if a.MipLevels != b.MipLevels {
+		return false
+	}
+	if a.Width != b.Width {
+		return false
+	}
+	if a.Height != b.Height {
+		return false
+	}
+	if a.Faces != b.Faces {
 		return false
 	}
 	return true

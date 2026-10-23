@@ -11,6 +11,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ts = require("../runtime/node_modules/typescript");
 
 const srcDir = path.join(__dirname, "bootstrap-src");
 const SHARED_API_EXPORT_MARKER = "// Scene3D shared API";
@@ -22,6 +23,11 @@ function readBootstrapSource(name) {
 function readRuntimeSource(name) {
   return fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
 }
+
+// Match the production TypeScript syntax before evaluating the real loader.
+const gltfSource = ts.transpileModule(readRuntimeSource("gltf.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 // The core's trailing export block reads engine-frame helpers that only
 // exist in the assembled monolith; everything under test sits above that
@@ -121,7 +127,7 @@ function createLoaderContext() {
 
   const context = vm.createContext(sandbox);
   runFragment(context, readBootstrapSource("11-scene-math.ts"), "11-scene-math.ts");
-  runFragment(context, readRuntimeSource("gltf.ts"), "gltf.ts");
+  runFragment(context, gltfSource, "gltf.ts");
   return { context, warnings };
 }
 

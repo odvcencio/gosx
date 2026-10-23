@@ -145,12 +145,16 @@ type Manifest struct {
 
 // ManifestVariantRef is one built asset variant a client may choose.
 //
-// The four fields are exactly what a selector needs and nothing more: the URI
-// to fetch, the delivery tier, the byte cost that breaks a tier tie, and the
-// capability tokens the consumer must hold. A client that lacks one required
-// token must keep the source URI.
+// The browser receives the built variant's role, colour space, channel count,
+// format and mip count as well as its URI, tier, size and capability tokens.
+// Bounded model-map selection must verify role and colour space before upload.
 type ManifestVariantRef struct {
 	URI                  string   `json:"uri"`
+	Role                 string   `json:"role,omitempty"`
+	ColorSpace           string   `json:"colorSpace,omitempty"`
+	Channels             string   `json:"channels,omitempty"`
+	Format               string   `json:"format,omitempty"`
+	MipLevels            int      `json:"mipLevels,omitempty"`
 	Quality              string   `json:"quality,omitempty"`
 	Bytes                int64    `json:"bytes,omitempty"`
 	RequiredCapabilities []string `json:"requiredCapabilities,omitempty"`
@@ -770,6 +774,11 @@ func (m *Manifest) SetTextureVariants(manifest assetpipe.VariantManifest) {
 			}
 			refs = append(refs, ManifestVariantRef{
 				URI:                  uri,
+				Role:                 variant.Role,
+				ColorSpace:           variant.ColorSpace,
+				Channels:             variant.Channels,
+				Format:               variant.Format,
+				MipLevels:            variant.MipLevels,
 				Quality:              variant.Quality,
 				Bytes:                variant.Bytes,
 				RequiredCapabilities: append([]string(nil), variant.RequiredCapabilities...),

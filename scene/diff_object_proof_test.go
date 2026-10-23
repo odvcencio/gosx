@@ -9,22 +9,41 @@ import (
 )
 
 func TestObjectProofMatchesAuthoredSchema(t *testing.T) {
-	typ := reflect.TypeFor[ObjectIR]()
 	if !objectProofSchemaMatches() {
 		t.Fatal("ObjectIR proof is stale; run go generate ./scene")
 	}
+	for _, schema := range []struct {
+		name    string
+		typ     reflect.Type
+		matches func(reflect.Type) bool
+	}{
+		{"ObjectIR", reflect.TypeFor[ObjectIR](), objectProofSchemaMatchesType},
+		{"MaterialTextureDescriptors", reflect.TypeFor[MaterialTextureDescriptors](), materialTextureDescriptorsProofSchemaMatchesType},
+		{"TextureDescriptor", reflect.TypeFor[TextureDescriptor](), textureDescriptorProofSchemaMatchesType},
+	} {
+		t.Run(schema.name, func(t *testing.T) { assertProofSchema(t, schema.typ, schema.matches) })
+	}
+}
+
+func assertProofSchema(t *testing.T, typ reflect.Type, matches func(reflect.Type) bool) {
+	t.Helper()
 	fields := make([]reflect.StructField, typ.NumField())
 	for i := range fields {
 		fields[i] = typ.Field(i)
 	}
-	if objectProofSchemaMatchesType(reflect.TypeFor[int]()) || objectProofSchemaMatchesType(reflect.StructOf(fields[:len(fields)-1])) {
+	if matches(reflect.TypeFor[int]()) || matches(reflect.StructOf(fields[:len(fields)-1])) {
 		t.Fatal("schema proof accepted a different record shape")
 	}
 	for i := range fields {
 		original := fields[i]
 		fields[i].Name += "Changed"
-		if objectProofSchemaMatchesType(reflect.StructOf(fields)) {
+		if matches(reflect.StructOf(fields)) {
 			t.Fatalf("schema proof ignored field name %s", original.Name)
+		}
+		fields[i] = original
+		fields[i].Tag = `json:"changed"`
+		if matches(reflect.StructOf(fields)) {
+			t.Fatalf("schema proof ignored JSON tag for %s", original.Name)
 		}
 		fields[i] = original
 		if original.Type.Kind() == reflect.String {
@@ -32,7 +51,7 @@ func TestObjectProofMatchesAuthoredSchema(t *testing.T) {
 		} else {
 			fields[i].Type = reflect.TypeFor[string]()
 		}
-		if objectProofSchemaMatchesType(reflect.StructOf(fields)) {
+		if matches(reflect.StructOf(fields)) {
 			t.Fatalf("schema proof ignored field type %s", original.Name)
 		}
 		fields[i] = original

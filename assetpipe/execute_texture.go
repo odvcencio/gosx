@@ -200,6 +200,11 @@ func BuildTexture(relPath string, data []byte, opts TextureOptions) (texture.Bui
 		variants = append(variants, Variant{
 			URI:                  textureVariantURI(base, plan),
 			Kind:                 "texture",
+			Role:                 result.Role,
+			ColorSpace:           result.ColorSpace,
+			Channels:             strconv.Itoa(plan.Channels),
+			Format:               plan.Format,
+			MipLevels:            plan.Levels,
 			Quality:              plan.Tier,
 			Compression:          textureCompressionLabel(plan),
 			SourceAction:         "texture-transcode-ktx2",

@@ -2,8 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import { createRequire } from "node:module";
 
-const source = fs.readFileSync(new URL("../runtime/scene3d/gltf.ts", import.meta.url), "utf8");
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
+
+const source = ts.transpileModule(fs.readFileSync(new URL("../runtime/scene3d/gltf.ts", import.meta.url), "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 const payload = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 function fixture() {
