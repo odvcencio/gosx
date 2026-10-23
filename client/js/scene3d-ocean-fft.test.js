@@ -68,7 +68,8 @@ test("nothing is encoded until every pipeline has validated; then the graph's ke
   assert.ok(passes.length > 40 && passes.every((p) => p.ended));
   assert.ok(passes.every((p) => /^gosx-elio-ocean-/.test(labels(p)[0])), "labelled gosx-elio-<graph>-<kernel>");
   const kernels = passes.map((p) => labels(p)[0].replace("gosx-elio-ocean-", ""));
-  const expected = Array.from(s.G.expand(s.graphs["webgpu/high"])).filter((p) => p.type === "kernel").map((p) => p.kernel);
+  // Wake passes wait for wakeEnabled; every changed: pass runs on the first frame.
+  const expected = Array.from(s.G.expand(s.G.normalize(s.graphs["webgpu/high"], s.context.window.__gosx_scene3d_elio_ocean))).filter((p) => p.type === "kernel" && (p.when === "always" || /^changed:/.test(p.when))).map((p) => p.kernel);
   assert.deepEqual(kernels, expected, "one compute pass per kernel pass, in order (every changed: pass runs on the first frame)");
   assert.ok(kernels.indexOf("ocean_spectrum") < kernels.indexOf("ocean_evolve") && kernels.lastIndexOf("ocean_assemble") < kernels.indexOf("ocean_foam"));
   const before = passes.length;
@@ -114,7 +115,7 @@ test("the low tier draws three cascades; the surface uniform carries tile, band 
   warm(s, resources, h, env, { time: 100 });
   for (let i = 1; i < 61; i++) frame(s, resources, h, env, { time: 100 + i / 60 });
   const d = lastSurface(s);
-  const graph = s.graphs["webgpu/low"], info = s.api.describe(graph);
+  const graph = s.G.normalize(s.graphs["webgpu/low"], s.context.window.__gosx_scene3d_elio_ocean), info = s.api.describe(graph);
   assert.equal(info.cascades.length, 3);
   assert.deepEqual([d[3], d[7], d[11], d[15]], [1, 1, 1, 0], "three cascades enabled, the fourth bound to the dummy texture");
   assert.deepEqual([d[0], d[4], d[8]], Array.from(info.cascades, (c) => c.tile));
@@ -330,6 +331,29 @@ test("surface uniform: the wake window terms come from exportParams and the wake
   assert.deepEqual(Array.from(out.slice(40, 48)), [0, 0, 0, 0, 0, 0, 0, 0]);
 });
 
+test("the hull: the wake's hull parameters follow the node bound to \"hull\", with the speed through the water; no node, no change", () => {
+  const s = standalone(), resources = {}, h = s.host();
+  const ship = s.context.window.__gosx_scene3d_node_poses = { ship: { x: 300, z: -80, heading: Math.PI, speed: 0 } };
+  const env = ocean({ graphParams: { driftZ: 8.2, wakeEnabled: 1, hullLength: 125, hullBeam: 21 }, graphNodes: { hull: "ship" }, graphTween: 0 });
+  warm(s, resources, h, env, { time: 1 });
+  frame(s, resources, h, env, { time: 1.02 });
+  const r = resources.fft.runner;
+  assert.deepEqual([r.value("hullX"), r.value("hullZ"), r.value("hullHeading")], [300, -80, Math.PI]);
+  assert.ok(Math.abs(r.value("hullSpeed") - 8.2) < 1e-9, "a ship at rest in 8.2 m/s of drifting water moves through it at 8.2 m/s: " + r.value("hullSpeed"));
+  assert.deepEqual([r.value("wakeEnabled"), r.value("hullLength"), r.value("hullBeam")], [1, 125, 21], "Go's wake parameters reach the graph");
+  const labels = s.fake.state.computePasses.map((p) => p.descriptor && p.descriptor.label).filter(Boolean);
+  assert.ok(labels.some((l) => /gosx-elio-ocean-wake\.step$/.test(l)), "the wake runs");
+  ship.ship.x = 340;
+  frame(s, resources, h, env, { time: 1.04 });
+  assert.equal(r.value("hullX"), 340, "tracked every frame");
+  delete s.context.window.__gosx_scene3d_node_poses.ship;
+  frame(s, resources, h, env, { time: 1.06 });
+  assert.equal(r.value("hullX"), 340, "a node that stopped publishing leaves the last pose");
+  const bare = standalone(), r2 = {}, h2 = bare.host();
+  warm(bare, r2, h2, ocean({ graphParams: { wakeEnabled: 0 } }), { time: 1 });
+  assert.equal(r2.fft.runner.value("hullX"), 0, "no graphNodes: untouched");
+});
+
 function nagaPath() {
   for (const candidate of ["naga", path.join(process.env.HOME || "", ".cargo", "bin", "naga")]) {
     try { execFileSync(candidate, ["--version"], { stdio: "ignore" }); return candidate; } catch (_e) {}
@@ -512,7 +536,7 @@ test("the browser carries the spectrum, swell waves, graphParams and graphTween 
 
 test("Go's graph parameters are exactly the graph's value parameters, and its swell waves share the graph's wind direction and loop time", () => {
   const s = standalone();
-  const graph = s.graphs["webgpu/high"];
+  const graph = s.G.normalize(s.graphs["webgpu/high"], s.context.window.__gosx_scene3d_elio_ocean);
   const golden = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-graph-params.json"), "utf8"));
   const valuesOf = (g) => Array.from(g.params).filter((p) => p.source.kind === "value" && !/\[\]$/.test(p.type)).map((p) => p.name).sort();
   // Go's parameters are the graph's value parameters. The wake's own tuning parameters (wakeCell, wakeDepth, ...) stay at the graph's defaults,

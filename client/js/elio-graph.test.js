@@ -307,3 +307,60 @@ test("node sources read a scene node's pose from the host each frame; speed is t
   r.evaluate(frame(0));
   assert.equal(r.current.x, 0);
 });
+
+test("an expr argument may itself be an expression, evaluated depth first in float64", () => {
+  const p = evaluator([decl("a", { kind: "value", value: 7 }), decl("b", { kind: "value", value: 3 }),
+    decl("n1", { kind: "expr", op: "mul", args: [{ op: "add", args: ["param:a", "param:b"] }, 2] }),
+    decl("n2", { kind: "expr", op: "floor", args: [{ op: "div", args: ["param:a", { op: "sub", args: ["param:b", 0.5] }] }] }),
+    decl("n3", { kind: "expr", op: "mod", args: [{ op: "mul", args: ["param:a", 1e9] }, { op: "add", args: [1e9, 1] }] }),
+    decl("n4", { kind: "expr", op: "sin", args: [{ op: "mul", args: [Math.PI, 0.5] }] })]);
+  p.evaluate(frame(0));
+  assert.deepEqual([p.current.n1, p.current.n2], [20, 2]);
+  assert.ok(Math.abs(p.current.n3 - (7e9 - 6 * (1e9 + 1))) < 1e-3);
+  assert.equal(p.current.n4, 1);
+  assert.throws(() => evaluator([decl("x", { kind: "expr", op: "add", args: [{ op: "pow", args: [1, 2] }, 1] })]).evaluate(frame(0)), /unknown op pow/);
+});
+
+test("emitted graph JSON omits defaults: missing type, entry, params and exportParams are filled in, and paramsFrom takes another graph's parameters", () => {
+  const ctx = runnerContext(), G = ctx.window.__gosx_elio_graph, module = ctx.window.__gosx_scene3d_elio_ocean;
+  const base = testGraph("webgpu");
+  const slim = JSON.parse(JSON.stringify(base));
+  for (const pass of slim.passes) { if (pass.type === "kernel") delete pass.type; if (pass.when === "always") delete pass.when; for (const b of pass.bindings || []) if (b.level === 0) delete b.level; }
+  slim.passes.find((p) => p.name === "evolve").entry = undefined;
+  slim.params = undefined;
+  slim.paramsFrom = "webgpu/high";
+  const donor = Object.assign(JSON.parse(JSON.stringify(base)), { exportParams: ["wakeOn"] });
+  const holder = { graphs: { "webgpu/high": donor, "webgpu/low": slim }, kernels: module.kernels };
+  const normalized = G.normalize(slim, holder);
+  assert.equal(normalized.params.length, base.params.length, "params come from the named graph");
+  assert.deepEqual(Array.from(normalized.exportParams), ["wakeOn"]);
+  assert.equal(normalized.paramsFrom, undefined);
+  const evolve = normalized.passes.find((p) => p.name === "evolve");
+  assert.equal(evolve.type, "kernel");
+  assert.equal(evolve.entry, module.kernels.oceanEvolve.entry, "a missing entry is the kernel's primary entry");
+  assert.equal(evolve.when, "changed:windSpeed");
+  assert.equal(normalized.passes.find((p) => p.name === "assemble").when, "always");
+  assert.equal(normalized.passes.find((p) => p.name === "assemble").bindings[0].level, 0);
+  assert.ok(!("entry" in slim.passes.find((p) => p.name === "evolve") && slim.passes.find((p) => p.name === "evolve").entry), "the source graph is not modified");
+  // An explicit entry (fft_cols) is kept; a graph that names itself or a graph of another backend is rejected.
+  const cols = normalized.passes.find((p) => p.name === "fft-cols");
+  assert.equal(cols.entry, "fft_cols");
+  assert.throws(() => G.normalize(Object.assign({}, slim, { paramsFrom: "webgpu/low" }), holder), /paramsFrom/);
+  assert.throws(() => G.normalize(Object.assign({}, slim, { paramsFrom: "webgl2/high" }), holder), /paramsFrom/);
+  // A graph with neither params nor a source for them has none.
+  const bare = G.normalize(Object.assign({}, base, { params: undefined, exportParams: undefined }), module);
+  assert.deepEqual([Array.from(bare.params).length, Array.from(bare.exportParams).length], [0, 0]);
+});
+
+test("copy passes: expand resolves their buffers through the repeat's swaps, and check validates them", () => {
+  const { expand, check } = api();
+  const module = runnerContext().window.__gosx_scene3d_elio_ocean;
+  const res = ["a", "b"].map((name) => ({ name, kind: "buffer", elementType: "vec4<f32>", count: 4096, width: 64 })).concat([{ name: "a_w", kind: "buffer", elementType: "vec4<f32>", count: 4096, width: 1024 }]);
+  const graph = { backend: "webgl2", version: 1, params: [], resources: res, exports: {}, frameSwaps: [], passes: [
+    { name: "stages", type: "repeat", count: 2, index: "i", swap: [["a", "b"]], body: [{ name: "c", type: "copy", from: "a", to: "a_w", width: 1024, when: "always" }] }] };
+  const out = Array.from(expand(graph));
+  assert.deepEqual(out.map((p) => [p.name, p.from, p.to]), [["stages[0].c", "a", "a_w"], ["stages[1].c", "b", "a_w"]]);
+  check(Object.assign({}, graph, { passes: [{ name: "c", type: "copy", from: "a", to: "a_w", width: 1024 }] }), { kernels: module.kernels }, "webgl2");
+  assert.throws(() => check(Object.assign({}, graph, { passes: [{ name: "c", type: "copy", from: "a", to: "nope", width: 1024 }] }), { kernels: module.kernels }, "webgl2"), /unknown resource/);
+  assert.throws(() => check(Object.assign({}, graph, { backend: "webgpu", passes: [{ name: "c", type: "copy", from: "a", to: "a_w", width: 1024 }] }), { kernels: module.kernels }, "webgpu"), /copy passes exist only on webgl2/);
+});

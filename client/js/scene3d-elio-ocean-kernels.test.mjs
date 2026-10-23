@@ -33,7 +33,7 @@ test("generated Elio ocean kernels match their embedded SHA-256 header", () => {
   const header = /^\/\/ sha256: ([0-9a-f]{64}) /m.exec(source);
   assert.ok(header, "file lacks the sha256 header");
   const sources = embeddedSources(source);
-  assert.equal(sources.length, 20, `expected the ocean set's WGSL and GLSL sources, found ${sources.length}`);
+  assert.equal(sources.length, 26, `expected the ocean set's WGSL and GLSL sources, found ${sources.length}`);
   const hash = crypto.createHash("sha256");
   for (const s of sources) hash.update(s);
   // Then each graph: its key, a newline, its compact JSON and a newline, in file order.

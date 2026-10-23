@@ -240,22 +240,61 @@ test("a resource fed by a buffer parameter is uploaded from it every frame", () 
   assert.equal(uploads[0][1], s.tex("h0"));
 });
 
-test("a buffer read at another width than it was written is copied into a view of the pass's width, and only when it changed", () => {
-  const s = setup(undefined, (g) => { const p = g.passes.find((x) => x.name === "assemble"); p.target = Object.assign({}, p.target, { elioWidth: 32 }); });
+// A WebGL2 kernel pass reads a buffer only at its own elio_width. A buffer a pass needs at another width is first copied by a copy pass,
+// which lays the same elements out `width` texels wide, GPU to GPU through a pixel buffer, and only when the source changed.
+function wideGraph(g, extra) {
+  const wide = (name) => ({ name, kind: "buffer", elementType: "vec4<f32>", count: 4096, width: 32 });
+  g.resources.push(wide("a0_w"), wide("b0_w"));
+  const assemble = g.passes.find((p) => p.name === "assemble");
+  assemble.target = Object.assign({}, assemble.target, { elioWidth: 32 });
+  assemble.bindings = assemble.bindings.map((b) => b.name === "fieldA" ? Object.assign({}, b, { resource: "a0_w" }) : b.name === "fieldB" ? Object.assign({}, b, { resource: "b0_w" }) : b);
+  const at = g.passes.indexOf(assemble);
+  g.passes.splice(at, 0, { name: "copy-a", type: "copy", from: "a0", to: "a0_w", width: 32, when: "always" }, { name: "copy-b", type: "copy", from: "b0", to: "b0_w", width: 32, when: "always" });
+  if (extra) extra(g);
+}
+
+test("copy passes lay a buffer out at another width through a pixel buffer, and only when the source changed", () => {
+  const s = setup(undefined, wideGraph);
   assert.equal(s.runner.failed, null);
   s.step();
   const reads = () => s.gl.ops.filter((o) => o[0] === "readPixels"), writes = () => s.gl.ops.filter((o) => o[0] === "texSubImage2D");
-  assert.equal(reads().length, 2, "fieldA and fieldB are copied");
-  assert.deepEqual(writes().map((o) => o[2] + "x" + o[3]), ["32x128", "32x128"], "same 4,096 texels, 32 per row");
+  assert.equal(reads().length, 2, "a0 and b0 are copied");
+  assert.deepEqual(writes().map((o) => o[2] + "x" + o[3]), ["32x128", "32x128"], "the same 4,096 texels, 32 per row");
   assert.deepEqual(reads().map((o) => o[2] + "x" + o[3]), ["64x64", "64x64"]);
   assert.ok(reads().every((o, i) => o[5] && o[5] === writes()[i][5]), "packed and unpacked through the same pixel buffer");
+  assert.equal(writes()[0][1], s.tex("a0_w"), "into the copy's own texture");
   const assemble = draws(s.gl).find((d) => d.kernel === "assemble");
   assert.equal(assemble.elioWidth, 32);
-  assert.deepEqual([assemble.inputs[0].w, assemble.inputs[0].h, assemble.inputs[1].w], [32, 128, 32], "the kernel samples the views");
-  assert.notEqual(assemble.inputs[0], s.tex("a0"));
+  assert.equal(assemble.inputs[0], s.tex("a0_w"));
+  assert.equal(assemble.inputs[1], s.tex("b0_w"));
   s.step();
-  assert.equal(reads().length, 3, "frame 2: the FFT rewrote fieldA, nothing rewrote fieldB (evolve waits for a parameter change)");
+  assert.equal(reads().length, 3, "frame 2: the FFT rewrote a0, nothing rewrote b0 (evolve waits for a parameter change)");
   for (const target of [GLC.PIXEL_PACK_BUFFER, GLC.PIXEL_UNPACK_BUFFER]) assert.equal(s.gl.buffers[target], null);
   s.runner.dispose();
   for (const kind of Object.keys(s.gl.created)) assert.equal(s.gl.live(kind).length, 0, kind + " leaked");
+});
+
+test("a pass that reads a buffer at another width than the buffer's own disables the graph; a copy pass honours its condition", () => {
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const bad = setup(undefined, (g) => { const p = g.passes.find((x) => x.name === "assemble"); p.target = Object.assign({}, p.target, { elioWidth: 32 }); });
+    assert.equal(bad.step(), false);
+    assert.match(bad.runner.error.message, /reads buffer a0 64 wide at elio_width 32/);
+  } finally { console.warn = warn; }
+  const s = setup(undefined, (g) => wideGraph(g, (x) => { x.passes.find((p) => p.name === "copy-a").when = "param:mips"; }));
+  s.runner.setValue("mips", 0);
+  s.step();
+  assert.equal(s.gl.ops.filter((o) => o[0] === "readPixels").length, 1, "copy-a is skipped while mips is false");
+});
+
+test("a copy inside a repeat follows the repeat's swaps", () => {
+  const s = setup(undefined, (g) => {
+    g.resources.push({ name: "w", kind: "buffer", elementType: "vec4<f32>", count: 4096, width: 32 });
+    g.passes = [{ name: "r", type: "repeat", count: 2, index: "i", swap: [["a0", "a1"]], body: [{ name: "c", type: "copy", from: "a0", to: "w", width: 32 }] }];
+    g.exports = {};
+  });
+  s.step();
+  assert.equal(s.gl.ops.filter((o) => o[0] === "readPixels").length, 2);
+  const reads = s.gl.ops.filter((o) => o[0] === "readPixels");
+  assert.deepEqual(reads.map((o) => o[1]), [s.gl.created.framebuffer.find((f) => f.attachments[0] === s.tex("a0")), s.gl.created.framebuffer.find((f) => f.attachments[0] === s.tex("a1"))], "iteration 0 reads a0, iteration 1 reads a1");
 });

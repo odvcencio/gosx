@@ -50,7 +50,7 @@
     const state: any = { split: false, disposed: false };
     let vertexShader: any = null;
     const resources: any = Object.create(null); // name -> resource object; frameSwaps exchange these
-    const fboCache = new Map(), views = new Map(); // views: buffers re-laid out at another width (see viewAt)
+    const fboCache = new Map(), pixelBuffers = new Map(); // pixelBuffers: one per copy destination (see copyBuffer)
     let seq = 0;
 
     const FORMATS: any = { rgba16float: gl.RGBA16F, rgba32float: gl.RGBA32F, r32float: gl.R32F };
@@ -156,7 +156,7 @@
       for (const sh of shaders) gl.deleteShader(sh);
       gl.deleteVertexArray(vao);
       textures.length = fbos.length = buffers.length = 0;
-      fboCache.clear(); views.clear();
+      fboCache.clear(); pixelBuffers.clear();
     }
 
     // Per-pass plan: resolved once; resource objects are looked up by name each frame because swaps exchange them.
@@ -165,7 +165,7 @@
     try {
     plans = ctx.steps.map(function (step: any) {
       const pass = step.pass;
-      if (pass.type === "mipmap") return { pass: pass };
+      if (pass.type === "mipmap" || pass.type === "copy") return { pass: pass };
       const p = program(pass.kernel), layout = p.layout;
       const inputs = layout.inputs.map(function (input: any) {
         const b = pass.bindings.find(function (x: any) { return x.name === input.name; });
@@ -192,31 +192,27 @@
     build();
     } catch (error) { teardown(); throw error; } finally { restoreState(gl, saved); }
 
-    // A gather kernel indexes every buffer as an elio_width-wide texture. A buffer that a pass reads at another width than it was written (the
-    // foam kernel reads each cascade's n-wide FFT field at the foam window's width) is copied, GPU to GPU through a pixel buffer, into a
-    // texture of the pass's width; the copy is redone only when a pass has written the buffer since.
-    function viewAt(r: any, width: number): any {
-      const total = r.w * r.h;
-      if (total % width) throw new Error("elio-graph: buffer " + r.name + " of " + total + " elements cannot be viewed " + width + " wide");
-      const key = r.id + "@" + width;
-      let v = views.get(key);
-      if (!v) {
-        const pbo = gl.createBuffer();
+    // A gather kernel indexes every buffer as an elio_width-wide texture and a pass reads a buffer only at its own width (the check in draw).
+    // A copy pass lays a buffer out at another width: the same elements in order, `width` texels per row, GPU to GPU through a pixel buffer,
+    // and only when the source was written since the last copy into that destination.
+    function copyBuffer(pass: any): void {
+      const from = resources[pass.from], to = resources[pass.to];
+      if (from.w * from.h !== to.w * to.h || to.w !== pass.width) throw new Error("elio-graph: pass " + pass.name + " cannot copy " + from.name + " into " + to.name + " at width " + pass.width);
+      if (to.copiedFrom === from && to.copiedVersion === from.version) return;
+      let pbo = pixelBuffers.get(to.id);
+      if (!pbo) {
+        pbo = gl.createBuffer();
         buffers.push(pbo);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, total * 16, gl.STREAM_COPY); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-        v = { name: r.name, w: width, h: total / width, tex: texture(width, total / width, gl.RGBA32F, 1, false), pbo: pbo, version: -1 };
-        views.set(key, v);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, from.w * from.h * 16, gl.STREAM_COPY); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        pixelBuffers.set(to.id, pbo);
       }
-      if (v.version !== r.version) {
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, targetFor([{ res: r, level: 0, location: 0 }])[0].fbo);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, v.pbo); gl.readPixels(0, 0, r.w, r.h, gl.RGBA, gl.FLOAT, 0); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-        gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, v.pbo);
-        gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, v.tex);
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, v.w, v.h, gl.RGBA, gl.FLOAT, 0);
-        gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
-        v.version = r.version;
-      }
-      return v;
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, targetFor([{ res: from, level: 0, location: 0 }])[0].fbo);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo); gl.readPixels(0, 0, from.w, from.h, gl.RGBA, gl.FLOAT, 0); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, pbo);
+      gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, to.tex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, to.w, to.h, gl.RGBA, gl.FLOAT, 0);
+      gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
+      to.copiedFrom = from; to.copiedVersion = from.version; to.version++;
     }
     function exchange(pairs: any[]): void { for (const pair of pairs) { const a = resources[pair[0]]; resources[pair[0]] = resources[pair[1]]; resources[pair[1]] = a; } }
     // feed uploads each fed parameter (a buffer parameter, such as probe points) into its resource.
@@ -233,14 +229,14 @@
       const pass = plan.pass, p = plan.p, t = pass.target;
       const outs = plan.outputs.map(function (o: any) { return { res: resources[o.binding.resource], level: o.binding.level || 0, location: o.location }; });
       const ins = plan.inputs.map(function (b: any) { return resources[b.resource]; });
-      const sampled = ins.map(function (r: any) { return r.kind === "buffer" && r.w !== t.elioWidth ? viewAt(r, t.elioWidth) : r; });
+      for (const r of ins) if (r.kind === "buffer" && r.w !== t.elioWidth) throw new Error("elio-graph: pass " + pass.name + " reads buffer " + r.name + " " + r.w + " wide at elio_width " + t.elioWidth);
       // A pass may read level L-1 of a texture and write level L (mip passes); the same image is a feedback loop WebGL2 rejects.
       plan.inputs.forEach(function (b: any, k: number) {
         for (const o of outs) if (o.res === ins[k] && o.level === (b.level || 0)) throw new Error("elio-graph: pass " + pass.name + " reads " + o.res.name + ", which it writes");
       });
       gl.useProgram(p.handle);
       gl.uniform1ui(p.width, t.elioWidth);
-      sampled.forEach(function (r: any, i: number) {
+      ins.forEach(function (r: any, i: number) {
         gl.activeTexture(gl.TEXTURE0 + firstUnit + i); gl.bindTexture(gl.TEXTURE_2D, r.tex);
         if (p.lens[i]) gl.uniform1ui(p.lens[i], r.w * r.h);
       });
@@ -268,7 +264,8 @@
           feed(params);
           for (const plan of plans) {
             if (!ctx.holds(plan.pass.when, params, changed)) continue;
-            if (plan.pass.type === "mipmap") {
+            if (plan.pass.type === "copy") copyBuffer(plan.pass);
+            else if (plan.pass.type === "mipmap") {
               gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, resources[plan.pass.resource].tex); gl.generateMipmap(gl.TEXTURE_2D);
             } else draw(plan, params);
           }

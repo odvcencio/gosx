@@ -101,9 +101,15 @@
       const src = d.source || { kind: "value", value: 0 };
       if (src.kind === "value") targets[d.name] = coerce(d.type, /\[\]$/.test(d.type) ? src.value : (src.value || 0));
     }
+    // ref evaluates an expression argument: a number, "param:<name>", or a nested { op, args } evaluated depth first in float64.
     const ref = function (a: any): number {
       if (typeof a === "number") return a;
       if (typeof a === "string" && a.indexOf("param:") === 0) { const n = a.slice(6); return n in current ? current[n] : 0; }
+      if (a && typeof a === "object" && typeof a.op === "string") {
+        const op = OPS[a.op];
+        if (!op) throw new Error("elio-graph: unknown op " + a.op);
+        return op(ref(a.args[0]), a.args.length > 1 ? ref(a.args[1]) : 0);
+      }
       throw new Error("elio-graph: bad argument " + a);
     };
     const api: any = {
@@ -185,6 +191,38 @@
   }
 
 
+
+  // normalize fills in what the emitted JSON leaves out and returns a new graph (the module's graphs are frozen): a pass without a type is a
+  // kernel, a kernel pass without an entry uses the kernel's primary entry, without when it runs always, a binding without a level reads level 0,
+  // and missing params and exportParams are empty. A graph with paramsFrom takes the params and exportParams of the named graph of the same
+  // backend, which must not itself have paramsFrom.
+  function normalize(graph: any, module: any): any {
+    const out: any = Object.assign({}, graph);
+    if (graph.paramsFrom) {
+      const donor = module && module.graphs && module.graphs[graph.paramsFrom];
+      if (!donor || donor.backend !== graph.backend || donor.paramsFrom) throw new Error("elio-graph: paramsFrom " + graph.paramsFrom + " does not name a graph of " + graph.backend + " that owns its parameters");
+      out.params = donor.params; out.exportParams = donor.exportParams;
+    }
+    delete out.paramsFrom;
+    out.params = out.params || []; out.exportParams = out.exportParams || [];
+    out.frameSwaps = out.frameSwaps || []; out.exports = out.exports || {};
+    const pass = function (p: any): any {
+      const q: any = Object.assign({}, p);
+      q.type = p.type || "kernel";
+      q.when = p.when || "always";
+      if (q.type === "kernel") {
+        const kernel = module && module.kernels && module.kernels[kernelKey(p.kernel)];
+        if (!q.entry && kernel) q.entry = kernel.entry;
+        if (p.bindings) q.bindings = p.bindings.map(function (b: any) { return Object.assign({ level: 0 }, b); });
+        if (!q.uniforms) q.uniforms = [];
+      }
+      if (q.type === "repeat") q.body = (p.body || []).map(pass);
+      return q;
+    };
+    out.passes = (graph.passes || []).map(pass);
+    return out;
+  }
+
   // indexValue evaluates an IndexExpr {index, offset, shr} for the repeat index i: i + offset, or max(shr >> (i + offset), 1) when shr is set.
   function indexValue(x: any, i: number): number {
     const v = i + (x.offset || 0);
@@ -222,6 +260,8 @@
       const q = Object.assign({}, p, { name: prefix + p.name });
       if (when && (!p.when || p.when === "always")) q.when = when;
       if (p.resource) q.resource = resolve(p.resource);
+      if (p.from) q.from = resolve(p.from);
+      if (p.to) q.to = resolve(p.to);
       if (p.bindings) {
         q.bindings = p.bindings.map(function (b: any) {
           const c = Object.assign({}, b, { resource: resolve(b.resource) });
@@ -269,6 +309,11 @@
       else if (w.indexOf("changed:") === 0) { for (const n of w.slice(8).split(",")) if (!params[n.trim()]) throw new Error("elio-graph: undeclared parameter " + n.trim()); }
       else if (w !== "always") throw new Error("elio-graph: pass " + p.name + ": bad when " + w);
       if (p.type === "mipmap") { if (!resources[p.resource]) throw new Error("elio-graph: pass " + p.name + ": unknown resource " + p.resource); continue; }
+      if (p.type === "copy") {
+        if (backend !== "webgl2") throw new Error("elio-graph: pass " + p.name + ": copy passes exist only on webgl2");
+        for (const n of [p.from, p.to]) if (!resources[n] || resources[n].kind !== "buffer") throw new Error("elio-graph: pass " + p.name + ": unknown resource " + n + " (a copy joins two buffers)");
+        continue;
+      }
       if (!module.kernels[kernelKey(p.kernel)]) throw new Error("elio-graph: pass " + p.name + ": the module has no kernel " + p.kernel);
       for (const b of p.bindings) if (!resources[b.resource]) throw new Error("elio-graph: pass " + p.name + ": unknown resource " + b.resource);
       for (const u of p.uniforms || []) for (const k of Object.keys(u.values)) ref(u.values[k]);
@@ -285,7 +330,7 @@
   // create builds a runner for one graph. options: module (the generated kernel set), backend, tier, graph (optional override), host.
   function create(options: any): any {
     const backend = options.backend, module = options.module, host = options.host || {};
-    const runner: any = { graph: null, backend: backend, ready: false, failed: null, disposed: false, buildCount: 0, run: run, gpuTiming: gpuTiming, setValue: setValue, setNodes: setNodes, setTween: setTween, value: value, hasParam: hasParam, params: null, exportParams: exportParams, export: exportTexture, dispose: dispose, fail: fail };
+    const runner: any = { graph: null, backend: backend, ready: false, failed: null, disposed: false, buildCount: 0, run: run, nodePose: nodePoseOf, gpuTiming: gpuTiming, setValue: setValue, setNodes: setNodes, setTween: setTween, value: value, hasParam: hasParam, params: null, exportParams: exportParams, export: exportTexture, dispose: dispose, fail: fail };
     let executor: any = null, evaluator: any = null;
     const disable = function (error: any): void {
       if (runner.failed) return;
@@ -297,8 +342,9 @@
       if (!(error && error.fallback) && typeof console !== "undefined" && console.warn) console.warn("elio-graph: graph disabled: " + (error && error.message ? error.message : String(error)));
     };
     try {
-      const graph = options.graph || (module.graphs && module.graphs[backend + "/" + (options.tier || "high")]);
+      let graph = options.graph || (module.graphs && module.graphs[backend + "/" + (options.tier || "high")]);
       if (!graph) throw Object.assign(new Error("elio-graph: no graph for " + backend + "/" + options.tier), { fallback: "no-graph" });
+      graph = normalize(graph, module);
       check(graph, module, backend);
       const make = window.__gosx_elio_graph.executors[backend];
       if (!make) throw Object.assign(new Error("elio-graph: no executor for " + backend), { fallback: "no-executor" });
@@ -310,6 +356,8 @@
     } catch (error) { disable(error); }
 
     function hasParam(name: string): boolean { return Boolean(runner.graph && runner.graph.params.some(function (p: any) { return p.name === name; })); }
+    // nodePose reads a scene node's pose through the host (the same lookup the graph's node sources use), or null.
+    function nodePoseOf(id: string): any { return host.nodePose ? host.nodePose(id) : null; }
     // gpuTiming is the graph's GPU time where the executor can measure it (WebGPU with timestamp-query), else null.
     function gpuTiming(): any { return executor && executor.gpuTiming ? executor.gpuTiming() : null; }
     function setNodes(map: any): void { if (evaluator) evaluator.setNodes(map); }
@@ -349,5 +397,5 @@
     return runner;
   }
 
-  window.__gosx_elio_graph = { create: create, expand: expand, pack: pack, kernelKey: kernelKey, check: check, holds: holds, createParams: createParams, executors: {} };
+  window.__gosx_elio_graph = { create: create, expand: expand, normalize: normalize, pack: pack, kernelKey: kernelKey, check: check, holds: holds, createParams: createParams, executors: {} };
 })();

@@ -51,6 +51,22 @@
     if (params) for (const name of Object.keys(params)) if (Number.isFinite(params[name]) && runner.hasParam(name)) runner.setValue(name, params[name]); // a backend's graph may omit a parameter (no probe on WebGL2)
     if (Number.isFinite(ocean.graphTween)) runner.setTween(ocean.graphTween);
     runner.setNodes(ocean.graphNodes || {}); // the graph's logical nodes ("hull") to scene node ids
+    feedNodes(runner, ocean);
+  }
+
+  // feedNodes sets the graph's pose parameters from the scene nodes it names. A graph reads a node with a "node" parameter source and needs
+  // nothing here; one that declares hullX, hullZ, hullHeading and hullSpeed as value parameters (the wake's hull) gets them from the node
+  // bound to "hull": position, the yaw whose forward is (sin, cos), and the speed through the water. No node, or none published: unchanged.
+  const HULL: any = [["hullX", "x"], ["hullZ", "z"], ["hullHeading", "heading"], ["hullSpeed", "speed"]];
+  function feedNodes(runner: any, ocean: any): void {
+    const id = ocean.graphNodes && ocean.graphNodes.hull;
+    if (!id) return;
+    const pose = runner.nodePose ? runner.nodePose(id) : null;
+    if (!pose) return;
+    for (const entry of HULL) {
+      const decl = runner.graph.params.find(function (p: any) { return p.name === entry[0]; });
+      if (decl && decl.source.kind === "value") runner.setValue(entry[0], pose[entry[1]]);
+    }
   }
 
   // surfaceData fills the surface uniform the spectral shaders read; see the declarations in the two surface files.
