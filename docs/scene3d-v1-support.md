@@ -171,6 +171,29 @@ path. The controls frame loop stops when idle, except while a gamepad is connect
 props and fetched only for first-person walking. Evidence lives in
 `scene/walk_test.go`, `island/island_test.go`, and `client/js/scene3d-walk.test.js`.
 
+## Orbit target and camera commands after mount
+
+With `Controls: scene.ControlOrbit`, `ControlTarget`, `ControlMinDistance`,
+`ControlMaxDistance` and `ControlPitchLimit` set the orbit at mount. They can
+change afterwards, and the player's mouse orbit continues from the new target
+without a jump:
+
+- A camera carries them: `scene.PerspectiveCamera{..., Orbit: &scene.Orbit{Target: t}}`
+  through `Scene3D.SetCamera`, or in a dispatched `scene.SetCameraCommand`. The
+  mounted camera takes the camera's position and faces `Orbit.Target`. A camera
+  without `Orbit` keeps the current target, so the camera faces it from its new
+  position. A zero limit leaves that limit as it is; the target is always applied.
+- `Scene3D.SetOrbit(ctx, scene.Orbit{...})`, the handle method `setOrbit(orbit)` and
+  `__gosx.scene3d.setOrbit(mount, orbit)` change the target and limits only. The
+  camera keeps its position and turns to the target.
+- A Go-side update of `Props` whose `ControlTarget` or limits changed reaches the
+  controls through `scene.DiffIRCommands(prev.CanonicalIR(), next.CanonicalIR())`.
+
+`Scene3D.Dispatch` with a camera command moves the camera the same way
+`Scene3D.SetCamera` does, including after the user has orbited. Evidence lives in
+`client/js/runtime-02-scene-orbit-target.test.js`,
+`client/js/runtime-02-scene-camera-commands.test.js` and `scene/orbit_test.go`.
+
 ## Executable corpus status
 
 | Corpus ID | Current state | Closure needed |

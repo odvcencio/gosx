@@ -51,7 +51,9 @@ type PerspectiveCamera struct {
 	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
 	// Orbit, when set, also moves the orbit controls' target and limits, so the
 	// player's mouse orbit continues around the new target. Nil leaves them as
-	// they are.
+	// they are. With orbit controls the mounted camera always faces the orbit
+	// target and keeps only this camera's Position, so a camera that looks at a
+	// new point must carry that point as Orbit.Target.
 	Orbit *Orbit
 }
 
