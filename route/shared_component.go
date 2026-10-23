@@ -156,7 +156,7 @@ func (r *fileProgramRenderer) writeSharedComponent(b *strings.Builder, node *ir.
 	}
 	target, ok := targets[name]
 	if !ok {
-		r.err = fmt.Errorf("render shared component %s: %s declares no strict component or island named %s", node.Tag, rawPath, name)
+		r.err = fmt.Errorf("render shared component %s: %s declares no strict component named %s", node.Tag, rawPath, name)
 		return true
 	}
 	if target.comp.IsIsland {
