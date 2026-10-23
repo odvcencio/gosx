@@ -202,6 +202,19 @@ func (r *PageRuntime) BindHubWithRoundTrip(name, path string, bindings []hydrate
 	return r.renderer.BindHubWithRoundTrip(name, path, bindings, roundTrip)
 }
 
+// SetHubLifecycle publishes a hub's connection state to a shared signal and
+// configures framework-owned resync requests. hubID is the value BindHub returned.
+func (r *PageRuntime) SetHubLifecycle(hubID string, lifecycle hydrate.HubLifecycle) error {
+	if r == nil || r.renderer == nil {
+		return fmt.Errorf("page runtime is nil")
+	}
+	if err := r.renderer.SetHubLifecycle(hubID, lifecycle); err != nil {
+		return err
+	}
+	r.active = true
+	return nil
+}
+
 // SetTextureVariants publishes built assetpipe texture variants to the current
 // page manifest. Scene3D uses them to choose a block-compressed texture only
 // when the selected renderer reports the required device capability; other

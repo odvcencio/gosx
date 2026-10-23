@@ -1,0 +1,5 @@
+props.PreferWebGPU = scene.Bool(true)
+props.WebGPURecovery = &scene.WebGPURecovery{
+	Strikes: 3,                // consecutive 2 s checks with a WebGPU error (default 3)
+	Reload:  scene.Bool(true), // reload once per tab session with WebGL forced
+}

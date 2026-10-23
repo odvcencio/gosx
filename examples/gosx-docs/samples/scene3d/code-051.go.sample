@@ -1,0 +1,7 @@
+ctx.Runtime().BindHub("scene-state", "/scene/ws", []hydrate.HubBinding{{
+	Event:                      "scene:update",
+	SceneMountID:               "scene",
+	SceneCommands:              true,
+	SceneCommandsWhen:          "revealed", // wait for the first frame with content
+	SceneCommandsWhenTimeoutMS: 8000,       // apply anyway after 8 s (default 20 s)
+}})

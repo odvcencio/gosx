@@ -131,6 +131,8 @@ type Props struct {
 	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
 	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
 	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
+	// WebGPURecovery sets what happens after repeated WebGPU device errors.
+	WebGPURecovery *WebGPURecovery `json:"webgpuRecovery,omitempty"`
 	// Timelines advertises the optional runtime for finite object and camera playback.
 	Timelines *bool `json:"timelines,omitempty"`
 	// ParticleBursts advertises the optional runtime and compute support for event effects.
@@ -2093,6 +2095,9 @@ func (p Props) legacyBaseProps() map[string]any {
 			comp["lodThreshold"] = thresh
 		}
 		out["compression"] = comp
+	}
+	if p.WebGPURecovery != nil {
+		out["webgpuRecovery"] = p.WebGPURecovery
 	}
 	if camera := p.cameraLegacyProps(); len(camera) > 0 {
 		out["camera"] = camera
@@ -5434,4 +5439,16 @@ func normalizeShadowSoftness(softness float64) float64 {
 		return 0
 	}
 	return softness
+}
+
+// WebGPURecovery decides what the browser does after repeated WebGPU errors.
+// The render watchdog checks the renderer every 2 s. A check that sees a
+// device error (a frame-error streak, a lost device or a failed pipeline) is
+// one strike; a clean check resets the count. At Strikes the runtime either
+// swaps to WebGL in place (Reload false) or reloads the page once with WebGL
+// forced for that tab session (Reload true). The mount publishes
+// data-gosx-scene3d-webgpu-recovery: inactive, armed, fallback, reloading or webgl-forced.
+type WebGPURecovery struct {
+	Strikes int   `json:"strikes,omitempty"` // default 3; range 1..20
+	Reload  *bool `json:"reload,omitempty"`  // default false
 }

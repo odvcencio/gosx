@@ -31,6 +31,41 @@
   `gosx export` keeps deferred props inline in each page. See
   docs/scene3d-performance.
 
+- Write hub payload fields to CSS custom properties without page JavaScript.
+  `hydrate.HubBinding.CSSVars` maps payload paths to `--*` names on `:root` or
+  a selector, with an optional flash class (skipped under reduced motion, in a
+  hidden tab, or with a `__gosx_visual_seed` query) and a one-time live class.
+  Invalid names are dropped when the manifest is built and reported by
+  `Manifest.Validate()`. The code ships in `bootstrap-feature-hub-css-vars.js`
+  (2,325 bytes raw, 1,119 gzip, 976 Brotli), loaded only for pages that use it;
+  production builds list and serve it. The browser checks every value before
+  it writes it: no parentheses, backslashes, quotes, semicolons or control
+  characters, at most 256 characters, and an optional per-variable `Kind`
+  (number, length, color, ident, string) for a stricter grammar.
+
+- Publish hub connection state and resync. `HubEntry.ConnectionSignal` receives
+  `connecting`, `open`, `reconnecting` or `error`; elements with
+  `data-gosx-hub-status` set to the hub name get `data-gosx-hub-connection`.
+  `HubEntry.Resync` (set through `SetHubLifecycle`) sends a `resync` event when
+  the tab becomes visible, the window gains focus, the network returns, the
+  page leaves the back-forward cache, after the socket opens, and on a
+  wall-clock schedule, at most once per 1.2 s by default. `Hub.ReplayLatched`
+  answers it for hubs that use `Latch`. The hubs chunk grows by 3,661 raw /
+  1,013 gzip / 876 Brotli bytes.
+
+- Gate Scene3D hub command batches on the first content frame with
+  `HubBinding.SceneCommandsWhen: "revealed"` and a timeout (default 20 s).
+
+- Add `PresenceClass` to custom post DOM regions: the document element carries
+  the class while a matched region is visible and the effect is composited, so
+  CSS can switch from a CSS-only fallback to the shader version. The Scene3D
+  chunk grows by 2,907 raw / 1,005 gzip / 834 Brotli bytes.
+
+- Add `scene.Props.WebGPURecovery`: after `Strikes` consecutive 2 s watchdog
+  checks with WebGPU errors (default 3), the scene swaps to WebGL in place or,
+  with `Reload`, reloads once with WebGL forced for the tab session. The mount
+  publishes `data-gosx-scene3d-webgpu-recovery`.
+
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,
   schema-checked ObjectIR equality proofs, including embedded model records.
   Transform and interaction updates

@@ -51,7 +51,10 @@
     if (record.socket && (record.socket.readyState === 1 || record.socket.readyState == null)) {
       bindHubOutputs(record);
       startHubRoundTrip(record);
-      emitHubConnection(record, "open");
+      scheduleHubResyncPeriod(record);
+      publishHubConnection(record, "open");
+    } else if (record.socket && record.socket.readyState === 0) {
+      publishHubConnection(record, "connecting");
     }
   }
 
@@ -171,7 +174,7 @@
     record.lastSceneCommandRevision.set(mountID, revision);
     const mount = document.getElementById(mountID);
     const detail = { revision: revision, commands: data.commands };
-    if (mount && mount.getAttribute("data-gosx-scene3d-command-ready") === "true") {
+    if (hubSceneMountReady(record, mountID, mount, binding)) {
       emitHubSceneCommands(mount, detail);
       return;
     }
@@ -182,25 +185,66 @@
     // from the initial scene, so older queued batches are unnecessary.
     record.pendingSceneCommands = record.pendingSceneCommands || new Map();
     record.pendingSceneCommands.set(mountID, detail);
-    watchHubSceneCommandMount(record, mountID);
+    watchHubSceneCommandMount(record, mountID, binding);
   }
 
-  function watchHubSceneCommandMount(record, mountID) {
+  // A mount takes command batches once it is command-ready. With
+  // sceneCommandsWhen "revealed" it must also have drawn its first frame with
+  // content (data-gosx-scene3d-revealed), unless the reveal timeout passed.
+  function hubSceneMountReady(record, mountID, mount, binding) {
+    if (!mount || mount.getAttribute("data-gosx-scene3d-command-ready") !== "true") return false;
+    if (!binding || binding.sceneCommandsWhen !== "revealed") return true;
+    if (record.sceneCommandRevealTimedOut && record.sceneCommandRevealTimedOut.has(mountID)) return true;
+    return mount.getAttribute("data-gosx-scene3d-revealed") === "true";
+  }
+
+  function flushHubSceneCommands(record, mountID, binding) {
+    const mount = document.getElementById(mountID);
+    if (!hubSceneMountReady(record, mountID, mount, binding)) return false;
+    const observer = record.sceneCommandObservers && record.sceneCommandObservers.get(mountID);
+    if (observer) {
+      observer.disconnect();
+      record.sceneCommandObservers.delete(mountID);
+    }
+    const timer = record.sceneCommandTimers && record.sceneCommandTimers.get(mountID);
+    if (timer != null) {
+      clearTimeout(timer);
+      record.sceneCommandTimers.delete(mountID);
+    }
+    const detail = record.pendingSceneCommands && record.pendingSceneCommands.get(mountID);
+    if (record.pendingSceneCommands) record.pendingSceneCommands.delete(mountID);
+    if (detail) emitHubSceneCommands(mount, detail);
+    return true;
+  }
+
+  // When the gate is "revealed", a scene that never draws content must not
+  // hold hub commands forever: after the timeout, apply on command-ready alone.
+  function armHubSceneRevealTimeout(record, mountID, binding) {
+    if (!binding || binding.sceneCommandsWhen !== "revealed") return;
+    record.sceneCommandTimers = record.sceneCommandTimers || new Map();
+    if (record.sceneCommandTimers.has(mountID)) return;
+    const delay = Math.max(1, Number(binding.sceneCommandsWhenTimeoutMs) || 20000);
+    record.sceneCommandTimers.set(mountID, setTimeout(function() {
+      record.sceneCommandTimers.delete(mountID);
+      if (record.disposed) return;
+      record.sceneCommandRevealTimedOut = record.sceneCommandRevealTimedOut || new Set();
+      record.sceneCommandRevealTimedOut.add(mountID);
+      console.warn("[gosx] scene commands for #" + mountID + " applied before reveal after " + delay + " ms");
+      flushHubSceneCommands(record, mountID, binding);
+    }, delay));
+  }
+
+  function watchHubSceneCommandMount(record, mountID, binding) {
+    armHubSceneRevealTimeout(record, mountID, binding);
     if (typeof MutationObserver !== "function" || !document.documentElement) return;
     record.sceneCommandObservers = record.sceneCommandObservers || new Map();
     if (record.sceneCommandObservers.has(mountID)) return;
     const observer = new MutationObserver(function() {
-      const mount = document.getElementById(mountID);
-      if (!mount || mount.getAttribute("data-gosx-scene3d-command-ready") !== "true") return;
-      observer.disconnect();
-      record.sceneCommandObservers.delete(mountID);
-      const detail = record.pendingSceneCommands && record.pendingSceneCommands.get(mountID);
-      if (record.pendingSceneCommands) record.pendingSceneCommands.delete(mountID);
-      if (detail) emitHubSceneCommands(mount, detail);
+      flushHubSceneCommands(record, mountID, binding);
     });
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-gosx-scene3d-command-ready"],
+      attributeFilter: ["data-gosx-scene3d-command-ready", "data-gosx-scene3d-revealed"],
       childList: true,
       subtree: true,
     });
@@ -574,6 +618,9 @@
       }
       bindHubOutputs(record);
       startHubRoundTrip(record);
+      scheduleHubResyncPeriod(record);
+      armHubResyncInitial(record);
+      publishHubConnection(record, "open");
     };
     socket.onmessage = function(evt) {
       if (record.disposed || record.suspended) return;
@@ -592,11 +639,13 @@
       record.closed = true;
       stopHubRoundTrip(record);
       scheduleHubReconnect(record);
-      emitHubConnection(record, "reconnecting");
+      publishHubConnection(record, "reconnecting", { reconnectInMs: record.reconnectDelay });
     };
 
     socket.onerror = function(e) {
-      if (!record.disposed) console.error(`[gosx] hub connection error for ${record.entry.id}:`, e);
+      if (record.disposed) return;
+      console.error(`[gosx] hub connection error for ${record.entry.id}:`, e);
+      publishHubConnection(record, "error");
     };
   }
 
@@ -662,9 +711,26 @@
 
   // Page views observe lifecycle without polling the socket. These local
   // notifications never enter the wire protocol or shared-signal bindings.
-  function emitHubConnection(record, state) {
+  // Each state also goes to the entry's connectionSignal (hydrate.HubEntry)
+  // and to the data-gosx-hub-connection attribute of every element marked
+  // data-gosx-hub-status="<hub name>", so CSS can show status without script.
+  function publishHubConnection(record, state, extra) {
+    const data = Object.assign({ state: state, attempt: record.reconnectAttempt || 0, at: Date.now() }, extra || {});
+    const text = JSON.stringify(data);
     for (const entry of record.entries.values()) {
-      emitHubEvent(entry, { event: "__connection", data: { state: state } });
+      emitHubEvent(entry, { event: "__connection", data: data });
+      if (entry.connectionSignal) {
+        try {
+          setSharedSignalJSON(entry.connectionSignal, text);
+        } catch (_e) {}
+      }
+      if (typeof document.querySelectorAll === "function" && entry.name) {
+        const name = String(entry.name).replace(/["\\]/g, "\\$&");
+        try {
+          const nodes = document.querySelectorAll('[data-gosx-hub-status="' + name + '"]');
+          for (let i = 0; i < nodes.length; i++) nodes[i].setAttribute("data-gosx-hub-connection", state);
+        } catch (_e) {}
+      }
     }
   }
 
@@ -756,8 +822,104 @@
     }
   }
 
+  // Resync asks the hub to resend current state after the page was not
+  // running (hydrate.HubResyncConfig). Requests share the open socket, so a
+  // dead socket reconnects instead and its join replays state.
+  function hubResyncConfig(record) {
+    for (const entry of record.entries.values()) if (entry && entry.resync) return entry.resync;
+    return null;
+  }
+
+  function requestHubResync(record, reason) {
+    const config = hubResyncConfig(record);
+    if (!config || record.disposed || record.suspended || !record.socket || record.socket.readyState !== 1) return false;
+    const now = hubMonotonicNow();
+    const minInterval = Math.max(250, Number(config.minIntervalMs) || 1200);
+    if (record.lastResyncAt && now - record.lastResyncAt < minInterval) return false;
+    record.lastResyncAt = now;
+    record.socket.send(JSON.stringify({ event: config.event || "resync", data: { reason: reason } }));
+    return true;
+  }
+
+  function hubResyncTriggerEnabled(config, trigger) {
+    const on = Array.isArray(config.on) && config.on.length ? config.on : ["visible", "focus", "online", "pageshow"];
+    return on.indexOf(trigger) >= 0;
+  }
+
+  function resyncHubs(trigger) {
+    hubConnections.forEach(function(record) {
+      const config = hubResyncConfig(record);
+      if (config && hubResyncTriggerEnabled(config, trigger)) requestHubResync(record, trigger);
+    });
+  }
+
+  // Delay until the next wall-clock multiple of periodMs plus offsetMs,
+  // including the current window when its slot is still ahead, plus random
+  // jitter of up to 10 percent of the period (at most 5 s) so many clients do
+  // not request state at the same instant.
+  function nextHubResyncDelay(periodMs, offsetMs) {
+    const now = Date.now();
+    let slot = Math.floor(now / periodMs) * periodMs + offsetMs;
+    if (slot <= now) slot += periodMs;
+    const jitter = Math.floor(Math.random() * Math.min(5000, periodMs * 0.1));
+    return Math.max(1, slot - now) + jitter;
+  }
+
+  function scheduleHubResyncPeriod(record) {
+    stopHubResyncTimers(record, true);
+    const config = hubResyncConfig(record);
+    if (!config || !(Number(config.periodMs) > 0) || record.disposed) return;
+    record.resyncPeriodTimer = setTimeout(function() {
+      record.resyncPeriodTimer = null;
+      if (typeof document === "undefined" || document.visibilityState !== "hidden") requestHubResync(record, "period");
+      scheduleHubResyncPeriod(record);
+    }, nextHubResyncDelay(Number(config.periodMs), Math.max(0, Number(config.offsetMs) || 0)));
+  }
+
+  function armHubResyncInitial(record) {
+    const config = hubResyncConfig(record);
+    if (record.resyncInitialTimer != null) {
+      clearTimeout(record.resyncInitialTimer);
+      record.resyncInitialTimer = null;
+    }
+    if (!config || !(Number(config.initialDelayMs) > 0) || record.disposed) return;
+    record.resyncInitialTimer = setTimeout(function() {
+      record.resyncInitialTimer = null;
+      requestHubResync(record, "initial");
+    }, Number(config.initialDelayMs));
+  }
+
+  function stopHubResyncTimers(record, periodOnly) {
+    if (!record) return;
+    if (record.resyncPeriodTimer != null) {
+      clearTimeout(record.resyncPeriodTimer);
+      record.resyncPeriodTimer = null;
+    }
+    if (!periodOnly && record.resyncInitialTimer != null) {
+      clearTimeout(record.resyncInitialTimer);
+      record.resyncInitialTimer = null;
+    }
+  }
+
   if (typeof window.addEventListener === "function") {
     window.addEventListener("pageshow", revalidateHubConnections);
+    if (!window.__gosx.hubResyncListeners) {
+      window.__gosx.hubResyncListeners = true;
+      // A page script cannot be sure the document finished loading, so focus
+      // waits until it left the "loading" state.
+      if (typeof document.addEventListener === "function") {
+        document.addEventListener("visibilitychange", function() {
+          if (document.visibilityState !== "hidden") resyncHubs("visible");
+        });
+      }
+      window.addEventListener("focus", function() {
+        if (document.readyState !== "loading") resyncHubs("focus");
+      });
+      window.addEventListener("online", function() { resyncHubs("online"); });
+      window.addEventListener("pageshow", function(event) {
+        if (event && event.persisted) resyncHubs("pageshow");
+      });
+    }
   }
 
   gosxHost.hubs = Object.assign(gosxHost.hubs || {}, {

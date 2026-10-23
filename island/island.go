@@ -1767,6 +1767,15 @@ func (r *Renderer) BindHubWithRoundTrip(name, path string, bindings []hydrate.Hu
 	return r.manifest.AddHubWithRoundTrip(name, path, bindings, roundTrip)
 }
 
+// SetHubLifecycle publishes a hub's connection state to a shared signal and
+// configures framework-owned resync requests. hubID is the value BindHub returned.
+func (r *Renderer) SetHubLifecycle(hubID string, lifecycle hydrate.HubLifecycle) error {
+	if r == nil || r.manifest == nil {
+		return fmt.Errorf("island renderer is nil")
+	}
+	return r.manifest.SetHubLifecycle(hubID, lifecycle)
+}
+
 // SetClientIdentity configures bootstrap-owned client identity state for the
 // page manifest.
 func (r *Renderer) SetClientIdentity(config hydrate.ClientIdentityConfig) {

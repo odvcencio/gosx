@@ -1,0 +1,13 @@
+scene.CustomPost{
+	Name:     "Glass",
+	Material: glassMaterial,
+	DOMRegions: scene.CustomPostDOMRegions{
+		Selector:      ".hero-card",
+		Max:           1,
+		PresenceClass: "hero-glass-live",
+	},
+}
+
+// CSS: keep a CSS-only look until the shader is on screen.
+//   .hero-card { backdrop-filter: blur(12px); }
+//   html.hero-glass-live .hero-card { backdrop-filter: none; }

@@ -10,6 +10,8 @@
       record.refreshTimer = null;
     }
     if (typeof stopHubRoundTrip === "function") stopHubRoundTrip(record);
+    if (typeof stopHubResyncTimers === "function") stopHubResyncTimers(record, false);
+    record.lastResyncAt = 0;
     record.refreshPreserveScroll = null;
     record.refreshEvent = null;
     record.refreshFetchEpoch = null;
@@ -27,6 +29,11 @@
       });
       record.sceneCommandObservers.clear();
     }
+    if (record.sceneCommandTimers instanceof Map) {
+      record.sceneCommandTimers.forEach(function(timer) { clearTimeout(timer); });
+      record.sceneCommandTimers.clear();
+    }
+    if (record.sceneCommandRevealTimedOut instanceof Set) record.sceneCommandRevealTimedOut.clear();
     if (record.pendingSceneCommands instanceof Map) record.pendingSceneCommands.clear();
     if (record.lastSceneCommandRevision instanceof Map) record.lastSceneCommandRevision.clear();
   }

@@ -413,6 +413,13 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/host/hub-document.ts")},
 	},
 	{
+		// Hub payload to CSS custom properties. Loads only for a page whose
+		// manifest lists the hub-css-vars feature (set by hydrate when a hub
+		// binding carries CSSVars). Not part of the monolith, like hub-document.
+		name:    "bootstrap-feature-hub-css-vars.js",
+		sources: []source{sourceFile("../runtime/host/hub-css-vars.ts")},
+	},
+	{
 		// Browser half of netplay: RTCPeerConnection and one unreliable data
 		// channel per connection, polled by Go WASM (netplay/client). It loads
 		// only for a page that calls RequireFeature("netplay").

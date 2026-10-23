@@ -4,7 +4,9 @@ package hydrate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"m31labs.dev/gosx/internal/sceneprobe"
 	"regexp"
 	"strings"
@@ -94,6 +96,9 @@ func (m *Manifest) RequireFeature(name string) error {
 type Manifest struct {
 	basePath       string
 	basePathSource *Manifest
+	// errors collects authoring problems found while the manifest is built
+	// (dropped hub bindings, failed feature requirements). Validate reports them.
+	errors []error
 
 	// Version of the manifest format.
 	Version string `json:"version"`
@@ -237,6 +242,16 @@ type HubEntry struct {
 	// Document binds a server-rendered textarea view to this hub. Its optional
 	// runtime chunk owns editing, presence and caret lifecycle without app JavaScript.
 	Document *HubDocumentConfig `json:"document,omitempty"`
+
+	// ConnectionSignal names a shared signal that receives the hub connection
+	// state: {"state":"connecting|open|reconnecting|error","attempt":n,"at":ms}.
+	// The browser also stamps data-gosx-hub-connection on elements marked
+	// data-gosx-hub-status="<hub name>". Set it through SetHubLifecycle.
+	ConnectionSignal string `json:"connectionSignal,omitempty"`
+
+	// Resync asks the hub for its current state when the page resumes. Set it
+	// through SetHubLifecycle.
+	Resync *HubResyncConfig `json:"resync,omitempty"`
 }
 
 // HubRoundTripConfig configures a bootstrap-owned heartbeat that writes the
@@ -272,6 +287,12 @@ type HubBinding struct {
 	SceneCommands  bool   `json:"sceneCommands,omitempty"`
 	SceneInput     string `json:"sceneInput,omitempty"`
 	SceneInputKind string `json:"sceneInputKind,omitempty"`
+	// SceneCommandsWhen delays SceneCommands batches. Empty applies a batch as
+	// soon as the mount is command-ready. "revealed" waits until the mount has
+	// drawn its first frame with content (data-gosx-scene3d-revealed="true"),
+	// then at most SceneCommandsWhenTimeoutMS (default 20000) before applying anyway.
+	SceneCommandsWhen          string `json:"sceneCommandsWhen,omitempty"`
+	SceneCommandsWhenTimeoutMS int    `json:"sceneCommandsWhenTimeoutMs,omitempty"`
 	// Refresh forces a same-URL soft navigation after a matching inbound event.
 	Refresh bool `json:"refresh,omitempty"`
 	// RefreshDebounceMS joins the hub connection's refresh burst and rearms its
@@ -279,6 +300,10 @@ type HubBinding struct {
 	RefreshDebounceMS int `json:"refreshDebounceMs,omitempty"`
 	// RefreshPreserveScroll defaults to true; false wins within a pending burst.
 	RefreshPreserveScroll *bool `json:"refreshPreserveScroll,omitempty"`
+	// CSSVars writes fields of a matching inbound payload to CSS custom
+	// properties. The page loads bootstrap-feature-hub-css-vars.js only when a
+	// binding sets it. See HubCSSVars.
+	CSSVars *HubCSSVars `json:"cssVars,omitempty"`
 }
 
 // HubInputConfig lets the browser bootstrap forward bounded, page-declared
@@ -666,6 +691,7 @@ func (m *Manifest) AddHub(name, path string, bindings []HubBinding) string {
 // bootstrap-owned browser input forwarding.
 func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, input *HubInputConfig) string {
 	id := hubID(len(m.Hubs))
+	bindings = m.keepValidHubBindings(name, bindings)
 	m.Hubs = append(m.Hubs, HubEntry{
 		ID:       id,
 		Name:     name,
@@ -674,6 +700,71 @@ func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, inp
 		Input:    input,
 	})
 	return id
+}
+
+// keepValidHubBindings drops bindings that fail validation, logs each drop
+// once, records it for Validate, and requires the hub-css-vars chunk when a
+// kept binding uses CSSVars. A typo never blanks a production page.
+func (m *Manifest) keepValidHubBindings(hubName string, bindings []HubBinding) []HubBinding {
+	if len(bindings) == 0 {
+		return bindings
+	}
+	kept := make([]HubBinding, 0, len(bindings))
+	dropped := false
+	needsCSSVars := false
+	for _, b := range bindings {
+		if err := validateHubBinding(hubName, b); err != nil {
+			dropped = true
+			m.errors = append(m.errors, err)
+			log.Printf("[gosx/hydrate] %v (binding dropped)", err)
+			continue
+		}
+		if b.CSSVars != nil {
+			needsCSSVars = true
+		}
+		kept = append(kept, b)
+	}
+	if needsCSSVars {
+		if err := m.RequireFeature("hub-css-vars"); err != nil {
+			m.errors = append(m.errors, err)
+		}
+	}
+	if !dropped {
+		return bindings
+	}
+	return kept
+}
+
+// validateHubBinding reports the first authoring problem with one binding.
+func validateHubBinding(hubName string, b HubBinding) error {
+	if b.SceneCommandsWhen != "" && b.SceneCommandsWhen != "revealed" {
+		return fmt.Errorf("hub %q binding %q: sceneCommandsWhen %q is not \"revealed\"", hubName, b.Event, b.SceneCommandsWhen)
+	}
+	if b.SceneCommandsWhenTimeoutMS != 0 {
+		if b.SceneCommandsWhen == "" || !b.SceneCommands {
+			return fmt.Errorf("hub %q binding %q: sceneCommandsWhenTimeoutMs needs sceneCommandsWhen and sceneCommands", hubName, b.Event)
+		}
+		if b.SceneCommandsWhenTimeoutMS < 250 || b.SceneCommandsWhenTimeoutMS > 120000 {
+			return fmt.Errorf("hub %q binding %q: sceneCommandsWhenTimeoutMs %d is outside 250..120000", hubName, b.Event, b.SceneCommandsWhenTimeoutMS)
+		}
+	}
+	if b.CSSVars != nil {
+		if err := b.CSSVars.Validate(); err != nil {
+			return fmt.Errorf("hub %q binding %q: %w", hubName, b.Event, err)
+		}
+	}
+	return nil
+}
+
+// Validate returns the authoring problems recorded while the manifest was
+// built, or nil. Marshal still works when Validate fails: invalid hub bindings
+// are dropped so a typo never blanks a production page. Tests and app Go tests
+// should assert through Validate.
+func (m *Manifest) Validate() error {
+	if m == nil || len(m.errors) == 0 {
+		return nil
+	}
+	return errors.Join(m.errors...)
 }
 
 // AddLocalInput registers a fighting-input controller that runs without a hub

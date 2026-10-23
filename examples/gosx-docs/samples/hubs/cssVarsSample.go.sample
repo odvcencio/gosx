@@ -1,0 +1,22 @@
+room := hub.New("palette")
+room.On("join", func(ctx *hub.Context) {
+	// json.RawMessage embeds the object as JSON. A plain []byte field would
+	// reach the browser as a base64 string.
+	state := json.RawMessage(`{"coreInner":"#ff8800","activity":0.42}`)
+	ctx.Hub.Send(ctx.Client.ID, "tick", map[string]any{"frame": 7, "state": state})
+})
+
+ctx.Runtime().BindHub("palette", "/palette/ws", []hydrate.HubBinding{{
+	Event: "tick",
+	CSSVars: &hydrate.HubCSSVars{
+		Root: "state", // payload path the var paths start from
+		Vars: []hydrate.HubCSSVar{
+			{Name: "--core", Path: "coreInner", Kind: "color"},
+			{Name: "--activity", Path: "activity", Digits: 2},
+		},
+		FlashClass: "palette-arrival", // added after a changed apply
+		FlashMS:    1200,
+		FlashWhen:  "frame", // flash only when this payload value changes
+		LiveClass:  "palette-live",
+	},
+}})

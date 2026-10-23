@@ -678,3 +678,35 @@ func TestManifestAddLocalInputRunsWithoutSocket(t *testing.T) {
 		t.Fatalf("base path invented a socket path %q", prefixed.Hubs[0].Path)
 	}
 }
+
+func TestManifestAddHubRejectsInvalidCSSVarsAndRequiresChunk(t *testing.T) {
+	m := NewManifest()
+	id := m.AddHub("palette", "/ws", []HubBinding{
+		{Event: "tick", CSSVars: &HubCSSVars{Vars: []HubCSSVar{{Name: "accent", Path: "a"}}}},
+		{Event: "tick", CSSVars: &HubCSSVars{Vars: []HubCSSVar{{Name: "--accent", Path: "a"}}}},
+	})
+	if id != "gosx-hub-0" {
+		t.Fatalf("id = %q", id)
+	}
+	if got := len(m.Hubs[0].Bindings); got != 1 {
+		t.Fatalf("invalid binding must be dropped; kept %d bindings", got)
+	}
+	err := m.Validate()
+	if err == nil || !strings.Contains(err.Error(), `hub "palette"`) || !strings.Contains(err.Error(), `"tick"`) || !strings.Contains(err.Error(), "cssVars") {
+		t.Fatalf("Validate must name the hub, event and field: %v", err)
+	}
+	if len(m.Features) != 1 || m.Features[0] != "hub-css-vars" {
+		t.Fatalf("a valid cssVars binding must require the hub-css-vars chunk once; features = %v", m.Features)
+	}
+}
+
+func TestManifestWithoutCSSVarsRequiresNoChunk(t *testing.T) {
+	m := NewManifest()
+	m.AddHub("plain", "/ws", []HubBinding{{Event: "tick", Signal: "$tick"}})
+	if len(m.Features) != 0 {
+		t.Fatalf("features = %v, want none", m.Features)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

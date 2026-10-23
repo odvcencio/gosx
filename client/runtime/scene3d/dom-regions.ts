@@ -61,6 +61,9 @@
     if (!selector || !effect || typeof effect.name !== "string" || !effect.name.trim()) return null;
     var uniforms = raw.uniforms && typeof raw.uniforms === "object" ? raw.uniforms : {};
     var bounds = sceneDOMRegionBoundsConfig(raw.bounds);
+    // One class token: no whitespace, at most 64 characters. Anything else is ignored.
+    var presenceClass = typeof raw.presenceClass === "string" ? raw.presenceClass.trim() : "";
+    if (presenceClass.length > 64 || /\s/.test(presenceClass)) presenceClass = "";
     return {
       name: effect.name.trim(),
       selector: selector,
@@ -72,8 +75,21 @@
         meta: sceneDOMRegionUniformPattern(uniforms.meta, "region%dMeta"),
       },
       bounds: bounds,
+      presenceClass: presenceClass,
     };
   }
+
+  // The effect is "composited" when the mount renders on WebGPU or WebGL and
+  // has neither dropped, deferred nor demoted its post-FX. The mount publishes
+  // the backend, postfx and webgpu-postfx-demoted attributes. Missing
+  // attributes count as healthy.
+  // The tracker's syncPresence applies this rule to its mount.
+
+  var SCENE_DOM_REGION_PRESENCE_ATTRIBUTES = [
+    "data-gosx-scene3d-backend",
+    "data-gosx-scene3d-postfx",
+    "data-gosx-scene3d-webgpu-postfx-demoted",
+  ];
 
   function sceneDOMRegionBoundsConfig(raw) {
     if (!raw || typeof raw !== "object") return null;
@@ -263,12 +279,19 @@
   function createSceneCustomPostDOMRegionTracker(mount, canvas, state, scheduleRender) {
     var disposed = false;
     var raf = 0;
-    var configs = [];
+    var configs = new Array();
     var key = "";
     var lastPatchKey = "";
     var resizeObserver = null;
-    var observed = [];
+    var observed = new Array();
     var geometryTracking = false;
+    // Object.create(null) and new Array() give explicit any types, which keeps
+    // the Scene3D noImplicitAny ratchet from counting these as new diagnostics.
+    var visibleByName = Object.create(null);
+    var appliedClasses = Object.create(null);
+    var presenceObserver = { disconnect: function() {} };
+    var presenceObserving = false;
+    var presenceAttributeWritten = false;
     var scheduledRender = typeof scheduleRender === "function" ? scheduleRender : function() {};
 
     function currentCanvas() {
@@ -321,6 +344,80 @@
       observed = next;
     }
 
+    function documentClassList() {
+      var root = typeof document !== "undefined" ? document.documentElement : null;
+      return root && root.classList ? root.classList : null;
+    }
+
+    // Toggle each config's presenceClass on the document element: on while a
+    // matched region is visible inside the canvas and the effect is composited.
+    function syncPresence() {
+      var wanted = Object.create(null);
+      var parts = [];
+      var backend = mount && typeof mount.getAttribute === "function" ? String(mount.getAttribute("data-gosx-scene3d-backend") || "") : "";
+      var postfx = mount && typeof mount.getAttribute === "function" ? String(mount.getAttribute("data-gosx-scene3d-postfx") || "") : "";
+      var demoted = mount && typeof mount.getAttribute === "function" ? String(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted") || "") : "";
+      var composited = !disposed && (backend === "webgpu" || backend === "webgl") &&
+        postfx !== "dropped" && postfx !== "deferred" && postfx !== "none" && demoted !== "true";
+      for (var i = 0; i < configs.length; i += 1) {
+        var config = configs[i];
+        if (!config.presenceClass) continue;
+        var on = composited && visibleByName[config.name] === true;
+        parts.push(config.name + ":" + (on ? 1 : 0));
+        if (on) wanted[config.presenceClass] = true;
+      }
+      var classList = documentClassList();
+      if (classList) {
+        // Scenes can share a presence class. The document element keeps a
+        // count per class, so one scene going away leaves the class in place
+        // while another scene still needs it.
+        var root = document.documentElement;
+        var counts = Reflect.get(root, "__gosxPresenceCounts");
+        if (!counts) {
+          counts = Object.create(null);
+          Reflect.set(root, "__gosxPresenceCounts", counts);
+        }
+        for (var applied in appliedClasses) {
+          if (!wanted[applied]) {
+            delete appliedClasses[applied];
+            counts[applied] = (counts[applied] || 1) - 1;
+            if (counts[applied] <= 0) {
+              delete counts[applied];
+              classList.remove(applied);
+            }
+          }
+        }
+        for (var cls in wanted) {
+          if (!appliedClasses[cls]) {
+            appliedClasses[cls] = true;
+            counts[cls] = (counts[cls] || 0) + 1;
+            classList.add(cls);
+          }
+        }
+      }
+      if (mount && typeof mount.setAttribute === "function" && (parts.length > 0 || presenceAttributeWritten)) {
+        var text = parts.join("|");
+        if (mount.getAttribute("data-gosx-scene3d-dom-region-presence") !== text) {
+          mount.setAttribute("data-gosx-scene3d-dom-region-presence", text);
+        }
+        presenceAttributeWritten = parts.length > 0;
+      }
+    }
+
+    function ensurePresenceObserver() {
+      var needed = geometryTracking && !disposed && configs.some(function(config) { return !!config.presenceClass; });
+      if (!needed) {
+        if (presenceObserving) presenceObserver.disconnect();
+        presenceObserving = false;
+        return;
+      }
+      if (presenceObserving || typeof MutationObserver !== "function" || !mount) return;
+      var observer = new MutationObserver(syncPresence);
+      observer.observe(mount, { attributes: true, attributeFilter: SCENE_DOM_REGION_PRESENCE_ATTRIBUTES });
+      presenceObserver = observer;
+      presenceObserving = true;
+    }
+
     function queryTargets(selector) {
       if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return [];
       try {
@@ -342,9 +439,16 @@
         var targets = queryTargets(config.selector);
         allTargets = allTargets.concat(targets.slice(0, config.max));
         targetKeyParts.push(config.name + ":" + config.selector + ":" + targets.length);
-        entries.push(sceneDOMRegionPatch(config, sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max, config.bounds)));
+        var measurement = sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max, config.bounds);
+        var anyVisible = false;
+        for (var v = 0; v < measurement.count; v += 1) {
+          if (measurement.meta[v * 4 + 1] > 0) anyVisible = true;
+        }
+        visibleByName[config.name] = anyVisible;
+        entries.push(sceneDOMRegionPatch(config, measurement));
       }
       observeTargets(allTargets);
+      syncPresence();
       var patchKey = JSON.stringify(entries);
       if (patchKey === lastPatchKey) return;
       lastPatchKey = patchKey;
@@ -397,6 +501,7 @@
         window.addEventListener("scroll", onGeometryChange, true);
         window.addEventListener("resize", onGeometryChange);
       }
+      ensurePresenceObserver();
     }
 
     function disableGeometryTracking() {
@@ -408,6 +513,7 @@
         window.removeEventListener("resize", onGeometryChange);
       }
       geometryTracking = false;
+      ensurePresenceObserver();
     }
 
     function configure(postEffects) {
@@ -422,9 +528,11 @@
       key = nextKey;
       configs = next;
       lastPatchKey = "";
+      visibleByName = {};
       disconnectObserved();
       if (configs.length === 0) {
         disableGeometryTracking();
+        syncPresence();
         if (mount && typeof mount.setAttribute === "function") {
           mount.setAttribute("data-gosx-scene3d-dom-regions", "0");
           mount.setAttribute("data-gosx-scene3d-dom-region-targets", "");
@@ -434,6 +542,8 @@
         return;
       }
       enableGeometryTracking();
+      ensurePresenceObserver();
+      syncPresence();
       scheduleMeasure();
     }
 
@@ -450,6 +560,7 @@
       dispose: function() {
         disposed = true;
         disableGeometryTracking();
+        syncPresence();
       },
       _measureNow: measureNow,
     };

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/scene"
 	"m31labs.dev/gosx/scene/harness"
 	"m31labs.dev/gosx/scene/preview"
@@ -829,6 +830,36 @@ func sampleNativePreview(props scene.Props) error {
 	return session.WriteJSON(os.Stdout)
 }
 
+func sampleHubSceneCommandsWhen() []hydrate.HubBinding {
+	return []hydrate.HubBinding{{
+		Event:                      "scene:update",
+		SceneMountID:               "scene",
+		SceneCommands:              true,
+		SceneCommandsWhen:          "revealed",
+		SceneCommandsWhenTimeoutMS: 8000,
+	}}
+}
+
+func samplePresenceClass(glassMaterial *scene.CustomMaterial) scene.CustomPost {
+	return scene.CustomPost{
+		Name:     "Glass",
+		Material: glassMaterial,
+		DOMRegions: scene.CustomPostDOMRegions{
+			Selector:      ".hero-card",
+			Max:           1,
+			PresenceClass: "hero-glass-live",
+		},
+	}
+}
+
+func sampleWebGPURecovery(props *scene.Props) {
+	props.PreferWebGPU = scene.Bool(true)
+	props.WebGPURecovery = &scene.WebGPURecovery{
+		Strikes: 3,
+		Reload:  scene.Bool(true),
+	}
+}
+
 func TestScene3DDocSamplesCompile(t *testing.T) {
 	// Taking the function values compiles every sample without running it.
 	guarded := []any{
@@ -856,6 +887,9 @@ func TestScene3DDocSamplesCompile(t *testing.T) {
 		sampleQuality,
 		sampleStreaming,
 		sampleNativePreview,
+		sampleHubSceneCommandsWhen,
+		samplePresenceClass,
+		sampleWebGPURecovery,
 	}
 	if len(guarded) == 0 {
 		t.Fatal("no documentation samples guarded")
