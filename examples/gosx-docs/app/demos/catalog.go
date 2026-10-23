@@ -61,6 +61,16 @@ var demoCatalog = []DemoDefinition{
 		ShowcaseRank: 0,
 	},
 	{
+		Slug: "voyage", Title: "Voyage", Tag: "spectral ocean, sea states, game speed",
+		Promise: "Watch an expedition ship under way, change the sea state from calm to storm, and run the passage at game speeds up to 1,000x.",
+		Lesson:  "One Go program declares an expedition hull, a physical sky and a spectral ocean (JONSWAP waves on an FFT) and changes the sea state and the water's apparent speed through ordinary scene updates; no page script is involved.",
+		Accent:  "#7fb5d1", Facets: []string{"Scene3D", "Spectral ocean", "Physical sky", "Elio kernels", "Vessel"},
+		SourcePath: "examples/gosx-docs/app/demos/voyage/voyage.go", Packages: []string{"scene", "vessel", "route"},
+		Status: "live", RenderMode: "SSR + Scene3D GPU runtime",
+		Limitations:  "The spectral ocean draws on WebGPU; other backends draw the six-wave Gerstner sea. The hull is built from primitive boxes, not a modelled ship, and holds still while the water passes it. At game speeds above 1x the water's apparent speed is a compressed stand-in for the true speed.",
+		ShowcaseRank: 0,
+	},
+	{
 		Slug: "water", Title: "Water", Tag: "flagship real-time optics",
 		Promise: "Disturb a responsive water pool with buoyant objects and live caustics.",
 		Lesson:  "A typed GoSX WaterSystem drives one Selena-authored optical model through native WebGPU and WebGL2 backends.",

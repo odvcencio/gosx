@@ -16,8 +16,8 @@ import (
 )
 
 func TestDemoCatalogContracts(t *testing.T) {
-	if len(Demos()) != 13 {
-		t.Fatalf("Demos() length = %d, want 13", len(Demos()))
+	if len(Demos()) != 14 {
+		t.Fatalf("Demos() length = %d, want 14", len(Demos()))
 	}
 	if _, ok := FindDemo("showreel"); !ok {
 		t.Fatal("the showreel route must have catalog metadata for the dock and details panel")
