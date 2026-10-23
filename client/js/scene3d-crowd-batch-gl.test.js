@@ -232,6 +232,23 @@ test("a crowd without tints draws with the colour attribute off", () => {
   h.renderer.dispose();
 });
 
+test("a crowd drawn without tints after a tinted one turns the colour attribute off again", () => {
+  const h = fixture(5);
+  const green = tintOf(h, 0, 1, 0);
+  h.objects.forEach(object => { object._crowdSkin.tint = green; });
+  h.renderer.render(h.build(), viewport);
+  assert.ok(colorBinding(h.gl, 0).flags.includes(1), "the first draw is tinted");
+  h.objects.forEach(object => { object._crowdSkin.tint = null; });
+  const mark = h.gl.ops.length;
+  const plain = h.build();
+  assert.equal(plain.meshObjects[0].crowdColors, null);
+  h.renderer.render(plain, viewport);
+  const after = colorBinding(h.gl, mark);
+  assert.equal(after.pointer.length, 0, "no colour stream on the second draw");
+  assert.equal(after.flags[after.flags.length - 1], 0, "u_hasInstanceColor is off for the second draw");
+  h.renderer.dispose();
+});
+
 test("a tinted GPU-motion crowd binds its colours beside the motion records", () => {
   const h = fixture(8);
   const table = { count: 1, data: new h.F32(4) };

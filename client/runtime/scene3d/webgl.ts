@@ -7859,7 +7859,9 @@
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
     function bindCrowdBatchColors(batch, ip, allowed) {
       const location = ip.attributes.instanceColor;
-      if (!(location >= 0) || !batch.colors || batch.colors.length < batch.count * 4) return;
+      if (!(location >= 0)) return;
+      // The program keeps its uniforms between draws: say "no tint" whenever this batch has none.
+      if (!batch.colors || batch.colors.length < batch.count * 4) { gl.uniform1i(ip.uniforms.hasInstanceColor, 0); return; }
       allowed[location] = true;
       const retained = batch._colorUploaded === undefined ? null : touchInstancedStream(batch, 0, "colors");
       let buffer = retained;
