@@ -80,6 +80,78 @@
     lastWater = runner.failed ? null : { x: runner.value("waterX"), z: runner.value("waterZ"), time: runner.value("simTime") };
   }
 
+
+  // --- Probe readback (WebGPU) ---------------------------------------------------------------------------------------
+  //
+  // A vessel samples the water at a few points each frame. On WebGPU those points go to the graph's ocean_probe kernel, which
+  // sums the very cascades that are drawn, and the result comes back through a ring of three staging buffers:
+  //   begin() starts a vessel update; sample(x, z, level) records the point (the k-th query of an update is point k) and answers
+  //   from the latest readback, extrapolated with the velocity of the two latest timestamped samples, for up to STALE_MS;
+  //   after that, or with no readback (WebGL2, a graph without a probe), it answers null and the caller uses the swell waves.
+  // The glue feeds the recorded points to the graph (probeCount, probeOriginX/Z and the probePoints buffer, relative to the origin),
+  // copies the kernel's output into a free staging slot after the graph ran, and polls the previous copies before encoding a new one:
+  // a readback is never awaited. The wire layout is the kernel's: out[i] = (height, normal.x, normal.z, simulation time).
+  const RING = 3, STALE_MS = 250, MAX_POINTS = 64, MAP_READ = 1, COPY_DST = 8, RECORD_BYTES = 16;
+  const probe: any = { collect: [], k: 0, latest: null, previous: null };
+  function probeBegin(): void { probe.collect = []; probe.k = 0; }
+  function probeSample(x: number, z: number, level: number, nowMs?: number): any {
+    const k = probe.k++;
+    if (probe.collect.length < MAX_POINTS) probe.collect.push({ x: x, z: z });
+    const now = Number.isFinite(nowMs) ? nowMs : (typeof performance !== "undefined" ? performance.now() : 0), last = probe.latest;
+    if (!last || k >= last.count || now - last.at > STALE_MS) return null;
+    if (Math.abs(last.points[k].x - x) > 8 || Math.abs(last.points[k].z - z) > 8) return null; // the vessel jumped; the readback is for elsewhere
+    const prev = probe.previous && probe.previous.count > k ? probe.previous : null;
+    const rate = prev && last.at > prev.at ? (last.heights[k] - prev.heights[k]) / ((last.at - prev.at) / 1000) : 0;
+    const h = last.heights[k] + rate * ((now - last.at) / 1000);
+    const nx = last.nx[k], nz = last.nz[k], ny = Math.sqrt(Math.max(0, 1 - nx * nx - nz * nz));
+    return { x: x, y: level + h, z: z, normal: { x: nx, y: ny, z: nz }, velocity: { x: 0, y: rate, z: 0 } };
+  }
+  // probeRing owns the staging buffers of one WebGPU engine.
+  function createProbeRing(device: any, now: () => number): any {
+    const slots: any[] = [];
+    for (let i = 0; i < RING; i++) slots.push({ buffer: device.createBuffer({ label: "gosx-ocean-fft-probe-" + i, size: MAX_POINTS * RECORD_BYTES, usage: MAP_READ | COPY_DST }), state: "free", meta: null });
+    const take = function (slot: any): void {
+      const buffer = slot.buffer, meta = slot.meta;
+      slot.state = "mapping";
+      buffer.mapAsync(MAP_READ).then(function () {
+        if (slot.state !== "mapping") return;
+        const raw = new Float32Array(buffer.getMappedRange().slice(0, meta.count * RECORD_BYTES));
+        buffer.unmap();
+        const heights: number[] = [], nx: number[] = [], nz: number[] = [];
+        for (let i = 0; i < meta.count; i++) { heights.push(raw[i * 4]); nx.push(raw[i * 4 + 1]); nz.push(raw[i * 4 + 2]); }
+        probe.previous = probe.latest;
+        probe.latest = { at: meta.at, count: meta.count, points: meta.points, heights: heights, nx: nx, nz: nz };
+        slot.state = "free";
+      }, function () { slot.state = "free"; });
+    };
+    return {
+      // poll maps every copy the last frame's submission finished with; call it before encoding this frame's copy.
+      poll: function () { for (const slot of slots) if (slot.state === "copied") take(slot); },
+      // copy records the probe output into a free slot after the graph's passes; with none free the frame is skipped.
+      copy: function (encoder: any, source: any, points: any[]): void {
+        const slot = slots.find(function (x: any) { return x.state === "free"; });
+        if (!slot) return;
+        encoder.copyBufferToBuffer(source, 0, slot.buffer, 0, MAX_POINTS * RECORD_BYTES);
+        slot.state = "copied"; slot.meta = { at: now(), count: points.length, points: points };
+      },
+      dispose: function () { for (const slot of slots) { slot.state = "disposed"; slot.buffer.destroy(); } },
+    };
+  }
+  // feedProbe hands the vessel's recorded points to the graph. Points are relative to their centroid, which the graph wraps per
+  // cascade in float64 (probeOriginMod<c>); a graph without the parameters (WebGL2) has no probe.
+  function feedProbe(runner: any, points: any[]): boolean {
+    if (!runner.hasParam("probePoints")) return false;
+    const n = Math.min(points.length, MAX_POINTS);
+    if (!n) { runner.setValue("probeCount", 0); return false; }
+    let ox = 0, oz = 0;
+    for (let i = 0; i < n; i++) { ox += points[i].x; oz += points[i].z; }
+    ox /= n; oz /= n;
+    const data = new Float32Array(MAX_POINTS * 4);
+    for (let i = 0; i < n; i++) { data[i * 4] = points[i].x - ox; data[i * 4 + 1] = points[i].z - oz; }
+    runner.setValue("probeOriginX", ox); runner.setValue("probeOriginZ", oz); runner.setValue("probeCount", n); runner.setValue("probePoints", data);
+    return true;
+  }
+
   // --- WebGPU ------------------------------------------------------------------------------------------------------
 
   function createGPU(host: any): any {
@@ -97,6 +169,7 @@
     const dummy = device.createTexture({ label: label + "dummy", size: [1, 1, 1], format: "rgba16float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     const dummyView = dummy.createView(), data = new Float32Array(SURFACE_FLOATS);
     const state: any = { last: null, tier: "", runner: null, info: null, viewList: null };
+    const ring = createProbeRing(device, function () { return host.now ? host.now() : (typeof performance !== "undefined" ? performance.now() : 0); });
     const engine: any = { device: device, ready: false, layout: layout, group: null, disposed: false, tier: "", update: update, dispose: dispose, fail: fail };
 
     // fail reports a problem outside the graph (the surface shader patch) through the optional-pass route: the guard disables the
@@ -133,6 +206,8 @@
       const runner = state.runner;
       if (runner.failed) { engine.ready = false; engine.group = null; return false; }
       feed(runner, frame.ocean);
+      ring.poll();
+      const points = probe.collect.slice(0, MAX_POINTS), probing = feedProbe(runner, points);
       const ran = runner.run(Object.assign(frameInputs(state, frame), { encoder: frame.encoder }));
       if (runner.failed) {
         engine.ready = false; engine.group = null; lastWater = null;
@@ -140,6 +215,8 @@
         return false;
       }
       if (!ran) return engine.ready;
+      const out = probing ? runner.export("probe") : null;
+      if (out && out.buffer) ring.copy(frame.encoder, out.buffer, points);
       bindGroup();
       surfaceData(runner, state.info, data);
       device.queue.writeBuffer(uniform, 0, data);
@@ -151,8 +228,8 @@
       if (engine.disposed) return;
       engine.disposed = true; engine.ready = false; engine.group = null;
       if (state.runner) state.runner.dispose();
-      lastWater = null;
-      uniform.destroy(); dummy.destroy();
+      lastWater = null; probe.latest = probe.previous = null;
+      ring.dispose(); uniform.destroy(); dummy.destroy();
     }
     Object.defineProperty(engine, "runner", { get: function () { return state.runner; } });
     return engine;
@@ -239,6 +316,6 @@
     if (host && host.mount && host.mount.setAttribute) host.mount.setAttribute("data-gosx-scene3d-ocean-fft-fallback", reason);
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, describe: describe, feed: feed, surfaceData: surfaceData };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
   window.__gosx_scene3d_ocean_fft_gl_api = { frame: frameGL, fail: failGL };
 })();

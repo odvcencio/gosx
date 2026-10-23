@@ -220,3 +220,15 @@ test("glue (WebGL2): a surface that cannot be built disables the graph with the 
   for (const kind of Object.keys(g.gl.created)) assert.equal(g.gl.live(kind).length, 0, kind + " leaked");
   assert.equal(g.ocean.water(), null);
 });
+
+test("glue (WebGL2): there is no probe on WebGL2; the vessel's points are recorded but never answered, and graphParams the graph lacks are ignored", () => {
+  const g = glue();
+  const env = spectral({ graphParams: { windSpeed: 9, probeOriginX: 10, probeOriginZ: 5, probeCount: 4 } });
+  const engine = g.frame(env, { time: 1 });
+  assert.ok(engine, "the WebGL2 graph has no probe parameters; feeding them must not disable it");
+  g.ocean.probe.begin();
+  assert.equal(g.ocean.probe.sample(1, 1, 0, 0), null);
+  assert.ok(g.frame(env, { time: 1.02 }));
+  assert.equal(g.resources.fft.runner.failed, null);
+  assert.equal(g.gl.ops.filter((o) => o[0] === "readPixels").length, 0, "no readback of any kind on WebGL2");
+});

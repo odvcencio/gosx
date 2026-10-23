@@ -331,3 +331,23 @@ test('WebGPU ocean draws at the scene clock and the mount quality tier',async t=
   assert.ok(write,'ocean uniforms uploaded');assert.equal(write.data[16+2],7.25,'ocean shader time is the scene clock');assert.equal(write.data[16+27],waves,'quality '+quality);
  }
 });
+test('a spectral ocean is sampled in the water frame, at the graph wave time, and the buoyancy points come from the probe when it answers',async()=>{
+ const h=await mountScene(true,60,false,false,false,false,{navigation:true,quickBoard:true});
+ const query=h.env.context.__gosx_scene3d_ocean_query,original=query.sample,calls=[];
+ query.sample=(...args)=>{calls.push(args.slice(1,4));return original(...args);};
+ const water={x:100,z:-50,time:7},probed=[];let begins=0,answer=null;
+ h.env.context.__gosx_scene3d_ocean_fft_api={water:()=>water,probe:{begin:()=>{begins++;},sample:(x,z,level)=>{probed.push([x,z,level]);return answer;}}};
+ h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',action:'helm'}});
+ calls.length=0;h.raf.flush(500);h.raf.flush(550);
+ assert.ok(calls.length>0,'the CPU query ran');
+ assert.ok(calls.every(c=>c[2]===7),'at the graph wave time, not the scene clock '+JSON.stringify(calls.slice(0,6)));
+ assert.ok(begins>0&&probed.length>=4,'each vessel update starts a probe pass and asks for the four buoyancy points');
+ // Samples are shifted by the water origin: a query for world (x, z) reaches the wave field at (x - 100, z + 50).
+ const world=probed[0];assert.ok(calls.some(c=>Math.abs(c[0]-(world[0]-100))<20&&Math.abs(c[1]-(world[1]+50))<20));
+ // When the probe answers, the CPU query is not asked for those points.
+ answer={x:0,y:1.25,z:0,normal:{x:0,y:1,z:0},velocity:{x:0,y:0,z:0}};
+ calls.length=0;probed.length=0;h.raf.flush(600);h.raf.flush(650);
+ assert.ok(probed.length>=4);
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-vessel'),'sailing');
+ h.handle.dispose();
+});

@@ -153,6 +153,94 @@ test("a graph that fails after its first frame stops the ocean: not ready, the g
   } finally { console.warn = warn; }
 });
 
+// --- the probe: points in, a ring of three staging buffers, readback out ---------------------------------------------
+
+// A fake device whose staging buffers can be mapped, and whose copyBufferToBuffer writes a pattern the test controls.
+function probeRig() {
+  const s = standalone();
+  const fake = makeFakeGPUDevice({ timestampQuery: true });
+  s.fake = fake; s.host = ((orig) => (extra) => orig(Object.assign({ device: fake.device }, extra)))(s.host);
+  s.copies = [];
+  s.pattern = (count) => { const a = new Float32Array(64 * 4); for (let i = 0; i < count; i++) { a[i * 4] = 0.5 + i; a[i * 4 + 1] = 0.1; a[i * 4 + 2] = -0.2; a[i * 4 + 3] = 3; } return a; };
+  s.heights = s.pattern(4);
+  const create = fake.device.createCommandEncoder.bind(fake.device);
+  fake.device.createCommandEncoder = () => {
+    const encoder = create();
+    encoder.copyBufferToBuffer = (source, so, destination, doff, size) => { s.copies.push({ source, destination, size }); new Float32Array(destination._backing).set(s.heights); };
+    return encoder;
+  };
+  return s;
+}
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("probe: the points a vessel asks about reach the graph relative to their centroid, and the output is copied into a staging buffer", async () => {
+  const s = probeRig(), resources = {}, h = s.host({ now: () => 1000 }), probe = s.api.probe;
+  const env = ocean({ level: 2, graphParams: { windSpeed: 9 } });
+  warm(s, resources, h, env, { time: 1 });
+  probe.begin();
+  const pts = [[100, 40], [104, 40], [102, 38], [102, 42]];
+  for (const [x, z] of pts) assert.equal(probe.sample(x, z, 2, 1000), null, "no readback yet: the caller uses the swell waves");
+  frame(s, resources, h, env, { time: 1.02 });
+  const runner = resources.fft.runner;
+  assert.equal(runner.value("probeCount"), 4);
+  assert.deepEqual([runner.value("probeOriginX"), runner.value("probeOriginZ")], [102, 40]);
+  assert.equal(s.copies.length, 1, "one copy of the probe output per frame");
+  assert.equal(s.copies[0].size, 64 * 16);
+  assert.ok(s.copies[0].source.size >= 64 * 16, "the graph's probeOut buffer");
+  assert.equal(s.fake.state.writeBufferCalls.filter((w) => w.buffer.size === 64 * 16).length > 0, true, "probePoints are uploaded");
+  const fed = s.fake.state.writeBufferCalls.filter((w) => w.buffer.size === 64 * 16).pop();
+  assert.deepEqual(Array.from(new Float32Array(fed.data.buffer || fed.data, fed.data.byteOffset || 0, 4)), [-2, 0, 0, 0], "point 0 relative to the centroid (102, 40)");
+});
+
+test("probe: a copy is polled and mapped on a later frame, never awaited; the answer is level + height, extrapolated with the velocity of the two latest readbacks, and stale after 250 ms", async () => {
+  const s = probeRig(), resources = {}; let now = 1000;
+  const h = s.host({ now: () => now }), probe = s.api.probe;
+  const env = ocean({ level: 2, graphParams: {} });
+  warm(s, resources, h, env, { time: 1 });
+  const askAll = () => { probe.begin(); return [[100, 40], [104, 40], [102, 38], [102, 42]].map(([x, z]) => probe.sample(x, z, 2, now)); };
+  askAll(); frame(s, resources, h, env, { time: 1.02 });
+  assert.equal(askAll()[0], null, "the copy has not been mapped yet");
+  frame(s, resources, h, env, { time: 1.04 });
+  await settled();
+  let a = askAll();
+  assert.ok(a[0], "after the map resolved the readback answers");
+  assert.ok(Math.abs(a[0].y - (2 + 0.5)) < 1e-6 && Math.abs(a[1].y - (2 + 1.5)) < 1e-6, "level + height: " + a[0].y);
+  assert.deepEqual([a[0].normal.x.toFixed(2), a[0].normal.z.toFixed(2)], ["0.10", "-0.20"]);
+  assert.ok(Math.abs(Math.hypot(a[0].normal.x, a[0].normal.y, a[0].normal.z) - 1) < 1e-6);
+  assert.equal(a[0].velocity.y, 0, "one readback gives no velocity");
+  // A second readback 100 ms later with the water 0.4 m higher gives 4 m/s; 50 ms after it the answer leads it by 0.2 m.
+  now = 1100; s.heights = s.pattern(4).map((v, i) => i % 4 === 0 && i < 16 ? v + 0.4 : v);
+  frame(s, resources, h, env, { time: 1.06 }); frame(s, resources, h, env, { time: 1.08 });
+  await settled();
+  now = 1150;
+  a = askAll();
+  assert.ok(Math.abs(a[0].velocity.y - 4) < 1e-6, "velocity from two timestamped samples: " + a[0].velocity.y);
+  assert.ok(Math.abs(a[0].y - (2 + 0.9 + 0.2)) < 1e-6, "extrapolated: " + a[0].y);
+  now = 1100 + 251;
+  assert.equal(askAll()[0], null, "after 250 ms the swell waves take over");
+  // A vessel that jumped far from the sampled points gets no answer from a readback made elsewhere.
+  now = 1150; probe.begin();
+  assert.equal(probe.sample(5000, 5000, 2, now), null);
+});
+
+test("probe: the ring holds three staging buffers; with all three in flight the frame skips its copy; dispose releases them", async () => {
+  const s = probeRig(), resources = {}, h = s.host({ now: () => 5 }), probe = s.api.probe;
+  const env = ocean({ graphParams: {} });
+  const stuck = [];
+  const create = s.fake.device.createBuffer.bind(s.fake.device);
+  s.fake.device.createBuffer = (d) => { const b = create(d); if (d.usage & 1) b.mapAsync = () => new Promise(() => stuck.push(b)); return b; };
+  warm(s, resources, h, env, { time: 1 });
+  for (let i = 0; i < 6; i++) { probe.begin(); probe.sample(1, 1, 0, 5); frame(s, resources, h, env, { time: 1.02 + i * 0.02 }); }
+  assert.equal(s.copies.length, 3, "a copy per free slot, then none: " + s.copies.length);
+  assert.equal(new Set(s.copies.map((c) => c.destination)).size, 3);
+  assert.equal(stuck.length, 3, "every copy was polled for mapping on a later frame");
+  const staging = s.fake.state.buffers.filter((b) => b.usage & 1);
+  assert.equal(staging.length, 3);
+  resources.fft.dispose();
+  assert.ok(staging.every((b) => b.destroyed));
+  assert.equal(probe.sample(1, 1, 0, 5), null, "a disposed graph leaves no stale answers");
+});
+
 function nagaPath() {
   for (const candidate of ["naga", path.join(process.env.HOME || "", ".cargo", "bin", "naga")]) {
     try { execFileSync(candidate, ["--version"], { stdio: "ignore" }); return candidate; } catch (_e) {}

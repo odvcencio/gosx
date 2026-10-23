@@ -22,7 +22,7 @@
     const exported: any = {};
     for (const k of Object.keys(graph.exports || {})) exported[graph.exports[k]] = true;
     const queue = device.queue;
-    const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+    const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC, UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
 
     for (const r of graph.resources) {
       if (r.kind === "buffer") {
