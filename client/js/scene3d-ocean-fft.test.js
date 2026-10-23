@@ -331,6 +331,16 @@ test("surface uniform: the wake window terms come from exportParams and the wake
   assert.deepEqual(Array.from(out.slice(40, 48)), [0, 0, 0, 0, 0, 0, 0, 0]);
 });
 
+test("surface uniform: a wake held from an earlier frame is re-anchored to the camera of this frame", () => {
+  const s = standalone();
+  const out = new Float32Array(48);
+  // The wake last ran with the camera at (100, 50); the camera is now at (103, 48): the window is 3 m nearer on X and 2 m farther on Z.
+  const runner = { exportParams: () => ({ wakeCamRelX: -12.5, wakeCamRelZ: 30.25, wakeOriginModX: 17, wakeOriginModZ: 200, wakeCell: 4, wakeOn: 1 }),
+    value: (n) => ({ cameraX: 100, cameraZ: 50 })[n] || 0, export: (n) => n === "wake" ? { width: 256, height: 256 } : null };
+  s.api.surfaceData(runner, { cascades: [], foam: { cell: 0.5, width: 1024 } }, out, null, { x: 103, z: 48 });
+  assert.deepEqual(Array.from(out.slice(40, 42)), [-15.5, 32.25]);
+});
+
 test("the hull: the wake's hull parameters follow the node bound to \"hull\", with the speed through the water; no node, no change", () => {
   const s = standalone(), resources = {}, h = s.host();
   const ship = s.context.window.__gosx_scene3d_node_poses = { ship: { x: 300, z: -80, heading: Math.PI, speed: 0 } };
@@ -352,6 +362,21 @@ test("the hull: the wake's hull parameters follow the node bound to \"hull\", wi
   const bare = standalone(), r2 = {}, h2 = bare.host();
   warm(bare, r2, h2, ocean({ graphParams: { wakeEnabled: 0 } }), { time: 1 });
   assert.equal(r2.fft.runner.value("hullX"), 0, "no graphNodes: untouched");
+});
+
+test("surface debug view: the wake's height alone as a colour ramp on a flat sea", () => {
+  const s = standalone();
+  const out = new Float32Array(48);
+  const withWake = (debug) => ({ exportParams: () => ({ wakeOn: 1, wakeCell: 4 }), value: () => 0, export: (n) => n === "wake" ? { width: 256 } : null, ocean: { wake: { debug } } });
+  const info = { cascades: [], foam: { cell: 0.5, width: 1024 } };
+  s.api.surfaceData(withWake(true), info, out, { wake: { debug: true } });
+  assert.equal(out[47], Math.fround(s.api.WAKE_DEBUG_RANGE), "the ramp range in metres goes to k[1].w");
+  s.api.surfaceData(withWake(false), info, out, { wake: { debug: false } });
+  assert.equal(out[47], 0);
+  s.api.surfaceData(withWake(true), info, out, {});
+  assert.equal(out[47], 0, "no wake declaration, no debug view");
+  s.api.surfaceData({ exportParams: () => ({}), value: () => 0, export: () => null }, info, out, { wake: { debug: true } });
+  assert.equal(out[47], 0, "nothing to show without a wake texture");
 });
 
 function nagaPath() {
@@ -415,9 +440,11 @@ test("the renderer encodes the ocean graph before the main pass and samples the 
   assert.match(module.code, /var spWakeTex: texture_2d<f32>/);
   assert.match(module.code, /let swk = textureSampleLevel\(spWakeTex[^\n]*\n[^\n]*\n[^\n]*p\.y \+= swk\.x/, "vertex: height");
   assert.match(module.code, /dx\.y \+= swk\.y[^\n]*dz\.y \+= swk\.z|dx\.y \+= swk\.y/, "vertex: slopes into the tangents");
-  assert.match(module.code, /sGx \+= swf\.y \* swm; sGz \+= swf\.z \* swm/, "fragment: slopes into the normal");
+  assert.match(module.code, /sGx \+= swf\.y \* swm \* 3\.00; sGz \+= swf\.z \* swm \* 3\.00/, "fragment: slopes into the normal, with the surface-side slope gain");
   assert.match(module.code, /foam = max\(foam, [^\n]*swf\.w/, "fragment: turbulence into foam");
   assert.match(module.code, /smoothstep\(0\.0, WAKE_EDGE_CELLS/, "the window edge fades out");
+  assert.match(module.code, /sp\.k\[1\]\.w > 0\.0\) \{ p = vec3f\(xz\.x, level, xz\.y\)/, "debug view: a flat sea");
+  assert.match(module.code, /if \(sp\.k\[1\]\.w > 0\.0\) \{[^\n]*swf\.x[^\n]*color = /, "debug view: the height ramp replaces the colour");
   assert.doesNotMatch(module.code, /for \(var i = 0; i < 6; i\+\+\) \{\n    if \(i >= waves\)/, "the Gerstner loop is replaced");
   if (naga) validateWGSL(module.code, "ocean-fft-surface");
   const pipeline = state.renderPipelines.find((p) => p.desc.label === "gosx-ocean-fft-surface");
@@ -521,7 +548,7 @@ test("the shipped (packed) WebGPU bundle still accepts the spectral surface patc
 test("the browser carries the spectrum, swell waves, graphParams and graphTween from the normalized scene unchanged", async () => {
   const h = await createBoardWebGPUHarness({ fresh: true });
   const raw = { spectrum: { windSpeed: 12, fetch: 100, peakEnhancement: 2, spread: 4, swell: 0.3, swellDirection: 15, seed: 0 }, swellWaves: [{ dx: 0, dz: 1, k: 0.1, omega: 1, amplitude: 0.1, phase: 0 }],
-    masks: ["hull", 3], graphParams: { windSpeed: 12, seed: 0, bogus: "x" }, graphTween: 5, graphNodes: { hull: "ship", bad: 3, empty: "" } };
+    masks: ["hull", 3], graphParams: { windSpeed: 12, seed: 0, bogus: "x" }, graphTween: 5, graphNodes: { hull: "ship", bad: 3, empty: "" }, wake: { nodeId: "ship", enabled: true, length: 125, beam: 21, debug: true, bogus: 1 } };
   const state = h.env.context.__gosx_scene3d_api.createSceneState({ scene: { environment: { ocean: raw } } });
   const ocean = state.environment.ocean;
   assert.equal(ocean.spectrum.windSpeed, 12);
@@ -531,6 +558,7 @@ test("the browser carries the spectrum, swell waves, graphParams and graphTween 
   assert.deepEqual(JSON.parse(JSON.stringify(ocean.graphParams)), { windSpeed: 12, seed: 0 }, "non-numeric values are dropped");
   assert.equal(ocean.graphTween, 5);
   assert.deepEqual(JSON.parse(JSON.stringify(ocean.graphNodes)), { hull: "ship" }, "only node ids that are non-empty strings");
+  assert.deepEqual(JSON.parse(JSON.stringify(ocean.wake)), { nodeId: "ship", enabled: true, length: 125, beam: 21, debug: true }, "the wake declaration, known fields only");
   h.renderer.dispose();
 });
 

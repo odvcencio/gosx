@@ -364,3 +364,22 @@ test("copy passes: expand resolves their buffers through the repeat's swaps, and
   assert.throws(() => check(Object.assign({}, graph, { passes: [{ name: "c", type: "copy", from: "a", to: "nope", width: 1024 }] }), { kernels: module.kernels }, "webgl2"), /unknown resource/);
   assert.throws(() => check(Object.assign({}, graph, { backend: "webgpu", passes: [{ name: "c", type: "copy", from: "a", to: "a_w", width: 1024 }] }), { kernels: module.kernels }, "webgpu"), /copy passes exist only on webgl2/);
 });
+
+test("derive: a group that runs at a lower rate sees dt since its own last run, expressions recomputed from it, and deltas since its own last run", () => {
+  const p = evaluator([decl("dt", { kind: "frame", name: "dt" }), decl("speed", { kind: "value", value: 2 }), decl("step", { kind: "expr", op: "mul", args: ["param:dt", "param:speed"] }),
+    decl("capped", { kind: "expr", op: "min", args: ["param:step", 0.2] }), decl("cell", { kind: "value", value: 0 }), { name: "shift", type: "i32", source: { kind: "delta", of: "param:cell" } },
+    decl("age", { kind: "accumulate", of: "param:speed" })]);
+  const run = (cell, dt) => { p.set("cell", cell); p.evaluate(frame(0, dt)); };
+  run(0, 0.05);
+  const snapshot = p.snapshot();
+  run(3, 0.05);
+  run(5, 0.05);
+  assert.equal(p.current.shift, 2, "the ordinary delta is per frame");
+  const d = p.derive(0.1, snapshot);
+  assert.equal(d.dt, 0.1, "dt is the time since the group's last run");
+  assert.ok(Math.abs(d.step - 0.2) < 1e-12 && d.capped === 0.2 - 0 && Math.abs(d.capped - 0.2) < 1e-12, "expressions follow it, including the cap");
+  assert.equal(d.shift, 5, "two frames of movement (0 to 5) since the snapshot, not the last frame's 2");
+  assert.equal(d.age, p.current.age, "stateful sources are not re-run");
+  assert.equal(p.current.dt, 0.05, "deriving changes nothing");
+  assert.equal(p.derive(0.05, null).shift, 0, "with no snapshot there is no earlier run: nothing moved");
+});

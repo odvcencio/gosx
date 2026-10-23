@@ -102,13 +102,14 @@
       if (src.kind === "value") targets[d.name] = coerce(d.type, /\[\]$/.test(d.type) ? src.value : (src.value || 0));
     }
     // ref evaluates an expression argument: a number, "param:<name>", or a nested { op, args } evaluated depth first in float64.
-    const ref = function (a: any): number {
+    const ref = function (a: any, scope?: any): number {
+      const at = scope || current;
       if (typeof a === "number") return a;
-      if (typeof a === "string" && a.indexOf("param:") === 0) { const n = a.slice(6); return n in current ? current[n] : 0; }
+      if (typeof a === "string" && a.indexOf("param:") === 0) { const n = a.slice(6); return n in at ? at[n] : 0; }
       if (a && typeof a === "object" && typeof a.op === "string") {
         const op = OPS[a.op];
         if (!op) throw new Error("elio-graph: unknown op " + a.op);
-        return op(ref(a.args[0]), a.args.length > 1 ? ref(a.args[1]) : 0);
+        return op(ref(a.args[0], at), a.args.length > 1 ? ref(a.args[1], at) : 0);
       }
       throw new Error("elio-graph: bad argument " + a);
     };
@@ -128,6 +129,23 @@
         targets[name] = n;
         if (tweenOf(d) > 0 && !first) tweens[name] = { from: current[name], start: null };
         else delete tweens[name];
+      },
+      // snapshot copies this frame's values, the baseline a pass group that runs at a lower rate derives its deltas from.
+      snapshot: function () { return Object.assign({}, current); },
+      // derive returns this frame's values as a pass group that last ran at "since" sees them: dt is the time since its last run,
+      // expressions follow dt, and deltas measure movement since that run (none without a snapshot). Stateful sources are kept.
+      derive: function (dt: number, since: any) {
+        const out: any = Object.assign({}, current);
+        for (const d of decls) {
+          const src = d.source || { kind: "value", value: 0 };
+          if (src.kind === "frame" && src.name === "dt") out[d.name] = coerce(d.type, dt);
+          else if (src.kind === "expr") out[d.name] = coerce(d.type, OPS[src.op](ref(src.args[0], out), src.args.length > 1 ? ref(src.args[1], out) : 0));
+          else if (src.kind === "delta") {
+            const of = String(src.of).replace(/^param:/, "");
+            out[d.name] = coerce(d.type, since ? (out[of] || 0) - (since[of] || 0) : 0);
+          }
+        }
+        return out;
       },
       evaluate: function (frame: any) {
         const time = Number(frame.time) || 0, dt = Number(frame.dt) || 0;
@@ -363,7 +381,10 @@
     function setNodes(map: any): void { if (evaluator) evaluator.setNodes(map); }
     function setTween(seconds: number): void { if (evaluator) evaluator.setTween(seconds); }
     // value reads a parameter as of the last frame (float64), for surfaces and CPU queries that must agree with the graph.
-    function value(name: string): number { return evaluator && name in evaluator.current ? evaluator.current[name] : 0; }
+    function value(name: string): number {
+      const held = executor && executor.held ? executor.held(name) : undefined;
+      return held !== undefined ? held : evaluator && name in evaluator.current ? evaluator.current[name] : 0;
+    }
     // setValue is how a scene update reaches a "value" parameter.
     function setValue(name: string, v: number): void {
       if (!evaluator || runner.failed) return;
@@ -378,13 +399,13 @@
         if (!runner.ready) return false;
         const f = frame && !frame.nodePose && host.nodePose ? Object.assign({}, frame, { nodePose: host.nodePose }) : (frame || {});
         evaluator.evaluate(f);
-        return executor.run(evaluator.current, f, evaluator.changed) !== false;
+        return executor.run(evaluator.current, f, evaluator.changed, evaluator) !== false;
       } catch (error) { disable(error); return false; }
     }
     // exportParams returns the values of the graph's exportParams (float64), for the surface to bind as uniforms.
     function exportParams(): any {
       const out: any = {};
-      if (evaluator && runner.graph) for (const n of runner.graph.exportParams || []) out[n] = evaluator.current[n];
+      if (evaluator && runner.graph) for (const n of runner.graph.exportParams || []) out[n] = value(n);
       return out;
     }
     function exportTexture(name: string): any { return executor && !runner.failed ? executor.export(name) : null; }

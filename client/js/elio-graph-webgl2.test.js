@@ -4,14 +4,14 @@
 const test = require("node:test"), assert = require("node:assert/strict");
 const { RecordingGL, GLC, runnerContext, floatCaps, testGraph } = require("./elio-graph-test-support.js");
 
-function setup(glOptions, graphEdit) {
+function setup(glOptions, graphEdit, hostExtra) {
   const context = runnerContext(), gl = new RecordingGL(glOptions);
   const g = context.window.__gosx_elio_graph, module = context.window.__gosx_scene3d_elio_ocean;
   const graph = testGraph("webgl2");
   if (graphEdit) graphEdit(graph);
   const textureCache = { _sceneTextureEpoch: 0 };
   const failures = [];
-  const runner = g.create({ module, backend: "webgl2", graph, host: { gl, caps: floatCaps, textureCache }, onFail: (reason) => failures.push(reason) });
+  const runner = g.create({ module, backend: "webgl2", graph, host: Object.assign({ gl, caps: floatCaps, textureCache }, hostExtra), onFail: (reason) => failures.push(reason) });
   let time = 10;
   const step = (extra) => runner.run(Object.assign({ time: (time += 1 / 60), dt: 1 / 60, cameraX: 0, cameraY: 30, cameraZ: 0 }, extra));
   // Resources are created in graph order, so the i-th texture is the i-th resource.
@@ -297,4 +297,88 @@ test("a copy inside a repeat follows the repeat's swaps", () => {
   assert.equal(s.gl.ops.filter((o) => o[0] === "readPixels").length, 2);
   const reads = s.gl.ops.filter((o) => o[0] === "readPixels");
   assert.deepEqual(reads.map((o) => o[1]), [s.gl.created.framebuffer.find((f) => f.attachments[0] === s.tex("a0")), s.gl.created.framebuffer.find((f) => f.attachments[0] === s.tex("a1"))], "iteration 0 reads a0, iteration 1 reads a1");
+});
+
+// A host may run some pass groups at a lower rate (the wake on a slow GPU): matching passes run every n-th frame, with dt the time since their last run.
+function throttled(extra) {
+  return setup(undefined, (g) => {
+    g.params.push({ name: "half", type: "f32", source: { kind: "expr", op: "mul", args: ["param:dt", 0.5] } }, { name: "cellv", type: "f32", source: { kind: "value", value: 0 } },
+      { name: "moved", type: "f32", source: { kind: "delta", of: "param:cellv" } });
+    const evolve = g.passes.find((p) => p.name === "evolve");
+    evolve.when = "always";
+    evolve.uniforms = [{ name: "ev", values: { n: 64, t: "param:half", tile: "param:moved", loopPeriod: 1000 } }];
+  }, Object.assign({ throttle: [{ match: "^evolve$", every: 2 }] }, extra));
+}
+
+test("throttle: a matching pass runs every n-th frame, with the dt of the frames it skipped and the movement since its last run", () => {
+  const s = throttled();
+  assert.equal(s.runner.failed, null);
+  const evolves = () => draws(s.gl).filter((d) => d.kernel === "evolve");
+  const frame = (cell) => { s.runner.setValue("cellv", cell); s.runner.run({ time: (frame.t = (frame.t || 10) + 1 / 60), dt: 0.1, cameraX: 0, cameraY: 0, cameraZ: 0 }); };
+  frame(0);
+  assert.equal(evolves().length, 1, "frame 0 runs");
+  frame(2);
+  assert.equal(evolves().length, 1, "frame 1 is skipped");
+  frame(7);
+  assert.equal(evolves().length, 2, "frame 2 runs");
+  const last = evolves()[1];
+  assert.ok(Math.abs(last.f32[0] - 0.1) < 1e-6, "half of dt = 0.2 s (two frames of 0.1): " + last.f32[0]);
+  assert.equal(last.f32[1], 7, "movement since the last run: 0 to 7, not the last frame's 5");
+  frame(7); frame(7);
+  assert.equal(evolves().length, 3, "every second frame");
+  assert.equal(evolves()[2].f32[1], 0, "nothing moved since the last run");
+  // Other passes keep their own rate and the ordinary params.
+  assert.ok(draws(s.gl).filter((d) => d.kernel === "assemble").length >= 5);
+});
+
+test("throttle: a pass whose gating parameter changed runs at once, so a switch-on is never delayed", () => {
+  const s = setup(undefined, (g) => {
+    g.params.push({ name: "on", type: "bool", source: { kind: "value", value: 0 } });
+    g.passes.find((p) => p.name === "evolve").when = "param:on";
+  }, { throttle: [{ match: "^evolve$", every: 4 }] });
+  const evolves = () => draws(s.gl).filter((d) => d.kernel === "evolve").length;
+  const f = (t) => s.runner.run({ time: t, dt: 0.016, cameraX: 0, cameraY: 0, cameraZ: 0 });
+  f(1); f(1.02);
+  assert.equal(evolves(), 0);
+  s.runner.setValue("on", 1);
+  f(1.04);
+  assert.equal(evolves(), 1, "it runs on the frame it is switched on, not up to 3 frames later");
+  f(1.06); f(1.08);
+  assert.equal(evolves(), 1);
+});
+
+test("profile: a host hook wraps every executed pass, by name, and skipped passes are not reported", () => {
+  const seen = [];
+  const s = setup(undefined, (g) => { g.passes.find((p) => p.name === "evolve").when = "param:off"; g.params.push({ name: "off", type: "bool", source: { kind: "value", value: 0 } }); },
+    { profile: (name, fn) => { seen.push(name); fn(); } });
+  s.runner.run({ time: 1, dt: 0.016, cameraX: 0, cameraY: 0, cameraZ: 0 });
+  assert.ok(seen.length > 0 && seen.includes("assemble"));
+  assert.ok(!seen.includes("evolve"));
+  assert.equal(draws(s.gl).length, seen.filter((n) => n !== undefined).length - seen.filter((n) => /copy|mip/.test(n)).length);
+});
+
+test("throttle: a frame swap that only a throttled group touches happens only on frames the group runs", () => {
+  const s = setup(undefined, (g) => { g.frameSwaps = [["disp", "slope"]]; }, { throttle: [{ match: "^(assemble|mip-)", every: 2 }] });
+  const tex = () => s.runner.export("disp0").tex;
+  const first = tex();
+  const f = () => s.runner.run({ time: 1, dt: 0.016, cameraX: 0, cameraY: 0, cameraZ: 0 });
+  f();
+  assert.notEqual(tex(), first, "the first frame runs the group and swaps");
+  const after = tex();
+  f();
+  assert.equal(tex(), after, "a skipped frame leaves the pair alone");
+  f();
+  assert.equal(tex(), first, "the next run swaps back");
+});
+
+test("throttle: parameters the group holds read as of its last run, so a surface pairs them with the group's textures", () => {
+  const s = throttled({ throttle: [{ match: "^evolve$", every: 2, hold: "^cellv$" }] });
+  const go = (cell) => { s.runner.setValue("cellv", cell); s.runner.run({ time: 1, dt: 0.1, cameraX: 0, cameraY: 0, cameraZ: 0 }); };
+  go(3);
+  assert.equal(s.runner.value("cellv"), 3, "the group ran this frame");
+  go(9);
+  assert.equal(s.runner.value("cellv"), 3, "skipped frame: the texture still reflects the earlier position");
+  assert.equal(s.runner.value("hasNoHold"), 0);
+  go(12);
+  assert.equal(s.runner.value("cellv"), 12);
 });

@@ -88,8 +88,20 @@ for (const wake of [true, false]) {
 const wakeRun = argv.includes('--wake');
 const selected = cases.filter(c => (wakeRun ? c.name.startsWith('wake-') : !c.name.startsWith('wake-')) && (!only || c.name.includes(only)));
 
-const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam]) => {
+const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam, wakeDebug, profiling, throttle, throttleMatch]) => {
   const api = window.__gosx_scene3d_api;
+  const diag = window.__gosx_elio_diagnostics = {};
+  // --profile: the page times every graph pass with its own timer query, so the renderer must not see the timer extension (one query at a time).
+  let realTimer = null;
+  if (profiling) {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (...a) {
+      const c = getContext.apply(this, a);
+      if (c && c.getExtension && !c.__hidden) { c.__hidden = true; const get = c.getExtension.bind(c); realTimer = get('EXT_disjoint_timer_query_webgl2'); c.getExtension = (n) => n === 'EXT_disjoint_timer_query_webgl2' ? null : get(n); }
+      return c;
+    };
+  }
+  if (throttle > 1) diag.throttle = [{ match: throttleMatch, every: throttle }];
   const canvas = document.getElementById('c');
   let adapter = null, renderer, gl = null, timer = null;
   if (!webgl) {
@@ -109,7 +121,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     const dbg = gl.getExtension('WEBGL_debug_renderer_info');
     adapter = { vendor: gl.getParameter(gl.VENDOR), renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
       colorBufferFloat: Boolean(gl.getExtension('EXT_color_buffer_float')) };
-    timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    timer = profiling ? null : gl.getExtension('EXT_disjoint_timer_query_webgl2');
   }
   // WebGL2 timing: queue TIME_ELAPSED queries around the chosen span and read finished ones on later frames.
   const queries = [], samples = [];
@@ -127,6 +139,23 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       const q = queries.shift(), bad = gl.getParameter(timer.GPU_DISJOINT_EXT);
       const ns = gl.getQueryParameter(q, gl.QUERY_RESULT); gl.deleteQuery(q);
       if (!bad) samples.push(ns / 1e6);
+    }
+  };
+  // Profiling: one query per executed pass; a frame's passes are summed by group (pass name without repeat indices, first two segments).
+  const frameQueries = [], profiled = [];
+  if (profiling && realTimer) {
+    const T = realTimer.TIME_ELAPSED_EXT;
+    diag.profile = (name, fn) => {
+      const q = gl.createQuery();
+      gl.beginQuery(T, q);
+      try { fn(); } finally { gl.endQuery(T); (frameQueries[frameQueries.length - 1] ||= []).push({ key: name.replace(/\[\d+\]/g, '').split('.').slice(0, /^foam\.copy/.test(name) ? 3 : 2).join('.'), q }); }
+    };
+  }
+  const drainProfile = (all) => {
+    while (frameQueries.length && (all || (frameQueries.length > 1 && frameQueries[0].every((e) => gl.getQueryParameter(e.q, gl.QUERY_RESULT_AVAILABLE))))) {
+      const list = frameQueries.shift(), sums = {};
+      for (const e of list) { sums[e.key] = (sums[e.key] || 0) + gl.getQueryParameter(e.q, gl.QUERY_RESULT) / 1e6; gl.deleteQuery(e.q); }
+      profiled.push(sums);
     }
   };
   // Diagnostics: capture the graph runner so the wake texture can be read back (WebGL2 only) once a wake case has run.
@@ -180,7 +209,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
         windDirDeg: ocean.windDirection, swellDirDeg: c.spectrum.swellDirection, seed: c.spectrum.seed, loopPeriod: 1000, lambda: ocean.choppiness, timeScale: 1, driftX: 0, driftZ: 0,
         foamTau: 6, foamGain: 0.9, foamThreshold: base === 0 ? 0 : 1 - ocean.choppiness * (1 - base) };
       ocean.graphTween = 0;
-      if (hull) { Object.assign(ocean.graphParams, { wakeEnabled: c.wakeOn ? 1 : 0, hullLength: 125, hullBeam: 21 }); ocean.graphNodes = { hull: 'ship' }; }
+      if (hull) { Object.assign(ocean.graphParams, { wakeEnabled: c.wakeOn ? 1 : 0, hullLength: 125, hullBeam: 21 }); ocean.graphNodes = { hull: 'ship' }; ocean.wake = { nodeId: 'ship', enabled: c.wakeOn, length: 125, beam: 21, debug: wakeDebug }; }
     }
     let status = '', first = null;
     const gpu = [];
@@ -199,10 +228,11 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
         // Drift the camera a little so the foam window moves in whole texels, as under a ship.
         camera.x += 0.15; camera.z += 0.1;
       }
+      if (profiling) frameQueries.push([]);
       status = webgl ? timed(() => renderer.render(bundle, viewport, { sceneTime: time, oceanTier: tier })) : renderer.render(bundle, viewport, { sceneTime: time, oceanTier: tier });
-      drain();
+      drain(); if (profiling) drainProfile(false);
       if (first === null && status === 'submitted' && String(canvas.parentNode.getAttribute('data-gosx-scene3d-ocean')).endsWith(c.spectrum ? '+spectrum' : 'surface')) first = i;
-      if (webgl && i === Math.floor(frames / 2)) samples.length = 0;
+      if (webgl && i === Math.floor(frames / 2)) { samples.length = 0; profiled.length = 0; }
       if (!webgl && i >= frames / 2) { const ms = parseFloat(canvas.parentNode.getAttribute('data-gosx-scene3d-webgpu-gpu-ms')); if (Number.isFinite(ms)) gpu.push(ms); }
       // The canvas is copied in the same task as the last render, while its texture is still current.
       if (i === frames - 1) { copyContext.clearRect(0, 0, W, H); copyContext.drawImage(canvas, 0, 0); break; }
@@ -212,8 +242,15 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     let sum = 0, bright = 0;
     for (let i = 0; i < pixels.length; i += 4) { const l = pixels[i] + pixels[i + 1] + pixels[i + 2]; sum += l; if (l > 600) bright++; }
     const mount = canvas.parentNode;
+    if (profiling) { for (let k = 0; k < 6; k++) await frame(); drainProfile(true); }
     if (webgl) { for (let k = 0; k < 6 && queries.length; k++) { await frame(); drain(); } gpu.push(...samples); queries.length = 0; }
-    out.push({ name: c.name, status, firstSubmitted: first, ocean: mount.getAttribute('data-gosx-scene3d-ocean'),
+    const pass = (() => {
+      if (!profiling || !profiled.length) return null;
+      const keys = [...new Set(profiled.flatMap((f) => Object.keys(f)))], med = (v) => v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)];
+      const table = {}; for (const k of keys) table[k] = med(profiled.map((f) => f[k] || 0));
+      return { frames: profiled.length, table, total: med(profiled.map((f) => Object.values(f).reduce((a, b) => a + b, 0))) };
+    })();
+    out.push({ name: c.name, passes: pass, status, firstSubmitted: first, ocean: mount.getAttribute('data-gosx-scene3d-ocean'),
       failed: mount.getAttribute('data-gosx-scene3d-webgpu-pipeline-failed'), fallback: mount.getAttribute('data-gosx-scene3d-ocean-fft-fallback'), meanLuma: sum / (pixels.length / 4) / 3, brightPixels: bright,
       wallMsPerFrame: (performance.now() - t0) / frames, gpuSamples: gpu.length, graphMs: (() => { const t = !webgl && window.__gosx_scene3d_ocean_fft_api && window.__gosx_scene3d_ocean_fft_api.timing(); if (!t || !t.samples.length) return null; const v = t.samples.slice().sort((a, b) => a - b); return { p50: v[Math.floor(v.length * 0.5)], p95: v[Math.min(v.length - 1, Math.floor(v.length * 0.95))], samples: v.length }; })(),
       gpuMsP50: gpu.length ? gpu.slice().sort((a, b) => a - b)[Math.floor(gpu.length * 0.5)] : null,
@@ -222,12 +259,13 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     if (c.knots && c.wakeOn) { const wi = wakeImage(); if (wi) { images.push({ name: c.name + '-texture', url: wi.url }); out[out.length - 1].wakeStats = wi.stats; } }
   }
   return { results: out, images, adapter };
-}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9'))]);
+}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9')), argv.includes('--wake-debug'), argv.includes('--profile'), Number(arg('--throttle', '1')), arg('--throttle-match', '^wake\\.')]);
 await browser.close();
 if (adapter) console.log('adapter', JSON.stringify(adapter));
 if (outDir) for (const image of images) fs.writeFileSync(path.join(outDir, image.name + '.png'), Buffer.from(image.url.split(',')[1], 'base64'));
 let failed = false;
 for (const r of results) {
+  if (r.passes) console.log(`passes ${r.name}: ${r.passes.frames} frames, graph total p50 ${r.passes.total.toFixed(3)} ms; ` + Object.entries(r.passes.table).map(([k, v]) => `${k} ${v.toFixed(3)}`).join(', '));
   const spectral = r.name.startsWith('spectrum') || r.name.startsWith('wake-');
   const ok = r.status === 'submitted' && !r.failed && (spectral ? /\+spectrum$/.test(r.ocean) : r.ocean === 'surface');
   if (!ok) failed = true;

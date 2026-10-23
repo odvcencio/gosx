@@ -253,23 +253,69 @@
       for (const f of targetFor(outs)) { gl.bindFramebuffer(gl.FRAMEBUFFER, f.fbo); gl.drawArrays(gl.TRIANGLES, 0, 3); }
     }
 
+    // host.profile(name, fn), when set, wraps each pass so a harness can time it (a GPU timer query around fn).
+    const profile = ctx.host.profile;
+    const exec = function (plan: any, params: any): void {
+      if (plan.pass.type === "copy") copyBuffer(plan.pass);
+      else if (plan.pass.type === "mipmap") {
+        gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, resources[plan.pass.resource].tex); gl.generateMipmap(gl.TEXTURE_2D);
+      } else draw(plan, params);
+    };
+    // Throttled groups (host.throttle: [{match, every}]): the passes whose name matches run every n-th frame, together, with the
+    // dt and movement of the frames they skipped; a change to a parameter that gates one of them runs the group at once.
+    const groups: any[] = [];
+    for (const rule of ctx.host.throttle || []) {
+      const re = new RegExp(rule.match), members = plans.filter(function (pl: any) { return re.test(pl.pass.name) && !pl.group; });
+      if (!members.length || !(rule.every > 1)) continue;
+      const g = { every: Math.floor(rule.every), hold: rule.hold ? new RegExp(rule.hold) : null, since: Infinity, dt: 0, snap: null as any, runs: false, derived: null as any, plans: members };
+      for (const pl of members) pl.group = g;
+      groups.push(g);
+    }
+    // A frame swap whose resources only a throttled group touches happens only when that group runs; otherwise its ping-pong would flip on skipped frames.
+    const swapOwner = function (pair: any[]): any {
+      let owner: any = null, mixed = false;
+      for (const pl of plans) {
+        const names = (pl.inputs || []).map(function (b: any) { return b.resource; }).concat((pl.outputs || []).map(function (o: any) { return o.binding.resource; }), pl.pass.resource ? [pl.pass.resource] : []);
+        if (names.indexOf(pair[0]) < 0 && names.indexOf(pair[1]) < 0) continue;
+        if (!pl.group || (owner && owner !== pl.group)) mixed = true; else owner = pl.group;
+      }
+      return mixed ? null : owner;
+    };
+    const swaps = (graph.frameSwaps || []).map(function (pair: any[]) { return { pair: pair, group: groups.length ? swapOwner(pair) : null }; });
+    const gating = function (when: string): string[] {
+      return when && when !== "always" ? when.replace(/^(param|changed):/, "").split(",").map(function (n: string) { return n.trim(); }) : [];
+    };
+    const decide = function (frame: any, changed: any, evaluator: any) {
+      for (const g of groups) {
+        g.dt += Number(frame && frame.dt) || 0;
+        g.since++;
+        const forced = g.plans.some(function (pl: any) { return gating(pl.pass.when).some(function (n: string) { return changed[n]; }); });
+        g.runs = forced || g.since >= g.every;
+        if (g.runs) g.derived = evaluator.derive(g.dt, g.snap);
+      }
+    };
+    const settle = function (evaluator: any) {
+      for (const g of groups) if (g.runs) { g.since = 0; g.dt = 0; g.snap = evaluator.snapshot(); }
+    };
+
     return {
       isReady: function () { return !state.disposed; },
-      run: function (params: any, _frame: any, changed: any) {
+      run: function (params: any, frame: any, changed: any, evaluator: any) {
         if (gl.isContextLost && gl.isContextLost()) return false; // the renderer's dispose path releases everything
         const s = saveState(gl);
         try {
           gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.disable(gl.SCISSOR_TEST);
           gl.colorMask(true, true, true, true); gl.bindVertexArray(vao);
           feed(params);
+          if (groups.length) decide(frame, changed, evaluator);
           for (const plan of plans) {
+            if (plan.group && !plan.group.runs) continue;
             if (!ctx.holds(plan.pass.when, params, changed)) continue;
-            if (plan.pass.type === "copy") copyBuffer(plan.pass);
-            else if (plan.pass.type === "mipmap") {
-              gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, resources[plan.pass.resource].tex); gl.generateMipmap(gl.TEXTURE_2D);
-            } else draw(plan, params);
+            const use = plan.group ? plan.group.derived : params;
+            if (profile) profile(plan.pass.name, function () { exec(plan, use); }); else exec(plan, use);
           }
-          exchange(graph.frameSwaps || []);
+          for (const sw of swaps) if (!sw.group || sw.group.runs) exchange([sw.pair]);
+          if (groups.length) settle(evaluator);
         } finally { restoreState(gl, s); }
         const cache = ctx.host.textureCache;
         if (cache) cache._sceneTextureEpoch = (cache._sceneTextureEpoch || 0) + 1;
@@ -279,6 +325,12 @@
       export: function (name: string) {
         const r = resources[graph.exports[name]];
         return r ? { tex: r.tex, width: r.w, height: r.h, levels: r.levels } : null;
+      },
+      // held: the value of a parameter a surface should pair with the textures as they are now. A throttled group's "hold" parameters are
+      // those the group last ran with (a window origin that moved after the group's last run is not yet in its texture); else undefined.
+      held: function (name: string) {
+        for (const g of groups) if (g.hold && g.hold.test(name) && g.snap && name in g.snap) return g.snap[name];
+        return undefined;
       },
       split: function () { return state.split; },
       dispose: teardown,

@@ -23,6 +23,7 @@
   // Surface-side tuning, not simulation: statelessGain drives the distant foam the shader derives from J beyond the persistent
   // window; FOAM_RADIUS is where the shader stops trusting that window; the crest amplitude normalizes the crest shading.
   const STATELESS_GAIN = 3.5, FOAM_RADIUS = 240;
+  const WAKE_DEBUG_RANGE = 0.3; // metres of wake height at the ends of the debug colour ramp
   const crestAmplitude = function (windSpeed: number): number { return Math.max(0.3, 0.14 * windSpeed * windSpeed / 9.81); };
   const SURFACE_FLOATS = 48; // c[4], f, m, w[4], k[2]: twelve vec4s, the layout both surface variants declare
   const CASCADES = 4;
@@ -70,7 +71,7 @@
   }
 
   // surfaceData fills the surface uniform the spectral shaders read; see the declarations in the two surface files.
-  function surfaceData(runner: any, info: any, out: Float32Array): void {
+  function surfaceData(runner: any, info: any, out: Float32Array, ocean?: any, camera?: any): void {
     out.fill(0);
     const wrapped = runner.exportParams(), foam = info.foam;
     info.cascades.forEach(function (c: any, i: number) {
@@ -81,8 +82,12 @@
     // The wake window (the graph's wake export and wake* exportParams); all zero, so masked out, when the graph has no wake or it is off.
     const wakeTex = runner.export("wake");
     if (wakeTex) {
-      out[40] = wrapped.wakeCamRelX || 0; out[41] = wrapped.wakeCamRelZ || 0; out[42] = wrapped.wakeOriginModX || 0; out[43] = wrapped.wakeOriginModZ || 0;
+      // The window offsets are as of the wake's last run (see WAKE_THROTTLE); the camera moves every frame, so re-anchor them to it: the held
+      // camera-relative offset is (window origin - held camera), and the offset to the camera now is that plus (held camera - camera now).
+      const dx = camera ? runner.value("cameraX") - (camera.x || 0) : 0, dz = camera ? runner.value("cameraZ") - (camera.z || 0) : 0;
+      out[40] = (wrapped.wakeCamRelX || 0) + dx; out[41] = (wrapped.wakeCamRelZ || 0) + dz; out[42] = wrapped.wakeOriginModX || 0; out[43] = wrapped.wakeOriginModZ || 0;
       out[44] = wrapped.wakeCell || 0; out[45] = wrapped.wakeOn || 0; out[46] = wakeTex.width;
+      out[47] = ocean && ocean.wake && ocean.wake.debug ? WAKE_DEBUG_RANGE : 0; // the wake height debug view (ocean.wake.debug): ramp range in metres
     }
     out[16] = 1 / span; out[17] = 1; out[18] = runner.value("foamThreshold"); out[19] = STATELESS_GAIN;
     out[20] = crestAmplitude(runner.value("windSpeed")); out[21] = wrap(runner.value("waterX")); out[22] = wrap(runner.value("waterZ")); out[23] = FOAM_RADIUS;
@@ -279,7 +284,7 @@
       const out = probing ? runner.export("probe") : null;
       if (out && out.buffer) ring.copy(frame.encoder, out.buffer, points);
       bindGroup();
-      surfaceData(runner, state.info, data);
+      surfaceData(runner, state.info, data, frame.ocean, frame.camera);
       device.queue.writeBuffer(uniform, 0, data);
       publish(runner); timingSource = runner;
       engine.ready = true;
@@ -313,9 +318,17 @@
 
   // --- WebGL2 ------------------------------------------------------------------------------------------------------
 
+  // On WebGL2 the wake graph (the Kelvin-wave FFTs, about 40 small passes) runs every second frame with the dt and the window movement of
+  // both frames; its window offsets and the camera they were made with are held, so the surface samples the texture where it was written.
+  // The measured split is in the pull request; the graph runner's throttle option is documented in elio-graph-gather.ts.
+  const WAKE_THROTTLE = [{ match: "^wake\\.", every: 2, hold: "^(wake|camera[XZ])" }];
+
+  // diagnostics are harness hooks: window.__gosx_elio_diagnostics = { profile(name, fn), throttle: [{ match, every }] } (both optional).
+  function diagnostics(): any { return (typeof window !== "undefined" && (window as any).__gosx_elio_diagnostics) || {}; }
+
   function createGL(gl: any, host: any): any {
     const state: any = { last: null };
-    const runner = G.create({ module: MODULE, backend: "webgl2", tier: tierOf(host.tier), host: { gl: gl, caps: host.caps, textureCache: host.textureCache, nodePose: function (id: string) { return waterRelative(nodePose(id), function () { return engine.runner; }); } } });
+    const runner = G.create({ module: MODULE, backend: "webgl2", tier: tierOf(host.tier), host: { gl: gl, caps: host.caps, textureCache: host.textureCache, profile: host.profile || diagnostics().profile, throttle: host.throttle || diagnostics().throttle || WAKE_THROTTLE, nodePose: function (id: string) { return waterRelative(nodePose(id), function () { return engine.runner; }); } } });
     const data = new Float32Array(SURFACE_FLOATS), cache = new Map();
     const info = runner.graph ? describe(runner.graph) : null;
     const engine: any = { gl: gl, runner: runner, tier: tierOf(host.tier), disposed: false, update: update, bind: bind, dispose: dispose, fail: function (reason: string) { runner.fail(reason); } };
@@ -323,7 +336,7 @@
       if (runner.failed) return false;
       feed(runner, frame.ocean);
       if (!runner.run(frameInputs(state, frame))) return false;
-      surfaceData(runner, info, data);
+      surfaceData(runner, info, data, frame.ocean, frame.camera);
       publish(runner);
       return true;
     }
@@ -378,7 +391,7 @@
     if (host && host.mount && host.mount.setAttribute) host.mount.setAttribute("data-gosx-scene3d-ocean-fft-fallback", reason);
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, timing: timing, nodePose: nodePose, waterRelative: waterRelative, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, timing: timing, nodePose: nodePose, waterRelative: waterRelative, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, WAKE_DEBUG_RANGE: WAKE_DEBUG_RANGE, feed: feed, surfaceData: surfaceData };
   // The WebGL chunk's minifier renames some property names (frame among them); the method the two chunks share is called run.
   window.__gosx_scene3d_ocean_fft_gl_api = { run: frameGL, fail: failGL };
 })();

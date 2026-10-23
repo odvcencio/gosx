@@ -11,7 +11,7 @@
   // Texture units of the spectral samplers. Units 0 to 3 belong to the ocean pass (bathymetry, reflection inputs).
   const UNIT = { disp: 4, slope: 8, foam: 12, wake: 13 };
   // Surface-side wake tuning (not simulation), as in the WGSL variant: the window edge fade in cells, the wake's shoaling wavenumber (rad/m) and foam gain.
-  const WAKE = { edgeCells: 8, k: 0.2, foam: 1.5 };
+  const WAKE = { edgeCells: 8, k: 0.2, foam: 1.5, slope: 3 };
 
   function swap(src: string, from: string, to: string): string {
     if (src.indexOf(from) < 0) throw new Error("ocean-fft: anchor not found: " + from.slice(0, 48));
@@ -58,7 +58,9 @@
       s += "  }\n";
     }
     s += "  vec3 swv = spWake(xz, u_ocean[7].xz);\n";
-    s += "  if (swv.z > 0.) {\n";
+    // Debug view (u_sp[11].w = ramp range in metres, 0 = off): a flat sea.
+    s += "  if (u_sp[11].w > 0.) { p = vec3(xz.x, level, xz.y); dx = vec3(1., 0., 0.); dz = vec3(0., 0., 1.); }\n";
+    s += "  if (swv.z > 0. && u_sp[11].w <= 0.) {\n";
     s += "    vec4 swk = textureLod(u_spWake, swv.xy, max(log2(max(spacing, 1e-3) / max(u_sp[11].x, 1e-3)), 0.));\n";
     s += "    float sws = swv.z * smoothstep(0., 1.2, depth0 * " + WAKE.k.toFixed(2) + ");\n";
     s += "    p.y += swk.x * sws; dx.y += swk.y * sws; dz.y += swk.z * sws;\n";
@@ -79,7 +81,7 @@
     s += "  vec3 swv = spWake(v_rest, u_ocean[7].xz);\n";
     s += "  vec4 swf = texture(u_spWake, swv.xy);\n";
     s += "  float swm = swv.z * smoothstep(0., 1.2, v_d0 * " + WAKE.k.toFixed(2) + ");\n";
-    s += "  sGx += swf.y * swm; sGz += swf.z * swm;\n";
+    s += "  sGx += swf.y * swm * " + WAKE.slope.toFixed(2) + "; sGz += swf.z * swm * " + WAKE.slope.toFixed(2) + ";\n";
     s += "  float sJ = (1. + sXX) * (1. + sZZ) - sXZ * sXZ;\n";
     s += "  float sPersist = textureLod(u_spFoam, wxz * u_sp[4].x, 0.).r;\n";
     s += "  vec3 N = normalize(vec3(sGz * sXZ - (1. + sZZ) * sGx, max(sJ, 0.1), sXZ * sGx - sGz * (1. + sXX)));\n";
@@ -107,6 +109,8 @@
     f = swap(f, "  if (dist < 250.) {", "  if (dist < 6000.) {");
     f = swap(f, "    foam = (1. - smoothstep(0.12, 0.35, v_j)) * lace * bu;\n", FOAM_LINE);
     f = swap(f, "(1. - smoothstep(80., 250., dist))", "(1. - smoothstep(1500., 6000., dist))");
+    // Debug view: the wake height as a colour ramp (blue below rest, red above, grey outside the wake window), unlit, replacing the colour.
+    f = swap(f, "  fragColor = vec4(color, alpha);", "  if (u_sp[11].w > 0.) { float hh = clamp(swf.x / u_sp[11].w, -1., 1.); color = swv.z > 0. ? (hh < 0. ? mix(vec3(1.), vec3(.1, .3, 1.), -hh) : mix(vec3(1.), vec3(1., .15, .1), hh)) : vec3(.25); alpha = 1.; }\n  fragColor = vec4(color, alpha);");
     // Foam is lit like the base shader lights it, with the sky term lifted so it reads as white foam under a bright sky.
     f = swap(f, "(ambient * 0.55 + sunCol * 0.04 * max(dot(N, L), 0.))", "(ambient * 1.4 + sunCol * 0.2 * max(dot(N, L), 0.) + vec3(0.05))");
     return { vertex: v, fragment: f };
