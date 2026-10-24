@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Prepare camera projection once per Scene3D frame and reuse camera-local line
+  endpoints through clipping and screen projection. Preserve near-plane rounding,
+  culling, resize behavior, and camera-independent world geometry caches.
+
 - Prepare base rotation and drift once per animated object per frame in the Go
   Scene3D renderer. Reuse them for line and solid mesh positions and normals,
   preserving clip, spin, scale, parent transforms, and the static bake cache.
