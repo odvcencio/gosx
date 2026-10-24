@@ -35,8 +35,9 @@ import (
 func main() {
 	root := flag.String("root", "", "directory with build/ from `gosx build-runtime build` (default: next to the executable, else the repository)")
 	smoke := flag.Duration("smoke", 0, "close the window after this long (tests); 0 keeps it open")
+	worker := flag.Bool("worker", false, "force the engine to run in the page's WASM worker")
 	flag.Parse()
-	if err := run(*root, *smoke); err != nil {
+	if err := run(*root, *smoke, *worker); err != nil {
 		_, _ = desktop.ShowMessage(desktop.MessageOptions{Title: "GoSX native engine", Text: err.Error(), Kind: desktop.MessageError})
 		os.Exit(1)
 	}
@@ -61,7 +62,7 @@ func runtimeRoot(flagValue string) (string, error) {
 	return "", errors.New("no runtime assets: run `go run ./cmd/gosx build-runtime build` and pass -root")
 }
 
-func run(rootFlag string, smoke time.Duration) error {
+func run(rootFlag string, smoke time.Duration, forceWorker bool) error {
 	root, err := runtimeRoot(rootFlag)
 	if err != nil {
 		return err
@@ -99,16 +100,17 @@ func run(rootFlag string, smoke time.Duration) error {
 
 	// The engine runs here, in this process. The page attaches to it when it
 	// mounts the engine whose component name is "CounterEngine".
-	engines := enginehost.New(app.Bridge(), enginehost.Options{Log: log.Printf})
+	engineOptions := enginehost.Options{Log: log.Printf}
+	if forceWorker {
+		engineOptions.DisableNative = []string{"*"}
+	}
+	engines := enginehost.New(app.Bridge(), engineOptions)
 	defer engines.Close()
 	if err := engines.Register(component, func(in *enginehost.Instance) (host.Handle, error) {
 		return Mount(in, 50*time.Millisecond)
 	}); err != nil {
 		return err
 	}
-	// App.Bridge().Register does not refresh the page's method list, which the
-	// engine attach does not need: the page asks the host directly.
-
 	go func() {
 		// Navigate from a goroutine: GoSX runs it on the window thread.
 		if err := app.Navigate(url); err != nil {
