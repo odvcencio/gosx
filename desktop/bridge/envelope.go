@@ -44,6 +44,10 @@ const (
 	// OpEvent is a fire-and-forget host→page notification. No
 	// correlation ID required; the page consumes it by method name.
 	OpEvent Op = "evt"
+
+	// OpListMethods queries the host's current registered-method snapshot.
+	// It is an infrastructure request rather than a registered method.
+	OpListMethods Op = "list_methods"
 )
 
 // Envelope is the wire frame for a single IPC message.
@@ -53,8 +57,8 @@ type Envelope struct {
 	Op Op `json:"op"`
 
 	// ID correlates a request with its response / error / stream frames.
-	// Required for OpRequest / OpResponse / OpError / OpStreamFrame /
-	// OpStreamEnd. Empty for OpEvent.
+	// Required for OpRequest / OpListMethods / OpResponse / OpError /
+	// OpStreamFrame / OpStreamEnd. Empty for OpEvent.
 	ID string `json:"id,omitempty"`
 
 	// Method names the operation. Required for OpRequest / OpEvent.

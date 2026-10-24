@@ -55,6 +55,9 @@ const (
 	EventMessage = "gosx.engine.msg"
 )
 
+// CodeNativeDisabled reports an attach rejected by a host's disable policy.
+const CodeNativeDisabled = "engine.native_disabled"
+
 // CodeNotRegistered is the bridge error code for an attach to a component
 // with no registered factory.
 const CodeNotRegistered = "engine.not_registered"
@@ -71,14 +74,20 @@ type Factory func(in *Instance) (host.Handle, error)
 
 // Options tunes a Host.
 type Options struct {
+	// DisableNative forces the WASM worker for these exact, case-sensitive
+	// component names. "*" disables every component. Entries are trimmed;
+	// empty entries are ignored. New copies the slice and fixes the policy
+	// for the lifetime of the host.
+	DisableNative []string
 	// Log receives diagnostics (rejected messages, failed sends). Nil discards.
 	Log func(format string, args ...any)
 }
 
 // Host serves native engines to the page behind a bridge.
 type Host struct {
-	b   Bridge
-	opt Options
+	b             Bridge
+	disableNative map[string]struct{}
+	opt           Options
 
 	mu        sync.Mutex
 	factories map[string]Factory
@@ -89,7 +98,14 @@ type Host struct {
 // New registers the engine protocol on b and returns the host. It panics if b
 // refuses the registration, which happens only for an empty method name.
 func New(b Bridge, opt Options) *Host {
-	h := &Host{b: b, opt: opt, factories: map[string]Factory{}, sessions: map[string]*session{}}
+	opt.DisableNative = append([]string(nil), opt.DisableNative...)
+	disabled := make(map[string]struct{}, len(opt.DisableNative))
+	for _, component := range opt.DisableNative {
+		if component = strings.TrimSpace(component); component != "" {
+			disabled[component] = struct{}{}
+		}
+	}
+	h := &Host{b: b, opt: opt, disableNative: disabled, factories: map[string]Factory{}, sessions: map[string]*session{}}
 	if err := b.Register(MethodAttach, h.attach); err != nil {
 		panic(err)
 	}
@@ -157,6 +173,11 @@ func (h *Host) attach(ctx *bridge.Context) error {
 	}
 	if req.ID == "" {
 		return ctx.Error(bridge.CodeDecode, "attach request has no engine id")
+	}
+	_, allDisabled := h.disableNative["*"]
+	_, componentDisabled := h.disableNative[req.Component]
+	if allDisabled || componentDisabled {
+		return ctx.Error(CodeNativeDisabled, fmt.Sprintf("native engine is disabled for %q", req.Component))
 	}
 	h.mu.Lock()
 	factory := h.factories[req.Component]
