@@ -123,13 +123,18 @@ func resolveWindowStatePath(path, appID string) (string, error) {
 	return defaultWindowStatePath(appID)
 }
 
+type windowStateStopper interface {
+	Stop() bool
+}
+
 type windowStatePersister struct {
 	path            string
 	debounce        time.Duration
 	onError         func(error)
 	mu              sync.Mutex
 	saveMu          sync.Mutex
-	timer           *time.Timer
+	timer           windowStateStopper
+	afterFunc       func(time.Duration, func()) windowStateStopper
 	pending         WindowPlacement
 	hasPending      bool
 	timerGeneration uint64
@@ -140,7 +145,8 @@ func newWindowStatePersister(path string, debounce time.Duration, onError func(e
 	if debounce == 0 {
 		debounce = defaultWindowStateDebounce
 	}
-	return &windowStatePersister{path: path, debounce: debounce, onError: onError}
+	return &windowStatePersister{path: path, debounce: debounce, onError: onError,
+		afterFunc: func(d time.Duration, f func()) windowStateStopper { return time.AfterFunc(d, f) }}
 }
 
 func validWindowPlacement(p WindowPlacement) bool {
@@ -162,7 +168,7 @@ func (p *windowStatePersister) schedule(placement WindowPlacement) {
 	}
 	p.timerGeneration++
 	generation := p.timerGeneration
-	p.timer = time.AfterFunc(p.debounce, func() { p.persistPending(generation) })
+	p.timer = p.afterFunc(p.debounce, func() { p.persistPending(generation) })
 }
 
 func (p *windowStatePersister) persistPending(generation uint64) {

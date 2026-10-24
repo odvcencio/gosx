@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -94,15 +95,82 @@ func TestWindowStateSaveFailureReportsOnce(t *testing.T) {
 	}
 }
 
+type windowStateTestTimer struct {
+	mu       sync.Mutex
+	callback func()
+	stopped  bool
+	done     chan struct{}
+}
+
+func (timer *windowStateTestTimer) Stop() bool {
+	timer.mu.Lock()
+	defer timer.mu.Unlock()
+	if timer.stopped {
+		return false
+	}
+	timer.stopped = true
+	return true
+}
+
+func (timer *windowStateTestTimer) fire() <-chan struct{} {
+	timer.mu.Lock()
+	if timer.stopped {
+		timer.mu.Unlock()
+		return nil
+	}
+	timer.stopped = true
+	timer.mu.Unlock()
+	go func() {
+		timer.callback()
+		close(timer.done)
+	}()
+	return timer.done
+}
+
+type windowStateTestClock struct {
+	mu        sync.Mutex
+	timers    []*windowStateTestTimer
+	durations []time.Duration
+}
+
+func (clock *windowStateTestClock) afterFunc(duration time.Duration, callback func()) windowStateStopper {
+	timer := &windowStateTestTimer{callback: callback, done: make(chan struct{})}
+	clock.mu.Lock()
+	clock.timers = append(clock.timers, timer)
+	clock.durations = append(clock.durations, duration)
+	clock.mu.Unlock()
+	return timer
+}
+
+func (clock *windowStateTestClock) fireLatest() <-chan struct{} {
+	clock.mu.Lock()
+	timer := clock.timers[len(clock.timers)-1]
+	clock.mu.Unlock()
+	return timer.fire()
+}
+
 func TestWindowStateDebouncesAndCloseFlushesLatest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "window-state.json")
+	clock := &windowStateTestClock{}
 	p := newWindowStatePersister(path, 30*time.Millisecond, nil)
+	p.afterFunc = clock.afterFunc
 	defer p.stop()
 	p.schedule(WindowPlacement{X: 1, Y: 2, Width: 500, Height: 400})
 	p.schedule(WindowPlacement{X: 3, Y: 4, Width: 500, Height: 400})
 	latest := WindowPlacement{X: 7, Y: 8, Width: 500, Height: 400, Maximized: true}
 	p.schedule(latest)
-	time.Sleep(70 * time.Millisecond)
+	if len(clock.durations) != 3 || clock.durations[2] != 30*time.Millisecond {
+		t.Fatalf("scheduled debounce durations = %v", clock.durations)
+	}
+	done := clock.fireLatest()
+	if done == nil {
+		t.Fatal("latest debounce timer was already stopped")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for debounced save")
+	}
 	if got, err := LoadWindowState(path); err != nil || got != latest {
 		t.Fatalf("debounced state = %+v, %v; want %+v", got, err, latest)
 	}
@@ -111,7 +179,6 @@ func TestWindowStateDebouncesAndCloseFlushesLatest(t *testing.T) {
 	if err := p.flush(closed); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(70 * time.Millisecond)
 	if got, err := LoadWindowState(path); err != nil || got != closed {
 		t.Fatalf("close state = %+v, %v; want %+v", got, err, closed)
 	}
