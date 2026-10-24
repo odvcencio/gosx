@@ -30,13 +30,13 @@ func TestSceneFrameTransformPreservesMotionComposition(t *testing.T) {
 	spins := []motion.Quat{{W: 1}, {X: .5, Y: .5, Z: -.5, W: .5}}
 	for _, object := range objects {
 		for _, seconds := range []float64{-3, 0, .7, 9.1, 63} {
-			frame := prepareSceneObjectFrameTransform(object, seconds)
 			for _, clip := range clips {
 				for _, spin := range spins {
+					frame := prepareSceneObjectFrameTransform(&object, spin, clip, seconds)
 					for _, point := range trigHoistSamplePoints() {
-						assertFramePointBits(t, frame.point(point, object, spin, clip), referenceFramePoint(point, object, spin, clip, seconds))
+						assertFramePointBits(t, frame.point(point), referenceFramePoint(point, object, spin, clip, seconds))
 						normal := sceneObjectLocalNormal(object, point)
-						assertFramePointBits(t, frame.normal(object, normal, spin, clip), referenceFrameNormal(object, normal, spin, clip))
+						assertFramePointBits(t, frame.normal(normal), referenceFrameNormal(object, normal, spin, clip))
 					}
 				}
 			}
