@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Prepare base rotation and drift once per animated object per frame in the Go
+  Scene3D renderer. Reuse them for line and solid mesh positions and normals,
+  preserving clip, spin, scale, parent transforms, and the static bake cache.
+
 - Skip redundant dependency ownership lookups when a single reactive tracking
   window has already read a source. Preserve the first revision, nested and
   concurrent tracking isolation, and TinyGo's existing shared-scope path.

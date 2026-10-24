@@ -149,6 +149,27 @@ func BenchmarkScene3D_100Spheres(b *testing.B) { benchScene3D(b, 100, 1, 32) }
 // BenchmarkScene3D_500Mixed mixes boxes and spheres.
 func BenchmarkScene3D_500Mixed(b *testing.B) { benchScene3D(b, 500, 5, 24) }
 
+// Animated solid geometry shares the same frame transform as the line path,
+// but emits positions and explicit normals for every triangle vertex.
+func BenchmarkScene3D_12SolidSpheres(b *testing.B) {
+	prog := scene3DBenchProgram(12, 1, 16)
+	id := islandprogram.ExprID(len(prog.Exprs))
+	prog.Exprs = append(prog.Exprs, islandprogram.Expr{Op: islandprogram.OpLitBool, Type: islandprogram.TypeBool, Value: "false"})
+	for i := range prog.EngineNodes {
+		prog.EngineNodes[i].Props["wireframe"] = id
+	}
+	rt := NewSceneAdapter(prog, `{}`)
+	rt.Reconcile()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bundle := rt.RenderBundle(1280, 720, float64(i)/60)
+		if len(bundle.MeshObjects) != 12 || len(bundle.WorldMeshNormals) == 0 {
+			b.Fatal("solid fixture did not emit its mesh streams")
+		}
+	}
+}
+
 // scene3DLitBenchProgram builds n box mesh nodes plus a directional and a point
 // light so that sceneLitColorRGBAResolved (Win B) exercises real light color math.
 func scene3DLitBenchProgram(n int) *rootengine.Program {

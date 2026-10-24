@@ -51,6 +51,7 @@ func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera,
 	baseRGBA := sceneColorRGBA(material.Color, [4]float64{1, 1, 1, 1})
 	vertexOffset := len(bundle.WorldMeshPositions) / 3
 	orientation := sceneObjectTransformOrientation(object, clip)
+	frameTransform := prepareSceneObjectFrameTransform(&object, spinQ, clip, timeSeconds)
 
 	for i := 0; i+2 < len(expanded.Positions); i += 3 {
 		source := i
@@ -63,15 +64,17 @@ func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera,
 			}
 		}
 		localPoint := point3{X: expanded.Positions[source], Y: expanded.Positions[source+1], Z: expanded.Positions[source+2]}
-		world := translatePoint(localPoint, object, spinQ, clip, timeSeconds)
+		world := frameTransform.point(localPoint)
 		bundle.WorldMeshPositions = append(bundle.WorldMeshPositions, world.X, world.Y, world.Z)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, world)
 
-		normal := sceneObjectWorldNormal(object, localPoint, spinQ, clip)
+		var normal point3
 		if source+2 < len(expanded.Normals) {
-			normal = sceneObjectLocalNormalToWorld(object, point3{
+			normal = frameTransform.normal(point3{
 				X: expanded.Normals[source], Y: expanded.Normals[source+1], Z: expanded.Normals[source+2],
-			}, spinQ, clip)
+			})
+		} else {
+			normal = frameTransform.normal(sceneObjectLocalNormal(object, localPoint))
 		}
 		bundle.WorldMeshNormals = append(bundle.WorldMeshNormals, normal.X, normal.Y, normal.Z)
 
@@ -412,11 +415,12 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 	// Animated/streaming path: motion geometry + perf color/camera.
 	baseRGBA := sceneColorRGBA(material.Color, [4]float64{0.55, 0.88, 1, 1})
 	obj := *object
+	frameTransform := prepareSceneObjectFrameTransform(object, spinQ, clip, timeSeconds)
 	for _, segment := range sceneObjectSegments(obj) {
-		worldFrom := translatePoint(segment[0], obj, spinQ, clip, timeSeconds)
-		worldTo := translatePoint(segment[1], obj, spinQ, clip, timeSeconds)
-		fromNormal := sceneObjectWorldNormal(obj, segment[0], spinQ, clip)
-		toNormal := sceneObjectWorldNormal(obj, segment[1], spinQ, clip)
+		worldFrom := frameTransform.point(segment[0])
+		worldTo := frameTransform.point(segment[1])
+		fromNormal := frameTransform.normal(sceneObjectLocalNormal(obj, segment[0]))
+		toNormal := frameTransform.normal(sceneObjectLocalNormal(obj, segment[1]))
 		fromRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
 		toRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
@@ -1502,12 +1506,18 @@ func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat,
 }
 
 func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ motion.Quat, clip clipTRS) point3 {
+	frame := sceneObjectFrameTransform{object: &object, rotation: newRotTrig(object.RotationX, object.RotationY, object.RotationZ), spin: spinQ, clip: clip}
+	return frame.normal(normal)
+}
+
+func (frame *sceneObjectFrameTransform) normal(normal point3) point3 {
+	object, clip := frame.object, &frame.clip
 	// Base orientation, then clip rotation, then spin quaternion. Normals are
 	// directions: static leaf scale applies as the inverse-scale (then
 	// renormalized) so non-uniform scale keeps lighting correct; no translation
 	// and no drift offset is applied. Rotation composition mirrors translatePoint
 	// (base -> clipR -> spin) so lit normals stay consistent with vertex positions.
-	normal = applySceneObjectInverseScaleToNormal(object, normal)
+	normal = applySceneObjectInverseScaleToNormal(*object, normal)
 	if clip.HasS {
 		if clip.S[0] == 0 || clip.S[1] == 0 || clip.S[2] == 0 {
 			normal = normalizePoint3(normal)
@@ -1515,13 +1525,13 @@ func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ moti
 			normal = normalizePoint3(point3{X: normal.X / clip.S[0], Y: normal.Y / clip.S[1], Z: normal.Z / clip.S[2]})
 		}
 	}
-	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
+	rotated := rotatePointTrig(normal, frame.rotation)
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
 		rotated = point3{X: cx, Y: cy, Z: cz}
 	}
-	nx, ny, nz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
-	return applySceneParentNormal(object, point3{X: nx, Y: ny, Z: nz})
+	nx, ny, nz := motion.RotateVec3(frame.spin, rotated.X, rotated.Y, rotated.Z)
+	return applySceneParentNormal(*object, point3{X: nx, Y: ny, Z: nz})
 }
 
 // lightingContext holds all light and environment colors pre-resolved from
@@ -1959,6 +1969,36 @@ func translatePointTrig(point point3, object sceneObject, timeSeconds float64, o
 // (T*R*S left-multiply on the raw transform). These are different renderer/bundle
 // structures — not a parity pair — so the divergence is by design.
 func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip clipTRS, timeSeconds float64) point3 {
+	frame := prepareSceneObjectFrameTransform(&object, spinQ, clip, timeSeconds)
+	return frame.point(point)
+}
+
+// sceneObjectFrameTransform holds only values shared by an object's vertices
+// during one frame. Keep clip and spin composition in the per-vertex helpers:
+// folding their rotations into a matrix would change floating-point ordering.
+// This is stack-local, so changes to the object or time need no invalidation.
+// Vertex helpers borrow the frame and its read-only object instead of copying
+// the frame, object, and motion state into every TinyGo call.
+type sceneObjectFrameTransform struct {
+	object   *sceneObject
+	rotation rotTrig
+	offset   point3
+	spin     motion.Quat
+	clip     clipTRS
+}
+
+func prepareSceneObjectFrameTransform(object *sceneObject, spin motion.Quat, clip clipTRS, timeSeconds float64) sceneObjectFrameTransform {
+	return sceneObjectFrameTransform{
+		object:   object,
+		rotation: newRotTrig(object.RotationX, object.RotationY, object.RotationZ),
+		offset:   sceneMotionOffset(*object, timeSeconds),
+		spin:     spin,
+		clip:     clip,
+	}
+}
+
+func (frame *sceneObjectFrameTransform) point(point point3) point3 {
+	object, clip := frame.object, &frame.clip
 	local := point
 	// Composition order (local vertex -> world position):
 	//   1. clip scale (local, pre-rotation): multiply the LOCAL vertex by clip.S.
@@ -1968,12 +2008,12 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	//   5. translation: object position + drift offset + clip translation.
 	// When the object has no clip targeting it (the common case) clip is the zero
 	// value (all Has* false) and this path is byte-identical to the pre-clip code.
-	local = applySceneObjectScale(local, object)
+	local = applySceneObjectScale(local, *object)
 	if clip.HasS {
 		local = point3{X: local.X * clip.S[0], Y: local.Y * clip.S[1], Z: local.Z * clip.S[2]}
 	}
 	// Base orientation via the existing intrinsic Euler rotation.
-	rotated := rotatePoint(local, object.RotationX, object.RotationY, object.RotationZ)
+	rotated := rotatePointTrig(local, frame.rotation)
 	// Clip rotation: composed AFTER the base orientation and BEFORE spin.
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
@@ -1982,13 +2022,13 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	// Spin orientation sourced from the canonical motion evaluator (GenSpin),
 	// applied as a quaternion. For single-axis spin this is identical to the
 	// previous Euler-add path; multi-axis spin now follows canonical qx*qy*qz order.
-	sx, sy, sz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
-	offset := sceneMotionOffset(object, timeSeconds)
+	sx, sy, sz := motion.RotateVec3(frame.spin, rotated.X, rotated.Y, rotated.Z)
+	offset := frame.offset
 	tx, ty, tz := 0.0, 0.0, 0.0
 	if clip.HasT {
 		tx, ty, tz = clip.T[0], clip.T[1], clip.T[2]
 	}
-	return applySceneParentPoint(object, point3{
+	return applySceneParentPoint(*object, point3{
 		X: sx + object.X + offset.X + tx,
 		Y: sy + object.Y + offset.Y + ty,
 		Z: sz + object.Z + offset.Z + tz,
