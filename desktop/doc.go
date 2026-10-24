@@ -33,11 +33,18 @@
 // The executable's first icon resource is used for the window's large and
 // small icons when present.
 //
-// Use Options.InitialPlacement and App.WindowPlacement to persist a window's
-// normal bounds and maximized state. Windows clamps restored bounds to
-// monitor work areas, and Options.OnBeforeClose reports the placement before
-// the native window is destroyed.
-//
+// Use Options.InitialPlacement and App.WindowPlacement for caller-managed
+// placement. Options.WindowState opts into automatic persistence on Windows;
+// its versioned JSON file defaults to os.UserConfigDir()/GoSX/<escaped AppID>/
+// window-state.json. Saves debounce move/resize and maximize changes by 250 ms
+// and flush synchronously on close. WindowStateOptions.OnError receives
+// best-effort load/save errors. A disconnected saved monitor falls back to a
+// centered configured window on the primary monitor; monitorless saved bounds
+// are retained if visible on any current work area. WindowState is unsupported
+// on macOS and Linux, and New returns an error wrapping ErrUnsupported. Set
+// WindowState to nil to disable persistence; otherwise configure Path,
+// Debounce, and OnError with WindowStateOptions. Save/load failures are
+// best-effort and do not change App.Run's result.
 // App.Window returns the primary window once it exists, and Window.Handle
 // returns its native handle (an HWND on Windows). Options.OnFocusChanged
 // reports when the window gains or loses focus; with NativeBridge it also

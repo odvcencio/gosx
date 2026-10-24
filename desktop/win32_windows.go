@@ -38,6 +38,7 @@ const (
 	wmCopyData       = 0x004A
 	wmDropFiles      = 0x0233
 	wmGetObject      = 0x003D
+	wmMove           = 0x0003
 	wmSize           = 0x0005
 	wmEraseBkgnd     = 0x0014
 	wmGetMinMaxInfo  = 0x0024
@@ -176,9 +177,10 @@ type wndClassEx struct {
 }
 
 var (
-	windowClassName  = syscall.StringToUTF16Ptr("GoSXDesktopWindow")
-	windowProc       = syscall.NewCallback(desktopWndProc)
-	monitorEnumAreas []screenRect
+	windowClassName    = syscall.StringToUTF16Ptr("GoSXDesktopWindow")
+	windowProc         = syscall.NewCallback(desktopWndProc)
+	monitorEnumAreas   []screenRect
+	monitorEnumDetails []monitorArea
 
 	monitorEnumProc = syscall.NewCallback(enumDisplayMonitor)
 	monitorEnumMu   sync.Mutex
@@ -204,11 +206,23 @@ func coUninitialize() {
 func monitorWorkAreas() []screenRect {
 	monitorEnumMu.Lock()
 	defer monitorEnumMu.Unlock()
+	monitorEnumDetails = nil
 	monitorEnumAreas = nil
 	if ok, _, _ := procEnumDisplayMonitors.Call(0, 0, monitorEnumProc, 0); ok == 0 {
 		return nil
 	}
 	return append([]screenRect(nil), monitorEnumAreas...)
+}
+
+func enumerateMonitorAreas() []monitorArea {
+	monitorEnumMu.Lock()
+	defer monitorEnumMu.Unlock()
+	monitorEnumAreas = nil
+	monitorEnumDetails = nil
+	if ok, _, _ := procEnumDisplayMonitors.Call(0, 0, monitorEnumProc, 0); ok == 0 {
+		return nil
+	}
+	return append([]monitorArea(nil), monitorEnumDetails...)
 }
 
 func enumDisplayMonitor(monitor, _, _, _ uintptr) uintptr {
@@ -219,6 +233,8 @@ func enumDisplayMonitor(monitor, _, _, _ uintptr) uintptr {
 		monitorEnumAreas = append(monitorEnumAreas, screenRect{
 			Left: int(area.Left), Top: int(area.Top), Right: int(area.Right), Bottom: int(area.Bottom),
 		})
+		work := screenRect{Left: int(area.Left), Top: int(area.Top), Right: int(area.Right), Bottom: int(area.Bottom)}
+		monitorEnumDetails = append(monitorEnumDetails, monitorArea{Name: syscall.UTF16ToString(info.szDevice[:]), Primary: info.dwFlags&1 != 0, Work: work})
 	}
 	return 1
 }
@@ -378,18 +394,21 @@ func getWindowPlacement(hwnd uintptr) (WindowPlacement, error) {
 	// area of the window's monitor. Convert to screen coordinates, which
 	// CreateWindowExW and InitialPlacement use; they differ when a taskbar
 	// sits on the top or left edge.
+	monitorName := ""
 	var dx, dy int32
 	if monitor, _, _ := procMonitorFromWindow.Call(hwnd, monitorDefaultToNearest); monitor != 0 {
 		var info monitorInfo
 		info.cbSize = uint32(unsafe.Sizeof(info))
 		if ok, _, _ := procGetMonitorInfoW.Call(monitor, uintptr(unsafe.Pointer(&info))); ok != 0 {
 			dx = info.rcWork.Left - info.rcMonitor.Left
+			monitorName = syscall.UTF16ToString(info.szDevice[:])
 			dy = info.rcWork.Top - info.rcMonitor.Top
 		}
 	}
 	const wpfRestoreToMaximized = 0x2
 	return WindowPlacement{
-		X: int(area.Left + dx), Y: int(area.Top + dy),
+		Monitor: monitorName,
+		X:       int(area.Left + dx), Y: int(area.Top + dy),
 		Width: int(area.Right - area.Left), Height: int(area.Bottom - area.Top),
 		Maximized: placement.ShowCmd == swShowMaximized ||
 			(placement.ShowCmd == swShowMinimized && placement.Flags&wpfRestoreToMaximized != 0),
@@ -450,6 +469,7 @@ type monitorInfo struct {
 	rcMonitor rect
 	rcWork    rect
 	dwFlags   uint32
+	szDevice  [32]uint16
 }
 
 // mINMAXINFO is the payload of a WM_GETMINMAXINFO message. We intercept
@@ -619,6 +639,11 @@ func desktopWndProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 	case wmSize:
 		if app != nil {
 			_ = app.resizeWebView()
+			app.notifyPlacementChanged()
+		}
+	case wmMove:
+		if app != nil {
+			app.notifyPlacementChanged()
 		}
 	case wmGetMinMaxInfo:
 		// Let the caller clamp the resize range. The MINMAXINFO struct
