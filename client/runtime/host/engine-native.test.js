@@ -45,6 +45,14 @@ function fakeDesktop(opts = {}) {
     posts: () => api.calls.filter(c => c.method === "gosx.engine.post").map(c => c.payload.msg),
     postsOf: t => api.posts().filter(m => m.t === t),
   };
+  if (opts.discovery) {
+    api.discoveryCalls = 0;
+    api.hasMethod = method => (opts.cachedMethods || []).includes(method);
+    api.refreshMethods = () => {
+      api.discoveryCalls++;
+      return opts.refreshMethods ? opts.refreshMethods() : Promise.resolve(opts.refreshedMethods || []);
+    };
+  }
   return api;
 }
 
@@ -112,6 +120,16 @@ test("no desktop bridge: the Worker starts, as before", async () => {
   await resolved;
 });
 
+test("late native registration is discovered by refreshMethods before attach", async () => {
+  const desktop = fakeDesktop({ discovery: true, refreshedMethods: ["gosx.engine.post", "gosx.engine.attach"] });
+  const page = bootPage({ desktop });
+  const out = await page.host.resolve(ENTRY, {}, async () => assert.fail("no fallback"));
+  assert.equal(typeof out.factory, "function");
+  assert.equal(desktop.discoveryCalls, 1);
+  assert.equal(desktop.calls.filter(c => c.method === "gosx.engine.attach").length, 1);
+  assert.equal(FakeWorker.all.length, 0);
+});
+
 test("a desktop host with a native engine runs it: attach, then booted, no Worker", async () => {
   const desktop = fakeDesktop();
   const page = bootPage({ desktop });
@@ -127,6 +145,28 @@ test("a desktop host with a native engine runs it: attach, then booted, no Worke
   assert.equal(lastStatus(page).State, "booting");
 });
 
+test("a successful method query with no native methods starts the Worker without a blind attach", async () => {
+  const desktop = fakeDesktop({ discovery: true, refreshedMethods: [] });
+  const page = bootPage({ desktop });
+  const resolved = page.host.resolve(ENTRY, {}, async () => assert.fail("no fallback"));
+  await tick();
+  assert.equal(desktop.calls.filter(c => c.method === "gosx.engine.attach").length, 0);
+  assert.equal(FakeWorker.all.length, 1);
+  FakeWorker.all[0].onmessage({ data: { t: "booted", v: 1 } });
+  await resolved;
+  assert.equal(page.issues.length, 0);
+});
+
+test("a failed method query preserves legacy direct attach", async () => {
+  const desktop = fakeDesktop({ discovery: true, refreshMethods: () => Promise.reject(new Error("query unavailable")) });
+  const page = bootPage({ desktop });
+  const resolved = page.host.resolve(ENTRY, {}, async () => assert.fail("no fallback"));
+  await resolved;
+  assert.equal(desktop.discoveryCalls, 1);
+  assert.equal(desktop.calls.filter(c => c.method === "gosx.engine.attach").length, 1);
+  assert.equal(FakeWorker.all.length, 0);
+});
+
 test("a host with no native engine for the component starts the Worker without a warning", async () => {
   const desktop = fakeDesktop({ attachAnswer: () => { throw Object.assign(new Error("no native engine"), { code: "engine.not_registered" }); } });
   const page = bootPage({ desktop });
@@ -137,6 +177,17 @@ test("a host with no native engine for the component starts the Worker without a
   assert.equal(FakeWorker.all.length, 1, "falls back to the Worker");
   assert.equal(page.issues.length, 0, "the ordinary case is not an issue");
   assert.equal(desktop.listenerCount("gosx.engine.msg"), 0, "the failed attach released its listener");
+});
+
+test("host native-disabled starts the Worker without a warning", async () => {
+  const desktop = fakeDesktop({ attachAnswer: () => { throw Object.assign(new Error("native disabled for Sim"), { code: "engine.native_disabled" }); } });
+  const page = bootPage({ desktop });
+  const resolved = page.host.resolve(ENTRY, {}, async () => assert.fail("no fallback"));
+  await tick(); await tick();
+  assert.equal(FakeWorker.all.length, 1);
+  FakeWorker.all[0].onmessage({ data: { t: "booted", v: 1 } });
+  await resolved;
+  assert.equal(page.issues.length, 0);
 });
 
 test("a bridge without the engine methods also falls back quietly", async () => {
@@ -363,6 +414,37 @@ for (const make of [workerTransport, nativeTransport]) {
 // ---------------------------------------------------------------------------
 // Native-only behavior
 // ---------------------------------------------------------------------------
+
+test("native and worker transports preserve mount, view, call, ack and dispose parity", async () => {
+  const traces = [];
+  for (const make of [workerTransport, nativeTransport]) {
+    const tr = make();
+    const { ctx, handle } = await mountOn(tr);
+    tr.batch('{"$bv.hud":{"Day":1}}', 3);
+    tr.say({ t: "calls", channel: "$bv.cmd", timeout: 1000, recent: 4, zero: "{}" });
+    const command = ctx.subs.find(s => s.name === "$bv.cmd");
+    const result = ctx.subs.find(s => s.name === "$bv.cmd.result");
+    assert.ok(command && result, tr.name + ": call channel subscribed");
+    command.cb('{"ID":1,"Name":"add"}');
+    let callResult;
+    const deliverResult = result.cb;
+    result.cb = encoded => { callResult = JSON.parse(encoded); deliverResult(encoded); };
+    const expectedCallResult = { ID: 1, Name: "add", Value: { Total: 5 }, Error: "", Recent: [] };
+    result.cb(JSON.stringify(expectedCallResult));
+    handle.dispose();
+    await tick();
+    tr.say({ t: "disposed" });
+    traces.push({
+      mount: tr.sentOf("mount").map(plain),
+      signals: ctx.calls.filter(c => c[0] === "setSignalsJSON"),
+      ack: tr.sentOf("ack").map(m => ({ t: m.t, seq: m.seq, ok: m.ok })),
+      callResult,
+      status: lastStatus(tr.page).State,
+      listeners: tr.desktop ? tr.desktop.listenerCount("gosx.engine.msg") : 0,
+    });
+  }
+  assert.deepEqual(traces[0], traces[1]);
+});
 
 test("native: only protocol messages cross the bridge, in order, with the engine id", async () => {
   const tr = nativeTransport();

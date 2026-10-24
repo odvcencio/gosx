@@ -224,8 +224,9 @@
           attached = true;
           deliver({ t: "booted", v: answer && answer.v });
         }, function(error) {
+          var disabled = error && error.code === "engine.native_disabled";
           var missing = error && (error.code === "engine.not_registered" || error.code === "bridge.not_found");
-          deliver({ t: "fatal", code: missing ? "native-not-registered" : "native-attach-failed", message: String(error && error.message || error) });
+          deliver({ t: "fatal", code: disabled ? "native-disabled" : missing ? "native-not-registered" : "native-attach-failed", message: String(error && error.message || error) });
         });
       }
       channel.postMessage = function(msg) {
@@ -263,13 +264,22 @@
       // browser toolchain, so it is tried before the checks for those. A page
       // that forces the fallback still skips it.
       var bridgeApi = entry && entry.forceWorkerFallback === true ? null : nativeBridge();
+      if (bridgeApi && typeof bridgeApi.hasMethod === "function" && typeof bridgeApi.refreshMethods === "function" &&
+          (!bridgeApi.hasMethod(NATIVE_ATTACH) || !bridgeApi.hasMethod(NATIVE_POST))) {
+        try {
+          var methods = await bridgeApi.refreshMethods();
+          if (!Array.isArray(methods) || !methods.includes(NATIVE_ATTACH) || !methods.includes(NATIVE_POST)) bridgeApi = null;
+        } catch (_) {
+          // Older or temporarily unavailable hosts retain the legacy direct attach path.
+        }
+      }
       if (bridgeApi) {
         try {
           record = await boot(entry, pending, bridgeApi);
         } catch (error) {
           // A host without a native engine for this component is the ordinary case
           // for an app that ships both; the worker path below takes over quietly.
-          if (!error || error.code !== "native-not-registered") {
+          if (!error || (error.code !== "native-not-registered" && error.code !== "native-disabled")) {
             report(entry, "warn", (error && error.code) || "native-boot-failed", "native engine unavailable; trying the worker: " + (error && error.message || error), error);
           }
         }

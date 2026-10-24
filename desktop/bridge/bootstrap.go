@@ -34,6 +34,7 @@ const bootstrapScript = `(function () {
   }
 
   var pending = new Map();
+  var methodQueryGeneration = 0;
   var listeners = new Map();
   var serviceCache = new Map();
   var nextID = 1;
@@ -84,6 +85,33 @@ const bootstrapScript = `(function () {
       pending.set(id, { resolve: resolve, reject: reject, onFrame: onFrame });
       try {
         send("req", method, payload, id);
+      } catch (err) {
+        pending.delete(id);
+        reject(err);
+      }
+    });
+  }
+
+  function sortedMethods() {
+    return Array.from(registeredMethods).sort();
+  }
+
+  function refreshMethods() {
+    var id = nextRequestID();
+    var queryGeneration = ++methodQueryGeneration;
+    var capturedRevision = methodRevision;
+    return new Promise(function (resolve, reject) {
+      pending.set(id, {
+        resolve: function (payload) {
+          if (queryGeneration === methodQueryGeneration && methodRevision === capturedRevision && payload && Array.isArray(payload.methods)) {
+            setMethodCapabilities({ methods: payload.methods, revision: methodRevision + 1 });
+          }
+          resolve(sortedMethods());
+        },
+        reject: reject
+      });
+      try {
+        postEnvelope({ op: "list_methods", id: id });
       } catch (err) {
         pending.delete(id);
         reject(err);
@@ -340,6 +368,7 @@ const bootstrapScript = `(function () {
     hasMethod: hasMethod,
     call: call,
     emit: emit,
+    refreshMethods: refreshMethods,
     on: on,
     service: service,
     services: servicesAPI,

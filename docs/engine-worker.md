@@ -245,7 +245,42 @@ described above. `ForceWorkerFallback` and `window.__gosx_engine_native_disable
 engine still needs a `WASMPath`: the config requires one, and a browser would
 fetch it.
 
-What stays the same for the island:
+Native method discovery is a query, not a registration event: the bridge accepts
+`list_methods` with a request ID and returns the current sorted registry snapshot.
+It is bridge infrastructure and does not appear among the registered methods.
+`window.gosxDesktop.hasMethod(name)` remains a synchronous cached view;
+`await window.gosxDesktop.refreshMethods()` asks the host for a fresh snapshot
+and returns the sorted cached method names. Concurrent queries and capability
+events are guarded by query generation and revision, and transport/host errors
+reject the promise.
+
+Before native attach, the engine runtime refreshes capabilities only when both
+helpers exist and either native method is absent from the current cache. If the
+query finds both attach and post methods, native attach proceeds. If it succeeds
+without both, the Worker starts without a blind attach or warning. A failed
+query preserves the legacy direct-attach path; old hosts and old pages remain
+compatible. Registration affects a later engine mount/resolution only: a live
+Worker or native engine is never replaced.
+
+To deliberately disable native engines from Go, pass `DisableNative` when
+constructing the host:
+
+```go
+engines := enginehost.New(app.Bridge(), enginehost.Options{
+    DisableNative: []string{"CounterEngine"}, // exact component name
+})
+```
+
+Names are case-sensitive and trimmed; `[]string{"*"}` disables every native
+component, while nil or an empty list enables all. The policy is fixed for that
+host. A disabled attach reports `engine.native_disabled`, which the page treats
+as an intentional, warning-free request to start the real WASM Worker. This is
+different from `ForceWorkerFallback`/`window.__gosx_engine_native_disable`,
+which bypass native and Worker execution and use the main-thread fallback.
+`WorkerRequired` still permits the real Worker and retains its existing failure
+policy.
+
+The worker protocol and lifecycle remain the same:
 
 - Views arrive as signal batches no faster than `MinInterval`, and the next one
   waits for the page to apply the previous one (`AckTimeout` frees a lost
