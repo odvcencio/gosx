@@ -51,6 +51,7 @@ func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera,
 	baseRGBA := sceneColorRGBA(material.Color, [4]float64{1, 1, 1, 1})
 	vertexOffset := len(bundle.WorldMeshPositions) / 3
 	orientation := sceneObjectTransformOrientation(object, clip)
+	frameTransform := prepareSceneObjectFrameTransform(object, timeSeconds)
 
 	for i := 0; i+2 < len(expanded.Positions); i += 3 {
 		source := i
@@ -63,15 +64,17 @@ func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera,
 			}
 		}
 		localPoint := point3{X: expanded.Positions[source], Y: expanded.Positions[source+1], Z: expanded.Positions[source+2]}
-		world := translatePoint(localPoint, object, spinQ, clip, timeSeconds)
+		world := frameTransform.point(localPoint, object, spinQ, clip)
 		bundle.WorldMeshPositions = append(bundle.WorldMeshPositions, world.X, world.Y, world.Z)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, world)
 
-		normal := sceneObjectWorldNormal(object, localPoint, spinQ, clip)
+		var normal point3
 		if source+2 < len(expanded.Normals) {
-			normal = sceneObjectLocalNormalToWorld(object, point3{
+			normal = frameTransform.normal(object, point3{
 				X: expanded.Normals[source], Y: expanded.Normals[source+1], Z: expanded.Normals[source+2],
 			}, spinQ, clip)
+		} else {
+			normal = frameTransform.normal(object, sceneObjectLocalNormal(object, localPoint), spinQ, clip)
 		}
 		bundle.WorldMeshNormals = append(bundle.WorldMeshNormals, normal.X, normal.Y, normal.Z)
 
@@ -412,11 +415,12 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 	// Animated/streaming path: motion geometry + perf color/camera.
 	baseRGBA := sceneColorRGBA(material.Color, [4]float64{0.55, 0.88, 1, 1})
 	obj := *object
+	frameTransform := prepareSceneObjectFrameTransform(obj, timeSeconds)
 	for _, segment := range sceneObjectSegments(obj) {
-		worldFrom := translatePoint(segment[0], obj, spinQ, clip, timeSeconds)
-		worldTo := translatePoint(segment[1], obj, spinQ, clip, timeSeconds)
-		fromNormal := sceneObjectWorldNormal(obj, segment[0], spinQ, clip)
-		toNormal := sceneObjectWorldNormal(obj, segment[1], spinQ, clip)
+		worldFrom := frameTransform.point(segment[0], obj, spinQ, clip)
+		worldTo := frameTransform.point(segment[1], obj, spinQ, clip)
+		fromNormal := frameTransform.normal(obj, sceneObjectLocalNormal(obj, segment[0]), spinQ, clip)
+		toNormal := frameTransform.normal(obj, sceneObjectLocalNormal(obj, segment[1]), spinQ, clip)
 		fromRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
 		toRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
@@ -1502,6 +1506,10 @@ func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat,
 }
 
 func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ motion.Quat, clip clipTRS) point3 {
+	return (sceneObjectFrameTransform{rotation: newRotTrig(object.RotationX, object.RotationY, object.RotationZ)}).normal(object, normal, spinQ, clip)
+}
+
+func (frame sceneObjectFrameTransform) normal(object sceneObject, normal point3, spinQ motion.Quat, clip clipTRS) point3 {
 	// Base orientation, then clip rotation, then spin quaternion. Normals are
 	// directions: static leaf scale applies as the inverse-scale (then
 	// renormalized) so non-uniform scale keeps lighting correct; no translation
@@ -1515,7 +1523,7 @@ func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ moti
 			normal = normalizePoint3(point3{X: normal.X / clip.S[0], Y: normal.Y / clip.S[1], Z: normal.Z / clip.S[2]})
 		}
 	}
-	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
+	rotated := rotatePointTrig(normal, frame.rotation)
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
 		rotated = point3{X: cx, Y: cy, Z: cz}
@@ -1959,6 +1967,26 @@ func translatePointTrig(point point3, object sceneObject, timeSeconds float64, o
 // (T*R*S left-multiply on the raw transform). These are different renderer/bundle
 // structures — not a parity pair — so the divergence is by design.
 func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip clipTRS, timeSeconds float64) point3 {
+	return prepareSceneObjectFrameTransform(object, timeSeconds).point(point, object, spinQ, clip)
+}
+
+// sceneObjectFrameTransform holds only values shared by an object's vertices
+// during one frame. Keep clip and spin composition in the per-vertex helpers:
+// folding their rotations into a matrix would change floating-point ordering.
+// This is stack-local, so changes to the object or time need no invalidation.
+type sceneObjectFrameTransform struct {
+	rotation rotTrig
+	offset   point3
+}
+
+func prepareSceneObjectFrameTransform(object sceneObject, timeSeconds float64) sceneObjectFrameTransform {
+	return sceneObjectFrameTransform{
+		rotation: newRotTrig(object.RotationX, object.RotationY, object.RotationZ),
+		offset:   sceneMotionOffset(object, timeSeconds),
+	}
+}
+
+func (frame sceneObjectFrameTransform) point(point point3, object sceneObject, spinQ motion.Quat, clip clipTRS) point3 {
 	local := point
 	// Composition order (local vertex -> world position):
 	//   1. clip scale (local, pre-rotation): multiply the LOCAL vertex by clip.S.
@@ -1973,7 +2001,7 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 		local = point3{X: local.X * clip.S[0], Y: local.Y * clip.S[1], Z: local.Z * clip.S[2]}
 	}
 	// Base orientation via the existing intrinsic Euler rotation.
-	rotated := rotatePoint(local, object.RotationX, object.RotationY, object.RotationZ)
+	rotated := rotatePointTrig(local, frame.rotation)
 	// Clip rotation: composed AFTER the base orientation and BEFORE spin.
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
@@ -1983,7 +2011,7 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	// applied as a quaternion. For single-axis spin this is identical to the
 	// previous Euler-add path; multi-axis spin now follows canonical qx*qy*qz order.
 	sx, sy, sz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
-	offset := sceneMotionOffset(object, timeSeconds)
+	offset := frame.offset
 	tx, ty, tz := 0.0, 0.0, 0.0
 	if clip.HasT {
 		tx, ty, tz = clip.T[0], clip.T[1], clip.T[2]
