@@ -284,7 +284,9 @@ func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
 	if !strings.Contains(got.SourceHref, "/examples/gosx-docs/app/demos/playground/page.gsx") || got.SourcePath != "examples/gosx-docs/app/demos/playground/page.gsx" {
 		t.Errorf("direct-load source = (%q, %q)", got.SourceHref, got.SourcePath)
 	}
-	if got.HeaderDirection != "column" || got.HeaderAlign != "flex-start" {
+	// CSS Align serializes flex-start as flow-start in newer Chromium.
+	// Both align items at the start of this column's cross axis.
+	if got.HeaderDirection != "column" || (got.HeaderAlign != "flex-start" && got.HeaderAlign != "flow-start") {
 		t.Errorf("mobile playground header layout = direction %q, align %q", got.HeaderDirection, got.HeaderAlign)
 	}
 	if got.TitleWidth < 250 || got.TitleHeight > 40 {

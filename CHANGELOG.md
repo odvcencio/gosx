@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Skip redundant dependency ownership lookups when a single reactive tracking
+  window has already read a source. Preserve the first revision, nested and
+  concurrent tracking isolation, and TinyGo's existing shared-scope path.
+
 - Retain renderer-owned instance matrix and color preparation storage across
   fresh SceneIR bundles in WebGL2 and WebGPU. Preserve mutable inputs, palette
   changes, GPU-driven updates, palette reads bounded by the active count, and

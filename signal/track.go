@@ -34,7 +34,11 @@ type dependency struct {
 // goroutine. It returns at once when no window is open anywhere, so an ordinary
 // Get pays one atomic load.
 func recordDependency(s Subscribable, revision uint64) {
-	if openTrackers.Load() == 0 {
+	count := openTrackers.Load()
+	if count == 0 {
+		return
+	}
+	if count == 1 && dependencyAlreadyRecorded(s) {
 		return
 	}
 	gid := goroutineID()

@@ -7,5 +7,9 @@ package signal
 // Tracking scope access is protected by trackerMu.
 var sharedTracker *dependencyTracker
 
+// TinyGo already looks up its shared scope without formatting a goroutine
+// traceback. Keep its existing single-lock dependency collection path.
+func dependencyAlreadyRecorded(Subscribable) bool { return false }
+
 func currentTracker(uint64) *dependencyTracker          { return sharedTracker }
 func storeTracker(_ uint64, tracker *dependencyTracker) { sharedTracker = tracker }

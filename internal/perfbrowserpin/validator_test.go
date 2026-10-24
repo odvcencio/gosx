@@ -508,6 +508,16 @@ func TestStableRendererProofComposition(t *testing.T) {
 		want   string
 	}{
 		{
+			name:   "stable Node drifts to a floating major",
+			mutate: replaceStableOnce("          node-version: '22.23.4'", "          node-version: '22'"),
+			want:   "stable Scene3D renderer proof Node setup.with.node-version",
+		},
+		{
+			name:   "stable Node rolls back before the decoder fix",
+			mutate: replaceStableOnce("          node-version: '22.23.4'", "          node-version: '22.23.2'"),
+			want:   "stable Scene3D renderer proof Node setup.with.node-version",
+		},
+		{
 			name:   "numeric fixture leaks into stable lane",
 			mutate: replaceStableOnce("          chrome-version: stable", "          chrome-version: '1688711'"),
 			want:   "stable Scene3D renderer proof setup.with.chrome-version",
@@ -1059,7 +1069,7 @@ func ensureStableProof(t *testing.T, source string) string {
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.4'
 
       - name: Run Scene3D CUBICSPLINE browser renderer proof
         env:
