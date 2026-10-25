@@ -67,7 +67,7 @@
       props = resolved.props;
       initialRuntimeCommands = resolved.commands;
     }
-    const sceneState = createSceneState(props, capability);
+    const sceneState = await scenePrepareGroups(createSceneState(props, capability));
     sceneState._textureDeliveryProfile = String(props.textureDeliveryProfile || "").trim().toLowerCase();
     if (!["", "auto", "low", "standard", "high"].includes(sceneState._textureDeliveryProfile)) {
       throw new TypeError("invalid Scene3D texture delivery profile");
@@ -226,7 +226,7 @@
       if (sceneHasTimeDrivenMaterials(sceneState)) {
         return { wants: true, reason: "material-clock" };
       }
-      if (sceneStateObjects(sceneState).some(sceneObjectAnimated)) {
+      if (sceneStateObjects(sceneState).some(sceneObjectAnimated) || sceneState.groups?.some(sceneObjectAnimated)) {
         return { wants: true, reason: "object-animation" };
       }
       if (sceneStateLabels(sceneState).some(sceneLabelAnimated)) {
@@ -2901,7 +2901,7 @@
         const c = i + 3;
         if (c + width > count) break;
         i = c + width;
-        if (ref == null || prop == null) continue;
+        if (ref == null || prop == null || prop === "rotation" && arity === 4 && window.__gosx_scene3d_hierarchy_api?.spin(sceneState, ref, timeSeconds, f, c)) continue;
         let data = null;
         if (prop === "position" && width >= 3) {
           data = { x: f[c], y: f[c + 1], z: f[c + 2] };
@@ -3086,7 +3086,7 @@
         applySceneRenderLoopState(initReason);
         return;
       }
-      if (disposed) return;
+      if (disposed || sceneState._hierarchyPending) return;
       const frameStart = sceneFrameNowMS();
       const perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
       recordScenePerfCounter("render:" + (reason || "animation"));
@@ -3217,7 +3217,7 @@
           // Only the PBR WebGL renderer can draw a crowd batch record.
           crowdBatches: Boolean(renderer && typeof renderer.prepareCrowdMotionShaders === "function"),
           meshWireframeFallback: renderer?.kind === "canvas",
-        },
+        }, sceneState,
       ), sceneState, sceneControlHandle);
       latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");

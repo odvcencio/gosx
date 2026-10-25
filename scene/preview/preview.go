@@ -67,6 +67,7 @@ type Result struct {
 }
 
 type wireDocument struct {
+	Groups             []scene.GroupIR            `json:"groups,omitempty"`
 	Schema             string                     `json:"schema,omitempty"`
 	Objects            []scene.ObjectIR           `json:"objects,omitempty"`
 	Models             []scene.ModelIR            `json:"models,omitempty"`
@@ -143,7 +144,7 @@ func RenderJSON(data []byte, opts Options) (*Result, error) {
 	}
 	opts = normalizeOptions(opts)
 	ir := scene.SceneIR{
-		Schema: doc.Schema, Objects: doc.Objects, Models: doc.Models, Points: doc.Points,
+		Groups: doc.Groups, Schema: doc.Schema, Objects: doc.Objects, Models: doc.Models, Points: doc.Points,
 		InstancedMeshes: doc.InstancedMeshes, InstancedGLBMeshes: doc.InstancedGLBMeshes,
 		ComputeParticles: doc.ComputeParticles, WaterSystems: doc.WaterSystems,
 		Animations: doc.Animations, Labels: doc.Labels, Sprites: doc.Sprites, HTML: doc.HTML,
@@ -245,7 +246,31 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 	if frame.Background == "" {
 		frame.Background = "#0b0b0d"
 	}
+	groupMatrices, groupError := scene.GroupWorldMatrices(ir.Groups, opts.Time)
+	if groupError != nil {
+		frame.Diagnostics = append(frame.Diagnostics, engine.RenderDiagnostic{Severity: "error", Code: "scene-group-invalid", Backend: "native", Message: groupError.Error()})
+		return frame
+	}
+	parentMatrix := func(id string, prefix []float64) []float64 {
+		if matrix, ok := groupMatrices[id]; ok {
+			if len(prefix) == 16 {
+				return composeParentMatrix(matrix[:], prefix)
+			}
+			return matrix[:]
+		}
+		return prefix
+	}
 	for _, light := range ir.Lights {
+		if m, ok := groupMatrices[light.ParentNode]; ok {
+			x, y, z := light.X, light.Y, light.Z
+			light.X = float64(m[0]*x) + float64(m[4]*y) + float64(m[8]*z) + m[12]
+			light.Y = float64(m[1]*x) + float64(m[5]*y) + float64(m[9]*z) + m[13]
+			light.Z = float64(m[2]*x) + float64(m[6]*y) + float64(m[10]*z) + m[14]
+			x, y, z = light.DirectionX, light.DirectionY, light.DirectionZ
+			light.DirectionX = float64(m[0]*x) + float64(m[4]*y) + float64(m[8]*z)
+			light.DirectionY = float64(m[1]*x) + float64(m[5]*y) + float64(m[9]*z)
+			light.DirectionZ = float64(m[2]*x) + float64(m[6]*y) + float64(m[10]*z)
+		}
 		frame.Lights = append(frame.Lights, engine.RenderLight{
 			ID: light.ID, Kind: light.Kind, Color: light.Color,
 			GroundColor: light.GroundColor, Intensity: light.Intensity,
@@ -268,6 +293,7 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 
 	materialIndexes := make(map[string]int)
 	for _, object := range ir.Objects {
+		object.ParentMatrix = parentMatrix(object.ParentNode, object.ParentMatrix)
 		if diagnostic, ok := geometryDiagnostic(object.Kind, object.ID); ok {
 			frame.Diagnostics = append(frame.Diagnostics, diagnostic)
 		}
@@ -285,6 +311,13 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 		})
 	}
 	for _, mesh := range ir.InstancedMeshes {
+		if matrix, ok := groupMatrices[mesh.ParentNode]; ok {
+			transforms := make([]float64, len(mesh.Transforms))
+			for i := 0; i+15 < len(transforms); i += 16 {
+				copy(transforms[i:i+16], composeParentMatrix(matrix[:], mesh.Transforms[i:i+16]))
+			}
+			mesh.Transforms = transforms
+		}
 		if diagnostic, ok := geometryDiagnostic(mesh.Kind, mesh.ID); ok {
 			frame.Diagnostics = append(frame.Diagnostics, diagnostic)
 		}
@@ -307,6 +340,7 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 		})
 	}
 	for _, points := range ir.Points {
+		points.ParentMatrix = parentMatrix(points.ParentNode, points.ParentMatrix)
 		frame.Points = append(frame.Points, engine.RenderPoints{
 			ID: points.ID, Count: points.Count, Positions: transformPointPositions(points),
 			Sizes: append([]float64(nil), points.Sizes...), Colors: colorsToFloats(points.Colors),

@@ -10453,7 +10453,7 @@
         computeEntry.renderShaderLayout = sourceEntry.renderShaderLayout && typeof sourceEntry.renderShaderLayout === "object"
           ? sourceEntry.renderShaderLayout
           : null;
-        computeEntry._computeParticlesSynthetic = true;
+        Object.assign(computeEntry, {_computeParticlesSynthetic: true, parentMatrix: sourceEntry.parentMatrix || null});
         // Model-matrix transform from the emitter: position, rotation, spin.
         // Particles are stored in LOCAL space so the renderer's model matrix
         // applies position + rotation + time-based spin uniformly.

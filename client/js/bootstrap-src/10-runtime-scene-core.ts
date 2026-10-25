@@ -496,12 +496,16 @@
     const hasInState = Object.prototype.hasOwnProperty.call(source, "inState");
     const hasOutState = Object.prototype.hasOwnProperty.call(source, "outState");
     const hasLive = Object.prototype.hasOwnProperty.call(source, "live");
-    return {
+    const result = {
       _transition: normalizeSceneTransition(source.transition, current._transition),
       _inState: sceneCloneData(hasInState ? source.inState : current._inState),
       _outState: sceneCloneData(hasOutState ? source.outState : current._outState),
       _live: sceneNormalizeLive(hasLive ? source.live : undefined, current._live),
     };
+    if (typeof source.parentNode === "string" || typeof current.parentNode === "string") {
+      result["parentNode"] = sceneFallbackString(source,current,"parentNode").trim();
+    }
+    return result;
   }
 
 
@@ -1809,6 +1813,7 @@
         scaleX: sceneNumber(instance.scaleX, 1), scaleY: sceneNumber(instance.scaleY, 1), scaleZ: sceneNumber(instance.scaleZ, 1),
         parentMatrix: sceneNormalizeParentMatrix(instance.parentMatrix),
       };
+      if (batch.parentNode) model.parentNode = batch.parentNode;
       if (["animation", "animationTime", "animationLoop"].some(key => Object.prototype.hasOwnProperty.call(instance, key))) {
         model._crowdPose = { animation: instance.animation || "", animationTime: instance.animationTime || 0, animationLoop: instance.animationLoop === true };
       }
@@ -3257,6 +3262,30 @@
     }, base);
   }
 
+  function sceneNormalizeGroups(raw) {
+    if (!Array.isArray(raw) || !raw.length) return [];
+    const api=window.__gosx_scene3d_hierarchy_api;
+    return api ? api.normalize(raw) : raw;
+  }
+  function sceneGroupMatrices(state,time) {return window.__gosx_scene3d_hierarchy_api.matrices(state,time);}
+  function sceneGroupRecords(records,matrices,mode) {return window.__gosx_scene3d_hierarchy_api.records(records,matrices,mode);}
+  async function scenePrepareGroups(state,raw) {
+    if (arguments.length<2) raw=state.groups;
+    const generation=(state._groupGeneration || 0)+1;
+    state._groupGeneration=generation;
+    if (!Array.isArray(raw) || !raw.length) {state.groups=[];state._hierarchyPending=false;return state;}
+    state._hierarchyPending=true;
+    try {
+      const api=window.__gosx_scene3d_hierarchy_api || await ensureSceneGatedFeatureLoaded("hierarchy","gosxScene3dHierarchyUrl","");
+      const groups=api.normalize(raw);
+      api.matrices({groups},0);
+      if (state._groupGeneration===generation) state.groups=groups;
+    } finally {
+      if (state._groupGeneration===generation) state._hierarchyPending=false;
+    }
+    return state;
+  }
+
   function createSceneState(props, capability) {
     // Decompress any TurboQuant-compressed vertex data before the render loop.
     // Progressive mode: decompress preview now, schedule the full-resolution
@@ -3290,6 +3319,7 @@
       sprites: new Map(),
       html: new Map(),
       lights: new Map(),
+      groups: sceneNormalizeGroups(scene && scene.groups || props.groups),
       models: sceneModels(props),
       points: scenePoints(props),
       pointQualityGroups: scenePointQualityGroups(props),
@@ -4235,14 +4265,20 @@
   // command; every existing value here is load-bearing wire protocol and
   // must never be renumbered.
   const SCENE_CMD_SET_POST_UNIFORMS = 14;
+  const SCENE_CMD_SET_GROUPS = 15;
 
   function applySceneCommands(state, commands) {
     if (!state || !Array.isArray(commands) || commands.length === 0) return;
     const pending = [];
-    for (const command of commands) {
+    for (let index = 0; index < commands.length; index++) {
+      const command = commands[index];
       const result = applySceneCommand(state, command);
       if (result && typeof result.then === "function") {
         pending.push(result);
+        // A newly loaded parent must exist before later commands target it.
+        if (command.kind === SCENE_CMD_SET_GROUPS && state._hierarchyPending) {
+          return Promise.all(pending).then(() => applySceneCommands(state, commands.slice(index + 1)));
+        }
       }
     }
     if (pending.length > 0) {
@@ -4264,7 +4300,12 @@
         state.html.delete(sceneObjectKey(command.objectId));
         state.lights.delete(sceneObjectKey(command.objectId));
         return;
+      case SCENE_CMD_SET_GROUPS:
+        return scenePrepareGroups(state,command.data && command.data.groups).then(function() {
+          for (const group of state.groups) group._spinProgramInvalidated=true;
+        });
       case SCENE_CMD_SET_TRANSFORM:
+        if (window.__gosx_scene3d_hierarchy_api?.patch(state,command.objectId,command.data)) return;
         const modelResult = applySceneModelTransformCommand(state, command.objectId, command.data);
         if (modelResult !== false) return modelResult;
         applySceneObjectPatch(state, command.objectId, command.data);
@@ -5231,10 +5272,21 @@
     sceneReserveWorldMeshAttributes(bundle, count);
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities, hierarchyState) {
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
       : Date.now();
+    if (hierarchyState && hierarchyState.groups && hierarchyState.groups.length) {
+      const hierarchy = sceneGroupMatrices(hierarchyState, timeSeconds);
+      objects = sceneGroupRecords(objects, hierarchy, "matrix");
+      points = sceneGroupRecords(points, hierarchy, "matrix");
+      computeParticles = sceneGroupRecords(computeParticles, hierarchy, "matrix");
+      instancedMeshes = sceneGroupRecords(instancedMeshes, hierarchy, "instances");
+      labels = sceneGroupRecords(labels, hierarchy, "position");
+      sprites = sceneGroupRecords(sprites, hierarchy, "position");
+      html = sceneGroupRecords(html, hierarchy, "position");
+      lights = sceneGroupRecords(lights, hierarchy, "light");
+    }
     sceneBeginWorldBakedGeometryCacheBundle();
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const renderCamera = sceneRenderCamera(camera);
@@ -7473,11 +7525,13 @@
 
   function sceneLabelPoint(label, timeSeconds) {
     const offset = sceneLabelOffset(label, timeSeconds);
-    return {
+    const point = {
       x: label.x + offset.x,
       y: label.y + offset.y,
       z: label.z + offset.z,
     };
+    if (label._groupParentMatrix) sceneMatrixTransformInto(point,label._groupParentMatrix,point.x,point.y,point.z,4,true);
+    return point;
   }
 
   function sceneLabelOffset(label, timeSeconds) {
@@ -7494,11 +7548,13 @@
 
   function sceneSpritePoint(sprite, timeSeconds) {
     const offset = sceneSpriteOffset(sprite, timeSeconds);
-    return {
+    const point = {
       x: sceneNumber(sprite && sprite.x, 0) + offset.x,
       y: sceneNumber(sprite && sprite.y, 0) + offset.y,
       z: sceneNumber(sprite && sprite.z, 0) + offset.z,
     };
+    if (sprite._groupParentMatrix) sceneMatrixTransformInto(point,sprite._groupParentMatrix,point.x,point.y,point.z,4,true);
+    return point;
   }
 
   function sceneSpriteOffset(sprite, timeSeconds) {
@@ -7633,6 +7689,7 @@
       { x: -hw, y: -hh, z: 0 }, { x: hw, y: -hh, z: 0 },
     ].map(function(local) {
       const rotated = sceneRotatePoint(local, rx, ry, rz);
+      if (entry._groupParentMatrix) sceneMatrixTransformInto(rotated,entry._groupParentMatrix,rotated.x,rotated.y,rotated.z,4,false);
       return sceneProjectPoint({ x: origin.x + rotated.x, y: origin.y + rotated.y, z: origin.z + rotated.z }, camera, width, height);
     });
   }
@@ -7720,7 +7777,7 @@
   }
 
   function sceneHTMLTextureSurfaceObject(entry, point) {
-    return {
+    const surface = {
       x: point.x,
       y: point.y,
       z: point.z,
@@ -7742,6 +7799,7 @@
       driftSpeed: sceneNumber(entry.driftSpeed, 0),
       driftPhase: sceneNumber(entry.driftPhase, 0),
     };
+    return entry._groupParentMatrix ? window.__gosx_scene3d_hierarchy_api.surface(entry,point,surface) : surface;
   }
 
   function sceneHTMLTextureMaterialKey(entry, texture, opacity) {
@@ -7896,6 +7954,7 @@
     applySceneCommands,
     cancelEngineFrame,
     clearChildren,
+    sceneNormalizeParentMatrix,
     createSceneRenderBundle,
     sceneSelectLODObjects,
     SCENE_IR_VERSION: 1,

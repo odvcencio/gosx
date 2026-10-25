@@ -674,6 +674,10 @@ var outputs = []output{
 		},
 	},
 	{
+		name:    "bootstrap-feature-scene3d-hierarchy.js",
+		sources: []source{sourceFile("../runtime/scene3d/hierarchy.ts")},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",
 		sources: []source{sourceFile("../runtime/scene3d/particle-burst.ts")},
 	},

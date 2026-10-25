@@ -414,7 +414,10 @@ type Group struct {
 	// Scale is inherited by descendants. Each zero component means unit scale,
 	// matching the existing Mesh and Model scale defaults. Non-uniform scale is
 	// retained as an exact affine transform so rotated children may carry shear.
-	Scale    Vector3
+	Scale Vector3
+	// Spin is angular velocity in radians per second, matching Mesh.Spin.
+	// It rotates descendants around this group's local origin.
+	Spin     Euler
 	Children []Node
 }
 
@@ -1676,10 +1679,11 @@ type quaternion struct {
 }
 
 type worldTransform struct {
-	Position  Vector3
-	Rotation  quaternion
-	Matrix    affineMatrix
-	HasMatrix bool
+	Position   Vector3
+	Rotation   quaternion
+	Matrix     affineMatrix
+	HasMatrix  bool
+	ParentNode string
 }
 
 type pendingLabel struct {
@@ -1698,6 +1702,8 @@ type pendingHTML struct {
 }
 
 type graphLowerer struct {
+	groups             []GroupIR
+	nextGroupID        int
 	objects            []ObjectIR
 	models             []ModelIR
 	points             []PointsIR
@@ -2644,6 +2650,10 @@ func htmlSurfaceWorldSize(surface HTMLSurface, textureWidth, textureHeight int) 
 }
 
 func (l *graphLowerer) lowerGroup(group Group, parent worldTransform) {
+	if group.Spin != (Euler{}) || parent.ParentNode != "" {
+		l.lowerRetainedGroup(group, parent)
+		return
+	}
 	world := combineTransforms(parent, localScaledTransform(group.Position, group.Rotation, group.Scale))
 	if id := strings.TrimSpace(group.ID); id != "" {
 		l.anchors[id] = world
@@ -2976,6 +2986,15 @@ func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotat
 }
 
 func applyLoweredObjectTransform(record *ObjectIR, parent, world worldTransform, localPosition Vector3, localRotation Euler) {
+	if parent.ParentNode != "" {
+		record.ParentNode = parent.ParentNode
+		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
+		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
+		if parent.HasMatrix || parent.Position != (Vector3{}) || parent.Rotation != (quaternion{W: 1}) {
+			record.ParentMatrix = affineSlice(worldAffine(parent))
+		}
+		return
+	}
 	if parent.HasMatrix {
 		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
 		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
@@ -2988,6 +3007,15 @@ func applyLoweredObjectTransform(record *ObjectIR, parent, world worldTransform,
 }
 
 func applyLoweredPointsTransform(record *PointsIR, parent, world worldTransform, localPosition Vector3, localRotation Euler) {
+	if parent.ParentNode != "" {
+		record.ParentNode = parent.ParentNode
+		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
+		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
+		if parent.HasMatrix || parent.Position != (Vector3{}) || parent.Rotation != (quaternion{W: 1}) {
+			record.ParentMatrix = affineSlice(worldAffine(parent))
+		}
+		return
+	}
 	if parent.HasMatrix {
 		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
 		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
@@ -4038,6 +4066,7 @@ func (l *graphLowerer) resolveLabel(item pendingLabel) (LabelIR, bool) {
 	}
 	position := l.resolveLabelPosition(item)
 	return LabelIR{
+		ParentNode:  l.anchoredParent(item.parent, item.label.Target),
 		ID:          l.nextSceneLabelID(item.label.ID),
 		Text:        text,
 		ClassName:   strings.TrimSpace(item.label.ClassName),
@@ -4080,6 +4109,7 @@ func (l *graphLowerer) resolveSprite(item pendingSprite) (SpriteIR, bool) {
 	}
 	position := l.resolveAnchoredPosition(item.parent, item.sprite.Target, item.sprite.Position)
 	return SpriteIR{
+		ParentNode: l.anchoredParent(item.parent, item.sprite.Target),
 		ID:         l.nextSceneSpriteID(item.sprite.ID),
 		Src:        src,
 		ClassName:  strings.TrimSpace(item.sprite.ClassName),
@@ -4120,6 +4150,7 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 		mode = string(HTMLDOM)
 	}
 	return HTMLIR{
+		ParentNode:       l.anchoredParent(item.parent, item.html.Target),
 		ID:               l.nextSceneHTMLID(item.html.ID),
 		Target:           strings.TrimSpace(item.html.Target),
 		Mode:             mode,
@@ -4166,6 +4197,13 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 
 func (l *graphLowerer) resolveLabelPosition(item pendingLabel) Vector3 {
 	return l.resolveAnchoredPosition(item.parent, item.label.Target, item.label.Position)
+}
+
+func (l *graphLowerer) anchoredParent(parent worldTransform, target string) string {
+	if anchor, ok := l.anchors[strings.TrimSpace(target)]; ok {
+		return anchor.ParentNode
+	}
+	return parent.ParentNode
 }
 
 func (l *graphLowerer) resolveAnchoredPosition(parent worldTransform, rawTarget string, localPosition Vector3) Vector3 {
@@ -5054,8 +5092,9 @@ func identityTransform() worldTransform {
 
 func combineTransforms(parent, local worldTransform) worldTransform {
 	combined := worldTransform{
-		Position: addVectors(parent.Position, parent.Rotation.rotate(local.Position)),
-		Rotation: parent.Rotation.mul(local.Rotation).normalized(),
+		Position:   addVectors(parent.Position, parent.Rotation.rotate(local.Position)),
+		Rotation:   parent.Rotation.mul(local.Rotation).normalized(),
+		ParentNode: parent.ParentNode,
 	}
 	if parent.HasMatrix || local.HasMatrix {
 		combined.Matrix = multiplyAffine(worldAffine(parent), worldAffine(local))

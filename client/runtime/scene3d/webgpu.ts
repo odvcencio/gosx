@@ -17570,7 +17570,7 @@
         pointsUniformScratchF.fill(0);
         var puF = pointsUniformScratchF;
         var puU = pointsUniformScratchU;
-        puF.set(_computeModelMat, 0);
+        puF.set(sceneWebGPUPointModelMatrix(entry, _computeTilt, _computeModelMat), 0);
 
         var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
         puF[16] = defaultColorRGBA[0];

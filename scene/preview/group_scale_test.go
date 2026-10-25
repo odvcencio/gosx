@@ -48,3 +48,19 @@ func assertFloatSliceNear(t *testing.T, got, want []float64, tolerance float64) 
 		}
 	}
 }
+
+func TestGroupSpinPreviewUsesSceneClockAndSharedPivot(t *testing.T) {
+	props := scene.Props{Graph: scene.NewGraph(scene.Group{ID: "rotor", Spin: scene.Rotate(0, 0, math.Pi/2), Children: []scene.Node{
+		scene.Mesh{ID: "blade", Geometry: scene.BoxGeometry{}, Position: scene.Vec3(2, 0, 0)},
+		scene.Points{ID: "marker", Count: 1, Position: scene.Vec3(2, 0, 0), Positions: []scene.Vector3{{}}},
+	}})}
+	for _, seconds := range []float64{0, 1, 2, 3, 4, .5} {
+		frame := preview.Bundle(props, preview.Options{Time: seconds})
+		if len(frame.InstancedMeshes) != 1 || len(frame.Points) != 1 {
+			t.Fatal("missing rotor children")
+		}
+		want := []float64{2 * math.Cos(seconds*math.Pi/2), 2 * math.Sin(seconds*math.Pi/2), 0}
+		assertFloatSliceNear(t, frame.InstancedMeshes[0].Transforms[12:15], want, 1e-12)
+		assertFloatSliceNear(t, frame.Points[0].Positions, want, 1e-12)
+	}
+}

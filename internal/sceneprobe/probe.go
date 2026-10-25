@@ -153,15 +153,15 @@ type Probe struct {
 
 	Controls string
 
-	Scene                                                                                                        *Probe
-	ParticleBursts, Timelines, ControlZoom, ModelPreparation                                                     bool
-	ForceWebGL, RequireWebGL, PreferCanvas                                                                       bool
-	PreferWebGL                                                                                                  *bool
-	BackendCaps                                                                                                  *struct{ Capable []string }
-	Compression                                                                                                  Presence
-	ComputeParticles, InstancedMeshes, Points, Models, InstancedGLBMeshes, Objects, Sprites, WaterSystems, Nodes []Record
-	Animations                                                                                                   []Clip
-	Environment                                                                                                  struct {
+	Scene                                                                                                                *Probe
+	ParticleBursts, Timelines, ControlZoom, ModelPreparation                                                             bool
+	ForceWebGL, RequireWebGL, PreferCanvas                                                                               bool
+	PreferWebGL                                                                                                          *bool
+	BackendCaps                                                                                                          *struct{ Capable []string }
+	Compression                                                                                                          Presence
+	Groups, ComputeParticles, InstancedMeshes, Points, Models, InstancedGLBMeshes, Objects, Sprites, WaterSystems, Nodes []Record
+	Animations                                                                                                           []Clip
+	Environment                                                                                                          struct {
 		EnvMap string
 		IBL    struct{ Radiance, Irradiance, BRDFLUT Texture }
 	}
