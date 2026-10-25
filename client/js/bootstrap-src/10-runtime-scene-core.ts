@@ -496,12 +496,16 @@
     const hasInState = Object.prototype.hasOwnProperty.call(source, "inState");
     const hasOutState = Object.prototype.hasOwnProperty.call(source, "outState");
     const hasLive = Object.prototype.hasOwnProperty.call(source, "live");
-    return {
+    const result = {
       _transition: normalizeSceneTransition(source.transition, current._transition),
       _inState: sceneCloneData(hasInState ? source.inState : current._inState),
       _outState: sceneCloneData(hasOutState ? source.outState : current._outState),
       _live: sceneNormalizeLive(hasLive ? source.live : undefined, current._live),
     };
+    if (typeof source.parentNode === "string" || typeof current.parentNode === "string") {
+      result["parentNode"] = sceneFallbackString(source,current,"parentNode").trim();
+    }
+    return result;
   }
 
 
@@ -1837,6 +1841,7 @@
         scaleX: sceneNumber(instance.scaleX, 1), scaleY: sceneNumber(instance.scaleY, 1), scaleZ: sceneNumber(instance.scaleZ, 1),
         parentMatrix: sceneNormalizeParentMatrix(instance.parentMatrix),
       };
+      if (batch.parentNode) model.parentNode = batch.parentNode;
       if (["animation", "animationTime", "animationLoop"].some(key => Object.prototype.hasOwnProperty.call(instance, key))) {
         model._crowdPose = { animation: instance.animation || "", animationTime: instance.animationTime || 0, animationLoop: instance.animationLoop === true };
       }
@@ -2291,11 +2296,6 @@
       cullKernelEntry: typeof sceneObjectMaterialValue(item, "cullKernelEntry") === "string" ? sceneObjectMaterialValue(item, "cullKernelEntry").trim() : (typeof current.cullKernelEntry === "string" ? current.cullKernelEntry : ""),
       cullRadius: sceneNumber(sceneObjectMaterialValue(item, "cullRadius"), sceneNumber(current.cullRadius, 0)),
       cullBackend: typeof sceneObjectMaterialValue(item, "cullBackend") === "string" ? sceneObjectMaterialValue(item, "cullBackend").trim().toLowerCase() : (typeof current.cullBackend === "string" ? current.cullBackend : ""),
-      // The scene node whose world matrix carries the batch (see
-      // sceneInstancedMeshParentTransforms). "" draws in world space.
-      parentNode: Object.prototype.hasOwnProperty.call(item, "parentNode")
-        ? (typeof item.parentNode === "string" ? item.parentNode.trim() : "")
-        : (typeof current.parentNode === "string" ? current.parentNode : ""),
       transforms,
       colors,
       attributes,
@@ -3293,6 +3293,30 @@
     }, base);
   }
 
+  function sceneNormalizeGroups(raw) {
+    if (!Array.isArray(raw) || !raw.length) return [];
+    const api=window.__gosx_scene3d_hierarchy_api;
+    return api ? api.normalize(raw) : raw;
+  }
+  function sceneGroupMatrices(state,time) {return window.__gosx_scene3d_hierarchy_api.matrices(state,time);}
+  function sceneGroupRecords(records,matrices,mode,batchParents) {return window.__gosx_scene3d_hierarchy_api.records(records,matrices,mode,batchParents);}
+  async function scenePrepareGroups(state,raw) {
+    if (arguments.length<2) raw=state.groups;
+    const generation=(state._groupGeneration || 0)+1;
+    state._groupGeneration=generation;
+    if (!Array.isArray(raw) || !raw.length) {state.groups=[];state._hierarchyPending=false;return state;}
+    state._hierarchyPending=true;
+    try {
+      const api=window.__gosx_scene3d_hierarchy_api || await ensureSceneGatedFeatureLoaded("hierarchy","gosxScene3dHierarchyUrl","");
+      const groups=api.normalize(raw);
+      api.matrices({groups},0);
+      if (state._groupGeneration===generation) state.groups=groups;
+    } finally {
+      if (state._groupGeneration===generation) state._hierarchyPending=false;
+    }
+    return state;
+  }
+
   function createSceneState(props, capability) {
     // Decompress any TurboQuant-compressed vertex data before the render loop.
     // Progressive mode: decompress preview now, schedule the full-resolution
@@ -3326,6 +3350,7 @@
       sprites: new Map(),
       html: new Map(),
       lights: new Map(),
+      groups: sceneNormalizeGroups(scene && scene.groups || props.groups),
       models: sceneModels(props),
       points: scenePoints(props),
       pointQualityGroups: scenePointQualityGroups(props),
@@ -4271,14 +4296,20 @@
   // command; every existing value here is load-bearing wire protocol and
   // must never be renumbered.
   const SCENE_CMD_SET_POST_UNIFORMS = 14;
+  const SCENE_CMD_SET_GROUPS = 15;
 
   function applySceneCommands(state, commands) {
     if (!state || !Array.isArray(commands) || commands.length === 0) return;
     const pending = [];
-    for (const command of commands) {
+    for (let index = 0; index < commands.length; index++) {
+      const command = commands[index];
       const result = applySceneCommand(state, command);
       if (result && typeof result.then === "function") {
         pending.push(result);
+        // A newly loaded parent must exist before later commands target it.
+        if (command.kind === SCENE_CMD_SET_GROUPS && state._hierarchyPending) {
+          return Promise.all(pending).then(() => applySceneCommands(state, commands.slice(index + 1)));
+        }
       }
     }
     if (pending.length > 0) {
@@ -4300,7 +4331,12 @@
         state.html.delete(sceneObjectKey(command.objectId));
         state.lights.delete(sceneObjectKey(command.objectId));
         return;
+      case SCENE_CMD_SET_GROUPS:
+        return scenePrepareGroups(state,command.data && command.data.groups).then(function() {
+          for (const group of state.groups) group._spinProgramInvalidated=true;
+        });
       case SCENE_CMD_SET_TRANSFORM:
+        if (window.__gosx_scene3d_hierarchy_api?.patch(state,command.objectId,command.data)) return;
         const modelResult = applySceneModelTransformCommand(state, command.objectId, command.data);
         if (modelResult !== false) return modelResult;
         applySceneObjectPatch(state, command.objectId, command.data);
@@ -5267,10 +5303,21 @@
     sceneReserveWorldMeshAttributes(bundle, count);
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities) {
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities, hierarchyState) {
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
       : Date.now();
+    let hierarchy = null;
+    if (hierarchyState && hierarchyState.groups && hierarchyState.groups.length) {
+      hierarchy = sceneGroupMatrices(hierarchyState, timeSeconds);
+      objects = sceneGroupRecords(objects, hierarchy, "matrix", Boolean(rendererCapabilities && rendererCapabilities.crowdBatches));
+      points = sceneGroupRecords(points, hierarchy, "matrix");
+      computeParticles = sceneGroupRecords(computeParticles, hierarchy, "matrix");
+      labels = sceneGroupRecords(labels, hierarchy, "position");
+      sprites = sceneGroupRecords(sprites, hierarchy, "position");
+      html = sceneGroupRecords(html, hierarchy, "position");
+      lights = sceneGroupRecords(lights, hierarchy, "light");
+    }
     sceneBeginWorldBakedGeometryCacheBundle();
     const resolvedEnvironment = sceneResolveLightingEnvironment(environment, Array.isArray(lights) && lights.length > 0);
     const renderCamera = sceneRenderCamera(camera);
@@ -5361,7 +5408,7 @@
     }
     // Crowd agents leave the per-object walk here and return as one record
     // per batch after the ordinary objects.
-    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds) : objects;
+    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy) : objects;
     const selectedObjects = sceneSelectLODObjects(sceneObjects, renderCamera);
     sceneReserveBakedObjectAttributes(bundle, selectedObjects);
     appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
@@ -5379,7 +5426,7 @@
     for (const entry of html || []) {
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
-    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds);
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy);
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
     bundle.vertexCount = bundle.positions.length / 2;
@@ -5459,7 +5506,7 @@
     return cache.buffers[cache.current];
   }
 
-  function appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds) {
+  function appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy) {
     const meshes = Array.isArray(instancedMeshes) ? instancedMeshes : [];
     for (let index = 0; index < meshes.length; index += 1) {
       const mesh = meshes[index];
@@ -5475,8 +5522,9 @@
         _renderPassDerived: (mesh && mesh._renderPassDerived) === true,
       });
       if (typeof mesh.parentNode === "string" && mesh.parentNode !== "") {
-        const node = sceneCrowdBatchParentObject(objects, mesh.parentNode, mesh.id);
-        const world = node ? sceneObjectModelMatrix(node, timeSeconds) : null;
+        const retained = hierarchy && hierarchy.get(mesh.parentNode);
+        const node = retained ? null : sceneCrowdBatchParentObject(objects, mesh.parentNode, mesh.id);
+        const world = retained || (node ? sceneObjectModelMatrix(node, timeSeconds) : null);
         const composed = world && world.length >= 16 ? sceneInstancedMeshParentTransforms(mesh, world, entry) : null;
         if (composed) {
           entry.transforms = composed;
@@ -5816,6 +5864,41 @@
     group.colorGen += 1;
   }
 
+  // An agent that left its crowd batch still draws on the crowd shader, as a batch
+  // of its own; its tint comes from its own skin record.
+  function scenePrepareCrowdColors(batch) {
+    const objects = batch.objects;
+    let any = false;
+    for (let i = 0; i < batch.count; i++) {
+      const skin = objects[i]._crowdSkin;
+      if (skin && skin.tint) { any = true; break; }
+    }
+    if (!any) { batch.colors = null; return; }
+    const need = batch.count * 4;
+    let colors = batch.colors;
+    let changed = false;
+    if (!colors || colors.length !== need) { colors = batch.colors = new Float32Array(need); changed = true; }
+    for (let i = 0; i < batch.count; i++) {
+      const skin = objects[i]._crowdSkin, tint = skin && skin.tint;
+      for (let k = 0; k < 4; k++) {
+        const value = tint ? tint[k] : 1;
+        if (colors[i * 4 + k] !== value) { colors[i * 4 + k] = value; changed = true; }
+      }
+    }
+    if (changed) batch._colorGeneration = (batch._colorGeneration | 0) + 1;
+  }
+
+  // Pose commits preserve tint identity so animation never invalidates colors.
+  function sceneCommitCrowdPoseUpdates(updates) {
+    for (const update of updates) {
+      const skin = update.object._crowdSkin;
+      skin.rows.set(update.rows);
+      skin.rev += 1;
+      const tint = update.tint, held = skin.tint;
+      if (tint !== held && !(tint && held && tint[0] === held[0] && tint[1] === held[1] && tint[2] === held[2] && tint[3] === held[3])) skin.tint = tint;
+    }
+  }
+
   // ---- Batch parent ------------------------------------------------------
   //
   // A group whose agents were declared with a parentNode draws with that
@@ -5911,7 +5994,7 @@
 
   // sceneCrowdBatchPartition returns the objects that are NOT batched crowd
   // agents. When the scene has no crowd agent it returns its input unchanged.
-  function sceneCrowdBatchPartition(bundle, objects, timeSeconds) {
+  function sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy) {
     const list = Array.isArray(objects) ? objects : [];
     const epoch = ++sceneCrowdBatchEpoch;
     const active = sceneCrowdBatchActive = [];
@@ -6011,8 +6094,9 @@
       // A parented group follows its node every bundle, even when no agent changed.
       let parentMoved = false;
       if (group.parentNode !== "") {
-        const node = sceneCrowdBatchParentObject(rest, group.parentNode, group.batchID);
-        parentMoved = sceneCrowdBatchSetParent(group, node ? sceneObjectModelMatrix(node, timeSeconds) : null);
+        const retained = hierarchy && hierarchy.get(group.parentNode);
+        const node = retained ? null : sceneCrowdBatchParentObject(rest, group.parentNode, group.batchID);
+        parentMoved = sceneCrowdBatchSetParent(group, retained || (node ? sceneObjectModelMatrix(node, timeSeconds) : null));
         group.cut = node && node.cutawayCrowd || null; // vessel cutaway: Float32Array(8) clip planes (see vessel-cutaway)
       }
       if (group.n !== group.count) {
@@ -7627,11 +7711,13 @@
 
   function sceneLabelPoint(label, timeSeconds) {
     const offset = sceneLabelOffset(label, timeSeconds);
-    return {
+    const point = {
       x: label.x + offset.x,
       y: label.y + offset.y,
       z: label.z + offset.z,
     };
+    if (label._groupParentMatrix) sceneMatrixTransformInto(point,label._groupParentMatrix,point.x,point.y,point.z,4,true);
+    return point;
   }
 
   function sceneLabelOffset(label, timeSeconds) {
@@ -7648,11 +7734,13 @@
 
   function sceneSpritePoint(sprite, timeSeconds) {
     const offset = sceneSpriteOffset(sprite, timeSeconds);
-    return {
+    const point = {
       x: sceneNumber(sprite && sprite.x, 0) + offset.x,
       y: sceneNumber(sprite && sprite.y, 0) + offset.y,
       z: sceneNumber(sprite && sprite.z, 0) + offset.z,
     };
+    if (sprite._groupParentMatrix) sceneMatrixTransformInto(point,sprite._groupParentMatrix,point.x,point.y,point.z,4,true);
+    return point;
   }
 
   function sceneSpriteOffset(sprite, timeSeconds) {
@@ -7787,6 +7875,7 @@
       { x: -hw, y: -hh, z: 0 }, { x: hw, y: -hh, z: 0 },
     ].map(function(local) {
       const rotated = sceneRotatePoint(local, rx, ry, rz);
+      if (entry._groupParentMatrix) sceneMatrixTransformInto(rotated,entry._groupParentMatrix,rotated.x,rotated.y,rotated.z,4,false);
       return sceneProjectPoint({ x: origin.x + rotated.x, y: origin.y + rotated.y, z: origin.z + rotated.z }, camera, width, height);
     });
   }
@@ -7874,7 +7963,7 @@
   }
 
   function sceneHTMLTextureSurfaceObject(entry, point) {
-    return {
+    const surface = {
       x: point.x,
       y: point.y,
       z: point.z,
@@ -7896,6 +7985,7 @@
       driftSpeed: sceneNumber(entry.driftSpeed, 0),
       driftPhase: sceneNumber(entry.driftPhase, 0),
     };
+    return entry._groupParentMatrix ? window.__gosx_scene3d_hierarchy_api.surface(entry,point,surface) : surface;
   }
 
   function sceneHTMLTextureMaterialKey(entry, texture, opacity) {
@@ -8050,6 +8140,7 @@
     applySceneCommands,
     cancelEngineFrame,
     clearChildren,
+    sceneNormalizeParentMatrix,
     createSceneRenderBundle,
     sceneSelectLODObjects,
     SCENE_IR_VERSION: 1,
@@ -8075,6 +8166,9 @@
     sceneStateObjectsWithMaterials,
     sceneStatePointsWithMaterials,
     sceneStateInstancedMeshesWithMaterials,
+    scenePrepareInstancedTransforms,
+    scenePrepareInstancedColors,
+    scenePrepareCrowdColors,
     sceneResolveMaterialUniforms,
     // The legacy vertex-colour renderer moved to 16e-scene-webgl-legacy.js,
     // which ships only in bootstrap.js and in the WebGL chunk. Guard the read:

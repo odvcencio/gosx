@@ -71,6 +71,31 @@
       }
     ]
   },
+  "Cbrt": {
+    "digest": "61782316af9a59bce98954e36ca86c5246ae70d864969431623a79d76a676dfe",
+    "samples": [
+      {
+        "x": "bfefa825a9ff5c1c",
+        "want": "bfefe29c42f0592a"
+      },
+      {
+        "x": "bfc2c8d89a342810",
+        "want": "bfe0e106c5803a6a"
+      },
+      {
+        "x": "408a80770e229d10",
+        "want": "4022ee513380738c"
+      },
+      {
+        "x": "fe349d14a3e32d4d",
+        "want": "d4b168f37f4f47f4"
+      },
+      {
+        "x": "800010b194b15bd0",
+        "want": "aa79c2a1f03fcb5c"
+      }
+    ]
+  },
   "Cos": {
     "digest": "497e4316463d396218bef5cef10caf7d2087fd506e2a0eccad9288807de55903",
     "samples": [

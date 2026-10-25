@@ -1,6 +1,10 @@
 package geom
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // This file holds the parametric bodies. Every generator is centered on the
 // origin and matches the browser runtime's generator in 12-scene-geometry.ts and
@@ -117,18 +121,18 @@ func buildSphere(radius float64, longitudes, latitudes int, want Attribute) *Mes
 	rows := make([][]vertex, latitudes+1)
 	for lat := 0; lat <= latitudes; lat++ {
 		theta := float64(lat) * math.Pi / float64(latitudes)
-		sinT, cosT := math.Sin(theta), math.Cos(theta)
+		sinT, cosT := det.Sin(theta), det.Cos(theta)
 		row := make([]vertex, longitudes+1)
 		for lon := 0; lon <= longitudes; lon++ {
 			phi := float64(lon) * 2 * math.Pi / float64(longitudes)
-			sinP, cosP := math.Sin(phi), math.Cos(phi)
+			sinP, cosP := det.Sin(phi), det.Cos(phi)
 			t := float64(lat) / float64(latitudes)
-			normal := vec3{X: cosP * sinT, Y: cosT, Z: sinP * sinT}
+			normal := vec3{X: float64(cosP * sinT), Y: cosT, Z: float64(sinP * sinT)}
 			row[lon] = vertex{
 				position: scaleVec(normal, radius),
 				normal:   normal,
 				uv:       vec2{U: float64(lon) / float64(longitudes), V: t},
-				color:    vec3{X: 0.9 - 0.6*t, Y: 0.3 + 0.5*t, Z: 0.4 + 0.5*(1-t)},
+				color:    vec3{X: 0.9 - float64(0.6*t), Y: 0.3 + 0.5*t, Z: 0.4 + 0.5*(1-t)},
 			}
 		}
 		rows[lat] = row
@@ -178,15 +182,15 @@ func buildCylinder(radiusTop, radiusBottom, height float64, segments int, want A
 		u1 := float64(i+1) / float64(segments)
 		th0 := float64(i) * 2 * math.Pi / float64(segments)
 		th1 := float64(i+1) * 2 * math.Pi / float64(segments)
-		c0, s0 := math.Cos(th0), math.Sin(th0)
-		c1, s1 := math.Cos(th1), math.Sin(th1)
+		c0, s0 := det.Cos(th0), det.Sin(th0)
+		c1, s1 := det.Cos(th1), det.Sin(th1)
 		n0 := normalize(vec3{c0, slopeY, s0})
 		n1 := normalize(vec3{c1, slopeY, s1})
 
-		b0 := vertex{position: vec3{radiusBottom * c0, -halfH, radiusBottom * s0}, normal: n0, uv: vec2{u0, 1}, color: sideColor}
-		b1 := vertex{position: vec3{radiusBottom * c1, -halfH, radiusBottom * s1}, normal: n1, uv: vec2{u1, 1}, color: sideColor}
-		t0 := vertex{position: vec3{radiusTop * c0, halfH, radiusTop * s0}, normal: n0, uv: vec2{u0, 0}, color: sideColor}
-		t1 := vertex{position: vec3{radiusTop * c1, halfH, radiusTop * s1}, normal: n1, uv: vec2{u1, 0}, color: sideColor}
+		b0 := vertex{position: vec3{float64(radiusBottom * c0), -halfH, float64(radiusBottom * s0)}, normal: n0, uv: vec2{u0, 1}, color: sideColor}
+		b1 := vertex{position: vec3{float64(radiusBottom * c1), -halfH, float64(radiusBottom * s1)}, normal: n1, uv: vec2{u1, 1}, color: sideColor}
+		t0 := vertex{position: vec3{float64(radiusTop * c0), halfH, float64(radiusTop * s0)}, normal: n0, uv: vec2{u0, 0}, color: sideColor}
+		t1 := vertex{position: vec3{float64(radiusTop * c1), halfH, float64(radiusTop * s1)}, normal: n1, uv: vec2{u1, 0}, color: sideColor}
 
 		if radiusBottom > 0 && radiusTop > 0 {
 			b.tri(b0, t1, b1)
@@ -200,15 +204,15 @@ func buildCylinder(radiusTop, radiusBottom, height float64, segments int, want A
 		if radiusBottom > 0 {
 			down := vec3{0, -1, 0}
 			center := vertex{position: vec3{0, -halfH, 0}, normal: down, uv: vec2{0.5, 0.5}, color: bottomColor}
-			p0 := vertex{position: vec3{radiusBottom * c0, -halfH, radiusBottom * s0}, normal: down, uv: radialUV(c0, s0), color: bottomColor}
-			p1 := vertex{position: vec3{radiusBottom * c1, -halfH, radiusBottom * s1}, normal: down, uv: radialUV(c1, s1), color: bottomColor}
+			p0 := vertex{position: vec3{float64(radiusBottom * c0), -halfH, float64(radiusBottom * s0)}, normal: down, uv: radialUV(c0, s0), color: bottomColor}
+			p1 := vertex{position: vec3{float64(radiusBottom * c1), -halfH, float64(radiusBottom * s1)}, normal: down, uv: radialUV(c1, s1), color: bottomColor}
 			b.tri(center, p0, p1)
 		}
 		if radiusTop > 0 {
 			up := vec3{0, 1, 0}
 			center := vertex{position: vec3{0, halfH, 0}, normal: up, uv: vec2{0.5, 0.5}, color: topColor}
-			p0 := vertex{position: vec3{radiusTop * c0, halfH, radiusTop * s0}, normal: up, uv: radialUV(c0, s0), color: topColor}
-			p1 := vertex{position: vec3{radiusTop * c1, halfH, radiusTop * s1}, normal: up, uv: radialUV(c1, s1), color: topColor}
+			p0 := vertex{position: vec3{float64(radiusTop * c0), halfH, float64(radiusTop * s0)}, normal: up, uv: radialUV(c0, s0), color: topColor}
+			p1 := vertex{position: vec3{float64(radiusTop * c1), halfH, float64(radiusTop * s1)}, normal: up, uv: radialUV(c1, s1), color: topColor}
 			b.tri(center, p1, p0)
 		}
 	}
@@ -233,15 +237,15 @@ func buildTorus(majorRadius, tubeRadius float64, radialSegments, tubularSegments
 	vertexAt := func(i, j int) vertex {
 		u := float64(i) * 2 * math.Pi / float64(radialSegments)
 		v := float64(j) * 2 * math.Pi / float64(tubularSegments)
-		cu, su := math.Cos(u), math.Sin(u)
-		cv, sv := math.Cos(v), math.Sin(v)
-		radius := majorRadius + tubeRadius*cv
+		cu, su := det.Cos(u), det.Sin(u)
+		cv, sv := det.Cos(v), det.Sin(v)
+		radius := majorRadius + float64(tubeRadius*cv)
 		t := float64(j) / float64(tubularSegments)
 		return vertex{
-			position: vec3{X: radius * cu, Y: tubeRadius * sv, Z: radius * su},
-			normal:   normalize(vec3{X: cv * cu, Y: sv, Z: cv * su}),
+			position: vec3{X: float64(radius * cu), Y: float64(tubeRadius * sv), Z: float64(radius * su)},
+			normal:   normalize(vec3{X: float64(cv * cu), Y: sv, Z: float64(cv * su)}),
 			uv:       vec2{U: float64(i) / float64(radialSegments), V: t},
-			color:    vec3{X: 0.45 + 0.35*t, Y: 0.78 - 0.30*t, Z: 0.92},
+			color:    vec3{X: 0.45 + float64(0.35*t), Y: 0.78 - float64(0.30*t), Z: 0.92},
 		}
 	}
 
@@ -288,11 +292,11 @@ func buildTorusKnot(radius, tube float64, radialSegments, tubularSegments int, w
 	radial, tubular := radialSegments, tubularSegments
 
 	curveAt := func(theta float64) vec3 {
-		sweep := radius * (2.0 + math.Cos(lobes*theta)) * 0.5
+		sweep := radius * (2.0 + det.Cos(float64(lobes*theta))) * 0.5
 		return vec3{
-			X: sweep * math.Cos(windings*theta),
-			Y: sweep * math.Sin(windings*theta),
-			Z: radius * math.Sin(lobes*theta) * 0.5,
+			X: float64(sweep * det.Cos(windings*theta)),
+			Y: float64(sweep * det.Sin(windings*theta)),
+			Z: radius * det.Sin(float64(lobes*theta)) * 0.5,
 		}
 	}
 	tangentAt := func(theta float64) vec3 {
@@ -327,10 +331,10 @@ func buildTorusKnot(radius, tube float64, radialSegments, tubularSegments int, w
 	// then spread it over the whole sweep so the tube closes without a visible
 	// twist.
 	last, first := normals[tubular], normals[0]
-	turn := math.Atan2(dotVec(crossVec(last, first), tangents[tubular]), dotVec(last, first))
+	turn := det.Atan2(dotVec(crossVec(last, first), tangents[tubular]), dotVec(last, first))
 	for i := 1; i <= tubular; i++ {
 		angle := turn * float64(i) / float64(tubular)
-		cos, sin := math.Cos(angle), math.Sin(angle)
+		cos, sin := det.Cos(angle), det.Sin(angle)
 		normal, binormal := normals[i], binormals[i]
 		normals[i] = addVec(scaleVec(normal, cos), scaleVec(binormal, sin))
 		binormals[i] = subVec(scaleVec(binormal, cos), scaleVec(normal, sin))
@@ -342,13 +346,13 @@ func buildTorusKnot(radius, tube float64, radialSegments, tubularSegments int, w
 		t := float64(i) / float64(tubular)
 		for j := 0; j < stride; j++ {
 			phi := 2 * math.Pi * float64(j) / float64(radial)
-			cos, sin := math.Cos(phi), math.Sin(phi)
+			cos, sin := det.Cos(phi), det.Sin(phi)
 			out := addVec(scaleVec(normals[i], cos), scaleVec(binormals[i], sin))
 			b.emit(vertex{
 				position: addVec(centers[i], scaleVec(out, tube)),
 				normal:   out,
 				uv:       vec2{U: t, V: float64(j) / float64(radial)},
-				color:    vec3{X: 0.45 + 0.35*t, Y: 0.78 - 0.30*t, Z: 0.92},
+				color:    vec3{X: 0.45 + float64(0.35*t), Y: 0.78 - float64(0.30*t), Z: 0.92},
 			})
 		}
 	}

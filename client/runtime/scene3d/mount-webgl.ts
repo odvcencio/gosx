@@ -1071,9 +1071,8 @@
   }
 
   function sceneApplyModelRenderFlags(instanced, model) {
-    if (!instanced || !model) {
-      return;
-    }
+    if (!instanced || !model) return;
+    if (model.parentNode) instanced.parentNode = model.parentNode;
     if (typeof model.castShadow === "boolean") {
       instanced.castShadow = model.castShadow;
     }
@@ -3903,17 +3902,7 @@
     } else {
       for (const object of staged.objects) object.parentMatrix = matrix;
     }
-    if (crowdRows) {
-      for (const update of crowdRows) {
-        const skin = update.object._crowdSkin;
-        skin.rows.set(update.rows);
-        skin.rev += 1;
-        // A recolour arrives as a pose patch. Keep the reference while the colour is unchanged:
-        // the crowd batch compares references to find the agents it must repack.
-        const tint = update.tint, held = skin.tint;
-        if (tint !== held && !(tint && held && tint[0] === held[0] && tint[1] === held[1] && tint[2] === held[2] && tint[3] === held[3])) skin.tint = tint;
-      }
-    }
+    if (crowdRows) sceneCommitCrowdPoseUpdates(crowdRows);
     staged.rigidInstanceModel = staged.model = model;
   }
 

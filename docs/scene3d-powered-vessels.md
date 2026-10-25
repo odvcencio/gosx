@@ -259,3 +259,11 @@ node client/js/scene3d-vessel-powered.bench.mjs                 # cost
 SCENE3D_TOOLS_DIR=<dir> SCENE3D_BROWSER=<chromium> \
   node scripts/scene3d-vessel-cutaway.mjs [shadows]             # pixels in a real browser
 ```
+
+Primitive `InstancedMesh.ParentNode` batches use the same named-parent lookup
+in WebGL2, WebGPU, native previews and `AtTime` picking. An explicit parent
+owns the batch coordinate space, including when the batch is declared inside
+another group; that structural group is not baked a second time. Exact object
+or model IDs take priority over imported part prefixes. A retained `Group` ID
+can carry a batch directly. Missing parents temporarily leave it in world
+space; strict SceneIR validation reports an unresolved primitive-batch parent.

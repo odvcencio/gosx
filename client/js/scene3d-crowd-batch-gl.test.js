@@ -95,15 +95,27 @@ test("a pose crowd draws as one instanced call and uploads its streams once", ()
   assert.equal(drawn(h.gl, before).length, 1);
   assert.equal(streamUploads(h.gl, before), 0, "an unchanged crowd uploads no stream data");
 
-  // Frame three: one agent's pose row changes. The batch uploads its streams again.
+  // Frame three: only the changed pose word uploads; transforms stay resident.
   h.objects[5]._crowdSkin.rows[2] = .9;
   h.objects[5]._crowdSkin.rev += 1;
   const mark = h.gl.ops.length;
   const posed = h.build();
   assert.equal(posed.meshObjects[0].crowdRevision, revision + 1);
   h.renderer.render(posed, viewport);
-  assert.ok(streamUploads(h.gl, mark) >= 2, "transform and pose streams upload after a revision change");
+  assert.equal(streamUploads(h.gl, mark), 1, "only the changed pose stream uploads");
+  const poseUploads = h.gl.ops.slice(mark).filter(op => op[0] === "bufferSubData");
+  assert.deepEqual(poseUploads.map(op => op.slice(3)), [[(5 * 3 + 2) * 4, 1]], "one changed pose word");
   assert.equal(drawn(h.gl, mark).length, 1);
+
+  // Frame four: moving that agent must update its transform without resending poses.
+  h.objects[5].parentMatrix[12] += 1;
+  h.objects[5]._crowdSkin.rev += 1;
+  const transformMark = h.gl.ops.length;
+  h.renderer.render(h.build(), viewport);
+  assert.equal(streamUploads(h.gl, transformMark), 1, "only the changed transform stream uploads");
+  const transformUploads = h.gl.ops.slice(transformMark).filter(op => op[0] === "bufferSubData");
+  assert.deepEqual(transformUploads.map(op => op.slice(3)), [[(5 * 16 + 12) * 4, 1]], "one changed matrix word");
+  assert.equal(drawn(h.gl, transformMark).length, 1);
   h.renderer.dispose();
 });
 
@@ -215,8 +227,8 @@ test("a tinted pose crowd binds one colour per agent and uploads it only when a 
   assert.equal(record.crowdRevision, posedRevision, "a recolour is not a pose revision");
   assert.deepEqual(Array.from(record.crowdColors), expected);
   h.renderer.render(recolored, viewport);
-  const colorUploads = h.gl.ops.slice(mark).filter(op => (op[0] === "bufferSubData" || op[0] === "bufferData") && (op[4] === 24 || op[3] === 24));
-  assert.equal(colorUploads.length, 1, "exactly one colour upload after the recolour");
+  const colorUploads = h.gl.ops.slice(mark).filter(op => (op[0] === "bufferSubData" || op[0] === "bufferData") && op[0] === "bufferSubData" && op[3] === 16 && op[4] === 3);
+  assert.equal(colorUploads.length, 1, "one changed RGB span at the second agent, reusing the resident colour buffer");
   assert.equal(drawn(h.gl, mark).length, 1);
   h.renderer.dispose();
 });

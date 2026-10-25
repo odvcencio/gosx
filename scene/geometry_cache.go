@@ -113,6 +113,7 @@ func geometryStorageBytes(g BufferGeometry) int64 {
 	bytes := int64(len(g.Positions)+len(g.Normals)+len(g.UVs)+len(g.Tangents)) * 8
 	// Conservatively account native-width indices as 64-bit on every target.
 	bytes += int64(len(g.Indices)) * 8
+	//gosx:allow map-range sums or copies each entry independently; order does not matter
 	for name, attribute := range g.Attributes {
 		bytes += int64(len(name)) + int64(len(attribute.Data))*8
 	}
@@ -139,6 +140,7 @@ func ownGeometry(g BufferGeometry) BufferGeometry {
 	}
 	if g.Attributes != nil {
 		attributes := make(map[string]BufferAttribute, len(g.Attributes))
+		//gosx:allow map-range sums or copies each entry independently; order does not matter
 		for name, attribute := range g.Attributes {
 			attribute.Data = copyFloats(attribute.Data)
 			attributes[strings.Clone(name)] = attribute

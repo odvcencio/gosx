@@ -1,3 +1,5 @@
+//gosx:deterministic
+
 // Package geom generates the triangles of every built-in GoSX geometry.
 //
 // One generator serves three consumers:
@@ -19,6 +21,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"m31labs.dev/gosx/det"
 )
 
 // Attribute selects the vertex streams a build fills. Positions are always
@@ -277,22 +281,22 @@ func BoundingRadius(params Params) float64 {
 	params = Normalize(params)
 	switch params.Kind {
 	case KindCube:
-		return math.Sqrt(3*params.Size*params.Size) * 0.5
+		return math.Sqrt(float64(3*params.Size*params.Size)) * 0.5
 	case KindBox, KindPyramid:
-		return math.Sqrt(params.Width*params.Width+params.Height*params.Height+params.Depth*params.Depth) * 0.5
+		return math.Sqrt(float64(params.Width*params.Width)+float64(params.Height*params.Height)+float64(params.Depth*params.Depth)) * 0.5
 	case KindPlane:
-		return math.Sqrt(params.Width*params.Width+params.Height*params.Height) * 0.5
+		return math.Sqrt(float64(params.Width*params.Width)+float64(params.Height*params.Height)) * 0.5
 	case KindSphere:
 		return params.Radius
 	case KindCylinder, KindCone:
 		r := math.Max(params.RadiusTop, params.RadiusBottom)
-		return math.Hypot(r, params.Height*0.5)
+		return det.Hypot(r, params.Height*0.5)
 	case KindTorus:
 		return params.Radius + params.Tube
 	case KindTorusKnot:
 		// The center curve reaches 1.5*radius from the origin, at the turn where
 		// it leaves the Z axis, so the tube adds its whole radius.
-		return params.Radius*1.5 + params.Tube
+		return float64(params.Radius*1.5) + params.Tube
 	}
 	return 0
 }

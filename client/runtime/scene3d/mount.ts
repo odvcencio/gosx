@@ -67,7 +67,7 @@
       props = resolved.props;
       initialRuntimeCommands = resolved.commands;
     }
-    const sceneState = createSceneState(props, capability);
+    const sceneState = await scenePrepareGroups(createSceneState(props, capability));
     sceneState._textureDeliveryProfile = String(props.textureDeliveryProfile || "").trim().toLowerCase();
     if (!["", "auto", "low", "standard", "high"].includes(sceneState._textureDeliveryProfile)) {
       throw new TypeError("invalid Scene3D texture delivery profile");
@@ -226,7 +226,7 @@
       if (sceneHasTimeDrivenMaterials(sceneState)) {
         return { wants: true, reason: "material-clock" };
       }
-      if (sceneStateObjects(sceneState).some(sceneObjectAnimated)) {
+      if (sceneStateObjects(sceneState).some(sceneObjectAnimated) || sceneState.groups?.some(sceneObjectAnimated)) {
         return { wants: true, reason: "object-animation" };
       }
       if (sceneStateLabels(sceneState).some(sceneLabelAnimated)) {
@@ -258,8 +258,7 @@
         return true;
       }
       const layout = entry.shaderLayout;
-      const block = layout && layout.uniformBlock;
-      const fields = block && (block.fields || block.Fields);
+      const fields = layout?.uniformBlock?.fields || layout?.uniformBlock?.Fields;
       return Array.isArray(fields) && fields.some(field => field && (field.name === "time" || field.Name === "time"));
     }
 
@@ -512,7 +511,7 @@
       const active = !disposing && sceneCanRender();
       const paused = sceneWaterSystemsPaused(sceneState);
       if (!force && rendererLifecycleActive === active && rendererLifecyclePaused === paused) return;
-      if (adaptiveQuality && active && !paused && (rendererLifecycleActive !== true || rendererLifecyclePaused === true)) {
+      if (active && !paused && (rendererLifecycleActive !== true || rendererLifecyclePaused === true)) {
         adaptiveQuality.resumePending = true;
         adaptiveQuality.lastRAFNowMS = null;
       }
@@ -543,7 +542,7 @@
       if (outcome !== "submitted") return false;
       submittedFrameSerial++;
       clockSubmission.submitted = meta.clockRevision;
-      const request = meta && meta.frameRequest;
+      const request = meta?.frameRequest;
       if (request && pendingFrameRequest === request &&
           sceneFrameRequestSubmitted(request, sceneState, lastMountCommandRevision, outcome)) {
         pendingFrameRequest = null;
@@ -566,7 +565,7 @@
         ? nowMS - lastSceneRenderNowMS
         : 0;
       lastSceneRenderNowMS = active ? nowMS : null;
-      const qualityEnabled = Boolean(adaptiveQuality && adaptiveQuality.enabled);
+      const qualityEnabled = Boolean(adaptiveQuality.enabled);
       const qualityProfile = qualityEnabled && adaptiveQuality.activeProfile
         ? adaptiveQuality.activeProfile
         : null;
@@ -577,15 +576,16 @@
         nowMS: nowMS,
         // Declarative scene seconds; telemetry retains the separate wall clock.
         sceneTime: clockSeconds,
+        oceanTier: sceneLowHardware() ? "low" : "high",
         clockRevision: clockSubmission.requested,
         displayDeltaMS: displayDeltaMS,
         active: active,
         qualityEnabled: qualityEnabled,
-        qualityTier: adaptiveQuality && adaptiveQuality.tier ? adaptiveQuality.tier : "fixed",
-        qualityRevision: Math.max(0, Math.floor(sceneNumber(adaptiveQuality && adaptiveQuality.qualityRevision, 0))),
+        qualityTier: adaptiveQuality.tier || "fixed",
+        qualityRevision: Math.max(0, Math.floor(sceneNumber(adaptiveQuality.qualityRevision, 0))),
         qualityProfile: qualityProfile,
         detailEnabled: sceneDetailQualityEnabled(adaptiveQuality),
-        atmosphereTier: sceneAtmosphereTier(adaptiveQuality, capability && capability.tier),
+        atmosphereTier: sceneAtmosphereTier(adaptiveQuality, capability.tier),
         qualityRequestedTier: adaptiveQuality.requestedTier,
         qualityActiveTier: adaptiveQuality.activeTier,
         performanceMeasurement: adaptiveQuality.lastMeasurement,
@@ -646,7 +646,7 @@
       }
       for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index];
-        const id = entry && entry.id;
+        const id = entry?.id;
         if (id != null && String(id).trim() !== "") {
           target.add(String(id));
         }
@@ -795,7 +795,7 @@
 
     function readSceneWebGPUProgress() {
       const progress = renderer && typeof renderer.getFrameProgress === "function" ? renderer.getFrameProgress() : null;
-      return { seq: progress && progress.frameSeq || 0, at: progress && progress.frameAt || 0 };
+      return { seq: progress?.frameSeq || 0, at: progress?.frameAt || 0 };
     }
 
     /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ function publishSceneRenderWatchdogState(reason, stalledFor) {
@@ -841,7 +841,7 @@
       // .deviceLostInfo, and adapterInfo, which diagnostics() already
       // carries through from the shared probe snapshot).
       const priorDiagnostics = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
-      const priorLostInfo = priorDiagnostics && priorDiagnostics.deviceLostInfo;
+      const priorLostInfo = priorDiagnostics?.deviceLostInfo;
       renderWatchdogDeviceLostInfo = priorLostInfo ? {
         reason: priorLostInfo.reason || "",
         message: priorLostInfo.message || "",
@@ -849,7 +849,7 @@
       } : null;
       publishSceneRenderWatchdogState(recoveryReason, stalledFor || 0);
       gosxSceneEmit("warn", "render-watchdog-recovery", {
-        rendererKind: renderer && renderer.kind ? renderer.kind : "",
+        rendererKind: renderer?.kind || "",
         reason: recoveryReason,
         stalledForMS: Math.round(stalledFor || 0),
         recoveryCount: renderWatchdogRecoveries,
@@ -863,7 +863,7 @@
       viewportDirty = true;
       if (!forceFallback && renderer && renderer.kind === "webgpu") {
         const recreated = createSceneRenderer(canvas, props, capability);
-        const nextRenderer = recreated && recreated.renderer;
+        const nextRenderer = recreated?.renderer;
         if (nextRenderer && nextRenderer.kind === "webgpu" && nextRenderer !== renderer) {
           if (swapRenderer(nextRenderer, recoveryReason)) {
             if (nativeOnly) {
@@ -1237,7 +1237,7 @@
         }
         voluntaryRestorePending = false;
         gosxSceneEmit("warn", "webgl-voluntary-restore-watchdog", {
-          rendererKind: renderer && renderer.kind ? renderer.kind : "",
+          rendererKind: renderer?.kind || "",
           forcing: true,
         });
         if (!renderer || renderer.kind === "webgl") {
@@ -1567,7 +1567,7 @@
       sceneRendererRecentlySwapped = true;
       sceneRendererLastSwapReason = fallbackReason || "";
       gosxSceneEmit("info", "renderer-swap", {
-        from: previous && previous.kind ? previous.kind : "",
+        from: previous?.kind || "",
         to: nextRenderer.kind || "",
         reason: fallbackReason || "",
 		      });
@@ -1889,7 +1889,7 @@
     // instanced mesh count, lights, post-fx, etc.) in the server slog.
     function emitRendererWarmup(reason, bundle) {
       gosxSceneEmit("info", "renderer-warmup", {
-        rendererKind: renderer && renderer.kind ? renderer.kind : "",
+        rendererKind: renderer?.kind || "",
         reason: reason || "",
         bundleMeshObjects: Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0,
         bundleInstancedMeshes: Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0,
@@ -1912,7 +1912,7 @@
         return false;
       }
       const restoredRenderer = createSceneRenderer(canvas, props, capability);
-      const webglRenderer = restoredRenderer && restoredRenderer.renderer;
+      const webglRenderer = restoredRenderer?.renderer;
       if (!webglRenderer || webglRenderer.kind !== "webgl") {
         if (webglRenderer && typeof webglRenderer.dispose === "function") {
           webglRenderer.dispose();
@@ -2163,7 +2163,7 @@
     }
 
     function sceneCSSExternalStyleSignature(element) {
-      const style = element && element.style;
+      const style = element?.style;
       if (!style) {
         return "";
       }
@@ -2506,16 +2506,14 @@
       scheduleRender("signal-gizmo-mode");
     }
 
+    function mountedSceneController(): any { return sceneControlHandle && sceneControlHandle.controller; }
     function currentMountedSceneCamera(sourceCamera) {
       return sceneRenderCamera(sceneViewportCamera(sceneCurrentControlCamera(
-        sceneControlHandle && sceneControlHandle.controller,
-        sourceCamera || readSceneSourceCamera(),
-        sceneState._scrollCamera,
-      ), sceneState.camera, viewport));
+        mountedSceneController(), sourceCamera || readSceneSourceCamera(), sceneState._scrollCamera), sceneState.camera, viewport));
     }
 
     function currentMountedSceneOrbitState() {
-      const controller = sceneControlHandle && sceneControlHandle.controller;
+      const controller = sceneControlHandle?.controller;
       if (!controller || controller.mode !== "orbit") {
         return null;
       }
@@ -2559,18 +2557,17 @@
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
 	      const currentCamera = currentMountedSceneCamera();
 	      const nextCamera = normalizeSceneCamera(camera, currentCamera);
-	      if (sceneCameraEquivalent(currentCamera, nextCamera)) {
-	        return false;
-	      }
+	      // The orbit target and limits change first, so the orbit continues from the new target.
+	      if (!sceneControlsApplyOrbit(mountedSceneController(), camera.orbit) && sceneCameraEquivalent(currentCamera, nextCamera)) return false;
 	      sceneState.camera = nextCamera;
-	      applySceneControlsCamera(sceneControlHandle && sceneControlHandle.controller, nextCamera);
+	      applySceneControlsCamera(mountedSceneController(), nextCamera);
 	      scheduleRender(reason || "camera");
 	      publishMountedSceneCamera(nextCamera, reason || "camera");
 	      return true;
 	    }
     const renderTiming = { cpuSubmitMS: 0, frameIntervalMS: 0, submitAtMS: 0 };
     function buildSceneDebugSnapshot(mode) {
-      const rendererKind = renderer && renderer.kind ? renderer.kind : "";
+      const rendererKind = renderer?.kind || "";
       const rendererDiagnostics = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const surfaceID = sceneDebugMountID(mount, ctx.id);
       const counts = sceneDebugBundleCounts(latestBundle, sceneState);
@@ -2578,7 +2575,7 @@
       const snapshot = {
         schema: SCENE3D_DEBUG_SCHEMA,
         id: surfaceID,
-        mountID: mount && mount.id ? String(mount.id) : "",
+        mountID: mount?.id ? String(mount.id) : "",
         engineID: String(ctx.id || ""),
         component: String(ctx.component || ""),
         renderer: rendererKind,
@@ -2609,7 +2606,7 @@
     }
     const releaseSceneDebugSurface = sceneDebugRegisterSurface({
       id: sceneDebugMountID(mount, ctx.id),
-      mountID: mount && mount.id ? String(mount.id) : "",
+      mountID: mount?.id ? String(mount.id) : "",
       engineID: String(ctx.id || ""),
       component: String(ctx.component || ""),
       mount: mount,
@@ -2851,7 +2848,7 @@
             return applyMountedSceneCamera(camera, "managed-control-forms-camera");
           },
           getControlTarget: function() {
-            return sceneControlsTarget(props);
+            return sceneControlsCurrentTarget(mountedSceneController(), props);
           },
           stopCameraInertia: function() {
             if (!sceneControlHandle || typeof sceneControlHandle.stopInertia !== "function") {
@@ -2904,7 +2901,7 @@
         const c = i + 3;
         if (c + width > count) break;
         i = c + width;
-        if (ref == null || prop == null) continue;
+        if (ref == null || prop == null || prop === "rotation" && arity === 4 && window.__gosx_scene3d_hierarchy_api?.spin(sceneState, ref, timeSeconds, f, c)) continue;
         let data = null;
         if (prop === "position" && width >= 3) {
           data = { x: f[c], y: f[c + 1], z: f[c + 2] };
@@ -3089,7 +3086,7 @@
         applySceneRenderLoopState(initReason);
         return;
       }
-      if (disposed) return;
+      if (disposed || sceneState._hierarchyPending) return;
       const frameStart = sceneFrameNowMS();
       const perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
       recordScenePerfCounter("render:" + (reason || "animation"));
@@ -3123,7 +3120,7 @@
       if (dayCycle) dayCycle.advance(timeSeconds);
       if (exploration) exploration.advance(timeSeconds);
       // @ts-ignore TS7005 -- the optional authority is installed after renderer creation
-      const advanceVessel = sceneControlHandle && sceneControlHandle.advance;
+      const advanceVessel = sceneControlHandle?.advance;
       if (advanceVessel) {
         advanceVessel(frameDeltaSeconds, frameStart / 1000,
           sceneQualityLadderPointBudgetScale(adaptiveQuality), animationPaused, timeSeconds);
@@ -3214,13 +3211,13 @@
         sceneState.postFXMaxPixels,
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
         {
-          retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true),
-          worldBakedAttributeViews: Boolean(renderer && renderer.supportsWorldBakedAttributeViews === true),
-          rigidImportedBatches: Boolean(renderer && renderer.supportsRigidImportedBatches === true),
+          retainedGeometry: renderer?.supportsRetainedGeometry === true,
+          worldBakedAttributeViews: renderer?.supportsWorldBakedAttributeViews === true,
+          rigidImportedBatches: renderer?.supportsRigidImportedBatches === true,
           // Only the PBR WebGL renderer can draw a crowd batch record.
           crowdBatches: Boolean(renderer && typeof renderer.prepareCrowdMotionShaders === "function"),
-          meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
-        },
+          meshWireframeFallback: renderer?.kind === "canvas",
+        }, sceneState,
       ), sceneState, sceneControlHandle);
       latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
@@ -3280,7 +3277,7 @@
         return;
       }
       gosxSceneEmit("error", "render-empty", {
-        rendererKind: renderer && renderer.kind ? renderer.kind : "",
+        rendererKind: renderer?.kind || "",
         lastSwapReason: reason,
         scenePoints: pointCount,
         sceneObjects: objectCount,
@@ -3323,7 +3320,7 @@
               ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
               : null;
             gosxSceneEmit("error", "render-canvas-blank", {
-              rendererKind: renderer && renderer.kind ? renderer.kind : "",
+              rendererKind: renderer?.kind || "",
               lastSwapReason: reason || "",
               bundleMeshObjects: stats ? stats.bundleMeshObjects : 0,
               bundleInstancedMeshes: stats ? stats.bundleInstancedMeshes : 0,
@@ -3490,6 +3487,7 @@
       }
       const postSource = sceneState._adaptiveSourcePostEffects;
       const result = applySceneCommands(sceneState, commands);
+      if (sceneControlsFollowCameraCommands(mountedSceneController(), sceneState, commands)) publishMountedSceneCamera(sceneState.camera, reason || "commands");
       if (postSource !== sceneState._adaptiveSourcePostEffects) sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
@@ -3523,7 +3521,7 @@
       getAnimationClock() { return {timeSeconds: clockSeconds, paused: animationPaused, pending: clockSubmission.submitted !== clockSubmission.requested}; },
       setAnimationClock(c) {
         if (disposed) throw new Error("disposed");
-        const seconds = c && c.timeSeconds;
+        const seconds = c?.timeSeconds;
         if (!Number.isFinite(seconds) || seconds < 0 || seconds > 86400) throw new RangeError("timeSeconds");
         if (c.paused !== undefined && typeof c.paused !== "boolean") throw new TypeError("paused");
         clockSeconds = seconds; animationPaused = c.paused !== false;
@@ -3584,6 +3582,7 @@
       setCamera(camera) {
         return applyMountedSceneCamera(camera, "handle-camera");
       },
+      setOrbit(orbit: any) { return applyMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit"); },
       async applyTextureProfile(requests: any[], profile: string, signal: AbortSignal, module: any) {
         return sceneApplyMountedTextureProfile(sceneState, mount, requests, profile, signal, module, {
           disposed: () => disposed,

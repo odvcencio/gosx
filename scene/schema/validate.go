@@ -43,6 +43,7 @@ type Report struct {
 }
 
 type Document struct {
+	Groups             []scene.GroupIR            `json:"groups,omitempty"`
 	Schema             string                     `json:"schema,omitempty"`
 	Objects            []scene.ObjectIR           `json:"objects,omitempty"`
 	Models             []scene.ModelIR            `json:"models,omitempty"`
@@ -83,6 +84,7 @@ func ValidateJSON(data []byte, opts Options) Report {
 
 func validateParentMatricesRawDocument(report *Report, data []byte) {
 	var raw struct {
+		Groups             []json.RawMessage `json:"groups"`
 		Objects            []json.RawMessage `json:"objects"`
 		Models             []json.RawMessage `json:"models"`
 		Points             []json.RawMessage `json:"points"`
@@ -99,6 +101,7 @@ func validateParentMatricesRawDocument(report *Report, data []byte) {
 			validateParentMatrixRaw(report, record, fmt.Sprintf("%s[%d].parentMatrix", family, index), "")
 		}
 	}
+	validateRecords(raw.Groups, "groups")
 	validateRecords(raw.Objects, "objects")
 	validateRecords(raw.Models, "models")
 	validateRecords(raw.Points, "points")
@@ -232,6 +235,65 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		}
 	}
 
+	if _, err := scene.GroupWorldMatrices(doc.Groups, 0); err != nil {
+		report.add(Error, "scene.group.invalid", err.Error(), "groups", "", nil)
+	}
+	groupIDs := map[string]bool{}
+	for i, group := range doc.Groups {
+		path := fmt.Sprintf("groups[%d]", i)
+		addID(group.ID, path+".id", true)
+		addTargetID(group.ID)
+		animatableIDs[group.ID] = struct{}{}
+		groupIDs[group.ID] = true
+	}
+	checkParent := func(parent, id, path string) {
+		if parent != "" && !groupIDs[parent] {
+			report.add(Error, "scene.group.unknown_parent", "Scene record refers to an unknown retained group", path+".parentNode", id, nil)
+		}
+	}
+	for i, r := range doc.Objects {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("objects[%d]", i))
+	}
+	for i, r := range doc.Models {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("models[%d]", i))
+	}
+	for i, r := range doc.Points {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("points[%d]", i))
+	}
+	for i, r := range doc.InstancedMeshes {
+		if r.ParentNode == "" || groupIDs[r.ParentNode] {
+			continue
+		}
+		known := false
+		for _, object := range doc.Objects {
+			known = known || object.ID == r.ParentNode || strings.HasPrefix(object.ID, r.ParentNode+"/")
+		}
+		for _, model := range doc.Models {
+			known = known || model.ID == r.ParentNode || strings.HasPrefix(model.ID, r.ParentNode+"/")
+		}
+		if !known {
+			severity := Warn
+			if opts.Strict {
+				severity = Error
+			}
+			report.add(severity, "scene.instance.unknown_parent", "Instanced batch parent is absent; live rendering uses world space until it appears", fmt.Sprintf("instancedMeshes[%d].parentNode", i), r.ID, nil)
+		}
+	}
+	for i, r := range doc.ComputeParticles {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("computeParticles[%d]", i))
+	}
+	for i, r := range doc.Labels {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("labels[%d]", i))
+	}
+	for i, r := range doc.Sprites {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("sprites[%d]", i))
+	}
+	for i, r := range doc.HTML {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("html[%d]", i))
+	}
+	for i, r := range doc.Lights {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("lights[%d]", i))
+	}
 	for i, object := range doc.Objects {
 		path := fmt.Sprintf("objects[%d]", i)
 		addID(object.ID, path+".id", object.Pickable != nil && *object.Pickable)
@@ -285,8 +347,16 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		if len(mesh.Instances) == 0 {
 			report.add(Warn, "scene.instances.empty", "Instanced GLB mesh has no instances", path+".instances", mesh.ID, nil)
 		}
+		for j, color := range mesh.Palette {
+			if strings.TrimSpace(color) == "" {
+				report.add(Error, "scene.instance.empty_tint", "Instance palette colors must not be empty", fmt.Sprintf("%s.palette[%d]", path, j), mesh.ID, nil)
+			}
+		}
 		for j, instance := range mesh.Instances {
 			instancePath := fmt.Sprintf("%s.instances[%d]", path, j)
+			if instance.Tint < 0 || instance.Tint > len(mesh.Palette) {
+				report.add(Error, "scene.instance.tint_range", "Instance tint must be zero or a 1-based palette index", instancePath+".tint", mesh.ID, nil)
+			}
 			addOptionalID(instance.ID, instancePath+".id")
 			validateMeshInstance(report, instance, instancePath, mesh.ID)
 		}

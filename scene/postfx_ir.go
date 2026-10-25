@@ -740,9 +740,11 @@ func lowerCustomPost(cp CustomPost) *CustomPostIR {
 	}
 	// Merge material defaults with per-call overrides. Overrides win.
 	merged := make(map[string]any, len(cp.Material.Uniforms)+len(cp.Uniforms))
+	//gosx:allow map-range copies entries independently; Uniforms then overrides Material.Uniforms by key
 	for k, v := range cp.Material.Uniforms {
 		merged[k] = v
 	}
+	//gosx:allow map-range copies entries independently; Uniforms then overrides Material.Uniforms by key
 	for k, v := range cp.Uniforms {
 		merged[k] = v
 	}

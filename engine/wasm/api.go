@@ -11,6 +11,9 @@
 // context supplied to asynchronous scene/navigation operations and dispose
 // subscriptions from the engine Handle; PlayFrames and TransitionCamera then
 // release their frame callbacks and pause naturally while the page is hidden.
+//
+// A loop on the page must wait for the browser between iterations, or the page
+// freezes: write it with EachFrame (docs/engine-frame-loop.md).
 package wasm
 
 import (

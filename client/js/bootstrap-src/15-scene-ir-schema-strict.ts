@@ -35,6 +35,7 @@
       validateSceneStrictOptionalInteger(diagnostics, ir.postFXMaxPixels, "postFXMaxPixels", "scene.postfx.invalid_max_pixels", "postFXMaxPixels must not be negative", "", true);
       validateSceneStrictOptionalInteger(diagnostics, ir.shadowMaxPixels, "shadowMaxPixels", "scene.shadow.invalid_max_pixels", "shadowMaxPixels must not be negative", "", true);
 
+      var groups = sceneStrictTopLevelArray(diagnostics, ir, "groups");
       var objects = sceneStrictTopLevelArray(diagnostics, ir, "objects");
       var models = sceneStrictTopLevelArray(diagnostics, ir, "models");
       var points = sceneStrictTopLevelArray(diagnostics, ir, "points");
@@ -49,6 +50,28 @@
       var lights = sceneStrictTopLevelArray(diagnostics, ir, "lights");
       var postEffects = sceneStrictTopLevelArray(diagnostics, ir, "postEffects");
 
+      var groupIDs=new Set(groups.map(group=>group && group.id));
+      groups.forEach(function(group,index) {
+        var path="groups["+index+"]";
+        checkSceneStrictID(diagnostics,seenIDs,knownIDs,group && group.id,path+".id",true);
+        validateSceneStrictFiniteScalars(diagnostics,group || {},path,["x","y","z","rotationX","rotationY","rotationZ","spinX","spinY","spinZ","scaleX","scaleY","scaleZ"],"scene.group.non_finite","Group transform must be finite",group && group.id);
+        validateSceneStrictParentMatrix(diagnostics,group && group.parentMatrix,path+".parentMatrix",group && group.id);
+      });
+      [groups,objects,models,points,instancedMeshes,computeParticles,labels,sprites,html,lights].forEach(function(records) {
+        records.forEach(function(record) {
+          if (record && record.parentNode && !groupIDs.has(record.parentNode)) pushSceneStrictDiagnostic(diagnostics,"error","scene.group.unknown_parent","Unknown retained group", "parentNode",record.id);
+        });
+      });
+      var groupParents=new Map(groups.map(group=>[group && group.id,group && group.parentNode]));
+      var complete=new Set();
+      groups.forEach(function(group) {
+        var visiting=new Set(),id=group && group.id;
+        while(id && groupParents.has(id) && !complete.has(id)) {
+          if(visiting.has(id)) {pushSceneStrictDiagnostic(diagnostics,"error","scene.group.cycle","Retained groups form a parent cycle","groups",id);break;}
+          visiting.add(id);id=groupParents.get(id);
+        }
+        visiting.forEach(id=>complete.add(id));
+      });
       objects.forEach(function(object, index) {
         var path = "objects[" + index + "]";
         if (object && object.interactive === true && !sceneStrictString(object.label)) {

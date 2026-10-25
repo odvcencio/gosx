@@ -196,39 +196,102 @@ func TestPointsGeneratorGoldenBits(t *testing.T) {
 	}
 }
 
-// TestCanonicalSinMatchesStdlib documents the empirical basis for the whole
-// design: the ported sine reproduces Go's own math.Sin exactly across the
-// argument range a point generator reaches, so adopting the canonical kernel
-// does not move any existing point. (Go's math.Sin and V8's Math.sin, by
-// contrast, disagree on 19.78% of these same seeds.)
-func TestCanonicalSinMatchesStdlib(t *testing.T) {
-	mismatches := 0
-	for seed := -20000; seed <= 40000; seed++ {
-		arg := float64(seed)*12.9898 + 78.233
-		if canonicalSin(arg) != math.Sin(arg) {
-			if mismatches < 5 {
-				t.Errorf("seed %d: canonicalSin=%v math.Sin=%v", seed, canonicalSin(arg), math.Sin(arg))
-			}
-			mismatches++
+// canonicalSinPins and pointsHashPins hold exact bits generated on amd64,
+// where no multiply-add is fused. math.Sin is not a reference: on arm64 the
+// stdlib fuses a*b+c inside its own kernel and returns different last bits.
+// canonicalSin and pointsHash01 must match these bits on every architecture.
+var canonicalSinPins = []struct {
+	seed             int
+	sinBits, hashBit uint64
+}{
+	{-20000, 0xbfe7d01872045d5b, 0x3fef515badb20000},
+	{-9973, 0x3fe8686ff75f10bd, 0x3fe8c1a2f8120000},
+	{-1, 0x3fe5587ef3d27a77, 0x3fd06f752ee50000},
+	{0, 0x3fd35461755fb50a, 0x3fc769cd92fb0000},
+	{1, 0xbfbdc90b2068484e, 0x3fe7aec65e866000},
+	{2, 0xbfe07419a54eaa66, 0x3fe20f865eeb8000},
+	{3, 0xbfea4716a1b0b417, 0x3fdd1a9ca4c80000},
+	{7, 0xbfddcdb51a8666f2, 0x3fe01ec4ac3d8000},
+	{11, 0x3fedee94d258b08a, 0x3fe2f47249340000},
+	{64, 0xbfefdf7c0f958fab, 0x3fc1dbc902040000},
+	{255, 0xbfe81d84c10fee21, 0x3fda7fe8fe400000},
+	{1000, 0xbfeacbaac850c7cf, 0x3fd14341180a0000},
+	{4097, 0xbfd463a086d8502b, 0x3fd7a8f3c1a58000},
+	{9999, 0x3feedca0a8bb4b04, 0x3fc2867e47040000},
+	{12345, 0x3fe426e111933fea, 0x3fe8980d25918000},
+	{20000, 0x3fefc7218ddfd0ba, 0x3fe8bd7eca8d0000},
+	{31337, 0x3fef76cf5f8ab0d3, 0x3fe75286a18f0000},
+	{39999, 0x3fbe7063e2684788, 0x3fefed4cceff8000},
+	{40000, 0x3fe086272dd21bdd, 0x3febbf8df3e20000},
+}
+
+const (
+	// SHA-256 over little-endian bits of canonicalSin for seeds -20000..40000
+	// and of pointsHash01 for seeds 0..40000, generated on amd64.
+	canonicalSinRangeDigest = "9c3f1e751252260afb496e9e402b2d6287184a89350f7c138d343b8b460c181c"
+	pointsHashRangeDigest   = "91d27933e8f1d478472e3d9fb1e9484bc5495b4e94d2d4aad4219ec258f463c6"
+)
+
+// sinArg is the hash's sine argument with the product rounded before the add.
+func sinArg(seed int) float64 { return float64(float64(seed)*12.9898) + 78.233 }
+
+// TestCanonicalSinPinnedBits pins canonicalSin to bits generated on amd64,
+// the same on every architecture, across the range a point generator reaches.
+// (Go's math.Sin and V8's Math.sin disagree on 19.78% of these same seeds, and
+// math.Sin itself differs between amd64 and arm64.)
+func TestCanonicalSinPinnedBits(t *testing.T) {
+	for _, p := range canonicalSinPins {
+		if got := math.Float64bits(canonicalSin(sinArg(p.seed))); got != p.sinBits {
+			t.Errorf("seed %d: canonicalSin bits %#016x, want %#016x", p.seed, got, p.sinBits)
 		}
 	}
-	if mismatches != 0 {
-		t.Fatalf("canonicalSin diverged from math.Sin on %d seeds", mismatches)
+	h := sha256.New()
+	var b [8]byte
+	for seed := -20000; seed <= 40000; seed++ {
+		binary.LittleEndian.PutUint64(b[:], math.Float64bits(canonicalSin(sinArg(seed))))
+		h.Write(b[:])
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != canonicalSinRangeDigest {
+		t.Fatalf("canonicalSin range digest %s, want %s", got, canonicalSinRangeDigest)
 	}
 }
 
-// TestPointsHash01MatchesLegacyExpression proves the canonical hash is the
-// same function the m31labs.dev sky was authored against, so converting a
-// layer to a descriptor is a payload change and not a visual one.
-func TestPointsHash01MatchesLegacyExpression(t *testing.T) {
-	legacy := func(seed int) float64 {
-		x := math.Sin(float64(seed)*12.9898+78.233) * 43758.5453
-		return x - math.Floor(x)
-	}
-	for seed := 0; seed <= 40000; seed++ {
-		if got, want := pointsHash01(seed), legacy(seed); got != want {
-			t.Fatalf("seed %d: pointsHash01=%v legacy=%v", seed, got, want)
+// TestCanonicalSinTracksStdlib is a sanity check, not an identity: the ported
+// kernel stays within a few ulp of math.Sin, which may fuse on some targets.
+func TestCanonicalSinTracksStdlib(t *testing.T) {
+	const tolerance = 1e-15
+	for seed := -20000; seed <= 40000; seed++ {
+		arg := sinArg(seed)
+		if d := math.Abs(canonicalSin(arg) - math.Sin(arg)); d > tolerance {
+			t.Fatalf("seed %d: canonicalSin=%v math.Sin=%v differ by %g", seed, canonicalSin(arg), math.Sin(arg), d)
 		}
+	}
+}
+
+// TestPointsHash01PinnedBits pins the canonical hash, the function the
+// m31labs.dev sky was authored against, to bits generated on amd64, so
+// converting a layer to a descriptor is a payload change and not a visual one.
+func TestPointsHash01PinnedBits(t *testing.T) {
+	for _, p := range canonicalSinPins {
+		if p.seed < 0 {
+			continue
+		}
+		if got := math.Float64bits(pointsHash01(p.seed)); got != p.hashBit {
+			t.Errorf("seed %d: pointsHash01 bits %#016x, want %#016x", p.seed, got, p.hashBit)
+		}
+	}
+	h := sha256.New()
+	var b [8]byte
+	for seed := 0; seed <= 40000; seed++ {
+		v := pointsHash01(seed)
+		if v < 0 || v >= 1 {
+			t.Fatalf("seed %d: pointsHash01=%v outside [0,1)", seed, v)
+		}
+		binary.LittleEndian.PutUint64(b[:], math.Float64bits(v))
+		h.Write(b[:])
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != pointsHashRangeDigest {
+		t.Fatalf("pointsHash01 range digest %s, want %s", got, pointsHashRangeDigest)
 	}
 }
 

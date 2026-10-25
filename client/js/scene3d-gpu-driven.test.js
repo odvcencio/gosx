@@ -369,3 +369,29 @@ test("gpu-driven: transmission continuation resolves both selective MSAA attachm
   assert.equal(harness.renderer.getFailureReason(), "");
   harness.renderer.dispose();
 });
+
+
+test("gpu-driven: changed palettes upload correctly while CPU color storage is retained", async () => {
+  const { harness, api } = await gpuDrivenHarness();
+  const state = sceneState(api, {});
+  await renderFrames(harness, api, state, 4);
+  state.instancedMeshes[0].colors = ["#00ff00"];
+  const first = frameBundle(api, state);
+  harness.renderer.render(first, { width:64,height:64 }, { nowMS:80,active:true });
+  await flushAsyncWork();
+  const prepared = first.instancedMeshes[0]._cachedInstanceColors;
+  assert.ok(prepared);
+  assert.deepEqual(Array.from(prepared.slice(0,4)), [0,1,0,1]);
+  const mark = harness.fake.state.writeBufferCalls.length;
+  state.instancedMeshes[0].colors = ["#0000ff"];
+  const second = frameBundle(api, state);
+  harness.renderer.render(second, { width:64,height:64 }, { nowMS:96,active:true });
+  await flushAsyncWork();
+  assert.equal(second.instancedMeshes[0]._cachedInstanceColors.buffer, prepared.buffer);
+  const writes = harness.fake.state.writeBufferCalls.slice(mark).filter(call => label(call.buffer) === "gosx.gpu-driven.instances");
+  assert.equal(writes.length, 1); assert.equal(writes[0].offset, 0);
+  const data = writes[0].data;
+  const values = ArrayBuffer.isView(data) ? new Float32Array(data.buffer, data.byteOffset, data.byteLength / 4) : new Float32Array(data);
+  assert.deepEqual(Array.from(values.slice(16,20)), [0,0,1,1]);
+  harness.renderer.dispose();
+});

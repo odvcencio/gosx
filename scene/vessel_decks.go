@@ -38,7 +38,7 @@ type VesselRamp struct {
 // Coordinates round to a millimetre, which keeps the JSON small and does not
 // change what a walker can reach.
 func VesselDecksFromLayout(l vessel.Layout) []VesselDeck {
-	mm := func(v float64) float64 { return math.Round(v*1000) / 1000 }
+	mm := func(v float64) float64 { return math.Round(float64(v*1000)) / 1000 }
 	flat := func(polys []vessel.Polygon) [][]float64 {
 		var out [][]float64
 		for _, p := range polys {

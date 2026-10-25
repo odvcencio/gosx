@@ -26,8 +26,8 @@ test("an instanced mesh keeps its parentNode through normalization and carries i
   const entry = { id: "ship/windows", count: 1, kind: "box", transforms: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] };
   const parented = api.normalizeSceneInstancedMeshEntry(Object.assign({ parentNode: " ship " }, entry), 0, null);
   assert.equal(parented.parentNode, "ship");
-  assert.equal(api.normalizeSceneInstancedMeshEntry(entry, 0, null).parentNode, "");
-  assert.equal(api.normalizeSceneInstancedMeshEntry(Object.assign({ parentNode: 7 }, entry), 0, null).parentNode, "");
+  assert.equal(api.normalizeSceneInstancedMeshEntry(entry, 0, null).parentNode, undefined);
+  assert.equal(api.normalizeSceneInstancedMeshEntry(Object.assign({ parentNode: 7 }, entry), 0, null).parentNode, undefined);
   // A later update that omits the field keeps the parent; one that sets "" clears it.
   assert.equal(api.normalizeSceneInstancedMeshEntry(entry, 0, parented).parentNode, "ship");
   assert.equal(api.normalizeSceneInstancedMeshEntry(Object.assign({ parentNode: "" }, entry), 0, parented).parentNode, "");

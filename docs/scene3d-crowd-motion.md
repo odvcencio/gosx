@@ -51,7 +51,9 @@ state), against 93 plus the ID length in a full frame.
 
 Set `ParentNode` on the batch. Instance positions, rotations and motion frames
 are then relative to that node, and the renderer applies the node's current
-world matrix once per frame.
+world matrix once per frame. A retained `Group` ID is also a parent: its
+scene-clock transform carries both pose and GPU-motion crowds without
+repacking their local streams.
 
 ```go
 scene.InstancedGLBMesh{

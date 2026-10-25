@@ -514,6 +514,36 @@ function sceneWebGPUCrowdAgentRecord(object: any, serial: number): any {
 // hooks: bindAttribute(pass, slot, record, key, components) and
 // bindIndex(pass, record) bind the retained geometry of a batch record;
 // materialGroup(record, materials) returns its material bind group.
+function sceneWebGPUCrowdSlotLayouts(): any[] {
+  return [
+    { arrayStride: 4, stepMode: "instance", attributes: [{ format: "uint32", offset: 0, shaderLocation: 4 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 5 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 6 }] },
+  ];
+}
+
+// Color and shadow share layout lifetime, topology and depth policy.
+function sceneWebGPUCrowdRenderPipeline(device: any, target: any, l: any, pipelines: any, module: (name: string, code: string) => any, motion: boolean, shadow: boolean): any {
+  const name = (shadow ? "shadow-" : "color-") + (motion ? "motion" : "pose");
+  const key = shadow ? name : name + "|" + target.format + "|" + target.sampleCount + "|" + (target.specular ? 1 : 0);
+  if (pipelines[key]) return pipelines[key];
+  return pipelines[key] = wgpuCreateValidatedPipeline(device, "render", {
+    label: "gosx-crowd-" + name,
+    layout: device.createPipelineLayout({ bindGroupLayouts: shadow ? [l.shadow, l.crowd] : [l.frame, l.material, l.crowd] }),
+    vertex: {
+      module: module(name, shadow ? sceneWebGPUCrowdShadowVertexWGSL(motion) : sceneWebGPUCrowdColorVertexWGSL(motion)),
+      entryPoint: "vertexMain",
+      buffers: (shadow ? [WGPU_SHADOW_VERTEX_LAYOUT[0]] : WGPU_PBR_VERTEX_LAYOUT).concat(sceneWebGPUCrowdSlotLayouts()),
+    },
+    fragment: shadow ? { module: module("shadow-fragment", WGSL_SHADOW_FRAGMENT), entryPoint: "fragmentMain", targets: [] }
+      : sceneWebGPUColorFragment(module("color-fragment", WGSL_PBR_FRAGMENT), sceneWebGPUColorTarget(target.format, target.specular), wgpuBlendState("opaque")),
+    primitive: { topology: "triangle-list", cullMode: "none", frontFace: "ccw" },
+    multisample: { count: shadow ? 1 : Math.max(1, target.sampleCount) },
+    depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
+  });
+}
+
+
 function createSceneWebGPUCrowd(device: any, hooks: any): any {
   let disposed = false;
   const atlases = new Map();
@@ -609,55 +639,6 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
     return shaderModules[name] || (shaderModules[name] = device.createShaderModule({ label: "gosx-crowd-" + name, code }));
   }
 
-  function slotLayouts(): any[] {
-    return [
-      { arrayStride: 4, stepMode: "instance", attributes: [{ format: "uint32", offset: 0, shaderLocation: 4 }] },
-      { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 5 }] },
-      { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 6 }] },
-    ];
-  }
-
-  function targetKey(): string {
-    return target.format + "|" + target.sampleCount + "|" + (target.specular ? 1 : 0);
-  }
-
-  function colorPipeline(motion: boolean): any {
-    const key = "color|" + (motion ? "m" : "p") + "|" + targetKey();
-    if (pipelines[key]) return pipelines[key];
-    const l = ensureLayouts();
-    return pipelines[key] = wgpuCreateValidatedPipeline(device, "render", {
-      label: "gosx-crowd-color-" + (motion ? "motion" : "pose"),
-      layout: device.createPipelineLayout({ bindGroupLayouts: [l.frame, l.material, l.crowd] }),
-      vertex: {
-        module: module("color-" + (motion ? "motion" : "pose"), sceneWebGPUCrowdColorVertexWGSL(motion)),
-        entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT.concat(slotLayouts()),
-      },
-      fragment: sceneWebGPUColorFragment(module("color-fragment", WGSL_PBR_FRAGMENT), sceneWebGPUColorTarget(target.format, target.specular), wgpuBlendState("opaque")),
-      primitive: { topology: "triangle-list", cullMode: "none" },
-      multisample: { count: Math.max(1, target.sampleCount) },
-      depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
-    });
-  }
-
-  function shadowPipeline(motion: boolean): any {
-    const key = "shadow|" + (motion ? "m" : "p");
-    if (pipelines[key]) return pipelines[key];
-    const l = ensureLayouts();
-    const slots = slotLayouts();
-    // Shadow vertex buffers: 0 position, 1 survivor slot, 2 joints, 3 weights.
-    return pipelines[key] = wgpuCreateValidatedPipeline(device, "render", {
-      label: "gosx-crowd-shadow-" + (motion ? "motion" : "pose"),
-      layout: device.createPipelineLayout({ bindGroupLayouts: [l.shadow, l.crowd] }),
-      vertex: {
-        module: module("shadow-" + (motion ? "motion" : "pose"), sceneWebGPUCrowdShadowVertexWGSL(motion)),
-        entryPoint: "vertexMain", buffers: [WGPU_SHADOW_VERTEX_LAYOUT[0]].concat(slots),
-      },
-      fragment: { module: module("shadow-fragment", WGSL_SHADOW_FRAGMENT), entryPoint: "fragmentMain", targets: [] },
-      primitive: { topology: "triangle-list", cullMode: "none", frontFace: "ccw" },
-      depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
-    });
-  }
-
   function computePipeline(name: string, code: string, entry: string, layout: any): any {
     if (pipelines[name]) return pipelines[name];
     return pipelines[name] = wgpuCreateValidatedPipeline(device, "compute", {
@@ -740,19 +721,15 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
 
   // Pose mode uploads the record's own streams after a revision change. Motion
   // mode packs the members' motion records and uploads only the dirty runs.
-  function syncTints(state: any, record: any): void {
-    const colors = record.crowdColors;
-    const count = record.instanceCount;
-    state.tinted = colors instanceof Float32Array && colors.length >= count * 4;
-    if (!state.tinted || state.colorGen === record.crowdColorGen) return;
-    device.queue.writeBuffer(state.tints, 0, colors, 0, count * 4);
-    state.colorGen = record.crowdColorGen;
-    counters.uploads += 1;
-    counters.uploadedBytes += count * 16;
-  }
-
   function syncAgents(state: any, record: any): void {
-    const count = record.instanceCount;
+    const count = record.instanceCount, colors = record.crowdColors;
+    state.tinted = colors instanceof Float32Array && colors.length >= count * 4;
+    if (state.tinted && state.colorGen !== record.crowdColorGen) {
+      device.queue.writeBuffer(state.tints, 0, colors, 0, count * 4);
+      state.colorGen = record.crowdColorGen;
+      counters.uploads += 1;
+      counters.uploadedBytes += count * 16;
+    }
     if (state.uploadedRevision === record.crowdRevision && state.count === count) return;
     const ranges = record.crowdDirtyRanges && state.uploadedRevision === record.crowdDirtyBase ? record.crowdDirtyRanges : null;
     const reshaped = state.count !== count || state.shape !== record.crowdShape;
@@ -987,7 +964,6 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
     state.localBounds = localBounds(record);
     ensureBatchBuffers(state, record);
     syncAgents(state, record);
-    syncTints(state, record);
     writeParams(state, record, frame, atlas);
     ensureBindGroups(state, atlas);
     state.agent = record._crowdAgent === true;
@@ -1041,7 +1017,7 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
     const record = state.record;
     const motion = state.motion;
     const indexed = record.vertices && record.vertices.indices instanceof Uint32Array && record.vertices.indices.length >= 3;
-    const pipeline = wgpuRequirePipeline(shadow ? shadowPipeline(motion) : colorPipeline(motion));
+    const pipeline = wgpuRequirePipeline(sceneWebGPUCrowdRenderPipeline(device, target, ensureLayouts(), pipelines, module, motion, shadow));
     pass.setPipeline(pipeline);
     pass.setBindGroup(shadow ? 1 : 2, state.group);
     const attributes = shadow ? [["positions", 3, 0]] : [["positions", 3, 0], ["normals", 3, 1], ["uvs", 2, 2], ["tangents", 4, 3]];

@@ -309,10 +309,9 @@ func (c *Computed[T]) Stop() {
 	c.stopped = true
 	deps := c.deps
 	c.deps = nil
+	recycle := !c.refreshing
 	c.mu.Unlock()
-	for _, dep := range deps {
-		dep.unsubscribe()
-	}
+	retireDependencies(deps, recycle)
 }
 
 // refresh checks upstream revisions before evaluating. A dirty descendant of
@@ -442,16 +441,14 @@ func (c *Computed[T]) onDepChange() {
 func (c *Computed[T]) subscribeToDepsLocked(deps []dependency) {
 	old := c.deps
 	c.deps = deps
-	if reuseDependencySubscriptions(old, deps) {
-		return
+	if !reuseDependencySubscriptions(old, deps) {
+		retireDependencies(old, false)
+		notify, invalidate := c.onDepChange, c.invalidate
+		for i, dep := range deps {
+			c.deps[i].unsubscribe = dep.source.subscribe(notify, invalidate)
+		}
 	}
-	for _, dep := range old {
-		dep.unsubscribe()
-	}
-	notify, invalidate := c.onDepChange, c.invalidate
-	for i, dep := range deps {
-		c.deps[i].unsubscribe = dep.source.subscribe(notify, invalidate)
-	}
+	recycleDependencies(old)
 }
 
 // Effect runs a side-effect function whenever its dependencies change.
@@ -503,14 +500,13 @@ func (e *Effect) run() {
 	})
 
 	e.mu.Lock()
-	if e.dead {
-		e.mu.Unlock()
-		return
-	}
-	for _, dep := range deps {
-		e.unsubs = append(e.unsubs, dep.source.subscribe(e.run, nil))
+	if !e.dead {
+		for _, dep := range deps {
+			e.unsubs = append(e.unsubs, dep.source.subscribe(e.run, nil))
+		}
 	}
 	e.mu.Unlock()
+	recycleDependencies(deps)
 }
 
 // Keep live subscriptions when a recomputation reads the same ordered sources.

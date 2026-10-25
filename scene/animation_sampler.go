@@ -54,6 +54,7 @@ func NewAnimationSampler(clips []AnimationClipIR, objects map[string]ObjectIR) *
 		}
 	}
 	sampler := &AnimationSampler{targets: make([]animationSampleTarget, 0, len(targets))}
+	//gosx:allow map-range targets are sorted by id on the next line
 	for _, target := range targets {
 		sampler.targets = append(sampler.targets, *target)
 	}

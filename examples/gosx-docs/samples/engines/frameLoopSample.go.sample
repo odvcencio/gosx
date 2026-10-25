@@ -1,0 +1,34 @@
+//go:build js && wasm
+
+package main
+
+import (
+	"context"
+
+	"m31labs.dev/gosx/engine/wasm"
+	"m31labs.dev/gosx/scene"
+)
+
+func main() {
+	err := wasm.Register("Orbiter", func(ctx wasm.Context) (wasm.Handle, error) {
+		loop, stop := context.WithCancel(context.Background())
+		sc := ctx.Scene3DByID("orbiter-scene")
+		go func() {
+			// One iteration per animation frame. The browser draws and answers
+			// input between iterations; a loop without this wait would not.
+			_ = wasm.EachFrame(loop, func(f wasm.Frame) error {
+				camera := nextCamera(f.Delta / 1000) // simulate for the seconds since the last frame
+				return sc.SetCamera(loop, camera)
+			})
+		}()
+		return wasm.HandleFunc(stop), nil
+	})
+	if err != nil {
+		panic(err)
+	}
+	select {}
+}
+
+func nextCamera(seconds float64) scene.PerspectiveCamera {
+	return scene.PerspectiveCamera{Position: scene.Vec3(0, 5, 20), FOV: 50}
+}

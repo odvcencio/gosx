@@ -13,6 +13,8 @@
   },
   "files": [
     "scene3d/bootstrap-bridge.d.ts",
+    "scene3d/instanced-data.ts",
+    "scene3d/hierarchy.ts",
     "scene3d/webgl-detail.ts",
     "scene3d/webgl.ts",
     "scene3d/webgpu-detail.ts",
