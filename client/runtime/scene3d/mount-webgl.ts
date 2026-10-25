@@ -3893,17 +3893,8 @@
       crowdRows, poseRevision: staged._poseRevision || 0 };
   }
 
-  function sceneCommitRigidInstancePatch({ staged, model, matrix, crowdRows }) {
-    if (staged.modelSkins?.length) {
-      const record = staged.modelSkins[0];
-      record.model = model;
-      record.rootTransform = matrix;
-      sceneApplyModelSkinPose(record, 0, false);
-    } else {
-      for (const object of staged.objects) object.parentMatrix = matrix;
-    }
-    if (crowdRows) sceneCommitCrowdPoseUpdates(crowdRows);
-    staged.rigidInstanceModel = staged.model = model;
+  function sceneCommitRigidInstancePatch(patch) {
+    sceneCommitImportedModelPose(patch, sceneApplyModelSkinPose);
   }
 
   function sceneUpdateRigidInstancePoses(state, hydrationModels) {
@@ -3915,6 +3906,10 @@
     const cache = records && records.rigidInstances;
     const pending = Boolean(state && (state._modelHydrationPromise || state._modelHydrationUncommitted));
     if (!cache || pending && (!binary || !poseBatches.length) || state._modelOwner && !state._modelOwner()) return false;
+    if (binary && !pending && !Array.isArray(hydrationModels)) {
+      const retained = window.__gosx_scene3d_command_bridge?.tryRetainedBinaryInstancePoses?.(state, poseBatches, records, sceneGetRetainedBinaryPoseBindings()) ?? null;
+      if (retained !== null) return retained;
+    }
     let models;
     if (binary && !Array.isArray(hydrationModels)) {
       // The bridge has applied these poses to their declared instances. Expand

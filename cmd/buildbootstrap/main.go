@@ -231,6 +231,7 @@ var outputs = []output{
 			// but it costs a few hundred bytes and keeps one source order.
 			sourceFile("bootstrap-src/16d-scene-webgl-bridge.ts"),
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
+			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
@@ -531,6 +532,7 @@ var outputs = []output{
 			// code that may fetch the WebGL chunk.
 			sourceFile("bootstrap-src/16d-scene-webgl-bridge.ts"),
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
+			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
