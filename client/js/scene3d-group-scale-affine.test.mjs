@@ -62,6 +62,7 @@ function createCoreContext({ mount = false } = {}) {
   vm.runInContext(ts.transpileModule(readRuntime("hierarchy.ts"), {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context,{filename:"hierarchy.ts"});
   vm.runInContext("function sceneGroupTestOrigin(object,time) {const result={};translateScenePointInto(result,0,0,0,object,time);return result;}",context);
   if (mount) {
+    vm.runInContext(ts.transpileModule(readRuntime("model-pose-data.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "model-pose-data.ts" });
     vm.runInContext(ts.transpileModule(readRuntime("mount-webgl.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "mount-webgl.ts" });
   }
   return context;
