@@ -14,8 +14,8 @@
           "htmlWireBytes": 12831,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 283738,
-          "lazyJsWireBytes": 218145,
+          "jsWireBytes": 284648,
+          "lazyJsWireBytes": 218328,
           "requests": 10,
           "totalWireBytes": 1018650,
           "wasmWireBytes": 662965
@@ -31,7 +31,8 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged."
+          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged. Retained WebGL instance uploads add 233 Brotli bytes to the optional chunk; the current generated advertised lazy-chunk total is 218328 B (+183 B above the prior cap). Set only this metric to that exact total, with no extra headroom or policy changes.",
+          "jsWireBytes": "2026-10-23: PR #747 shares renderer-owned instance preparation across WebGL2 and WebGPU. The typed helper adds 630 Brotli bytes to the startup Scene3D chunk while backend chunks shrink by 106/156 bytes. Hosted CI run 39971086334 and the independent exact-source wire run both measured 284206 B for this route, 468 B above its prior 283738 B cap. Set only this metric to the measured value, with no extra headroom. Other byte limits, request counts, and require/allowance policies stay fixed. Bounding palette validation by the active instance count changes the regenerated startup chunk by -46 Brotli bytes from that measurement. The revised exact target is 284160 B; the fresh wire gate must confirm it. PR #744 adds camera command synchronization, ordered orbit targets and zoom height-floor enforcement. The fresh production wire run measured 284648 B for this route, exactly 488 B above its previous 284160 B cap. Set only jsWireBytes to that measured minimum with no extra headroom; WASM, request, lazy-chunk and policy limits are unchanged."
         }
       },
       "/capabilities/": {
@@ -89,8 +90,8 @@
           "htmlWireBytes": 17910,
           "imageWireBytes": 8404,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 267311,
-          "lazyJsWireBytes": 218145,
+          "jsWireBytes": 268309,
+          "lazyJsWireBytes": 218328,
           "requests": 8,
           "totalWireBytes": 978053,
           "wasmWireBytes": 662965
@@ -106,8 +107,8 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged.",
-          "jsWireBytes": "2026-10-22: the mount-owned decoded-model cache repair adds 171 Brotli bytes to the eager Scene3D feature chunk. The production wire measurement at frozen source 871e80b9 reports jsWireBytes=267237 for /demos/scene3d/, exceeding the previous 267128 B cap by 109 B. Set this metric to the measured minimum 267237 B with no extra headroom. Lazy bytes, request counts, all other limits, and required policies are unchanged. 2026-10-23: ocean rendering on the scene clock with quality tiers adds 74 B to the startup bootstrap; hosted wire run 39897867084 measured 267311 B (scene3d) and 271601 B (water), set with no extra headroom."
+          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged. Retained WebGL instance uploads add 233 Brotli bytes to the optional chunk; the current generated advertised lazy-chunk total is 218328 B (+183 B above the prior cap). Set only this metric to that exact total, with no extra headroom or policy changes.",
+          "jsWireBytes": "2026-10-23: PR #747 shares renderer-owned instance preparation across WebGL2 and WebGPU. The typed helper adds 630 Brotli bytes to the startup Scene3D chunk while backend chunks shrink by 106/156 bytes. Hosted CI run 39971086334 and the independent exact-source wire run both measured 267867 B for this route, 630 B above its prior 267237 B cap. Set only this metric to the measured value, with no extra headroom. Other byte limits, request counts, and require/allowance policies stay fixed. Bounding palette validation by the active instance count changes the regenerated startup chunk by -46 Brotli bytes from that measurement. The revised exact target is 267821 B; the fresh wire gate must confirm it. PR #744 adds camera command synchronization, ordered orbit targets and zoom height-floor enforcement. The fresh production wire run measured 268309 B for this route, exactly 488 B above its previous 267821 B cap. Set only jsWireBytes to that measured minimum with no extra headroom; WASM, request, lazy-chunk and policy limits are unchanged."
         }
       },
       "/demos/water": {
@@ -117,8 +118,8 @@
           "htmlWireBytes": 54354,
           "imageWireBytes": 193942,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 271601,
-          "lazyJsWireBytes": 218145,
+          "jsWireBytes": 272599,
+          "lazyJsWireBytes": 218328,
           "requests": 15,
           "totalWireBytes": 1204485,
           "wasmWireBytes": 662965
@@ -134,8 +135,8 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged.",
-          "jsWireBytes": "2026-10-22: the mount-owned decoded-model cache repair adds 171 Brotli bytes to the eager Scene3D feature chunk. The production wire measurement at frozen source 871e80b9 reports jsWireBytes=271527 for /demos/water, exceeding the previous 271525 B cap by 2 B. Set this metric to the measured minimum 271527 B with no extra headroom. Lazy bytes, request counts, all other limits, and required policies are unchanged. 2026-10-23: ocean rendering on the scene clock with quality tiers adds 74 B to the startup bootstrap; hosted wire run 39897867084 measured 267311 B (scene3d) and 271601 B (water), set with no extra headroom."
+          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged. Retained WebGL instance uploads add 233 Brotli bytes to the optional chunk; the current generated advertised lazy-chunk total is 218328 B (+183 B above the prior cap). Set only this metric to that exact total, with no extra headroom or policy changes.",
+          "jsWireBytes": "2026-10-23: PR #747 shares renderer-owned instance preparation across WebGL2 and WebGPU. The typed helper adds 630 Brotli bytes to the startup Scene3D chunk while backend chunks shrink by 106/156 bytes. Hosted CI run 39971086334 and the independent exact-source wire run both measured 272157 B for this route, 630 B above its prior 271527 B cap. Set only this metric to the measured value, with no extra headroom. Other byte limits, request counts, and require/allowance policies stay fixed. Bounding palette validation by the active instance count changes the regenerated startup chunk by -46 Brotli bytes from that measurement. The revised exact target is 272111 B; the fresh wire gate must confirm it. PR #744 adds camera command synchronization, ordered orbit targets and zoom height-floor enforcement. The fresh production wire run measured 272599 B for this route, exactly 488 B above its previous 272111 B cap. Set only jsWireBytes to that measured minimum with no extra headroom; WASM, request, lazy-chunk and policy limits are unchanged."
         }
       },
       "/docs/getting-started/": {

@@ -104,6 +104,9 @@ type IRCamera struct {
 	Near         float64 `json:"near,omitempty"`
 	Far          float64 `json:"far,omitempty"`
 	TransitionMS float64 `json:"transitionMS,omitempty"`
+	// Orbit, when set, moves the mounted orbit controls' target and limits
+	// together with the camera. See Orbit.
+	Orbit *Orbit `json:"orbit,omitempty"`
 }
 
 // IREnvironment describes scene-wide lighting, atmosphere, and exposure.
@@ -538,6 +541,7 @@ func (ir *IR) Validate() error {
 			problems = append(problems, problem)
 		}
 		variantNames := make([]string, 0, len(material.Variants))
+		//gosx:allow map-range names are sorted on the next lines
 		for name := range material.Variants {
 			variantNames = append(variantNames, name)
 		}
@@ -923,10 +927,22 @@ func cameraToIR(camera PerspectiveCamera) IRCamera {
 		Near:         camera.Near,
 		Far:          camera.Far,
 		TransitionMS: camera.TransitionMS,
+		Orbit:        camera.Orbit.clone(),
 	}
 }
 
 func (p Props) cameraToIR() IRCamera {
+	ir := p.lensToIR()
+	if p.Controls == ControlOrbit && ir.Orbit == nil {
+		// Orbit controls aim at ControlTarget. Carrying it in the camera record lets
+		// a changed ControlTarget, ControlMinDistance, ControlMaxDistance or
+		// ControlPitchLimit reach the mounted controls as a camera command.
+		ir.Orbit = &Orbit{Target: p.ControlTarget, MinDistance: p.ControlMinDistance, MaxDistance: p.ControlMaxDistance, PitchLimit: p.ControlPitchLimit}
+	}
+	return ir
+}
+
+func (p Props) lensToIR() IRCamera {
 	if p.OrthographicCamera != nil && !p.OrthographicCamera.isZero() {
 		camera := p.OrthographicCamera
 		return IRCamera{

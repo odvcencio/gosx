@@ -1,3 +1,5 @@
+//gosx:deterministic
+
 // Package harness provides an interactive, browser-free Scene3D test session.
 // It combines deterministic native frames, exact scene queries, renderer
 // payload inspection, and Selena artifact evidence in one JSON report that is
@@ -415,7 +417,7 @@ func frameVisualEvidence(img, previous *image.RGBA) (temporal int, luminanceVari
 			c := img.RGBAAt(x, y)
 			lum := 0.2126*float64(c.R)/255 + 0.7152*float64(c.G)/255 + 0.0722*float64(c.B)/255
 			sum += lum
-			sumSquares += lum * lum
+			sumSquares += float64(lum * lum)
 			if x > bounds.Min.X {
 				left := img.RGBAAt(x-1, y)
 				leftLum := 0.2126*float64(left.R)/255 + 0.7152*float64(left.G)/255 + 0.0722*float64(left.B)/255
@@ -432,7 +434,7 @@ func frameVisualEvidence(img, previous *image.RGBA) (temporal int, luminanceVari
 		}
 	}
 	mean := sum / float64(count)
-	variance := sumSquares/float64(count) - mean*mean
+	variance := sumSquares/float64(count) - float64(mean*mean)
 	if variance < 0 {
 		variance = 0
 	}
@@ -476,6 +478,7 @@ func inspectSelena(materials []engine.RenderMaterial) []SelenaEvidence {
 			evidence.Valid = false
 			evidence.Problems = append(evidence.Problems, "shader layout missing material name")
 		}
+		//gosx:allow map-range uniform names are sorted on the next lines
 		for name := range material.CustomUniforms {
 			evidence.Uniforms = append(evidence.Uniforms, name)
 		}

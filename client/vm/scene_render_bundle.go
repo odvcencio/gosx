@@ -15,7 +15,7 @@ import (
 	"m31labs.dev/gosx/scene/geom"
 )
 
-func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, objIndex, nodeIndex, materialIndex int, material rootengine.RenderMaterial, lights []sceneLight, animations []rootengine.RenderAnimation, timeSeconds float64, camTrig rotTrig, litCtx lightingContext, spinSc *spinScratch) (sceneAppendResult, bool) {
+func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera *sceneCameraFrame, object sceneObject, objIndex, nodeIndex, materialIndex int, material rootengine.RenderMaterial, lights []sceneLight, animations []rootengine.RenderAnimation, timeSeconds float64, litCtx lightingContext, spinSc *spinScratch) (sceneAppendResult, bool) {
 	var result sceneAppendResult
 	if material.Wireframe || sceneObjectHasTexturedSurface(object, material) {
 		return result, false
@@ -51,6 +51,7 @@ func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera,
 	baseRGBA := sceneColorRGBA(material.Color, [4]float64{1, 1, 1, 1})
 	vertexOffset := len(bundle.WorldMeshPositions) / 3
 	orientation := sceneObjectTransformOrientation(object, clip)
+	frameTransform := prepareSceneObjectFrameTransform(&object, spinQ, clip, timeSeconds)
 
 	for i := 0; i+2 < len(expanded.Positions); i += 3 {
 		source := i
@@ -63,15 +64,17 @@ func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera,
 			}
 		}
 		localPoint := point3{X: expanded.Positions[source], Y: expanded.Positions[source+1], Z: expanded.Positions[source+2]}
-		world := translatePoint(localPoint, object, spinQ, clip, timeSeconds)
+		world := frameTransform.point(localPoint)
 		bundle.WorldMeshPositions = append(bundle.WorldMeshPositions, world.X, world.Y, world.Z)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, world)
 
-		normal := sceneObjectWorldNormal(object, localPoint, spinQ, clip)
+		var normal point3
 		if source+2 < len(expanded.Normals) {
-			normal = sceneObjectLocalNormalToWorld(object, point3{
+			normal = frameTransform.normal(point3{
 				X: expanded.Normals[source], Y: expanded.Normals[source+1], Z: expanded.Normals[source+2],
-			}, spinQ, clip)
+			})
+		} else {
+			normal = frameTransform.normal(sceneObjectLocalNormal(object, localPoint))
 		}
 		bundle.WorldMeshNormals = append(bundle.WorldMeshNormals, normal.X, normal.Y, normal.Z)
 
@@ -92,8 +95,8 @@ func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera,
 		return result, false
 	}
 
-	depthNear, depthFar, depthCenter := renderBoundsDepthMetricsTrig(result.Bounds, camera, camTrig)
-	result.ViewCulled = result.HasBounds && renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
+	depthNear, depthFar, depthCenter := camera.boundsDepthMetrics(result.Bounds)
+	result.ViewCulled = result.HasBounds && camera.boundsOutsideFrustum(result.Bounds)
 	bundle.MeshObjects = append(bundle.MeshObjects, rootengine.RenderObject{
 		ID:            object.ID,
 		Kind:          object.Kind,
@@ -272,9 +275,8 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 		bundle.Lights = renderSceneLights(lights)
 	}
 	appendSceneGrid(&bundle, width, height)
-	// Camera rotation is constant for every vertex/corner in the frame; hoist
-	// its inverse-rotation trig once and thread it through the per-object loops.
-	camTrig := cameraInverseRotTrig(camera)
+	// Projection and inverse rotation are constant across all geometry this frame.
+	cameraFrame := prepareSceneCameraFrame(camera, width, height)
 	// Pre-resolve all light and environment colors once per frame so
 	// sceneLitColorRGBAResolved can skip the string→RGBA parse on every vertex.
 	litCtx := buildLightingContext(lights, environment)
@@ -297,18 +299,18 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 		object := objects[objectIdx]
 		materialIndex := ensureRenderMaterial(&bundle, materialIndexByKey, object)
 		material := bundle.Materials[materialIndex]
-		if _, ok := appendSolidSceneObject(&bundle, camera, width, height, object, objectIdx, objectNodeIndex[objectIdx], materialIndex, material, lights, animations, timeSeconds, camTrig, litCtx, spinSc); ok {
+		if _, ok := appendSolidSceneObject(&bundle, &cameraFrame, object, objectIdx, objectNodeIndex[objectIdx], materialIndex, material, lights, animations, timeSeconds, litCtx, spinSc); ok {
 			continue
 		}
 		vertexOffset := len(bundle.WorldPositions) / 3
-		appendResult := appendSceneObjectCached(&bundle, camera, width, height, &object, objectIdx, material, lights, environment, animations, timeSeconds, camTrig, litCtx, bakeStore, objectNodeIndex[objectIdx], litSig, spinSc)
+		appendResult := appendSceneObjectCached(&bundle, &cameraFrame, width, height, &object, objectIdx, material, lights, environment, animations, timeSeconds, litCtx, bakeStore, objectNodeIndex[objectIdx], litSig, spinSc)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
 			bounds := appendResult.Bounds
 			if !appendResult.HasBounds && vertexCount > 0 {
 				bounds = renderObjectBounds(bundle.WorldPositions, vertexOffset, vertexCount)
 			}
-			depthNear, depthFar, depthCenter := renderBoundsDepthMetricsTrig(bounds, camera, camTrig)
+			depthNear, depthFar, depthCenter := cameraFrame.boundsDepthMetrics(bounds)
 			bundle.Objects = append(bundle.Objects, rootengine.RenderObject{
 				ID:            object.ID,
 				Kind:          object.Kind,
@@ -325,14 +327,14 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 				ViewCulled:    appendResult.ViewCulled,
 			})
 			// Pass the spinQ and clip TRS already computed in appendSceneObjectCached — no second evaluation.
-			appendSceneSurface(&bundle, camera, width, height, object, materialIndex, material, bounds, appendResult.SpinQ, appendResult.ClipTRS, timeSeconds, camTrig)
+			appendSceneSurface(&bundle, &cameraFrame, object, materialIndex, material, bounds, appendResult.SpinQ, appendResult.ClipTRS, timeSeconds)
 		}
 	}
 	for _, label := range labels {
-		appendSceneLabel(&bundle, camera, width, height, label, timeSeconds)
+		appendSceneLabel(&bundle, &cameraFrame, width, height, label, timeSeconds)
 	}
 	for _, sprite := range sprites {
-		appendSceneSprite(&bundle, camera, width, height, sprite, timeSeconds)
+		appendSceneSprite(&bundle, &cameraFrame, width, height, sprite, timeSeconds)
 	}
 	bundle.ObjectCount = len(bundle.Objects) + len(bundle.MeshObjects)
 	bundle.VertexCount = len(bundle.Positions) / 2
@@ -354,7 +356,9 @@ func appendSceneGrid(bundle *rootengine.RenderBundle, width, height int) {
 // appendSceneObject is a thin wrapper for callers that do not have a bake store
 // (e.g. tests). It delegates to appendSceneObjectCached with a nil store.
 func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, objIndex int, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, animations []rootengine.RenderAnimation, timeSeconds float64, camTrig rotTrig, litCtx lightingContext, spinSc *spinScratch) sceneAppendResult {
-	return appendSceneObjectCached(bundle, camera, width, height, &object, objIndex, material, lights, environment, animations, timeSeconds, camTrig, litCtx, nil, -1, 0, spinSc)
+	frame := prepareSceneCameraFrame(camera, width, height)
+	frame.rotation = camTrig
+	return appendSceneObjectCached(bundle, &frame, width, height, &object, objIndex, material, lights, environment, animations, timeSeconds, litCtx, nil, -1, 0, spinSc)
 }
 
 // appendSceneObjectCached bakes (or reuses a cached bake of) the object's WORLD
@@ -368,8 +372,7 @@ func appendSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, widt
 // object is passed by pointer to avoid copying the large sceneObject struct on the
 // per-object hot path; it is treated as READ-ONLY (only deref-copied into the leaf
 // transform helpers, exactly as the pre-cache path did).
-func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object *sceneObject, objIndex int, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, animations []rootengine.RenderAnimation, timeSeconds float64, camTrig rotTrig, litCtx lightingContext, bakeStore *worldBakeStore, nodeIndex int, litSig uint64, spinSc *spinScratch) sceneAppendResult {
-	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
+func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera *sceneCameraFrame, width, height int, object *sceneObject, objIndex int, material rootengine.RenderMaterial, lights []sceneLight, environment sceneEnvironment, animations []rootengine.RenderAnimation, timeSeconds float64, litCtx lightingContext, bakeStore *worldBakeStore, nodeIndex int, litSig uint64, spinSc *spinScratch) sceneAppendResult {
 	result := sceneAppendResult{}
 	spinQ := spinQuatWithScratch(*object, timeSeconds, spinSc)
 	result.SpinQ = spinQ
@@ -382,7 +385,7 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 			result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, corner)
 		}
 		if result.HasBounds {
-			result.ViewCulled = renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
+			result.ViewCulled = camera.boundsOutsideFrustum(result.Bounds)
 		}
 		return result
 	}
@@ -393,7 +396,7 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 		if gen, ok := bakeStore.generationFor(nodeIndex); ok {
 			if entry, found := bakeStore.load(nodeIndex); found && entry.generation == gen && entry.litSig == litSig {
 				bakeStore.recordHit()
-				emitted := emitBakedSceneObject(bundle, camera, width, height, material, entry, camTrig)
+				emitted := emitBakedSceneObject(bundle, camera, width, height, material, entry)
 				emitted.SpinQ = spinQ
 				emitted.ClipTRS = clip
 				return emitted
@@ -403,7 +406,7 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 			entry.litSig = litSig
 			bakeStore.store(nodeIndex, entry)
 			bakeStore.recordMiss()
-			emitted := emitBakedSceneObject(bundle, camera, width, height, material, entry, camTrig)
+			emitted := emitBakedSceneObject(bundle, camera, width, height, material, entry)
 			emitted.SpinQ = spinQ
 			emitted.ClipTRS = clip
 			return emitted
@@ -412,22 +415,23 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 	// Animated/streaming path: motion geometry + perf color/camera.
 	baseRGBA := sceneColorRGBA(material.Color, [4]float64{0.55, 0.88, 1, 1})
 	obj := *object
+	frameTransform := prepareSceneObjectFrameTransform(object, spinQ, clip, timeSeconds)
 	for _, segment := range sceneObjectSegments(obj) {
-		worldFrom := translatePoint(segment[0], obj, spinQ, clip, timeSeconds)
-		worldTo := translatePoint(segment[1], obj, spinQ, clip, timeSeconds)
-		fromNormal := sceneObjectWorldNormal(obj, segment[0], spinQ, clip)
-		toNormal := sceneObjectWorldNormal(obj, segment[1], spinQ, clip)
+		worldFrom := frameTransform.point(segment[0])
+		worldTo := frameTransform.point(segment[1])
+		fromNormal := frameTransform.normal(sceneObjectLocalNormal(obj, segment[0]))
+		toNormal := frameTransform.normal(sceneObjectLocalNormal(obj, segment[1]))
 		fromRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
 		toRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldTo)
-		clippedFrom, clippedTo, ok := clipWorldSegmentForCameraTrig(worldFrom, worldTo, camera, aspect, camTrig)
-		if !ok {
+		segment := sceneCameraSegment{from: worldFrom, to: worldTo}
+		if !camera.clipSegment(&segment) {
 			continue
 		}
-		appendWorldSceneLine(bundle, clippedFrom, clippedTo, fromRGBA, toRGBA)
-		from := projectPointTrig(clippedFrom, camera, width, height, camTrig)
-		to := projectPointTrig(clippedTo, camera, width, height, camTrig)
+		appendWorldSceneLine(bundle, segment.from, segment.to, fromRGBA, toRGBA)
+		from := camera.projectLocalPoint(segment.localFrom)
+		to := camera.projectLocalPoint(segment.localTo)
 		if from == nil || to == nil {
 			continue
 		}
@@ -436,7 +440,7 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 		appendSceneLine(bundle, width, height, *from, *to, sceneRGBAString(stroke), 1.8)
 	}
 	if result.HasBounds {
-		result.ViewCulled = renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
+		result.ViewCulled = camera.boundsOutsideFrustum(result.Bounds)
 	}
 	return result
 }
@@ -487,18 +491,17 @@ func bakeSceneObjectWorld(object *sceneObject, material rootengine.RenderMateria
 // emitBakedSceneObject applies the camera-dependent clip/project to each baked
 // segment and appends the result into the bundle. The arithmetic per segment is
 // identical to the original loop's tail, so the emitted bundle is bit-identical.
-func emitBakedSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, material rootengine.RenderMaterial, bake *objectWorldBake, camTrig rotTrig) sceneAppendResult {
-	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
+func emitBakedSceneObject(bundle *rootengine.RenderBundle, camera *sceneCameraFrame, width, height int, material rootengine.RenderMaterial, bake *objectWorldBake) sceneAppendResult {
 	result := sceneAppendResult{Bounds: bake.bounds, HasBounds: bake.hasBounds}
 	for i := range bake.segments {
 		seg := &bake.segments[i]
-		clippedFrom, clippedTo, ok := clipWorldSegmentForCameraTrig(seg.worldFrom, seg.worldTo, camera, aspect, camTrig)
-		if !ok {
+		segment := sceneCameraSegment{from: seg.worldFrom, to: seg.worldTo}
+		if !camera.clipSegment(&segment) {
 			continue
 		}
-		appendWorldSceneLine(bundle, clippedFrom, clippedTo, seg.fromRGBA, seg.toRGBA)
-		from := projectPointTrig(clippedFrom, camera, width, height, camTrig)
-		to := projectPointTrig(clippedTo, camera, width, height, camTrig)
+		appendWorldSceneLine(bundle, segment.from, segment.to, seg.fromRGBA, seg.toRGBA)
+		from := camera.projectLocalPoint(segment.localFrom)
+		to := camera.projectLocalPoint(segment.localTo)
 		if from == nil || to == nil {
 			continue
 		}
@@ -507,7 +510,7 @@ func emitBakedSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, w
 		appendSceneLine(bundle, width, height, *from, *to, sceneRGBAString(stroke), 1.8)
 	}
 	if result.HasBounds {
-		result.ViewCulled = renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
+		result.ViewCulled = camera.boundsOutsideFrustum(result.Bounds)
 	}
 	return result
 }
@@ -580,7 +583,7 @@ func sceneObjectUsesLineGeometry(object sceneObject, material rootengine.RenderM
 	return !(sceneObjectHasTexturedSurface(object, material) && !material.Wireframe)
 }
 
-func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, spinQ motion.Quat, clip clipTRS, timeSeconds float64, camTrig rotTrig) {
+func appendSceneSurface(bundle *rootengine.RenderBundle, camera *sceneCameraFrame, object sceneObject, materialIndex int, material rootengine.RenderMaterial, bounds rootengine.RenderBounds, spinQ motion.Quat, clip clipTRS, timeSeconds float64) {
 	if !sceneObjectHasTexturedSurface(object, material) {
 		return
 	}
@@ -590,7 +593,7 @@ func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, wid
 	if len(corners) != 4 {
 		return
 	}
-	depthNear, depthFar, depthCenter := renderBoundsDepthMetricsTrig(bounds, camera, camTrig)
+	depthNear, depthFar, depthCenter := camera.boundsDepthMetrics(bounds)
 	bundle.Surfaces = append(bundle.Surfaces, rootengine.RenderSurface{
 		ID:            object.ID,
 		Kind:          object.Kind,
@@ -604,7 +607,7 @@ func appendSceneSurface(bundle *rootengine.RenderBundle, camera sceneCamera, wid
 		DepthNear:     depthNear,
 		DepthFar:      depthFar,
 		DepthCenter:   depthCenter,
-		ViewCulled:    renderBoundsOutsideFrustum(bounds, camera, width, height),
+		ViewCulled:    camera.boundsOutsideFrustum(bounds),
 	})
 }
 
@@ -667,9 +670,10 @@ func scenePlaneSurfaceUVs() []float64 {
 	}
 }
 
-func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, label sceneLabel, timeSeconds float64) {
+func appendSceneLabel(bundle *rootengine.RenderBundle, camera *sceneCameraFrame, width, height int, label sceneLabel, timeSeconds float64) {
 	world := sceneLabelPoint(label, timeSeconds)
-	position := projectPoint(world, camera, width, height)
+	local := camera.localPoint(world)
+	position := camera.projectLocalPoint(local)
 	if position == nil {
 		return
 	}
@@ -683,7 +687,7 @@ func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width
 		Text:        label.Text,
 		ClassName:   label.ClassName,
 		Position:    *position,
-		Depth:       cameraLocalPoint(world, camera).Z,
+		Depth:       local.Z,
 		Priority:    label.Priority,
 		MaxWidth:    label.MaxWidth,
 		MaxLines:    label.MaxLines,
@@ -704,14 +708,15 @@ func appendSceneLabel(bundle *rootengine.RenderBundle, camera sceneCamera, width
 	})
 }
 
-func appendSceneSprite(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, sprite sceneSprite, timeSeconds float64) {
+func appendSceneSprite(bundle *rootengine.RenderBundle, camera *sceneCameraFrame, width, height int, sprite sceneSprite, timeSeconds float64) {
 	point := sceneSpritePoint(sprite, timeSeconds)
-	position := projectPoint(point, camera, width, height)
+	local := camera.localPoint(point)
+	position := camera.projectLocalPoint(local)
 	if position == nil {
 		return
 	}
-	depth := cameraLocalPoint(point, camera).Z
-	screenWidth, screenHeight := projectedSceneSpriteSize(camera, width, height, sprite, depth)
+	depth := local.Z
+	screenWidth, screenHeight := camera.projectedSpriteSize(sprite, depth)
 	if screenWidth <= 0 || screenHeight <= 0 {
 		return
 	}
@@ -793,10 +798,15 @@ func sceneSpriteOffset(sprite sceneSprite, timeSeconds float64) point3 {
 }
 
 func projectedSceneSpriteSize(camera sceneCamera, width, height int, sprite sceneSprite, depth float64) (float64, float64) {
+	frame := prepareSceneCameraFrame(camera, width, height)
+	return frame.projectedSpriteSize(sprite, depth)
+}
+
+func (camera *sceneCameraFrame) projectedSpriteSize(sprite sceneSprite, depth float64) (float64, float64) {
 	if depth <= 0 {
 		return 0, 0
 	}
-	focal := (math.Min(float64(width), float64(height)) / 2) / math.Tan((camera.FOV*math.Pi)/360)
+	focal := camera.pixelFocal
 	scale := sprite.Scale
 	if scale <= 0 {
 		scale = 1
@@ -1502,12 +1512,18 @@ func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat,
 }
 
 func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ motion.Quat, clip clipTRS) point3 {
+	frame := sceneObjectFrameTransform{object: &object, rotation: newRotTrig(object.RotationX, object.RotationY, object.RotationZ), spin: spinQ, clip: clip}
+	return frame.normal(normal)
+}
+
+func (frame *sceneObjectFrameTransform) normal(normal point3) point3 {
+	object, clip := frame.object, &frame.clip
 	// Base orientation, then clip rotation, then spin quaternion. Normals are
 	// directions: static leaf scale applies as the inverse-scale (then
 	// renormalized) so non-uniform scale keeps lighting correct; no translation
 	// and no drift offset is applied. Rotation composition mirrors translatePoint
 	// (base -> clipR -> spin) so lit normals stay consistent with vertex positions.
-	normal = applySceneObjectInverseScaleToNormal(object, normal)
+	normal = applySceneObjectInverseScaleToNormal(*object, normal)
 	if clip.HasS {
 		if clip.S[0] == 0 || clip.S[1] == 0 || clip.S[2] == 0 {
 			normal = normalizePoint3(normal)
@@ -1515,13 +1531,13 @@ func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ moti
 			normal = normalizePoint3(point3{X: normal.X / clip.S[0], Y: normal.Y / clip.S[1], Z: normal.Z / clip.S[2]})
 		}
 	}
-	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
+	rotated := rotatePointTrig(normal, frame.rotation)
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
 		rotated = point3{X: cx, Y: cy, Z: cz}
 	}
-	nx, ny, nz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
-	return applySceneParentNormal(object, point3{X: nx, Y: ny, Z: nz})
+	nx, ny, nz := motion.RotateVec3(frame.spin, rotated.X, rotated.Y, rotated.Z)
+	return applySceneParentNormal(*object, point3{X: nx, Y: ny, Z: nz})
 }
 
 // lightingContext holds all light and environment colors pre-resolved from
@@ -1959,6 +1975,36 @@ func translatePointTrig(point point3, object sceneObject, timeSeconds float64, o
 // (T*R*S left-multiply on the raw transform). These are different renderer/bundle
 // structures — not a parity pair — so the divergence is by design.
 func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip clipTRS, timeSeconds float64) point3 {
+	frame := prepareSceneObjectFrameTransform(&object, spinQ, clip, timeSeconds)
+	return frame.point(point)
+}
+
+// sceneObjectFrameTransform holds only values shared by an object's vertices
+// during one frame. Keep clip and spin composition in the per-vertex helpers:
+// folding their rotations into a matrix would change floating-point ordering.
+// This is stack-local, so changes to the object or time need no invalidation.
+// Vertex helpers borrow the frame and its read-only object instead of copying
+// the frame, object, and motion state into every TinyGo call.
+type sceneObjectFrameTransform struct {
+	object   *sceneObject
+	rotation rotTrig
+	offset   point3
+	spin     motion.Quat
+	clip     clipTRS
+}
+
+func prepareSceneObjectFrameTransform(object *sceneObject, spin motion.Quat, clip clipTRS, timeSeconds float64) sceneObjectFrameTransform {
+	return sceneObjectFrameTransform{
+		object:   object,
+		rotation: newRotTrig(object.RotationX, object.RotationY, object.RotationZ),
+		offset:   sceneMotionOffset(*object, timeSeconds),
+		spin:     spin,
+		clip:     clip,
+	}
+}
+
+func (frame *sceneObjectFrameTransform) point(point point3) point3 {
+	object, clip := frame.object, &frame.clip
 	local := point
 	// Composition order (local vertex -> world position):
 	//   1. clip scale (local, pre-rotation): multiply the LOCAL vertex by clip.S.
@@ -1968,12 +2014,12 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	//   5. translation: object position + drift offset + clip translation.
 	// When the object has no clip targeting it (the common case) clip is the zero
 	// value (all Has* false) and this path is byte-identical to the pre-clip code.
-	local = applySceneObjectScale(local, object)
+	local = applySceneObjectScale(local, *object)
 	if clip.HasS {
 		local = point3{X: local.X * clip.S[0], Y: local.Y * clip.S[1], Z: local.Z * clip.S[2]}
 	}
 	// Base orientation via the existing intrinsic Euler rotation.
-	rotated := rotatePoint(local, object.RotationX, object.RotationY, object.RotationZ)
+	rotated := rotatePointTrig(local, frame.rotation)
 	// Clip rotation: composed AFTER the base orientation and BEFORE spin.
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
@@ -1982,13 +2028,13 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	// Spin orientation sourced from the canonical motion evaluator (GenSpin),
 	// applied as a quaternion. For single-axis spin this is identical to the
 	// previous Euler-add path; multi-axis spin now follows canonical qx*qy*qz order.
-	sx, sy, sz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
-	offset := sceneMotionOffset(object, timeSeconds)
+	sx, sy, sz := motion.RotateVec3(frame.spin, rotated.X, rotated.Y, rotated.Z)
+	offset := frame.offset
 	tx, ty, tz := 0.0, 0.0, 0.0
 	if clip.HasT {
 		tx, ty, tz = clip.T[0], clip.T[1], clip.T[2]
 	}
-	return applySceneParentPoint(object, point3{
+	return applySceneParentPoint(*object, point3{
 		X: sx + object.X + offset.X + tx,
 		Y: sy + object.Y + offset.Y + ty,
 		Z: sz + object.Z + offset.Z + tz,
@@ -2173,51 +2219,88 @@ func rotatePointTrig(point point3, t rotTrig) point3 {
 	return point3{X: nextX, Y: nextY, Z: z}
 }
 
-func projectPoint(point point3, camera sceneCamera, width, height int) *rootengine.RenderPoint {
-	return projectPointTrig(point, camera, width, height, cameraInverseRotTrig(camera))
+// sceneCameraFrame owns the camera constants for one bundle. It is passed by
+// pointer and never retained: a camera move or viewport resize prepares a new
+// frame, while every segment, bound, label and sprite shares its projection.
+type sceneCameraFrame struct {
+	camera                sceneCamera
+	rotation              rotTrig
+	halfWidth, halfHeight float64
+	pixelFocal, clipFocal float64
+	aspect                float64
 }
 
-func projectPointTrig(point point3, camera sceneCamera, width, height int, camTrig rotTrig) *rootengine.RenderPoint {
-	local := cameraLocalPointTrig(point, camera, camTrig)
+func prepareSceneCameraFrame(camera sceneCamera, width, height int) sceneCameraFrame {
+	tangent := math.Tan((camera.FOV * math.Pi) / 360)
+	return sceneCameraFrame{
+		camera:     camera,
+		rotation:   cameraInverseRotTrig(camera),
+		halfWidth:  float64(width) / 2,
+		halfHeight: float64(height) / 2,
+		pixelFocal: (math.Min(float64(width), float64(height)) / 2) / tangent,
+		clipFocal:  1 / math.Max(0.0001, tangent),
+		aspect:     math.Max(0.0001, float64(width)/math.Max(1, float64(height))),
+	}
+}
+
+func (frame *sceneCameraFrame) localPoint(point point3) point3 {
+	return cameraLocalPointTrig(point, frame.camera, frame.rotation)
+}
+
+func projectPoint(point point3, camera sceneCamera, width, height int) *rootengine.RenderPoint {
+	frame := prepareSceneCameraFrame(camera, width, height)
+	return frame.projectLocalPoint(frame.localPoint(point))
+}
+
+func (frame *sceneCameraFrame) projectLocalPoint(local point3) *rootengine.RenderPoint {
 	depth := local.Z
-	if depth <= camera.Near || depth >= camera.Far {
+	if depth <= frame.camera.Near || depth >= frame.camera.Far {
 		return nil
 	}
-	focal := (math.Min(float64(width), float64(height)) / 2) / math.Tan((camera.FOV*math.Pi)/360)
 	return &rootengine.RenderPoint{
-		X: float64(width)/2 + (local.X*focal)/depth,
-		Y: float64(height)/2 - (local.Y*focal)/depth,
+		X: frame.halfWidth + (local.X*frame.pixelFocal)/depth,
+		Y: frame.halfHeight - (local.Y*frame.pixelFocal)/depth,
 	}
 }
 
 func clipWorldSegmentForCamera(from, to point3, camera sceneCamera, aspect float64) (point3, point3, bool) {
-	return clipWorldSegmentForCameraTrig(from, to, camera, aspect, cameraInverseRotTrig(camera))
+	frame := prepareSceneCameraFrame(camera, 1, 1)
+	frame.aspect = math.Max(aspect, 0.0001)
+	segment := sceneCameraSegment{from: from, to: to}
+	if !frame.clipSegment(&segment) {
+		return point3{}, point3{}, false
+	}
+	return segment.from, segment.to, true
 }
 
-func clipWorldSegmentForCameraTrig(from, to point3, camera sceneCamera, aspect float64, camTrig rotTrig) (point3, point3, bool) {
-	localFrom := cameraLocalPointTrig(from, camera, camTrig)
-	localTo := cameraLocalPointTrig(to, camera, camTrig)
-	depthFrom := localFrom.Z
-	depthTo := localTo.Z
-	if depthFrom <= camera.Near && depthTo <= camera.Near {
-		return point3{}, point3{}, false
+// Retain camera-local endpoints through clipping and screen projection. A near
+// intersection is still interpolated in WORLD space and then transformed; doing
+// that interpolation in camera space would change floating-point rounding.
+type sceneCameraSegment struct {
+	from, to           point3
+	localFrom, localTo point3
+}
+
+func (frame *sceneCameraFrame) clipSegment(segment *sceneCameraSegment) bool {
+	segment.localFrom = frame.localPoint(segment.from)
+	segment.localTo = frame.localPoint(segment.to)
+	depthFrom := segment.localFrom.Z
+	depthTo := segment.localTo.Z
+	near := frame.camera.Near
+	if depthFrom <= near && depthTo <= near {
+		return false
 	}
-	clippedFrom := from
-	clippedTo := to
-	if depthFrom <= camera.Near || depthTo <= camera.Near {
-		t := (camera.Near - depthFrom) / math.Max(0.000001, depthTo-depthFrom)
-		if depthFrom <= camera.Near {
-			clippedFrom = lerpPoint3(from, to, t)
+	if depthFrom <= near || depthTo <= near {
+		t := (near - depthFrom) / math.Max(0.000001, depthTo-depthFrom)
+		if depthFrom <= near {
+			segment.from = lerpPoint3(segment.from, segment.to, t)
+			segment.localFrom = frame.localPoint(segment.from)
 		} else {
-			clippedTo = lerpPoint3(from, to, t)
+			segment.to = lerpPoint3(segment.from, segment.to, t)
+			segment.localTo = frame.localPoint(segment.to)
 		}
 	}
-	depthFrom = cameraLocalPointTrig(clippedFrom, camera, camTrig).Z
-	depthTo = cameraLocalPointTrig(clippedTo, camera, camTrig).Z
-	if worldSegmentOutsideFrustumTrig(clippedFrom, depthFrom, clippedTo, depthTo, camera, aspect, camTrig) {
-		return point3{}, point3{}, false
-	}
-	return clippedFrom, clippedTo, true
+	return !frame.segmentOutsideFrustum(segment.localFrom, segment.localFrom.Z, segment.localTo, segment.localTo.Z)
 }
 
 func renderObjectBounds(worldPositions []float64, vertexOffset, vertexCount int) rootengine.RenderBounds {
@@ -2248,19 +2331,19 @@ func renderObjectBounds(worldPositions []float64, vertexOffset, vertexCount int)
 }
 
 func renderBoundsOutsideFrustum(bounds rootengine.RenderBounds, camera sceneCamera, width, height int) bool {
-	return renderBoundsOutsideFrustumTrig(bounds, camera, width, height, cameraInverseRotTrig(camera))
+	frame := prepareSceneCameraFrame(camera, width, height)
+	return frame.boundsOutsideFrustum(bounds)
 }
 
-func renderBoundsOutsideFrustumTrig(bounds rootengine.RenderBounds, camera sceneCamera, width, height int, camTrig rotTrig) bool {
-	aspect := math.Max(0.0001, float64(width)/math.Max(1, float64(height)))
+func (frame *sceneCameraFrame) boundsOutsideFrustum(bounds rootengine.RenderBounds) bool {
 	corners := renderBoundsCorners(bounds)
 	allLeft, allRight, allBottom, allTop := true, true, true, true
 	allNear, allFar := true, true
 	for _, corner := range corners {
-		local := cameraLocalPointTrig(corner, camera, camTrig)
-		allNear = allNear && local.Z <= camera.Near
-		allFar = allFar && local.Z >= camera.Far
-		clipX, clipY := projectWorldClipPointTrig(corner, camera, aspect, camTrig)
+		local := frame.localPoint(corner)
+		allNear = allNear && local.Z <= frame.camera.Near
+		allFar = allFar && local.Z >= frame.camera.Far
+		clipX, clipY := frame.clipLocalPoint(local)
 		allLeft = allLeft && clipX < -1
 		allRight = allRight && clipX > 1
 		allBottom = allBottom && clipY < -1
@@ -2273,15 +2356,16 @@ func renderBoundsOutsideFrustumTrig(bounds rootengine.RenderBounds, camera scene
 }
 
 func renderBoundsDepthMetrics(bounds rootengine.RenderBounds, camera sceneCamera) (near, far, center float64) {
-	return renderBoundsDepthMetricsTrig(bounds, camera, cameraInverseRotTrig(camera))
+	frame := prepareSceneCameraFrame(camera, 1, 1)
+	return frame.boundsDepthMetrics(bounds)
 }
 
-func renderBoundsDepthMetricsTrig(bounds rootengine.RenderBounds, camera sceneCamera, camTrig rotTrig) (near, far, center float64) {
+func (frame *sceneCameraFrame) boundsDepthMetrics(bounds rootengine.RenderBounds) (near, far, center float64) {
 	corners := renderBoundsCorners(bounds)
-	near = cameraLocalPointTrig(corners[0], camera, camTrig).Z
+	near = frame.localPoint(corners[0]).Z
 	far = near
 	for i := 1; i < len(corners); i++ {
-		depth := cameraLocalPointTrig(corners[i], camera, camTrig).Z
+		depth := frame.localPoint(corners[i]).Z
 		near = math.Min(near, depth)
 		far = math.Max(far, depth)
 	}
@@ -2325,28 +2409,30 @@ func renderBoundsCorners(bounds rootengine.RenderBounds) [8]point3 {
 }
 
 func projectWorldClipPoint(point point3, camera sceneCamera, aspect float64) (float64, float64) {
-	return projectWorldClipPointTrig(point, camera, aspect, cameraInverseRotTrig(camera))
+	frame := prepareSceneCameraFrame(camera, 1, 1)
+	frame.aspect = math.Max(aspect, 0.0001)
+	return frame.clipLocalPoint(frame.localPoint(point))
 }
 
-func projectWorldClipPointTrig(point point3, camera sceneCamera, aspect float64, camTrig rotTrig) (float64, float64) {
-	local := cameraLocalPointTrig(point, camera, camTrig)
+func (frame *sceneCameraFrame) clipLocalPoint(local point3) (float64, float64) {
 	depth := local.Z
-	focal := 1 / math.Max(0.0001, math.Tan((camera.FOV*math.Pi)/360))
-	x := (local.X * focal / math.Max(depth, 0.0001)) / math.Max(aspect, 0.0001)
-	y := local.Y * focal / math.Max(depth, 0.0001)
+	x := (local.X * frame.clipFocal / math.Max(depth, 0.0001)) / frame.aspect
+	y := local.Y * frame.clipFocal / math.Max(depth, 0.0001)
 	return x, y
 }
 
 func worldSegmentOutsideFrustum(from point3, depthFrom float64, to point3, depthTo float64, camera sceneCamera, aspect float64) bool {
-	return worldSegmentOutsideFrustumTrig(from, depthFrom, to, depthTo, camera, aspect, cameraInverseRotTrig(camera))
+	frame := prepareSceneCameraFrame(camera, 1, 1)
+	frame.aspect = math.Max(aspect, 0.0001)
+	return frame.segmentOutsideFrustum(frame.localPoint(from), depthFrom, frame.localPoint(to), depthTo)
 }
 
-func worldSegmentOutsideFrustumTrig(from point3, depthFrom float64, to point3, depthTo float64, camera sceneCamera, aspect float64, camTrig rotTrig) bool {
-	if depthFrom >= camera.Far && depthTo >= camera.Far {
+func (frame *sceneCameraFrame) segmentOutsideFrustum(from point3, depthFrom float64, to point3, depthTo float64) bool {
+	if depthFrom >= frame.camera.Far && depthTo >= frame.camera.Far {
 		return true
 	}
-	clipFromX, clipFromY := projectWorldClipPointTrig(from, camera, aspect, camTrig)
-	clipToX, clipToY := projectWorldClipPointTrig(to, camera, aspect, camTrig)
+	clipFromX, clipFromY := frame.clipLocalPoint(from)
+	clipToX, clipToY := frame.clipLocalPoint(to)
 	return (clipFromX < -1 && clipToX < -1) ||
 		(clipFromX > 1 && clipToX > 1) ||
 		(clipFromY < -1 && clipToY < -1) ||

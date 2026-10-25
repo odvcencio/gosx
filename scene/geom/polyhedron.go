@@ -1,6 +1,10 @@
 package geom
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // This file builds the five platonic-family solids. All four named solids share
 // one subdivider: Polyhedron takes a base hull of triangles, splits each face
@@ -115,9 +119,9 @@ func subdivideFace(b *builder, a, c, d vec3, cols int, onSphere func(vec3) vec3,
 
 func lerpVec(a, b vec3, t float64) vec3 {
 	return vec3{
-		X: a.X + (b.X-a.X)*t,
-		Y: a.Y + (b.Y-a.Y)*t,
-		Z: a.Z + (b.Z-a.Z)*t,
+		X: a.X + float64((b.X-a.X)*t),
+		Y: a.Y + float64((b.Y-a.Y)*t),
+		Z: a.Z + float64((b.Z-a.Z)*t),
 	}
 }
 
@@ -125,8 +129,8 @@ func lerpVec(a, b vec3, t float64) vec3 {
 // The seam at azimuth 0 and the two poles need a repair pass; see
 // correctPolyhedronSeam and correctPolyhedronPoles.
 func sphericalUV(v vec3) vec2 {
-	azimuth := math.Atan2(v.Z, -v.X)
-	inclination := math.Atan2(-v.Y, math.Hypot(v.X, v.Z))
+	azimuth := det.Atan2(v.Z, -v.X)
+	inclination := det.Atan2(-v.Y, det.Hypot(v.X, v.Z))
 	return vec2{
 		U: azimuth/(2*math.Pi) + 0.5,
 		V: 1 - (inclination/math.Pi + 0.5),
@@ -163,7 +167,7 @@ func correctPolyhedronPoles(mesh *Mesh) {
 		base := i / 3 * 2
 		for k := 0; k < 3; k++ {
 			x, z := positions[i+k*3], positions[i+k*3+2]
-			if math.Hypot(x, z) > 1e-9 {
+			if det.Hypot(x, z) > 1e-9 {
 				continue
 			}
 			other0 := uvs[base+((k+1)%3)*2]
@@ -188,7 +192,7 @@ func fillSphericalColors(mesh *Mesh, radius float64) {
 		if t > 1 {
 			t = 1
 		}
-		mesh.Colors = append(mesh.Colors, 0.9-0.6*t, 0.3+0.5*t, 0.4+0.5*(1-t))
+		mesh.Colors = append(mesh.Colors, 0.9-float64(0.6*t), 0.3+0.5*t, 0.4+0.5*(1-t))
 	}
 }
 

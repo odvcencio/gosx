@@ -2,6 +2,8 @@ package scene
 
 import (
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 
 	"m31labs.dev/gosx/motion"
@@ -1176,9 +1178,10 @@ func (p Props) SceneIR() SceneIR {
 	}
 	if len(p.PointQualityGroups) > 0 {
 		groups := make(map[string]string, len(p.PointQualityGroups))
-		for name, group := range p.PointQualityGroups {
-			name = strings.TrimSpace(name)
-			group = strings.TrimSpace(group)
+		// Sorted so that two names that trim to one resolve the same way every run.
+		for _, rawName := range slices.Sorted(maps.Keys(p.PointQualityGroups)) {
+			name := strings.TrimSpace(rawName)
+			group := strings.TrimSpace(p.PointQualityGroups[rawName])
 			if name == "" || group == "" {
 				continue
 			}
@@ -1268,6 +1271,7 @@ func customShaderUnservedBackends(ir SceneIR, r capability.ShaderResolver) []cap
 		}
 		src := capability.CustomMaterialSources{GLSL: hasGLSL, WGSL: hasWGSL}
 		served := r.Serves(src)
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for b, ok := range served {
 			if !ok {
 				seen[b] = true
@@ -1277,10 +1281,7 @@ func customShaderUnservedBackends(ir SceneIR, r capability.ShaderResolver) []cap
 	if len(seen) == 0 {
 		return nil
 	}
-	out := make([]capability.Backend, 0, len(seen))
-	for b := range seen {
-		out = append(out, b)
-	}
+	out := slices.Sorted(maps.Keys(seen))
 	return out
 }
 
@@ -1628,6 +1629,7 @@ func cloneShaderLibCollections(ir *SceneIR) {
 	// entries the caller never asked for.
 	if len(ir.ShaderLib) > 0 {
 		cloned := make(map[string]string, len(ir.ShaderLib))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for id, src := range ir.ShaderLib {
 			cloned[id] = src
 		}
@@ -1858,6 +1860,7 @@ func hoistShaderLib(ir *SceneIR) {
 	}
 
 	lib := make(map[string]string)
+	//gosx:allow map-range keys are content hashes, so each source has one id; order does not matter
 	for s, n := range counts {
 		if n >= 2 {
 			lib[shaderLibID(s)] = s
@@ -1868,6 +1871,7 @@ func hoistShaderLib(ir *SceneIR) {
 	}
 
 	sourceToID := make(map[string]string, len(lib))
+	//gosx:allow map-range keys are content hashes, so each source has one id; order does not matter
 	for id, s := range lib {
 		sourceToID[s] = id
 	}
@@ -1883,6 +1887,7 @@ func hoistShaderLib(ir *SceneIR) {
 	if ir.ShaderLib == nil {
 		ir.ShaderLib = make(map[string]string, len(lib))
 	}
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for id, s := range lib {
 		ir.ShaderLib[id] = s
 	}
@@ -1997,6 +2002,7 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if len(ir.PointQualityGroups) > 0 {
 		groups := make(map[string]string, len(ir.PointQualityGroups))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for name, group := range ir.PointQualityGroups {
 			groups[name] = group
 		}
@@ -2007,6 +2013,7 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if len(ir.ShaderLib) > 0 {
 		lib := make(map[string]string, len(ir.ShaderLib))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for key, source := range ir.ShaderLib {
 			lib[key] = source
 		}
@@ -3010,6 +3017,7 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setString(record, "duckMaterialFragmentGLES", item.DuckMaterialFragmentGLES)
 	if len(item.ShaderDescriptors) > 0 {
 		descriptors := make(map[string]any, len(item.ShaderDescriptors))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for k, v := range item.ShaderDescriptors {
 			clone := make(json.RawMessage, len(v))
 			copy(clone, v)
@@ -3643,8 +3651,7 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 			delete(seen, f)
 		}
 	}
-	for f := range seen {
-		features = append(features, f)
-	}
+	// Features outside collectFeatureOrder follow in name order.
+	features = append(features, slices.Sorted(maps.Keys(seen))...)
 	return features
 }

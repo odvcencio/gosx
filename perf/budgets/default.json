@@ -50,9 +50,9 @@
       ]
     },
     "water-ci": {
-      "description": "Water route under CI software rasterization. The network limit covers 1845.26 KiB measured in PR #727 CI run 39834210179: the Scene3D chunk grew by 4891 raw bytes from the 1840.48 KiB baseline in PR #724 CI run 39747737518. The limit is the measurement rounded up to the next KiB. Load and blocking time remain separate experience gates. Long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary; real-GPU cadence is certified separately.",
+      "description": "Water route under CI software rasterization. The network limit covers 1846.28 KiB measured in PR #747 CI run 39971086334 after shared renderer-owned instance preparation. This replaces the 1845.26 KiB measurement in PR #727; the shared Scene3D chunk grows while both backend chunks shrink. The limit is the measurement rounded up to the next KiB. Load and blocking time remain separate experience gates. Long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary; real-GPU cadence is certified separately. PR #744 CI run 40027059297 measured 1,892,703 bytes (1848.34 KiB) with no renderer recovery. Of the five loaded framework scripts, only the startup Scene3D script changes from main: +1,757 raw bytes for camera command synchronization, ordered orbit targets and zoom height-floor enforcement. Set the network limit to 1849 KiB, rounding this observed transfer total upward under the existing policy; load and blocking-time limits are unchanged.",
       "assertions": [
-        "network_kb <= 1846",
+        "network_kb <= 1849",
         "lcp <= 2000",
         "tbt <= 18000"
       ]

@@ -296,9 +296,9 @@ func raycastWorldObject(ray pickRay, b engine.RenderBundle, object engine.Render
 			triangleIndex: tri / 3,
 			localPosition: barycentric3(p0, p1, p2, w, u, v),
 			worldPosition: [3]float32{
-				ray.origin[0] + ray.dir[0]*dist,
-				ray.origin[1] + ray.dir[1]*dist,
-				ray.origin[2] + ray.dir[2]*dist,
+				ray.origin[0] + float32(ray.dir[0]*dist),
+				ray.origin[1] + float32(ray.dir[1]*dist),
+				ray.origin[2] + float32(ray.dir[2]*dist),
 			},
 			uv:    barycentric2(objectUVAt(b, object, tri), objectUVAt(b, object, tri+1), objectUVAt(b, object, tri+2), w, u, v),
 			depth: dist,

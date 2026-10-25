@@ -190,7 +190,7 @@ func (m *Mixer) Update(dt float64, policy Policy, out *WriteBuf) {
 
 	// 1. Advance time and handle fading for every active entry (JS step 1).
 	for _, e := range m.active {
-		e.time += dt * e.speed
+		e.time += float64(dt * e.speed)
 
 		// Looping: wrap time at duration.
 		if e.loop && e.clip.duration > 0 && e.time >= e.clip.duration {
@@ -204,7 +204,7 @@ func (m *Mixer) Update(dt float64, policy Policy, out *WriteBuf) {
 			if r > 1.0 {
 				r = 1.0
 			}
-			e.weight = r * e.targetWeight
+			e.weight = float64(r * e.targetWeight)
 		}
 
 		// Fade-out (stopping): ramp weight →0 over fadeOut seconds.
@@ -214,7 +214,7 @@ func (m *Mixer) Update(dt float64, policy Policy, out *WriteBuf) {
 			if r < 0 {
 				r = 0
 			}
-			e.weight = r * e.targetWeight
+			e.weight = float64(r * e.targetWeight)
 		}
 	}
 
@@ -251,6 +251,7 @@ func (m *Mixer) Update(dt float64, policy Policy, out *WriteBuf) {
 // map is normally already empty; this guards the path where no clip contributed
 // (or a prior tick was interrupted) so accumulators are never leaked.
 func (m *Mixer) clearResults() {
+	//gosx:allow map-range recycles accumulators and clears the map; the pool order is not read by any result
 	for k, a := range m.results {
 		m.freePool = append(m.freePool, a)
 		delete(m.results, k)
@@ -301,7 +302,7 @@ func (m *Mixer) blendInto(weight float64) {
 			} else {
 				for c := 0; c < width; c++ {
 					nv := w[vstart+c]
-					acc.value[c] = acc.value[c] + (nv-acc.value[c])*t
+					acc.value[c] = acc.value[c] + float64((nv-acc.value[c])*t)
 				}
 			}
 			acc.totalWeight += weight
@@ -329,6 +330,7 @@ func (m *Mixer) emit(out *WriteBuf) {
 	// Deterministic order: collect keys, sort ascending. Model animation has a
 	// small, bounded key set; the sort cost is negligible.
 	keys := m.keyScratch[:0]
+	//gosx:allow map-range collects keys that are sorted on the next lines
 	for k := range m.results {
 		keys = append(keys, k)
 	}
