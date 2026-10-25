@@ -723,7 +723,7 @@
   ],
   "quickstart": {
     "command": "go install m31labs.dev/gosx/cmd/gosx@latest",
-    "method": "Cold run used fresh isolated GOMODCACHE and GOCACHE directories. Warm run reused both caches. Times include compilation and module download. Sampled @latest=v0.57.20 on Go1.26.9 with GOMAXPROCS=2 and GOFLAGS=-p=2.",
+    "method": "Cold used empty module/build caches; warm reused them. Includes download and compilation. Sample: v0.57.20, Go1.26.9, GOMAXPROCS=2, GOFLAGS=-p=2.",
     "coldSeconds": 52.93,
     "warmSeconds": 0.43
   }
