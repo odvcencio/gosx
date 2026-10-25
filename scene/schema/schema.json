@@ -547,6 +547,7 @@
               "type": "string",
               "minLength": 1
             },
+            "palette": { "type": "array", "items": { "type": "string", "minLength": 1 } },
             "roughness": { "type": "number" },
             "metalness": { "type": "number" },
             "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
@@ -574,6 +575,7 @@
           "additionalProperties": true,
           "properties": {
             "id": { "type": "string" },
+            "tint": { "type": "integer", "minimum": 0 },
             "animation": { "type": "string" },
             "animationTime": { "type": "number", "minimum": 0 },
             "animationLoop": { "type": "boolean" }

@@ -1627,6 +1627,9 @@
       scaleZ: sceneNumber(current.scaleZ, sceneNumber(scaleSource ? scaleSource.z : undefined, sceneNumber(current.scale, 1))),
       parentMatrix: sceneNormalizeParentMatrix(current.parentMatrix),
     };
+    // 1-based index into the batch palette; absent means untinted.
+    const tint = Math.floor(sceneNumber(current.tint, 0));
+    if (tint > 0) instance.tint = tint;
     // Preserve absence for legacy rigid declarations. Explicit empty clip is
     // still meaningful (bind pose), so check property presence, not truthiness.
     if (["animation", "animationTime", "animationLoop"].some(key => Object.prototype.hasOwnProperty.call(current, key))) {
@@ -1709,6 +1712,11 @@
       }),
       ...lifecycle,
     };
+    // Instance colours ship once per batch; instance.tint indexes this list, 1-based.
+    const rawPalette = Array.isArray(raw.palette) ? raw.palette : (Array.isArray(current.palette) ? current.palette : null);
+    if (rawPalette && rawPalette.length) {
+      batch.palette = rawPalette.map(function(color) { return typeof color === "string" ? color.trim() : ""; });
+    }
     for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "specularFragmentGLSL", "specularFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
       if (sceneObjectMaterialHasValue(raw, key)) {
         batch[key] = sceneCloneData(sceneObjectMaterialValue(raw, key));
@@ -1773,11 +1781,30 @@
   const sceneInstancedGLBHydrationTemplates = new WeakMap();
   const sceneInstancedGLBBatchIDs = new WeakMap();
   const sceneInstancedGLBBatchParents = new WeakMap();
+  // The tint of an instance's crowd agents: a Float32Array(4) in linear light, set only for tinted instances.
+  const sceneInstancedGLBTints = new WeakMap();
+
+  function sceneSRGBChannelToLinear(value) {
+    const channel = Math.max(0, Math.min(1, sceneNumber(value, 0)));
+    return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+  }
+
+  // One Float32Array per palette entry per expansion, shared by its instances.
+  function sceneInstancedGLBPaletteTints(palette) {
+    if (!Array.isArray(palette) || !palette.length) return null;
+    return palette.map(function(color) {
+      if (typeof color !== "string" || !color) return null;
+      const rgba = sceneColorRGBA(color, [1, 1, 1, 1]);
+      return new Float32Array([sceneSRGBChannelToLinear(rgba[0]), sceneSRGBChannelToLinear(rgba[1]), sceneSRGBChannelToLinear(rgba[2]), rgba[3]]);
+    });
+  }
 
   function sceneCloneHydrationModel(model) {
     const copy = sceneCloneData(model);
-    const template = sceneInstancedGLBHydrationTemplates.get(model);
-    if (template) sceneInstancedGLBHydrationTemplates.set(copy, template);
+    for (const metadata of [sceneInstancedGLBHydrationTemplates, sceneInstancedGLBBatchIDs, sceneInstancedGLBBatchParents, sceneInstancedGLBTints]) {
+      const value = metadata.get(model);
+      if (value !== undefined) metadata.set(copy, value);
+    }
     return copy;
   }
 
@@ -1802,6 +1829,7 @@
     const declaration = Object.assign({}, template);
     for (const key of ["id", "x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) delete declaration[key];
     const hydrationTemplate = JSON.stringify(declaration);
+    const paletteTints = sceneInstancedGLBPaletteTints(batch.palette);
     const models = [];
     for (let index = 0; index < batch.instances.length; index += 1) {
       const instance = batch.instances[index];
@@ -1822,6 +1850,9 @@
       // the crowd batch record this agent's render objects join.
       sceneInstancedGLBBatchIDs.set(model, batch.id);
       if (batch.parentNode) sceneInstancedGLBBatchParents.set(model, batch.parentNode);
+      // Colour is not a hydration input either: it rides the agent's crowd record.
+      const tint = paletteTints && instance.tint > 0 ? paletteTints[instance.tint - 1] : null;
+      if (tint) sceneInstancedGLBTints.set(model, tint);
       models.push(model);
     }
     return models;
@@ -3268,7 +3299,7 @@
     return api ? api.normalize(raw) : raw;
   }
   function sceneGroupMatrices(state,time) {return window.__gosx_scene3d_hierarchy_api.matrices(state,time);}
-  function sceneGroupRecords(records,matrices,mode) {return window.__gosx_scene3d_hierarchy_api.records(records,matrices,mode);}
+  function sceneGroupRecords(records,matrices,mode,batchParents) {return window.__gosx_scene3d_hierarchy_api.records(records,matrices,mode,batchParents);}
   async function scenePrepareGroups(state,raw) {
     if (arguments.length<2) raw=state.groups;
     const generation=(state._groupGeneration || 0)+1;
@@ -5276,12 +5307,12 @@
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
       : Date.now();
+    let hierarchy = null;
     if (hierarchyState && hierarchyState.groups && hierarchyState.groups.length) {
-      const hierarchy = sceneGroupMatrices(hierarchyState, timeSeconds);
-      objects = sceneGroupRecords(objects, hierarchy, "matrix");
+      hierarchy = sceneGroupMatrices(hierarchyState, timeSeconds);
+      objects = sceneGroupRecords(objects, hierarchy, "matrix", Boolean(rendererCapabilities && rendererCapabilities.crowdBatches));
       points = sceneGroupRecords(points, hierarchy, "matrix");
       computeParticles = sceneGroupRecords(computeParticles, hierarchy, "matrix");
-      instancedMeshes = sceneGroupRecords(instancedMeshes, hierarchy, "instances");
       labels = sceneGroupRecords(labels, hierarchy, "position");
       sprites = sceneGroupRecords(sprites, hierarchy, "position");
       html = sceneGroupRecords(html, hierarchy, "position");
@@ -5377,7 +5408,7 @@
     }
     // Crowd agents leave the per-object walk here and return as one record
     // per batch after the ordinary objects.
-    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds) : objects;
+    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy) : objects;
     const selectedObjects = sceneSelectLODObjects(sceneObjects, renderCamera);
     sceneReserveBakedObjectAttributes(bundle, selectedObjects);
     appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
@@ -5395,7 +5426,7 @@
     for (const entry of html || []) {
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
-    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes);
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy);
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
     bundle.vertexCount = bundle.positions.length / 2;
@@ -5418,7 +5449,65 @@
     return bundle;
   }
 
-  function appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes) {
+  // ---- Instanced mesh parent ---------------------------------------------
+  //
+  // An InstancedMesh with a parentNode keeps its instance transforms in that
+  // node's space. The bundle entry the renderers read carries them composed
+  // with the node's current world matrix (the node's parentMatrix, which a
+  // vessel pose writes every frame), so WebGL2 and WebGPU draw, cull, shadow
+  // and pick the batch where the node is without a message and without a
+  // renderer change. The source record keeps its local transforms.
+  //
+  // The composed array is rebuilt on every bundle build, because the node may
+  // move and the local array may change in place. It keeps its identity while
+  // its contents are unchanged and takes the other of two buffers when they
+  // change, and the entry's _instanceStreamRevision advances with it, so the
+  // GPU-driven instancing path (which re-uploads on a new array or revision)
+  // sees the move.
+  const sceneInstancedParentTransforms = new WeakMap();
+
+  function sceneInstancedMeshParentTransforms(mesh, parent, entry) {
+    const local = mesh.transforms;
+    const count = Math.min(
+      Math.max(0, Math.floor(sceneNumber(mesh.count, 0))),
+      Math.floor((local && typeof local.length === "number" ? local.length : 0) / 16));
+    if (count <= 0) return null;
+    const owner = mesh.resourceOwner || mesh;
+    let cache = sceneInstancedParentTransforms.get(owner);
+    if (!cache || cache.buffers[0].length !== count * 16) {
+      cache = { buffers: [new Float32Array(count * 16), new Float32Array(count * 16)], current: -1, generation: 0 };
+      sceneInstancedParentTransforms.set(owner, cache);
+    }
+    const next = cache.buffers[cache.current === 0 ? 1 : 0];
+    const p0 = parent[0], p1 = parent[1], p2 = parent[2], p3 = parent[3];
+    const p4 = parent[4], p5 = parent[5], p6 = parent[6], p7 = parent[7];
+    const p8 = parent[8], p9 = parent[9], p10 = parent[10], p11 = parent[11];
+    const p12 = parent[12], p13 = parent[13], p14 = parent[14], p15 = parent[15];
+    for (let i = 0, base = 0; i < count; i += 1, base += 16) {
+      for (let c = 0; c < 16; c += 4) {
+        const a = local[base + c], b = local[base + c + 1], d = local[base + c + 2], e = local[base + c + 3];
+        next[base + c] = p0 * a + p4 * b + p8 * d + p12 * e;
+        next[base + c + 1] = p1 * a + p5 * b + p9 * d + p13 * e;
+        next[base + c + 2] = p2 * a + p6 * b + p10 * d + p14 * e;
+        next[base + c + 3] = p3 * a + p7 * b + p11 * d + p15 * e;
+      }
+    }
+    let changed = cache.current < 0;
+    if (!changed) {
+      const current = cache.buffers[cache.current];
+      for (let k = 0; k < next.length; k += 1) {
+        if (current[k] !== next[k]) { changed = true; break; }
+      }
+    }
+    if (changed) {
+      cache.current = cache.current === 0 ? 1 : 0;
+      cache.generation += 1;
+    }
+    entry._instanceStreamRevision = sceneNumber(mesh._instanceStreamRevision, 0) + cache.generation;
+    return cache.buffers[cache.current];
+  }
+
+  function appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy) {
     const meshes = Array.isArray(instancedMeshes) ? instancedMeshes : [];
     for (let index = 0; index < meshes.length; index += 1) {
       const mesh = meshes[index];
@@ -5433,6 +5522,17 @@
         renderPass: material.renderPass || mesh.renderPass,
         _renderPassDerived: (mesh && mesh._renderPassDerived) === true,
       });
+      if (typeof mesh.parentNode === "string" && mesh.parentNode !== "") {
+        const retained = hierarchy && hierarchy.get(mesh.parentNode);
+        const node = retained ? null : sceneCrowdBatchParentObject(objects, mesh.parentNode, mesh.id);
+        const world = retained || (node ? sceneObjectModelMatrix(node, timeSeconds) : null);
+        const composed = world && world.length >= 16 ? sceneInstancedMeshParentTransforms(mesh, world, entry) : null;
+        if (composed) {
+          entry.transforms = composed;
+          // Both renderers read _cachedTransforms before transforms.
+          entry._cachedTransforms = composed;
+        }
+      }
       bundle.instancedMeshes.push(entry);
     }
   }
@@ -5676,6 +5776,9 @@
       dirty: [], dirtyEpoch: 0, dirtyFull: true,
       objects: [], skins: [], matrices: [], motions: [], revs: [],
       transforms: null, poses: null,
+      // Per-agent tints (linear RGBA, 4 floats per slot) or null when no agent has one.
+      // tintRefs holds each slot's skin.tint to spot a recolour; colorGen advances on a repack.
+      tintRefs: [], colors: null, colorsDirty: false, colorGen: 0,
       bounds: { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 },
       record: null,
     };
@@ -5740,6 +5843,63 @@
     }
   }
 
+  // Packs each agent's tint (4 floats per slot, linear RGBA) into group.colors, or
+  // clears it when no agent has one. colorGen tells the renderers to upload again.
+  function sceneCrowdBatchPackColors(group) {
+    const count = group.n;
+    let any = false;
+    for (let i = 0; i < count; i += 1) {
+      if (group.tintRefs[i]) { any = true; break; }
+    }
+    if (!any) {
+      if (group.colors !== null) { group.colors = null; group.colorGen += 1; }
+      return;
+    }
+    if (!group.colors || group.colors.length !== count * 4) group.colors = new Float32Array(count * 4);
+    const out = group.colors;
+    for (let i = 0; i < count; i += 1) {
+      const tint = group.tintRefs[i];
+      if (tint) out.set(tint, i * 4);
+      else { out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = out[i * 4 + 3] = 1; }
+    }
+    group.colorGen += 1;
+  }
+
+  // An agent that left its crowd batch still draws on the crowd shader, as a batch
+  // of its own; its tint comes from its own skin record.
+  function scenePrepareCrowdColors(batch) {
+    const objects = batch.objects;
+    let any = false;
+    for (let i = 0; i < batch.count; i++) {
+      const skin = objects[i]._crowdSkin;
+      if (skin && skin.tint) { any = true; break; }
+    }
+    if (!any) { batch.colors = null; return; }
+    const need = batch.count * 4;
+    let colors = batch.colors;
+    let changed = false;
+    if (!colors || colors.length !== need) { colors = batch.colors = new Float32Array(need); changed = true; }
+    for (let i = 0; i < batch.count; i++) {
+      const skin = objects[i]._crowdSkin, tint = skin && skin.tint;
+      for (let k = 0; k < 4; k++) {
+        const value = tint ? tint[k] : 1;
+        if (colors[i * 4 + k] !== value) { colors[i * 4 + k] = value; changed = true; }
+      }
+    }
+    if (changed) batch._colorGeneration = (batch._colorGeneration | 0) + 1;
+  }
+
+  // Pose commits preserve tint identity so animation never invalidates colors.
+  function sceneCommitCrowdPoseUpdates(updates) {
+    for (const update of updates) {
+      const skin = update.object._crowdSkin;
+      skin.rows.set(update.rows);
+      skin.rev += 1;
+      const tint = update.tint, held = skin.tint;
+      if (tint !== held && !(tint && held && tint[0] === held[0] && tint[1] === held[1] && tint[2] === held[2] && tint[3] === held[3])) skin.tint = tint;
+    }
+  }
+
   // ---- Batch parent ------------------------------------------------------
   //
   // A group whose agents were declared with a parentNode draws with that
@@ -5757,15 +5917,25 @@
   // still draws on its own record, in world space.
   // group.localBounds holds the agents' union in the parent's space and
   // group.bounds the world-space box the renderer culls and sorts with.
-  function sceneCrowdBatchParentObject(rest, id) {
+  //
+  // A crowd batch id may itself sit under the node's id ("ship/riders" on node
+  // "ship"), so its own agents match the node's prefix. The search skips every
+  // crowd agent and everything under the searching batch's own id, and an
+  // object with exactly the node's id wins over a part.
+  function sceneCrowdBatchParentObject(rest, id, ownBatchID) {
     if (!rest) return null;
     const prefix = id + "/";
+    const ownPrefix = ownBatchID ? ownBatchID + "/" : "";
+    let part = null;
     for (let i = 0; i < rest.length; i += 1) {
       const object = rest[i];
       const name = object && object.id;
-      if (typeof name === "string" && (name === id || name.startsWith(prefix))) return object;
+      if (typeof name !== "string" || object._crowdSkin) continue;
+      if (ownPrefix !== "" && name.startsWith(ownPrefix)) continue;
+      if (name === id) return object;
+      if (part === null && name.startsWith(prefix)) part = object;
     }
-    return null;
+    return part;
   }
 
   // Returns true when the world matrix or its presence changed.
@@ -5825,7 +5995,7 @@
 
   // sceneCrowdBatchPartition returns the objects that are NOT batched crowd
   // agents. When the scene has no crowd agent it returns its input unchanged.
-  function sceneCrowdBatchPartition(bundle, objects, timeSeconds) {
+  function sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy) {
     const list = Array.isArray(objects) ? objects : [];
     const epoch = ++sceneCrowdBatchEpoch;
     const active = sceneCrowdBatchActive = [];
@@ -5847,6 +6017,10 @@
             known.matrices[slot] === object.parentMatrix && object.visible !== false &&
             (object.selected !== true || Boolean(skin.parent)) && !object._modelHidden) {
           if (!rest) rest = list.slice(0, i);
+          if (known.tintRefs[slot] !== (skin.tint || null)) {
+            known.tintRefs[slot] = skin.tint || null;
+            known.colorsDirty = true;
+          }
           if (known.revs[slot] !== skin.rev) {
             known.revs[slot] = skin.rev;
             known.changed = true;
@@ -5908,6 +6082,10 @@
         group.changed = true;
         group.reshaped = true;
       }
+      if (group.tintRefs[slot] !== (skin.tint || null)) {
+        group.tintRefs[slot] = skin.tint || null;
+        group.colorsDirty = true;
+      }
       group.objects[slot] = object;
       group.n = slot + 1;
     }
@@ -5917,8 +6095,9 @@
       // A parented group follows its node every bundle, even when no agent changed.
       let parentMoved = false;
       if (group.parentNode !== "") {
-        const node = sceneCrowdBatchParentObject(rest, group.parentNode);
-        parentMoved = sceneCrowdBatchSetParent(group, node ? sceneObjectModelMatrix(node, timeSeconds) : null);
+        const retained = hierarchy && hierarchy.get(group.parentNode);
+        const node = retained ? null : sceneCrowdBatchParentObject(rest, group.parentNode, group.batchID);
+        parentMoved = sceneCrowdBatchSetParent(group, retained || (node ? sceneObjectModelMatrix(node, timeSeconds) : null));
         group.cut = node && node.cutawayCrowd || null; // vessel cutaway: Float32Array(8) clip planes (see vessel-cutaway)
       }
       if (group.n !== group.count) {
@@ -5926,7 +6105,12 @@
         group.reshaped = true;
         group.count = group.n;
         group.objects.length = group.skins.length = group.motions.length = group.matrices.length =
-          group.revs.length = group.n;
+          group.revs.length = group.tintRefs.length = group.n;
+        group.colorsDirty = true;
+      }
+      if (group.colorsDirty || group.reshaped) {
+        group.colorsDirty = false;
+        sceneCrowdBatchPackColors(group);
       }
       if (parentMoved && !group.changed) sceneCrowdBatchWorldBounds(group);
       if (group.changed && group.count > 0) {
@@ -5948,7 +6132,7 @@
           const stale = groups[i];
           stale.alive = false;
           stale.objects.length = stale.skins.length = stale.motions.length = stale.matrices.length =
-            stale.revs.length = 0;
+            stale.revs.length = stale.tintRefs.length = 0;
           groups.splice(i, 1);
         }
       }
@@ -6062,6 +6246,9 @@
       record.crowdShape = group.shape;
       record.crowdTransforms = group.transforms;
       record.crowdPoses = group.poses;
+      // Per-agent tints: linear RGBA per slot, null when none. crowdColorGen changes when they do.
+      record.crowdColors = group.colors;
+      record.crowdColorGen = group.colorGen;
       record.crowdMotion = motion;
       record.crowdParentMatrix = group.parentMatrix;
       record.crowdCut = group.cut || null;
@@ -7982,6 +8169,7 @@
     sceneStateInstancedMeshesWithMaterials,
     scenePrepareInstancedTransforms,
     scenePrepareInstancedColors,
+    scenePrepareCrowdColors,
     sceneResolveMaterialUniforms,
     // The legacy vertex-colour renderer moved to 16e-scene-webgl-legacy.js,
     // which ships only in bootstrap.js and in the WebGL chunk. Guard the read:
@@ -8012,6 +8200,7 @@
     sceneOceanUniformData: typeof sceneOceanUniformData === "function" ? sceneOceanUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,
+    normalizeSceneInstancedMeshEntry,
     normalizeSceneLabel,
     normalizeSceneLabelAlign,
     normalizeSceneLabelCollision,

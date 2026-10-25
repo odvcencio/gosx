@@ -585,8 +585,19 @@ func (ir *IR) Validate() error {
 	}
 	for i, node := range ir.Nodes {
 		problems = append(problems, validateIRNode(i, node, len(ir.Materials))...)
-		if node.Transform.ParentNode != "" && !groupIDs[node.Transform.ParentNode] {
-			problems = append(problems, fmt.Sprintf("nodes[%d].transform.parentNode is unknown", i))
+		if parent := node.Transform.ParentNode; parent != "" && !groupIDs[parent] {
+			known := false
+			if node.Kind == "instanced-mesh" {
+				for _, target := range ir.Nodes {
+					if target.Kind == "mesh" && (target.ID == parent || strings.HasPrefix(target.ID, parent+"/")) {
+						known = true
+						break
+					}
+				}
+			}
+			if !known {
+				problems = append(problems, fmt.Sprintf("nodes[%d].transform.parentNode is unknown", i))
+			}
 		}
 	}
 	for i, light := range ir.Lights {

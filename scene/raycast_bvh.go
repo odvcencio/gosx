@@ -752,6 +752,7 @@ func buildTorusKnotSoup(key torusKnotKey) *triangleSoup {
 type SceneAccelerator struct {
 	graph       Graph
 	timeSeconds float64
+	parents     rayParentResolver
 	prims       []accelPrim
 	boxes       []aabb
 	tree        bvh
@@ -803,6 +804,7 @@ func (accel *SceneAccelerator) Update(graph Graph) {
 // Geometry hierarchy reuse follows Update; the scene clock owns the pose.
 func (accel *SceneAccelerator) UpdateAtTime(graph Graph, seconds float64) {
 	accel.graph, accel.timeSeconds = graph, seconds
+	accel.parents = rayParentResolver{graph: graph, seconds: seconds}
 	if math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 		clear(accel.prims)
 		accel.prims = accel.prims[:0]
@@ -1068,6 +1070,13 @@ func (a *SceneAccelerator) flattenMesh(mesh Mesh, parent worldTransform) {
 }
 
 func (a *SceneAccelerator) flattenInstancedMesh(mesh InstancedMesh, parent worldTransform) {
+	if mesh.ParentNode != "" {
+		var valid bool
+		parent, valid = a.parents.resolve(mesh.ParentNode)
+		if !valid {
+			return
+		}
+	}
 	count := instanceCount(mesh)
 	pickable := mesh.Pickable == nil || *mesh.Pickable
 	id := strings.TrimSpace(mesh.ID)

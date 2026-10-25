@@ -1145,10 +1145,12 @@
     "in vec3 a_normal;",
     "in vec2 a_uv;",
     "in vec4 a_tangent;",
+    "in vec4 a_instanceColor;",
     SCENE_CROWD_MOTION_ATTRIBUTES_GLSL,
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
+    "uniform bool u_hasInstanceColor;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -1170,7 +1172,7 @@
     "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));",
     "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
-    "    v_instanceColor = vec4(1.0);",
+    "    v_instanceColor = u_hasInstanceColor ? a_instanceColor : vec4(1.0);",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
   ].join("\n");
@@ -6275,8 +6277,9 @@
   function createScenePBRCrowdMotionProgram(gl, detail = false) {
     return scenePBRCreateProgramInfo(gl, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Crowd motion PBR shader", function(program: any) {
 
-      var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState");
+      var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState instanceColor");
       var uniforms = scenePBRCacheBaseUniforms(gl, program);
+      uniforms.hasInstanceColor = gl.getUniformLocation(program, "u_hasInstanceColor");
       uniforms.crowdAtlas = gl.getUniformLocation(program, "u_crowdAtlas");
       uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
       uniforms.now = gl.getUniformLocation(program, "u_now");
@@ -7763,16 +7766,28 @@
       record.lastUsed = crowdFrame;
       return record;
     }
+    function disposeOwnedProgram(record: any) {
+      if (!record) return;
+      gl.deleteShader(record.vertexShader);
+      gl.deleteShader(record.fragmentShader);
+      gl.deleteProgram(record.program);
+    }
     function disposeCrowdResources() {
       for (const record of crowdAtlasTextures.values()) gl.deleteTexture(record.texture);
       crowdAtlasTextures.clear();
       crowdPaletteBytes = 0;
       for (const cp of [crowdProgram, crowdShadowProgram, crowdMotionProgram, crowdMotionShadowProgram]) {
-        if (cp) { gl.deleteProgram(cp.program); gl.deleteShader(cp.vertexShader); gl.deleteShader(cp.fragmentShader); }
+        disposeOwnedProgram(cp);
       }
       crowdProgram = crowdShadowProgram = null;
       crowdCapabilities = crowdCapabilityError = null;
       crowdMotionProgram = crowdMotionShadowProgram = crowdMotionShaderError = null;
+    }
+    function bindCrowdJointAttributes(obj: any, attributes: any, allowed: Record<number, boolean>) {
+      for (const name of ["joints", "weights"]) {
+        const location = attributes[name]; allowed[location] = true;
+        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
+      }
     }
     function bindCrowdBatch(batch, ip, allowed) {
       if (!batch.atlas) return;
@@ -7781,17 +7796,47 @@
       gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
       gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
       gl.uniform4fv(ip.uniforms.crowdCut, batch.cut || SCENE_NO_CUT);
-      const obj = batch.objects[0];
-      for (const name of ["joints", "weights"]) {
-        const location = ip.attributes[name]; allowed[location] = true;
-        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
-      }
+      bindCrowdJointAttributes(batch.objects[0], ip.attributes, allowed);
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const location = ip.attributes.pose; allowed[location] = true;
       gl.bindBuffer(gl.ARRAY_BUFFER, uploadPackedStream(batch, "poses", batch.poses));
       gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 12, 0); gl.vertexAttribDivisor(location, 1);
+      bindCrowdBatchColors(batch, ip, allowed);
     }
     function finishCrowdBatch(batch, ip) {
       if (batch.atlas) { gl.vertexAttribDivisor(ip.attributes.pose, 0); gl.disableVertexAttribArray(ip.attributes.pose); }
+      finishCrowdBatchColors(ip);
+    }
+
+    // Per-agent tints (linear RGBA, 4 floats per agent) as an instance-rate attribute.
+    // They upload when the record's colour generation changes, not with every pose revision.
+    // The shadow programs have no a_instanceColor and skip this.
+    function bindCrowdBatchColors(batch: any, ip: any, allowed: Record<number, boolean>) {
+      const location = ip.attributes.instanceColor;
+      if (!(location >= 0)) return;
+      // The program keeps its uniforms between draws: say "no tint" whenever this batch has none.
+      if (!batch.colors || batch.colors.length < batch.count * 4) { gl.uniform1i(ip.uniforms.hasInstanceColor, 0); return; }
+      allowed[location] = true;
+      const retained = batch._colorUploaded === undefined ? null : touchInstancedStream(batch, 0, "colors");
+      let buffer = retained;
+      if (!retained || batch._colorUploaded !== batch._colorGeneration) {
+        batch._colorUploaded = batch._colorGeneration;
+        buffer = uploadInstancedStream(batch, 0, "colors", batch.colors, batch.count * 4);
+      }
+      bindInstanceColors(ip, buffer);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 1);
+    }
+    function bindInstanceColors(ip: any, buffer: WebGLBuffer | null) {
+      const location = ip.attributes.instanceColor;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, 4, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(location, 1);
+    }
+    function finishCrowdBatchColors(ip: any) {
+      const location = ip.attributes.instanceColor;
+      if (!(location >= 0)) return;
+      gl.vertexAttribDivisor(location, 0);
+      gl.disableVertexAttribArray(location);
     }
 
     // --- GPU-driven crowd motion batch binding ---
@@ -7936,11 +7981,7 @@
       gl.uniform1f(ip.uniforms.motionExtrapolationSeconds, SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS);
       gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
       gl.uniform4fv(ip.uniforms.crowdCut, batch.cut || SCENE_NO_CUT);
-      const obj = batch.objects[0];
-      for (const name of ["joints", "weights"]) {
-        const location = ip.attributes[name]; allowed[location] = true;
-        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
-      }
+      bindCrowdJointAttributes(batch.objects[0], ip.attributes, allowed);
       const buffer = crowdMotionStreamBuffer(batch);
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       const stride = SCENE_CROWD_MOTION_RECORD_FLOATS * 4;
@@ -7958,10 +7999,12 @@
         gl.vertexAttribPointer(location, components, gl.FLOAT, false, stride, byteOffset);
         gl.vertexAttribDivisor(location, 1);
       }
+      bindCrowdBatchColors(batch, ip, allowed);
     }
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
     function finishCrowdMotionBatch(batch, ip) {
       if (!batch.atlas) return;
+      finishCrowdBatchColors(ip);
       for (const name of ["motionPrevPos", "motionPrevRot", "motionPrevScale", "tPrev", "motionNextPos", "motionNextRot", "motionNextScale", "tNext", "animState"]) {
         gl.vertexAttribDivisor(ip.attributes[name], 0);
         gl.disableVertexAttribArray(ip.attributes[name]);
@@ -9662,6 +9705,7 @@
       batch.atlas = obj.crowdAtlas; batch.clipTable = obj.crowdClipTable;
       batch.members = obj.crowdMembers; batch.shape = obj.crowdShape; batch.count = obj.instanceCount;
       batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses; batch.parent = obj.crowdParentMatrix || null; batch.cut = obj.crowdCut || null;
+      batch.colors = obj.crowdColors || null; batch._colorGeneration = obj.crowdColorGen;
       if (batch._packedRevision !== obj.crowdRevision) {
         // Dirty slot ranges describe one revision. Use them only when this
         // batch packed the revision just before it.
@@ -9780,6 +9824,7 @@
             batch.transforms = null;
             continue;
           }
+          if (batch.atlas) scenePrepareCrowdColors(batch);
           if (batch.motion) {
             // GPU-motion crowd batch: no CPU transform/pose math here at all,
             // and prepareCrowdMotionRecords re-copies/re-uploads only when an
@@ -9814,12 +9859,16 @@
       const base = attributes.instanceMatrix;
       if (!(base >= 0)) return false;
       gl.bindBuffer(gl.ARRAY_BUFFER, uploadPackedStream(batch, "transforms", batch.transforms, batch.count * 16));
+      bindInstanceMatrixAttributes(base);
+      return true;
+    }
+
+    function bindInstanceMatrixAttributes(base: number) {
       for (let col = 0; col < 4; col++) {
         gl.enableVertexAttribArray(base + col);
         gl.vertexAttribPointer(base + col, 4, gl.FLOAT, false, 64, col * 16);
         gl.vertexAttribDivisor(base + col, 1);
       }
-      return true;
     }
 
     function finishRigidBatchMatrices(attributes) {
@@ -10891,36 +10940,15 @@
         sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
         gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "transforms", transformData));
 
-        // Set up mat4 attribute (4 × vec4, each with divisor 1).
-        // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
-        for (var col = 0; col < 4; col++) {
-          var loc = baseLoc + col;
-          gl.enableVertexAttribArray(loc);
-          gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, 64, col * 16);
-          gl.vertexAttribDivisor(loc, 1);
-        }
+        bindInstanceMatrixAttributes(baseLoc);
 
-        if (hasInstanceColor) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "colors", instanceColorData));
-          gl.enableVertexAttribArray(ip.attributes.instanceColor);
-          gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
-          gl.vertexAttribDivisor(ip.attributes.instanceColor, 1);
-        }
+        if (hasInstanceColor) bindInstanceColors(ip, uploadInstancedStream(mesh, i, "colors", instanceColorData));
 
         // Draw instanced.
         gl.drawArraysInstanced(gl.TRIANGLES, 0, drawVertexCount, instanceCount);
 
-        if (hasInstanceColor) {
-          gl.vertexAttribDivisor(ip.attributes.instanceColor, 0);
-          gl.disableVertexAttribArray(ip.attributes.instanceColor);
-        }
-
-        // Reset divisors and disable instance attribute slots.
-        for (var col = 0; col < 4; col++) {
-          var loc2 = baseLoc + col;
-          gl.vertexAttribDivisor(loc2, 0);
-          gl.disableVertexAttribArray(loc2);
-        }
+        if (hasInstanceColor) finishCrowdBatchColors(ip);
+        finishRigidBatchMatrices(ip.attributes);
       }
 
       // Switch back to regular PBR program.
@@ -10970,11 +10998,7 @@
       disposeCrowdResources();
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
-      if (rigidShadowProgram) {
-        gl.deleteProgram(rigidShadowProgram.program);
-        gl.deleteShader(rigidShadowProgram.vertexShader);
-        gl.deleteShader(rigidShadowProgram.fragmentShader);
-      }
+      disposeOwnedProgram(rigidShadowProgram);
       staticPointEntries.clear();
       activeStaticPointEntries.clear();
       staticPointKeyedVBOs.clear();
@@ -11012,65 +11036,39 @@
         postProcessor = null;
       }
 
-      if (shadowProgram) {
-        gl.deleteShader(shadowProgram.vertexShader);
-        gl.deleteShader(shadowProgram.fragmentShader);
-        gl.deleteProgram(shadowProgram.program);
-      }
+      disposeOwnedProgram(shadowProgram);
 
       // Clean up skinned PBR program.
-      if (skinnedProgram) {
-        gl.deleteShader(skinnedProgram.vertexShader);
-        gl.deleteShader(skinnedProgram.fragmentShader);
-        gl.deleteProgram(skinnedProgram.program);
-        skinnedProgram = null;
-      }
+      disposeOwnedProgram(skinnedProgram);
+      skinnedProgram = null;
 
       // Clean up points program.
-      if (pointsProgram) {
-        gl.deleteShader(pointsProgram.vertexShader);
-        gl.deleteShader(pointsProgram.fragmentShader);
-        gl.deleteProgram(pointsProgram.program);
-        pointsProgram = null;
-      }
+      disposeOwnedProgram(pointsProgram);
+      pointsProgram = null;
       // Authored points programs own their shader objects independently of the
       // builtin points program. Clear both maps so repeated disposal cannot
       // delete the same GL objects twice or retain failed layer IDs.
       for (const authoredRecord of pointsAuthoredGLPrograms.values()) {
         if (!authoredRecord || authoredRecord.failed) continue;
-        gl.deleteShader(authoredRecord.vertexShader);
-        gl.deleteShader(authoredRecord.fragmentShader);
-        gl.deleteProgram(authoredRecord.program);
+        disposeOwnedProgram(authoredRecord);
       }
       pointsAuthoredGLPrograms.clear();
 
       // Clean up instanced PBR program.
-      if (instancedProgram) {
-        gl.deleteShader(instancedProgram.vertexShader);
-        gl.deleteShader(instancedProgram.fragmentShader);
-        gl.deleteProgram(instancedProgram.program);
-        instancedProgram = null;
-      }
+      disposeOwnedProgram(instancedProgram);
+      instancedProgram = null;
       instancedGeometryCache = {};
 
       for (const record of customProgramCache.values()) {
         const cp = record && record.program;
-        if (cp) {
-          gl.deleteShader(cp.vertexShader);
-          gl.deleteShader(cp.fragmentShader);
-          gl.deleteProgram(cp.program);
-        }
+        disposeOwnedProgram(cp);
       }
       customProgramCache.clear();
       scenePBRAuthoredProgramKeys.delete(customProgramCache);
 
       for (const record of selenaProgramCache.values()) {
         const sp = record && record.program;
-        if (sp) {
-          gl.deleteShader(sp.vertexShader);
-          gl.deleteShader(sp.fragmentShader);
-          gl.deleteProgram(sp.program);
-        }
+        disposeOwnedProgram(sp);
       }
       selenaProgramCache.clear();
       scenePBRAuthoredProgramKeys.delete(selenaProgramCache);

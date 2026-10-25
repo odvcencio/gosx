@@ -102,12 +102,15 @@
     for (const node of frame.nodes.values()) evaluate(node);
     return frame.matrices;
   }
-  function sceneGroupRecords(records: RenderRecord[], hierarchy: Map<string, Float64Array>, mode: string): RenderRecord[] {
+  function sceneGroupRecords(records: RenderRecord[], hierarchy: Map<string, Float64Array>, mode: string, batchParents = false): RenderRecord[] {
     if (!Array.isArray(records)) return records;
     let result: RenderRecord[] | null=null;
     for (let i=0;i<records.length;i++) {
       const source=records[i], parent=source && source.parentNode && hierarchy.get(source.parentNode);
       if (!parent) continue;
+      // Crowds keep their local pose/motion streams resident; the renderer
+      // applies this shared parent once through its existing batch uniform.
+      if (batchParents && source._crowdSkin?.parent === source.parentNode) continue;
       if (!result) result=records.slice();
       let cached=sceneGroupRecordCaches.get(source);
       if (!cached) {cached={view:{},matrix:new Float64Array(16),transforms:null};sceneGroupRecordCaches.set(source,cached);}

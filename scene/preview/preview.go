@@ -246,7 +246,7 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 	if frame.Background == "" {
 		frame.Background = "#0b0b0d"
 	}
-	groupMatrices, groupError := scene.GroupWorldMatrices(ir.Groups, opts.Time)
+	groupMatrices, groupError := ir.ParentWorldMatrices(opts.Time)
 	if groupError != nil {
 		frame.Diagnostics = append(frame.Diagnostics, engine.RenderDiagnostic{Severity: "error", Code: "scene-group-invalid", Backend: "native", Message: groupError.Error()})
 		return frame

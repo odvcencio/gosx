@@ -52,6 +52,8 @@ function createCoreContext({ mount = false } = {}) {
     "11-scene-math.ts",
     "12-scene-geometry.ts",
     "13-scene-material.ts",
+    "14-scene-lighting.ts",
+    "15-scene-draw-plan.ts",
   ]) {
     vm.runInContext(readSource(name), context, { filename: name });
   }
@@ -719,4 +721,50 @@ test("first live hierarchy load preserves following transform command order", as
   assert.equal(result.x, 3);
   assert.equal(result.spin, 0);
   assert.deepEqual(result.point, {x:5,y:0,z:0});
+});
+
+test("group-parented instance batches compose once even when a child matches the group prefix", () => {
+ const context=createCoreContext();
+ const result=runJSON(context,`(() => {
+  const state={groups:sceneNormalizeGroups([{id:"rotor",x:3,y:4,spinZ:Math.PI/2,scaleX:2,scaleY:3}])};
+  const hull=normalizeSceneObject({id:"rotor/hull",kind:"box",x:2,parentNode:"rotor"},0);
+  const mesh=normalizeSceneInstancedMeshEntry({id:"windows",parentNode:"rotor",kind:"box",count:1,transforms:[1,0,0,0,0,1,0,0,0,0,1,0,1,0,0,1]},0,null);
+  const build=t=>createSceneRenderBundle(640,360,"#000",{x:0,y:0,z:20,fov:60,near:.1,far:500},[hull],[],[],[],[],{},t,[],[mesh],[],[],[],0,false,{},state).instancedMeshes[0];
+  const a=build(0), first=Array.from(a.transforms.slice(12,15));
+  const b=build(1), second=Array.from(b.transforms.slice(12,15));
+  const c=build(1);
+  return {first,second,reused:b.transforms===c.transforms,revision:b._instanceStreamRevision===c._instanceStreamRevision,local:mesh.transforms[12]};
+ })()`);
+ assert.deepEqual(result.first,[5,4,0]);
+ result.second.forEach((v,i)=>assert.ok(Math.abs(v-[3,6,0][i])<1e-6));
+ assert.equal(result.reused,true);assert.equal(result.revision,true);assert.equal(result.local,1);
+});
+
+test("retained group motion keeps crowd pose and motion streams local and resident", () => {
+ const context=createCoreContext();
+ for (const motion of [false,true]) {
+  const result=runJSON(context,`(() => {
+   const state={groups:sceneNormalizeGroups([{id:"rotor",x:3,y:4,spinZ:Math.PI/2}])};
+   const object=normalizeSceneObject({id:"agents/a",kind:"mesh",parentNode:"rotor",vertices:{count:3,positions:new Float32Array([0,0,0,1,0,0,0,1,0])}},0);
+   object.vertices.immutable=true;object.parentMatrix=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,2,0,0,1]);
+   object._crowdSkin={atlas:{},bounds:{minX:0,minY:0,minZ:0,maxX:1,maxY:1,maxZ:1},rows:new Float32Array([1,2,.5]),batchID:"agents",rev:7,group:null,parent:"rotor"};
+   if (${motion}) object._crowdMotion={atlas:object._crowdSkin.atlas,clipTable:{count:1},record:new Float32Array(24),dirty:false,bounds:{minX:1,minY:0,minZ:0,maxX:3,maxY:1,maxZ:1}};
+   const build=t=>createSceneRenderBundle(640,360,"#000",{x:0,y:0,z:20,fov:60,near:.1,far:500},[object],[],[],[],[],{},t,[],[],[],[],[],0,false,{crowdBatches:true},state).meshObjects[0];
+   const a=build(0), revision=a.crowdRevision, transforms=a.crowdTransforms, p0=Array.from(a.crowdParentMatrix);
+   const b=build(1);
+   return {parent0:p0.slice(12,15),parent1:Array.from(b.crowdParentMatrix),same:a===b,resident:transforms===b.crowdTransforms,revision:revision===b.crowdRevision,local:object.parentMatrix[12]};
+  })()`);
+  assert.deepEqual(result.parent0,[3,4,0]);
+  assert.ok(Math.abs(result.parent1[0])<1e-6);assert.ok(Math.abs(result.parent1[1]-1)<1e-6);
+  assert.equal(result.same,true);assert.equal(result.resident,true);assert.equal(result.revision,true);assert.equal(result.local,2);
+ }
+});
+
+test("hydration clones retain instance membership, parent and tint metadata together", () => {
+ const result=runJSON(createCoreContext(),`(() => {
+  const batch=normalizeSceneInstancedGLBMeshEntry({id:"agents",src:"/agent.glb",parentNode:"rotor",palette:["#ff0000"],instances:[{id:"a",tint:1}]},0,null);
+  const model=sceneInstancedGLBMeshToModels(batch,0)[0],clone=sceneCloneHydrationModel(model);
+  return {separate:clone!==model,parent:sceneInstancedGLBBatchParents.get(clone),batch:sceneInstancedGLBBatchIDs.get(clone),template:sceneInstancedGLBHydrationTemplates.get(clone)===sceneInstancedGLBHydrationTemplates.get(model),tint:sceneInstancedGLBTints.get(clone)===sceneInstancedGLBTints.get(model),localParent:clone.parentNode};
+ })()`);
+ assert.equal(result.separate,true);assert.equal(result.parent,"rotor");assert.equal(result.batch,"agents");assert.equal(result.template,true);assert.equal(result.tint,true);assert.equal(result.localParent,"rotor");
 });

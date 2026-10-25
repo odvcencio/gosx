@@ -159,7 +159,7 @@
     {
       "file": "client/js/scene3d-crowd-animation.test.mjs",
       "source": "mount-webgl.ts",
-      "count": 2
+      "count": 3
     },
     {
       "file": "client/js/scene3d-crowd-animation.test.mjs",
@@ -922,7 +922,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterSimWebGL@2446:3",
+      "name": "createSceneWaterSimWebGL@2448:3",
       "lines": 252,
       "cyclomatic": 76,
       "cognitive": 82,
@@ -931,7 +931,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterRendererWebGL@3206:3",
+      "name": "createSceneWaterRendererWebGL@3208:3",
       "lines": 1186,
       "cyclomatic": 313,
       "cognitive": 388,
@@ -940,7 +940,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "waterShadowSignature@3391:5",
+      "name": "waterShadowSignature@3393:5",
       "lines": 11,
       "cyclomatic": 4,
       "cognitive": 4,
@@ -949,7 +949,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyWaterQualityProfile@3724:5",
+      "name": "applyWaterQualityProfile@3726:5",
       "lines": 100,
       "cyclomatic": 58,
       "cognitive": 68,
@@ -958,7 +958,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderMeshTextureTarget@3882:5",
+      "name": "renderMeshTextureTarget@3884:5",
       "lines": 32,
       "cyclomatic": 7,
       "cognitive": 6,
@@ -967,7 +967,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawFrame@3915:5",
+      "name": "drawFrame@3917:5",
       "lines": 408,
       "cyclomatic": 109,
       "cognitive": 141,
@@ -976,7 +976,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor@4486:3",
+      "name": "createScenePostProcessor@4488:3",
       "lines": 588,
       "cyclomatic": 164,
       "cognitive": 232,
@@ -985,7 +985,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4909:14",
+      "name": "anonymous@4911:14",
       "lines": 153,
       "cyclomatic": 40,
       "cognitive": 87,
@@ -994,7 +994,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@7004:3",
+      "name": "scenePBRUploadLights@7007:3",
       "lines": 86,
       "cyclomatic": 15,
       "cognitive": 36,
@@ -1003,7 +1003,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@7346:3",
+      "name": "scenePBRUploadEnvironmentMap@7349:3",
       "lines": 125,
       "cyclomatic": 52,
       "cognitive": 98,
@@ -1012,7 +1012,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@7633:3",
+      "name": "createScenePBRRenderer@7636:3",
       "lines": 3308,
       "cyclomatic": 1101,
       "cognitive": 1673,
@@ -1021,7 +1021,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@8625:5",
+      "name": "uploadCustomUniforms@8668:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -1030,7 +1030,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderFrame@8847:5",
+      "name": "renderFrame@8890:5",
       "lines": 346,
       "cyclomatic": 119,
       "cognitive": 169,
@@ -1039,7 +1039,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9677:5",
+      "name": "prepareRigidMeshBatches@9721:5",
       "lines": 148,
       "cyclomatic": 86,
       "cognitive": 198,
@@ -1048,7 +1048,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@9939:5",
+      "name": "drawPBRObjectList@9988:5",
       "lines": 256,
       "cyclomatic": 88,
       "cognitive": 207,
@@ -1057,7 +1057,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10312:5",
+      "name": "applyPointsAuthoredCustomUniforms@10361:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -1066,7 +1066,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10478:5",
+      "name": "drawPointsEntries@10527:5",
       "lines": 187,
       "cyclomatic": 59,
       "cognitive": 120,
@@ -1075,7 +1075,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10735:5",
+      "name": "drawInstancedMeshes@10784:5",
       "lines": 171,
       "cyclomatic": 55,
       "cognitive": 109,
@@ -1376,7 +1376,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu-crowd.ts",
-      "name": "createSceneWebGPUCrowd@512:1",
+      "name": "createSceneWebGPUCrowd@547:1",
       "lines": 688,
       "cyclomatic": 218,
       "cognitive": 263,
@@ -1528,9 +1528,9 @@
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgl.js"
       ],
-      "raw": 916700,
-      "gzip": 264130,
-      "brotli": 226395,
+      "raw": 919135,
+      "gzip": 265262,
+      "brotli": 227237,
       "ledger": "Selena vertex textures add 7 Brotli bytes (235996 measured); only the exhausted Brotli target moves to 224758 under the unchanged allowance. The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 879763 raw, 249525 gzip and 206908 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 887738 / 251948 / 208858. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 891400, 'gzip': 253556, 'brotli': 210360}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 892009, 'gzip': 253808, 'brotli': 210592}; only exhausted targets rise. The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Startup readiness with the current sky and walking features measures 881393 raw, 249153 gzip and 206896 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. Combined startup readiness and normal-map sampling measures 881435 raw, 249353 gzip and 207025 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. CSS post-effect retention and shader-failure recovery measure 881661 raw, 249420 gzip and 207218 Brotli bytes; only exceeded targets rise by the smallest sufficient 100-byte steps. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Frame review repairs integrated with sailing main measure 228618 Brotli bytes; only the exhausted target rises to the exact minimum 217731, with the 5% allowance unchanged. Lazy pipeline review measures 228862 brotli bytes; target 217731 → 217963 is the minimum under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 218111 -> 218239 (+128; measured 229151). Allowances, tolerances and policies remain unchanged. Native cross-chunk hash callbacks and touch deduplication use only the exhausted Brotli minimum 218765; all existing allowances remain unchanged. Selena-bound cloud helpers reduce emitted shader text by 23–24%, with measured compression dictionary changes; only the exhausted minimum moves and the allowance is unchanged. Integration of bounded dense-mesh retention measures 229967 brotli bytes; only the exhausted target rises from 218932 to 219016, preserving the governed allowance. Bounded world-baked GPU reuse measures 230235 brotli bytes; only the exhausted target moves to 219271 under the unchanged allowance. Crowd batch records measure 233206 brotli bytes; only the exhausted target moves to 222101 under the unchanged allowance. Sampled clip frames add a stateless sampler hook in the model skin pose path and the clipSampled model flag; the exhausted Brotli target rises to the measured minimum 222184 (233294 measured)."
     },
     "base+webgpu": {
@@ -1538,9 +1538,9 @@
         "bootstrap-feature-scene3d.js",
         "bootstrap-feature-scene3d-webgpu.js"
       ],
-      "raw": 1102340,
-      "gzip": 304350,
-      "brotli": 258543,
+      "raw": 1105701,
+      "gzip": 305557,
+      "brotli": 259420,
       "ledger": "Selena vertex textures add 148 raw, 64 gzip and 71 Brotli bytes (1152863 raw measured); only the exhausted targets move to their exact minima under the unchanged allowance. The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1031136 raw, 277958 gzip and 229589 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1039111 / 280381 / 231539. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 1043953, 'gzip': 282317, 'brotli': 233244}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 1044562, 'gzip': 282569, 'brotli': 233476}; only exhausted targets rise. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Lazy pipeline review measures 254738 brotli bytes; target 242143 → 242607 is the minimum under the unchanged allowance. Merged reviewed pipeline and mipmap sources measure 255116 brotli bytes; 242967 is the minimum target under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 243115 -> 243348 (+233; measured 255516). Allowances, tolerances and policies remain unchanged. Native cross-chunk hash callbacks and touch deduplication use only the exhausted Brotli minimum 243719; all existing allowances remain unchanged. Selena-bound cloud helpers reduce emitted shader text by 23–24%, with measured compression dictionary changes; only the exhausted minimum moves and the allowance is unchanged. Integration of bounded dense-mesh retention measures 256007 brotli bytes; only the exhausted target rises from 243795 to 243816, preserving the governed allowance. Bounded world-baked GPU reuse measures 256213 brotli bytes; only the exhausted target moves to 244012 under the unchanged allowance. Crowd batch records measure 259394 brotli bytes; only the exhausted target moves to 247041 under the unchanged allowance. Sampled clip frames raise the exhausted Brotli target to its measured minimum 247125 (259482 measured)."
     },
     "base+webgl+gltf+animation": {
@@ -1550,9 +1550,9 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 989401,
-      "gzip": 290178,
-      "brotli": 250253,
+      "raw": 992555,
+      "gzip": 291310,
+      "brotli": 251095,
       "ledger": "Selena vertex textures add 84 raw, 40 gzip and 7 Brotli bytes; only the exhausted targets move to their exact minima under the unchanged allowance. The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 942585 raw, 272500 gzip and 227335 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 950560 / 274923 / 229285. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 954362, 'gzip': 276577, 'brotli': 230801}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 954971, 'gzip': 276829, 'brotli': 231033}; only exhausted targets rise. The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Combined startup readiness and normal-map sampling measures 944991 raw, 272560 gzip and 227672 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. CSS post-effect retention and shader-failure recovery measure 945217 raw, 272627 gzip and 227865 Brotli bytes; only exceeded targets rise by the smallest sufficient 100-byte steps. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Frame review repairs integrated with sailing main measure 249823 Brotli bytes; only the exhausted target rises to the exact minimum 237926, with the 5% allowance unchanged. Lazy pipeline review measures 250067 brotli bytes; target 237926 → 238159 is the minimum under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 238306 -> 238434 (+128; measured 250356). Allowances, tolerances and policies remain unchanged. Native cross-chunk hash callbacks and touch deduplication use only the exhausted Brotli minimum 238961; all existing allowances remain unchanged. Selena-bound cloud helpers reduce emitted shader text by 23–24%, with measured compression dictionary changes; only the exhausted minimum moves and the allowance is unchanged. Integration of bounded dense-mesh retention measures 251172 brotli bytes; only the exhausted target rises from 239127 to 239211, preserving the governed allowance. Bounded world-baked GPU reuse measures 251440 brotli bytes; only the exhausted target moves to 239466 under the unchanged allowance. Crowd batch records measure 254411 brotli bytes; only the exhausted target moves to 242296 under the unchanged allowance. Sampled clip frames raise the exhausted Brotli target to its measured minimum 243461 (255635 measured)."
     },
     "base+webgpu+gltf+animation": {
@@ -1562,9 +1562,9 @@
         "bootstrap-feature-scene3d-gltf.js",
         "bootstrap-feature-scene3d-animation.js"
       ],
-      "raw": 1175760,
-      "gzip": 330534,
-      "brotli": 282401,
+      "raw": 1179121,
+      "gzip": 331801,
+      "brotli": 283278,
       "ledger": "Selena vertex textures add 148 raw, 64 gzip and 71 Brotli bytes; only the exhausted targets move to their exact minima under the unchanged allowance. The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1093958 raw, 300933 gzip and 250016 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1101933 / 303356 / 251966. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 1106915, 'gzip': 305338, 'brotli': 253685}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 1107524, 'gzip': 305590, 'brotli': 253917}; only exhausted targets rise. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Lazy pipeline review measures 275943 brotli bytes; target 262238 → 262802 is the minimum under the unchanged allowance. Merged reviewed pipeline and mipmap sources measure 276321 brotli bytes; 263162 is the minimum target under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 263310 -> 263543 (+233; measured 276721). Allowances, tolerances and policies remain unchanged. Native cross-chunk hash callbacks and touch deduplication use only the exhausted Brotli minimum 263914; all existing allowances remain unchanged. Selena-bound cloud helpers reduce emitted shader text by 23–24%, with measured compression dictionary changes; only the exhausted minimum moves and the allowance is unchanged. Integration of bounded dense-mesh retention measures 277212 brotli bytes; only the exhausted target rises from 263990 to 264011, preserving the governed allowance. Bounded world-baked GPU reuse measures 277418 brotli bytes; only the exhausted target moves to 264207 under the unchanged allowance. Crowd batch records measure 280599 brotli bytes; only the exhausted target moves to 267237 under the unchanged allowance. Sampled clip frames raise the exhausted Brotli target to its measured minimum 268402 (281823 measured)."
     }
   },

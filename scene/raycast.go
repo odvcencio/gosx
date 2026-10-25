@@ -34,6 +34,7 @@ type RaycastOptions struct {
 	// TimeSeconds samples animated group transforms on the scene clock.
 	TimeSeconds float64 `json:"timeSeconds,omitempty"`
 	timeSet     bool
+	parents     *rayParentResolver
 	// PointThreshold is the world-space hit radius for primitives that carry no
 	// cross-section: Points particles, Sprite billboards, and Lines strokes.
 	// Points and sprites draw as screen-space sprites and a line stroke is a few
@@ -138,8 +139,11 @@ func TraceGraph(graph Graph, ray Ray, options ...RaycastOption) RayTrace {
 	// Resolve the pick radius once. trace.Options already holds the caller's
 	// values, so this local copy never reaches the report.
 	opts.PointThreshold = pointHitRadius(opts)
+	query := opts
+	parents := rayParentResolver{graph: graph, seconds: opts.TimeSeconds}
+	query.parents = &parents
 	for _, node := range graph.Nodes {
-		raycastNode(node, identityTransform(), ray, opts, &trace)
+		raycastNode(node, identityTransform(), ray, query, &trace)
 	}
 	finalizeTrace(&trace)
 	return trace
@@ -285,6 +289,13 @@ func raycastMesh(mesh Mesh, parent worldTransform, ray Ray, opts RaycastOptions,
 }
 
 func raycastInstancedMesh(mesh InstancedMesh, parent worldTransform, ray Ray, opts RaycastOptions, trace *RayTrace) {
+	if mesh.ParentNode != "" {
+		var valid bool
+		parent, valid = opts.parents.resolve(mesh.ParentNode)
+		if !valid {
+			return
+		}
+	}
 	count := instanceCount(mesh)
 	pickable := mesh.Pickable == nil || *mesh.Pickable
 	if opts.PickableOnly && !pickable {

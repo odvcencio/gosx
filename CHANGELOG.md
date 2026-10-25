@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- Colour crowd agents one by one. `MeshInstance.Color` tints an instance of an
+  animated `InstancedGLBMesh`, so a body part that comes in five colours is one
+  batch instead of five. The batch ships a palette and each instance a 1-based
+  index (about 9 bytes per coloured agent for 1,000 agents; a colour string per
+  agent would take 18), and a batch without colours keeps its old wire form. The
+  WebGL pose and motion shaders read the tint as an instance attribute and the
+  WebGPU crowd colour shader as a storage buffer; a colour uploads only when it
+  changes. Vertex colours are not read: neither renderer's mesh path has them.
+
+- Carry instanced meshes on a moving scene node. `InstancedMesh.ParentNode`
+  names the node (a `Vessel.NodeID`, a model ID or an object ID); instance
+  positions are then relative to it, and each render bundle composes the node's
+  current world matrix into the transforms the WebGL2 and WebGPU renderers read.
+  A ship that heaves, pitches and rolls under `DispatchVesselPose` now carries
+  its windows, rails and lifeboats; before, the instances stayed where the scene
+  first placed them. Unchanged composed transforms retain their GPU stream.
+  The same parent search no longer picks a crowd agent as the node, so a
+  crowd batch ID may start with its parent's ID.
+
+- Reuse live computed-value subscriptions when a recomputation reads the same
+  ordered dependencies. Retain freshly tracked revisions, the replacement path
+  for changed dependencies, batched reads, and disposal while reducing
+  subscription allocation churn in islands and engines.
+
+- Reject SceneIR transform and state patches with known non-patch edits before
+  copying large mesh records. Cache scalar comparison fields from the authored
+  patch types, retaining the JSON fallback for ambiguous comparisons.
+
+- Match SceneIR records with one ID table instead of building two maps.
+  Preserve the handling of repeated and empty IDs, sorted removals, and the
+  order of updates and optional patches without mutating either snapshot.
+
+- Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
+  Identical negative thresholds and standalone omitted values still reach the
+  JSON rejection path instead of silently suppressing the update. Carrying
+  omitzero fields keep their omission semantics, including nested records.
+
+- Compare lowered material texture descriptors with generated typed field proofs
+  during SceneIR updates, avoiding repeated reflection over texture slots.
+  Nested schema and named-scalar checks retain the JSON fallback when a proof
+  is stale or a comparison is ambiguous.
+
 - Skip unused normal preparation for unlit Scene3D line geometry in animated
   frames and static world bakes. Preserve lit colors, solid mesh normals, and
   lighting changes that invalidate cached geometry colors.

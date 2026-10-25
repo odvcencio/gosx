@@ -261,7 +261,23 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		checkParent(r.ParentNode, r.ID, fmt.Sprintf("points[%d]", i))
 	}
 	for i, r := range doc.InstancedMeshes {
-		checkParent(r.ParentNode, r.ID, fmt.Sprintf("instancedMeshes[%d]", i))
+		if r.ParentNode == "" || groupIDs[r.ParentNode] {
+			continue
+		}
+		known := false
+		for _, object := range doc.Objects {
+			known = known || object.ID == r.ParentNode || strings.HasPrefix(object.ID, r.ParentNode+"/")
+		}
+		for _, model := range doc.Models {
+			known = known || model.ID == r.ParentNode || strings.HasPrefix(model.ID, r.ParentNode+"/")
+		}
+		if !known {
+			severity := Warn
+			if opts.Strict {
+				severity = Error
+			}
+			report.add(severity, "scene.instance.unknown_parent", "Instanced batch parent is absent; live rendering uses world space until it appears", fmt.Sprintf("instancedMeshes[%d].parentNode", i), r.ID, nil)
+		}
 	}
 	for i, r := range doc.ComputeParticles {
 		checkParent(r.ParentNode, r.ID, fmt.Sprintf("computeParticles[%d]", i))
@@ -331,8 +347,16 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		if len(mesh.Instances) == 0 {
 			report.add(Warn, "scene.instances.empty", "Instanced GLB mesh has no instances", path+".instances", mesh.ID, nil)
 		}
+		for j, color := range mesh.Palette {
+			if strings.TrimSpace(color) == "" {
+				report.add(Error, "scene.instance.empty_tint", "Instance palette colors must not be empty", fmt.Sprintf("%s.palette[%d]", path, j), mesh.ID, nil)
+			}
+		}
 		for j, instance := range mesh.Instances {
 			instancePath := fmt.Sprintf("%s.instances[%d]", path, j)
+			if instance.Tint < 0 || instance.Tint > len(mesh.Palette) {
+				report.add(Error, "scene.instance.tint_range", "Instance tint must be zero or a 1-based palette index", instancePath+".tint", mesh.ID, nil)
+			}
 			addOptionalID(instance.ID, instancePath+".id")
 			validateMeshInstance(report, instance, instancePath, mesh.ID)
 		}

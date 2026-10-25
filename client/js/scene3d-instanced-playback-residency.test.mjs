@@ -15,10 +15,11 @@ function functions(first, next) {
 function fixture() {
   const c = vm.createContext({console, Float32Array, Map, Set, WeakMap});
   vm.runInContext(fs.readFileSync(path.join(root,'client/js/bootstrap-src/11-scene-math.ts'),'utf8'),c);
-  vm.runInContext('const sceneInstancedGLBHydrationTemplates = new WeakMap();',c);
+  vm.runInContext('const sceneInstancedGLBHydrationTemplates = new WeakMap(); const sceneInstancedGLBTints = new WeakMap();',c);
   c.sceneModelTransformMatrix = m => new Float32Array([m.scaleX,0,0,0,0,m.scaleY,0,0,0,0,m.scaleZ,0,m.x,0,0,1]);
   c.sceneHydrationModels = s => s.models;
   c.sceneApplyModelSkinPose = r => {r.sampledPose=r.model._crowdPose;};
+  { const core=fs.readFileSync(path.join(root,'client/js/bootstrap-src/10-runtime-scene-core.ts'),'utf8'); vm.runInContext(core.slice(core.indexOf('  function sceneCommitCrowdPoseUpdates('),core.indexOf('  // ---- Batch parent')),c); }
   vm.runInContext(functions('sceneStaticModelHydrationKey','sceneCommitRigidInstancePatch')+
     functions('sceneCommitRigidInstancePatch','sceneUpdateRigidInstanceMotion')+
     functions('sceneRigidMembershipModelID','sceneRigidMembershipSnapshotModel'), c);
@@ -112,6 +113,7 @@ function packedFixture() {
     if (name === '10-runtime-scene-core.ts') text = text.slice(0,text.indexOf('// Scene3D shared API'));
     vm.runInContext(text,c,{filename:name});
   }
+  { const core=fs.readFileSync(path.join(root,'client/js/bootstrap-src/10-runtime-scene-core.ts'),'utf8'); vm.runInContext(core.slice(core.indexOf('  function sceneCommitCrowdPoseUpdates('),core.indexOf('  // ---- Batch parent')),c); }
   vm.runInContext(functions('sceneStaticModelHydrationKey','sceneCommitRigidInstancePatch')+
     functions('sceneCommitRigidInstancePatch','sceneUpdateRigidInstanceMotion')+
     functions('sceneRigidMembershipModelID','sceneRigidMembershipSnapshotModel')+

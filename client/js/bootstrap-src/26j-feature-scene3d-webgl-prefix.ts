@@ -57,6 +57,7 @@
   };
   var scenePrepareInstancedTransforms = sceneApi.scenePrepareInstancedTransforms;
   var scenePrepareInstancedColors = sceneApi.scenePrepareInstancedColors;
+  var scenePrepareCrowdColors = sceneApi.scenePrepareCrowdColors;
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
   var sceneMat4Multiply = sceneApi.sceneMat4Multiply;
   var sceneMat4MultiplyInto = sceneApi.sceneMat4MultiplyInto;

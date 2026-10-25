@@ -64,3 +64,26 @@ func TestGroupSpinPreviewUsesSceneClockAndSharedPivot(t *testing.T) {
 		assertFloatSliceNear(t, frame.Points[0].Positions, want, 1e-12)
 	}
 }
+
+func TestInstancedNamedParentPreviewSamplesGroupClock(t *testing.T) {
+	props := scene.Props{Graph: scene.NewGraph(scene.Group{ID: "rotor", Position: scene.Vec3(3, 4, 0), Scale: scene.Vec3(2, 3, 1), Spin: scene.Rotate(0, 0, math.Pi/2), Children: []scene.Node{
+		scene.Mesh{ID: "ship", Position: scene.Vec3(2, 0, 0), Geometry: scene.BoxGeometry{}},
+		scene.InstancedMesh{ID: "windows", ParentNode: "ship", Count: 1, Positions: []scene.Vector3{scene.Vec3(1, 0, 0)}, Geometry: scene.BoxGeometry{}},
+	}})}
+	for _, seconds := range []float64{0, 1, 2, .5} {
+		frame := preview.Bundle(props, preview.Options{Time: seconds})
+		found := false
+		for _, mesh := range frame.InstancedMeshes {
+			if mesh.ID == "windows" {
+				found = true
+				assertFloatSliceNear(t, mesh.Transforms[12:15], []float64{3 + 6*math.Cos(seconds*math.Pi/2), 4 + 6*math.Sin(seconds*math.Pi/2), 0}, 1e-12)
+			}
+		}
+		if !found {
+			t.Fatal("missing carried batch")
+		}
+	}
+	if x := props.SceneIR().InstancedMeshes[0].Transforms[12]; x != 1 {
+		t.Fatalf("source changed: %g", x)
+	}
+}
