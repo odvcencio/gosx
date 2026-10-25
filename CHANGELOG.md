@@ -2,25 +2,6 @@
 
 ## Unreleased
 
-- Colour crowd agents one by one. `MeshInstance.Color` tints an instance of an
-  animated `InstancedGLBMesh`, so a body part that comes in five colours is one
-  batch instead of five. The batch ships a palette and each instance a 1-based
-  index (about 9 bytes per coloured agent for 1,000 agents; a colour string per
-  agent would take 18), and a batch without colours keeps its old wire form. The
-  WebGL pose and motion shaders read the tint as an instance attribute and the
-  WebGPU crowd colour shader as a storage buffer; a colour uploads only when it
-  changes. Vertex colours are not read: neither renderer's mesh path has them.
-
-- Carry instanced meshes on a moving scene node. `InstancedMesh.ParentNode`
-  names the node (a `Vessel.NodeID`, a model ID or an object ID); instance
-  positions are then relative to it, and each render bundle composes the node's
-  current world matrix into the transforms the WebGL2 and WebGPU renderers read.
-  A ship that heaves, pitches and rolls under `DispatchVesselPose` now carries
-  its windows, rails and lifeboats; before, the instances stayed where the scene
-  first placed them. Unchanged composed transforms retain their GPU stream.
-  The same parent search no longer picks a crowd agent as the node, so a
-  crowd batch ID may start with its parent's ID.
-
 - Reuse live computed-value subscriptions when a recomputation reads the same
   ordered dependencies. Retain freshly tracked revisions, the replacement path
   for changed dependencies, batched reads, and disposal while reducing
@@ -43,6 +24,38 @@
   during SceneIR updates, avoiding repeated reflection over texture slots.
   Nested schema and named-scalar checks retain the JSON fallback when a proof
   is stale or a comparison is ambiguous.
+
+## v0.57.21
+
+- Retain two private pose wrappers per local binary-updated GLB instance instead
+  of re-expanding every model each frame. Validate shared declarations once per
+  batch, preserve atomic rejection and live skin playback, and retire cached
+  wrappers across membership and palette changes. Parented, paletted, fitted,
+  and pending declarations retain their established update path.
+
+- Rotate an entire subtree around its shared local origin with `Group.Spin`.
+  Preserve child-local transforms, nested parents, inherited scale, animation
+  transport, and picking on both GPU backends and the Go renderer. Groups
+  without spin keep their existing flattened representation.
+
+- Colour crowd agents one by one. `MeshInstance.Color` tints an instance of an
+  animated `InstancedGLBMesh`, so a body part that comes in five colours is one
+  batch instead of five. The batch ships a palette and each instance a 1-based
+  index (about 9 bytes per coloured agent for 1,000 agents; a colour string per
+  agent would take 18), and a batch without colours keeps its old wire form. The
+  WebGL pose and motion shaders read the tint as an instance attribute and the
+  WebGPU crowd colour shader as a storage buffer; a colour uploads only when it
+  changes. Vertex colours are not read: neither renderer's mesh path has them.
+
+- Carry instanced meshes on a moving scene node. `InstancedMesh.ParentNode`
+  names the node (a `Vessel.NodeID`, a model ID or an object ID); instance
+  positions are then relative to it, and each render bundle composes the node's
+  current world matrix into the transforms the WebGL2 and WebGPU renderers read.
+  A ship that heaves, pitches and rolls under `DispatchVesselPose` now carries
+  its windows, rails and lifeboats; before, the instances stayed where the scene
+  first placed them. Unchanged composed transforms retain their GPU stream.
+  The same parent search no longer picks a crowd agent as the node, so a
+  crowd batch ID may start with its parent's ID.
 
 - Skip unused normal preparation for unlit Scene3D line geometry in animated
   frames and static world bakes. Preserve lit colors, solid mesh normals, and
