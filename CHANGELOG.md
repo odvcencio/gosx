@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep ocean rendering on the shared Scene3D animation clock in WebGL2 and
+  WebGPU, matching vessel buoyancy through pause, seek, and resume. Use the same
+  hardware wave tier for rendering and water queries.
+
 - Prepare camera projection once per Scene3D frame and reuse camera-local line
   endpoints through clipping and screen projection. Preserve near-plane rounding,
   culling, resize behavior, and camera-independent world geometry caches.

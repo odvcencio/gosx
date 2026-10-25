@@ -6771,7 +6771,7 @@
   }
 
   function selenaPipelineFrontFace(options) {
-    return options && options.frontFace === "cw" ? "cw" : "ccw";
+    return options?.frontFace === "cw" ? "cw" : "ccw";
   }
 
   function sceneWebGPUPointModelMatrix(entry, _pointsTilt, _pointsModelMat) {
@@ -9106,7 +9106,7 @@
       // caustics/object-mesh-shadow offscreen RTT passes): WebGPU requires a
       // render pipeline's depthStencil state to exactly match whether the
       // render pass it's used in has a depthStencilAttachment.
-      var pipelineDepthStencil = !(options && options.depthStencil === false);
+      var pipelineDepthStencil = options?.depthStencil !== false;
       // Per-material memo (perf): getSelenaPipeline is called once PER OBJECT
       // PER FRAME, and the content key below stringifies the whole shader (~1.2KB)
       // + JSON.stringify(layout) on every call. Board frames are fresh-parsed,
@@ -18695,7 +18695,7 @@
       var sampleCount = resolveWebGPUSampleCount(bundle);
       activeSampleCount = sampleCount;
       detailResources = sceneWebGPUEnsureDetailResources(device, detailResources, bundle.materials, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT);
-      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      detailEnabled = frameMeta?.detailEnabled !== false;
       if (detailEnabled && detailResources) sceneWebGPUDetailBakeResources(device, detailResources, placeholderView);
       if (scenePicker && scenePicker.hasPending()) scenePicker.preparePipelines();
       prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing);
@@ -18742,11 +18742,11 @@
       // Reuse uniforms when color or detail controls change; retire buffers and
       // atlases that no longer belong to the active draw set.
 
-      var frameNowMS = frameMeta && Number.isFinite(frameMeta.nowMS)
+      var frameNowMS = Number.isFinite(frameMeta?.nowMS)
         ? frameMeta.nowMS
         : performance.now();
-      var frameActive = !frameMeta || frameMeta.active !== false;
-      var frameQualityEnabled = Boolean(frameMeta && frameMeta.qualityEnabled === true);
+      var frameActive = frameMeta?.active !== false;
+      var frameQualityEnabled = frameMeta?.qualityEnabled === true;
       var frameQualityProfile = frameQualityEnabled && frameMeta.qualityProfile
         ? frameMeta.qualityProfile
         : null;
@@ -19119,7 +19119,7 @@
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: Boolean(frameMeta && frameMeta.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
+        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
@@ -19183,13 +19183,13 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
       // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
       const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
         if (drawList.opaque.length > 0) {
-          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
         frameStats.meshDrawCalls += crowd.drawColor(mainPass, frameBindGroup, materials);
         if (instancedDrawList.opaque.length > 0) {
@@ -19234,7 +19234,7 @@
 
         // Alpha pass.
         if (drawList.alpha.length > 0) {
-          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
         if (instancedDrawList.alpha.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
@@ -19251,7 +19251,7 @@
 
         // Additive pass.
         if (drawList.additive.length > 0) {
-          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
         if (instancedDrawList.additive.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);

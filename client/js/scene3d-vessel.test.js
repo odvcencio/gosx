@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-const {FakeElement,createContext,installManualRAF,runScript,flushAsyncWork,bootstrapSource}=require('./runtime-test-harness.js');
+const {FakeElement,FakeWebGLContext,createContext,installManualRAF,runScript,flushAsyncWork,bootstrapSource,createBoardWebGPUHarness,createWebGLRendererForPost,makePointsBundle,renderPreparedFrame}=require('./runtime-test-harness.js');
 const sources={};for(const part of ['walk','ocean-query','vessel'])sources[part]=fs.readFileSync(path.join(__dirname,'bootstrap-feature-scene3d-'+part+'.js'),'utf8');
 async function mountScene(vessel=true,maxFPS=60,realShip=false,coarse=false,spectator=false,reduced=false,options={}) {
  const mount=new FakeElement('div',null);mount.id='mounted-vessel';mount.setAttribute('data-gosx-engine','GoSXScene3D');
@@ -27,16 +27,18 @@ async function mountScene(vessel=true,maxFPS=60,realShip=false,coarse=false,spec
    props.scene.models.push({id,src,visible:i===0});if(i)props.vessel.lods.push({nodeId:id,distance:i*65});
   }
  }
- const env=createContext({elements:[mount],enableWebGL:true,disableCanvas2D:true,performanceNow:()=>0,
+ const env=createContext({elements:[mount],enableWebGL:true,enableWebGL2:options.webgl2,disableCanvas2D:true,performanceNow:()=>0,
   matchMedia:{'(pointer: coarse)':coarse},prefersReducedMotion:reduced,
+  deviceMemory:options.deviceMemory,hardwareConcurrency:options.hardwareConcurrency,
   fetchRoutes:routes,
   manifest:{engines:[{id:'ship-scene',component:'GoSXScene3D',kind:'surface',mountId:mount.id,props}]}});
+ if(options.webgl2)env.context.WebGL2RenderingContext=FakeWebGLContext;
  env.context.atob=atob;const script=env.document.createElement('script');script.setAttribute('data-gosx-script','feature-scene3d');
  for(const name of ['walk','ocean-query','vessel'])script.setAttribute('data-gosx-scene3d-'+name+'-url','/'+name+'.js');env.document.head.appendChild(script);
  const raf=installManualRAF(env.context);runScript(bootstrapSource,env.context,'bootstrap.js');env.document.dispatchEvent({type:'DOMContentLoaded'});
  for(let i=0;i<12;i++) {await flushAsyncWork();raf.flush(i*17);}
  const mounted=env.context.__gosx.engines.get('ship-scene');assert.ok(mounted&&mounted.handle);
- const canvas=mount.querySelector('canvas'),gl=canvas.getContext('webgl');
+ const canvas=mount.querySelector('canvas'),gl=canvas.getContext(options.webgl2?'webgl2':'webgl');
  function event(target,type,extra={}) {const e={type,preventDefault(){this.defaultPrevented=true;},...extra};target.dispatchEvent(e);return e;}
  return {env,mount,canvas,gl,raf,event,handle:mounted.handle};
 }
@@ -306,4 +308,56 @@ test('right-thumb look retains independent rudder and sail pointers and cancels 
  h.event(h.canvas,'pointercancel',{pointerId:33});const yaw=state.lookYaw;h.event(h.canvas,'pointermove',{pointerType:'touch',pointerId:33,clientX:x+60,clientY:180});h.raf.flush(350);
  assert.equal(state.lookYaw,yaw);assert.equal(input.rudder,1);assert.equal(input.sail,1);
  h.event(h.env.context,'blur');h.raf.flush(400);assert.equal(input.rudder,0);assert.equal(input.sail,0);h.handle.dispose();
+});
+
+const oceanRecord=()=>({level:0,windDirection:0,waveHeight:.8,waveLength:18,choppiness:.6,speed:1,deepColor:'#03141f',shallowColor:'#1f6f78',scatterColor:'#2fa58f',foamColor:'#e9eef0',clarity:4,roughness:.06,foam:.6,surf:.5,extent:4000,bathymetry:null});
+const oceanBundle=()=>{const b=makePointsBundle(null);b.points=[];b.environment.ocean=oceanRecord();return b;};
+// Wall time (nowMS, performance.now) and the scene clock differ after a pause; the ocean must draw at the scene clock
+// and at the quality tier the mount chose, as the vessel's water query does.
+const oceanCases = [
+ {nowMS:91000,sceneTime:7.25},
+ {nowMS:95000,sceneTime:7.25}, // paused despite elapsed wall time
+ {nowMS:96000,sceneTime:0}, // seek to zero must not fall back to wall time
+ {nowMS:97000,sceneTime:2.5}, // resumed scene
+];
+for (const backend of ['WebGL','WebGPU']) test(backend+' ocean follows pause, seek, resume, and the mount quality tier',async t=>{
+ const h=backend==='WebGL'?createWebGLRendererForPost({fresh:true}):await createBoardWebGPUHarness({fresh:true});
+ t.after(()=>h.renderer.dispose());h.canvas.width=h.canvas.height=64;
+ const gl=backend==='WebGL'?h.canvas.getContext('webgl2'):null;
+ const offset=gl?0:16;
+ async function draw(meta) {
+  if(gl)gl.ops.length=0;else h.fake.state.writeBufferCalls.length=0;
+  await renderPreparedFrame(h.renderer,oceanBundle(),{width:64,height:64},meta);
+  const data=gl?gl.ops.find(o=>o[0]==='uniform4fv'&&o[2].length===140)?.[2]:
+   h.fake.state.writeBufferCalls.find(c=>c.data?.constructor.name==='Float32Array'&&c.data.length===156)?.data;
+  assert.ok(data,'ocean uniforms uploaded');return data;
+ }
+ for(const [quality,waves] of [['low',4],['high',6]]) for(const frame of oceanCases) {
+  const data=await draw({...frame,oceanTier:quality,active:true,displayDeltaMS:17});
+  assert.equal(data[offset+2],frame.sceneTime,'shader follows scene seconds, including zero');
+  assert.equal(data[offset+27],waves,'wave count for '+quality);
+ }
+ // Direct renderer consumers without mount metadata retain the shared shader clock fallback.
+ h.env.context.performance.now=()=>120000;
+ assert.equal((await draw(undefined))[offset+2],120);
+ h.env.context.performance.now=()=>121000;
+ assert.equal((await draw(undefined))[offset+2],121);
+});
+
+for(const [memory,cores,waves] of [[8,8,6],[2,2,4],[2,8,6],[8,2,6]]) test('mounted ocean and vessel share clock and waves on '+memory+'GB/'+cores+' cores',async t=>{
+ const h=await mountScene(true,60,false,false,false,false,{webgl2:true,deviceMemory:memory,hardwareConcurrency:cores});
+ t.after(()=>h.handle.dispose());
+ const query=h.env.context.__gosx_scene3d_ocean_query,original=query.sample,samples=[];
+ query.sample=function(...args){samples.push({time:args[3],waves:args[0].data[27]});return original.apply(this,args);};
+ h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',action:'helm'}});
+ h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',action:'trim',trim:1}});
+ h.handle.setAnimationClock({timeSeconds:7.25,paused:false});
+ for(let now=500;now<1200;now+=50)h.raf.flush(now);
+ const data=h.gl.ops.filter(o=>o[0]==='uniform4fv'&&o[2].length===140).at(-1)?.[2];
+ assert.ok(data,'mounted ocean uploads uniforms');assert.ok(samples.length,'vessel samples water');
+ assert.ok(Math.abs(data[2]-samples.at(-1).time)<1e-5,'render and buoyancy share scene time');
+ assert.equal(data[27],waves);assert.equal(samples.at(-1).waves,waves);
+ h.handle.setAnimationClock({timeSeconds:0,paused:true});h.raf.flush(1300);h.raf.flush(2300);
+ const paused=h.gl.ops.filter(o=>o[0]==='uniform4fv'&&o[2].length===140).at(-1)?.[2];
+ assert.equal(paused[2],0,'pause and seek freeze the mounted ocean');
 });
