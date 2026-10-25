@@ -263,13 +263,13 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 	for _, light := range ir.Lights {
 		if m, ok := groupMatrices[light.ParentNode]; ok {
 			x, y, z := light.X, light.Y, light.Z
-			light.X = m[0]*x + m[4]*y + m[8]*z + m[12]
-			light.Y = m[1]*x + m[5]*y + m[9]*z + m[13]
-			light.Z = m[2]*x + m[6]*y + m[10]*z + m[14]
+			light.X = float64(m[0]*x) + float64(m[4]*y) + float64(m[8]*z) + m[12]
+			light.Y = float64(m[1]*x) + float64(m[5]*y) + float64(m[9]*z) + m[13]
+			light.Z = float64(m[2]*x) + float64(m[6]*y) + float64(m[10]*z) + m[14]
 			x, y, z = light.DirectionX, light.DirectionY, light.DirectionZ
-			light.DirectionX = m[0]*x + m[4]*y + m[8]*z
-			light.DirectionY = m[1]*x + m[5]*y + m[9]*z
-			light.DirectionZ = m[2]*x + m[6]*y + m[10]*z
+			light.DirectionX = float64(m[0]*x) + float64(m[4]*y) + float64(m[8]*z)
+			light.DirectionY = float64(m[1]*x) + float64(m[5]*y) + float64(m[9]*z)
+			light.DirectionZ = float64(m[2]*x) + float64(m[6]*y) + float64(m[10]*z)
 		}
 		frame.Lights = append(frame.Lights, engine.RenderLight{
 			ID: light.ID, Kind: light.Kind, Color: light.Color,

@@ -38,7 +38,7 @@ func spinningTransform(position Vector3, rotation Euler, scale Vector3, spin Eul
 	if spin == (Euler{}) || seconds == 0 {
 		return localScaledTransform(position, rotation, scale)
 	}
-	q := motion.QuatFromEuler(spin.X*seconds, spin.Y*seconds, spin.Z*seconds)
+	q := motion.QuatFromEuler(float64(spin.X*seconds), float64(spin.Y*seconds), float64(spin.Z*seconds))
 	local := worldTransform{Position: position, Rotation: (quaternion{X: q.X, Y: q.Y, Z: q.Z, W: q.W}).mul(quaternionFromEuler(rotation)).normalized()}
 	if !isUnitSceneScale(scale) {
 		local.HasMatrix = true
@@ -129,7 +129,7 @@ func validSpinTime(spin Euler, seconds float64) bool {
 	if spin == (Euler{}) {
 		return true
 	}
-	for _, angle := range []float64{spin.X * seconds, spin.Y * seconds, spin.Z * seconds} {
+	for _, angle := range []float64{float64(spin.X * seconds), float64(spin.Y * seconds), float64(spin.Z * seconds)} {
 		if math.IsNaN(angle) || math.IsInf(angle, 0) {
 			return false
 		}

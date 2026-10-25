@@ -1,20 +1,28 @@
 // Retained Scene3D transform evaluation. Demand-loaded for animated groups.
 (function() {
+  // Render records cross the existing dynamic Scene3D bootstrap boundary.
+  type RenderRecord = Record<string, any>;
+  type Matrix = ArrayLike<number>;
+  type Group = RenderRecord & {id: string; parentNode: string};
+  type State = {groups: Group[]; _gosxMotionRuntimeBindings?: Map<unknown, Map<unknown, {binding: {target: string; node: string; property: string}; value: number}>>};
+  type GroupNode = {group: Group; world: Float64Array; local: Float64Array; prefix: Float64Array; mark: number};
+  type Frame = {nodes: Map<string, GroupNode>; matrices: Map<string, Float64Array>};
+  type RecordCache = {view: RenderRecord; matrix: Float64Array; transforms: Float32Array | null; skin?: RenderRecord; skinRevision?: number; streamRevision?: number; revision?: number};
   const sceneApi=window.__gosx_scene3d_api;
   const sceneNormalizeParentMatrix=sceneApi.sceneNormalizeParentMatrix;
   const sceneNormalizeDirection=sceneApi.sceneNormalizeDirection;
   // Retained transform boundaries are evaluated once on the scene clock. Both
   // renderers and picking consume the resulting bundle; geometry stays local.
-  const sceneGroupFrameCaches = new WeakMap();
-  const sceneGroupRecordCaches = new WeakMap();
-  const sceneGroupMotionPrefixes = {position:"",rotation:"rotation",scale:"scale"};
-  function sceneNormalizeGroups(raw) {
+  const sceneGroupFrameCaches = new WeakMap<Group[], Frame>();
+  const sceneGroupRecordCaches = new WeakMap<RenderRecord, RecordCache>();
+  const sceneGroupMotionPrefixes: Record<string, string> = {position:"",rotation:"rotation",scale:"scale"};
+  function sceneNormalizeGroups(raw: RenderRecord[]): Group[] {
     const groups = Array.isArray(raw) ? raw : [];
     const seen = new Set();
-    return groups.map(function(source) {
+    return groups.map(function(source: RenderRecord) {
       const parentMatrix=sceneNormalizeParentMatrix(source.parentMatrix);
       if (source.parentMatrix!=null && !parentMatrix) throw new Error("Scene3D group parent matrix is invalid");
-      const group = {id: String(source.id || "").trim(), parentNode: String(source.parentNode || "").trim(), parentMatrix};
+      const group: Group = {id: String(source.id || "").trim(), parentNode: String(source.parentNode || "").trim(), parentMatrix};
       if (!group.id || seen.has(group.id)) throw new Error("Scene3D group IDs must be unique and non-empty");
       seen.add(group.id);
       for (const prefix of ["", "rotation", "spin", "scale"]) for (const axis of ["x", "y", "z"]) {
@@ -26,7 +34,7 @@
       return group;
     });
   }
-  function sceneGroupMultiply(out, a, b, offset) {
+  function sceneGroupMultiply(out: Float64Array | Float32Array, a: Matrix, b: Matrix, offset: number): boolean {
     const start = offset || 0;
     // Callers provide distinct output; instances read from their authored buffer.
     let changed=false;
@@ -38,12 +46,12 @@
     }
     return changed;
   }
-  function sceneGroupQuaternion(x, y, z, intrinsic) {
+  function sceneGroupQuaternion(x: number, y: number, z: number, intrinsic: boolean): number[] {
     const sx=Math.sin(x/2), cx=Math.cos(x/2), sy=Math.sin(y/2), cy=Math.cos(y/2), sz=Math.sin(z/2), cz=Math.cos(z/2);
     return intrinsic ? [sx*cy*cz+cx*sy*sz,cx*sy*cz-sx*cy*sz,cx*cy*sz+sx*sy*cz,cx*cy*cz-sx*sy*sz]
       : [sx*cy*cz-cx*sy*sz,cx*sy*cz+sx*cy*sz,cx*cy*sz-sx*sy*cz,cx*cy*cz+sx*sy*sz];
   }
-  function sceneGroupMatrices(state, seconds) {
+  function sceneGroupMatrices(state: State, seconds: number): Map<string, Float64Array> {
     if (!Number.isFinite(seconds)) throw new Error("Scene3D group time must be finite");
     let frame = sceneGroupFrameCaches.get(state.groups);
     if (!frame) {
@@ -56,7 +64,7 @@
     }
     for (const node of frame.nodes.values()) node.mark=0;
     const layers = state._gosxMotionRuntimeBindings;
-    function evaluate(node) {
+    function evaluate(node: GroupNode): Float64Array {
       if (node.mark===2) return node.world;
       if (node.mark===1) throw new Error("Scene3D group parent cycle");
       node.mark=1;
@@ -94,9 +102,9 @@
     for (const node of frame.nodes.values()) evaluate(node);
     return frame.matrices;
   }
-  function sceneGroupRecords(records, hierarchy, mode) {
+  function sceneGroupRecords(records: RenderRecord[], hierarchy: Map<string, Float64Array>, mode: string): RenderRecord[] {
     if (!Array.isArray(records)) return records;
-    let result=null;
+    let result: RenderRecord[] | null=null;
     for (let i=0;i<records.length;i++) {
       const source=records[i], parent=source && source.parentNode && hierarchy.get(source.parentNode);
       if (!parent) continue;
@@ -146,8 +154,8 @@
   }
 
 
-  const surfaceMatrices=new WeakMap();
-  function groupSurface(entry,point,surface) {
+  const surfaceMatrices=new WeakMap<RenderRecord, Float64Array>();
+  function groupSurface(entry: RenderRecord, point: {x: number; y: number; z: number}, surface: RenderRecord): RenderRecord {
     let matrix=surfaceMatrices.get(entry);
     if (!matrix) {matrix=new Float64Array(16);surfaceMatrices.set(entry,matrix);}
     matrix.set(entry._groupParentMatrix);
@@ -159,7 +167,7 @@
   }
   // GenSpin is a delta quaternion. Keep the authored orientation and sample
   // it exactly once, including when the shared Go motion runtime owns time.
-  function groupSpin(state,ref,seconds,values,offset) {
+  function groupSpin(state: State, ref: string, seconds: number, values: Matrix, offset: number): boolean {
     const group=state.groups?.find(group=>group.id===ref);
     if (!group) return false;
     if (!group._spinProgramInvalidated) {
@@ -168,7 +176,7 @@
     }
     return true;
   }
-  function patchGroup(state,objectID,data) {
+  function patchGroup(state: State, objectID: string, data: RenderRecord): boolean {
     const group=state.groups?.find(group=>group.id===String(objectID));
     if (!group) return false;
     const next=sceneNormalizeGroups([Object.assign({},group,data,{id:group.id})])[0];
