@@ -13,7 +13,7 @@
   },
   "lighthouse": {
     "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 · Lighthouse 13.5.0",
-    "method": "Mobile/production; three cold runs per route in fresh Windows profiles on one frozen source. Six valid route batches retained; the initial homepage batch contained a NO_FCP failure and was repeated in full. All 21 final reports and the initial failed attempt are retained. Localhost secure origin; load averages span the combined Lighthouse batches.",
+    "method": "Mobile production on localhost; fresh Windows profiles, fixed source, three cold runs/route. Six route triplicates retained; homepage triplicate repeated after NO_FCP. All 21 final reports and the failed batch retained. Load spans both batches.",
     "loadAverageStart": "4.47 6.31 6.61",
     "loadAverageEnd": "4.40 5.58 6.17",
     "runCount": 3,
