@@ -160,3 +160,18 @@ test("a parented instanced mesh keeps its array while the node is still and take
   assert.equal(back.transforms[12], 55);
   assert.ok(back._instanceStreamRevision > edited._instanceStreamRevision);
 });
+
+test("named material wrappers retain the parent's composed stream across frames and recolors", async () => {
+ const api=await makeSceneApiEnv();
+ const mesh=windows(api,{parentNode:"ship",material:"glass"});
+ const state={instancedMeshes:[mesh],materials:[{name:"glass",kind:"standard",color:"#ffffff"}]};
+ const hull=shipPart(api,"ship/hull",translation(50,0,0));
+ const build=()=>bundleOf(api,[hull],api.sceneStateInstancedMeshesWithMaterials(state)).instancedMeshes[0];
+ const first=build(),second=build();
+ assert.equal(first.transforms,second.transforms,"a fresh live-material view must keep its underlying stream owner");
+ assert.equal(first._instanceStreamRevision,second._instanceStreamRevision);
+ state.materials[0].color="#ff0000";
+ const recolored=build();assert.equal(recolored.transforms,second.transforms,"material edits do not change parent transforms");
+ mesh.transforms[12]=7;
+ const edited=build();assert.equal(edited.transforms[12],57);assert.notEqual(edited.transforms,recolored.transforms);
+});

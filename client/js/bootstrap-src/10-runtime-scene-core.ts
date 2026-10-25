@@ -5472,10 +5472,11 @@
       Math.max(0, Math.floor(sceneNumber(mesh.count, 0))),
       Math.floor((local && typeof local.length === "number" ? local.length : 0) / 16));
     if (count <= 0) return null;
-    let cache = sceneInstancedParentTransforms.get(mesh);
+    const owner = mesh.resourceOwner || mesh;
+    let cache = sceneInstancedParentTransforms.get(owner);
     if (!cache || cache.buffers[0].length !== count * 16) {
       cache = { buffers: [new Float32Array(count * 16), new Float32Array(count * 16)], current: -1, generation: 0 };
-      sceneInstancedParentTransforms.set(mesh, cache);
+      sceneInstancedParentTransforms.set(owner, cache);
     }
     const next = cache.buffers[cache.current === 0 ? 1 : 0];
     const p0 = parent[0], p1 = parent[1], p2 = parent[2], p3 = parent[3];
