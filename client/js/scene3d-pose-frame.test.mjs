@@ -211,6 +211,8 @@ test("retained pose application reaches the existing crowd animation rows", () =
     context.sceneInstancedGLBHydrationTemplates.set(model, 'hero-template');
     return model;
   });
+  const crowdSource = fs.readFileSync(path.join(directory, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
+  vm.runInContext(crowdSource.slice(crowdSource.indexOf("  function sceneCommitCrowdPoseUpdates("), crowdSource.indexOf("  // ---- Batch parent")), context);
   vm.runInContext(rendererSource.slice(start, end), context);
   const atlas = { clips: new Map([["run", { start: 1, duration: 1, segments: 4 }]]), missingClips: new Set() };
   const rows = new Float32Array(3);

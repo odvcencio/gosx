@@ -759,3 +759,12 @@ test("retained group motion keeps crowd pose and motion streams local and reside
   assert.equal(result.same,true);assert.equal(result.resident,true);assert.equal(result.revision,true);assert.equal(result.local,2);
  }
 });
+
+test("hydration clones retain instance membership, parent and tint metadata together", () => {
+ const result=runJSON(createCoreContext(),`(() => {
+  const batch=normalizeSceneInstancedGLBMeshEntry({id:"agents",src:"/agent.glb",parentNode:"rotor",palette:["#ff0000"],instances:[{id:"a",tint:1}]},0,null);
+  const model=sceneInstancedGLBMeshToModels(batch,0)[0],clone=sceneCloneHydrationModel(model);
+  return {separate:clone!==model,parent:sceneInstancedGLBBatchParents.get(clone),batch:sceneInstancedGLBBatchIDs.get(clone),template:sceneInstancedGLBHydrationTemplates.get(clone)===sceneInstancedGLBHydrationTemplates.get(model),tint:sceneInstancedGLBTints.get(clone)===sceneInstancedGLBTints.get(model),localParent:clone.parentNode};
+ })()`);
+ assert.equal(result.separate,true);assert.equal(result.parent,"rotor");assert.equal(result.batch,"agents");assert.equal(result.template,true);assert.equal(result.tint,true);assert.equal(result.localParent,"rotor");
+});

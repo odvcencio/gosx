@@ -1801,10 +1801,10 @@
 
   function sceneCloneHydrationModel(model) {
     const copy = sceneCloneData(model);
-    const template = sceneInstancedGLBHydrationTemplates.get(model);
-    if (template) sceneInstancedGLBHydrationTemplates.set(copy, template);
-    const tint = sceneInstancedGLBTints.get(model);
-    if (tint) sceneInstancedGLBTints.set(copy, tint);
+    for (const metadata of [sceneInstancedGLBHydrationTemplates, sceneInstancedGLBBatchIDs, sceneInstancedGLBBatchParents, sceneInstancedGLBTints]) {
+      const value = metadata.get(model);
+      if (value !== undefined) metadata.set(copy, value);
+    }
     return copy;
   }
 
