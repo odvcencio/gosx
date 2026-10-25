@@ -31,6 +31,9 @@ type RayHit struct {
 type RaycastOptions struct {
 	PickableOnly bool    `json:"pickableOnly,omitempty"`
 	MaxDistance  float64 `json:"maxDistance,omitempty"`
+	// TimeSeconds samples animated group transforms on the scene clock.
+	TimeSeconds float64 `json:"timeSeconds,omitempty"`
+	timeSet     bool
 	// PointThreshold is the world-space hit radius for primitives that carry no
 	// cross-section: Points particles, Sprite billboards, and Lines strokes.
 	// Points and sprites draw as screen-space sprites and a line stroke is a few
@@ -67,6 +70,12 @@ type RayTrace struct {
 
 // RaycastOption mutates RaycastOptions.
 type RaycastOption func(*RaycastOptions)
+
+// AtTime samples picking at the supplied scene-clock time in seconds. It also
+// selects the initial pose when constructing a SceneAccelerator.
+func AtTime(seconds float64) RaycastOption {
+	return func(opts *RaycastOptions) { opts.TimeSeconds, opts.timeSet = seconds, true }
+}
 
 // PickableOnly limits ray queries to meshes that have not opted out of
 // pointer-style picking.
@@ -123,7 +132,7 @@ func TraceGraph(graph Graph, ray Ray, options ...RaycastOption) RayTrace {
 	}
 	ray.Direction = normalizeVector(ray.Direction)
 	trace := RayTrace{Ray: ray, Options: opts, Hits: []RayHit{}}
-	if ray.Direction == (Vector3{}) {
+	if ray.Direction == (Vector3{}) || math.IsNaN(opts.TimeSeconds) || math.IsInf(opts.TimeSeconds, 0) {
 		return trace
 	}
 	// Resolve the pick radius once. trace.Options already holds the caller's
@@ -170,10 +179,13 @@ func raycastNode(node Node, parent worldTransform, ray Ray, opts RaycastOptions,
 			raycastInstancedMesh(*current, parent, ray, opts, trace)
 		}
 	case Group:
-		raycastNodes(current.Children, combineTransforms(parent, localScaledTransform(current.Position, current.Rotation, current.Scale)), ray, opts, trace)
+		if !validSpinTime(current.Spin, opts.TimeSeconds) {
+			return
+		}
+		raycastNodes(current.Children, combineTransforms(parent, spinningTransform(current.Position, current.Rotation, current.Scale, current.Spin, opts.TimeSeconds)), ray, opts, trace)
 	case *Group:
-		if current != nil {
-			raycastNodes(current.Children, combineTransforms(parent, localScaledTransform(current.Position, current.Rotation, current.Scale)), ray, opts, trace)
+		if current != nil && validSpinTime(current.Spin, opts.TimeSeconds) {
+			raycastNodes(current.Children, combineTransforms(parent, spinningTransform(current.Position, current.Rotation, current.Scale, current.Spin, opts.TimeSeconds)), ray, opts, trace)
 		}
 	case LODGroup:
 		raycastLODGroup(current, parent, ray, opts, trace)
@@ -1162,11 +1174,11 @@ func triangleHit(ray Ray, first, second, third Vector3) (float64, Vector3, bool)
 	}
 	swept := crossVector(toFirst, ray.Direction)
 	u := float64(dotVector(edge2, swept) * inverse)
-	if u < 0 {
+	if u < -1e-12 || u > 1+1e-12 {
 		return 0, Vector3{}, false
 	}
 	v := float64(-dotVector(edge1, swept) * inverse)
-	if v < 0 || u+v > 1 {
+	if v < -1e-12 || u+v > 1+1e-12 {
 		return 0, Vector3{}, false
 	}
 	return distance, normal, true

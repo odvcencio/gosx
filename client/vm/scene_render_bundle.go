@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/internal/scenehierarchy"
 	"m31labs.dev/gosx/motion"
 	"m31labs.dev/gosx/scene/geom"
 )
@@ -221,6 +222,12 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 		Diagnostics:     diagnostics,
 	}
 
+	groupMatrices, groupError := sceneGroupWorldMatrices(props, timeSeconds)
+	if groupError != nil {
+		bundle.Diagnostics = append(bundle.Diagnostics, rootengine.RenderDiagnostic{Severity: "error", Code: "scene-group-invalid", Backend: "native", Message: groupError.Error()})
+		return bundle
+	}
+	props = sceneGroupProps(props, groupMatrices)
 	camera := sceneCameraFromProps(props)
 	lights := sceneLightsFromProps(props)
 	sprites := sceneSpritesFromProps(props)
@@ -232,6 +239,9 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 	objectNodeIndex := make([]int, 0, len(nodes))
 	labels := make([]sceneLabel, 0, len(nodes))
 	for index, node := range nodes {
+		if len(groupMatrices) > 0 && node.Kind != "mesh" {
+			node, _ = sceneGroupNode(node, groupMatrices)
+		}
 		switch strings.TrimSpace(strings.ToLower(node.Kind)) {
 		case "camera":
 			camera = normalizeSceneCameraMap(node.Props, camera)
@@ -240,7 +250,17 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 				lights = append(lights, light)
 			}
 		case "mesh":
-			objects = append(objects, sceneObjectFromResolvedNode(index, node))
+			object := sceneObjectFromResolvedNode(index, node)
+			if parent, grouped := groupMatrices[stringFromAny(node.Props["parentNode"], "")]; grouped {
+				if object.HasParentMatrix {
+					parent = scenehierarchy.Multiply(parent, object.ParentMatrix)
+				}
+				object.ParentMatrix = parent
+				object.HasParentMatrix = true
+				object.DynamicParent = true
+				object.Static = false
+			}
+			objects = append(objects, object)
 			objectNodeIndex = append(objectNodeIndex, index)
 		case "label":
 			if label, ok := sceneLabelFromResolvedNode(index, node); ok {
@@ -458,7 +478,7 @@ func clipIsEmpty(c clipTRS) bool { return !c.HasT && !c.HasR && !c.HasS }
 // so only they are safe to cache across frames. Any object that gains spin or
 // drift fails this check and is rebaked every frame.
 func sceneObjectBakeEligible(object *sceneObject) bool {
-	return object.SpinX == 0 && object.SpinY == 0 && object.SpinZ == 0 &&
+	return !object.DynamicParent && object.SpinX == 0 && object.SpinY == 0 && object.SpinZ == 0 &&
 		object.ShiftX == 0 && object.ShiftY == 0 && object.ShiftZ == 0
 }
 

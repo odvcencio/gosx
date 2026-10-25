@@ -89,6 +89,7 @@ declare var createSceneCanvasRenderer: any;
 declare var createSceneCustomPostDOMRegionTracker: any;
 declare var createSceneRenderBundle: any;
 declare var createSceneState: any;
+declare var scenePrepareGroups: any;
 declare var createSceneThickLineScratch: any;
 declare var createSceneWebGLProgram: any;
 declare var createSceneWebGLRenderer: any;

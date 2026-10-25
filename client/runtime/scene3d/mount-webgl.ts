@@ -1071,9 +1071,8 @@
   }
 
   function sceneApplyModelRenderFlags(instanced, model) {
-    if (!instanced || !model) {
-      return;
-    }
+    if (!instanced || !model) return;
+    if (model.parentNode) instanced.parentNode = model.parentNode;
     if (typeof model.castShadow === "boolean") {
       instanced.castShadow = model.castShadow;
     }

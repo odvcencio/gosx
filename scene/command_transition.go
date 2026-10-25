@@ -168,7 +168,7 @@ func transitionCommandMap(commands []Command) (map[string]*Command, []string, er
 	out := make(map[string]*Command, len(commands))
 	var order []string
 	for _, raw := range commands {
-		if raw.Kind < CommandCreateObject || raw.Kind > CommandSetPostUniforms || raw.Kind <= CommandSetLight && raw.ObjectID == "" || len(raw.ObjectID) > 256 || raw.Kind != CommandRemoveObject && raw.Data == nil {
+		if raw.Kind < CommandCreateObject || raw.Kind > CommandSetGroups || raw.Kind <= CommandSetLight && raw.ObjectID == "" || len(raw.ObjectID) > 256 || raw.Kind != CommandRemoveObject && raw.Data == nil {
 			return nil, nil, fmt.Errorf("scene transition contains an invalid command")
 		}
 		c := raw

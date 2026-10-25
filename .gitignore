@@ -7,6 +7,7 @@ build/
 !/docs/polar.md
 !/docs/netplay.md
 !/docs/engine-worker.md
+!/docs/scene3d-group-spin.md
 !/docs/scene3d-v1-support.md
 !/docs/scene3d-particle-bursts.md
 !/docs/scene3d-clip-frames.md

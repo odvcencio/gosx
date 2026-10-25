@@ -43,6 +43,7 @@ type Report struct {
 }
 
 type Document struct {
+	Groups             []scene.GroupIR            `json:"groups,omitempty"`
 	Schema             string                     `json:"schema,omitempty"`
 	Objects            []scene.ObjectIR           `json:"objects,omitempty"`
 	Models             []scene.ModelIR            `json:"models,omitempty"`
@@ -83,6 +84,7 @@ func ValidateJSON(data []byte, opts Options) Report {
 
 func validateParentMatricesRawDocument(report *Report, data []byte) {
 	var raw struct {
+		Groups             []json.RawMessage `json:"groups"`
 		Objects            []json.RawMessage `json:"objects"`
 		Models             []json.RawMessage `json:"models"`
 		Points             []json.RawMessage `json:"points"`
@@ -99,6 +101,7 @@ func validateParentMatricesRawDocument(report *Report, data []byte) {
 			validateParentMatrixRaw(report, record, fmt.Sprintf("%s[%d].parentMatrix", family, index), "")
 		}
 	}
+	validateRecords(raw.Groups, "groups")
 	validateRecords(raw.Objects, "objects")
 	validateRecords(raw.Models, "models")
 	validateRecords(raw.Points, "points")
@@ -232,6 +235,49 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		}
 	}
 
+	if _, err := scene.GroupWorldMatrices(doc.Groups, 0); err != nil {
+		report.add(Error, "scene.group.invalid", err.Error(), "groups", "", nil)
+	}
+	groupIDs := map[string]bool{}
+	for i, group := range doc.Groups {
+		path := fmt.Sprintf("groups[%d]", i)
+		addID(group.ID, path+".id", true)
+		addTargetID(group.ID)
+		animatableIDs[group.ID] = struct{}{}
+		groupIDs[group.ID] = true
+	}
+	checkParent := func(parent, id, path string) {
+		if parent != "" && !groupIDs[parent] {
+			report.add(Error, "scene.group.unknown_parent", "Scene record refers to an unknown retained group", path+".parentNode", id, nil)
+		}
+	}
+	for i, r := range doc.Objects {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("objects[%d]", i))
+	}
+	for i, r := range doc.Models {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("models[%d]", i))
+	}
+	for i, r := range doc.Points {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("points[%d]", i))
+	}
+	for i, r := range doc.InstancedMeshes {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("instancedMeshes[%d]", i))
+	}
+	for i, r := range doc.ComputeParticles {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("computeParticles[%d]", i))
+	}
+	for i, r := range doc.Labels {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("labels[%d]", i))
+	}
+	for i, r := range doc.Sprites {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("sprites[%d]", i))
+	}
+	for i, r := range doc.HTML {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("html[%d]", i))
+	}
+	for i, r := range doc.Lights {
+		checkParent(r.ParentNode, r.ID, fmt.Sprintf("lights[%d]", i))
+	}
 	for i, object := range doc.Objects {
 		path := fmt.Sprintf("objects[%d]", i)
 		addID(object.ID, path+".id", object.Pickable != nil && *object.Pickable)

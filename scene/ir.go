@@ -242,6 +242,7 @@ type IRNode struct {
 	ID            string           `json:"id,omitempty"`
 	MaterialIndex int              `json:"materialIndex,omitempty"`
 	Transform     IRTransform      `json:"transform"`
+	Group         *IRGroupNode     `json:"group,omitempty"`
 	Mesh          *IRMeshNode      `json:"mesh,omitempty"`
 	Points        *IRPointsNode    `json:"points,omitempty"`
 	InstancedMesh *IRInstancedMesh `json:"instancedMesh,omitempty"`
@@ -255,6 +256,7 @@ type IRNode struct {
 
 // IRTransform is the shared transform block used by every renderable node.
 type IRTransform struct {
+	ParentNode   string    `json:"parentNode,omitempty"`
 	X            float64   `json:"x,omitempty"`
 	Y            float64   `json:"y,omitempty"`
 	Z            float64   `json:"z,omitempty"`
@@ -269,6 +271,9 @@ type IRTransform struct {
 	ScaleZ       float64   `json:"scaleZ,omitempty"`
 	ParentMatrix []float64 `json:"parentMatrix,omitempty"`
 }
+
+// IRGroupNode is a retained transform boundary, with no drawable geometry.
+type IRGroupNode struct{}
 
 // IRMeshNode describes a single mesh primitive or model instance.
 type IRMeshNode struct {
@@ -479,6 +484,7 @@ type IRVector3 struct {
 
 // IRLight describes one scene light.
 type IRLight struct {
+	ParentNode     string      `json:"parentNode,omitempty"`
 	ID             string      `json:"id,omitempty"`
 	Kind           string      `json:"kind"`
 	Color          string      `json:"color,omitempty"`
@@ -554,10 +560,39 @@ func (ir *IR) Validate() error {
 			}
 		}
 	}
+	var groups []GroupIR
+	for _, node := range ir.Nodes {
+		if node.Kind == "group" {
+			tr := node.Transform
+			groups = append(groups, GroupIR{ID: node.ID, ParentNode: tr.ParentNode, X: tr.X, Y: tr.Y, Z: tr.Z, RotationX: tr.RotationX, RotationY: tr.RotationY, RotationZ: tr.RotationZ, SpinX: tr.SpinX, SpinY: tr.SpinY, SpinZ: tr.SpinZ, ScaleX: tr.ScaleX, ScaleY: tr.ScaleY, ScaleZ: tr.ScaleZ, ParentMatrix: tr.ParentMatrix})
+		}
+	}
+	if len(groups) > 0 {
+		ids := map[string]bool{}
+		for _, node := range ir.Nodes {
+			if ids[node.ID] && node.ID != "" {
+				problems = append(problems, "duplicate node ID: "+node.ID)
+			}
+			ids[node.ID] = true
+		}
+	}
+	groupIDs := map[string]bool{}
+	for _, g := range groups {
+		groupIDs[g.ID] = true
+	}
+	if _, err := GroupWorldMatrices(groups, 0); err != nil {
+		problems = append(problems, err.Error())
+	}
 	for i, node := range ir.Nodes {
 		problems = append(problems, validateIRNode(i, node, len(ir.Materials))...)
+		if node.Transform.ParentNode != "" && !groupIDs[node.Transform.ParentNode] {
+			problems = append(problems, fmt.Sprintf("nodes[%d].transform.parentNode is unknown", i))
+		}
 	}
 	for i, light := range ir.Lights {
+		if light.ParentNode != "" && !groupIDs[light.ParentNode] {
+			problems = append(problems, fmt.Sprintf("lights[%d].parentNode is unknown", i))
+		}
 		problems = append(problems, validateIRLight(i, light)...)
 	}
 	for i, effect := range ir.PostFX {
@@ -674,6 +709,9 @@ func validateIRNode(index int, node IRNode, materialCount int) []string {
 	}
 
 	payloads := 0
+	if node.Group != nil {
+		payloads++
+	}
 	if node.Mesh != nil {
 		payloads++
 	}
@@ -700,6 +738,10 @@ func validateIRNode(index int, node IRNode, materialCount int) []string {
 	}
 
 	switch kind {
+	case "group":
+		if node.Group == nil {
+			problems = append(problems, fmt.Sprintf("nodes[%d].group is required", index))
+		}
 	case "mesh":
 		if node.Mesh == nil {
 			problems = append(problems, fmt.Sprintf("nodes[%d].mesh is required", index))
@@ -752,6 +794,19 @@ func (p Props) CanonicalIR() IR {
 		Nodes:       make([]IRNode, 0, len(legacy.Objects)+len(legacy.Models)+len(legacy.Points)+len(legacy.InstancedMeshes)+len(legacy.ComputeParticles)+len(legacy.Sprites)+len(legacy.Labels)+len(legacy.HTML)),
 	}
 	materialIndexes := map[string]int{}
+	for _, group := range legacy.Groups {
+		out.Nodes = append(out.Nodes, IRNode{
+			Kind: "group", ID: group.ID, Group: &IRGroupNode{},
+			Transform: IRTransform{
+				ParentNode: group.ParentNode,
+				X:          group.X, Y: group.Y, Z: group.Z,
+				RotationX: group.RotationX, RotationY: group.RotationY, RotationZ: group.RotationZ,
+				SpinX: group.SpinX, SpinY: group.SpinY, SpinZ: group.SpinZ,
+				ScaleX: resolveIRScale(group.ScaleX), ScaleY: resolveIRScale(group.ScaleY), ScaleZ: resolveIRScale(group.ScaleZ),
+				ParentMatrix: append([]float64(nil), group.ParentMatrix...),
+			},
+		})
+	}
 	for _, object := range legacy.Objects {
 		materialIndex := appendIRMaterial(&out.Materials, materialIndexes, materialFromObjectIR(object))
 		out.Nodes = append(out.Nodes, objectToIRNode(object, materialIndex))
@@ -996,6 +1051,7 @@ func lightsToIR(items []LightIR) []IRLight {
 	out := make([]IRLight, 0, len(items))
 	for _, item := range items {
 		out = append(out, IRLight{
+			ParentNode:     item.ParentNode,
 			ID:             item.ID,
 			Kind:           item.Kind,
 			Color:          item.Color,
@@ -1235,6 +1291,7 @@ func pointsToIRNode(points PointsIR) IRNode {
 
 func instancedToIRNode(mesh InstancedMeshIR, materialIndex int) IRNode {
 	return IRNode{
+		Transform:     IRTransform{ParentNode: mesh.ParentNode},
 		Kind:          "instanced-mesh",
 		ID:            mesh.ID,
 		MaterialIndex: materialIndex,
@@ -1263,6 +1320,7 @@ func instancedToIRNode(mesh InstancedMeshIR, materialIndex int) IRNode {
 
 func computeToIRNode(compute ComputeParticlesIR) IRNode {
 	return IRNode{
+		Transform:    IRTransform{ParentNode: compute.ParentNode},
 		Kind:         "compute-particles",
 		ID:           compute.ID,
 		Capabilities: []string{"compute"},
@@ -1364,6 +1422,7 @@ func htmlToIRNode(html HTMLIR) IRNode {
 
 func transformFromObjectIR(object ObjectIR) IRTransform {
 	return IRTransform{
+		ParentNode:   object.ParentNode,
 		X:            object.X,
 		Y:            object.Y,
 		Z:            object.Z,
@@ -1382,6 +1441,7 @@ func transformFromObjectIR(object ObjectIR) IRTransform {
 
 func transformFromPointsIR(points PointsIR) IRTransform {
 	return IRTransform{
+		ParentNode:   points.ParentNode,
 		X:            points.X,
 		Y:            points.Y,
 		Z:            points.Z,
@@ -1400,40 +1460,43 @@ func transformFromPointsIR(points PointsIR) IRTransform {
 
 func transformFromSpriteIR(sprite SpriteIR) IRTransform {
 	return IRTransform{
-		X:      sprite.X,
-		Y:      sprite.Y,
-		Z:      sprite.Z,
-		ScaleX: 1,
-		ScaleY: 1,
-		ScaleZ: 1,
+		ParentNode: sprite.ParentNode,
+		X:          sprite.X,
+		Y:          sprite.Y,
+		Z:          sprite.Z,
+		ScaleX:     1,
+		ScaleY:     1,
+		ScaleZ:     1,
 	}
 }
 
 func transformFromLabelIR(label LabelIR) IRTransform {
 	return IRTransform{
-		X:      label.X,
-		Y:      label.Y,
-		Z:      label.Z,
-		ScaleX: 1,
-		ScaleY: 1,
-		ScaleZ: 1,
+		ParentNode: label.ParentNode,
+		X:          label.X,
+		Y:          label.Y,
+		Z:          label.Z,
+		ScaleX:     1,
+		ScaleY:     1,
+		ScaleZ:     1,
 	}
 }
 
 func transformFromHTMLIR(html HTMLIR) IRTransform {
 	return IRTransform{
-		X:         html.X,
-		Y:         html.Y,
-		Z:         html.Z,
-		RotationX: html.RotationX,
-		RotationY: html.RotationY,
-		RotationZ: html.RotationZ,
-		SpinX:     html.SpinX,
-		SpinY:     html.SpinY,
-		SpinZ:     html.SpinZ,
-		ScaleX:    1,
-		ScaleY:    1,
-		ScaleZ:    1,
+		ParentNode: html.ParentNode,
+		X:          html.X,
+		Y:          html.Y,
+		Z:          html.Z,
+		RotationX:  html.RotationX,
+		RotationY:  html.RotationY,
+		RotationZ:  html.RotationZ,
+		SpinX:      html.SpinX,
+		SpinY:      html.SpinY,
+		SpinZ:      html.SpinZ,
+		ScaleX:     1,
+		ScaleY:     1,
+		ScaleZ:     1,
 	}
 }
 

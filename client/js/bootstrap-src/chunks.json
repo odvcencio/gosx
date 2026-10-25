@@ -414,6 +414,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-hierarchy.js",
+      "sources": [
+        "../runtime/scene3d/hierarchy.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-particle-burst.js",
       "sources": [
         "../runtime/scene3d/particle-burst.ts"
