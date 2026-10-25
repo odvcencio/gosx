@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.57.20
+
 - Keep ocean rendering on the shared Scene3D animation clock in WebGL2 and
   WebGPU, matching vessel buoyancy through pause, seek, and resume. Use the same
   hardware wave tier for rendering and water queries.
