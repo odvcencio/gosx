@@ -4265,14 +4265,20 @@
   // command; every existing value here is load-bearing wire protocol and
   // must never be renumbered.
   const SCENE_CMD_SET_POST_UNIFORMS = 14;
+  const SCENE_CMD_SET_GROUPS = 15;
 
   function applySceneCommands(state, commands) {
     if (!state || !Array.isArray(commands) || commands.length === 0) return;
     const pending = [];
-    for (const command of commands) {
+    for (let index = 0; index < commands.length; index++) {
+      const command = commands[index];
       const result = applySceneCommand(state, command);
       if (result && typeof result.then === "function") {
         pending.push(result);
+        // A newly loaded parent must exist before later commands target it.
+        if (command.kind === SCENE_CMD_SET_GROUPS && state._hierarchyPending) {
+          return Promise.all(pending).then(() => applySceneCommands(state, commands.slice(index + 1)));
+        }
       }
     }
     if (pending.length > 0) {
@@ -4294,7 +4300,7 @@
         state.html.delete(sceneObjectKey(command.objectId));
         state.lights.delete(sceneObjectKey(command.objectId));
         return;
-      case 15:
+      case SCENE_CMD_SET_GROUPS:
         return scenePrepareGroups(state,command.data && command.data.groups).then(function() {
           for (const group of state.groups) group._spinProgramInvalidated=true;
         });

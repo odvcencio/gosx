@@ -690,3 +690,33 @@ test("retained crowd poses invalidate only when the group or source pose changes
   assert.equal(result.same,true);
   assert.equal(result.keptBatch,true);
 });
+
+
+test("first live hierarchy load preserves following transform command order", async () => {
+  const context = createCoreContext();
+  const pending = vm.runInContext(`(() => {
+    const api = window.__gosx_scene3d_hierarchy_api;
+    delete window.__gosx_scene3d_hierarchy_api;
+    let finishLoad;
+    ensureSceneGatedFeatureLoaded = () => new Promise(resolve => {
+      finishLoad = () => { window.__gosx_scene3d_hierarchy_api = api; resolve(api); };
+    });
+    const state = createSceneState({scene:{objects:[]}}, null);
+    const work = applySceneCommands(state, [
+      {kind:15,data:{groups:[{id:"rotor",spinZ:1}]}},
+      {kind:2,objectId:"rotor",data:{x:3,spinZ:0}},
+      {kind:0,objectId:"tip",data:{kind:"mesh",props:{id:"tip",kind:"box",x:2,parentNode:"rotor"}}}
+    ]);
+    const deferred = !state.objects.has("tip");
+    finishLoad();
+    return work.then(() => ({
+      deferred, x:state.groups[0].x, spin:state.groups[0].spinZ,
+      point:sceneGroupTestOrigin(sceneGroupRecords([state.objects.get("tip")],sceneGroupMatrices(state,10),"matrix")[0],10)
+    }));
+  })()`, context);
+  const result = JSON.parse(JSON.stringify(await pending));
+  assert.equal(result.deferred, true);
+  assert.equal(result.x, 3);
+  assert.equal(result.spin, 0);
+  assert.deepEqual(result.point, {x:5,y:0,z:0});
+});
