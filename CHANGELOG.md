@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Skip unused normal preparation for unlit Scene3D line geometry in animated
+  frames and static world bakes. Preserve lit colors, solid mesh normals, and
+  lighting changes that invalidate cached geometry colors.
+
 ## v0.57.20
 
 - Keep ocean rendering on the shared Scene3D animation clock in WebGL2 and

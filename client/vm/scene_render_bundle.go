@@ -419,10 +419,14 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera *sceneCamer
 	for _, segment := range sceneObjectSegments(obj) {
 		worldFrom := frameTransform.point(segment[0])
 		worldTo := frameTransform.point(segment[1])
-		fromNormal := frameTransform.normal(sceneObjectLocalNormal(obj, segment[0]))
-		toNormal := frameTransform.normal(sceneObjectLocalNormal(obj, segment[1]))
-		fromRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
-		toRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
+		// Line streams carry positions and colors; inactive lighting needs no normals.
+		fromRGBA, toRGBA := baseRGBA, baseRGBA
+		if litCtx.active {
+			fromNormal := frameTransform.normal(sceneObjectLocalNormal(obj, segment[0]))
+			toNormal := frameTransform.normal(sceneObjectLocalNormal(obj, segment[1]))
+			fromRGBA = sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
+			toRGBA = sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
+		}
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldFrom)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, worldTo)
 		segment := sceneCameraSegment{from: worldFrom, to: worldTo}
@@ -472,10 +476,13 @@ func bakeSceneObjectWorld(object *sceneObject, material rootengine.RenderMateria
 	for _, segment := range segments {
 		worldFrom := translatePointTrig(segment[0], obj, timeSeconds, objTrig)
 		worldTo := translatePointTrig(segment[1], obj, timeSeconds, objTrig)
-		fromNormal := sceneObjectWorldNormalTrig(obj, segment[0], objTrig)
-		toNormal := sceneObjectWorldNormalTrig(obj, segment[1], objTrig)
-		fromRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
-		toRGBA := sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
+		fromRGBA, toRGBA := baseRGBA, baseRGBA
+		if litCtx.active {
+			fromNormal := sceneObjectWorldNormalTrig(obj, segment[0], objTrig)
+			toNormal := sceneObjectWorldNormalTrig(obj, segment[1], objTrig)
+			fromRGBA = sceneLitColorRGBAResolved(baseRGBA, material, worldFrom, fromNormal, lights, litCtx)
+			toRGBA = sceneLitColorRGBAResolved(baseRGBA, material, worldTo, toNormal, lights, litCtx)
+		}
 		bake.bounds, bake.hasBounds = expandRenderBounds(bake.bounds, bake.hasBounds, worldFrom)
 		bake.bounds, bake.hasBounds = expandRenderBounds(bake.bounds, bake.hasBounds, worldTo)
 		bake.segments = append(bake.segments, bakedSegment{
