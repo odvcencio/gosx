@@ -12,7 +12,7 @@ func CameraIR(camera PerspectiveCamera) IRCamera { return cameraToIR(camera) }
 
 // Perspective returns the typed perspective lens and pose of a camera snapshot.
 func (camera IRCamera) Perspective() PerspectiveCamera {
-	return PerspectiveCamera{Position: Vec3(camera.X, camera.Y, camera.Z), Rotation: Rotate(camera.RotationX, camera.RotationY, camera.RotationZ), FOV: camera.FOV, PortraitFOV: camera.PortraitFOV, Near: camera.Near, Far: camera.Far, TransitionMS: camera.TransitionMS}
+	return PerspectiveCamera{Position: Vec3(camera.X, camera.Y, camera.Z), Rotation: Rotate(camera.RotationX, camera.RotationY, camera.RotationZ), FOV: camera.FOV, PortraitFOV: camera.PortraitFOV, Near: camera.Near, Far: camera.Far, TransitionMS: camera.TransitionMS, Orbit: camera.Orbit.clone()}
 }
 
 // SameCameraPose compares effective poses, excluding transition metadata.
@@ -51,11 +51,11 @@ func (move CameraTransition) Sample(elapsed time.Duration) (IRCamera, bool) {
 		return target, false
 	}
 	t := (motion.Ease{Kind: motion.EaseCubicBezier, Args: []float64{.4, 0, .2, 1}}).Apply(math.Max(0, float64(elapsed)/float64(move.Duration)))
-	mix := func(a, b float64) float64 { return a + (b-a)*t }
+	mix := func(a, b float64) float64 { return a + float64((b-a)*t) }
 	c := target
 	c.X, c.Y, c.Z = mix(move.From.X, c.X), mix(move.From.Y, c.Y), mix(move.From.Z, c.Z)
 	c.RotationX, c.RotationY, c.RotationZ = mix(move.From.RotationX, c.RotationX), mix(move.From.RotationY, c.RotationY), mix(move.From.RotationZ, c.RotationZ)
-	c.FOV = mix(move.From.FOV, c.FOV) + math.Max(0, move.FOVArc)*4*t*(1-t)
+	c.FOV = mix(move.From.FOV, c.FOV) + float64(math.Max(0, move.FOVArc)*4*t*(1-t))
 	c.PortraitFOV = mix(move.From.PortraitFOV, c.PortraitFOV)
 	c.Left, c.Right = mix(move.From.Left, c.Left), mix(move.From.Right, c.Right)
 	c.Top, c.Bottom = mix(move.From.Top, c.Top), mix(move.From.Bottom, c.Bottom)
@@ -82,5 +82,9 @@ func completeCamera(c IRCamera) map[string]any {
 	if c.Far == 0 {
 		c.Far = 128
 	}
-	return map[string]any{"kind": c.Kind, "x": c.X, "y": c.Y, "z": c.Z, "rotationX": c.RotationX, "rotationY": c.RotationY, "rotationZ": c.RotationZ, "fov": c.FOV, "portraitFOV": c.PortraitFOV, "left": c.Left, "right": c.Right, "top": c.Top, "bottom": c.Bottom, "zoom": c.Zoom, "near": c.Near, "far": c.Far, "transitionMS": c.TransitionMS}
+	camera := map[string]any{"kind": c.Kind, "x": c.X, "y": c.Y, "z": c.Z, "rotationX": c.RotationX, "rotationY": c.RotationY, "rotationZ": c.RotationZ, "fov": c.FOV, "portraitFOV": c.PortraitFOV, "left": c.Left, "right": c.Right, "top": c.Top, "bottom": c.Bottom, "zoom": c.Zoom, "near": c.Near, "far": c.Far, "transitionMS": c.TransitionMS}
+	if c.Orbit != nil {
+		camera["orbit"] = c.Orbit
+	}
+	return camera
 }

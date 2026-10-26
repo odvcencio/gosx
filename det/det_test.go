@@ -65,6 +65,7 @@ var unaryCases = []unaryCase{
 	{"Log", Log, math.Log, [][2]float64{{0.5, 2}, {1e-6, 1e6}, {1e-300, 1e300}}, 1, nil, 0},
 	{"Log2", Log2, math.Log2, [][2]float64{{0.5, 2}, {1e-6, 1e6}, {1e-300, 1e300}}, 1, nil, 0},
 	{"Log10", Log10, math.Log10, [][2]float64{{0.5, 2}, {1e-6, 1e6}, {1e-300, 1e300}}, 1, nil, 0},
+	{"Cbrt", Cbrt, math.Cbrt, [][2]float64{{-1, 1}, {-1000, 1000}, {-1e300, 1e300}, {-1e-310, 1e-310}}, 1, nil, 0},
 	{"Sin", Sin, math.Sin, [][2]float64{{-1, 1}, {-100, 100}, {-1e6, 1e6}, {-1e12, 1e12}}, 1, nil, 0},
 	{"Cos", Cos, math.Cos, [][2]float64{{-1, 1}, {-100, 100}, {-1e6, 1e6}, {-1e12, 1e12}}, 1, nil, 0},
 	{"Tan", Tan, math.Tan, [][2]float64{{-1, 1}, {-100, 100}, {-1e6, 1e6}}, 1, nil, 0},

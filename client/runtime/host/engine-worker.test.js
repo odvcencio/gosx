@@ -434,7 +434,9 @@ function bootWorker(opts = {}) {
         constructor() { this.importObject = {}; this.env = {}; }
         run() {
           scope.goEnv = this.env;
-          if (!opts.noRegister) scope.__gosx_register_go_wasm_engine_factory(this.env.GOSX_GO_WASM_REGISTRATION_TOKEN, "Sim", ctx => { scope.factoryCtx = ctx; return { dispose() { scope.disposed = true; } }; });
+          const mount = ctx => { scope.factoryCtx = ctx; return { dispose() { scope.disposed = true; } }; };
+          if (opts.register) opts.register(scope, this.env.GOSX_GO_WASM_REGISTRATION_TOKEN, mount);
+          else if (!opts.noRegister) scope.__gosx_register_go_wasm_engine_factory(this.env.GOSX_GO_WASM_REGISTRATION_TOKEN, "Sim", mount);
           return new Promise(() => {});
         }
       };
@@ -474,6 +476,25 @@ test("worker: loads wasm_exec, runs the module with a registration token, and re
   assert.deepEqual(plain(w.of("booted").map(p => p.msg)), [{ t: "booted", v: 1 }]);
 });
 
+test("worker: a multi-component module registers before and after the requested factory", async () => {
+  const accepted = [];
+  const w = bootWorker({ register(scope, token, mount) {
+    for (const name of ["Other", "Sim", "Alias"]) {
+      const ok = scope.__gosx_register_go_wasm_engine_factory(token, name, name === "Sim" ? mount : () => { throw Error("wrong factory selected"); });
+      accepted.push(ok);
+      if (!ok) throw Error("Go Register would reject " + name);
+    }
+  } });
+  w.send(INIT);
+  await tick(); await tick(); await tick();
+  assert.deepEqual(accepted, [true, true, true]);
+  assert.equal(w.of("booted").length, 1);
+  w.send({ t: "mount" });
+  await tick(); await tick();
+  assert.equal(w.of("mounted").length, 1);
+  assert.equal(w.scope.factoryCtx.component, "Sim");
+});
+
 test("worker: reports a fatal error for a missing standard Go runtime, a bad status and no registration", async () => {
   for (const [opts, code] of [[{ noCtor: true }, "worker-wasm-exec-missing"], [{ status: 404 }, "worker-fetch-status"]]) {
     const w = bootWorker(opts);
@@ -486,14 +507,26 @@ test("worker: reports a fatal error for a missing standard Go runtime, a bad sta
   }
 });
 
-test("worker: the registration function rejects other tokens and components", async () => {
-  const w = bootWorker({ noRegister: true });
+test("worker: registration is token-scoped, unique and limited to synchronous module startup", async () => {
+  const results = [];
+  const w = bootWorker({ register(scope, token, mount) {
+    const register = scope.__gosx_register_go_wasm_engine_factory;
+    results.push(register("wrong", "Sim", mount));
+    results.push(register(token, "", mount));
+    results.push(register(token, "Sim", null));
+    results.push(register(token, "Other", () => {}));
+    results.push(register(token, "Other", () => {}));
+    results.push(register(token, "Sim", mount));
+    results.push(register(token, "Sim", () => {}));
+  } });
   w.send(INIT);
   await tick(); await tick();
+  assert.deepEqual(results, [false, false, false, true, false, true, false]);
+  assert.equal(w.of("booted").length, 1);
   const register = w.scope.__gosx_register_go_wasm_engine_factory;
   assert.equal(register("wrong", "Sim", () => {}), false);
-  assert.equal(register(w.scope.goEnv.GOSX_GO_WASM_REGISTRATION_TOKEN, "Other", () => {}), false);
-  assert.equal(register(w.scope.goEnv.GOSX_GO_WASM_REGISTRATION_TOKEN, "Sim", () => {}), true);
+  assert.equal(register(w.scope.goEnv.GOSX_GO_WASM_REGISTRATION_TOKEN, "Late", () => {}), false);
+  assert.equal(register(w.scope.goEnv.GOSX_GO_WASM_REGISTRATION_TOKEN, "Sim", () => {}), false);
 });
 
 async function mountedWorker(opts) {
@@ -1449,10 +1482,12 @@ test("page: terminating a pending engine mid-mount stops watchdogs, frees subscr
 test("page: a worker still booting when it is terminated does not stay at booting", async () => {
   const page = bootPage();
   const pending = {};
-  page.host.resolve(ENTRY, pending, fakeFallback());
+  const resolved = page.host.resolve(ENTRY, pending, fakeFallback());
+  const rejected = assert.rejects(resolved, error => error.code === "worker-terminated");
   await tick();
   pending.workerRecord.terminate();
   assert.equal(engineStatuses(page).at(-1), "disposed");
+  await rejected;
 });
 
 test("page: a boot failure falls back without a transient disposed status", async () => {

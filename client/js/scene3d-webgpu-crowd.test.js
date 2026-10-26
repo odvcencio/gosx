@@ -192,13 +192,14 @@ test("crowd shaders keep their bindings and vertex inputs consistent", async () 
   assert.match(code, /@group\(2\) @binding\(1\) var crowdAtlas: texture_2d<f32>;/);
   assert.match(code, /@group\(2\) @binding\(2\) var<storage, read> crowdAgents: array<f32>;/);
   assert.match(code, /@group\(2\) @binding\(3\) var<storage, read> crowdPoses: array<f32>;/);
+  assert.match(code, /@group\(2\) @binding\(4\) var<storage, read> crowdTints: array<vec4f>;/);
   assert.match(code, /@location\(4\) crowdSlot: u32,/);
   assert.match(code, /@location\(5\) joints: vec4f,/);
   assert.match(code, /@location\(6\) weights: vec4f,/);
   assert.equal(code.split("{").length, code.split("}").length, "braces balance");
   const layouts = color.desc.layout.desc.bindGroupLayouts;
   assert.equal(layouts.length, 3);
-  assert.deepEqual(Array.from(layouts[2].desc.entries, (e) => e.binding), [0, 1, 2, 3]);
+  assert.deepEqual(Array.from(layouts[2].desc.entries, (e) => e.binding), [0, 1, 2, 3, 4]);
   assert.equal(layouts[2].desc.entries[1].texture.sampleType, "unfilterable-float");
   const buffers = color.desc.vertex.buffers;
   assert.deepEqual(Array.from(buffers, (b) => b.stepMode), ["vertex", "vertex", "vertex", "vertex", "instance", "vertex", "vertex"]);
@@ -353,6 +354,43 @@ test("a crowd is never recorded into a render bundle", async () => {
   assert.equal(harness.fake.state.renderBundleEncoders.length, 0);
 });
 
+test("a tinted batch reads one colour per agent from a storage buffer and uploads it only when a colour changes", async () => {
+  const harness = await setup();
+  const { agents, atlas } = crowd(harness.api, 6);
+  harness.renderer.prepareCrowdAtlas(atlas);
+  const red = new F32([1, 0, 0, 1]), blue = new F32([0, 0, 1, 1]);
+  agents.forEach((agent, i) => { agent._crowdSkin.tint = i === 3 ? null : (i % 2 ? blue : red); });
+  const expected = [];
+  agents.forEach((agent, i) => expected.push(...(i === 3 ? [1, 1, 1, 1] : (i % 2 ? blue : red))));
+
+  await draw(harness, bundleOf(harness.api, agents));
+  const tints = bufferWithLabel(harness, "tints")[0];
+  const params = bufferWithLabel(harness, "params")[0];
+  assert.ok(tints, "a tint buffer exists");
+  assert.deepEqual(Array.from(writesTo(harness, tints)[0].data), expected, "the agents' colours upload as the planner packed them");
+  assert.equal(writesTo(harness, params).pop().data[18], 1, "timing.z tells the colour shader to read them");
+  const group = harness.fake.state.renderPasses.flatMap((pass) => pass.bindGroups || []).filter((g) => g.group && g.group.desc.label === "gosx-crowd").pop();
+  assert.deepEqual(Array.from(group.group.desc.entries, (e) => e.binding), [0, 1, 2, 3, 4]);
+  assert.equal(group.group.desc.entries[4].resource.buffer, tints, "binding 4 is the tint buffer");
+
+  await draw(harness, bundleOf(harness.api, agents));
+  assert.equal(writesTo(harness, tints).length, 1, "an unchanged crowd uploads no colours");
+  agents[1]._crowdSkin.tint = red;
+  expected.splice(4, 4, 1, 0, 0, 1);
+  await draw(harness, bundleOf(harness.api, agents));
+  assert.equal(writesTo(harness, tints).length, 2, "a recolour uploads the colours once");
+  assert.deepEqual(Array.from(writesTo(harness, tints)[1].data), expected);
+});
+
+test("a batch without tints leaves the colour switch off", async () => {
+  const harness = await setup();
+  const { agents, atlas } = crowd(harness.api, 5);
+  harness.renderer.prepareCrowdAtlas(atlas);
+  await draw(harness, bundleOf(harness.api, agents));
+  assert.equal(writesTo(harness, bufferWithLabel(harness, "params")[0]).pop().data[18], 0);
+  assert.equal(writesTo(harness, bufferWithLabel(harness, "tints")[0]).length, 0, "no colours uploaded");
+});
+
 test("a crowd agent is not a GPU pick target", async () => {
   const api = (await setup()).api;
   const { agents } = crowd(api, 3);
@@ -467,7 +505,7 @@ test("the batch buffers are released when the batch leaves and when the renderer
   assert.ok(live() >= 5);
   const box = harness.api.normalizeSceneObject({ id: "box", kind: "box", width: 1, height: 1, depth: 1, color: "#888888" }, 0);
   await draw(harness, bundleOf(harness.api, [box]));
-  assert.equal(harness.fake.state.buffers.filter((b) => /^gosx\.crowd\.(agents|poses|params|visible|visibility|identity)$/.test(b.label || "") && !b.destroyed).length, 0);
+  assert.equal(harness.fake.state.buffers.filter((b) => /^gosx\.crowd\.(agents|poses|tints|params|visible|visibility|identity)$/.test(b.label || "") && !b.destroyed).length, 0);
   await draw(harness, bundleOf(harness.api, agents));
   harness.renderer.dispose();
   assert.equal(live(), 0);

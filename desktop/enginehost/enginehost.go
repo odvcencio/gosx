@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,18 +40,18 @@ import (
 )
 
 // Protocol is the version of the wire protocol below. The page checks it.
-const Protocol = 1
+const Protocol = 2
 
 // Bridge methods and events. The page runtime speaks these; an app does not.
 const (
 	// MethodAttach is a page request {id, component, props, hidden}. The host
-	// answers {v} when a factory is registered for component, and a bridge
+	// answers {v, session} when a factory is registered for component, and a bridge
 	// error with CodeNotRegistered when not (the page then starts its worker).
 	MethodAttach = "gosx.engine.attach"
-	// MethodPost is a page request {id, msg}: one message in the engine worker
+	// MethodPost is a page request {id, session, msg}: one message in the engine worker
 	// protocol (docs/engine-worker.md) addressed to the attached instance.
 	MethodPost = "gosx.engine.post"
-	// EventMessage is a host event {id, msg}: one worker-protocol message for
+	// EventMessage is a host event {id, session, msg}: one worker-protocol message for
 	// the page's engine record.
 	EventMessage = "gosx.engine.msg"
 )
@@ -61,6 +62,9 @@ const CodeNativeDisabled = "engine.native_disabled"
 // CodeNotRegistered is the bridge error code for an attach to a component
 // with no registered factory.
 const CodeNotRegistered = "engine.not_registered"
+
+// CodeStaleSession rejects traffic from an earlier attachment of the same engine.
+const CodeStaleSession = "engine.stale_session"
 
 // Bridge is the part of bridge.Router that the host uses.
 type Bridge interface {
@@ -89,10 +93,11 @@ type Host struct {
 	disableNative map[string]struct{}
 	opt           Options
 
-	mu        sync.Mutex
-	factories map[string]Factory
-	sessions  map[string]*session
-	closed    bool
+	mu          sync.Mutex
+	factories   map[string]Factory
+	sessions    map[string]*session
+	closed      bool
+	nextSession uint64
 }
 
 // New registers the engine protocol on b and returns the host. It panics if b
@@ -187,17 +192,20 @@ func (h *Host) attach(ctx *bridge.Context) error {
 	}
 	old := h.sessions[req.ID]
 	s := newSession(h, req, factory, old)
+	h.nextSession++
+	s.token = strconv.FormatUint(h.nextSession, 10)
 	h.sessions[req.ID] = s
 	h.mu.Unlock()
 	if old != nil {
 		old.shutdown(false)
 	}
-	return ctx.Respond(map[string]any{"v": Protocol})
+	return ctx.Respond(map[string]any{"v": Protocol, "session": s.token})
 }
 
 type postRequest struct {
-	ID  string          `json:"id"`
-	Msg json.RawMessage `json:"msg"`
+	ID      string          `json:"id"`
+	Session string          `json:"session"`
+	Msg     json.RawMessage `json:"msg"`
 }
 
 func (h *Host) post(ctx *bridge.Context) error {
@@ -210,6 +218,9 @@ func (h *Host) post(ctx *bridge.Context) error {
 	h.mu.Unlock()
 	if s == nil {
 		return ctx.Error(CodeNotRegistered, fmt.Sprintf("engine %q is not attached", req.ID))
+	}
+	if req.Session == "" || req.Session != s.token {
+		return ctx.Error(CodeStaleSession, "engine attachment is no longer current")
 	}
 	var head struct {
 		T string `json:"t"`
@@ -282,6 +293,7 @@ func errString(err error) string {
 type session struct {
 	h         *Host
 	id        string
+	token     string // immutable after attach, before the page can post
 	component string
 	props     json.RawMessage
 	factory   Factory
@@ -363,10 +375,10 @@ func (s *session) shutdown(notify bool) {
 			s.acks = map[uint64]func(bool){}
 			s.subs = map[uint64]func(json.RawMessage){}
 			s.mu.Unlock()
-			s.h.drop(s)
 			if notify {
 				s.rawEmit(map[string]any{"t": "disposed"})
 			}
+			s.h.drop(s)
 			s.qmu.Lock()
 			s.closed = true
 			s.qmu.Unlock()
@@ -502,7 +514,13 @@ func (s *session) rawEmit(msg map[string]any) {
 }
 
 func (s *session) send(msg map[string]any) error {
-	return s.h.b.Emit(EventMessage, map[string]any{"id": s.id, "msg": msg})
+	s.h.mu.Lock()
+	current := !s.h.closed && s.h.sessions[s.id] == s
+	s.h.mu.Unlock()
+	if !current {
+		return errors.New("engine attachment is no longer current")
+	}
+	return s.h.b.Emit(EventMessage, map[string]any{"id": s.id, "session": s.token, "msg": msg})
 }
 
 // ---------------------------------------------------------------------------

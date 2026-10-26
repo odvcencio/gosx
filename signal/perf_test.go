@@ -1,6 +1,9 @@
 package signal
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func BenchmarkDeriveRecompute(b *testing.B) {
 	base := New(0)
@@ -33,6 +36,31 @@ func BenchmarkDeriveFiveDeps(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		deps[0].Set(i + 1)
 		_ = c.Get()
+	}
+}
+
+func BenchmarkDeriveRepeatedRead(b *testing.B) {
+	for _, reads := range []int{1, 4, 16, 64} {
+		b.Run(fmt.Sprint(reads), func(b *testing.B) {
+			base := New(0)
+			computed := Derive(func() int {
+				sum := 0
+				for range reads {
+					sum += base.Get()
+				}
+				return sum
+			})
+			defer computed.Stop()
+			computed.Subscribe(func() {})
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := range b.N {
+				base.Set(i + 1)
+				if got := computed.Get(); got != reads*(i+1) {
+					b.Fatalf("computed = %d, want %d", got, reads*(i+1))
+				}
+			}
+		})
 	}
 }
 
@@ -84,6 +112,33 @@ func BenchmarkDeriveDependencyChanges(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				route.Set(i + 1)
 				_ = computed.Get()
+			}
+		})
+	}
+}
+
+func BenchmarkDeriveLifecycle(b *testing.B) {
+	for _, count := range []int{1, 5, 16} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			sources := make([]*Signal[int], count)
+			for i := range sources {
+				sources[i] = New(i)
+			}
+			compute := func() int {
+				sum := 0
+				for _, source := range sources {
+					sum += source.Get()
+				}
+				return sum
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				computed := Derive(compute)
+				if got := computed.Get(); got != count*(count-1)/2 {
+					b.Fatalf("computed = %d", got)
+				}
+				computed.Stop()
 			}
 		})
 	}

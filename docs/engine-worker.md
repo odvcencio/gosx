@@ -301,7 +301,15 @@ attaches again, and the host disposes the old instance before it mounts the new
 one. Input forwarding, application messages and netplay are not carried over the
 native channel. The wire protocol is the worker message protocol below, carried
 as `gosx.engine.attach` and `gosx.engine.post` requests and `gosx.engine.msg`
-events on the desktop bridge. The bridge caps page messages at 64 KiB and 200 per
+events on the desktop bridge. The outer native protocol is version 2: attach
+returns an opaque session token, every post includes it, and host events carry
+it. A replaced or disposed session cannot send traffic into a new attachment of
+the same engine ID. Cancelling boot rejects immediately; a late attach response
+is cleaned up with its own token instead of disposing its replacement. Older
+native hosts fall back to the worker transport. The inner worker protocol stays
+at version 1.
+
+The bridge caps page messages at 64 KiB and 200 per
 second by default (`Options.BridgeLimit`); a view batch travels host to page and
 is not capped. The native channel works wherever the typed bridge does; see
 `desktop` for which platforms have it. `examples/desktop-engine` is a complete

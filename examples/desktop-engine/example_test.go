@@ -18,11 +18,12 @@ import (
 // A page played by the test: it records what the host emits and posts requests
 // the way the page runtime does.
 type pageEnd struct {
-	t      *testing.T
-	router *bridge.Router
-	mu     sync.Mutex
-	msgs   []map[string]json.RawMessage
-	seq    int
+	t       *testing.T
+	router  *bridge.Router
+	mu      sync.Mutex
+	msgs    []map[string]json.RawMessage
+	seq     int
+	session string
 }
 
 func newPageEnd(t *testing.T) *pageEnd {
@@ -31,6 +32,14 @@ func newPageEnd(t *testing.T) *pageEnd {
 		env, err := bridge.ParseEnvelope(raw)
 		if err != nil {
 			return err
+		}
+		if env.Op == bridge.OpResponse {
+			var answer struct{ Session string }
+			if json.Unmarshal(env.Payload, &answer) == nil && answer.Session != "" {
+				p.mu.Lock()
+				p.session = answer.Session
+				p.mu.Unlock()
+			}
 		}
 		if env.Op != bridge.OpEvent || env.Method != enginehost.EventMessage {
 			return nil
@@ -95,7 +104,12 @@ func TestCounterEngineRunsBehindDesktopIPC(t *testing.T) {
 	}
 	id := "gosx-engine-" + mountID
 	p.request(enginehost.MethodAttach, map[string]any{"id": id, "component": component})
-	post := func(msg map[string]any) { p.request(enginehost.MethodPost, map[string]any{"id": id, "msg": msg}) }
+	post := func(msg map[string]any) {
+		p.mu.Lock()
+		session := p.session
+		p.mu.Unlock()
+		p.request(enginehost.MethodPost, map[string]any{"id": id, "session": session, "msg": msg})
+	}
 	post(map[string]any{"t": "mount"})
 	p.find("mounted", nil)
 

@@ -65,7 +65,7 @@ func mathCalls(x float64) float64 {
 	_ = math.FMA(x, x, x)
 	f := math.Sin // want `math-call: math.Sin can differ .* use det.Sin`
 	_ = f
-	_ = math.Cbrt(x)                      // want `math-call: math.Cbrt .* no det replacement`
+	_ = math.Erf(x)                       // want `math-call: math.Erf .* no det replacement`
 	return math.Exp(x) + math.Atan2(x, 1) // want `math-call: math.Exp .* det.Exp` `math-call: math.Atan2 .* det.Atan2`
 }
 

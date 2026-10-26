@@ -174,6 +174,10 @@ class FakeElement {
     return this.attrs.has(name) ? this.attrs.get(name) : null;
   }
 
+  hasAttribute(name) {
+    return this.attrs.has(name);
+  }
+
   removeAttribute(name) {
     this.attrs.delete(name);
     if (name === "id") this.id = "";
@@ -296,24 +300,26 @@ function loadApplier(source = patchSource) {
 // Reference applier — plain uncached walk, no memoization
 // ---------------------------------------------------------------------------
 
-const IMPLICIT = new Set(["TBODY", "THEAD", "TFOOT", "COLGROUP"]);
 const PROP_ATTRS = new Set(["value", "checked", "selected", "disabled"]);
 const BOOL_PROPS = new Set(["checked", "selected", "disabled"]);
 
-function refSkipImplicit(node) {
-  if (node.nodeType !== ELEMENT_NODE) return node;
-  const elements = node.kids.filter((kid) => kid.nodeType === ELEMENT_NODE);
-  if (elements.length === 1 && IMPLICIT.has(elements[0].tagName)) {
-    return elements[0];
-  }
-  return node;
-}
-
+// A <tbody> the server marked data-gosx-implicit is transparent: a table's
+// children are the marked <tbody>'s children in its place.
 function refEffectiveChildren(node) {
-  const kids = node.kids || [];
-  return kids.filter(
-    (kid) => kid.nodeType === ELEMENT_NODE || kid.nodeType === TEXT_NODE,
-  );
+  const out = [];
+  for (const kid of node.kids || []) {
+    if (
+      node.tagName === "TABLE" &&
+      kid.nodeType === ELEMENT_NODE &&
+      kid.tagName === "TBODY" &&
+      kid.attrs.has("data-gosx-implicit")
+    ) {
+      out.push(...refEffectiveChildren(kid));
+    } else if (kid.nodeType === ELEMENT_NODE || kid.nodeType === TEXT_NODE) {
+      out.push(kid);
+    }
+  }
+  return out;
 }
 
 function refResolve(root, pathText) {
@@ -322,7 +328,6 @@ function refResolve(root, pathText) {
   for (const part of String(pathText).split("/")) {
     const idx = parseInt(part, 10);
     if (Number.isNaN(idx)) return null;
-    node = refSkipImplicit(node);
     const kids = refEffectiveChildren(node);
     if (idx < 0 || idx >= kids.length) return null;
     node = kids[idx];
@@ -554,6 +559,7 @@ function seededTable(rows) {
   return (root, doc, stats) => {
     const table = new FakeElement("table", stats, doc);
     const tbody = new FakeElement("tbody", stats, doc);
+    tbody.setAttribute("data-gosx-implicit", "");
     table.appendChild(tbody);
     root.appendChild(table);
     for (let r = 0; r < rows; r++) {
@@ -643,7 +649,7 @@ test("patch applier skips comment nodes the same way with a warm cache", () => {
   assertMatchesOracles("comments", seededListWithComments(3), ops);
 });
 
-test("patch applier still skips implicit tbody with a warm cache", () => {
+test("patch applier reads through a marked implicit tbody with a warm cache", () => {
   const ops = [
     { kind: 0, path: "0/0/0/0", text: "cell 0 patched" },
     { kind: 0, path: "0/1/0/0", text: "cell 1 patched" },

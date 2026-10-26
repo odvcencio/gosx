@@ -149,8 +149,10 @@ err := scene.DispatchVesselPose("scene-mount-id", scene.VesselPoseFrame{
 The target is the mount element's ID. `DispatchVesselPose` returns an error until
 the vessel has mounted, so ignore errors for the first ticks. In the browser, the
 vessel stops integrating physics and shows the pose, blended between ticks. The
-model parts, the walker, the wake and `InstancedGLBMesh{ParentNode: "liner"}`
-crowds follow the pose as for a sailing vessel. There is no helm, navigation or
+model parts, the walker, the wake, `InstancedGLBMesh{ParentNode: "liner"}`
+crowds and `InstancedMesh{ParentNode: "liner"}` batches (windows, rails,
+lifeboats) follow the pose as for a sailing vessel. Instance positions in a
+parented batch are in the ship's own frame. There is no helm, navigation or
 wind. Set `VesselPose.Snap` for the first pose and for teleports.
 
 The frame (`GSV1`, little-endian) is `"GSV1"`, a `u16` ship count, then per ship
@@ -257,3 +259,11 @@ node client/js/scene3d-vessel-powered.bench.mjs                 # cost
 SCENE3D_TOOLS_DIR=<dir> SCENE3D_BROWSER=<chromium> \
   node scripts/scene3d-vessel-cutaway.mjs [shadows]             # pixels in a real browser
 ```
+
+Primitive `InstancedMesh.ParentNode` batches use the same named-parent lookup
+in WebGL2, WebGPU, native previews and `AtTime` picking. An explicit parent
+owns the batch coordinate space, including when the batch is declared inside
+another group; that structural group is not baked a second time. Exact object
+or model IDs take priority over imported part prefixes. A retained `Group` ID
+can carry a batch directly. Missing parents temporarily leave it in world
+space; strict SceneIR validation reports an unresolved primitive-batch parent.

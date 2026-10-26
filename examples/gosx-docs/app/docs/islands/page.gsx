@@ -65,6 +65,43 @@ func Page() Node {
 			<span class="inline-code">gosx dev</span>
 			to produce and serve application assets.
 		</p>
+		<h2 id="island-files">Islands in other files</h2>
+		<p>
+			A page can use an island that another
+			<span class="inline-code">.gsx</span>
+			file declares. There are two ways to reach it, and both hydrate like a same-file island.
+		</p>
+		<p>
+			A sibling file in the same directory and package resolves by its bare name, the way Go resolves a name declared in another file of one package. If
+			<span class="inline-code">counter.gsx</span>
+			declares
+			<span class="inline-code">Counter</span>
+			, then
+			<span class="inline-code">page.gsx</span>
+			writes
+			<span class="inline-code">&lt;Counter /&gt;</span>
+			.
+		</p>
+		<p>
+			A shared directory resolves through the same relative import rule that shared components use. Write
+			<span class="inline-code">import ui "./ui"</span>
+			and call
+			<span class="inline-code">&lt;ui.Counter /&gt;</span>
+			. The path must start with
+			<span class="inline-code">./</span>
+			or
+			<span class="inline-code">../</span>
+			, and every
+			<span class="inline-code">.gsx</span>
+			file of that directory is searched.
+		</p>
+		<p>
+			The build finds islands in every
+			<span class="inline-code">.gsx</span>
+			file under the project, so the manifest and program assets cover them. Island names are global within a project, so two files cannot declare the same island name. An island accepts no child content, and a strict page component still calls only same-file strict components; use a legacy
+			<span class="inline-code">func Page() Node</span>
+			or a shared import to reach other files.
+		</p>
 		<h2 id="composition">Pure-view composition</h2>
 		<CodeBlock lang="gosx" source={data.compositionSample} />
 		<p>

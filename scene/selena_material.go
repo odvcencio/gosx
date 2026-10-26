@@ -349,6 +349,7 @@ func MaterialFromSelena(result selena.Result, opts SelenaMaterialOptions) (Custo
 	// defaults. Validate every authored value without publishing placeholders
 	// that could shadow the renderer's transforms.
 	validation := make(map[string]any, len(m.Uniforms)+3)
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for name, value := range m.Uniforms {
 		validation[name] = value
 	}
@@ -417,6 +418,7 @@ func selenaUniforms(layout bindings.Layout, overrides map[string]any) map[string
 	if out == nil {
 		out = make(map[string]any, len(overrides))
 	}
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for name, value := range overrides {
 		if strings.TrimSpace(name) == "" {
 			continue

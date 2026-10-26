@@ -185,6 +185,7 @@
     var NATIVE_ATTACH = "gosx.engine.attach";
     var NATIVE_POST = "gosx.engine.post";
     var NATIVE_EVENT = "gosx.engine.msg";
+    var NATIVE_PROTOCOL = 2;
     // Messages that mean something to a native engine. Input, app messages and
     // netplay belong to a worker's page APIs and are not forwarded.
     var NATIVE_FORWARD = { mount: 1, dispose: 1, visibility: 1, signal: 1, ack: 1, fault: 1 };
@@ -198,20 +199,20 @@
 
     function createNativeWorker(api, entry) {
       var channel = { onmessage: null, onerror: null, onmessageerror: null };
-      var off = null, attached = false, ended = false;
+      var off = null, attached = false, ended = false, session = "";
       function deliver(msg) {
         if (ended || typeof channel.onmessage !== "function") return;
         channel.onmessage({ data: msg });
       }
       function send(msg, onFail) {
         var pending;
-        try { pending = api.call(NATIVE_POST, { id: entry.id, msg: msg }); } catch (error) { if (onFail) onFail(error); return; }
+        try { pending = api.call(NATIVE_POST, { id: entry.id, session: session, msg: msg }); } catch (error) { if (onFail) onFail(error); return; }
         if (pending && typeof pending.then === "function") pending.then(null, function(error) { if (onFail) onFail(error); });
       }
       function attach(init) {
         try {
           off = api.on(NATIVE_EVENT, function(payload) {
-            if (payload && payload.id === entry.id && payload.msg) deliver(payload.msg);
+            if (attached && payload && payload.id === entry.id && payload.session === session && payload.msg) deliver(payload.msg);
           });
         } catch (error) {
           deliver({ t: "fatal", code: "native-attach-failed", message: String(error && error.message || error) });
@@ -221,8 +222,16 @@
         var pending;
         try { pending = api.call(NATIVE_ATTACH, request); } catch (error) { pending = Promise.reject(error); }
         Promise.resolve(pending).then(function(answer) {
+          if (!answer || answer.v !== NATIVE_PROTOCOL || typeof answer.session !== "string" || !answer.session) {
+            deliver({ t: "fatal", code: "worker-protocol", message: "native engine host does not support scoped attachment protocol " + NATIVE_PROTOCOL });
+            return;
+          }
+          session = answer.session;
           attached = true;
-          deliver({ t: "booted", v: answer && answer.v });
+          // The RPC may finish after navigation has already cancelled this record.
+          // Its session token prevents this cleanup from disposing a replacement.
+          if (ended) { send({ t: "dispose" }); return; }
+          deliver({ t: "booted", v: PROTOCOL });
         }, function(error) {
           var disabled = error && error.code === "engine.native_disabled";
           var missing = error && (error.code === "engine.not_registered" || error.code === "bridge.not_found");
@@ -277,6 +286,7 @@
         try {
           record = await boot(entry, pending, bridgeApi);
         } catch (error) {
+          if (error && error.code === "worker-terminated") throw error;
           // A host without a native engine for this component is the ordinary case
           // for an app that ships both; the worker path below takes over quietly.
           if (!error || (error.code !== "native-not-registered" && error.code !== "native-disabled")) {
@@ -289,6 +299,7 @@
         try {
           record = await boot(entry, pending, null);
         } catch (error) {
+          if (error && error.code === "worker-terminated") throw error;
           reason = { code: (error && error.code) || "worker-boot-failed", message: (error && error.message) || String(error), error: error };
         }
       }
@@ -355,11 +366,11 @@
         setStatus(entry, "booting", rec.thread, "");
         var timer = setTimeout(function() {
           if (rec.state !== "booting") return;
-          rec.bootFailed = true;
-          terminate(rec);
-          rejectBoot(workerError("worker-boot-timeout", "timed out waiting for the engine worker to start"));
+          rec.bootDone(workerError("worker-boot-timeout", "timed out waiting for the engine worker to start"));
         }, bootTimeoutMS());
         rec.bootDone = function(error) {
+          if (rec.bootSettled) return;
+          rec.bootSettled = true;
           clearTimeout(timer);
           if (error) { rec.bootFailed = true; terminate(rec); rejectBoot(error); } else { rec.state = "ready"; resolveBoot(rec); }
         };
@@ -401,6 +412,9 @@
       // A boot failure continues as a fallback or "unsupported", which write
       // their own status. Every other path ends with a final status here.
       if (!rec.bootFailed && !rec.finalStatus) { rec.finalStatus = true; setStatus(rec.entry, "disposed", rec.thread, ""); }
+      if (rec.state === "booting" && !rec.bootSettled && rec.bootDone) {
+        rec.bootDone(workerError("worker-terminated", "engine boot was cancelled"));
+      }
       for (var off of rec.subs.values()) { try { off(); } catch (_) {} }
       rec.subs.clear();
       for (var off2 of rec.listeners.values()) { try { off2(); } catch (_) {} }
@@ -1217,11 +1231,16 @@
       hidden = message.hidden === true;
       frameClock.setRate(message.frameHz || DEFAULT_FRAME_HZ);
       var token = randomToken();
+      var registrationOpen = true;
+      var components = new Set();
       var registered = new Promise(function(resolveReg) {
         scope.__gosx_register_go_wasm_engine_factory = function(given, name, fn) {
-          if (given !== token || String(name) !== init.component || typeof fn !== "function") return false;
-          factory = fn;
-          resolveReg();
+          var component = String(name || "").trim();
+          if (!registrationOpen || given !== token || !component || typeof fn !== "function" || components.has(component)) return false;
+          components.add(component);
+          // A Go module may register several components. Acknowledge every
+          // module-local registration, but mount only the requested factory.
+          if (component === init.component) { factory = fn; resolveReg(); }
           return true;
         };
       });
@@ -1234,7 +1253,8 @@
       var response = await scope.fetch(message.programRef);
       if (!response.ok) throw codedError("worker-fetch-status", "engine module fetch failed with status " + response.status);
       var instance = await instantiate(response, go.importObject);
-      var run = go.run(instance);
+      var run;
+      try { run = go.run(instance); } finally { registrationOpen = false; }
       goExit = run && typeof run.then === "function"
         ? run.then(function() { return codedError("worker-module-exited", "the engine module exited"); }, function(e) { return codedError("worker-run-failed", e && e.message || String(e)); })
         : new Promise(function() {});

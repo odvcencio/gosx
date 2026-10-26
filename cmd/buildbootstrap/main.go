@@ -150,6 +150,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26-runtime-blocks.ts"),
 			sourceFile(runtimePrimitivesFile),
 			sourceFile(runtimeSceneUtilsFile),
+			sourceFile("../runtime/scene3d/instanced-data.ts"),
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.ts"),
 			sourceFile("bootstrap-src/11-scene-base64.ts"),
@@ -230,6 +231,7 @@ var outputs = []output{
 			// but it costs a few hundred bytes and keeps one source order.
 			sourceFile("bootstrap-src/16d-scene-webgl-bridge.ts"),
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
+			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
@@ -454,6 +456,7 @@ var outputs = []output{
 			// another, so a Chromium Scene3D page downloaded the same helpers
 			// twice. 26d-feature-scene3d-prefix.js now bridges the eight names
 			// this chunk reads from window.__gosx_runtime_api.
+			sourceFile("../runtime/scene3d/instanced-data.ts"),
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.ts"),
 			// 11-scene-base64.ts stays eager. 20-scene-mount.js decodes a motion
@@ -529,6 +532,7 @@ var outputs = []output{
 			// code that may fetch the WebGL chunk.
 			sourceFile("bootstrap-src/16d-scene-webgl-bridge.ts"),
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
+			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
@@ -670,6 +674,10 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/vessel-cutaway.ts"),
 			sourceFile("../runtime/scene3d/mount-vessel.ts"),
 		},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-hierarchy.js",
+		sources: []source{sourceFile("../runtime/scene3d/hierarchy.ts")},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",

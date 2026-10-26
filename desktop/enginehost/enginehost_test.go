@@ -15,16 +15,17 @@ import (
 // fakePage is the page end of the bridge: it records what the host sends and
 // posts requests through a real bridge.Router.
 type fakePage struct {
-	t      *testing.T
-	router *bridge.Router
-	mu     sync.Mutex
-	envs   []bridge.Envelope
-	seen   int
-	nextID int
+	t        *testing.T
+	router   *bridge.Router
+	mu       sync.Mutex
+	envs     []bridge.Envelope
+	seen     int
+	nextID   int
+	sessions map[string]string
 }
 
 func newFakePage(t *testing.T) *fakePage {
-	p := &fakePage{t: t}
+	p := &fakePage{t: t, sessions: map[string]string{}}
 	p.router = bridge.NewRouter(func(raw string) error {
 		env, err := bridge.ParseEnvelope(raw)
 		if err != nil {
@@ -72,12 +73,25 @@ func mustJSON(v any) json.RawMessage {
 }
 
 func (p *fakePage) attach(id, component string, hidden bool) bridge.Envelope {
-	return p.request(MethodAttach, map[string]any{"id": id, "component": component, "props": map[string]any{"seed": 7}, "hidden": hidden})
+	e := p.request(MethodAttach, map[string]any{"id": id, "component": component, "props": map[string]any{"seed": 7}, "hidden": hidden})
+	if e.Op == bridge.OpResponse {
+		var answer struct{ Session string }
+		if err := json.Unmarshal(e.Payload, &answer); err != nil {
+			p.t.Fatal(err)
+		}
+		p.mu.Lock()
+		p.sessions[id] = answer.Session
+		p.mu.Unlock()
+	}
+	return e
 }
 
 func (p *fakePage) post(id string, msg map[string]any) {
 	p.t.Helper()
-	if e := p.request(MethodPost, map[string]any{"id": id, "msg": msg}); e.Op != bridge.OpResponse {
+	p.mu.Lock()
+	session := p.sessions[id]
+	p.mu.Unlock()
+	if e := p.request(MethodPost, map[string]any{"id": id, "session": session, "msg": msg}); e.Op != bridge.OpResponse {
 		p.t.Fatalf("post %v failed: %+v", msg["t"], e.Error)
 	}
 }
@@ -193,7 +207,11 @@ func TestAttachAnswersProtocolAndMountRunsTheFactoryOnce(t *testing.T) {
 		return host.HandleFunc(func() {}), nil
 	})
 	env := p.attach("e1", "Sim", false)
-	if env.Op != bridge.OpResponse || string(env.Payload) != `{"v":1}` {
+	var answer struct {
+		V       int
+		Session string
+	}
+	if env.Op != bridge.OpResponse || json.Unmarshal(env.Payload, &answer) != nil || answer.V != Protocol || answer.Session == "" {
 		t.Fatalf("attach = %+v %s", env, env.Payload)
 	}
 	mountEngine(t, p, "e1")
@@ -499,4 +517,39 @@ func TestRegisterValidatesItsArguments(t *testing.T) {
 	if h.Register("Sim", nil) == nil {
 		t.Error("a nil factory was accepted")
 	}
+}
+
+func TestReplacementRejectsStaleSessionTraffic(t *testing.T) {
+	p := newFakePage(t)
+	h := newHost(t, p)
+	instances := make(chan *Instance, 2)
+	_ = h.Register("Sim", func(in *Instance) (host.Handle, error) { instances <- in; return host.HandleFunc(func() {}), nil })
+	p.attach("e1", "Sim", false)
+	mountEngine(t, p, "e1")
+	old := <-instances
+	oldToken := old.s.token
+	p.attach("e1", "Sim", false)
+	p.post("e1", map[string]any{"t": "mount"})
+	p.waitMsg("e1", "mounted", 2)
+	current := <-instances
+	if oldToken == "" || current.s.token == oldToken {
+		t.Fatal("attachments must have distinct session tokens")
+	}
+	for _, token := range []string{"", oldToken} {
+		e := p.request(MethodPost, map[string]any{"id": "e1", "session": token, "msg": map[string]any{"t": "dispose"}})
+		if e.Op != bridge.OpError || e.Error == nil || e.Error.Code != CodeStaleSession {
+			t.Fatalf("stale post accepted: %+v", e)
+		}
+	}
+	if err := old.CallTransport().Write("$late", 1); err == nil {
+		t.Fatal("replaced instance wrote into its replacement")
+	}
+	before := len(p.messages("e1"))
+	old.Fail(errors.New("late failure"))
+	old.Log("warn", "late log")
+	if len(p.messages("e1")) != before {
+		t.Fatal("replaced instance emitted into its replacement")
+	}
+	p.post("e1", map[string]any{"t": "visibility", "hidden": true})
+	waitFor(t, "replacement remains alive", func() bool { return current.ViewSink().Hidden() })
 }

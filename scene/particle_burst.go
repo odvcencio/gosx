@@ -32,7 +32,7 @@ type particleBurstJSON struct {
 // Duration bounds the delay, emission jitter, and longest randomized lifetime.
 // Browser playback removes the emitter at this deadline, releasing its work.
 func (b ParticleBurst) Duration() time.Duration {
-	return b.Delay + time.Duration(math.Ceil((math.Max(.08, b.Emitter.Lifetime*.12)+b.Emitter.Lifetime*1.56)*float64(time.Second)))
+	return b.Delay + time.Duration(math.Ceil(float64((math.Max(.08, float64(b.Emitter.Lifetime*.12))+float64(b.Emitter.Lifetime*1.56))*float64(time.Second))))
 }
 
 // Validate bounds event allocations and rejects unsupported or non-finite data.

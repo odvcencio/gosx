@@ -1,3 +1,5 @@
+//gosx:deterministic
+
 // Package sceneaffine owns the small, runtime-safe Scene3D parent-matrix
 // contract shared by the host scene package and the client VM.
 package sceneaffine
@@ -39,10 +41,10 @@ func InverseLinear(values []float64) ([9]float64, bool) {
 	a, b, c := values[0]/maximum, values[4]/maximum, values[8]/maximum
 	d, e, f := values[1]/maximum, values[5]/maximum, values[9]/maximum
 	g, h, i := values[2]/maximum, values[6]/maximum, values[10]/maximum
-	c00, c01, c02 := e*i-f*h, f*g-d*i, d*h-e*g
-	c10, c11, c12 := c*h-b*i, a*i-c*g, b*g-a*h
-	c20, c21, c22 := b*f-c*e, c*d-a*f, a*e-b*d
-	determinant := a*c00 + b*c01 + c*c02
+	c00, c01, c02 := float64(e*i)-float64(f*h), float64(f*g)-float64(d*i), float64(d*h)-float64(e*g)
+	c10, c11, c12 := float64(c*h)-float64(b*i), float64(a*i)-float64(c*g), float64(b*g)-float64(a*h)
+	c20, c21, c22 := float64(b*f)-float64(c*e), float64(c*d)-float64(a*f), float64(a*e)-float64(b*d)
+	determinant := float64(a*c00) + float64(b*c01) + float64(c*c02)
 	if math.Abs(determinant) <= determinantEpsilon || math.IsNaN(determinant) || math.IsInf(determinant, 0) {
 		return inverse, false
 	}
