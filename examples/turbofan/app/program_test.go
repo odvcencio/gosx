@@ -40,17 +40,18 @@ func TestTurbofanSceneContract(t *testing.T) {
 		if blades != 498 || rows != 18 {
 			t.Fatalf("unexpected blade budget: %d blades in %d rows", blades, rows)
 		}
-		// The far-half shell must actually omit the near side in its geometry.
+		// The near half is resident but hidden in cutaway mode, so switching
+		// presentation needs no geometry replacement or network request.
 		for _, object := range ir.Objects {
-			if object.ID != "nacelle" {
+			if object.ID != "nacelle-cover" {
 				continue
 			}
 			nearSide := false
 			for i := 2; i < len(object.Vertices.Positions); i += 3 {
 				nearSide = nearSide || object.Vertices.Positions[i] > .01
 			}
-			if nearSide != exterior {
-				t.Fatalf("exterior=%v: near-side shell geometry present=%v", exterior, nearSide)
+			if !nearSide || object.Visible == nil || *object.Visible != exterior {
+				t.Fatalf("exterior=%v: near-side shell residency/visibility incorrect", exterior)
 			}
 		}
 		encoded, err := json.Marshal(ir)
@@ -64,7 +65,7 @@ func TestTurbofanSceneContract(t *testing.T) {
 	}
 }
 
-func TestTurbofanPauseAndSharedPivot(t *testing.T) {
+func TestTurbofanSharedPivot(t *testing.T) {
 	ir := Turbofan(Options{}).SceneIR()
 	atStart, err := scene.GroupWorldMatrices(ir.Groups, 0)
 	if err != nil {
@@ -86,35 +87,35 @@ func TestTurbofanPauseAndSharedPivot(t *testing.T) {
 	if atTime["low-spool"] == atTime["high-spool"] {
 		t.Fatal("spools must turn independently")
 	}
-	paused := Turbofan(Options{Paused: true}).SceneIR()
-	if len(paused.Groups) != 0 || len(paused.SpinTracks) != 0 || len(paused.MotionProgram) != 0 {
-		t.Fatal("paused presentation still has an animation driver")
-	}
 }
 
-func TestPresentationLinksKeepOtherChoices(t *testing.T) {
-	data := pageData(url.Values{"view": {"side"}, "shell": {"full"}, "motion": {"paused"}, "backend": {"webgl"}, "unknown": {"discard"}})
-	for _, key := range []string{"cutawayURL", "exteriorURL", "motionURL", "perspectiveURL", "sideURL", "intakeURL"} {
-		u, err := url.Parse(data[key].(string))
-		if err != nil {
-			t.Fatal(err)
+func TestPresentationChangesOnlyVisibility(t *testing.T) {
+	props := Turbofan(Options{})
+	presentation := props.Presentation
+	if presentation.Endpoint != "" || len(presentation.Views) != 3 || len(presentation.Periods) != 2 {
+		t.Fatal("presentation must keep its data on the client")
+	}
+	for _, period := range presentation.Periods {
+		if len(period.Commands) != 22 {
+			t.Fatalf("%s: expected 10 covers and 12 section edges, got %d", period.ID, len(period.Commands))
 		}
-		q := u.Query()
-		if q.Get("unknown") != "" || q.Get("backend") != "webgl" {
-			t.Fatalf("unsafe or lost presentation state in %s", u)
-		}
-		if key != "motionURL" && q.Get("motion") != "paused" {
-			t.Fatalf("lost paused state in %s", u)
-		}
-		if (key == "cutawayURL" || key == "motionURL") && q.Get("view") != "side" {
-			t.Fatalf("lost side camera in %s", u)
+		for _, command := range period.Commands {
+			patch := command.Data.(map[string]any)
+			if command.Kind != scene.CommandSetTransform || len(patch) != 1 {
+				t.Fatalf("casing selection changed more than visibility: %+v", command)
+			}
+			cover := strings.HasSuffix(command.ObjectID, "-cover")
+			if patch["visible"] != ((period.ID == "exterior") == cover) {
+				t.Fatalf("%s has wrong visibility for %s", period.ID, command.ObjectID)
+			}
 		}
 	}
-	if data["motionLabel"] != "Resume rotation" || data["exteriorActive"] != true {
-		t.Fatalf("incorrect paused exterior controls: %v", data["motionLabel"])
+	data := pageData(url.Values{"view": {"side"}, "shell": {"full"}})
+	if data["view"] != "side" || data["period"] != "exterior" {
+		t.Fatal("legacy camera/casing links lost their initial selection")
 	}
-	invalid := pageData(url.Values{"view": {"bad"}, "shell": {"bad"}, "motion": {"bad"}})
-	if invalid["perspectiveActive"] != true || invalid["cutawayActive"] != true || invalid["motionLabel"] != "Pause rotation" {
+	invalid := pageData(url.Values{"view": {"bad"}, "period": {"bad"}})
+	if invalid["view"] != "perspective" || invalid["period"] != "cutaway" {
 		t.Fatal("invalid choices did not fall back to the default study")
 	}
 }

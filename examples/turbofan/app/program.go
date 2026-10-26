@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"m31labs.dev/gosx/scene"
 )
@@ -11,7 +12,6 @@ import (
 // is an illustrative two-spool engine; geometry and speeds are not engineering data.
 type Options struct {
 	Exterior bool
-	Paused   bool
 	View     string
 	Backend  string
 }
@@ -28,9 +28,6 @@ var (
 // Only the two complete rotor assemblies spin; no per-blade spin is copied.
 func Turbofan(options Options) scene.Props {
 	lowSpeed, highSpeed := .48, .82
-	if options.Paused {
-		lowSpeed, highSpeed = 0, 0
-	}
 	low := []scene.Node{
 		lathe("spinner", []scene.LathePoint{{Radius: .02, Y: -5.1}, {Radius: .22, Y: -4.95}, {Radius: .44, Y: -4.55}, {Radius: .56, Y: -4.12}, {Radius: .54, Y: -3.85}}, titanium, false),
 		shaft("low-shaft", -3.9, 4.15, .16, steel),
@@ -60,7 +57,7 @@ func Turbofan(options Options) scene.Props {
 		scene.Group{ID: "low-spool", Spin: scene.Rotate(lowSpeed, 0, 0), Children: low},
 		scene.Group{ID: "high-spool", Spin: scene.Rotate(highSpeed, 0, 0), Children: high},
 	}
-	cut := !options.Exterior
+	cut := true
 	// Closed profiles give the nacelle real wall thickness. In section mode the
 	// near half is omitted in the generated geometry, rather than made transparent.
 	nodes = append(nodes,
@@ -94,28 +91,85 @@ func Turbofan(options Options) scene.Props {
 		for i, edge := range []struct{ x, y, radius float64 }{{-4.4, -2.6, 2.35}, {-2.6, -.7, 2.13}, {-.7, 1.2, 1.88}, {-2.9, .4, 1.0}, {.4, 2.2, .98}, {2.2, 3.65, 1.1}} {
 			// Thin orange rails mark the two cut faces without obscuring the machinery.
 			for _, sign := range []float64{-1, 1} {
-				nodes = append(nodes, scene.Mesh{ID: fmt.Sprintf("section-edge-%d-%g", i, sign), Geometry: scene.BoxGeometry{Width: edge.y - edge.x, Height: .025, Depth: .025}, Material: copper, Position: scene.Vec3((edge.x+edge.y)/2, sign*edge.radius, 0)})
+				nodes = append(nodes, scene.Mesh{ID: fmt.Sprintf("section-edge-%d-%g", i, sign), Geometry: scene.BoxGeometry{Width: edge.y - edge.x, Height: .025, Depth: .025}, Material: copper, Position: scene.Vec3((edge.x+edge.y)/2, sign*edge.radius, 0), Visible: scene.Bool(!options.Exterior)})
 			}
 		}
 	}
-	camera := scene.Vec3(-5.9, 3.6, 11.3)
-	switch options.View {
-	case "side":
-		camera = scene.Vec3(-.1, 1.2, 13.5)
-	case "intake":
-		camera = scene.Vec3(-11.5, 1.1, 2.2)
+	// Both halves are resident. Casing controls only patch visibility, preserving
+	// geometry buffers, the orbit camera and the current rotor clock.
+	for _, node := range nodes {
+		mesh, ok := node.(scene.Mesh)
+		if !ok || !isCasing(mesh.ID) {
+			continue
+		}
+		geometry := mesh.Geometry.(scene.BufferGeometry)
+		cover := geometry
+		cover.Positions = append([]float64(nil), geometry.Positions...)
+		cover.Normals = append([]float64(nil), geometry.Normals...)
+		cover.Indices = append([]int(nil), geometry.Indices...)
+		for i := 2; i < len(cover.Positions); i += 3 {
+			cover.Positions[i] = -cover.Positions[i]
+			cover.Normals[i] = -cover.Normals[i]
+		}
+		for i := 0; i < len(cover.Indices); i += 3 {
+			cover.Indices[i+1], cover.Indices[i+2] = cover.Indices[i+2], cover.Indices[i+1]
+		}
+		mesh.ID += "-cover"
+		mesh.Geometry = cover
+		mesh.Visible = scene.Bool(options.Exterior)
+		nodes = append(nodes, mesh)
+	}
+	presentation := &scene.Presentation{InputSignal: "$turbofan.presentation", OutputSignal: "$turbofan.presentationState", InitialView: options.View, InitialPeriod: "cutaway", Query: true}
+	if presentation.InitialView == "" {
+		presentation.InitialView = "perspective"
+	}
+	if options.Exterior {
+		presentation.InitialPeriod = "exterior"
+	}
+	for _, view := range []string{"perspective", "side", "intake"} {
+		presentation.Views = append(presentation.Views, scene.PresentationView{ID: view, Camera: scene.CameraIR(viewCamera(view))})
+	}
+	for _, period := range []string{"cutaway", "exterior"} {
+		commands := []scene.Command{}
+		for _, node := range nodes {
+			mesh, ok := node.(scene.Mesh)
+			if !ok {
+				continue
+			}
+			if strings.HasSuffix(mesh.ID, "-cover") || strings.HasPrefix(mesh.ID, "section-edge-") {
+				visible := (period == "exterior") == strings.HasSuffix(mesh.ID, "-cover")
+				commands = append(commands, scene.Command{Kind: scene.CommandSetTransform, ObjectID: mesh.ID, Data: map[string]any{"visible": visible}})
+			}
+		}
+		presentation.Periods = append(presentation.Periods, scene.PresentationPeriod{ID: period, Commands: commands})
 	}
 	return scene.Props{
 		AriaLabel: "Procedural two-spool turbofan. Drag to orbit; scroll or pinch to zoom.",
 		Width:     1280, Height: 540, Responsive: scene.Bool(true), FillHeight: scene.Bool(true), Background: "#010203",
 		Controls: "orbit", ControlTarget: scene.Vec3(-.1, 0, 0), AutoRotate: scene.Bool(false), ControlZoom: scene.Bool(true), ControlMinDistance: 6, ControlMaxDistance: 25,
-		Camera:      scene.PerspectiveCamera{Position: camera, FOV: 32, PortraitFOV: 56, Near: .1, Far: 100},
-		Environment: scene.Environment{AmbientColor: "#dce8f2", AmbientIntensity: .25, ToneMapping: "aces", Exposure: .95},
-		MaxFPS:      30, MaxDevicePixelRatio: 1.5, MaxPixels: 1280 * 720,
+		Camera:       viewCamera(options.View),
+		Presentation: presentation,
+		Environment:  scene.Environment{AmbientColor: "#dce8f2", AmbientIntensity: .25, ToneMapping: "aces", Exposure: .95},
+		MaxFPS:       30, MaxDevicePixelRatio: 1.5, MaxPixels: 1280 * 720,
 		PreferWebGPU: scene.Bool(options.Backend == "webgpu"), ForceWebGL: scene.Bool(options.Backend == "webgl"),
 		UnsupportedMessage: "3D rendering is unavailable in this browser. The component descriptions below explain the engine cycle.",
 		Graph:              scene.NewGraph(nodes...),
 	}
+}
+
+func viewCamera(view string) scene.PerspectiveCamera {
+	position := scene.Vec3(-5.9, 3.6, 11.3)
+	switch view {
+	case "side":
+		position = scene.Vec3(-.1, 1.2, 13.5)
+	case "intake":
+		position = scene.Vec3(-11.5, 1.1, 2.2)
+	}
+	return scene.PerspectiveCamera{Position: position, FOV: 32, PortraitFOV: 56, Near: .1, Far: 100}
+}
+
+func isCasing(id string) bool {
+	return id == "nacelle" || id == "intake-lip" || id == "core-case" || id == "combustor-liner" || id == "exhaust-duct" || strings.HasPrefix(id, "nacelle-joint-")
 }
 
 func lathe(id string, profile []scene.LathePoint, material scene.Material, cut bool) scene.Mesh {

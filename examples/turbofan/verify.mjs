@@ -38,6 +38,7 @@ const page = await context.newPage();
 async function ready(target = page) {
   await target.waitForFunction(selector => document.querySelector(selector)?.getAttribute('data-gosx-scene3d-mounted') === 'true', mount);
   await target.evaluate(() => document.fonts.ready);
+  await target.waitForFunction(() => document.querySelector('.segmented button')?.disabled === false);
 }
 async function visit(query = '', target = page) {
   await target.goto(`${base}/${query}`, { waitUntil: 'networkidle' });
@@ -52,6 +53,8 @@ async function sceneSummary(target = page) {
       reducedMotion: element.getAttribute('data-gosx-scene3d-reduced-motion'),
       camera: element.__gosxScene3DHandle.getCamera(),
       objects: state.objects.size,
+      visibleObjects: [...state.objects.values()].filter(o => o.visible !== false).length,
+      animation: element.__gosxScene3DHandle.getAnimationClock(),
       groups: state.groups.map(g => ({ id: g.id, spinX: g.spinX })),
       fanVertices: state.objects.get('fan')?.vertices?.count,
       triangles: [...state.objects.values()].reduce((sum, o) => sum + (o.vertices?.indices?.length || o.vertices?.positions?.length / 3 || 0) / 3, 0),
@@ -71,14 +74,15 @@ async function fit(target, label) {
   report.checks.push({ name: `${label} fit`, observed: bounds });
 }
 async function click(name) {
-  await page.getByRole('link', { name, exact: true }).click();
+  await page.getByRole('button', { name, exact: true }).click();
   await ready();
 }
 try {
   await visit('?backend=webgl');
   const initial = await sceneSummary();
   assert.equal(initial.backend, 'webgl');
-  assert.equal(initial.objects, 78);
+  assert.equal(initial.objects, 88);
+  assert.equal(initial.visibleObjects, 78);
   assert(initial.fanVertices > 1000, 'custom fan vertices must reach the renderer');
   assert.equal(initial.groups.length, 2);
   await fit(page, 'desktop');
@@ -90,23 +94,33 @@ try {
   report.checks.push({ name: 'visible rotor animation', observed: initial });
   await page.screenshot({ path: path.join(root, 'preview.png'), fullPage: true });
 
+  const canvas = await page.locator('canvas').elementHandle();
+  const document = await page.evaluateHandle(() => window.document);
+  const requests = [];
+  const collect = r => { if (['document', 'fetch', 'xhr'].includes(r.resourceType())) requests.push(r.url()); };
+  page.on('request', collect);
   await click('Pause rotation');
-  assert.equal((await sceneSummary()).groups.length, 0);
+  const paused = await sceneSummary();
+  assert.equal(paused.animation.paused, true);
+  assert(paused.clock > 0, 'pause must keep the running pose, not reset to zero');
   const stopped1 = await page.locator('canvas').screenshot();
   await page.waitForTimeout(700);
   const stopped2 = await page.locator('canvas').screenshot();
   assert(stopped1.equals(stopped2), 'static study must keep identical pixels');
-  report.checks.push({ name: 'paused static study', observed: 'identical canvas pixels across 700 ms; no retained spinning groups' });
+  assert.equal((await sceneSummary()).clock, paused.clock);
+  report.checks.push({ name: 'pause at current pose', observed: { clock: paused.clock, pixelResult: 'identical canvas pixels across 700 ms' } });
   await click('Exterior');
-  assert.equal((await sceneSummary()).objects, 66);
-  assert.equal(new URL(page.url()).searchParams.get('motion'), 'paused');
+  assert.equal((await sceneSummary()).objects, 88);
+  assert.equal((await sceneSummary()).visibleObjects, 76);
+  assert.equal((await sceneSummary()).clock, paused.clock);
+  assert.deepEqual((await sceneSummary()).camera, paused.camera);
   await page.screenshot({ path: path.join(output, 'exterior.png'), fullPage: true });
   await click('Cutaway');
   await click('Side');
-  assert.equal((await sceneSummary()).camera.x, -.1);
+  assert(Math.abs((await sceneSummary()).camera.x + .1) < 1e-6);
   await page.screenshot({ path: path.join(output, 'side.png'), fullPage: true });
   await click('Intake');
-  assert.equal((await sceneSummary()).camera.x, -11.5);
+  assert(Math.abs((await sceneSummary()).camera.x + 11.5) < 1e-6);
   await page.screenshot({ path: path.join(output, 'intake.png'), fullPage: true });
   await click('Perspective');
   const cameraBefore = (await sceneSummary()).camera;
@@ -121,14 +135,24 @@ try {
   await page.mouse.wheel(0, -200);
   await page.waitForTimeout(300);
   assert.notEqual((await sceneSummary()).camera.z, cameraAfterOrbit.z, 'wheel must zoom camera');
-  report.checks.push({ name: 'casing, camera presets, orbit and zoom', observed: 'all links retain motion choice; real pointer drag and wheel change camera' });
+  await click('Exterior');
+  await click('Cutaway');
+  await page.goBack();
+  await page.waitForFunction(() => document.querySelector('.viewer').getAttribute('data-period') === 'exterior');
+  await page.goForward();
+  await page.waitForFunction(() => document.querySelector('.viewer').getAttribute('data-period') === 'cutaway');
+  assert.equal((await sceneSummary()).clock, paused.clock);
   await click('Resume rotation');
-  assert.equal((await sceneSummary()).groups.length, 2);
+  await page.waitForFunction(selector => document.querySelector(selector).__gosxScene3DHandle.getAnimationClock().paused === false, mount);
+  assert(await canvas.evaluate(element => element === document.querySelector('canvas')), 'controls must keep the same canvas');
+  assert(await document.evaluate(element => element === window.document), 'controls must keep the same document');
+  page.off('request', collect);
+  assert.deepEqual(requests, [], 'controls must not navigate or fetch application data');
+  report.checks.push({ name: 'immediate controls preserve scene', observed: 'same document and canvas; zero document/fetch/XHR requests; casing preserves camera and clock; camera presets, orbit, zoom, Back/Forward and resume pass' });
 
   await visit('?shell=bad&view=bad&motion=bad&unknown=discard');
-  assert.equal(await page.getByRole('link', { name: 'Cutaway', exact: true }).getAttribute('aria-current'), 'true');
-  assert(!(await page.getByRole('link', { name: 'Side', exact: true }).getAttribute('href')).includes('unknown'));
-  report.checks.push({ name: 'invalid query values', observed: 'default cutaway/perspective/animation restored and unknown parameters dropped' });
+  assert.equal(await page.getByRole('button', { name: 'Cutaway', exact: true }).getAttribute('aria-pressed'), 'true');
+  report.checks.push({ name: 'invalid query values', observed: 'default cutaway/perspective/animation restored' });
 
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, reducedMotion: 'reduce' });
   const phone = await mobile.newPage();

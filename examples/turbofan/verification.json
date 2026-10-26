@@ -3,10 +3,10 @@
   "environment": "Linux headless Chromium / software rendering",
   "sourceSHA256": {
     "main.go": "43fff7bb0af339fa7767af6340fedf12a4995924dec26a0fe131d7846d6096bd",
-    "app/program.go": "f6ab1cfdff6569cf9561a2c09715964822ac6252da6aabc5da93221c8ca4016a",
-    "app/page.server.go": "0d254eb0aff2d73393b5c3b9bffd695a5e621efc2bf0fd9aadf58f50737e5ff3",
-    "app/page.gsx": "c48578e7f40d39d2d70f03486e179b81ab3ee0d2a4622ed39db4a86490bf3b4f",
-    "public/turbofan.css": "ab0a5d6ec9a6e37e4390c014a66ca18cb499fedf648d39dd29c963e8d25e26d3",
+    "app/program.go": "d4c569edc410af2a6bd64cae370df49e43c3073da8dfcf26980271b2c57b65ed",
+    "app/page.server.go": "7a6e3696fc2775c5e231615575ec1a0619682da600e5c1fcf3364ecaec305a81",
+    "app/page.gsx": "da44e749983f3f7026cad2a8618ee740a8bd2cba7c6afed962e39f3f53cb0676",
+    "public/turbofan.css": "e9d68786aa807a63910ec807b0b15450dbf0401db76c4431c24e4deae6ad753f",
     "../../scene/geom/lathe.go": "1da64e8012ec06246a60f581a303eeb5c01ef95e64b31e9e7e315c973e276bd6"
   },
   "checks": [
@@ -47,7 +47,7 @@
       "name": "visible rotor animation",
       "observed": {
         "backend": "webgl",
-        "clock": 0.167,
+        "clock": 0.45,
         "reducedMotion": "false",
         "camera": {
           "kind": "perspective",
@@ -66,7 +66,13 @@
           "near": 0.1,
           "far": 100
         },
-        "objects": 78,
+        "objects": 88,
+        "visibleObjects": 78,
+        "animation": {
+          "timeSeconds": 0.4501,
+          "paused": false,
+          "pending": false
+        },
         "groups": [
           {
             "id": "low-spool",
@@ -78,7 +84,7 @@
           }
         ],
         "fanVertices": 1296,
-        "triangles": 47944,
+        "triangles": 52840,
         "renderTruth": {
           "backend": "webgl",
           "gpu": true,
@@ -102,7 +108,7 @@
           },
           "events": [
             {
-              "at": 655,
+              "at": 514,
               "kind": "backend",
               "detail": "webgl"
             }
@@ -111,16 +117,19 @@
       }
     },
     {
-      "name": "paused static study",
-      "observed": "identical canvas pixels across 700 ms; no retained spinning groups"
+      "name": "pause at current pose",
+      "observed": {
+        "clock": 3.3,
+        "pixelResult": "identical canvas pixels across 700 ms"
+      }
     },
     {
-      "name": "casing, camera presets, orbit and zoom",
-      "observed": "all links retain motion choice; real pointer drag and wheel change camera"
+      "name": "immediate controls preserve scene",
+      "observed": "same document and canvas; zero document/fetch/XHR requests; casing preserves camera and clock; camera presets, orbit, zoom, Back/Forward and resume pass"
     },
     {
       "name": "invalid query values",
-      "observed": "default cutaway/perspective/animation restored and unknown parameters dropped"
+      "observed": "default cutaway/perspective/animation restored"
     },
     {
       "name": "mobile fit",
@@ -144,7 +153,7 @@
             "name": "viewer-controls",
             "x": 18,
             "width": 354,
-            "height": 91
+            "height": 90
           },
           {
             "name": "viewer-footnote",
@@ -163,7 +172,7 @@
       "name": "WebGPU preference",
       "observed": {
         "backend": "webgl",
-        "clock": 4.016,
+        "clock": 4.133,
         "reducedMotion": "false",
         "camera": {
           "kind": "perspective",
@@ -182,7 +191,13 @@
           "near": 0.1,
           "far": 100
         },
-        "objects": 78,
+        "objects": 88,
+        "visibleObjects": 78,
+        "animation": {
+          "timeSeconds": 4.133199999999999,
+          "paused": false,
+          "pending": false
+        },
         "groups": [
           {
             "id": "low-spool",
@@ -194,7 +209,7 @@
           }
         ],
         "fanVertices": 1296,
-        "triangles": 47944,
+        "triangles": 52840,
         "renderTruth": {
           "backend": "webgl",
           "gpu": true,
@@ -218,22 +233,22 @@
           },
           "events": [
             {
-              "at": 675,
+              "at": 806,
               "kind": "webgpu-device-ready",
               "detail": "webkit-webgpu"
             },
             {
-              "at": 676,
+              "at": 808,
               "kind": "backend",
               "detail": "webgpu"
             },
             {
-              "at": 824,
+              "at": 962,
               "kind": "device-lost",
               "detail": "destroyed Device was destroyed."
             },
             {
-              "at": 2692,
+              "at": 2823,
               "kind": "backend",
               "detail": "webgl fallback=webgpu-device-lost"
             }
@@ -243,7 +258,7 @@
     }
   ],
   "errors": [],
-  "buildManifestSHA256": "2d4f681c94b2f8f8b6ddd2ea3be417217f390aec42ea59a3fde6b0e5991b374a",
+  "buildManifestSHA256": "7df1a319e64def1a208aff0972ba1685fdc87152a92f1e3e8504ed98d5e6d4b4",
   "result": "pass",
   "limits": [
     "WebGPU lost its software device on this host and recovered through WebGL2; native WebGPU visual parity and hardware GPU frame rates are unverified.",
@@ -253,13 +268,13 @@
     "profile": "docs-scene3d-ci",
     "budget": "perf/budgets/default.json",
     "result": "pass",
-    "browserCache": "cleared with Network.clearBrowserCache before profiling",
+    "browserCache": "fresh Chromium profile",
     "backend": "WebGL2 / ANGLE SwiftShader",
-    "javascriptKiB": 1257.72,
-    "networkKiB": 319.71,
-    "lcpMs": 284,
-    "totalBlockingTimeMs": 0,
+    "javascriptKiB": 1323.31,
+    "networkKiB": 558.17,
+    "lcpMs": 472,
+    "totalBlockingTimeMs": 32,
     "command": "CHROME_WS_URL=<software Chromium CDP endpoint> GOWORK=off go run ./cmd/gosx perf --json --coverage --frames 45 --budget perf/budgets/default.json --budget-profile docs-scene3d-ci http://127.0.0.1:8096/?backend=webgl",
-    "note": "networkKiB is the profiler resource-waterfall metric; it does not include the main HTML document. Hardware performance is not inferred from software rendering."
+    "note": "networkKiB is the profiler resource-waterfall metric; it excludes the main HTML document. Hardware performance is not inferred from software rendering."
   }
 }

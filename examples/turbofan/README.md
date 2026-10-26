@@ -17,9 +17,10 @@ Open <http://localhost:8080>. A development build also works; replace `--prod`
 with `--dev`. Building stages the framework runtime assets. After a build,
 `GOWORK=off go run ./examples/turbofan` runs the source application too.
 
-Drag to orbit and scroll or pinch to zoom. The casing and camera links preserve
-the other presentation choices. Pause switches to the authored static pose;
-resume starts the assembly again. These links make ordinary server requests.
+Drag to orbit and scroll or pinch to zoom. Camera and casing buttons update the existing scene locally, with no page
+navigation or application data requests. Casing changes preserve the camera and
+rotor clock. Pause freezes the current pose; resume continues from that pose.
+Browser Back/Forward restores camera and casing choices.
 The framework also honors the browser's reduced-motion preference.
 
 The model includes a partial nacelle and intake lip, a spinner and 24 fan
@@ -35,8 +36,9 @@ into one indexed `BufferGeometry` per blade row: 498 blades in 18 row meshes,
 about 48,000 triangles overall. This preserves custom airfoils without relying
 on the primitive-only `InstancedMesh` path. Stable IDs and retained `Group.Spin`
 boundaries keep the entire rotor assemblies on their shared shaft axis.
-The default cutaway contains 78 meshes; the exterior contains 66. SceneIR is
-about 2.6 MB before HTTP compression. The scene caps rendering at 30 FPS,
+Both casing halves stay resident in 88 meshes: the cutaway draws 78 and
+the exterior draws 76. Switching casing only changes visibility. SceneIR is
+about 3.0 MB before HTTP compression. The scene caps rendering at 30 FPS,
 1.5 DPR, and 921,600 backing pixels.
 
 This is an illustrative model, not a particular manufacturer's engine or a
@@ -60,8 +62,9 @@ SCENE3D_BROWSER=/path/to/chromium \
 node examples/turbofan/verify.mjs http://127.0.0.1:8080
 ```
 
-The harness checks visible motion, static pixels, casing and camera controls,
-pointer orbit, wheel zoom, query fallbacks, mobile fit, reduced motion, and
+The harness checks visible motion, pause/resume at the current pose, casing and
+camera controls without navigation or data fetches, document/canvas identity,
+Back/Forward, pointer orbit, wheel zoom, query fallbacks, mobile fit, reduced motion, and
 WebGPU selection or an explicit WebGL fallback. It writes the documentation
 preview and local `evidence/` captures with a source-hashed JSON receipt.
 It is test tooling and is never served as application code.

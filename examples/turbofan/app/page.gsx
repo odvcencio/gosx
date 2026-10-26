@@ -1,5 +1,10 @@
 package app
 
+import (
+	"m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/signal"
+)
+
 func Page() Node {
 	return <main>
 		<header class="masthead">
@@ -10,17 +15,17 @@ func Page() Node {
 			<div><p class="eyebrow"><span class="accent-dot"></span> THE PROPULSION SERIES</p><h1 id="title">Inside the turbofan<span>.</span></h1></div>
 			<p class="intro-copy">A machine that turns air into momentum.<br />Open the casing. Follow the flow.<br />See how every stage works together.</p>
 		</section>
-		<section class="viewer" aria-label="Interactive turbofan model" data-gosx-scene3d-status-scope>
-			<div class="viewer-heading"><div><span class="model-id">TF—01</span><span class="model-description">TWO-SPOOL / HIGH-BYPASS</span></div><span class="motion-state"><span class="status-dot"></span>{data.state}</span></div>
+		<section
+			class="viewer"
+			aria-label="Interactive turbofan model"
+			data-gosx-scene3d-status-scope
+			data-gosx-scene3d-control-scope
+		>
+			<div class="viewer-heading"><div><span class="model-id">TF—01</span><span class="model-description">TWO-SPOOL / HIGH-BYPASS</span></div><span class="motion-state"><span class="status-dot"></span><span class="playing-label">SLOW MOTION</span><span class="paused-label">ROTATION PAUSED</span><span class="reduced-label">REDUCED MOTION</span></span></div>
 			<div class="scene-area"><Scene3D {...data.scene} stats={false} /></div>
 			<div class="viewer-controls">
-				<nav class="segmented" aria-label="Casing view"><a href={data.cutawayURL} data-active={data.cutawayActive} aria-current={data.cutawayActive}>Cutaway</a><a href={data.exteriorURL} data-active={data.exteriorActive} aria-current={data.exteriorActive}>Exterior</a></nav>
-				<nav class="camera-controls" aria-label="Camera presets"><a
-						href={data.perspectiveURL}
-						data-active={data.perspectiveActive}
-						aria-current={data.perspectiveActive}
-					>Perspective</a><a href={data.sideURL} data-active={data.sideActive} aria-current={data.sideActive}>Side</a><a href={data.intakeURL} data-active={data.intakeActive} aria-current={data.intakeActive}>Intake</a></nav>
-				<a class="motion-control" href={data.motionURL}>{data.motionLabel}<span aria-hidden="true"> ↗</span></a>
+				<TurbofanControls View={data.view} Period={data.period} />
+				<button type="button" class="motion-control" data-gosx-scene3d-animation-toggle aria-pressed="false"><span class="playing-label">Pause rotation</span><span class="paused-label">Resume rotation</span><span class="reduced-label">Reduced motion</span><span aria-hidden="true"> ↗</span></button>
 			</div>
 			<div class="viewer-footnote"><span>DRAG TO ORBIT <span class="separator">/</span> SCROLL OR PINCH TO ZOOM</span><span class="renderer-label">RENDERER <output data-gosx-scene3d-status="renderer">starting…</output></span></div>
 			<p class="fallback" role="status" data-gosx-scene3d-status="fallback" hidden></p>
@@ -36,4 +41,53 @@ func Page() Node {
 		</section>
 		<footer class="colophon"><p>ANATOMY, IN MOTION.</p><p>Illustrative geometry · Rotation slowed for study · Not an engineering simulation</p><a href="https://github.com/odvcencio/gosx/tree/main/examples/turbofan">Built with GoSX <span aria-hidden="true">↗</span></a></footer>
 	</main>
+}
+
+//gosx:island
+func TurbofanControls(props struct{ View, Period string }) Node {
+	request := signal.NewShared("turbofan.presentation", scene.PresentationRequest{})
+	state := signal.NewShared("turbofan.presentationState", scene.PresentationState{View: props.View, Period: props.Period})
+	selectView := func() { request.Set(scene.PresentationRequest{View: eventData, Revision: request.Get().Revision + 1}) }
+	selectCasing := func() { request.Set(scene.PresentationRequest{Period: eventData, Revision: request.Get().Revision + 1}) }
+	return <div class="presentation-controls">
+		<nav class="segmented" aria-label="Casing view">
+			<button
+				type="button"
+				onClick={selectCasing}
+				data-gosx-event-value="cutaway"
+				disabled={!state.Get().Ready}
+				aria-pressed={state.Get().Period=="cutaway"}
+			>Cutaway</button>
+			<button
+				type="button"
+				onClick={selectCasing}
+				data-gosx-event-value="exterior"
+				disabled={!state.Get().Ready}
+				aria-pressed={state.Get().Period=="exterior"}
+			>Exterior</button>
+		</nav>
+		<nav class="camera-controls" aria-label="Camera presets">
+			<button
+				type="button"
+				onClick={selectView}
+				data-gosx-event-value="perspective"
+				disabled={!state.Get().Ready}
+				aria-pressed={state.Get().View=="perspective"}
+			>Perspective</button>
+			<button
+				type="button"
+				onClick={selectView}
+				data-gosx-event-value="side"
+				disabled={!state.Get().Ready}
+				aria-pressed={state.Get().View=="side"}
+			>Side</button>
+			<button
+				type="button"
+				onClick={selectView}
+				data-gosx-event-value="intake"
+				disabled={!state.Get().Ready}
+				aria-pressed={state.Get().View=="intake"}
+			>Intake</button>
+		</nav>
+	</div>
 }
