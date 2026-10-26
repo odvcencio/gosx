@@ -61,6 +61,19 @@ func main() {
 			},
 		},
 	}
+	for i, count := range []int{2, 1, 0, 3, 2} {
+		frame := scene.InstanceStreamFrame{BatchID: "tinted", Revision: uint64(i + 1)}
+		instances := make([]scene.InstanceTransformColor, count)
+		for n := range instances {
+			instances[n].Transform = [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, float32(n) * 2, float32(i), 0, 1}
+			instances[n].Color = [4]float32{float32(n) * .25, float32(i) * .2, .5, 1}
+		}
+		frame.SetTransformColors(instances)
+		frames = append(frames, struct {
+			name  string
+			frame scene.InstanceStreamFrame
+		}{fmt.Sprintf("tinted-%d", i+1), frame})
+	}
 
 	out := make([]fixture, 0, len(frames))
 	for _, f := range frames {

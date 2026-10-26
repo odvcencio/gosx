@@ -28,18 +28,16 @@
 //      ready handle, retrying until a timeout, then call
 //      handle.applyInstanceStream(bytes).
 //
-// Only scene.InstanceStreamTransform (a rigid InstancedMesh batch's flat
-// 4x4-per-instance array) has an apply target today. InstanceStreamFrame's
-// transform+color kind is reserved: applying it needs to cooperate with the
-// retained model-instance pose tracker's membership bookkeeping instead of
-// writing a flat array, so it ships separately. InstanceStreamSkinnedPose
+// Transform frames keep the mounted count. Transform+color frames replace
+// the active count, local matrices and linear RGBA together, retaining the
+// batch's geometry/material/parent. InstanceStreamSkinnedPose
 // stays reserved permanently, by design, not just for now: an
 // InstancedGLBMesh crowd's clip/time/loop state already has an owner, the
 // PoseFrame/GSP2 channel (scene/pose_frame.go, command-runtime.ts's
 // dispatchPoseFrame/applyMountedPoseFrame). Wiring a second apply target for
 // the same job here would give callers two incompatible ways to stream the
 // same skinned-pose data; use PoseFrame for that instead. A frame carrying
-// either reserved kind fails named (console.error plus a
+// the reserved kind fails named (console.error plus a
 // gosx:scene3d:instance-stream-error event) instead of being silently
 // dropped.
 (function() {
@@ -140,9 +138,9 @@
   }
 
   // targetCollection names which sceneState collection a wire Kind updates.
-  // See the file doc comment for why kinds 1 and 2 have no target yet.
+  // Skinned poses retain their single owner on the GSP2 channel.
   function targetCollection(sceneState, kind) {
-    return kind === 0 ? sceneState.instancedMeshes : null;
+    return kind === 0 || kind === 1 ? sceneState.instancedMeshes || [] : null;
   }
 
   // applyInstanceStreamFrame writes bytes into the mounted InstancedMesh
@@ -179,19 +177,54 @@
       if (collection[i] && collection[i].id === frame.batchId) { entry = collection[i]; break; }
     }
     if (!entry) return reportFailure(mount, "unknown instance-stream batch id", frame.batchId);
-    if (frame.count !== entry.count) {
+    if (frame.kind === 0 && frame.count !== entry.count) {
       return reportFailure(mount, "instance-stream count " + frame.count + " does not match mounted batch count " + entry.count, frame.batchId);
     }
+    if (frame.kind === 1) return applyTransformColors(entry, frame, revisions, scheduleRender, mount);
     var floatsNeeded = frame.count * 16;
     if (!(entry._instanceStreamBuffer instanceof Float32Array) || entry._instanceStreamBuffer.length !== floatsNeeded) {
       entry._instanceStreamBuffer = new Float32Array(floatsNeeded);
       entry.transforms = entry._instanceStreamBuffer;
     }
     entry._instanceStreamBuffer.set(frame.data.subarray(0, floatsNeeded));
+    entry._cachedTransforms = entry.transforms;
     revisions.set(frame.batchId, frame.revision);
     // The buffer above keeps its identity across frames, so stamp the entry:
     // indirect-instancing.ts re-uploads a batch's instance records when this changes.
     entry._instanceStreamRevision = frame.revision;
+    scheduleRender("instance-stream");
+    return { applied: true, revision: frame.revision };
+  }
+
+  function applyTransformColors(entry, frame, revisions, scheduleRender, mount) {
+    // Validate the complete payload before touching retained storage. The
+    // producer owns frame.data and may overwrite it as soon as apply returns.
+    for (var i = 0; i < frame.data.length; i++) {
+      if (!Number.isFinite(frame.data[i])) return reportFailure(mount, "non-finite instance transform or color", frame.batchId);
+    }
+    var storage = entry._instanceStreamColorStorage;
+    if (!storage || storage.capacity < frame.count) {
+      var capacity = Math.max(frame.count, storage ? storage.capacity * 2 : 0);
+      storage = { capacity: capacity, transforms: new Float32Array(capacity * 16), colors: new Float32Array(capacity * 4), count: -1 };
+    }
+    // Allocate both active views before publishing any part of this update.
+    if (storage.count !== frame.count) {
+      storage.transformView = storage.transforms.subarray(0, frame.count * 16);
+      storage.colorView = storage.colors.subarray(0, frame.count * 4);
+      storage.count = frame.count;
+    }
+    for (var n = 0; n < frame.count; n++) {
+      var source = n * 20, matrix = n * 16, color = n * 4;
+      for (var c = 0; c < 16; c++) storage.transforms[matrix + c] = frame.data[source + c];
+      for (var k = 0; k < 4; k++) storage.colors[color + k] = frame.data[source + 16 + k];
+    }
+    entry._instanceStreamColorStorage = storage;
+    entry.transforms = entry._cachedTransforms = storage.transformView;
+    entry.colors = entry._cachedInstanceColors = storage.colorView;
+    entry._instanceStreamBuffer = storage.transformView;
+    entry.count = frame.count;
+    entry._instanceStreamRevision = frame.revision;
+    revisions.set(frame.batchId, frame.revision);
     scheduleRender("instance-stream");
     return { applied: true, revision: frame.revision };
   }

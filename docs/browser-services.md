@@ -55,7 +55,7 @@ Telemetry opt-out drops queued events and prevents unload beacons.
 ## Retained instance streaming
 
 Mount geometry and materials with ordinary typed scene commands. A
-`scene.StreamWriter` updates transforms of an existing batch. Call `Prepare`
+`scene.StreamWriter` updates an existing primitive batch. Call `Prepare`
 before a group of writes; it finds the current renderer handle and loads the
 shared codec if needed. Until ready, keep the normal declaration fallback.
 
@@ -69,8 +69,32 @@ To pose a skinned model from your own simulation clock, see
 
 `InstanceStreamFrame.Encode()` returns an independently owned byte slice.
 `EncodeInto(dst)` may alias `dst`; its bytes are valid until that storage is
-reused. The binary format, revision checks and batch membership checks are
-unchanged. The shared codec can be preloaded without invisible warm-up actors.
+reused. The shared codec can be preloaded without invisible warm-up actors.
+
+Use `InstanceStreamTransform` for a fixed count of matrices. For changing
+counts and colors, pack an `InstanceStreamTransformColor` snapshot in Go:
+
+```go
+frame := scene.InstanceStreamFrame{BatchID: "sparks", Revision: nextRevision}
+frame.SetTransformColors([]scene.InstanceTransformColor{{
+    Transform: [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 3, 4, 1},
+    Color: [4]float32{1, .25, 0, 1}, // linear RGBA, multiplied by material
+}})
+applied, err := writer.Apply(frame)
+```
+
+Retain the frame to reuse its packing storage. Matrices are local to the
+declared parent; colors are finite linear RGBA floats, as on the numeric
+runtime color path. Convert CSS/sRGB colors before packing.
+The snapshot publishes count, transforms and colors together; source arrays
+may be reused when `Apply` returns. A zero count hides the instances while
+keeping the declaration available for re-growth. Indices remain positional.
+Geometry, materials, parent and custom attributes remain declared; changes
+to those fields, including attributes tied to new membership, require a
+normal declaration. A removed batch rejects streams. Re-declaring batches
+starts a new revision lifetime and drops frames queued during codec loading.
+Until `Prepare` succeeds or when `Apply` returns false, retain the normal
+declaration fallback. Skinned models continue to use `PoseFrame`.
 
 ## Build only the application module
 

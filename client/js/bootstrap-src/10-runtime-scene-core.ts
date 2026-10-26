@@ -4439,6 +4439,8 @@
 
   function applySceneInstancedMeshesCommand(state, data) {
     if (!state) return;
+    // A full declaration starts a new stream lifetime, including reused IDs.
+    state._instanceStreamRevisions = null;
     const payload = sceneIsPlainObject(data) ? data : {};
     const rawMeshes = Array.isArray(data)
       ? data
