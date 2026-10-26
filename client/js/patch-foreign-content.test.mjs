@@ -87,3 +87,26 @@ for (const [label, source] of [["authority", patchAuthoritySource], ["bundle", p
     assert.equal(use.getAttributeNamespace("xlink:href"), XLINK_NS);
   });
 }
+
+for (const [label, source] of [["authority", patchAuthoritySource], ["bundle", patchBundleSource]]) {
+  test(`foreign descendants keep the current namespace (${label})`, () => {
+    for (const [parentNS, childTag] of [[SVG_NS, 'math'], [MATHML_NS, 'svg']]) {
+      const scene = loadScene(source, (root, doc) => root.appendChild(el(doc, parentNS === SVG_NS ? 'g' : 'mrow', {ns:parentNS})));
+      scene.apply([{kind:PATCH_CREATE_ELEMENT,path:'0',tag:childTag,children:[0]}]);
+      assert.equal(scene.root.childNodes[0].childNodes[0].namespaceURI,parentNS);
+    }
+  });
+  test(`MathML text integration keeps mglyph and malignmark foreign (${label})`, () => {
+    const scene = loadScene(source, (root, doc) => root.appendChild(el(doc,'mtext',{ns:MATHML_NS})));
+    scene.apply(['mglyph','malignmark','span','svg','math'].map((tag,i)=>({kind:PATCH_CREATE_ELEMENT,path:'0',tag,children:[i]})));
+    assert.deepEqual(scene.root.childNodes[0].childNodes.map(n=>n.namespaceURI),[MATHML_NS,MATHML_NS,HTML_NS,SVG_NS,MATHML_NS]);
+  });
+  test(`MathML annotation encoding selects HTML integration (${label})`, () => {
+    for (const encoding of ['text/html','APPLICATION/XHTML+XML','application/mathml+xml',' text/html ']) {
+      const scene = loadScene(source, (root, doc) => root.appendChild(el(doc,'annotation-xml',{ns:MATHML_NS,attrs:{encoding}})));
+      scene.apply([{kind:PATCH_CREATE_ELEMENT,path:'0',tag:'section',children:[0]},{kind:PATCH_CREATE_ELEMENT,path:'0',tag:'svg',children:[1]}]);
+      assert.equal(scene.root.childNodes[0].childNodes[0].namespaceURI,/^(text\/html|application\/xhtml\+xml)$/i.test(encoding)?HTML_NS:MATHML_NS);
+      assert.equal(scene.root.childNodes[0].childNodes[1].namespaceURI,SVG_NS,'annotation-xml admits SVG regardless of encoding');
+    }
+  });
+}

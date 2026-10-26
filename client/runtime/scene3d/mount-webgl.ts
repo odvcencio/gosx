@@ -1071,9 +1071,8 @@
   }
 
   function sceneApplyModelRenderFlags(instanced, model) {
-    if (!instanced || !model) {
-      return;
-    }
+    if (!instanced || !model) return;
+    if (model.parentNode) instanced.parentNode = model.parentNode;
     if (typeof model.castShadow === "boolean") {
       instanced.castShadow = model.castShadow;
     }
@@ -3695,7 +3694,7 @@
           object.vertices = primitive.vertices;
           object._modelLocalVertices = primitive.vertices;
           object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
-          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows, batchID: sceneInstancedGLBBatchIDs.get(model) || "", parent: sceneInstancedGLBBatchParents.get(model) || "", rev: 0, group: null };
+          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows, batchID: sceneInstancedGLBBatchIDs.get(model) || "", parent: sceneInstancedGLBBatchParents.get(model) || "", tint: sceneInstancedGLBTints.get(model) || null, rev: 0, group: null };
           object.static = false;
           staged.objects.push(object);
         }
@@ -3878,12 +3877,13 @@
       matrix = sceneModelTransformMatrix(model);
     }
     let crowdRows = null;
+    const tint = sceneInstancedGLBTints.get(model) || null;
     for (const object of staged.objects) {
       if (!object._crowdSkin) continue;
       const rows = object._crowdSkin.poseRows(object._crowdSkin.atlas, model._crowdPose, new Float32Array(3));
       if (!rows || rows.length !== object._crowdSkin.rows.length) return null;
       if (!crowdRows) crowdRows = [];
-      crowdRows.push({ object, rows });
+      crowdRows.push({ object, rows, tint });
     }
     // InstancedGLB expansion creates an immutable command-owned model, so its
     // cached matrix is already a transaction snapshot. Ordinary Model entries
@@ -3893,19 +3893,8 @@
       crowdRows, poseRevision: staged._poseRevision || 0 };
   }
 
-  function sceneCommitRigidInstancePatch({ staged, model, matrix, crowdRows }) {
-    if (staged.modelSkins?.length) {
-      const record = staged.modelSkins[0];
-      record.model = model;
-      record.rootTransform = matrix;
-      sceneApplyModelSkinPose(record, 0, false);
-    } else {
-      for (const object of staged.objects) object.parentMatrix = matrix;
-    }
-    if (crowdRows) {
-      for (const update of crowdRows) { update.object._crowdSkin.rows.set(update.rows); update.object._crowdSkin.rev += 1; }
-    }
-    staged.rigidInstanceModel = staged.model = model;
+  function sceneCommitRigidInstancePatch(patch) {
+    sceneCommitImportedModelPose(patch, sceneApplyModelSkinPose);
   }
 
   function sceneUpdateRigidInstancePoses(state, hydrationModels) {
@@ -3917,6 +3906,10 @@
     const cache = records && records.rigidInstances;
     const pending = Boolean(state && (state._modelHydrationPromise || state._modelHydrationUncommitted));
     if (!cache || pending && (!binary || !poseBatches.length) || state._modelOwner && !state._modelOwner()) return false;
+    if (binary && !pending && !Array.isArray(hydrationModels)) {
+      const retained = window.__gosx_scene3d_command_bridge?.tryRetainedBinaryInstancePoses?.(state, poseBatches, records, sceneGetRetainedBinaryPoseBindings()) ?? null;
+      if (retained !== null) return retained;
+    }
     let models;
     if (binary && !Array.isArray(hydrationModels)) {
       // The bridge has applied these poses to their declared instances. Expand

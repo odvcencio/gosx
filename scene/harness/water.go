@@ -248,7 +248,7 @@ func compareWaterInt(e *WaterTelemetry, name string, want, got int) {
 }
 
 func normalizedWaterVector(x, y, z float64) WaterVector {
-	length := math.Sqrt(x*x + y*y + z*z)
+	length := math.Sqrt(float64(x*x) + float64(y*y) + float64(z*z))
 	if length == 0 {
 		return WaterVector{}
 	}
@@ -257,5 +257,5 @@ func normalizedWaterVector(x, y, z float64) WaterVector {
 
 func waterVectorDistance(a, b WaterVector) float64 {
 	dx, dy, dz := a.X-b.X, a.Y-b.Y, a.Z-b.Z
-	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+	return math.Sqrt(float64(dx*dx) + float64(dy*dy) + float64(dz*dz))
 }

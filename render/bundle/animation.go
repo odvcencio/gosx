@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/motion"
 )
@@ -267,7 +268,7 @@ func sampleNativeAnimationChannel(ch engine.RenderAnimationChannel, timeSeconds 
 	for i := 0; i < stride; i++ {
 		a := ch.Values[lo*stride+i]
 		b := ch.Values[hi*stride+i]
-		out[i] = float32(a + (b-a)*alpha)
+		out[i] = float32(a + float64((b-a)*alpha))
 	}
 	return out, true
 }
@@ -416,8 +417,8 @@ func nativeAnimationMatrix(state nativeAnimationState) mat4 {
 }
 
 func mat4RotateZ(a float32) mat4 {
-	c := float32(math.Cos(float64(a)))
-	s := float32(math.Sin(float64(a)))
+	c := float32(det.Cos(float64(a)))
+	s := float32(det.Sin(float64(a)))
 	m := mat4Identity()
 	m[0], m[1], m[4], m[5] = c, s, -s, c
 	return m

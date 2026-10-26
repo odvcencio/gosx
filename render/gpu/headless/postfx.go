@@ -83,9 +83,9 @@ func runPostPass(dst postTarget, shade postFragment) {
 	invW := 1 / float32(dst.w)
 	invH := 1 / float32(dst.h)
 	for y := 0; y < dst.h; y++ {
-		v := (float32(y) + 0.5) * invH
+		v := float32((float32(y) + 0.5) * invH)
 		for x := 0; x < dst.w; x++ {
-			rgb := shade([2]float32{(float32(x) + 0.5) * invW, v})
+			rgb := shade([2]float32{float32((float32(x) + 0.5) * invW), v})
 			out := color.RGBA{
 				R: clampByte(rgb[0]),
 				G: clampByte(rgb[1]),
@@ -219,8 +219,8 @@ func samplePostRGB(t *Texture, uv [2]float32) [3]float32 {
 	if t == nil || t.width <= 0 || t.height <= 0 {
 		return [3]float32{}
 	}
-	x := uv[0]*float32(t.width) - 0.5
-	y := uv[1]*float32(t.height) - 0.5
+	x := float32(uv[0]*float32(t.width)) - 0.5
+	y := float32(uv[1]*float32(t.height)) - 0.5
 	x0 := int(math.Floor(float64(x)))
 	y0 := int(math.Floor(float64(y)))
 	tx := x - float32(x0)
@@ -279,7 +279,7 @@ func acesFilmicToneMap(x [3]float32) [3]float32 {
 	)
 	var out [3]float32
 	for i, v := range x {
-		out[i] = clamp01f((v * (a*v + b)) / (v*(c*v+d) + e))
+		out[i] = clamp01f((v * (float32(a*v) + b)) / (float32(v*(float32(c*v)+d)) + e))
 	}
 	return out
 }
@@ -303,7 +303,7 @@ func filmicToneMap(x [3]float32) [3]float32 {
 		if c < 0 {
 			c = 0
 		}
-		out[i] = clamp01f((c * (6.2*c + 0.5)) / (c*(6.2*c+1.7) + 0.06))
+		out[i] = clamp01f((c * (float32(6.2*c) + 0.5)) / (float32(c*(float32(6.2*c)+1.7)) + 0.06))
 	}
 	return out
 }
@@ -318,9 +318,9 @@ func applyToneMap(x [3]float32, mode, exposure float32) [3]float32 {
 		exposure = 0
 	}
 	exposed := [3]float32{
-		maxF(x[0]*exposure, 0),
-		maxF(x[1]*exposure, 0),
-		maxF(x[2]*exposure, 0),
+		maxF(float32(x[0]*exposure), 0),
+		maxF(float32(x[1]*exposure), 0),
+		maxF(float32(x[2]*exposure), 0),
 	}
 	switch int(mode) {
 	case 0:
@@ -368,9 +368,9 @@ func newComposePresentFragment(bg *BindGroup, dst postTarget) postFragment {
 		hdr := src.at(uv)
 		if intensity != 0 && glowTex != nil {
 			g := glow.at(uv)
-			hdr[0] += g[0] * intensity
-			hdr[1] += g[1] * intensity
-			hdr[2] += g[2] * intensity
+			hdr[0] += float32(g[0] * intensity)
+			hdr[1] += float32(g[1] * intensity)
+			hdr[2] += float32(g[2] * intensity)
 		}
 		return applyToneMap(hdr, mode, exposure)
 	}
@@ -390,9 +390,9 @@ func newVignetteFragment(bg *BindGroup, dst postTarget) postFragment {
 		c := src.at(uv)
 		dx := uv[0] - 0.5
 		dy := uv[1] - 0.5
-		dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-		v := 1 - smoothstep(0.3, 0.7, dist*amount)
-		return [3]float32{c[0] * v, c[1] * v, c[2] * v}
+		dist := float32(math.Sqrt(float64(float32(dx*dx) + float32(dy*dy))))
+		v := 1 - smoothstep(0.3, 0.7, float32(dist*amount))
+		return [3]float32{float32(c[0] * v), float32(c[1] * v), float32(c[2] * v)}
 	}
 }
 
@@ -412,7 +412,7 @@ func newColorGradeFragment(bg *BindGroup, dst postTarget) postFragment {
 	return func(uv [2]float32) [3]float32 {
 		c := src.at(uv)
 		for i := range c {
-			c[i] = mix(0.5, c[i]*exposure, contrast)
+			c[i] = mix(0.5, float32(c[i]*exposure), contrast)
 		}
 		gray := rec709Luma(c)
 		for i := range c {
@@ -442,7 +442,7 @@ func newBrightPassFragment(bg *BindGroup, dst postTarget) postFragment {
 		c := src.at(uv)
 		lum := maxF(rec709Luma(c)-threshold, 0)
 		soft := lum / (lum + 1)
-		return [3]float32{c[0] * soft, c[1] * soft, c[2] * soft}
+		return [3]float32{float32(c[0] * soft), float32(c[1] * soft), float32(c[2] * soft)}
 	}
 }
 
@@ -466,15 +466,15 @@ func newBlurFragment(bg *BindGroup, dst postTarget) postFragment {
 		var sum [3]float32
 		centre := src.at(uv)
 		for i := range sum {
-			sum[i] = centre[i] * blurWeights[0]
+			sum[i] = float32(centre[i] * blurWeights[0])
 		}
 		for step := 1; step < 5; step++ {
 			w := blurWeights[step]
 			d := float32(step)
-			plus := src.at([2]float32{uv[0] + off[0]*d, uv[1] + off[1]*d})
-			minus := src.at([2]float32{uv[0] - off[0]*d, uv[1] - off[1]*d})
+			plus := src.at([2]float32{uv[0] + float32(off[0]*d), uv[1] + float32(off[1]*d)})
+			minus := src.at([2]float32{uv[0] - float32(off[0]*d), uv[1] - float32(off[1]*d)})
 			for i := range sum {
-				sum[i] += (plus[i] + minus[i]) * w
+				sum[i] += float32((plus[i] + minus[i]) * w)
 			}
 		}
 		return sum
@@ -484,5 +484,5 @@ func newBlurFragment(bg *BindGroup, dst postTarget) postFragment {
 // rec709Luma is the luminance weight vector both the bright pass and the colour
 // grade use.
 func rec709Luma(c [3]float32) float32 {
-	return 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2]
+	return float32(0.2126*c[0]) + float32(0.7152*c[1]) + float32(0.0722*c[2])
 }

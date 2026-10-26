@@ -17,11 +17,11 @@ func Roster() Node {
 		<button id="roster-reorder" onClick={reorder}>Reorder</button>
 		<table id="full">
 			<thead><tr><th>name</th></tr></thead>
-			<Each of={names.Get()} as="name" key={name}><tr class="row"><td>{name}</td></tr></Each>
+			<Each of={names.Get()} as="name"><tr class="row" key={name}><td>{name}</td></tr></Each>
 			<tfoot><tr><td>{len(names.Get())} names</td></tr></tfoot>
 		</table>
 		<table id="bare">
-			<Each of={names.Get()} as="name" key={name}><tr class="row"><td>{name}</td></tr></Each>
+			<Each of={names.Get()} as="name"><tr class="row" key={name}><td>{name}</td></tr></Each>
 		</table>
 	</section>
 }

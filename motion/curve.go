@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"m31labs.dev/gosx/det"
 )
 
 // railSamplesPerSegment is how many orientation samples CameraRail emits per
@@ -52,12 +54,12 @@ func CurveValue(stops []CurveStop, smooth bool, x float64) float64 {
 	h := b.At - a.At
 	t := (x - a.At) / h
 	if !smooth {
-		return a.Value + (b.Value-a.Value)*t
+		return a.Value + float64((b.Value-a.Value)*t)
 	}
 	ma := curveTangent(stops, i)
 	mb := curveTangent(stops, i+1)
-	t2, t3 := t*t, t*t*t
-	return (2*t3-3*t2+1)*a.Value + (t3-2*t2+t)*h*ma + (-2*t3+3*t2)*b.Value + (t3-t2)*h*mb
+	t2, t3 := float64(t*t), float64(t*t*t)
+	return float64((2*t3-float64(3*t2)+1)*a.Value) + float64((t3-2*t2+t)*h*ma) + float64((-2*t3+float64(3*t2))*b.Value) + float64((t3-t2)*h*mb)
 }
 
 // curveTangent returns the monotone-cubic (Fritsch-Carlson) tangent at stop k.
@@ -90,12 +92,12 @@ func curveTangent(stops []CurveStop, k int) float64 {
 		h0, h1 = stops[n-1].At-stops[n-2].At, stops[n-2].At-stops[n-3].At
 		d0, d1 = delta(n-2), delta(n-3)
 	}
-	m := ((2*h0+h1)*d0 - h0*d1) / (h0 + h1)
+	m := (float64((2*h0+h1)*d0) - float64(h0*d1)) / (h0 + h1)
 	if m*d0 <= 0 {
 		return 0
 	}
 	if d0*d1 <= 0 && math.Abs(m) > 3*math.Abs(d0) {
-		return 3 * d0
+		return float64(3 * d0)
 	}
 	return m
 }
@@ -192,12 +194,12 @@ func (p *Program) CameraRail(id string, progress SignalRef, sceneSelector string
 		for c := 0; c < 3; c++ {
 			d[c] = CurveValue(look[c], true, at) - CurveValue(pos[c], true, at)
 		}
-		length := math.Sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2])
+		length := math.Sqrt(float64(d[0]*d[0]) + float64(d[1]*d[1]) + float64(d[2]*d[2]))
 		if length <= 1e-9 {
 			return 0, 0, fmt.Errorf("motion: camera rail passes through its look-at point at progress %v; move a stop or the look-at point", at)
 		}
-		pitchRad = math.Asin(math.Max(-1, math.Min(1, d[1]/length)))
-		yawRad = math.Atan2(-d[0], -d[2])
+		pitchRad = det.Asin(math.Max(-1, math.Min(1, d[1]/length)))
+		yawRad = det.Atan2(-d[0], -d[2])
 		if haveRef {
 			for yawRad-refYaw > math.Pi {
 				yawRad -= 2 * math.Pi

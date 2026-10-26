@@ -8,6 +8,8 @@ func Page() Node {
 		<Counter />
 		<ui.Tally />
 		<Chart />
+		<ForeignContent />
 		<ui.Roster />
+		<ui.Sections />
 	</main>
 }

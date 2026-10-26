@@ -179,3 +179,53 @@ for (const [label, source] of [["authority", patchAuthoritySource], ["bundle", p
     assert.deepEqual(labels(scene), ["head", "a2", "n", "c", "d", "foot"].map((x) => x));
   });
 }
+
+for (const [label, source] of [["authority", patchAuthoritySource], ["bundle", patchBundleSource]]) {
+  test(`inserting an explicit section splits implicit rows without shifting paths (${label})`, () => {
+    const scene=loadScene(source,serverTable({head:false,foot:false,rows:['left','right']}));
+    const table=scene.root.childNodes[0],right=table.childNodes[0].childNodes[1];
+    scene.apply([
+      {kind:CREATE_ELEMENT,path:'0',tag:'tbody',children:[1]},
+      {kind:CREATE_ELEMENT,path:'0/1',tag:'tr',children:[0]},
+      {kind:CREATE_ELEMENT,path:'0/1/0',tag:'td',children:[0]},
+      {kind:CREATE_TEXT,path:'0/1/0/0',text:'middle',children:[0]},
+      {kind:SET_TEXT,path:'0/2/0/0',text:'RIGHT'},
+    ]);
+    assert.deepEqual(labels(scene),['left','middle','RIGHT']);
+    assert.deepEqual(physical(scene),['tbody','tbody','tbody']);
+    assert.equal(table.childNodes[2].childNodes[0],right,'existing row identity must survive grouping');
+    assert.equal(table.childNodes[1].hasAttribute('data-gosx-implicit'),false);
+    assert.deepEqual(scene.warnings,[]);
+  });
+  test(`reorder creates a new implicit group for each separated row run (${label})`, () => {
+    const scene=loadScene(source,serverTable({head:false,foot:true,rows:['a','b']}));
+    // Logical [a,b,tfoot] -> [a,tfoot,b]; two row runs need two wrappers.
+    scene.apply([{kind:REORDER,path:'0',children:[0,2,1]},{kind:SET_TEXT,path:'0/2/0/0',text:'B'}]);
+    assert.deepEqual(labels(scene),['a','foot','B']);
+    assert.deepEqual(physical(scene),['tbody','tfoot','tbody']);
+    assert.equal(scene.root.childNodes[0].childNodes[2].hasAttribute('data-gosx-implicit'),true);
+    assert.deepEqual(scene.warnings,[]);
+  });
+}
+
+for (const [label, source] of [["authority", patchAuthoritySource], ["bundle", patchBundleSource]]) {
+  test(`replacing an implicit row with a section keeps legal grouping and paths (${label})`, () => {
+    const scene=loadScene(source,serverTable({head:false,foot:false,rows:['left','old','right']}));
+    scene.apply([
+      {kind:6,path:'0/1',tag:'tbody'},
+      {kind:CREATE_ELEMENT,path:'0/1',tag:'tr',children:[0]},
+      {kind:CREATE_ELEMENT,path:'0/1/0',tag:'td',children:[0]},
+      {kind:CREATE_TEXT,path:'0/1/0/0',text:'new',children:[0]},
+      {kind:SET_TEXT,path:'0/2/0/0',text:'RIGHT'},
+    ]);
+    assert.deepEqual(labels(scene),['left','new','RIGHT']);
+    assert.deepEqual(physical(scene),['tbody','tbody','tbody']);
+    for(const group of scene.root.childNodes[0].childNodes) assert.ok(group.childNodes.every(n=>n.localName==='tr'));
+    assert.deepEqual(scene.warnings,[]);
+  });
+  test(`first dynamic rows get a marked implicit group (${label})`, () => {
+    const scene=loadScene(source,serverTable({rows:[]}));
+    scene.apply([{kind:CREATE_ELEMENT,path:'0',tag:'tr',children:[1]},{kind:CREATE_ELEMENT,path:'0/1',tag:'td',children:[0]},{kind:CREATE_TEXT,path:'0/1/0',text:'first',children:[0]}]);
+    assert.deepEqual(labels(scene),['head','first','foot']);assert.deepEqual(physical(scene),['thead','tbody','tfoot']);assert.equal(scene.root.childNodes[0].childNodes[1].hasAttribute('data-gosx-implicit'),true);
+  });
+}

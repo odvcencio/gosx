@@ -205,7 +205,7 @@ func boxCoord(center, extent, draw float64) float64 {
 // the platform sine replaced by canonicalSin so the result is reproducible
 // in any conforming environment.
 func pointsHash01(seed int) float64 {
-	x := float64(canonicalSin(float64(seed)*12.9898+78.233) * 43758.5453)
+	x := float64(canonicalSin(float64(float64(seed)*12.9898)+78.233) * 43758.5453)
 	return x - math.Floor(x)
 }
 
@@ -252,7 +252,7 @@ func canonicalSin(x float64) float64 {
 		sign = !sign
 		j -= 4
 	}
-	zz := z * z
+	zz := float64(z * z)
 	var r float64
 	if j == 1 || j == 2 {
 		const (
@@ -263,7 +263,7 @@ func canonicalSin(x float64) float64 {
 			c4 = -1.38888888888730564116e-3
 			c5 = 4.16666666666665929218e-2
 		)
-		p := float64(float64(float64(float64(float64(c0*zz)+c1)*zz+c2)*zz+c3)*zz + c4)
+		p := float64(float64(float64(float64(float64(float64(float64(float64(c0*zz)+c1)*zz)+c2)*zz)+c3)*zz) + c4)
 		p = float64(p*zz) + c5
 		r = 1.0 - float64(0.5*zz) + float64(float64(zz*zz)*p)
 	} else {
@@ -275,7 +275,7 @@ func canonicalSin(x float64) float64 {
 			s4 = 8.33333333332211858878e-3
 			s5 = -1.66666666666666307295e-1
 		)
-		p := float64(float64(float64(float64(float64(s0*zz)+s1)*zz+s2)*zz+s3)*zz + s4)
+		p := float64(float64(float64(float64(float64(float64(float64(float64(s0*zz)+s1)*zz)+s2)*zz)+s3)*zz) + s4)
 		p = float64(p*zz) + s5
 		r = z + float64(float64(z*zz)*p)
 	}
@@ -318,8 +318,8 @@ func canonicalLog(x float64) float64 {
 	f := f1 - 1
 	k := float64(ki)
 	s := f / (2 + f)
-	s2 := s * s
-	s4 := s2 * s2
+	s2 := float64(s * s)
+	s4 := float64(s2 * s2)
 	t1 := float64(s2 * (l1 + float64(s4*(l3+float64(s4*(l5+float64(s4*l7)))))))
 	t2 := float64(s4 * (l2 + float64(s4*(l4+float64(s4*l6)))))
 	r := t1 + t2
@@ -354,7 +354,7 @@ func canonicalExp(x float64) float64 {
 		k = int(float64(log2e*x) + 0.5)
 	}
 	hi := x - float64(float64(k)*ln2Hi)
-	lo := float64(k) * ln2Lo
+	lo := float64(float64(k) * ln2Lo)
 	return canonicalExpMulti(hi, lo, k)
 }
 
@@ -368,7 +368,7 @@ func canonicalExpMulti(hi, lo float64, k int) float64 {
 		p5 = 4.13813679705723846039e-08
 	)
 	r := hi - lo
-	t := r * r
+	t := float64(r * r)
 	c := r - float64(t*(p1+float64(t*(p2+float64(t*(p3+float64(t*(p4+float64(t*p5)))))))))
 	y := 1 - ((lo - float64(r*c)/(2-c)) - hi)
 	return math.Ldexp(y, k)

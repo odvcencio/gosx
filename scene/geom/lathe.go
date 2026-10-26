@@ -1,6 +1,10 @@
 package geom
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // Lathe revolves a flat radius/Y profile around the Y axis. The profile
 // alternates radius, Y and must contain at least two finite points with
@@ -50,7 +54,7 @@ func Lathe(profile []float64, segments int, phiStart, phiLength float64, want At
 				dy = profile[2*i+3] - profile[2*i-1]
 			}
 			n := vec3{X: dy, Y: -dr, Z: 0}
-			l := math.Hypot(n.X, n.Y)
+			l := det.Hypot(n.X, n.Y)
 			if l == 0 || math.IsNaN(l) || math.IsInf(l, 0) {
 				// Degenerate local tangent: fall back to a finite outward radial normal.
 				n = vec3{X: 1, Y: 0, Z: 0}
@@ -64,8 +68,8 @@ func Lathe(profile []float64, segments int, phiStart, phiLength float64, want At
 	last := points - 1
 	for j := 0; j <= segments; j++ {
 		t := float64(j) / float64(segments)
-		phi := phiStart + phiLength*t
-		cos, sin := math.Cos(phi), math.Sin(phi)
+		phi := phiStart + float64(phiLength*t)
+		cos, sin := det.Cos(phi), det.Sin(phi)
 		u := t
 		for i := 0; i < points; i++ {
 			radius, y := profile[2*i], profile[2*i+1]
@@ -76,10 +80,10 @@ func Lathe(profile []float64, segments int, phiStart, phiLength float64, want At
 			var normal vec3
 			if normals != nil {
 				pn := normals[i]
-				normal = vec3{X: pn.X * cos, Y: pn.Y, Z: pn.X * sin}
+				normal = vec3{X: float64(pn.X * cos), Y: pn.Y, Z: float64(pn.X * sin)}
 			}
 			b.emit(vertex{
-				position: vec3{X: radius * cos, Y: y, Z: radius * sin},
+				position: vec3{X: float64(radius * cos), Y: y, Z: float64(radius * sin)},
 				normal:   normal,
 				uv:       vec2{U: u, V: v},
 			})

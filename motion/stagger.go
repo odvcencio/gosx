@@ -1,6 +1,10 @@
 package motion
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // Origin selects the reference point for stagger distance calculation.
 type Origin uint8
@@ -53,7 +57,7 @@ func ExpandStagger(template Track, targetIDs []int, spec StaggerSpec) []Track {
 				orow = float64(spec.FromIdx / cols)
 			}
 
-			dist = math.Hypot(col-ocol, row-orow)
+			dist = det.Hypot(col-ocol, row-orow)
 		} else {
 			switch spec.From {
 			case FromFirst:
@@ -68,7 +72,7 @@ func ExpandStagger(template Track, targetIDs []int, spec StaggerSpec) []Track {
 			}
 		}
 
-		delay := spec.Delay * dist
+		delay := float64(spec.Delay * dist)
 
 		// deep-copy template
 		tr := template

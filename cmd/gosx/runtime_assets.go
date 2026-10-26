@@ -43,6 +43,7 @@ func runtimeJSAssetSpecs(gosxRoot string, assets *RuntimeAssets) []runtimeJSAsse
 		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &assets.BootstrapFeatureScene3DDecompress, "scene3d"},
 		{"bootstrap-feature-scene3d-walk", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-walk.js"), &assets.BootstrapFeatureScene3DWalk, "scene3d"},
 		{"bootstrap-feature-scene3d-model-preparation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-model-preparation.js"), &assets.BootstrapFeatureScene3DModelPreparation, "scene3d"},
+		{"bootstrap-feature-scene3d-hierarchy", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-hierarchy.js"), &assets.BootstrapFeatureScene3DHierarchy, "scene3d"},
 		{"bootstrap-feature-scene3d-particle-burst", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-particle-burst.js"), &assets.BootstrapFeatureScene3DParticleBurst, "scene3d"},
 		{"bootstrap-feature-scene3d-zoom", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-zoom.js"), &assets.BootstrapFeatureScene3DZoom, "scene3d"},
 		{"bootstrap-feature-scene3d-timeline", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-timeline.js"), &assets.BootstrapFeatureScene3DTimeline, "scene3d"},

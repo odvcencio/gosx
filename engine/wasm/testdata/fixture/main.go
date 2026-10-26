@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"syscall/js"
 
@@ -59,12 +60,40 @@ func mountFixture(ctx enginewasm.Context) (enginewasm.Handle, error) {
 	return &fixtureHandle{mount: mount}, nil
 }
 
+// The same Go loop runs on the page and in a framework-managed worker.
+func mountFrameFixture(ctx enginewasm.Context) (enginewasm.Handle, error) {
+	loop, stop := context.WithCancel(context.Background())
+	thread := "main"
+	if ctx.Thread() == engine.ThreadWorker {
+		thread = "worker"
+	}
+	go func() {
+		count := 0
+		_ = enginewasm.EachFrame(loop, func(frame enginewasm.Frame) error {
+			count++
+			return ctx.Emit("frame", struct {
+				EngineID    string  `json:"engineID"`
+				Thread      string  `json:"thread"`
+				HasDocument bool    `json:"hasDocument"`
+				Count       int     `json:"count"`
+				Delta       float64 `json:"delta"`
+			}{ctx.ID(), thread, js.Global().Get("document").Truthy(), count, frame.Delta})
+		})
+	}()
+	return enginewasm.HandleFunc(stop), nil
+}
+
 func main() {
 	if err := enginewasm.Register("GoWASMFixture", mountFixture); err != nil {
 		panic(err)
 	}
 	if err := enginewasm.Register("GoWASMFixtureAlias", mountFixture); err != nil {
 		panic(err)
+	}
+	for _, name := range []string{"GoWASMFrameFixture", "GoWASMFrameWorkerFixture"} {
+		if err := enginewasm.Register(name, mountFrameFixture); err != nil {
+			panic(err)
+		}
 	}
 	select {}
 }

@@ -12,7 +12,6 @@ import (
 // in a window that goroutine B opened.
 var (
 	trackerMu     sync.Mutex
-	trackerStacks map[uint64]*dependencyTracker
 	openTrackers  atomic.Int32
 	spareTrackers *dependencyTracker
 	spareCount    int
@@ -35,13 +34,17 @@ type dependency struct {
 // goroutine. It returns at once when no window is open anywhere, so an ordinary
 // Get pays one atomic load.
 func recordDependency(s Subscribable, revision uint64) {
-	if openTrackers.Load() == 0 {
+	count := openTrackers.Load()
+	if count == 0 {
+		return
+	}
+	if count == 1 && dependencyAlreadyRecorded(s) {
 		return
 	}
 	gid := goroutineID()
 
 	trackerMu.Lock()
-	t := trackerStacks[gid]
+	t := currentTracker(gid)
 	if t == nil {
 		trackerMu.Unlock()
 		return
@@ -77,7 +80,7 @@ func recordDependency(s Subscribable, revision uint64) {
 
 // trackDependencies runs fn and reports every signal that fn read on the
 // calling goroutine. Nested windows are supported. The returned dependencies
-// belong to the caller; only cleared tracking scratch is cached for reuse.
+// belong to the caller; recycle only retired lists with no remaining readers.
 func trackDependencies[T any](fn func() T) (value T, deps []dependency) {
 	t := pushTracker(goroutineID())
 	defer popTracker(t, &deps)
@@ -96,23 +99,21 @@ func pushTracker(gid uint64) *dependencyTracker {
 		spareTrackers = t.parent
 		spareCount--
 	}
-	if trackerStacks == nil {
-		trackerStacks = make(map[uint64]*dependencyTracker)
-	}
 	t.gid = gid
-	t.parent = trackerStacks[gid]
-	trackerStacks[gid] = t
+	t.parent = currentTracker(gid)
+	storeTracker(gid, t)
 	trackerMu.Unlock()
 	return t
 }
 
-// Pop and clear the window even when fn panics. Neither subsequent reads
-// nor cached scratch may retain a dependency of an abandoned computation.
+// Close the window even when fn panics. Transfer its dependency storage to
+// the caller; cached windows cannot retain or overwrite a returned list.
 func popTracker(t *dependencyTracker, deps *[]dependency) {
 	trackerMu.Lock()
-	*deps = append([]dependency(nil), t.deps...)
+	*deps = t.deps
+	t.deps = nil
 	gid := t.gid
-	head := trackerStacks[gid]
+	head := currentTracker(gid)
 	if head != t {
 		// Runtimes without goroutine IDs share one scope. If overlapping
 		// windows finish out of order, detach this window before caching it.
@@ -121,16 +122,12 @@ func popTracker(t *dependencyTracker, deps *[]dependency) {
 			head = head.parent
 		}
 		head.parent = t.parent
-	} else if t.parent == nil {
-		delete(trackerStacks, gid)
 	} else {
-		trackerStacks[gid] = t.parent
+		storeTracker(gid, t.parent)
 	}
 	// Cache only small, cleared windows. Oversized or excess windows can be
 	// collected instead of keeping their backing arrays or source graphs.
-	if cap(t.deps) <= 128 && spareCount < 8 {
-		clear(t.deps)
-		t.deps = t.deps[:0]
+	if cap(*deps) <= 128 && spareCount < 8 {
 		clear(t.seen)
 		t.parent = spareTrackers
 		spareTrackers = t
@@ -138,4 +135,29 @@ func popTracker(t *dependencyTracker, deps *[]dependency) {
 	}
 	trackerMu.Unlock()
 	openTrackers.Add(-1)
+}
+
+// Recycle only retired lists, after their subscriptions have been reconciled.
+// Cached lists are cleared and bounded by the existing tracking-window cache.
+func recycleDependencies(deps []dependency) {
+	if cap(deps) > 128 {
+		return
+	}
+	trackerMu.Lock()
+	if t := spareTrackers; t != nil && t.deps == nil {
+		clear(deps)
+		t.deps = deps[:0]
+	}
+	trackerMu.Unlock()
+}
+
+// A stopped computation may still be reading its dependency snapshot in a
+// refresh. Dispose its subscriptions, but only recycle storage with no reader.
+func retireDependencies(deps []dependency, recycle bool) {
+	for i := range deps {
+		deps[i].unsubscribe()
+	}
+	if recycle {
+		recycleDependencies(deps)
+	}
 }

@@ -40,6 +40,7 @@ func init() {
 				"webgpuSample":     docsapp.DocSample("engines/webgpuSample.go.sample"),
 				"wasmConfigSample": docsapp.DocSample("engines/wasmConfigSample.go.sample"),
 				"wasmModuleSample": docsapp.DocSample("engines/wasmModuleSample.go.sample"),
+				"frameLoopSample":  docsapp.DocSample("engines/frameLoopSample.go.sample"),
 				"liveWorkerStatus": "IndexWorker config passed engine.Config.Validate.",
 				"liveWorkerSample": docsapp.DocSample("engines/liveWorker.go.sample"),
 			}, nil

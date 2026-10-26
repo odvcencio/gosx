@@ -228,6 +228,17 @@
     });
   }
 
+  // setOrbit moves the orbit target and limits of a mounted scene without moving
+  // the camera. orbit is {target?, minDistance?, maxDistance?, pitchLimit?}.
+  function setOrbit(target: any, orbit: any, opts: any = {}) {
+    return waitForCommandMount(target, opts, "orbit", (rec, resolve, reject) => {
+      aborted(opts);
+      if (typeof rec.handle.setOrbit !== "function") return reject(new Error("Scene3D orbit is unavailable"));
+      rec.handle.setOrbit(orbit);
+      resolve(true);
+    });
+  }
+
   function setAnimationClock(target: any, clock: any, opts: any = {}) {
     return waitForCommandMount(target, opts, "animation clock", (rec, resolve, reject) => {
       aborted(opts);
@@ -427,6 +438,97 @@
       return Promise.resolve().then(function() { return rec.handle.applyPoseFrame(batches); }).then(resolve, reject);
     }).catch(fallback);
   }
+
+  // Binary frames only replace local pose fields. Keep two private wrapper
+  // slots per committed identity so validation never mutates the wrapper or
+  // matrix currently installed on any primitive. Shared declaration metadata
+  // is still normalized once per selected batch on every frame; authored
+  // material changes must retain their ordinary hydration rejection path.
+  function sceneTryRetainedBinaryInstancePoses(state: any, batches: any[], records: any, bindings: SceneRetainedPoseBindings): boolean | null {
+    const {scopeKey: sceneRigidMembershipScopeKey, templates: sceneInstancedGLBHydrationTemplates, expand: sceneInstancedGLBMeshToModels,
+      clone: sceneCloneHydrationModel, matrix: sceneModelTransformMatrix, eligible: sceneRigidInstanceHydrationEligible,
+      prepare: scenePrepareRigidInstancePatch, commit: sceneCommitRigidInstancePatch, number: sceneNumber, local: localPose} = bindings;
+    const mounted: any[] = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];
+    const memberships = records.rigidInstancesByID;
+    if (!(memberships instanceof Map)) return null;
+    const scope = sceneRigidMembershipScopeKey(state);
+    let held: any = state._retainedBinaryPoseCache;
+    if (!held || held.records !== records || held.mounted !== mounted || held.scope !== scope) {
+      held = { records, mounted, scope, batches: new WeakMap() };
+      state._retainedBinaryPoseCache = held;
+    }
+    const patches: { entry: any; patch: any }[] = [];
+    const keys = new Set<string>();
+    const seenBatches = new Set<string>();
+    for (const batch of batches) {
+      if (!batch || typeof batch.id !== "string" || seenBatches.has(batch.id) || !Array.isArray(batch.instances)) return false;
+      seenBatches.add(batch.id);
+      const batchIndex = mounted.findIndex(function(candidate: any) { return candidate.id === batch.id; });
+      const current = mounted[batchIndex];
+      if (!current || !Array.isArray(current.instances) || current.instances.length !== batch.instances.length) return false;
+      if (!current.instances.length) { held.batches.delete(current); return null; }
+      // Parented/paletted declarations keep the established path. In
+      // particular, a group/ParentNode's world affine matrix is never cached
+      // here; the existing per-frame hierarchy owns its live composition.
+      if (current.parentNode || current.palette && current.palette.length) { held.batches.delete(current); return null; }
+      for (let index = 0; index < current.instances.length; index++) {
+        if (!batch.instances[index] || current.instances[index].id !== batch.instances[index].id) return false;
+        if (current.instances[index].parentMatrix) { held.batches.delete(current); return null; }
+      }
+      const seedBatch = Object.assign({}, current, { instances: [current.instances[0]] });
+      const seed = sceneInstancedGLBMeshToModels(seedBatch, batchIndex)[0];
+      const template = seed && sceneInstancedGLBHydrationTemplates.get(seed);
+      if (!template || seed.fit) { held.batches.delete(current); return null; }
+      let entries: any[] = held.batches.get(current);
+      if (!entries) {
+        entries = [];
+        for (const instance of current.instances) {
+          const id = current.id + "/" + instance.id;
+          const membership = memberships.get(id);
+          if (!membership || membership.template !== template || membership.scope !== scope || membership.staged !== records.rigidInstances.get(membership.key)) return false;
+          const original = membership.staged.rigidInstanceModel;
+          if (!original || original.fit || sceneInstancedGLBHydrationTemplates.get(original) !== template) return false;
+          // Parent/tint metadata is outside the hydration key. Let ordinary
+          // staging clear a previous declaration before cloning local slots.
+          if (!localPose(original)) return null;
+          entries.push({ membership, staged: membership.staged, key: membership.key, template, next: 0, models: [sceneCloneHydrationModel(original), sceneCloneHydrationModel(original)] });
+        }
+        held.batches.set(current, entries);
+      }
+      if (entries.length !== current.instances.length) { held.batches.delete(current); return null; }
+      for (let index = 0; index < entries.length; index++) {
+        const entry = entries[index], membership = entry.membership, instance = current.instances[index];
+        if (memberships.get(current.id + "/" + instance.id) !== membership || membership.staged !== entry.staged || membership.key !== entry.key || template !== entry.template || membership.template !== template || membership.scope !== scope || membership.staged !== records.rigidInstances.get(membership.key)) {
+          // A valid rehydration may reuse its containers. Drop old wrappers and
+          // let ordinary atomic staging validate the new committed identities.
+          held.batches.delete(current);
+          return null;
+        }
+        if (keys.has(membership.key)) return false;
+        keys.add(membership.key);
+        const model = entry.models[entry.next];
+        model.x = sceneNumber(instance.x, 0); model.y = sceneNumber(instance.y, 0); model.z = sceneNumber(instance.z, 0);
+        model.rotationX = sceneNumber(instance.rotationX, 0); model.rotationY = sceneNumber(instance.rotationY, 0); model.rotationZ = sceneNumber(instance.rotationZ, 0);
+        model.scaleX = sceneNumber(instance.scaleX, 1); model.scaleY = sceneNumber(instance.scaleY, 1); model.scaleZ = sceneNumber(instance.scaleZ, 1);
+        const pose = model._crowdPose || (model._crowdPose = {});
+        pose.animation = instance.animation || ""; pose.animationTime = instance.animationTime || 0; pose.animationLoop = instance.animationLoop === true;
+        const matrix = sceneModelTransformMatrix(model);
+        if (!sceneRigidInstanceHydrationEligible(model, matrix)) return false;
+        const patch = scenePrepareRigidInstancePatch(state, membership.staged, model, matrix);
+        if (!patch) return false;
+        patches.push({ entry, patch });
+      }
+    }
+    // All ownership, pose rows, and affine eligibility checks finish first.
+    for (const { entry, patch } of patches) {
+      sceneCommitRigidInstancePatch(patch);
+      for (const object of patch.staged.objects) delete object._crowdMotion;
+      patch.staged._poseRevision = patch.poseRevision + 1;
+      entry.next = 1 - entry.next;
+    }
+    return true;
+  }
+
 
   function applyMountedPoseFrame(state, batches, updateRigidPoses, scheduleRender, handle) {
     var stats = handle.__gosxPoseFrameStats || (handle.__gosxPoseFrameStats = { accepted: 0, plannerCallsSkipped: 0, fallback: 0, superseded: 0, errors: 0, lastError: "", rejected: Object.create(null) });
@@ -882,12 +984,13 @@
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
     live: live,
-    getCamera, setCamera, whenReady, setAnimationClock,
+    getCamera, setCamera, setOrbit, whenReady, setAnimationClock,
     playTimeline: playTimeline,
     burstParticles: burstParticles,
     dispatchPoseFrame: dispatchPoseFrame,
     decodePoseFrame: decodePoseFrame,
     applyMountedPoseFrame: applyMountedPoseFrame,
+    tryRetainedBinaryInstancePoses: sceneTryRetainedBinaryInstancePoses,
     dispatchClipFrame: dispatchClipFrame,
     decodeClipFrame: decodeClipFrame,
     createClipDecoder: createClipDecoder,

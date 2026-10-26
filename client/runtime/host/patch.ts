@@ -729,10 +729,9 @@
   }
 
   /**
-   * Namespace for a new element named `tag` under `parent`. <svg> and <math>
-   * switch namespace wherever they appear; every other tag keeps its parent's
-   * namespace, except below an HTML integration point (foreignObject and the
-   * like), where content is HTML again. A missing parent means HTML.
+   * Match the HTML parser's foreign-content integration points. Foreign
+   * descendants inherit their namespace; only HTML content and integration
+   * points enter SVG/MathML based on the new tag. A missing parent means HTML.
    *
    * @param {Node|null} parent
    * @param {string} tag
@@ -740,17 +739,21 @@
    */
   function namespaceFor(parent, tag) {
     var lower = String(tag).toLowerCase();
-    if (lower === "svg") return SVG_NS;
-    if (lower === "math") return MATHML_NS;
     var ns = parent && parent.nodeType === Node.ELEMENT_NODE ? parent.namespaceURI : null;
     if (ns === SVG_NS) {
       var svgName = String(parent.localName || parent.tagName);
-      return SVG_HTML_INTEGRATION.has(svgName) ? HTML_NS : SVG_NS;
+      if (!SVG_HTML_INTEGRATION.has(svgName)) return SVG_NS;
     }
     if (ns === MATHML_NS) {
       var mathName = String(parent.localName || parent.tagName);
-      return MATHML_HTML_INTEGRATION.has(mathName) ? HTML_NS : MATHML_NS;
+      if (mathName === "annotation-xml") {
+        if (lower === "svg") return SVG_NS;
+        var encoding = String(parent.getAttribute("encoding") || "").toLowerCase();
+        if (encoding !== "text/html" && encoding !== "application/xhtml+xml") return MATHML_NS;
+      } else if (!MATHML_HTML_INTEGRATION.has(mathName) || lower === "mglyph" || lower === "malignmark") return MATHML_NS;
     }
+    if (lower === "svg") return SVG_NS;
+    if (lower === "math") return MATHML_NS;
     return HTML_NS;
   }
 
@@ -841,10 +844,27 @@
           gap.appendChild(node);
           return false;
         }
+        var rowGroup = implicitRowGroup();
+        table.insertBefore(rowGroup, ref);
+        rowGroup.appendChild(node);
+        return false;
       }
       if (ref.parentNode !== table && !row) {
-        // Only a row belongs in the row group: go before the group instead.
-        table.insertBefore(node, ref.parentNode);
+        // A new explicit section divides a run of implicit rows. Keep the
+        // prefix before the section and move the suffix into a new group;
+        // moving the section ahead of the whole run shifts later patch paths.
+        var group = ref.parentNode;
+        if (ref === group.firstChild) table.insertBefore(node, group);
+        else {
+          var suffix = implicitRowGroup();
+          table.insertBefore(node, group.nextSibling);
+          table.insertBefore(suffix, node.nextSibling);
+          while (ref) {
+            var next = ref.nextSibling;
+            suffix.appendChild(ref);
+            ref = next;
+          }
+        }
       } else {
         ref.parentNode.insertBefore(node, ref);
       }
@@ -853,9 +873,20 @@
 
     var last = table.lastChild;
     while (last && last.nodeType !== Node.ELEMENT_NODE) last = last.previousSibling;
-    if (row && last && isImplicitWrapper(last)) last.appendChild(node);
-    else table.appendChild(node);
+    if (row) {
+      if (!last || !isImplicitWrapper(last)) {
+        last = implicitRowGroup();
+        table.appendChild(last);
+      }
+      last.appendChild(node);
+    } else table.appendChild(node);
     return true;
+  }
+
+  function implicitRowGroup() {
+    var group = document.createElement("tbody");
+    group.setAttribute(IMPLICIT_ATTR, "");
+    return group;
   }
 
   /**
@@ -881,7 +912,13 @@
     }
 
     if (target.parentNode) {
-      target.parentNode.replaceChild(newEl, target);
+      var parent = target.parentNode;
+      var table = isTable(parent) ? parent : (isImplicitWrapper(parent) ? parent.parentNode : null);
+      if (table && isTable(table)) {
+        var index = getEffectiveChildren(table).indexOf(target);
+        insertIntoTable(table, newEl, { children: [index] });
+        target.parentNode.removeChild(target);
+      } else parent.replaceChild(newEl, target);
     }
   }
 
@@ -950,8 +987,8 @@
     var pos = 0;
     while (pos < ordered.length) {
       var node = ordered[pos];
-      if (isRowElement(node) && next < wrappers.length) {
-        var group = wrappers[next++];
+      if (isRowElement(node)) {
+        var group = next < wrappers.length ? wrappers[next++] : implicitRowGroup();
         table.appendChild(group);
         while (pos < ordered.length && isRowElement(ordered[pos])) group.appendChild(ordered[pos++]);
       } else {

@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/render/gpu"
 )
 
@@ -1014,19 +1015,19 @@ func cullInstanceVisible(record []byte, planes [cullPlaneCount][4]float32, baseR
 	for column := 0; column < 3; column++ {
 		for row := 0; row < 3; row++ {
 			value := readFloat32(record, column*16+row*4)
-			scaleSquared += value * value
+			scaleSquared += float32(value * value)
 		}
 	}
 	scale := float32(math.Sqrt(float64(scaleSquared)))
 	radius := baseRadius
 	if scale > 0 {
-		radius = baseRadius * scale
+		radius = float32(baseRadius * scale)
 	}
 	cx := readFloat32(record, 48)
 	cy := readFloat32(record, 52)
 	cz := readFloat32(record, 56)
 	for _, plane := range planes {
-		d := plane[0]*cx + plane[1]*cy + plane[2]*cz + plane[3]
+		d := float32(plane[0]*cx) + float32(plane[1]*cy) + float32(plane[2]*cz) + plane[3]
 		if d < -radius {
 			return false
 		}
@@ -1104,13 +1105,13 @@ func runParticleUpdate(bg *BindGroup, maxInvocations int) {
 				}
 				acceleration = addVec3(acceleration, headlessParticleForceAcceleration(kind, strength, frequency, vector, [3]float32{pos[0], pos[1], pos[2]}, tSeconds))
 			}
-			dragFactor := clamp01f(1 - drag*dt)
-			vel[0] = vel[0]*dragFactor + acceleration[0]*dt
-			vel[1] = vel[1]*dragFactor + acceleration[1]*dt
-			vel[2] = vel[2]*dragFactor + acceleration[2]*dt
-			pos[0] += vel[0] * dt
-			pos[1] += vel[1] * dt
-			pos[2] += vel[2] * dt
+			dragFactor := clamp01f(1 - float32(drag*dt))
+			vel[0] = float32(vel[0]*dragFactor) + float32(acceleration[0]*dt)
+			vel[1] = float32(vel[1]*dragFactor) + float32(acceleration[1]*dt)
+			vel[2] = float32(vel[2]*dragFactor) + float32(acceleration[2]*dt)
+			pos[0] += float32(vel[0] * dt)
+			pos[1] += float32(vel[1] * dt)
+			pos[2] += float32(vel[2] * dt)
 			pos[3] = newAge
 		}
 		writeFloat32(particles.data, off+0, pos[0])
@@ -1163,9 +1164,9 @@ func headlessParticleForceAcceleration(kind int, strength, frequency float32, ve
 		if frequency == 0 {
 			frequency = 1
 		}
-		nx := float32(math.Sin(float64(pos[0]*frequency+tSeconds*1.3)) * math.Cos(float64(pos[2]*frequency+tSeconds*0.7)))
-		ny := float32(math.Sin(float64(pos[1]*frequency+tSeconds*0.9)) * math.Cos(float64(pos[0]*frequency+tSeconds*1.1)))
-		nz := float32(math.Sin(float64(pos[2]*frequency+tSeconds*1.7)) * math.Cos(float64(pos[1]*frequency+tSeconds*0.5)))
+		nx := float32(det.Sin(float64(float32(pos[0]*frequency)+float32(tSeconds*1.3))) * det.Cos(float64(float32(pos[2]*frequency)+float32(tSeconds*0.7))))
+		ny := float32(det.Sin(float64(float32(pos[1]*frequency)+float32(tSeconds*0.9))) * det.Cos(float64(float32(pos[0]*frequency)+float32(tSeconds*1.1))))
+		nz := float32(det.Sin(float64(float32(pos[2]*frequency)+float32(tSeconds*1.7))) * det.Cos(float64(float32(pos[1]*frequency)+tSeconds*0.5)))
 		return scaleVec3([3]float32{nx, ny, nz}, strength)
 	}
 	return [3]float32{}
@@ -1187,18 +1188,18 @@ func subVec3(a, b [3]float32) [3]float32 {
 }
 
 func scaleVec3(v [3]float32, s float32) [3]float32 {
-	return [3]float32{v[0] * s, v[1] * s, v[2] * s}
+	return [3]float32{float32(v[0] * s), float32(v[1] * s), float32(v[2] * s)}
 }
 
 func dotVec3(a, b [3]float32) float32 {
-	return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+	return float32(a[0]*b[0]) + float32(a[1]*b[1]) + float32(a[2]*b[2])
 }
 
 func crossVec3(a, b [3]float32) [3]float32 {
 	return [3]float32{
-		a[1]*b[2] - a[2]*b[1],
-		a[2]*b[0] - a[0]*b[2],
-		a[0]*b[1] - a[1]*b[0],
+		float32(a[1]*b[2]) - float32(a[2]*b[1]),
+		float32(a[2]*b[0]) - float32(a[0]*b[2]),
+		float32(a[0]*b[1]) - float32(a[1]*b[0]),
 	}
 }
 
@@ -1215,23 +1216,23 @@ func normalizeVec3(v [3]float32) [3]float32 {
 }
 
 func respawnParticle(i int, tSeconds float32, emitter [4]float32, lifetime, initialSpeed float32) ([4]float32, [4]float32) {
-	seed := [3]float32{float32(i), tSeconds, tSeconds * 1.37}
+	seed := [3]float32{float32(i), tSeconds, float32(tSeconds * 1.37)}
 	rx := hash13(seed)*2.0 - 1.0
 	ry := hash13(add3(seed, [3]float32{1.7, 2.3, 3.1}))
 	rz := hash13(add3(seed, [3]float32{4.1, 5.3, 6.7}))*2.0 - 1.0
-	dir := normalize3([3]float32{rx, ry*0.4 + 0.3, rz})
+	dir := normalize3([3]float32{rx, float32(ry*0.4) + 0.3, rz})
 	offsetY := hash13(add3(seed, [3]float32{9.1, 3.3, 7.7}))*2.0 - 1.0
 	radius := emitter[3]
 	pos := [4]float32{
-		emitter[0] + rx*radius,
-		emitter[1] + offsetY*radius,
-		emitter[2] + rz*radius,
+		emitter[0] + float32(rx*radius),
+		emitter[1] + float32(offsetY*radius),
+		emitter[2] + float32(rz*radius),
 		0,
 	}
 	vel := [4]float32{
-		dir[0] * initialSpeed,
-		dir[1] * initialSpeed,
-		dir[2] * initialSpeed,
+		float32(dir[0] * initialSpeed),
+		float32(dir[1] * initialSpeed),
+		float32(dir[2] * initialSpeed),
 		lifetime,
 	}
 	return pos, vel
@@ -1444,15 +1445,15 @@ func clipTriangleNearPlane(tri [3]clipVertex, out []clipVertex) []clipVertex {
 func lerpClipVertex(a, b clipVertex, t float32) clipVertex {
 	var out clipVertex
 	for i := 0; i < 4; i++ {
-		out.clip[i] = a.clip[i] + (b.clip[i]-a.clip[i])*t
-		out.color[i] = a.color[i] + (b.color[i]-a.color[i])*t
+		out.clip[i] = a.clip[i] + float32((b.clip[i]-a.clip[i])*t)
+		out.color[i] = a.color[i] + float32((b.color[i]-a.color[i])*t)
 	}
 	for i := 0; i < 3; i++ {
-		out.world[i] = a.world[i] + (b.world[i]-a.world[i])*t
-		out.normal[i] = a.normal[i] + (b.normal[i]-a.normal[i])*t
+		out.world[i] = a.world[i] + float32((b.world[i]-a.world[i])*t)
+		out.normal[i] = a.normal[i] + float32((b.normal[i]-a.normal[i])*t)
 	}
 	for i := 0; i < 2; i++ {
-		out.uv[i] = a.uv[i] + (b.uv[i]-a.uv[i])*t
+		out.uv[i] = a.uv[i] + float32((b.uv[i]-a.uv[i])*t)
 	}
 	return out
 }
@@ -1462,10 +1463,10 @@ func lerpClipVertex(a, b clipVertex, t float32) clipVertex {
 func transformToClip(m [16]float32, p [3]float32) [4]float32 {
 	x, y, z := p[0], p[1], p[2]
 	return [4]float32{
-		m[0]*x + m[4]*y + m[8]*z + m[12],
-		m[1]*x + m[5]*y + m[9]*z + m[13],
-		m[2]*x + m[6]*y + m[10]*z + m[14],
-		m[3]*x + m[7]*y + m[11]*z + m[15],
+		float32(m[0]*x) + float32(m[4]*y) + float32(m[8]*z) + m[12],
+		float32(m[1]*x) + float32(m[5]*y) + float32(m[9]*z) + m[13],
+		float32(m[2]*x) + float32(m[6]*y) + float32(m[10]*z) + m[14],
+		float32(m[3]*x) + float32(m[7]*y) + float32(m[11]*z) + m[15],
 	}
 }
 
@@ -1487,8 +1488,8 @@ func projectClip(clip [4]float32, width, height int) (float32, float32, float32,
 		math.IsInf(float64(ndcY), 0) || math.IsInf(float64(ndcZ), 0) {
 		return 0, 0, 0, false
 	}
-	sx := (ndcX*0.5 + 0.5) * float32(width-1)
-	sy := (1 - (ndcY*0.5 + 0.5)) * float32(height-1)
+	sx := float32((ndcX*0.5 + 0.5) * float32(width-1))
+	sy := float32((1 - (ndcY*0.5 + 0.5)) * float32(height-1))
 	return sx, sy, ndcZ, true
 }
 
@@ -1546,9 +1547,9 @@ func (r *RenderPassEncoder) rasterizeParticles(instanceCount, firstInstance int)
 			continue
 		}
 		t := clamp01f(age / lifetime)
-		alpha := mix(colorStart[3], colorEnd[3], t) *
+		alpha := float32(mix(colorStart[3], colorEnd[3], t) *
 			smoothstep(0, 0.15, t) *
-			(1 - smoothstep(0.85, 1, t))
+			(1 - smoothstep(0.85, 1, t)))
 		if alpha <= 0 {
 			continue
 		}
@@ -1557,11 +1558,11 @@ func (r *RenderPassEncoder) rasterizeParticles(instanceCount, firstInstance int)
 			continue
 		}
 		size := mix(sizeStart, sizeEnd, t)
-		radius := max(1, int(math.Ceil(float64(size)*float64(min(target.width, target.height))*0.06)))
+		radius := max(1, int(math.Ceil(float64(float64(size)*float64(min(target.width, target.height))*0.06))))
 		col := color.RGBA{
-			R: clampByte(mix(colorStart[0], colorEnd[0], t) * alpha),
-			G: clampByte(mix(colorStart[1], colorEnd[1], t) * alpha),
-			B: clampByte(mix(colorStart[2], colorEnd[2], t) * alpha),
+			R: clampByte(float32(mix(colorStart[0], colorEnd[0], t) * alpha)),
+			G: clampByte(float32(mix(colorStart[1], colorEnd[1], t) * alpha)),
+			B: clampByte(float32(mix(colorStart[2], colorEnd[2], t) * alpha)),
 			A: clampByte(alpha),
 		}
 		cx := int(math.Round(float64(x)))
@@ -1573,7 +1574,7 @@ func (r *RenderPassEncoder) rasterizeParticles(instanceCount, firstInstance int)
 				}
 				dx := float64(px - cx)
 				dy := float64(py - cy)
-				if dx*dx+dy*dy > float64(radius*radius) {
+				if float64(dx*dx)+float64(dy*dy) > float64(radius*radius) {
 					continue
 				}
 				if depthPasses(target, px, py, depth) {
@@ -1748,32 +1749,32 @@ func identityMat4() [16]float32 {
 
 func transformPoint(m [16]float32, p [3]float32) [3]float32 {
 	x, y, z := p[0], p[1], p[2]
-	w := m[3]*x + m[7]*y + m[11]*z + m[15]
+	w := float32(m[3]*x) + float32(m[7]*y) + float32(m[11]*z) + m[15]
 	if w == 0 {
 		w = 1
 	}
 	return [3]float32{
-		(m[0]*x + m[4]*y + m[8]*z + m[12]) / w,
-		(m[1]*x + m[5]*y + m[9]*z + m[13]) / w,
-		(m[2]*x + m[6]*y + m[10]*z + m[14]) / w,
+		(float32(m[0]*x) + float32(m[4]*y) + float32(m[8]*z) + m[12]) / w,
+		(float32(m[1]*x) + float32(m[5]*y) + float32(m[9]*z) + m[13]) / w,
+		(float32(m[2]*x) + float32(m[6]*y) + float32(m[10]*z) + m[14]) / w,
 	}
 }
 
 func transformDirection(m [16]float32, p [3]float32) [3]float32 {
 	x, y, z := p[0], p[1], p[2]
 	return normalize3([3]float32{
-		m[0]*x + m[4]*y + m[8]*z,
-		m[1]*x + m[5]*y + m[9]*z,
-		m[2]*x + m[6]*y + m[10]*z,
+		float32(m[0]*x) + float32(m[4]*y) + float32(m[8]*z),
+		float32(m[1]*x) + float32(m[5]*y) + float32(m[9]*z),
+		float32(m[2]*x) + float32(m[6]*y) + float32(m[10]*z),
 	})
 }
 
 func transformToNDC(m [16]float32, p [3]float32) ([3]float32, bool) {
 	x, y, z := p[0], p[1], p[2]
-	clipX := m[0]*x + m[4]*y + m[8]*z + m[12]
-	clipY := m[1]*x + m[5]*y + m[9]*z + m[13]
-	clipZ := m[2]*x + m[6]*y + m[10]*z + m[14]
-	clipW := m[3]*x + m[7]*y + m[11]*z + m[15]
+	clipX := float32(m[0]*x) + float32(m[4]*y) + float32(m[8]*z) + m[12]
+	clipY := float32(m[1]*x) + float32(m[5]*y) + float32(m[9]*z) + m[13]
+	clipZ := float32(m[2]*x) + float32(m[6]*y) + float32(m[10]*z) + m[14]
+	clipW := float32(m[3]*x) + float32(m[7]*y) + float32(m[11]*z) + m[15]
 	if clipW == 0 || math.IsNaN(float64(clipW)) || math.IsInf(float64(clipW), 0) {
 		return [3]float32{}, false
 	}
@@ -1791,10 +1792,10 @@ func transformToScreen(m [16]float32, p [3]float32, width, height int) (float32,
 		return 0, 0, 0, false
 	}
 	x, y, z := p[0], p[1], p[2]
-	clipX := m[0]*x + m[4]*y + m[8]*z + m[12]
-	clipY := m[1]*x + m[5]*y + m[9]*z + m[13]
-	clipZ := m[2]*x + m[6]*y + m[10]*z + m[14]
-	clipW := m[3]*x + m[7]*y + m[11]*z + m[15]
+	clipX := float32(m[0]*x) + float32(m[4]*y) + float32(m[8]*z) + m[12]
+	clipY := float32(m[1]*x) + float32(m[5]*y) + float32(m[9]*z) + m[13]
+	clipZ := float32(m[2]*x) + float32(m[6]*y) + float32(m[10]*z) + m[14]
+	clipW := float32(m[3]*x) + float32(m[7]*y) + float32(m[11]*z) + m[15]
 	if clipW <= 0 || math.IsNaN(float64(clipW)) || math.IsInf(float64(clipW), 0) {
 		return 0, 0, 0, false
 	}
@@ -1806,8 +1807,8 @@ func transformToScreen(m [16]float32, p [3]float32, width, height int) (float32,
 		math.IsInf(float64(ndcY), 0) || math.IsInf(float64(ndcZ), 0) {
 		return 0, 0, 0, false
 	}
-	sx := (ndcX*0.5 + 0.5) * float32(width-1)
-	sy := (1 - (ndcY*0.5 + 0.5)) * float32(height-1)
+	sx := float32((ndcX*0.5 + 0.5) * float32(width-1))
+	sy := float32((1 - (ndcY*0.5 + 0.5)) * float32(height-1))
 	return sx, sy, ndcZ, true
 }
 
@@ -2140,9 +2141,9 @@ func (m materialState) resolve(vertex [3]float32, uv [2]float32) [4]float32 {
 	solid := m.solidColor(vertex)
 	sample := m.baseColorMap.sampleRGB(uv)
 	return [4]float32{
-		solid[0] * sample[0],
-		solid[1] * sample[1],
-		solid[2] * sample[2],
+		float32(solid[0] * sample[0]),
+		float32(solid[1] * sample[1]),
+		float32(solid[2] * sample[2]),
 		solid[3],
 	}
 }
@@ -2439,10 +2440,10 @@ func newLitProgram(lighting sceneLighting, material materialState) litProgram {
 // renderers and litWGSL carry the same two expressions.
 func pointLightAttenuation(dist, rangeLimit, decay float32) float32 {
 	if rangeLimit > 0 {
-		ratio := clamp01f(1 - float32(math.Pow(float64(dist/rangeLimit), float64(rangeWindowExponent))))
-		return ratio * ratio / max32(dist*dist, attenuationFloor)
+		ratio := clamp01f(1 - float32(det.Pow(float64(dist/rangeLimit), float64(rangeWindowExponent))))
+		return ratio * ratio / max32(float32(dist*dist), attenuationFloor)
 	}
-	return 1 / max32(float32(math.Pow(float64(dist), float64(decay))), attenuationFloor)
+	return 1 / max32(float32(det.Pow(float64(dist), float64(decay))), attenuationFloor)
 }
 
 // spotConeAttenuation is the cone falloff of a spot light. L points from the
@@ -2451,8 +2452,8 @@ func pointLightAttenuation(dist, rangeLimit, decay float32) float32 {
 func spotConeAttenuation(L, spotDir [3]float32, angle, penumbra float32) float32 {
 	axis := normalize3(spotDir)
 	cosAngle := dotVec3(L, [3]float32{-axis[0], -axis[1], -axis[2]})
-	outerCos := float32(math.Cos(float64(angle)))
-	innerCos := float32(math.Cos(float64(angle * (1 - penumbra))))
+	outerCos := float32(det.Cos(float64(angle)))
+	innerCos := float32(det.Cos(float64(angle * (1 - penumbra))))
 	return clamp01f((cosAngle - outerCos) / max32(innerCos-outerCos, spotConeFloor))
 }
 
@@ -2500,15 +2501,15 @@ func triangleTangent(verts [3]rasterVertex) tangentFrame {
 	dv1 := verts[1].uv[1] - verts[0].uv[1]
 	du2 := verts[2].uv[0] - verts[0].uv[0]
 	dv2 := verts[2].uv[1] - verts[0].uv[1]
-	det := du1*dv2 - du2*dv1
+	det := float32(du1*dv2) - float32(du2*dv1)
 	if absf(det) < 1e-8 {
 		return tangentFrame{}
 	}
 	inv := 1 / det
 	tangent := [3]float32{
-		(e1[0]*dv2 - e2[0]*dv1) * inv,
-		(e1[1]*dv2 - e2[1]*dv1) * inv,
-		(e1[2]*dv2 - e2[2]*dv1) * inv,
+		float32((float32(e1[0]*dv2) - float32(e2[0]*dv1)) * inv),
+		float32((float32(e1[1]*dv2) - float32(e2[1]*dv1)) * inv),
+		float32((float32(e1[2]*dv2) - float32(e2[2]*dv1)) * inv),
 	}
 	if length3(tangent) < 1e-8 {
 		return tangentFrame{}
@@ -2526,26 +2527,26 @@ func perturbNormal(geomN [3]float32, frame tangentFrame, sample [3]float32) [3]f
 	raw := frame.tangent
 	along := dotVec3(geomN, raw)
 	tangent := normalize3([3]float32{
-		raw[0] - geomN[0]*along,
-		raw[1] - geomN[1]*along,
-		raw[2] - geomN[2]*along,
+		raw[0] - float32(geomN[0]*along),
+		raw[1] - float32(geomN[1]*along),
+		raw[2] - float32(geomN[2]*along),
 	})
 	bitangent := normalize3(crossVec3(geomN, tangent))
 	mapped := [3]float32{sample[0]*2 - 1, sample[1]*2 - 1, sample[2]*2 - 1}
 	return normalize3([3]float32{
-		tangent[0]*mapped[0] + bitangent[0]*mapped[1] + geomN[0]*mapped[2],
-		tangent[1]*mapped[0] + bitangent[1]*mapped[1] + geomN[1]*mapped[2],
-		tangent[2]*mapped[0] + bitangent[2]*mapped[1] + geomN[2]*mapped[2],
+		float32(tangent[0]*mapped[0]) + float32(bitangent[0]*mapped[1]) + float32(geomN[0]*mapped[2]),
+		float32(tangent[1]*mapped[0]) + float32(bitangent[1]*mapped[1]) + float32(geomN[1]*mapped[2]),
+		float32(tangent[2]*mapped[0]) + float32(bitangent[2]*mapped[1]) + float32(geomN[2]*mapped[2]),
 	})
 }
 
 // distributionGGX is the Trowbridge-Reitz normal distribution, copied from
 // litWGSL. It sets the width of the specular highlight.
 func distributionGGX(NdotH, roughness float32) float32 {
-	a := roughness * roughness
-	a2 := a * a
-	d := NdotH*NdotH*(a2-1) + 1
-	return a2 / (math.Pi*d*d + 1e-7)
+	a := float32(roughness * roughness)
+	a2 := float32(a * a)
+	d := float32(NdotH*NdotH*(a2-1)) + 1
+	return a2 / (float32(math.Pi*d*d) + 1e-7)
 }
 
 // geometrySmith is the Hammon height-correlated Smith visibility term, copied
@@ -2557,9 +2558,9 @@ func distributionGGX(NdotH, roughness float32) float32 {
 // and the verdict: the correlated form approaches no masking as the surface
 // approaches a mirror, and the browser Schlick form never does.
 func geometrySmith(NdotV, NdotL, roughness float32) float32 {
-	a := roughness * roughness
-	ggxV := NdotL * (NdotV*(1-a) + a)
-	ggxL := NdotV * (NdotL*(1-a) + a)
+	a := float32(roughness * roughness)
+	ggxV := float32(NdotL * (float32(NdotV*(1-a)) + a))
+	ggxL := float32(NdotV * (float32(NdotL*(1-a)) + a))
 	return 0.5 / max(ggxV+ggxL, 1e-5)
 }
 
@@ -2569,12 +2570,12 @@ func geometrySmith(NdotV, NdotL, roughness float32) float32 {
 // call sits in the pixel loop.
 func fresnelSchlick(f0 [3]float32, f90 float32, VdotH float32) [3]float32 {
 	t := clamp01f(1 - VdotH)
-	t2 := t * t
-	k := t2 * t2 * t
+	t2 := float32(t * t)
+	k := float32(t2 * t2 * t)
 	return [3]float32{
-		f0[0] + (f90-f0[0])*k,
-		f0[1] + (f90-f0[1])*k,
-		f0[2] + (f90-f0[2])*k,
+		f0[0] + float32((f90-f0[0])*k),
+		f0[1] + float32((f90-f0[1])*k),
+		f0[2] + float32((f90-f0[2])*k),
 	}
 }
 
@@ -2584,9 +2585,9 @@ func rotateEnvY(v [3]float32, radians float32) [3]float32 {
 	if radians == 0 {
 		return v
 	}
-	c := float32(math.Cos(float64(radians)))
-	s := float32(math.Sin(float64(radians)))
-	return [3]float32{v[0]*c - v[2]*s, v[1], v[0]*s + v[2]*c}
+	c := float32(det.Cos(float64(radians)))
+	s := float32(det.Sin(float64(radians)))
+	return [3]float32{float32(v[0]*c) - float32(v[2]*s), v[1], float32(v[0]*s) + float32(v[2]*c)}
 }
 
 // The constants below are the numbers litProgram.shade shares with litWGSL in
@@ -2667,14 +2668,14 @@ func (p *litProgram) directLight(
 		switch light.kind {
 		case lightKindAmbient:
 			for i := 0; i < 3; i++ {
-				sum[i] += baseColor[i] * light.color[i] * light.intensity
+				sum[i] += float32(baseColor[i] * light.color[i] * light.intensity)
 			}
 			continue
 		case lightKindHemisphere:
 			hemiBlend := N[1]*0.5 + 0.5
 			for i := 0; i < 3; i++ {
 				hemiColor := mix(light.groundColor[i], light.color[i], hemiBlend)
-				sum[i] += baseColor[i] * hemiColor * light.intensity
+				sum[i] += float32(baseColor[i] * hemiColor * light.intensity)
 			}
 			continue
 		case lightKindRectArea:
@@ -2691,7 +2692,7 @@ func (p *litProgram) directLight(
 			dist := length3(toLight)
 			L = scaleVec3(toLight, 1/max32(dist, 0.0001))
 			cone := spotConeAttenuation(L, light.direction, light.coneAngle, light.penumbra)
-			attenuation = pointLightAttenuation(dist, light.rangeLimit, light.decay) * cone
+			attenuation = float32(pointLightAttenuation(dist, light.rangeLimit, light.decay) * cone)
 		default:
 			toLight := subVec3(light.position, f.world)
 			dist := length3(toLight)
@@ -2709,7 +2710,7 @@ func (p *litProgram) directLight(
 		fresnel := fresnelSchlick(f0, f90, VdotH)
 		fdiel := fresnelSchlick(dielectricF0, dielectricF90, VdotH)
 		dielectricMax := max32(fdiel[0], max32(fdiel[1], fdiel[2]))
-		dg := d * g
+		dg := float32(d * g)
 
 		shadow := float32(1)
 		if light.kind == lightKindDirectional && index == p.shadowLight {
@@ -2720,13 +2721,13 @@ func (p *litProgram) directLight(
 			// the dielectric Fresnel alone, so the dielectric specular tint
 			// no longer adds an inverse RGB tint to the diffuse lobe; the
 			// base colour still multiplies the diffuse term itself.
-			kD := (1 - dielectricMax) * (1 - metalness)
-			diffuse := kD * baseColor[i] * invPi
-			specular := dg * fresnel[i]
+			kD := float32((1 - dielectricMax) * (1 - metalness))
+			diffuse := float32(kD * baseColor[i] * invPi)
+			specular := float32(dg * fresnel[i])
 			// The falloff rides in the radiance, exactly as litWGSL puts it
 			// there, so the direct term is the same product in both copies.
-			radiance := light.color[i] * light.intensity * attenuation
-			sum[i] += (diffuse + specular) * radiance * NdotL * shadow
+			radiance := float32(light.color[i] * light.intensity * attenuation)
+			sum[i] += float32((diffuse + specular) * radiance * NdotL * shadow)
 		}
 	}
 	return sum
@@ -2757,9 +2758,9 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	// colour map. A texture tints, it does not replace.
 	sample := m.baseColorMap.sampleRGB(f.uv)
 	baseColor := [3]float32{
-		f.base[0] * sample[0],
-		f.base[1] * sample[1],
-		f.base[2] * sample[2],
+		float32(f.base[0] * sample[0]),
+		float32(f.base[1] * sample[1]),
+		float32(f.base[2] * sample[2]),
 	}
 
 	// glTF 2.0 packs roughness in green and metalness in blue. Read the same two
@@ -2767,16 +2768,16 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	// occlusion channel.
 	metalness := m.metalness
 	if m.hasMetalMap {
-		metalness *= m.metalMap.sampleRGB(f.uv)[2]
+		metalness = float32(metalness * m.metalMap.sampleRGB(f.uv)[2])
 	}
 	metalness = clamp01f(metalness)
 	roughness := m.roughness
 	if m.hasRoughMap {
-		roughness *= m.roughMap.sampleRGB(f.uv)[1]
+		roughness = float32(roughness * m.roughMap.sampleRGB(f.uv)[1])
 	}
 	roughness = clampRange(roughness, roughnessFloor, 1)
 	anisotropy := clampSignedUnit(m.anisotropy)
-	roughness = clampRange(roughness*(1-absf(anisotropy)*anisotropyRoughnessGain), roughnessFloor, 1)
+	roughness = clampRange(float32(roughness*(1-float32(absf(anisotropy)*anisotropyRoughnessGain))), roughnessFloor, 1)
 
 	// F0 is the effective dielectric F0 the material preparation uploaded
 	// (min(IOR F0 * colour, 1) * intensity), and F90 its grazing reflectance
@@ -2801,7 +2802,7 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	// base colour; the browser copy still does. See the divergence ledger.
 	fresnel := fresnelSchlick(f0, f90, VdotH)
 	fdiel := fresnelSchlick(m.specularF0, m.specularF90, VdotH)
-	kD := (1 - max32(fdiel[0], max32(fdiel[1], fdiel[2]))) * (1 - metalness)
+	kD := float32((1 - max32(fdiel[0], max32(fdiel[1], fdiel[2]))) * (1 - metalness))
 
 	// Direct light: one Cook-Torrance lobe per scene light, summed.
 	color := p.directLight(f, N, V, baseColor, f0, f90, m.specularF0, m.specularF90, metalness, roughness, NdotV)
@@ -2812,9 +2813,9 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	hemi := clamp01f(N[1]*0.5 + 0.5)
 	var ambient [3]float32
 	for i := 0; i < 3; i++ {
-		envDiffuse := l.ambientColor[i]*l.ambientColor[3] +
-			l.skyColor[i]*hemi + l.groundColor[i]*(1-hemi)
-		ambient[i] = envDiffuse * baseColor[i]
+		envDiffuse := float32(l.ambientColor[i]*l.ambientColor[3]) +
+			float32(l.skyColor[i]*hemi) + float32(l.groundColor[i]*(1-hemi))
+		ambient[i] = float32(envDiffuse * baseColor[i])
 		color[i] += ambient[i]
 	}
 
@@ -2825,12 +2826,12 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 		diffuseEnv := l.envCube.sampleCube(rotateEnvY(N, rotation))
 		reflected := reflect3(V, N)
 		specularEnv := l.envCube.sampleCube(rotateEnvY(reflected, rotation))
-		gain := l.envParams[0] * l.envParams[2]
-		roughFade := 1 - roughness*envSpecularRoughFade
+		gain := float32(l.envParams[0] * l.envParams[2])
+		roughFade := 1 - float32(roughness*envSpecularRoughFade)
 		for i := 0; i < 3; i++ {
-			cubeDiffuse := diffuseEnv[i] * baseColor[i] * kD
-			cubeSpecular := specularEnv[i] * fresnel[i] * roughFade
-			color[i] += (cubeDiffuse + cubeSpecular) * gain
+			cubeDiffuse := float32(diffuseEnv[i] * baseColor[i] * kD)
+			cubeSpecular := float32(specularEnv[i] * fresnel[i] * roughFade)
+			color[i] += float32((cubeDiffuse + cubeSpecular) * gain)
 		}
 	}
 
@@ -2842,14 +2843,14 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 			emissiveColor = m.emissiveMap.sampleRGB(f.uv)
 		}
 		for i := 0; i < 3; i++ {
-			color[i] += emissiveColor[i] * m.emissiveScale
+			color[i] += float32(emissiveColor[i] * m.emissiveScale)
 		}
 	}
 
 	// Clear coat: a second, tighter lobe over the whole surface.
 	if clearcoat := clamp01f(m.clearcoat); clearcoat > 0 {
 		power := mix(clearcoatPowerLow, clearcoatPowerHigh, 1-roughness)
-		lobe := float32(math.Pow(float64(NdotV), float64(power))) * clearcoat * clearcoatGain
+		lobe := float32(float32(det.Pow(float64(NdotV), float64(power))) * clearcoat * clearcoatGain)
 		color[0] += lobe
 		color[1] += lobe
 		color[2] += lobe
@@ -2858,20 +2859,20 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	// Sheen: the velvet edge of a fabric, added rather than blended.
 	if sheen := clamp01f(m.sheen); sheen > 0 {
 		facing := 1 - NdotV
-		velvet := facing * facing * facing * sheen
+		velvet := float32(facing * facing * facing * sheen)
 		for i := 0; i < 3; i++ {
-			color[i] += baseColor[i] * velvet * sheenGain
+			color[i] += float32(baseColor[i] * velvet * sheenGain)
 		}
 	}
 
 	// Iridescence: a thin-film hue sweep that grows toward the silhouette.
 	if iridescence := clamp01f(m.iridescence); iridescence > 0 {
 		facing := 1 - NdotV
-		weight := iridescence * facing * facing
+		weight := float32(iridescence * facing * facing)
 		phases := [3]float32{0, iridescencePhaseGreen, iridescencePhaseBlue}
 		for i := 0; i < 3; i++ {
-			iri := 0.5 + 0.5*float32(math.Cos(float64(phases[i]+NdotV*iridescenceFrequency)))
-			color[i] = mix(color[i], color[i]*(iridescenceTintBase+iri*iridescenceTintGain), weight)
+			iri := 0.5 + 0.5*float32(det.Cos(float64(phases[i]+NdotV*iridescenceFrequency)))
+			color[i] = mix(color[i], float32(color[i]*(iridescenceTintBase+float32(iri*iridescenceTintGain))), weight)
 		}
 	}
 
@@ -2879,10 +2880,10 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	// browser renderers use: fade the shaded colour toward the ambient term plus
 	// a tenth of the base colour. None of the four renderers refracts, because
 	// refraction needs a second pass over the whole scene.
-	if transmission := clamp01f(m.transmission) * (1 - metalness); transmission > 0 {
-		weight := transmission * transmissionMixGain
+	if transmission := float32(clamp01f(m.transmission) * (1 - metalness)); transmission > 0 {
+		weight := float32(transmission * transmissionMixGain)
 		for i := 0; i < 3; i++ {
-			color[i] = mix(color[i], ambient[i]+baseColor[i]*transmissionBaseGain, weight)
+			color[i] = mix(color[i], ambient[i]+float32(baseColor[i]*transmissionBaseGain), weight)
 		}
 	}
 	return color
@@ -2908,7 +2909,7 @@ func (l sceneLighting) sampleShadow(worldPos [3]float32) float32 {
 	}
 	// The shadow map holds depth in the zero-to-one range, so the reference
 	// depth has to travel through the same mapping the raster write uses.
-	bias := float32(0.003 + 0.003*float32(cascade))
+	bias := float32(0.003 + float32(0.003*float32(cascade)))
 	return sampleShadowCompare(l.shadow, layer, u, v, ndcToDepth(proj[2])-bias)
 }
 
@@ -3066,12 +3067,12 @@ func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *litP
 			w0 /= area
 			w1 /= area
 			w2 /= area
-			depth := verts[0].depth*w0 + verts[1].depth*w1 + verts[2].depth*w2
+			depth := float32(verts[0].depth*w0) + float32(verts[1].depth*w1) + float32(verts[2].depth*w2)
 			if !depthPasses(target, x, y, depth) {
 				continue
 			}
 			// Perspective-correct weights. invSum is the interpolated 1/w.
-			invSum := verts[0].invW*w0 + verts[1].invW*w1 + verts[2].invW*w2
+			invSum := float32(verts[0].invW*w0) + float32(verts[1].invW*w1) + float32(verts[2].invW*w2)
 			p0, p1, p2 := w0, w1, w2
 			if invSum > 0 {
 				p0 = verts[0].invW * w0 / invSum
@@ -3080,7 +3081,7 @@ func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *litP
 			}
 			var out [4]float32
 			for i := 0; i < 4; i++ {
-				out[i] = verts[0].color[i]*p0 + verts[1].color[i]*p1 + verts[2].color[i]*p2
+				out[i] = float32(verts[0].color[i]*p0) + float32(verts[1].color[i]*p1) + float32(verts[2].color[i]*p2)
 			}
 			if shading != nil {
 				frag := fragment{
@@ -3088,11 +3089,11 @@ func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *litP
 					frame: frame,
 				}
 				for i := 0; i < 3; i++ {
-					frag.world[i] = verts[0].world[i]*p0 + verts[1].world[i]*p1 + verts[2].world[i]*p2
-					frag.normal[i] = verts[0].normal[i]*p0 + verts[1].normal[i]*p1 + verts[2].normal[i]*p2
+					frag.world[i] = float32(verts[0].world[i]*p0) + float32(verts[1].world[i]*p1) + float32(verts[2].world[i]*p2)
+					frag.normal[i] = float32(verts[0].normal[i]*p0) + float32(verts[1].normal[i]*p1) + float32(verts[2].normal[i]*p2)
 				}
 				for i := 0; i < 2; i++ {
-					frag.uv[i] = verts[0].uv[i]*p0 + verts[1].uv[i]*p1 + verts[2].uv[i]*p2
+					frag.uv[i] = float32(verts[0].uv[i]*p0) + float32(verts[1].uv[i]*p1) + float32(verts[2].uv[i]*p2)
 				}
 				lit := shading.shade(frag)
 				out[0], out[1], out[2] = lit[0], lit[1], lit[2]
@@ -3185,8 +3186,8 @@ func sampleShadowCompare(t *Texture, layer int, u, v, depthRef float32) float32 
 	if t == nil || t.width <= 0 || t.height <= 0 {
 		return 1
 	}
-	x := u*float32(t.width) - 0.5
-	y := v*float32(t.height) - 0.5
+	x := float32(u*float32(t.width)) - 0.5
+	y := float32(v*float32(t.height)) - 0.5
 	x0 := int(math.Floor(float64(x)))
 	y0 := int(math.Floor(float64(y)))
 	tx := x - float32(x0)
@@ -3278,8 +3279,8 @@ func blendRasterColor(dst, src color.RGBA, blend gpu.BlendState) color.RGBA {
 }
 
 func blendComponent(src, dst, srcA, dstA float32, c gpu.BlendComponent) float32 {
-	s := src * blendFactor(c.SrcFactor, srcA, dstA)
-	d := dst * blendFactor(c.DstFactor, srcA, dstA)
+	s := float32(src * blendFactor(c.SrcFactor, srcA, dstA))
+	d := float32(dst * blendFactor(c.DstFactor, srcA, dstA))
 	switch c.Operation {
 	case gpu.BlendOpSubtract:
 		return s - d
@@ -3357,8 +3358,8 @@ func sampleTextureRGB(t *Texture, layer int, uv [2]float32) [3]float32 {
 	}
 	u := fract32(uv[0])
 	v := fract32(uv[1])
-	x := u*float32(t.width) - 0.5
-	y := v*float32(t.height) - 0.5
+	x := float32(u*float32(t.width)) - 0.5
+	y := float32(v*float32(t.height)) - 0.5
 	x0 := int(math.Floor(float64(x)))
 	y0 := int(math.Floor(float64(y)))
 	tx := x - float32(x0)
@@ -3529,7 +3530,7 @@ func writeTextureUint32(t *Texture, layer, x, y int, v uint32) {
 }
 
 func edge(a, b, c [2]float32) float32 {
-	return (c[0]-a[0])*(b[1]-a[1]) - (c[1]-a[1])*(b[0]-a[0])
+	return float32((c[0]-a[0])*(b[1]-a[1])) - float32((c[1]-a[1])*(b[0]-a[0]))
 }
 
 func sameSign(v, ref float32) bool {
@@ -3549,7 +3550,7 @@ func triangleOutsideClip(depths [3]float32) bool {
 }
 
 func mix(a, b, t float32) float32 {
-	return a + (b-a)*t
+	return a + float32((b-a)*t)
 }
 
 func smoothstep(edge0, edge1, x float32) float32 {
@@ -3560,7 +3561,7 @@ func smoothstep(edge0, edge1, x float32) float32 {
 		return 1
 	}
 	t := clamp01f((x - edge0) / (edge1 - edge0))
-	return t * t * (3 - 2*t)
+	return float32(t * t * (3 - 2*t))
 }
 
 func add3(a, b [3]float32) [3]float32 {
@@ -3568,7 +3569,7 @@ func add3(a, b [3]float32) [3]float32 {
 }
 
 func length3(v [3]float32) float32 {
-	return float32(math.Sqrt(float64(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])))
+	return float32(math.Sqrt(float64(float32(v[0]*v[0]) + float32(v[1]*v[1]) + float32(v[2]*v[2]))))
 }
 
 func normalize3(v [3]float32) [3]float32 {
@@ -3583,7 +3584,7 @@ func normalize3(v [3]float32) [3]float32 {
 // cubemap lookup needs. litWGSL writes reflect(-V, N); this is the same vector.
 func reflect3(v, n [3]float32) [3]float32 {
 	d := 2 * dotVec3(n, v)
-	return [3]float32{d*n[0] - v[0], d*n[1] - v[1], d*n[2] - v[2]}
+	return [3]float32{float32(d*n[0]) - v[0], float32(d*n[1]) - v[1], float32(d*n[2]) - v[2]}
 }
 
 func absf(v float32) float32 {
@@ -3616,14 +3617,14 @@ func readFloat32At(data []byte, offset int) float32 {
 }
 
 func hash13(p [3]float32) float32 {
-	p0 := fract32(p[0] * 0.1031)
-	p1 := fract32(p[1] * 0.1031)
-	p2 := fract32(p[2] * 0.1031)
-	d := p0*(p1+33.33) + p1*(p2+33.33) + p2*(p0+33.33)
+	p0 := fract32(float32(p[0] * 0.1031))
+	p1 := fract32(float32(p[1] * 0.1031))
+	p2 := fract32(float32(p[2] * 0.1031))
+	d := float32(p0*(p1+33.33)) + float32(p1*(p2+33.33)) + float32(p2*(p0+33.33))
 	p0 += d
 	p1 += d
 	p2 += d
-	return fract32((p0 + p1) * p2)
+	return fract32(float32((p0 + p1) * p2))
 }
 
 func fract32(v float32) float32 {
@@ -3645,7 +3646,7 @@ func clampByte(v float32) uint8 {
 	if v >= 1 {
 		return 255
 	}
-	return uint8(v*255 + 0.5)
+	return uint8(float32(v*255) + 0.5)
 }
 
 func packRGB10A2(r, g, b, a uint8) uint32 {

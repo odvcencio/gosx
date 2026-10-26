@@ -16,5 +16,6 @@ func (Scene3D) Dispatch(context.Context, []scene.Command) error { return ErrUnsu
 func (Scene3D) Live(context.Context, string, any) error         { return ErrUnsupported }
 func (Scene3D) Camera() (scene.IRCamera, error)                 { return scene.IRCamera{}, ErrUnsupported }
 func (Scene3D) SetCamera(context.Context, any) error            { return ErrUnsupported }
+func (Scene3D) SetOrbit(context.Context, scene.Orbit) error     { return ErrUnsupported }
 
 func (Scene3D) SetAnimationClock(context.Context, float64, bool) error { return ErrUnsupported }

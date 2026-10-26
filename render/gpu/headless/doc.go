@@ -1,3 +1,5 @@
+//gosx:deterministic
+
 // Package headless is a server-side, pure-Go implementation of gpu.Device
 // that renders into a CPU-backed RGBA framebuffer instead of a real GPU.
 //

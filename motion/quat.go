@@ -1,9 +1,15 @@
+//gosx:deterministic
+
 // Package motion provides a unified animation evaluator for GoSX.
 // It is designed to be TinyGo-clean: no reflect, no encoding/json, no
 // per-frame heap allocation on hot paths.
 package motion
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // Quat is a unit quaternion representing a 3D rotation.
 type Quat struct {
@@ -14,24 +20,24 @@ type Quat struct {
 // If the magnitude is effectively zero the identity quaternion {0,0,0,1}
 // is returned to avoid a divide-by-zero NaN.
 func (q Quat) Normalize() Quat {
-	m2 := q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W
+	m2 := float64(q.X*q.X) + float64(q.Y*q.Y) + float64(q.Z*q.Z) + float64(q.W*q.W)
 	// NOTE: guards squared-magnitude < 1e-30 (i.e. |q| < 1e-15); the JS reference
 	// (19a-scene-animation.js:125) guards length < 1e-10 — a less strict threshold.
 	if m2 < 1e-30 {
 		return Quat{0, 0, 0, 1}
 	}
 	inv := 1.0 / math.Sqrt(m2)
-	return Quat{q.X * inv, q.Y * inv, q.Z * inv, q.W * inv}
+	return Quat{float64(q.X * inv), float64(q.Y * inv), float64(q.Z * inv), float64(q.W * inv)}
 }
 
 // quatMul returns the Hamilton product of two quaternions a * b.
 // Result represents the combined rotation: first apply b, then a.
 func quatMul(a, b Quat) Quat {
 	return Quat{
-		X: a.W*b.X + a.X*b.W + a.Y*b.Z - a.Z*b.Y,
-		Y: a.W*b.Y - a.X*b.Z + a.Y*b.W + a.Z*b.X,
-		Z: a.W*b.Z + a.X*b.Y - a.Y*b.X + a.Z*b.W,
-		W: a.W*b.W - a.X*b.X - a.Y*b.Y - a.Z*b.Z,
+		X: float64(a.W*b.X) + float64(a.X*b.W) + float64(a.Y*b.Z) - float64(a.Z*b.Y),
+		Y: float64(a.W*b.Y) - float64(a.X*b.Z) + float64(a.Y*b.W) + float64(a.Z*b.X),
+		Z: float64(a.W*b.Z) + float64(a.X*b.Y) - float64(a.Y*b.X) + float64(a.Z*b.W),
+		W: float64(a.W*b.W) - float64(a.X*b.X) - float64(a.Y*b.Y) - float64(a.Z*b.Z),
 	}
 }
 
@@ -42,9 +48,9 @@ func quatMul(a, b Quat) Quat {
 //	QuatFromEuler(0, y, 0) == {0, sin(y/2), 0, cos(y/2)}
 func QuatFromEuler(x, y, z float64) Quat {
 	hx, hy, hz := x*0.5, y*0.5, z*0.5
-	qx := Quat{X: math.Sin(hx), W: math.Cos(hx)}
-	qy := Quat{Y: math.Sin(hy), W: math.Cos(hy)}
-	qz := Quat{Z: math.Sin(hz), W: math.Cos(hz)}
+	qx := Quat{X: det.Sin(hx), W: det.Cos(hx)}
+	qy := Quat{Y: det.Sin(hy), W: det.Cos(hy)}
+	qz := Quat{Z: det.Sin(hz), W: det.Cos(hz)}
 	return quatMul(quatMul(qx, qy), qz)
 }
 
@@ -58,13 +64,13 @@ func QuatFromEuler(x, y, z float64) Quat {
 // Slerp outputs are unit).
 func RotateVec3(q Quat, x, y, z float64) (float64, float64, float64) {
 	// t = cross(q.xyz, v) + q.w*v
-	tx := q.Y*z - q.Z*y + q.W*x
-	ty := q.Z*x - q.X*z + q.W*y
-	tz := q.X*y - q.Y*x + q.W*z
+	tx := float64(q.Y*z) - float64(q.Z*y) + float64(q.W*x)
+	ty := float64(q.Z*x) - float64(q.X*z) + float64(q.W*y)
+	tz := float64(q.X*y) - float64(q.Y*x) + float64(q.W*z)
 	// v' = v + 2 * cross(q.xyz, t)
-	return x + 2*(q.Y*tz-q.Z*ty),
-		y + 2*(q.Z*tx-q.X*tz),
-		z + 2*(q.X*ty-q.Y*tx)
+	return x + 2*(float64(q.Y*tz)-float64(q.Z*ty)),
+		y + 2*(float64(q.Z*tx)-float64(q.X*tz)),
+		z + 2*(float64(q.X*ty)-float64(q.Y*tx))
 }
 
 // Slerp performs spherical linear interpolation between unit quaternions a and b
@@ -79,7 +85,7 @@ func RotateVec3(q Quat, x, y, z float64) (float64, float64, float64) {
 //   - NaN-safe: dot is clamped to [-1, 1] before math.Acos.
 func Slerp(a, b Quat, t float64) Quat {
 	// Four-component dot product.
-	dot := a.X*b.X + a.Y*b.Y + a.Z*b.Z + a.W*b.W
+	dot := float64(a.X*b.X) + float64(a.Y*b.Y) + float64(a.Z*b.Z) + float64(a.W*b.W)
 
 	// Shortest-arc: flip b so we travel the short way around.
 	if dot < 0 {
@@ -90,10 +96,10 @@ func Slerp(a, b Quat, t float64) Quat {
 	// Nlerp fast-path for nearly-parallel quaternions.
 	if dot > 0.9995 {
 		r := Quat{
-			a.X + t*(b.X-a.X),
-			a.Y + t*(b.Y-a.Y),
-			a.Z + t*(b.Z-a.Z),
-			a.W + t*(b.W-a.W),
+			a.X + float64(t*(b.X-a.X)),
+			a.Y + float64(t*(b.Y-a.Y)),
+			a.Z + float64(t*(b.Z-a.Z)),
+			a.W + float64(t*(b.W-a.W)),
 		}
 		return r.Normalize()
 	}
@@ -106,15 +112,15 @@ func Slerp(a, b Quat, t float64) Quat {
 		dot = -1
 	}
 
-	theta := math.Acos(dot)
-	sinTheta := math.Sin(theta)
-	wa := math.Sin((1-t)*theta) / sinTheta
-	wb := math.Sin(t*theta) / sinTheta
+	theta := det.Acos(dot)
+	sinTheta := det.Sin(theta)
+	wa := det.Sin(float64((1-t)*theta)) / sinTheta
+	wb := det.Sin(float64(t*theta)) / sinTheta
 
 	return Quat{
-		wa*a.X + wb*b.X,
-		wa*a.Y + wb*b.Y,
-		wa*a.Z + wb*b.Z,
-		wa*a.W + wb*b.W,
+		float64(wa*a.X) + float64(wb*b.X),
+		float64(wa*a.Y) + float64(wb*b.Y),
+		float64(wa*a.Z) + float64(wb*b.Z),
+		float64(wa*a.W) + float64(wb*b.W),
 	}
 }

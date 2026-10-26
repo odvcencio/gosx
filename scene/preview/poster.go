@@ -99,12 +99,12 @@ func MeasureFrame(img *image.RGBA) FrameMetrics {
 			}
 			lum := 0.2126*float64(c.R)/255 + 0.7152*float64(c.G)/255 + 0.0722*float64(c.B)/255
 			sum += lum
-			sumSquares += lum * lum
+			sumSquares += float64(lum * lum)
 		}
 	}
 	count := float64(metrics.Pixels)
 	mean := sum / count
-	variance := sumSquares/count - mean*mean
+	variance := sumSquares/count - float64(mean*mean)
 	if variance < 0 {
 		variance = 0
 	}
@@ -256,10 +256,12 @@ func posterFromResult(result *Result, opts PosterOptions) (*Poster, error) {
 	// below that, so one allocation covers the encode.
 	buffer.Grow(result.Image.Bounds().Dx() * result.Image.Bounds().Dy() * 4)
 	encoder := png.Encoder{CompressionLevel: png.DefaultCompression}
+	//gosx:allow wall-clock measures encode duration for the report only; no output byte reads it
 	started := time.Now()
 	if err := encoder.Encode(&buffer, result.Image); err != nil {
 		return nil, fmt.Errorf("scene preview: encode poster: %w", err)
 	}
+	//gosx:allow wall-clock measures encode duration for the report only; no output byte reads it
 	encodeElapsed := time.Since(started)
 	sum := sha256.Sum256(buffer.Bytes())
 	poster := &Poster{
@@ -336,6 +338,7 @@ func summarizeDropped(dropped []DroppedRecord) string {
 		counts[strings.TrimPrefix(record.Code, "scene.preview.unsupported_")]++
 	}
 	kinds := make([]string, 0, len(counts))
+	//gosx:allow map-range kinds are sorted on the next lines
 	for kind := range counts {
 		kinds = append(kinds, kind)
 	}

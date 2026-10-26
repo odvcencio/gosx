@@ -190,7 +190,7 @@ test("one decoder serves a dense frame and reordered membership falls back witho
   assert.equal(second.x, 0);
 });
 
-test("retained pose application reaches the existing crowd animation rows", () => {
+test("legacy retained pose application reaches the existing crowd animation rows", () => {
   const { context, bridge } = runtime();
   const rendererSource = fs.readFileSync(path.join(directory, "..", "runtime", "scene3d", "mount-webgl.ts"), "utf8");
   const start = rendererSource.indexOf("function scenePrepareRigidInstancePatch(");
@@ -203,13 +203,21 @@ test("retained pose application reaches the existing crowd animation rows", () =
   context.sceneRigidInstanceHydrationEligible = () => true;
   context.sceneRigidInstanceHydrationKey = (_state, model) => model.id;
   context.sceneReusableRigidInstance = () => true;
+  context.sceneApplyModelSkinPose = () => { throw Error('unexpected CPU playback in palette-only fixture'); };
   context.sceneRigidMembershipScopeKey = () => "";
   context.sceneInstancedGLBHydrationTemplates = new WeakMap();
+  context.sceneInstancedGLBTints = new WeakMap();
   const expand = context.sceneInstancedGLBMeshToModels;
   context.sceneInstancedGLBMeshToModels = batch => expand(batch).map(model => {
     context.sceneInstancedGLBHydrationTemplates.set(model, 'hero-template');
     return model;
   });
+  const crowdSource = fs.readFileSync(path.join(directory, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
+  vm.runInContext(crowdSource.slice(crowdSource.indexOf("  function sceneCommitCrowdPoseUpdates("), crowdSource.indexOf("  // ---- Batch parent")), context);
+  vm.runInContext(transpile(fs.readFileSync(path.join(directory, "..", "runtime", "scene3d", "model-pose-data.ts"), "utf8")), context);
+  // Older cached command chunks lack the optional fast path. Keep this
+  // transport/animation-row case on that supported fallback.
+  bridge.tryRetainedBinaryInstancePoses = undefined;
   vm.runInContext(rendererSource.slice(start, end), context);
   const atlas = { clips: new Map([["run", { start: 1, duration: 1, segments: 4 }]]), missingClips: new Set() };
   const rows = new Float32Array(3);
