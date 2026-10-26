@@ -28,8 +28,8 @@ const (
 	// primitives) streams every frame.
 	InstanceStreamTransform InstanceStreamKind = iota
 	// InstanceStreamTransformColor carries a 4x4 matrix plus an RGBA color
-	// (20 finite float32s) per instance. Colors are linear RGBA, matching
-	// the runtime's numeric color path (CSS strings require sRGB conversion).
+	// (20 finite float32s) per instance. Colors are normalized RGBA, matching
+	// the runtime's numeric color path (for #808080 use 128/255 per RGB channel).
 	// Count, transforms and colors replace the batch's active instances
 	// atomically. Count may grow, shrink or become zero; geometry, material,
 	// parent and per-instance attributes stay as declared. Re-declare the
@@ -112,7 +112,7 @@ type InstanceStreamFrame struct {
 	Data []float32
 }
 
-// InstanceTransformColor is one local column-major matrix and linear RGBA.
+// InstanceTransformColor is one local column-major matrix and normalized RGBA.
 // Color multiplies the batch material; use [4]float32{1, 1, 1, 1} for no tint.
 type InstanceTransformColor struct {
 	Transform [16]float32

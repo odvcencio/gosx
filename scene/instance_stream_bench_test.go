@@ -134,7 +134,7 @@ func BenchmarkInstancedMeshCountColor(b *testing.B) {
 			for c := range records[i].Transform {
 				records[i].Transform[c] = float32(mesh.Transforms[i*16+c])
 			}
-			records[i].Color = [4]float32{1, .2158605, 0, 1}
+			records[i].Color = [4]float32{1, 128.0 / 255, 0, 1}
 		}
 		b.Run(benchCountLabel(count), func(b *testing.B) {
 			batch := MountCommandBatch{Revision: 1, Commands: []Command{SetInstancedMeshesCommand([]InstancedMeshIR{mesh})}}

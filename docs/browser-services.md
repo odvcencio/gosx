@@ -78,14 +78,14 @@ counts and colors, pack an `InstanceStreamTransformColor` snapshot in Go:
 frame := scene.InstanceStreamFrame{BatchID: "sparks", Revision: nextRevision}
 frame.SetTransformColors([]scene.InstanceTransformColor{{
     Transform: [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 3, 4, 1},
-    Color: [4]float32{1, .25, 0, 1}, // linear RGBA, multiplied by material
+    Color: [4]float32{1, .25, 0, 1}, // normalized RGBA, multiplied by material
 }})
 applied, err := writer.Apply(frame)
 ```
 
 Retain the frame to reuse its packing storage. Matrices are local to the
-declared parent; colors are finite linear RGBA floats, as on the numeric
-runtime color path. Convert CSS/sRGB colors before packing.
+declared parent; colors are finite normalized RGBA floats, as on the numeric
+runtime color path. Use CSS channel values divided by 255; for `#808080`, each RGB channel is `128.0/255`.
 The snapshot publishes count, transforms and colors together; source arrays
 may be reused when `Apply` returns. A zero count hides the instances while
 keeping the declaration available for re-growth. Indices remain positional.

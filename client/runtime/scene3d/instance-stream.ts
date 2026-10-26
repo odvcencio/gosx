@@ -29,7 +29,7 @@
 //      handle.applyInstanceStream(bytes).
 //
 // Transform frames keep the mounted count. Transform+color frames replace
-// the active count, local matrices and linear RGBA together, retaining the
+// the active count, local matrices and normalized RGBA together, retaining the
 // batch's geometry/material/parent. InstanceStreamSkinnedPose
 // stays reserved permanently, by design, not just for now: an
 // InstancedGLBMesh crowd's clip/time/loop state already has an owner, the

@@ -27,7 +27,7 @@
 
 ## v0.57.22
 
-- Stream primitive instance counts, local transforms and linear RGBA colors as
+- Stream primitive instance counts, local transforms and normalized RGBA colors as
   one retained binary snapshot. Batches can shrink to zero and re-grow without
   resending geometry, materials or parent declarations. The typed Go
   `SetTransformColors` helper reuses packing storage; fixed-count transform
