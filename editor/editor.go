@@ -814,12 +814,18 @@ func (e *Editor) saveStatusText() string {
 	if e.Options.ReadOnly {
 		return "Read only"
 	}
+	if e.Options.Surface == SurfaceCode && e.Options.AutoSaveURL == "" && e.Options.Code != nil && e.Options.Code.Unsaved {
+		return "Unsaved"
+	}
 	return "Saved"
 }
 
 func (e *Editor) saveStatusClass() string {
 	if e.Options.ReadOnly {
 		return "saved"
+	}
+	if e.Options.Surface == SurfaceCode && e.Options.AutoSaveURL == "" && e.Options.Code != nil && e.Options.Code.Unsaved {
+		return "unsaved"
 	}
 	return "saved"
 }
