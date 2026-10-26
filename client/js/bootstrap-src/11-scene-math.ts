@@ -318,7 +318,8 @@
     var sz = roz - v0z;
 
     var u = f * sceneDot3(sx, sy, sz, hx, hy, hz);
-    if (u < 0.0 || u > 1.0) return null;
+    // Shared-edge roundoff must not expose the back face of a rotating mesh.
+    if (u < -1e-12 || u > 1.0 + 1e-12) return null;
 
     // cross(s, edge1)
     var qx = sy * edge1z - sz * edge1y;
@@ -326,12 +327,13 @@
     var qz = sx * edge1y - sy * edge1x;
 
     var v = f * sceneDot3(rdx, rdy, rdz, qx, qy, qz);
-    if (v < 0.0 || u + v > 1.0) return null;
+    if (v < -1e-12 || u + v > 1.0 + 1e-12) return null;
 
     var t = f * sceneDot3(edge2x, edge2y, edge2z, qx, qy, qz);
     if (t < EPSILON) return null; // behind ray
 
-    return { distance: t, u: u, v: v };
+    u = Math.max(0, Math.min(1, u));
+    return { distance: t, u: u, v: Math.max(0, Math.min(1-u, v)) };
   }
 
   function clamp01(value) {

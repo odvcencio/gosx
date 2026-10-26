@@ -82,7 +82,7 @@ func sampleTransformTrack(track AnimationChannelIR, at float64) (v [3]float64) {
 		mix = 0
 	}
 	for j := range v {
-		v[j] = track.Values[(i-1)*3+j]*(1-mix) + track.Values[i*3+j]*mix
+		v[j] = float64(track.Values[(i-1)*3+j]*(1-mix)) + float64(track.Values[i*3+j]*mix)
 	}
 	return
 }
@@ -146,6 +146,7 @@ func SampleAnimationCommands(clips []AnimationClipIR, objects map[string]ObjectI
 		}
 	}
 	ids := make([]string, 0, len(patches))
+	//gosx:allow map-range keys are sorted on the next lines
 	for id := range patches {
 		ids = append(ids, id)
 	}

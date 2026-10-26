@@ -1103,11 +1103,16 @@
       hidden = message.hidden === true;
       frameClock.setRate(message.frameHz || DEFAULT_FRAME_HZ);
       var token = randomToken();
+      var registrationOpen = true;
+      var components = new Set();
       var registered = new Promise(function(resolveReg) {
         scope.__gosx_register_go_wasm_engine_factory = function(given, name, fn) {
-          if (given !== token || String(name) !== init.component || typeof fn !== "function") return false;
-          factory = fn;
-          resolveReg();
+          var component = String(name || "").trim();
+          if (!registrationOpen || given !== token || !component || typeof fn !== "function" || components.has(component)) return false;
+          components.add(component);
+          // A Go module may register several components. Acknowledge every
+          // module-local registration, but mount only the requested factory.
+          if (component === init.component) { factory = fn; resolveReg(); }
           return true;
         };
       });
@@ -1120,7 +1125,8 @@
       var response = await scope.fetch(message.programRef);
       if (!response.ok) throw codedError("worker-fetch-status", "engine module fetch failed with status " + response.status);
       var instance = await instantiate(response, go.importObject);
-      var run = go.run(instance);
+      var run;
+      try { run = go.run(instance); } finally { registrationOpen = false; }
       goExit = run && typeof run.then === "function"
         ? run.then(function() { return codedError("worker-module-exited", "the engine module exited"); }, function(e) { return codedError("worker-run-failed", e && e.message || String(e)); })
         : new Promise(function() {});

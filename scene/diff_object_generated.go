@@ -35,6 +35,7 @@ func objectProofSchemaMatchesType(t reflect.Type) bool {
 		typ  reflect.Type
 		tag  reflect.StructTag
 	}{
+		{"ParentNode", reflect.TypeFor[string](), "json:\"parentNode,omitempty\""},
 		{"VerticesURL", reflect.TypeFor[string](), "json:\"verticesURL,omitempty\""},
 		{"Detail", reflect.TypeFor[*Detail](), "json:\"detail,omitempty\""},
 		{"ID", reflect.TypeFor[string](), "json:\"id\""},
@@ -286,6 +287,9 @@ func provenObjectFieldsEqual(a, b *ObjectIR, omitted objectProofOmissions) bool 
 				return false
 			}
 		}
+	}
+	if a.ParentNode != b.ParentNode {
+		return false
 	}
 	if a.VerticesURL != b.VerticesURL {
 		return false

@@ -221,6 +221,9 @@ type CodeOptions struct {
 	HighlightSource string
 	ExternalUndo    bool
 	Highlights      []HighlightSpan
+	// Unsaved marks manually saved Code content as a recovered or checked draft.
+	// Clear it only when the host projects the saved file, not after validation.
+	Unsaved bool
 }
 
 // HighlightSpan is a caller-supplied syntax decoration. Byte offsets make

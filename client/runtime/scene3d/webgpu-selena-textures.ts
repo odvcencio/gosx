@@ -1,5 +1,5 @@
   type SceneSelenaTextureMaterial = { customUniforms?: Record<string, unknown> };
-  type SceneSelenaTextureDescriptor = { name?: string; dimension?: string; wgsl?: { textureBinding?: number; samplerBinding?: number } };
+  type SceneSelenaTextureDescriptor = { name?: string; dimension?: string; vertexStage?: boolean; wgsl?: { textureBinding?: number; samplerBinding?: number } };
   type SceneSelenaIBLTextures = { active: boolean; radiance?: { view: unknown }; irradiance?: { view: unknown }; brdfLUT?: { view: unknown } };
   type SceneSelenaTextureBindingContext = {
     device: Parameters<typeof wgpuLoadTexture>[0];

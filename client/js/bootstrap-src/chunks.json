@@ -32,6 +32,7 @@
         "bootstrap-src/26-runtime-blocks.ts",
         "bootstrap-src/10-runtime-primitives.ts",
         "bootstrap-src/10-runtime-scene-utils.ts",
+        "../runtime/scene3d/instanced-data.ts",
         "bootstrap-src/10-runtime-scene-core.ts",
         "bootstrap-src/11-scene-math.ts",
         "bootstrap-src/11-scene-base64.ts",
@@ -89,6 +90,7 @@
         "bootstrap-src/19b-scene-control-forms.ts",
         "bootstrap-src/16d-scene-webgl-bridge.ts",
         "../runtime/scene3d/mount-backend.ts",
+        "../runtime/scene3d/model-pose-data.ts",
         "../runtime/scene3d/mount-webgl.ts",
         "../runtime/scene3d/mount-quality.ts",
         "../runtime/scene3d/overlays.ts",
@@ -277,6 +279,7 @@
         "../runtime/scene3d/command-bridge.ts",
         "../runtime/scene3d/instance-stream-bridge.ts",
         "bootstrap-src/10-runtime-primitives.ts",
+        "../runtime/scene3d/instanced-data.ts",
         "bootstrap-src/10-runtime-scene-core.ts",
         "bootstrap-src/11-scene-math.ts",
         "bootstrap-src/11-scene-base64.ts",
@@ -299,6 +302,7 @@
         "bootstrap-src/19b-scene-control-forms.ts",
         "bootstrap-src/16d-scene-webgl-bridge.ts",
         "../runtime/scene3d/mount-backend.ts",
+        "../runtime/scene3d/model-pose-data.ts",
         "../runtime/scene3d/mount-webgl.ts",
         "../runtime/scene3d/mount-quality.ts",
         "../runtime/scene3d/overlays.ts",
@@ -411,6 +415,12 @@
         "../runtime/scene3d/vessel-decks.ts",
         "../runtime/scene3d/vessel-cutaway.ts",
         "../runtime/scene3d/mount-vessel.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-hierarchy.js",
+      "sources": [
+        "../runtime/scene3d/hierarchy.ts"
       ]
     },
     {

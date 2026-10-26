@@ -15,6 +15,8 @@
 //     2 storage  pose mode: 16 floats per agent (transform);
 //                motion mode: 24 floats per agent (the GSP3 motion record)
 //     3 storage  pose mode: 3 floats per agent (atlas rows a, b, blend)
+//     4 storage  4 floats per agent: tint (linear RGBA), read by the color pass
+//                only when CrowdParams.timing.z is 1
 //
 // The shaders mirror the WebGL renderer's SCENE_CROWD_SKIN_GLSL and
 // SCENE_CROWD_SKIN_MOTION_GLSL line for line; scene3d-webgpu-crowd.test.js pins
@@ -53,13 +55,13 @@ const SCENE_WEBGPU_CROWD_STRUCTS = [
   "};",
 ].join("\n");
 
-function sceneWebGPUCrowdDecls(group: number): string {
+function sceneWebGPUCrowdDecls(group: number, tints: boolean): string {
   return [
     "@group(" + group + ") @binding(0) var<uniform> crowdParams: CrowdParams;",
     "@group(" + group + ") @binding(1) var crowdAtlas: texture_2d<f32>;",
     "@group(" + group + ") @binding(2) var<storage, read> crowdAgents: array<f32>;",
     "@group(" + group + ") @binding(3) var<storage, read> crowdPoses: array<f32>;",
-  ].join("\n");
+  ].concat(tints ? ["@group(" + group + ") @binding(4) var<storage, read> crowdTints: array<vec4f>;"] : []).join("\n");
 }
 
 // Agent models. Read only crowdParams and crowdAgents, so the cull kernel
@@ -165,14 +167,14 @@ function sceneWebGPUCrowdModelFn(motion: boolean): string {
     ].join("\n");
 }
 
-function sceneWebGPUCrowdBlock(group: number, motion: boolean): string {
-  return [SCENE_WEBGPU_CROWD_STRUCTS, sceneWebGPUCrowdDecls(group), SCENE_WEBGPU_CROWD_MODEL_WGSL,
+function sceneWebGPUCrowdBlock(group: number, motion: boolean, tints: boolean = false): string {
+  return [SCENE_WEBGPU_CROWD_STRUCTS, sceneWebGPUCrowdDecls(group, tints), SCENE_WEBGPU_CROWD_MODEL_WGSL,
     SCENE_WEBGPU_CROWD_SKIN_WGSL, sceneWebGPUCrowdModelFn(motion), SCENE_WEBGPU_CUTAWAY_CROWD_WGSL].join("\n");
 }
 
 // The color shader is the instanced PBR vertex shader with the instance matrix
-// replaced by the crowd model and the instance color by white, as the WebGL
-// crowd shaders replace a_instanceMatrix. It is written out in full rather than
+// replaced by the crowd model and the instance color by the agent's tint (white
+// without one), as the WebGL crowd shaders replace a_instanceMatrix. It is written out in full rather than
 // patched from the instanced shader's text: the bundle build strips that text's
 // indentation and renames its locals.
 function sceneWebGPUCrowdColorVertexWGSL(motion: boolean): string {
@@ -198,7 +200,7 @@ function sceneWebGPUCrowdColorVertexWGSL(motion: boolean): string {
     "    @location(5) @interpolate(flat) instanceColor: vec4f,",
     "};",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
-    sceneWebGPUCrowdBlock(2, motion),
+    sceneWebGPUCrowdBlock(2, motion, true),
     "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    var out: VertexOutput;",
     "    let agentModel = crowdModel(in.crowdSlot, in.joints, in.weights);",
@@ -219,6 +221,7 @@ function sceneWebGPUCrowdColorVertexWGSL(motion: boolean): string {
     "    out.tangent = T;",
     "    out.bitangent = cross(N, T) * in.tangent.w * an.w;",
     "    out.instanceColor = vec4f(1.0);",
+    "    if (crowdParams.timing.z > 0.5) { out.instanceColor = crowdTints[in.crowdSlot]; }",
     "    out.clipPos = frame.projMatrix * frame.viewMatrix * world;",
     "    return out;",
     "}",
@@ -506,12 +509,44 @@ function sceneWebGPUCrowdAgentRecord(object: any, serial: number): any {
   record.crowdDirtyRanges = null;
   record.crowdDirtyBase = -1;
   record.crowdParentMatrix = null;
+  record.crowdColors = skin.tint ? new Float32Array(skin.tint) : null;
+  record.crowdColorGen = serial;
   return record;
 }
 
 // hooks: bindAttribute(pass, slot, record, key, components) and
 // bindIndex(pass, record) bind the retained geometry of a batch record;
 // materialGroup(record, materials) returns its material bind group.
+function sceneWebGPUCrowdSlotLayouts(): any[] {
+  return [
+    { arrayStride: 4, stepMode: "instance", attributes: [{ format: "uint32", offset: 0, shaderLocation: 4 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 5 }] },
+    { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 6 }] },
+  ];
+}
+
+// Color and shadow share layout lifetime, topology and depth policy.
+function sceneWebGPUCrowdRenderPipeline(device: any, target: any, l: any, pipelines: any, module: (name: string, code: string) => any, motion: boolean, shadow: boolean): any {
+  const name = (shadow ? "shadow-" : "color-") + (motion ? "motion" : "pose");
+  const key = shadow ? name : name + "|" + target.format + "|" + target.sampleCount + "|" + (target.specular ? 1 : 0);
+  if (pipelines[key]) return pipelines[key];
+  return pipelines[key] = wgpuCreateValidatedPipeline(device, "render", {
+    label: "gosx-crowd-" + name,
+    layout: device.createPipelineLayout({ bindGroupLayouts: shadow ? [l.shadow, l.crowd] : [l.frame, l.material, l.crowd] }),
+    vertex: {
+      module: module(name, shadow ? sceneWebGPUCrowdShadowVertexWGSL(motion) : sceneWebGPUCrowdColorVertexWGSL(motion)),
+      entryPoint: "vertexMain",
+      buffers: (shadow ? [WGPU_SHADOW_VERTEX_LAYOUT[0]] : WGPU_PBR_VERTEX_LAYOUT).concat(sceneWebGPUCrowdSlotLayouts()),
+    },
+    fragment: shadow ? { module: module("shadow-fragment", WGSL_SHADOW_FRAGMENT), entryPoint: "fragmentMain", targets: [] }
+      : sceneWebGPUColorFragment(module("color-fragment", WGSL_PBR_FRAGMENT), sceneWebGPUColorTarget(target.format, target.specular), wgpuBlendState("opaque")),
+    primitive: { topology: "triangle-list", cullMode: "none", frontFace: "ccw" },
+    multisample: { count: shadow ? 1 : Math.max(1, target.sampleCount) },
+    depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
+  });
+}
+
+
 function createSceneWebGPUCrowd(device: any, hooks: any): any {
   let disposed = false;
   const atlases = new Map();
@@ -554,14 +589,14 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
   function dropStale(): void {
     batches.forEach(function(state: any, id: string) {
       if (state.serial === serial) return;
-      release(state.params); release(state.agents); release(state.poses); release(state.identity); release(state.visible); release(state.visibility);
+      release(state.params); release(state.agents); release(state.poses); release(state.tints); release(state.identity); release(state.visible); release(state.visibility);
       batches.delete(id);
     });
   }
 
   function capability(): void {
     const limits = device.limits || {};
-    if (typeof limits.maxStorageBuffersInVertexStage === "number" && limits.maxStorageBuffersInVertexStage < 2) {
+    if (typeof limits.maxStorageBuffersInVertexStage === "number" && limits.maxStorageBuffersInVertexStage < 3) {
       throw new Error("crowd needs vertex-stage storage buffers");
     }
   }
@@ -590,6 +625,7 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
         { binding: 1, visibility: V, texture: { sampleType: "unfilterable-float", viewDimension: "2d" } },
         buf(2, V | C, "read-only-storage"),
         buf(3, V, "read-only-storage"),
+        buf(4, V, "read-only-storage"),
       ] }),
       cull: device.createBindGroupLayout({ label: "gosx-crowd-cull", entries: [
         buf(0, C, "uniform", true), buf(1, C, "uniform"), buf(2, C, "read-only-storage"),
@@ -604,55 +640,6 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
 
   function module(name: string, code: string): any {
     return shaderModules[name] || (shaderModules[name] = device.createShaderModule({ label: "gosx-crowd-" + name, code }));
-  }
-
-  function slotLayouts(): any[] {
-    return [
-      { arrayStride: 4, stepMode: "instance", attributes: [{ format: "uint32", offset: 0, shaderLocation: 4 }] },
-      { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 5 }] },
-      { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 6 }] },
-    ];
-  }
-
-  function targetKey(): string {
-    return target.format + "|" + target.sampleCount + "|" + (target.specular ? 1 : 0);
-  }
-
-  function colorPipeline(motion: boolean): any {
-    const key = "color|" + (motion ? "m" : "p") + "|" + targetKey();
-    if (pipelines[key]) return pipelines[key];
-    const l = ensureLayouts();
-    return pipelines[key] = wgpuCreateValidatedPipeline(device, "render", {
-      label: "gosx-crowd-color-" + (motion ? "motion" : "pose"),
-      layout: device.createPipelineLayout({ bindGroupLayouts: [l.frame, l.material, l.crowd] }),
-      vertex: {
-        module: module("color-" + (motion ? "motion" : "pose"), sceneWebGPUCrowdColorVertexWGSL(motion)),
-        entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT.concat(slotLayouts()),
-      },
-      fragment: sceneWebGPUColorFragment(module("color-fragment", WGSL_PBR_FRAGMENT), sceneWebGPUColorTarget(target.format, target.specular), wgpuBlendState("opaque")),
-      primitive: { topology: "triangle-list", cullMode: "none" },
-      multisample: { count: Math.max(1, target.sampleCount) },
-      depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
-    });
-  }
-
-  function shadowPipeline(motion: boolean): any {
-    const key = "shadow|" + (motion ? "m" : "p");
-    if (pipelines[key]) return pipelines[key];
-    const l = ensureLayouts();
-    const slots = slotLayouts();
-    // Shadow vertex buffers: 0 position, 1 survivor slot, 2 joints, 3 weights.
-    return pipelines[key] = wgpuCreateValidatedPipeline(device, "render", {
-      label: "gosx-crowd-shadow-" + (motion ? "motion" : "pose"),
-      layout: device.createPipelineLayout({ bindGroupLayouts: [l.shadow, l.crowd] }),
-      vertex: {
-        module: module("shadow-" + (motion ? "motion" : "pose"), sceneWebGPUCrowdShadowVertexWGSL(motion)),
-        entryPoint: "vertexMain", buffers: [WGPU_SHADOW_VERTEX_LAYOUT[0]].concat(slots),
-      },
-      fragment: { module: module("shadow-fragment", WGSL_SHADOW_FRAGMENT), entryPoint: "fragmentMain", targets: [] },
-      primitive: { topology: "triangle-list", cullMode: "none", frontFace: "ccw" },
-      depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
-    });
   }
 
   function computePipeline(name: string, code: string, entry: string, layout: any): any {
@@ -715,11 +702,13 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
       grew = true;
     }
     if (!state.agents || state.capacity < count || state.motion !== motion) {
-      release(state.agents); release(state.poses); release(state.identity); release(state.visible); release(state.visibility);
+      release(state.agents); release(state.poses); release(state.tints); release(state.identity); release(state.visible); release(state.visibility);
       state.capacity = Math.max(8, Math.ceil(count * 1.25));
       state.motion = motion;
       state.agents = buffer("agents", state.capacity * stride * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
       state.poses = buffer("poses", motion ? 16 : state.capacity * 12, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+      state.tints = buffer("tints", state.capacity * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+      state.colorGen = -1;
       const identity = new Uint32Array(state.capacity);
       for (let i = 0; i < identity.length; i++) identity[i] = i;
       state.identity = buffer("identity", identity.byteLength, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
@@ -736,7 +725,14 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
   // Pose mode uploads the record's own streams after a revision change. Motion
   // mode packs the members' motion records and uploads only the dirty runs.
   function syncAgents(state: any, record: any): void {
-    const count = record.instanceCount;
+    const count = record.instanceCount, colors = record.crowdColors;
+    state.tinted = colors instanceof Float32Array && colors.length >= count * 4;
+    if (state.tinted && state.colorGen !== record.crowdColorGen) {
+      device.queue.writeBuffer(state.tints, 0, colors, 0, count * 4);
+      state.colorGen = record.crowdColorGen;
+      counters.uploads += 1;
+      counters.uploadedBytes += count * 16;
+    }
     if (state.uploadedRevision === record.crowdRevision && state.count === count) return;
     const ranges = record.crowdDirtyRanges && state.uploadedRevision === record.crowdDirtyBase ? record.crowdDirtyRanges : null;
     const reshaped = state.count !== count || state.shape !== record.crowdShape;
@@ -790,7 +786,7 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
     const f = paramsF32, u = paramsU32;
     const parent = record.crowdParentMatrix;
     for (let k = 0; k < 16; k++) f[k] = parent ? parent[k] : (k % 5 === 0 ? 1 : 0);
-    f[16] = frame.now; f[17] = SCENE_WEBGPU_CROWD_EXTRAPOLATION_SECONDS; f[18] = 0; f[19] = 0;
+    f[16] = frame.now; f[17] = SCENE_WEBGPU_CROWD_EXTRAPOLATION_SECONDS; f[18] = state.tinted ? 1 : 0; f[19] = 0;
     const b = state.localBounds;
     f[20] = b.cx; f[21] = b.cy; f[22] = b.cz; f[23] = b.r;
     u[24] = record.instanceCount; u[25] = state.motion ? 1 : 0; u[26] = record.castShadow ? 1 : 0; u[27] = state.argsIndex * (SCENE_WEBGPU_CROWD_ARGS_BYTES / 4);
@@ -819,6 +815,7 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
         { binding: 1, resource: atlas.view },
         { binding: 2, resource: { buffer: state.agents } },
         { binding: 3, resource: { buffer: state.poses } },
+        { binding: 4, resource: { buffer: state.tints } },
       ] });
       state.atlasView = atlas.view;
     }
@@ -957,7 +954,7 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
   function syncBatch(record: any, index: number, frame: any, planes: any): any {
     let state = batches.get(record.id);
     if (!state) {
-      state = { id: record.id, params: null, agents: null, poses: null, identity: null, visible: null, visibility: null, capacity: 0,
+      state = { id: record.id, params: null, agents: null, poses: null, tints: null, tinted: false, colorGen: -1, identity: null, visible: null, visibility: null, capacity: 0,
         motion: false, count: 0, shape: -1, uploadedRevision: -1, packed: null, flags: null, group: null, cullGroup: null };
       batches.set(record.id, state);
     }
@@ -1024,7 +1021,7 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
     const record = state.record;
     const motion = state.motion;
     const indexed = record.vertices && record.vertices.indices instanceof Uint32Array && record.vertices.indices.length >= 3;
-    const pipeline = wgpuRequirePipeline(shadow ? shadowPipeline(motion) : colorPipeline(motion));
+    const pipeline = wgpuRequirePipeline(sceneWebGPUCrowdRenderPipeline(device, target, ensureLayouts(), pipelines, module, motion, shadow));
     pass.setPipeline(pipeline);
     pass.setBindGroup(shadow ? 1 : 2, state.group);
     const attributes = shadow ? [["positions", 3, 0]] : [["positions", 3, 0], ["normals", 3, 1], ["uvs", 2, 2], ["tangents", 4, 3]];
@@ -1235,7 +1232,7 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
     dispose: function(): void {
       disposed = true;
       batches.forEach(function(state: any) {
-        release(state.params); release(state.agents); release(state.poses); release(state.identity); release(state.visible); release(state.visibility);
+        release(state.params); release(state.agents); release(state.poses); release(state.tints); release(state.identity); release(state.visible); release(state.visibility);
       });
       batches.clear();
       atlases.forEach(function(record: any) { release(record.texture); });

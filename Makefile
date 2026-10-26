@@ -453,7 +453,7 @@ build-det-parity-darwin-arm64:
 # opt in with a //gosx:deterministic comment. Add a package to DET_LINT_PKGS when
 # it opts in. The analyzer type-checks each package, so list packages instead of
 # using ./... .
-DET_LINT_PKGS ?= ./det/... ./physics ./vessel
+DET_LINT_PKGS ?= ./det/... ./physics ./vessel ./motion ./scene/geom ./scene/harness ./scene/imagediff ./scene/preview ./internal/sceneaffine ./render/gpu/headless ./scene
 lint-deterministic:
 	$(GO) run ./cmd/gosx-detlint $(DET_LINT_PKGS)
 

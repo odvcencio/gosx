@@ -153,6 +153,7 @@ func applyShaderLib(props map[string]any) map[string]any {
 
 	// Identify duplicates (count ≥ 2).
 	lib := map[string]string{} // id → source (deduped)
+	//gosx:allow map-range keys are content hashes, so each source has one id; order does not matter
 	for src, cnt := range counts {
 		if cnt >= 2 {
 			id := shaderLibID(src)
@@ -165,6 +166,7 @@ func applyShaderLib(props map[string]any) map[string]any {
 
 	// Build a reverse index: source → id, for fast lookup during replacement.
 	sourceToID := make(map[string]string, len(lib))
+	//gosx:allow map-range keys are content hashes, so each source has one id; order does not matter
 	for id, src := range lib {
 		sourceToID[src] = id
 	}
@@ -190,16 +192,19 @@ func applyShaderLib(props map[string]any) map[string]any {
 	// when a deduped SceneIR is re-marshaled after a Go round trip.
 	libMap := make(map[string]string, len(lib))
 	if existing, ok := props["shaderLib"].(map[string]string); ok {
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for id, src := range existing {
 			libMap[id] = src
 		}
 	} else if existingAny, ok := props["shaderLib"].(map[string]any); ok {
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for id, value := range existingAny {
 			if src, ok := value.(string); ok {
 				libMap[id] = src
 			}
 		}
 	}
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for id, src := range lib {
 		libMap[id] = src
 	}
@@ -225,6 +230,7 @@ func inflateShaderLib(scene map[string]any) {
 			return
 		}
 		lib = make(map[string]string, len(libAny))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for k, v := range libAny {
 			if s, ok := v.(string); ok {
 				lib[k] = s
@@ -277,6 +283,7 @@ func sceneIRNodeIterator(scene map[string]any, collection string, fn func(node m
 // tests to assert deterministic output.
 func sortedShaderLibKeys(lib map[string]string) []string {
 	keys := make([]string, 0, len(lib))
+	//gosx:allow map-range keys are sorted on the next lines
 	for k := range lib {
 		keys = append(keys, k)
 	}

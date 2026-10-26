@@ -290,8 +290,8 @@ func (r bvhRay) hitsBox(box aabb, padding, maxDistance float64) bool {
 		far = maxDistance
 	}
 
-	lower := (box.Min.X - padding - r.origin.X) * r.inverse.X
-	upper := (box.Max.X + padding - r.origin.X) * r.inverse.X
+	lower := float64((box.Min.X - padding - r.origin.X) * r.inverse.X)
+	upper := float64((box.Max.X + padding - r.origin.X) * r.inverse.X)
 	if lower > upper {
 		lower, upper = upper, lower
 	}
@@ -301,8 +301,8 @@ func (r bvhRay) hitsBox(box aabb, padding, maxDistance float64) bool {
 		return false
 	}
 
-	lower = (box.Min.Y - padding - r.origin.Y) * r.inverse.Y
-	upper = (box.Max.Y + padding - r.origin.Y) * r.inverse.Y
+	lower = float64((box.Min.Y - padding - r.origin.Y) * r.inverse.Y)
+	upper = float64((box.Max.Y + padding - r.origin.Y) * r.inverse.Y)
 	if lower > upper {
 		lower, upper = upper, lower
 	}
@@ -312,8 +312,8 @@ func (r bvhRay) hitsBox(box aabb, padding, maxDistance float64) bool {
 		return false
 	}
 
-	lower = (box.Min.Z - padding - r.origin.Z) * r.inverse.Z
-	upper = (box.Max.Z + padding - r.origin.Z) * r.inverse.Z
+	lower = float64((box.Min.Z - padding - r.origin.Z) * r.inverse.Z)
+	upper = float64((box.Max.Z + padding - r.origin.Z) * r.inverse.Z)
 	if lower > upper {
 		lower, upper = upper, lower
 	}
@@ -750,9 +750,12 @@ func buildTorusKnotSoup(key torusKnotKey) *triangleSoup {
 // changes with Update; the accelerator owns its triangle buffers and reuses
 // their hierarchies when a named mesh keeps identical geometry.
 type SceneAccelerator struct {
-	prims []accelPrim
-	boxes []aabb
-	tree  bvh
+	graph       Graph
+	timeSeconds float64
+	parents     rayParentResolver
+	prims       []accelPrim
+	boxes       []aabb
+	tree        bvh
 	// buildThreshold is the pick radius the boxes were sized with. A query with a
 	// larger threshold pads the box tests by the excess.
 	buildThreshold float64
@@ -783,7 +786,7 @@ func NewSceneAccelerator(graph Graph, options ...RaycastOption) *SceneAccelerato
 		}
 	}
 	accel := &SceneAccelerator{buildThreshold: pointHitRadius(opts)}
-	accel.Update(graph)
+	accel.UpdateAtTime(graph, opts.TimeSeconds)
 	return accel
 }
 
@@ -794,6 +797,22 @@ func NewSceneAccelerator(graph Graph, options ...RaycastOption) *SceneAccelerato
 // required. Removed geometry is released at each update. Update and ray queries
 // must not run concurrently on the same accelerator.
 func (accel *SceneAccelerator) Update(graph Graph) {
+	accel.UpdateAtTime(graph, 0)
+}
+
+// UpdateAtTime replaces the graph and samples its animated parent transforms.
+// Geometry hierarchy reuse follows Update; the scene clock owns the pose.
+func (accel *SceneAccelerator) UpdateAtTime(graph Graph, seconds float64) {
+	accel.graph, accel.timeSeconds = graph, seconds
+	accel.parents = rayParentResolver{graph: graph, seconds: seconds}
+	if math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		clear(accel.prims)
+		accel.prims = accel.prims[:0]
+		accel.boxes = accel.boxes[:0]
+		accel.tree = bvh{}
+		accel.nodesVisited = 0
+		return
+	}
 	accel.previousMeshSoups = accel.meshSoups
 	accel.meshSoups = nil
 	accel.soups = nil
@@ -836,14 +855,20 @@ func (a *SceneAccelerator) Raycast(ray Ray, options ...RaycastOption) (RayHit, b
 // BVH instead of a full graph walk.
 func (a *SceneAccelerator) Trace(ray Ray, options ...RaycastOption) RayTrace {
 	opts := RaycastOptions{}
+	if a != nil {
+		opts.TimeSeconds = a.timeSeconds
+	}
 	for _, option := range options {
 		if option != nil {
 			option(&opts)
 		}
 	}
+	if a != nil && opts.timeSet && !math.IsNaN(opts.TimeSeconds) && !math.IsInf(opts.TimeSeconds, 0) && opts.TimeSeconds != a.timeSeconds {
+		a.UpdateAtTime(a.graph, opts.TimeSeconds)
+	}
 	ray.Direction = normalizeVector(ray.Direction)
 	trace := RayTrace{Ray: ray, Options: opts, Hits: []RayHit{}}
-	if a == nil || ray.Direction == (Vector3{}) {
+	if a == nil || ray.Direction == (Vector3{}) || math.IsNaN(opts.TimeSeconds) || math.IsInf(opts.TimeSeconds, 0) {
 		return trace
 	}
 	trace.NodesVisited = a.nodesVisited
@@ -911,7 +936,7 @@ func (a *SceneAccelerator) intersect(prim *accelPrim, ray Ray, threshold float64
 	case primPoint, primSprite:
 		radius := threshold
 		if prim.kind == primSprite {
-			radius *= prim.scale.X
+			radius = float64(radius * prim.scale.X)
 		}
 		hit, ok := intersectWorldSphere(ray, prim.world.Position, radius)
 		if !ok {
@@ -969,10 +994,13 @@ func (a *SceneAccelerator) flatten(node Node, parent worldTransform) {
 			a.flattenInstancedMesh(*current, parent)
 		}
 	case Group:
-		a.flattenChildren(current.Children, combineTransforms(parent, localScaledTransform(current.Position, current.Rotation, current.Scale)))
+		if !validSpinTime(current.Spin, a.timeSeconds) {
+			return
+		}
+		a.flattenChildren(current.Children, combineTransforms(parent, spinningTransform(current.Position, current.Rotation, current.Scale, current.Spin, a.timeSeconds)))
 	case *Group:
-		if current != nil {
-			a.flattenChildren(current.Children, combineTransforms(parent, localScaledTransform(current.Position, current.Rotation, current.Scale)))
+		if current != nil && validSpinTime(current.Spin, a.timeSeconds) {
+			a.flattenChildren(current.Children, combineTransforms(parent, spinningTransform(current.Position, current.Rotation, current.Scale, current.Spin, a.timeSeconds)))
 		}
 	case LODGroup:
 		a.flattenLODGroup(current, parent)
@@ -1036,17 +1064,24 @@ func (a *SceneAccelerator) flattenMesh(mesh Mesh, parent worldTransform) {
 		pickable: mesh.Pickable == nil || *mesh.Pickable,
 		stroked:  strokes > 0,
 		index:    -1,
-		radius:   radius*worldScaleBound(world, scale) + strokes*a.buildThreshold,
+		radius:   float64(radius*worldScaleBound(world, scale)) + float64(strokes*a.buildThreshold),
 	})
 	a.flattenChildren(mesh.Children, world)
 }
 
 func (a *SceneAccelerator) flattenInstancedMesh(mesh InstancedMesh, parent worldTransform) {
+	if mesh.ParentNode != "" {
+		var valid bool
+		parent, valid = a.parents.resolve(mesh.ParentNode)
+		if !valid {
+			return
+		}
+	}
 	count := instanceCount(mesh)
 	pickable := mesh.Pickable == nil || *mesh.Pickable
 	id := strings.TrimSpace(mesh.ID)
 	localRadius, strokes := geometryBounds(mesh.Geometry)
-	stroke := strokes * a.buildThreshold
+	stroke := float64(strokes * a.buildThreshold)
 	geometry := a.exactGeometry(mesh.Geometry, id)
 	for i := 0; i < count; i++ {
 		position := vectorAt(mesh.Positions, i, Vector3{})
@@ -1062,7 +1097,7 @@ func (a *SceneAccelerator) flattenInstancedMesh(mesh InstancedMesh, parent world
 			pickable: pickable,
 			stroked:  strokes > 0,
 			index:    i,
-			radius:   localRadius*worldScaleBound(world, scale) + stroke,
+			radius:   float64(localRadius*worldScaleBound(world, scale)) + stroke,
 		})
 	}
 }
@@ -1183,7 +1218,7 @@ func (a *SceneAccelerator) flattenSprite(sprite Sprite, parent worldTransform) {
 		kind:     primSprite,
 		pickable: true,
 		index:    -1,
-		radius:   a.buildThreshold * radiusScale,
+		radius:   float64(a.buildThreshold * radiusScale),
 	})
 }
 
@@ -1203,7 +1238,7 @@ func (a *SceneAccelerator) flattenModel(model Model, parent worldTransform) {
 		kind:     primModel,
 		pickable: model.Pickable == nil || *model.Pickable,
 		index:    -1,
-		radius:   radius * worldScaleBound(world, scale),
+		radius:   float64(radius * worldScaleBound(world, scale)),
 	})
 }
 

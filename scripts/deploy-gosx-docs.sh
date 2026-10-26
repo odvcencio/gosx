@@ -241,8 +241,7 @@ if [ -z "$framework_version" ]; then
 	echo "gosx docs deploy: could not determine the framework version from the built CLI" >&2
 	exit 1
 fi
-tinygo_dir="$(dirname "$tinygo_path")"
-PATH="${tinygo_dir}:${PATH}" \
+TINYGO="$tinygo_path" \
 	GOSX_TINYGO_GOROOT="$tinygo_go_root" \
 	PUBLIC_URL="$public_url" \
 	GOSX_DOCS_REVISION="$revision" \

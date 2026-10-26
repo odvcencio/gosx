@@ -847,7 +847,7 @@ func validateStableNode(node *yaml.Node) error {
 		return err
 	}
 	return exactStringMap(step["with"], label+".with", map[string]string{
-		"node-version": "22",
+		"node-version": "22.23.4",
 	})
 }
 

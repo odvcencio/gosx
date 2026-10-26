@@ -1,15 +1,41 @@
 (function () {
   "use strict";
 
+  const mountKey = Symbol.for("gosx.editor.intelligence");
+  if (window[mountKey]) {
+    window[mountKey]();
+    return;
+  }
   const runtimePromises = new Map();
   const languagePromises = new Map();
-  const forms = Array.from(document.querySelectorAll(
-    "form[data-code-intelligence-runtime], form[data-code-intelligence-server]"
-  ));
+  const forms = new Map();
+  const selector = "form[data-code-intelligence-runtime], form[data-code-intelligence-server]";
   const firstPaint = waitForFirstContentfulPaint();
-  for (const form of forms) {
-    firstPaint.then(() => mount(form));
+  function refresh() {
+    for (const [form, state] of forms) {
+      if (!form.isConnected || form.querySelector("textarea[name=content]") !== state.source) {
+        state.cleanup();
+        forms.delete(form);
+      }
+    }
+    for (const form of document.querySelectorAll(selector)) {
+      if (!forms.has(form)) void mount(form);
+      else forms.get(form).refresh();
+    }
   }
+  window[mountKey] = refresh;
+  firstPaint.then(refresh);
+  new MutationObserver(records => {
+    const relevant = node => node.nodeType === 1 && (node.matches(selector + ", textarea[name=content]") || node.querySelector(selector));
+    if (records.some(record => record.type === "attributes"
+      ? record.target.matches(selector + ", .editor-page-native")
+      : record.target.matches?.("textarea[name=content]") || Array.from(record.addedNodes).some(relevant) || Array.from(record.removedNodes).some(relevant))) {
+      firstPaint.then(refresh);
+    }
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ["class", "data-code-intelligence-lane", "data-highlight-span-count"],
+  });
 
   function waitForFirstContentfulPaint() {
     if (performance.getEntriesByName("first-contentful-paint", "paint").length > 0) return Promise.resolve();
@@ -41,59 +67,92 @@
       (cfg.collaborationPath || Math.random().toString(36).slice(2));
     let timer = 0;
     let runtime;
+    let runtimeOpen = false;
     let latestTags = [];
     let serverFallback = false;
     let requestSequence = 0;
+    let latestAnalysis;
+    let analyzedSource;
+    let refreshAnalysis = () => {};
+    let disposed = false;
+    const lifetime = new AbortController();
+    const live = () => !disposed && form.isConnected;
+    const cleanup = () => {
+      disposed = true;
+      requestSequence++;
+      window.clearTimeout(timer);
+      lifetime.abort();
+      if (runtimeOpen) runtime.close(documentID);
+    };
+    forms.set(form, {source, cleanup, refresh: () => refreshAnalysis()});
+    const initialSource = source.value;
+    const acceptAnalysis = analysis => {
+      latestTags = analysis.tags || [];
+      latestAnalysis = analysis;
+      analyzedSource = source.value;
+      applyAnalysis(form, source, highlight, analysis);
+    };
 
     try {
       let initial;
       if (cfg.codeIntelligenceWasmExec && cfg.codeIntelligenceRuntime && cfg.codeIntelligenceGrammar && cfg.codeIntelligenceHighlights) {
         runtime = await loadRuntime(cfg.codeIntelligenceWasmExec, cfg.codeIntelligenceRuntime);
+        if (!live()) return;
         await loadLanguage(runtime, cfg);
+        if (!live()) return;
         initial = requireOK(runtime.open(cfg.codeIntelligenceLanguage, documentID, source.value));
+        runtimeOpen = true;
       } else if (cfg.codeIntelligenceServer) {
         serverFallback = true;
-        initial = await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, source.value);
+        initial = await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, initialSource, lifetime.signal);
       } else {
         throw new Error("Code intelligence has neither browser assets nor a server endpoint.");
       }
-      latestTags = initial.tags || [];
-      applyAnalysis(form, source, highlight, initial);
+      if (!live()) return;
+      if (source.value === initialSource) {
+        acceptAnalysis(initial);
+      }
     } catch (error) {
+      if (!live()) return;
       if (!cfg.codeIntelligenceServer) {
         reportError(form, error);
         return;
       }
       try {
         serverFallback = true;
-        const initial = await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, source.value);
-        latestTags = initial.tags || [];
-        applyAnalysis(form, source, highlight, initial);
+        const initial = await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, initialSource, lifetime.signal);
+        if (!live()) return;
+        if (source.value === initialSource) {
+          acceptAnalysis(initial);
+        }
       } catch (fallbackError) {
+        if (!live()) return;
         reportError(form, fallbackError);
-        return;
+        // Keep the input binding so an edit can retry a transient outage.
       }
     }
 
     const update = () => {
+      if (!live()) return;
       window.clearTimeout(timer);
       const sequence = ++requestSequence;
       timer = window.setTimeout(async () => {
+        const value = source.value;
         try {
           const analysis = serverFallback
-            ? await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, source.value)
-            : requireOK(runtime.update(documentID, source.value));
-          if (sequence !== requestSequence) return;
-          latestTags = analysis.tags || [];
-          applyAnalysis(form, source, highlight, analysis);
+            ? await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, value, lifetime.signal)
+            : requireOK(runtime.update(documentID, value));
+          if (!live() || sequence !== requestSequence || value !== source.value) return;
+          acceptAnalysis(analysis);
         } catch (error) {
-          reportError(form, error);
+          if (live() && sequence === requestSequence) reportError(form, error);
         }
       }, 40);
     };
-    source.addEventListener("input", update);
-    source.addEventListener("gosx:remote-input", update);
+    source.addEventListener("input", update, {signal: lifetime.signal});
+    source.addEventListener("gosx:remote-input", update, {signal: lifetime.signal});
     source.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
       if (event.key === "F12") {
         const target = definitionAtCursor(source, latestTags);
         if (!target) return;
@@ -109,14 +168,23 @@
         event.preventDefault();
         source.setSelectionRange(tagStart(target), tagEnd(target));
       }
-    });
-    window.addEventListener("pagehide", () => {
-      if (runtime && !serverFallback) runtime.close(documentID);
-    }, {once: true});
+    }, {signal: lifetime.signal});
+    window.addEventListener("pagehide", cleanup, {once: true, signal: lifetime.signal});
+    refreshAnalysis = () => {
+      if (!live()) return;
+      if (analyzedSource !== source.value) {
+        update();
+      } else if (latestAnalysis && (form.dataset.codeIntelligenceLane !== (latestAnalysis.lane || "wasm") ||
+        form.dataset.highlightSpanCount !== String((latestAnalysis.highlights || []).length))) {
+        applyAnalysis(form, source, highlight, latestAnalysis);
+      }
+    };
+    if (source.value !== initialSource) update();
   }
 
-  async function requestServerAnalysis(form, url, path, source) {
+  async function requestServerAnalysis(form, url, path, source, signal) {
     const response = await fetch(url, {
+      signal,
       method: "POST",
       credentials: "same-origin",
       headers: {
@@ -230,12 +298,13 @@
   }
 
   function applyAnalysis(form, source, highlight, analysis) {
-    form.dataset.codeIntelligenceLane = analysis.lane || "wasm";
+    const lane = analysis.lane || "wasm";
+    if (form.dataset.codeIntelligenceLane !== lane) form.dataset.codeIntelligenceLane = lane;
     renderHighlights(highlight, source.value, analysis.highlights || []);
 	form.dispatchEvent(new CustomEvent("gosx:highlight-spans", {detail: {spans: analysis.highlights || []}}));
     renderOutline(form, source, analysis.tags || []);
     const diagnostics = form.querySelector("#editor-diagnostics");
-    if (diagnostics && analysis.hasError) diagnostics.textContent = "Syntax tree contains an error node.";
+    if (diagnostics) diagnostics.textContent = analysis.hasError ? "Syntax tree contains an error node." : "";
     form.dispatchEvent(new CustomEvent("gosx:code-analysis", {detail: analysis}));
   }
 
@@ -322,6 +391,6 @@
   }
 
   function reportGlobalError(error) {
-    for (const form of forms) reportError(form, error instanceof Error ? error : new Error(String(error)));
+    for (const form of forms.keys()) reportError(form, error instanceof Error ? error : new Error(String(error)));
   }
 })();

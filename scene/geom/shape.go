@@ -4,6 +4,7 @@ import (
 	"math"
 	"slices"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/scene/earcut"
 )
 
@@ -49,7 +50,7 @@ func (o ExtrudeOptions) resolved() ExtrudeOptions {
 		o.BevelSegments = 0
 		return o
 	}
-	o.BevelThickness = PositiveOr(o.BevelThickness, o.Depth*0.1)
+	o.BevelThickness = PositiveOr(o.BevelThickness, float64(o.Depth*0.1))
 	o.BevelSize = PositiveOr(o.BevelSize, o.BevelThickness)
 	o.BevelSegments = ClampInt(o.BevelSegments, 3, 1, 16)
 	if o.BevelThickness*2 >= o.Depth {
@@ -177,7 +178,7 @@ func Extrude(contour Contour, opts ExtrudeOptions, want Attribute) *Mesh {
 			next := (i + 1) % count
 			x0, z0 := points[ring[i]*2], points[ring[i]*2+1]
 			x1, z1 := points[ring[next]*2], points[ring[next]*2+1]
-			distance[i+1] = distance[i] + math.Hypot(x1-x0, z1-z0)
+			distance[i+1] = distance[i] + det.Hypot(x1-x0, z1-z0)
 		}
 		perimeter := math.Max(distance[count], 1e-12)
 
@@ -192,7 +193,7 @@ func Extrude(contour Contour, opts ExtrudeOptions, want Attribute) *Mesh {
 				out := outward[step%count]
 				b.emit(vertex{
 					position: vec3{X: x, Y: lv.height, Z: z},
-					normal:   normalize(vec3{X: out.X * radial, Y: vertical, Z: out.Z * radial}),
+					normal:   normalize(vec3{X: float64(out.X * radial), Y: vertical, Z: float64(out.Z * radial)}),
 					uv:       vec2{U: distance[step] / perimeter, V: lv.height / opts.Depth},
 					color:    discColor(0.5),
 				})
@@ -231,16 +232,16 @@ func extrudeLevels(opts ExtrudeOptions) []extrudeLevel {
 	for step := 0; step <= opts.BevelSegments; step++ {
 		angle := float64(step) / float64(opts.BevelSegments) * math.Pi / 2
 		levels = append(levels, extrudeLevel{
-			inset:  opts.BevelSize * (1 - math.Sin(angle)),
-			height: opts.BevelThickness * (1 - math.Cos(angle)),
+			inset:  float64(opts.BevelSize * (1 - det.Sin(angle))),
+			height: float64(opts.BevelThickness * (1 - det.Cos(angle))),
 		})
 	}
 	// The top lip mirrors the bottom one about the middle of the solid.
 	for step := opts.BevelSegments; step >= 0; step-- {
 		angle := float64(step) / float64(opts.BevelSegments) * math.Pi / 2
 		levels = append(levels, extrudeLevel{
-			inset:  opts.BevelSize * (1 - math.Sin(angle)),
-			height: opts.Depth - opts.BevelThickness*(1-math.Cos(angle)),
+			inset:  float64(opts.BevelSize * (1 - det.Sin(angle))),
+			height: opts.Depth - float64(opts.BevelThickness*(1-det.Cos(angle))),
 		})
 	}
 	return levels
@@ -266,7 +267,7 @@ func levelProfileNormal(levels []extrudeLevel, index int) (radial, vertical floa
 	if index+1 < len(levels) {
 		add(index, index+1)
 	}
-	length := math.Hypot(radial, vertical)
+	length := det.Hypot(radial, vertical)
 	if length <= 0 || math.IsNaN(length) {
 		return 1, 0
 	}
@@ -294,7 +295,7 @@ func orientUp(points []float64, indices []int) []int {
 		ax, az := points[out[i]*2], points[out[i]*2+1]
 		bx, bz := points[out[i+1]*2], points[out[i+1]*2+1]
 		cx, cz := points[out[i+2]*2], points[out[i+2]*2+1]
-		total += (bx-ax)*(cz-az) - (bz-az)*(cx-ax)
+		total += float64((bx-ax)*(cz-az)) - float64((bz-az)*(cx-ax))
 	}
 	if total > 0 {
 		// The loop runs counter-clockwise in (x, z), which faces -Y.
@@ -380,7 +381,7 @@ func ringSignedArea(points []float64, ring []int) float64 {
 		next := (i + 1) % len(ring)
 		x0, z0 := points[ring[i]*2], points[ring[i]*2+1]
 		x1, z1 := points[ring[next]*2], points[ring[next]*2+1]
-		total += x0*z1 - x1*z0
+		total += float64(x0*z1) - float64(x1*z0)
 	}
 	return total
 }
@@ -428,15 +429,15 @@ func insetContour(points []float64, rings [][]int, inset float64) []float64 {
 			next := (i + 1) % len(ring)
 			edge0 := edgeDirection(points, ring[prev], ring[i])
 			edge1 := edgeDirection(points, ring[i], ring[next])
-			cos := edge0.X*edge1.X + edge0.Z*edge1.Z
+			cos := float64(edge0.X*edge1.X) + float64(edge0.Z*edge1.Z)
 			if half := math.Sqrt(math.Max((1+cos)/2, 1e-6)); half > 1e-3 {
 				scale = 1 / half
 			}
 			if scale > 4 {
 				scale = 4
 			}
-			out[index*2] -= normals[i].X * inset * scale
-			out[index*2+1] -= normals[i].Z * inset * scale
+			out[index*2] -= float64(normals[i].X * inset * scale)
+			out[index*2+1] -= float64(normals[i].Z * inset * scale)
 		}
 	}
 	return out

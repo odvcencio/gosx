@@ -73,7 +73,7 @@ func orientPolygonUp(points []float64, indices []int) []int {
 		ax, az := points[out[i]*2], points[out[i]*2+1]
 		bx, bz := points[out[i+1]*2], points[out[i+1]*2+1]
 		cx, cz := points[out[i+2]*2], points[out[i+2]*2+1]
-		total += (bx-ax)*(cz-az) - (bz-az)*(cx-ax)
+		total += float64((bx-ax)*(cz-az)) - float64((bz-az)*(cx-ax))
 	}
 	if total > 0 {
 		for i := 0; i+3 <= len(out); i += 3 {

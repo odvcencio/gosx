@@ -25,6 +25,176 @@
   Nested schema and named-scalar checks retain the JSON fallback when a proof
   is stale or a comparison is ambiguous.
 
+## v0.57.24
+
+### Fixed
+
+- Preserve the caller-selected optimizer during docs deployment instead of
+  prepending TinyGo's directory and silently selecting its bundled `wasm-opt`.
+- Honor `TINYGO` in production CLI builds, including custom executable names and
+  relative paths. An unavailable explicit compiler fails without a prebuilt
+  fallback; explicit prebuilt mode and development builds retain their behavior.
+
+## v0.57.23
+
+- Hydrate islands declared in sibling GoSX files or relative-imported shared
+  directories while preserving package boundaries and the declaring file's
+  render context.
+- Create dynamic SVG and MathML in the proper namespace, including HTML
+  integration points, MathML annotations, and namespaced attributes.
+- Keep island table paths aligned with server-added row groups. Preserve
+  grouping through row insertion, section replacement and keyed reordering.
+- Retain keyed row identity around compiler-identified whitespace and static
+  siblings. Ambiguous structures keep positional reconciliation; ordinary
+  fully keyed lists keep their existing path. Reuse row-key strings rather
+  than allocating a new key per row while matching stable source anchors.
+
+## v0.57.22
+
+- Stream primitive instance counts, local transforms and normalized RGBA colors as
+  one retained binary snapshot. Batches can shrink to zero and re-grow without
+  resending geometry, materials or parent declarations. The typed Go
+  `SetTransformColors` helper reuses packing storage; fixed-count transform
+  frames and GLB pose streaming keep their established paths.
+- Reject non-finite count/color snapshots before modifying live state, retire
+  revision history on full declarations, and discard stale queued snapshots
+  when a declaration changes during lazy codec loading. Preserve picking and
+  shared parent transforms on WebGL and WebGPU.
+
+## v0.57.21
+
+- Retain two private pose wrappers per local binary-updated GLB instance instead
+  of re-expanding every model each frame. Validate shared declarations once per
+  batch, preserve atomic rejection and live skin playback, and retire cached
+  wrappers across membership and palette changes. Parented, paletted, fitted,
+  and pending declarations retain their established update path.
+
+- Rotate an entire subtree around its shared local origin with `Group.Spin`.
+  Preserve child-local transforms, nested parents, inherited scale, animation
+  transport, and picking on both GPU backends and the Go renderer. Groups
+  without spin keep their existing flattened representation.
+
+- Colour crowd agents one by one. `MeshInstance.Color` tints an instance of an
+  animated `InstancedGLBMesh`, so a body part that comes in five colours is one
+  batch instead of five. The batch ships a palette and each instance a 1-based
+  index (about 9 bytes per coloured agent for 1,000 agents; a colour string per
+  agent would take 18), and a batch without colours keeps its old wire form. The
+  WebGL pose and motion shaders read the tint as an instance attribute and the
+  WebGPU crowd colour shader as a storage buffer; a colour uploads only when it
+  changes. Vertex colours are not read: neither renderer's mesh path has them.
+
+- Carry instanced meshes on a moving scene node. `InstancedMesh.ParentNode`
+  names the node (a `Vessel.NodeID`, a model ID or an object ID); instance
+  positions are then relative to it, and each render bundle composes the node's
+  current world matrix into the transforms the WebGL2 and WebGPU renderers read.
+  A ship that heaves, pitches and rolls under `DispatchVesselPose` now carries
+  its windows, rails and lifeboats; before, the instances stayed where the scene
+  first placed them. Unchanged composed transforms retain their GPU stream.
+  The same parent search no longer picks a crowd agent as the node, so a
+  crowd batch ID may start with its parent's ID.
+
+- Skip unused normal preparation for unlit Scene3D line geometry in animated
+  frames and static world bakes. Preserve lit colors, solid mesh normals, and
+  lighting changes that invalidate cached geometry colors.
+
+## v0.57.20
+
+- Keep ocean rendering on the shared Scene3D animation clock in WebGL2 and
+  WebGPU, matching vessel buoyancy through pause, seek, and resume. Use the same
+  hardware wave tier for rendering and water queries.
+
+- Prepare camera projection once per Scene3D frame and reuse camera-local line
+  endpoints through clipping and screen projection. Preserve near-plane rounding,
+  culling, resize behavior, and camera-independent world geometry caches.
+
+- Prepare base rotation and drift once per animated object per frame in the Go
+  Scene3D renderer. Reuse them for line and solid mesh positions and normals,
+  preserving clip, spin, scale, parent transforms, and the static bake cache.
+
+- Skip redundant dependency ownership lookups when a single reactive tracking
+  window has already read a source. Preserve the first revision, nested and
+  concurrent tracking isolation, and TinyGo's existing shared-scope path.
+
+- Retain renderer-owned instance matrix and color preparation storage across
+  fresh SceneIR bundles in WebGL2 and WebGPU. Preserve mutable inputs, palette
+  changes, GPU-driven updates, palette reads bounded by the active count, and
+  retirement when the last batch disappears.
+
+- Retain WebGL2 instance stream snapshots across camera-only frames and upload
+  only changed spans, preserving in-place edits, dirty ranges and buffer retirement.
+
+- Reuse retired dependency storage for derived values and effects without
+  recycling lists still read by a refresh. Avoid TinyGo WASM goroutine-identity
+  lookups and a constant-key tracking map while preserving native Go isolation.
+
+- Compile authored Selena vertex texture sampling through SceneIR. Expose only
+  vertex-sampled textures to the WebGPU vertex stage and reject unsupported
+  WebGL device limits before shader compilation, retaining material fallbacks.
+- Bound an orbit's pitch on each side, and give it a floor. `scene.Orbit` gains
+  `MinPitch` and `MaxPitch` (radians of camera elevation above the target's
+  horizon; pointers, because zero is valid) and `MinHeight` (a world y the
+  camera never goes below, at any distance). `PitchLimit` stays the symmetric
+  shorthand. A drag, inertia, a key, a zoom or a camera command all stop on the
+  range and the floor, so a preset aimed near the waterline cannot orbit under
+  the sea. The floor is a fixed height; it does not follow the waves.
+
+- Change a mounted Scene3D scene's orbit target, distance limits and pitch limit
+  after mount. Put `scene.Orbit` on a camera (`PerspectiveCamera.Orbit`,
+  `IRCamera.Orbit`) and the orbit controls take the new target when the camera
+  command runs, so mouse orbit continues around it. `Scene3D.SetOrbit` (and the
+  page-side `__gosx.scene3d.setOrbit` and handle `setOrbit`) changes them alone:
+  the camera keeps its position and turns to the new target. Props with
+  `Controls: ControlOrbit` carry `ControlTarget` and the control limits in the
+  canonical camera record, so a Go-side scene update that changes them reaches
+  the mounted controls.
+
+- Apply a dispatched `SetCamera` command to the built-in camera controls.
+  `Scene3D.Dispatch` with a camera command used to update only the scene state,
+  and orbit, fly and first-person controls kept their own camera, so the camera
+  never moved once the user had touched it. It now takes the same path as
+  `Scene3D.SetCamera` and publishes the new camera.
+
+- Add `wasm.EachFrame`, the way to write a loop in a page-side Go WASM engine.
+  A loop made only of Scene3D calls never lets the browser draw or handle
+  input, because each call waits on an already-resolved promise: the page
+  freezes for the length of the loop. `EachFrame` runs a step once per visible
+  animation frame, pauses while the page is hidden, and ends with its context.
+  See docs/engine-frame-loop.md.
+
+- Boot multi-component Go WASM modules in engine workers. Worker startup
+  accepts each module-local factory and mounts only the requested component,
+  matching page-side registration. Wrong tokens, duplicate names and factory
+  registrations after synchronous module startup are rejected.
+
+- Serve the current Go WASM build from a development server. A hashed Go WASM
+  module is revalidated on each reload (`no-cache` with an ETag), a compressed
+  sidecar older than its file is not used, and a request for an older hash gets
+  the manifest's current build for that module. A production server still
+  serves a hashed file as immutable and never remaps a hash.
+
+- Reuse live computed-value subscriptions when a recomputation reads the same
+  ordered dependencies. Retain freshly tracked revisions, the replacement path
+  for changed dependencies, batched reads, and disposal while reducing
+  subscription allocation churn in islands and engines.
+
+- Reject SceneIR transform and state patches with known non-patch edits before
+  copying large mesh records. Cache scalar comparison fields from the authored
+  patch types, retaining the JSON fallback for ambiguous comparisons.
+
+- Match SceneIR records with one ID table instead of building two maps.
+  Preserve the handling of repeated and empty IDs, sorted removals, and the
+  order of updates and optional patches without mutating either snapshot.
+
+- Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
+  Identical negative thresholds and standalone omitted values still reach the
+  JSON rejection path instead of silently suppressing the update. Carrying
+  omitzero fields keep their omission semantics, including nested records.
+
+- Compare lowered material texture descriptors with generated typed field proofs
+  during SceneIR updates, avoiding repeated reflection over texture slots.
+  Nested schema and named-scalar checks retain the JSON fallback when a proof
+  is stale or a comparison is ambiguous.
+
 ## v0.57.19
 
 - Select Scene3D model-map variants by each mount's delivery profile and actual

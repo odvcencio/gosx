@@ -26,7 +26,7 @@
   };
 
   // All public command and presentation calls share one demand-loaded bridge.
-  ["dispatchCommands", "live", "dispatchPoseFrame", "dispatchMotionFrame", "dispatchClipFrame", "playTimeline", "burstParticles", "setCamera", "whenReady", "setAnimationClock"].forEach(function(method) {
+  ["dispatchCommands", "live", "dispatchPoseFrame", "dispatchMotionFrame", "dispatchClipFrame", "playTimeline", "burstParticles", "setCamera", "setOrbit", "whenReady", "setAnimationClock"].forEach(function(method) {
     api[method] = function() {
       const args = arguments;
       return loadCommandBridge().then(function(bridge) { return bridge[method](...args); });

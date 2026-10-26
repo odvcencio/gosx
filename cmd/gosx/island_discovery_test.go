@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1224,5 +1225,34 @@ func TestFrozenReviewerDiscoveryAcceptsUntrackedNestedHardlinkAlias(t *testing.T
 	}
 	if !os.SameFile(info, aliasInfo) {
 		t.Fatal("fixture paths are not the same physical file")
+	}
+}
+
+// TestCollectProjectIslandProgramsFindsIslandsInSiblingAndSharedFiles pins
+// that the build manifest covers every island the page can render: one in a
+// sibling file of page.gsx and one in a directory imported by relative path.
+func TestCollectProjectIslandProgramsFindsIslandsInSiblingAndSharedFiles(t *testing.T) {
+	dir := t.TempDir()
+	island := func(name string) string {
+		return "package app\n\n//gosx:island\nfunc " + name + "() Node {\n" +
+			"\tcount := signal.New(0)\n" +
+			"\tincrement := func() { count.Set(count.Get() + 1) }\n" +
+			"\treturn <div><span>{count.Get()}</span><button onClick={increment}>+</button></div>\n}\n"
+	}
+	writeTempFile(t, dir, "sibling.gsx", island("Sibling"))
+	writeTempFile(t, dir, "ui/shared.gsx", island("Shared"))
+	writeTempFile(t, dir, "page.gsx", "package app\n\nimport ui \"./ui\"\n\nfunc Page() Node {\n\treturn <main><Sibling /><ui.Shared /></main>\n}\n")
+
+	programs, _, err := collectProjectIslandPrograms(dir)
+	if err != nil {
+		t.Fatalf("collectProjectIslandPrograms: %v", err)
+	}
+	var names []string
+	for _, prog := range programs {
+		names = append(names, prog.Name)
+	}
+	sort.Strings(names)
+	if !reflect.DeepEqual(names, []string{"Shared", "Sibling"}) {
+		t.Fatalf("islands = %v, want [Shared Sibling]", names)
 	}
 }

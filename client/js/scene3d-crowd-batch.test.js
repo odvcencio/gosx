@@ -415,6 +415,28 @@ test("a parent name matches a node or its parts, not a longer name", async () =>
   assert.equal(batchRecords(build(api, [other, exact, ...crowd]))[0].crowdParentMatrix[12], 7);
 });
 
+test("a crowd named under its parent's id never resolves one of its own agents as the parent", async () => {
+  const api = await makeSceneApiEnv();
+  const pose = yawPose(0, 70, 0, 0);
+  // Batch "ship/riders" rides node "ship": its agent ids start with "ship/", the node's part prefix.
+  const crowd = makeCrowd(api, 4, { parent: "ship" });
+  crowd.forEach((object, i) => {
+    object.id = `ship/riders/agent-${i}/0`;
+    object._crowdSkin.batchID = "ship/riders";
+    object.specularColor = Array.from(object.specularColor || [1, 1, 1]);
+  });
+  // An agent that differs from its batch draws on its own record, which lands in the list the parent search reads.
+  crowd[1].color = "#ff0000";
+  crowd[1].parentMatrix = matrixAt(500, 500);
+  const ship = makeShip(api, pose);
+  const [record] = batchRecords(build(api, [...crowd, ship]));
+  assert.equal(record.instanceCount, 3);
+  assert.equal(record.crowdParentMatrix[12], 70, "the batch rides the ship's pose, not its stray agent at x=500");
+  // With no ship in the scene the crowd must draw in world space, not ride its own agent.
+  const alone = batchRecords(build(api, crowd))[0];
+  assert.equal(alone.crowdParentMatrix, null);
+});
+
 test("agents with different parents do not share a record", async () => {
   const api = await makeSceneApiEnv();
   const a = makeCrowd(api, 4, { parent: "ship" });
@@ -511,6 +533,18 @@ test("an InstancedGLB batch keeps its parentNode through normalization", async (
   assert.equal(batch.parentNode, "ship");
   assert.equal(api.normalizeSceneInstancedGLBMeshEntry({ id: "walkers", src: "/p.glb", instances: [{ id: "a" }] }, 0, null).parentNode, "");
   assert.equal(api.normalizeSceneInstancedGLBMeshEntry({ id: "x", src: "/p.glb", parentNode: 7, instances: [] }, 0, null).parentNode, "");
+});
+
+test("an InstancedGLB batch keeps its palette and each instance's tint index through normalization", async () => {
+  const api = await makeSceneApiEnv();
+  const batch = api.normalizeSceneInstancedGLBMeshEntry({ id: "shirts", src: "/p.glb", palette: [" #d8a373 ", "#3a5a8c", 7],
+    instances: [{ id: "a", tint: 2 }, { id: "b" }, { id: "c", tint: 1.9 }, { id: "d", tint: -3 }, { id: "e", tint: "x" }] }, 0, null);
+  assert.deepEqual(Array.from(batch.palette), ["#d8a373", "#3a5a8c", ""]);
+  assert.deepEqual(batch.instances.map(instance => instance.tint), [2, undefined, 1, undefined, undefined]);
+  assert.equal(api.normalizeSceneInstancedGLBMeshEntry({ id: "plain", src: "/p.glb", instances: [{ id: "a" }] }, 0, null).palette, undefined);
+  // An update that omits the palette keeps the mounted one.
+  const kept = api.normalizeSceneInstancedGLBMeshEntry({ id: "shirts", src: "/p.glb", instances: [{ id: "a", tint: 1 }] }, 0, batch);
+  assert.deepEqual(Array.from(kept.palette), ["#d8a373", "#3a5a8c", ""]);
 });
 
 test("a selected agent leaves its batch, unless the batch rides a parent", async () => {
