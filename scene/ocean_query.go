@@ -4,6 +4,8 @@ import (
 	_ "embed"
 	"encoding/json"
 	"math"
+
+	"m31labs.dev/gosx/det"
 )
 
 //go:embed ocean_waves.json
@@ -56,13 +58,13 @@ func NewOceanQuery(o Ocean, quality string, floor func(x, z float64) float64) *O
 	h, l, c := defaulted(o.WaveHeight, .8), defaulted(o.WaveLength, 18), defaulted(o.Choppiness, .6)
 	var weights float64
 	for i := 0; i < count; i++ {
-		weights += oceanWaveTable.Weight[i] * oceanWaveTable.Weight[i]
+		weights += float64(oceanWaveTable.Weight[i] * oceanWaveTable.Weight[i])
 	}
 	for i := 0; i < count; i++ {
 		b := 36 + i*8
 		angle := o.WindDirection*math.Pi/180 + oceanWaveTable.Angle[i]
 		k := 2 * math.Pi / (l * oceanWaveTable.Ratio[i])
-		values := []float64{math.Sin(angle), math.Cos(angle), k, math.Sqrt(oceanWaveTable.Gravity*k) * q.data[3], oceanWaveTable.Weight[i] * h / math.Sqrt(8*weights), c / (k * float64(count)), math.Mod(float64(i)*oceanWaveTable.PhaseStep, 1) * 2 * math.Pi}
+		values := []float64{det.Sin(angle), det.Cos(angle), k, float64(math.Sqrt(float64(oceanWaveTable.Gravity*k)) * q.data[3]), oceanWaveTable.Weight[i] * h / math.Sqrt(8*weights), c / (k * float64(count)), float64(math.Mod(float64(float64(i)*oceanWaveTable.PhaseStep), 1) * 2 * math.Pi)}
 		for j, v := range values {
 			q.data[b+j] = f32(v)
 		}
@@ -72,7 +74,7 @@ func NewOceanQuery(o Ocean, quality string, floor func(x, z float64) float64) *O
 
 func oceanSmooth(a, b, x float64) float64 {
 	t := math.Max(0, math.Min(1, (x-a)/(b-a)))
-	return t * t * (3 - 2*t)
+	return float64(t * t * (3 - 2*t))
 }
 func oceanSlope(a, b, x float64) float64 {
 	t := math.Max(0, math.Min(1, (x-a)/(b-a)))
@@ -88,31 +90,31 @@ func (q *OceanQuery) Evaluate(x, z, seconds float64) OceanSample {
 	for i := 0; i < int(u[27]); i++ {
 		b := 36 + i*8
 		wx, wz, k, omega := u[b], u[b+1], u[b+2], u[b+3]
-		shoal := oceanSmooth(0, 1.2, depth*k)
-		a, qa := u[b+4]*shoal, u[b+5]*shoal
-		th := k*(wx*x+wz*z) - omega*t + u[b+6]
-		s, c := math.Sin(th), math.Cos(th)
-		p.X += qa * wx * c
-		p.Y += a * s
-		p.Z += qa * wz * c
-		dx.X -= k * qa * wx * wx * s
-		dx.Y += k * a * wx * c
-		dx.Z -= k * qa * wx * wz * s
-		dz.X -= k * qa * wx * wz * s
-		dz.Y += k * a * wz * c
-		dz.Z -= k * qa * wz * wz * s
-		v.X += qa * wx * omega * s
-		v.Y -= a * omega * c
-		v.Z += qa * wz * omega * s
+		shoal := oceanSmooth(0, 1.2, float64(depth*k))
+		a, qa := float64(u[b+4]*shoal), float64(u[b+5]*shoal)
+		th := float64(k*(float64(wx*x)+float64(wz*z))) - float64(omega*t) + u[b+6]
+		s, c := det.Sin(th), det.Cos(th)
+		p.X += float64(qa * wx * c)
+		p.Y += float64(a * s)
+		p.Z += float64(qa * wz * c)
+		dx.X -= float64(k * qa * wx * wx * s)
+		dx.Y += float64(k * a * wx * c)
+		dx.Z -= float64(k * qa * wx * wz * s)
+		dz.X -= float64(k * qa * wx * wz * s)
+		dz.Y += float64(k * a * wz * c)
+		dz.Z -= float64(k * qa * wz * wz * s)
+		v.X += float64(qa * wx * omega * s)
+		v.Y -= float64(a * omega * c)
+		v.Z += float64(qa * wz * omega * s)
 	}
-	ph := t*u[3]/9 + .15*math.Sin(x*.07+1.3) + .08*math.Sin(x*.19)
+	ph := t*u[3]/9 + float64(.15*det.Sin(float64(x*.07)+1.3)) + float64(.08*det.Sin(float64(x*.19)))
 	ph -= math.Floor(ph)
 	up, down := oceanSmooth(0, .28, ph), oceanSmooth(.28, 1, ph)
-	runup := u[19] * .45 * (1 - oceanSmooth(.3, 4, depth))
-	p.Y += runup * up * (1 - down)
-	v.Y += runup * (oceanSlope(0, .28, ph)*(1-down) - up*oceanSlope(.28, 1, ph)) * u[3] / 9
-	n := Vec3(dz.Y*dx.Z-dz.Z*dx.Y, dz.Z*dx.X-dz.X*dx.Z, dz.X*dx.Y-dz.Y*dx.X)
-	length := math.Sqrt(n.X*n.X + n.Y*n.Y + n.Z*n.Z)
+	runup := float64(u[19] * .45 * (1 - oceanSmooth(.3, 4, depth)))
+	p.Y += float64(runup * up * (1 - down))
+	v.Y += runup * (float64(oceanSlope(0, .28, ph)*(1-down)) - float64(up*oceanSlope(.28, 1, ph))) * u[3] / 9
+	n := Vec3(float64(dz.Y*dx.Z)-float64(dz.Z*dx.Y), float64(dz.Z*dx.X)-float64(dz.X*dx.Z), float64(dz.X*dx.Y)-float64(dz.Y*dx.X))
+	length := math.Sqrt(float64(n.X*n.X) + float64(n.Y*n.Y) + float64(n.Z*n.Z))
 	if length == 0 {
 		length = 1
 	}
@@ -134,19 +136,19 @@ func (q *OceanQuery) Sample(x, z, seconds float64) OceanSample {
 	for i := 0; i < 8; i++ {
 		p := q.Evaluate(qx, qz, seconds).Position
 		ex, ez := p.X-x, p.Z-z
-		if math.Hypot(ex, ez) < 1e-8 {
+		if det.Hypot(ex, ez) < 1e-8 {
 			break
 		}
 		const h = .001
 		dx, dz := q.Evaluate(qx+h, qz, seconds).Position, q.Evaluate(qx, qz+h, seconds).Position
 		a, b, c, d := (dx.X-p.X)/h, (dz.X-p.X)/h, (dx.Z-p.Z)/h, (dz.Z-p.Z)/h
-		det := a*d - b*c
+		det := float64(a*d) - float64(b*c)
 		if math.Abs(det) < 1e-8 {
 			qx -= ex * .5
 			qz -= ez * .5
 		} else {
-			qx -= (d*ex - b*ez) / det
-			qz -= (a*ez - c*ex) / det
+			qx -= (float64(d*ex) - float64(b*ez)) / det
+			qz -= (float64(a*ez) - float64(c*ex)) / det
 		}
 	}
 	return q.Evaluate(qx, qz, seconds)

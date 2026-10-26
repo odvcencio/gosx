@@ -22,6 +22,7 @@
     const fetchProgram = api.fetchProgram;
     const inferProgramFormat = api.inferProgramFormat;
     const loadScriptTag = api.loadScriptTag;
+    const ensureBootstrapFeature = api.ensureBootstrapFeature;
     const engineFrame = api.engineFrame || function(callback) {
       const scheduler = window.__gosx && window.__gosx.motion && window.__gosx.motion.scheduler;
       if (scheduler && typeof scheduler.request === "function") return scheduler.request(callback);

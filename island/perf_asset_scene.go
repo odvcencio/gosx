@@ -33,6 +33,7 @@ func (r *Renderer) legacyPerfSceneStartupGates() (map[string]bool, bool, error) 
 			values, _ := props[name].([]any)
 			return values
 		}
+		gates["hierarchy"] = gates["hierarchy"] || len(list("groups")) > 0
 		gates["zoom"] = gates["zoom"] || props["controlZoom"] == true
 		controls, _ := props["controls"].(string)
 		_, walk := props["walk"].(map[string]any)
@@ -154,6 +155,7 @@ func (r *Renderer) perfSceneStartupGates() (map[string]bool, bool, error) {
 		if scene == nil {
 			scene = p
 		}
+		gates["hierarchy"] = gates["hierarchy"] || len(list(p.Groups, scene.Groups)) > 0
 		mode := strings.ToLower(strings.TrimSpace(p.Controls))
 		gates["zoom"] = gates["zoom"] || p.ControlZoom
 		gates["walk"] = gates["walk"] || p.Walk != nil && (mode == "first-person" || mode == "firstperson" || mode == "fps")

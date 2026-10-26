@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"m31labs.dev/gosx/client/browser"
 	"m31labs.dev/gosx/engine"
@@ -47,5 +48,20 @@ func Register(component string, factory Factory) error {
 func (Context) MountElement() browser.Element                             { return browser.Element{} }
 func (Context) SignalJSON(string) (json.RawMessage, error)                { return nil, ErrUnsupported }
 func (Context) SetSignals(map[string]any) error                           { return ErrUnsupported }
+func (Context) SetChangedSignals(map[string]any) error                    { return ErrUnsupported }
 func (Context) Navigate(context.Context, string, NavigationOptions) error { return ErrUnsupported }
 func (Context) IsCurrent() bool                                           { return false }
+
+func (Context) subscribeSignalReplay(string, func(json.RawMessage)) (HandleFunc, error) {
+	return nil, ErrUnsupported
+}
+func (Context) declareCalls(string, time.Duration, int, string) {}
+
+func (Context) viewSink() viewSink { return unsupportedViewSink{} }
+
+type unsupportedViewSink struct{}
+
+func (unsupportedViewSink) send([]byte, func(bool)) error  { return ErrUnsupported }
+func (unsupportedViewSink) hidden() bool                   { return false }
+func (unsupportedViewSink) onVisibility(func()) HandleFunc { return func() {} }
+func (unsupportedViewSink) release()                       {}

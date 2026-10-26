@@ -21,9 +21,18 @@ const (
 )
 
 // Frame describes one advanced render frame and its fixed simulation work.
+//
+// Delta is game time: the clamped real delta times the time scale, and zero
+// while paused. RealDelta is the clamped delta before scaling. At scale 1 and
+// not paused the two are equal. Steps is the total number of fixed steps run
+// since the clock started.
 type Frame struct {
 	Index           uint64        `json:"index"`
 	Delta           time.Duration `json:"delta"`
+	RealDelta       time.Duration `json:"realDelta,omitempty"`
+	TimeScale       float64       `json:"timeScale,omitempty"`
+	Paused          bool          `json:"paused,omitempty"`
+	Steps           uint64        `json:"steps,omitempty"`
 	FixedStep       time.Duration `json:"fixedStep"`
 	FixedSteps      int           `json:"fixedSteps"`
 	Alpha           float64       `json:"alpha"`
@@ -46,6 +55,39 @@ type Clock struct {
 	accumulator time.Duration
 	frame       uint64
 	elapsed     time.Duration
+	steps       uint64
+	paused      bool
+	scale       float64
+	scaleFrac   float64 // sub-nanosecond remainder of scaled deltas
+}
+
+// SetPaused freezes or resumes game time. While paused, Advance still returns
+// frames (the index advances) but runs no fixed steps and adds no time.
+func (c *Clock) SetPaused(paused bool) {
+	if c != nil {
+		c.paused = paused
+	}
+}
+
+// Paused reports whether the clock is paused.
+func (c *Clock) Paused() bool { return c != nil && c.paused }
+
+// SetTimeScale sets how much game time passes per unit of real time: 2 is
+// double speed, 0.5 half speed, 0 stops time. Negative, infinite and NaN
+// values are ignored.
+func (c *Clock) SetTimeScale(scale float64) {
+	if c == nil || math.IsNaN(scale) || math.IsInf(scale, 0) || scale < 0 {
+		return
+	}
+	c.scale = scale
+}
+
+// TimeScale returns the current time scale (1 by default).
+func (c *Clock) TimeScale() float64 {
+	if c == nil {
+		return 1
+	}
+	return c.scale
 }
 
 // NewClock creates a deterministic fixed-step clock.
@@ -66,6 +108,7 @@ func NewClock(cfg LoopConfig) *Clock {
 		fixedStep:   fixed,
 		maxDelta:    maxDelta,
 		maxSubsteps: maxSubsteps,
+		scale:       1,
 	}
 }
 
@@ -80,13 +123,22 @@ func (c *Clock) Advance(delta time.Duration) Frame {
 	if delta > c.maxDelta {
 		delta = c.maxDelta
 	}
-	c.accumulator += delta
+	realDelta := delta
+	var scaled time.Duration
+	if !c.paused {
+		exact := float64(delta)*c.scale + c.scaleFrac
+		whole := math.Floor(exact)
+		c.scaleFrac = exact - whole
+		scaled = time.Duration(whole)
+	}
+	c.accumulator += scaled
 	steps := 0
 	for c.accumulator >= c.fixedStep && steps < c.maxSubsteps {
 		c.accumulator -= c.fixedStep
 		c.elapsed += c.fixedStep
 		steps++
 	}
+	c.steps += uint64(steps)
 	var dropped time.Duration
 	if steps == c.maxSubsteps && c.accumulator >= c.fixedStep {
 		dropped = c.accumulator
@@ -100,7 +152,11 @@ func (c *Clock) Advance(delta time.Duration) Frame {
 	}
 	return Frame{
 		Index:           c.frame,
-		Delta:           delta,
+		Delta:           scaled,
+		RealDelta:       realDelta,
+		TimeScale:       c.scale,
+		Paused:          c.paused,
+		Steps:           c.steps,
 		FixedStep:       c.fixedStep,
 		FixedSteps:      steps,
 		Alpha:           alpha,
@@ -115,7 +171,9 @@ func (c *Clock) restore(frame uint64, elapsed time.Duration) {
 	}
 	c.frame = frame
 	c.elapsed = elapsed
+	c.steps = uint64(elapsed / c.fixedStep)
 	c.accumulator = 0
+	c.scaleFrac = 0
 }
 
 // System runs runtime work in a specific phase.
@@ -167,15 +225,19 @@ type Event struct {
 
 // Context is passed to systems for each phase.
 type Context struct {
-	Runtime       *Runtime
-	World         *World
-	Input         *Input
-	Assets        *Assets
-	Physics       *physics.World
-	Frame         Frame
-	Phase         Phase
-	Delta         time.Duration
-	FixedStep     int
+	Runtime   *Runtime
+	World     *World
+	Input     *Input
+	Assets    *Assets
+	Physics   *physics.World
+	Frame     Frame
+	Phase     Phase
+	Delta     time.Duration
+	FixedStep int
+	// Tick numbers the work for cadence: in PhaseFixedUpdate it is the
+	// 1-based count of fixed steps since the clock started; in other phases it
+	// is the frame index. See Every and EveryInterval.
+	Tick          uint64
 	NetworkInputs map[string]sim.Input
 }
 
@@ -233,12 +295,17 @@ func New(cfg Config) *Runtime {
 		fixedStep = profile.FixedStep
 	}
 	maxDelta := cfg.MaxDelta
-	if maxDelta <= 0 {
-		maxDelta = profile.MaxDelta
-	}
 	maxSubsteps := cfg.MaxSubsteps
 	if maxSubsteps <= 0 {
 		maxSubsteps = profile.MaxSubsteps
+	}
+	if maxDelta <= 0 {
+		maxDelta = profile.MaxDelta
+		// A coarse fixed step (say one game hour) must not be clamped away
+		// by a default meant for 60 Hz.
+		if maxDelta < fixedStep {
+			maxDelta = fixedStep * time.Duration(maxSubsteps)
+		}
 	}
 	world := cfg.World
 	if world == nil {
@@ -310,6 +377,11 @@ func (r *Runtime) runPhase(ctx *Context, phase Phase, delta time.Duration, fixed
 	ctx.Phase = phase
 	ctx.Delta = delta
 	ctx.FixedStep = fixedStep
+	if phase == PhaseFixedUpdate {
+		ctx.Tick = ctx.Frame.Steps - uint64(ctx.Frame.FixedSteps) + uint64(fixedStep) + 1
+	} else {
+		ctx.Tick = ctx.Frame.Index
+	}
 	var firstErr error
 	for _, system := range r.systems {
 		if system == nil || system.Phase() != phase {
@@ -339,12 +411,14 @@ func (r *Runtime) ApplyNetworkInputs(inputs map[string]sim.Input) {
 		return
 	}
 	r.networkInputs = cloneSimInputs(inputs)
-	for playerID, input := range inputs {
+	// Ascending player order keeps event order and last-writer fields
+	// (pointer position) identical across runs and replays.
+	sim.EachInput(inputs, func(playerID string, input sim.Input) {
 		if len(input.Data) == 0 {
-			continue
+			return
 		}
 		r.applyNetworkInput(playerID, input.Data)
-	}
+	})
 }
 
 func (r *Runtime) applyNetworkInput(playerID string, data []byte) {
@@ -365,6 +439,34 @@ func (r *Runtime) applyNetworkInput(playerID string, data []byte) {
 		}
 		r.input.Apply(event)
 	}
+}
+
+// SetPaused pauses or resumes game time. See Clock.SetPaused.
+func (r *Runtime) SetPaused(paused bool) {
+	if r != nil {
+		r.clock.SetPaused(paused)
+	}
+}
+
+// Paused reports whether game time is paused.
+func (r *Runtime) Paused() bool { return r != nil && r.clock.Paused() }
+
+// SetTimeScale sets the game-time multiplier. See Clock.SetTimeScale. For a
+// large factor, raise FixedStep so each frame needs only a few steps (one game
+// hour per step reaches a game year per real minute at scale 525600); also
+// raise MaxSubsteps if a frame can need more than the default 5.
+func (r *Runtime) SetTimeScale(scale float64) {
+	if r != nil {
+		r.clock.SetTimeScale(scale)
+	}
+}
+
+// TimeScale returns the game-time multiplier.
+func (r *Runtime) TimeScale() float64 {
+	if r == nil {
+		return 1
+	}
+	return r.clock.TimeScale()
 }
 
 // FixedStep returns the runtime's deterministic simulation step.
@@ -478,9 +580,21 @@ func (f SnapshotCodecFuncs) State(r *Runtime) []byte {
 
 // RuntimeState is the default snapshot/state payload.
 type RuntimeState struct {
-	Frame       uint64              `json:"frame"`
-	TimeSeconds float64             `json:"timeSeconds"`
-	Physics     *physics.WorldState `json:"physics,omitempty"`
+	Frame uint64 `json:"frame"`
+	// TimeSeconds is a human-readable copy of the time. It loses nanoseconds
+	// after about 104 game days; Restore prefers TimeNanos when present.
+	TimeSeconds float64 `json:"timeSeconds"`
+	// TimeNanos is the exact elapsed time. Snapshots written before this field
+	// existed omit it, and Restore falls back to TimeSeconds.
+	TimeNanos *int64 `json:"timeNanos,omitempty"`
+	// TimeScale and Paused save the time control settings. Older snapshots
+	// omit them and Restore then leaves the current settings alone.
+	TimeScale *float64            `json:"timeScale,omitempty"`
+	Paused    *bool               `json:"paused,omitempty"`
+	Physics   *physics.WorldState `json:"physics,omitempty"`
+	// World holds registered world content. Only a SaveCodec snapshot writes
+	// it; the default snapshot leaves it out.
+	World *WorldSave `json:"world,omitempty"`
 }
 
 // Snapshot returns a restorable runtime checkpoint for sim.Runner.
@@ -507,12 +621,27 @@ func (r *Runtime) Restore(snapshot []byte) {
 	if err := json.Unmarshal(snapshot, &state); err != nil {
 		return
 	}
+	r.applyRuntimeState(state)
+}
+
+// applyRuntimeState restores the clock, time control settings and physics.
+func (r *Runtime) applyRuntimeState(state RuntimeState) {
 	if r.clock != nil {
 		elapsed := time.Duration(state.TimeSeconds * float64(time.Second))
+		if state.TimeNanos != nil {
+			elapsed = time.Duration(*state.TimeNanos)
+		}
 		r.clock.restore(state.Frame, elapsed)
 		r.frame.Index = state.Frame
 		r.frame.Time = elapsed
 		r.frame.FixedStep = r.FixedStep()
+		r.frame.Steps = r.clock.steps
+		if state.TimeScale != nil {
+			r.clock.SetTimeScale(*state.TimeScale)
+		}
+		if state.Paused != nil {
+			r.clock.SetPaused(*state.Paused)
+		}
 	}
 	if r.physics != nil && state.Physics != nil {
 		r.physics.ApplyState(*state.Physics)
@@ -531,9 +660,24 @@ func (r *Runtime) State() []byte {
 }
 
 func (r *Runtime) defaultState() []byte {
+	data, err := json.Marshal(r.runtimeState())
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// runtimeState captures the clock, time control settings and physics.
+func (r *Runtime) runtimeState() RuntimeState {
+	nanos := int64(r.frame.Time)
 	state := RuntimeState{
 		Frame:       r.frame.Index,
 		TimeSeconds: r.frame.Time.Seconds(),
+		TimeNanos:   &nanos,
+	}
+	if r.clock != nil {
+		scale, paused := r.clock.TimeScale(), r.clock.Paused()
+		state.TimeScale, state.Paused = &scale, &paused
 	}
 	if r.physics != nil {
 		physicsState := r.physics.StateSnapshot()
@@ -541,11 +685,7 @@ func (r *Runtime) defaultState() []byte {
 			state.Physics = &physicsState
 		}
 	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		return nil
-	}
-	return data
+	return state
 }
 
 func cloneSimInputs(inputs map[string]sim.Input) map[string]sim.Input {

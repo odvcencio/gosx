@@ -59,9 +59,9 @@ func (m mat3) inverse() (mat3, bool) {
 	inv := 1 / det
 	// The inverse is the transposed cofactor matrix divided by the determinant.
 	return mat3{
-		x: Vec3{X: c0.X * inv, Y: c1.X * inv, Z: c2.X * inv},
-		y: Vec3{X: c0.Y * inv, Y: c1.Y * inv, Z: c2.Y * inv},
-		z: Vec3{X: c0.Z * inv, Y: c1.Z * inv, Z: c2.Z * inv},
+		x: Vec3{X: float64(c0.X * inv), Y: float64(c1.X * inv), Z: float64(c2.X * inv)},
+		y: Vec3{X: float64(c0.Y * inv), Y: float64(c1.Y * inv), Z: float64(c2.Y * inv)},
+		z: Vec3{X: float64(c0.Z * inv), Y: float64(c1.Z * inv), Z: float64(c2.Z * inv)},
 	}, true
 }
 

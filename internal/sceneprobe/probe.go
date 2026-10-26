@@ -147,19 +147,21 @@ func (p *Probe) HasExperience() bool {
 
 type Probe struct {
 	experienceFields
-	ComputeChunk, DecompressChunk, WebGPU, WebGL bool `json:"-"`
+	ComputeChunk, DecompressChunk, WebGPU, WebGL bool            `json:"-"`
+	MaterialMotion                               bool            `json:"-"`
+	MaterialMotionProgram                        json.RawMessage `json:"materialMotionProgram,omitempty"`
 
 	Controls string
 
-	Scene                                                                                                        *Probe
-	ParticleBursts, Timelines, ControlZoom, ModelPreparation                                                     bool
-	ForceWebGL, RequireWebGL, PreferCanvas                                                                       bool
-	PreferWebGL                                                                                                  *bool
-	BackendCaps                                                                                                  *struct{ Capable []string }
-	Compression                                                                                                  Presence
-	ComputeParticles, InstancedMeshes, Points, Models, InstancedGLBMeshes, Objects, Sprites, WaterSystems, Nodes []Record
-	Animations                                                                                                   []Clip
-	Environment                                                                                                  struct {
+	Scene                                                                                                                *Probe
+	ParticleBursts, Timelines, ControlZoom, ModelPreparation                                                             bool
+	ForceWebGL, RequireWebGL, PreferCanvas                                                                               bool
+	PreferWebGL                                                                                                          *bool
+	BackendCaps                                                                                                          *struct{ Capable []string }
+	Compression                                                                                                          Presence
+	Groups, ComputeParticles, InstancedMeshes, Points, Models, InstancedGLBMeshes, Objects, Sprites, WaterSystems, Nodes []Record
+	Animations                                                                                                           []Clip
+	Environment                                                                                                          struct {
 		EnvMap string
 		IBL    struct{ Radiance, Irradiance, BRDFLUT Texture }
 	}
@@ -170,6 +172,18 @@ type Probe struct {
 	PosterAlt                       string
 	Err                             error `json:"-"`
 	ChunkErr, PreloadErr, PosterErr error `json:"-"`
+}
+
+// NeedsMaterialMotion identifies declared native material programs in either
+// accepted props shape. Other optional-field errors do not erase this decision.
+func (p *Probe) NeedsMaterialMotion() bool {
+	if p == nil {
+		return false
+	}
+	var program string
+	return p.MaterialMotion ||
+		len(p.MaterialMotionProgram) > 0 && json.Unmarshal(p.MaterialMotionProgram, &program) == nil && strings.TrimSpace(program) != "" ||
+		p.Scene.NeedsMaterialMotion()
 }
 
 func Decode(raw json.RawMessage) *Probe {

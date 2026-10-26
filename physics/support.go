@@ -22,9 +22,9 @@ func mat3FromQuat(q Quat) mat3 {
 // mul rotates a local vector into world space.
 func (m mat3) mul(v Vec3) Vec3 {
 	return Vec3{
-		X: m.x.X*v.X + m.y.X*v.Y + m.z.X*v.Z,
-		Y: m.x.Y*v.X + m.y.Y*v.Y + m.z.Y*v.Z,
-		Z: m.x.Z*v.X + m.y.Z*v.Y + m.z.Z*v.Z,
+		X: float64(m.x.X*v.X) + float64(m.y.X*v.Y) + float64(m.z.X*v.Z),
+		Y: float64(m.x.Y*v.X) + float64(m.y.Y*v.Y) + float64(m.z.Y*v.Z),
+		Z: float64(m.x.Z*v.X) + float64(m.y.Z*v.Y) + float64(m.z.Z*v.Z),
 	}
 }
 
@@ -171,11 +171,11 @@ func cylinderLocalSupport(dir Vec3, radius, halfH float64) Vec3 {
 	} else if dir.Y < 0 {
 		p.Y = -halfH
 	}
-	radial2 := dir.X*dir.X + dir.Z*dir.Z
+	radial2 := float64(dir.X*dir.X) + float64(dir.Z*dir.Z)
 	if radial2 > epsilon {
 		scale := radius / math.Sqrt(radial2)
-		p.X = dir.X * scale
-		p.Z = dir.Z * scale
+		p.X = float64(dir.X * scale)
+		p.Z = float64(dir.Z * scale)
 	}
 	return p
 }
@@ -183,17 +183,17 @@ func cylinderLocalSupport(dir Vec3, radius, halfH float64) Vec3 {
 // coneLocalSupport returns the farthest cone point along a local direction.
 // The apex sits at +halfH on local Y and the base disc at -halfH.
 func coneLocalSupport(dir Vec3, radius, halfH float64) Vec3 {
-	radial := math.Sqrt(dir.X*dir.X + dir.Z*dir.Z)
-	apexDot := dir.Y * halfH
-	baseDot := -dir.Y*halfH + radius*radial
+	radial := math.Sqrt(float64(dir.X*dir.X) + float64(dir.Z*dir.Z))
+	apexDot := float64(dir.Y * halfH)
+	baseDot := float64(-dir.Y*halfH) + float64(radius*radial)
 	if apexDot >= baseDot {
 		return Vec3{Y: halfH}
 	}
 	p := Vec3{Y: -halfH}
 	if radial > epsilon {
 		scale := radius / radial
-		p.X = dir.X * scale
-		p.Z = dir.Z * scale
+		p.X = float64(dir.X * scale)
+		p.Z = float64(dir.Z * scale)
 	}
 	return p
 }

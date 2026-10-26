@@ -13,7 +13,7 @@ Run the complete example:
 go run ./examples/motion-shader
 ```
 
-The example uses one `.sel` material as a flat background and a sphere. Its
+The example uses one `.sel` material as a flat background and a torus. Its
 staggered lettering, swaying form, camera and warming material share time.
 Keyboard and touch controls can pause, reverse, replay and seek to the bloom.
 
@@ -59,6 +59,27 @@ document is hidden; returning to a tab does not advance by the hidden time.
 Reduced motion settles automatic playback at the end. Bound Selena scene
 clocks stay at zero so shader animation remains still. Semantic HTML remains
 readable without enhancement; playback buttons enable once their scope mounts.
+
+## Bind a Go scene sequence
+
+Existing `scene.Timeline` plans can use this same playhead:
+
+```go
+plan := scene.NewTimeline("arrival").At(0,
+    scene.Tween{Node: "sculpture", Property: "y", From: 2, To: 0,
+        Duration: 2 * time.Second, Ease: motion.Ease{Kind: motion.EaseOutPow}},
+).Then(scene.Tween{Camera: true, Property: "z", From: 8, To: 6,
+    Duration: time.Second})
+if err := plan.BindMotion(program, clock, "#sculpture"); err != nil {
+    return err
+}
+```
+
+The plan compiles into existing signals and bindings. Playback controls seek
+node and camera poses alongside DOM and Selena animation, including gaps,
+instant cuts and reverse seeks. No imperative bridge or separate clock is
+needed. See [scene timelines](scene3d-timeline.md) for property names, validation
+and scope ownership.
 
 ## Compose expressive keyframes
 
@@ -115,14 +136,44 @@ overshoot is desired. `server.MotionControl` and transport capture settlement
 continue to work without application JavaScript.
 
 Each track requires 2–4,096 finite, strictly increasing keys with one consistent
-arity. Generators and tangent splines return an error; their native motion IR
-remains available. Quaternion keys must be unit length and use shortest-arc
+arity. Generators return an error; their native motion IR remains available.
+Quaternion keys must be unit length and use shortest-arc
 slerp, including the normalized-linear fast path for nearly parallel poses.
-`InterpSlerp` is accepted only for quaternion tracks. The scalar wire format
-remains unchanged. `Target`, `TargetID` and `PropID`
+`InterpSlerp` is accepted only for quaternion tracks. Existing linear scalar
+wire data remains unchanged. `Target`, `TargetID` and `PropID`
 are not used by this bridge: the ordinary binding methods select the target.
 Reduced motion holds each track's final key and restores the current input
 position when the preference is lifted.
+
+### Follow a curved path
+
+`InterpCubicSpline` accepts the native `Key.InTangent` and `Key.OutTangent`.
+Tangents express change per input unit: units per second for a playhead, or per
+unit of scroll progress for `ScrollProgress`. Each segment scales its outgoing
+and incoming tangents by its duration before sampling the Hermite curve.
+
+```go
+departure := motion.Vec3V(0, .3, 0)
+arrival := motion.Vec3V(0, -.3, 0)
+path, err := program.SampleTrack("camera-path", clock, motion.Track{
+    Interp: motion.InterpCubicSpline,
+    Keys: []motion.Key{
+        {T: 0, Value: motion.Vec3V(-1, 0, 3), OutTangent: &departure},
+        {T: 4, Value: motion.Vec3V(1, 0, 3), InTangent: &arrival},
+    },
+})
+// Handle err before binding.
+program.BindCamera(path, "#sculpture", "position")
+```
+
+Use matching incoming and outgoing tangents at an interior key for continuous
+velocity. Tangents must have the same arity as their key values and finite
+components. Complete spline segments ignore easing, matching native `Eval`;
+a segment missing either required tangent falls back to eased interpolation.
+Quaternion splines interpolate components and normalize the result, rather
+than flipping signs for shortest-arc slerp. Quaternion tangents are derivatives
+and do not need unit length. A near-zero result uses the identity quaternion.
+Scalar, vector and color splines can overshoot; choose tangents accordingly.
 
 ### Sample a complete pose or color
 
@@ -313,3 +364,67 @@ playback buttons. Framework adapters can use `motion.createSVGMorph(fromSVG,
 toSVG, {easing: "ease-in-out"})` and call `sample(progress)` / `dispose()`;
 GoSX-slides uses this boundary for storyboard navigation. Applications use the
 Go binding rather than authoring browser scripts.
+
+## Native material choreography
+
+Declare uniform animation beside the mesh's Selena material. The material must
+declare the named uniform, such as a scalar `gain` parameter:
+
+```go
+scene.Mesh{
+    ID: "glow",
+    Geometry: scene.BoxGeometry{Width: 1, Height: 1, Depth: 1},
+    Material: material, // From scene.CompileSelenaMaterial.
+    MaterialAnims: []scene.MaterialUniformAnim{
+        {
+            Uniform: "gain", Arity: 1,
+            Spring: &scene.MaterialSpringAnim{
+                From: .2, To: 1, Stiffness: 160, Damping: 12,
+            },
+        },
+    },
+}
+```
+
+A standalone Scene3D with `MaterialAnims` automatically requests the framework's
+Go/WASM kernel and keeps its material clock running. It needs no island,
+application program, or browser flag. Keyframes and per-component oscillators
+use the same declaration. The scene clock controls pause, resume and seeking;
+reduced motion emits the native rest value and stops ambient work.
+
+The renderer uses `engine.RuntimeKernel` for these framework helpers and chooses
+the smallest compatible runtime profile. Other page features may require a
+larger profile. Ordinary scenes and spin-only declarations retain their existing
+loading behavior. An explicit shared engine program keeps its own runtime
+ownership. Each mount owns and releases its material program, including failed
+loads and program replacement.
+
+## Repeated native spring sampling
+
+For repeated absolute-time samples in Go, prepare a spring once:
+
+```go
+spring := motion.Spring{Mass: 1, Stiffness: 400, Damping: 2}
+samples := spring.Prepare(0, 1)
+value := samples.Value(playheadSeconds)
+settleTime := samples.Duration()
+```
+
+`PreparedSpring` retains immutable position/velocity checkpoints from the same
+240 Hz Euler integrator as `Spring.Value`. Each sample replays at most 31 steps
+and preserves the original float bits, including reverse seeks and step
+boundaries. Sampling allocates nothing and supports concurrent readers.
+Preparation runs at most 2,400 steps once and uses at most 1,216 bytes of
+checkpoint tables per spring. A one-off sample can use `Spring.Value` directly.
+
+`motion.Runtime.Load` automatically prepares decoded spring-generator tracks.
+Identical physics and endpoints share a table, with signed-zero distinctions
+preserved. Each decoded program admits at most 64 KiB of checkpoint tables;
+additional unique springs use the uncached evaluator. Reduced motion keeps the
+same final value. These optimizations apply to Go and its WASM motion runtime;
+they do not change the browser's interruptible reactive spring integrator.
+
+Non-finite physics use the uncached evaluator. Spring time handling is bounded:
+NaN and negative times hold the starting value, positive infinity holds the
+target, and replay never exceeds the ten-second duration cap even if invalid
+physics produce a NaN settle time.

@@ -379,6 +379,23 @@ test("Motion keeps its initial keyframe during delay, samples intermediate keys,
   assert.ok(Math.abs(Number(eased.style.opacity) - 0.75) < 1e-9, "ease-out changes the midpoint from linear 0.5 to 0.75");
 });
 
+test("fallback motion interpolates every transform component without mutating authored frames", async () => {
+  const runtime = createRuntime(), element = {style: {}};
+  const frames = Object.freeze([
+    Object.freeze({opacity: 0, transform: "translate3d(2px, 4px, 6px) rotate(0rad) scale(1) perspective(500px)"}),
+    Object.freeze({opacity: 1, transform: "translate3d(10px, 12px, 14px) rotate(1rad) scale(3) perspective(600px)"}),
+  ]);
+  const animation = runtime.motion.animate(element, frames, {duration: 100, easing: "linear"});
+  runtime.advance(50);
+  assert.equal(element.style.opacity, "0.5");
+  assert.equal(element.style.transform, "translate3d(6px, 8px, 10px) rotate(0.5rad) scale(2) perspective(600px)");
+  runtime.advance(100);
+  assert.equal(element.style.opacity, "1");
+  assert.equal(element.style.transform, "translate3d(10px, 12px, 14px) rotate(1rad) scale(3) perspective(600px)");
+  assert.equal((await animation.finished).finished, true);
+  assert.equal(runtime.frameCount(), 0);
+});
+
 test("a spring waking an idle scheduler starts like a fresh scheduler", () => {
   for (const cancelled of [false, true]) {
     const idle = createRuntime();

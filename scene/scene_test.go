@@ -3,6 +3,7 @@ package scene
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -4366,5 +4367,165 @@ func TestInstancedGLBMeshAutoID(t *testing.T) {
 	}
 	if ir.InstancedGLBMeshes[0].ID == ir.InstancedGLBMeshes[1].ID {
 		t.Fatalf("expected distinct auto-IDs, got duplicate %q", ir.InstancedGLBMeshes[0].ID)
+	}
+}
+
+func TestInstancedGLBMeshParentNodeReachesTheWire(t *testing.T) {
+	ir := Props{
+		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
+		Graph: NewGraph(
+			InstancedGLBMesh{
+				ID: "riders", Src: "/models/passenger.glb", ParentNode: "  ship ",
+				Instances: []MeshInstance{{ID: "p1", Position: Vec3(1, 0, 2), Scale: Vec3(1, 1, 1)}},
+			},
+			InstancedGLBMesh{
+				ID: "walkers", Src: "/models/passenger.glb",
+				Instances: []MeshInstance{{ID: "w1", Scale: Vec3(1, 1, 1)}},
+			},
+		),
+	}.SceneIR()
+	if len(ir.InstancedGLBMeshes) != 2 {
+		t.Fatalf("batches: %d", len(ir.InstancedGLBMeshes))
+	}
+	if got := ir.InstancedGLBMeshes[0].ParentNode; got != "ship" {
+		t.Fatalf("ParentNode: %q", got)
+	}
+	// Instance positions stay relative to the parent: lowering must not move them.
+	if inst := ir.InstancedGLBMeshes[0].Instances[0]; inst.X != 1 || inst.Z != 2 {
+		t.Fatalf("instance moved during lowering: %+v", inst)
+	}
+	data, err := json.Marshal(ir.InstancedGLBMeshes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"parentNode":"ship"`) || strings.Count(string(data), "parentNode") != 1 {
+		t.Fatalf("parentNode should appear once, on the opted-in batch: %s", data)
+	}
+	batches := ir.legacyProps()["instancedGLBMeshes"].([]map[string]any)
+	if batches[0]["parentNode"] != "ship" {
+		t.Fatalf("legacy props: %#v", batches[0])
+	}
+	if _, present := batches[1]["parentNode"]; present {
+		t.Fatal("a batch without a parent must not carry the field")
+	}
+}
+
+func TestInstancedMeshParentNodeReachesTheWire(t *testing.T) {
+	ir := Props{
+		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
+		Graph: NewGraph(
+			InstancedMesh{
+				ID: "ship/windows", Count: 1, ParentNode: "  ship ",
+				Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Positions: []Vector3{Vec3(1, 2, 3)},
+			},
+			InstancedMesh{
+				ID: "free", Count: 1,
+				Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Positions: []Vector3{Vec3(4, 5, 6)},
+			},
+		),
+	}.SceneIR()
+	if len(ir.InstancedMeshes) != 2 {
+		t.Fatalf("meshes: %d", len(ir.InstancedMeshes))
+	}
+	if got := ir.InstancedMeshes[0].ParentNode; got != "ship" {
+		t.Fatalf("ParentNode: %q", got)
+	}
+	// Positions stay relative to the parent: lowering must not move them.
+	if tr := ir.InstancedMeshes[0].Transforms; tr[12] != 1 || tr[13] != 2 || tr[14] != 3 {
+		t.Fatalf("instance moved during lowering: %v", tr)
+	}
+	data, err := json.Marshal(ir.InstancedMeshes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"parentNode":"ship"`) || strings.Count(string(data), "parentNode") != 1 {
+		t.Fatalf("parentNode should appear once, on the opted-in mesh: %s", data)
+	}
+	meshes := ir.legacyProps()["instancedMeshes"].([]map[string]any)
+	if meshes[0]["parentNode"] != "ship" {
+		t.Fatalf("legacy props: %#v", meshes[0])
+	}
+	if _, present := meshes[1]["parentNode"]; present {
+		t.Fatal("a mesh without a parent must not carry the field")
+	}
+	spread := InstancedMesh{ID: "s", Count: 1, ParentNode: "ship", Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1}}.SpreadProps()
+	if spread["parentNode"] != "ship" {
+		t.Fatalf("SpreadProps: %#v", spread)
+	}
+}
+
+func TestInstancedGLBMeshInstanceColorsShipAsAPalette(t *testing.T) {
+	colors := []string{"#d8a373", " #3a5a8c ", "", "#d8a373", "#3a5a8c", "#d8a373"}
+	instances := make([]MeshInstance, len(colors))
+	for i, color := range colors {
+		instances[i] = MeshInstance{ID: "p" + intString(i), Color: color, Scale: Vec3(1, 1, 1)}
+	}
+	ir := Props{
+		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
+		Graph: NewGraph(
+			InstancedGLBMesh{ID: "shirts", Src: "/models/shirt.glb", Instances: instances},
+			InstancedGLBMesh{ID: "plain", Src: "/models/shirt.glb", Instances: []MeshInstance{{ID: "a", Scale: Vec3(1, 1, 1)}}},
+		),
+	}.SceneIR()
+	batch := ir.InstancedGLBMeshes[0]
+	if want := []string{"#d8a373", "#3a5a8c"}; !reflect.DeepEqual(batch.Palette, want) {
+		t.Fatalf("palette: %v, want %v", batch.Palette, want)
+	}
+	// Palette indexes are 1-based so that 0 (omitted on the wire) means "no colour".
+	want := []int{1, 2, 0, 1, 2, 1}
+	for i, inst := range batch.Instances {
+		if inst.Tint != want[i] {
+			t.Fatalf("instance %d tint %d, want %d", i, inst.Tint, want[i])
+		}
+	}
+	if len(ir.InstancedGLBMeshes[1].Palette) != 0 {
+		t.Fatalf("a batch without colours must not carry a palette: %v", ir.InstancedGLBMeshes[1].Palette)
+	}
+	data, err := json.Marshal(ir.InstancedGLBMeshes[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "palette") || strings.Contains(string(data), "tint") {
+		t.Fatalf("an uncoloured batch keeps its old wire form: %s", data)
+	}
+	legacy := ir.legacyProps()["instancedGLBMeshes"].([]map[string]any)
+	if got := legacy[0]["palette"]; !reflect.DeepEqual(got, []string{"#d8a373", "#3a5a8c"}) {
+		t.Fatalf("legacy palette: %#v", got)
+	}
+	insts := legacy[0]["instances"].([]map[string]any)
+	if insts[1]["tint"] != 2 {
+		t.Fatalf("legacy tint: %#v", insts[1])
+	}
+	if _, present := insts[2]["tint"]; present {
+		t.Fatalf("an instance without a colour must not carry a tint: %#v", insts[2])
+	}
+}
+
+func TestInstancedGLBMeshColorWireIsSmallerThanPerInstanceStrings(t *testing.T) {
+	const agents = 1000
+	palette := []string{"#d8a373", "#3a5a8c", "#8c3a3a", "#3a8c5a", "#c9c24a"}
+	build := func(colored bool) []byte {
+		instances := make([]MeshInstance, agents)
+		for i := range instances {
+			instances[i] = MeshInstance{ID: "a" + intString(i), Position: Vec3(float64(i), 0, 1), Scale: Vec3(1, 1, 1)}
+			if colored {
+				instances[i].Color = palette[i%len(palette)]
+			}
+		}
+		ir := Props{Graph: NewGraph(InstancedGLBMesh{ID: "crowd", Src: "/models/p.glb", Instances: instances})}.SceneIR()
+		data, err := json.Marshal(ir.InstancedGLBMeshes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	plain, tinted := build(false), build(true)
+	perAgent := float64(len(tinted)-len(plain)) / agents
+	t.Logf("1,000 agents: %d bytes without colour, %d with a palette (%.1f bytes per agent); per-instance strings would add %d",
+		len(plain), len(tinted), perAgent, agents*len(`,"color":"#d8a373"`))
+	if perAgent > 9.5 {
+		t.Fatalf("colour costs %.1f bytes per agent, want at most 9.5", perAgent)
 	}
 }

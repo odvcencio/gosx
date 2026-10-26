@@ -65,9 +65,11 @@ type MotionEase struct {
 
 // MotionKeyframe is a scalar or vector sample in a keyframe signal.
 type MotionKeyframe struct {
-	At    float64     `json:"at"`
-	Value any         `json:"value"`
-	Ease  *MotionEase `json:"ease,omitempty"`
+	At         float64     `json:"at"`
+	Value      any         `json:"value"`
+	Ease       *MotionEase `json:"ease,omitempty"`
+	InTangent  any         `json:"inTangent,omitempty"`
+	OutTangent any         `json:"outTangent,omitempty"`
 }
 
 // SignalSpec describes one signal in a serializable motion Program.
@@ -92,6 +94,7 @@ type SignalSpec struct {
 	Ease          *MotionEase         `json:"ease,omitempty"`
 	Frames        []MotionKeyframe    `json:"frames,omitempty"`
 	Arity         ValueArity          `json:"arity,omitempty"`
+	Interp        Interp              `json:"interp,omitempty"`
 	Smooth        bool                `json:"smooth,omitempty"`
 	ReducedMotion ReducedMotionPolicy `json:"reducedMotion,omitempty"`
 }

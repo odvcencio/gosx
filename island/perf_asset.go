@@ -296,6 +296,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				return fail("unknown-reachability", "/runtimeFetches")
 			}
 			for _, entry := range []struct{ name, path string }{
+				{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath},
 				{"zoom", r.bootstrapFeatureScene3dZoomPath}, {"walk", r.bootstrapFeatureScene3dWalkPath},
 				{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath},
 				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath},
@@ -327,6 +328,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				return nil, err
 			}
 			for _, entry := range []struct{ name, path string }{
+				{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath},
 				{"zoom", r.bootstrapFeatureScene3dZoomPath}, {"walk", r.bootstrapFeatureScene3dWalkPath},
 				{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath},
 				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath},

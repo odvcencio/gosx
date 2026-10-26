@@ -13,16 +13,18 @@ import (
 //
 // This reuses Track, Key, Ease and ExpandStagger from the native motion IR. It
 // does not start another clock. Vectors and colors interpolate component-wise;
-// unit quaternions use shortest-arc slerp. Generators and tangent splines are
-// rejected. Reduced motion holds the last value, matching the native evaluator.
+// unit quaternions use shortest-arc slerp. InterpCubicSpline uses the native
+// duration-scaled Hermite tangents, ignoring easing on complete spline segments.
+// Segments missing either tangent fall back to eased interpolation. Generators
+// are rejected. Reduced motion holds the last value, matching the native evaluator.
 // Target and resolved IDs are ignored;
 // bind the returned signal with the usual Program binding methods.
 func (p *Program) SampleTrack(id string, input SignalRef, track Track) (SignalRef, error) {
 	if p == nil {
 		return "", fmt.Errorf("motion: nil program")
 	}
-	if track.Gen != nil || track.Interp != InterpLinear && track.Interp != InterpStep && track.Interp != InterpSlerp {
-		return "", fmt.Errorf("motion: sampled track requires linear, step, or quaternion slerp keyframes")
+	if track.Gen != nil || track.Interp > InterpSlerp {
+		return "", fmt.Errorf("motion: sampled track requires linear, step, cubic spline, or quaternion slerp keyframes")
 	}
 	if len(track.Keys) < 2 || len(track.Keys) > 4096 {
 		return "", fmt.Errorf("motion: sampled track needs 2..4096 keys")
@@ -43,13 +45,24 @@ func (p *Program) SampleTrack(id string, input SignalRef, track Track) (SignalRe
 		if track.Interp == InterpStep {
 			ease = Ease{Kind: EaseSteps, Args: []float64{1}}
 		}
-		var value any = key.Value.F[0]
-		if arity != ArityScalar {
-			value = append([]float64(nil), key.Value.F[:arity.Width()]...)
+		frames[i] = MotionKeyframe{At: key.T, Value: wireTrackValue(key.Value), Ease: wireEase(ease)}
+		if track.Interp == InterpCubicSpline {
+			for j, tangent := range []*Value{key.InTangent, key.OutTangent} {
+				if tangent == nil {
+					continue
+				}
+				if tangent.Arity != arity {
+					return "", fmt.Errorf("motion: track key %d tangent must match the value arity", i)
+				}
+				if j == 0 {
+					frames[i].InTangent = wireTrackValue(*tangent)
+				} else {
+					frames[i].OutTangent = wireTrackValue(*tangent)
+				}
+			}
 		}
-		frames[i] = MotionKeyframe{At: key.T, Value: value, Ease: wireEase(ease)}
 	}
-	spec := SignalSpec{ID: strings.TrimSpace(id), Kind: SignalTrack, Input: input, Frames: frames, Arity: arity}
+	spec := SignalSpec{ID: strings.TrimSpace(id), Kind: SignalTrack, Input: input, Frames: frames, Arity: arity, Interp: track.Interp}
 	if spec.ID == "" {
 		return "", fmt.Errorf("motion: track signal id is required")
 	}
@@ -59,17 +72,29 @@ func (p *Program) SampleTrack(id string, input SignalRef, track Track) (SignalRe
 	return p.add(spec), nil
 }
 
+func wireTrackValue(value Value) any {
+	if value.Arity == ArityScalar {
+		return value.F[0]
+	}
+	return append([]float64(nil), value.F[:value.Arity.Width()]...)
+}
+
 func validateTrackSignal(signal SignalSpec) error {
 	if strings.TrimSpace(string(signal.Input)) == "" || len(signal.Frames) < 2 || len(signal.Frames) > 4096 {
 		return fmt.Errorf("motion: track %q needs an input and 2..4096 keys", signal.ID)
 	}
-	if signal.Arity > ArityColor {
-		return fmt.Errorf("motion: track %q has invalid value arity", signal.ID)
+	if signal.Arity > ArityColor || signal.Interp > InterpSlerp || signal.Interp == InterpSlerp && signal.Arity != ArityQuat {
+		return fmt.Errorf("motion: track %q has invalid value arity or interpolation", signal.ID)
 	}
 	previous := math.Inf(-1)
 	for i, frame := range signal.Frames {
-		if !validTrackValue(frame.Value, signal.Arity) || !finiteTrackNumber(frame.At) || !(frame.At > previous) {
+		if !validTrackValue(frame.Value, signal.Arity, true) || !finiteTrackNumber(frame.At) || !(frame.At > previous) {
 			return fmt.Errorf("motion: track %q key %d must have a finite scalar or correctly sized vector value, unit quaternion, and strictly increasing time", signal.ID, i)
+		}
+		for _, tangent := range []any{frame.InTangent, frame.OutTangent} {
+			if tangent != nil && (signal.Interp != InterpCubicSpline || !validTrackValue(tangent, signal.Arity, false)) {
+				return fmt.Errorf("motion: track %q key %d needs finite tangents matching the spline value arity", signal.ID, i)
+			}
 		}
 		previous = frame.At
 		if err := validateTrackEase(frame.Ease); err != nil {
@@ -79,7 +104,7 @@ func validateTrackSignal(signal SignalSpec) error {
 	return nil
 }
 
-func validTrackValue(value any, arity ValueArity) bool {
+func validTrackValue(value any, arity ValueArity, unitQuaternion bool) bool {
 	if arity == ArityScalar {
 		number, ok := value.(float64)
 		return ok && finiteTrackNumber(number)
@@ -111,9 +136,9 @@ func validTrackValue(value any, arity ValueArity) bool {
 		if !finiteTrackNumber(component) {
 			return false
 		}
-		norm += component * component
+		norm += float64(component * component)
 	}
-	return arity != ArityQuat || math.Abs(norm-1) <= 1e-6
+	return !unitQuaternion || arity != ArityQuat || math.Abs(norm-1) <= 1e-6
 }
 
 func finiteTrackNumber(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }

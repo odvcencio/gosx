@@ -132,6 +132,21 @@ test("selective runtime loads islands feature and shared wasm only when islands 
   assert.equal(env.context.__gosx.islands.size, 1);
 });
 
+test("kernel engines load the shared core runtime without hydrating an application program", async () => {
+  const mount = new FakeElement("div", null); mount.id = "kernel-root";
+  const env = createContext({
+    elements:[mount],
+    engineFactories:{KernelHelper(ctx){assert.equal(ctx.runtimeMode,"kernel");ctx.mount.setAttribute("data-mounted","true");return{};}},
+    fetchRoutes:{"/runtime.wasm":{bytes:[0,97,115,109]},"/gosx/bootstrap-feature-engines.js":{text:bootstrapFeatureEnginesSource}},
+    manifest:{runtime:{path:"/runtime.wasm"},engines:[{id:"kernel",component:"KernelHelper",kind:"surface",runtime:"kernel",mountId:"kernel-root",props:{}}]},
+  });
+  runScript(bootstrapRuntimeSource,env.context,"bootstrap-runtime.js");await flushAsyncWork();
+  assert.ok(env.fetchCalls.some(entry=>entry.url==="/runtime.wasm"));
+  assert.equal(env.hydrateCalls.length,0);
+  assert.equal(mount.getAttribute("data-mounted"),"true");
+  await env.context.__gosx_dispose_page();
+});
+
 test("selective runtime loads islands feature for compute islands", async () => {
   const env = createContext({
     fetchRoutes: {

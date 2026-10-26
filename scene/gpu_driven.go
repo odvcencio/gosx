@@ -15,6 +15,12 @@ package scene
 // An InstancedMesh is eligible when it draws in the opaque pass, has at least
 // one instance, and has no authored CullKernelWGSL. Every other mesh keeps the
 // renderer's existing path.
+//
+// Crowd batches (InstancedGLBMesh agents that share one primitive) take part
+// too. The WebGPU renderer culls each batch with one compute dispatch per view,
+// from the agents' own records, so the CPU does no per-agent work. With
+// Occlusion the crowd gets its own Hi-Z pyramid, built from the frame's depth
+// after the early pass, so agents behind decks and walls are not drawn.
 type GPUDriven struct {
 	// Occlusion turns on two-phase hierarchical-Z occlusion culling for the
 	// camera. The main pass first draws what was visible last frame, builds a

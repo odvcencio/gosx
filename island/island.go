@@ -101,6 +101,7 @@ type Renderer struct {
 	bootstrapFeatureScene3dZoomPath             string
 	bootstrapFeatureScene3dVesselPath           string
 	bootstrapFeatureScene3dOceanQueryPath       string
+	bootstrapFeatureScene3dHierarchyPath        string
 	bootstrapFeatureScene3dParticleBurstPath    string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
@@ -281,6 +282,7 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapFeatureScene3dWalkPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-walk.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWalk.Hash))
 	renderer.bootstrapFeatureScene3dModelPreparationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-model-preparation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DModelPreparation.Hash))
 	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
+	renderer.bootstrapFeatureScene3dHierarchyPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hierarchy.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHierarchy.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
@@ -291,6 +293,12 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	// override with a hashed URL during a build-manifest apply.
 	renderer.relayPath = "/gosx/relay.js"
 	if manifest != nil {
+		// Development metadata describes stable /gosx/* URLs, with full digests
+		// instead of content-addressed deployment filenames.
+		if runtimeAssets.WASM.File == "" && runtimeAssets.WASM.Hash != "" {
+			renderer.SetRuntime("/gosx/runtime.wasm", runtimeAssets.WASM.Hash, runtimeAssets.WASM.Size)
+			return renderer
+		}
 		// ApplyBuildManifest only reads the manifest, so renderers may share
 		// one cached pointer. Do not mutate a manifest returned by
 		// loadDefaultBuildManifest.
@@ -349,6 +357,17 @@ func loadDefaultBuildManifest() *buildmanifest.Manifest {
 
 	if root == "" {
 		return nil
+	}
+	if os.Getenv("GOSX_DEV") == "1" {
+		candidate := filepath.Join(root, "build", buildmanifest.DevRuntimeManifestFile)
+		if manifest := loadCachedBuildManifest(candidate); manifest != nil {
+			return manifest
+		}
+		// Malformed or inaccessible development metadata must not silently
+		// select a stale production build. A missing file retains legacy lookup.
+		if _, err := os.Stat(candidate); !os.IsNotExist(err) {
+			return nil
+		}
 	}
 
 	for _, candidate := range []string{
@@ -729,6 +748,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DZoomPath(path string) {
 	r.bootstrapFeatureScene3dZoomPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DHierarchyPath overrides the demand-loaded hierarchy URL.
+func (r *Renderer) SetBootstrapFeatureScene3DHierarchyPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dHierarchyPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DParticleBurstPath overrides the demand-loaded burst URL.
 func (r *Renderer) SetBootstrapFeatureScene3DParticleBurstPath(path string) {
 	if r == nil {
@@ -860,6 +887,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DModelPreparation, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-zoom.js", r.bootstrapFeatureScene3dZoomPath, r.runtimeAssets.BootstrapFeatureScene3DZoom):
 		return r.runtimeAssets.BootstrapFeatureScene3DZoom, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-hierarchy.js", r.bootstrapFeatureScene3dHierarchyPath, r.runtimeAssets.BootstrapFeatureScene3DHierarchy):
+		return r.runtimeAssets.BootstrapFeatureScene3DHierarchy, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
 		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
@@ -1057,6 +1086,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DWalkPath(runtime.BootstrapFeatureScene3DWalk)
 	r.SetBootstrapFeatureScene3DModelPreparationPath(runtime.BootstrapFeatureScene3DModelPreparation)
 	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
+	r.SetBootstrapFeatureScene3DHierarchyPath(runtime.BootstrapFeatureScene3DHierarchy)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
@@ -1468,7 +1498,21 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	if !engine.KindSupported(cfg.Kind) {
 		return renderEngineError(fmt.Errorf("unsupported engine kind: %q", cfg.Kind))
 	}
+	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
+		if cfg.Scene3DProbe == nil {
+			cfg.Scene3DProbe = sceneprobe.Decode(cfg.Props)
+		}
+		if cfg.Runtime == engine.RuntimeNone && strings.TrimSpace(cfg.WASMPath) == "" && cfg.Scene3DProbe.NeedsMaterialMotion() {
+			cfg.Runtime = engine.RuntimeKernel
+		}
+	}
 	if err := engine.ValidateRuntime(cfg.Runtime, cfg.WASMPath); err != nil {
+		return renderEngineError(err)
+	}
+	if err := engine.ValidateThread(cfg.Thread, cfg.Runtime); err != nil {
+		return renderEngineError(err)
+	}
+	if err := engine.ValidateWorkerMode(cfg.Worker, cfg.ForceWorkerFallback, cfg.Thread); err != nil {
 		return renderEngineError(err)
 	}
 	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
@@ -1509,6 +1553,17 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	)
 	if err != nil {
 		return renderEngineError(err)
+	}
+
+	if cfg.Thread == engine.ThreadWorker {
+		last := &r.manifest.Engines[len(r.manifest.Engines)-1]
+		last.Thread = string(cfg.Thread)
+		last.WorkerMode = string(cfg.Worker)
+		last.ForceWorkerFallback = cfg.ForceWorkerFallback
+		// The worker host chunk loads only for pages with a worker-thread engine.
+		if err := r.manifest.RequireFeature("engine-worker"); err != nil {
+			return renderEngineError(err)
+		}
 	}
 
 	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
@@ -1905,12 +1960,63 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 	if node.Text != "" {
 		b.WriteString(html.EscapeString(node.Text))
 	}
-	for idx, childIdx := range node.Children {
-		renderResolvedNodeInto(b, resolved, childIdx, childProgramPath(path, idx))
+	if strings.EqualFold(node.Tag, "table") {
+		renderTableChildrenInto(b, resolved, node.Children, path)
+	} else {
+		for idx, childIdx := range node.Children {
+			renderResolvedNodeInto(b, resolved, childIdx, childProgramPath(path, idx))
+		}
 	}
 	b.WriteString("</")
 	b.WriteString(safeTag)
 	b.WriteByte('>')
+}
+
+// ImplicitTbodyAttr marks a <tbody> the renderer added around table rows. It
+// has no node in the island's tree, so the browser runtime skips it when it
+// resolves a patch path and when it inserts or removes rows.
+const ImplicitTbodyAttr = "data-gosx-implicit"
+
+// renderTableChildrenInto renders a table's children and wraps each run of
+// <tr> rows that sit directly under the table in a marked <tbody>.
+//
+// The browser's HTML parser does this wrap on its own: it moves a <tr> that is
+// a direct child of <table> into a <tbody> it creates. The island's tree has no
+// such node, so without the wrap the live DOM is table > tbody > tr while patch
+// paths assume table > tr, and a patch lands on the wrong node whenever the
+// table also holds a <thead> or <tfoot>. Writing the <tbody> here makes the
+// parser leave the rows alone and gives the runtime a marker to skip.
+//
+// A run starts at a row and ends at the last row before a different element,
+// so text between two rows stays inside the run and trailing text does not.
+// Child paths use the island tree's indices, so the wrapper takes no index.
+func renderTableChildrenInto(b *strings.Builder, resolved *vm.ResolvedTree, children []int, path string) {
+	isRow := func(i int) bool {
+		idx := children[i]
+		return idx >= 0 && idx < len(resolved.Nodes) && strings.EqualFold(resolved.Nodes[idx].Tag, "tr")
+	}
+	isText := func(i int) bool {
+		idx := children[i]
+		return idx >= 0 && idx < len(resolved.Nodes) && resolved.Nodes[idx].Tag == ""
+	}
+	for i := 0; i < len(children); i++ {
+		if !isRow(i) {
+			renderResolvedNodeInto(b, resolved, children[i], childProgramPath(path, i))
+			continue
+		}
+		last := i
+		for k := i + 1; k < len(children) && (isRow(k) || isText(k)); k++ {
+			if isRow(k) {
+				last = k
+			}
+		}
+		b.WriteString("<tbody " + ImplicitTbodyAttr + `="">`)
+		for k := i; k <= last; k++ {
+			renderResolvedNodeInto(b, resolved, children[k], childProgramPath(path, k))
+		}
+		b.WriteString("</tbody>")
+		i = last
+	}
 }
 
 // expandIslandManagedFormAttrs applies the data-gosx-managed shorthand
@@ -2213,6 +2319,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"command", r.bootstrapFeatureScene3dCommandPath, true},
 		{"experience", r.bootstrapFeatureScene3dExperiencePath, r.scene3DNeedsExperienceChunk()},
 		{"instance-stream", r.bootstrapFeatureScene3dInstanceStreamPath, true},
+		{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath, true},
 		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
 		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
 		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
@@ -2353,6 +2460,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		mode = "preview"
 	}
 	sharedEngine := r.needsSharedRuntimeEngineBridge()
+	kernelEngine := r.needsKernelRuntime()
 	// In preview mode, the bridge is required even without islands —
 	// otherwise the iframe has no Bridge.DispatchInboundSignal target.
 	previewNeedsRuntime := previewRelay && mode == "preview"
@@ -2369,8 +2477,8 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		Mode:               mode,
 		Manifest:           bootstrap && mode != "lite",
 		Selective:          selective,
-		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
-		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
+		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || kernelEngine || monolithBridge,
+		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || kernelEngine || monolithBridge,
 		StandardGoWASMExec: r.hasGoWASMEngines(),
 		Patch:              islands > 0,
 		PreviewRelay:       previewRelay,
@@ -2777,6 +2885,15 @@ func (r *Renderer) scene3DNeedsHydrateChunk() bool {
 func (r *Renderer) needsSharedRuntimeEngineBridge() bool {
 	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Runtime), string(engine.RuntimeShared)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Renderer) needsKernelRuntime() bool {
+	for _, entry := range r.manifest.Engines {
+		if entry.Runtime == string(engine.RuntimeKernel) {
 			return true
 		}
 	}

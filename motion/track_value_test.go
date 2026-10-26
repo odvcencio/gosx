@@ -36,6 +36,30 @@ func valueTracks() []Track {
 	step = tracks[4]
 	step.Interp = InterpStep
 	tracks = append(tracks, step)
+	for _, source := range tracks[:6] {
+		cubic := source
+		cubic.Interp = InterpCubicSpline
+		cubic.Keys = append([]Key(nil), source.Keys...)
+		for i := range cubic.Keys {
+			// Deliberately nonuniform times and non-unit quaternion derivatives.
+			cubic.Keys[i].T = .2 + float64(i*i+i)*.6
+			in := Value{Arity: cubic.Keys[i].Value.Arity, F: [4]float64{.4, -.2, .8, -.3}}
+			out := Value{Arity: in.Arity, F: [4]float64{-.1, .6, -.3, .2}}
+			cubic.Keys[i].InTangent, cubic.Keys[i].OutTangent = &in, &out
+		}
+		tracks = append(tracks, cubic)
+	}
+	// Opposite quaternion signs produce a zero-length Hermite midpoint. The
+	// native evaluator returns identity rather than applying slerp's sign flip.
+	zero := QuatV(Quat{})
+	tracks = append(tracks, Track{Interp: InterpCubicSpline, Keys: []Key{
+		{T: .2, Value: QuatV(Quat{X: 1}), OutTangent: &zero},
+		{T: 1.2, Value: QuatV(Quat{X: -1}), InTangent: &zero},
+	}})
+	fallback := tracks[len(tracks)-2]
+	fallback.Keys = append([]Key(nil), fallback.Keys...)
+	fallback.Keys[0].OutTangent = nil
+	tracks = append(tracks, fallback)
 	return tracks
 }
 

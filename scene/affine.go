@@ -1,3 +1,5 @@
+//gosx:deterministic
+
 package scene
 
 import (
@@ -31,27 +33,27 @@ func isUnitSceneScale(scale Vector3) bool {
 func affineFromTRS(translation Vector3, rotation quaternion, scale Vector3) affineMatrix {
 	rotation = rotation.normalized()
 	scale = resolvedSceneScale(scale)
-	xx := rotation.X * rotation.X
-	yy := rotation.Y * rotation.Y
-	zz := rotation.Z * rotation.Z
-	xy := rotation.X * rotation.Y
-	xz := rotation.X * rotation.Z
-	yz := rotation.Y * rotation.Z
-	wx := rotation.W * rotation.X
-	wy := rotation.W * rotation.Y
-	wz := rotation.W * rotation.Z
+	xx := float64(rotation.X * rotation.X)
+	yy := float64(rotation.Y * rotation.Y)
+	zz := float64(rotation.Z * rotation.Z)
+	xy := float64(rotation.X * rotation.Y)
+	xz := float64(rotation.X * rotation.Z)
+	yz := float64(rotation.Y * rotation.Z)
+	wx := float64(rotation.W * rotation.X)
+	wy := float64(rotation.W * rotation.Y)
+	wz := float64(rotation.W * rotation.Z)
 	return affineMatrix{
-		(1 - 2*(yy+zz)) * scale.X,
-		(2 * (xy + wz)) * scale.X,
-		(2 * (xz - wy)) * scale.X,
+		float64((1 - 2*(yy+zz)) * scale.X),
+		float64((2 * (xy + wz)) * scale.X),
+		float64((2 * (xz - wy)) * scale.X),
 		0,
-		(2 * (xy - wz)) * scale.Y,
-		(1 - 2*(xx+zz)) * scale.Y,
-		(2 * (yz + wx)) * scale.Y,
+		float64((2 * (xy - wz)) * scale.Y),
+		float64((1 - 2*(xx+zz)) * scale.Y),
+		float64((2 * (yz + wx)) * scale.Y),
 		0,
-		(2 * (xz + wy)) * scale.Z,
-		(2 * (yz - wx)) * scale.Z,
-		(1 - 2*(xx+yy)) * scale.Z,
+		float64((2 * (xz + wy)) * scale.Z),
+		float64((2 * (yz - wx)) * scale.Z),
+		float64((1 - 2*(xx+yy)) * scale.Z),
 		0,
 		translation.X,
 		translation.Y,
@@ -64,10 +66,10 @@ func multiplyAffine(left, right affineMatrix) affineMatrix {
 	var out affineMatrix
 	for column := 0; column < 4; column++ {
 		for row := 0; row < 4; row++ {
-			out[column*4+row] = left[row]*right[column*4] +
-				left[4+row]*right[column*4+1] +
-				left[8+row]*right[column*4+2] +
-				left[12+row]*right[column*4+3]
+			out[column*4+row] = float64(left[row]*right[column*4]) +
+				float64(left[4+row]*right[column*4+1]) +
+				float64(left[8+row]*right[column*4+2]) +
+				float64(left[12+row]*right[column*4+3])
 		}
 	}
 	return out
@@ -75,17 +77,17 @@ func multiplyAffine(left, right affineMatrix) affineMatrix {
 
 func affinePoint(matrix affineMatrix, point Vector3) Vector3 {
 	return Vector3{
-		X: matrix[0]*point.X + matrix[4]*point.Y + matrix[8]*point.Z + matrix[12],
-		Y: matrix[1]*point.X + matrix[5]*point.Y + matrix[9]*point.Z + matrix[13],
-		Z: matrix[2]*point.X + matrix[6]*point.Y + matrix[10]*point.Z + matrix[14],
+		X: float64(matrix[0]*point.X) + float64(matrix[4]*point.Y) + float64(matrix[8]*point.Z) + matrix[12],
+		Y: float64(matrix[1]*point.X) + float64(matrix[5]*point.Y) + float64(matrix[9]*point.Z) + matrix[13],
+		Z: float64(matrix[2]*point.X) + float64(matrix[6]*point.Y) + float64(matrix[10]*point.Z) + matrix[14],
 	}
 }
 
 func affineVector(matrix affineMatrix, vector Vector3) Vector3 {
 	return Vector3{
-		X: matrix[0]*vector.X + matrix[4]*vector.Y + matrix[8]*vector.Z,
-		Y: matrix[1]*vector.X + matrix[5]*vector.Y + matrix[9]*vector.Z,
-		Z: matrix[2]*vector.X + matrix[6]*vector.Y + matrix[10]*vector.Z,
+		X: float64(matrix[0]*vector.X) + float64(matrix[4]*vector.Y) + float64(matrix[8]*vector.Z),
+		Y: float64(matrix[1]*vector.X) + float64(matrix[5]*vector.Y) + float64(matrix[9]*vector.Z),
+		Z: float64(matrix[2]*vector.X) + float64(matrix[6]*vector.Y) + float64(matrix[10]*vector.Z),
 	}
 }
 
@@ -116,18 +118,18 @@ func affineNormal(matrix affineMatrix, normal Vector3) Vector3 {
 		return Vector3{}
 	}
 	return normalizeVector(Vector3{
-		X: inverse[0]*normal.X + inverse[1]*normal.Y + inverse[2]*normal.Z,
-		Y: inverse[4]*normal.X + inverse[5]*normal.Y + inverse[6]*normal.Z,
-		Z: inverse[8]*normal.X + inverse[9]*normal.Y + inverse[10]*normal.Z,
+		X: float64(inverse[0]*normal.X) + float64(inverse[1]*normal.Y) + float64(inverse[2]*normal.Z),
+		Y: float64(inverse[4]*normal.X) + float64(inverse[5]*normal.Y) + float64(inverse[6]*normal.Z),
+		Z: float64(inverse[8]*normal.X) + float64(inverse[9]*normal.Y) + float64(inverse[10]*normal.Z),
 	})
 }
 
 // affineLinearBound is a conservative upper bound on the largest singular
 // value of the linear 3x3 block. It keeps sphere broadphases sound under shear.
 func affineLinearBound(matrix affineMatrix) float64 {
-	squared := matrix[0]*matrix[0] + matrix[1]*matrix[1] + matrix[2]*matrix[2] +
-		matrix[4]*matrix[4] + matrix[5]*matrix[5] + matrix[6]*matrix[6] +
-		matrix[8]*matrix[8] + matrix[9]*matrix[9] + matrix[10]*matrix[10]
+	squared := float64(matrix[0]*matrix[0]) + float64(matrix[1]*matrix[1]) + float64(matrix[2]*matrix[2]) +
+		float64(matrix[4]*matrix[4]) + float64(matrix[5]*matrix[5]) + float64(matrix[6]*matrix[6]) +
+		float64(matrix[8]*matrix[8]) + float64(matrix[9]*matrix[9]) + float64(matrix[10]*matrix[10])
 	if squared <= 0 {
 		return 1
 	}

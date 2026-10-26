@@ -12,6 +12,9 @@ import (
 	"strings"
 )
 
+// DevRuntimeManifestFile records digests for the stable assets staged by gosx dev.
+const DevRuntimeManifestFile = "gosx-dev-runtime.json"
+
 // Manifest describes all build outputs for deployment.
 type Manifest struct {
 	// GoWASM holds explicitly configured standard-Go engine modules, separate
@@ -83,6 +86,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureScene3DTimeline         HashedAsset `json:"bootstrapFeatureScene3dTimeline,omitzero"`
 	BootstrapFeatureScene3DVessel           HashedAsset `json:"bootstrapFeatureScene3dVessel,omitzero"`
 	BootstrapFeatureScene3DOceanQuery       HashedAsset `json:"bootstrapFeatureScene3dOceanQuery,omitzero"`
+	BootstrapFeatureScene3DHierarchy        HashedAsset `json:"bootstrapFeatureScene3dHierarchy,omitzero"`
 	BootstrapFeatureScene3DParticleBurst    HashedAsset `json:"bootstrapFeatureScene3dParticleBurst,omitzero"`
 	// BootstrapFeatureScene3DInstanceStream is the opt-in binary
 	// instance-transform fast path (see client/runtime/scene3d/
@@ -228,6 +232,7 @@ type RuntimePaths struct {
 	BootstrapFeatureScene3DWalk             string
 	BootstrapFeatureScene3DModelPreparation string
 	BootstrapFeatureScene3DZoom             string
+	BootstrapFeatureScene3DHierarchy        string
 	BootstrapFeatureScene3DParticleBurst    string
 	BootstrapFeatureScene3DTimeline         string
 	BootstrapFeatureScene3DVessel           string
@@ -305,6 +310,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureScene3DWalk:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWalk.File),
 		BootstrapFeatureScene3DModelPreparation: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DModelPreparation.File),
 		BootstrapFeatureScene3DZoom:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DZoom.File),
+		BootstrapFeatureScene3DHierarchy:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DHierarchy.File),
 		BootstrapFeatureScene3DParticleBurst:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DParticleBurst.File),
 		BootstrapFeatureScene3DTimeline:         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DTimeline.File),
 		BootstrapFeatureScene3DVessel:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DVessel.File),

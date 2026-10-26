@@ -400,3 +400,22 @@ func TestRunnerConcurrentInputs(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// racySim mutates plain fields in Tick and reads them in Snapshot, so any
+// concurrent call into the simulation is a data race under -race.
+type racySim struct{ n int }
+
+func (s *racySim) Tick(map[string]Input) { s.n++ }
+func (s *racySim) Snapshot() []byte      { return []byte(fmt.Sprint(s.n)) }
+func (s *racySim) Restore([]byte)        {}
+func (s *racySim) State() []byte         { return []byte(fmt.Sprint(s.n)) }
+
+func TestJoinSnapshotDoesNotRaceWithTick(t *testing.T) {
+	r := New(hub.New("join-race"), &racySim{}, Options{TickRate: 1000})
+	r.Start()
+	defer r.Stop()
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		r.snapshotNow()
+	}
+}

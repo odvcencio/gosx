@@ -75,3 +75,67 @@ func TestReplayRecordAndPlayback(t *testing.T) {
 		t.Fatalf("expected 2 ticks from replay, got %d", s.ticks)
 	}
 }
+
+// sumSim accumulates input bytes and the RNG seed so a replay is checkable.
+type sumSim struct{ sum int }
+
+func (s *sumSim) Tick(in map[string]Input) {
+	EachInput(in, func(_ string, i Input) {
+		for _, b := range i.Data {
+			s.sum = s.sum*31 + int(b)
+		}
+	})
+	s.sum++
+}
+func (s *sumSim) Snapshot() []byte { return []byte(fmt.Sprint(s.sum)) }
+func (s *sumSim) Restore(b []byte) { fmt.Sscan(string(b), &s.sum) }
+func (s *sumSim) State() []byte    { return s.Snapshot() }
+
+func TestReplayLogCarriesInitialSnapshotAndSeed(t *testing.T) {
+	s := &sumSim{sum: 7}
+	r := New(hub.New("replay-init"), s, Options{Seed: 99})
+	for i := 0; i < 5; i++ {
+		r.ReceiveInput("p1", Input{Data: []byte{byte('a' + i)}})
+		r.tickOnce()
+	}
+	log := r.Replay()
+	if string(log.Initial) != "7" || log.Seed != 99 || log.InitialFrame != 0 || log.Truncated {
+		t.Fatalf("log header: initial=%q seed=%d frame=%d", log.Initial, log.Seed, log.InitialFrame)
+	}
+	fresh := &sumSim{}
+	fresh.Restore(log.Initial)
+	for _, f := range log.Frames {
+		fresh.Tick(f.Inputs)
+	}
+	if fresh.sum != s.sum {
+		t.Fatalf("replay diverged: %d != %d", fresh.sum, s.sum)
+	}
+}
+
+func TestReplayMaxFramesBoundsLog(t *testing.T) {
+	r := New(hub.New("replay-cap"), &sumSim{}, Options{ReplayMaxFrames: 3})
+	for i := 0; i < 10; i++ {
+		r.tickOnce()
+	}
+	log := r.Replay()
+	if len(log.Frames) != 3 || !log.Truncated || log.Frames[2].Frame != 3 {
+		t.Fatalf("frames=%d truncated=%v", len(log.Frames), log.Truncated)
+	}
+}
+
+func TestRunnerRestoreSetsFrameAndRestartsReplay(t *testing.T) {
+	s := &sumSim{}
+	r := New(hub.New("restore"), s, Options{})
+	r.Restore(500, []byte("42"))
+	if r.Frame() != 500 || s.sum != 42 {
+		t.Fatalf("frame=%d sum=%d", r.Frame(), s.sum)
+	}
+	r.tickOnce()
+	if r.Frame() != 501 {
+		t.Fatalf("frame=%d", r.Frame())
+	}
+	log := r.Replay()
+	if string(log.Initial) != "42" || log.InitialFrame != 500 || len(log.Frames) != 1 || log.Frames[0].Frame != 501 {
+		t.Fatalf("log=%+v", log)
+	}
+}

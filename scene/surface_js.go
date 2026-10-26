@@ -58,6 +58,9 @@ func (s *Surface) renderer() (js.Value, error) {
 // Use pose/instance streams for per-frame transforms; this is the graph path.
 func (s *Surface) DispatchCommands(batch MountCommandBatch) (err error) {
 	defer surfaceRecover(&err)
+	if bridge, ok := workerBridge(); ok {
+		return s.workerDispatchCommands(bridge, batch)
+	}
 	mount, err := s.element()
 	if err != nil {
 		return err
@@ -82,6 +85,9 @@ func (s *Surface) OnFrameSubmitted(handler func(MountFrameSubmission)) (cancel f
 	defer surfaceRecover(&err)
 	if handler == nil {
 		return nil, errors.New("scene: frame submission handler is nil")
+	}
+	if bridge, ok := workerBridge(); ok {
+		return s.workerOnFrameSubmitted(bridge, handler)
 	}
 	mount, err := s.element()
 	if err != nil {
@@ -121,6 +127,9 @@ func (s *Surface) CancelFrameRequest(id string) (err error) {
 	if id == "" {
 		return errors.New("scene: frame request cancellation ID is empty")
 	}
+	if bridge, ok := workerBridge(); ok {
+		return s.workerCancelFrameRequest(bridge, id)
+	}
 	mount, err := s.element()
 	if err != nil {
 		return err
@@ -137,6 +146,23 @@ func (s *Surface) Update(options SurfaceOptions) (err error) {
 	defer surfaceRecover(&err)
 	if options.MaxFrameRate == nil && options.PostFXMaxPixels == nil {
 		return nil
+	}
+	if bridge, ok := workerBridge(); ok {
+		partial := map[string]any{}
+		if options.MaxFrameRate != nil {
+			fps := *options.MaxFrameRate
+			if math.IsNaN(fps) || math.IsInf(fps, 0) || fps < 0 {
+				return errors.New("scene: invalid frame rate")
+			}
+			partial["maxFrameRate"] = fps
+		}
+		if options.PostFXMaxPixels != nil {
+			if *options.PostFXMaxPixels < 0 {
+				return errors.New("scene: invalid post-FX pixel budget")
+			}
+			partial["postFXMaxPixels"] = *options.PostFXMaxPixels
+		}
+		return s.workerUpdate(bridge, partial)
 	}
 	handle, err := s.renderer()
 	if err != nil {
@@ -166,6 +192,9 @@ func (s *Surface) Resize(width, height int) (changed bool, err error) {
 	defer surfaceRecover(&err)
 	if width < 1 || height < 1 || width > 65536 || height > 65536 {
 		return false, errors.New("scene: invalid backing dimensions")
+	}
+	if _, ok := workerBridge(); ok {
+		return false, errWorkerDOM
 	}
 	mount, err := s.element()
 	if err != nil {
@@ -217,6 +246,9 @@ type ContextLoss struct{ extension js.Value }
 // reported as a successful device recovery.
 func (s *Surface) LoseContext() (loss *ContextLoss, err error) {
 	defer surfaceRecover(&err)
+	if _, ok := workerBridge(); ok {
+		return nil, errWorkerDOM
+	}
 	mount, err := s.element()
 	if err != nil {
 		return nil, err

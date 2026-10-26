@@ -54,6 +54,7 @@ type sceneObject struct {
 	ScaleY             float64
 	ScaleZ             float64
 	ParentMatrix       [16]float64
+	DynamicParent      bool
 	HasParentMatrix    bool
 	SpinX              float64
 	SpinY              float64

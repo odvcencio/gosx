@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import inspector from "node:inspector";
 import test from "node:test";
 import vm from "node:vm";
 
@@ -18,16 +19,54 @@ function runtime() {
   const context = vm.createContext({window, document, console, performance: {now: () => clock}, setTimeout, clearTimeout, queueMicrotask});
   vm.runInContext(core, context);
   return {motion: window.__gosx.motion, frames,
-    load(source = track) {vm.runInContext(source, context);},
+    load(source = track, filename = "motion-feature.ts") {vm.runInContext(source, context, {filename});},
     advance(ms = clock) {clock = ms; const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(fn => fn(ms));},
     reduce(value) {reduced({matches: value});},
   };
 }
 
+test("mix selects exact endpoints without cancellation, overflow or vector aliasing", () => {
+  const r = runtime();
+  for (const [from, to] of [[1e20, 1], [Number.MAX_VALUE, -Number.MAX_VALUE], [0, -0]]) {
+    const a = r.motion.signal(from), b = r.motion.signal(to), weight = r.motion.signal(0);
+    const mixed = r.motion.mix(a, b, weight);
+    assert.ok(Object.is(mixed.get(), from));
+    weight.set(1); assert.ok(Object.is(mixed.get(), to), `${from} -> ${to}`);
+    weight.set(0); assert.ok(Object.is(mixed.get(), from));
+    mixed.dispose();
+    const mapped = r.motion.map(weight, 0, 1, from, to);
+    assert.ok(Object.is(mapped.get(), from));
+    weight.set(1); assert.ok(Object.is(mapped.get(), to));
+    mapped.dispose();
+  }
+  const from = [1e20, -0], to = [1, 2], weight = r.motion.signal(0);
+  const mixed = r.motion.mix(r.motion.signal(from), r.motion.signal(to), weight);
+  assert.deepEqual(Array.from(mixed.get()), from);
+  mixed.get()[0] = 42; assert.equal(from[0], 1e20);
+  weight.set(1); assert.deepEqual(Array.from(mixed.get()), to);
+  mixed.get()[0] = 42; assert.equal(to[0], 1);
+  weight.set(.5); assert.equal(mixed.get()[1], 1);
+  mixed.dispose();
+  assert.equal(r.frames.size, 0);
+});
+
+test("signals suppress equal scalar and nested vector writes while retaining signed zero changes", () => {
+  const r = runtime(), value = r.motion.signal([1, [-0, NaN]]);
+  let writes = 0;
+  const stop = value.subscribe(() => writes++, {immediate: false});
+  value.set([1, [-0, NaN]]); assert.equal(writes, 0);
+  value.set([1, [0, NaN]]); assert.equal(writes, 1);
+  value.set([1]); assert.equal(writes, 2);
+  value.set(1); assert.equal(writes, 3);
+  value.set(1); assert.equal(writes, 3);
+  value.set([1]); assert.equal(writes, 4);
+  stop(); assert.equal(r.frames.size, 0);
+});
+
 test("prepared scalar tracks agree with native Eval for easing, holds, step boundaries, stagger and reverse seeks", () => {
   const r = runtime(); r.load();
   for (const fixture of fixtures) {
-    const sample = r.motion.createTrackSampler(fixture.signal.frames);
+    const sample = r.motion.createTrackSampler(fixture.signal.frames, 0, fixture.signal.interp);
     for (const [time, want] of fixture.samples) {
       assert.ok(Math.abs(sample(time) - want) < 1e-7, `${JSON.stringify(fixture.signal)} at ${time}: ${sample(time)} vs ${want}`);
     }
@@ -112,10 +151,74 @@ test("track and transport chunks tolerate either load order, deferred loading, c
 });
 
 const valueFixtures = JSON.parse(read("../../motion/testdata/track_value_golden.json"));
+
+const timelineFixtures = [...JSON.parse(read("../../scene/testdata/timeline_motion.json")), ...JSON.parse(read("../../scene/testdata/timeline_motion_windows.json"))];
+test("Go scene plans mounted as motion programs agree with native poses through seeks, cuts and reduced motion", () => {
+  const property = name => /^[xyz]$/.test(name) ? `position.${name}` : name.replace(/^(rotation|scale)([XYZ])$/, (_, prefix, axis) => `${prefix}.${axis.toLowerCase()}`);
+  for (const deferred of [false, true]) for (const fixture of timelineFixtures) {
+    const r = runtime(), scene = {}, latest = new Map();
+    r.load(transport); if (!deferred) r.load();
+    const root = {nodeType: 1, hasAttribute: name => name === "data-gosx-motion-program", getAttribute: () => JSON.stringify(fixture.program),
+      querySelectorAll(selector) {return selector === "#scene" ? [scene] : [];}};
+    r.motion.mountPrograms(root);
+    if (deferred) r.load();
+    r.motion.attachScene(scene, {write(binding, value) {latest.set(`${binding.target}:${binding.node || ""}:${binding.property}`, value);}, invalidate() {}});
+    r.advance();
+    const playback = r.motion.transport(fixture.program.id);
+    const check = (commands, at) => {
+      for (const command of commands) for (const [name, want] of Object.entries(command.data)) {
+        const key = `${command.kind === 5 ? "camera" : "sceneNode"}:${command.objectId || ""}:${property(name)}`, got = latest.get(key);
+        assert.ok(Number.isFinite(got) && Math.abs(got - want) <= 1e-9 * Math.max(1, Math.abs(want)), `${fixture.name} at ${at} ${key}: ${got} vs ${want}`);
+      }
+    };
+    for (const sample of fixture.samples) {
+      playback.seek((sample.seconds - (fixture.offset || 0)) * 1000); r.advance(); check(sample.commands, sample.seconds);
+    }
+    r.reduce(true); r.advance(); check(fixture.final);
+    r.reduce(false); playback.seek(0); r.advance(); check(fixture.samples[0].commands);
+    r.motion.disposePrograms(root); r.advance();
+    const settled = new Map(latest);
+    r.reduce(true); r.advance(); assert.deepEqual(latest, settled);
+    assert.equal(r.frames.size, 0, `${fixture.name}: disposed scope retains no RAF`);
+  }
+});
+
+test("long Go scene sequences stop sampling inactive branches without another runtime primitive", async () => {
+  const fixture = timelineFixtures.find(f => f.name === "long-linear"), r = runtime(), scene = {};
+  r.load(transport); r.load(track, "timeline-work-proof.ts");
+  let latest;
+  const root = {nodeType: 1, hasAttribute: name => name === "data-gosx-motion-program", getAttribute: () => JSON.stringify(fixture.program),
+    querySelectorAll(selector) {return selector === "#scene" ? [scene] : [];}};
+  r.motion.attachScene(scene, {write(_binding, value) {latest = value;}, invalidate() {}});
+  r.motion.mountPrograms(root); r.advance();
+  const playback = r.motion.transport(fixture.program.id);
+  playback.seek(32125); r.advance();
+  const session = new inspector.Session(); session.connect();
+  const post = (method, params = {}) => new Promise((resolve, reject) => session.post(method, params, (error, value) => error ? reject(error) : resolve(value)));
+  try {
+    await post("Profiler.enable");
+    await post("Profiler.startPreciseCoverage", {callCount: true, detailed: true});
+    await post("Profiler.takePreciseCoverage");
+    playback.seek(32250); r.advance();
+    const coverage = await post("Profiler.takePreciseCoverage");
+    const start = track.indexOf("function(input, output)");
+    assert.ok(start >= 0, "identify the actual prepared sampler");
+    const samplers = coverage.result.filter(script => script.url === "timeline-work-proof.ts")
+      .flatMap(script => script.functions.filter(fn => fn.ranges[0].startOffset === start));
+    assert.equal(samplers.length, 1);
+    const calls = samplers[0].ranges[0].count;
+    assert.ok(calls > 0 && calls <= 20, `one active tween required ${calls} actual sampler calls; old graph requires 127`);
+    assert.equal(latest, 32.25);
+  } finally {
+    await post("Profiler.stopPreciseCoverage"); session.disconnect();
+    r.motion.disposePrograms(root); r.advance(); assert.equal(r.frames.size, 0);
+  }
+});
+
 test("typed vector, HDR color and shortest-arc quaternion tracks agree with native Eval", () => {
   const r = runtime(); r.load();
   for (const fixture of valueFixtures) {
-    const sample = r.motion.createTrackSampler(fixture.signal.frames, fixture.signal.arity);
+    const sample = r.motion.createTrackSampler(fixture.signal.frames, fixture.signal.arity, fixture.signal.interp);
     const scratch = new Array(fixture.samples[0].value.length);
     for (const {time, value} of fixture.samples) {
       const got = sample(time, scratch);
@@ -141,13 +244,32 @@ test("typed samplers reject invalid shapes, values and quaternions", () => {
   assert.throws(() => sample(.5,[]), /width/);
 });
 
+test("spline samplers own tangents, accept quaternion derivatives and reject malformed tangent wire data", () => {
+  const r = runtime(); r.load();
+  const frames = [{at:0,value:[0,0],outTangent:[1,2]}, {at:2,value:[2,0],inTangent:[1,-2]}];
+  const sample = r.motion.createTrackSampler(frames,1,2), out = [0,0];
+  assert.equal(sample(1,out),out);
+  assert.deepEqual(out,[1,1]);
+  frames[0].outTangent[1] = 99; frames[1].inTangent[1] = 99;
+  assert.deepEqual(Array.from(sample(1)),[1,1]);
+  assert.throws(() => sample(1,[]), /width/);
+  for (const tangent of [[1], [1,NaN], [1,Infinity], new Array(2), 2]) {
+    assert.throws(() => r.motion.createTrackSampler([{at:0,value:[0,0],outTangent:tangent},{at:1,value:[1,1]}],1,2));
+  }
+  for (const interp of [-1,4,1.5,"2",NaN,3]) assert.throws(() => r.motion.createTrackSampler(frames,1,interp));
+  assert.throws(() => r.motion.createTrackSampler(frames,1), /tangents/);
+  const q = r.motion.createTrackSampler([{at:0,value:[1,0,0,0],outTangent:[0,0,0,0]},
+    {at:2,value:[-1,0,0,0],inTangent:[0,0,0,0]}],4,2);
+  assert.deepEqual(Array.from(q(1)),[0,0,0,1]);
+});
+
 test("typed tracks preserve their rest pose across seeks, reduced motion, load order and disposal", () => {
   for (const late of [false,true]) {
     const r = runtime(), title = {style:{color:""}}, scene = {}, writes = [];
     r.load(transport); if (!late) r.load();
     const program = {version:1,id:"typed",transport:{durationMs:2000},signals:[
       {id:"clock",kind:"playhead"},
-      {id:"position",kind:"track",input:"clock",arity:2,frames:[{at:0,value:[0,1,2]},{at:2,value:[2,3,4]}]},
+      {id:"position",kind:"track",input:"clock",arity:2,interp:2,frames:[{at:0,value:[0,1,2],outTangent:[1,1,3]},{at:2,value:[2,3,4],inTangent:[1,1,-1]}]},
       {id:"other",kind:"track",input:"clock",arity:2,frames:[{at:0,value:[2,3,4]},{at:2,value:[4,5,6]}]},
       {id:"weight",kind:"map",input:"clock",from:0,to:2,min:0,max:1},
       {id:"mixed",kind:"mix",a:"position",b:"other",weight:"weight"},
@@ -162,7 +284,7 @@ test("typed tracks preserve their rest pose across seeks, reduced motion, load o
     r.motion.attachScene(scene,{write(binding,value){writes.push([binding.target,Array.from(value || [])]);},invalidate(){}});
     r.motion.mountPrograms(root);
     const t = r.motion.transport("typed"); t.seek(1000); if(late)r.load(); r.advance();
-    assert.deepEqual(writes.slice(-2),[["camera",[2,3,4]],["materialUniform",[.5,.25,0,.75]]]);
+    assert.deepEqual(writes.slice(-2),[["camera",[2,3,4.5]],["materialUniform",[.5,.25,0,.75]]]);
     assert.equal(title.style.color,"rgba(128,64,0,0.75)");
     t.seek(500);r.advance();r.reduce(true);r.advance();
     assert.deepEqual(writes.slice(-2),[["camera",[4,5,6]],["materialUniform",[1,.5,0,.5]]]);

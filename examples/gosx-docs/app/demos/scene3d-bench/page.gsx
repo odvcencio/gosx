@@ -29,6 +29,7 @@ func Page() Node {
 			</div>
 			<div class="scene3d-bench__overlay" id="bench3d-overlay" data-workload={data.workload}>
 				<h2 class="scene3d-bench__title">Live measurements</h2>
+				<p class="scene3d-bench__note" id="bench3d-render-status" role="status">Starting renderer…</p>
 				<nav class="scene3d-bench__workloads" aria-label="Switch workload">
 					<a data-gosx-native="true" href="?workload=static">Static</a>
 					<a data-gosx-native="true" href="?workload=pbr-heavy">PBR heavy</a>
@@ -124,6 +125,6 @@ func Page() Node {
 				</details>
 			</div>
 		</div>
-		<script src="/scene3d-bench-client.js"></script>
+		<script src={data.clientScriptURL}></script>
 	</section>
 }

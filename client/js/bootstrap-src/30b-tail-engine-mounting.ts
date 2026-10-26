@@ -464,6 +464,7 @@
       pendingEngineRuntimes.delete(pending.id);
     }
     releaseGoWASMEngineWaiter(pending);
+    if (pending.workerRecord) pending.workerRecord.terminate();
     if (!owned) return;
     if (!pending.runtimeDisposed && pending.runtime && typeof pending.runtime.dispose === "function") {
       pending.runtimeDisposed = true;
@@ -4457,6 +4458,38 @@
       const record = window.__gosx && window.__gosx.engines && window.__gosx.engines.get(entry.id);
       return !!(pending && pending.generation === goWASMEnginePageGeneration && record && !record.disposed && record.context === context);
     };
+    function applySignalBatch(values, encoded, changedOnly) {
+      if (!values || typeof values !== "object" || Array.isArray(values)) throw new TypeError("signal batch must be an object");
+      let names = Object.keys(values);
+      if (names.some(name => !name.trim())) throw new TypeError("signal name is required");
+      if (!names.length) return null;
+      gosxReadSharedSignal(names[0], undefined);
+      const store = window.__gosx.sharedSignals;
+      const batch = window.__gosx_set_input_batch;
+      // Snapshot writes may omit unchanged values. The VM compares its live
+      // Values; this fallback compares the live browser store without caching
+      // sender identities that another component could have edited.
+      if (changedOnly && typeof batch !== "function") {
+        names = names.filter(name => !store.values.has(name) || JSON.stringify(store.values.get(name)) !== JSON.stringify(values[name]));
+      }
+      const before = names.map(name => [name, store.values.has(name), store.values.get(name)]);
+      // Prime all browser reads before the VM notifies any batch subscriber.
+      for (const name of names) store.values.set(name, values[name]);
+      try {
+        if (typeof batch === "function") {
+          const error = batch(encoded, changedOnly);
+          if (error) throw new Error(String(error));
+        } else {
+          for (const name of names) gosxNotifySharedSignal(name, JSON.stringify(values[name]));
+        }
+      } catch (error) {
+        for (const [name, existed, value] of before) {
+          if (existed) store.values.set(name, value); else store.values.delete(name);
+        }
+        throw error;
+      }
+      return null;
+    }
     const context = {
       id: entry.id,
       kind: entry.kind,
@@ -4479,36 +4512,23 @@
       },
       setSignals(values) {
         if (!isCurrent()) throw new Error("engine context is disposed");
-        if (!values || typeof values !== "object" || Array.isArray(values)) throw new TypeError("signal batch must be an object");
-        const names = Object.keys(values);
-        if (names.some(name => !name.trim())) throw new TypeError("signal name is required");
-        const encoded = JSON.stringify(values);
-        if (!names.length) return null;
-        gosxReadSharedSignal(names[0], undefined);
-        const store = window.__gosx.sharedSignals;
-        const before = names.map(name => [name, store.values.has(name), store.values.get(name)]);
-        // Prime all browser reads before the VM notifies any batch subscriber.
-        for (const name of names) store.values.set(name, values[name]);
-        const batch = window.__gosx_set_input_batch;
-        try {
-          if (typeof batch === "function") {
-            const error = batch(encoded);
-            if (error) throw new Error(String(error));
-          } else {
-            for (const name of names) gosxNotifySharedSignal(name, JSON.stringify(values[name]));
-          }
-        } catch (error) {
-          for (const [name, existed, value] of before) {
-            if (existed) store.values.set(name, value); else store.values.delete(name);
-          }
-          throw error;
-        }
-        return null;
+        return applySignalBatch(values, JSON.stringify(values), false);
+      },
+      setSignalsJSON(encoded, changedOnly) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        if (typeof encoded !== "string") throw new TypeError("signal batch must be JSON");
+        return applySignalBatch(JSON.parse(encoded), encoded, changedOnly === true);
       },
       subscribeSignal(name, handler, options) {
         if (!isCurrent()) throw new Error("engine context is disposed");
         return gosxSubscribeSharedSignal(name, function(value, signalName) {
           if (isCurrent()) handler(value, signalName);
+        }, options);
+      },
+      subscribeSignalJSON(name, handler, options) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        return gosxSubscribeSharedSignal(name, function(value, signalName, encoded) {
+          if (isCurrent()) handler(typeof encoded === "string" ? encoded : JSON.stringify(value), signalName);
         }, options);
       },
       navigate(target, options) {
@@ -4724,7 +4744,13 @@
 
   async function resolveMountedEngineFactory(entry, pending) {
     if (engineUsesGoWASMRuntime(entry)) {
-      return resolveGoWASMEngineFactory(entry, pending);
+      const mainThread = () => resolveGoWASMEngineFactory(entry, pending);
+      if (entry.thread !== "worker") return mainThread();
+      // Thread "worker": the host chunk starts a Worker and falls back to
+      // mainThread, reporting why, when it cannot.
+      try { if (typeof ensureBootstrapFeature === "function") await ensureBootstrapFeature("engine-worker"); } catch (_) {}
+      const host = window.__gosx.engineWorker;
+      return host ? host.resolve(entry, pending, mainThread) : mainThread();
     }
     return { factory: resolveEngineFactory(entry), moduleRecord: null };
   }

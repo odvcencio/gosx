@@ -1,0 +1,30 @@
+// vertex-texture.sel — vertex displacement from a height texture.
+//
+// vertex() reads the `heightMap` texture with sampleLevel (explicit LOD; a
+// vertex shader has no derivatives, so sample() is not available there),
+// pushes each vertex along its normal by the sampled height, and passes the
+// height to surface() through a varying. `tint` is sampled only by surface(),
+// so the descriptor marks heightMap as vertex-visible and tint as
+// fragment-only.
+material HeightDisplace {
+    param heightMap : texture2d
+    param tint      : texture2d
+    param scale     : float = 0.25
+    param lod       : float = 0.0
+
+    varying height : float
+    varying vUv     : vec2
+
+    vertex(geo) -> vec4 {
+        let h = sampleLevel(heightMap, geo.uv, lod).x
+        let p = geo.position + geo.normal * (h * scale)
+        height = h
+        vUv = geo.uv
+        return mvp * vec4f(p, 1.0)
+    }
+
+    surface(geo) -> color {
+        let c = sample(tint, geo.vUv)
+        return rgb(c.x * (0.5 + geo.height), c.y * (0.5 + geo.height), c.z * (0.5 + geo.height))
+    }
+}

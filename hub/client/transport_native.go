@@ -84,6 +84,7 @@ func (d nativeDialer) Dial(ctx context.Context, rawURL string, header http.Heade
 type nativeConn struct {
 	*eventStream
 	ws        *websocket.Conn
+	writeMu   sync.Mutex // gorilla allows one concurrent writer
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -93,6 +94,8 @@ func (c *nativeConn) Send(data []byte, binary bool) error {
 	if binary {
 		messageType = websocket.BinaryMessage
 	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return c.ws.WriteMessage(messageType, data)
 }
 

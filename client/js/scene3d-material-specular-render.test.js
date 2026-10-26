@@ -18,6 +18,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ts = require("../runtime/node_modules/typescript");
 
 const srcDir = path.join(__dirname, "bootstrap-src");
 const SHARED_API_EXPORT_MARKER = "// Scene3D shared API";
@@ -29,6 +30,11 @@ function readBootstrapSource(name) {
 function readSceneRuntimeSource(name) {
   return fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
 }
+
+// Match the production TypeScript syntax before evaluating the real loader.
+const gltfSource = ts.transpileModule(readSceneRuntimeSource("gltf.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 function trimBeforeSharedApiExport(source) {
   const at = source.indexOf(SHARED_API_EXPORT_MARKER);
@@ -174,7 +180,7 @@ function webglUpload(context, literal) {
 
 test("imported PBR factors reach single-skin and GPU palette crowd uniforms", () => {
   const { source, context } = setupWebGLRenderer();
-  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  runFragment(context, gltfSource, "gltf.ts");
   const document = {
     asset: { version: "2.0" },
     materials: [
@@ -277,7 +283,7 @@ test("imported PBR factors reach single-skin and GPU palette crowd uniforms", ()
 
 test("a normal-texture-only KHR_texture_transform scale reaches the WebGL normalUVScale uniform", () => {
   const { context } = setupWebGLRenderer();
-  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  runFragment(context, gltfSource, "gltf.ts");
   const document = JSON.stringify({
     asset: { version: "2.0" },
     materials: [
@@ -1072,15 +1078,15 @@ test("WebGPU fragment shaders pin coverage discard and corrected alpha selects",
 
 test("WebGPU instanceColor varyings are flat (primitive-constant, no interpolation drift)", () => {
   // Every producer writes a primitive constant (ordinary vec4f(1), cull
-  // vec4f(1), instanced per-instance constants), and every consumer (PBR,
-  // water) reads it back. Perspective-correct interpolation of a constant 1
+  // vec4f(1), crowd vec4f(1), instanced per-instance constants), and every
+  // consumer (PBR, water) reads it back. Perspective-correct interpolation of a constant 1
   // can round just below 1 and discard a fragment at cutoff equality.
   // @interpolate(flat) keeps the primitive-constant alpha exact.
   const { source } = setupWebGPURenderer();
   assert.strictEqual(
     (source.match(/@location\(5\) @interpolate\(flat\) instanceColor: vec4f,/g) || []).length,
-    4,
-    "ordinary/instanced vertex outputs + PBR/water fragment inputs all flat");
+    5,
+    "ordinary/instanced/crowd vertex outputs + PBR/water fragment inputs all flat");
   assert.match(source,
     /WGSL_PBR_INSTANCED_CULL_VERTEX = WGSL_PBR_INSTANCED_VERTEX[\s\S]*\.replace\("instanceColor: vec4f,", "pickData: vec4u,"\)/,
     "the cull vertex variant derives from the already-flat instanced source");
@@ -1575,7 +1581,7 @@ test("WebGPU specular-color late load and new view invalidate the cached bind gr
 
 test("signed and zero normal scales survive glTF, object profiles and both renderer uploads", () => {
   const glBackend = setupWebGLRenderer();
-  runFragment(glBackend.context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  runFragment(glBackend.context, gltfSource, "gltf.ts");
   const gpuBackend = setupWebGPUMaterialBinding();
   const calls = makeGPUHarness(gpuBackend.context, {});
   for (const scale of [[60, 45], [-60, 45], [0, 45], [60, 0], [0, 0], [1, 1], null]) {
@@ -1618,7 +1624,7 @@ test("signed and zero normal scales survive glTF, object profiles and both rende
 
 test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidate caches", () => {
   const { context } = setupWebGLRenderer();
-  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  runFragment(context, gltfSource, "gltf.ts");
   const source = readSceneRendererBackendSrc("webgl");
   runFragment(context, sliceBetween(source, "function scenePBRTextureDescriptor", "// Bind a texture record"), "texture-loader.js");
   const images = [];
@@ -1699,7 +1705,7 @@ test("KTX2 material uploads restore the declared wrap modes after decoder defaul
 
 test("glTF volume thickness texture keeps linear green data and authored wrapping", () => {
   const context = createSceneCoreContext();
-  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  runFragment(context, gltfSource, "gltf.ts");
   context.volumeDocument = {
     asset: { version: "2.0" }, images: [{ uri: "thickness.png" }],
     textures: [{ source: 0, sampler: 0 }],

@@ -37,6 +37,12 @@ func TestSampleTrackGolden(t *testing.T) {
 	perKey := scalarTrack(Ease{Kind: EaseOutPow})
 	perKey.Keys[0].Ease = &Ease{Kind: EaseInPow, Args: []float64{3}}
 	tracks = append(tracks, perKey)
+	out, in := ScalarV(4), ScalarV(-2)
+	cubic := scalarTrack(Ease{Kind: EaseInPow, Args: []float64{3}})
+	cubic.Interp = InterpCubicSpline
+	cubic.Keys[0].OutTangent, cubic.Keys[1].InTangent = &out, &in
+	cubic.Keys[1].OutTangent, cubic.Keys[2].InTangent = &in, &out
+	tracks = append(tracks, cubic)
 	tracks = append(tracks, ExpandStagger(tracks[3], []int{0, 1, 2}, StaggerSpec{From: FromCenter, Delay: .17})...)
 	for _, track := range tracks {
 		p := NewProgram("golden")
@@ -106,7 +112,7 @@ func TestSampleTrackRejectsInvalidAuthoringWithoutMutation(t *testing.T) {
 		{"few keys", func(tr *Track) { tr.Keys = tr.Keys[:1] }},
 		{"too many", func(tr *Track) { tr.Keys = make([]Key, 4097) }},
 		{"generator", func(tr *Track) { tr.Gen = &Generator{Kind: GenSpin} }},
-		{"spline", func(tr *Track) { tr.Interp = InterpCubicSpline }},
+		{"unknown interpolation", func(tr *Track) { tr.Interp = Interp(99) }},
 		{"mixed arity", func(tr *Track) { tr.Keys[0].Value = Vec2V(1, 2) }},
 		{"duplicate time", func(tr *Track) { tr.Keys[1].T = tr.Keys[0].T }},
 		{"nan", func(tr *Track) { tr.Keys[0].T = math.NaN() }},

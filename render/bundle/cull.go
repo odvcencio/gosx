@@ -447,7 +447,7 @@ func subRow(a, b [4]float32) [4]float32 {
 }
 
 func normalizePlane(p [4]float32) [4]float32 {
-	l := float32(math.Sqrt(float64(p[0]*p[0] + p[1]*p[1] + p[2]*p[2])))
+	l := float32(math.Sqrt(float64(float32(p[0]*p[0]) + float32(p[1]*p[1]) + float32(p[2]*p[2]))))
 	if l == 0 {
 		return p
 	}

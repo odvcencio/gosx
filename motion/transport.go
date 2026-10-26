@@ -35,6 +35,7 @@ func (p *Program) WithTransport(options TransportOptions) *Program {
 		Scenes: append([]string(nil), options.Scenes...)}
 	if len(options.Labels) > 0 {
 		spec.Labels = make(map[string]float64, len(options.Labels))
+		//gosx:allow map-range copies each label independently into a map
 		for label, at := range options.Labels {
 			spec.Labels[label] = float64(at) / float64(time.Millisecond)
 		}
@@ -64,6 +65,7 @@ func (s *TransportSpec) validate() error {
 	if len(s.Labels) > 128 || len(s.Scenes) > 64 {
 		return fmt.Errorf("motion: transport exceeds 128 labels or 64 scene selectors")
 	}
+	//gosx:allow map-range validation only; any invalid label rejects the transport
 	for name, at := range s.Labels {
 		if strings.TrimSpace(name) == "" || len(name) > 128 || math.IsNaN(at) || math.IsInf(at, 0) || at < 0 || at > s.DurationMS {
 			return fmt.Errorf("motion: invalid transport label %q", name)

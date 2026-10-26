@@ -60,12 +60,15 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 	clock := program.Playhead("clock")
 	key := func(at, value float64) motion.Key { return motion.Key{T: at, Value: motion.ScalarV(value)} }
 	valueKey := func(at float64, value motion.Value) motion.Key { return motion.Key{T: at, Value: value} }
-	sample := func(id string, ease motion.Ease, keys ...motion.Key) motion.SignalRef {
-		ref, err := program.SampleTrack(id, clock, motion.Track{Ease: ease, Keys: keys})
+	sampleTrack := func(id string, track motion.Track) motion.SignalRef {
+		ref, err := program.SampleTrack(id, clock, track)
 		if err != nil {
 			log.Fatal(err)
 		}
 		return ref
+	}
+	sample := func(id string, ease motion.Ease, keys ...motion.Key) motion.SignalRef {
+		return sampleTrack(id, motion.Track{Ease: ease, Keys: keys})
 	}
 	soft := motion.Ease{Kind: motion.EaseInOutPow, Args: []float64{2}}
 	gain := sample("gain", soft, key(0, .35), key(5, .95), key(9, .45), key(14, .6))
@@ -75,7 +78,6 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 		valueKey(9, motion.ColorV(.62, .48, .92, 1)),
 		valueKey(14, motion.ColorV(.42, .83, .8, 1)),
 	)
-	progress := sample("pose", soft, key(0, 0), key(5, .85), key(9, .25), key(14, 1))
 	entrances := motion.ExpandStagger(motion.Track{
 		Ease: motion.Ease{Kind: motion.EaseOutBack, Args: []float64{.8}},
 		Keys: []motion.Key{key(0, 32), key(1.2, 0)},
@@ -90,12 +92,15 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 		fade := program.Map(id+"-fade", rise, 32, 0, 0, 1)
 		program.BindStyle(program.Clamp(id+"-visible", fade, 0, 1), selector, "opacity", "")
 	}
-	position := sample("position", soft,
-		valueKey(0, motion.Vec3V(-.45, -.25, 0)),
-		valueKey(5, motion.Vec3V(.4, .25, -.1)),
-		valueKey(9, motion.Vec3V(-.2, -.15, .15)),
-		valueKey(14, motion.Vec3V(.05, 0, 0)),
-	)
+	splineKey := func(at float64, value, tangent motion.Value) motion.Key {
+		return motion.Key{T: at, Value: value, InTangent: &tangent, OutTangent: &tangent}
+	}
+	position := sampleTrack("position", motion.Track{Interp: motion.InterpCubicSpline, Keys: []motion.Key{
+		splineKey(0, motion.Vec3V(-.45, -.25, 0), motion.Vec3V(0, 0, 0)),
+		splineKey(5, motion.Vec3V(.4, .25, -.1), motion.Vec3V(0, -.08, .06)),
+		splineKey(9, motion.Vec3V(-.2, -.15, .15), motion.Vec3V(.08, 0, -.04)),
+		splineKey(14, motion.Vec3V(.05, 0, 0), motion.Vec3V(0, 0, 0)),
+	}})
 	rotation := sample("rotation", soft,
 		valueKey(0, motion.QuatV(motion.QuatFromEuler(.65, -.35, -.2))),
 		valueKey(5, motion.QuatV(motion.QuatFromEuler(1.15, .45, -.2))),
@@ -113,14 +118,19 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 	program.BindSceneNode(size, "#form", "form", "scale")
 	program.BindStyle(tint, ".study-copy .eyebrow", "color", "")
 	program.BindStyle(tint, ".chapter-fill", "backgroundColor", "")
-	if err := program.BindSceneTransition(progress, "#form", scene.CommandTransition{
-		From: []scene.Command{
-			scene.SetCameraCommand(scene.PerspectiveCamera{Position: scene.Vec3(0, 0, 10), FOV: 50}),
-		},
-		To: []scene.Command{
-			scene.SetCameraCommand(scene.PerspectiveCamera{Position: scene.Vec3(0, .3, 8.5), FOV: 45}),
-		},
-	}); err != nil {
+	// A finite Go scene plan shares the same playhead as the DOM and Selena.
+	camera := scene.NewTimeline("camera")
+	for _, phase := range []struct {
+		from, to float64
+		duration time.Duration
+	}{{0, .85, 5 * time.Second}, {.85, .25, 4 * time.Second}, {.25, 1, 5 * time.Second}} {
+		camera.Then(
+			scene.Tween{Camera: true, Property: "y", From: .3 * phase.from, To: .3 * phase.to, Duration: phase.duration, Ease: soft},
+			scene.Tween{Camera: true, Property: "z", From: 10 - 1.5*phase.from, To: 10 - 1.5*phase.to, Duration: phase.duration, Ease: soft},
+			scene.Tween{Camera: true, Property: "fov", From: 50 - 5*phase.from, To: 50 - 5*phase.to, Duration: phase.duration, Ease: soft},
+		)
+	}
+	if err := camera.BindMotion(program, clock, "#form"); err != nil {
 		log.Fatal(err)
 	}
 	program.BindMaterialUniform(gain, "#tide", "ribbon", "gain")

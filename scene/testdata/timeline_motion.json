@@ -1,0 +1,7320 @@
+[
+  {
+    "name": "place",
+    "plan": {
+      "version": 1,
+      "id": "place",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "scaleX",
+          "from": 1.1,
+          "to": 1,
+          "at": 0.6,
+          "duration": 0.1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "camera": true,
+          "property": "y",
+          "from": 4,
+          "to": 2,
+          "at": 0,
+          "duration": 0.4,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "scaleX",
+          "from": 1,
+          "to": 1.1,
+          "at": 0.4,
+          "duration": 0.1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "y",
+          "from": 1,
+          "to": 0,
+          "at": 0,
+          "duration": 0.2,
+          "ease": {
+            "kind": 2
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "place",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "place.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "max": 1
+        },
+        {
+          "id": "place.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "place.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 4,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 0.4,
+              "value": 2,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "place.motion.1.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "max": 1
+        },
+        {
+          "id": "place.motion.1.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "place.motion.1.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 1,
+              "ease": {
+                "kind": 2
+              }
+            },
+            {
+              "at": 0.2,
+              "value": 0,
+              "ease": {
+                "kind": 2
+              }
+            }
+          ]
+        },
+        {
+          "id": "place.motion.2.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -0.4,
+          "max": 0.6
+        },
+        {
+          "id": "place.motion.2.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "place.motion.2.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 1,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 0.1,
+              "value": 1.1,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "place.motion.3.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -0.6,
+          "max": 0.4
+        },
+        {
+          "id": "place.motion.3.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "place.motion.3.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 1.1,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 0.1,
+              "value": 1,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "place.motion.select.0.gate",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "clock",
+          "frames": [
+            {
+              "at": -0.4,
+              "value": 0,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            },
+            {
+              "at": 0.6,
+              "value": 1,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            }
+          ],
+          "interp": 1
+        },
+        {
+          "id": "place.motion.select.0.value",
+          "kind": "mix",
+          "from": 0,
+          "to": 0,
+          "a": "place.motion.2.value",
+          "b": "place.motion.3.value",
+          "weight": "place.motion.select.0.gate"
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "place.motion.0.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "position.y"
+        },
+        {
+          "signal": "place.motion.1.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.y"
+        },
+        {
+          "signal": "place.motion.select.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "scale.x"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 4
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 3.75
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0.5625
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 3.5
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0.25
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 3
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1.1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1.1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1.1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1.05,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 2
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "y": 4
+            }
+          },
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "scaleX": 1,
+              "y": 1
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 5,
+        "data": {
+          "y": 2
+        }
+      },
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "scaleX": 1,
+          "y": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "cuts",
+    "plan": {
+      "version": 1,
+      "id": "cuts",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "x",
+          "from": 100000000000000000000,
+          "to": 1,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "x",
+          "from": 7,
+          "to": 9,
+          "at": 3,
+          "duration": 0,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "x",
+          "from": 2,
+          "to": 4,
+          "at": 4,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "x",
+          "from": -3,
+          "to": -1,
+          "at": 5,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "cuts",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "cuts.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "cuts.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "cuts.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 100000000000000000000,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 1,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "cuts.motion.1.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "clock",
+          "frames": [
+            {
+              "at": 2,
+              "value": 7,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            },
+            {
+              "at": 3,
+              "value": 9,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            }
+          ],
+          "interp": 1
+        },
+        {
+          "id": "cuts.motion.2.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -4,
+          "max": -3
+        },
+        {
+          "id": "cuts.motion.2.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "cuts.motion.2.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 4,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "cuts.motion.3.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -5,
+          "max": -4
+        },
+        {
+          "id": "cuts.motion.3.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "cuts.motion.3.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": -3,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": -1,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "cuts.motion.select.0.gate",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "clock",
+          "frames": [
+            {
+              "at": 2,
+              "value": 0,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            },
+            {
+              "at": 3,
+              "value": 1,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            }
+          ],
+          "interp": 1
+        },
+        {
+          "id": "cuts.motion.select.0.value",
+          "kind": "mix",
+          "from": 0,
+          "to": 0,
+          "a": "cuts.motion.0.value",
+          "b": "cuts.motion.1.value",
+          "weight": "cuts.motion.select.0.gate"
+        },
+        {
+          "id": "cuts.motion.select.1.gate",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "clock",
+          "frames": [
+            {
+              "at": 4,
+              "value": 0,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            },
+            {
+              "at": 5,
+              "value": 1,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            }
+          ],
+          "interp": 1
+        },
+        {
+          "id": "cuts.motion.select.1.value",
+          "kind": "mix",
+          "from": 0,
+          "to": 0,
+          "a": "cuts.motion.2.value",
+          "b": "cuts.motion.3.value",
+          "weight": "cuts.motion.select.1.gate"
+        },
+        {
+          "id": "cuts.motion.select.2.gate",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "clock",
+          "frames": [
+            {
+              "at": 3,
+              "value": 0,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            },
+            {
+              "at": 4,
+              "value": 1,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            }
+          ],
+          "interp": 1
+        },
+        {
+          "id": "cuts.motion.select.2.value",
+          "kind": "mix",
+          "from": 0,
+          "to": 0,
+          "a": "cuts.motion.select.0.value",
+          "b": "cuts.motion.select.1.value",
+          "weight": "cuts.motion.select.2.gate"
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "cuts.motion.select.2.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.x"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 90000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 50000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 99999999983616
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 9
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 9
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 3
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": -3
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": -1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": -1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 9
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 75000000000000000000
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "x": 100000000000000000000
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "x": -1
+        }
+      }
+    ]
+  },
+  {
+    "name": "instant",
+    "plan": {
+      "version": 1,
+      "id": "instant",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "y",
+          "from": 9,
+          "to": -2,
+          "at": 0,
+          "duration": 0,
+          "ease": {
+            "kind": 0
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "instant",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "instant.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "clock",
+          "frames": [
+            {
+              "at": -1,
+              "value": 9,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            },
+            {
+              "at": 0,
+              "value": -2,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  1
+                ]
+              }
+            }
+          ],
+          "interp": 1
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "instant.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.y"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "y": -2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "y": -2
+        }
+      }
+    ]
+  },
+  {
+    "name": "late-nanosecond",
+    "plan": {
+      "version": 1,
+      "id": "late-nanosecond",
+      "tweens": [
+        {
+          "camera": true,
+          "property": "x",
+          "from": 0,
+          "to": 1,
+          "at": 82800,
+          "duration": 1e-9,
+          "ease": {
+            "kind": 0
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "late-nanosecond",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "late-nanosecond.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -82800,
+          "max": -82799
+        },
+        {
+          "id": "late-nanosecond.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "late-nanosecond.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 0,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1e-9,
+              "value": 1,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "late-nanosecond.motion.0.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "position.x"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "x": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 82799.999999999,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "x": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 82800,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "x": 0
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 82800.00000000001,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "x": 0.01455191522836685
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 82800.000000001,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "x": 1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 82801,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "x": 1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 82800,
+        "commands": [
+          {
+            "kind": 5,
+            "data": {
+              "x": 0
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 5,
+        "data": {
+          "x": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "properties",
+    "plan": {
+      "version": 1,
+      "id": "properties",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "x",
+          "from": 0,
+          "to": 2,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "y",
+          "from": 1,
+          "to": 3,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": 4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "rotationX",
+          "from": 3,
+          "to": 5,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "rotationY",
+          "from": 4,
+          "to": 6,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "rotationZ",
+          "from": 5,
+          "to": 7,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "scaleX",
+          "from": 6,
+          "to": 8,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "scaleY",
+          "from": 7,
+          "to": 9,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "scaleZ",
+          "from": 8,
+          "to": 10,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "node": "piece",
+          "property": "opacity",
+          "from": 9,
+          "to": 11,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "camera": true,
+          "property": "x",
+          "from": 0,
+          "to": 2,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "camera": true,
+          "property": "y",
+          "from": 1,
+          "to": 3,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "camera": true,
+          "property": "z",
+          "from": 2,
+          "to": 4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "camera": true,
+          "property": "rotationX",
+          "from": 3,
+          "to": 5,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "camera": true,
+          "property": "rotationY",
+          "from": 4,
+          "to": 6,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "camera": true,
+          "property": "rotationZ",
+          "from": 5,
+          "to": 7,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        },
+        {
+          "camera": true,
+          "property": "fov",
+          "from": 10,
+          "to": 12,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "properties",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "properties.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 0,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 2,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.1.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.1.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.1.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 1,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 3,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.2.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.2.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.2.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 4,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.3.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.3.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.3.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 3,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 5,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.4.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.4.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.4.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 4,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 6,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.5.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.5.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.5.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 5,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 7,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.6.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.6.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.6.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 6,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 8,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.7.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.7.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.7.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 7,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 9,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.8.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.8.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.8.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 8,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 10,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.9.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.9.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.9.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 9,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 11,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.10.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.10.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.10.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 0,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 2,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.11.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.11.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.11.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 1,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 3,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.12.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.12.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.12.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 4,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.13.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.13.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.13.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 3,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 5,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.14.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.14.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.14.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 4,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 6,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.15.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.15.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.15.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 5,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 7,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "properties.motion.16.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "properties.motion.16.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "properties.motion.16.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 10,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": 12,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "properties.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.x"
+        },
+        {
+          "signal": "properties.motion.1.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.y"
+        },
+        {
+          "signal": "properties.motion.2.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        },
+        {
+          "signal": "properties.motion.3.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "rotation.x"
+        },
+        {
+          "signal": "properties.motion.4.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "rotation.y"
+        },
+        {
+          "signal": "properties.motion.5.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "rotation.z"
+        },
+        {
+          "signal": "properties.motion.6.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "scale.x"
+        },
+        {
+          "signal": "properties.motion.7.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "scale.y"
+        },
+        {
+          "signal": "properties.motion.8.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "scale.z"
+        },
+        {
+          "signal": "properties.motion.9.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "opacity"
+        },
+        {
+          "signal": "properties.motion.10.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "position.x"
+        },
+        {
+          "signal": "properties.motion.11.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "position.y"
+        },
+        {
+          "signal": "properties.motion.12.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "position.z"
+        },
+        {
+          "signal": "properties.motion.13.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "rotation.x"
+        },
+        {
+          "signal": "properties.motion.14.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "rotation.y"
+        },
+        {
+          "signal": "properties.motion.15.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "rotation.z"
+        },
+        {
+          "signal": "properties.motion.16.value",
+          "target": "camera",
+          "selector": "#scene",
+          "property": "fov"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9.2,
+              "rotationX": 3.2,
+              "rotationY": 4.2,
+              "rotationZ": 5.2,
+              "scaleX": 6.2,
+              "scaleY": 7.2,
+              "scaleZ": 8.2,
+              "x": 0.20000000000000018,
+              "y": 1.2000000000000002,
+              "z": 2.2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10.2,
+              "rotationX": 3.2,
+              "rotationY": 4.2,
+              "rotationZ": 5.2,
+              "x": 0.20000000000000018,
+              "y": 1.2000000000000002,
+              "z": 2.2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 10,
+              "rotationX": 4,
+              "rotationY": 5,
+              "rotationZ": 6,
+              "scaleX": 7,
+              "scaleY": 8,
+              "scaleZ": 9,
+              "x": 1,
+              "y": 2,
+              "z": 3
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 11,
+              "rotationX": 4,
+              "rotationY": 5,
+              "rotationZ": 6,
+              "x": 1,
+              "y": 2,
+              "z": 3
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 10.999998,
+              "rotationX": 4.999998,
+              "rotationY": 5.999998,
+              "rotationZ": 6.999998,
+              "scaleX": 7.999998,
+              "scaleY": 8.999998,
+              "scaleZ": 9.999998,
+              "x": 1.9999980000000002,
+              "y": 2.999998,
+              "z": 3.999998
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 11.999998,
+              "rotationX": 4.999998,
+              "rotationY": 5.999998,
+              "rotationZ": 6.999998,
+              "x": 1.9999980000000002,
+              "y": 2.999998,
+              "z": 3.999998
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 11,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "scaleX": 8,
+              "scaleY": 9,
+              "scaleZ": 10,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 12,
+              "rotationX": 5,
+              "rotationY": 6,
+              "rotationZ": 7,
+              "x": 2,
+              "y": 3,
+              "z": 4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9.5,
+              "rotationX": 3.5,
+              "rotationY": 4.5,
+              "rotationZ": 5.5,
+              "scaleX": 6.5,
+              "scaleY": 7.5,
+              "scaleZ": 8.5,
+              "x": 0.5,
+              "y": 1.5,
+              "z": 2.5
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10.5,
+              "rotationX": 3.5,
+              "rotationY": 4.5,
+              "rotationZ": 5.5,
+              "x": 0.5,
+              "y": 1.5,
+              "z": 2.5
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "opacity": 9,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "scaleX": 6,
+              "scaleY": 7,
+              "scaleZ": 8,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          },
+          {
+            "kind": 5,
+            "data": {
+              "fov": 10,
+              "rotationX": 3,
+              "rotationY": 4,
+              "rotationZ": 5,
+              "x": 0,
+              "y": 1,
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "opacity": 11,
+          "rotationX": 5,
+          "rotationY": 6,
+          "rotationZ": 7,
+          "scaleX": 8,
+          "scaleY": 9,
+          "scaleZ": 10,
+          "x": 2,
+          "y": 3,
+          "z": 4
+        }
+      },
+      {
+        "kind": 5,
+        "data": {
+          "fov": 12,
+          "rotationX": 5,
+          "rotationY": 6,
+          "rotationZ": 7,
+          "x": 2,
+          "y": 3,
+          "z": 4
+        }
+      }
+    ]
+  },
+  {
+    "name": "ease-0",
+    "plan": {
+      "version": 1,
+      "id": "ease-0",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": -4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 0
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "ease-0",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "ease-0.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "ease-0.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "ease-0.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 0
+              }
+            },
+            {
+              "at": 1,
+              "value": -4,
+              "ease": {
+                "kind": 0
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "ease-0.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 1.3999999999999995
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -3.999994000000001
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "z": -4
+        }
+      }
+    ]
+  },
+  {
+    "name": "ease-1",
+    "plan": {
+      "version": 1,
+      "id": "ease-1",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": -4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 1,
+            "args": [
+              3
+            ]
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "ease-1",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "ease-1.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "ease-1.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "ease-1.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 1,
+                "args": [
+                  3
+                ]
+              }
+            },
+            {
+              "at": 1,
+              "value": -4,
+              "ease": {
+                "kind": 1,
+                "args": [
+                  3
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "ease-1.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 1.994
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 1.25
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -3.999982000018001
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 1.90625
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "z": -4
+        }
+      }
+    ]
+  },
+  {
+    "name": "ease-2",
+    "plan": {
+      "version": 1,
+      "id": "ease-2",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": -4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 2,
+            "args": [
+              3
+            ]
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "ease-2",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "ease-2.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "ease-2.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "ease-2.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 2,
+                "args": [
+                  3
+                ]
+              }
+            },
+            {
+              "at": 1,
+              "value": -4,
+              "ease": {
+                "kind": 2,
+                "args": [
+                  3
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "ease-2.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 0.37399999999999856
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -3.25
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -1.46875
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "z": -4
+        }
+      }
+    ]
+  },
+  {
+    "name": "ease-3",
+    "plan": {
+      "version": 1,
+      "id": "ease-3",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": -4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 3,
+            "args": [
+              2
+            ]
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "ease-3",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "ease-3.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "ease-3.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "ease-3.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 3,
+                "args": [
+                  2
+                ]
+              }
+            },
+            {
+              "at": 1,
+              "value": -4,
+              "ease": {
+                "kind": 3,
+                "args": [
+                  2
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "ease-3.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 1.88
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -3.9999999999880007
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 1.25
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "z": -4
+        }
+      }
+    ]
+  },
+  {
+    "name": "ease-4",
+    "plan": {
+      "version": 1,
+      "id": "ease-4",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": -4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 4,
+            "args": [
+              0.22,
+              1,
+              0.36,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "ease-4",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "ease-4.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "ease-4.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "ease-4.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 4,
+                "args": [
+                  0.22,
+                  1,
+                  0.36,
+                  1
+                ]
+              }
+            },
+            {
+              "at": 1,
+              "value": -4,
+              "ease": {
+                "kind": 4,
+                "args": [
+                  0.22,
+                  1,
+                  0.36,
+                  1
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "ease-4.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -0.4065813731128536
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -3.768295286825907
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -2.5891883143532084
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "z": -4
+        }
+      }
+    ]
+  },
+  {
+    "name": "ease-5",
+    "plan": {
+      "version": 1,
+      "id": "ease-5",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": -4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 5,
+            "args": [
+              4
+            ]
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "ease-5",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "ease-5.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "ease-5.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "ease-5.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  4
+                ]
+              }
+            },
+            {
+              "at": 1,
+              "value": -4,
+              "ease": {
+                "kind": 5,
+                "args": [
+                  4
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "ease-5.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -2.5
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "z": -4
+        }
+      }
+    ]
+  },
+  {
+    "name": "ease-6",
+    "plan": {
+      "version": 1,
+      "id": "ease-6",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": -4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 7
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "ease-6",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "ease-6.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "ease-6.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "ease-6.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 7
+              }
+            },
+            {
+              "at": 1,
+              "value": -4,
+              "ease": {
+                "kind": 7
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "ease-6.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -0.4529678800000032
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4.526185
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4.000000000010209
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -2.9044581250000014
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "z": -4
+        }
+      }
+    ]
+  },
+  {
+    "name": "ease-7",
+    "plan": {
+      "version": 1,
+      "id": "ease-7",
+      "tweens": [
+        {
+          "node": "piece",
+          "property": "z",
+          "from": 2,
+          "to": -4,
+          "at": 1,
+          "duration": 1,
+          "ease": {
+            "kind": 8
+          }
+        }
+      ]
+    },
+    "program": {
+      "transport": {
+        "durationMs": 86400000
+      },
+      "version": 1,
+      "id": "ease-7",
+      "signals": [
+        {
+          "id": "clock",
+          "kind": "playhead",
+          "from": 0,
+          "to": 0
+        },
+        {
+          "id": "ease-7.motion.0.time",
+          "kind": "map",
+          "from": 0,
+          "to": 1,
+          "input": "clock",
+          "min": -1,
+          "max": 0
+        },
+        {
+          "id": "ease-7.motion.0.value",
+          "kind": "track",
+          "from": 0,
+          "to": 0,
+          "input": "ease-7.motion.0.time",
+          "frames": [
+            {
+              "at": 0,
+              "value": 2,
+              "ease": {
+                "kind": 8
+              }
+            },
+            {
+              "at": 1,
+              "value": -4,
+              "ease": {
+                "kind": 8
+              }
+            }
+          ]
+        }
+      ],
+      "bindings": [
+        {
+          "signal": "ease-7.motion.0.value",
+          "target": "sceneNode",
+          "selector": "#scene",
+          "node": "piece",
+          "property": "position.z"
+        }
+      ]
+    },
+    "samples": [
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.05,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.55,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.65,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0.7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.1,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2.225111312
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -1
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4.0000000000311395
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 2.999999,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 4.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 5.5,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 6,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 7,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 3,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": -4
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 1.25,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2.5980910625
+            }
+          }
+        ]
+      },
+      {
+        "seconds": 0,
+        "commands": [
+          {
+            "kind": 2,
+            "objectId": "piece",
+            "data": {
+              "z": 2
+            }
+          }
+        ]
+      }
+    ],
+    "final": [
+      {
+        "kind": 2,
+        "objectId": "piece",
+        "data": {
+          "z": -4
+        }
+      }
+    ]
+  }
+]

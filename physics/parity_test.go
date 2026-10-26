@@ -34,10 +34,12 @@ import (
 // text would make the test depend on float formatting, and the claim under test
 // is bit equality, not printed equality.
 //
-// The claim holds for a build that does not fuse a floating point multiply and
-// add. That covers js/wasm, which has no fused multiply-add instruction, and
-// amd64 at GOAMD64 v2 or lower, which is the Go default. See the fused
-// multiply-add section below for the guard that reports a fusing build.
+// The claim holds on every build: js/wasm, amd64 at any GOAMD64 level, and
+// arm64. The physics package is marked //gosx:deterministic, so every float
+// product that feeds an addition is rounded by an explicit conversion and the
+// compiler cannot fuse it. `make lint-deterministic` enforces that. The fused
+// multiply-add section below reports the build's fusion state in the log and
+// proves the probe itself.
 //
 // Run `make test-physics-parity` to check both targets. Set
 // PHYSICS_PARITY_REGEN=1 to rewrite the corpus from the scenario builders.
@@ -846,15 +848,12 @@ func TestParityCorpus(t *testing.T) {
 			}
 		}
 
-		// Name the fusion state before comparing any float. A build that fuses
-		// a multiply and an add cannot reproduce a corpus that a build without
-		// fusion recorded, so reporting it first turns a wall of digest
-		// differences into one actionable line.
+		// Log the fusion state of this build. The corpus must reproduce in
+		// every state, so a mismatch below is a real divergence. A fusing build
+		// that fails here has a float product that is not rounded explicitly;
+		// run `make lint-deterministic` to find it.
 		if fused != c.FMAContraction {
-			t.Fatalf("%s: this build fuses multiply-add = %v, the corpus was recorded with %v (by %s). "+
-				"Bit-exact parity with a js/wasm client needs a build that does not fuse. "+
-				"On amd64 use GOAMD64 v2 or lower, which is the default; GOAMD64 v3 and higher fuse. "+
-				"arm64 always fuses, so an arm64 server needs its own corpus and cannot match a browser client bit for bit",
+			t.Logf("%s: this build fuses multiply-add = %v, the corpus was recorded with %v (by %s)",
 				c.Name, fused, c.FMAContraction, c.GeneratedBy)
 		}
 

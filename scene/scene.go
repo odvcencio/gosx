@@ -2,11 +2,14 @@ package scene
 
 import (
 	"encoding/json"
+	"maps"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/motion"
 )
@@ -49,6 +52,12 @@ type PerspectiveCamera struct {
 	Near         float64
 	Far          float64
 	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
+	// Orbit, when set, also moves the orbit controls' target and limits, so the
+	// player's mouse orbit continues around the new target. Nil leaves them as
+	// they are. With orbit controls the mounted camera always faces the orbit
+	// target and keeps only this camera's Position, so a camera that looks at a
+	// new point must carry that point as Orbit.Target.
+	Orbit *Orbit
 }
 
 // OrthographicCamera describes a non-perspective camera for CAD, editor, and
@@ -210,6 +219,10 @@ type Props struct {
 	FrameIntervalMS float64 `json:"frameIntervalMS,omitempty"`
 	// ModelPreparation advertises the opt-in Surface.PrepareModels authority.
 	ModelPreparation *bool `json:"modelPreparation,omitempty"`
+	// TextureDeliveryProfile selects model-map variants for this mount.
+	// "auto" follows device hints; "low", "standard", and "high" set a
+	// delivery ceiling. Empty preserves the legacy capability-only policy.
+	TextureDeliveryProfile TextureDeliveryProfile `json:"textureDeliveryProfile,omitempty"`
 	// RenderBeforeModels lets the scene draw the first frame without waiting for models; models appear when loaded.
 	RenderBeforeModels *bool `json:"renderBeforeModels,omitempty"`
 	// FramePacing selects the render-loop pacing policy.
@@ -401,7 +414,10 @@ type Group struct {
 	// Scale is inherited by descendants. Each zero component means unit scale,
 	// matching the existing Mesh and Model scale defaults. Non-uniform scale is
 	// retained as an exact affine transform so rotated children may carry shear.
-	Scale    Vector3
+	Scale Vector3
+	// Spin is angular velocity in radians per second, matching Mesh.Spin.
+	// It rotates descendants around this group's local origin.
+	Spin     Euler
 	Children []Node
 }
 
@@ -630,6 +646,16 @@ type InstancedMesh struct {
 	OutState      *InstancedMeshProps
 	Live          []string
 
+	// ParentNode names a retained Group ID, Model ID, Vessel.NodeID or object ID
+	// whose world transform carries the whole batch. Positions, rotations and
+	// scales are then relative to that node, and the renderer applies the
+	// node's current world matrix each frame, so a ship that heaves, pitches
+	// and rolls under pose frames carries its windows, rails and lifeboats.
+	// The node must exist in the same scene; while it is absent the batch
+	// draws in world space. An object whose ID equals ParentNode wins over
+	// one whose ID starts with ParentNode + "/".
+	ParentNode string
+
 	// Optional Elio GPU cull kernel. When set, the browser runtime (slice 2)
 	// will run a compute pass to cull instances before drawing. Absent here
 	// ⇒ byte-identical payload (pure additive).
@@ -675,6 +701,17 @@ type InstancedGLBMesh struct {
 	// materials, but per-instance scene-node CSS appearance overrides are not
 	// supported for an opted-in batch.
 	SharedAppearance bool
+	// ParentNode names a retained Group ID, Model ID, Vessel.NodeID or object ID
+	// whose world transform carries the whole batch. Instance positions,
+	// rotations and motion frames are then relative to that node, and the
+	// renderer applies the node's current world matrix once per frame instead
+	// of every agent being re-sent in world space. Use it for crowds that ride
+	// a moving ship. The node must exist in the same scene; while it is absent
+	// the batch draws in world space. Only the crowd path (animated agents
+	// sharing one primitive, on WebGL and WebGPU) follows the parent; a batch
+	// of static instances ignores it, so use InstancedMesh.ParentNode for
+	// those. Leave it empty elsewhere.
+	ParentNode string
 }
 
 // MeshInstance describes the transform for a single instance within an
@@ -687,6 +724,13 @@ type MeshInstance struct {
 	Position      Vector3
 	Scale         Vector3
 	Rotation      Euler
+	// Color tints this instance of an animated crowd batch (a CSS hex or rgb()
+	// colour). It multiplies the batch material's colour and texture in linear
+	// light, so a batch whose Material is white shows the instance colour as
+	// written. Empty leaves the instance untinted. A crowd that differs only
+	// by colour then needs one batch per body part, not one per colour. Only
+	// the opaque crowd path on WebGL and WebGPU tints; other draws ignore it.
+	Color string
 }
 
 // ComputeParticles declares a GPU-computed particle system.
@@ -1198,10 +1242,23 @@ type Model struct {
 	AnimationFadeInMS  *int
 	AnimationFadeOutMS *int
 	Loop               *bool
-	Transition         Transition
-	InState            *ModelProps
-	OutState           *ModelProps
-	Live               []string
+	// ClipSampled opts this model into sampled animation. The model needs an
+	// ID. A sampled model has no client animation clock: it holds its bind
+	// pose until a ClipFrame poses it, and the Animation, Loop and speed
+	// fields above do not drive it. ClipFrame documents the sampling rules.
+	ClipSampled bool
+	// RootMotion applies clip root motion to a ClipSampled model. By default
+	// it is false and the simulation owns position: the horizontal (X and Z)
+	// translation of each root node is replaced by its authored value, so a
+	// walk or lunge clip does not slide the model away from the position the
+	// app sets. A root node is a glTF scene root or the topmost joint of a
+	// skin. Vertical (Y) translation is kept, so crouches and hip height still
+	// animate. Rotation and scale are never altered.
+	RootMotion bool
+	Transition Transition
+	InState    *ModelProps
+	OutState   *ModelProps
+	Live       []string
 }
 
 // Decal projects a planar texture or color marker into the scene. The initial
@@ -1640,10 +1697,11 @@ type quaternion struct {
 }
 
 type worldTransform struct {
-	Position  Vector3
-	Rotation  quaternion
-	Matrix    affineMatrix
-	HasMatrix bool
+	Position   Vector3
+	Rotation   quaternion
+	Matrix     affineMatrix
+	HasMatrix  bool
+	ParentNode string
 }
 
 type pendingLabel struct {
@@ -1662,6 +1720,8 @@ type pendingHTML struct {
 }
 
 type graphLowerer struct {
+	groups             []GroupIR
+	nextGroupID        int
 	objects            []ObjectIR
 	models             []ModelIR
 	points             []PointsIR
@@ -1776,6 +1836,7 @@ func cloneSceneAnyMap(values map[string]any) map[string]any {
 		return nil
 	}
 	out := make(map[string]any, len(values))
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for key, value := range values {
 		out[key] = value
 	}
@@ -1787,6 +1848,7 @@ func cloneSceneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(values))
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for key, value := range values {
 		out[key] = value
 	}
@@ -1799,7 +1861,9 @@ func mapStringMapValue(value any) (map[string]string, bool) {
 		return cloneSceneStringMap(typed), len(typed) > 0
 	case map[string]any:
 		out := make(map[string]string, len(typed))
-		for key, raw := range typed {
+		// Sorted so that two keys that trim to one name resolve the same way every run.
+		for _, key := range slices.Sorted(maps.Keys(typed)) {
+			raw := typed[key]
 			stringValue, ok := mapStringValue(raw)
 			if !ok {
 				continue
@@ -1820,8 +1884,10 @@ func cloneFloat64Slices(values map[string][]float64) map[string][]float64 {
 		return nil
 	}
 	out := make(map[string][]float64, len(values))
-	for key, value := range values {
-		key = strings.TrimSpace(key)
+	// Sorted so that two keys that trim to one name resolve the same way every run.
+	for _, rawKey := range slices.Sorted(maps.Keys(values)) {
+		value := values[rawKey]
+		key := strings.TrimSpace(rawKey)
 		if key == "" {
 			continue
 		}
@@ -2016,6 +2082,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
 	setBool(out, "renderBeforeModels", p.RenderBeforeModels)
 	setBool(out, "modelPreparation", p.ModelPreparation)
+	setString(out, "textureDeliveryProfile", string(p.TextureDeliveryProfile))
 	setString(out, "framePacing", p.FramePacing)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
 	if p.MaxPixels > 0 || p.MaxPixels == MaxPixelsUnbounded {
@@ -2601,6 +2668,10 @@ func htmlSurfaceWorldSize(surface HTMLSurface, textureWidth, textureHeight int) 
 }
 
 func (l *graphLowerer) lowerGroup(group Group, parent worldTransform) {
+	if group.Spin != (Euler{}) || parent.ParentNode != "" {
+		l.lowerRetainedGroup(group, parent)
+		return
+	}
 	world := combineTransforms(parent, localScaledTransform(group.Position, group.Rotation, group.Scale))
 	if id := strings.TrimSpace(group.ID); id != "" {
 		l.anchors[id] = world
@@ -2743,7 +2814,7 @@ func (l *graphLowerer) lowerGridHelper(helper GridHelper, parent worldTransform)
 	points := make([]Vector3, 0, (divisions+1)*4)
 	segments := make([][2]int, 0, (divisions+1)*2)
 	for i := 0; i <= divisions; i++ {
-		offset := -half + float64(i)*step
+		offset := -half + float64(float64(i)*step)
 		base := len(points)
 		points = append(points,
 			Vector3{X: -half, Z: offset},
@@ -2910,7 +2981,7 @@ func (l *graphLowerer) lowerGizmoAxesHelper(id string, position Vector3, rotatio
 // control.Rotation, consistent with this being an overlay helper rather than
 // a physically-accurate handle.
 func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotation Euler, size, width float64, visible bool, parent worldTransform) {
-	handle := size * 0.16
+	handle := float64(size * 0.16)
 	if handle <= 0 {
 		handle = 0.2
 	}
@@ -2933,6 +3004,15 @@ func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotat
 }
 
 func applyLoweredObjectTransform(record *ObjectIR, parent, world worldTransform, localPosition Vector3, localRotation Euler) {
+	if parent.ParentNode != "" {
+		record.ParentNode = parent.ParentNode
+		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
+		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
+		if parent.HasMatrix || parent.Position != (Vector3{}) || parent.Rotation != (quaternion{W: 1}) {
+			record.ParentMatrix = affineSlice(worldAffine(parent))
+		}
+		return
+	}
 	if parent.HasMatrix {
 		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
 		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
@@ -2945,6 +3025,15 @@ func applyLoweredObjectTransform(record *ObjectIR, parent, world worldTransform,
 }
 
 func applyLoweredPointsTransform(record *PointsIR, parent, world worldTransform, localPosition Vector3, localRotation Euler) {
+	if parent.ParentNode != "" {
+		record.ParentNode = parent.ParentNode
+		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
+		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
+		if parent.HasMatrix || parent.Position != (Vector3{}) || parent.Rotation != (quaternion{W: 1}) {
+			record.ParentMatrix = affineSlice(worldAffine(parent))
+		}
+		return
+	}
 	if parent.HasMatrix {
 		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
 		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
@@ -3083,6 +3172,11 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 }
 
 func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransform) {
+	// An explicit parent owns the batch coordinate space. Structural groups
+	// are already part of that node's world pose and must not be baked twice.
+	if strings.TrimSpace(im.ParentNode) != "" {
+		parent = identityTransform()
+	}
 	world := combineTransforms(parent, localTransform(Vector3{}, Euler{}))
 	id := strings.TrimSpace(im.ID)
 	if id == "" {
@@ -3109,6 +3203,7 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		CullKernelEntry: im.CullKernelEntry,
 		CullRadius:      im.CullRadius,
 		CullBackend:     im.CullBackend,
+		ParentNode:      strings.TrimSpace(im.ParentNode),
 	}
 	// Apply geometry dimensions.
 	if geometryProps != nil {
@@ -3606,6 +3701,7 @@ func cloneWaterShaderDescriptors(in map[string]json.RawMessage) map[string]json.
 		return nil
 	}
 	out := make(map[string]json.RawMessage, len(in))
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for k, v := range in {
 		clone := make(json.RawMessage, len(v))
 		copy(clone, v)
@@ -3679,6 +3775,8 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.AnimationFadeInMS = nonNegativeIntPtr(model.AnimationFadeInMS)
 	record.AnimationFadeOutMS = nonNegativeIntPtr(model.AnimationFadeOutMS)
 	record.Loop = model.Loop
+	record.ClipSampled = model.ClipSampled
+	record.RootMotion = model.ClipSampled && model.RootMotion
 	l.models = append(l.models, record)
 	l.anchors[id] = world
 }
@@ -3694,10 +3792,24 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		id = "scene-instanced-glb-" + intString(l.nextInstancedGLBID)
 	}
 	instances := make([]MeshInstanceIR, 0, len(igm.Instances))
+	// Colours ship once per batch as a palette; each instance carries a
+	// 1-based index (0, omitted on the wire, means untinted).
+	var palette []string
+	paletteIndex := map[string]int{}
 	for _, inst := range igm.Instances {
 		world := combineTransforms(parent, localTransform(inst.Position, inst.Rotation))
+		tint := 0
+		if color := strings.TrimSpace(inst.Color); color != "" {
+			tint = paletteIndex[color]
+			if tint == 0 {
+				palette = append(palette, color)
+				tint = len(palette)
+				paletteIndex[color] = tint
+			}
+		}
 		record := MeshInstanceIR{
 			Animation: inst.Animation, AnimationTime: inst.AnimationTime, AnimationLoop: inst.AnimationLoop,
+			Tint:   tint,
 			ID:     strings.TrimSpace(inst.ID),
 			ScaleX: inst.Scale.X,
 			ScaleY: inst.Scale.Y,
@@ -3721,6 +3833,8 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		Visible:          igm.Visible,
 		Static:           igm.Static,
 		SharedAppearance: igm.SharedAppearance,
+		ParentNode:       strings.TrimSpace(igm.ParentNode),
+		Palette:          palette,
 		Instances:        instances,
 	}
 	applyMaterialToInstancedGLBIR(&record, igm.Material)
@@ -3991,6 +4105,7 @@ func (l *graphLowerer) resolveLabel(item pendingLabel) (LabelIR, bool) {
 	}
 	position := l.resolveLabelPosition(item)
 	return LabelIR{
+		ParentNode:  l.anchoredParent(item.parent, item.label.Target),
 		ID:          l.nextSceneLabelID(item.label.ID),
 		Text:        text,
 		ClassName:   strings.TrimSpace(item.label.ClassName),
@@ -4033,6 +4148,7 @@ func (l *graphLowerer) resolveSprite(item pendingSprite) (SpriteIR, bool) {
 	}
 	position := l.resolveAnchoredPosition(item.parent, item.sprite.Target, item.sprite.Position)
 	return SpriteIR{
+		ParentNode: l.anchoredParent(item.parent, item.sprite.Target),
 		ID:         l.nextSceneSpriteID(item.sprite.ID),
 		Src:        src,
 		ClassName:  strings.TrimSpace(item.sprite.ClassName),
@@ -4073,6 +4189,7 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 		mode = string(HTMLDOM)
 	}
 	return HTMLIR{
+		ParentNode:       l.anchoredParent(item.parent, item.html.Target),
 		ID:               l.nextSceneHTMLID(item.html.ID),
 		Target:           strings.TrimSpace(item.html.Target),
 		Mode:             mode,
@@ -4119,6 +4236,13 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 
 func (l *graphLowerer) resolveLabelPosition(item pendingLabel) Vector3 {
 	return l.resolveAnchoredPosition(item.parent, item.label.Target, item.label.Position)
+}
+
+func (l *graphLowerer) anchoredParent(parent worldTransform, target string) string {
+	if anchor, ok := l.anchors[strings.TrimSpace(target)]; ok {
+		return anchor.ParentNode
+	}
+	return parent.ParentNode
 }
 
 func (l *graphLowerer) resolveAnchoredPosition(parent worldTransform, rawTarget string, localPosition Vector3) Vector3 {
@@ -4473,7 +4597,7 @@ func helperRingGeometry(radius float64, segments int, lineWidth float64) LinesGe
 	links := make([][2]int, 0, segments)
 	for i := 0; i < segments; i++ {
 		angle := (float64(i) / float64(segments)) * math.Pi * 2
-		points = append(points, Vector3{X: math.Cos(angle) * radius, Y: math.Sin(angle) * radius})
+		points = append(points, Vector3{X: float64(det.Cos(angle) * radius), Y: float64(det.Sin(angle) * radius)})
 		links = append(links, [2]int{i, (i + 1) % segments})
 	}
 	return LinesGeometry{Points: points, Segments: links, Width: lineWidth}
@@ -5007,8 +5131,9 @@ func identityTransform() worldTransform {
 
 func combineTransforms(parent, local worldTransform) worldTransform {
 	combined := worldTransform{
-		Position: addVectors(parent.Position, parent.Rotation.rotate(local.Position)),
-		Rotation: parent.Rotation.mul(local.Rotation).normalized(),
+		Position:   addVectors(parent.Position, parent.Rotation.rotate(local.Position)),
+		Rotation:   parent.Rotation.mul(local.Rotation).normalized(),
+		ParentNode: parent.ParentNode,
 	}
 	if parent.HasMatrix || local.HasMatrix {
 		combined.Matrix = multiplyAffine(worldAffine(parent), worldAffine(local))
@@ -5045,17 +5170,17 @@ func axisAngleQuaternion(axis Vector3, angle float64) quaternion {
 		return quaternion{W: 1}
 	}
 	half := angle / 2
-	sine := math.Sin(half)
+	sine := det.Sin(half)
 	return quaternion{
-		X: axis.X * sine,
-		Y: axis.Y * sine,
-		Z: axis.Z * sine,
-		W: math.Cos(half),
+		X: float64(axis.X * sine),
+		Y: float64(axis.Y * sine),
+		Z: float64(axis.Z * sine),
+		W: det.Cos(half),
 	}
 }
 
 func (q quaternion) normalized() quaternion {
-	length := math.Sqrt((q.X * q.X) + (q.Y * q.Y) + (q.Z * q.Z) + (q.W * q.W))
+	length := math.Sqrt((float64(q.X * q.X)) + (float64(q.Y * q.Y)) + (float64(q.Z * q.Z)) + (float64(q.W * q.W)))
 	if length == 0 {
 		return quaternion{W: 1}
 	}
@@ -5073,10 +5198,10 @@ func (q quaternion) conjugate() quaternion {
 
 func (q quaternion) mul(other quaternion) quaternion {
 	return quaternion{
-		X: (q.W * other.X) + (q.X * other.W) + (q.Y * other.Z) - (q.Z * other.Y),
-		Y: (q.W * other.Y) - (q.X * other.Z) + (q.Y * other.W) + (q.Z * other.X),
-		Z: (q.W * other.Z) + (q.X * other.Y) - (q.Y * other.X) + (q.Z * other.W),
-		W: (q.W * other.W) - (q.X * other.X) - (q.Y * other.Y) - (q.Z * other.Z),
+		X: (float64(q.W * other.X)) + (float64(q.X * other.W)) + (float64(q.Y * other.Z)) - (float64(q.Z * other.Y)),
+		Y: (float64(q.W * other.Y)) - (float64(q.X * other.Z)) + (float64(q.Y * other.W)) + (float64(q.Z * other.X)),
+		Z: (float64(q.W * other.Z)) + (float64(q.X * other.Y)) - (float64(q.Y * other.X)) + (float64(q.Z * other.W)),
+		W: (float64(q.W * other.W)) - (float64(q.X * other.X)) - (float64(q.Y * other.Y)) - (float64(q.Z * other.Z)),
 	}
 }
 
@@ -5088,27 +5213,27 @@ func (q quaternion) rotate(vector Vector3) Vector3 {
 
 func eulerFromQuaternion(q quaternion) Euler {
 	q = q.normalized()
-	m00 := 1 - (2 * ((q.Y * q.Y) + (q.Z * q.Z)))
-	m10 := 2 * ((q.X * q.Y) + (q.Z * q.W))
-	m20 := 2 * ((q.X * q.Z) - (q.Y * q.W))
-	m21 := 2 * ((q.Y * q.Z) + (q.X * q.W))
-	m22 := 1 - (2 * ((q.X * q.X) + (q.Y * q.Y)))
-	m01 := 2 * ((q.X * q.Y) - (q.Z * q.W))
-	m11 := 1 - (2 * ((q.X * q.X) + (q.Z * q.Z)))
+	m00 := 1 - (2 * ((float64(q.Y * q.Y)) + (float64(q.Z * q.Z))))
+	m10 := 2 * ((float64(q.X * q.Y)) + (float64(q.Z * q.W)))
+	m20 := 2 * ((float64(q.X * q.Z)) - (float64(q.Y * q.W)))
+	m21 := 2 * ((float64(q.Y * q.Z)) + (float64(q.X * q.W)))
+	m22 := 1 - (2 * ((float64(q.X * q.X)) + (float64(q.Y * q.Y))))
+	m01 := 2 * ((float64(q.X * q.Y)) - (float64(q.Z * q.W)))
+	m11 := 1 - (2 * ((float64(q.X * q.X)) + (float64(q.Z * q.Z))))
 
-	y := math.Asin(clamp(-m20, -1, 1))
-	cosY := math.Cos(y)
+	y := det.Asin(clamp(-m20, -1, 1))
+	cosY := det.Cos(y)
 	if math.Abs(cosY) > 1e-9 {
 		return Euler{
-			X: math.Atan2(m21, m22),
+			X: det.Atan2(m21, m22),
 			Y: y,
-			Z: math.Atan2(m10, m00),
+			Z: det.Atan2(m10, m00),
 		}
 	}
 	return Euler{
 		X: 0,
 		Y: y,
-		Z: math.Atan2(-m01, m11),
+		Z: det.Atan2(-m01, m11),
 	}
 }
 

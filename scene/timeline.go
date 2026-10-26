@@ -157,8 +157,8 @@ func (t *Timeline) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("scene timeline timing is outside one day")
 		}
 		next.Tweens = append(next.Tweens, Tween{Node: tween.Node, Camera: tween.Camera, Property: tween.Property,
-			From: tween.From, To: tween.To, At: time.Duration(math.Round(tween.At * float64(time.Second))),
-			Duration: time.Duration(math.Round(tween.Duration * float64(time.Second))),
+			From: tween.From, To: tween.To, At: time.Duration(math.Round(float64(tween.At * float64(time.Second)))),
+			Duration: time.Duration(math.Round(float64(tween.Duration * float64(time.Second)))),
 			Ease:     motion.Ease{Kind: tween.Ease.Kind, Args: tween.Ease.Args}})
 	}
 	if err := next.Validate(); err != nil {
@@ -220,7 +220,12 @@ func (p *TimelinePlayer) Sample(seconds float64) ([]Command, error) {
 				progress = (seconds - tween.At.Seconds()) / tween.Duration.Seconds()
 			}
 		}
-		value := tween.From + (tween.To-tween.From)*tween.Ease.Apply(progress)
+		value := tween.From
+		if progress >= 1 {
+			value = tween.To
+		} else if progress > 0 {
+			value = tween.From + float64((tween.To-tween.From)*tween.Ease.Apply(progress))
+		}
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil, fmt.Errorf("scene timeline sample overflowed")
 		}

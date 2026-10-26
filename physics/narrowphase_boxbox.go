@@ -74,14 +74,14 @@ func collideBoxBox(a, b *Collider) (ContactManifold, bool) {
 	// 3 A-face axes
 	for i := 0; i < 3; i++ {
 		ra := hA[i]
-		rb := hB[0]*AbsR[i][0] + hB[1]*AbsR[i][1] + hB[2]*AbsR[i][2]
+		rb := float64(hB[0]*AbsR[i][0]) + float64(hB[1]*AbsR[i][1]) + float64(hB[2]*AbsR[i][2])
 		if !tryAxis(axesA[i], ra, rb, t.Dot(axesA[i]), i, 0) {
 			return ContactManifold{}, false
 		}
 	}
 	// 3 B-face axes
 	for j := 0; j < 3; j++ {
-		ra := hA[0]*AbsR[0][j] + hA[1]*AbsR[1][j] + hA[2]*AbsR[2][j]
+		ra := float64(hA[0]*AbsR[0][j]) + float64(hA[1]*AbsR[1][j]) + float64(hA[2]*AbsR[2][j])
 		rb := hB[j]
 		if !tryAxis(axesB[j], ra, rb, t.Dot(axesB[j]), 3+j, 0) {
 			return ContactManifold{}, false
@@ -101,8 +101,8 @@ func collideBoxBox(a, b *Collider) (ContactManifold, bool) {
 			i2 := (i + 2) % 3
 			j1 := (j + 1) % 3
 			j2 := (j + 2) % 3
-			ra := hA[i1]*AbsR[i2][j] + hA[i2]*AbsR[i1][j]
-			rb := hB[j1]*AbsR[i][j2] + hB[j2]*AbsR[i][j1]
+			ra := float64(hA[i1]*AbsR[i2][j]) + float64(hA[i2]*AbsR[i1][j])
+			rb := float64(hB[j1]*AbsR[i][j2]) + float64(hB[j2]*AbsR[i][j1])
 			// All quantities here are scaled by |axis|; rescale to a normalized
 			// depth so tryAxis's best-tracking stays apples-to-apples with the
 			// face axes above.
@@ -166,7 +166,7 @@ func clipBoxFace(refCol, incCol *Collider,
 	if refAxes[refAxisIdx].Dot(refOutward) < 0 {
 		refSide = -1
 	}
-	refFaceCenter := refCenter.Add(refAxes[refAxisIdx].Mul(refSide * refHalf[refAxisIdx]))
+	refFaceCenter := refCenter.Add(refAxes[refAxisIdx].Mul(float64(refSide * refHalf[refAxisIdx])))
 	refFaceNormal := refAxes[refAxisIdx].Mul(refSide).Normalize()
 	refDist := refFaceNormal.Dot(refFaceCenter)
 
@@ -192,7 +192,7 @@ func clipBoxFace(refCol, incCol *Collider,
 	if incAxes[incAxisIdx].Dot(refFaceNormal) < 0 {
 		incSide = 1
 	}
-	incFaceCenter := incCenter.Add(incAxes[incAxisIdx].Mul(incSide * incHalf[incAxisIdx]))
+	incFaceCenter := incCenter.Add(incAxes[incAxisIdx].Mul(float64(incSide * incHalf[incAxisIdx])))
 	iu := (incAxisIdx + 1) % 3
 	iv := (incAxisIdx + 2) % 3
 	uIn := incAxes[iu].Mul(incHalf[iu])
@@ -303,13 +303,13 @@ func boxBoxEdgeContact(a, b *Collider,
 		return 1
 	}
 	edgeAOrigin := centerA.
-		Add(axesA[uA].Mul(signA(tA.Dot(axesA[uA])) * halfA[uA])).
-		Add(axesA[vA].Mul(signA(tA.Dot(axesA[vA])) * halfA[vA]))
+		Add(axesA[uA].Mul(float64(signA(tA.Dot(axesA[uA])) * halfA[uA]))).
+		Add(axesA[vA].Mul(float64(signA(tA.Dot(axesA[vA])) * halfA[vA])))
 
 	tB := centerA.Sub(centerB)
 	edgeBOrigin := centerB.
-		Add(axesB[uB].Mul(signA(tB.Dot(axesB[uB])) * halfB[uB])).
-		Add(axesB[vB].Mul(signA(tB.Dot(axesB[vB])) * halfB[vB]))
+		Add(axesB[uB].Mul(float64(signA(tB.Dot(axesB[uB])) * halfB[uB]))).
+		Add(axesB[vB].Mul(float64(signA(tB.Dot(axesB[vB])) * halfB[vB])))
 
 	// Closest point between two segments parameterized as Pa(s) = A0 + s*dirA,
 	// Pb(t) = B0 + t*dirB, with s in [-halfA,halfA], t in [-halfB,halfB].
@@ -319,13 +319,13 @@ func boxBoxEdgeContact(a, b *Collider,
 	bDotA := dirA.Dot(dirB)
 	rDotA := dirA.Dot(r)
 	rDotB := dirB.Dot(r)
-	denom := aDotA*bDotB - bDotA*bDotA
+	denom := float64(aDotA*bDotB) - float64(bDotA*bDotA)
 
 	var s, tParam float64
 	if denom > 1e-12 {
-		s = (bDotA*rDotB - rDotA*bDotB) / denom
+		s = (float64(bDotA*rDotB) - float64(rDotA*bDotB)) / denom
 	}
-	tParam = (bDotA*s + rDotB) / bDotB
+	tParam = (float64(bDotA*s) + rDotB) / bDotB
 	s = clampFloat(s, -halfA[edgeA], halfA[edgeA])
 	tParam = clampFloat(tParam, -halfB[edgeB], halfB[edgeB])
 

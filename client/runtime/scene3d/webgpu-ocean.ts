@@ -186,7 +186,7 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
         else { data[16 + 26] = 0; state = record && record.failed ? "bathymetry-failed" : "bathymetry-pending"; }
       }
       device.queue.writeBuffer(uniform, 0, data);
-      if (clouds) { sceneCloudUniformData(Object.assign({},opts,{view: opts.view, aspect: opts.aspect || 1}),cloudData); if (!sceneAtmosphereQuality(opts.meta).clouds) cloudData[44] = 0; device.queue.writeBuffer(cloudBuffer,0,cloudData); }
+      if (clouds) { sceneCloudUniformData(Object.assign({},opts,{aspect: opts.aspect || 1}),cloudData); if (!sceneAtmosphereQuality(opts.meta).clouds) cloudData[44] = 0; device.queue.writeBuffer(cloudBuffer,0,cloudData); }
       const key = opts.format + ":" + opts.samples;
       let pipeline = pipelines.get(key);
       if (!pipeline) {
@@ -232,6 +232,6 @@ function wgpuOceanDraw(resources, pass, opts) {
     state = resources.renderer ? resources.renderer.draw(pass, opts) : "unavailable";
   }
   if (opts.publishAttribute) opts.publishAttribute("data-gosx-scene3d-ocean", state);
-  else if (opts.mount && opts.mount.setAttribute) opts.mount.setAttribute("data-gosx-scene3d-ocean", state);
+  else opts.mount?.setAttribute?.("data-gosx-scene3d-ocean", state);
   return state !== "none";
 }

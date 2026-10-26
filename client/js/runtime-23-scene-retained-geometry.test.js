@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const vm = require("node:vm");
 
 const {
+  bootstrapFeatureScene3DSource,
   bootstrapRuntimeSource,
   createContext,
   createBoardWebGPUHarness,
@@ -132,7 +133,7 @@ function assertVectorClose(actual, expected, message) {
   }
 }
 
-function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry, lights) {
+function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry, lights, worldBakedAttributeViews) {
   return api.createSceneRenderBundle(
     320,
     180,
@@ -152,7 +153,7 @@ function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry, 
     [],
     0,
     false,
-    { retainedGeometry: retainedGeometry !== false },
+    { retainedGeometry: retainedGeometry !== false, worldBakedAttributeViews: worldBakedAttributeViews === true },
   );
 }
 
@@ -180,6 +181,97 @@ function loadFreshSceneAPI() {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
   return { env, api: env.context.__gosx_scene3d_api };
+}
+
+function expandedIndexedMesh(object, F32) {
+  const source = object.vertices;
+  const vertices = { count: source.indices.length, immutable: false };
+  for (const [key, width] of [["positions", 3], ["normals", 3], ["uvs", 2], ["tangents", 4]]) {
+    vertices[key] = new F32(vertices.count * width);
+    for (let i = 0; i < source.indices.length; i++) {
+      for (let j = 0; j < width; j++) vertices[key][i * width + j] = source[key][source.indices[i] * width + j];
+    }
+  }
+  return Object.assign({}, object, { vertices });
+}
+
+function bakedMeshSnapshot(bundle) {
+  return {
+    positions: Array.from(bundle.worldMeshPositions), normals: Array.from(bundle.worldMeshNormals),
+    uvs: Array.from(bundle.worldMeshUVs), tangents: Array.from(bundle.worldMeshTangents),
+    colors: Array.from(bundle.worldMeshColors), lines: Array.from(bundle.worldPositions),
+    lineColors: Array.from(bundle.worldColors),
+    bounds: bundle.meshObjects.map(mesh => ({ ...mesh.bounds })),
+  };
+}
+
+for (const fresh of [true, false]) {
+  test(`${fresh ? "source" : "generated"} indexed world bakes preserve triangle soup through pose and source edits`, () => {
+    const env = createContext({});
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    runScript(fresh ? freshFeatureBundleSource("scene3d") : bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+    const api = env.context.__gosx_scene3d_api;
+    const F32 = vm.runInContext("Float32Array", env.context);
+    const U32 = vm.runInContext("Uint32Array", env.context);
+    const object = obliqueTriangle({ x: 0, castShadow: true }, F32);
+    object.vertices.immutable = false;
+    object.vertices.indices = new U32(Array.from({ length: 192 }, (_, i) => i % 3));
+    const other = Object.assign({}, object, { id: "interleaved-mesh", x: 3, rotationY: 0.6, scaleZ: 1.7 });
+    const lights = [{ kind: "directional", x: 1, y: 3, z: 2, color: "#ffffff", intensity: 1 }];
+    for (const [step, scale] of [[2, 3, 4], [-2, 3, 4], [-2, -3, -4], [1, 1, 1]].entries()) {
+      [object.scaleX, object.scaleY, object.scaleZ] = scale;
+      object.rotationZ = step * 0.3;
+      object.wireframe = step === 3;
+      if (step === 2) {
+        object.vertices.positions[0] += 0.125;
+        object.vertices.normals[1] = 0.9;
+        object.vertices.tangents[3] = -1;
+        object.vertices.uvs[0] = 0.75;
+        object.vertices.indices.reverse();
+      }
+      const objects = [object, other];
+      const actual = renderBundle(api, objects, step, [], false, lights);
+      const expected = renderBundle(api, objects.map(mesh => expandedIndexedMesh(mesh, F32)), step, [], false, lights);
+      assert.deepEqual(bakedMeshSnapshot(actual), bakedMeshSnapshot(expected), `pose ${step} must match expanded geometry exactly`);
+      const hit = api.sceneRaycastPick(160, 90, 320, 180, actual.camera, actual);
+      const oracleHit = api.sceneRaycastPick(160, 90, 320, 180, expected.camera, expected);
+      assert.ok(hit && oracleHit, `pose ${step} remains pickable`);
+      assert.equal(hit.triangleIndex, oracleHit.triangleIndex);
+      assert.deepEqual({ ...hit.worldPosition }, { ...oracleHit.worldPosition });
+      assert.deepEqual({ ...hit.uv }, { ...oracleHit.uv });
+    }
+  });
+
+  test(`${fresh ? "source" : "generated"} indexed world bakes transform shared vertices once and bound scratch use`, () => {
+    const env = createContext({});
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    runScript(fresh ? freshFeatureBundleSource("scene3d") : bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+    const api = env.context.__gosx_scene3d_api;
+    const F32 = vm.runInContext("Float32Array", env.context);
+    const U32 = vm.runInContext("Uint32Array", env.context);
+    for (const [count, indexCount, expectedReads] of [[3, 192, 9], [3, 6, 18], [1024, 96, 288], [8193, 24579, 73737]]) {
+      let reads = 0;
+      const object = obliqueTriangle({}, F32);
+      const normals = new F32(count * 3);
+      normals.set(object.vertices.normals);
+      object.vertices.normals = new Proxy(normals, {
+        get(target, key) {
+          if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+          return Reflect.get(target, key, target);
+        },
+      });
+      object.vertices.count = count;
+      object.vertices.immutable = false;
+      object.vertices.indices = new U32(Array.from({ length: indexCount }, (_, i) => i % 3));
+      for (let pose = 0; pose < 2; pose++) {
+        reads = 0;
+        object.x = pose;
+        const bundle = renderBundle(api, object, pose, [], false);
+        assert.equal(reads, expectedReads, `${count}/${indexCount}, pose ${pose}`);
+        assert.equal(bundle.worldBakedMeshVertexCount, indexCount);
+      }
+    }
+  });
 }
 
 test("Scene3D retains eligible local mesh arrays and updates only compact transform state", () => {
@@ -514,7 +606,7 @@ function worldUploadHarness(fresh = true) {
   return { ...h, api, object, gl, draw: b => h.renderer.render(b, viewport) };
 }
 
-function worldShadowUploadHarness(fresh) {
+function worldShadowUploadHarness(fresh, worldBakedAttributeViews) {
   const h = worldUploadHarness(fresh);
   h.object.castShadow = true;
   h.object.scaleX = 2;
@@ -558,7 +650,7 @@ function worldShadowUploadHarness(fresh) {
   };
   return { ...h, draws, bundle(time) {
     other.z = (time % 4) * 0.1;
-    return renderBundle(h.api, [h.object, other], time, [], true, [light]);
+    return renderBundle(h.api, [h.object, other], time, [], true, [light], worldBakedAttributeViews);
   } };
 }
 
@@ -583,6 +675,58 @@ for (const fresh of [true, false]) {
       "settled shadow and color passes upload no geometry again");
   });
 }
+
+for (const fresh of [true, false]) {
+  test(`${fresh ? "source" : "generated"} world snapshots draw without copying settled geometry into frame streams`, t => {
+    const h = worldShadowUploadHarness(fresh, true); t.after(() => h.renderer.dispose());
+    const cold = h.bundle(0); h.draw(cold);
+    const before = h.draws.slice();
+    const warm = h.bundle(1), mesh = warm.meshObjects[0];
+    for (const [key, stride] of [["Positions", 3], ["Normals", 3], ["UVs", 2], ["Tangents", 4]]) {
+      assert.deepEqual(Array.from(mesh.vertices[key.toLowerCase()]), Array.from(cold["worldMesh" + key].subarray(0, 6 * stride)), key);
+      assert.equal(warm["worldMesh" + key].length, 3 * stride, "only the moving caster occupies frame streams");
+    }
+    assert.equal(warm.worldMeshColors.length, 12, "settled color tuples are not rebuilt");
+    assert.equal(warm.worldMeshVertexCount + warm.retainedMeshVertexCount,
+      cold.worldMeshVertexCount + cold.retainedMeshVertexCount, "geometry accounting includes direct world snapshots");
+    assert.equal(mesh.directVertices, true);
+    assert.equal(mesh.vertexOffset, 0);
+    assert.deepEqual(Array.from(mesh.modelMatrix), [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    h.draw(warm);
+    for (let i = 0; i < 2; i++) for (const key of ["positions", "model", "lightMatrix", "winding"]) {
+      assert.deepEqual(h.draws[i + 2][key], before[i][key], key);
+    }
+    const next = h.bundle(2);
+    assert.equal(next.meshObjects[0].vertices, mesh.vertices, "later frames reuse the immutable snapshot");
+    h.draw(next);
+    const at = h.gl.ops.length; h.draw(h.bundle(3));
+    assert.equal(h.gl.ops.slice(at).filter(op => op[0] === "bufferData" && op[4] === h.gl.STATIC_DRAW).length, 0);
+    h.object.color = "#804020";
+    const appearance = h.bundle(4);
+    assert.equal(appearance.meshObjects[0].vertices, mesh.vertices);
+    assert.equal(appearance.materials[appearance.meshObjects[0].materialIndex].color, "#804020");
+    h.object.x += 1;
+    const moved = h.bundle(5); h.draw(moved);
+    assert.equal(moved.meshObjects[0].directVertices, undefined, "a changing pose keeps the streaming path");
+    assert.deepEqual(Array.from(mesh.vertices.positions), before[0].positions, "held frames retain their old world geometry");
+    assert.equal(mesh._worldBakedUpload.resident, false);
+    h.draw(warm);
+    for (let i = 0; i < 2; i++) for (const key of ["positions", "model", "lightMatrix", "winding"]) {
+      assert.deepEqual(h.draws.at(-2 + i)[key], before[i][key], key);
+    }
+    assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0, "expired held frames stream instead of retaining GPU buffers");
+  });
+}
+
+test("world snapshot views preserve custom attribute fallback", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  h.object.vertices.attributes = { a_weight: { itemSize: 1, array: new Float32Array([1, 2, 3]) } };
+  renderBundle(h.api, h.object, 0, [], true, [], true);
+  const warm = renderBundle(h.api, h.object, 1, [], true, [], true);
+  assert.equal(warm.meshObjects[0].directVertices, undefined);
+  assert.equal(warm.meshObjects[0].vertices.attributes, h.object.vertices.attributes);
+  assert.equal(warm.worldMeshPositions.length, 9);
+});
 
 test("moving and mutable world casters keep their current shadow geometry", t => {
   const h = worldShadowUploadHarness(true); t.after(() => h.renderer.dispose());

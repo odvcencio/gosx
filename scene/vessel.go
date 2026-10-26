@@ -34,6 +34,25 @@ type Vessel struct {
 	LODs              []VesselLOD     `json:"lods,omitempty"`
 	WakeTexture       string          `json:"wakeTexture,omitempty"` // optional alpha foam image
 	Wake              *bool           `json:"wake,omitempty"`        // default true
+
+	// ExternalPose hands the pose to Go. The runtime then runs no sailing
+	// physics for this vessel: it shows the pose that DispatchVesselPose sends
+	// (for example from package vessel), blended between ticks, and still
+	// carries the walker, the model parts, parented crowds and the wake.
+	// Wind, sail trim, helm, navigation and landings are ignored. Position and
+	// Heading give the pose until the first frame arrives.
+	ExternalPose bool `json:"externalPose,omitempty"`
+
+	// Decks replaces the single walk rectangle with these walkable levels in
+	// ship-local coordinates. The walker stands on the highest deck at or just
+	// above their feet, so a rolling ship keeps people on the deck they chose.
+	// Leave it empty for the rectangle.
+	Decks []VesselDeck `json:"decks,omitempty"`
+
+	// Cutaway is the initial dollhouse state. Change it later with
+	// DispatchVesselCutaway. Setting it, even disabled, makes the vessel
+	// cutaway-capable.
+	Cutaway *VesselCutaway `json:"cutaway,omitempty"`
 }
 
 // VesselCommandEvent accepts a VesselCommand on the mounted Scene3D element.

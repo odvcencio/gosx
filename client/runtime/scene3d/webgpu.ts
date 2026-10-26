@@ -3679,13 +3679,23 @@
   function wgpuEnvMapMaxLod(envMap: any): number {
     return envMap.active ? Math.max(0, sceneNumber(envMap.record && envMap.record.levels, 1) - 1) : 0;
   }
-  function wgpuLoadTexture(device, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
+  function wgpuLoadTexture(device, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace, retryFailed = false) {
     if (!cache) return null;
     var descriptor = wgpuTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
     var key = descriptor.uri;
     if (!key) return null;
     var cacheKey = wgpuTextureCacheKey(descriptor);
-    if (cache.has(cacheKey)) return cache.get(cacheKey);
+    var cached = cache.get(cacheKey);
+    if (cached) {
+      if (retryFailed && cached.failed && !wgpuTextureRecordDisposed(cached)) {
+        cached.failed = false;
+        cached.loaded = false;
+        cached.pending = true;
+        cached.error = undefined;
+        wgpuStartTextureLoad(device, cached);
+      }
+      return cached;
+    }
     // Placeholder: 1x1 white pixel.
     var cube = descriptor.view === "cube";
     var placeholderTex = cube ? wgpuCreatePlaceholderCubeTexture(device) : device.createTexture({
@@ -3715,6 +3725,12 @@
       disposed: false,
     };
     cache.set(cacheKey, record);
+    wgpuStartTextureLoad(device, record);
+    return record;
+  }
+  function wgpuStartTextureLoad(device, record) {
+    var descriptor = record.descriptor, key = record.src;
+    var cube = descriptor.view === "cube";
     // KTX2 uploads supplied mips through its decoder, outside the Image path.
     if (wgpuIsKTX2URL(key) && wgpuKTX2API()) {
       wgpuUploadKTX2Texture(device, key, record);
@@ -3722,14 +3738,14 @@
     }
     if (cube) {
       record.failed = true;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.pending = false;
+      record.pending = false;
       record.error = "cube descriptors require a KTX2 upload path";
       wgpuNotifyTextureSettled(record);
     } else if (typeof Image === "function") {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var image = new Image();
+      var image = new Image();
       record.image = image;
       image.onload = function() {
-        if (wgpuTextureRecordDisposed(record)) return;
+        if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
         // Preserve base/specular RGB under transparent pixels and MASK alpha
         // by decoding/copying these roles unpremultiplied.
         var needsUnpremultipliedAlpha = ["specular-color", "base-color"].indexOf(descriptor.role) >= 0;
@@ -3756,14 +3772,14 @@
         if (imagePromise) {
           imagePromise.then(async function(bitmap) {
             try {
-              if (wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
+              if (record.image !== image || wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
               device.queue.copyExternalImageToTexture(
                 { source: bitmap },
                 needsUnpremultipliedAlpha || isHTMLTexture ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
                 [w, h]
               );
               await wgpuGenerateTextureMips(device, tex, imageTexture.format, imageTexture.levels);
-              if (wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
+              if (record.image !== image || wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
               record.texture.destroy();
               record.texture = tex;
               record.view = tex.createView();
@@ -3777,7 +3793,7 @@
             }
           }).catch(function() {
             tex.destroy();
-            if (wgpuTextureRecordDisposed(record)) return;
+            if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
             record.failed = true;
             record.pending = false;
             wgpuNotifyTextureSettled(record);
@@ -3789,7 +3805,7 @@
         }
       };
       image.onerror = function() {
-        if (wgpuTextureRecordDisposed(record)) return;
+        if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
         record.failed = true;
         record.pending = false;
         wgpuNotifyTextureSettled(record);
@@ -3801,7 +3817,6 @@
       record.pending = false;
       wgpuNotifyTextureSettled(record);
     }
-    return record;
   }
   function wgpuWaterCubeMapFaceURLs(value) {
     var base = typeof value === "string" ? value.trim() : "";
@@ -5444,7 +5459,7 @@
   // must draw exactly the set that file picks, so a non-pickable object never
   // occludes a pickable one in the ID buffer.
   function sceneWebGPUPickAllowsObject(object) {
-    if (!object || object.viewCulled) return false;
+    if (!object || object.viewCulled || object._crowdBatch === true || object._crowdSkin) return false;
     if (typeof object.pickable === "boolean") return object.pickable;
     if (object.kind === "plane") return false;
     var extents = sceneWebGPUPickBoundsExtents(object.bounds);
@@ -6756,7 +6771,7 @@
   }
 
   function selenaPipelineFrontFace(options) {
-    return options && options.frontFace === "cw" ? "cw" : "ccw";
+    return options?.frontFace === "cw" ? "cw" : "ccw";
   }
 
   function sceneWebGPUPointModelMatrix(entry, _pointsTilt, _pointsModelMat) {
@@ -8923,19 +8938,19 @@
       var textures = sceneSelenaTextureDescriptors(layout);
       for (var i = 0; i < textures.length; i++) {
         var wgsl = textures[i] && textures[i].wgsl || {};
-        // dimension:"cube" (e.g. the water surface/surface-below passes' "sky"
-        // environment map) needs viewDimension:"cube" in the bind group layout
-        // entry; every other texture (the overwhelming majority) keeps the
-        // existing "2d" default.
+        // Cube maps require cube views; other material textures use 2D.
         var texDimension = textures[i] && textures[i].dimension === "cube" ? "cube" : "2d";
+        var textureVisibility = textures[i] && textures[i].vertexStage === true
+          ? visibility
+          : (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2);
         entries.push({
           binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
           texture: { sampleType: "float", viewDimension: texDimension },
         });
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
           sampler: { type: "filtering" },
         });
       }
@@ -9091,7 +9106,7 @@
       // caustics/object-mesh-shadow offscreen RTT passes): WebGPU requires a
       // render pipeline's depthStencil state to exactly match whether the
       // render pass it's used in has a depthStencilAttachment.
-      var pipelineDepthStencil = !(options && options.depthStencil === false);
+      var pipelineDepthStencil = options?.depthStencil !== false;
       // Per-material memo (perf): getSelenaPipeline is called once PER OBJECT
       // PER FRAME, and the content key below stringifies the whole shader (~1.2KB)
       // + JSON.stringify(layout) on every call. Board frames are fresh-parsed,
@@ -9317,7 +9332,12 @@
       return new Uint32Array([width, height]);
     }
 
-    function createSelenaBindGroup(material, resource, cacheOwner, renderContext) {
+    function sceneWaterMainSelenaContext(material) {
+      var water = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, { name: "causticTexture" }));
+      return water ? sceneWaterObjectTextureSelenaContext(water.system, 0, "scene") : undefined;
+    }
+
+    function createSelenaBindGroup(material, resource, cacheOwner, renderContext = sceneWaterMainSelenaContext(material)) {
       var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext, selenaFrame);
       if (!uniformData || !resource) return null;
       var owner = cacheOwner?.id
@@ -11515,6 +11535,8 @@
       }
       system._cubemapRenderBindGroups = null;
       system._poolBindGroups = null;
+      system.waterObjectTextureSubject = null;
+      system.waterObjectShadowSignature = null;
       system.waterExpensiveCadenceBucket = null;
       system._qualityResourceKey = key;
       system.qualityAllocationPending = false;
@@ -11862,7 +11884,7 @@
     }
 
     function sceneWaterObjectTextureSelenaUniforms(system, texturePassMode) {
-      var mode = texturePassMode === 2 ? 2 : 1;
+      var mode = texturePassMode === 0 ? 0 : texturePassMode === 2 ? 2 : 1;
       var entry = system && system.entry || {};
       var resolution = Math.max(1, sceneNumber(system && system.waterResolution, system && system.resolution ? system.resolution : sceneWaterResolution(entry && entry.resolution)));
       var poolWidth = Math.max(0.01, sceneNumber(system && system.waterPoolWidth, sceneNumber(entry && entry.poolWidth, 1.0)));
@@ -11876,18 +11898,23 @@
       var kind = Math.max(0, Math.floor(sceneNumber(system && system.waterObjectKind, sceneWaterObjectKind(entry))));
       var subtype = Math.max(0, Math.floor(sceneNumber(system && system.waterObjectSubtype, sceneWaterObjectSubtype(entry, kind))));
       var radius = Math.max(0.0001, sceneNumber(system && system.waterObjectRadius, sceneNumber(entry && entry.objectRadius, kind === 1 ? 0.25 : 0.31)));
+      var center = system && system.waterObjectCenter || {};
       return {
-        isTexturePass: [1, 0, 0, 0],
-        texturePassMode: [mode, 0, 0, 0],
-        waterObjectTexturePassMode: [mode, 0, 0, 0],
+        isTexturePass: mode ? [1, 0, 0, 0] : undefined,
+        texturePassMode: mode ? [mode, 0, 0, 0] : undefined,
+        waterObjectTexturePassMode: mode ? [mode, 0, 0, 0] : undefined,
         lightDir: [light.x / lightLen, light.y / lightLen, light.z / lightLen, 0],
+        poolWidth, poolHeight, poolLength,
+        objectKind: kind,
+        objectRadius: radius,
+        objectCenter: [sceneNumber(center.x, sceneNumber(entry.objectX, 0)), sceneNumber(center.y, sceneNumber(entry.objectY, 0)), sceneNumber(center.z, sceneNumber(entry.objectZ, 0))],
         poolSize: [poolWidth, poolHeight, poolLength, cornerRadius],
         params: [resolution, radius, kind, subtype],
       };
     }
 
     function sceneWaterObjectTextureSelenaContext(system, texturePassMode, targetName) {
-      var mode = texturePassMode === 2 ? 2 : 1;
+      var mode = texturePassMode === 0 ? 0 : texturePassMode === 2 ? 2 : 1;
       var target = String(targetName || "target").trim() || "target";
       var waterID = String(system && (system.id || system.entry && system.entry.id) || "water-system");
       return {
@@ -11895,6 +11922,19 @@
         uniformSlotSuffix: ["water-object-texture", waterID, target, mode].join("-"),
         uniforms: sceneWaterObjectTextureSelenaUniforms(system, mode),
       };
+    }
+
+    // Never retain a white upload placeholder in a cached projected view.
+    function sceneWaterObjectSelenaTexturesPending(material, layout) {
+      var textures = sceneSelenaTextureDescriptors(layout);
+      for (var i = 0; i < textures.length; i++) {
+        var texture = textures[i];
+        if (sceneSelenaResourceRef(material, texture)) continue;
+        var url = sceneSelenaTextureURL(material, texture, i);
+        var record = url && (texture.dimension === "cube" ? wgpuLoadCubeTexture(device, url, textureCache) : wgpuLoadTexture(device, url, textureCache, null, undefined, undefined));
+        if (record && record.pending && !record.loaded && !record.failed) return true;
+      }
+      return false;
     }
 
     function drawWaterObjectMeshObjects(pass, objectList, bundle, materials, frameBindGroup, pbrBuffers, texturePassMode, renderContext) {
@@ -11918,6 +11958,7 @@
           labelSuffix: "water-object-texture",
         });
         if (selenaResource) {
+          if (sceneWaterObjectSelenaTexturesPending(mat, selenaResource.layout)) return { drawCalls: 0, selenaDrawCalls: 0 };
           var selenaKey = "selena:" + texturePassMode + ":" + (mat && mat.key || matIndex) + ":" + blendMode + ":" + (depthWrite ? "1" : "0");
           if (currentPipelineKey !== selenaKey) {
             pass.setPipeline(wgpuRequirePipeline(selenaResource.pipeline));
@@ -12136,7 +12177,7 @@
       }
       pass.end();
       return {
-        passes: hasSubject ? 1 : 0,
+        passes: 1,
         authored: !!(pipelineRecord && pipelineRecord.authored && hasSubject && !drewSelena),
         failed: !!(pipelineRecord && pipelineRecord.failed),
         selena: selena,
@@ -12362,8 +12403,15 @@
       var restoredFrame = false;
       for (var i = 0; i < records.length; i++) {
         var system = records[i] && records[i].system;
-        if (!system || !waterSystemHasObjectTextureSubject(system)) continue;
+        if (!system) continue;
         var entry = system.entry || {};
+        var textureSubject = waterSystemHasObjectTextureSubject(system) ? sceneWaterActiveObjectID(entry) || "mesh" : "";
+        if (system.waterObjectTextureSubject !== textureSubject) {
+          system.waterObjectTextureSubject = textureSubject;
+          system.waterObjectTextureReadySlots = 0;
+          system.waterObjectTextureSignature = null;
+        }
+        if (!textureSubject) continue;
         var optics = sceneWaterOpticsFlags(entry, {
           kind: sceneWaterObjectKind(entry),
           displacementScale: Math.max(0, sceneNumber(entry.objectDisplacementScale, 1)),
@@ -12478,11 +12526,12 @@
         }
         restoredFrame = true;
         var passCount = refraction.passes + reflection.passes + clipped.passes;
+        if (passCount > 0) system.waterObjectTextureReadySlots |= 1 << passSlot;
         var drawCalls = refraction.drawCalls + reflection.drawCalls + clipped.drawCalls;
         var selenaDrawCalls = refraction.selenaDrawCalls + reflection.selenaDrawCalls + clipped.selenaDrawCalls;
         if (passCount > 0) addWaterObjectTextureStats(stats, system, passCount, passCount, drawCalls, 0, selenaDrawCalls);
         system.waterObjectTextureRefreshCursor = (refreshCursor + 1) % targetSlots.length;
-        system.waterObjectTextureRefreshRemaining = Math.max(0, refreshRemaining - 1);
+        system.waterObjectTextureRefreshRemaining = Math.max(0, refreshRemaining - (passCount > 0 ? 1 : 0));
       }
       if (restoredFrame) {
         uploadFrameUniforms(bundle && bundle.camera, width, height, toneMap);
@@ -12938,7 +12987,7 @@
         // stale below so the very next refresh (on wake) is unconditional.
         var refreshExpensivePasses = waterStateDirty || (!system.waterAtRest && system.waterExpensiveCadenceBucket !== expensiveCadenceBucket);
         if (refreshExpensivePasses) system.waterExpensiveCadenceBucket = expensiveCadenceBucket;
-        if (optics.object || optics.caustics) {
+        if (optics.object || optics.caustics || system.waterObjectShadowSignature != null) {
           var objectShadowPasses = 0;
           var meshShadow = { passes: 0, drawCalls: 0 };
           var hasShadowSubject = waterSystemHasObjectTextureSubject(system);
@@ -12946,10 +12995,9 @@
           // M4: includeCamera=false -- the object-shadow RTT is a light-space
           // projection (see sceneWaterObjectRenderSignature's comment above),
           // so orbiting the camera must NOT invalidate this cache.
-          var shadowSignature = sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false);
+          var shadowSignature = hasShadowSubject ? sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false) : "";
           var refreshObjectShadow = system.waterObjectShadowSignature !== shadowSignature;
-          hasShadowSubject = hasShadowSubject && refreshObjectShadow;
-          if (hasShadowSubject && objectList.length > 0 && pbrBuffers) {
+          if (refreshObjectShadow && hasShadowSubject && objectList.length > 0 && pbrBuffers) {
             meshShadow = renderWaterObjectMeshShadowPass(encoder, system, objectList, pbrBuffers);
           }
           if (meshShadow.passes > 0) {
@@ -12960,9 +13008,9 @@
             /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (meshShadow.failed) stats.waterAuthoredObjectMeshShadowFallbacks += 1;
             /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ stats.waterSelenaObjectMeshShadowPasses += meshShadow.selena || 0;
             stats.waterSelenaObjectMeshShadowFallbacks += meshShadow.selenaFallback || 0;
-          } else if (hasShadowSubject) {
-            if (objectList.length === 0) stats.waterObjectShadowFallbackMissingObjects += 1;
-            if (!pbrBuffers) stats.waterObjectShadowFallbackMissingResources += 1;
+          } else if (refreshObjectShadow) {
+            if (hasShadowSubject && objectList.length === 0) stats.waterObjectShadowFallbackMissingObjects += 1;
+            if (hasShadowSubject && !pbrBuffers) stats.waterObjectShadowFallbackMissingResources += 1;
             var shadowResult = renderWaterObjectShadowPass(encoder, system);
             objectShadowPasses = shadowResult && shadowResult.passes || 0;
             if (shadowResult && shadowResult.authored) stats.waterAuthoredObjectShadowPasses += objectShadowPasses;
@@ -13383,6 +13431,7 @@
           objectKind: sceneNumber(system && system.waterObjectKind, 0),
           objectSubtype: sceneNumber(system && system.waterObjectSubtype, 0),
           objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
+          meshTextureEnable: waterSystemHasObjectTextureSubject(system) && sceneWaterObjectTextureTargetSlots(system).every(slot => (system.waterObjectTextureReadySlots & (1 << slot)) !== 0) ? 1 : 0,
           opticsEnable: optics.object ? 1 : 0,
           waterColor: [waterColor[0], waterColor[1], waterColor[2]],
           lightDir: [sceneNumber(light.x, 0.3), sceneNumber(light.y, 0.9), sceneNumber(light.z, 0.45)],
@@ -16268,6 +16317,7 @@
         if (!obj || obj.viewCulled) continue;
         if (!obj.castShadow) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+        if (obj._crowdBatch === true || obj._crowdSkin) continue;
         if (webGPUObjectIsSkinned(obj)) {
           var skinnedPositionBuffer = obj._gosxWGPUElioSkinOutputBuffer;
           if (!skinnedPositionBuffer) continue;
@@ -16335,6 +16385,7 @@
       }
 
       pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+      webGPUCrowdHost().drawShadow(pass, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
       drawInstancedShadowMeshes(pass, bundle, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
       pass.end();
     }
@@ -16389,6 +16440,7 @@
       }
       for (var i = 0; i < objectList.length; i++) {
         var obj = objectList[i];
+        if (obj._crowdBatch === true || obj._crowdSkin) continue;
         var matIndex = sceneNumber(obj.materialIndex, 0);
         var mat = materials[matIndex] || null;
         objectDepthWrite = sceneTransmissionDepthWrite(obj, mat, depthWrite);
@@ -16444,7 +16496,7 @@
           if (currentPipelineKind !== selenaKey) {
             pass.setPipeline(wgpuRequirePipeline(selenaResource.pipeline));
             currentPipelineKind = selenaKey;
-          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
+          }
           var selenaBG = createSelenaBindGroup(mat, selenaResource, obj);
           if (selenaBG) {
             pass.setBindGroup(0, selenaBG);
@@ -16562,63 +16614,13 @@
     }
     function instancedMeshTransformData(mesh, count) {
       if (!mesh || count <= 0 || !mesh.transforms) return null;
-      if (!mesh._cachedTransforms) {
-        if (mesh.transforms instanceof Float32Array) {
-          mesh._cachedTransforms = mesh.transforms;
-        } else if (Array.isArray(mesh.transforms)) {
-          mesh._cachedTransforms = new Float32Array(mesh.transforms);
-        }
-      }
+      if (!mesh._cachedTransforms) mesh._cachedTransforms = scenePrepareInstancedTransforms(webGPUInstancedCacheOwner(mesh.id, mesh), mesh.transforms);
       var data = mesh._cachedTransforms;
       return data && data.length >= count * 16 ? data : null;
     }
     function instancedMeshColorData(mesh, count) {
       if (!mesh || count <= 0) return null;
-      var rawColors = mesh.colors;
-      if (wgpuIsPackedInstanceColors(rawColors, count)) return rawColors;
-      var owner = webGPUInstancedCacheOwner(mesh.id, mesh);
-      if (owner._cachedWGPUInstanceColors &&
-        owner._cachedWGPUInstanceColorCount === count &&
-        wgpuArrayContentsMatch(owner._cachedWGPUInstanceColorSource, rawColors)
-      ) {
-        return owner._cachedWGPUInstanceColors;
-      }
-      var data = null;
-      if (rawColors && typeof rawColors.length === "number" && rawColors.length > 0) {
-        if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-          data = new Float32Array(count * 4);
-          for (var ci = 0; ci < count; ci++) {
-            var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
-            data[ci * 4] = rgba[0];
-            data[ci * 4 + 1] = rgba[1];
-            data[ci * 4 + 2] = rgba[2];
-            data[ci * 4 + 3] = rgba[3];
-          }
-        } else if (rawColors.length >= count * 4) {
-          data = new Float32Array(rawColors);
-        } else if (rawColors.length >= count * 3) {
-          data = new Float32Array(count * 4);
-          for (var ni = 0; ni < count; ni++) {
-            data[ni * 4] = rawColors[ni * 3];
-            data[ni * 4 + 1] = rawColors[ni * 3 + 1];
-            data[ni * 4 + 2] = rawColors[ni * 3 + 2];
-            data[ni * 4 + 3] = 1;
-          }
-        }
-      }
-      if (!data) {
-        data = new Float32Array(count * 4);
-        for (var di = 0; di < count; di++) {
-          data[di * 4] = 1;
-          data[di * 4 + 1] = 1;
-          data[di * 4 + 2] = 1;
-          data[di * 4 + 3] = 1;
-        }
-      }
-      owner._cachedWGPUInstanceColors = data;
-      owner._cachedWGPUInstanceColorCount = count;
-      owner._cachedWGPUInstanceColorSource = rawColors ? Array.prototype.slice.call(rawColors) : null;
-      return data;
+      return mesh._cachedInstanceColors = scenePrepareInstancedColors(webGPUInstancedCacheOwner(mesh.id, mesh), mesh.colors, count, true);
     }
     function getInstancedGeometry(mesh) {
       if (typeof generateInstancedGeometry !== "function") return null;
@@ -16698,6 +16700,7 @@
       var api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
       if (!device || !api || typeof api.createSceneGPUDrivenHost !== "function") return SCENE_GPU_DRIVEN_INERT_HOST;
       host = api.createSceneGPUDrivenHost(device, {
+        onResourceReady: pipelineGuard.changed,
         createFrameBindGroupLayout: wgpuCreateFrameBindGroupLayout,
         createMaterialBindGroupLayout: wgpuCreateMaterialBindGroupLayout,
         createShadowBindGroupLayout: wgpuCreateShadowBindGroupLayout,
@@ -16716,6 +16719,23 @@
         drawInstancedMeshes: drawInstancedMeshes,
       });
       gpuDrivenHosts.set("host", host);
+      return host;
+    }
+
+    // webGPUCrowdHost returns this renderer's crowd host (webgpu-crowd.ts). The
+    // hooks bind a batch record's retained geometry and its material group.
+    function webGPUCrowdHost() {
+      var host = gpuDrivenHosts.get("crowd");
+      if (host) return host;
+      host = createSceneWebGPUCrowd(device, {
+        bindAttribute: webGPUBindRetainedMeshAttribute,
+        bindIndex: webGPUBindRetainedMeshIndexBuffer,
+        materialGroup: function(record, materials) {
+          var index = sceneNumber(record.materialIndex, 0);
+          return webGPUFrameMaterialGroup(materialFrame, index, materials[index] || null, !!record.receiveShadow, createMaterialBindGroup);
+        },
+      });
+      gpuDrivenHosts.set("crowd", host);
       return host;
     }
 
@@ -17550,7 +17570,7 @@
         pointsUniformScratchF.fill(0);
         var puF = pointsUniformScratchF;
         var puU = pointsUniformScratchU;
-        puF.set(_computeModelMat, 0);
+        puF.set(sceneWebGPUPointModelMatrix(entry, _computeTilt, _computeModelMat), 0);
 
         var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
         puF[16] = defaultColorRGBA[0];
@@ -18503,7 +18523,7 @@
       if (!obj) return false;
       if (webGPUObjectIsSkinned(obj)) return true;
       if (webGPUObjectComputedMorphDrawRecord(obj)) return true;
-      return false;
+      return obj._crowdBatch === true || Boolean(obj._crowdSkin);
     }
 
     // encodeBundleableSceneDraws drives ONE target through the PBR and instanced
@@ -18675,7 +18695,7 @@
       var sampleCount = resolveWebGPUSampleCount(bundle);
       activeSampleCount = sampleCount;
       detailResources = sceneWebGPUEnsureDetailResources(device, detailResources, bundle.materials, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT);
-      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      detailEnabled = frameMeta?.detailEnabled !== false;
       if (detailEnabled && detailResources) sceneWebGPUDetailBakeResources(device, detailResources, placeholderView);
       if (scenePicker && scenePicker.hasPending()) scenePicker.preparePipelines();
       prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing);
@@ -18684,7 +18704,7 @@
       // The standard mesh, shadow and post variants are prepared above. Other
       // feature renderers can discover pipelines while encoding; defer their
       // canvas commands until the entire frame has encoded successfully.
-      pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
+      pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost().present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
         bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds) ||
         (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
         postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST; }));
@@ -18722,11 +18742,11 @@
       // Reuse uniforms when color or detail controls change; retire buffers and
       // atlases that no longer belong to the active draw set.
 
-      var frameNowMS = frameMeta && Number.isFinite(frameMeta.nowMS)
+      var frameNowMS = Number.isFinite(frameMeta?.nowMS)
         ? frameMeta.nowMS
         : performance.now();
-      var frameActive = !frameMeta || frameMeta.active !== false;
-      var frameQualityEnabled = Boolean(frameMeta && frameMeta.qualityEnabled === true);
+      var frameActive = frameMeta?.active !== false;
+      var frameQualityEnabled = frameMeta?.qualityEnabled === true;
       var frameQualityProfile = frameQualityEnabled && frameMeta.qualityProfile
         ? frameMeta.qualityProfile
         : null;
@@ -18765,6 +18785,8 @@
         var material = instancedMeshMaterial(mesh, bundle.materials);
         return !material || !material.detail;
       }) : instancedDrawList.opaque });
+      var crowd = webGPUCrowdHost();
+      crowd.beginFrame(bundle, encoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
@@ -18801,6 +18823,7 @@
         shadowLightIndices[slot] = li;
 
         gpuDriven.lightView(encoder, lightMatrix, slot);
+        crowd.lightView(encoder, lightMatrix, slot);
         renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots[slot].view, lightSlot: slot }, pbrSceneBuffers);
         activeShadowCount++;
       }
@@ -18918,6 +18941,7 @@
       };
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites("main");
       if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
+      crowd.prepareMainPass(mainPassDescriptor);
       gpuDriven.prepareMainPass(mainPassDescriptor);
       var mainPass = encoder.beginRenderPass(mainPassDescriptor);
       var skyState = "none";
@@ -19095,7 +19119,7 @@
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: Boolean(frameMeta && frameMeta.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
+        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
@@ -19159,14 +19183,15 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
       // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
       const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
         if (drawList.opaque.length > 0) {
-          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
+        frameStats.meshDrawCalls += crowd.drawColor(mainPass, frameBindGroup, materials);
         if (instancedDrawList.opaque.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
           drawInstancedMeshes(mainPass, instancedDrawList.opaque, materials, "opaque", true);
@@ -19183,6 +19208,7 @@
         // Two-phase occlusion: end the early pass, cull against its depth, and
         // draw the newly visible instances in a late pass that loads it.
         mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
+        mainPass = crowd.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials);
 
         prepareOceanReflection();
         // The water surface writes depth before translucent world surfaces.
@@ -19198,6 +19224,7 @@
           mainPass.end();
           transmissionResources.capture(encoder, postTarget.colorView);
           gpuDriven.resumeMainPass(mainPassDescriptor);
+          crowd.resumeMainPass(mainPassDescriptor);
           mainColorAttachment.loadOp = "load";
           if (specularAttachment) specularAttachment.loadOp = "load";
           mainPassDescriptor.depthStencilAttachment.depthLoadOp = "load";
@@ -19207,7 +19234,7 @@
 
         // Alpha pass.
         if (drawList.alpha.length > 0) {
-          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
         if (instancedDrawList.alpha.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
@@ -19224,7 +19251,7 @@
 
         // Additive pass.
         if (drawList.additive.length > 0) {
-          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
         if (instancedDrawList.additive.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
@@ -19293,8 +19320,9 @@
       endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
       gpuDriven.finishEncoding(encoder);
+      crowd.finishEncoding(encoder);
       device.queue.submit([encoder.finish()]);
-      Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink));
+      Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink), crowd.endFrame());
       pollGPUTimingReadback();
       // Pick readback starts after submit and does not wait in this frame.
       if (scenePicker) scenePicker.finishReadback();
@@ -19674,7 +19702,9 @@
       kind: "webgpu",
       type: "webgpu",
       supportsRetainedGeometry: true,
-      supportsBundle: supportsBundle, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace) },
+      supportsBundle: supportsBundle,
+      prepareCrowdAtlas: function(atlas: any) { return webGPUCrowdHost().prepareCrowdAtlas(atlas); },
+      prepareCrowdMotionShaders: function() { return webGPUCrowdHost().prepareCrowdMotionShaders(); }, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace, retryFailed) },
       queuePick: queuePick,
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,

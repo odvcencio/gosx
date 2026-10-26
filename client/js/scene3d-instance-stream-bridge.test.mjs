@@ -440,3 +440,15 @@ test("shared URL resolution retains the compat fallback when advertised data is 
   assert.equal(scripts.length, 1);
   assert.equal(scripts[0].src, "/gosx/bootstrap-feature-scene3d-instance-stream.js");
 });
+
+test("queued streams cannot mutate a batch re-declared while the codec loads", async () => {
+  const { window, scripts } = loadInstanceStreamBridge();
+  const state = makeSceneState(), mount = makeMount();
+  const promise = window.__gosx_scene3d_apply_instance_stream_frame(state, buildFrameBytes("reused", 2), () => {}, mount);
+  state.instancedMeshes = [{ id: "reused", count: 1 }];
+  window.__gosx_scene3d_instance_stream_apply = () => assert.fail("old lifetime applied");
+  scripts[0].onload();
+  assert.match((await promise).reason, /declaration changed/);
+  window.__gosx_scene3d_instance_stream_apply = () => ({ applied: true });
+  assert.equal(window.__gosx_scene3d_apply_instance_stream_frame(state, buildFrameBytes("reused", 1), () => {}, mount).applied, true);
+});

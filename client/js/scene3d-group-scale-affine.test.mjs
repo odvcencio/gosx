@@ -23,6 +23,11 @@ function readRuntime(name) {
   return fs.readFileSync(path.join(runtimeDir, name), "utf8");
 }
 
+// Match the production TypeScript syntax before evaluating the real loader.
+const gltfSource = ts.transpileModule(readRuntime("gltf.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+
 function trimBeforeSharedAPI(source) {
   const marker = source.indexOf("// Scene3D shared API");
   assert.ok(marker >= 0);
@@ -31,6 +36,7 @@ function trimBeforeSharedAPI(source) {
 
 function createCoreContext({ mount = false } = {}) {
   const sandbox = {
+    __gosx_scene3d_api: {},
     console: { warn() {}, error() {}, log() {} },
     Math, JSON, Number, Object, Array, Map, Set, WeakMap,
     Float32Array, Float64Array, Uint8Array, Uint16Array, Uint32Array,
@@ -46,11 +52,17 @@ function createCoreContext({ mount = false } = {}) {
     "11-scene-math.ts",
     "12-scene-geometry.ts",
     "13-scene-material.ts",
+    "14-scene-lighting.ts",
+    "15-scene-draw-plan.ts",
   ]) {
     vm.runInContext(readSource(name), context, { filename: name });
   }
   vm.runInContext(trimBeforeSharedAPI(readSource("10-runtime-scene-core.ts")), context, { filename: "10-runtime-scene-core.ts" });
+  vm.runInContext("Object.assign(window.__gosx_scene3d_api,{sceneNormalizeParentMatrix,sceneNormalizeDirection});",context);
+  vm.runInContext(ts.transpileModule(readRuntime("hierarchy.ts"), {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,context,{filename:"hierarchy.ts"});
+  vm.runInContext("function sceneGroupTestOrigin(object,time) {const result={};translateScenePointInto(result,0,0,0,object,time);return result;}",context);
   if (mount) {
+    vm.runInContext(ts.transpileModule(readRuntime("model-pose-data.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "model-pose-data.ts" });
     vm.runInContext(ts.transpileModule(readRuntime("mount-webgl.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "mount-webgl.ts" });
   }
   return context;
@@ -470,7 +482,7 @@ test("browser direct, instanced, skinned and morph shaders share affine normal s
 
 test("glTF POINTS and LINES modes 0-3 retain exact affine through animation", () => {
   const context = createCoreContext({ mount: true });
-  vm.runInContext(readRuntime("gltf.ts"), context, { filename: "gltf.ts" });
+  vm.runInContext(gltfSource, context, { filename: "gltf.ts" });
   const result = runJSON(context, `(() => {
     const buffer = new ArrayBuffer(80);
     new Float32Array(buffer).set([
@@ -529,4 +541,231 @@ test("glTF POINTS and LINES modes 0-3 retain exact affine through animation", ()
   for (const world of result.initial) assert.deepEqual(world, {x:4,y:20,z:30});
   for (const world of result.animated) assert.deepEqual(world, {x:12,y:32,z:30});
   assert.equal(result.uploadedFresh, true);
+});
+
+test("retained group spin carries off-center children around a shared scaled pivot", () => {
+  const context = createCoreContext();
+  const result = runJSON(context, `(() => {
+    const state={groups:sceneNormalizeGroups([
+      {id:"outer",x:5,scaleX:2,scaleY:3,scaleZ:4,spinZ:2},
+      {id:"inner",parentNode:"outer",x:2,spinZ:-1,scaleY:2}
+    ])};
+    const source=normalizeSceneObject({id:"tip",kind:"box",x:1,parentNode:"inner"},0);
+    const matrices=sceneGroupMatrices(state,Math.PI/4);
+    const first=sceneGroupRecords([source],matrices,"matrix")[0];
+    const position=sceneGroupTestOrigin(first,0);
+    const parent=Array.from(first.parentMatrix);
+    sceneGroupMatrices(state,0);
+    const second=sceneGroupRecords([source],matrices,"matrix")[0];
+    return {position,parent,source:{x:source.x,parent:source.parentMatrix,spin:source.spinZ},same:first===second,zero:sceneGroupTestOrigin(second,0)};
+  })()`);
+  assert.ok(Math.abs(result.position.x-(5+3/Math.SQRT2))<1e-10);
+  assert.ok(Math.abs(result.position.y-(4+Math.SQRT2))<1e-10);
+  assert.deepEqual(result.zero,{x:11,y:0,z:0});
+  assert.equal(result.source.x,1);
+  assert.equal(result.source.parent,null);
+  assert.equal(result.source.spin,0);
+  assert.equal(result.same,true,"retain the per-child preparation view");
+});
+
+test("group live commands update the boundary without replacing descendants", () => {
+  const context=createCoreContext();
+  const result=runJSON(context,`(() => {
+    const state=createSceneState({scene:{groups:[{id:"rotor",spinZ:1}],objects:[{id:"tip",kind:"box",x:2,parentNode:"rotor"}]}},null);
+    const before=state.objects.get("tip");
+    applySceneCommands(state,[{kind:2,objectId:"rotor",data:{x:3,spinZ:0}}]);
+    const group=state.groups[0], matrices=sceneGroupMatrices(state,10);
+    const after=state.objects.get("tip");
+    const point=sceneGroupTestOrigin(sceneGroupRecords([after],matrices,"matrix")[0],10);
+    applySceneCommands(state,[{kind:15,data:{groups:[]}}]);
+    return {same:before===after,group,point,cleared:state.groups.length};
+  })()`);
+  assert.equal(result.same,true);
+  assert.deepEqual(result.point,{x:5,y:0,z:0});
+  assert.equal(result.cleared,0);
+});
+
+test("group matrices reject invalid hierarchies and nonfinite clocks", () => {
+  const context=createCoreContext();
+  for (const expression of [
+    'sceneNormalizeGroups([{id:"a"},{id:"a"}])',
+    'sceneNormalizeGroups([{id:"a",spinX:Infinity}])',
+    'sceneGroupMatrices({groups:sceneNormalizeGroups([{id:"a",parentNode:"b"},{id:"b",parentNode:"a"}])},0)',
+    'sceneGroupMatrices({groups:sceneNormalizeGroups([{id:"a",parentNode:"missing"}])},0)',
+    'sceneGroupMatrices({groups:sceneNormalizeGroups([{id:"a"}])},NaN)',
+  ]) assert.throws(()=>vm.runInContext(expression,context));
+});
+
+test("group affine prefixes move instances, annotations and light directions", () => {
+  const context=createCoreContext();
+  const result=runJSON(context,`(() => {
+    const state={groups:sceneNormalizeGroups([{id:"g",x:10,spinZ:Math.PI/2,scaleX:2,scaleY:3,scaleZ:4}])};
+    const matrices=sceneGroupMatrices(state,1);
+    const source={id:"i",parentNode:"g",transforms:new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,2,0,0,1])};
+    const instances=sceneGroupRecords([source],matrices,"instances")[0];
+    const light=sceneGroupRecords([{parentNode:"g",x:2,y:0,z:0,directionX:1,directionY:0,directionZ:0}],matrices,"light")[0];
+    const label=sceneLabelPoint(sceneGroupRecords([{parentNode:"g",x:2,y:0,z:0}],matrices,"position")[0],1);
+    return {instance:Array.from(instances.transforms),original:Array.from(source.transforms),light,label};
+  })()`);
+  assert.ok(Math.abs(result.instance[12]-10)<1e-6);
+  assert.ok(Math.abs(result.instance[13]-4)<1e-6);
+  assert.equal(result.original[12],2);
+  assert.ok(Math.abs(result.label.x-10)<1e-10);
+  assert.ok(Math.abs(result.label.y-4)<1e-10);
+  assert.ok(Math.abs(result.light.directionY-1)<1e-10);
+});
+
+test("a group motion binding owns the parent pose without copying spin to children", () => {
+  const context=createCoreContext();
+  const result=runJSON(context,`(() => {
+    const bindings=new Map([["rotation",{binding:{target:"sceneNode",node:"rotor",property:"rotation.z"},value:Math.PI/2}]]);
+    const state={groups:sceneNormalizeGroups([{id:"rotor",spinZ:4}]),_gosxMotionRuntimeBindings:new Map([["timeline",bindings]])};
+    const child=normalizeSceneObject({id:"blade",parentNode:"rotor",kind:"box",x:2},0);
+    const matrices=sceneGroupMatrices(state,5);
+    const frame=sceneGroupRecords([child],matrices,"matrix")[0];
+    return {position:sceneGroupTestOrigin(frame,5),childSpin:child.spinZ,childX:child.x};
+  })()`);
+  assert.ok(Math.abs(result.position.x)<1e-12);
+  assert.ok(Math.abs(result.position.y-2)<1e-12);
+  assert.equal(result.childSpin,0);
+  assert.equal(result.childX,2);
+});
+
+test("a ray through the center of a half-turned scaled rotor tip hits its sphere", () => {
+  const context=createCoreContext();
+  const result=runJSON(context,`(() => {
+    const state={groups:sceneNormalizeGroups([{id:"rig",x:-.4,scaleX:1.2,scaleY:.8,scaleZ:1},{id:"rotor",parentNode:"rig",spinZ:Math.PI/2}])};
+    const source=normalizeSceneObject({id:"tip",kind:"sphere",radius:.28,x:2,parentNode:"rotor"},0);
+    const object=sceneGroupRecords([source],sceneGroupMatrices(state,2),"matrix")[0];
+    const vertices=sphereTriangleMesh(object).positions;
+    const matrix=sceneObjectModelMatrix(object,2);
+    const ray=sceneScreenToRay(296.3094177246094,291.5,1000,583,{x:0,y:0,z:9,rotationX:0,rotationY:0,rotationZ:0,fov:48});
+    const origin=ray.origin,direction=ray.dir;
+    let nearest=null;
+    for(let i=0;i+8<vertices.length;i+=9) {
+      const points=[];
+      for(let k=0;k<9;k+=3) {
+        const point=sceneMatrixTransformInto({},matrix,vertices[i+k],vertices[i+k+1],vertices[i+k+2],4,true);
+        points.push(point);
+      }
+      const hit=sceneRayIntersectsTriangle(origin,direction,points[0],points[1],points[2]);
+      if(hit && (!nearest ||hit.distance<nearest.distance)) nearest=hit;
+    }
+    return {nearest};
+  })()`);
+  assert.ok(result.nearest,"animated mesh must remain pickable at a shared triangle edge");
+  assert.ok(result.nearest.distance<9.3,`must hit the front surface before the blade: ${JSON.stringify(result.nearest)}`);
+});
+
+test("browser group matrices agree with Go for nested spin, base rotation, shear and reflection", () => {
+  const fixture=JSON.parse(fs.readFileSync(path.join(__dirname,"testdata/group-spin-affine.json"),"utf8"));
+  const context=createCoreContext();
+  context.groupParityFixture=fixture;
+  const result=runJSON(context,`(() => {
+    const state={groups:sceneNormalizeGroups(groupParityFixture.groups)};
+    return groupParityFixture.samples.map(sample=>Object.fromEntries([...sceneGroupMatrices(state,sample.time)].map(([id,matrix])=>[id,Array.from(matrix)])));
+  })()`);
+  fixture.samples.forEach((sample,index)=>{
+    for(const [id,want] of Object.entries(sample.matrices))want.forEach((value,component)=>{
+      assert.ok(Math.abs(result[index][id][component]-value)<1e-10,`t=${sample.time}, ${id}[${component}] differs from Go`);
+    });
+  });
+});
+
+test("retained crowd poses invalidate only when the group or source pose changes", () => {
+  const context=createCoreContext();
+  const result=runJSON(context,`(() => {
+    const state={groups:sceneNormalizeGroups([{id:"rotor",spinZ:1}])};
+    const source=normalizeSceneObject({id:"agent",kind:"box",parentNode:"rotor"},0);
+    source._crowdSkin={rev:7,atlas:{},batchID:"agents",parent:"",group:null};
+    const first=sceneGroupRecords([source],sceneGroupMatrices(state,0),"matrix")[0];
+    const revision0=first._crowdSkin.rev;
+    const batch={alive:true};first._crowdSkin.group=batch;
+    const second=sceneGroupRecords([source],sceneGroupMatrices(state,1),"matrix")[0];
+    const revision1=second._crowdSkin.rev;
+    const third=sceneGroupRecords([source],sceneGroupMatrices(state,1),"matrix")[0];
+    return {revision0,revision1,revision2:third._crowdSkin.rev,same:first===second && second===third,sourceRevision:source._crowdSkin.rev,sourceGroup:source._crowdSkin.group,keptBatch:third._crowdSkin.group===batch};
+  })()`);
+  assert.ok(result.revision1>result.revision0);
+  assert.equal(result.revision2,result.revision1);
+  assert.equal(result.sourceRevision,7);
+  assert.equal(result.sourceGroup,null);
+  assert.equal(result.same,true);
+  assert.equal(result.keptBatch,true);
+});
+
+
+test("first live hierarchy load preserves following transform command order", async () => {
+  const context = createCoreContext();
+  const pending = vm.runInContext(`(() => {
+    const api = window.__gosx_scene3d_hierarchy_api;
+    delete window.__gosx_scene3d_hierarchy_api;
+    let finishLoad;
+    ensureSceneGatedFeatureLoaded = () => new Promise(resolve => {
+      finishLoad = () => { window.__gosx_scene3d_hierarchy_api = api; resolve(api); };
+    });
+    const state = createSceneState({scene:{objects:[]}}, null);
+    const work = applySceneCommands(state, [
+      {kind:15,data:{groups:[{id:"rotor",spinZ:1}]}},
+      {kind:2,objectId:"rotor",data:{x:3,spinZ:0}},
+      {kind:0,objectId:"tip",data:{kind:"mesh",props:{id:"tip",kind:"box",x:2,parentNode:"rotor"}}}
+    ]);
+    const deferred = !state.objects.has("tip");
+    finishLoad();
+    return work.then(() => ({
+      deferred, x:state.groups[0].x, spin:state.groups[0].spinZ,
+      point:sceneGroupTestOrigin(sceneGroupRecords([state.objects.get("tip")],sceneGroupMatrices(state,10),"matrix")[0],10)
+    }));
+  })()`, context);
+  const result = JSON.parse(JSON.stringify(await pending));
+  assert.equal(result.deferred, true);
+  assert.equal(result.x, 3);
+  assert.equal(result.spin, 0);
+  assert.deepEqual(result.point, {x:5,y:0,z:0});
+});
+
+test("group-parented instance batches compose once even when a child matches the group prefix", () => {
+ const context=createCoreContext();
+ const result=runJSON(context,`(() => {
+  const state={groups:sceneNormalizeGroups([{id:"rotor",x:3,y:4,spinZ:Math.PI/2,scaleX:2,scaleY:3}])};
+  const hull=normalizeSceneObject({id:"rotor/hull",kind:"box",x:2,parentNode:"rotor"},0);
+  const mesh=normalizeSceneInstancedMeshEntry({id:"windows",parentNode:"rotor",kind:"box",count:1,transforms:[1,0,0,0,0,1,0,0,0,0,1,0,1,0,0,1]},0,null);
+  const build=t=>createSceneRenderBundle(640,360,"#000",{x:0,y:0,z:20,fov:60,near:.1,far:500},[hull],[],[],[],[],{},t,[],[mesh],[],[],[],0,false,{},state).instancedMeshes[0];
+  const a=build(0), first=Array.from(a.transforms.slice(12,15));
+  const b=build(1), second=Array.from(b.transforms.slice(12,15));
+  const c=build(1);
+  return {first,second,reused:b.transforms===c.transforms,revision:b._instanceStreamRevision===c._instanceStreamRevision,local:mesh.transforms[12]};
+ })()`);
+ assert.deepEqual(result.first,[5,4,0]);
+ result.second.forEach((v,i)=>assert.ok(Math.abs(v-[3,6,0][i])<1e-6));
+ assert.equal(result.reused,true);assert.equal(result.revision,true);assert.equal(result.local,1);
+});
+
+test("retained group motion keeps crowd pose and motion streams local and resident", () => {
+ const context=createCoreContext();
+ for (const motion of [false,true]) {
+  const result=runJSON(context,`(() => {
+   const state={groups:sceneNormalizeGroups([{id:"rotor",x:3,y:4,spinZ:Math.PI/2}])};
+   const object=normalizeSceneObject({id:"agents/a",kind:"mesh",parentNode:"rotor",vertices:{count:3,positions:new Float32Array([0,0,0,1,0,0,0,1,0])}},0);
+   object.vertices.immutable=true;object.parentMatrix=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,2,0,0,1]);
+   object._crowdSkin={atlas:{},bounds:{minX:0,minY:0,minZ:0,maxX:1,maxY:1,maxZ:1},rows:new Float32Array([1,2,.5]),batchID:"agents",rev:7,group:null,parent:"rotor"};
+   if (${motion}) object._crowdMotion={atlas:object._crowdSkin.atlas,clipTable:{count:1},record:new Float32Array(24),dirty:false,bounds:{minX:1,minY:0,minZ:0,maxX:3,maxY:1,maxZ:1}};
+   const build=t=>createSceneRenderBundle(640,360,"#000",{x:0,y:0,z:20,fov:60,near:.1,far:500},[object],[],[],[],[],{},t,[],[],[],[],[],0,false,{crowdBatches:true},state).meshObjects[0];
+   const a=build(0), revision=a.crowdRevision, transforms=a.crowdTransforms, p0=Array.from(a.crowdParentMatrix);
+   const b=build(1);
+   return {parent0:p0.slice(12,15),parent1:Array.from(b.crowdParentMatrix),same:a===b,resident:transforms===b.crowdTransforms,revision:revision===b.crowdRevision,local:object.parentMatrix[12]};
+  })()`);
+  assert.deepEqual(result.parent0,[3,4,0]);
+  assert.ok(Math.abs(result.parent1[0])<1e-6);assert.ok(Math.abs(result.parent1[1]-1)<1e-6);
+  assert.equal(result.same,true);assert.equal(result.resident,true);assert.equal(result.revision,true);assert.equal(result.local,2);
+ }
+});
+
+test("hydration clones retain instance membership, parent and tint metadata together", () => {
+ const result=runJSON(createCoreContext(),`(() => {
+  const batch=normalizeSceneInstancedGLBMeshEntry({id:"agents",src:"/agent.glb",parentNode:"rotor",palette:["#ff0000"],instances:[{id:"a",tint:1}]},0,null);
+  const model=sceneInstancedGLBMeshToModels(batch,0)[0],clone=sceneCloneHydrationModel(model);
+  return {separate:clone!==model,parent:sceneInstancedGLBBatchParents.get(clone),batch:sceneInstancedGLBBatchIDs.get(clone),template:sceneInstancedGLBHydrationTemplates.get(clone)===sceneInstancedGLBHydrationTemplates.get(model),tint:sceneInstancedGLBTints.get(clone)===sceneInstancedGLBTints.get(model),localParent:clone.parentNode};
+ })()`);
+ assert.equal(result.separate,true);assert.equal(result.parent,"rotor");assert.equal(result.batch,"agents");assert.equal(result.template,true);assert.equal(result.tint,true);assert.equal(result.localParent,"rotor");
 });

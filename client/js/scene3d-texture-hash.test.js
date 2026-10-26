@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const ts = require("node:module").createRequire(path.join(__dirname, "../runtime/package.json"))("typescript");
 
 function runtime() {
-  const context = vm.createContext({ window: {}, console });
+  const context = vm.createContext({ window: { __gosx_scene3d_api: {} }, console });
   for (const name of ["10-runtime-primitives.ts", "10-runtime-scene-utils.ts", "11-scene-math.ts", "12-scene-geometry.ts", "13-scene-material.ts", "10-runtime-scene-core.ts", "15-scene-draw-plan.ts", "15b-scene-planner.ts"]) {
     let source = fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8");
     if (name === "10-runtime-scene-core.ts") source = source.slice(0, source.indexOf("// Scene3D shared API"));
@@ -261,7 +261,10 @@ test("numeric camera depths and poses reuse CSS resolution while the draw plan s
     assert.equal(prepared.cssCache.inputSignature,signature);
     assert.equal(prepared.ir.objects[0].x,frame);
     assert.equal(prepared.ir.meshObjects[0].depthCenter,frame+4);
-    assert.notEqual(prepared.signature,prior.signature,"draw planning must follow movement");
+    // Mesh depth reaches the plan through the pass buckets, which a cache hit
+    // re-reads from the current records; it no longer forces a rebuild.
+    assert.equal(prepared.signature,prior.signature,"mesh depth alone does not rebuild the plan");
+    assert.equal(prepared.pbrPasses.opaque[0],source.meshObjects[0],"cached passes follow the current records");
   }
   assert.equal(reads,initialReads,"camera movement must not repeat computed-style reads");
   tint="#abcdef";

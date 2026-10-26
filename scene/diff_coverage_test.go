@@ -14,6 +14,7 @@ import (
 // fails when a field has no mutator, so a new field cannot join the payload
 // without a decision about how the diff treats it.
 var sceneIRFieldMutators = map[string]func(ir *SceneIR){
+	"Groups":  func(ir *SceneIR) { ir.Groups = append(ir.Groups, GroupIR{ID: "added-group", SpinY: 1}) },
 	"Schema":  func(ir *SceneIR) { ir.Schema = "gosx.scene3d.ir.v2" },
 	"Objects": func(ir *SceneIR) { ir.Objects = append(ir.Objects, ObjectIR{ID: "added-object", Kind: "box"}) },
 	"Models": func(ir *SceneIR) {
@@ -353,6 +354,7 @@ func diffKindScenarioCommands(t *testing.T, options DiffOptions) []Command {
 		Objects: []ObjectIR{{ID: "kept", Kind: "box"}, {ID: "dropped", Kind: "box"}},
 	}
 	next := SceneIR{
+		Groups:             []GroupIR{{ID: "rotor", SpinY: 1}},
 		Schema:             SceneIRSchema,
 		Objects:            []ObjectIR{{ID: "kept", Kind: "box", X: 3}},
 		Models:             []ModelIR{{ObjectIR: ObjectIR{ID: "model"}, Src: "/m.glb"}},

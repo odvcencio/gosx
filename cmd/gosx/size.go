@@ -307,6 +307,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "bootstrap-feature-scene3d-walk.js", file: rt.BootstrapFeatureScene3DWalk.File, role: "scene3d walk chunk"},
 		{name: "bootstrap-feature-scene3d-model-preparation.js", file: rt.BootstrapFeatureScene3DModelPreparation.File, role: "scene3d model preparation chunk"},
 		{name: "bootstrap-feature-scene3d-zoom.js", file: rt.BootstrapFeatureScene3DZoom.File, role: "scene3d zoom chunk"},
+		{name: "bootstrap-feature-scene3d-hierarchy.js", file: rt.BootstrapFeatureScene3DHierarchy.File, role: "scene3d hierarchy chunk"},
 		{name: "bootstrap-feature-scene3d-particle-burst.js", file: rt.BootstrapFeatureScene3DParticleBurst.File, role: "scene3d particle burst chunk"},
 		{name: "bootstrap-feature-scene3d-timeline.js", file: rt.BootstrapFeatureScene3DTimeline.File, role: "scene3d timeline chunk"},
 		{name: "bootstrap-feature-scene3d-vessel.js", file: rt.BootstrapFeatureScene3DVessel.File, role: "scene3d vessel chunk"},
@@ -350,8 +351,8 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 // not this vocabulary.
 var runtimeExcludableAssetRoles = map[string][]string{
 	"islands":     {"bootstrap-feature-islands.js"},
-	"engines":     {"bootstrap-feature-engines.js"},
-	"hubs":        {"bootstrap-feature-hubs.js", "bootstrap-feature-hub-document.js"},
+	"engines":     {"bootstrap-feature-engines.js", "bootstrap-feature-engine-worker.js"},
+	"hubs":        {"bootstrap-feature-hubs.js", "bootstrap-feature-hub-document.js", "bootstrap-feature-netplay.js", "bootstrap-feature-arcade-audio.js"},
 	"controllers": {"bootstrap-feature-controllers.js", "bootstrap-controller-input.js"},
 	"workbench":   {"bootstrap-feature-workbench.js"},
 	"motion":      {"bootstrap-feature-motion-transport.js", "bootstrap-feature-motion-svg.js", "bootstrap-feature-motion-scene.js", "bootstrap-feature-motion-track.js"},
@@ -370,6 +371,7 @@ var runtimeExcludableAssetRoles = map[string][]string{
 		"bootstrap-feature-scene3d-walk.js",
 		"bootstrap-feature-scene3d-model-preparation.js",
 		"bootstrap-feature-scene3d-zoom.js",
+		"bootstrap-feature-scene3d-hierarchy.js",
 		"bootstrap-feature-scene3d-particle-burst.js",
 		"bootstrap-feature-scene3d-timeline.js",
 		"bootstrap-feature-scene3d-vessel.js",

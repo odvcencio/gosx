@@ -366,3 +366,64 @@ test("apply-side benchmark: binary instance-stream vs. an equivalent JSON round 
     t.diagnostic(`instances=${count}: JSON round trip=${jsonMs.toFixed(3)}ms, binary apply=${binaryMs.toFixed(3)}ms`);
   }
 });
+
+// These frames come from SetTransformColors in the public Go API.
+test("transform-color snapshots grow, shrink, empty and re-grow a retained batch atomically", () => {
+  const { apply, decode } = loadInstanceStream(), frames = goFixtureFrames();
+  const geometry = { positions: [0, 0, 0] }, material = { color: "white" };
+  const entry = { id: "tinted", count: 1, geometry, material, parentNode: "carrier", _cachedTransforms: new Float32Array(16) };
+  const state = makeSceneState([entry]), observed = [];
+  let storage;
+  for (let i = 1; i <= 5; i++) {
+    const bytes = frames[`tinted-${i}`].slice(), frame = decode(bytes);
+    const result = apply(state, bytes, () => observed.push([entry.count, entry.transforms.length, entry.colors.length]), makeMount());
+    assert.equal(result.applied, true);
+    assert.equal(entry.count, frame.count);
+    assert.equal(entry._cachedTransforms, entry.transforms);
+    assert.equal(entry._cachedInstanceColors, entry.colors);
+    for (let n = 0; n < frame.count; n++) {
+      assert.deepEqual([...entry.transforms.subarray(n * 16, n * 16 + 16)], [...frame.data.subarray(n * 20, n * 20 + 16)]);
+      assert.deepEqual([...entry.colors.subarray(n * 4, n * 4 + 4)], [...frame.data.subarray(n * 20 + 16, n * 20 + 20)]);
+    }
+    if (i === 1) storage = entry._instanceStreamColorStorage;
+    if (i === 2 || i === 3) assert.equal(entry._instanceStreamColorStorage, storage, "shrinking and emptying reuse capacity");
+    const snapshot = [...entry.transforms, ...entry.colors];
+    bytes.fill(0);
+    assert.deepEqual([...entry.transforms, ...entry.colors], snapshot, "producer bytes are independently owned");
+    assert.equal(entry.geometry, geometry); assert.equal(entry.material, material); assert.equal(entry.parentNode, "carrier");
+  }
+  assert.deepEqual(observed, [[2, 32, 8], [1, 16, 4], [0, 0, 0], [3, 48, 12], [2, 32, 8]]);
+  assert.equal(apply(state, frames['tinted-4'], () => assert.fail("stale render"), makeMount()).reason, "stale-revision");
+});
+
+test("invalid colors/matrices reject the entire snapshot without consuming its revision", () => {
+  const { apply, decode } = loadInstanceStream(), frames = goFixtureFrames();
+  const entry = { id: "tinted", count: 0 }, state = makeSceneState([entry]);
+  apply(state, frames['tinted-1'], () => {}, makeMount());
+  const transform = entry.transforms, colors = entry.colors, before = [...transform, ...colors];
+  const originalError = console.error; console.error = () => {};
+  try {
+    for (const [offset, value] of [[0, NaN], [19, Infinity], [18, -Infinity]]) {
+      const bytes = frames['tinted-4'].slice(), decoded = decode(bytes); decoded.data[offset] = value;
+      assert.equal(apply(state, bytes, () => assert.fail("invalid render"), makeMount()).applied, false);
+      assert.equal(entry.count, 2); assert.equal(entry.transforms, transform); assert.equal(entry.colors, colors);
+      assert.deepEqual([...transform, ...colors], before);
+    }
+  } finally { console.error = originalError; }
+  assert.equal(apply(state, frames['tinted-4'], () => {}, makeMount()).applied, true);
+});
+
+test("same-count color edits retain views and transform-only frames use the current buffers", () => {
+  const { apply } = loadInstanceStream(), frames = goFixtureFrames();
+  const entry = { id: "tinted", count: 2 }, state = makeSceneState([entry]);
+  apply(state, frames['tinted-1'], () => {}, makeMount());
+  const transforms = entry.transforms, colors = entry.colors;
+  apply(state, frames['tinted-5'], () => {}, makeMount());
+  assert.equal(entry.transforms, transforms); assert.equal(entry.colors, colors);
+  assert.equal(colors[1], Math.fround(.8));
+  // Reuse Go's kind-0 frame with this batch ID and a newer revision.
+  const bytes = frames['tinted-5'].slice(0, 32 + 2 * 16 * 4);
+  bytes[5] = 0; new DataView(bytes.buffer).setUint32(8, 6, true);
+  assert.equal(apply(state, bytes, () => {}, makeMount()).applied, true);
+  assert.equal(entry.transforms, transforms); assert.equal(entry._cachedTransforms, transforms); assert.equal(entry.colors, colors);
+});

@@ -3061,12 +3061,14 @@ function motionMeshExtents(gl) {
 // single TargetMaterial track (mesh "glow-cube", uniform "emissive"); the tick
 // stub writes one packed Color record. The seam must decode it and write the
 // color into the mesh's customUniforms so selena's per-frame re-pack sees it.
-// motionFlag toggles whether window.__gosx_motion_wasm is set, proving the
-// seam is fully inert (tick never called, customUniforms untouched) when off.
-async function mountMaterialMotionScene(motionFlag) {
+// The legacy transform flag is optional; declared material programs run
+// independently. Counters expose program ownership for lifecycle assertions.
+async function mountMaterialMotionScene(motionFlag, options = {}) {
   const mount = new FakeElement("div", null);
   mount.id = "scene-material-motion-root";
   let tickCalls = 0;
+  let loadCalls = 0;
+  const unloadCalls = [];
   // The decoded color the stub emits (r,g,b,a). arity 5 (Color) → width 4.
   const color = [0.2, 0.6, 0.9, 1.0];
   const tick = (handle, t, reduced, outU8) => {
@@ -3133,19 +3135,11 @@ async function mountMaterialMotionScene(motionFlag) {
     onRenderEngine: () => "",
   });
 
-  if (motionFlag) {
-    env.context.__gosx_motion_wasm = true;
-    env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["emissive"] });
-    env.context.__gosx_motion_tick = tick;
-    env.context.__gosx_motion_unload = () => {};
-  } else {
-    // Exports present but the opt-in flag deliberately unset.
-    env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["emissive"] });
-    env.context.__gosx_motion_tick = tick;
-    env.context.__gosx_motion_unload = () => {};
-  }
+  if (motionFlag) env.context.__gosx_motion_wasm = true;
+  env.context.__gosx_motion_load = () => ++loadCalls;
+  env.context.__gosx_motion_refs = () => options.refs === undefined ? { target: ["1"], prop: ["emissive"] } : options.refs;
+  env.context.__gosx_motion_tick = tick;
+  env.context.__gosx_motion_unload = handle => unloadCalls.push(handle);
 
   const raf = installManualRAF(env.context);
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -3156,7 +3150,7 @@ async function mountMaterialMotionScene(motionFlag) {
   await flushAsyncWork();
 
   const state = mount.__gosxScene3DState;
-  return { env, mount, state, color, tickCalls: () => tickCalls };
+  return { env, mount, state, color, raf, tickCalls: () => tickCalls, loadCalls: () => loadCalls, unloadCalls };
 }
 
 // Fixture: byte-identical to the GLSL m31labs.dev/selena emits for a default
@@ -4894,6 +4888,9 @@ async function renderWaterPerfShapeFrames(duck, frameCount, resolution) {
       qualityTier: resolution === 128 ? "survival" : (resolution === 192 ? "balanced" : "full"),
       qualityRevision: 0,
     });
+    // Image.onload uses a timer turn; finish decode/upload inside warmup so
+    // steady-state measurements cover cached targets, not pending retries.
+    if (frame === 0) await flushAsyncWork();
     const after = deviceCallSnapshot(harness.fake);
     deltas.push(deviceCallDelta(before, after));
   }

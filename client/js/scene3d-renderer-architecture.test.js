@@ -261,9 +261,9 @@ test("repo-wide renderer references scan Git-tracked text without suffix escape 
       "probe.yml",
     ]);
     const generated = [...generatedBootstrapArtifactPaths()];
-    assert.equal(generated.length, 136);
+    assert.equal(generated.length, 152);
     assert.ok(["", ".map", ".gz", ".br"].every(suffix => generated.includes("client/js/bootstrap-feature-scene3d-model-preparation.js" + suffix)));
-    assert.ok(["bootstrap-controller-input", "bootstrap-feature-browser-services", "bootstrap-feature-workbench", "bootstrap-feature-hub-document", "bootstrap-feature-scene3d-experience", "bootstrap-feature-motion-transport", "bootstrap-feature-motion-svg", "bootstrap-feature-motion-scene", "bootstrap-feature-motion-track"].every((file) => ["", ".map", ".gz", ".br"].every((suffix) => generated.includes("client/js/" + file + ".js" + suffix))));
+    assert.ok(["bootstrap-controller-input", "bootstrap-feature-browser-services", "bootstrap-feature-workbench", "bootstrap-feature-hub-document", "bootstrap-feature-netplay", "bootstrap-feature-arcade-audio", "bootstrap-feature-engine-worker", "bootstrap-feature-scene3d-experience", "bootstrap-feature-motion-transport", "bootstrap-feature-motion-svg", "bootstrap-feature-motion-scene", "bootstrap-feature-motion-track"].every((file) => ["", ".map", ".gz", ".br"].every((suffix) => generated.includes("client/js/" + file + ".js" + suffix))));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.map"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.gz"));
@@ -556,7 +556,7 @@ function assertRendererABI(renderer, backend) {
   assert.equal(typeof renderer.dispose, "function");
   for (const key of contract.optional) {
     if (!(key in renderer)) continue;
-    if (key === "supportsRetainedGeometry" || key === "supportsRigidImportedBatches") assert.equal(typeof renderer[key], "boolean");
+    if (key === "supportsRetainedGeometry" || key === "supportsRigidImportedBatches" || key === "supportsWorldBakedAttributeViews") assert.equal(typeof renderer[key], "boolean");
     else if (key === "texturePreparation") {
       assert.equal(typeof renderer[key].load, "function");
       assert.equal(typeof renderer[key].generation.disposed, "boolean");

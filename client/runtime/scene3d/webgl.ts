@@ -216,6 +216,8 @@
     "uniform float u_rimStrength;",
     "uniform float u_opacity;",
     "uniform float u_alphaCutoff;",
+    // Vessel cutaway: planes in world space, a point with dot(n,p)+w>0 is cut. [0] decks above (dithered by u_cut[2].x, 0 hides), [1] hull section.
+    "uniform vec4 u_cut[3];",
     "uniform bool u_unlit;",
     "",
     // Texture maps
@@ -477,6 +479,8 @@
     "}",
     GLSL_TRANSMISSION,
     "void main() {",
+    "    if (dot(u_cut[1].xyz, v_worldPosition) + u_cut[1].w > 0.0) discard;",
+    "    if (dot(u_cut[0].xyz, v_worldPosition) + u_cut[0].w > 0.0 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) >= u_cut[2].x) discard;",
     "    gosxSpecularOutput = vec4(0.0);",
     // Resolve material properties, sampling textures when available.
     "    vec3 albedo = u_albedo;",
@@ -863,6 +867,8 @@
 
   // --- Shadow Depth Shader Sources ---
 
+  // Cutaway planes are off when every value is zero.
+  const SCENE_NO_CUT = new Float32Array(12);
   const SCENE_SHADOW_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -1053,11 +1059,14 @@
   const SCENE_CROWD_SKIN_GLSL = [
     "in vec4 a_joints; in vec4 a_weights; in vec3 a_pose;",
     "uniform highp sampler2D u_crowdAtlas;",
+    "uniform mat4 u_crowdParent;",
+    "uniform vec4 u_crowdCut[2];",
+    "bool gosxCrowdCulled(mat4 m){vec3 p=m[3].xyz;return dot(u_crowdCut[0].xyz,p)+u_crowdCut[0].w>0.0||dot(u_crowdCut[1].xyz,p)+u_crowdCut[1].w>0.0;}",
     "mat4 gosxCrowdJoint(int joint,int row){int x=joint*4;return mat4(texelFetch(u_crowdAtlas,ivec2(x,row),0),texelFetch(u_crowdAtlas,ivec2(x+1,row),0),texelFetch(u_crowdAtlas,ivec2(x+2,row),0),texelFetch(u_crowdAtlas,ivec2(x+3,row),0));}",
     "mat4 gosxCrowdSkin(){mat4 m=mat4(0.0);float total=0.0;for(int i=0;i<4;i++){float w=a_weights[i];if(w>0.0){mat4 a=gosxCrowdJoint(int(a_joints[i]),int(a_pose.x));mat4 b=gosxCrowdJoint(int(a_joints[i]),int(a_pose.y));m+=(a*(1.0-a_pose.z)+b*a_pose.z)*w;total+=w;}}return total>0.0?m:mat4(1.0);}",
   ].join("\n");
   const SCENE_PBR_CROWD_VERTEX_SOURCE = SCENE_PBR_INSTANCED_VERTEX_SOURCE
-    .replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=a_instanceMatrix*gosxCrowdSkin();")
+    .replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=u_crowdParent*a_instanceMatrix*gosxCrowdSkin();if(gosxCrowdCulled(crowdModel)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}")
     .replace("a_instanceMatrix * vec4(a_position", "crowdModel * vec4(a_position")
     .replace("mat3(a_instanceMatrix)", "mat3(crowdModel)");
 
@@ -1109,6 +1118,9 @@
     "uniform vec4 u_crowdClipTable[" + SCENE_CROWD_MOTION_MAX_CLIPS + "];",
     "uniform float u_now;",
     "uniform float u_motionExtrapolationSeconds;",
+    "uniform mat4 u_crowdParent;",
+    "uniform vec4 u_crowdCut[2];",
+    "bool gosxCrowdCulled(mat4 m){vec3 p=m[3].xyz;return dot(u_crowdCut[0].xyz,p)+u_crowdCut[0].w>0.0||dot(u_crowdCut[1].xyz,p)+u_crowdCut[1].w>0.0;}",
   ].join("\n");
 
   // Functions only -- no declarations -- so both the color and shadow motion
@@ -1133,10 +1145,12 @@
     "in vec3 a_normal;",
     "in vec2 a_uv;",
     "in vec4 a_tangent;",
+    "in vec4 a_instanceColor;",
     SCENE_CROWD_MOTION_ATTRIBUTES_GLSL,
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
+    "uniform bool u_hasInstanceColor;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -1149,7 +1163,8 @@
     SCENE_CROWD_SKIN_MOTION_GLSL,
     "",
     "void main() {",
-    "    mat4 crowdModel = gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+    "    mat4 crowdModel = u_crowdParent * gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+    "    if(gosxCrowdCulled(crowdModel)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}",
     "    vec4 worldPos = crowdModel * vec4(a_position, 1.0);",
     "    v_worldPosition = worldPos.xyz;",
     "mat3 m=mat3(crowdModel);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
@@ -1157,7 +1172,7 @@
     "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));",
     "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
-    "    v_instanceColor = vec4(1.0);",
+    "    v_instanceColor = u_hasInstanceColor ? a_instanceColor : vec4(1.0);",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
   ].join("\n");
@@ -1592,6 +1607,13 @@
         // depth metrics constant must still invalidate the shadow map.
         for (var k = 0; k < 16; k++) h += o.modelMatrix[k] || 0;
       }
+      // A crowd batch record holds one matrix; its revision tracks every agent.
+      if (o._crowdBatch === true) {
+        h += (o.crowdRevision || 0) * 13.0 + (o.instanceCount || 0) * 7.0;
+        // The parent matrix moves every agent without changing the revision.
+        if (o.crowdParentMatrix) for (var p = 0; p < 16; p++) h += (o.crowdParentMatrix[p] || 0) * (p + 3);
+        if (o.crowdCut) for (var c = 0; c < 8; c++) h += (o.crowdCut[c] || 0) * (c + 5);
+      }
       casterCount++;
     }
     h += casterCount * 17.0;
@@ -1727,8 +1749,8 @@
     let source = instanced ? SCENE_SHADOW_VERTEX_SOURCE
       .replace("uniform mat4 u_modelMatrix;", "in mat4 a_instanceMatrix;")
       .replace("u_modelMatrix *", "a_instanceMatrix *") : SCENE_SHADOW_VERTEX_SOURCE;
-    if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {")
-      .replace("a_instanceMatrix *", "a_instanceMatrix * gosxCrowdSkin() *");
+    if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=u_crowdParent*a_instanceMatrix*gosxCrowdSkin();if(gosxCrowdCulled(crowdModel)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}")
+      .replace("a_instanceMatrix *", "crowdModel *");
     return scenePBRCreateShaderProgram(gl, source, SCENE_SHADOW_FRAGMENT_SOURCE, "Shadow shader", function(program: any, vertexShader: any, fragmentShader: any) {
       return {
         program: program, vertexShader: vertexShader, fragmentShader: fragmentShader,
@@ -1741,6 +1763,8 @@
         },
         uniforms: {
           crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
+          crowdParent: crowd ? gl.getUniformLocation(program, "u_crowdParent") : null,
+          crowdCut: crowd ? gl.getUniformLocation(program, "u_crowdCut") : null,
           ...scenePBRProgramLocations(gl, program, "lightViewProjection modelMatrix"),
         },
       };
@@ -1765,7 +1789,8 @@
       "uniform mat4 u_lightViewProjection;",
       SCENE_CROWD_SKIN_MOTION_GLSL,
       "void main() {",
-      "    mat4 crowdModel = gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+      "    mat4 crowdModel = u_crowdParent * gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+      "    if(gosxCrowdCulled(crowdModel)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}",
       "    gl_Position = u_lightViewProjection * (crowdModel * vec4(a_position, 1.0));",
       "}",
     ].join("\n");
@@ -1776,7 +1801,7 @@
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         attributes: scenePBRAttributeLocations(gl, program, "position joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState"),
-        uniforms: scenePBRUniformLocations(gl, program, "crowdAtlas crowdClipTable now motionExtrapolationSeconds lightViewProjection"),
+        uniforms: scenePBRUniformLocations(gl, program, "crowdAtlas crowdClipTable now motionExtrapolationSeconds crowdParent crowdCut lightViewProjection"),
       };
     });
   }
@@ -2839,8 +2864,18 @@
     };
   }
 
-  // Map the live active water object to the scene mesh-object id the bundle
-  // carries (mirrors the WebGPU sceneWaterActiveObjectID).
+  function sceneWaterRenderObjectColor(bundle, targetID, fallback) {
+    var objects = bundle && bundle.meshObjects || [];
+    for (var i = 0; i < objects.length; i++) {
+      var object = objects[i], id = String(object && object.id || "");
+      if (!targetID || !(id === targetID || id.indexOf(targetID + ":") === 0 || id.indexOf(targetID + "-prim") === 0)) continue;
+      var material = bundle.materials && bundle.materials[object.materialIndex];
+      var color = material && material.customUniforms && material.customUniforms.baseColor;
+      if (Array.isArray(color) && color.length >= 4) return color;
+    }
+    return fallback;
+  }
+  // Map the active water object to its bundle mesh id (WebGPU parity).
   function sceneWaterRenderActiveMeshID(activeObject, objectSubtype, objectKind) {
     var a = String(activeObject || "").trim().toLowerCase();
     var s = String(objectSubtype || "").trim().toLowerCase();
@@ -3385,6 +3420,8 @@
     var objectReflectionTarget = null;
     var objectClippedTarget = null;
     var objectTextureSlotsReady = [false, false, false];
+    var objectTextureSubject = "";
+    var objectTextureMVP = new Float32Array(16);
     var objectTextureTargetsRequired = false;
     function disposeWaterColorTarget(target) {
       if (!target) return;
@@ -3844,8 +3881,11 @@
     // view-projection + texture-pass mode (1 = refraction/reflection, 2 = clipped
     // reflection: discards submerged fragments). Mirrors the WebGPU
     // renderWaterObjectMeshTargetPass: clear transparent, depth-test on, no cull.
-    function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex, frameCausticTex, frameLightDir, framePoolWidth, framePoolLength, framePoolHeight, frameObjectCenter, frameObjectRadius, frameObjectKind) {
-      if (!scenePBRProgramReady(gl, prog) || !target || !meshUpload || !meshUpload.count) return;
+    function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex, frameCausticTex, frameLightDir, framePoolWidth, framePoolLength, framePoolHeight, frameObjectCenter, frameObjectRadius, frameObjectKind, frameBaseColor) {
+      if (!scenePBRProgramReady(gl, prog) || !target || !meshUpload || !meshUpload.count) return false;
+      // surface.sel samples top-origin projected textures; GL FBOs are bottom-origin.
+      objectTextureMVP.set(vpMatrix);
+      for (var rowY = 1; rowY < 16; rowY += 4) objectTextureMVP[rowY] = -objectTextureMVP[rowY];
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.viewport(0, 0, target.size, target.size);
       gl.enable(gl.DEPTH_TEST);
@@ -3864,13 +3904,14 @@
       if (modelTex) samplers.push({ name: "modelTexture", target: gl.TEXTURE_2D, tex: modelTex });
       sceneWaterRenderBindSamplers(gl, prog, samplers);
       sceneWaterRenderSetUniforms(gl, prog, desc, {
-        mvp: vpMatrix, modelMatrix: identity4, normalMatrix: identity3,
+        mvp: objectTextureMVP, modelMatrix: identity4, normalMatrix: identity3,
         lightDir: frameLightDir, poolWidth: framePoolWidth, poolLength: framePoolLength, poolHeight: framePoolHeight,
         objectCenter: frameObjectCenter, objectRadius: frameObjectRadius, objectKind: frameObjectKind,
-        baseColor: [1, 1, 1, 1], isTexturePass: 1, texturePassMode: mode,
+        baseColor: frameBaseColor, isTexturePass: 1, texturePassMode: mode,
       });
       gl.drawArrays(gl.TRIANGLES, 0, meshUpload.count);
       gl.bindVertexArray(null);
+      return true;
     }
 
     function drawFrame(frameMeta) {
@@ -3883,7 +3924,7 @@
       var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
         ? Number(frameMeta.nowMS)
         : (sceneWebGLNow());
-      var active = lifecycleActive && (!frameMeta || frameMeta.active !== false);
+      var active = lifecycleActive && (frameMeta?.active !== false);
       var paused = lifecyclePaused || sceneBool(liveEntry.paused, false);
       var clockFrame = sceneWaterAdvanceRendererClock(waterClock, nowMS, active, paused, waterClockOptions);
 
@@ -3980,6 +4021,7 @@
       // object-material for the torus (its <Mesh> uses water-object-material).
       var meshProgram = liveMeshID === "float-duck" && duckProgram ? duckProgram : objectProgram;
       var meshUsesModelTex = meshProgram === duckProgram;
+      var liveBaseColor = sceneWaterRenderObjectColor(lastBundle, liveMeshID, meshUsesModelTex ? [1, 1, 1, 1] : [0.52, 0.54, 0.56, 1]);
       var meshData = isMeshObject && meshProgram ? sceneWaterRenderFindBundleMesh(lastBundle, liveMeshID) : null;
       if (meshData) refreshMeshUpload(meshProgram, meshData);
 
@@ -4078,7 +4120,7 @@
         livePoolWidth, livePoolLength, useCompoundShadow, compoundSphereCount
       );
       var refreshShadowPass = shadowSignature !== lastShadowSignature;
-      if (shadowTarget && scenePBRProgramReady(gl, useCompoundShadow ? compoundShadowProgram : shadowProgram) && refreshShadowPass) {
+      if (shadowTarget && refreshShadowPass && (liveKindNum === 0 || scenePBRProgramReady(gl, useCompoundShadow ? compoundShadowProgram : shadowProgram))) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, shadowTarget.fbo);
         gl.viewport(0, 0, shadowTarget.size, shadowTarget.size);
         gl.disable(gl.DEPTH_TEST);
@@ -4087,29 +4129,31 @@
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);
         gl.bindVertexArray(emptyVAO);
-        if (useCompoundShadow) {
-          // objectTop mirrors the raw-WGSL oracle's
-          // objectCenter.y + max(halfSizeRadius.y, halfSizeRadius.w) (the
-          // topmost Y of the object's bounding volume), gating the shadow off
-          // once the object has been lifted clear of the pool.
-          var shadowObjectTop = liveCenter[1] + Math.max(liveHalf[1], liveRadius);
-          gl.useProgram(compoundShadowProgram);
-          sceneWaterRenderSetUniforms(gl, compoundShadowProgram, compoundShadowDesc, {
-            spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,
-            objectEnabled: 1, objectTop: shadowObjectTop, lightDir: liveLightDir,
-            poolWidth: livePoolWidth, poolLength: livePoolLength,
-            objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
-          });
-        } else {
-          gl.useProgram(shadowProgram);
-          sceneWaterRenderSetUniforms(gl, shadowProgram, shadowDesc, {
-            objectKind: liveKindNum, objectEnabled: liveKindNum > 0 ? 1 : 0, lightDir: liveLightDir,
-            poolWidth: livePoolWidth, poolLength: livePoolLength,
-            objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
-            objectRadius: liveRadius, objectHalfX: liveHalf[0], objectHalfZ: liveHalf[2],
-          });
+        if (liveKindNum > 0) {
+          if (useCompoundShadow) {
+            // objectTop mirrors the raw-WGSL oracle's
+            // objectCenter.y + max(halfSizeRadius.y, halfSizeRadius.w) (the
+            // topmost Y of the object's bounding volume), gating the shadow off
+            // once the object has been lifted clear of the pool.
+            var shadowObjectTop = liveCenter[1] + Math.max(liveHalf[1], liveRadius);
+            gl.useProgram(compoundShadowProgram);
+            sceneWaterRenderSetUniforms(gl, compoundShadowProgram, compoundShadowDesc, {
+              spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,
+              objectEnabled: 1, objectTop: shadowObjectTop, lightDir: liveLightDir,
+              poolWidth: livePoolWidth, poolLength: livePoolLength,
+              objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
+            });
+          } else {
+            gl.useProgram(shadowProgram);
+            sceneWaterRenderSetUniforms(gl, shadowProgram, shadowDesc, {
+              objectKind: liveKindNum, objectEnabled: 1, lightDir: liveLightDir,
+              poolWidth: livePoolWidth, poolLength: livePoolLength,
+              objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
+              objectRadius: liveRadius, objectHalfX: liveHalf[0], objectHalfZ: liveHalf[2],
+            });
+          }
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
         }
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
         lastShadowSignature = shadowSignature;
         shadowRefreshCount++;
       }
@@ -4121,6 +4165,11 @@
       // sampling is disabled (meshTextureEnable = 0) and the transparent stub
       // backs the samplers. Mirrors the WebGPU object-texture pass (capped 512²).
       var meshTextureReady = false;
+      if (objectTextureSubject !== liveMeshID) {
+        objectTextureSubject = liveMeshID;
+        objectTextureSlotsReady.fill(false);
+        meshTexturePassCursor = 0;
+      }
       if (isMeshObject && meshData && scenePBRProgramReady(gl, meshProgram) && ensureObjectTextureTargets()) {
         var meshDescActive = meshUsesModelTex ? duckDesc : objectDesc;
         var meshModel = meshUsesModelTex ? meshModelTex : null;
@@ -4128,26 +4177,18 @@
           // A replacement set is not visible to the surface until all three
           // projective views contain the same-frame mesh. This is a one-time
           // transition cost and avoids two frames of transparent reflection.
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-          objectTextureSlotsReady[0] = true;
-          objectTextureSlotsReady[1] = true;
-          objectTextureSlotsReady[2] = true;
+          objectTextureSlotsReady[0] = renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum, liveBaseColor);
+          objectTextureSlotsReady[1] = renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum, liveBaseColor);
+          objectTextureSlotsReady[2] = renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum, liveBaseColor);
           meshTexturePassCursor = 0;
-          meshTexturePassCount += 3;
+          meshTexturePassCount += Number(objectTextureSlotsReady[0]) + Number(objectTextureSlotsReady[1]) + Number(objectTextureSlotsReady[2]);
         } else {
           // Steady state retains two views and refreshes one round-robin.
           var meshTexturePassSlot = meshTexturePassCursor % 3;
-          if (meshTexturePassSlot === 0) {
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-          } else if (meshTexturePassSlot === 1) {
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-          } else {
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-          }
+          var meshTarget = meshTexturePassSlot === 0 ? objectRefractionTarget : meshTexturePassSlot === 1 ? objectReflectionTarget : objectClippedTarget;
+          objectTextureSlotsReady[meshTexturePassSlot] = renderMeshTextureTarget(meshProgram, meshDescActive, meshTarget, meshTexturePassSlot === 0 ? objectRefractionMatrix : objectReflectionMatrix, meshTexturePassSlot === 2 ? 2 : 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum, liveBaseColor);
           meshTexturePassCursor = (meshTexturePassCursor + 1) % 3;
-          meshTexturePassCount++;
+          if (objectTextureSlotsReady[meshTexturePassSlot]) meshTexturePassCount++;
         }
         meshTextureReady = objectTextureSlotsReady[0] && objectTextureSlotsReady[1] && objectTextureSlotsReady[2];
       }
@@ -4159,7 +4200,7 @@
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.disable(gl.CULL_FACE);
-      var compositeWorld = frameMeta && frameMeta.compositeWorld === true;
+      var compositeWorld = frameMeta?.compositeWorld === true;
       if (!compositeWorld || frameMeta.clearComposite === true) {
         var bg = compositeWorld
           ? sceneWaterRenderHexColor(frameMeta.background, [0.03, 0.08, 0.12])
@@ -4226,7 +4267,7 @@
           mvp: mvp, modelMatrix: identity4, normalMatrix: identity3,
           lightDir: liveLightDir, poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
           objectCenter: liveCenter, objectRadius: liveRadius, objectKind: liveKindNum,
-          baseColor: meshUsesModelTex ? [1, 1, 1, 1] : [0.52, 0.54, 0.56, 1],
+          baseColor: liveBaseColor,
           isTexturePass: 0, texturePassMode: 0,
         });
         gl.drawArrays(gl.TRIANGLES, 0, meshUpload.count);
@@ -4241,7 +4282,7 @@
           mvp: mvp, modelMatrix: identity4, normalMatrix: identity3,
           lightDir: liveLightDir, poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
           objectCenter: liveCenter, objectRadius: liveRadius, objectKind: liveKindNum,
-          baseColor: [0.52, 0.54, 0.56, 1], isTexturePass: 0, texturePassMode: 0,
+          baseColor: liveBaseColor, isTexturePass: 0, texturePassMode: 0,
         });
         gl.drawElements(gl.TRIANGLES, objectMesh.count, gl.UNSIGNED_SHORT, 0);
       }
@@ -5291,7 +5332,32 @@
     ].join("\u0000");
   }
 
-  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
+  function scenePBRStartTextureLoad(gl, record) {
+    const key = record.src, target = record.target, texture = record.texture;
+    if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) return;
+    if (scenePBRIsKTX2URL(key) && scenePBRKTX2API()) {
+      scenePBRUploadKTX2Texture(gl, key, record);
+      return;
+    }
+    if (target === gl.TEXTURE_CUBE_MAP) {
+      Object.assign(record, { failed: true, error: "cube descriptors require a KTX2 upload path" });
+    } else if (typeof Image === "function") {
+      const image = new Image();
+      record.image = image;
+      image.onload = function() {
+        if (record.image === image) scenePBRUploadImageTexture(gl, record, image);
+      };
+      image.onerror = function() {
+        if (record.image !== image || !scenePBRTextureLive(record)) return;
+        record.failed = true;
+        scenePBRNotifyTextureSettled(record);
+      };
+      image.crossOrigin = "anonymous";
+      image.src = key;
+    }
+  }
+
+  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace, retryFailed = false) {
     if (!cache) return null;
     const textureMap = cache;
     var descriptor = scenePBRTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
@@ -5300,8 +5366,15 @@
       return null;
     }
     var cacheKey = scenePBRTextureCacheKey(descriptor);
-    if (textureMap.has(cacheKey)) {
-      return textureMap.get(cacheKey);
+    const cached = textureMap.get(cacheKey);
+    if (cached) {
+      if (retryFailed && cached.failed && scenePBRTextureLive(cached)) {
+        cached.failed = false;
+        cached.loaded = false;
+        cached.error = undefined;
+        scenePBRStartTextureLoad(gl, cached);
+      }
+      return cached;
     }
 
     const texture = gl.createTexture();
@@ -5336,34 +5409,7 @@
       }
     });
 
-    if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
-      return record;
-    }
-
-    // A .ktx2 URI holds a block-compressed container, not an image an <img>
-    // element can decode. Route it through the KTX2 reader. An image element
-    // fed a .ktx2 URI leaves the 1x1 white placeholder bound and never reports
-    // an error the caller can see.
-    if (scenePBRIsKTX2URL(key) && scenePBRKTX2API()) {
-      scenePBRUploadKTX2Texture(gl, key, record);
-      return record;
-    }
-
-    if (target === gl.TEXTURE_CUBE_MAP) {
-      Object.assign(record, { failed: true, error: "cube descriptors require a KTX2 upload path" });
-    } else if (typeof Image === "function") {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const image = new Image();
-      record.image = image;
-      image.onload = function() { scenePBRUploadImageTexture(gl, record, image); };
-      image.onerror = function() {
-        if (!scenePBRTextureLive(record)) return;
-        record.failed = true;
-        scenePBRNotifyTextureSettled(record);
-      };
-      image.crossOrigin = "anonymous";
-      image.src = key;
-    }
-
+    scenePBRStartTextureLoad(gl, record);
     return record;
   }
 
@@ -5538,6 +5584,7 @@
 
     var uniforms = Object.assign(scenePBRUniformLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness specularAA thicknessMap hasThicknessMap metalness clearcoat sheen transmission volume attenuationColor transmissionScene transmissionCapture iridescence anisotropy emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap lightCount ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor"), {
       alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
+      cut: gl.getUniformLocation(program, "u_cut"),
       specularF0: gl.getUniformLocation(program, "u_specularF0"),
       specularF90: gl.getUniformLocation(program, "u_specularF90"),
       specularIntensityMap: gl.getUniformLocation(program, "u_specularIntensityMap"),
@@ -5706,36 +5753,6 @@
     if (gl) {
       sceneGLConstantCache.delete(gl);
     }
-  }
-
-  // Per-distinct-string cache for sceneColorRGBA() results, consumed by
-  // sceneInstancedColorBuffer() (createScenePBRRenderer's instanced-mesh
-  // draw path, below). A hex/rgba() string is re-parsed through regex
-  // matching and parseInt on every call; an instanced mesh commonly reuses
-  // a small, fixed palette across hundreds of instances, so memoizing by
-  // the raw color value turns an O(instanceCount) parse into an O(distinct
-  // colors) parse per rebuild. sceneColorRGBA's result only depends on
-  // `value` here because every call below passes the same literal
-  // fallback; the loop only reads the returned array's components, so
-  // handing back the shared cached reference is safe. A color string
-  // always parses to the same RGBA, so this cache needs no invalidation
-  // (bounded defensively in case a caller streams unbounded distinct
-  // values instead of reusing a palette).
-  var sceneInstancedColorRGBACache = new Map();
-  var SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX = 512;
-
-  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
-  function sceneCachedInstancedColorRGBA(value, fallback) {
-    var cached = sceneInstancedColorRGBACache.get(value);
-    if (cached) {
-      return cached;
-    }
-    var rgba = sceneColorRGBA(value, fallback);
-    if (sceneInstancedColorRGBACache.size >= SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX) {
-      sceneInstancedColorRGBACache.clear();
-    }
-    sceneInstancedColorRGBACache.set(value, rgba);
-    return rgba;
   }
 
   // prepareRigidMeshBatches (createScenePBRRenderer's rigid-batch grouping
@@ -6082,7 +6099,7 @@
 
   function createSceneSelenaProgram(gl, material, skinned, selective = false) {
     var layout = sceneSelenaMaterialLayout(material);
-    if (!layout) return null;
+    if (!layout || (layout.requires && layout.requires.glVertexTextureUnits > sceneCachedGLParameter(gl, gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS))) return null; // device has too few vertex texture units
     var vertexSource = sceneWebGLNormalizeCustomShaderSource(material.customVertex);
     var fragmentSource = sceneWebGLNormalizeCustomShaderSource(selective ? material.specularFragmentGLSL : material.customFragment);
     var skinInfo = null;
@@ -6242,6 +6259,8 @@
 
     var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
     uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
+    uniforms.crowdParent = crowd ? gl.getUniformLocation(linked.program, "u_crowdParent") : null;
+    uniforms.crowdCut = crowd ? gl.getUniformLocation(linked.program, "u_crowdCut") : null;
     uniforms.hasInstanceColor = gl.getUniformLocation(linked.program, "u_hasInstanceColor");
 
     return {
@@ -6258,12 +6277,15 @@
   function createScenePBRCrowdMotionProgram(gl, detail = false) {
     return scenePBRCreateProgramInfo(gl, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Crowd motion PBR shader", function(program: any) {
 
-      var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState");
+      var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState instanceColor");
       var uniforms = scenePBRCacheBaseUniforms(gl, program);
+      uniforms.hasInstanceColor = gl.getUniformLocation(program, "u_hasInstanceColor");
       uniforms.crowdAtlas = gl.getUniformLocation(program, "u_crowdAtlas");
       uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
       uniforms.now = gl.getUniformLocation(program, "u_now");
       uniforms.motionExtrapolationSeconds = gl.getUniformLocation(program, "u_motionExtrapolationSeconds");
+      uniforms.crowdParent = gl.getUniformLocation(program, "u_crowdParent");
+      uniforms.crowdCut = gl.getUniformLocation(program, "u_crowdCut");
       return {
         attributes: attributes,
         uniforms: uniforms,
@@ -7675,38 +7697,14 @@
     // Per-layer authored GLSL program cache: layerID → {program, attrs, uniforms} | {failed:true}
     var pointsAuthoredGLPrograms = new Map();
 
-    // Per-typed-array VBO cache.
-    //
-    // Root cause this fixes: the prior renderer allocated three shared
-    // global VBOs (pointsPositionBuffer/Size/Color) and re-uploaded the
-    // cached typed arrays to them on every entry on every frame via
-    // gl.bufferData(STREAM_DRAW). For an 8-12 entry galaxy scene with
-    // thousands of vertices per layer, that was ~30 bufferData calls and
-    // ~700KB of GPU upload per frame of already-cached, known-static data.
-    // Chrome's driver optimizes the pattern away; Firefox's does not, so
-    // the Scene3D draw loop on FF tripped the script watchdog and fell
-    // to 10-19 fps on particle-heavy pages.
-    //
-    // New approach:
-    //   - Static geometry data: WeakMap keyed by the typed-array
-    //     reference. Upload once with STATIC_DRAW, reuse the buffer
-    //     forever.
-    //   - Static point data: persistent VBO slots keyed by stable point id
-    //     plus attribute slot. Scene preparation may hand the renderer fresh
-    //     point wrapper objects while preserving the same id and source
-    //     buffers; keeping the GPU handle at renderer scope avoids treating
-    //     that wrapper churn as new geometry. When a live update replaces
-    //     positions/sizes/colors, the keyed slot deletes its old GL buffer
-    //     before uploading the replacement. This keeps long-lived tabs from
-    //     accumulating one stale color buffer per palette tick.
-    //   - Dynamic data (compute particle systems): persistent per-entry
-    //     buffer with bufferSubData each frame into DYNAMIC_DRAW storage.
-    //     Still avoids the bufferData reallocation churn of the old path;
-    //     only the data upload is paid, not the GPU memory allocator.
-    //
-    // All per-entry buffers — static and dynamic, points and meshes —
-    // register into pointsEntryBuffers so dispose() can free them on
-    // scene unmount without needing a per-subsystem bookkeeping pass.
+    // Keep GPU storage at renderer scope: repeated static uploads previously
+    // caused particle-heavy scenes to hit Firefox's script watchdog.
+    // Geometry uses a typed-array WeakMap and uploads once with STATIC_DRAW.
+    // Points use stable IDs plus attribute slots: fresh wrappers reuse VBOs,
+    // while replaced arrays delete the old VBO before allocating its successor.
+    // Dynamic particles reuse per-entry DYNAMIC_DRAW storage with bufferSubData.
+    // Instanced streams retain bit-exact snapshots and upload changed spans.
+    // Every owned buffer registers in pointsEntryBuffers for unmount cleanup.
     const staticMeshArrayVBOs = new WeakMap();
     const pointsEntryBuffers = new Set();
     const instancedStreamRecords = new Map();
@@ -7768,33 +7766,77 @@
       record.lastUsed = crowdFrame;
       return record;
     }
+    function disposeOwnedProgram(record: any) {
+      if (!record) return;
+      gl.deleteShader(record.vertexShader);
+      gl.deleteShader(record.fragmentShader);
+      gl.deleteProgram(record.program);
+    }
     function disposeCrowdResources() {
       for (const record of crowdAtlasTextures.values()) gl.deleteTexture(record.texture);
       crowdAtlasTextures.clear();
       crowdPaletteBytes = 0;
       for (const cp of [crowdProgram, crowdShadowProgram, crowdMotionProgram, crowdMotionShadowProgram]) {
-        if (cp) { gl.deleteProgram(cp.program); gl.deleteShader(cp.vertexShader); gl.deleteShader(cp.fragmentShader); }
+        disposeOwnedProgram(cp);
       }
       crowdProgram = crowdShadowProgram = null;
       crowdCapabilities = crowdCapabilityError = null;
       crowdMotionProgram = crowdMotionShadowProgram = crowdMotionShaderError = null;
+    }
+    function bindCrowdJointAttributes(obj: any, attributes: any, allowed: Record<number, boolean>) {
+      for (const name of ["joints", "weights"]) {
+        const location = attributes[name]; allowed[location] = true;
+        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
+      }
     }
     function bindCrowdBatch(batch, ip, allowed) {
       if (!batch.atlas) return;
       const record = prepareCrowdAtlas(batch.atlas);
       gl.activeTexture(gl.TEXTURE0 + record.unit); gl.bindTexture(gl.TEXTURE_2D, record.texture);
       gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
-      const obj = batch.objects[0];
-      for (const name of ["joints", "weights"]) {
-        const location = ip.attributes[name]; allowed[location] = true;
-        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
-      }
+      gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
+      gl.uniform4fv(ip.uniforms.crowdCut, batch.cut || SCENE_NO_CUT);
+      bindCrowdJointAttributes(batch.objects[0], ip.attributes, allowed);
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const location = ip.attributes.pose; allowed[location] = true;
-      gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "poses", batch.poses));
+      gl.bindBuffer(gl.ARRAY_BUFFER, uploadPackedStream(batch, "poses", batch.poses));
       gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 12, 0); gl.vertexAttribDivisor(location, 1);
+      bindCrowdBatchColors(batch, ip, allowed);
     }
     function finishCrowdBatch(batch, ip) {
       if (batch.atlas) { gl.vertexAttribDivisor(ip.attributes.pose, 0); gl.disableVertexAttribArray(ip.attributes.pose); }
+      finishCrowdBatchColors(ip);
+    }
+
+    // Per-agent tints (linear RGBA, 4 floats per agent) as an instance-rate attribute.
+    // They upload when the record's colour generation changes, not with every pose revision.
+    // The shadow programs have no a_instanceColor and skip this.
+    function bindCrowdBatchColors(batch: any, ip: any, allowed: Record<number, boolean>) {
+      const location = ip.attributes.instanceColor;
+      if (!(location >= 0)) return;
+      // The program keeps its uniforms between draws: say "no tint" whenever this batch has none.
+      if (!batch.colors || batch.colors.length < batch.count * 4) { gl.uniform1i(ip.uniforms.hasInstanceColor, 0); return; }
+      allowed[location] = true;
+      const retained = batch._colorUploaded === undefined ? null : touchInstancedStream(batch, 0, "colors");
+      let buffer = retained;
+      if (!retained || batch._colorUploaded !== batch._colorGeneration) {
+        batch._colorUploaded = batch._colorGeneration;
+        buffer = uploadInstancedStream(batch, 0, "colors", batch.colors, batch.count * 4);
+      }
+      bindInstanceColors(ip, buffer);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 1);
+    }
+    function bindInstanceColors(ip: any, buffer: WebGLBuffer | null) {
+      const location = ip.attributes.instanceColor;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, 4, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(location, 1);
+    }
+    function finishCrowdBatchColors(ip: any) {
+      const location = ip.attributes.instanceColor;
+      if (!(location >= 0)) return;
+      gl.vertexAttribDivisor(location, 0);
+      gl.disableVertexAttribArray(location);
     }
 
     // --- GPU-driven crowd motion batch binding ---
@@ -7850,7 +7892,7 @@
     // upload only changed instance ranges, even if several snapshots arrive
     // before rendering. batch._motionGeneration advances only on a copy.
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
-    function prepareCrowdMotionRecords(batch) {
+    function prepareCrowdMotionRecords(batch, ranges = null) {
       prepareCrowdAtlas(batch.atlas);
       const stride = SCENE_CROWD_MOTION_RECORD_FLOATS;
       const needed = batch.count * stride;
@@ -7862,22 +7904,37 @@
         batch._motionDirtyFlags = new Uint8Array(capacity / stride);
         resync = true;
       }
-      if (!resync && (!batch._motionMembers || batch._motionMembers.length !== batch.count)) resync = true;
-      if (!resync) for (let i = 0; i < batch.count; i++) if (batch._motionMembers[i] !== batch.objects[i]) { resync = true; break; }
+      // A crowd batch record lists its agents in batch.members, edited in place
+      // by its owner; batch.shape changes when they or their motion records do.
+      const members = batch.members || batch.objects;
+      if (batch.members) {
+        resync = resync || batch._motionShape !== batch.shape || batch._motionCount !== batch.count;
+        batch._motionShape = batch.shape; batch._motionCount = batch.count;
+      } else {
+        if (!resync && (!batch._motionMembers || batch._motionMembers.length !== batch.count)) resync = true;
+        if (!resync) for (let i = 0; i < batch.count; i++) if (batch._motionMembers[i] !== members[i]) { resync = true; break; }
+      }
       let touched = resync;
       if (resync) batch._motionDirtyFlags.fill(1, 0, batch.count);
-      for (let i = 0; i < batch.count; i++) {
-        const motion = batch.objects[i]._crowdMotion;
-        if (resync || motion.dirty) {
-          batch.motion.set(motion.record, i * stride);
-          batch._motionDirtyFlags[i] = 1;
-          motion.dirty = false;
-          touched = true;
+      // A caller that knows which slots changed passes [start, end) pairs and
+      // the scan skips every other slot.
+      const scans = !resync && ranges ? ranges.length : 2;
+      for (let r = 0; r < scans; r += 2) {
+        const from = !resync && ranges ? Math.max(0, ranges[r]) : 0;
+        const to = !resync && ranges ? Math.min(batch.count, ranges[r + 1]) : batch.count;
+        for (let i = from; i < to; i++) {
+          const motion = members[i]._crowdMotion;
+          if (resync || motion.dirty) {
+            batch.motion.set(motion.record, i * stride);
+            batch._motionDirtyFlags[i] = 1;
+            motion.dirty = false;
+            touched = true;
+          }
         }
       }
       if (touched) {
         batch._motionGeneration = (batch._motionGeneration || 0) + 1;
-        batch._motionMembers = batch.objects.slice();
+        if (!batch.members) batch._motionMembers = members.slice();
       }
     }
 
@@ -7922,11 +7979,9 @@
       gl.uniform4fv(ip.uniforms.crowdClipTable, batch.clipTable.data);
       gl.uniform1f(ip.uniforms.now, crowdMotionNow);
       gl.uniform1f(ip.uniforms.motionExtrapolationSeconds, SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS);
-      const obj = batch.objects[0];
-      for (const name of ["joints", "weights"]) {
-        const location = ip.attributes[name]; allowed[location] = true;
-        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
-      }
+      gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
+      gl.uniform4fv(ip.uniforms.crowdCut, batch.cut || SCENE_NO_CUT);
+      bindCrowdJointAttributes(batch.objects[0], ip.attributes, allowed);
       const buffer = crowdMotionStreamBuffer(batch);
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       const stride = SCENE_CROWD_MOTION_RECORD_FLOATS * 4;
@@ -7944,10 +7999,12 @@
         gl.vertexAttribPointer(location, components, gl.FLOAT, false, stride, byteOffset);
         gl.vertexAttribDivisor(location, 1);
       }
+      bindCrowdBatchColors(batch, ip, allowed);
     }
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
     function finishCrowdMotionBatch(batch, ip) {
       if (!batch.atlas) return;
+      finishCrowdBatchColors(ip);
       for (const name of ["motionPrevPos", "motionPrevRot", "motionPrevScale", "tPrev", "motionNextPos", "motionNextRot", "motionNextScale", "tNext", "animState"]) {
         gl.vertexAttribDivisor(ip.attributes[name], 0);
         gl.disableVertexAttribArray(ip.attributes[name]);
@@ -8198,15 +8255,10 @@
     }
 
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
-    function uploadInstancedStream(mesh, index, slot, data, activeLength, dirtyRanges = null) {
+    function uploadInstancedStream(mesh, index, slot, data, activeLength = data.length, dirtyRanges = null) {
       // Commands replace JS arrays frequently. Their identity is not a GPU
       // lifetime: own mutable streams by batch ID, with frame retirement.
-      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
-      let record = instancedStreamRecords.get(key);
-      if (!record) {
-        record = {};
-        instancedStreamRecords.set(key, record);
-      }
+      const record = instancedStreamOwner(mesh, index);
       let stream = record[slot];
       if (!stream) {
         stream = { buffer: gl.createBuffer(), bytes: 0, epoch: 0 };
@@ -8219,20 +8271,74 @@
       if (resized) {
         gl.bufferData(gl.ARRAY_BUFFER, dirtyRanges ? data.byteLength : data, gl.DYNAMIC_DRAW);
         stream.bytes = data.byteLength;
+        stream.snapshot = null;
       }
       if (dirtyRanges) {
+        stream.snapshot = stream.words = null;
         for (let i = 0; i < dirtyRanges.length; i += 2) {
           const start = Math.max(0, Math.min(data.length, dirtyRanges[i]));
           const end = Math.max(start, Math.min(data.length, dirtyRanges[i + 1]));
           if (end > start) gl.bufferSubData(gl.ARRAY_BUFFER, start * data.BYTES_PER_ELEMENT, data.subarray(start, end));
         }
-      } else if (!resized) {
+      } else {
         const length = Number.isFinite(activeLength)
           ? Math.max(0, Math.min(data.length, Math.floor(activeLength)))
           : data.length;
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, length === data.length ? data : data.subarray(0, length));
+        if (data.BYTES_PER_ELEMENT === 4) {
+          uploadChangedInstancedStream(stream, data, length, resized);
+        } else {
+          stream.snapshot = stream.words = null;
+          if (!resized) gl.bufferSubData(gl.ARRAY_BUFFER, 0, length === data.length ? data : data.subarray(0, length));
+        }
       }
       return stream.buffer;
+    }
+
+    // Own bit-exact snapshots: fresh equal arrays and camera-only frames skip
+    // uploads, while in-place edits submit only the first-to-last changed span.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function uploadChangedInstancedStream(stream, data, length, allocated) {
+      let words = stream.words;
+      if (!words || words.buffer !== data.buffer || words.byteOffset !== data.byteOffset || words.length !== data.length) {
+        words = stream.words = new Uint32Array(data.buffer, data.byteOffset, data.length);
+      }
+      if (!stream.snapshot) {
+        stream.snapshot = new Uint32Array(words.length);
+        stream.validLength = 0;
+      }
+      const snapshot = stream.snapshot;
+      if (allocated) {
+        snapshot.set(words);
+        stream.validLength = words.length;
+        return;
+      }
+      let start = 0, end = length;
+      const valid = stream.validLength;
+      while (start < end && start < valid && words[start] === snapshot[start]) start++;
+      while (end > start && end <= valid && words[end - 1] === snapshot[end - 1]) end--;
+      if (end > start) {
+        gl.bufferSubData(gl.ARRAY_BUFFER, start * 4, start === 0 && end === data.length ? data : data.subarray(start, end));
+        snapshot.set(start === 0 && end === words.length ? words : words.subarray(start, end), start);
+      }
+      stream.validLength = Math.max(valid, length);
+    }
+
+    function instancedStreamOwner(mesh: any, index: number) {
+      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
+      let owner = instancedStreamRecords.get(key);
+      if (!owner) { owner = {}; instancedStreamRecords.set(key, owner); }
+      return owner;
+    }
+
+    // Crowd batches repack only when their revision changes (_packGeneration),
+    // so they upload only then, or when the GPU copy was retired.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function uploadPackedStream(batch, slot, data, activeLength) {
+      const retained = batch._packGeneration === undefined ? null : touchInstancedStream(batch, 0, slot);
+      const uploaded = batch._streamUploaded || (batch._streamUploaded = {});
+      if (retained && uploaded[slot] === batch._packGeneration) return retained;
+      uploaded[slot] = batch._packGeneration;
+      return uploadInstancedStream(batch, 0, slot, data, activeLength);
     }
 
     function touchInstancedStream(mesh, index, slot) {
@@ -8770,7 +8876,7 @@
         }
       }
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
-      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      detailEnabled = frameMeta?.detailEnabled !== false;
       sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
@@ -8807,6 +8913,7 @@
       beginWebGLDirectMeshBufferFrame(bundle);
       if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
+        retireInstancedStreams();
         return "empty";
       }
 
@@ -8979,7 +9086,7 @@
         }
         var temporalActive = false;
         if (temporalRequested) {
-          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true), bundle.lights);
+          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (frameMeta?.compositeOverWater !== true), bundle.lights);
           if (temporalActive) sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
         } else postProcessor.resetTemporal();
         var antialiasing = temporalActive ? "taa" : temporalRequested || spatialRequested ? "fxaa" : "none";
@@ -9005,7 +9112,7 @@
         bg[3] = 0;
       }
 
-      if (!frameMeta || frameMeta.compositeOverWater !== true) {
+      if (frameMeta?.compositeOverWater !== true) {
         // Fullscreen post passes disable depth writes. Clear must restore the
         // write mask first, or last frame's glass occludes this frame's opaque
         // transmission capture even though the color attachment was cleared.
@@ -9017,7 +9124,7 @@
       }
 
       var skyState = "none";
-      if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
+      if (bundle.environment && bundle.environment.sky && (frameMeta?.compositeOverWater !== true)) {
         if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
         skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
           camera: cam, aspect: aspect, linear: frameLinear }) : "unavailable";
@@ -9071,11 +9178,11 @@
       // Draw opaque pass.
       applyBlendMode(gl, "opaque");
       applyDepthMode(gl, "opaque");
-      drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta && frameMeta.frameRequest);
+      drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta?.frameRequest);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
       const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
-      sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
+      sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: sceneSelenaFrameTime, quality: frameMeta?.oceanTier,
         meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
       // Shared water must be present in the opaque capture sampled by glass.
       scenePBRCompositePass(gl, frameMeta, renderTarget);
@@ -9091,7 +9198,7 @@
       if (drawList && drawList.alpha.length > 0) {
         applyBlendMode(gl, "alpha");
         applyDepthMode(gl, "alpha");
-        drawPBRObjectList(gl, drawList.alpha, bundle, materials, frameMeta && frameMeta.frameRequest);
+        drawPBRObjectList(gl, drawList.alpha, bundle, materials, frameMeta?.frameRequest);
       }
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "alpha");
 
@@ -9099,7 +9206,7 @@
       if (drawList && drawList.additive.length > 0) {
         applyBlendMode(gl, "additive");
         applyDepthMode(gl, "additive");
-        drawPBRObjectList(gl, drawList.additive, bundle, materials, frameMeta && frameMeta.frameRequest);
+        drawPBRObjectList(gl, drawList.additive, bundle, materials, frameMeta?.frameRequest);
       }
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "additive");
 
@@ -9416,57 +9523,8 @@
       }
       var retained = obj.retainedGeometry === true;
       var revision = retained ? obj.geometryRevision : null;
-      let entry = directMeshAttributeCache.get(vertices);
-      if (
-        entry &&
-        (entry.retained !== retained || (retained && entry.revision !== revision))
-      ) {
-        if (retained || entry.retained) {
-          retainedMeshBufferStats.rebuilds += 1;
-          if (entry.revision !== revision) retainedMeshBufferStats.revisionInvalidations += 1;
-        }
-        retireWebGLDirectMeshEntry(vertices, entry);
-        entry = null;
-      }
-      if (!entry) {
-        entry = {
-          retained,
-          revision,
-          lastSeenEpoch: directMeshAttributeEpoch,
-          attributes: Object.create(null),
-        };
-        directMeshAttributeCache.set(vertices, entry);
-      }
-      entry.lastSeenEpoch = directMeshAttributeEpoch;
-      let record = entry.attributes.indices;
-      if (!record || record.data !== data) {
-        if (record) {
-          if (retained) retainedMeshBufferStats.rebuilds += 1;
-          retireWebGLDirectMeshAttribute(entry, "indices");
-        }
-        record = {
-          data,
-          size: 1,
-          byteLength: data.byteLength,
-          buffer: gl.createBuffer(),
-        };
-        pointsEntryBuffers.add(record.buffer);
-        entry.attributes.indices = record;
-        if (retained) {
-          retainedMeshBufferStats.misses += 1;
-          retainedMeshBufferStats.allocations += 1;
-          retainedMeshBufferStats.liveBytes += data.byteLength;
-        }
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, record.buffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data, retained ? gl.STATIC_DRAW : gl.DYNAMIC_DRAW);
-        if (retained) {
-          retainedMeshBufferStats.uploadCalls += 1;
-          retainedMeshBufferStats.uploadBytes += data.byteLength;
-        }
-      } else {
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, record.buffer);
-        if (retained) retainedMeshBufferStats.hits += 1;
-      }
+      var entry = webGLDirectMeshEntry(vertices, retained, revision);
+      bindWebGLDirectMeshBuffer(entry, "indices", data, 1, gl.ELEMENT_ARRAY_BUFFER);
       return data.length;
     }
 
@@ -9491,6 +9549,59 @@
         retireWebGLDirectMeshAttribute(entry, keys[i]);
       }
       directMeshAttributeCache.delete(vertices);
+    }
+
+    function webGLDirectMeshEntry(vertices: any, retained: boolean, revision: unknown) {
+      let entry = directMeshAttributeCache.get(vertices);
+      if (
+        entry &&
+        (entry.retained !== retained || (retained && entry.revision !== revision))
+      ) {
+        retainedMeshBufferStats.rebuilds += 1;
+        if (entry.revision !== revision) retainedMeshBufferStats.revisionInvalidations += 1;
+        retireWebGLDirectMeshEntry(vertices, entry);
+        entry = null;
+      }
+      if (!entry) {
+        entry = {
+          retained,
+          revision,
+          lastSeenEpoch: directMeshAttributeEpoch,
+          attributes: Object.create(null),
+        };
+        directMeshAttributeCache.set(vertices, entry);
+      }
+      entry.lastSeenEpoch = directMeshAttributeEpoch;
+      return entry;
+    }
+
+    function bindWebGLDirectMeshBuffer(entry: any, key: string, data: Float32Array | Uint32Array, size: number, target: number) {
+      const retained = entry.retained;
+      let record = entry.attributes[key];
+      if (!record || record.data !== data || record.size !== size) {
+        if (record) {
+          if (retained) retainedMeshBufferStats.rebuilds += 1;
+          retireWebGLDirectMeshAttribute(entry, key);
+        }
+        record = { data, size, byteLength: data.byteLength, buffer: gl.createBuffer() };
+        pointsEntryBuffers.add(record.buffer);
+        entry.attributes[key] = record;
+        if (retained) {
+          retainedMeshBufferStats.misses += 1;
+          retainedMeshBufferStats.allocations += 1;
+          retainedMeshBufferStats.liveBytes += data.byteLength;
+        }
+        gl.bindBuffer(target, record.buffer);
+        gl.bufferData(target, data, retained ? gl.STATIC_DRAW : gl.DYNAMIC_DRAW);
+        if (retained) {
+          retainedMeshBufferStats.uploadCalls += 1;
+          retainedMeshBufferStats.uploadBytes += data.byteLength;
+        }
+      } else {
+        gl.bindBuffer(target, record.buffer);
+        if (retained) retainedMeshBufferStats.hits += 1;
+        else if (target === gl.ARRAY_BUFFER) gl.bufferData(target, data, gl.DYNAMIC_DRAW);
+      }
     }
 
     function beginWebGLDirectMeshBufferFrame(bundle) {
@@ -9551,68 +9662,60 @@
       if (!vertices || !Number.isFinite(attrib) || attrib < 0 || !(data instanceof Float32Array)) {
         return false;
       }
-      var retained = obj.retainedGeometry === true;
+      var retained = obj.retainedGeometry === true &&
+        (!obj._worldBakedUpload || obj._worldBakedUpload.resident === true);
       var revision = retained ? obj.geometryRevision : null;
-      let entry = directMeshAttributeCache.get(vertices);
-      if (
-        entry &&
-        (entry.retained !== retained || (retained && entry.revision !== revision))
-      ) {
-        if (retained || entry.retained) {
-          retainedMeshBufferStats.rebuilds += 1;
-          if (entry.revision !== revision) retainedMeshBufferStats.revisionInvalidations += 1;
-        }
-        retireWebGLDirectMeshEntry(vertices, entry);
-        entry = null;
-      }
-      if (!entry) {
-        entry = {
-          retained,
-          revision,
-          lastSeenEpoch: directMeshAttributeEpoch,
-          attributes: Object.create(null),
-        };
-        directMeshAttributeCache.set(vertices, entry);
-      }
-      entry.lastSeenEpoch = directMeshAttributeEpoch;
-	      let record = entry.attributes[key];
-	      if (!record || record.data !== data || record.size !== size) {
-	        if (record) {
-            if (retained) retainedMeshBufferStats.rebuilds += 1;
-            retireWebGLDirectMeshAttribute(entry, key);
-          }
-	        record = {
-	          data,
-            size,
-            byteLength: data.byteLength,
-	          buffer: gl.createBuffer(),
-	        };
-	        pointsEntryBuffers.add(record.buffer);
-        entry.attributes[key] = record;
-        if (retained) {
-          retainedMeshBufferStats.misses += 1;
-          retainedMeshBufferStats.allocations += 1;
-          retainedMeshBufferStats.liveBytes += data.byteLength;
-        }
-        gl.bindBuffer(gl.ARRAY_BUFFER, record.buffer);
-        gl.bufferData(gl.ARRAY_BUFFER, data, retained ? gl.STATIC_DRAW : gl.DYNAMIC_DRAW);
-        if (retained) {
-          retainedMeshBufferStats.uploadCalls += 1;
-          retainedMeshBufferStats.uploadBytes += data.byteLength;
-        }
-      } else {
-        gl.bindBuffer(gl.ARRAY_BUFFER, record.buffer);
-        if (retained) {
-          retainedMeshBufferStats.hits += 1;
-        } else {
-          // Skinning/morph/authored shader geometry remains mutable and is
-          // uploaded every draw instead of inheriting retained semantics.
-          gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
-        }
-      }
+      var entry = webGLDirectMeshEntry(vertices, retained, revision);
+      bindWebGLDirectMeshBuffer(entry, key, data, size, gl.ARRAY_BUFFER);
       gl.enableVertexAttribArray(attrib);
       gl.vertexAttribPointer(attrib, size, gl.FLOAT, false, 0, 0);
       return true;
+    }
+
+    // True when the box lies outside any of the four side frustum planes.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function boundsOutsideSidePlanes(b, planes) {
+      for (let i = 0; i < 4; i++) {
+        const p = planes[i];
+        if (p[0] * (p[0] >= 0 ? b.maxX : b.minX) + p[1] * (p[1] >= 0 ? b.maxY : b.minY) +
+            p[2] * (p[2] >= 0 ? b.maxZ : b.minZ) + p[3] < -.0001) return true;
+      }
+      return false;
+    }
+
+    // A crowd batch record (_crowdBatch) stands for all of a batch's agents and
+    // stays the same object while they move. Keep one batch per record id and
+    // refresh its streams only when the record's revision changes. The color
+    // pass culls a whole batch whose union bounds leave the view; agents are
+    // not culled one by one on the CPU, and all of them cast shadows.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function prepareCrowdBatchRecord(obj, planes) {
+      let batch = prebuiltRigidBatchRecords.get(obj.id);
+      if (!batch) {
+        batch = { id: obj.id, objects: [obj], count: 0, motion: null, prebuilt: true, epoch: 0, _packGeneration: 0, _packedRevision: -1 };
+        prebuiltRigidBatchRecords.set(obj.id, batch);
+      }
+      batch.epoch = prebuiltRigidBatchEpoch;
+      batch.objects[0] = obj;
+      const motion = obj.crowdMotion === true;
+      if (motion !== (batch.motion !== null) || batch.atlas !== obj.crowdAtlas) {
+        batch.motion = motion ? new Float32Array(0) : null;
+        batch._packedRevision = -1;
+      }
+      batch.atlas = obj.crowdAtlas; batch.clipTable = obj.crowdClipTable;
+      batch.members = obj.crowdMembers; batch.shape = obj.crowdShape; batch.count = obj.instanceCount;
+      batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses; batch.parent = obj.crowdParentMatrix || null; batch.cut = obj.crowdCut || null;
+      batch.colors = obj.crowdColors || null; batch._colorGeneration = obj.crowdColorGen;
+      if (batch._packedRevision !== obj.crowdRevision) {
+        // Dirty slot ranges describe one revision. Use them only when this
+        // batch packed the revision just before it.
+        const ranges = obj.crowdDirtyRanges && batch._packedRevision === obj.crowdDirtyBase ? obj.crowdDirtyRanges : null;
+        batch._packedRevision = obj.crowdRevision;
+        batch._packGeneration++;
+        if (motion) prepareCrowdMotionRecords(batch, ranges); else prepareCrowdAtlas(batch.atlas);
+      }
+      meshColorVisibility.set(obj, batch.count > 0 && !(obj.bounds && boundsOutsideSidePlanes(obj.bounds, planes)));
+      if (batch.count > 0) rigidObjectBatches.set(obj, batch);
     }
 
     function prepareRigidMeshBatches(bundle) {
@@ -9630,6 +9733,10 @@
       }
       for (const obj of bundle.meshObjects || []) {
         const mat = materials[obj && obj.materialIndex] || null;
+        if (obj && obj._crowdBatch === true) {
+          prepareCrowdBatchRecord(obj, planes);
+          continue;
+        }
         if (obj && obj._rigidImportedBatch === true) {
           const authoredCount = Math.max(0, Math.min(Math.floor(sceneNumber(obj.instanceCount, 0)),
             Array.isArray(obj.instanceMatrices) ? obj.instanceMatrices.length : 0));
@@ -9652,19 +9759,7 @@
           const boundsRows = obj.instanceBounds;
           for (let index = 0; index < authoredCount; index++) {
             const bounds = Array.isArray(boundsRows) ? boundsRows[index] : null;
-            let visible = Boolean(bounds);
-            if (visible) {
-              for (let planeIndex = 0; planeIndex < 4; planeIndex++) {
-                const p = planes[planeIndex];
-                if (p[0] * (p[0] >= 0 ? bounds.maxX : bounds.minX) +
-                    p[1] * (p[1] >= 0 ? bounds.maxY : bounds.minY) +
-                    p[2] * (p[2] >= 0 ? bounds.maxZ : bounds.minZ) + p[3] < -.0001) {
-                  visible = false;
-                  break;
-                }
-              }
-            }
-            if (!visible) continue;
+            if (!bounds || boundsOutsideSidePlanes(bounds, planes)) continue;
             const matrix = obj.instanceMatrices[index];
             if (!matrix || matrix.length < 16) continue;
             batch.transforms.set(matrix, count * 16);
@@ -9687,12 +9782,7 @@
           // Cull the color pass against the four side planes using the
           // positive AABB vertex. Keep off-camera casters in shadow batches:
           // their shadows can still fall onto visible ground.
-          for (let i = 0; i < 4; i++) {
-            const p = planes[i];
-            if (p[0] * (p[0] >= 0 ? bounds.maxX : bounds.minX) +
-                p[1] * (p[1] >= 0 ? bounds.maxY : bounds.minY) +
-                p[2] * (p[2] >= 0 ? bounds.maxZ : bounds.minZ) + p[3] < -.0001) { visible = false; break; }
-          }
+          visible = !boundsOutsideSidePlanes(bounds, planes);
         }
         meshColorVisibility.set(obj, visible);
         // Only immutable, direct, opaque PBR geometry can share this shader.
@@ -9734,6 +9824,7 @@
             batch.transforms = null;
             continue;
           }
+          if (batch.atlas) scenePrepareCrowdColors(batch);
           if (batch.motion) {
             // GPU-motion crowd batch: no CPU transform/pose math here at all,
             // and prepareCrowdMotionRecords re-copies/re-uploads only when an
@@ -9767,13 +9858,17 @@
     function bindRigidBatchMatrices(batch, attributes) {
       const base = attributes.instanceMatrix;
       if (!(base >= 0)) return false;
-      gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(batch, 0, "transforms", batch.transforms, batch.count * 16));
+      gl.bindBuffer(gl.ARRAY_BUFFER, uploadPackedStream(batch, "transforms", batch.transforms, batch.count * 16));
+      bindInstanceMatrixAttributes(base);
+      return true;
+    }
+
+    function bindInstanceMatrixAttributes(base: number) {
       for (let col = 0; col < 4; col++) {
         gl.enableVertexAttribArray(base + col);
         gl.vertexAttribPointer(base + col, 4, gl.FLOAT, false, 64, col * 16);
         gl.vertexAttribDivisor(base + col, 1);
       }
-      return true;
     }
 
     function finishRigidBatchMatrices(attributes) {
@@ -9866,7 +9961,7 @@
       sceneDisableUnownedVertexAttribArrays(allowed);
       if (!batch.motion) bindRigidBatchMatrices(batch, ip.attributes);
       drawRigidBatchGeometry(batch);
-      if (frameRequest) for (const object of batch.objects) frameRequest.record(object.id);
+      if (frameRequest) for (const object of batch.members || batch.objects) frameRequest.record(object.id);
       rigidFrameDraws++;
       rigidFrameInstances += batch.count;
       webglRenderTruthStats.meshDrawn += batch.count;
@@ -10061,6 +10156,8 @@
 
         // Per-object shadow receive control.
         gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
+        if (obj.cut) { gl.uniform4fv(currentUniforms.cut, obj.cut); currentUniforms.cutLive = true; }
+        else if (currentUniforms.cutLive) { gl.uniform4fv(currentUniforms.cut, SCENE_NO_CUT); currentUniforms.cutLive = false; }
 
         // Per-object depth write control.
         var objDepthWriteOverride = obj.depthWrite !== undefined && obj.depthWrite !== null || sceneTransmissionMaterial(mat);
@@ -10405,7 +10502,7 @@
         computeEntry.renderShaderLayout = sourceEntry.renderShaderLayout && typeof sourceEntry.renderShaderLayout === "object"
           ? sourceEntry.renderShaderLayout
           : null;
-        computeEntry._computeParticlesSynthetic = true;
+        Object.assign(computeEntry, {_computeParticlesSynthetic: true, parentMatrix: sourceEntry.parentMatrix || null});
         // Model-matrix transform from the emitter: position, rotation, spin.
         // Particles are stored in LOCAL space so the renderer's model matrix
         // applies position + rotation + time-based spin uniformly.
@@ -10678,45 +10775,10 @@
       return geom;
     }
 
-    // Draw all instanced meshes from the render bundle.
-    function sceneInstancedColorBuffer(mesh, count) {
-      if (!mesh || count <= 0) {
-        return null;
-      }
-      if (mesh._cachedInstanceColors && mesh._cachedInstanceColors.length >= count * 4) {
-        return mesh._cachedInstanceColors;
-      }
-      mesh._cachedInstanceColors = null;
-      var rawColors = mesh.colors;
-      if (!rawColors || typeof rawColors.length !== "number") {
-        return null;
-      }
-      if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-        mesh._cachedInstanceColors = new Float32Array(count * 4);
-        for (var ci = 0; ci < count; ci++) {
-          var rgba = sceneCachedInstancedColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
-          mesh._cachedInstanceColors[ci * 4] = rgba[0];
-          mesh._cachedInstanceColors[ci * 4 + 1] = rgba[1];
-          mesh._cachedInstanceColors[ci * 4 + 2] = rgba[2];
-          mesh._cachedInstanceColors[ci * 4 + 3] = rgba[3];
-        }
-        return mesh._cachedInstanceColors;
-      }
-      if (rawColors.length >= count * 4) {
-        mesh._cachedInstanceColors = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
-        return mesh._cachedInstanceColors;
-      }
-      if (rawColors.length >= count * 3) {
-        mesh._cachedInstanceColors = new Float32Array(count * 4);
-        for (var ni = 0; ni < count; ni++) {
-          mesh._cachedInstanceColors[ni * 4] = rawColors[ni * 3];
-          mesh._cachedInstanceColors[ni * 4 + 1] = rawColors[ni * 3 + 1];
-          mesh._cachedInstanceColors[ni * 4 + 2] = rawColors[ni * 3 + 2];
-          mesh._cachedInstanceColors[ni * 4 + 3] = 1;
-        }
-        return mesh._cachedInstanceColors;
-      }
-      return null;
+    function sceneInstancedColorBuffer(mesh: any, count: number, owner: object) {
+      if (!mesh || count <= 0) return null;
+      if (mesh._cachedInstanceColors && mesh._cachedInstanceColors.length >= count * 4) return mesh._cachedInstanceColors;
+      return mesh._cachedInstanceColors = scenePrepareInstancedColors(owner, mesh.colors, count);
     }
 
     function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, renderPass) {
@@ -10801,38 +10863,19 @@
         bindInstancedVertexAttribute(ip.attributes.uv, geom.uvs, 2, [0, 0]);
         bindInstancedVertexAttribute(ip.attributes.tangent, geom.tangents, 4, [1, 0, 0, 1]);
 
-        // Cache the transforms Float32Array on the mesh entry (same
-        // pattern as points _cachedPos). normalizeSceneInstancedMeshEntry
-        // now carries _cachedTransforms forward across ticks when
-        // mesh.transforms is unchanged by reference, so this branch
-        // only allocates on the first draw of a mesh identity.
-        if (!mesh._cachedTransforms) {
-          if (mesh.transforms instanceof Float32Array) {
-            mesh._cachedTransforms = mesh.transforms;
-          } else if (Array.isArray(mesh.transforms)) {
-            mesh._cachedTransforms = new Float32Array(mesh.transforms);
-          }
-        }
+        const preparationOwner = instancedStreamOwner(mesh, i);
+        if (!mesh._cachedTransforms) mesh._cachedTransforms = scenePrepareInstancedTransforms(preparationOwner, mesh.transforms);
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
         instanceCount = Math.min(instanceCount, sceneInstancedAttributeCapacity(transformData, 16));
         if (instanceCount <= 0) continue;
 
-        // -----------------------------------------------------------------------
-        // CPU frustum cull (WebGL2 path — gpu-cull capability absent).
-        // When a mesh carries a cull kernel (cullKernelWGSL present), run a
-        // per-instance sphere-vs-frustum test using extractFrustumPlanesJS +
-        // instancePassesCullTest (both defined in 11-scene-math.ts).
-        // Survivors are compacted into scratch Float32Arrays; instanceCount is
-        // reduced to the survivor count. The compacted data is uploaded to
-        // dedicated dynamic VBOs (_cpuCullTransformVBO/_cpuCullColorVBO) owned
-        // by the mesh entry so bufferSubData runs per-frame without cache
-        // invalidation. When no cull config is present the mesh draws all
-        // instances unchanged via the normal static-VBO path.
-        // -----------------------------------------------------------------------
+        // WebGL2 culls configured instances by sphere against the CPU frustum.
+        // Compact survivors into reusable scratch arrays, then upload through
+        // the same retained instance streams. Unconfigured meshes draw all.
         var hasCullConfig = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
         // Fetch full color buffer (indexed by original instance) before compaction.
-        var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount);
+        var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount, preparationOwner);
         if (hasCullConfig) {
           var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0) ? mesh.cullRadius : 2.0;
           var planes = extractFrustumPlanesJS(scratchSelenaViewProjection);
@@ -10895,39 +10938,17 @@
           instancedAllowedAttribs[ip.attributes.instanceColor] = true;
         }
         sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
-/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
         gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "transforms", transformData));
 
-        // Set up mat4 attribute (4 × vec4, each with divisor 1).
-        // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
-        for (var col = 0; col < 4; col++) {
-          var loc = baseLoc + col;
-          gl.enableVertexAttribArray(loc);
-          gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, 64, col * 16);
-          gl.vertexAttribDivisor(loc, 1);
-        }
+        bindInstanceMatrixAttributes(baseLoc);
 
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (hasInstanceColor) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "colors", instanceColorData));
-          gl.enableVertexAttribArray(ip.attributes.instanceColor);
-          gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
-          gl.vertexAttribDivisor(ip.attributes.instanceColor, 1);
-        }
+        if (hasInstanceColor) bindInstanceColors(ip, uploadInstancedStream(mesh, i, "colors", instanceColorData));
 
         // Draw instanced.
         gl.drawArraysInstanced(gl.TRIANGLES, 0, drawVertexCount, instanceCount);
 
-        if (hasInstanceColor) {
-          gl.vertexAttribDivisor(ip.attributes.instanceColor, 0);
-          gl.disableVertexAttribArray(ip.attributes.instanceColor);
-        }
-
-        // Reset divisors and disable instance attribute slots.
-        for (var col = 0; col < 4; col++) {
-          var loc2 = baseLoc + col;
-          gl.vertexAttribDivisor(loc2, 0);
-          gl.disableVertexAttribArray(loc2);
-        }
+        if (hasInstanceColor) finishCrowdBatchColors(ip);
+        finishRigidBatchMatrices(ip.attributes);
       }
 
       // Switch back to regular PBR program.
@@ -10977,11 +10998,7 @@
       disposeCrowdResources();
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
-      if (rigidShadowProgram) {
-        gl.deleteProgram(rigidShadowProgram.program);
-        gl.deleteShader(rigidShadowProgram.vertexShader);
-        gl.deleteShader(rigidShadowProgram.fragmentShader);
-      }
+      disposeOwnedProgram(rigidShadowProgram);
       staticPointEntries.clear();
       activeStaticPointEntries.clear();
       staticPointKeyedVBOs.clear();
@@ -11019,65 +11036,39 @@
         postProcessor = null;
       }
 
-      if (shadowProgram) {
-        gl.deleteShader(shadowProgram.vertexShader);
-        gl.deleteShader(shadowProgram.fragmentShader);
-        gl.deleteProgram(shadowProgram.program);
-      }
+      disposeOwnedProgram(shadowProgram);
 
       // Clean up skinned PBR program.
-      if (skinnedProgram) {
-        gl.deleteShader(skinnedProgram.vertexShader);
-        gl.deleteShader(skinnedProgram.fragmentShader);
-        gl.deleteProgram(skinnedProgram.program);
-        skinnedProgram = null;
-      }
+      disposeOwnedProgram(skinnedProgram);
+      skinnedProgram = null;
 
       // Clean up points program.
-      if (pointsProgram) {
-        gl.deleteShader(pointsProgram.vertexShader);
-        gl.deleteShader(pointsProgram.fragmentShader);
-        gl.deleteProgram(pointsProgram.program);
-        pointsProgram = null;
-      }
+      disposeOwnedProgram(pointsProgram);
+      pointsProgram = null;
       // Authored points programs own their shader objects independently of the
       // builtin points program. Clear both maps so repeated disposal cannot
       // delete the same GL objects twice or retain failed layer IDs.
       for (const authoredRecord of pointsAuthoredGLPrograms.values()) {
         if (!authoredRecord || authoredRecord.failed) continue;
-        gl.deleteShader(authoredRecord.vertexShader);
-        gl.deleteShader(authoredRecord.fragmentShader);
-        gl.deleteProgram(authoredRecord.program);
+        disposeOwnedProgram(authoredRecord);
       }
       pointsAuthoredGLPrograms.clear();
 
       // Clean up instanced PBR program.
-      if (instancedProgram) {
-        gl.deleteShader(instancedProgram.vertexShader);
-        gl.deleteShader(instancedProgram.fragmentShader);
-        gl.deleteProgram(instancedProgram.program);
-        instancedProgram = null;
-      }
+      disposeOwnedProgram(instancedProgram);
+      instancedProgram = null;
       instancedGeometryCache = {};
 
       for (const record of customProgramCache.values()) {
         const cp = record && record.program;
-        if (cp) {
-          gl.deleteShader(cp.vertexShader);
-          gl.deleteShader(cp.fragmentShader);
-          gl.deleteProgram(cp.program);
-        }
+        disposeOwnedProgram(cp);
       }
       customProgramCache.clear();
       scenePBRAuthoredProgramKeys.delete(customProgramCache);
 
       for (const record of selenaProgramCache.values()) {
         const sp = record && record.program;
-        if (sp) {
-          gl.deleteShader(sp.vertexShader);
-          gl.deleteShader(sp.fragmentShader);
-          gl.deleteProgram(sp.program);
-        }
+        disposeOwnedProgram(sp);
       }
       selenaProgramCache.clear();
       scenePBRAuthoredProgramKeys.delete(selenaProgramCache);
@@ -11160,11 +11151,12 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
+      supportsWorldBakedAttributeViews: true,
       getFailureReason: function() { return scenePBRShaderFailureReason(program); },
       get supportsRigidImportedBatches() {
         return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
       },
-      prepareCrowdAtlas, texturePreparation: { generation: textureCache._gosxGeneration, load: (url: any, descriptor: any, role: any, colorSpace: any) => scenePBRLoadTexture(gl, url, textureCache, descriptor, role, colorSpace) },
+      prepareCrowdAtlas, texturePreparation: { generation: textureCache._gosxGeneration, load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => scenePBRLoadTexture(gl, url, textureCache, descriptor, role, colorSpace, retryFailed) },
       // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
       // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads
       // crowdMotionProgram directly (see drawPBRObjectList's rigidProgram

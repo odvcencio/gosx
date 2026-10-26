@@ -112,6 +112,17 @@ func Page() Node {
 			<span class="inline-code">Emit</span>
 			for framework events.
 		</p>
+		<h2 id="frame-loop">Loops: wait for a frame</h2>
+		<CodeBlock lang="go" source={data.frameLoopSample} />
+		<p>
+			A loop that runs on the page must wait for the browser between iterations. Scene3D calls such as
+			<span class="inline-code">SetCamera</span>
+			wait on a promise that is already resolved, so a loop made only of them never lets the browser draw or answer input, and the page freezes. Use
+			<span class="inline-code">wasm.EachFrame</span>
+			: it runs your step once per visible animation frame, pauses while the page is hidden, and stops when its context ends.
+			<span class="inline-code">Frame.Delta</span>
+			is zero on the first frame and after a hidden page.
+		</p>
 		<h2 id="lifecycle">Lifecycle</h2>
 		<p>
 			One exact module URL boots once per document, while its factories may create multiple independent instances. Each factory returns a

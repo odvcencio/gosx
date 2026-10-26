@@ -23,7 +23,7 @@ func spinMotionTrack(spin Euler, targetRef string) motion.Track {
 }
 
 // SpinMotionTimeline returns a motion.Timeline containing one GenSpin Track for
-// every mesh or points node in the scene that has a non-zero Spin. The timeline
+// every mesh, points node, or retained group in the scene that has a non-zero Spin. The timeline
 // has Autoplay true and infinite loop so it mirrors the existing SpinX/Y/Z
 // runtime semantics.
 //

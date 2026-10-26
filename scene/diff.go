@@ -6,6 +6,8 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"strings"
+	"sync"
 )
 
 // CommandKind mirrors the Scene3D client command protocol. The numeric values
@@ -28,6 +30,7 @@ const (
 	CommandSetAnimations
 	CommandSetEnvironment
 	CommandSetPostUniforms
+	CommandSetGroups
 	// commandKindCount is one past the last declared kind. It lets a test walk
 	// every kind and prove each one is either emitted by a Diff function or
 	// recorded as constructor-only. Keep it last.
@@ -60,6 +63,7 @@ var commandKindOrigins = map[CommandKind]struct {
 	origin commandKindOrigin
 	reason string
 }{
+	CommandSetGroups:    {originDiffScene, ""},
 	CommandCreateObject: {originDiffScene, ""},
 	CommandRemoveObject: {originDiffScene, ""},
 	CommandSetTransform: {originDiffSceneOption, "DiffOptions.PatchTransforms turns it on. " +
@@ -167,6 +171,9 @@ func DiffCommands(previous, next SceneIR) []Command {
 // changed fields the command protocol cannot carry.
 func DiffScene(previous, next SceneIR, options DiffOptions) Diff {
 	var commands []Command
+	if !sceneRecordJSONEqual(previous.Groups, next.Groups) {
+		commands = append(commands, SetGroupsCommand(next.Groups))
+	}
 	var objectPatch func(previous, next *ObjectIR) (Command, bool)
 	if options.PatchObjectState {
 		objectPatch = objectStatePatch
@@ -260,6 +267,7 @@ type sceneIRFieldPolicy struct {
 // the browser runtime switches on. Adding one needs a matching runtime change, so
 // the honest answer today is to report the change and let the caller remount.
 var sceneIRFieldPolicies = map[string]sceneIRFieldPolicy{
+	"Groups":             {policy: sceneIRDiffed},
 	"Objects":            {policy: sceneIRDiffed},
 	"Models":             {policy: sceneIRDiffed},
 	"Points":             {policy: sceneIRDiffed},
@@ -375,6 +383,7 @@ var sceneIRRemountFieldNames = sortedRemountFieldNames()
 
 func sortedRemountFieldNames() []string {
 	names := make([]string, 0, len(sceneIRFieldPolicies))
+	//gosx:allow map-range keys are sorted on the next lines
 	for name, policy := range sceneIRFieldPolicies {
 		if policy.policy == sceneIRRemount {
 			names = append(names, name)
@@ -702,27 +711,26 @@ func SetTransformCommand(id string, patch TransformPatch) Command {
 	return Command{Kind: CommandSetTransform, ObjectID: id, Data: patch}
 }
 
-// objectTransformPatch returns a transform patch when next changed only in
-// position, rotation, or scale. It proves that claim rather than assuming it: it
-// copies previous, overwrites the ten transform fields with next's, and
-// requires the copy to equal next. Any other changed field, including a nested
-// slice or a map, leaves the copy unequal and the caller falls back to remove
-// plus create. So a patch can never drop a second edit that arrived in the same
-// frame.
+// objectTransformPatch proves that a compact patch can replace the whole edit.
+// The common proof compares typed fields without copying the mesh record; the
+// reference path still decides values whose JSON equivalence is not proven.
 func objectTransformPatch(previous, next *ObjectIR) (Command, bool) {
-	probe := *previous
-	probe.X, probe.Y, probe.Z = next.X, next.Y, next.Z
-	probe.RotationX, probe.RotationY, probe.RotationZ = next.RotationX, next.RotationY, next.RotationZ
-	probe.ScaleX, probe.ScaleY, probe.ScaleZ = next.ScaleX, next.ScaleY, next.ScaleZ
-	probe.ParentMatrix = next.ParentMatrix
-	if !sceneRecordPointerJSONEqual(&probe, next) {
+	if !objectPatchFieldsEqual(previous, next, objectProofOmitTransform) {
 		return Command{}, false
 	}
-	parentMatrix, ok := transformPatchParentMatrix(next.ParentMatrix)
+	patch, ok := objectTransformPatchData(next)
 	if !ok {
 		return Command{}, false
 	}
-	return SetTransformCommand(next.ID, TransformPatch{
+	return SetTransformCommand(next.ID, patch), true
+}
+
+func objectTransformPatchData(next *ObjectIR) (TransformPatch, bool) {
+	parentMatrix, ok := transformPatchParentMatrix(next.ParentMatrix)
+	if !ok {
+		return TransformPatch{}, false
+	}
+	return TransformPatch{
 		X:            next.X,
 		Y:            next.Y,
 		Z:            next.Z,
@@ -733,7 +741,7 @@ func objectTransformPatch(previous, next *ObjectIR) (Command, bool) {
 		ScaleY:       resolveIRScale(next.ScaleY),
 		ScaleZ:       resolveIRScale(next.ScaleZ),
 		ParentMatrix: parentMatrix,
-	}), true
+	}, true
 }
 
 // ObjectStatePatch extends the transform patch with explicit interaction and
@@ -757,20 +765,19 @@ func objectStatePatch(previous, next *ObjectIR) (Command, bool) {
 	if next.Pickable == nil && !next.Interactive && (previous.Pickable != nil || previous.Interactive) {
 		return Command{}, false
 	}
-	probe := *previous
-	probe.Interactive, probe.Label, probe.InteractiveOrder = next.Interactive, next.Label, next.InteractiveOrder
-	probe.Pickable, probe.Visible, probe.Selected = next.Pickable, next.Visible, next.Selected
-	command, ok := objectTransformPatch(&probe, next)
+	if !objectPatchFieldsEqual(previous, next, objectProofOmitTransform|objectProofOmitState) {
+		return Command{}, false
+	}
+	transform, ok := objectTransformPatchData(next)
 	if !ok {
 		return Command{}, false
 	}
 	visible := next.Visible == nil || *next.Visible
-	command.Data = ObjectStatePatch{
-		TransformPatch: command.Data.(TransformPatch),
+	return Command{Kind: CommandSetTransform, ObjectID: next.ID, Data: ObjectStatePatch{
+		TransformPatch: transform,
 		Interactive:    next.Interactive, Label: next.Label, InteractiveOrder: next.InteractiveOrder,
 		Pickable: next.Pickable, Visible: visible, Selected: next.Selected,
-	}
-	return command, true
+	}}, true
 }
 
 func transformPatchParentMatrix(values []float64) (*[16]float64, bool) {
@@ -818,42 +825,52 @@ func MarshalCommands(commands []Command) ([]byte, error) {
 //
 // patch is optional. When it returns a command, that command replaces the remove
 // plus create pair for one record. Pass nil to keep the pair.
+//
+// One table holds next identities and their last matching previous records.
+// Nil entries denote creations. Sort and deduplicate missing identities before
+// visiting next records in input order, including repeated IDs.
 func diffSceneRecords[T any](commands *[]Command, previous, next []T, id func(*T) string, create func(*T) Command, patch func(previous, next *T) (Command, bool)) {
-	prevByID := make(map[string]*T, len(previous))
-	nextIDs := make(map[string]struct{}, len(next))
-	for index := range previous {
-		if recordID := id(&previous[index]); recordID != "" {
-			prevByID[recordID] = &previous[index]
+	// Seed next identities, then retain the last matching previous record.
+	// A nil value denotes a new identity. No table is needed for creation only.
+	var matchingPrevious map[string]*T
+	if len(previous) != 0 {
+		matchingPrevious = make(map[string]*T, len(next))
+		for index := range next {
+			if recordID := id(&next[index]); recordID != "" {
+				matchingPrevious[recordID] = nil
+			}
 		}
 	}
-	for index := range next {
-		if recordID := id(&next[index]); recordID != "" {
-			nextIDs[recordID] = struct{}{}
-		}
-	}
-
 	var removed []string
-	for recordID := range prevByID {
-		if _, ok := nextIDs[recordID]; !ok {
+	for index := range previous {
+		recordID := id(&previous[index])
+		if recordID == "" {
+			continue
+		}
+		if _, exists := matchingPrevious[recordID]; exists {
+			matchingPrevious[recordID] = &previous[index]
+		} else {
 			removed = append(removed, recordID)
 		}
 	}
 	sort.Strings(removed)
-	for _, recordID := range removed {
-		*commands = append(*commands, RemoveObjectCommand(recordID))
+	for index, recordID := range removed {
+		// A repeated missing identity still emits one removal, as in the ID map.
+		if index == 0 || recordID != removed[index-1] {
+			*commands = append(*commands, RemoveObjectCommand(recordID))
+		}
 	}
-
 	for index := range next {
 		record := &next[index]
 		recordID := id(record)
 		if recordID == "" {
 			continue
 		}
-		previousRecord, existed := prevByID[recordID]
-		if existed && sceneRecordPointerJSONEqual(previousRecord, record) {
-			continue
-		}
-		if existed {
+		previousRecord := matchingPrevious[recordID]
+		if previousRecord != nil {
+			if sceneRecordPointerJSONEqual(previousRecord, record) {
+				continue
+			}
 			if patch != nil {
 				if command, ok := patch(previousRecord, record); ok {
 					*commands = append(*commands, command)
@@ -874,8 +891,9 @@ func sceneRecordJSONEqual[T any](a, b T) bool {
 // sceneRecordPointerJSONEqual answers the same question as sceneRecordJSONEqual
 // without copying either value.
 //
-// It rejects unequal plain object transforms, tries provenJSONEqual, and then
-// rejects known scalar/vertex differences before resorting to marshaling.
+// It rejects unequal plain object transforms, uses a schema-checked typed
+// ObjectIR proof when available (the reflective proof otherwise), and rejects
+// known scalar/vertex differences before resorting to marshaling.
 //
 // provenJSONEqual is one-way on purpose: true means the two values
 // must encode to identical JSON, and false means "not proven", never "different".
@@ -899,7 +917,13 @@ func sceneRecordPointerJSONEqual[T any](a, b *T) bool {
 			return false
 		}
 	}
-	if provenJSONEqual(reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()) {
+	proven := false
+	if object, ok := any(a).(*ObjectIR); ok && objectProofEnabled() {
+		proven = provenObjectFieldsEqual(object, any(b).(*ObjectIR), 0)
+	} else {
+		proven = provenJSONEqual(reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem())
+	}
+	if proven {
 		return true
 	}
 	if object, ok := any(a).(*ObjectIR); ok && objectRecordJSONDifferent(object, any(b).(*ObjectIR)) {
@@ -965,8 +989,27 @@ func provenJSONEqual(a, b reflect.Value) bool {
 	case reflect.String:
 		return a.String() == b.String()
 	case reflect.Struct:
+		// Omitted alpha cutoffs have no standalone wire form. Only a carrying
+		// omitzero field may prove them equal without invoking the encoder.
+		if a.Type() == reflect.TypeFor[AlphaCutoff]() {
+			left, right := alphaCutoffProofValue(a), alphaCutoffProofValue(b)
+			return !left.IsZero() && !right.IsZero() && left.state == right.state && provenFloatEqual(left.value, right.value) && provenAlphaCutoffFieldEqual(left, right)
+		}
+		// Model and aggregate records embed ObjectIR. Reuse its typed proof
+		// when reflection can expose the actual record without copying it.
+		if a.Type() == reflect.TypeFor[ObjectIR]() && a.CanAddr() && b.CanAddr() && a.CanInterface() && b.CanInterface() && objectProofEnabled() {
+			return provenObjectFieldsEqual(a.Addr().Interface().(*ObjectIR), b.Addr().Interface().(*ObjectIR), 0)
+		}
 		for index := range a.NumField() {
-			if !provenJSONEqual(a.Field(index), b.Field(index)) {
+			left, right := a.Field(index), b.Field(index)
+			if left.Kind() == reflect.Struct && left.Type() == reflect.TypeFor[AlphaCutoff]() && alphaCutoffFieldOmitsZero(a.Type(), index) {
+				x, y := alphaCutoffProofValue(left), alphaCutoffProofValue(right)
+				if !provenAlphaCutoffFieldEqual(x, y) {
+					return false
+				}
+				continue
+			}
+			if !provenJSONEqual(left, right) {
 				return false
 			}
 		}
@@ -1033,6 +1076,72 @@ func provenJSONEqual(a, b reflect.Value) bool {
 	}
 }
 
+// Omission is a field property, not permission to encode the zero value as a
+// standalone uniform. Keep that context when proving tri-state cutoff fields.
+var alphaCutoffOmissionPlans sync.Map // reflect.Type -> []bool; lazy per carrying type
+
+func sceneRecordHasJSONMarshaler(typ reflect.Type) bool {
+	marshaler := reflect.TypeFor[json.Marshaler]()
+	return typ.Implements(marshaler) || reflect.PointerTo(typ).Implements(marshaler)
+}
+
+func alphaCutoffFieldOmitsZero(typ reflect.Type, index int) bool {
+	if cached, ok := alphaCutoffOmissionPlans.Load(typ); ok {
+		return cached.([]bool)[index]
+	}
+	fields := make([]bool, typ.NumField())
+	if sceneRecordHasJSONMarshaler(typ) {
+		cached, _ := alphaCutoffOmissionPlans.LoadOrStore(typ, fields)
+		return cached.([]bool)[index]
+	}
+	for i := range fields {
+		field := typ.Field(i)
+		if field.Type != reflect.TypeFor[AlphaCutoff]() {
+			continue
+		}
+		_, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+		for options != "" {
+			var option string
+			option, options, _ = strings.Cut(options, ",")
+			if option == "omitzero" {
+				fields[i] = true
+				break
+			}
+		}
+	}
+	cached, _ := alphaCutoffOmissionPlans.LoadOrStore(typ, fields)
+	return cached.([]bool)[index]
+}
+
+func alphaCutoffProofValue(value reflect.Value) AlphaCutoff {
+	// Private nested fields can be read by kind without Interface. This preserves
+	// the structural walk's proof for identical records without unsafe access.
+	if !value.CanInterface() {
+		return AlphaCutoff{state: alphaCutoffState(value.FieldByName("state").Uint()), value: value.FieldByName("value").Float()}
+	}
+	if value.CanAddr() {
+		return *value.Addr().Interface().(*AlphaCutoff)
+	}
+	return value.Interface().(AlphaCutoff)
+}
+
+// A carrying omitzero field drops the omitted state, even if internal unused
+// numeric bits differ. Disabled values encode null; authored numbers must be
+// finite/non-negative and retain the sign of zero in their encoding.
+func provenAlphaCutoffFieldEqual(a, b AlphaCutoff) bool {
+	if a.state != b.state {
+		return false
+	}
+	switch a.state {
+	case alphaCutoffOmitted, alphaCutoffDisabled:
+		return true
+	case alphaCutoffNumeric:
+		return validAlphaCutoff(a.value) && validAlphaCutoff(b.value) && provenFloatEqual(a.value, b.value)
+	default:
+		return false
+	}
+}
+
 // provenNumericSliceEqual compares the dense numeric slices a lowered scene
 // carries in bulk: point positions, instance transforms, and packed quantized
 // bytes. One typed loop replaces one reflect call per element, which matters
@@ -1084,4 +1193,14 @@ func provenFloatEqual(left, right float64) bool {
 		return false
 	}
 	return math.Float64bits(left) == math.Float64bits(right)
+}
+
+// SetGroupsCommand replaces retained transform boundaries, including clearing
+// them. Descendant geometry and its local transforms remain unchanged.
+func SetGroupsCommand(groups []GroupIR) Command {
+	copyGroups := append([]GroupIR(nil), groups...)
+	for i := range copyGroups {
+		copyGroups[i].ParentMatrix = append([]float64(nil), groups[i].ParentMatrix...)
+	}
+	return Command{Kind: CommandSetGroups, Data: map[string]any{"groups": copyGroups}}
 }
