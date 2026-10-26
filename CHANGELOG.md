@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Build the TinyGo runtime with 256 KB goroutine stacks (`-stack-size=256KB`).
+  TinyGo's 64 KiB default cannot grow, and resolving deeply nested island
+  trees during a JS event overran it, corrupting the WASM heap ("memory access
+  out of bounds" in `runtime.alloc`, or `unreachable` from the stack canary).
+
 - Reuse template, CSS, metadata, and runtime-manifest lookups in production
   mode (`GOSX_ENV=production` or `prod`). Restart after replacing build files;
   `GOSX_DEV=1` keeps file-change checks active.
