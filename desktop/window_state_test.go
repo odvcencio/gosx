@@ -36,7 +36,12 @@ func TestWindowStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	// Windows exposes the read-only attribute here, rather than Unix mode bits.
+	if runtime.GOOS == "windows" {
+		if info.Mode().Perm()&0200 == 0 {
+			t.Fatal("saved window state is read-only")
+		}
+	} else if info.Mode().Perm() != 0600 {
 		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
 	}
 }
