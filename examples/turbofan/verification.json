@@ -1,0 +1,265 @@
+{
+  "browser": "156.0.8078.4",
+  "environment": "Linux headless Chromium / software rendering",
+  "sourceSHA256": {
+    "main.go": "43fff7bb0af339fa7767af6340fedf12a4995924dec26a0fe131d7846d6096bd",
+    "app/program.go": "f6ab1cfdff6569cf9561a2c09715964822ac6252da6aabc5da93221c8ca4016a",
+    "app/page.server.go": "0d254eb0aff2d73393b5c3b9bffd695a5e621efc2bf0fd9aadf58f50737e5ff3",
+    "app/page.gsx": "c48578e7f40d39d2d70f03486e179b81ab3ee0d2a4622ed39db4a86490bf3b4f",
+    "public/turbofan.css": "ab0a5d6ec9a6e37e4390c014a66ca18cb499fedf648d39dd29c963e8d25e26d3",
+    "../../scene/geom/lathe.go": "1da64e8012ec06246a60f581a303eeb5c01ef95e64b31e9e7e315c973e276bd6"
+  },
+  "checks": [
+    {
+      "name": "desktop fit",
+      "observed": {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "regions": [
+          {
+            "name": "viewer-heading",
+            "x": 56,
+            "width": 1328,
+            "height": 62
+          },
+          {
+            "name": "scene-area",
+            "x": 56,
+            "width": 1328,
+            "height": 460
+          },
+          {
+            "name": "viewer-controls",
+            "x": 56,
+            "width": 1328,
+            "height": 54
+          },
+          {
+            "name": "viewer-footnote",
+            "x": 56,
+            "width": 1328,
+            "height": 40
+          }
+        ]
+      }
+    },
+    {
+      "name": "visible rotor animation",
+      "observed": {
+        "backend": "webgl",
+        "clock": 0.167,
+        "reducedMotion": "false",
+        "camera": {
+          "kind": "perspective",
+          "x": -5.899999999999998,
+          "y": 3.6000000000000005,
+          "z": 11.3,
+          "rotationX": -0.27618596691965197,
+          "rotationY": -0.4742105964038593,
+          "rotationZ": 0,
+          "fov": 32,
+          "left": 0,
+          "right": 0,
+          "top": 0,
+          "bottom": 0,
+          "zoom": 1,
+          "near": 0.1,
+          "far": 100
+        },
+        "objects": 78,
+        "groups": [
+          {
+            "id": "low-spool",
+            "spinX": 0.48
+          },
+          {
+            "id": "high-spool",
+            "spinX": 0.82
+          }
+        ],
+        "fanVertices": 1296,
+        "triangles": 47944,
+        "renderTruth": {
+          "backend": "webgl",
+          "gpu": true,
+          "fallbackReason": "",
+          "dropped": [],
+          "implementation": "webkit-webgpu",
+          "browserEngine": "webkit",
+          "adapter": "Google Inc. (Google) ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+          "adapterInfo": {
+            "vendor": "Google Inc. (Google)",
+            "architecture": "",
+            "device": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+            "description": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+          },
+          "deviceLost": false,
+          "initError": "",
+          "lastError": "",
+          "shaderDiagnostics": {
+            "messages": 0,
+            "errors": 0
+          },
+          "events": [
+            {
+              "at": 655,
+              "kind": "backend",
+              "detail": "webgl"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "paused static study",
+      "observed": "identical canvas pixels across 700 ms; no retained spinning groups"
+    },
+    {
+      "name": "casing, camera presets, orbit and zoom",
+      "observed": "all links retain motion choice; real pointer drag and wheel change camera"
+    },
+    {
+      "name": "invalid query values",
+      "observed": "default cutaway/perspective/animation restored and unknown parameters dropped"
+    },
+    {
+      "name": "mobile fit",
+      "observed": {
+        "width": 390,
+        "scrollWidth": 390,
+        "regions": [
+          {
+            "name": "viewer-heading",
+            "x": 18,
+            "width": 354,
+            "height": 56
+          },
+          {
+            "name": "scene-area",
+            "x": 18,
+            "width": 354,
+            "height": 374
+          },
+          {
+            "name": "viewer-controls",
+            "x": 18,
+            "width": 354,
+            "height": 91
+          },
+          {
+            "name": "viewer-footnote",
+            "x": 18,
+            "width": 354,
+            "height": 35
+          }
+        ]
+      }
+    },
+    {
+      "name": "mobile reduced motion",
+      "observed": "390 \u00d7 844 touch viewport; identical canvas pixels across 700 ms"
+    },
+    {
+      "name": "WebGPU preference",
+      "observed": {
+        "backend": "webgl",
+        "clock": 4.016,
+        "reducedMotion": "false",
+        "camera": {
+          "kind": "perspective",
+          "x": -5.899999999999998,
+          "y": 3.6000000000000005,
+          "z": 11.3,
+          "rotationX": -0.27618596691965197,
+          "rotationY": -0.4742105964038593,
+          "rotationZ": 0,
+          "fov": 32,
+          "left": 0,
+          "right": 0,
+          "top": 0,
+          "bottom": 0,
+          "zoom": 1,
+          "near": 0.1,
+          "far": 100
+        },
+        "objects": 78,
+        "groups": [
+          {
+            "id": "low-spool",
+            "spinX": 0.48
+          },
+          {
+            "id": "high-spool",
+            "spinX": 0.82
+          }
+        ],
+        "fanVertices": 1296,
+        "triangles": 47944,
+        "renderTruth": {
+          "backend": "webgl",
+          "gpu": true,
+          "fallbackReason": "webgpu-device-lost",
+          "dropped": [],
+          "implementation": "webkit-webgpu",
+          "browserEngine": "webkit",
+          "adapter": "",
+          "adapterInfo": {
+            "vendor": "",
+            "architecture": "",
+            "device": "",
+            "description": ""
+          },
+          "deviceLost": false,
+          "initError": "",
+          "lastError": "",
+          "shaderDiagnostics": {
+            "messages": 0,
+            "errors": 0
+          },
+          "events": [
+            {
+              "at": 675,
+              "kind": "webgpu-device-ready",
+              "detail": "webkit-webgpu"
+            },
+            {
+              "at": 676,
+              "kind": "backend",
+              "detail": "webgpu"
+            },
+            {
+              "at": 824,
+              "kind": "device-lost",
+              "detail": "destroyed Device was destroyed."
+            },
+            {
+              "at": 2692,
+              "kind": "backend",
+              "detail": "webgl fallback=webgpu-device-lost"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "buildManifestSHA256": "2d4f681c94b2f8f8b6ddd2ea3be417217f390aec42ea59a3fde6b0e5991b374a",
+  "result": "pass",
+  "limits": [
+    "WebGPU lost its software device on this host and recovered through WebGL2; native WebGPU visual parity and hardware GPU frame rates are unverified.",
+    "TinyGo production build completed without optional wasm-opt because Binaryen is unavailable on PATH."
+  ],
+  "performance": {
+    "profile": "docs-scene3d-ci",
+    "budget": "perf/budgets/default.json",
+    "result": "pass",
+    "browserCache": "cleared with Network.clearBrowserCache before profiling",
+    "backend": "WebGL2 / ANGLE SwiftShader",
+    "javascriptKiB": 1257.72,
+    "networkKiB": 319.71,
+    "lcpMs": 284,
+    "totalBlockingTimeMs": 0,
+    "command": "CHROME_WS_URL=<software Chromium CDP endpoint> GOWORK=off go run ./cmd/gosx perf --json --coverage --frames 45 --budget perf/budgets/default.json --budget-profile docs-scene3d-ci http://127.0.0.1:8096/?backend=webgl",
+    "note": "networkKiB is the profiler resource-waterfall metric; it does not include the main HTML document. Hardware performance is not inferred from software rendering."
+  }
+}
