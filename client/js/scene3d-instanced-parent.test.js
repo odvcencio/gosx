@@ -202,7 +202,6 @@ test("streamed count/color snapshots preserve parent-space picking and re-declar
     } else assert.equal(api.sceneRaycastPickInstancedMeshes({origin:{x:10,y:1,z:10},dir:{x:0,y:0,z:-1}},bundle.instancedMeshes,0),null);
   }
   api.applySceneCommands(state,[{kind:8,data:{instancedMeshes:[]}}]);
-  assert.equal(state._instanceStreamRevisions,null);
   assert.equal(state.instancedMeshes.length,0);
   api.applySceneCommands(state,[{kind:8,data:{instancedMeshes:[{id:'tinted',count:0,kind:'sphere',transforms:[]}]}}]);
   const first = fixtures.find(f=>f.name==='tinted-1');

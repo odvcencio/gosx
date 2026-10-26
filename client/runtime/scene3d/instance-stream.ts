@@ -161,15 +161,6 @@
   function applyInstanceStreamFrame(sceneState, bytes, scheduleRender, mount) {
     var frame = decodeInstanceStreamFrame(bytes);
     if (!frame) return reportFailure(mount, "malformed or unrecognized instance-stream frame", "");
-    var revisions = sceneState._instanceStreamRevisions;
-    if (!(revisions instanceof Map)) {
-      revisions = new Map();
-      sceneState._instanceStreamRevisions = revisions;
-    }
-    var lastRevision = revisions.get(frame.batchId) || 0;
-    if (!Number.isFinite(frame.revision) || frame.revision <= 0 || frame.revision <= lastRevision) {
-      return { applied: false, reason: "stale-revision" };
-    }
     var collection = targetCollection(sceneState, frame.kind);
     if (!collection) return reportFailure(mount, "unsupported instance-stream kind " + frame.kind, frame.batchId);
     var entry = null;
@@ -177,6 +168,12 @@
       if (collection[i] && collection[i].id === frame.batchId) { entry = collection[i]; break; }
     }
     if (!entry) return reportFailure(mount, "unknown instance-stream batch id", frame.batchId);
+    // Entry identity owns a declaration lifetime; reusing an ID after a full
+    // declaration never inherits an old stream revision or retains old entries.
+    var revisions = sceneState._instanceStreamRevisions;
+    if (!(revisions instanceof WeakMap)) sceneState._instanceStreamRevisions = revisions = new WeakMap();
+    var lastRevision = revisions.get(entry) || 0;
+    if (!Number.isFinite(frame.revision) || frame.revision <= 0 || frame.revision <= lastRevision) return { applied: false, reason: "stale-revision" };
     if (frame.kind === 0 && frame.count !== entry.count) {
       return reportFailure(mount, "instance-stream count " + frame.count + " does not match mounted batch count " + entry.count, frame.batchId);
     }
@@ -188,7 +185,7 @@
     }
     entry._instanceStreamBuffer.set(frame.data.subarray(0, floatsNeeded));
     entry._cachedTransforms = entry.transforms;
-    revisions.set(frame.batchId, frame.revision);
+    revisions.set(entry, frame.revision);
     // The buffer above keeps its identity across frames, so stamp the entry:
     // indirect-instancing.ts re-uploads a batch's instance records when this changes.
     entry._instanceStreamRevision = frame.revision;
@@ -224,7 +221,7 @@
     entry._instanceStreamBuffer = storage.transformView;
     entry.count = frame.count;
     entry._instanceStreamRevision = frame.revision;
-    revisions.set(frame.batchId, frame.revision);
+    revisions.set(entry, frame.revision);
     scheduleRender("instance-stream");
     return { applied: true, revision: frame.revision };
   }
