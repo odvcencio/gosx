@@ -23,13 +23,23 @@ FakeWorker.all = [];
 // page's requests and lets the test answer them and emit host events.
 function fakeDesktop(opts = {}) {
   const listeners = new Map();
+  const sessions = new Map();
+  let nextSession = 0;
   const api = {
     calls: [],
-    attachAnswer: opts.attachAnswer || (() => ({ v: 1 })),
+    sessions,
+    attachAnswer: opts.attachAnswer || (() => ({ v: 2 })),
     call(method, payload) {
       api.calls.push({ method, payload });
       if (method === "gosx.engine.attach") {
-        try { return Promise.resolve(api.attachAnswer(payload)); } catch (error) { return Promise.reject(error); }
+        try {
+          return Promise.resolve(api.attachAnswer(payload)).then(answer => {
+            if (!answer || answer.v !== 2 || opts.omitSession) return answer;
+            const session = String(++nextSession);
+            sessions.set(payload.id, session);
+            return {...answer, session};
+          });
+        } catch (error) { return Promise.reject(error); }
       }
       if (api.postError && method === "gosx.engine.post" && api.postError(payload.msg)) return Promise.reject(Object.assign(new Error("post refused"), { code: "bridge.rate_limited" }));
       return Promise.resolve(undefined);
@@ -41,7 +51,7 @@ function fakeDesktop(opts = {}) {
     },
     listenerCount: method => (listeners.get(method) || new Set()).size,
     // Host to page: one event carrying a worker-protocol message.
-    hostSays(id, msg) { for (const fn of Array.from(listeners.get("gosx.engine.msg") || [])) fn({ id, msg }); },
+    hostSays(id, msg, session = sessions.get(id)) { for (const fn of Array.from(listeners.get("gosx.engine.msg") || [])) fn({ id, session, msg }); },
     posts: () => api.calls.filter(c => c.method === "gosx.engine.post").map(c => c.payload.msg),
     postsOf: t => api.posts().filter(m => m.t === t),
   };
@@ -420,4 +430,61 @@ test("native: a call written while the engine mounts is handled from the current
   assert.equal(primed.sid, 7);
   assert.equal(primed.initial, true);
   assert.deepEqual(JSON.parse(primed.json), { ID: 2, Name: "add" });
+});
+
+test("native: cancelled pending attach disposes only its late host session", async () => {
+  let finishAttach;
+  const desktop = fakeDesktop({attachAnswer: () => new Promise(resolve => { finishAttach = resolve; })});
+  const page = bootPage({desktop, noWorker:true});
+  const pending = {};
+  const resolved = page.host.resolve(ENTRY, pending, async () => assert.fail("cancelled boot must not start a fallback"));
+  const rejected = assert.rejects(resolved, error => error.code === "worker-terminated");
+  await tick();
+  pending.workerRecord.terminate();
+  finishAttach({v:2});
+  await rejected;
+  await tick(); await tick();
+  const disposals = desktop.calls.filter(c => c.method === "gosx.engine.post" && c.payload.msg.t === "dispose");
+  assert.equal(disposals.length, 1, "a cancelled attach must not leave its host session alive");
+  assert.equal(disposals[0].payload.session, desktop.sessions.get(ENTRY.id));
+  assert.equal(desktop.listenerCount("gosx.engine.msg"), 0);
+  assert.equal(FakeWorker.all.length, 0);
+});
+
+test("worker: cancelled pending boot rejects promptly without starting a fallback", async () => {
+  const page = bootPage({});
+  const pending = {};
+  const resolved = page.host.resolve(ENTRY, pending, async () => assert.fail("cancelled boot must not start a fallback"));
+  const rejected = assert.rejects(resolved, error => error.code === "worker-terminated");
+  await tick();
+  pending.workerRecord.terminate();
+  await rejected;
+  assert.equal(FakeWorker.all.length, 1);
+  assert.equal(FakeWorker.all[0].terminated, true);
+});
+
+test("native: stale-session events cannot affect the attached engine", async () => {
+  const tr = nativeTransport();
+  const {ctx} = await mountOn(tr);
+  const session = tr.desktop.sessions.get(ENTRY.id);
+  assert.ok(session);
+  tr.desktop.hostSays(ENTRY.id, {t:"fatal",code:"engine-crashed",message:"old instance"}, "stale-" + session);
+  tr.desktop.hostSays(ENTRY.id, {t:"signals",changedOnly:true,text:'{"$x":99}',seq:1}, "stale-" + session);
+  assert.deepEqual(ctx.calls, []);
+  assert.equal(lastStatus(tr.page).State, "running");
+  tr.desktop.hostSays(ENTRY.id, {t:"signals",changedOnly:true,text:'{"$x":42}',seq:1});
+  assert.equal(ctx.calls.length, 1);
+  assert.ok(tr.desktop.calls.filter(c => c.method === "gosx.engine.post").every(c => c.payload.session === session));
+  tr.page.host.disposePage(new Set());
+});
+
+test("native: unscoped hosts fall back instead of accepting unsafe lifecycle traffic", async () => {
+  for (const opts of [{attachAnswer:() => ({v:1})}, {omitSession:true}]) {
+    const desktop = fakeDesktop(opts);
+    const page = bootPage({desktop,noWorker:true});
+    const out = await page.host.resolve(ENTRY, {}, async () => ({factory:() => ({}),moduleRecord:null}));
+    assert.equal(typeof out.factory, "function");
+    assert.equal(desktop.listenerCount("gosx.engine.msg"), 0);
+    assert.equal(page.issues.filter(i => i.code === "worker-protocol").length, 1);
+  }
 });
