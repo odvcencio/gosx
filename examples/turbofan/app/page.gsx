@@ -20,9 +20,30 @@ func Page() Node {
 			aria-label="Interactive turbofan model"
 			data-gosx-scene3d-status-scope
 			data-gosx-scene3d-control-scope
+			data-render-model={data.mode}
 		>
 			<div class="viewer-heading"><div><span class="model-id">TF—01</span><span class="model-description">TWO-SPOOL / HIGH-BYPASS</span></div><span class="motion-state"><span class="status-dot"></span><span class="playing-label">SLOW MOTION</span><span class="paused-label">ROTATION PAUSED</span><span class="reduced-label">REDUCED MOTION</span></span></div>
 			<div class="scene-area"><Scene3D {...data.scene} stats={false} /></div>
+			<div class="render-telemetry" aria-label="Rendered operating point">
+				<p><span>N1 / FAN</span><output data-render-output="n1">{data.visual.LowLabel}</output></p>
+				<p><span>N2 / CORE</span><output data-render-output="n2">{data.visual.HighLabel}</output></p>
+				<p><span>BURNER GAS</span><output data-render-output="temperature">{data.visual.TemperatureLabel}</output></p>
+				<p class="render-caption" data-render-output="caption">{data.visual.Caption}</p>
+			</div>
+			<div class="render-operating-controls" data-render-controls>
+				<label for="render-fuel">Fuel command <output data-render-fuel-label>2.0550 kg/s</output></label>
+				<input
+					id="render-fuel"
+					data-render-fuel
+					type="range"
+					min="0.2054"
+					max="2.055"
+					step="0.0001"
+					value="2.055"
+					disabled
+				 />
+				<nav aria-label="Rendered ground point"><button type="button" data-render-lto="idle" disabled>Idle</button><button type="button" data-render-lto="approach" disabled>Approach</button><button type="button" data-render-lto="climbout" disabled>Climbout</button><button type="button" data-render-lto="takeoff" disabled>Takeoff</button></nav>
+			</div>
 			<div class="viewer-controls">
 				<TurbofanControls View={data.view} Period={data.period} />
 				<button type="button" class="motion-control" data-gosx-scene3d-animation-toggle aria-pressed="false"><span class="playing-label">Pause rotation</span><span class="paused-label">Resume rotation</span><span class="reduced-label">Reduced motion</span><span aria-hidden="true"> ↗</span></button>
@@ -40,7 +61,7 @@ func Page() Node {
 				<article class="stage"><span class="stage-number">04 <span>↗</span></span><h3>Turbine &amp; exhaust</h3><p>The turbines drive the compressor and fan. Remaining energy accelerates the exhaust through the core nozzle.</p><span class="stage-detail">EXTRACT &amp; ACCELERATE</span></article>
 			</div>
 		</section>
-		<footer class="colophon"><p>ANATOMY, WITH NUMBERS.</p><p>Cycle design &amp; JT9D ground calibration · Geometry &amp; rotor speeds illustrative</p><a href="https://github.com/odvcencio/gosx/tree/main/examples/turbofan">Built with GoSX <span aria-hidden="true">↗</span></a></footer>
+		<footer class="colophon"><p>ANATOMY, WITH NUMBERS.</p><p>JT9D steady ground solver · Schematic geometry · Solved spools at 1/800 speed</p><a href="https://github.com/odvcencio/gosx/tree/main/examples/turbofan">Built with GoSX <span aria-hidden="true">↗</span></a></footer>
 	</main>
 }
 
@@ -165,7 +186,7 @@ func CycleWorkbench() Node {
 			<div class="cycle-status-row"><p class="balance-status" data-cycle-output="status" role="status">{data.cycle.Values["status"]}</p><button type="button" class="cycle-export" data-cycle-export disabled>Export point · CSV <span aria-hidden="true">↗</span></button></div>
 			<section class="mapped-details" data-map-only aria-label="JT9D mapped model">
 				<dl class="mapped-metrics"><div><dt>Model N1</dt><dd><output data-cycle-output="n1">—</output> rpm</dd></div><div><dt>Model N2</dt><dd><output data-cycle-output="n2">—</output> rpm</dd></div><div><dt>Solved OPR</dt><dd><output data-cycle-output="mapped-opr">—</output> : 1</dd></div><div><dt>Solved bypass</dt><dd><output data-cycle-output="mapped-bypass">—</output> : 1</dd></div></dl>
-				<div class="map-plot-grid"><Each of={data.mapPlots} as="plot"><figure class="component-map"><figcaption>{plot.Label}<span>NASA MAP SHAPES</span></figcaption><svg viewBox="0 0 360 210" role="img" aria-label={plot.Label}><path class="map-axis" d="M35 20V175H325" /><g class="map-speed-lines"><Each of={plot.Paths} as="path"><path d={path} /></Each></g><circle
+				<div class="map-plot-grid"><Each of={data.mapPlots} as="plot"><figure class="component-map"><figcaption>{plot.Label}<span>SCALED NASA MAPS</span></figcaption><svg viewBox="0 0 360 210" role="img" aria-label={plot.Label}><path class="map-axis" d="M35 20V175H325" /><g class="map-speed-lines"><Each of={plot.Paths} as="path"><path d={path} /></Each></g><g class="map-extension-lines"><Each of={plot.ExtensionPaths} as="path"><path d={path} /></Each></g><circle
 									class="map-operating-point"
 									data-map-dot={plot.Name}
 									cx="0"
@@ -173,10 +194,10 @@ func CycleWorkbench() Node {
 									r="4"
 									visibility="hidden"
 								 /><g class="map-labels"><text x="3" y="28">{plot.MaxPressure}</text><text x="19" y="178">1</text><text x="35" y="193">0</text><text x="295" y="193">{plot.MaxFlow}</text><text x="105" y="209">Corrected flow · kg/s</text></g></svg></figure></Each></div>
-				<p class="map-note">Horizontal: corrected flow. Vertical: pressure ratio. Grey curves are corrected-speed lines; orange marks the matched point. Map extrapolation is disabled. Booster exit: <output data-cycle-output="booster-temperature">—</output> K · Cooled HPT inlet: <output data-cycle-output="hpt-inlet-temperature">—</output> K · Largest matching residual: <output data-cycle-output="match-residual">—</output>.</p>
+				<p class="map-note">Horizontal: corrected flow. Vertical: pressure ratio. Solid curves: scaled public map tables. Dashed curves: bounded modeled extensions. Orange marks the solved point. <strong data-cycle-output="map-region">—</strong>. Booster exit: <output data-cycle-output="booster-temperature">—</output> K · Cooled HPT inlet: <output data-cycle-output="hpt-inlet-temperature">—</output> K · Largest matching residual: <output data-cycle-output="match-residual">—</output>.</p>
 				<details class="cycle-details calibration-details" open><summary>Calibration &amp; unfitted checks · sea-level static</summary><div class="station-scroll" tabindex="0" role="region" aria-label="Calibration comparison"><table class="station-table"><thead><tr><th scope="col">ICAO point</th><th scope="col">Fuel · kg/s</th><th scope="col">Target · kN</th><th scope="col">Model · kN</th><th scope="col">Error</th></tr></thead><tbody><Each of={data.mapChecks} as="check"><tr><th scope="row">{check.Mode}<span class="check-role">{check.Role}</span></th><td>{check.Fuel}</td><td>{check.Target}</td><td>{check.Prediction}</td><td>{check.Error}</td></tr></Each></tbody></table></div>
-					<p class="map-note">Takeoff anchors the rated cycle; approach fits one shared low-speed fan/booster efficiency correction. Climbout is excluded from fitting. Idle has no converged point inside these maps. This is a sparse ground calibration, with no validation of flight conditions, station measurements, spool RPM or surge margins.</p>
-					<p class="map-note">Sources: <a							href="https://github.com/nasa/T-MATS/tree/ad6e4d5d0d76c229db4eb72ca40ef58d5ddc4014/Trunk/TMATS_Examples/Example_JT9D/Simsetup">NASA T-MATS JT9D maps</a> and <a							href="https://www.easa.europa.eu/en/domains/environment/icao-aircraft-engine-emissions-databank">ICAO/EASA databank 03/2026</a>, UID 1PW026. The maps are scaled NASA model shapes, not proprietary manufacturer maps. Temperature-dependent NASA7 frozen-air properties, air-equivalent combustion products, 9% cooling bleed and prescribed component priors remain approximations. The 3D rotor speeds remain illustrative.</p></details>
+					<p class="map-note">Takeoff anchors the rated cycle; approach fits one shared low-speed fan/booster efficiency correction. Idle fits an additional correction below map speed 0.5 and uses modeled extensions. Climbout is excluded from fitting. These three fitted ground points do not validate flight conditions, station measurements, spool RPM or surge margins.</p>
+					<p class="map-note">Sources: <a							href="https://github.com/nasa/T-MATS/tree/ad6e4d5d0d76c229db4eb72ca40ef58d5ddc4014/Trunk/TMATS_Examples/Example_JT9D/Simsetup">NASA T-MATS JT9D maps</a> and <a							href="https://www.easa.europa.eu/en/domains/environment/icao-aircraft-engine-emissions-databank">ICAO/EASA databank 03/2026</a>, UID 1PW026. The maps are scaled NASA model shapes, not proprietary manufacturer maps. Temperature-dependent NASA7 frozen-air properties, air-equivalent combustion products, 9% cooling bleed and prescribed component priors remain approximations. Rotor motion follows the estimated N1/N2 ratio at 1/800 speed. Color shows schematic gas temperature; metal temperature and CFD are not calculated.</p></details>
 			</section>
 			<details class="cycle-details" open>
 				<summary>Station conditions &amp; nozzle sizing</summary>

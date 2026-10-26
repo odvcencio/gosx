@@ -41,7 +41,7 @@ func TestMappedProfileServerFallback(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code)
 	}
-	for _, s := range []string{`data-cycle-mode="mapped"`, `data-cycle-output="net-thrust">213.5`, `ICAO 1PW026`, `NASA MAP SHAPES`, `unfitted check`} {
+	for _, s := range []string{`data-cycle-mode="mapped"`, `data-cycle-output="net-thrust">213.5`, `ICAO 1PW026`, `SCALED NASA MAPS`, `unfitted check`, `data-render-output="n1">3944 rpm`, `data-map-dot="LPT"`} {
 		if !strings.Contains(w.Body.String(), s) {
 			t.Errorf("mapped server page missing %q", s)
 		}

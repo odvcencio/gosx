@@ -5,15 +5,17 @@ import (
 	"math"
 	"strings"
 
+	"m31labs.dev/gosx/examples/turbofan/cycle"
 	"m31labs.dev/gosx/scene"
 )
 
-// Options describes presentation choices, not operating conditions. The model
-// is an illustrative two-spool engine; geometry and speeds are not engineering data.
+// Options combines presentation choices with a solved operating point's visual
+// state. Geometry is illustrative; mapped spool ratios come from the solver.
 type Options struct {
 	Exterior bool
 	View     string
 	Backend  string
+	Visual   *cycle.RenderState
 }
 
 var (
@@ -28,6 +30,11 @@ var (
 // Only the two complete rotor assemblies spin; no per-blade spin is copied.
 func Turbofan(options Options) scene.Props {
 	lowSpeed, highSpeed := .48, .82
+	liner := ceramic
+	if options.Visual != nil {
+		lowSpeed, highSpeed = options.Visual.LowSpin, options.Visual.HighSpin
+		liner.Color = options.Visual.Color
+	}
 	low := []scene.Node{
 		lathe("spinner", []scene.LathePoint{{Radius: .02, Y: -5.1}, {Radius: .22, Y: -4.95}, {Radius: .44, Y: -4.55}, {Radius: .56, Y: -4.12}, {Radius: .54, Y: -3.85}}, titanium, false),
 		shaft("low-shaft", -3.9, 4.15, .16, steel),
@@ -64,7 +71,7 @@ func Turbofan(options Options) scene.Props {
 		lathe("nacelle", []scene.LathePoint{{Radius: 2.28, Y: -4.45}, {Radius: 2.4, Y: -4.3}, {Radius: 2.46, Y: -3.8}, {Radius: 2.4, Y: -2.6}, {Radius: 2.16, Y: -.7}, {Radius: 1.86, Y: 1.15}, {Radius: 1.76, Y: 1.3}, {Radius: 1.72, Y: 1.13}, {Radius: 2.02, Y: -.7}, {Radius: 2.26, Y: -2.6}, {Radius: 2.32, Y: -3.8}, {Radius: 2.28, Y: -4.15}, {Radius: 2.18, Y: -4.3}, {Radius: 2.28, Y: -4.45}}, shell, cut),
 		lathe("intake-lip", []scene.LathePoint{{Radius: 2.18, Y: -4.3}, {Radius: 2.2, Y: -4.5}, {Radius: 2.3, Y: -4.58}, {Radius: 2.4, Y: -4.47}, {Radius: 2.4, Y: -4.3}}, titanium, cut),
 		lathe("core-case", []scene.LathePoint{{Radius: 1.17, Y: -2.95}, {Radius: 1.14, Y: -2.4}, {Radius: .95, Y: .4}, {Radius: 1.02, Y: 1.4}, {Radius: 1.04, Y: 2.2}, {Radius: 1.14, Y: 3.65}, {Radius: 1.07, Y: 3.65}, {Radius: .97, Y: 2.2}, {Radius: .95, Y: 1.4}, {Radius: .88, Y: .4}, {Radius: 1.07, Y: -2.4}, {Radius: 1.1, Y: -2.95}, {Radius: 1.17, Y: -2.95}}, steel, cut),
-		lathe("combustor-liner", []scene.LathePoint{{Radius: .73, Y: .58}, {Radius: .85, Y: .8}, {Radius: .86, Y: 1.35}, {Radius: .75, Y: 1.65}, {Radius: .69, Y: 1.65}, {Radius: .78, Y: 1.35}, {Radius: .77, Y: .8}, {Radius: .66, Y: .58}, {Radius: .73, Y: .58}}, ceramic, cut),
+		lathe("combustor-liner", []scene.LathePoint{{Radius: .73, Y: .58}, {Radius: .85, Y: .8}, {Radius: .86, Y: 1.35}, {Radius: .75, Y: 1.65}, {Radius: .69, Y: 1.65}, {Radius: .78, Y: 1.35}, {Radius: .77, Y: .8}, {Radius: .66, Y: .58}, {Radius: .73, Y: .58}}, liner, cut),
 		lathe("exhaust-duct", []scene.LathePoint{{Radius: 1.14, Y: 3.65}, {Radius: .95, Y: 4.7}, {Radius: .88, Y: 4.7}, {Radius: 1.07, Y: 3.65}, {Radius: 1.14, Y: 3.65}}, titanium, cut),
 		lathe("exhaust-cone", []scene.LathePoint{{Radius: .01, Y: 5.2}, {Radius: .21, Y: 4.8}, {Radius: .39, Y: 4.25}, {Radius: .44, Y: 3.65}, {Radius: 0, Y: 3.65}}, steel, false),
 	)

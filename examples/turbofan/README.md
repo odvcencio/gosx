@@ -26,13 +26,20 @@ Browser Back/Forward restores camera and casing choices.
 The framework also honors the browser's reduced-motion preference.
 
 Select **JT9D maps**, or open `/?model=jt9d`, for the mapped ground profile.
-Five NASA component maps solve spool speeds, airflow split and component
-operating points against fixed nozzles. Rated thrust/fuel and published
-pressure/bypass ratios anchor the cycle; approach fits one explicit low-speed
-loss correction. The unfitted climbout check has −0.55% thrust error at the
-reported fuel flow. Idle has no converged point within these maps and remains
-unsupported. The UI shows map curves, matched points, the calibration table,
-and a model-specific CSV export.
+Five NASA component maps solve spool speeds, airflow split and operating points
+against fixed nozzles. Rated thrust/fuel and published pressure/bypass ratios
+anchor the cycle; approach and idle fit two declared efficiency corrections.
+Idle uses bounded engineering extensions of the public map boundaries. All five
+maps are plotted, with dashed modeled regions and explicit operating-point flags.
+Climbout remains excluded from fitting, with −0.55% reference-thrust error.
+
+The fuel slider and presets beside the 3D viewer drive the same solver as the
+workbench controls. Both spools follow solved N1/N2 at a common 1/800 speed
+reduction. The combustor tint follows gas temperature schematically. Fuel changes
+preserve rotor pose, pause, camera, canvas and geometry buffers. The numerical
+model remains steady; it does not calculate shaft acceleration, metal temperature
+or three-dimensional flow. CSV exports include low-speed assumptions and map
+region flags.
 
 NASA map shapes are scaled to the ICAO JT9D-7R4D / -7R4D1 entry, UID 1PW026.
 They are not proprietary manufacturer maps. Temperature-dependent frozen-air
@@ -57,7 +64,7 @@ The **Cycle design** mode is a generic design-point calculator for cycle trends 
 accounting. Constant gas properties and prescribed corrected airflow and
 efficiencies are explicit assumptions. Nozzle areas resize at each point.
 That generic mode has no real-engine calibration or map matching. Neither mode
-provides surge prediction, CFD or transient shaft dynamics. The rotor animation is illustrative.
+provides surge prediction, CFD or transient shaft dynamics. Generic design-mode rotor speeds remain illustrative; mapped-mode speeds follow the solver.
 See [equations, analytic benchmark and limits](MODEL.md).
 
 ![The calculated cycle workbench](cycle-preview.png)
@@ -67,8 +74,9 @@ blades, seven compressor rotor rows with six stationary stator rows, an
 annular combustor with injectors, one high-pressure and three low-pressure
 turbine rows, concentric shafts, an exhaust duct, and a tail cone. The fan
 and low-pressure turbine share `low-spool`; the compressor and high-pressure
-turbine share `high-spool`. Their angular velocities are 0.48 and 0.82 rad/s
-for observation, not operating RPM.
+turbine share `high-spool`. Generic-mode angular velocities are 0.48 and 0.82 rad/s. Mapped-mode
+angular velocities are solved RPM × 2π / 60 / 800. Displayed shaft RPM remains
+unvalidated against independent engine-speed measurements.
 
 Lathe profiles form the casings. Sampled, twisted airfoil surfaces are combined
 into one indexed `BufferGeometry` per blade row: 498 blades in 18 row meshes,

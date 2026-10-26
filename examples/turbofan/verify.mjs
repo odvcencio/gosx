@@ -24,7 +24,7 @@ const browser = await chromium.launch({
 });
 const report = { browser: browser.version(), environment: 'Linux headless Chromium / software rendering', sourceSHA256: {}, checks: [], errors: [] };
 report.frameworkRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', '../../scene/geom/lathe.go']) {
+for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/low_speed.go', 'cycle/visual.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', 'browser/render.go', '../../scene/geom/lathe.go']) {
   report.sourceSHA256[file] = createHash('sha256').update(await readFile(path.join(root, file))).digest('hex');
 }
 const manifestBytes = await readFile(path.join(root, 'dist/build.json'));
@@ -55,6 +55,15 @@ async function ready(target = page) {
   await target.evaluate(() => document.fonts.ready);
   await target.waitForFunction(() => document.querySelector('.segmented button')?.disabled === false);
   await target.waitForFunction(() => document.querySelector('#cycle-workbench')?.getAttribute('data-cycle-ready') === 'true');
+  await rendered(target);
+}
+async function rendered(target = page) {
+  await target.waitForFunction(() => {
+    const viewer = document.querySelector('.viewer');
+    const point = JSON.parse(document.querySelector('#cycle-workbench')?.getAttribute('data-cycle-state') || 'null');
+    const visual = JSON.parse(viewer?.getAttribute('data-render-applied') || 'null');
+    return !viewer?.hasAttribute('data-render-error') && visual && point && visual.mode === point.mode && visual.valid === point.valid && (!point.valid || Math.abs(visual.temperatureK - point.result.burner.temperatureK) < 1e-6);
+  });
 }
 async function visit(query = '', target = page) {
   await target.goto(`${base}/${query}`, { waitUntil: 'networkidle' });
@@ -71,7 +80,8 @@ async function sceneSummary(target = page) {
       objects: state.objects.size,
       visibleObjects: [...state.objects.values()].filter(o => o.visible !== false).length,
       animation: element.__gosxScene3DHandle.getAnimationClock(),
-      groups: state.groups.map(g => ({ id: g.id, spinX: g.spinX })),
+      groups: state.groups.map(g => ({ id: g.id, spinX: g.spinX, rotationX: g.rotationX, matrix: [...window.__gosx_scene3d_hierarchy_api.matrices(state, element.__gosxScene3DHandle.getAnimationClock().timeSeconds).get(g.id)] })),
+      combustorColor: state.objects.get('combustor-liner').color,
       fanVertices: state.objects.get('fan')?.vertices?.count,
       triangles: [...state.objects.values()].reduce((sum, o) => sum + (o.vertices?.indices?.length || o.vertices?.positions?.length / 3 || 0) / 3, 0),
       renderTruth: JSON.parse(element.getAttribute('data-gosx-scene3d-render-backend-truth') || '{}'),
@@ -228,21 +238,74 @@ try {
   assert(Math.abs(approachMap.result.netThrustN - 64050) < .02);
   assert.deepEqual([approachMap.result.coreNozzle.areaM2, approachMap.result.bypassNozzle.areaM2], areas, 'mapped controls must keep fixed geometry');
   await click('Idle 7%');
-  assert.equal((await cycleState()).valid, false);
-  assert.equal(await page.locator('[data-cycle-output=net-thrust]').textContent(), '—');
-  assert.equal(await page.locator('[data-map-dot=Fan]').getAttribute('visibility'), 'hidden');
-  assert(await page.getByRole('button', { name: /Export point/ }).isDisabled());
+  const idleMap = await cycleState();
+  assert(idleMap.valid);
+  assert(Math.abs(idleMap.result.netThrustN - 14945) < .01);
+  assert(Math.abs(idleMap.result.netThrustN - nativeCalibration.checks.find(c => c.mode === 'idle').predictedThrustN) < .01);
+  assert.deepEqual(idleMap.matched.mapPoints.filter(p => p.extended).map(p => p.name), ['Fan', 'LPT']);
+  assert.equal(await page.locator('[data-map-dot=Fan]').getAttribute('visibility'), 'visible');
+  assert.equal(await page.locator('.component-map').count(), 5);
+  assert.match(await page.locator('[data-cycle-output=map-region]').textContent(), /Modeled extension: Fan, LPT/);
+  assert(await page.locator('.map-extension-lines path').count() > 0);
+  assert(!(await page.getByRole('button', { name: /Export point/ }).isDisabled()));
+  const [idleDownload] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Export point/ }).click()]);
+  const idleCSV = await readFile(await idleDownload.path(), 'utf8');
+  assert(idleCSV.includes('takeoff, approach and idle'));
+  assert(idleCSV.includes('modeled extension'));
+  assert(Math.abs(Number(idleCSV.split('\n').find(s => s.startsWith('net thrust,')).split(',')[1]) - 14945) < .01);
+  await idleDownload.saveAs(path.join(output, 'mapped-idle.csv'));
   await click('Takeoff 100%');
-  assert((await cycleState()).valid, 'rated preset must recover from unsupported idle');
+  assert((await cycleState()).valid);
   assert(await canvas.evaluate(element => element === document.querySelector('canvas')));
   assert(await document.evaluate(element => element === window.document));
   assert.deepEqual(requests, [], 'model switching, matching and mapped CSV export must stay local');
   report.checks.push({ name: 'five-map JT9D ground profile', observed: {
     rated: ratedMap.matched, climbout: climboutMap.matched, approach: approachMap.matched,
-    idle: 'no converged point; numbers cleared, dots hidden, export disabled; rated preset recovers',
+    idle: idleMap.matched,
     fixedAreasM2: areas, mappedSliderHandlerMs: mappedHandlerMs, nativeWASMAgreement: 'within 0.01 N at the unfitted climbout point',
     csv: 'mapped-climbout.csv; model identity, fixed areas and current numerical results present', requests: 0,
   } });
+
+  await rendered();
+  await click('Pause rotation');
+  const renderedTakeoff = await sceneSummary();
+  const takeoffCanvas = await page.locator('canvas').screenshot();
+  await page.locator('.viewer').screenshot({ path: path.join(root, 'takeoff-render-preview.png') });
+  const fanBuffers = await page.locator(mount).evaluateHandle(e => e.__gosxScene3DState.objects.get('fan').vertices);
+  await page.locator('[data-render-lto=idle]').click();
+  await rendered();
+  const renderedIdle = await sceneSummary();
+  assert.equal(renderedIdle.animation.paused, true, 'fuel must preserve pause');
+  assert.equal(renderedIdle.animation.timeSeconds, renderedTakeoff.animation.timeSeconds);
+  assert.equal(await page.locator('[name=fuelFlowKGS]').inputValue(), await page.locator('[data-render-fuel]').inputValue());
+  assert.equal(renderedIdle.combustorColor, '#608bac');
+  assert.notEqual(renderedIdle.combustorColor, renderedTakeoff.combustorColor);
+  const delta = (a, b) => Math.atan2(Math.sin(b-a), Math.cos(b-a));
+  const phase = g => Math.atan2(g.matrix[6], g.matrix[5]);
+  for (let i = 0; i < 2; i++) {
+    const rpm = i === 0 ? idleMap.matched.n1RPM : idleMap.matched.n2RPM;
+    assert(Math.abs(renderedIdle.groups[i].spinX - rpm * 2*Math.PI/60/800) < 1e-10, 'renderer spin must come from solved RPM');
+    assert(Math.abs(delta(phase(renderedTakeoff.groups[i]), phase(renderedIdle.groups[i]))) < .002, 'speed update must retain the current rendered pose');
+  }
+  assert(await fanBuffers.evaluate(vertices => vertices === document.querySelector('[data-gosx-scene3d]').__gosxScene3DState.objects.get('fan').vertices), 'solver updates must retain geometry buffers');
+  const idleCanvas = await page.locator('canvas').screenshot();
+  assert(!takeoffCanvas.equals(idleCanvas), 'gas-temperature change must alter visible pixels while rotors are paused');
+  await page.locator('.viewer').screenshot({ path: path.join(root, 'idle-render-preview.png') });
+  await click('Resume rotation');
+  const spinningIdleA = await sceneSummary();
+  await page.waitForTimeout(600);
+  const spinningIdleB = await sceneSummary();
+  const dt = spinningIdleB.animation.timeSeconds - spinningIdleA.animation.timeSeconds;
+  assert(dt > .1);
+  for (let i = 0; i < 2; i++) assert(Math.abs(delta(phase(spinningIdleA.groups[i]), phase(spinningIdleB.groups[i])) - spinningIdleA.groups[i].spinX*dt) < .002, 'rendered rotor matrix must advance at the solved speed');
+  await page.locator('[data-render-fuel]').evaluate(e => { for (const value of ['1.2','0.6593','0.2054','0.4']) { e.value=value; e.dispatchEvent(new Event('input', {bubbles:true})); } });
+  await rendered();
+  assert(Math.abs((await cycleState()).matched.command.fuelFlowKGS-.4) < 1e-10, 'viewer slider must drive the solver');
+  const intermediateMap = await cycleState();
+  assert(intermediateMap.valid && intermediateMap.matched.matchResidual < 1e-9);
+  assert.deepEqual(requests, [], 'render coupling must not request data or replace the document');
+  report.checks.push({ name:'solver-driven rendered spools and gas-temperature tint', observed:{takeoff:renderedTakeoff,idle:renderedIdle,idleMotion:{before:spinningIdleA,after:spinningIdleB,elapsedSeconds:dt},intermediate:intermediateMap.matched,displaySpeedReduction:800,pausedPoseToleranceRadians:.002,requests:0,geometryBuffersRetained:true,captures:['takeoff-render-preview.png','idle-render-preview.png']} });
+
   await click('Cycle design');
   assert.deepEqual((await cycleState()).result, baselineCycle.result);
   await click('Pause rotation');
@@ -302,7 +365,12 @@ try {
   await visit('?model=jt9d&backend=webgl');
   assert.equal((await cycleState()).mode, 'mapped');
   assert(Math.abs((await cycleState()).result.netThrustN - 213500) < .01);
-  report.checks.push({ name: 'mapped profile direct URL', observed: 'model=jt9d selects the mapped profile through server props' });
+  assert(await page.locator(mount).evaluate(e => e.__gosxScene3DState.groups.every(g => !g._spinProgramInvalidated)), 'initial SSR point must not dispatch a redundant renderer mutation');
+  await page.locator('[data-render-lto=idle]').click();
+  await rendered();
+  assert(Math.abs((await cycleState()).result.netThrustN-14945) < .01, 'first viewer input must work after the SSR no-op');
+  assert(Math.abs((await sceneSummary()).groups[0].spinX-idleMap.matched.n1RPM*2*Math.PI/60/800) < 1e-10);
+  report.checks.push({ name: 'mapped profile direct URL', observed: 'model=jt9d uses the SSR-authored spools without a redundant initial command transaction; the first idle input loads the command bridge and updates the live renderer' });
 
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, reducedMotion: 'reduce' });
   const phone = await mobile.newPage();
@@ -331,6 +399,19 @@ try {
   assert(Math.abs(mappedPhone.result.netThrustN - nativeClimbout.predictedThrustN) < .02);
   await fit(phone, 'mapped mobile');
   await phone.screenshot({ path: path.join(root, 'mapped-mobile-preview.png'), fullPage: true });
+  await rendered(phone);
+  const reducedClock = (await sceneSummary(phone)).animation.timeSeconds;
+  await phone.locator('[data-render-lto=idle]').tap();
+  await rendered(phone);
+  const mobileIdle = await phone.locator('#cycle-workbench').evaluate(e => JSON.parse(e.getAttribute('data-cycle-state')));
+  assert(mobileIdle.valid && Math.abs(mobileIdle.result.netThrustN-14945) < .01);
+  assert.equal((await sceneSummary(phone)).animation.timeSeconds, reducedClock, 'solver updates must respect reduced motion');
+  const reducedIdle1 = await phone.locator('canvas').screenshot();
+  await phone.waitForTimeout(700);
+  const reducedIdle2 = await phone.locator('canvas').screenshot();
+  assert(reducedIdle1.equals(reducedIdle2));
+  await phone.locator('.viewer').screenshot({path:path.join(root,'idle-mobile-preview.png')});
+  report.checks.push({name:'mobile idle render with reduced motion',observed:{point:mobileIdle.matched,clock:reducedClock,pixelsStableAcross700ms:true,viewerFuelSynchronized:true}});
   report.checks.push({ name: 'mobile reduced motion', observed: '390 × 844 touch viewport; identical canvas pixels across 700 ms' });
   report.checks.push({ name: 'mobile cycle controls', observed: 'touch cruise preset updates the local solver; station flow column reachable by scrolling' });
   await mobile.close();

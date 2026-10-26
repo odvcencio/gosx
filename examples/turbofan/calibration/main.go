@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	fit := flag.Bool("fit", false, "recompute the approach correction")
+	fit := flag.Bool("fit", false, "recompute the approach and idle corrections")
 	flag.Parse()
 	m, err := cycle.CalibrateJT9D()
 	if err != nil {
@@ -19,6 +19,10 @@ func main() {
 	}
 	if *fit {
 		_, err = cycle.FitApproachLoss(m)
+		if err != nil {
+			panic(err)
+		}
+		_, err = cycle.FitIdleRecovery(m)
 		if err != nil {
 			panic(err)
 		}
@@ -44,7 +48,7 @@ func main() {
 		}
 		checks = append(checks, q)
 	}
-	report := map[string]any{"profile": ref.Engine, "uid": ref.UID, "model": m, "checks": checks, "protocol": "Rated thrust/fuel and published OPR/BPR anchor the map scaling; approach fits one low-speed efficiency correction. Climbout/idle are excluded from fitting. Public points were inspected during development; these are unfitted checks, not blind validation."}
+	report := map[string]any{"profile": ref.Engine, "uid": ref.UID, "model": m, "checks": checks, "protocol": "Rated thrust/fuel and published OPR/BPR anchor map scaling; approach fits a shared low-speed efficiency correction, and idle fits an additional correction below Nc=0.5. Bounded modeled extensions cover the missing low-speed map region. Climbout is excluded from parameter fitting. Public points were inspected during development; this is an unfitted check, not blind validation."}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(report); err != nil {

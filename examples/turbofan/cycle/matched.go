@@ -29,6 +29,7 @@ type MappedResult struct {
 // The public observations do not identify the proprietary component maps.
 type MappedModel struct {
 	LowSpeedLoss         float64             `json:"lowSpeedLoss"`
+	IdleRecovery         float64             `json:"idleRecovery"`
 	Scales               map[string]MapScale `json:"scales"`
 	CoreAreaM2           float64             `json:"coreAreaM2"`
 	BypassAreaM2         float64             `json:"bypassAreaM2"`
@@ -94,6 +95,7 @@ func JT9D() (*MappedModel, error) {
 		mappedDefault, mappedErr = CalibrateJT9D()
 		if mappedErr == nil {
 			mappedDefault.LowSpeedLoss = profile.LowSpeedLoss
+			mappedDefault.IdleRecovery = profile.IdleRecovery
 		}
 	})
 	return mappedDefault, mappedErr
@@ -430,8 +432,8 @@ func (m *MappedModel) evaluate(x [7]float64, in MappedInputs) ([7]float64, Mappe
 }
 
 func (m *MappedModel) Solve(in MappedInputs) (MappedResult, error) {
-	if !finite(in.AltitudeM) || in.AltitudeM < 0 || in.AltitudeM > 11000 || !finite(in.Mach) || in.Mach < 0 || in.Mach > .85 || !finite(in.FuelFlowKGS) || in.FuelFlowKGS < .15 || in.FuelFlowKGS > reference.Points[0].FuelFlowKGS {
-		return MappedResult{}, fmt.Errorf("command outside altitude 0–11 km, Mach 0–0.85 or fuel 0.15–2.055 kg/s")
+	if !finite(in.AltitudeM) || in.AltitudeM < 0 || in.AltitudeM > 11000 || !finite(in.Mach) || in.Mach < 0 || in.Mach > .85 || !finite(in.FuelFlowKGS) || in.FuelFlowKGS < .2054 || in.FuelFlowKGS > reference.Points[0].FuelFlowKGS {
+		return MappedResult{}, fmt.Errorf("command outside altitude 0–11 km, Mach 0–0.85 or fuel 0.2054–2.055 kg/s")
 	}
 	x := [7]float64{1, 1, 2, 2, 2, 5, 6.4}
 	ratedFuel := reference.Points[0].FuelFlowKGS
@@ -449,7 +451,7 @@ func (m *MappedModel) Solve(in MappedInputs) (MappedResult, error) {
 		x, result, iterations, err = m.match(x, command)
 		totalIterations += iterations
 		if err != nil {
-			return MappedResult{}, fmt.Errorf("no converged point within published map coverage at fuel %.4f kg/s: %w", in.FuelFlowKGS, err)
+			return MappedResult{}, fmt.Errorf("no converged point within the bounded map model at fuel %.4f kg/s: %w", in.FuelFlowKGS, err)
 		}
 	}
 	result.Iterations = totalIterations

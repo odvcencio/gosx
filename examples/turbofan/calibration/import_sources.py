@@ -75,7 +75,7 @@ def observations(path):
                       engine="JT9D-7R4D / -7R4D1", uid="1PW026", ratedThrustN=v["I"]*1000,
                       pressureRatio=v["H"], bypassRatio=v["G"],
                       points=[dict(mode=mode, thrustFraction=fraction, fuelFlowKGS=v[c],
-                                   role="calibration" if mode in ("takeoff", "approach") else "unfitted check")
+                                   role="calibration" if mode in ("takeoff", "approach", "idle") else "unfitted check")
                               for mode, fraction, c in [("takeoff", 1, "BZ"), ("climbout", .85, "CA"), ("approach", .3, "CB"), ("idle", .07, "CC")]],
                       attribution="ICAO Aircraft Engine Emissions Databank, hosted by EASA; manufacturer supplied data. Reproduced with source acknowledgement.")
     (DATA / "jt9d_icao.json").write_text(json.dumps(result, indent=2) + "\n")

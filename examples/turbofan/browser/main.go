@@ -1,7 +1,7 @@
 //go:build js && wasm
 
-// The cycle engine owns only its Surface mount. All computation is Go; it
-// shares the exact cycle package used by native tests and server rendering.
+// The cycle engine owns the workbench and its viewer controls. All computation
+// is Go; typed Scene3D commands connect the shared cycle solver to the render.
 package main
 
 import (
@@ -32,6 +32,15 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 	if err != nil {
 		return nil, err
 	}
+	initial := struct {
+		cycle.Inputs
+		Model  string            `json:"model"`
+		Visual cycle.RenderState `json:"visual"`
+	}{Inputs: cycle.DefaultInputs(), Model: "generic"}
+	if err := ctx.DecodeProps(&initial); err != nil {
+		return nil, err
+	}
+	renderer := newRenderLink(ctx, initial.Visual)
 	mode := "generic"
 	var matched cycle.MappedResult
 	var result cycle.Result
@@ -82,6 +91,7 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 					dot.Call("setAttribute", "cx", x)
 					dot.Call("setAttribute", "cy", y)
 					dot.Call("setAttribute", "visibility", "visible")
+					dot.Call("setAttribute", "data-map-extended", strconv.FormatBool(p.Extended))
 				}
 			}
 		}
@@ -116,15 +126,12 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 		if data, err := json.Marshal(state); err == nil {
 			root.Call("setAttribute", "data-cycle-state", string(data))
 		}
+		renderer.update(cycle.Visualize(mode, result, matched, solveErr), fuel)
 	}
-	initial := cycle.DefaultInputs()
-	if err := ctx.DecodeProps(&initial); err != nil {
-		return nil, err
-	}
-	if model := ctx.Props().Get("model"); model.Type() == js.TypeString && model.String() == "mapped" {
+	if initial.Model == "mapped" {
 		mode = "mapped"
 	}
-	setInputs(initial)
+	setInputs(initial.Inputs)
 	input := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if len(args) > 0 && args[0].Get("target").Call("matches", "input[type=range]").Bool() {
 			update()
@@ -143,11 +150,15 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 			query("[name=fuelFlowKGS]").Set("value", "2.055")
 			update()
 		}
-		lto := target.Call("closest", "[data-cycle-lto]")
+		lto := target.Call("closest", "[data-cycle-lto],[data-render-lto]")
 		if lto.Truthy() {
 			mode = "mapped"
+			name := lto.Call("getAttribute", "data-cycle-lto")
+			if name.IsNull() {
+				name = lto.Call("getAttribute", "data-render-lto")
+			}
 			for _, p := range cycle.Reference().Points {
-				if p.Mode == lto.Call("getAttribute", "data-cycle-lto").String() {
+				if p.Mode == name.String() {
 					query("[name=fuelFlowKGS]").Set("value", strconv.FormatFloat(p.FuelFlowKGS, 'g', -1, 64))
 				}
 			}
@@ -189,10 +200,23 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 	})
 	root.Call("addEventListener", "input", input)
 	root.Call("addEventListener", "click", click)
+	renderInput := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) > 0 && args[0].Get("target").Call("matches", "[data-render-fuel]").Bool() {
+			query("[name=fuelFlowKGS]").Set("value", args[0].Get("target").Get("value"))
+			update()
+		}
+		return nil
+	})
+	renderer.controls.Call("addEventListener", "input", renderInput)
+	renderer.controls.Call("addEventListener", "click", click)
 	update()
 	query("fieldset").Set("disabled", false)
 	root.Call("setAttribute", "data-cycle-ready", "true")
 	return wasm.HandleFunc(func() {
+		renderer.cancel()
+		renderer.controls.Call("removeEventListener", "input", renderInput)
+		renderer.controls.Call("removeEventListener", "click", click)
+		renderInput.Release()
 		root.Call("removeEventListener", "input", input)
 		input.Release()
 		root.Call("removeEventListener", "click", click)

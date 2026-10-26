@@ -25,6 +25,24 @@ GOWORK=off go run ./examples/turbofan/calibration --fit
 ```
 
 Takeoff plus published pressure/bypass ratios reconstruct the rated cycle;
-approach fits one common low-speed efficiency correction. Climbout and idle
-are excluded from parameter fitting. The public check values were inspected
+approach fits one common low-speed efficiency correction. Idle fits a second correction below map speed 0.5. Climbout
+is excluded from parameter fitting. The public check values were inspected
 during development: this is an unfitted comparison, not blind validation.
+
+## Modeled idle extension
+
+The retained NASA tables do not cover the matched idle point. NASA's
+[T-MATS workshop proceedings](https://ntrs.nasa.gov/citations/20180002976),
+NASA/CP-2018-219785, printed p.56 (PDF p.62), identify missing idle fan-map
+coverage. The public [NASA map-extension study](https://ntrs.nasa.gov/api/citations/20160010065/downloads/20160010065.pdf),
+section III.A, discusses extensions toward unity pressure ratio and zero flow.
+
+The equations in `../low_speed.go` are this example's bounded engineering
+assumptions anchored to those public tables. They are not additional NASA test
+measurements or an implementation of the papers' complete procedures. Fan/LPC
+low-speed similarity and LPT swallowing/efficiency assumptions are documented in
+[MODEL.md](../../MODEL.md). At calibrated idle, Fan and LPT use these extensions.
+The ICAO idle fuel observation and 7% reference-thrust setting explicitly enter
+the fit. Idle is calibration evidence; climbout is the sole unfitted LTO check.
+Manufacturer maps, actual idle RPM, bleed and variable-vane schedules remain
+unidentified by these public data.

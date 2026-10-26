@@ -19,6 +19,7 @@ var profileData []byte
 
 type Profile struct {
 	LowSpeedLoss float64 `json:"lowSpeedLoss"`
+	IdleRecovery float64 `json:"idleRecovery"`
 	Protocol     string  `json:"protocol"`
 }
 
@@ -151,12 +152,13 @@ type MapPoint struct {
 	CorrectedFlowKGS float64 `json:"correctedFlowKGS"`
 	PressureRatio    float64 `json:"pressureRatio"`
 	Efficiency       float64 `json:"efficiency"`
+	Extended         bool    `json:"extended"`
 }
 
 func (m *MappedModel) point(name string, n, t, c float64) (MapPoint, error) {
 	s := m.Scales[name]
 	nc := n / math.Sqrt(t/TRef) / s.Speed
-	w, e, p, err := rawMaps[name].lookup(nc, c)
+	w, e, p, extended, err := m.lookup(name, nc, c)
 	if err != nil {
 		return MapPoint{}, err
 	}
@@ -167,9 +169,14 @@ func (m *MappedModel) point(name string, n, t, c float64) (MapPoint, error) {
 	if name == "Fan" || name == "LPC" {
 		deficit := math.Max(0, 1-nc)
 		e *= 1 - m.LowSpeedLoss*deficit*deficit
+		// The approach-only correction does not identify efficiency below the
+		// fan map's lowest speed. One additional shared coefficient is fitted
+		// to idle; it joins the prior correction with zero slope at Nc=0.5.
+		idle := math.Max(0, 1-nc/.5)
+		e *= 1 + m.IdleRecovery*idle*idle
 	}
 	if e <= 0 || e > 1 || p < 1 {
 		return MapPoint{}, fmt.Errorf("%s map returns nonphysical efficiency or pressure ratio", name)
 	}
-	return MapPoint{name, nc, c, w * s.Flow, p, e}, nil
+	return MapPoint{Name: name, CorrectedSpeed: nc, Coordinate: c, CorrectedFlowKGS: w * s.Flow, PressureRatio: p, Efficiency: e, Extended: extended}, nil
 }

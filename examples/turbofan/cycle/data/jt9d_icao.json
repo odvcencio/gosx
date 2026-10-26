@@ -127,7 +127,7 @@
       "mode": "idle",
       "thrustFraction": 0.07,
       "fuelFlowKGS": 0.2054,
-      "role": "unfitted check"
+      "role": "calibration"
     }
   ],
   "attribution": "ICAO Aircraft Engine Emissions Databank, hosted by EASA; manufacturer supplied data. Reproduced with source acknowledgement."

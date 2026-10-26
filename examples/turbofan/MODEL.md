@@ -1,104 +1,56 @@
 # Turbofan thermodynamic models
 
-The workbench has two steady, one-dimensional models: a generic **cycle design** calculator and a **JT9D mapped ground profile** calibrated to public data. The browser, server and native checks execute the same Go package, `cycle`.
+The workbench has two steady component-cycle models: a generic **cycle design** calculator and a **JT9D mapped ground profile** calibrated to public data. The browser, server and native checks execute the same Go package, `cycle`.
 
-The 3D geometry and slowed rotor speeds remain anatomical illustrations. The mapped model estimates shaft RPM from its maps; those estimates are not used as animation speeds and have no independent RPM validation. Neither model predicts shaft transients. In generic cycle design, every change sizes a new engine point. In JT9D mode, geometry and map scalars stay fixed while fuel command changes.
+The mapped model is a numerical component solver: it iterates seven unknowns to close seven flow, shaft-power and fixed-nozzle constraints. It does not solve a three-dimensional fluid field. Its schematic geometry supplies no aerodynamic coefficients. The renderer receives solved N1/N2 speeds at a common **1/800 speed reduction**, preserving their ratio, and a gas-temperature color tint. That tint is not a prediction of metal temperature or flame appearance. Changing fuel preserves the current rotor pose, camera, canvas and pause state. Neither model integrates shaft inertia or predicts acceleration transients. Generic design-mode rotor speeds remain illustrative.
 
 ## JT9D mapped ground profile
 
-Open `/?model=jt9d` or select **JT9D maps**. This profile targets the grouped
-**JT9D-7R4D / -7R4D1** entry, ICAO UID **1PW026**, in the EASA-hosted 03/2026
-workbook. The rated thrust is 213.5 kN, published pressure ratio 23.4 and bypass
-ratio 5. The reported fuel flows are 2.055, 1.678, 0.6593 and 0.2054 kg/s at
-100%, 85%, 30% and 7% rated static thrust. Source cells, workbook hash,
-licenses and reproducible import steps are in [data/SOURCES.md](cycle/data/SOURCES.md).
+Open `/?model=jt9d` or select **JT9D maps**. The profile targets the grouped **JT9D-7R4D / -7R4D1** entry, ICAO UID **1PW026**, in the EASA-hosted 03/2026 workbook. Rated thrust is 213.5 kN, published pressure ratio 23.4 and bypass ratio 5. Reported fuel flows are 2.055, 1.678, 0.6593 and 0.2054 kg/s at 100%, 85%, 30% and 7% rated static thrust. Exact source cells, workbook hash, licenses and import instructions are in [data/SOURCES.md](cycle/data/SOURCES.md).
 
-Five bilinear component maps come from the public NASA T-MATS JT9D example:
-fan, booster/LPC, HPC, HPT and LPT. These are **NASA model map shapes scaled to
-a public engine target**, not the manufacturer's proprietary maps. Corrected
-flow uses `Wc = W sqrt(Tt/288.15)/(Pt/101325)` and corrected speed uses
-`Nc = N/sqrt(Tt/288.15)`. Speed and flow are scaled to the reconstructed rated
-point; pressure rise scales as `PR = 1 + sPR (PRmap − 1)`. Efficiency uses the
-published NASA efficiency scale. Both interpolation coordinates must remain
-inside the supplied tables; extrapolation is rejected.
+Five bilinear component maps come from NASA's public T-MATS JT9D example: fan, booster/LPC, HPC, HPT and LPT. These are **NASA model shapes**, not proprietary manufacturer maps for the databank variant. The retained tables are unchanged. Corrected speed uses rows; compressor R-line or turbine pressure coordinate uses columns. Table interpolation rejects extrapolation. Separately identified, bounded engineering extensions provide missing low-speed coverage; dashed plot curves and per-component `extended` flags distinguish them.
 
-The rated reconstruction uses published thrust/fuel, pressure and bypass
-ratios. Fan/booster pressure ratios and component efficiencies are NASA-model
-priors at map corrected speed 1 and R-line 2. HPT/LPT reference coordinates
-are speed 100 and pressure coordinates 5 / 6.4. The shaft-speed references
-are model priors, not measured engine RPM. For fixed fuel, a scalar airflow
-solve closes rated thrust. Two mathematical roots occur; the root whose core
-area is closest in log space to NASA's 862.88 in² core-nozzle prior is selected.
-This yields about **650.89 kg/s airflow**, **0.57240 m² core area** and
-**1.43581 m² bypass area**. The areas then remain fixed.
+Rated fuel/thrust and published OPR/BPR reconstruct one design point. The heat/work equations admit two airflow roots; the model selects the core nozzle area closest in log space to NASA's 862.88 in² geometry prior. It then fixes both nozzle areas and map scales. Rated flow is approximately 650.895 kg/s, with core/bypass areas of 0.572401 / 1.435810 m².
 
-At each fuel command, seven unknowns are solved together: both shaft speeds,
-fan/LPC/HPC R-lines, and both turbine pressure coordinates. Seven residuals
-close HPC/HPT/LPT flow, both nozzle capacities, and both shaft powers.
-Fan and booster flow follow their maps; the bypass split is an output.
-A damped least-squares Newton method with fuel continuation stops at maximum
-normalized matching residual 1e-9. A failed or out-of-map solution is cleared
-from the UI, never presented as a plausible operating point.
+At each fuel command, a damped Newton/Levenberg–Marquardt iteration solves **N1, N2, three compressor R-lines and two turbine pressure coordinates**. Seven normalized residuals enforce HPC/HPT/LPT flow matching, HP/LP shaft balance and the two fixed-area nozzle capacities. The maximum residual must be below **1e-9**. Fuel continuation initializes each solve; numerical outputs are never replaced by interpolation between calibration thrusts.
 
-Gas enthalpy and entropy use temperature-dependent NASA7 frozen-air
-properties, with small continuity offsets at 1000 K. The mixture is 78% N2,
-21% O2 and 1% Ar by mole, with R = 287.05 J/(kg K), over 200–3500 K.
-Combustion products remain **air-equivalent gas**, not chemical-equilibrium
-products. Compression and expansion use isentropic entropy changes and
-enthalpy-based efficiencies. Nozzles solve the sonic energy condition using
-the local heat capacity; fixed-area mass capacity, momentum and pressure
-thrust are all included.
+Gas properties use NASA7 frozen air: 78% N2, 21% O2 and 1% Ar by mole, R = 287.05 J/(kg K), 200–3500 K. Compression/expansion use entropy and enthalpy changes; convergent nozzles include variable heat capacity, choking, mass capacity, momentum and pressure thrust. Combustion products remain air-equivalent gas rather than chemical-equilibrium products. Compressor cooling bleed is 9%: 5.5% rejoins at HPT inlet, 3.5% after HPT, conserving enthalpy. Burner recovery is 0.945; combustion and shaft efficiencies are 0.99; fuel LHV is 43 MJ/kg. These remain declared priors, with no identified accessory or variable-geometry schedule.
 
-The compressor supplies 9% cooling bleed: 5.5% rejoins at the HPT inlet,
-3.5% after the HPT. Enthalpy is conserved through both mixing steps. Burner
-pressure recovery is 0.945, combustion and shaft efficiencies 0.99, LHV
-43 MJ/kg. These are declared model priors. No accessory extraction or
-variable-geometry schedule is identified from the public observations.
+### Low-speed coverage and calibration
 
-The first rated-only fit overpredicted approach thrust by 23%. Approach is
-therefore a **second calibration point**, fitting a single shared low-speed
-fan/booster efficiency correction:
+NASA's [T-MATS workshop report](https://ntrs.nasa.gov/citations/20180002976), printed p.56 / PDF p.62, explicitly identifies missing idle fan-map coverage. NASA's [map-extension study](https://ntrs.nasa.gov/api/citations/20160010065/downloads/20160010065.pdf), section III.A, describes extension toward unity pressure ratio and zero flow. Those sources motivate the approach; they do **not** supply the new map entries or the formulas chosen here.
 
-`eta = eta_map sEta [1 − k max(0, 1 − Nc_map)²]`, with `k = 1.0665884689`.
+The implemented engineering assumptions are:
 
-It leaves the rated point unchanged. This aggregate correction can absorb
-multiple model discrepancies; it is not a measurement of real fan loss,
-booster loss, deterioration or variable geometry. `data/profile.json` records
-the fit protocol. No climbout or idle fuel observation enters the fit.
+- **Fan/LPC lower-speed lines:** hold the lowest published line's efficiency prior, scale corrected flow by `q = Nc/Nc_min`, and pressure-ratio excess by `q²`. Existing R-line limits stay in force. The modeled speed floor is 0.2; Fan/LPC published floors are 0.5/0.3.
+- **LPT:** below its published speed floor of 60, retain boundary swallowing capacity. Below its pressure-coordinate floor of 3, scale flow by the Stodola factor `sqrt[(1 − PR⁻²)/(1 − PR_boundary⁻²)]`, using the scaled physical pressure ratios. Efficiency uses a bounded blade-speed/ideal-jet-speed parabola, `eta_boundary × clamp[u(2−u), 0.05, 1]`. Here `u = min(1,Nc/60)`, multiplied below the PR boundary by `sqrt[(1−PR_boundary⁻⁰·²⁵)/(1−PR⁻⁰·²⁵)]`. These are shape priors, not reconstructed blade geometry. The modeled domain is `20 ≤ Nc ≤ 120`, `1.05 ≤ pressure coordinate ≤ 8`.
+- HPC and HPT retain their original domains. No below-unity compressor operation, startup, shutdown or windmilling is supported. Fuel commands are restricted to 0.2054–2.055 kg/s.
+
+Approach fits the common fan/booster efficiency correction `1 − k max(0,1−Nc_map)²`, with **k = 1.0665884689267835**. Idle then fits one additional factor `1 + a max(0,1−Nc_map/0.5)²`, with **a = 1.8115930073145137**. The second correction term and its first derivative vanish at map speed 0.5, leaving approach, climbout and takeoff unchanged. These corrections absorb aggregate model discrepancy; they do not identify measured component degradation, variable vanes, bleed schedules or manufacturer efficiency curves.
+
+At calibrated idle, Fan and LPT use modeled extensions; LPC/HPC/HPT remain inside their published table domains. The data do not independently identify this choice of low-speed shapes or the inferred internal states. Idle is now explicitly a **third fitted point**.
 
 | ICAO point | Role | Fuel kg/s | Reference kN | Predicted kN | Thrust error |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Takeoff 100% | Calibration | 2.0550 | 213.500 | 213.500 | ≈0% |
 | Climbout 85% | Unfitted check | 1.6780 | 181.475 | 180.484 | −0.546% |
 | Approach 30% | Calibration | 0.6593 | 64.050 | 64.050 | ≈0% |
-| Idle 7% | Unfitted check | 0.2054 | 14.945 | Unavailable | No converged mapped point |
+| Idle 7% | Calibration; modeled low-speed maps | 0.2054 | 14.945 | 14.945 | ≈0% |
 
-Errors compare **predicted thrust at the reported fuel flow** with the
-prescribed ICAO thrust fraction times rated thrust. The source provides no
-uncertainty interval for these aggregate fuel values. Public check values
-were inspected during development: this is an unfitted check, not blind
-validation. The initial 23% error is retained here to make the calibration
-scope explicit. A sparse fit does not uniquely identify five component maps.
+Errors compare predicted thrust at the reported fuel flow with prescribed ICAO thrust fractions times rated static thrust. They are not four independent force measurements with supplied uncertainty intervals. Climbout is excluded from parameter fitting; its public value was inspected during development, so this is an **unfitted check, not blind validation**. A three-point calibration does not uniquely identify five maps or establish accuracy between the fitted points.
 
-The UI locks mapped mode to sea-level static conditions. There is no
-experimental validation of flight conditions, station measurements, spool RPM,
-surge margin, cooling schedules or transients. Idle remains unsupported;
-there is no synthetic replacement point. The API's altitude/Mach capability
-is an unvalidated model extrapolation and is not exposed as a calibrated
-flight simulation.
+The UI locks mapped mode to sea-level static conditions. Flight conditions, station measurements, actual shaft RPM, surge margin, cooling schedules and transients have no experimental validation. The API's altitude/Mach behavior remains unvalidated and is not exposed as calibrated flight operation.
 
-Reproduce the fit and all checks, without network access:
+### Reproduction and numerical checks
 
 ```sh
 GOWORK=off go run ./examples/turbofan/calibration --fit
 GOWORK=off go test ./examples/turbofan/cycle
 ```
 
-The stored profile is checked against recomputation. An operating-line test
-checks 21 points between approach and takeoff for monotonic thrust, map-domain
-membership, fixed nozzle areas, mass/energy conservation and shaft balances.
-The [calibration report](calibration/report.json) retains the numerical
-results. Browser checks compare native and WASM predictions and CSV exports.
+The stored profile is checked against recomputation. An **81-point idle-to-takeoff sweep** checks monotonic thrust, declared map domains, fixed nozzle areas and mass/energy/shaft closure. A geometry-perturbation check rematches an intermediate 0.4 kg/s fuel command after a 2% bypass-nozzle-area change: thrust changes from approximately 33.525 to 33.821 kN while the matching residual still closes. This distinguishes a component solve from a fuel-to-thrust lookup. It proves numerical response to the equations, not real-engine accuracy.
+
+The [calibration report](calibration/report.json) retains predicted states, map-region flags and residuals. Browser checks compare native/WASM outputs, idle CSV, control synchronization, actual rendered spool motion, temperature tint, retained pose/camera/canvas and reduced-motion behavior.
 
 ## Generic cycle design
 
