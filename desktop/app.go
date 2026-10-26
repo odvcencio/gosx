@@ -47,11 +47,13 @@ type Options struct {
 	// InitialPlacement restores a previous window's bounds and maximized state.
 	// Zero keeps the normal Width and Height startup behavior.
 	InitialPlacement WindowPlacement
-	AppID            string
-	Version          string
-	UpdateFeed       string
-	URL              string
-	HTML             string
+	// WindowState opts into Windows-only automatic placement persistence. Nil disables it.
+	WindowState *WindowStateOptions
+	AppID       string
+	Version     string
+	UpdateFeed  string
+	URL         string
+	HTML        string
 	// BrowserExecutableFolder selects a Fixed Version WebView2 runtime. The
 	// empty value selects the installed Evergreen runtime.
 	BrowserExecutableFolder string
@@ -158,11 +160,15 @@ type Options struct {
 	// OnBeforeClose runs on the window thread before the native window is
 	// destroyed, with its current placement. Keep the callback short.
 	OnBeforeClose func(WindowPlacement)
+
+	savedWindowPlacement *WindowPlacement
+	onPlacementChanged   func(WindowPlacement)
 }
 
 // App is a native desktop host for a GoSX application or HTML document.
 type App struct {
 	options         Options
+	windowState     *windowStatePersister
 	impl            platformApp
 	bridge          *bridge.Router
 	preloadMu       sync.Mutex
@@ -216,11 +222,15 @@ func New(options Options) (*App, error) {
 		return nil, err
 	}
 
+	statePersister, err := prepareWindowState(&normalized)
+	if err != nil {
+		return nil, err
+	}
 	// Keep the caller's raw-message callback so the bridge can chain to
 	// it after the typed router has had a chance to dispatch.
 	userCallback := normalized.OnWebMessage
 
-	app := &App{options: normalized}
+	app := &App{options: normalized, windowState: statePersister}
 	userFocusCallback := normalized.OnFocusChanged
 	normalized.OnFocusChanged = func(focused bool) {
 		if userFocusCallback != nil {
@@ -889,6 +899,19 @@ func normalizeOptions(options Options) (Options, error) {
 	options.Accessibility.Name = strings.TrimSpace(options.Accessibility.Name)
 	options.Accessibility.Description = strings.TrimSpace(options.Accessibility.Description)
 
+	if options.WindowState != nil {
+		state := *options.WindowState
+		if state.Debounce < 0 {
+			return Options{}, fmt.Errorf("%w: window-state debounce must not be negative", ErrInvalidOptions)
+		}
+		if state.Debounce == 0 {
+			state.Debounce = defaultWindowStateDebounce
+		}
+		if strings.ContainsRune(state.Path, '\x00') {
+			return Options{}, fmt.Errorf("%w: window-state path contains NUL", ErrInvalidOptions)
+		}
+		options.WindowState = &state
+	}
 	if options.URL != "" && options.HTML != "" {
 		return Options{}, fmt.Errorf("%w: url and html are mutually exclusive", ErrInvalidOptions)
 	}
