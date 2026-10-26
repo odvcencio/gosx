@@ -287,9 +287,9 @@ func (c *Collider) AABB() AABB {
 		half := math.Abs(c.Height) * 0.5
 		axis := c.WorldAxis()
 		return AABBFromCenterHalfExtents(c.WorldCenter(), Vec3{
-			X: half*math.Abs(axis.X) + radius*discExtent(axis.X),
-			Y: half*math.Abs(axis.Y) + radius*discExtent(axis.Y),
-			Z: half*math.Abs(axis.Z) + radius*discExtent(axis.Z),
+			X: float64(half*math.Abs(axis.X)) + float64(radius*discExtent(axis.X)),
+			Y: float64(half*math.Abs(axis.Y)) + float64(radius*discExtent(axis.Y)),
+			Z: float64(half*math.Abs(axis.Z)) + float64(radius*discExtent(axis.Z)),
 		})
 	case ShapeCone:
 		// The cone is the convex hull of its apex point and its base disc, so
@@ -301,9 +301,9 @@ func (c *Collider) AABB() AABB {
 		apex := center.Add(axis.Mul(half))
 		base := center.Sub(axis.Mul(half))
 		discHalf := Vec3{
-			X: radius * discExtent(axis.X),
-			Y: radius * discExtent(axis.Y),
-			Z: radius * discExtent(axis.Z),
+			X: float64(radius * discExtent(axis.X)),
+			Y: float64(radius * discExtent(axis.Y)),
+			Z: float64(radius * discExtent(axis.Z)),
 		}
 		return AABB{Min: apex, Max: apex}.Union(AABBFromCenterHalfExtents(base, discHalf))
 	case ShapeConvexHull, ShapeTriangleMesh:
@@ -386,7 +386,7 @@ func (c *Collider) BoundingRadius() float64 {
 		return c.halfExtents().Len()
 	case ShapeCylinder, ShapeCone:
 		half := math.Abs(c.Height) * 0.5
-		return math.Sqrt(half*half + c.Radius*c.Radius)
+		return math.Sqrt(float64(half*half) + float64(c.Radius*c.Radius))
 	case ShapeConvexHull, ShapeTriangleMesh:
 		// The local bounds are not centred on the collider origin, so measure
 		// to the farthest corner rather than to the box centre.
@@ -407,7 +407,7 @@ func (c *Collider) halfExtents() Vec3 {
 // discExtent returns sqrt(1 - component^2), the half-width of a unit disc
 // whose normal has the given component along a world axis.
 func discExtent(component float64) float64 {
-	rest := 1 - component*component
+	rest := 1 - float64(component*component)
 	if rest <= 0 {
 		return 0
 	}
@@ -420,9 +420,9 @@ func obbAABB(center Vec3, rotation Quat, half Vec3) AABB {
 	axisY := rotation.Rotate(Vec3{Y: 1}).Abs()
 	axisZ := rotation.Rotate(Vec3{Z: 1}).Abs()
 	extents := Vec3{
-		X: axisX.X*half.X + axisY.X*half.Y + axisZ.X*half.Z,
-		Y: axisX.Y*half.X + axisY.Y*half.Y + axisZ.Y*half.Z,
-		Z: axisX.Z*half.X + axisY.Z*half.Y + axisZ.Z*half.Z,
+		X: float64(axisX.X*half.X) + float64(axisY.X*half.Y) + float64(axisZ.X*half.Z),
+		Y: float64(axisX.Y*half.X) + float64(axisY.Y*half.Y) + float64(axisZ.Y*half.Z),
+		Z: float64(axisX.Z*half.X) + float64(axisY.Z*half.Y) + float64(axisZ.Z*half.Z),
 	}
 	return AABBFromCenterHalfExtents(center, extents)
 }

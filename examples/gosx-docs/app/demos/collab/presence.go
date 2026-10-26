@@ -97,6 +97,13 @@ func (r *roster) join(clientID string) Identity {
 	return id
 }
 
+func (r *roster) identity(clientID string) (Identity, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	id, ok := r.members[clientID]
+	return id, ok
+}
+
 // leave forgets a disconnected client's identity and cursor.
 func (r *roster) leave(clientID string) {
 	r.mu.Lock()

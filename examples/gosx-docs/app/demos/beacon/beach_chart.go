@@ -61,7 +61,7 @@ func blackglassBeachChart() string {
 	return blackglassChartShore
 }
 
-func blackglassBeachChartPlaces() string {
+func blackglassBeachPlaces() []blackglassChartPlace {
 	places := []blackglassChartPlace{
 		{"Tide pools", 10.8, 5.3, "pools", false, nil}, {"Black glass", beachgen.MonolithX, beachgen.MonolithZ, "glass", false, nil},
 		{"Lighthouse", beaconX, beaconZ, "beacon", false, nil}, {"Sun hollow", grottoX, grottoZ, "hollow", false, nil},
@@ -75,8 +75,42 @@ func blackglassBeachChartPlaces() string {
 		}
 		places = append(places, blackglassChartPlace{island.Name, p[0], p[2] + p[4]/2 - 1, island.ID, true, passage})
 	}
-	data, _ := json.Marshal(places)
+	return places
+}
+
+func blackglassBeachChartPlaces() string {
+	data, _ := json.Marshal(blackglassBeachPlaces())
 	return string(data)
+}
+
+// Keep the view-model keys used by CoastChart independent of the public
+// navigation IDs (drift-isle and bell-rock are not Go field names).
+func blackglassBeachChartIslandCoordinates() map[string]float64 {
+	coordinates := make(map[string]float64, 6)
+	for _, place := range blackglassBeachPlaces() {
+		key := ""
+		switch place.View {
+		case "drift-isle":
+			key = "drift"
+		case "bell-rock":
+			key = "bell"
+		case "starglass":
+			key = "starglass"
+		}
+		if key != "" && place.Island {
+			coordinates[key+"X"] = place.X
+			coordinates[key+"Z"] = place.Z
+		}
+	}
+	return coordinates
+}
+
+func blackglassBeachOptics() *scene.Optics {
+	optics := &scene.Optics{Magnification: 3, InputSignal: "$blackglass.spyglass", OutputSignal: "$blackglass.sight"}
+	for _, place := range blackglassBeachPlaces() {
+		optics.Landmarks = append(optics.Landmarks, scene.Landmark{ID: place.View, Name: place.Name, Position: scene.Vec3(place.X, 0, place.Z), Landing: place.Island})
+	}
+	return optics
 }
 
 func blackglassBeachPoolRipple() scene.Mesh {
@@ -95,3 +129,9 @@ func blackglassBeachPoolRippleSites() string {
 }
 
 func blackglassHarborExit() string { return `[80,-80]` }
+
+// BlackglassBeachChartSVG keeps the immutable survey on the server rather than
+// duplicating its path in island props and the initial document.
+func BlackglassBeachChartSVG() string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-245 -430 600 480"><path d="` + blackglassBeachChart() + `" fill="none" stroke="#91aaa0" stroke-width="0.55" vector-effect="non-scaling-stroke"/></svg>`
+}

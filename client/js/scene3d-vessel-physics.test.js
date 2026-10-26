@@ -134,6 +134,14 @@ test('touch steering and sail hold have independent pointer IDs and cancel only 
  touch.up(input,22);near(touch.value(input).rudder,1);near(touch.value(input).sail,0);touch.up(input,99);near(touch.value(input).rudder,1);
  touch.up(input,11);near(touch.value(input).rudder,0);input.keys.add('KeyA');input.keys.add('KeyW');near(touch.value(input).rudder,-1);touch.clear(input);near(touch.value(input).sail,0);
 });
+test('small thumb movements stay centered and retain course hold until an intentional steer',()=>{
+ const s=ship({navigation:true}),input=touch.create();s.mode='sailing';
+ context.window.__gosx_scene3d_vessel_navigation.holdCourse(s,60);const course=s.course;
+ touch.down(input,'rudder',11,100);
+ for(const dx of [-3,-1,0,2,3]) {touch.move(input,11,100+dx);near(touch.value(input).rudder,0);context.window.__gosx_scene3d_vessel_navigation.rudder(s,touch.value(input));near(s.course,course);}
+ touch.move(input,11,127.5);near(touch.value(input).rudder,.5);context.window.__gosx_scene3d_vessel_navigation.rudder(s,touch.value(input));assert.ok(Number.isNaN(s.course));
+ touch.up(input,11);near(touch.value(input).rudder,0);
+});
 test('stern camera frames the full clipper rig and hull at the sailing field of view',()=>{
  const s=ship(),camera=api.camera(s,{fov:42},1/60),halfFOV=camera.fov/2*radians;
  for(const [height,z] of [[18.5,-6.3],[21,0],[17,6],[2.5,11],[-1.5,0]]) {
@@ -147,6 +155,33 @@ test('fixed steps are invariant to render batching and clamp background-tab elap
  for(let i=0;i<20;i++)api.advance(b,.1,0,{rudder:.3},flat,deep);
  near(a.x,b.x);near(a.z,b.z);near(a.heading,b.heading);
  const c=ship();c.mode='sailing';api.advance(c,20,0,{sail:1},flat,deep);assert.ok(c.trim<.6);
+});
+test('render poses advance between physics ticks without changing the voyage or allocating another pose',()=>{
+ const s=ship({heading:Math.PI/2});s.mode='sailing';s.trim=1;s.vx=-8.5;s.vz=.2/1.4;
+ const pose=api.presentation(s),positions=[],authoritative=[];
+ for(let i=1;i<=120;i++) {
+  api.advance(s,1/120,i/120,{},flat,deep);
+  assert.equal(api.presentation(s),pose);positions.push(pose.x);authoritative.push(s.x);
+ }
+ assert.ok(authoritative.slice(1).some((x,i)=>x===authoritative[i]),'fixed physics remains 60 Hz');
+ for(let i=2;i<positions.length;i++)near(positions[i]-positions[i-1],-8.5/120,1e-6);
+ const control=ship({heading:Math.PI/2});control.mode='sailing';control.trim=1;control.vx=-8.5;control.vz=.2/1.4;
+ for(let i=1;i<=60;i++)api.advance(control,1/60,i/60,{},flat,deep);
+ for(const key of ['x','z','heading','distance','speed'])near(s[key],control[key],1e-8);
+ s.cameraMode='wheel';s.reduced=true;const h=api.localPoint(pose,s.helm.x,s.helm.y,s.helm.z),camera=api.camera(s,{},1/120,1,pose);
+ near(camera.x,h.x);near(camera.y,h.y);near(camera.z,h.z);
+ const model=context.window.__gosx_scene3d_vessel_model.create({objects:new Map()},{nodeId:'ship'},api);
+ model.update(pose,camera,1,1);near(model.pose[12],pose.x);near(model.pose[14],pose.z);
+ const before={x:s.x,z:s.z,heading:s.heading};api.look(s,.2,.1);near(pose.lookYaw,.2);assert.deepEqual({x:s.x,z:s.z,heading:s.heading},before);
+});
+test('render interpolation takes the short heading wrap and reset snaps instead of crossing the world',()=>{
+ const s=ship({heading:Math.PI-.001});s.mode='sailing';s.yawVelocity=.2;
+ const before=s.heading;api.advance(s,1/40,1/40,{rudder:-1},flat,deep);
+ assert.ok(s.heading<0,'the physics heading crossed the wrap');const pose=api.presentation(s);
+ assert.ok(Math.abs(pose.heading)>3,'presentation cannot spin through zero');
+ near(pose.heading,before+Math.atan2(Math.sin(s.heading-before),Math.cos(s.heading-before))*.5);
+ s.x=2500;s.z=-3700;s.accumulator=0;const fresh=api.presentation(s,true);near(fresh.x,s.x);near(fresh.z,s.z);near(fresh.heading,s.heading);
+ api.advance(s,0,1,{},flat,deep);assert.equal(api.presentation(s),fresh);
 });
 test('walk deck and ramp surfaces preserve terrain and respect yaw and slopes',()=>{
  const api=context.window.__gosx_scene3d_walk_surfaces,s=[{x:0,y:2,z:0,sizeX:2,sizeZ:10,slopeZ:-.1}];
@@ -175,7 +210,7 @@ test('wake is bounded, follows wave height, uses alpha without depth writes and 
  for(let i=0;i<240;i+=4) {
   if(p[i*3]===p[(i+1)*3]&&p[i*3+2]===p[(i+1)*3+2])continue;
   const center=[0,0,0];for(let j=0;j<4;j++)for(let k=0;k<3;k++)center[k]+=p[(i+j)*3+k]/4;
-  near(center[1],wave(center[0],center[2],7.8).y+.1,1e-5,'each small foam patch follows its water sample');
+  near(center[1],wave(center[0],center[2],7.8).y+.065,1e-5,'each small foam patch follows its water sample');
  }
  for(let i=240*3;i<p.length;i+=3)near(p[i+1],wave(p[i],p[i+2],7.8).y+.055,1e-5);
  const object=scene.objects.values().next().value;assert.equal(object.depthWrite,false);assert.equal(object.renderPass,'alpha');assert.equal(object.texture,'/foam.png');
@@ -287,6 +322,20 @@ test('wake detail changes retain the full track while drawing fewer feathered ag
   near(uv[a+5]-uv[a+1],1/8,1e-6,'one complete feathered age cell per patch');
  }
  queries=0;wake.update(s,7.75,water,1);assert.ok(queries<=80);assert.deepEqual(snapshot(),retained);
+ wake.dispose();
+});
+test('fresh wake textures keep their orientation and shape as the stern moves between stamps',()=>{
+ const scene={objects:new Map()},s=ship(),wake=context.window.__gosx_scene3d_vessel_wake.create(scene,{addObject:(s,id,p)=>s.objects.set(id,p)},{nodeId:'ship'});
+ s.mode='sailing';s.speed=8.5;
+ const water=()=>({y:0,normal:{x:0,y:1,z:0}});
+ wake.update(s,1,water,1);const first=Array.from(wake.vertices.positions.slice(0,36)),uv=Array.from(wake.vertices.uvs.slice(0,24));
+ s.z-=8.5/120;wake.update(s,1+1/120,water,1);
+ assert.deepEqual(Array.from(wake.vertices.uvs.slice(0,24)),uv,'movement cannot flip the newest foam texture');
+ const next=wake.vertices.positions;
+ for(let i=0;i<36;i+=3) {
+  assert.ok(Math.abs(next[i]-first[i])<.01,'patch shape varies by less than a centimeter per frame');
+  near(next[i+1],.065);assert.ok(Math.abs(next[i+2]-first[i+2]+8.5/120)<.01);
+ }
  wake.dispose();
 });
 

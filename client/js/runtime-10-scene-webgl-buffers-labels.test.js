@@ -1966,11 +1966,11 @@ test("Scene3D defers postfx until idle delay", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
 });
 
-test("WebGL customPost receives reserved auto-uniforms: time is nonzero and advances with the clock", async () => {
+test("WebGL customPost receives mounted scene time when paused and rewound", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgl-custompost-reserved-uniforms";
 
-  let fakeNowMS = 4000; // a real page never starts its clock at exactly 0
+  let fakeNowMS = 4000; // Wall time is independent of the mounted scene clock.
   const env = createContext({
     elements: [mount],
     enableWebGL: true,
@@ -2028,11 +2028,11 @@ test("WebGL customPost receives reserved auto-uniforms: time is nonzero and adva
   const firstTimes = uniform1fValues("time");
   assert.ok(firstTimes.length > 0,
     "the custom post pass must upload the reserved `time` uniform at least once");
-  // THE REGRESSION: before the fix every one of these was 0, because
-  // applyCustomPost only ever read effect.uniforms and `time` is not in it.
-  assert.ok(firstTimes.every((value) => value > 0),
-    "reserved `time` must resolve to the engine clock, got: " + JSON.stringify(firstTimes));
-  assert.ok(firstTimes.includes(4), "time must be performance.now()/1000, expected 4, got: " + JSON.stringify(firstTimes));
+  assert.ok(firstTimes.every(value => value === 0), "a mounted scene starts at zero, independently of wall time");
+  const handle = mount.__gosxScene3DHandle;
+  handle.setAnimationClock({timeSeconds: 4});
+  await flushAsyncWork(); await flushAsyncWork();
+  assert.equal(uniform1fValues("time").at(-1), 4, "the uploaded uniform must follow the mounted scene clock");
 
   // Author-supplied non-reserved params keep working.
   assert.ok(uniform1fValues("amount").includes(0.75),
@@ -2043,20 +2043,12 @@ test("WebGL customPost receives reserved auto-uniforms: time is nonzero and adva
       && entry[2] === 0.25 && entry[3] === 0.5 && entry[4] === 0.75),
     "compiled layout default for `tint` must upload as a vec3");
 
-  // Advance the clock and drive more frames: `time` must track it, which is
-  // what makes an animated post effect animate at all.
   const opsBefore = gl.ops.length;
   fakeNowMS = 9000;
-  await flushAsyncWork();
-  await flushAsyncWork();
-
-  const laterTimes = gl.ops
-    .slice(opsBefore)
-    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
-    .map((entry) => entry[2]);
-  assert.ok(laterTimes.length > 0, "expected further frames to re-upload `time`");
-  assert.ok(laterTimes.includes(9),
-    "reserved `time` must advance with the clock, got: " + JSON.stringify(laterTimes));
+  handle.setAnimationClock({timeSeconds: 1.25});
+  await flushAsyncWork(); await flushAsyncWork();
+  const laterTimes = gl.ops.slice(opsBefore).filter(entry => entry[0] === "uniform1f" && entry[1] === "time").map(entry => entry[2]);
+  assert.equal(laterTimes.at(-1), 1.25, "rewinding must upload scene time while wall time advances");
   assert.equal(env.consoleLogs.error.length, 0);
 });
 

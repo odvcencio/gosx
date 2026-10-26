@@ -311,6 +311,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`y={2.8}`,
 		`z={2.1}`,
 		`fov={38}`,
+		`portraitFOV={42}`,
 		`interactionProfile="water-object-drop-orbit"`,
 		`interactionTarget="water-main"`,
 		`interactionObject="Sphere"`,
@@ -861,8 +862,8 @@ func TestWaterAtRestGatingEmitsStatsAttr(t *testing.T) {
 		// folded into waterStateDirty) must wake the system instantly.
 		"if (waterStateDirty) {\n            system.waterRestEnergy = 1.0;\n            system.waterLastDisturbanceMS = currentNowMS;\n            system.waterAtRest = false;\n          }",
 		// The DOM/stats surface diag overlays and e2e tests observe.
-		`setEssentialAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));`,
-		`mount.setAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));`,
+		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));`,
+		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));`,
 	} {
 		if !strings.Contains(webgpuSource, want) {
 			t.Fatalf("Scene3D WebGPU water runtime missing at-rest gating source %q", want)
@@ -892,8 +893,8 @@ func TestWaterUniformUploadDedupSkipsUnchangedFrames(t *testing.T) {
 		"device.queue.writeBuffer(system.uniformBuffer, 0, commitUniformData);",
 		"stats.waterUniformUploads += 1;",
 		"stats.waterUniformUploadsSkipped += 1;",
-		`mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));`,
-		`mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));`,
+		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));`,
+		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));`,
 		// (b): the swapchain-reconfigure dirty check this audit verified
 		// (rather than needing to add).
 		"function configureWebGPUCanvas(canvas) {\n      var target = canvas || (gpuCtx && gpuCtx.canvas) || null;\n      var key = sceneWebGPUSurfaceKey(target);\n      if (key === configuredSurfaceKey) return false;",

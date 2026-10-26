@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/evanw/esbuild v0.28.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/odvcencio/gotreesitter v0.50.1
+	github.com/odvcencio/gotreesitter v0.56.0
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/image v0.38.0
 	golang.org/x/net v0.52.0
@@ -23,12 +23,15 @@ require (
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
 	github.com/redis/go-redis/v9 v9.18.0
 	golang.org/x/sys v0.43.0
-	m31labs.dev/selena v0.5.3-0.20261010191520-994398415643
+	golang.org/x/tools v0.42.0
+	m31labs.dev/selena v0.5.3-0.20261023001026-65ca73e1b8b1
 	m31labs.dev/turboquant v0.2.1
 )
 
 require (
 	github.com/odvcencio/turboquant v0.1.3 // indirect
+	golang.org/x/mod v0.33.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	m31labs.dev/mll v0.1.0 // indirect
 	m31labs.dev/prism v0.1.3 // indirect
 )

@@ -238,6 +238,13 @@
     const entries = [];
     const declared = delegatedEventSet(eventSlots);
 
+    // Canvas gestures can suppress a browser's compatibility click. A completed
+    // touch tap on an authored type=button control still runs its Go handler.
+    // Native forms, links, cancelled drags and keyboard clicks keep their rules.
+    if ((!declared || declared.has("click")) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) {
+      entries.push(...setupButtonTapDelegation(islandRoot));
+    }
+
     for (const eventType of DELEGATED_EVENTS) {
       if (declared && !declared.has(eventType)) continue;
       // Legacy manifests declare nothing. Their wheel listener is passive unless
@@ -255,6 +262,33 @@
       entries.push({ target: config.target, type: config.type, listener, capture: false });
     }
 
+    return entries;
+  }
+
+  function setupButtonTapDelegation(root) {
+    let tap = null;
+    const entries = [];
+    function listen(type, listener) {
+      root.addEventListener(type, listener, {capture:true,passive:false});
+      entries.push({target:root,type,listener,capture:true});
+    }
+    listen("pointerdown", event => {
+      tap = null;
+      root.__gosxButtonTap = null;
+      if (event.pointerType !== "touch" || event.defaultPrevented || event.button > 0) return;
+      const found = findHandlerForEvent(event.target, root, "click"), button = found && found.element;
+      if (!button || button.tagName !== "BUTTON" || button.getAttribute("type") !== "button" || button.disabled || button.hasAttribute("disabled")) return;
+      tap = {button,id:event.pointerId,x:event.clientX,y:event.clientY};
+    });
+    listen("pointercancel", () => {tap=null;});
+    listen("pointerup", event => {
+      const current=tap;tap=null;
+      if (!current || current.id!==event.pointerId || event.defaultPrevented || Math.hypot(event.clientX-current.x,event.clientY-current.y)>12 || current.button.disabled || current.button.hasAttribute("disabled")) return;
+      const rect=current.button.getBoundingClientRect();
+      if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)return;
+      event.preventDefault();root.__gosxButtonTap={button:current.button,time:event.timeStamp};
+      current.button.focus();current.button.click();
+    });
     return entries;
   }
 
@@ -307,6 +341,10 @@
   function createDelegatedListener(islandRoot, islandID, eventType) {
     return function(e) {
       if (e.__gosx_handled) return;
+      const tap=islandRoot.__gosxButtonTap;
+      // A Go update may replace the tapped button before the browser emits its
+      // compatibility click. Suppress that touch click even if it retargets.
+      if(eventType==="click"&&e.detail>0&&tap&&(e.target===tap.button||e.pointerType==="touch")&&e.timeStamp>=tap.time&&e.timeStamp-tap.time<600){e.preventDefault();return;}
       const match = findHandlerForEvent(e.target, islandRoot, eventType);
       if (!match) return;
       if ((eventType === "dragover" || eventType === "drop") && typeof e.preventDefault === "function") {

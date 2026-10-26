@@ -138,6 +138,9 @@ func (e *Editor) renderNativeForm() gosx.Node {
 		if code.ExternalUndo {
 			attrs = append(attrs, gosx.BoolAttr("data-code-external-undo"))
 		}
+		if code.Unsaved {
+			attrs = append(attrs, gosx.BoolAttr("data-code-unsaved"))
+		}
 	}
 
 	return gosx.El("form", attrs, gosx.Fragment(children...))
@@ -236,7 +239,7 @@ func (e *Editor) renderNativeCodeTopbar() gosx.Node {
 		),
 		gosx.El("nav", gosx.Attrs(gosx.Attr("class", "editor-segments"), gosx.Attr("aria-label", "Editor panels")), gosx.Fragment(e.renderNativePanelSegments()...)),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-actions editor-native-actions")),
-			gosx.El("span", gosx.Attrs(gosx.Attr("id", "editor-save-status"), gosx.Attr("class", "editor-save-status editor-save-status-saved"), gosx.Attr("aria-live", "polite")), gosx.Text(e.saveStatusText())),
+			gosx.El("span", gosx.Attrs(gosx.Attr("id", "editor-save-status"), gosx.Attr("class", "editor-save-status editor-save-status-"+e.saveStatusClass()), gosx.Attr("aria-live", "polite")), gosx.Text(e.saveStatusText())),
 			gosx.Fragment(e.renderNativeFormButtons(e.Options.Buttons)...),
 		),
 	)
@@ -314,8 +317,15 @@ func (e *Editor) renderNativeToolbar() gosx.Node {
 			gosx.Attr("aria-label", "Code editing"),
 		),
 			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-command", "find"), gosx.Attr("aria-label", "Find and replace")), gosx.Text("Find")),
+			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-command", "goto"), gosx.Attr("aria-label", "Go to line")), gosx.Text("Go to line")),
 			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-command", "comment"), gosx.Attr("aria-label", "Toggle line comment")), gosx.Text("Comment")),
 			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-command", "bracket"), gosx.Attr("aria-label", "Go to matching bracket")), gosx.Text("Bracket")),
+			gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-code-goto"), gosx.BoolAttr("data-code-goto-panel"), gosx.Attr("role", "group"), gosx.Attr("aria-label", "Go to line"), gosx.BoolAttr("hidden")),
+				gosx.El("input", gosx.Attrs(gosx.Attr("type", "text"), gosx.Attr("data-code-goto", "query"), gosx.Attr("aria-label", "Line and column"), gosx.Attr("placeholder", "line:column"), gosx.Attr("autocomplete", "off"), gosx.Attr("spellcheck", "false"))),
+				gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-goto", "go")), gosx.Text("Go")),
+				gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("data-code-goto", "close"), gosx.Attr("aria-label", "Close go to line")), gosx.Text("×")),
+				gosx.El("span", gosx.Attrs(gosx.Attr("data-code-goto", "status"), gosx.Attr("aria-live", "polite"))),
+			),
 			gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-code-find"), gosx.Attr("role", "search"), gosx.BoolAttr("hidden")),
 				gosx.El("input", gosx.Attrs(gosx.Attr("type", "search"), gosx.Attr("data-code-find", "query"), gosx.Attr("aria-label", "Find"), gosx.Attr("placeholder", "Find"), gosx.Attr("autocomplete", "off"))),
 				gosx.El("input", gosx.Attrs(gosx.Attr("type", "text"), gosx.Attr("data-code-find", "replacement"), gosx.Attr("aria-label", "Replace"), gosx.Attr("placeholder", "Replace"), gosx.Attr("autocomplete", "off"))),

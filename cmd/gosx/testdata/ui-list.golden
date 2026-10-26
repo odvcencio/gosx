@@ -1,5 +1,9 @@
-RECIPE  VERSION  DEPENDS  DESCRIPTION
-button  1.0.0    tokens   Semantic action button with four tones and three sizes.
-card    1.0.0    tokens   Editorial content card with default, raised, and quiet surfaces.
-input   1.0.0    tokens   Accessible labeled input with help, invalid, required, and disabled states.
-tokens  1.0.0    -        Portable Obsidian color, type, spacing, shape, and motion tokens.
+RECIPE       VERSION  DEPENDS  DESCRIPTION
+button       1.0.0    tokens   Semantic action button with four tones and three sizes.
+card         1.0.0    tokens   Editorial content card with default, raised, and quiet surfaces.
+collapsible  1.0.0    tokens   Native details panel whose open state persists through a signal.
+dock         1.0.0    tokens   Top, left, center, right and bottom regions with resizable edges.
+input        1.0.0    tokens   Accessible labeled input with help, invalid, required, and disabled states.
+splitpane    1.0.0    tokens   Two panes with a keyboard-resizable separator; sizes persist through a signal.
+tabs         1.0.0    tokens   Plain tab links that the workbench chunk upgrades to roving tabindex.
+tokens       1.0.0    -        Portable Obsidian color, type, spacing, shape, and motion tokens.

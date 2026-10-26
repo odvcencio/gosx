@@ -2,6 +2,7 @@ package scene
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -26,6 +27,19 @@ func TestModelPreparationSnapshotValidation(t *testing.T) {
 	}
 }
 
+func TestTextureProfileSnapshotSupportsBatchedModelCount(t *testing.T) {
+	requests := make([]ModelPreparation, 51)
+	for i := range requests {
+		requests[i] = ModelPreparation{ID: fmt.Sprintf("model-%d", i), Src: fmt.Sprintf("/model-%d.glb", i)}
+	}
+	if _, err := modelPreparationSnapshotLimit(requests, 256); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := modelPreparationSnapshot(requests); err == nil {
+		t.Fatal("ordinary PrepareModels cap changed")
+	}
+}
+
 func TestPropsModelPreparationSerializesOnlyAuthoredCapability(t *testing.T) {
 	for _, value := range []*bool{nil, Bool(false), Bool(true)} {
 		props := Props{ModelPreparation: value}
@@ -40,6 +54,40 @@ func TestPropsModelPreparationSerializesOnlyAuthoredCapability(t *testing.T) {
 		got, present := payload["modelPreparation"]
 		if present != (value != nil) || value != nil && got != *value {
 			t.Fatalf("capability: %#v", payload)
+		}
+	}
+}
+
+func TestPropsTextureDeliveryProfileSerialization(t *testing.T) {
+	for _, profile := range []TextureDeliveryProfile{"", TextureDeliveryAuto, TextureDeliveryLow, TextureDeliveryStandard, TextureDeliveryHigh} {
+		data, err := (Props{TextureDeliveryProfile: profile}).MarshalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatal(err)
+		}
+		got, present := payload["textureDeliveryProfile"]
+		if present != (profile != "") || profile != "" && got != string(profile) {
+			t.Fatalf("profile %q serialized as %s", profile, data)
+		}
+	}
+}
+
+func TestModelPreparationRigidGeometryOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		data, err := modelPreparationSnapshot([]ModelPreparation{{ID: "prop", Src: "/prop.glb", RigidGeometry: enabled}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []map[string]any
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatal(err)
+		}
+		value, present := got[0]["rigidGeometry"]
+		if present != enabled || enabled && value != true {
+			t.Fatalf("rigid preparation opt-in: %s", data)
 		}
 	}
 }

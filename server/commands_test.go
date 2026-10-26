@@ -20,7 +20,7 @@ func TestCommandsOnlyPagePublishesManifestAndWorkbenchContract(t *testing.T) {
 	w := httptest.NewRecorder()
 	app.Build().ServeHTTP(w, httptest.NewRequest("GET", "/commands", nil))
 	body := w.Body.String()
-	for _, want := range []string{`"commands":[{"id":"edit.undo"`, `"features":["workbench"]`, `"bootstrapFeatureWorkbenchPath":"/gosx/bootstrap-feature-workbench.js"`, `bootstrap-runtime.js`} {
+	for _, want := range []string{`"commands":[{"id":"edit.undo"`, `"features":["workbench"]`, `"bootstrapFeatureWorkbenchPath":"/gosx/bootstrap-feature-workbench.js"`, `bootstrap-runtime.js`, `"bootstrapControllerInputPath":"/gosx/bootstrap-controller-input.js"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %s: %s", want, body)
 		}

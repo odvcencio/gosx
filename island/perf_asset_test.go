@@ -1,19 +1,15 @@
 package island
 
 import (
-	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os/exec"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
@@ -54,6 +50,7 @@ func perfAssetRendererFixture(t *testing.T) (*Renderer, *buildmanifest.Manifest)
 		{"bootstrap-feature-scene3d-compute.js", &m.Runtime.BootstrapFeatureScene3DCompute}, {"bootstrap-feature-scene3d-decompress.js", &m.Runtime.BootstrapFeatureScene3DDecompress},
 		{"bootstrap-feature-scene3d-gltf.js", &m.Runtime.BootstrapFeatureScene3DGLTF}, {"bootstrap-feature-scene3d-animation.js", &m.Runtime.BootstrapFeatureScene3DAnimation},
 		{"bootstrap-feature-scene3d-command.js", &m.Runtime.BootstrapFeatureScene3DCommand}, {"bootstrap-feature-scene3d-instance-stream.js", &m.Runtime.BootstrapFeatureScene3DInstanceStream},
+		{"bootstrap-feature-scene3d-hierarchy.js", &m.Runtime.BootstrapFeatureScene3DHierarchy},
 		{"bootstrap-feature-scene3d-timeline.js", &m.Runtime.BootstrapFeatureScene3DTimeline}, {"bootstrap-feature-scene3d-particle-burst.js", &m.Runtime.BootstrapFeatureScene3DParticleBurst},
 		{"bootstrap-feature-textlayout.js", &m.Runtime.BootstrapFeatureTextlayout},
 		{"hls.min.js", &m.Runtime.VideoHLS},
@@ -600,92 +597,24 @@ func TestPerfAssetRendererBackendClosure(t *testing.T) {
 	}
 }
 
-func perfWebGPULoaderRequests(t *testing.T, head string, navigatorGPU bool) []string {
-	t.Helper()
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is required to execute the emitted loader")
-	}
-	_, tail, found := strings.Cut(head, `data-gosx-script="feature-scene3d-webgpu-loader"`)
-	if !found {
-		t.Fatal("missing production WebGPU loader")
-	}
-	_, tail, found = strings.Cut(tail, ">")
-	if !found {
-		t.Fatal("missing loader body")
-	}
-	source, _, found := strings.Cut(tail, "</script>")
-	if !found {
-		t.Fatal("unterminated loader")
-	}
-	input, err := json.Marshal(struct {
-		Source       string `json:"source"`
-		NavigatorGPU bool   `json:"navigatorGPU"`
-	}{source, navigatorGPU})
-	if err != nil {
-		t.Fatal(err)
-	}
-	const script = `
-const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
-(async function() {
-  const requests = [];
-  const navigator = input.navigatorGPU ? {gpu: {requestAdapter: async () => null}} : {};
-  const document = {
-    readyState: 'complete',
-    currentScript: {nonce: '', getAttribute() { return ''; }},
-    createElement(tag) {
-      assert.equal(tag, 'script');
-      return {dataset: {}, setAttribute() {}};
-    },
-    head: {appendChild(script) { requests.push(script.src); }},
-  };
-  vm.runInNewContext(input.source, {window: {}, document, navigator});
-  if (input.navigatorGPU) assert.equal(await navigator.gpu.requestAdapter(), null);
-  process.stdout.write(JSON.stringify(requests));
-})().catch(error => { console.error(error); process.exitCode = 1; });
-`
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, node, "-e", script)
-	cmd.Stdin = bytes.NewReader(input)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("execute production loader: %v: %s", err, output)
-	}
-	var requests []string
-	if err := json.Unmarshal(output, &requests); err != nil {
-		t.Fatal(err)
-	}
-	return requests
-}
-
 func TestPerfAssetRendererWebGLUnusableGPUAPI(t *testing.T) {
 	r, _ := perfAssetRendererFixture(t)
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
-	head := gosx.RenderHTML(r.PageHead())
-	t.Run("production-loader", func(t *testing.T) {
-		requests := perfWebGPULoaderRequests(t, head, true)
-		if !reflect.DeepEqual(requests, []string{r.bootstrapFeatureScene3dWebGPUPath}) {
-			t.Fatalf("GPU API with no adapter requested %v", requests)
-		}
-		if requests := perfWebGPULoaderRequests(t, head, false); len(requests) != 0 {
-			t.Fatalf("absent GPU API requested %v", requests)
-		}
-	})
 	present, absent := true, false
 	for _, tc := range []struct {
 		name  string
 		api   *bool
+		ready *bool
 		phase string
 	}{
-		{"unknown-api", nil, "startup"},
-		{"unusable-api", &present, "startup"},
-		{"absent-api", &absent, "dormant"},
+		{"unknown-api", nil, nil, "startup"},
+		{"unknown-attempt", &present, nil, "startup"},
+		{"no-renderer-attempt", &present, &absent, "dormant"},
+		{"renderer-failure-after-attempt", &present, &present, "startup"},
+		{"absent-api", &absent, nil, "dormant"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgl2", NavigatorGPU: tc.api})
+			uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgl2", NavigatorGPU: tc.api, WebGPUAttempted: tc.ready})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -730,7 +659,7 @@ func TestPerfAssetRendererWebGLFallbackCapabilities(t *testing.T) {
 }
 
 func TestPerfAssetRendererUnknownAndRewrite(t *testing.T) {
-	for _, bad := range []string{"legacy", "missing-program", "missing-loader", "wrong-backend", "private-backend", "unsupported-backend", "missing-gpu-api"} {
+	for _, bad := range []string{"legacy", "missing-program", "missing-loader", "wrong-backend", "private-backend", "unsupported-backend", "missing-gpu-api", "failed-gpu-probe", "ready-probe-without-api"} {
 		t.Run(bad, func(t *testing.T) {
 			r, _ := perfAssetRendererFixture(t)
 			opts := PerfAssetOptions{}
@@ -753,6 +682,14 @@ func TestPerfAssetRendererUnknownAndRewrite(t *testing.T) {
 				r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 				present := false
 				opts.Backend, opts.NavigatorGPU = "webgpu", &present
+			case "failed-gpu-probe":
+				r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+				ready := false
+				opts.Backend, opts.WebGPUAttempted = "webgpu", &ready
+			case "ready-probe-without-api":
+				r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+				api, ready := false, true
+				opts.Backend, opts.NavigatorGPU, opts.WebGPUAttempted = "webgl2", &api, &ready
 			}
 			uses, err := r.PerfAssetUses(opts)
 			var typed *buildmanifest.PerfAssetError

@@ -2075,7 +2075,7 @@ func resolveDirectionalLight(b engine.RenderBundle) (dir [3]float32, color [4]fl
 	if idx := primaryDirectionalIndex(b.Lights); idx >= 0 {
 		l := b.Lights[idx]
 		dx, dy, dz := float32(l.DirectionX), float32(l.DirectionY), float32(l.DirectionZ)
-		length := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+		length := float32(math.Sqrt(float64(float32(dx*dx) + float32(dy*dy) + float32(dz*dz))))
 		if length > 0 {
 			dir = [3]float32{dx / length, dy / length, dz / length}
 		}
@@ -2115,8 +2115,8 @@ func resolveHemisphereAmbient(b engine.RenderBundle) (sky [4]float32, ground [4]
 	if groundI == 0 {
 		groundI = 1.0
 	}
-	return [4]float32{skyRGB[0] * skyI, skyRGB[1] * skyI, skyRGB[2] * skyI, 1},
-		[4]float32{groundRGB[0] * groundI, groundRGB[1] * groundI, groundRGB[2] * groundI, 1}
+	return [4]float32{float32(skyRGB[0] * skyI), float32(skyRGB[1] * skyI), float32(skyRGB[2] * skyI), 1},
+		[4]float32{float32(groundRGB[0] * groundI), float32(groundRGB[1] * groundI), float32(groundRGB[2] * groundI), 1}
 }
 
 // The scene light array.

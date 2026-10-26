@@ -29,10 +29,12 @@ function detailRenderer() {
   vm.runInContext(renderer, c);
   c.sceneWebGPUBakeDetailAtlas = () => {};
   c.wgpuLoadTexture = () => null;
-  const start = renderer.indexOf("      detailEnabled = !frameMeta");
+  const start = renderer.indexOf("      detailResources = sceneWebGPUPrepareDetailFrame");
   const end = renderer.indexOf("      var frameNowMS", start);
   assert.ok(start >= 0 && end > start);
-  const frame = new vm.Script(renderer.slice(start, end));
+  const prepare = renderer.indexOf("      detailResources = sceneWebGPUEnsureDetailResources");
+  const prepareEnd = renderer.indexOf("\n", prepare);
+  const frame = new vm.Script(renderer.slice(prepare, prepareEnd) + "\ndetailEnabled = !frameMeta || frameMeta.detailEnabled !== false;\n" + renderer.slice(start, end));
   return { c, buffers, textures, writes, render(materials) { c.bundle = { materials }; frame.runInContext(c); } };
 }
 

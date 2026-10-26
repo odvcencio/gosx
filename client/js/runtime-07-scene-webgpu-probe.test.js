@@ -27,7 +27,7 @@ const {
 test("Scene3D animation loop supports foreground frame caps", () => {
   const mount = readSceneMountSrc();
 
-  assert.match(mount, /function sceneAnimationFrameIntervalMS\(\)/);
+  assert.match(mount, /function sceneAnimationFrameIntervalMS\(reason\)/);
   assert.match(mount, /props && props\.frameIntervalMS/);
   assert.match(mount, /props && props\.maxFrameRate/);
   assert.match(mount, /props && props\.maxFPS/);
@@ -61,7 +61,7 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
   assert.match(webgpu, /function drawInstancedMeshes\(pass, meshList, materials/);
   assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
   assert.match(webgpu, /function getShadowInstancedPipeline/);
-  assert.match(webgpu, /createMaterialBindGroup\(\s*mat,\s*receiveShadow,\s*materialOwner,\s*obj\.retainedGeometry \? webGPUObjectModelMatrix\(obj\) : null\s*\)/);
+  assert.match(webgpu, /webGPUFrameMaterialGroup\(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup\)/);
   assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
   assert.doesNotMatch(mount, /instanced-meshes/);
 });
@@ -90,8 +90,8 @@ test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none
   assert.match(webgpu, /var pipelineCullMode = options && typeof options\.cullMode === "string" && options\.cullMode \? options\.cullMode : "back";/);
   assert.match(webgpu, /var reflectedDirect = obj\.directVertices && sceneAffineDeterminant\(obj\.modelMatrix, 0\) < 0;/);
   assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided\s*\? \{ cullMode: "none" \}\s*:\s*\(reflectedDirect \? \{ frontFace: "cw" \} : null\);/);
-  assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
-  assert.match(webgpu, /getSelenaSkinnedPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
+  assert.match(webgpu, /getSelenaPipeline\(material, blend, depth, options\)/);
+  assert.match(webgpu, /getSelenaSkinnedPipeline\(material, blend, depth, options\)/);
 });
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {

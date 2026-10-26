@@ -29,6 +29,8 @@ const (
 	goSetupName       = "Set up Go"
 	tinyGoName        = "Install TinyGo"
 	docsName          = "Browser docs E2E gate"
+	docsUploadName    = "Retain browser behavior evidence"
+	docsProofDir      = "${{ runner.temp }}/gosx-e2e-proof"
 	ouroborosName     = "Ouroboros media metadata browser smoke"
 	driverName        = "Perf driver browser tests"
 	pinnedSetupName   = "Set up pinned Chromium for perf budget"
@@ -142,6 +144,7 @@ var baseAggregateNeeds = []string{
 	"release-gate",
 	"go-tests",
 	"go-race-tests",
+	"desktop-macos",
 	"go-cli-tests",
 	"go-cli-tests-b",
 	"go-cli-tests-c",
@@ -372,6 +375,12 @@ func docsContract(shard int) stepContract {
 	}}
 }
 
+func docsUploadContract(shard int) stepContract {
+	return stepContract{docsUploadName, "browser behavior evidence upload", func(node *yaml.Node) error {
+		return validateDocsUpload(node, shard)
+	}}
+}
+
 // validateBrowserShardJob pins a browser-tests-b or -c lane. These lanes run
 // only their share of the e2e suite, on the floating browser, so they carry no
 // pinned-browser or perf step. The draft gate and the timeout match
@@ -397,6 +406,7 @@ func validateBrowserShardJob(node *yaml.Node, name string, shard int) error {
 		{latestSetupName, name + " browser setup", validateLatestSetup},
 		{tinyGoName, name + " TinyGo install", validateTinyGo},
 		docsContract(shard),
+		docsUploadContract(shard),
 	}
 	if err := validateExactStepRoster(job["steps"], label+".steps", contracts); err != nil {
 		return err
@@ -488,6 +498,7 @@ func browserStepContracts() []stepContract {
 		{encoderName, "WebAssembly encoder browser validation", validateEncoder},
 		{tinyGoName, "browser TinyGo install", validateTinyGo},
 		docsContract(0),
+		docsUploadContract(0),
 		{ouroborosName, "Ouroboros browser smoke", validateOuroboros},
 		{driverName, "perf driver browser tests", validateDriver},
 		{pinnedSetupName, "pinned perf browser setup", validatePinnedSetup},
@@ -631,8 +642,36 @@ func validateDocs(node *yaml.Node, shard int) error {
 		return err
 	}
 	return exactStringMap(step["env"], label+".env", map[string]string{
-		"GOSX_E2E_CHROME": latestChromePath,
+		"GOSX_E2E_CHROME":    latestChromePath,
+		"GOSX_E2E_PROOF_DIR": docsProofDir,
 	})
+}
+
+func validateDocsUpload(node *yaml.Node, shard int) error {
+	const label = "browser behavior evidence upload"
+	step, err := exactMapping(node, label, "name", "if", "uses", "with")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": docsUploadName,
+		"if":   "always()",
+		"uses": "actions/upload-artifact@v4",
+	}); err != nil {
+		return err
+	}
+	with, err := exactMapping(step["with"], label+".with", "name", "path", "if-no-files-found", "retention-days")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(with, label+".with", map[string]string{
+		"name":              fmt.Sprintf("gosx-browser-proof-${{ github.run_id }}-${{ github.run_attempt }}-%d", shard),
+		"path":              docsProofDir,
+		"if-no-files-found": "ignore",
+	}); err != nil {
+		return err
+	}
+	return exactInt(with["retention-days"], label+".with.retention-days", "14")
 }
 
 func validateEncoder(node *yaml.Node) error {
@@ -808,7 +847,7 @@ func validateStableNode(node *yaml.Node) error {
 		return err
 	}
 	return exactStringMap(step["with"], label+".with", map[string]string{
-		"node-version": "22",
+		"node-version": "22.23.4",
 	})
 }
 

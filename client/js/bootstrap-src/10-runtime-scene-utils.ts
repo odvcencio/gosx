@@ -882,7 +882,7 @@
     };
     appendCapabilityValues(entry && entry.requiredCapabilities, append);
     appendCapabilityValues(entry && entry.requires, append);
-    if (entry && (entry.runtime === "shared" || entry.programRef)) {
+    if (entry && (entry.runtime === "shared" || entry.runtime === "kernel" || entry.programRef)) {
       append("wasm");
     }
     return out;

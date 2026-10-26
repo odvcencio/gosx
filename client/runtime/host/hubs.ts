@@ -21,11 +21,19 @@
 
   const hubConnections = window.__gosx.hubConnections || (window.__gosx.hubConnections = new Map());
 
+  // A local input entry has no path: the fight controller runs without a
+  // socket and publishes its samples to a shared signal (input.sink).
+  function localInputEntry(entry) {
+    return Boolean(entry && entry.id && !entry.path && entry.input && String(entry.input.sink || "").trim().toLowerCase() === "signal");
+  }
+
   function hubIdentity(entry) {
+    if (localInputEntry(entry)) return JSON.stringify(["local", String(entry.id)]);
     return JSON.stringify([String(entry.name || ""), hubURL(entry.path)]);
   }
 
   function hubSocketLive(record) {
+    if (record && record.local) return !record.disposed;
     return record && !record.disposed && !record.closed && record.socket && record.socket.readyState !== 2 && record.socket.readyState !== 3;
   }
 
@@ -40,9 +48,10 @@
     });
     record.suspended = false;
     record.inputController = createHubInputController(record);
-    if (record.socket.readyState === 1 || record.socket.readyState == null) {
+    if (record.socket && (record.socket.readyState === 1 || record.socket.readyState == null)) {
       bindHubOutputs(record);
       startHubRoundTrip(record);
+      emitHubConnection(record, "open");
     }
   }
 
@@ -463,16 +472,18 @@
   }
 
   function canConnectHub(entry) {
-    return Boolean(entry && entry.id && entry.path && typeof WebSocket === "function");
+    return Boolean(entry && entry.id && ((entry.path && typeof WebSocket === "function") || localInputEntry(entry)));
   }
 
   function createHubRecord(entry, attempt) {
+    const local = localInputEntry(entry);
     return {
       entry: entry,
       identity: hubIdentity(entry),
       entries: new Map(),
       refCount: 0,
-      socket: new WebSocket(hubURL(entry.path)),
+      local: local,
+      socket: local ? null : new WebSocket(hubURL(entry.path)),
       reconnectTimer: null,
       reconnectAttempt: attempt || 0,
     };
@@ -544,6 +555,7 @@
 
   function attachHubSocketHandlers(record) {
     const socket = record.socket;
+    if (!socket) return;
     try {
       socket.binaryType = "arraybuffer";
     } catch (_e) {
@@ -580,6 +592,7 @@
       record.closed = true;
       stopHubRoundTrip(record);
       scheduleHubReconnect(record);
+      emitHubConnection(record, "reconnecting");
     };
 
     socket.onerror = function(e) {
@@ -645,6 +658,14 @@
         data: message.data,
       },
     }));
+  }
+
+  // Page views observe lifecycle without polling the socket. These local
+  // notifications never enter the wire protocol or shared-signal bindings.
+  function emitHubConnection(record, state) {
+    for (const entry of record.entries.values()) {
+      emitHubEvent(entry, { event: "__connection", data: { state: state } });
+    }
   }
 
   // reconnectDelayMs computes a hub's next reconnect delay: exponential
@@ -720,7 +741,7 @@
   function revalidateHubConnections() {
     const stale = [];
     hubConnections.forEach(function(record) {
-      if (!record || !record.entry) return;
+      if (!record || !record.entry || record.local) return;
       const socket = record.socket;
       // WebSocket.CLOSING === 2, CLOSED === 3. A null readyState is a test
       // double that does not model the lifecycle; bindHubOutputs already

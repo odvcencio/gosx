@@ -183,11 +183,13 @@ func TestWaterDuckStartsAtBuoyantReadableWaterline(t *testing.T) {
 			ObjectRadius   float64 `json:"objectRadius"`
 			BuoyancyRadius float64 `json:"buoyancyRadius"`
 			FloorClearance float64 `json:"floorClearance"`
+			SelectionMinY  float64 `json:"selectionMinY"`
 			XLimitRadius   float64 `json:"xLimitRadius"`
 			ZLimitRadius   float64 `json:"zLimitRadius"`
 			Mesh           struct {
-				Y      float64 `json:"y"`
-				Bounds float64 `json:"bounds"`
+				Y        float64 `json:"y"`
+				Bounds   float64 `json:"bounds"`
+				Pickable bool    `json:"pickable"`
 			} `json:"mesh"`
 		} `json:"objects"`
 	}
@@ -202,11 +204,17 @@ func TestWaterDuckStartsAtBuoyantReadableWaterline(t *testing.T) {
 	if math.Abs(duck.ObjectY-equilibriumY) > 0.02 {
 		t.Fatalf("duck objectY = %.3f, natural buoyancy line = %.3f", duck.ObjectY, equilibriumY)
 	}
-	if math.Abs((duck.FloorClearance-1)-duck.ObjectY) > 0.000001 {
-		t.Fatalf("duck switch clamp = %.3f, objectY = %.3f; a preceding floor object would submerge it", duck.FloorClearance-1, duck.ObjectY)
+	if duck.SelectionMinY != -0.1 || duck.SelectionMinY != duck.ObjectY {
+		t.Fatalf("duck selection guard = %.3f, objectY = %.3f; a preceding floor object must not submerge a newly selected duck", duck.SelectionMinY, duck.ObjectY)
+	}
+	if duck.FloorClearance != 0 {
+		t.Fatalf("duck physical floor clearance = %.3f; center-min-y geometry must be able to dunk below its selection waterline", duck.FloorClearance)
 	}
 	if duck.Mesh.Y != duck.ObjectY {
 		t.Fatalf("duck mesh Y = %.3f, physics Y = %.3f", duck.Mesh.Y, duck.ObjectY)
+	}
+	if !duck.Mesh.Pickable {
+		t.Fatal("duck mesh must allow exact pointer picking for dunk and release")
 	}
 	if duck.Mesh.Bounds != 0.65 || duck.ObjectRadius != 0.32 || duck.XLimitRadius != 0.32 || duck.ZLimitRadius != 0.32 {
 		t.Fatalf("duck visual/collision bounds = mesh %.2f object %.2f limits %.2f/%.2f, want coherent 0.65/0.32 scale", duck.Mesh.Bounds, duck.ObjectRadius, duck.XLimitRadius, duck.ZLimitRadius)

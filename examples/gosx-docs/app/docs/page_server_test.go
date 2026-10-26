@@ -30,9 +30,14 @@ func TestDocsIndexAndLayoutModulesRegister(t *testing.T) {
 			t.Fatalf("module for %s has no loader", name)
 		}
 		if name == "layout.gsx" {
-			bindings := module.Bindings(&route.RouteContext{Request: httptest.NewRequest(http.MethodGet, "/docs", nil)}, route.FilePage{RoutePath: "/docs"}, nil)
+			ctx := &route.RouteContext{Request: httptest.NewRequest(http.MethodGet, "/docs", nil)}
+			bindings := module.Bindings(ctx, route.FilePage{RoutePath: "/docs"}, nil)
 			if bindings.Values["docsIndexCurrent"] != "page" {
 				t.Fatalf("layout docsIndexCurrent = %#v", bindings.Values["docsIndexCurrent"])
+			}
+			summary := ctx.Runtime().Summary()
+			if !summary.Bootstrap || summary.BootstrapMode != "lite" || summary.Runtime || summary.Manifest {
+				t.Fatalf("static docs need native controls without WASM: %+v", summary)
 			}
 		}
 	}

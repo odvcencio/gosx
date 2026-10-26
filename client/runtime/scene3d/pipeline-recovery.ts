@@ -1,5 +1,6 @@
   // Keep rejection handling with its renderer; loading Scene3D alone cannot run it.
   function wgpuOptionalPipelinePass(label: string): string {
+    if (/^gosx-post-canvas-/.test(label)) return "directOutput";
     if (/^gosx-post-/.test(label)) {
       var name = label.slice("gosx-post-".length);
       if (/^bloom|^blur$/.test(name)) return "bloom";

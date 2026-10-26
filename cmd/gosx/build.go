@@ -60,6 +60,14 @@ type BuildOptions struct {
 var runtimeFeatureChunks = []struct{ name, role string }{
 	{"browser-services", "engines"},
 	{"workbench", "workbench"},
+	{"hub-document", "hubs"},
+	{"netplay", "hubs"},
+	{"arcade-audio", "hubs"},
+	{"engine-worker", "engines"},
+	{"motion-transport", "motion"},
+	{"motion-svg", "motion"},
+	{"motion-scene", "motion"},
+	{"motion-track", "motion"},
 }
 
 type wasmCompiler string
@@ -489,68 +497,61 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		fmt.Println("    TinyGo not found; using a release-matched prebuilt runtime instead...")
 	}
 
-	// Build both WASM binaries in parallel. The islands-only runtime is a
+	// Build runtime variants with bounded workers. The islands-only runtime is a
 	// route-selected Go WASM variant that drops shared engine, CRDT, syntax
 	// highlighting, and text-layout exports for pages that only hydrate islands.
 	optimizer := newOptionalWASMOptimizer(os.Stderr)
-	var wg sync.WaitGroup
 	coreResult := wasmResult{label: "core"}
 	engineResult := wasmResult{label: "engine"}
 	collabResult := wasmResult{label: "collab"}
 	runtimeResult := wasmResult{label: "full"}
 	islandsResult := wasmResult{label: "islands"}
 
-	buildOneWASM := func(result *wasmResult, compiler wasmCompiler, name, outputName string, extraTags ...string) {
-		defer wg.Done()
+	buildOneWASM := func(result *wasmResult, compiler wasmCompiler, name, outputName string, extraTags ...string) error {
 		tmpPath := filepath.Join(distDir, outputName+".wasm.tmp")
 
 		switch compiler {
 		case wasmCompilerTinyGo:
 			if err := buildTinyGoWASM(dir, gosxRoot, tmpPath, tinygoPath, extraTags...); err != nil {
-				result.err = err
-				return
+				return err
 			}
 			result.compiler = string(wasmCompilerTinyGo)
 			if optimized, err := optimizeOptionalBuildWASM(optimizer, tmpPath, opts.PerfAppID == ""); err != nil {
-				result.err = err
-				return
+				return err
 			} else if optimized {
 				fmt.Printf("    Applied wasm-opt -Oz (%s)\n", name)
 			}
 		case wasmCompilerPrebuilt:
 			srcPath, variant, ok := prebuiltRuntime.VariantPath(name)
 			if !ok {
-				result.err = fmt.Errorf("prebuilt runtime bundle has no %q variant", name)
-				return
+				return fmt.Errorf("prebuilt runtime bundle has no %q variant", name)
 			}
 			data, err := os.ReadFile(srcPath)
 			if err != nil {
-				result.err = fmt.Errorf("read prebuilt runtime %s: %w", name, err)
-				return
+				return fmt.Errorf("read prebuilt runtime %s: %w", name, err)
 			}
 			if err := verifyRuntimeAssetDigest(variant.File, data, variant.SHA256, variant.Bytes); err != nil {
-				result.err = err
-				return
+				return err
+			}
+			if err := validateWASMFraming(data); err != nil {
+				return fmt.Errorf("invalid prebuilt WASM: %w", err)
 			}
 			if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-				result.err = fmt.Errorf("stage prebuilt runtime %s: %w", name, err)
-				return
+				return fmt.Errorf("stage prebuilt runtime %s: %w", name, err)
 			}
 			result.compiler = string(wasmCompilerPrebuilt)
 		default:
 			cmd := exec.Command("go", goWASMBuildArgs(tmpPath, extraTags...)...)
 			cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS="+goModuleCommandFlags)
 			cmd.Dir = dir
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				result.err = fmt.Errorf("go wasm build failed: %w", err)
-				return
+			output, err := runValidatedWASMCompiler(cmd, tmpPath)
+			if err != nil {
+				return fmt.Errorf("go wasm build failed: %w\n%s", err, output)
 			}
 			result.compiler = string(wasmCompilerGo)
 			if opts.PerfAppID == "" && standardGoWASMOptEnabled() {
 				if optimized, err := optimizer.optimize(tmpPath); err != nil {
-					result.err = err
-					return
+					return err
 				} else if optimized {
 					fmt.Printf("    Applied wasm-opt -Oz (%s, Go)\n", name)
 				}
@@ -560,13 +561,15 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		if opts.PerfAppID != "" {
 			result.optimization, result.err = optimizePerfBuildWASM(tmpPath)
 			if result.err != nil {
-				return
+				return result.err
 			}
 		}
 		data, err := os.ReadFile(tmpPath)
 		if err != nil {
-			result.err = fmt.Errorf("read compiled WASM: %w", err)
-			return
+			return fmt.Errorf("read compiled WASM: %w", err)
+		}
+		if err := validateWASMFraming(data); err != nil {
+			return fmt.Errorf("invalid WASM before hashing: %w", err)
 		}
 		writeRuntimeWASM := writeHashed
 		if opts.Dev {
@@ -574,31 +577,41 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 		asset, err := writeRuntimeWASM(runtimeDir, outputName, ".wasm", data)
 		if err != nil {
-			result.err = fmt.Errorf("write wasm asset: %w", err)
-			return
+			return fmt.Errorf("write wasm asset: %w", err)
 		}
 		result.data = data
 		result.asset = asset
 		_ = os.Remove(tmpPath)
+		return nil
 	}
 
-	// Capability-linked runtimes — all four published variants are built in
-	// parallel. The full artifact keeps the compatibility filename while the
-	// core/engine/collab artifacts are selected from page requirements.
-	wg.Add(4)
-	go buildOneWASM(&coreResult, compiler, "core", "gosx-runtime-core", runtimeVariantBuildTags(runtimewasm.VariantCore)...)
-	go buildOneWASM(&engineResult, compiler, "engine", "gosx-runtime-engine", runtimeVariantBuildTags(runtimewasm.VariantEngine)...)
-	go buildOneWASM(&collabResult, compiler, "collab", "gosx-runtime-collab", runtimeVariantBuildTags(runtimewasm.VariantCollab)...)
-	go buildOneWASM(&runtimeResult, compiler, "full", "gosx-runtime", runtimeVariantBuildTags(runtimewasm.VariantFull)...)
-
-	// Islands-only runtime — parallel with shared runtime.
+	// Keep every capability-linked variant, but respect the caller's existing
+	// Go concurrency limit rather than launching five compilers unconditionally.
 	buildIslands := !tinyGoFullRuntimeEnabled()
-	if buildIslands {
-		wg.Add(1)
-		go buildOneWASM(&islandsResult, compiler, "islands", "gosx-runtime-islands", islandOnlyWASMTags(compiler)...)
+	jobs := []struct {
+		result       *wasmResult
+		name, output string
+		tags         []string
+	}{
+		{&coreResult, "core", "gosx-runtime-core", runtimeVariantBuildTags(runtimewasm.VariantCore)},
+		{&engineResult, "engine", "gosx-runtime-engine", runtimeVariantBuildTags(runtimewasm.VariantEngine)},
+		{&collabResult, "collab", "gosx-runtime-collab", runtimeVariantBuildTags(runtimewasm.VariantCollab)},
+		{&runtimeResult, "full", "gosx-runtime", runtimeVariantBuildTags(runtimewasm.VariantFull)},
 	}
-
-	wg.Wait()
+	if buildIslands {
+		jobs = append(jobs, struct {
+			result       *wasmResult
+			name, output string
+			tags         []string
+		}{&islandsResult, "islands", "gosx-runtime-islands", islandOnlyWASMTags(compiler)})
+	}
+	tasks := make([]func() error, len(jobs))
+	for i, job := range jobs {
+		tasks[i] = func() error { return buildOneWASM(job.result, compiler, job.name, job.output, job.tags...) }
+	}
+	for i, err := range runRuntimeBuildTasks(tasks) {
+		jobs[i].result.err = err
+	}
 
 	// Process runtime result.
 	if runtimeResult.err != nil {
@@ -709,43 +722,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// runtimeExcludableAssetRoles); a blank role marks the core loader chain,
 	// which build.runtime.exclude can never drop. This loop never reaches
 	// WASM compilation or wasm_exec.js — those stay outside this lane.
-	for _, js := range []struct {
-		name string
-		path string
-		dest *HashedAsset
-		role string
-	}{
-		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap, ""},
-		{"bootstrap-lite", filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js"), &manifest.Runtime.BootstrapLite, ""},
-		{"bootstrap-runtime", filepath.Join(gosxRoot, "client", "js", "bootstrap-runtime.js"), &manifest.Runtime.BootstrapRuntime, ""},
-		{"bootstrap-feature-islands", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js"), &manifest.Runtime.BootstrapFeatureIslands, "islands"},
-		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines, "engines"},
-		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs, "hubs"},
-		{"bootstrap-feature-controllers", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js"), &manifest.Runtime.BootstrapFeatureControllers, "controllers"},
-		{"bootstrap-controller-input", filepath.Join(gosxRoot, "client", "js", "bootstrap-controller-input.js"), &manifest.Runtime.BootstrapControllerInput, "controllers"},
-		{"bootstrap-feature-textlayout", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js"), &manifest.Runtime.BootstrapFeatureTextlayout, "textlayout"},
-		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D, "scene3d"},
-		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand, "scene3d"},
-		{"bootstrap-feature-scene3d-hydrate", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-hydrate.js"), &manifest.Runtime.BootstrapFeatureScene3DHydrate, "scene3d"},
-		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU, "scene3d"},
-		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL, "scene3d"},
-		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF, "scene3d"},
-		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation, "scene3d"},
-		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute, "scene3d"},
-		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress, "scene3d"},
-		{"bootstrap-feature-scene3d-walk", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-walk.js"), &manifest.Runtime.BootstrapFeatureScene3DWalk, "scene3d"},
-		{"bootstrap-feature-scene3d-model-preparation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-model-preparation.js"), &manifest.Runtime.BootstrapFeatureScene3DModelPreparation, "scene3d"},
-		{"bootstrap-feature-scene3d-particle-burst", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-particle-burst.js"), &manifest.Runtime.BootstrapFeatureScene3DParticleBurst, "scene3d"},
-		{"bootstrap-feature-scene3d-zoom", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-zoom.js"), &manifest.Runtime.BootstrapFeatureScene3DZoom, "scene3d"},
-		{"bootstrap-feature-scene3d-timeline", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-timeline.js"), &manifest.Runtime.BootstrapFeatureScene3DTimeline, "scene3d"},
-		{"bootstrap-feature-scene3d-vessel", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-vessel.js"), &manifest.Runtime.BootstrapFeatureScene3DVessel, "scene3d"},
-		{"bootstrap-feature-scene3d-ocean-query", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-ocean-query.js"), &manifest.Runtime.BootstrapFeatureScene3DOceanQuery, "scene3d"},
-		{"bootstrap-feature-scene3d-instance-stream", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-instance-stream.js"), &manifest.Runtime.BootstrapFeatureScene3DInstanceStream, "scene3d"},
-		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch, ""},
-		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS, "video"},
-		{"stripe-bridge", filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js"), &manifest.Runtime.StripeBridge, "payments"},
-		{"relay", filepath.Join(gosxRoot, "client", "js", "relay.js"), &manifest.Runtime.Relay, "relay"},
-	} {
+	for _, js := range runtimeJSAssetSpecs(gosxRoot, &manifest.Runtime) {
 		if cfg.Build.Runtime.excludesRole(js.role) {
 			fmt.Printf("    (skipped: %s, excluded by build.runtime.exclude %q)\n", js.name, js.role)
 			continue
@@ -1131,6 +1108,9 @@ func (optimizer *optionalWASMOptimizer) warn(message string) {
 }
 
 func (optimizer *optionalWASMOptimizer) optimize(path string) (bool, error) {
+	if err := validateWASMFile(path); err != nil {
+		return false, fmt.Errorf("invalid optimizer input %s: %w", path, err)
+	}
 	if optimizer.tool == "" {
 		optimizer.missing.Do(func() {
 			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH; keeping compiled WASM. Install Binaryen matching your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
@@ -1139,9 +1119,21 @@ func (optimizer *optionalWASMOptimizer) optimize(path string) (bool, error) {
 	}
 	optTmp := path + ".opt"
 	defer os.Remove(optTmp)
+	if err := os.Remove(optTmp); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("clear owned optimizer output: %w", err)
+	}
 	optCmd := exec.Command(optimizer.tool, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
-	if output, err := optCmd.CombinedOutput(); err != nil {
+	output, err := optCmd.CombinedOutput()
+	if err != nil {
 		message := fmt.Sprintf("warning: optional wasm-opt optimization skipped for %s: %s failed: %v; keeping compiled WASM. Check this optimizer's version against your CI toolchain.\n", filepath.Base(path), optimizer.tool, err)
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			message += detail + "\n"
+		}
+		optimizer.warn(message)
+		return false, nil
+	}
+	if err := validateWASMFile(optTmp); err != nil {
+		message := fmt.Sprintf("warning: optional wasm-opt optimization skipped for %s: invalid optimizer output: %v; keeping compiled WASM.\n", filepath.Base(path), err)
 		if detail := strings.TrimSpace(string(output)); detail != "" {
 			message += detail + "\n"
 		}
@@ -1515,6 +1507,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "/gosx/bootstrap-feature-scene3d-command.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCommand.File)
+	case "/gosx/bootstrap-feature-scene3d-experience.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DExperience.File)
 	case "/gosx/bootstrap-feature-scene3d-hydrate.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
@@ -1531,6 +1525,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWalk.File)
 	case "/gosx/bootstrap-feature-scene3d-model-preparation.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DModelPreparation.File)
+	case "/gosx/bootstrap-feature-scene3d-hierarchy.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHierarchy.File)
 	case "/gosx/bootstrap-feature-scene3d-particle-burst.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
 	case "/gosx/bootstrap-feature-scene3d-zoom.js":

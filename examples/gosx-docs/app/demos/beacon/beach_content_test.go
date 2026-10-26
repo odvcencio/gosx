@@ -16,7 +16,7 @@ import (
 
 func TestBeachCachedAssetURLsMatchContent(t *testing.T) {
 	depth := BlackglassBeachProgram("shore", "").Environment.Ocean.Bathymetry.Src
-	for _, src := range []string{blackglassBeachPosterSrc, depth, blackglassDiscoveriesScriptSrc, blackglassChartScriptSrc, blackglassViewScriptSrc, blackglassDiscoveriesStylesSrc, blackglassWakeTextureSrc} {
+	for _, src := range []string{blackglassBeachPosterSrc, depth, blackglassDiscoveriesStylesSrc, blackglassWakeTextureSrc} {
 		u, err := url.Parse(src)
 		if err != nil {
 			t.Fatal(err)

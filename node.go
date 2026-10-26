@@ -32,6 +32,7 @@ type nodeAttr struct {
 	name     string
 	value    any
 	presence bool
+	dispatch bool
 }
 
 // El creates an element node. The variadic args can be AttrList or Node children.
@@ -121,6 +122,25 @@ func Attrs(pairs ...any) AttrList {
 // Attr creates a single attribute.
 func Attr(name string, value any) nodeAttr {
 	return nodeAttr{name: name, value: value}
+}
+
+// DispatchAttr explicitly binds a trusted handler to a DOM event in handwritten
+// RenderIsland content. Use event types such as "click", "input", or
+// "document-keydown". Unlike Attr
+// and Spread, this constructor can emit framework dispatch metadata.
+func DispatchAttr(event, handler string) nodeAttr {
+	if event == "" {
+		return nodeAttr{}
+	}
+	for _, c := range event {
+		if c == '-' && (event == "document-keydown" || event == "document-keyup" || event == "window-resize") {
+			continue
+		}
+		if c < 'a' || c > 'z' {
+			return nodeAttr{}
+		}
+	}
+	return nodeAttr{name: "data-gosx-on-" + event, value: handler, dispatch: true}
 }
 
 // BoolAttr creates a boolean attribute (e.g., disabled, checked).
@@ -325,7 +345,7 @@ func managedFormShorthandTruthy(attr nodeAttr) bool {
 }
 
 func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
-	if !htmlattr.ValidName(attr.name) {
+	if !attr.dispatch && !htmlattr.SafeAuthoredName(attr.name) {
 		return
 	}
 	switch v := attr.value.(type) {

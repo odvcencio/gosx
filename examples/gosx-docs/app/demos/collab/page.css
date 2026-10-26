@@ -58,12 +58,12 @@
   50%       { opacity: 0.4; }
 }
 
-.collab--connected .collab__status-dot {
+.collab[data-gosx-document-connected="true"] .collab__status-dot {
   background: var(--demo-accent);
   animation: collab-pulse 2.4s ease-in-out infinite;
 }
 
-.collab--connected .collab__status {
+.collab[data-gosx-document-connected="true"] .collab__status {
   color: var(--demo-accent);
 }
 
@@ -76,7 +76,7 @@
   100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
 }
 
-.collab__status-dot.collab__status-dot--flash {
+.collab[data-gosx-document-updated="true"] .collab__status-dot {
   background: var(--demo-accent);
   animation: collab-dot-flash 650ms ease-out;
 }
@@ -194,19 +194,19 @@
   pointer-events: none;
 }
 
-.collab__cursor {
+[data-gosx-document-caret] {
   position: absolute;
   top: 0;
   left: 0;
   width: 2px;
   height: 1.4em;
   border-radius: 1px;
-  background: var(--cursor-color, var(--demo-accent));
+  background: var(--gosx-document-cursor-color, var(--demo-accent));
   opacity: 0.95;
   transition: top 120ms ease, left 120ms ease, opacity 200ms ease;
 }
 
-.collab__cursor::after {
+[data-gosx-document-caret]::after {
   content: attr(data-label);
   position: absolute;
   top: -1.4em;
@@ -219,7 +219,7 @@
   line-height: 1.4;
   white-space: nowrap;
   color: #0b0b0d;
-  background: var(--cursor-color, var(--demo-accent));
+  background: var(--gosx-document-cursor-color, var(--demo-accent));
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
@@ -244,7 +244,7 @@
   100% { background: transparent; }
 }
 
-.collab__preview .collab__block--flash {
+.collab__preview [data-gosx-document-changed="true"] {
   animation: collab-block-flash 1s ease-out;
   border-radius: 3px;
 }
@@ -360,19 +360,19 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .collab--connected .collab__status-dot {
+  .collab[data-gosx-document-connected="true"] .collab__status-dot {
     animation: none;
   }
 
-  .collab__status-dot.collab__status-dot--flash {
+  .collab[data-gosx-document-updated="true"] .collab__status-dot {
     animation: none;
   }
 
-  .collab__preview .collab__block--flash {
+  .collab__preview [data-gosx-document-changed="true"] {
     animation: none;
   }
 
-  .collab__cursor {
+  [data-gosx-document-caret] {
     transition: none;
   }
 }
@@ -422,7 +422,7 @@
   .collab__mobile-tabs button:focus-visible { outline: 2px solid var(--demo-accent); outline-offset: 2px; }
   .collab__body { display: block; min-height: 26rem; }
   .collab__pane { min-height: 26rem; height: min(54vh, 36rem); }
-  .collab[data-view="write"] .collab__pane--preview,
-  .collab[data-view="preview"] .collab__pane--editor { display: none; }
+  .collab[data-gosx-document-view="write"] .collab__pane--preview,
+  .collab[data-gosx-document-view="preview"] .collab__pane--editor { display: none; }
   .collab__source { font-size: 0.8rem; }
 }

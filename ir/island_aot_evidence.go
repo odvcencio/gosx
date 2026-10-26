@@ -27,6 +27,7 @@ type aotEvidence struct {
 	component      Component
 	props          types.Object
 	propsObjects   map[types.Object]bool
+	callbackSlots  map[ast.Expr]string
 	events         map[types.Object]string
 	states         map[types.Object]string
 	stateKinds     map[string]aot.ScalarKind
@@ -640,6 +641,20 @@ func (e *aotEvidence) validateSourceRoots(src *Program, names map[string]bool) e
 			}
 		}
 		for _, attr := range n.Attrs {
+			callbackCall := false
+			if n.Kind == NodeComponent {
+				for _, target := range src.Components {
+					if target.Name == n.Tag && islandCallbackType(target.PropsFields[attr.Name]) {
+						callbackCall = true
+					}
+				}
+			}
+			if callbackCall || (attr.IsEvent && owner.Name != e.component.Name) {
+				if err := e.validateCallbackSource(owner, attr, callbackCall); err != nil {
+					return err
+				}
+				continue
+			}
 			if attr.Kind == AttrStatic {
 				if _, inline := legacyInlineEventType(attr.Name); inline {
 					source := attr.Value

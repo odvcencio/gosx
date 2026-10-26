@@ -19,6 +19,9 @@ async function failureHarness(pattern, mode = "scope", options = {}) {
     configureDevice(device, state, env) {
       env.context.__gosx_emit = (level, category, message, detail) => events.push({ message, detail });
       env.context.console = { warn: message => warnings.push(message), error() {}, log() {} };
+      // These cases exercise the synchronous compatibility/error-scope path.
+      // Async rejection coverage lives with the first-frame pipeline tests.
+      device.createComputePipelineAsync = undefined;
       device.pushErrorScope = (filter) => stack.push({ filter, error: null });
       device.popErrorScope = () => {
         const error = stack.pop().error;
@@ -68,7 +71,7 @@ for (const [label, kind] of [
     assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 1);
     assert.equal(h.warnings.length, 1);
     assert.equal(h.events.find(event => event.message === "pipeline-failed").detail.error, validationMessage);
-    assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.some(draw => draw.pipeline && draw.pipeline.desc.label === "gosx-post-fxaa")));
+    assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.some(draw => draw.pipeline && /^gosx-post-(canvas-)?fxaa$/.test(draw.pipeline.desc.label))));
     assert.equal(h.fake.state.renderPasses.some(pass => pass.pipelines.some(pipeline => pipeline.desc.label === "gosx-post-" + label)), false);
     assert.ok(h.fake.state.submitCount > 10, "raw scene and remaining effects must keep presenting frames");
     assert.equal(h.stack.length, 0, "aborted frames must pop the frame scope");
@@ -132,6 +135,8 @@ test("WebGPU disposes detail atlases even when their first bake is still pending
   const h = await failureHarness(/does-not-match/);
   h.scene.materials[0].detail = { ground: { scale: 3 } };
   h.renderer.render(h.scene, { width: 64, height: 64 });
+  await flushAsyncWork();
+  h.renderer.render(h.scene, { width: 64, height: 64 });
   const atlases = h.fake.state.textures.filter(texture => texture.desc.label === "detail-atlas");
   assert.equal(atlases.length, 1);
   assert.equal(atlases[0].destroyed, undefined);
@@ -151,8 +156,8 @@ test("a newly enabled post pass preserves water simulation commands while its pi
   const beforeSteps = dispatches("gosx-water-step"), beforeSubmits = h.fake.state.submitCount;
   h.scene.postEffects = [{ kind: "fxaa" }];
   h.renderer.render(h.scene, { width: 64, height: 64 }, { nowMS: 170, active: true });
-  assert.ok(dispatches("gosx-water-step") > beforeSteps, "the live simulation advances before a newly required pipeline pauses the frame");
-  assert.ok(h.fake.state.submitCount > beforeSubmits, "the advanced simulation must reach the GPU before retrying");
+  assert.equal(dispatches("gosx-water-step"), beforeSteps, "known pending post pipelines pause before simulation advances");
+  assert.equal(h.fake.state.submitCount, beforeSubmits, "preparation submits no incomplete frame");
   assert.ok(h.fake.state.renderPasses.every(pass => pass.ended));
   await flushAsyncWork();
   for (let i = 0; i < 8; i++) {
@@ -160,7 +165,7 @@ test("a newly enabled post pass preserves water simulation commands while its pi
     await flushAsyncWork();
   }
   assert.equal(dispatches("gosx-water-seed-drops"), 1, "retries must preserve the simulation seed state");
-  assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.some(draw => draw.pipeline && draw.pipeline.desc.label === "gosx-post-fxaa")));
+  assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.some(draw => draw.pipeline && /^gosx-post-(canvas-)?fxaa$/.test(draw.pipeline.desc.label))));
   assert.equal(h.renderer.getFailureReason(), "");
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
   h.renderer.dispose();
@@ -237,6 +242,7 @@ test("the honesty gate swaps a core-failed WebGPU scene to WebGL2 on a replaceme
 
 test("an invalid core compute pipeline requests fallback without dispatching", async () => {
   const h = await failureHarness(/^gosx-water-step$/);
+  h.scene.waterSystems = h.env.context.__gosx_scene3d_api.createSceneState({ scene: { waterSystems: [{ id: "invalid-step", grid: 4 }] } }).waterSystems;
   await frames(h, 5);
   assert.equal(h.renderer.getFailureReason(), "webgpu-pipeline-failed");
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 1);
@@ -384,4 +390,18 @@ test("disposing before validation settles leaves the retired renderer silent", a
   await flushAsyncWork();
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
   assert.equal(h.warnings.length, 0);
+});
+
+
+test("WebGPU canvas post pipeline rejection keeps HDR effects and disables only direct output", async t => {
+  const h = await failureHarness(/^gosx-post-canvas-toneMapping$/);
+  t.after(() => h.renderer.dispose());
+  h.scene.postEffects = [{ kind: "bloom" }, { kind: "toneMapping" }];
+  await frames(h);
+  const diagnostic = h.renderer.diagnostics();
+  assert.equal(h.renderer.getFailureReason(), "");
+  assert.deepEqual(Array.from(diagnostic.disabledPipelinePasses), ["directOutput"]);
+  assert.equal(h.mount.__gosxScene3DWebGPUStats.postEffects, 2);
+  assert.equal(h.fake.state.renderPasses.at(-1).draws[0].pipeline.desc.label, "gosx-post-present");
+  assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.some(draw => draw.pipeline?.desc.label === "gosx-post-toneMapping")));
 });

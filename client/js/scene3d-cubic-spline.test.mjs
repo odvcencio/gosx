@@ -35,6 +35,11 @@ function readSource(name) {
   return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
+// Match the production TypeScript syntax before evaluating the real loader.
+const gltfSource = ts.transpileModule(readSource("../runtime/scene3d/gltf.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+
 function createContext() {
   const sandbox = {
     console: { warn: () => {}, error: () => {}, log: () => {} },
@@ -62,7 +67,7 @@ function loadGltfContext() {
   // 11-scene-math.ts, so load the real fragments in bundle order: math,
   // then gltf, then animation.
   vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
-  vm.runInContext(readSource("../runtime/scene3d/gltf.ts"), context, { filename: "gltf.ts" });
+  vm.runInContext(gltfSource, context, { filename: "gltf.ts" });
   vm.runInContext(ts.transpileModule(readSource("../runtime/scene3d/animation.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "animation.ts" });
   return context;
 }

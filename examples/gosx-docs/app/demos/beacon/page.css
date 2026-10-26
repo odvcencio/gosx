@@ -32,7 +32,7 @@
 :global(.bgb__controls) { bottom: max(62px, calc(env(safe-area-inset-bottom) + 62px)); display: flex; flex-wrap: wrap; gap: 8px; }
 :global(.bgb__group) { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(10,12,14,.36); backdrop-filter: blur(10px); }
 :global(.bgb__link) {
-  padding: 6px 12px; border-radius: 999px; font-size: 12px; letter-spacing: .01em;
+  padding: 6px 12px; border:0; background:transparent; font:inherit; border-radius: 999px; font-size: 12px; letter-spacing: .01em;
   color: rgba(255,255,255,.78); text-decoration: none; white-space: nowrap;
 }
 :global(.bgb__link:hover), :global(.bgb__link:focus-visible) { color: #fff; background: rgba(255,255,255,.12); }
@@ -41,7 +41,7 @@
 :global(.bgb:not([data-coast-following="true"]) .gosx-scene3d-vessel-controls) { padding: 0 !important; background: transparent !important; }
 :global(.bgb:not([data-coast-following="true"]) .gosx-scene3d-vessel-controls button) { min-height: 44px !important; border-radius: 999px !important; background: #f4e4c9 !important; color: #16130f !important; font: 600 13px ui-sans-serif, system-ui, sans-serif !important; box-shadow: 0 3px 16px #0004; }
 :global(.bgb__instructions) { flex-basis: 100%; margin: 0; font-size: 12px; color: rgba(255,255,255,.85); text-shadow: 0 1px 4px #101318; }
-:global(.bgb[data-coast-following="true"] .bgb__instructions) { display: none !important; }
+:global(.bgb:has([data-gosx-scene3d-vessel-following="true"]) .bgb__instructions) { display: none !important; }
 :global(.bgb__discoveries) { max-width: 660px; font-size: 11px; color: rgba(255,255,255,.68); }
 :global(.bgb__reveal) { bottom: max(20px, env(safe-area-inset-bottom)); margin: 0; font-size: 12px; line-height: 1.6; color: rgba(255,255,255,.8); text-shadow: 0 1px 4px #101318; }
 :global(.bgb .bgb__reveal output[data-gosx-scene3d-status]) { display: inline !important; font-variant-numeric: tabular-nums; }
@@ -56,7 +56,7 @@
 @media (max-width: 640px) {
   :global(.bgb__controls), :global(.bgb__reveal) { left: 12px; right: 12px; }
   :global(.bgb__controls) { bottom: max(80px, calc(env(safe-area-inset-bottom) + 80px)); gap: 6px; }
-  :global(.bgb[data-coast-following="true"] [data-gosx-scene3d-vessel="sailing"] > :is(span, .gosx-scene3d-vessel-controls)) { bottom: var(--bgb-helm-bottom, calc(220px + env(safe-area-inset-bottom))) !important; }
+  :global(.bgb:has([data-gosx-scene3d-vessel-following="true"]) [data-gosx-scene3d-vessel="sailing"] > :is(span, .gosx-scene3d-vessel-controls)) { bottom: var(--gosx-vessel-controls-bottom, calc(220px + env(safe-area-inset-bottom))) !important; }
   :global(.bgb__link) { padding: 6px 9px; font-size: 11px; }
   :global(.bgb__instructions) { font-size: 11px; }
   :global(.bgb__discoveries) { display: none; }
@@ -67,7 +67,7 @@
 @media (pointer: coarse) {
   :global(.bgb__instructions-desktop), :global(.bgb__discoveries) { display: none; }
   :global(.bgb__instructions-touch) { display: block; }
-  :global(.bgb[data-coast-following="true"] [data-gosx-scene3d-vessel="sailing"] > .gosx-scene3d-vessel-controls) { bottom: var(--bgb-helm-bottom, 180px) !important; }
+  :global(.bgb:has([data-gosx-scene3d-vessel-following="true"]) [data-gosx-scene3d-vessel="sailing"] > .gosx-scene3d-vessel-controls) { bottom: var(--gosx-vessel-controls-bottom, 180px) !important; }
 }
 :global(.bgb .gosx-scene3d-rudder:focus-visible) { outline: 2px solid #f2c38c; outline-offset: 3px; }
 @media (pointer: coarse) and (max-height: 420px) {

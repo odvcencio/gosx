@@ -32,6 +32,9 @@ func (*StreamWriter) Dispose()                                {}
 func (*Surface) PrepareModels(context.Context, []ModelPreparation) (ModelPreparationResult, error) {
 	return ModelPreparationResult{}, errSurfaceBrowser
 }
+func (*Surface) ApplyTextureProfile(context.Context, TextureDeliveryProfile, []ModelPreparation) (ModelPreparationResult, error) {
+	return ModelPreparationResult{}, errSurfaceBrowser
+}
 
 func (*Surface) OnFrameSubmitted(func(MountFrameSubmission)) (func(), error) {
 	return nil, errSurfaceBrowser

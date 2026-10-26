@@ -5,9 +5,9 @@
   "use strict";
   if (typeof window === "undefined" || window.__gosx_runtime_contract) return;
   window.__gosx_runtime_contract = Object.freeze({
-    abiVersion: 3,
+    abiVersion: 4,
     mailboxVersion: 1,
-    manifestHash: "c9b55465b8f4a4015f7108b1172dabce6f38390b4996dc39059c3719126d2dc8",
+    manifestHash: "430e81b149da21c2c64daf679765cb676e7d1fe25c2fdaf557ac4654162a108c",
     mailboxMagic: 1297634119,
     mailboxHeaderBytes: 24,
     mailboxMaxPayload: 67108864,

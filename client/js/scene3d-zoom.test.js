@@ -14,8 +14,9 @@ class Target {
   removeAttribute(name) { delete this.attrs[name]; }
   closest() { return this.host || null; }
   setPointerCapture() {}
+  dispatchEvent(e) { this.emit(e.type, e); return true; }
   emit(type, props = {}) {
-    const e = { type, ...props, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.stopped = true; } };
+    const e = { type, target: this, ...props, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.stopped = true; } };
     for (const x of [...this.listeners].sort((a,b) => Number(!!b.options?.capture)-Number(!!a.options?.capture))) {
       if (x.name === type) x.fn(e);
       if (e.stopped) break;
@@ -27,18 +28,20 @@ function harness(mode = 'first-person', reduced = false, enabled = true, options
   const window = new Target(), canvas = new Target(), handle = new Target(), document = { activeElement: canvas, querySelector: () => handle }, media = new Target();
   window.__gosx_runtime_api = {};
   media.matches = reduced; window.matchMedia = () => media;
-  vm.runInNewContext(source, { window, document, Map, Math, Number, Array });
-  const api = window.__gosx_runtime_api.scene3DZoom, frames = new Map(), reasons = [];
+  vm.runInNewContext(source, { window, document, Map, Math, Number, Array, CustomEvent: class { constructor(type, options) { this.type=type; Object.assign(this,options); } } });
+  const api = window.__gosx_runtime_api.scene3DZoom, frames = new Map(), reasons = [], subscribers=new Map(), signals=new Map();
   let id = 0, now = 0, pose = { x: 1, y: 2, z: 3, fov: 75 }, cancelled = 0, disposed = 0;
   const controller = { mode, target: {x:0,y:0,z:0}, touched: false, zoomScale: 1, minDistance: 2, maxDistance: 100, orbit: { radius: 20 }, syncCamera() {},
     currentCamera: () => pose, applyCamera: c => { pose = c; } };
   const base = { controller, cancelTouch: () => cancelled++, reset: () => { pose = { ...pose, fov: 75 }; }, dispose: () => disposed++ };
   const helpers = { read: () => pose, pan: d => { pose = {...pose, x:pose.x+d.x, y:pose.y+d.y, z:pose.z+d.z}; }, schedule: r => reasons.push(r), now: () => now,
+    subscribe: (name,fn) => {subscribers.set(name,fn);return ()=>subscribers.delete(name);},
+    publish: (name,value) => {signals.set(name,value);subscribers.get(name)?.(value);},
     requestFrame: fn => { frames.set(++id, fn); return id; }, cancelFrame: id => frames.delete(id) };
   if (mode === 'stern' || mode === 'wheel') { base.state = { mode: 'sailing', cameraMode: mode, length: 10 }; pose.fov = 65; }
   api.setup(canvas, { controlZoom: enabled, ...options }, base, helpers);
   const flush = () => { for (let i = 0; frames.size && i < 200; i++) { now += 16; const pending = [...frames.values()]; frames.clear(); pending.forEach(fn => fn(now)); } };
-  return { api, window, canvas, handle, document, media, base, controller, frames, reasons, helpers, flush, cancelled: () => cancelled, disposed: () => disposed };
+  return { api, window, canvas, handle, document, media, base, controller, frames, reasons, helpers, signals, subscribers, setSignal:(name,value)=>helpers.publish(name,value), flush, cancelled: () => cancelled, disposed: () => disposed };
 }
 const near = (a,b) => assert.ok(Math.abs(a-b)<1e-8, `${a} != ${b}`);
 test('zoom targets clamp and easing is invariant to frame subdivision', () => {
@@ -136,6 +139,51 @@ test('the lazy zoom loader finds the controller in the runtime API', () => {
  const api = { setup() {} }, env = { window: { __gosx_runtime_api: { scene3DZoom: api } } };
  vm.runInNewContext(source, env);
  assert.equal(env.sceneGatedFeatureAPI('zoom'), api);
+});
+
+test('optical lens magnifies without moving or detaching a sailing camera and restores the prior zoom', () => {
+  for (const mode of ['first-person','orbit','stern','wheel']) {
+    const h=harness(mode,true), before=h.controller.currentCamera(), navigation=h.controller.zoomScale;
+    h.canvas.emit('gosx:scene3d:optical-zoom',{detail:{factor:3}});
+    const after=h.controller.currentCamera(); near(Math.tan(after.fov*Math.PI/360),Math.tan(before.fov*Math.PI/360)/3);
+    for(const key of ['x','y','z'])assert.equal(after[key],before[key]);
+    assert.equal(h.controller.zoomScale,navigation);assert.equal(h.frames.size,0,'lens uses the existing render scheduler');
+    if(h.base.state)assert.equal(h.base.state.mode,'sailing');
+    h.canvas.emit('gosx:scene3d:optical-zoom',{detail:{factor:1}});assert.equal(h.controller.currentCamera().fov,before.fov);
+    h.canvas.emit('gosx:scene3d:optical-zoom',{detail:{factor:3}});h.controller.applyCamera({fov:70});assert.equal(h.controller.currentCamera().fov,70);
+    h.base.dispose();assert.equal(h.canvas.listeners.length,0);
+  }
+});
+
+test('optical lens honors portrait FOV, rejects malformed and foreign events, and resets with the scene', () => {
+  const h=harness('stern',true);h.helpers.fov=c=>c._gosxZoomFOV?c.fov:70;
+  h.canvas.emit('gosx:scene3d:optical-zoom',{detail:{factor:3}});
+  const expected=360/Math.PI*Math.atan(Math.tan(70*Math.PI/360)/3);near(h.controller.currentCamera().fov,expected);
+  for(const factor of [NaN,Infinity,0,9,'3',null]) {h.canvas.emit('gosx:scene3d:optical-zoom',{detail:{factor}});near(h.controller.currentCamera().fov,expected);}
+  h.canvas.emit('gosx:scene3d:optical-zoom',{target:{},detail:{factor:1}});near(h.controller.currentCamera().fov,expected);
+  let resets=0;h.canvas.addEventListener('gosx:scene3d:optical-zoom-state',e=>{if(e.detail.factor===1)resets++;});
+  h.base.reset();assert.equal(h.controller.currentCamera().fov,75);assert.equal(resets,1);
+});
+
+test('Go-authored optics uses shared signals for magnification, readings, escape and disposal',()=>{
+ const input='$survey.optics',output='$survey.reading';
+ const h=harness('wheel',false,true,{optics:{inputSignal:input,outputSignal:output,magnification:3,landmarks:[{id:'north',name:'North isle',position:{x:1,z:-100},landing:true}]}});
+ h.controller.currentCamera();assert.equal(h.signals.get(output).Ready,true);
+ h.setSignal(input,true);const c=h.controller.currentCamera(),reading=h.signals.get(output);
+ near(Math.tan(c.fov*Math.PI/360),Math.tan(65*Math.PI/360)/3);
+ assert.equal(reading.Enabled,true);assert.equal(reading.LandmarkID,'north');assert.equal(reading.CanNavigate,true);
+ assert.equal(h.base.state.mode,'sailing');assert.equal(h.frames.size,0);
+ h.canvas.emit('keydown',{key:'Escape',stopPropagation(){}});assert.equal(h.signals.get(input),false);assert.equal(h.controller.currentCamera().fov,65);
+ h.setSignal(input,true);h.base.reset();assert.equal(h.signals.get(input),false);
+ h.base.dispose();assert.equal(h.subscribers.size,0);assert.equal(h.canvas.listeners.length,0);
+});
+
+test('an optics-only fixed viewer keeps ordinary wheel and touch gestures untouched',()=>{
+ const h=harness('fixed',false,false,{optics:{inputSignal:'$lens',magnification:3}});
+ h.setSignal('$lens',true);assert.ok(h.controller.currentCamera().fov<30);
+ assert.equal(h.canvas.emit('wheel',{deltaY:100}).defaultPrevented,undefined);
+ assert.equal(h.canvas.emit('pointerdown',{pointerType:'touch',pointerId:1}).defaultPrevented,undefined);
+ h.setSignal('$lens',false);assert.equal(h.controller.currentCamera().fov,75);h.base.dispose();
 });
 
 

@@ -1,33 +1,31 @@
-// Package docs is the top-level page package for the gosx-docs example app.
-// This file registers a hidden e2e test fixture for Scene3D material-uniform
-// motion. The fixture serves a Scene3D with a single mesh whose CustomMaterial
-// carries an explicit "emissive" customUniform AND a MaterialAnims Oscillator
-// on that same uniform. The non-empty MaterialAnims auto-emits a SEPARATE wire
-// program (SceneIR.MaterialMotionProgram, base64-serialized as the JSON
-// "materialMotionProgram" key) into the scene IR — independent of any transform
-// motion. When the shared Go WASM runtime is loaded and window.__gosx_motion_wasm
-// is set, the JS seam applyWasmMaterialMotionFrame (client/js/bootstrap-src/
-// 20-scene-mount.js) ticks motion.Eval each frame and writes the evaluated value
-// into the mesh's customUniforms["emissive"] bag (read live via
-// ctx.mount.__gosxScene3DState). selena re-packs that uniform per frame so the
-// emissive pulses black<->white at ~0.5Hz. It should not appear in navigation.
-//
-// Headless note: a stand-alone declarative Scene3D does not load the Go WASM
-// runtime (no island / shared engine on the page), so __gosx_motion_tick is
-// undefined and the uniform does not animate under headless Chrome; the visual
-// pulse requires a GPU host with a shared-runtime Scene3D fixture. The fixture
-// still proves the lowering shipped (materialMotionProgram present, customUniforms
-// present), which the e2e hard-asserts.
+// Standalone Go/Selena fixture: MaterialAnims automatically loads the framework kernel.
 package docs
 
 import (
+	"sync"
+
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/scene"
 )
 
+var motionMaterialFixture = sync.OnceValues(func() (scene.CustomMaterial, error) {
+	material, _, err := scene.CompileSelenaMaterial([]byte(`material Pulse {
+    param emissive : color = rgb(0.4, 0.55, 0.65)
+    surface(geo) -> color {
+        let stripe = sin(geo.uv.x * 18.0) * 0.12 + 0.88
+        return mix(rgb(0.025, 0.04, 0.07), emissive, stripe)
+    }
+}`), scene.SelenaMaterialOptions{})
+	return material, err
+})
+
 func init() {
 	route.RegisterFileModuleCaller(0, route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			material, err := motionMaterialFixture()
+			if err != nil {
+				return nil, err
+			}
 			props := scene.Props{
 				Label:      "Animated material-uniform motion fixture",
 				AriaLabel:  "Animated material-uniform motion fixture",
@@ -49,29 +47,17 @@ func init() {
 					scene.Mesh{
 						ID:       "glow-cube",
 						Geometry: scene.BoxGeometry{Width: 1.6, Height: 1.6, Depth: 1.6},
-						// CustomMaterial carries an explicit "emissive" customUniform
-						// (vec4) that the renderer re-packs each frame. The
-						// MaterialAnims Oscillator below mutates exactly this uniform.
-						Material: scene.CustomMaterial{
-							StandardMaterial: scene.StandardMaterial{
-								Color:     "#222633",
-								Roughness: 0.4,
-								Metalness: 0.1,
-							},
-							Uniforms: map[string]any{
-								"emissive": []float64{0, 0, 0, 1},
-							},
-						},
+						Material: material,
 						// Oscillator pulse on the emissive (vec4) uniform:
 						//   value[i] = Base[i] + Amplitude[i]*sin(t*Freq[i]*2π).
-						// emissive RGB pulses 0<->1 at 0.5Hz, alpha pinned at 1.
+						// Emissive RGB pulses at 0.5Hz; the shader has no time input.
 						MaterialAnims: []scene.MaterialUniformAnim{
 							{
 								Uniform: "emissive",
 								Arity:   4,
 								Oscillator: &scene.MaterialOscillatorAnim{
-									Base:      []float64{0, 0, 0, 1},
-									Amplitude: []float64{1, 1, 1, 0},
+									Base:      []float64{0.4, 0.55, 0.65, 1},
+									Amplitude: []float64{0.25, 0.35, 0.35, 0},
 									Freq:      []float64{0.5, 0.5, 0.5, 0},
 								},
 							},

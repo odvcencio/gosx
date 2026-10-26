@@ -204,6 +204,12 @@ func (r MDPPRenderer) Render(doc Document) (gosx.Node, error) {
 	if err != nil {
 		return gosx.Text(""), err
 	}
+	if r.Options.Sanitize {
+		html, err = sanitizeMarkdownHTML(html)
+		if err != nil {
+			return gosx.Text(""), err
+		}
+	}
 	return gosx.RawHTML(string(html)), nil
 }
 

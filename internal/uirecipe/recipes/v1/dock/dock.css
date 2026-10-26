@@ -1,0 +1,29 @@
+.gsx-dock {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: var(--gsx-dock-left, 280px) minmax(0, 1fr) var(--gsx-dock-right, 240px);
+  grid-template-rows: auto minmax(0, 1fr) var(--gsx-dock-bottom, 240px);
+  grid-template-areas: "top top top" "left center right" "bottom bottom bottom";
+}
+
+.gsx-dock > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+.gsx-dock__top { grid-area: top; }
+.gsx-dock__left { grid-area: left; }
+.gsx-dock__center { grid-area: center; }
+.gsx-dock__right { grid-area: right; }
+.gsx-dock__bottom { grid-area: bottom; }
+
+.gsx-dock__left,
+.gsx-dock__right,
+.gsx-dock__bottom {
+  display: grid;
+}
+
+.gsx-dock__left { grid-template-columns: minmax(0, 1fr) auto; }
+.gsx-dock__right { grid-template-columns: auto minmax(0, 1fr); }
+.gsx-dock__bottom { grid-template-rows: auto minmax(0, 1fr); }

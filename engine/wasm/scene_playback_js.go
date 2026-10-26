@@ -16,27 +16,41 @@ import (
 // sceneFrameWaiter owns one visibility subscription for a finite playback.
 // Hidden documents retain no queued RAF; cancellation prevents late writes.
 type sceneFrameWaiter struct {
-	source   *host.FrameSourceJS
-	doc      js.Value
-	changed  chan struct{}
-	listener js.Func
+	source         *host.FrameSourceJS
+	changed        chan struct{}
+	stopVisibility HandleFunc
 }
 
 func newSceneFrameWaiter() *sceneFrameWaiter {
-	w := &sceneFrameWaiter{source: host.NewFrameSourceJS(), doc: js.Global().Get("document"), changed: make(chan struct{}, 1)}
-	w.listener = js.FuncOf(func(js.Value, []js.Value) any {
+	w := &sceneFrameWaiter{source: host.NewFrameSourceJS(), changed: make(chan struct{}, 1)}
+	notify := func() {
 		select {
 		case w.changed <- struct{}{}:
 		default:
 		}
-		return nil
-	})
-	w.doc.Call("addEventListener", "visibilitychange", w.listener)
+	}
+	if root := js.Global().Get("__gosx"); root.Truthy() {
+		if bridge := root.Get("worker"); bridge.Truthy() && bridge.Get("onVisibility").Type() == js.TypeFunction {
+			w.stopVisibility = (Port{value: bridge}).OnVisibility(func(bool) { notify() })
+			return w
+		}
+	}
+	doc := js.Global().Get("document")
+	if doc.Truthy() {
+		listener := js.FuncOf(func(js.Value, []js.Value) any { notify(); return nil })
+		doc.Call("addEventListener", "visibilitychange", listener)
+		w.stopVisibility = func() {
+			doc.Call("removeEventListener", "visibilitychange", listener)
+			listener.Release()
+		}
+	}
 	return w
 }
 func (w *sceneFrameWaiter) dispose() {
-	w.doc.Call("removeEventListener", "visibilitychange", w.listener)
-	w.listener.Release()
+	if w.stopVisibility != nil {
+		w.stopVisibility()
+		w.stopVisibility = nil
+	}
 }
 func (w *sceneFrameWaiter) next(ctx context.Context) (float64, bool, error) {
 	if ctx == nil {

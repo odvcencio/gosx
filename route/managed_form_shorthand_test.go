@@ -253,15 +253,9 @@ func TestFileRendererManagedFormShorthandDropsActionNameOnRawForm(t *testing.T) 
 	}
 }
 
-// TestFileRendererStripsSpreadSuppliedManagedFormShorthand covers gosx#179
-// F4: stripManagedFormShorthandAttr matches attrs by ir.Attr.Name, but a
-// {...extra}-supplied shorthand has no Name of its own — the key lives
-// inside the spread map's evaluated value, rendered later by
-// renderFileSpreadAttrs. Detection already worked (attrValue searches
-// spread maps too), so the shorthand still expanded; only the strip step
-// missed it, leaving the raw data-gosx-managed key rendered beside the full
-// contract it triggered.
-func TestFileRendererStripsSpreadSuppliedManagedFormShorthand(t *testing.T) {
+// TestFileRendererRejectsSpreadSuppliedManagedFormShorthand proves a filtered
+// framework attribute cannot trigger server-generated managed form attributes.
+func TestFileRendererRejectsSpreadSuppliedManagedFormShorthand(t *testing.T) {
 	src := []byte(`package docs
 
 func Page() Node {
@@ -283,19 +277,16 @@ func Page() Node {
 		t.Fatalf("render: %v", err)
 	}
 
-	if !hasManagedFormAttr(html) {
-		t.Fatalf("expected the spread-supplied shorthand to expand, got %q", html)
+	if hasManagedFormAttr(html) {
+		t.Fatalf("spread-supplied framework attribute triggered expansion: %q", html)
 	}
 	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
 		t.Fatalf("expected the spread-supplied shorthand key stripped from output, got %q", html)
 	}
 }
 
-// TestFileRendererSpreadShorthandFalseLeavesFormUnmanaged is the opt-out
-// counterpart to the spread-supplied truthy case above: when the
-// spread-supplied value is falsy, the shorthand key must survive exactly
-// as authored, matching the direct-attribute opt-out rule
-// (TestFileRendererManagedFormShorthandFalseOptsOut).
+// A spread cannot enable or disable framework behavior; explicit authored
+// shorthand attributes retain their separate opt-out rule.
 func TestFileRendererSpreadShorthandFalseLeavesFormUnmanaged(t *testing.T) {
 	src := []byte(`package docs
 
@@ -318,8 +309,8 @@ func Page() Node {
 		t.Fatalf("render: %v", err)
 	}
 
-	if !strings.Contains(html, `data-gosx-managed="false"`) {
-		t.Fatalf("expected the literal opt-out attribute in output, got %q", html)
+	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("spread-supplied framework attribute survived: %q", html)
 	}
 	if hasManagedFormAttr(html) {
 		t.Fatalf("expected no expansion for a falsy spread-supplied shorthand, got %q", html)

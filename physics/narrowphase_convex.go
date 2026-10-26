@@ -91,7 +91,7 @@ func collideCylinderCylinder(a, b *Collider) (ContactManifold, bool) {
 	aMin, aMax := -halfA, halfA
 	bMin, bMax := axialB-halfB, axialB+halfB
 	overlap := minFloat(aMax, bMax) - maxFloat(aMin, bMin)
-	margin := cylinderAxialMarginFactor * minFloat(radiusA, radiusB)
+	margin := float64(cylinderAxialMarginFactor * minFloat(radiusA, radiusB))
 	if margin <= 0 {
 		margin = epsilon
 	}
@@ -99,7 +99,7 @@ func collideCylinderCylinder(a, b *Collider) (ContactManifold, bool) {
 		return collideConvexGJK(a, b)
 	}
 
-	radialMargin := cylinderRadialMarginFactor * minFloat(radiusA, radiusB)
+	radialMargin := float64(cylinderRadialMarginFactor * minFloat(radiusA, radiusB))
 	if radialMargin <= 0 {
 		radialMargin = epsilon
 	}
@@ -511,7 +511,7 @@ func closestPointOnTriangle(p, a, b, c Vec3) Vec3 {
 		return b
 	}
 
-	vc := d1*d4 - d3*d2
+	vc := float64(d1*d4) - float64(d3*d2)
 	if vc <= 0 && d1 >= 0 && d3 <= 0 {
 		denom := d1 - d3
 		if denom <= epsilon {
@@ -527,7 +527,7 @@ func closestPointOnTriangle(p, a, b, c Vec3) Vec3 {
 		return c
 	}
 
-	vb := d5*d2 - d1*d6
+	vb := float64(d5*d2) - float64(d1*d6)
 	if vb <= 0 && d2 >= 0 && d6 <= 0 {
 		denom := d2 - d6
 		if denom <= epsilon {
@@ -536,7 +536,7 @@ func closestPointOnTriangle(p, a, b, c Vec3) Vec3 {
 		return a.Add(ac.Mul(d2 / denom))
 	}
 
-	va := d3*d6 - d5*d4
+	va := float64(d3*d6) - float64(d5*d4)
 	if va <= 0 && (d4-d3) >= 0 && (d5-d6) >= 0 {
 		denom := (d4 - d3) + (d5 - d6)
 		if denom <= epsilon {
@@ -630,5 +630,5 @@ func boxMinAlong(box AABB, normal Vec3) float64 {
 	center := box.Center()
 	half := box.Size().Mul(0.5)
 	return normal.Dot(center) -
-		(math.Abs(normal.X)*half.X + math.Abs(normal.Y)*half.Y + math.Abs(normal.Z)*half.Z)
+		(float64(math.Abs(normal.X)*half.X) + float64(math.Abs(normal.Y)*half.Y) + float64(math.Abs(normal.Z)*half.Z))
 }

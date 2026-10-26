@@ -22,7 +22,9 @@ func WakeFoam() ([]byte, error) {
 			lace := clamp(.35+2.2*noise.fbm(u*52, v*20, 3), 0, 1)
 			ridge := math.Pow(math.Max(0, math.Cos(v*32+noise.value(u*18, v*14)*5)), 3)
 			alpha := body * math.Pow(math.Sin(u*math.Pi), .8) * math.Pow(math.Sin(v*math.Pi), .8)
-			alpha *= (.18 + .8*lace + .18*ridge) * math.Pow(1-float64(y/16)/8, 1.5)
+			age := float64(y / 16)
+			coverage := clamp(.18+.8*lace+.18*ridge-age*.095, 0, 1)
+			alpha *= coverage * math.Pow(1-age/8, 1.15)
 			img.SetNRGBA(x, y, color.NRGBA{R: 239, G: 245, B: 238, A: uint8(clamp(alpha, 0, 1) * 255)})
 		}
 	}

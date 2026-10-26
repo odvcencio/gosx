@@ -25,6 +25,15 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 		`internal/api/api.go`,
 		`name="content"`,
 		`data-code-command="find"`,
+		`data-code-command="goto"`,
+		`aria-label="Go to line"`,
+		`data-code-goto-panel`,
+		`data-code-goto="query"`,
+		`aria-label="Line and column"`,
+		`data-code-goto="go"`,
+		`data-code-goto="close"`,
+		`aria-label="Close go to line"`,
+		`data-code-goto="status" aria-live="polite"`,
 		`data-code-command="comment"`,
 		`data-code-command="bracket"`,
 		`data-code-find="query"`,
@@ -45,6 +54,44 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 	}
 	if !strings.Contains(html, `class="editor-native-card editor-panel editor-panel-diagnostics"`) {
 		t.Fatalf("diagnostics panel must participate in panel selection: %s", html)
+	}
+}
+
+func TestMarkdownSurfaceOmitsCodeNavigation(t *testing.T) {
+	html := gosx.RenderHTML(New("markdown", Options{Content: "# Note"}).Render())
+	if strings.Contains(html, `data-code-command="goto"`) || strings.Contains(html, `data-code-goto-panel`) {
+		t.Fatal("Markdown surface must not render code navigation")
+	}
+}
+
+func TestCodeUnsavedProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options Options
+		unsaved bool
+		status  string
+		class   string
+	}{
+		{name: "saved by default", options: Options{Surface: SurfaceCode}, status: "Saved", class: "saved"},
+		{name: "recovered manual draft", options: Options{Surface: SurfaceCode, Code: &CodeOptions{Unsaved: true}}, unsaved: true, status: "Unsaved", class: "unsaved"},
+		{name: "autosave retains its existing status", options: Options{Surface: SurfaceCode, AutoSaveURL: "/autosave", Code: &CodeOptions{Unsaved: true}}, unsaved: true, status: "Saved", class: "saved"},
+		{name: "read only", options: Options{Surface: SurfaceCode, ReadOnly: true, Code: &CodeOptions{Unsaved: true}}, unsaved: true, status: "Read only", class: "saved"},
+		{name: "publishing ignores code projection", options: Options{Code: &CodeOptions{Unsaved: true}}, status: "Saved", class: "saved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html := gosx.RenderHTML(New("editor", tc.options).Render())
+			if got := strings.Contains(html, " data-code-unsaved"); got != tc.unsaved {
+				t.Fatalf("unsaved attribute = %v, want %v", got, tc.unsaved)
+			}
+			start := strings.Index(html, `id="editor-save-status"`)
+			if start < 0 {
+				t.Fatal("missing native save status")
+			}
+			status := html[start : start+strings.Index(html[start:], "</span>")]
+			if !strings.Contains(status, "editor-save-status-"+tc.class) || !strings.HasSuffix(status, ">"+tc.status) {
+				t.Fatalf("status = %s, want %s/%s", status, tc.class, tc.status)
+			}
+		})
 	}
 }
 

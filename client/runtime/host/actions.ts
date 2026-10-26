@@ -23,6 +23,7 @@
 //   data-gosx-action="POST /url"    element/button → fetch(url, {Accept: json}); no reload.
 //   <form data-gosx-action[="..."]>  submit → fetch URLSearchParams(FormData);
 //                                    method/url default to the form's method/action.
+//                                    GET/HEAD merge fields into the URL query.
 //   data-gosx-reset                  on a data-gosx-action form → clear text inputs on 2xx.
 //   data-gosx-submit-on="change"     input → el.form.requestSubmit() on change.
 //   data-gosx-set="$signal"          element → on click, set the shared signal to
@@ -122,17 +123,24 @@
     var actionEl = contractEl || el;
     var opts = { method: method, headers: { Accept: "application/json" } };
     if (body !== undefined) {
-      opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
-      opts.body = body;
+      if (/^(GET|HEAD)$/i.test(method)) {
+        var target = gosxRequestURL(url);
+        var fields = new URLSearchParams(body);
+        // Submitted fields replace stale URL values. Delete first so repeated
+        // controls retain every submitted value and unrelated queries survive.
+        fields.forEach(function (_, name) { target.searchParams.delete(name); });
+        fields.forEach(function (value, name) {
+          target.searchParams.append(name, value);
+        });
+        url = target.href;
+      } else {
+        opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
+        opts.body = body;
+      }
     }
     if (el && "disabled" in el) el.disabled = true;
     return gosxActionRequest(url, opts)
       .then(function (r) {
-        // Re-enable on settle (success OR failure), not just on failure: a
-        // persistent submit button (composer send, comment Pin, suggest) must
-        // be usable again after a successful 2xx. Buttons that re-render away
-        // (accept/dismiss) are replaced anyway, so re-enabling is harmless.
-        if (el && "disabled" in el) el.disabled = false;
         if (!r.ok) {
           console.warn("[gosx] action failed", method, url, r.status);
           reportActionFailure(
@@ -146,6 +154,8 @@
           );
         }
         return responsePayload(r).then(function (result) {
+          // The body is ready; enable before projection restores focus.
+          if (el && "disabled" in el) el.disabled = false;
           applyActionResult(actionEl, result, el);
           var detail = {
             element: el,
@@ -335,10 +345,10 @@
 
   function formBody(form, submitter) {
     var formData = new FormData(form);
-    var name = submitter && (submitter.name || (submitter.getAttribute && submitter.getAttribute("name")));
-    if (name && (!formData.has || !formData.has(name))) {
-      var value = submitter.value || (submitter.getAttribute && submitter.getAttribute("value")) || "";
-      if (typeof formData.append === "function") formData.append(name, value);
+    // FormData(form) excludes submit buttons. A matching field name must not
+    // suppress the clicked button or collapse repeated successful controls.
+    if (submitter && submitter.name && !submitter.disabled) {
+      formData.append(submitter.name, submitter.value);
     }
     return new URLSearchParams(formData);
   }
@@ -389,6 +399,7 @@
     var target = targetFor(selector);
     if (!target) return false;
     var attribute = trigger.getAttribute("data-gosx-toggle-attribute") || "data-gosx-open";
+    if (gosxHost.attributes.isReservedDispatchName(attribute)) return false;
     var open = forceClose ? false : !target.hasAttribute(attribute);
     if (open) target.setAttribute(attribute, "true");
     else target.removeAttribute(attribute);
@@ -455,6 +466,21 @@
     });
   }
 
+  function bindingTargetAllowed(name, value) {
+    var lower = name.replace(/[A-Z]/g, function(c) { return String.fromCharCode(c.charCodeAt(0) + 32); });
+    if (!/^[a-z_][-a-z0-9_.]*$/.test(lower) || lower.indexOf("data-gosx-") === 0 || lower === "data-csrf" || lower === "data-csrf-token") return false;
+    // Match live bindings: permit inert targets explicitly rather than trying
+    // to enumerate every executable HTML and SVG attribute.
+    if (/^(title|value|datetime|disabled|hidden)$/.test(lower) || lower.indexOf("data-") === 0 || lower.indexOf("aria-") === 0) return true;
+    if (lower !== "href") return false;
+    if (value === null) return true;
+    // Browsers ignore ASCII controls in schemes and normalize backslashes in
+    // web URLs. Check the URL they resolve, including network-path references.
+    var clean = String(value).replace(/[\u0000-\u0020\u007f]/g, "").replace(/\\/g, "/");
+    if (/^[a-z][a-z0-9+.-]*:/i.test(clean)) return /^https?:/i.test(clean);
+    return clean.indexOf("//") !== 0;
+  }
+
   function bindAttribute(target, spec, source) {
     String(spec || "").split(";").forEach(function (mapping) {
       var split = mapping.indexOf(":");
@@ -462,7 +488,7 @@
       var targetName = mapping.slice(0, split).trim();
       var sourceName = mapping.slice(split + 1).trim();
       var value = source.getAttribute(sourceName);
-      if (!targetName) return;
+      if (!bindingTargetAllowed(targetName, value)) return;
       if (value === null || value === "") target.removeAttribute(targetName);
       else target.setAttribute(targetName, value);
     });
@@ -489,6 +515,10 @@
   }
 
   function refreshBindings() {
+    var root = document.documentElement;
+    if (root && root.getAttribute("data-gosx-copy-ready") !== "true") {
+      root.setAttribute("data-gosx-copy-ready", "true");
+    }
     if (typeof document.querySelectorAll !== "function") return;
     document.querySelectorAll("[data-gosx-bind-source]").forEach(bindSource);
   }

@@ -22,6 +22,11 @@ func buildReport() assetpipe.Report {
 					{
 						URI:                  "assets/wood.bc7.ktx2",
 						Kind:                 "texture",
+						Role:                 "base-color",
+						ColorSpace:           "srgb",
+						Channels:             "4",
+						Format:               "bc7-rgba-unorm-srgb",
+						MipLevels:            11,
 						Quality:              "high",
 						Bytes:                42529,
 						State:                assetpipe.VariantBuilt,
@@ -78,6 +83,9 @@ func TestSetTextureVariantsCarriesOnlyBuiltTextures(t *testing.T) {
 	}
 	if refs[0].Bytes != 42529 || refs[0].Quality != "high" {
 		t.Errorf("the first variant carries bytes %d and quality %q", refs[0].Bytes, refs[0].Quality)
+	}
+	if refs[0].Role != "base-color" || refs[0].ColorSpace != "srgb" || refs[0].Channels != "4" || refs[0].Format != "bc7-rgba-unorm-srgb" || refs[0].MipLevels != 11 {
+		t.Errorf("the first variant lost role/colour/channel/format/mip metadata: %+v", refs[0])
 	}
 	if len(refs[0].RequiredCapabilities) != 3 {
 		t.Errorf("the first variant carries %d capabilities, want 3", len(refs[0].RequiredCapabilities))
@@ -142,7 +150,7 @@ func TestTextureVariantsSurviveTheJSONRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("the first variant is %v", entries[0])
 	}
-	for _, field := range []string{"uri", "quality", "bytes", "requiredCapabilities"} {
+	for _, field := range []string{"uri", "role", "colorSpace", "channels", "format", "mipLevels", "quality", "bytes", "requiredCapabilities"} {
 		if _, present := first[field]; !present {
 			t.Errorf("the variant JSON has no %q field, it has keys %v", field, keysOf(first))
 		}

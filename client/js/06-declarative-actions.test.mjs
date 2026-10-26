@@ -121,6 +121,7 @@ function makeEl(attrs = {}, opts = {}) {
 function runModule(options = {}) {
   const listeners = {};
   const fetches = [];
+  const requests = [];
   const signals = [];
   const notifications = [];
   const dispatched = [];
@@ -148,6 +149,7 @@ function runModule(options = {}) {
     },
     fetch: (url, opts) => {
       fetches.push({ url, opts });
+      if (options.constructRequests) requests.push(new Request(url, opts));
       const response = {
         headers: { get: () => options.responseToken ?? null },
         ok: options.responseOK !== false,
@@ -206,7 +208,7 @@ function runModule(options = {}) {
   ctx.CustomEvent = CustomEvent;
   vm.createContext(ctx);
   vm.runInContext(moduleSrc, ctx);
-  return { listeners, fetches, signals, notifications, dispatched, telemetry, ctx };
+  return { listeners, fetches, requests, signals, notifications, dispatched, telemetry, ctx };
 }
 
 function fire(listener, target) {
@@ -306,8 +308,15 @@ test("data-gosx-toggle-target owns attribute and aria state without page JS", ()
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
 });
 
-test("data-gosx-copy-button copies code and announces the result", async () => {
+test("copy controls work before runtime startup and recover readiness after navigation", async () => {
   const copied = [];
+  const root = makeEl({ "data-gosx-runtime-ready": "false" }, { tag: "html" });
+  const setAttribute = root.setAttribute.bind(root);
+  let readinessWrites = 0;
+  root.setAttribute = (name, value) => {
+    if (name === "data-gosx-copy-ready") readinessWrites++;
+    setAttribute(name, value);
+  };
   const code = { textContent: "fmt.Println(\"Hello, GoSX\")" };
   const status = { textContent: "" };
   const button = makeEl({
@@ -318,13 +327,17 @@ test("data-gosx-copy-button copies code and announces the result", async () => {
     children: [button],
     querySelector: (selector) => selector === "pre code" ? code : status,
   });
-  const { listeners } = runModule({
+  const { listeners, ctx } = runModule({
+    documentElement: root,
+    noSharedSignalWriter: true,
     clipboard: (text) => {
       copied.push(text);
       return Promise.resolve();
     },
   });
 
+  assert.equal(root.getAttribute("data-gosx-copy-ready"), "true");
+  assert.equal(root.getAttribute("data-gosx-runtime-ready"), "false");
   const prevented = fire(listeners.click, button);
   assert.equal(prevented, true);
   assert.equal(button.disabled, true);
@@ -333,6 +346,13 @@ test("data-gosx-copy-button copies code and announces the result", async () => {
   assert.equal(button.disabled, false);
   assert.equal(button.textContent, "Copied");
   assert.equal(status.textContent, "Copied code to the clipboard.");
+  root.removeAttribute("data-gosx-copy-ready");
+  listeners["gosx:navigate"]();
+  assert.equal(root.getAttribute("data-gosx-copy-ready"), "true");
+  assert.equal(root.getAttribute("data-gosx-runtime-ready"), "false");
+  ctx.window.__gosx.actions.refreshBindings();
+  ctx.window.__gosx.actions.refreshBindings();
+  assert.equal(readinessWrites, 2, "steady refreshes do not repeatedly mutate the root");
 });
 
 test("data-gosx-copy-button falls back to a temporary textarea", async () => {
@@ -425,6 +445,74 @@ test("data-gosx-action button POSTs, disables during flight, re-enables on settl
   assert.equal(btn.disabled, false, "re-enabled on settle");
 });
 
+test("action buttons stay disabled until the response body is available", async (t) => {
+  for (const ok of [true, false]) {
+    await t.test(ok ? "success" : "HTTP failure", async () => {
+      let finishBody;
+      let readingBody = false;
+      const body = new Promise((resolve) => { finishBody = resolve; });
+      const response = {
+        ok,
+        status: ok ? 200 : 422,
+        json() { readingBody = true; return body; },
+      };
+      const { ctx, signals, dispatched } = runModule({ coreRequest: () => Promise.resolve(response) });
+      const button = makeEl({ "data-gosx-action-signal": "$result" }, { tag: "button" });
+      const pending = ctx.window.__gosx.actions.run(button, "POST", "/publish");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(readingBody, true, "headers arrived and body consumption started");
+      assert.equal(button.disabled, true, "headers alone must not release the button");
+      assert.equal(dispatched.length, 0);
+      assert.equal(signals.length, 0);
+
+      finishBody({ value: "published" });
+      assert.equal(await pending, response);
+      assert.equal(button.disabled, false);
+      assert.deepEqual(signals, [{ name: "$result", payload: '"published"' }]);
+      assert.equal(dispatched.filter((event) => event.type === "gosx:action:result").length, 1);
+    });
+  }
+});
+
+test("action result projection restores focus to an enabled trigger", async () => {
+  const target = { innerHTML: "" };
+  const { ctx } = runModule({ targetSelector: "#result", target, responsePayload: { html: "<p>Saved</p>" } });
+  const button = makeEl({ "data-gosx-action-target": "#result" }, { tag: "button" });
+  let focused = false;
+  button.focus = () => { assert.equal(button.disabled, false); focused = true; };
+  const response = await ctx.window.__gosx.actions.run(button, "POST", "/publish");
+  assert.equal(response.ok, true);
+  assert.equal(focused, true);
+  assert.equal(target.innerHTML, "<p>Saved</p>");
+});
+
+test("action buttons become usable again after a request rejects", async () => {
+  let fail;
+  const request = new Promise((_, reject) => { fail = reject; });
+  const { ctx, dispatched } = runModule({ coreRequest: () => request });
+  const button = makeEl({}, { tag: "button" });
+  const pending = ctx.window.__gosx.actions.run(button, "POST", "/publish");
+  assert.equal(button.disabled, true);
+  fail(new Error("connection lost"));
+  await pending;
+  assert.equal(button.disabled, false);
+  assert.equal(dispatched.filter((event) => event.type === "gosx:action:error").length, 1);
+});
+
+test("action buttons become usable again when the response body rejects", async () => {
+  let failBody;
+  const body = new Promise((_, reject) => { failBody = reject; });
+  const response = { ok: true, status: 200, json: () => body };
+  const { ctx } = runModule({ coreRequest: () => Promise.resolve(response) });
+  const button = makeEl({}, { tag: "button" });
+  const pending = ctx.window.__gosx.actions.run(button, "POST", "/publish");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(button.disabled, true);
+  failBody(new Error("truncated response body"));
+  assert.equal(await pending, response);
+  assert.equal(button.disabled, false);
+});
+
 test("data-gosx-action form submits via fetch and does not navigate", () => {
   const { listeners, fetches } = runModule();
   const form = makeEl({ "data-gosx-action": "" , method: "POST", action: "/api/x/agent" }, { tag: "form" });
@@ -472,6 +560,81 @@ test("data-gosx-action form honors submitter formaction and formmethod", () => {
   assert.equal(fetches[0].url, "https://app.example/api/x/schedule");
   assert.equal(fetches[0].opts.method, "PATCH");
   assert.equal(String(fetches[0].opts.body), "publish_at=2026-07-29T16%3A30&post_action=schedule");
+});
+
+for (const method of ["GET", "HEAD"]) {
+  test(`data-gosx-action ${method} form sends controls in a valid request URL`, async () => {
+    const { listeners, fetches, requests, dispatched } = runModule({
+      constructRequests: true,
+      csrfToken: "private-token",
+      baseURI: "https://app.example/operator/",
+    });
+    const submit = makeEl({ type: "submit", name: "view", value: "list" }, { tag: "button" });
+    const form = makeEl({
+      "data-gosx-action": "",
+      method,
+      action: "search?scope=drafts&scope=ready&q=old&tag=old#results",
+    }, { tag: "form", submitBtn: submit });
+    form._formEntries = [["q", "scene & labels"], ["tag", "go"], ["tag", "web"], ["empty", ""]];
+    listeners.submit({ target: form, submitter: submit, preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(requests.length, 1, "Fetch Request accepts the submission");
+    const request = requests[0];
+    const url = new URL(request.url);
+    assert.equal(url.pathname, "/operator/search");
+    assert.equal(url.hash, "#results");
+    assert.deepEqual(url.searchParams.getAll("scope"), ["drafts", "ready"]);
+    assert.equal(url.searchParams.get("q"), "scene & labels");
+    assert.deepEqual(url.searchParams.getAll("tag"), ["go", "web"]);
+    assert.equal(url.searchParams.get("empty"), "");
+    assert.equal(url.searchParams.get("view"), "list");
+    assert.equal(request.method, method);
+    assert.equal(request.body, null);
+    assert.equal(request.headers.has("Content-Type"), false);
+    assert.equal(request.headers.has("X-CSRF-Token"), false);
+    assert.equal("body" in fetches[0].opts, false);
+    assert.equal(dispatched.some((event) => event.type === "gosx:action:error"), false);
+    assert.equal(form.getAttribute("data-gosx-pending"), null);
+  });
+}
+
+test("data-gosx-action form honors a GET submitter override through the core transport", () => {
+  const calls = [];
+  const { listeners } = runModule({
+    coreRequest(url, opts) {
+      calls.push(new Request(url, opts));
+      return Promise.resolve({ ok: true, status: 200 });
+    },
+  });
+  const submit = makeEl({
+    type: "submit",
+    name: "intent",
+    value: "preview",
+    formaction: "/search?scope=all",
+    formmethod: "get",
+  }, { tag: "button" });
+  const form = makeEl({ "data-gosx-action": "", method: "POST", action: "/save" }, {
+    tag: "form", submitBtn: submit,
+  });
+  form._formEntries = [["q", "galaxy"]];
+  listeners.submit({ target: form, submitter: submit, preventDefault() {} });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://app.example/search?scope=all&q=galaxy&intent=preview");
+  assert.equal(calls[0].method, "GET");
+  assert.equal(calls[0].body, null);
+});
+
+test("data-gosx-action form preserves fields with the submitter name", () => {
+  const { listeners, fetches } = runModule();
+  const submit = makeEl({ type: "submit", name: "tag", value: "submitter" }, { tag: "button" });
+  const form = makeEl({ "data-gosx-action": "", method: "POST", action: "/save" }, {
+    tag: "form", submitBtn: submit,
+  });
+  form._formEntries = [["tag", "first"], ["tag", "second"]];
+  listeners.submit({ target: form, submitter: submit, preventDefault() {} });
+  assert.deepEqual(new URLSearchParams(fetches[0].opts.body).getAll("tag"), ["first", "second", "submitter"]);
 });
 
 test("data-gosx-action form lets the submitter own the patch target", async () => {
@@ -798,4 +961,84 @@ test("isolated sign-in actions refresh the token before the next mutation", asyn
  fire(listeners.click, makeEl({"data-gosx-action":"POST /save"}, {tag:"button"}));
  assert.equal(fetches[0].opts.headers["X-CSRF-Token"], "before-login");
  assert.equal(fetches[1].opts.headers["X-CSRF-Token"], "after-login");
+});
+
+test("declarative attribute bindings cannot overwrite or remove dispatch markers", () => {
+  for (const name of ["data-gosx-handler", "data-gosx-path", "data-gosx-on-click", "DATA-GOSX-ON-INPUT", "data-gosx-on-"]) {
+    for (const value of ["evil", ""]) {
+      const source = makeEl({ "data-value": value });
+      const root = makeEl({
+        "data-gosx-bind-source": ".active",
+        "data-gosx-bind-attr": `${name}:data-value;data-gosx-link:data-value`,
+        [name]: "real",
+        "data-gosx-link": "trusted",
+      });
+      const { ctx } = runModule({ queryMap: { ".active": source }, queryAll: { "[data-gosx-bind-source]": [root] } });
+      ctx.window.__gosx.actions.refreshBindings();
+      assert.equal(root.getAttribute(name), "real", name);
+      assert.equal(root.getAttribute("data-gosx-link"), "trusted");
+    }
+  }
+});
+
+test("declarative toggles cannot inject or remove reserved dispatch markers", () => {
+  for (const name of ["data-gosx-handler", "data-gosx-path", "DATA-GOSX-ON-CLICK", "data-gosx-on-"]) {
+    for (const existing of [null, "real"]) {
+      const target = makeEl(existing == null ? {} : { [name]: existing });
+      const trigger = makeEl({ "data-gosx-toggle-target": "#target", "data-gosx-toggle-attribute": name });
+      const { listeners } = runModule({ queryMap: { "#target": target } });
+      fire(listeners.click, trigger);
+      assert.equal(target.getAttribute(name), existing, name);
+    }
+  }
+});
+
+test("attribute bindings refuse executable and framework targets before mutation", () => {
+ for (const name of ["onclick", "OnError", "ONLOAD", "style", "STYLE", "data-gosx-action", "DATA-GOSX-BIND-ATTR", "data-gosx-on-click", "x y", "x=onclick"]) {
+  for (const value of ["alert(1)", "", null]) {
+   const source = makeEl(value === null ? {} : { "data-value": value });
+   const root = makeEl({ "data-gosx-bind-source": ".active", "data-gosx-bind-attr": name+":data-value", [name]: "original" });
+   const { ctx } = runModule({ queryMap: { ".active": source }, queryAll: { "[data-gosx-bind-source]": [root] } });
+   ctx.window.__gosx.actions.refreshBindings();
+   assert.equal(root.getAttribute(name), "original", name+"="+value);
+  }
+ }
+});
+
+test("attribute bindings use a positive allowlist before writing or removing targets", () => {
+ for (const name of ["srcdoc", "SRCDOC", "data", "attributeName", "values", "to", "from", "by", "begin", "end", "keyTimes", "keySplines", "data-csrf", "DATA-CSRF-TOKEN", "class", "id", "name", "src", "action", "formaction", "poster"]) {
+  for (const value of ["payload", "", null]) {
+   const source = makeEl(value === null ? {} : { "data-value": value });
+   const root = makeEl({ "data-gosx-bind-source": ".active", "data-gosx-bind-attr": name+":data-value", [name]: "original" });
+   const { ctx } = runModule({ queryMap: { ".active": source }, queryAll: { "[data-gosx-bind-source]": [root] } });
+   ctx.window.__gosx.actions.refreshBindings();
+   assert.equal(root.getAttribute(name), "original", name+"="+value);
+  }
+ }
+});
+
+test("attribute bindings retain inert targets and their removal semantics", () => {
+ for (const name of ["title", "value", "datetime", "disabled", "hidden", "data-app-state", "aria-label"]) {
+  for (const value of ["safe", "", null]) {
+   const source = makeEl(value === null ? {} : { "data-value": value });
+   const root = makeEl({ "data-gosx-bind-source": ".active", "data-gosx-bind-attr": name+":data-value", [name]: "original" });
+   const { ctx } = runModule({ queryMap: { ".active": source }, queryAll: { "[data-gosx-bind-source]": [root] } });
+   ctx.window.__gosx.actions.refreshBindings();
+   assert.equal(root.getAttribute(name), value || null, name+"="+value);
+  }
+ }
+});
+
+test("attribute bindings refuse unsafe URLs and retain safe href values", () => {
+ for (const name of ["href", "HREF"]) {
+  const safeValues = ["/safe", "https://example.com/img", "http://example.com", "../img", "#item", "?q=javascript:x"];
+  for (const value of ["javascript:alert(1)", " JaVaScRiPt:alert(1)", "java\tscript:alert(1)", "java\nscript:alert(1)", "\u0000javascript:alert(1)", "data:text/html,x", "vbscript:x", "mailto:user@example.com", "//evil.example", "/\\evil.example", "\\\\evil.example", ...safeValues]) {
+   const source = makeEl({ "data-value": value });
+   const root = makeEl({ "data-gosx-bind-source": ".active", "data-gosx-bind-attr": name+":data-value", [name]: "/original" });
+   const { ctx } = runModule({ queryMap: { ".active": source }, queryAll: { "[data-gosx-bind-source]": [root] } });
+   ctx.window.__gosx.actions.refreshBindings();
+   const safe = safeValues.includes(value);
+   assert.equal(root.getAttribute(name), safe ? value : "/original", name+"="+value);
+  }
+ }
 });

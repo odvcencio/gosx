@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"m31labs.dev/gosx/client/jsutil"
 	"m31labs.dev/gosx/scene"
+	"strings"
 	"syscall/js"
 )
 
@@ -19,6 +20,11 @@ type Scene3D struct {
 }
 
 func (c Context) Scene3D(mount js.Value) Scene3D { return Scene3D{owner: c, mount: mount} }
+
+// Scene3DByID targets the Scene3D mount element with the given DOM id. Use it
+// in a worker-thread engine, which has no document to look the element up in;
+// the page resolves the id. It works on the main thread too.
+func (c Context) Scene3DByID(id string) Scene3D { return c.Scene3D(js.ValueOf(id)) }
 
 func (s Scene3D) call(method string, args ...any) (value js.Value, err error) {
 	defer func() {
@@ -67,6 +73,24 @@ func (s Scene3D) Dispatch(ctx context.Context, commands []scene.Command) error {
 	return s.async(ctx, "dispatchCommands", value)
 }
 
+// Live delivers one named Live event to this scene. It takes the same path as
+// a hub event the scene listens for, so scene.Live nodes, model animation and
+// audio cues react to it without a hub or an internal document event. data is
+// JSON-encoded; nil sends no data.
+func (s Scene3D) Live(ctx context.Context, event string, data any) error {
+	if strings.TrimSpace(event) == "" {
+		return fmt.Errorf("Scene3D Live event name is required")
+	}
+	value := js.Null()
+	if data != nil {
+		var err error
+		if value, err = encodeEventDetail(data); err != nil {
+			return err
+		}
+	}
+	return s.async(ctx, "live", event, value)
+}
+
 // Camera returns the effective mounted camera, including user orbit/zoom.
 func (s Scene3D) Camera() (camera scene.IRCamera, err error) {
 	value, err := s.call("getCamera")
@@ -87,6 +111,19 @@ func (s Scene3D) SetCamera(ctx context.Context, camera any) error {
 		return err
 	}
 	return s.async(ctx, "setCamera", value)
+}
+
+// SetOrbit changes the orbit controls' target and limits after mount. The camera
+// keeps its position and turns to face the new target, and the player's mouse
+// orbit continues around it. It needs Props.Controls = scene.ControlOrbit.
+// Moving the camera and the target together is one SetCamera call with
+// PerspectiveCamera.Orbit set.
+func (s Scene3D) SetOrbit(ctx context.Context, orbit scene.Orbit) error {
+	value, err := encodeEventDetail(orbit)
+	if err != nil {
+		return err
+	}
+	return s.async(ctx, "setOrbit", value)
 }
 
 // SetAnimationClock controls the scene clock without exposing renderer internals.

@@ -1217,6 +1217,7 @@ func addManifestRuntimeRefs(refs map[string]string, manifest *buildmanifest.Mani
 		{"/gosx/bootstrap-feature-textlayout.js", manifest.Runtime.BootstrapFeatureTextlayout.File},
 		{"/gosx/bootstrap-feature-scene3d.js", manifest.Runtime.BootstrapFeatureScene3D.File},
 		{"/gosx/bootstrap-feature-scene3d-command.js", manifest.Runtime.BootstrapFeatureScene3DCommand.File},
+		{"/gosx/bootstrap-feature-scene3d-experience.js", manifest.Runtime.BootstrapFeatureScene3DExperience.File},
 		{"/gosx/bootstrap-feature-scene3d-hydrate.js", manifest.Runtime.BootstrapFeatureScene3DHydrate.File},
 		{"/gosx/bootstrap-feature-scene3d-webgpu.js", manifest.Runtime.BootstrapFeatureScene3DWebGPU.File},
 		{"/gosx/bootstrap-feature-scene3d-webgl.js", manifest.Runtime.BootstrapFeatureScene3DWebGL.File},
@@ -1409,6 +1410,8 @@ func manifestRefSource(distDir string, manifest *buildmanifest.Manifest, ref str
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureScene3D)
 	case "/gosx/bootstrap-feature-scene3d-command.js":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCommand)
+	case "/gosx/bootstrap-feature-scene3d-experience.js":
+		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DExperience)
 	case "/gosx/bootstrap-feature-scene3d-hydrate.js":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHydrate)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
@@ -1754,6 +1757,7 @@ func allManifestAssets(manifest *buildmanifest.Manifest) []buildmanifest.HashedA
 		rt.BootstrapFeatureIslands, rt.BootstrapFeatureEngines, rt.BootstrapFeatureHubs,
 		rt.BootstrapFeatureControllers, rt.BootstrapControllerInput, rt.BootstrapFeatureTextlayout,
 		rt.BootstrapFeatureScene3D, rt.BootstrapFeatureScene3DCommand,
+		rt.BootstrapFeatureScene3DExperience,
 		rt.BootstrapFeatureScene3DHydrate,
 		rt.BootstrapFeatureScene3DWebGPU, rt.BootstrapFeatureScene3DWebGL,
 		rt.BootstrapFeatureScene3DGLTF, rt.BootstrapFeatureScene3DAnimation,

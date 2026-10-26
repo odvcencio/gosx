@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 )
 
 func docsBaseURL() string {
@@ -172,20 +174,40 @@ func TestDocsMobileNavigationWorksWithoutDisclosureRuntime(t *testing.T) {
 		t.Fatalf("open mobile navigation: %v", err)
 	}
 	var open bool
-	page.eval(t, `location.hash === '#nav-overlay' &&
+	page.eval(t, `document.querySelector('#nav-overlay').matches(':popover-open') &&
       getComputedStyle(document.querySelector('#nav-overlay')).display !== 'none' &&
       !!document.querySelector('#nav-overlay form[action="/docs"]')`, &open)
 	if !open {
-		t.Fatal("mobile navigation did not open through the native anchor target")
+		t.Fatal("mobile navigation did not open through the native popover target")
 	}
 	if err := chromedp.Run(page.ctx, chromedp.Click(".nav-overlay__close", chromedp.ByQuery)); err != nil {
 		t.Fatalf("close mobile navigation: %v", err)
 	}
 	var closed bool
-	page.eval(t, `location.hash !== '#nav-overlay' && getComputedStyle(document.querySelector('#nav-overlay')).display === 'none'`, &closed)
+	page.eval(t, `!document.querySelector('#nav-overlay').matches(':popover-open') && getComputedStyle(document.querySelector('#nav-overlay')).display === 'none'`, &closed)
 	if !closed {
 		t.Fatal("mobile navigation did not close")
 	}
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(".pill-toggle", chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+	); err != nil {
+		t.Fatalf("dismiss native popover with Escape: %v", err)
+	}
+	var keyboardDismissed bool
+	page.eval(t, `!document.querySelector('#nav-overlay').matches(':popover-open') &&
+      document.activeElement === document.querySelector('.pill-toggle') && location.hash === ''`, &keyboardDismissed)
+	if !keyboardDismissed {
+		t.Fatal("Escape must dismiss the native menu, return opener focus and leave history unchanged")
+	}
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(".pill-toggle", chromedp.ByQuery),
+		chromedp.Click(`#nav-overlay a[href="/docs/getting-started"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("follow native menu destination: %v", err)
+	}
+	page.waitFor(t, `location.pathname.replace(/\/$/, '') === '/docs/getting-started' &&
+      !document.querySelector('#nav-overlay').matches(':popover-open')`, 20*time.Second, "menu destination closes the native popover")
 }
 
 func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
@@ -262,7 +284,9 @@ func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
 	if !strings.Contains(got.SourceHref, "/examples/gosx-docs/app/demos/playground/page.gsx") || got.SourcePath != "examples/gosx-docs/app/demos/playground/page.gsx" {
 		t.Errorf("direct-load source = (%q, %q)", got.SourceHref, got.SourcePath)
 	}
-	if got.HeaderDirection != "column" || got.HeaderAlign != "flex-start" {
+	// CSS Align serializes flex-start as flow-start in newer Chromium.
+	// Both align items at the start of this column's cross axis.
+	if got.HeaderDirection != "column" || (got.HeaderAlign != "flex-start" && got.HeaderAlign != "flow-start") {
 		t.Errorf("mobile playground header layout = direction %q, align %q", got.HeaderDirection, got.HeaderAlign)
 	}
 	if got.TitleWidth < 250 || got.TitleHeight > 40 {
@@ -435,8 +459,14 @@ if (root && window.__playgroundListenerAudit?.originalRemove) {
   root.removeEventListener = window.__playgroundListenerAudit.originalRemove;
 }
 })()`, nil)
+	var initialName string
+	page.eval(t, `document.querySelector('.play__preview-frame input').value`, &initialName)
+	if initialName != "world" {
+		t.Fatalf("bound Greeter input = %q, want world", initialName)
+	}
 	if err := chromedp.Run(page.ctx,
 		chromedp.Click(`.play__preview-frame input`, chromedp.ByQuery),
+		chromedp.KeyEvent("a", chromedp.KeyModifiers(input.ModifierCtrl)),
 		chromedp.SendKeys(`.play__preview-frame input`, "Ada", chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("type in playground greeter: %v", err)
@@ -461,6 +491,7 @@ document.querySelector(".play__preview-frame h1")?.textContent.trim() === "Hello
 	)
 	if err := chromedp.Run(page.ctx,
 		chromedp.Click(`.play__preview-frame input`, chromedp.ByQuery),
+		chromedp.KeyEvent("a", chromedp.KeyModifiers(input.ModifierCtrl)),
 		chromedp.SendKeys(`.play__preview-frame input`, "Grace", chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("type in recompiled playground greeter: %v", err)

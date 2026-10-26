@@ -110,8 +110,11 @@
     // ~6 MP on a Retina laptop, so any fill-bound scene (large soft sprites,
     // a big water surface, a multi-pass post-FX chain) silently costs 3x more
     // there and falls off a cliff. Deriving the ratio from a pixel budget makes
-    // the cap resolution-aware. Opt-in: unset means the old behaviour exactly.
-    const maxPixels = sceneNumber(props && (props.maxPixels || props.maxRenderPixels), 0);
+    // the cap resolution-aware. Zero uses 1080p; -1 explicitly opts out.
+    const pixelBudget = sceneNumber(props && (props.maxPixels != null ? props.maxPixels : props.maxRenderPixels), 0);
+    const authoredMinRatio = Math.max(0, sceneNumber(props && props.minDevicePixelRatio, 0));
+    const maxPixels = pixelBudget === -1 ? 0 : pixelBudget > 0 ? pixelBudget
+      : Math.max(2073600, cssWidth * cssHeight * authoredMinRatio * authoredMinRatio);
     if (maxPixels > 0) {
       const cssPixels = Math.max(1, cssWidth * cssHeight);
       const budgetRatio = Math.sqrt(maxPixels / cssPixels);
@@ -127,11 +130,9 @@
     let pixelHeight = Math.max(1, Math.round(cssHeight * devicePixelRatio));
     if (maxPixels > 0 && pixelWidth * pixelHeight > maxPixels) {
       const budgetRatio = Math.sqrt(maxPixels / Math.max(1, cssWidth * cssHeight));
-      if (budgetRatio >= 1) {
-        devicePixelRatio = Math.max(1, Math.min(devicePixelRatio, budgetRatio));
-        pixelWidth = Math.max(1, Math.floor(cssWidth * devicePixelRatio));
-        pixelHeight = Math.max(1, Math.floor(cssHeight * devicePixelRatio));
-      }
+      devicePixelRatio = Math.min(devicePixelRatio, budgetRatio);
+      pixelWidth = Math.max(1, Math.floor(cssWidth * devicePixelRatio));
+      pixelHeight = Math.max(1, Math.floor(cssHeight * devicePixelRatio));
     }
     return {
       cssWidth,

@@ -18,6 +18,14 @@ async function harnessWithTargets() {
   return h;
 }
 
+async function submitted(h, bundle, viewport) {
+  for (let i = 0; i < 20; i++) {
+    if (h.renderer.render(bundle, viewport) === "submitted") return;
+    await flushAsyncWork();
+  }
+  assert.fail("pipelines must settle and submit the complete frame");
+}
+
 function checkTargets(h, passes) {
   const presentationFormat = h.configureCalls.at(-1).format;
   for (const pass of passes) {
@@ -50,7 +58,7 @@ test("HDR post targets survive water, MSAA, resize, and post toggles", async () 
     h.canvas.width = h.canvas.height = size;
     bundle.msaaSamples = samples;
     bundle.postEffects = post ? effects : [];
-    h.renderer.render(bundle, { width: size, height: size });
+    await submitted(h, bundle, { width: size, height: size });
     const passes = h.fake.state.renderPasses.slice(start);
     checkTargets(h, passes);
     if (post) {
@@ -61,7 +69,7 @@ test("HDR post targets survive water, MSAA, resize, and post toggles", async () 
         "both bloom textures retain values above the threshold");
       const last = passes.at(-1);
       assert.equal(last.descriptor.colorAttachments[0].view.__kind, "canvasTextureView");
-      assert.equal(last.draws[0].pipeline.desc.fragment.module.label, "post-present");
+      assert.equal(last.draws[0].pipeline.desc.fragment.module.label, size === 64 ? "post-fxaa" : "post-present");
     }
     assert.notEqual(h.configureCalls.at(-1).format, "rgba16float", "the canvas keeps its presentation format");
   }
@@ -73,10 +81,10 @@ test("custom post and its pending fallback use HDR until presentation", async ()
   const h = await harnessWithTargets();
   const bundle = makeBundleWithCustomPost({ fragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4f { return vec4f(4.0); }" });
   h.canvas.width = 320; h.canvas.height = 180;
-  h.renderer.render(bundle, { width: 320, height: 180 });
+  await submitted(h, bundle, { width: 320, height: 180 });
   await flushAsyncWork();
   const start = h.fake.state.renderPasses.length;
-  h.renderer.render(bundle, { width: 320, height: 180 });
+  await submitted(h, bundle, { width: 320, height: 180 });
   const passes = h.fake.state.renderPasses.slice(start);
   checkTargets(h, passes);
   const custom = passes.flatMap(p => p.draws).find(d => d.pipeline?.desc?.label === "gosx-selena-post-test-lens");
@@ -99,13 +107,15 @@ for (const kind of ["contactShadows", "ssao", "dof", "customPost"]) {
     }
     try {
       for (const [samples, size] of [[4, 64], [1, 64], [4, 64], [4, 96], [1, 96]]) {
-        const start = h.fake.state.renderPasses.length;
         bundle.msaaSamples = samples;
         h.canvas.width = h.canvas.height = size;
-        h.renderer.render(bundle, { width: size, height: size });
+        await submitted(h, bundle, { width: size, height: size });
+        await flushAsyncWork();
+        const start = h.fake.state.renderPasses.length;
+        await submitted(h, bundle, { width: size, height: size });
         const passes = h.fake.state.renderPasses.slice(start);
         const main = passes.find(p => p.descriptor.depthStencilAttachment && p.descriptor.colorAttachments.length);
-        const resolve = passes.find(p => p.descriptor.label === "gosx-post-depth-resolve");
+        const resolve = passes.find(p => p.descriptor.label === "gosx-post-depth-resolve" && p.draws.length);
         const sampled = h.fake.state.textures.find(t => !t.destroyed && t.desc.format === "depth24plus" && !t.desc.sampleCount && t.desc.size[0] === size);
         assert.equal(main.descriptor.depthStencilAttachment.view.texture.desc.sampleCount || 1, samples);
         checkTargets(h, passes);

@@ -230,8 +230,8 @@ test("render truth: both renderers are wired to the shared publisher", () => {
   assert.match(webglSource, /webglRenderTruthStats\.meshDrawn \+= 1;/);
   assert.match(webglSource, /webglRenderTruthStats\.meshViewCulled \+= 1;/);
   assert.match(webglSource, /webglRenderTruthStats\.meshUndrawable \+= 1;/);
-  assert.match(webgpuSource, /truthApi\.publish\(mount, \{/);
-  assert.match(webgpuSource, /meshUndrawable: webGPUCountUndrawableMeshObjects\(bundle\)/);
+  assert.match(webgpuSource, /truthApi\.publish\(webGPUAttributeSink, \{/);
+  assert.match(webgpuSource, /frameStats\.meshUndrawable = webGPUCountUndrawableMeshObjects\(bundle\)/);
 });
 
 test("render truth: the WebGPU post chain is marked at the single dispatch funnel", () => {

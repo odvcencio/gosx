@@ -3,6 +3,7 @@ package route
 import (
 	"fmt"
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/htmlattr"
 	"m31labs.dev/gosx/ir"
 	"math"
 	"strings"
@@ -153,5 +154,74 @@ func TestEqualityPreservesIdentifiersAndRequiresExactNumericStrings(t *testing.T
 	}
 	if got := evalFileExpr("9007199254740993 == 9007199254740992", fileRenderEnv{}); got != false {
 		t.Fatalf("rounded integer literals: %v", got)
+	}
+}
+
+func TestServerRenderDropsReservedDispatchAttrs(t *testing.T) {
+	for _, name := range []string{"data-gosx-handler", "data-gosx-path", "data-gosx-on-click", "DATA-GOSX-ON-INPUT", "data-gosx-on-"} {
+		prog, err := gosx.Compile([]byte("package main\n\nfunc Page() Node {\n return <button " + name + "=\"evil\" {...extra} data-gosx-link=\"true\">ok</button>\n}\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Values: map[string]any{"extra": map[string]any{name: "evil"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "evil") || !strings.Contains(out, `data-gosx-link="true"`) {
+			t.Fatalf("%s: %s", name, out)
+		}
+		var b strings.Builder
+		r := &fileProgramRenderer{}
+		r.renderAttrsWithProfile(&b, "button", []ir.Attr{
+			{Kind: ir.AttrStatic, Name: name, Value: "evil"},
+			{Kind: ir.AttrExpr, Name: name, Expr: "evil"},
+			{Kind: ir.AttrBool, Name: name},
+			{Kind: ir.AttrStatic, Name: "data-gosx-link", Value: "true"},
+		}, fileRenderEnv{}, "", func(tag string, attrs []RenderAttr) []RenderAttr {
+			for _, attr := range attrs {
+				if htmlattr.ReservedDispatchName(attr.Name) {
+					t.Errorf("authored reserved name reached hook: %s", attr.Name)
+				}
+			}
+			return attrs
+		})
+		if r.err != nil {
+			t.Fatalf("authored reserved name failed render: %v", r.err)
+		}
+		if b.String() != ` data-gosx-link="true"` {
+			t.Fatalf("profile output: %s", b.String())
+		}
+		fallback := defaultRenderedComponent("Unknown", fileComponentHTMLAttrs{values: map[string]any{name: "evil"}}, "")
+		if strings.Contains(fallback, "evil") {
+			t.Fatalf("fallback output: %s", fallback)
+		}
+	}
+}
+
+func TestRenderProfileStillRejectsIntroducedDispatchAttrs(t *testing.T) {
+	var b strings.Builder
+	r := &fileProgramRenderer{}
+	r.renderAttrsWithProfile(&b, "button", nil, fileRenderEnv{}, "", func(string, []RenderAttr) []RenderAttr {
+		return []RenderAttr{{Name: "data-gosx-on-click", Value: "evil"}}
+	})
+	if r.err == nil || strings.Contains(b.String(), "evil") {
+		t.Fatalf("profile-introduced marker accepted: %q, %v", b.String(), r.err)
+	}
+}
+
+func TestFileSpreadCannotInstallFrameworkBindings(t *testing.T) {
+	attrs := map[string]any{"data-gosx-bind-source": "#source", "DATA-GOSX-BIND-ATTR": "onclick:data-code", "data-gosx-action": "POST /delete", "data-gosx-action-target": "#target", "data-app-id": "safe"}
+	var b strings.Builder
+	renderFileSpreadAttrs(&b, attrs, "")
+	if b.String() != ` data-app-id="safe"` {
+		t.Fatalf("spread installed framework behavior: %s", b.String())
+	}
+	resolved := resolveFileAttrs([]ir.Attr{{Kind: ir.AttrSpread, Expr: "attrs"}}, fileRenderEnv{values: map[string]any{"attrs": attrs}}, "")
+	if len(resolved) != 1 || resolved[0].Name != "data-app-id" {
+		t.Fatalf("profile received framework attrs: %+v", resolved)
+	}
+	got := defaultRenderedComponent("Unknown", fileComponentHTMLAttrs{values: attrs}, "")
+	if strings.Contains(got, "bind-source") || strings.Contains(got, "BIND-ATTR") || strings.Contains(got, "action-target") {
+		t.Fatalf("fallback installed behavior: %s", got)
 	}
 }

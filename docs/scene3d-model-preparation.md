@@ -30,6 +30,15 @@ counts distinct texture records. It does not guarantee GPU vertex buffers,
 shader compilation, or a scene-generation commit. Observe the relevant command
 acknowledgement separately when a committed scene is required.
 
+For immutable rigid props, opt in per request with `RigidGeometry: true`.
+This also prepares shared, model-local CPU primitive streams used by both WebGL
+and WebGPU instantiation. Repeated preparation and the first visible instance
+reuse those streams. It creates no scene members or draw calls. Skinned,
+morph-animated, node-animated, and auxiliary-content models are unsupported and
+return an error rather than freezing animation. Leave this flag unset for
+animated actors. Prepared streams remain weakly owned by the decoded asset;
+this option does not allocate GPU vertex buffers or compile shaders.
+
 Model or map failure, context cancellation, `Surface.Dispose`, mount removal,
 or renderer replacement returns an error. A canceled operation cleans up its
 listeners and stops launching material maps. Shared model fetches remain
@@ -41,6 +50,60 @@ Keep the initial set small. Noncritical debris or effect assets can be prepared
 after the first core scene commits. An unrelated model included in an atomic
 scene transaction can still delay that transaction even when its hero models
 have already prepared.
+
+## Model texture delivery profiles
+
+Set `Props.TextureDeliveryProfile` to `scene.TextureDeliveryLow`,
+`scene.TextureDeliveryStandard`, `scene.TextureDeliveryHigh`, or
+`scene.TextureDeliveryAuto` for one mounted scene. An empty profile preserves
+the previous variant-selection behavior. `PrepareModels` and ordinary model
+draws use the same mount scope, backend capabilities, and decoded-asset cache
+key. The manifest must contain built, reachable KTX2 variants keyed by the
+source image URI. For an embedded GLB image or `data:` image, use the GLB URL
+path followed by `#image=N`, where `N` is its zero-based glTF image index.
+`hydrate.Manifest.SetTextureVariants(assetpipe.BuildVariantManifest(report))`
+publishes the built variant metadata, including role and color space.
+
+Low and standard require a compatible built variant for each used material
+image. They select backend-proven BC formats where available or a bounded
+uncompressed KTX2 variant where supported. They fail preparation if none is
+available, including after an upload error; they do not silently load the
+authored full-resolution image. High and the empty legacy profile may retain
+the authored image where no suitable variant exists. A shared linear ORM image
+can serve metallic/roughness and occlusion when its packed variant preserves
+the sampled channels. A shared sRGB base-color/emissive image uses the
+base-color variant; transparent materials require a four-channel encoding
+that preserves alpha. Other ambiguous role or color-space reuse is not
+substituted.
+Current material shaders do not reconstruct a normal's Z channel from BC5 RG,
+so BC5 normal variants are rejected; provide a compatible full-RGB variant.
+
+For a live quality change, include **every active model source** and call
+`Surface.ApplyTextureProfile` from a goroutine. It prepares up to 256 selected
+models in batches of 32, uploads their target maps, then rehydrates the scene.
+The previous textured scene remains drawn until the new scene commits. Failure,
+cancellation, a changed active-model set, disposal, or renderer replacement
+returns an error and retains the committed profile. Concurrent profile changes
+supersede earlier attempts. Ordinary model commands remain responsive and
+restore the committed scope if they invalidate a staged change. Existing
+cache-owned textures from an old profile may remain retained after a switch;
+this API makes no total VRAM or eviction guarantee.
+
+Public generic-fixture hardware verification of feature commit `3ffb3d7355`
+on Chrome 155 used typed Go/WASM
+`Surface` calls and real WebGL (D3D11) and WebGPU (NVIDIA Blackwell) uploads.
+Both backends selected low BC1 sRGB base color and BC7 linear shared ORM, then
+standard BC7 sRGB base color and BC7 ORM, each with seven mip levels. Held
+target uploads left the previous rendered pixels unchanged; successful commit
+changed the fixture's pixels. Upload failure, cancellation, and a model-command
+race retained the old textured frame and profile. An embedded-image GLB also
+switched correctly. Cache record counts increased after the switch, confirming
+old-profile retention. A non-BC browser was unavailable for hardware proof;
+portable KTX2 selection is covered by focused selector tests. The later
+texture-retry merge and regenerated corpus passed focused Go, JS, TypeScript,
+and generated-bundle checks; the screenshots do not attest that merged blob.
+These fixture results do not establish game-art visual parity or total GPU
+memory usage.
 
 ## Requested frame submissions
 

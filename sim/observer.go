@@ -9,6 +9,10 @@ type TickEvent struct {
 	Frame              uint64
 	Duration, Lag      time.Duration
 	StateBytes, Inputs int
+	// Behind counts ticks still owed after this one (catch-up or speed above
+	// 1 that the wake's time budget did not cover). It is zero in the default
+	// configuration.
+	Behind int
 }
 
 // Observer runs synchronously after a tick, outside runner state locks. It must

@@ -72,7 +72,7 @@ func Toggle() Node {
 func Greeter() Node {
 	name := signal.New("world")
 	return <div class="greeter">
-		<input type="text" data-on-input="name.Set(value)" />
+		<input type="text" aria-label="Your name" placeholder="Your name" value={name.Get()} data-on-input="name.Set(value)" />
 		<h1>Hello, {name.Get()}</h1>
 	</div>
 }

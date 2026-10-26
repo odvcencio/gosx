@@ -15,7 +15,8 @@ func Open(args ...any) bool { return false }
 // Close closes a root-scoped dialog/disclosure in an island handler.
 func Close(args ...any) bool { return false }
 
-// Focus focuses a root-scoped element in an island handler.
+// Focus queues focus on a root-scoped element after the event's native default
+// actions and reconciliation, unless that island has been replaced.
 func Focus(args ...any) bool { return false }
 
 // FocusMove moves focus through visible root-scoped matches with wrapping.

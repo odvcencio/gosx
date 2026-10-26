@@ -259,7 +259,7 @@ func chromeFooter() gosx.Node {
 
 // CounterPage demonstrates an interactive island compiled from counter.gsx.
 //
-// The server-rendered HTML uses buttons with data-gosx-handler attributes that
+// The server-rendered HTML uses buttons with gosx.DispatchAttr event bindings that
 // match the handler names in the compiled IslandProgram. The event delegation
 // system picks these up and dispatches to the WASM VM.
 //
@@ -267,14 +267,14 @@ func chromeFooter() gosx.Node {
 func CounterPage(count int, islands *island.Renderer) gosx.Node {
 	// Server-render the counter matching the .gsx island structure:
 	//   <div class="counter">
-	//     <button data-gosx-handler="decrement">-</button>
+	//     <button data-gosx-on-click="decrement">-</button>
 	//     <span class="count">{count}</span>
-	//     <button data-gosx-handler="increment">+</button>
+	//     <button data-gosx-on-click="increment">+</button>
 	//   </div>
 	counterContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "counter")),
-		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "decrement")), gosx.Text("-")),
+		gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "decrement")), gosx.Text("-")),
 		gosx.El("span", gosx.Attrs(gosx.Attr("class", "count")), gosx.Expr(count)),
-		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "increment")), gosx.Text("+")),
+		gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "increment")), gosx.Text("+")),
 	)
 
 	type counterProps struct {
@@ -317,12 +317,12 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 		gosx.El("h3", gosx.Text("Todo List")),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "todo-input")),
 			gosx.El("span", gosx.Text("")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "addItem")), gosx.Text("Add")),
+			gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "addItem")), gosx.Text("Add")),
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "todo-items")),
 			gosx.El("p", gosx.Text("")),
 		),
-		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "clearAll")), gosx.Text("Clear All")),
+		gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "clearAll")), gosx.Text("Clear All")),
 	)
 	todoIsland := islands.RenderIslandWithEvents("Todo",
 		nil,
@@ -338,14 +338,14 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 		gosx.El("h3", gosx.Text("Form Validation")),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "form-field")),
 			gosx.El("label", gosx.Text("Name")),
-			gosx.RawHTML(`<input type="text" placeholder="Enter name..." data-gosx-on-input="updateName" />`),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "fillName")), gosx.Text("Fill Name")),
+			gosx.El("input", gosx.Attrs(gosx.Attr("type", "text"), gosx.Attr("placeholder", "Enter name..."), gosx.DispatchAttr("input", "updateName"))),
+			gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "fillName")), gosx.Text("Fill Name")),
 			gosx.El("span", gosx.Attrs(gosx.Attr("class", "field-value")), gosx.Text("")),
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "form-status")),
 			gosx.El("p", gosx.Text("Please fill in name")),
 		),
-		gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "validateForm")), gosx.Text("Validate")),
+		gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "validateForm")), gosx.Text("Validate")),
 	)
 	formIsland := islands.RenderIslandWithEvents("Form",
 		nil,
@@ -363,16 +363,16 @@ func KitchenSinkPage(islands *island.Renderer) gosx.Node {
 	// === LIST (dynamic list rendering) ===
 	listContent := gosx.El("div", gosx.Attrs(gosx.Attr("class", "list-demo")),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "list-input")),
-			gosx.RawHTML(`<input type="text" placeholder="Add item..." data-gosx-on-input="addItem" />`),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "addItem")), gosx.Text("Add")),
+			gosx.El("input", gosx.Attrs(gosx.Attr("type", "text"), gosx.Attr("placeholder", "Add item..."), gosx.DispatchAttr("input", "addItem"))),
+			gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "addItem")), gosx.Text("Add")),
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "list-display")),
 			gosx.El("span", gosx.Attrs(gosx.Attr("class", "item-count")), gosx.Text("0 items")),
 			gosx.El("pre", gosx.Attrs(gosx.Attr("class", "item-list")), gosx.Text("")),
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "list-actions")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "removeLastItem")), gosx.Text("Remove Last")),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "clearItems")), gosx.Text("Clear All")),
+			gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "removeLastItem")), gosx.Text("Remove Last")),
+			gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "clearItems")), gosx.Text("Clear All")),
 		),
 	)
 	listIsland := islands.RenderIslandWithEvents("List",
@@ -407,7 +407,7 @@ func main() {
 				gosx.El("span", gosx.Text(fmt.Sprintf("%d", len(sampleCode)))),
 				gosx.Text(" chars"),
 			),
-			gosx.El("button", gosx.Attrs(gosx.Attr("data-gosx-handler", "clear"), gosx.Attr("class", "editor-btn")), gosx.Text("Clear")),
+			gosx.El("button", gosx.Attrs(gosx.DispatchAttr("click", "clear"), gosx.Attr("class", "editor-btn")), gosx.Text("Clear")),
 		),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-body")),
 			gosx.El("div", gosx.Attrs(gosx.Attr("class", "line-numbers"), gosx.Attr("id", "editor-lines")),

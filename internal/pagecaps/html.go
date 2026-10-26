@@ -137,7 +137,12 @@ func InspectDocumentTree(tree *DocumentTree, observe func(*Document, ExecutableS
 			case "":
 				modes["js"] = true
 				c.engineRuntimes |= runtimeJS
-			case "shared":
+			case "shared", "kernel":
+				// Kernel helpers use the shared Go/WASM host and its capability
+				// obligations, even though they carry no application program.
+				if entry.Runtime == "kernel" && strings.TrimSpace(entry.ProgramRef) != "" {
+					return Capabilities{}, errors.New("kernel runtime cannot carry an application program")
+				}
 				modes["shared"] = true
 				c.engineRuntimes |= runtimeShared
 				c.WASM = true
@@ -162,12 +167,12 @@ func InspectDocumentTree(tree *DocumentTree, observe func(*Document, ExecutableS
 			case isVideo:
 				c.engineTypes |= videoEngine
 			case isScene:
-				if entry.Runtime == "shared" {
+				if entry.Runtime == "shared" || entry.Runtime == "kernel" {
 					c.engineTypes |= sceneShared
 				} else {
 					c.engineTypes |= sceneJS
 				}
-			case entry.Runtime == "shared":
+			case entry.Runtime == "shared" || entry.Runtime == "kernel":
 				c.engineTypes |= engineShared
 			case entry.Runtime != "go-wasm":
 				c.engineTypes |= engineJS

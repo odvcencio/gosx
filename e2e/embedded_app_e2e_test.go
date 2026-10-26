@@ -97,7 +97,7 @@ func TestEmbeddedAppUnderPrefix(t *testing.T) {
 	appURL = strings.Replace(web.URL, "127.0.0.1", "localhost", 1)
 	chrome := os.Getenv("GOSX_CHROME_BIN")
 	if chrome == "" {
-		chrome = findChrome(t)
+		chrome = e2eChromePath(t)
 	}
 	browser, err := chrometest.Start(t.Context(), chrome, "--no-sandbox", "--ignore-certificate-errors", "--disable-site-isolation-trials")
 	if err != nil {

@@ -174,7 +174,7 @@ func sweepSphereSphere(origin Vec3, radius float64, direction Vec3, maxDistance 
 	combined := radius + math.Abs(target.Radius)
 	m := origin.Sub(center)
 	b := m.Dot(direction)
-	c := m.Dot(m) - combined*combined
+	c := m.Dot(m) - float64(combined*combined)
 	if c <= 0 {
 		// Already overlapping. The discrete solver owns this case.
 		return ccdHit{}, false
@@ -182,7 +182,7 @@ func sweepSphereSphere(origin Vec3, radius float64, direction Vec3, maxDistance 
 	if b > 0 {
 		return ccdHit{}, false
 	}
-	discriminant := b*b - c
+	discriminant := float64(b*b) - c
 	if discriminant < 0 {
 		return ccdHit{}, false
 	}
@@ -226,8 +226,8 @@ func sweepSphereBox(origin Vec3, radius float64, direction Vec3, maxDistance flo
 			continue
 		}
 		invD := 1 / dirs[i]
-		t1 := (mins[i] - origins[i]) * invD
-		t2 := (maxs[i] - origins[i]) * invD
+		t1 := float64((mins[i] - origins[i]) * invD)
+		t2 := float64((maxs[i] - origins[i]) * invD)
 		n1 := axes[i].Neg()
 		n2 := axes[i]
 		if t1 > t2 {
@@ -274,5 +274,5 @@ func resolveCCDVelocity(body *RigidBody, hit ccdHit) {
 	if hit.Collider != nil && hit.Collider.Body != nil && hit.Collider.Body.Restitution > restitution {
 		restitution = hit.Collider.Body.Restitution
 	}
-	body.Velocity = body.Velocity.Sub(normal.Mul((1 + restitution) * vn))
+	body.Velocity = body.Velocity.Sub(normal.Mul(float64((1 + restitution) * vn)))
 }

@@ -23,6 +23,7 @@ func TestWakeFoamCellsFeatherDissolveAndRemainBounded(t *testing.T) {
 	}
 	alpha := func(x, y int) uint32 { _, _, _, a := img.At(x, y).RGBA(); return a }
 	var coverage uint32
+	var occupied [8]int
 	for stage := 0; stage < 8; stage++ {
 		for x := 0; x < 128; x++ {
 			if alpha(x, stage*16) != 0 || alpha(x, stage*16+15) != 0 {
@@ -35,6 +36,9 @@ func TestWakeFoamCellsFeatherDissolveAndRemainBounded(t *testing.T) {
 			}
 			for x := 1; x < 127; x++ {
 				coverage += alpha(x, stage*16+y)
+				if alpha(x, stage*16+y) > 0 {
+					occupied[stage]++
+				}
 				if stage > 0 && alpha(x, stage*16+y) > alpha(x, (stage-1)*16+y) {
 					t.Fatal("foam aging must dissolve its existing pattern without brightening")
 				}
@@ -43,6 +47,9 @@ func TestWakeFoamCellsFeatherDissolveAndRemainBounded(t *testing.T) {
 	}
 	if coverage == 0 || alpha(64, 8) <= alpha(64, 120)*8 {
 		t.Fatal("foam needs visible fresh coverage and a faint dissolving tail")
+	}
+	if occupied[6] >= occupied[0]/2 {
+		t.Fatal("aging foam must break into smaller patches as well as fading")
 	}
 	again, err := WakeFoam()
 	if err != nil || !bytes.Equal(data, again) {

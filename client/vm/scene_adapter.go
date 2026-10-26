@@ -285,9 +285,9 @@ func valueToAny(value Value) any {
 	case islandprogram.TypeBool:
 		return value.truth()
 	case islandprogram.TypeInt:
-		return int(value.num)
+		return value.ToAny()
 	case islandprogram.TypeFloat:
-		return value.num
+		return value.number()
 	default:
 		if text := value.text(); text != "" {
 			return text
@@ -295,7 +295,7 @@ func valueToAny(value Value) any {
 		if value.truth() {
 			return true
 		}
-		return value.num
+		return value.number()
 	}
 }
 

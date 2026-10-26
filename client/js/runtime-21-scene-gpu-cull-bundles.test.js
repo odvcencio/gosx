@@ -1308,7 +1308,7 @@ test("cpu-cull S3-T5: no cullKernelWGSL on WebGL2 → draw-all (unchanged instan
 
   // instanceColorData must be declared BEFORE the cull branch so the draw-all
   // path uses the original data directly.
-  const cidPos = webgl.indexOf("var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount)");
+  const cidPos = webgl.indexOf("var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount, preparationOwner)");
   const cullPos = webgl.indexOf("if (hasCullConfig)");
   assert.ok(cidPos > 0, "instanceColorData declaration must exist");
   assert.ok(cullPos > 0, "hasCullConfig branch must exist");

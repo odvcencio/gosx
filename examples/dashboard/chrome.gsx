@@ -58,7 +58,7 @@ component CounterHowItWorksCard() {
 			1. counter.gsx is compiled to an IslandProgram at server startup
 		</p>
 		<p>
-			2. Server renders the counter HTML with data-gosx-handler attributes
+			2. Server uses gosx.DispatchAttr("click", handler) to render trusted event markers
 		</p>
 		<p>
 			3. Bootstrap loads the shared WASM runtime and fetches the IslandProgram

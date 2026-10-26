@@ -162,7 +162,7 @@ func TestPageHeadCarriesManifestSRIForRuntimeScripts(t *testing.T) {
 		`integrity="sha256-runtime-integrity"`,
 		`src="/gosx/assets/runtime/bootstrap-feature-scene3d.44444444.js"`,
 		`integrity="sha256-scene-integrity"`,
-		`s.setAttribute('integrity',"sha256-webgpu-integrity");`,
+		`data-gosx-scene3d-webgpu-integrity="sha256-webgpu-integrity"`,
 	} {
 		if !strings.Contains(runtimeHTML, want) {
 			t.Fatalf("expected production runtime to include %q in %s", want, runtimeHTML)
@@ -801,7 +801,7 @@ func TestApplyBuildManifestRejectsAmbiguousIslandAssetsBeforeMutation(t *testing
 	}
 }
 
-func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
+func TestScene3DBackendsLoadOnlyThroughSceneSelection(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                             buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -817,8 +817,11 @@ func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	}
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 	html := gosx.RenderHTML(r.BootstrapScript())
-	if !strings.Contains(html, `data-gosx-script="feature-scene3d-webgpu-loader"`) {
-		t.Fatalf("Scene3D WebGPU loader lacks GoSX provenance: %s", html)
+	if strings.Contains(html, `data-gosx-script="feature-scene3d-webgpu-loader"`) {
+		t.Fatal("independent WebGPU loader bypasses Scene3D backend selection")
+	}
+	if !strings.Contains(html, `data-gosx-scene3d-webgpu-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgpu.js"`) {
+		t.Fatalf("Scene3D script lacks WebGPU chunk URL: %s", html)
 	}
 	if !strings.Contains(html, `data-gosx-scene3d-command-url="/gosx/assets/runtime/bootstrap-feature-scene3d-command.js"`) {
 		t.Fatalf("Scene3D script lacks command chunk URL: %s", html)
@@ -911,7 +914,7 @@ func TestSetBootstrapFeatureScene3DInstanceStreamPathAddsVersionQueryLikeCommand
 	}
 }
 
-func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) {
+func TestScene3DWebGPULazyLoaderReceivesNonceAndIntegrity(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -919,7 +922,7 @@ func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) 
 		BootstrapFeatureEngines:        buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
 		BootstrapFeatureScene3D:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCommand: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
-		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: strings.Repeat("00", 32)},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -928,9 +931,9 @@ func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) 
 
 	html := gosx.RenderHTML(r.BootstrapScriptWithNonce("scene-nonce"))
 	for _, snippet := range []string{
-		`data-gosx-script="feature-scene3d-webgpu-loader" nonce="scene-nonce"`,
-		`document.currentScript.nonce`,
-		`if(_n){s.nonce=_n;}`,
+		`data-gosx-script="feature-scene3d"`,
+		`nonce="scene-nonce"`,
+		`data-gosx-scene3d-webgpu-integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected Scene3D WebGPU loader to include %q in %s", snippet, html)
@@ -1978,5 +1981,77 @@ func TestScene3DModelPreparationURLRequiresExplicitOptIn(t *testing.T) {
 				t.Fatal("preparation executed eagerly")
 			}
 		})
+	}
+}
+
+func TestRenderEngineWorkerThreadRecordsThreadAndRequiresHostChunk(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{
+		Name:     "Sim",
+		Kind:     engine.KindWorker,
+		Runtime:  engine.RuntimeGoWASM,
+		Thread:   engine.ThreadWorker,
+		WASMPath: "/gosx/engines/sim.wasm",
+	}, gosx.Node{})
+	engines := r.Manifest().Engines
+	if len(engines) != 1 || engines[0].Thread != "worker" {
+		t.Fatalf("engine entries = %+v, want one with thread worker", engines)
+	}
+	raw, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"thread":"worker"`) || !strings.Contains(raw, `"engine-worker"`) {
+		t.Fatalf("manifest must carry thread and the engine-worker feature: %s", raw)
+	}
+	if got := r.FeaturePaths()["engine-worker"]; got == "" {
+		t.Fatalf("FeaturePaths = %v, want engine-worker", r.FeaturePaths())
+	}
+}
+
+func TestRenderEngineMainThreadOmitsThread(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{Name: "Sim", Kind: engine.KindWorker, Runtime: engine.RuntimeGoWASM, WASMPath: "/gosx/engines/sim.wasm"}, gosx.Node{})
+	raw, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, `"thread"`) || strings.Contains(raw, "engine-worker") {
+		t.Fatalf("a main-thread engine must not mention the worker host: %s", raw)
+	}
+}
+
+func TestRenderEngineWorkerThreadWithoutGoWASMIsRejected(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{Name: "Sim", Kind: engine.KindWorker, Thread: engine.ThreadWorker}, gosx.Node{})
+	if len(r.Manifest().Engines) != 0 {
+		t.Fatalf("a worker-thread engine without go-wasm must not register: %+v", r.Manifest().Engines)
+	}
+}
+
+func TestRenderEngineWorkerModeAndForcedFallbackReachManifest(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{
+		Name: "Sim", Kind: engine.KindWorker, Runtime: engine.RuntimeGoWASM, Thread: engine.ThreadWorker,
+		WASMPath: "/gosx/engines/sim.wasm", Worker: engine.WorkerRequired, ForceWorkerFallback: true,
+	}, gosx.Node{})
+	engines := r.Manifest().Engines
+	if len(engines) != 1 || engines[0].WorkerMode != "required" || !engines[0].ForceWorkerFallback {
+		t.Fatalf("engine entries = %+v, want workerMode required and forced fallback", engines)
+	}
+	raw, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"workerMode":"required"`) || !strings.Contains(raw, `"forceWorkerFallback":true`) {
+		t.Fatalf("manifest must carry the worker policy: %s", raw)
+	}
+}
+
+func TestRenderEngineWorkerModeWithoutWorkerThreadIsRejected(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{Name: "Sim", Kind: engine.KindWorker, Runtime: engine.RuntimeGoWASM, WASMPath: "/s.wasm", Worker: engine.WorkerRequired}, gosx.Node{})
+	if len(r.Manifest().Engines) != 0 {
+		t.Fatalf("a worker policy without a worker thread must not register: %+v", r.Manifest().Engines)
 	}
 }

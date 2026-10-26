@@ -93,3 +93,16 @@ test("event mode with no data-gosx-live-on warns once", async () => {
   assert.equal(env.consoleLogs.warn.length, 1);
   assert.match(env.consoleLogs.warn[0], /data-gosx-live-on/);
 });
+
+test("hub live bindings cannot inject or overwrite reserved dispatch markers", async () => {
+  const { root, name } = eventRoot(false);
+  const reserved = ["data-gosx-handler", "data-gosx-path", "data-gosx-on-click", "DATA-GOSX-ON-INPUT", "data-gosx-on-"];
+  name.setAttribute("data-gosx-live-bind-attr", reserved.map(attr => `${attr}:handler`).concat("data-app-label:label").join(","));
+  name.setAttribute("data-gosx-on-click", "real");
+  const env = await boot(root);
+  hubEvent(env, "draft:pick", { handler: "evil", label: "safe" });
+  await flushAsyncWork();
+  assert.equal(name.getAttribute("data-gosx-on-click"), "real");
+  for (const attr of reserved.filter(attr => attr !== "data-gosx-on-click")) assert.equal(name.getAttribute(attr), null, attr);
+  assert.equal(name.getAttribute("data-app-label"), "safe");
+});

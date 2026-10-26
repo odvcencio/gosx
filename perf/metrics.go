@@ -19,15 +19,16 @@ type Report struct {
 
 // PageReport holds metrics collected from a single page load.
 type PageReport struct {
-	URL               string              `json:"url"`
-	TTFBMs            float64             `json:"ttfbMs"`
-	DCLMs             float64             `json:"dclMs"`
-	FullyLoadedMs     float64             `json:"fullyLoadedMs"`
-	Islands           []IslandMetric      `json:"islands,omitempty"`
-	IslandHydrationMs float64             `json:"islandHydrationMs"`
-	JSHeapSizeMB      float64             `json:"jsHeapSizeMb"`
-	Scene             *SceneMetric        `json:"scene,omitempty"`
-	Interactions      []InteractionMetric `json:"interactions,omitempty"`
+	URL                string              `json:"url"`
+	TTFBMs             float64             `json:"ttfbMs"`
+	DCLMs              float64             `json:"dclMs"`
+	FullyLoadedMs      float64             `json:"fullyLoadedMs"`
+	Islands            []IslandMetric      `json:"islands,omitempty"`
+	IslandHydrationMs  float64             `json:"islandHydrationMs"`
+	JSHeapSizeMB       float64             `json:"jsHeapSizeMb"`
+	Scene              *SceneMetric        `json:"scene,omitempty"`
+	Interactions       []InteractionMetric `json:"interactions,omitempty"`
+	MetricAvailability *MetricAvailability `json:"metricAvailability,omitempty"`
 
 	// Network resource waterfall (top-N slowest or largest)
 	Resources             []ResourceEntry `json:"resources,omitempty"`
@@ -65,6 +66,22 @@ type PageReport struct {
 	// Sorted by unused bytes descending — biggest split opportunities first.
 	CoverageCaptured bool            `json:"coverageCaptured,omitempty"`
 	Coverage         []CoverageEntry `json:"coverage,omitempty"`
+}
+
+// MetricAvailability distinguishes a measured zero from missing instrumentation
+// or an optional collection query that failed. Older reports omit this field;
+// their nonzero values and recorded samples remain usable as evidence.
+type MetricAvailability struct {
+	Navigation      bool `json:"navigation"`
+	Heap            bool `json:"heap"`
+	Hydration       bool `json:"hydration"`
+	LCP             bool `json:"lcp"`
+	CLS             bool `json:"cls"`
+	FID             bool `json:"fid"`
+	LongTasks       bool `json:"longTasks"`
+	Network         bool `json:"network"`
+	RuntimeCounters bool `json:"runtimeCounters"`
+	SceneFrames     bool `json:"sceneFrames"`
 }
 
 // LongTaskMetric represents one main-thread blocking task (> 50ms).
@@ -311,7 +328,7 @@ func collectPageReportWithQueryRunner(d *Driver, url string, runner pageReportQu
 }
 
 func collectPageReport(d *Driver, url string, queries pageReportQueries, runner pageReportQueryRunner) (*PageReport, error) {
-	pr := &PageReport{URL: url}
+	pr := &PageReport{URL: url, MetricAvailability: &MetricAvailability{}}
 
 	// Navigation timing
 	var nav NavigationTiming
@@ -325,6 +342,7 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 	pr.TTFBMs = nav.TTFB
 	pr.DCLMs = nav.DOMContentLoaded
 	pr.FullyLoadedMs = nav.FullyLoaded
+	pr.MetricAvailability.Navigation = nav.Available
 
 	// Heap size
 	var heap float64
@@ -336,6 +354,7 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 		return nil, err
 	}
 	pr.JSHeapSizeMB = heap
+	pr.MetricAvailability.Heap = heap > 0
 
 	// Hydration log
 	var hydLog []HydrationEntry
@@ -385,6 +404,7 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 			return nil, err
 		}
 		pr.Scene = BuildSceneMetric(sceneMeasures, snapshot, rs.FrameCount)
+		pr.MetricAvailability.SceneFrames = rs.SceneFrameCounterAvailable
 	}
 
 	// Dispatch log → interactions
@@ -406,6 +426,12 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 
 	// Core Web Vitals + extended runtime counters
 	var vitals struct {
+		Availability struct {
+			LCP bool `json:"lcp"`
+			CLS bool `json:"cls"`
+			FID bool `json:"fid"`
+		} `json:"availability"`
+		Instrumented    bool    `json:"instrumented"`
 		LCP             float64 `json:"lcp"`
 		CLS             float64 `json:"cls"`
 		FID             float64 `json:"fid"`
@@ -415,10 +441,14 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 		HubMessageBytes int     `json:"hubMessageBytes"`
 		HubSendCount    int     `json:"hubSendCount"`
 	}
-	_ = runPageReportQuery(runner, "collect/vitals", false, func() error {
+	vitalsErr := runPageReportQuery(runner, "collect/vitals", false, func() error {
 		return queries.evaluate(d, `(function() {
 		var p = window.__gosx_perf || {};
+		if (typeof p.flushObservers === "function") p.flushObservers();
+		var available = p.availability || {};
 		return {
+			availability: {lcp: !p.wasHidden && !!available.lcp, cls: !p.wasHidden && !!available.cls, fid: !p.wasHidden && !!available.fid},
+			instrumented: !!window.__gosx_perf,
 			lcp: p.largestContentfulPaint || 0,
 			cls: p.cumulativeLayoutShift || 0,
 			fid: p.firstInputDelay || 0,
@@ -430,6 +460,13 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 		};
 	})()`, &vitals)
 	})
+	if vitalsErr == nil {
+		pr.MetricAvailability.LCP = vitals.Availability.LCP
+		pr.MetricAvailability.CLS = vitals.Availability.CLS
+		pr.MetricAvailability.FID = vitals.Availability.FID
+		pr.MetricAvailability.RuntimeCounters = vitals.Instrumented
+	}
+	pr.MetricAvailability.Hydration = len(hydLog) > 0 || pr.MetricAvailability.RuntimeCounters
 	pr.LargestContentfulPaintMs = vitals.LCP
 	pr.CumulativeLayoutShift = vitals.CLS
 	pr.FirstInputDelayMs = vitals.FID
@@ -440,15 +477,23 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 	pr.HubSendCount = vitals.HubSendCount
 
 	// Long tasks
-	var longTasks []struct {
-		Name      string  `json:"name"`
-		StartTime float64 `json:"startTime"`
-		Duration  float64 `json:"duration"`
+	var longTasks struct {
+		Available bool `json:"available"`
+		Entries   []struct {
+			Name      string  `json:"name"`
+			StartTime float64 `json:"startTime"`
+			Duration  float64 `json:"duration"`
+		} `json:"entries"`
 	}
-	_ = runPageReportQuery(runner, "collect/long-tasks", false, func() error {
-		return queries.evaluate(d, `(window.__gosx_perf && window.__gosx_perf.longTasks) || []`, &longTasks)
+	longTasksErr := runPageReportQuery(runner, "collect/long-tasks", false, func() error {
+		return queries.evaluate(d, `(function() {
+			var p = window.__gosx_perf;
+			if (p && typeof p.flushObservers === "function") p.flushObservers();
+			return {available: !!(p && !p.wasHidden && p.availability && p.availability.longTasks), entries: (p && p.longTasks) || []};
+		})()`, &longTasks)
 	})
-	for _, lt := range longTasks {
+	pr.MetricAvailability.LongTasks = longTasksErr == nil && longTasks.Available
+	for _, lt := range longTasks.Entries {
 		pr.LongTasks = append(pr.LongTasks, LongTaskMetric{
 			Name:       lt.Name,
 			StartTime:  lt.StartTime,
@@ -460,7 +505,7 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 			pr.TotalBlockingTimeMs += lt.Duration - 50
 		}
 	}
-	pr.LongTaskCount = len(longTasks)
+	pr.LongTaskCount = len(longTasks.Entries)
 
 	// GPU context info (tier + caps). Captured even when no canvas is
 	// present so the report can show browser capabilities.
@@ -480,6 +525,7 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 		return err
 	})
 	if resourcesErr == nil {
+		pr.MetricAvailability.Network = true
 		pr.Resources = resources
 		for _, r := range resources {
 			pr.TotalBytesTransferred += int64(r.TransferSize)
@@ -653,6 +699,7 @@ func BuildSceneMetric(measures []PerfEntry, snapshot SceneTelemetrySnapshot, fra
 		}
 	}
 
+	applyGPUEventSamples(gpu, snapshot)
 	if gpu.Total != nil || len(gpu.Passes) > 0 || gpu.Status != "" {
 		scene.GPU = gpu
 	}
@@ -842,6 +889,41 @@ func telemetryPhase(at, warmAt float64) string {
 
 func sceneAttributeKey(name string) string {
 	return strings.TrimPrefix(name, "data-gosx-scene3d-")
+}
+
+// Prefer per-frame timestamp events to the throttled diagnostic mirror.
+// Retain attribute series for renderers that do not emit these events.
+func applyGPUEventSamples(gpu *SceneGPUTelemetry, snapshot SceneTelemetrySnapshot) {
+	groups := map[string][]SceneTelemetrySample{}
+	for _, event := range snapshot.TelemetryEvents {
+		if event.Type != "gosx:scene3d:perf" || event.Detail["source"] != "gpu-timestamp" {
+			continue
+		}
+		keys := map[string]string{"total": "gpuMS"}
+		if event.Detail["scope"] == "passes" {
+			keys = map[string]string{"shadow": "shadowMS", "main": "mainMS", "scene": "sceneMS"}
+		} else if event.Detail["scope"] != "frame" {
+			continue
+		}
+		for name, key := range keys {
+			value, ok := event.Detail[key].(float64)
+			if !ok || !validMetricNumber(value) || value < 0 {
+				continue
+			}
+			groups[name] = append(groups[name], SceneTelemetrySample{
+				NumericValue: value, StartTime: event.StartTime, Phase: telemetryPhase(event.StartTime, snapshot.WarmAt),
+			})
+		}
+	}
+	for name, samples := range groups {
+		series := buildTelemetrySeries("event:gosx:scene3d:perf:gpu-timestamp", "ms", samples)
+		if name == "total" {
+			gpu.Total = &series
+		} else {
+			gpu.Passes[name] = series
+		}
+		gpu.Status = "measured"
+	}
 }
 
 func gpuPassKey(name string) string {

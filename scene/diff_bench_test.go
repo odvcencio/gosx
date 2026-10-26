@@ -299,3 +299,94 @@ func referenceDiffSceneRecords[T any](commands *[]Command, previous, next []T, i
 		*commands = append(*commands, create(record))
 	}
 }
+
+// Include interaction changes in the same frame as a move: a state patch must
+// keep geometry and carry both edits without constructing replacement records.
+func BenchmarkDiffScenePatchState5000Objects10PercentMoved(b *testing.B) {
+	previous, next := benchDiffScenes(5000, 500)
+	for i := range 500 {
+		next.Objects[i].Selected = true
+		next.Objects[i].Label = "selected"
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		diff := DiffScene(previous, next, DiffOptions{PatchObjectState: true})
+		if len(diff.Commands) != 500 {
+			b.Fatalf("commands = %d, want 500", len(diff.Commands))
+		}
+	}
+}
+
+// Model snapshots embed ObjectIR and are compared as a collection. No model
+// command should be emitted when only a later camera update needs the scene.
+func BenchmarkDiffSceneModels5000Unchanged(b *testing.B) {
+	previous := SceneIR{Models: make([]ModelIR, 5000)}
+	next := SceneIR{Models: make([]ModelIR, 5000)}
+	for i := range previous.Models {
+		previous.Models[i] = ModelIR{ObjectIR: benchObjectIR(i), Src: "/assets/model.glb", Fit: "contain"}
+		next.Models[i] = previous.Models[i]
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		diff := DiffScene(previous, next, DiffOptions{})
+		if len(diff.Commands) != 0 {
+			b.Fatalf("commands=%d, want none", len(diff.Commands))
+		}
+	}
+}
+
+// Lowered textured meshes populate descriptor slots as well as legacy URIs.
+// Keep both cases: hand-built IR and real material lowering must benefit.
+func BenchmarkDiffSceneTextureDescriptors5000Objects(b *testing.B) {
+	for _, moved := range []int{0, 500} {
+		b.Run(fmt.Sprintf("moved-%d", moved), func(b *testing.B) {
+			previous, next := benchDiffScenes(5000, moved)
+			populateSceneTextureDescriptors(&previous)
+			populateSceneTextureDescriptors(&next)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				diff := DiffScene(previous, next, DiffOptions{PatchTransforms: true})
+				if len(diff.Commands) != moved {
+					b.Fatalf("commands=%d, want %d", len(diff.Commands), moved)
+				}
+			}
+		})
+	}
+}
+
+// Keep asymmetric scene transitions alongside the steady-state benchmarks: an
+// allocation improvement must not depend on snapshots having the same length.
+func BenchmarkDiffSceneRecordChurn(b *testing.B) {
+	for _, test := range []struct {
+		name                         string
+		previous, next, wantCommands int
+	}{
+		{"create", 0, 5000, 5000}, {"remove", 5000, 0, 5000},
+		{"shrink", 5000, 1, 4999}, {"grow", 1, 5000, 4999},
+		{"reorder", 5000, 5000, 0}, {"empty", 0, 0, 0},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			previous, next := SceneIR{Objects: make([]ObjectIR, test.previous)}, SceneIR{Objects: make([]ObjectIR, test.next)}
+			for i := range previous.Objects {
+				previous.Objects[i] = ObjectIR{ID: fmt.Sprint(i), X: float64(i)}
+			}
+			for i := range next.Objects {
+				index := i
+				if test.name == "reorder" {
+					index = len(next.Objects) - 1 - i
+				}
+				next.Objects[i] = ObjectIR{ID: fmt.Sprint(index), X: float64(index)}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if got := len(DiffCommands(previous, next)); got != test.wantCommands {
+					b.Fatalf("commands=%d want%d", got, test.wantCommands)
+				}
+			}
+		})
+	}
+}

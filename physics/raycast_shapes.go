@@ -38,19 +38,19 @@ func raycastCapsule(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool
 	var bestNormal Vec3
 
 	// Lateral tube of the capsule.
-	a := direction.X*direction.X + direction.Z*direction.Z
-	b := origin.X*direction.X + origin.Z*direction.Z
-	cc := origin.X*origin.X + origin.Z*origin.Z - radius*radius
+	a := float64(direction.X*direction.X) + float64(direction.Z*direction.Z)
+	b := float64(origin.X*direction.X) + float64(origin.Z*direction.Z)
+	cc := float64(origin.X*origin.X) + float64(origin.Z*origin.Z) - float64(radius*radius)
 	if a > epsilon {
-		discriminant := b*b - a*cc
+		discriminant := float64(b*b) - float64(a*cc)
 		if discriminant >= 0 {
 			root := math.Sqrt(discriminant)
 			t := (-b - root) / a
 			if t >= 0 && t <= maxDistance {
-				y := origin.Y + t*direction.Y
+				y := origin.Y + float64(t*direction.Y)
 				if math.Abs(y) <= half {
 					best = t
-					bestNormal = Vec3{X: origin.X + t*direction.X, Z: origin.Z + t*direction.Z}.Normalize()
+					bestNormal = Vec3{X: origin.X + float64(t*direction.X), Z: origin.Z + float64(t*direction.Z)}.Normalize()
 				}
 			}
 		}
@@ -61,8 +61,8 @@ func raycastCapsule(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool
 		center := Vec3{Y: capY}
 		m := origin.Sub(center)
 		mb := m.Dot(direction)
-		mc := m.Dot(m) - radius*radius
-		discriminant := mb*mb - mc
+		mc := m.Dot(m) - float64(radius*radius)
+		discriminant := float64(mb*mb) - mc
 		if discriminant < 0 {
 			continue
 		}
@@ -95,30 +95,30 @@ func raycastCylinder(c *Collider, ray Ray, maxDistance float64) (RaycastHit, boo
 	}
 	origin, direction, basis := localRay(c, ray)
 
-	if math.Abs(origin.Y) <= half && origin.X*origin.X+origin.Z*origin.Z <= radius*radius {
+	if math.Abs(origin.Y) <= half && float64(origin.X*origin.X)+float64(origin.Z*origin.Z) <= radius*radius {
 		return insideHit(ray)
 	}
 
 	best := math.Inf(1)
 	var bestNormal Vec3
 
-	a := direction.X*direction.X + direction.Z*direction.Z
-	b := origin.X*direction.X + origin.Z*direction.Z
-	cc := origin.X*origin.X + origin.Z*origin.Z - radius*radius
+	a := float64(direction.X*direction.X) + float64(direction.Z*direction.Z)
+	b := float64(origin.X*direction.X) + float64(origin.Z*direction.Z)
+	cc := float64(origin.X*origin.X) + float64(origin.Z*origin.Z) - float64(radius*radius)
 	if a > epsilon {
-		discriminant := b*b - a*cc
+		discriminant := float64(b*b) - float64(a*cc)
 		if discriminant >= 0 {
 			root := math.Sqrt(discriminant)
 			for _, t := range [2]float64{(-b - root) / a, (-b + root) / a} {
 				if t < 0 || t > maxDistance || t >= best {
 					continue
 				}
-				y := origin.Y + t*direction.Y
+				y := origin.Y + float64(t*direction.Y)
 				if math.Abs(y) > half {
 					continue
 				}
 				best = t
-				bestNormal = Vec3{X: origin.X + t*direction.X, Z: origin.Z + t*direction.Z}.Normalize()
+				bestNormal = Vec3{X: origin.X + float64(t*direction.X), Z: origin.Z + float64(t*direction.Z)}.Normalize()
 			}
 		}
 	}
@@ -129,9 +129,9 @@ func raycastCylinder(c *Collider, ray Ray, maxDistance float64) (RaycastHit, boo
 			if t < 0 || t > maxDistance || t >= best {
 				continue
 			}
-			x := origin.X + t*direction.X
-			z := origin.Z + t*direction.Z
-			if x*x+z*z > radius*radius {
+			x := origin.X + float64(t*direction.X)
+			z := origin.Z + float64(t*direction.Z)
+			if float64(x*x)+float64(z*z) > radius*radius {
 				continue
 			}
 			best = t
@@ -155,11 +155,11 @@ func raycastCone(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool) {
 
 	// slope is the cone radius gained per unit of drop from the apex.
 	slope := radius / (2 * half)
-	slope2 := slope * slope
+	slope2 := float64(slope * slope)
 
 	if origin.Y >= -half && origin.Y <= half {
-		limit := slope * (half - origin.Y)
-		if origin.X*origin.X+origin.Z*origin.Z <= limit*limit {
+		limit := float64(slope * (half - origin.Y))
+		if float64(origin.X*origin.X)+float64(origin.Z*origin.Z) <= limit*limit {
 			return insideHit(ray)
 		}
 	}
@@ -168,21 +168,21 @@ func raycastCone(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool) {
 	var bestNormal Vec3
 
 	drop := half - origin.Y
-	a := direction.X*direction.X + direction.Z*direction.Z - slope2*direction.Y*direction.Y
-	b := origin.X*direction.X + origin.Z*direction.Z + slope2*drop*direction.Y
-	cc := origin.X*origin.X + origin.Z*origin.Z - slope2*drop*drop
+	a := float64(direction.X*direction.X) + float64(direction.Z*direction.Z) - float64(slope2*direction.Y*direction.Y)
+	b := float64(origin.X*direction.X) + float64(origin.Z*direction.Z) + float64(slope2*drop*direction.Y)
+	cc := float64(origin.X*origin.X) + float64(origin.Z*origin.Z) - float64(slope2*drop*drop)
 
 	accept := func(t float64) {
 		if t < 0 || t > maxDistance || t >= best {
 			return
 		}
-		y := origin.Y + t*direction.Y
+		y := origin.Y + float64(t*direction.Y)
 		if y < -half || y > half {
 			return
 		}
-		x := origin.X + t*direction.X
-		z := origin.Z + t*direction.Z
-		normal := Vec3{X: x, Y: slope2 * (half - y), Z: z}.Normalize()
+		x := origin.X + float64(t*direction.X)
+		z := origin.Z + float64(t*direction.Z)
+		normal := Vec3{X: x, Y: float64(slope2 * (half - y)), Z: z}.Normalize()
 		if normal.Len2() <= epsilon {
 			// The ray landed on the apex, where the surface has no single
 			// normal. Report the cone axis, which is the usual convention.
@@ -193,7 +193,7 @@ func raycastCone(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool) {
 	}
 
 	if math.Abs(a) > epsilon {
-		discriminant := b*b - a*cc
+		discriminant := float64(b*b) - float64(a*cc)
 		if discriminant >= 0 {
 			root := math.Sqrt(discriminant)
 			accept((-b - root) / a)
@@ -206,9 +206,9 @@ func raycastCone(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool) {
 	if math.Abs(direction.Y) > epsilon {
 		t := (-half - origin.Y) / direction.Y
 		if t >= 0 && t <= maxDistance && t < best {
-			x := origin.X + t*direction.X
-			z := origin.Z + t*direction.Z
-			if x*x+z*z <= radius*radius {
+			x := origin.X + float64(t*direction.X)
+			z := origin.Z + float64(t*direction.Z)
+			if float64(x*x)+float64(z*z) <= radius*radius {
 				best = t
 				bestNormal = Vec3{Y: -1}
 			}
@@ -260,16 +260,16 @@ func rayTriangle(origin, direction Vec3, tri meshTriangle, maxDistance float64) 
 	}
 	invDet := 1 / det
 	tvec := origin.Sub(tri.a)
-	u := tvec.Dot(pvec) * invDet
+	u := float64(tvec.Dot(pvec) * invDet)
 	if u < 0 || u > 1 {
 		return 0, Vec3{}, false
 	}
 	qvec := tvec.Cross(edge1)
-	v := direction.Dot(qvec) * invDet
+	v := float64(direction.Dot(qvec) * invDet)
 	if v < 0 || u+v > 1 {
 		return 0, Vec3{}, false
 	}
-	t := edge2.Dot(qvec) * invDet
+	t := float64(edge2.Dot(qvec) * invDet)
 	if t < 0 || t > maxDistance {
 		return 0, Vec3{}, false
 	}

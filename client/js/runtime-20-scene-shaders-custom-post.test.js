@@ -28,6 +28,7 @@ const {
   installManualTimers,
   runScript,
   flushAsyncWork,
+  renderPreparedFrame,
   createBoardWebGPUHarness,
   mainRenderPasses,
   boardBundleManyObjectsOneMaterial,
@@ -1075,7 +1076,7 @@ test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline an
   });
 
   // Frame 1: pipeline enqueued.
-  harness.renderer.render(bundle, viewport);
+  await renderPreparedFrame(harness.renderer, bundle, viewport);
   assert.equal(renderPipelineAsyncCalls, 1, "frame 1 must trigger exactly one createRenderPipelineAsync");
 
   await flushAsyncWork();
@@ -1097,10 +1098,10 @@ test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline an
 // reaches the GPU: its WGSL compiles into a shader module, and on the frame
 // after the async pipeline resolves it is BOUND AND DRAWN. Assert the draw, not
 // just the compile: a pass that compiles but never dispatches is exactly the bug.
-async function renderValidatedPostFrame(harness, bundle, viewport) {
+async function renderValidatedPostFrame(harness, bundle, viewport, meta) {
   const before = harness.renderer.diagnostics().frameSeq;
   for (let i = 0; i < 8; i++) {
-    harness.renderer.render(bundle, viewport);
+    await renderPreparedFrame(harness.renderer, bundle, viewport, meta);
     await flushAsyncWork();
     if (harness.renderer.diagnostics().frameSeq > before) return;
   }
@@ -1248,6 +1249,16 @@ test("custom post WebGPU: reserved time and patched uniforms reach the post unif
   const packed = postUniformWrites[postUniformWrites.length - 1].data;
   assert.equal(Math.abs(Number(packed[0]) - 4.2) < 0.00001, true,
     "reserved time must use the renderer frame clock, not the compiled default or effect.uniforms.time");
+
+  // Wall time keeps increasing; the actual uniform upload must follow seek,
+  // reverse and pause rather than just reporting the requested DOM clock.
+  for (const seconds of [1.25, 3.5, 1.25]) {
+    nowMS += 1000;
+    await renderValidatedPostFrame(harness, bundle, viewport, {nowMS, sceneTime: seconds});
+    const writes = fake.state.writeBufferCalls.filter(call => call.data && Math.abs(Number(call.data[1]) - .75) < .00001);
+    assert.equal(Number(writes.at(-1).data[0]), seconds);
+    assert.equal(harness.renderer.diagnostics().uniformTime, seconds);
+  }
 });
 
 test("Selena mesh WebGPU: postFX MSAA render pass uses a matching pipeline sample count", async () => {
@@ -1342,7 +1353,7 @@ test("custom post WebGPU: identical complete WGSL module is submitted once", asy
     "}",
   ].join("\n");
 
-  harness.renderer.render(makeBundleWithCustomPost({
+  await renderPreparedFrame(harness.renderer, makeBundleWithCustomPost({
     fragmentWGSL: completeModule,
     vertexWGSL: completeModule,
   }), viewport);
@@ -1430,7 +1441,7 @@ test("custom post WebGPU: invalid WGSL triggers async validation failure, warns 
   });
 
   // Frame 1: pipeline attempt fires.
-  harness.renderer.render(bundle, viewport);
+  await renderPreparedFrame(harness.renderer, bundle, viewport);
   assert.equal(renderPipelineAsyncCalls, 1, "frame 1 must attempt one createRenderPipelineAsync");
 
   await flushAsyncWork();
@@ -1443,7 +1454,7 @@ test("custom post WebGPU: invalid WGSL triggers async validation failure, warns 
 
   // Frame 2: failure cached — no new pipeline attempt.
   const callsBefore = renderPipelineAsyncCalls;
-  harness.renderer.render(bundle, viewport);
+  await renderPreparedFrame(harness.renderer, bundle, viewport);
   assert.equal(renderPipelineAsyncCalls, callsBefore, "failure must be cached — no re-attempt on frame 2");
 
   // Still exactly one warn.
@@ -2220,10 +2231,13 @@ test("Scene3D WebGPU post-FX demotes at the trip threshold, restores after a sca
               canvas.__webgpuClaimed = true;
               return {
                 kind: "webgpu",
+                getFrameProgress: function() {
+                  return { frameSeq: window.__testWebGPUFrameSeq || 0, frameAt: window.__testWebGPUFrameSeq || 0 };
+                },
                 diagnostics: function() {
-                  // Advance the mount's frame-seq/frame-at progress markers
+                  // Advance the fake renderer's progress markers
                   // on every diagnostics() poll -- readSceneWebGPUProgress()
-                  // reads them from the DOM, and this fake never runs a real
+                  // reads them from JS, and this fake never runs a real
                   // render loop (no raf.flush between polls in this test),
                   // so without this the UNRELATED render-STALL watchdog
                   // (checkSceneRenderWatchdog's own progress-staleness check,
@@ -2411,7 +2425,7 @@ test("custom post WebGPU: a module with compilation errors is refused even when 
     vertexWGSL: "BAD WGSL VERTEX",
   });
 
-  harness.renderer.render(bundle, viewport);
+  await renderPreparedFrame(harness.renderer, bundle, viewport);
   assert.equal(renderPipelineAsyncCalls, 1);
   await flushAsyncWork();
   await flushAsyncWork();

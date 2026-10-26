@@ -1877,3 +1877,18 @@ test("WebGPU browser-proof case retention serializes a throwing active case and 
   assert.equal(appendEvidence.diagnosticFailures[0].stage, "case-evidence-append",
     "receipt serialization/append failures must remain non-authoritative");
 });
+
+test("adapter proof derives its ABI expectation from the generated contract", () => {
+  const start = browserProof.indexOf("function fullHandshakeMatchesContract(");
+  const end = browserProof.indexOf("\nasync function runCase", start);
+  assert.ok(start >= 0 && end > start);
+  const matches = vm.runInNewContext(browserProof.slice(start, end) + "; fullHandshakeMatchesContract");
+  for (const abiVersion of [3, 4]) {
+    const contract = { abiVersion };
+    assert.equal(matches({ abiVersion, variant: "full" }, contract), true);
+    assert.equal(matches({ abiVersion: abiVersion + 1, variant: "full" }, contract), false);
+    assert.equal(matches({ abiVersion, variant: "core" }, contract), false);
+  }
+  assert.equal(matches({ abiVersion: 4, variant: "full" }, null), false);
+  assert.equal(matches({ abiVersion: 4, variant: "full" }, { abiVersion: "4" }), false);
+});

@@ -36,6 +36,11 @@ type fileProgramRenderer struct {
 	opts           fileRenderOptions
 	replaced       bool
 	err            error
+
+	// siblings holds the components of the other .gsx files in this file's
+	// directory, loaded on the first unresolved tag of one render.
+	siblings       map[string]sharedComponentTarget
+	siblingsLoaded bool
 }
 
 func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (output string, replaced bool, renderErr error) {
@@ -398,6 +403,10 @@ func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, 
 		return
 	}
 
+	if r.writeSiblingComponent(b, node, env) {
+		return
+	}
+
 	b.WriteString(defaultRenderedComponent(node.Tag, r.componentHTMLAttrs(node.Attrs, env), r.renderChildren(node.Children, env)))
 }
 
@@ -508,7 +517,7 @@ func (r *fileProgramRenderer) writeLink(b *strings.Builder, node *ir.Node, env f
 
 func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
 	for _, attr := range attrs {
-		if linkReservedAttr(attr.Name) || (attr.Kind != ir.AttrSpread && !htmlattr.ValidName(normalizeFileAttrName(attr.Name))) {
+		if linkReservedAttr(attr.Name) || (attr.Kind != ir.AttrSpread && !htmlattr.SafeAuthoredName(normalizeFileAttrName(attr.Name))) {
 			continue
 		}
 		switch attr.Kind {
@@ -1395,14 +1404,16 @@ func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env 
 		))
 	}
 
-	props := r.componentAttrMap(node.Attrs, env)
+	var props map[string]any
 	if comp := r.components[name]; comp != nil && comp.Syntax == ir.ComponentSyntaxStrict {
 		converted, _, err := localComponentProps(comp, node.Attrs, env, gosx.Node{})
 		if err != nil {
 			r.err = fmt.Errorf("render strict island %s: %w", name, err)
 			return ""
 		}
-		props = converted
+		props = clientIslandProps(comp, prog, converted)
+	} else {
+		props = r.componentAttrMap(node.Attrs, env)
 	}
 	return gosx.RenderHTML(env.island(prog, props))
 }
@@ -1607,6 +1618,11 @@ const formErrorDescribedbyAttr = "data-gosx-form-error-describedby"
 func resolveFileAttrs(attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string) []RenderAttr {
 	out := make([]RenderAttr, 0, len(attrs))
 	for _, attr := range attrs {
+		// Authored dispatch names are inert data; only names introduced by a
+		// trusted AttrWriter can fail the profile render.
+		if attr.Kind != ir.AttrSpread && htmlattr.ReservedDispatchName(attr.Name) {
+			continue
+		}
 		switch attr.Kind {
 		case ir.AttrStatic:
 			out = append(out, RenderAttr{Name: attr.Name, Value: attr.Value})
@@ -1701,7 +1717,7 @@ func (r *fileProgramRenderer) renderResolvedAttrs(b *strings.Builder, tag string
 
 // validRenderAttrName applies the shared HTML name validator to profile output.
 func validRenderAttrName(name string) bool {
-	return htmlattr.ValidName(name)
+	return htmlattr.SafeAuthoredName(name)
 }
 
 // profileError records the first error a render profile hook causes,
@@ -1739,8 +1755,8 @@ func (r *fileProgramRenderer) componentAttrMap(attrs []ir.Attr, env fileRenderEn
 	return values
 }
 
-// Keep authored style provenance until fallback HTML is emitted. Spread
-// filtering happens before merging, so a spread cannot replace authored CSS.
+// Keep authored attribute provenance until fallback HTML is emitted. Spread
+// filtering happens before merging, so spreads cannot replace trusted attributes.
 func (r *fileProgramRenderer) componentHTMLAttrs(attrs []ir.Attr, env fileRenderEnv) fileComponentHTMLAttrs {
 	out := fileComponentHTMLAttrs{values: make(map[string]any, len(attrs))}
 	for _, attr := range attrs {
@@ -1753,12 +1769,10 @@ func (r *fileProgramRenderer) componentHTMLAttrs(attrs []ir.Attr, env fileRender
 			}
 		case ir.AttrStatic, ir.AttrExpr, ir.AttrBool:
 			out.values[attr.Name] = attrValue([]ir.Attr{attr}, env, attr.Name)
-			if strings.EqualFold(attr.Name, "style") {
-				if out.authoredStyles == nil {
-					out.authoredStyles = make(map[string]bool)
-				}
-				out.authoredStyles[attr.Name] = true
+			if out.authoredNames == nil {
+				out.authoredNames = make(map[string]bool)
 			}
+			out.authoredNames[attr.Name] = true
 		}
 	}
 	return out
@@ -1771,7 +1785,7 @@ func (r *fileProgramRenderer) componentHTMLAttrs(attrs []ir.Attr, env fileRender
 // change, renderFileAttr held 48.5% of the remaining allocated objects on a
 // depth-100 page. Direct writes cost none.
 func writeFileAttrPair(b *strings.Builder, name, value string) {
-	if !htmlattr.ValidName(name) {
+	if !htmlattr.SafeAuthoredName(name) {
 		return
 	}
 	b.WriteByte(' ')
@@ -1782,7 +1796,7 @@ func writeFileAttrPair(b *strings.Builder, name, value string) {
 }
 
 func writeFileAttrName(b *strings.Builder, name string) {
-	if !htmlattr.ValidName(name) {
+	if !htmlattr.SafeAuthoredName(name) {
 		return
 	}
 	b.WriteByte(' ')
@@ -1790,7 +1804,7 @@ func writeFileAttrName(b *strings.Builder, name string) {
 }
 
 func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv, excludeSpreadKey string) {
-	if attr.Kind != ir.AttrSpread && !htmlattr.ValidName(attr.Name) {
+	if attr.Kind != ir.AttrSpread && !htmlattr.SafeAuthoredName(attr.Name) {
 		return
 	}
 	name := html.EscapeString(attr.Name)
@@ -1910,7 +1924,7 @@ func plainTextFileEvaluatedExpr(value any) string {
 }
 
 func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
-	if !htmlattr.ValidName(name) {
+	if !htmlattr.SafeAuthoredName(name) {
 		return
 	}
 	safeName := html.EscapeString(name)
@@ -1950,6 +1964,11 @@ func attrValue(attrs []ir.Attr, env fileRenderEnv, names ...string) any {
 			case ir.AttrBool:
 				return true
 			}
+		}
+		// Filter spread names before using their values to activate framework
+		// behavior, as well as before writing their HTML attributes.
+		if !htmlattr.SafeSpreadName(normalizeFileAttrName(name)) {
+			continue
 		}
 		for _, attr := range attrs {
 			if attr.Kind != ir.AttrSpread {
@@ -2232,6 +2251,20 @@ func setStrictComponentChildren(comp *ir.Component, props map[string]any, childr
 }
 
 func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if schema := comp.ClientProps[attr.Name]; comp.IsIsland && schema != nil {
+		if strictScalarFieldType(fieldType) {
+			plain := *comp
+			plain.ClientProps = nil
+			return strictComponentAttrValue(&plain, attr, env, fieldType)
+		}
+		if attr.Kind != ir.AttrExpr {
+			return nil, fmt.Errorf("client data %s requires an expression", fieldType)
+		}
+		if strings.TrimSpace(attr.Expr) == "nil" && (schema.Type == "slice" || schema.Type == "map") {
+			return nil, nil
+		}
+		return projectClientValue(evalFileExpr(attr.Expr, env), schema, comp.ClientTypes)
+	}
 	if fieldType == "map[string]string" && attr.Kind == ir.AttrExpr {
 		return requireStrictStringMap(evalFileExpr(attr.Expr, env))
 	}
@@ -2677,6 +2710,8 @@ func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
 		var proved any
 		var err error
 		switch {
+		case comp.IsIsland && comp.ClientProps[field] != nil:
+			proved, err = projectClientValue(raw, comp.ClientProps[field], comp.ClientTypes)
 		case strictScalarFieldType(fieldType):
 			proved, err = requireStrictScalarType(raw, fieldType)
 		case fieldType == "map[string]string":
@@ -2751,6 +2786,8 @@ func strictSpreadPropsFromTypedFrame(comp *ir.Component, frame map[string]any) (
 		var proved any
 		var err error
 		switch {
+		case comp.IsIsland && comp.ClientProps[field] != nil:
+			proved, err = projectClientValue(raw, comp.ClientProps[field], comp.ClientTypes)
 		case strictScalarFieldType(fieldType):
 			proved, err = requireStrictScalarType(raw, fieldType)
 		case fieldType == "map[string]string":
@@ -3396,7 +3433,9 @@ func engineComponentProps(attrs []ir.Attr, env fileRenderEnv, surface bool) (map
 				value := entry.Value
 				normalized := normalizeSurfaceMountAttr(key)
 				if surface && normalized != "" {
-					mountAttrs[normalized] = value
+					if htmlattr.SafeSpreadName(normalized) {
+						mountAttrs[normalized] = value
+					}
 					continue
 				}
 				if isEngineReservedAttr(key) {
@@ -3559,7 +3598,7 @@ func isEngineReservedAttr(name string) bool {
 
 func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
 	for _, attr := range attrs {
-		if isTextBlockReservedAttr(attr.Name) || attr.Kind == ir.AttrSpread || !htmlattr.ValidName(attr.Name) {
+		if isTextBlockReservedAttr(attr.Name) || attr.Kind == ir.AttrSpread || !htmlattr.SafeAuthoredName(attr.Name) {
 			continue
 		}
 		switch attr.Kind {

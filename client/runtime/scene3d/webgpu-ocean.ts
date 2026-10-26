@@ -71,17 +71,20 @@ const WGSL_SCENE_OCEAN = [
   "}",
   "fn ob(q: vec2f) -> f32 { var p = q; var v = 0.0; var a = 0.5; for (var i = 0; i < 4; i++) { v += a * on(p); p = p * 2.03 + 17.1; a *= 0.5; } return v; }",
   "fn od(n: vec3f, xz: vec2f, t: f32, wind: vec2f) -> vec3f {",
+  "  let detail = 1.0 - smoothstep(40.0, 500.0, length(xz - ocean.p[7].xz));",
+  "  let ripple = xz + vec2f(1.5, -1.1) * (on(xz * 0.22 - wind * t * 0.12) - 0.5);",
+  "  let pixel = fwidth(ripple); if (detail <= 0.0) { return n; }",
   "  var g = vec2f(0.0); var lambda = 1.7;",
-  "  for (var i = 0; i < 8; i++) {",
+  "  for (var i = 0; i < 6; i++) {",
   "    let ang = f32(i) * 2.39996;",
   "    let D = normalize(wind * 0.65 + vec2f(cos(ang), sin(ang)));",
   "    let k = 6.2831853 / lambda;",
-  "    let ph = k * dot(D, xz) - sqrt(9.81 * k) * t + f32(i) * 1.7;",
-  "    let fade = 1.0 - smoothstep(0.6, 2.0, fwidth(ph));",
+  "    let ph = k * dot(D, ripple) - sqrt(9.81 * k) * t + f32(i) * 1.7;",
+  "    let fade = 1.0 - smoothstep(0.6, 2.0, k * dot(abs(D), pixel));",
   "    g += D * (0.035 * pow(0.83, f32(i)) * cos(ph) * fade);",
   "    lambda *= 0.74;",
   "  }",
-  "  return normalize(n + vec3f(-g.x, 0.0, -g.y) * (1.0 - smoothstep(40.0, 500.0, length(xz - ocean.p[7].xz))));",
+  "  return normalize(n + vec3f(-g.x, 0.0, -g.y) * detail);",
   "}",
   "@fragment fn fragmentMain(in: OceanVertex) -> @location(0) vec4f {",
   "  let toCam = ocean.p[7].xyz - in.world; let dist = length(toCam); let V = toCam / dist;",
@@ -183,7 +186,7 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
         else { data[16 + 26] = 0; state = record && record.failed ? "bathymetry-failed" : "bathymetry-pending"; }
       }
       device.queue.writeBuffer(uniform, 0, data);
-      if (clouds) { sceneCloudUniformData(Object.assign({},opts,{view: opts.view, aspect: opts.aspect || 1}),cloudData); if (!sceneAtmosphereQuality(opts.meta).clouds) cloudData[44] = 0; device.queue.writeBuffer(cloudBuffer,0,cloudData); }
+      if (clouds) { sceneCloudUniformData(Object.assign({},opts,{aspect: opts.aspect || 1}),cloudData); if (!sceneAtmosphereQuality(opts.meta).clouds) cloudData[44] = 0; device.queue.writeBuffer(cloudBuffer,0,cloudData); }
       const key = opts.format + ":" + opts.samples;
       let pipeline = pipelines.get(key);
       if (!pipeline) {
@@ -228,6 +231,7 @@ function wgpuOceanDraw(resources, pass, opts) {
     }
     state = resources.renderer ? resources.renderer.draw(pass, opts) : "unavailable";
   }
-  if (opts.mount && opts.mount.setAttribute) opts.mount.setAttribute("data-gosx-scene3d-ocean", state);
+  if (opts.publishAttribute) opts.publishAttribute("data-gosx-scene3d-ocean", state);
+  else opts.mount?.setAttribute?.("data-gosx-scene3d-ocean", state);
   return state !== "none";
 }

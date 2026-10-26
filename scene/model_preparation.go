@@ -3,6 +3,7 @@ package scene
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -11,6 +12,10 @@ import (
 type ModelPreparation struct {
 	ID  string `json:"id"`
 	Src string `json:"src"`
+	// RigidGeometry prepares shared CPU primitive streams without scene nodes.
+	// Only immutable rigid meshes are supported; skins, morphs and node animation
+	// are rejected. GPU buffers and shaders remain first-render work.
+	RigidGeometry bool `json:"rigidGeometry,omitempty"`
 }
 
 // ModelPreparationResult counts selected models and distinct native texture records.
@@ -22,8 +27,12 @@ type ModelPreparationResult struct {
 }
 
 func modelPreparationSnapshot(requests []ModelPreparation) ([]byte, error) {
-	if len(requests) < 1 || len(requests) > 32 {
-		return nil, errors.New("scene: preparation requires 1–32 models")
+	return modelPreparationSnapshotLimit(requests, 32)
+}
+
+func modelPreparationSnapshotLimit(requests []ModelPreparation, maximum int) ([]byte, error) {
+	if len(requests) < 1 || len(requests) > maximum {
+		return nil, fmt.Errorf("scene: preparation requires 1–%d models", maximum)
 	}
 	ids := make(map[string]bool, len(requests))
 	for _, request := range requests {

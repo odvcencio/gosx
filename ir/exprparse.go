@@ -387,6 +387,16 @@ func (p *exprParser) parsePrimary() (program.ExprID, error) {
 
 	case tokenIdent:
 		p.next()
+		// Keyed Go records are also valid signal initializers. Preserve the
+		// authored field names, including records from imported packages.
+		if p.peek().kind == tokenLBrace {
+			return p.parseRecordLiteral(tok.text)
+		}
+		if p.pos+2 < len(p.tokens) && p.tokens[p.pos].kind == tokenDot && p.tokens[p.pos+1].kind == tokenIdent && p.tokens[p.pos+2].kind == tokenLBrace {
+			p.next()
+			name := tok.text + "." + p.next().text
+			return p.parseRecordLiteral(name)
+		}
 		switch tok.text {
 		case "true", "false":
 			return p.addExpr(program.Expr{
@@ -411,6 +421,33 @@ func (p *exprParser) parsePrimary() (program.ExprID, error) {
 	}
 
 	return 0, fmt.Errorf("cannot parse expression: %q", p.source)
+}
+
+func (p *exprParser) parseRecordLiteral(name string) (program.ExprID, error) {
+	p.next() // {
+	var operands []program.ExprID
+	for !p.match(tokenRBrace) {
+		field, err := p.expect(tokenIdent)
+		if err != nil {
+			return 0, err
+		}
+		if _, err = p.expect(tokenColon); err != nil {
+			return 0, err
+		}
+		value, err := p.parseConditional()
+		if err != nil {
+			return 0, err
+		}
+		key := p.addExpr(program.Expr{Op: program.OpLitString, Value: field.text, Type: program.TypeString})
+		operands = append(operands, key, value)
+		if p.match(tokenRBrace) {
+			break
+		}
+		if _, err = p.expect(tokenComma); err != nil {
+			return 0, err
+		}
+	}
+	return p.addExpr(program.Expr{Op: program.OpComposite, Value: "struct:" + name, Operands: operands, Type: program.TypeAny}), nil
 }
 
 // parseSliceLiteral lowers a typed Go slice literal through the same
@@ -804,6 +841,36 @@ func (p *exprParser) buildFixedArityMethod(receiverID program.ExprID, normalized
 }
 
 func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (program.ExprID, error) {
+	// A declared Go handler shadows builtins and calls through the VM's
+	// function registry. OpCall is reserved for registered intrinsics.
+	if p.scope != nil && p.scope.Handlers[name] {
+		return p.addExpr(program.Expr{
+			Op:       program.OpIndirectCall,
+			Operands: args,
+			Value:    name,
+			Type:     program.TypeAny,
+		}), nil
+	}
+	// Keep Go's append spelling and handler shadowing. The VM already owns
+	// immutable append semantics; lowering individual elements to its existing
+	// operation adds no runtime opcode or browser feature dependency.
+	if name == "append" {
+		if len(args) == 0 {
+			return 0, fmt.Errorf("append requires a slice as its first argument")
+		}
+		result := args[0]
+		if p.exprs[result].Type != program.TypeAny {
+			return 0, fmt.Errorf("append requires a slice as its first argument")
+		}
+		for _, item := range args[1:] {
+			result = p.addExpr(program.Expr{
+				Op:       program.OpAppend,
+				Operands: []program.ExprID{result, item},
+				Type:     program.TypeAny,
+			})
+		}
+		return result, nil
+	}
 	switch strings.ToLower(name) {
 	case "len":
 		if len(args) != 1 {
@@ -813,14 +880,6 @@ func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (prog
 			Op:       program.OpLen,
 			Operands: []program.ExprID{args[0]},
 			Type:     program.TypeInt,
-		}), nil
-	}
-	if p.scope != nil && p.scope.Handlers != nil && p.scope.Handlers[name] {
-		return p.addExpr(program.Expr{
-			Op:       program.OpCall,
-			Operands: args,
-			Value:    name,
-			Type:     program.TypeAny,
 		}), nil
 	}
 	return 0, fmt.Errorf("unknown function %q", name)

@@ -32,6 +32,7 @@
         "bootstrap-src/26-runtime-blocks.ts",
         "bootstrap-src/10-runtime-primitives.ts",
         "bootstrap-src/10-runtime-scene-utils.ts",
+        "../runtime/scene3d/instanced-data.ts",
         "bootstrap-src/10-runtime-scene-core.ts",
         "bootstrap-src/11-scene-math.ts",
         "bootstrap-src/11-scene-base64.ts",
@@ -77,6 +78,7 @@
         "../runtime/scene3d/webgpu-specular-bloom.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
         "../runtime/scene3d/webgpu-contact-shadows.ts",
+        "../runtime/scene3d/webgpu-crowd.ts",
         "../runtime/scene3d/compute.ts",
         "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/17-scene-input.ts",
@@ -87,6 +89,7 @@
         "bootstrap-src/19b-scene-control-forms.ts",
         "bootstrap-src/16d-scene-webgl-bridge.ts",
         "../runtime/scene3d/mount-backend.ts",
+        "../runtime/scene3d/model-pose-data.ts",
         "../runtime/scene3d/mount-webgl.ts",
         "../runtime/scene3d/mount-quality.ts",
         "../runtime/scene3d/overlays.ts",
@@ -99,6 +102,7 @@
         "../runtime/scene3d/mount-input.ts",
         "../runtime/scene3d/geometry-assets.ts",
         "../runtime/scene3d/mount-lifecycle.ts",
+        "../runtime/scene3d/mount-presentation.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
@@ -211,6 +215,14 @@
       ]
     },
     {
+      "name": "bootstrap-feature-arcade-audio.js",
+      "sources": [
+        "bootstrap-src/26m-feature-arcade-audio-prefix.ts",
+        "bootstrap-src/30c2-tail-arcade-audio.ts",
+        "bootstrap-src/26m-feature-arcade-audio-suffix.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-controllers.js",
       "sources": [
         "bootstrap-src/26h-feature-controllers-prefix.ts",
@@ -232,6 +244,24 @@
       ]
     },
     {
+      "name": "bootstrap-feature-hub-document.js",
+      "sources": [
+        "../runtime/host/hub-document.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-netplay.js",
+      "sources": [
+        "../runtime/host/netplay.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-engine-worker.js",
+      "sources": [
+        "../runtime/host/engine-worker.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
         "bootstrap-src/26i-feature-textlayout-prefix.ts",
@@ -248,6 +278,7 @@
         "../runtime/scene3d/command-bridge.ts",
         "../runtime/scene3d/instance-stream-bridge.ts",
         "bootstrap-src/10-runtime-primitives.ts",
+        "../runtime/scene3d/instanced-data.ts",
         "bootstrap-src/10-runtime-scene-core.ts",
         "bootstrap-src/11-scene-math.ts",
         "bootstrap-src/11-scene-base64.ts",
@@ -270,6 +301,7 @@
         "bootstrap-src/19b-scene-control-forms.ts",
         "bootstrap-src/16d-scene-webgl-bridge.ts",
         "../runtime/scene3d/mount-backend.ts",
+        "../runtime/scene3d/model-pose-data.ts",
         "../runtime/scene3d/mount-webgl.ts",
         "../runtime/scene3d/mount-quality.ts",
         "../runtime/scene3d/overlays.ts",
@@ -308,6 +340,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-experience.js",
+      "sources": [
+        "../runtime/scene3d/mount-presentation.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-command.js",
       "sources": [
         "../runtime/scene3d/command-runtime.ts"
@@ -343,6 +381,7 @@
         "../runtime/scene3d/webgpu-specular-bloom.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
         "../runtime/scene3d/webgpu-contact-shadows.ts",
+        "../runtime/scene3d/webgpu-crowd.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ]
     },
@@ -364,12 +403,22 @@
     {
       "name": "bootstrap-feature-scene3d-vessel.js",
       "sources": [
+        "../runtime/scene3d/vessel-instruments.ts",
         "../runtime/scene3d/vessel-navigation.ts",
         "../runtime/scene3d/vessel-physics.ts",
         "../runtime/scene3d/vessel-input.ts",
         "../runtime/scene3d/vessel-model.ts",
         "../runtime/scene3d/vessel-wake.ts",
+        "../runtime/scene3d/vessel-external.ts",
+        "../runtime/scene3d/vessel-decks.ts",
+        "../runtime/scene3d/vessel-cutaway.ts",
         "../runtime/scene3d/mount-vessel.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-hierarchy.js",
+      "sources": [
+        "../runtime/scene3d/hierarchy.ts"
       ]
     },
     {
@@ -382,6 +431,32 @@
       "name": "bootstrap-feature-scene3d-model-preparation.js",
       "sources": [
         "../runtime/scene3d/model-preparation.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-motion-transport.js",
+      "sources": [
+        "../runtime/motion/transport.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-motion-track.js",
+      "sources": [
+        "../runtime/motion/track.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-motion-scene.js",
+      "sources": [
+        "../runtime/motion/easing.ts",
+        "../runtime/motion/scene.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-motion-svg.js",
+      "sources": [
+        "../runtime/motion/easing.ts",
+        "../runtime/motion/svg.ts"
       ]
     },
     {

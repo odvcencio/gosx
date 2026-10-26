@@ -1,6 +1,10 @@
 package scene
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 const (
 	ControlRotateModeViewport     = "viewport"
@@ -106,14 +110,14 @@ func ApplyOrbitDrag(state OrbitState, input OrbitDragInput) OrbitDragResult {
 
 	var deltaYaw, deltaPitch float64
 	if input.RotateMode == ControlRotateModePixelDegrees {
-		pixelRadians := math.Pi / 180 * speed
-		deltaYaw = input.DeltaX * pixelRadians * direction
-		deltaPitch = input.DeltaY * pixelRadians
+		pixelRadians := float64(math.Pi / 180 * speed)
+		deltaYaw = float64(input.DeltaX * pixelRadians * direction)
+		deltaPitch = float64(input.DeltaY * pixelRadians)
 	} else {
 		width := math.Max(1, input.ViewportWidth)
 		height := math.Max(1, input.ViewportHeight)
-		deltaYaw = input.DeltaX / width * math.Pi * speed * direction
-		deltaPitch = input.DeltaY / height * math.Pi * speed
+		deltaYaw = float64(input.DeltaX / width * math.Pi * speed * direction)
+		deltaPitch = float64(input.DeltaY / height * math.Pi * speed)
 	}
 
 	pitchLimit := input.PitchLimit
@@ -168,10 +172,10 @@ func IntersectRaySphere(ray Ray, center Vector3, radius float64) (RayHit, bool) 
 func OrbitCameraForTarget(camera PerspectiveCamera, target Vector3) PerspectiveCamera {
 	worldPosition := Vector3{X: camera.Position.X, Y: camera.Position.Y, Z: -camera.Position.Z}
 	forward := subVectors(target, worldPosition)
-	horizontal := math.Max(0.0001, math.Hypot(forward.X, forward.Z))
+	horizontal := math.Max(0.0001, det.Hypot(forward.X, forward.Z))
 	camera.Rotation = Euler{
-		X: -math.Atan2(forward.Y, horizontal),
-		Y: math.Atan2(forward.X, forward.Z),
+		X: -det.Atan2(forward.Y, horizontal),
+		Y: det.Atan2(forward.X, forward.Z),
 	}
 	return camera
 }
@@ -185,7 +189,7 @@ func ScreenToRay(pointerX, pointerY, width, height float64, camera PerspectiveCa
 	if fov == 0 {
 		fov = 75
 	}
-	focal := (height / 2) / math.Tan(fov*math.Pi/360)
+	focal := (height / 2) / det.Tan(fov*math.Pi/360)
 	localDirection := Vector3{
 		X: (pointerX - width/2) / focal,
 		Y: (height/2 - pointerY) / focal,
@@ -239,12 +243,12 @@ func clampObjectDragPosition(position Vector3, bounds ObjectDragBounds) Vector3 
 }
 
 func rotateControlPoint(point Vector3, rotation Euler) Vector3 {
-	sinX, cosX := math.Sin(rotation.X), math.Cos(rotation.X)
-	point.Y, point.Z = point.Y*cosX-point.Z*sinX, point.Y*sinX+point.Z*cosX
-	sinY, cosY := math.Sin(rotation.Y), math.Cos(rotation.Y)
-	point.X, point.Z = point.X*cosY+point.Z*sinY, -point.X*sinY+point.Z*cosY
-	sinZ, cosZ := math.Sin(rotation.Z), math.Cos(rotation.Z)
-	point.X, point.Y = point.X*cosZ-point.Y*sinZ, point.X*sinZ+point.Y*cosZ
+	sinX, cosX := det.Sin(rotation.X), det.Cos(rotation.X)
+	point.Y, point.Z = float64(point.Y*cosX)-float64(point.Z*sinX), float64(point.Y*sinX)+float64(point.Z*cosX)
+	sinY, cosY := det.Sin(rotation.Y), det.Cos(rotation.Y)
+	point.X, point.Z = float64(point.X*cosY)+float64(point.Z*sinY), float64(-point.X*sinY)+float64(point.Z*cosY)
+	sinZ, cosZ := det.Sin(rotation.Z), det.Cos(rotation.Z)
+	point.X, point.Y = float64(point.X*cosZ)-float64(point.Y*sinZ), float64(point.X*sinZ)+float64(point.Y*cosZ)
 	return point
 }
 
@@ -262,13 +266,13 @@ func AxisDragParameter(ray Ray, axisOrigin, axisDirection Vector3) (float64, boo
 	// Closest points between two lines: solve for t on the axis line.
 	w := subVectors(ray.Origin, axisOrigin)
 	b := dotVector(axis, dir)
-	denominator := 1 - b*b
+	denominator := 1 - float64(b*b)
 	if math.Abs(denominator) < 1e-12 {
 		return 0, false
 	}
 	d := dotVector(axis, w)
 	e := dotVector(dir, w)
-	return (b*e - d) / denominator * -1, true
+	return (float64(b*e) - d) / denominator * -1, true
 }
 
 // RingDragAngle intersects the pointer ray with the ring's plane and returns
@@ -287,10 +291,10 @@ func RingDragAngle(ray Ray, center, normal Vector3) (float64, bool) {
 	}
 	tangentX := normalizeVector(subVectors(reference, scaleVector(n, dotVector(reference, n))))
 	tangentY := Vector3{
-		X: n.Y*tangentX.Z - n.Z*tangentX.Y,
-		Y: n.Z*tangentX.X - n.X*tangentX.Z,
-		Z: n.X*tangentX.Y - n.Y*tangentX.X,
+		X: float64(n.Y*tangentX.Z) - float64(n.Z*tangentX.Y),
+		Y: float64(n.Z*tangentX.X) - float64(n.X*tangentX.Z),
+		Z: float64(n.X*tangentX.Y) - float64(n.Y*tangentX.X),
 	}
 	local := subVectors(point, center)
-	return math.Atan2(dotVector(local, tangentY), dotVector(local, tangentX)), true
+	return det.Atan2(dotVector(local, tangentY), dotVector(local, tangentX)), true
 }

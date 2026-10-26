@@ -206,12 +206,13 @@ for (const backend of ["WebGL", "WebGPU"]) {
       shader = h.fake.state.renderPasses.flatMap(p => p.draws).find(d => d.pipeline?.desc?.fragment?.module?.label === "post-toneMapping").pipeline.desc.fragment.module.code;
       const output = h.fake.state.renderPasses.at(-1);
       assert.equal(output.descriptor.colorAttachments[0].view.__kind, "canvasTextureView");
-      assert.match(output.draws[0].pipeline.desc.fragment.module.code, /return textureSample\(inputTex, inputSamp, uv\);/, "presentation passes the tone-mapped RGBA through");
+      assert.equal(output.draws[0].pipeline.desc.fragment.module.label, "post-toneMapping", "the final effect presents the tone-mapped RGBA directly");
+      assert.match(shader, /return _r\(_p\(uv\)\)|let a = _r\(_p\(start\)\)/, "direct presentation preserves HDR rounding");
     }
     assert.equal(clearAlpha, 0, "the scene target clears uncovered pixels to transparent");
     // Evaluate the alpha expression from the shader actually used by the output draw.
     const expression = shader.match(/(?:fragColor = vec4|return vec4f)\(color, ([^;]+)\);/)[1];
-    const sample = shader.match(/(?:vec4|let) (\w+) = (?:texture|textureSample)\(/)?.[1];
+    const sample = shader.match(/(?:vec4|let) (\w+) = (?:texture|textureSample(?:Level)?)\(/)?.[1];
     const outputAlpha = new Function(sample || "sample", `return ${expression};`);
     for (const alpha of [clearAlpha, 0.35, 1]) {
       const actual = outputAlpha({a:alpha});

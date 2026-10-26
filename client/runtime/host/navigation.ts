@@ -274,6 +274,7 @@
   // every entry reliably removed once its submission settles.
   // form -> outstanding submissions (more than one only for queued forms).
   const pendingManagedForms = new Map();
+  const managedFormSubmissions = new WeakMap();
   const sentNavigationBeacons = new Set();
   let revalidateTimerHandle = null;
   let revalidateSrc = "";
@@ -839,10 +840,15 @@
       }
     }
 
+    // Moving an already-loaded stylesheet through insertBefore detaches its
+    // CSSStyleSheet in Chrome, even when the final head order is unchanged.
+    // Keep retained styles connected unless the cascade actually changes.
+    let headIndex = toArray(head.childNodes).indexOf(currentMarkers.start) + 1;
     for (const node of orderedNodes) {
-      if (node.parentNode === head) {
-        head.insertBefore(node, currentMarkers.end);
-      }
+      if (node.parentNode !== head) continue;
+      const before = head.childNodes[headIndex] || currentMarkers.end;
+      if (node !== before) head.insertBefore(node, before);
+      headIndex += 1;
     }
   }
 
@@ -1877,10 +1883,12 @@
   }
 
   function reconcileNavigationAttributes(current, incoming, baseURL) {
-    const incomingEntries = attributeEntries(incoming);
+    const incomingEntries = attributeEntries(incoming).filter(function(entry) {
+      return !gosxHost.attributes.isReservedDispatchName(entry.name);
+    });
     const incomingNames = new Set(incomingEntries.map(function(entry) { return entry.name; }));
     for (const entry of attributeEntries(current)) {
-      if (!incomingNames.has(entry.name)) current.removeAttribute(entry.name);
+      if (!gosxHost.attributes.isReservedDispatchName(entry.name) && !incomingNames.has(entry.name)) current.removeAttribute(entry.name);
     }
     for (const entry of incomingEntries) {
       const value = navigationAttributeValue(entry.name, entry.value, baseURL);
@@ -2889,6 +2897,8 @@
     const action = formSubmissionAction(form, submitter) || window.location.href;
     const url = new URL(action, window.location.href);
     const previous = captureManagedFormState(form);
+    const submission = {};
+    managedFormSubmissions.set(form, submission);
     let outcome = null;
 
     setManagedFormPending(form);
@@ -2910,10 +2920,22 @@
       return;
     } finally {
       try {
-        restoreManagedFormState(form, previous);
-        if (outcome && !outcome.redirected
-            && (!document.documentElement.contains || document.documentElement.contains(form))) {
-          projectManagedFormResult(form, outcome.response, outcome.result);
+        if (managedFormSubmissions.get(form) === submission) {
+          const acceptedRedirect = outcome && outcome.redirected && !managedActionFailed(outcome.response, outcome.result);
+          const current = acceptedRedirect ? captureManagedFormState(form) : previous;
+          // The destination can retain this form and render fresh lifecycle
+          // state. Do not resurrect the previous validation error after an
+          // accepted redirect, or overwrite a newer submission's feedback.
+          if (acceptedRedirect) {
+            if (current.pending === "true") current.pending = null;
+            if (current.state === "pending") current.state = "idle";
+          }
+          restoreManagedFormState(form, current);
+          if (outcome && !outcome.redirected
+              && (!document.documentElement.contains || document.documentElement.contains(form))) {
+            projectManagedFormResult(form, outcome.response, outcome.result);
+          }
+          managedFormSubmissions.delete(form);
         }
       } catch (err) {
         reportManagedActionResponseFailure("form action projection", err, url.href, method);
@@ -7879,7 +7901,17 @@
     prefetchLink(anchor, "focus");
   }
 
-  function onPopState() {
+  function onPopState(event) {
+    // Local application state can own a history entry without replacing the
+    // document. Emit the intent before starting navigation so handler order
+    // cannot force an unnecessary page morph (for example, editor selection).
+    if (typeof CustomEvent === "function" && typeof document.dispatchEvent === "function") {
+      const intent = new CustomEvent("gosx:popstate", {
+        cancelable: true,
+        detail: { state: event && event.state, url: window.location.href },
+      });
+      if (!document.dispatchEvent(intent)) return;
+    }
     navigate(window.location.href, { replace: true, preserveScroll: true }).catch(function(err) {
       console.error("[gosx] popstate navigation failed:", err);
       // The browser already moved the URL. A soft-nav failure here would

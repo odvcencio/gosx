@@ -27,6 +27,7 @@ function harness() {
   const telemetry = source("mount-telemetry.ts");
   run(telemetry.slice(telemetry.indexOf("function sceneCreateFrameRequest")), context);
   const mounted = source("mount.ts");
+  run(mounted.match(/const clockSubmission = [^\n]+/)[0], context);
   run('let readySent=false,mountedSent=false,revealSent=false;',context);
   run(mounted.slice(mounted.indexOf('    function publishReady('),mounted.indexOf('    function finishScenePerfMeasure(')),context);
   run(mounted.slice(mounted.indexOf("    let lastMountCommandRevision = 0;"), mounted.indexOf("    function createSceneRenderFrameMeta")), context);
@@ -34,7 +35,7 @@ function harness() {
     pendingFrameRequest=sceneCreateFrameRequest({id:'drop',modelIDs:['hero/slot-0']},6);
     pendingFrameRequest.accepted=true;
     var receipt=scenePrepareFrameRequest(pendingFrameRequest,state,9);
-    var meta={frameRequest:receipt,frameRenderer:renderer,commandRevision:9,hydrationGeneration:4};`, context);
+    var meta={frameRequest:receipt,frameRenderer:renderer,commandRevision:9,hydrationGeneration:4,clockRevision:0};`, context);
   return { context, events, lifecycleEvents, attributes, state, eval: code => run(code, context), sets: () => sets };
 }
 
@@ -76,6 +77,22 @@ test("normal settled submission frames allocate no request sets and emit no rece
   const h=harness();h.eval("pendingFrameRequest=null;meta.frameRequest=null");const before=h.sets();
   h.eval("for(let i=0;i<10000;i++) finishSceneSubmission('submitted',meta)");
   assert.equal(h.sets(),before);assert.equal(h.events.length,0);
+});
+
+test("shader clock receipts follow accepted frames and retain newer pending requests", () => {
+  const h=harness();
+  h.eval("clockSubmission.requested=3;meta.clockRevision=2");
+  for (const outcome of ["pending","empty","failed"]) {
+    h.eval(`finishSceneSubmission('${outcome}',meta)`);
+    assert.equal(h.eval("clockSubmission.submitted"),-1);
+  }
+  h.eval("finishSceneSubmission('submitted',meta)");
+  assert.equal(h.eval("clockSubmission.submitted"),2);
+  assert.equal(h.eval("clockSubmission.submitted !== clockSubmission.requested"),true);
+  h.eval("meta.clockRevision=3;lastMountCommandRevision=10;finishSceneSubmission('submitted',meta)");
+  assert.equal(h.eval("clockSubmission.submitted"),2,"a stale command frame cannot satisfy the newer clock");
+  h.eval("lastMountCommandRevision=9;finishSceneSubmission('submitted',meta)");
+  assert.equal(h.eval("clockSubmission.submitted"),3);
 });
 
 test("empty renderer mounts once without visual readiness or a requested submission", () => {
@@ -144,7 +161,7 @@ function completedFrame(outcome,checkEmpty=false,covered=true) {
     ensureRendererCanCoverBundle(){trace.push('coverage');return covered;},
     syncSceneNodeSentinels:step('sentinels'),createSceneRenderFrameMeta(){trace.push('meta');return h.eval('meta');},
     sceneRenderWithTiming(_renderer,rendered){assert.equal(rendered,bundle);trace.push('render');return outcome;},
-    recordSceneWaterFrame:step('water'),maybeEmitRenderEmpty:step('empty'),
+    publishMetrics(){},recordSceneWaterFrame:step('water'),maybeEmitRenderEmpty:step('empty'),
     renderSceneLayers:step('layers'),statsOverlay:{update:step('stats')},inspectorOverlay:{update:step('inspector')},
     sceneUpdateAdaptiveQuality(){trace.push('quality');return true;},scheduleRender:step('schedule'),
     publishReady:step('ready'),publishRevealed:step('revealed'),notifySceneProgressiveModelRenderCommitted:step('progressive'),

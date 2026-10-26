@@ -273,7 +273,7 @@ func TestChangedGuidesShowTheirWorkingExampleAndCurrentContract(t *testing.T) {
 	assertDocsContract(t, string(page), []string{"params.slug", "View the parameter route source"}, nil)
 }
 
-func TestDocsCopyControlWaitsForItsJavaScriptHandler(t *testing.T) {
+func TestDocsCopyControlUsesFrameworkReadiness(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve docs test location")
@@ -286,7 +286,6 @@ func TestDocsCopyControlWaitsForItsJavaScriptHandler(t *testing.T) {
 	for _, pattern := range []string{
 		`(?s)\.docs-content \.code-sample__copy\s*\{\s*display:\s*none;\s*\}`,
 		`(?s):global\(\.docs-content \.code-sample__gutter\)\s*\{\s*color:\s*var\(--code-comment\);\s*\}`,
-		`(?s):global\(html\[data-gosx-runtime-ready="true"\] \.docs-content \.code-sample__copy\)\s*\{\s*display:\s*inline-flex;\s*\}`,
 		`(?s):global\(html\[data-gosx-copy-ready="true"\] \.docs-content \.code-sample__copy\)\s*\{\s*display:\s*inline-flex;\s*\}`,
 	} {
 		if !regexp.MustCompile(pattern).Match(css) {
@@ -299,23 +298,20 @@ func TestDocsCopyControlWaitsForItsJavaScriptHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Contains(layout, []byte("copy-controls.js")) {
-		t.Fatal("docs layout bypasses the managed script API for its copy-control handler")
+		t.Fatal("docs layout must use the framework copy handler")
 	}
 	layoutServer, err := os.ReadFile(filepath.Join(root, "app", "docs", "layout.server.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(layoutServer, []byte(`server.LifecycleScript("/docs/copy-controls.js"`)) {
-		t.Fatal("docs layout does not register its copy-control handler as a managed script")
+	if bytes.Contains(layoutServer, []byte("copy-controls.js")) {
+		t.Fatal("docs layout must not install a duplicate copy handler")
 	}
-	handler, err := os.ReadFile(filepath.Join(root, "public", "docs", "copy-controls.js"))
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(root, "public", "docs", "copy-controls.js")); !os.IsNotExist(err) {
+		t.Fatal("docs must not ship an app-authored copy handler")
 	}
-	for _, want := range []string{"data-gosx-copy-button", "data-gosx-copy-ready", "navigator.clipboard", "Copy failed. Select the code and copy it manually."} {
-		if !bytes.Contains(handler, []byte(want)) {
-			t.Errorf("copy-control handler is missing %q", want)
-		}
+	if bytes.Contains(css, []byte(`html[data-gosx-runtime-ready="true"] .docs-content .code-sample__copy`)) {
+		t.Fatal("copy visibility must follow its handler's readiness")
 	}
 }
 
@@ -579,6 +575,8 @@ func TestRuntimeNavigationMigrationRendersAllowlist(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
+	// This source-rendering contract must not read ignored production ISR artifacts.
+	app.SetRuntimeRoot(t.TempDir())
 	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/docs/runtime/", nil))
 	pattern := "/gosx/assets/runtime/navigation.*.js"
 	body := w.Body.String()

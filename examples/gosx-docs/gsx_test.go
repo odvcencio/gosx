@@ -47,6 +47,51 @@ func TestDocsGSXFilesCompile(t *testing.T) {
 	}
 }
 
+// The platform owns dismissal and focus return. Do not add a docs-only script
+// or enlarge every route's request budget to implement the navigation menu.
+func TestDocsNavigationUsesNativePopover(t *testing.T) {
+	source, err := os.ReadFile("app/layout.gsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gosx.Compile(source); err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{`popovertarget="nav-overlay"`, `popover="auto"`, `popovertargetaction="hide"`, `autofocus`} {
+		if !strings.Contains(text, required) {
+			t.Errorf("navigation missing native popover contract %s", required)
+		}
+	}
+	if strings.Contains(text, `href="#nav-overlay"`) || strings.Contains(text, `aria-modal="true"`) {
+		t.Fatal("nonmodal popover must not retain hash navigation or claim modal focus containment")
+	}
+	// Native links dispose the open top-layer menu with the document; retained
+	// navigation would otherwise keep the site's unchanged layout open.
+	_, menu, ok := strings.Cut(text, `<div id="nav-overlay"`)
+	if !ok {
+		t.Fatal("missing navigation popover")
+	}
+	menu, _, _ = strings.Cut(menu, `<main id="main-content">`)
+	if strings.Contains(menu, `data-gosx-link="true"`) {
+		t.Fatal("popover menu destinations must close through native document navigation")
+	}
+	css, err := os.ReadFile("app/layout.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(css), ".nav-overlay:popover-open") || strings.Contains(string(css), ".nav-overlay:target") {
+		t.Fatal("menu visibility must follow the native popover state")
+	}
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mainSource), "docs-navigation.js") {
+		t.Fatal("native popover must not load an app-authored keyboard helper")
+	}
+}
+
 // TestDemosLayoutStructure verifies the editorial demos shell has the expected
 // structural shape. We use compile + raw-source grep rather than rendered HTML
 // because the IR does not expose an HTML renderer in tests.
@@ -423,7 +468,7 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 		t.Fatalf("read scene3d-bench-client.js: %v", err)
 	}
 	clientSrc := string(clientSource)
-	if !strings.Contains(gsxSrc, `src="/scene3d-bench-client.js"`) {
+	if !strings.Contains(gsxSrc, `src={data.clientScriptURL}`) {
 		t.Error("scene3d-bench/page.gsx must load the benchmark client")
 	}
 
@@ -671,7 +716,7 @@ func TestCollabDemoShape(t *testing.T) {
 
 	serverChecks := []struct{ needle, label string }{
 		{`hub.New("collab")`, `hub.New("collab")`},
-		{"ctx.Runtime().BindHub(", "ctx.Runtime().BindHub("},
+		{"ctx.Runtime().BindHubDocument(", "typed Hub document binding"},
 		{`"doc:edit"`, `"doc:edit"`},
 		{`"doc:update"`, `"doc:update"`},
 	}
@@ -705,7 +750,7 @@ func TestCollabDemoShape(t *testing.T) {
 	}
 	gsxSrc := string(gsxSource)
 
-	gsxChecks := []string{"collab-source", "collab-preview", "/collab-client.js"}
+	gsxChecks := []string{"collab-source", "collab-preview", "data-gosx-document-source", "data-gosx-document-preview"}
 	for _, needle := range gsxChecks {
 		if !strings.Contains(gsxSrc, needle) {
 			t.Errorf("collab/page.gsx missing %q", needle)
@@ -721,18 +766,11 @@ func TestCollabDemoShape(t *testing.T) {
 		t.Error("collab/page.gsx: expected Page component")
 	}
 
-	// ── public/collab-client.js ───────────────────────────────────────────────
-	jsSource, err := os.ReadFile(filepath.Join(publicDir, "collab-client.js"))
-	if err != nil {
-		t.Fatalf("read public/collab-client.js: %v", err)
+	if strings.Contains(gsxSrc, "<script") {
+		t.Fatal("collaboration view must use framework constructs")
 	}
-	jsSrc := string(jsSource)
-
-	jsChecks := []string{"gosx:hub:event", "doc:edit", "renderMarkdown"}
-	for _, needle := range jsChecks {
-		if !strings.Contains(jsSrc, needle) {
-			t.Errorf("public/collab-client.js missing %q", needle)
-		}
+	if _, err := os.Stat(filepath.Join(publicDir, "collab-client.js")); !os.IsNotExist(err) {
+		t.Fatalf("bespoke collaboration client must be removed: %v", err)
 	}
 
 	// ── layout.gsx: collab must be a live <a>, not an aria-disabled <span> ───

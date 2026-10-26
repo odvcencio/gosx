@@ -19,7 +19,7 @@ type pageReportQueryInvocation struct {
 func successfulPageReportQueries() pageReportQueries {
 	return pageReportQueries{
 		navigationTiming: func(*Driver) (NavigationTiming, error) {
-			return NavigationTiming{TTFB: 1, DOMContentLoaded: 2, FullyLoaded: 3}, nil
+			return NavigationTiming{Available: true, TTFB: 1, DOMContentLoaded: 2, FullyLoaded: 3}, nil
 		},
 		heapSize: func(*Driver) (float64, error) {
 			return 4, nil

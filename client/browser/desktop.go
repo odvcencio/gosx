@@ -24,6 +24,8 @@ type DiagnosticsPlan struct {
 // DesktopBridge exposes the supported desktop services as typed operations.
 // Bridge identity and capability checks occur at each operation. Methods
 // initiate calls synchronously, then deliver promise results asynchronously.
+// Availability probes require host registration metadata; older hosts report
+// false, while explicit operations and the raw desktop bridge remain usable.
 type DesktopBridge struct{ ctx context.Context }
 
 func Desktop() DesktopBridge { return DesktopBridge{ctx: context.Background()} }

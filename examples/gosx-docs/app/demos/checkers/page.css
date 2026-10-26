@@ -341,12 +341,14 @@
 .checkers-showcase__intro > p:not(.checkers-showcase__eyebrow) { color: var(--color-text-secondary); }
 .checkers-showcase__intro .checkers-showcase__status { margin-top: var(--space-md); padding: var(--space-xs) var(--space-sm); color: var(--demo-fg); background: var(--color-surface-raised); border-left: 2px solid var(--demo-accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 
-.checkers-showcase__scene { position: relative; grid-column: 2; grid-row: 1 / 5; min-height: 34rem; background: #0a1419; border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: 0 1.5rem 4rem var(--color-backdrop); }
+.checkers-showcase__scene { position: sticky; top: 0; align-self: start; aspect-ratio: 1; width: 100%; box-sizing: border-box; grid-column: 2; grid-row: 1 / 5; min-height: 0; max-height: calc(100svh - var(--site-nav-offset) - 2 * var(--space-sm)); background: #0a1419; border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: 0 1.5rem 4rem var(--color-backdrop); }
 .checkers-showcase__scene > div { position: absolute !important; inset: 0; width: 100% !important; height: 100% !important; overflow: hidden; }
+.checkers-showcase__scene { scroll-margin-block-start: calc(var(--site-nav-offset) + var(--space-sm)); scroll-margin-block-end: var(--space-sm); }
 .checkers-showcase__scene canvas { height: 100% !important; }
 .checkers-showcase__native-preview { opacity: 1; filter: none; }
 .checkers-showcase__render-note { top: auto; right: var(--space-sm); bottom: var(--space-sm); z-index: 2; color: #e1e9e9; background: rgba(8, 22, 29, 0.82); border-color: rgba(230, 244, 245, 0.22); }
 .checkers-showcase__render-note a { color: #ffd09a; }
+.checkers-showcase__render-note output[data-gosx-scene3d-status="renderer"] { display: inline !important; }
 
 .checkers-showcase__dashboard { grid-column: 1; grid-row: 2; }
 .checkers-showcase__facts { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-xs); margin: 0 0 var(--space-md); }
@@ -370,13 +372,15 @@
 .checkers-showcase__notes summary { min-height: 1.75rem; color: var(--demo-fg); font: 700 0.85rem/1.5 var(--font-body); cursor: pointer; }
 .checkers-showcase__board-panel p,
 .checkers-showcase__notes p { color: var(--color-text-secondary); font-size: 0.78rem; line-height: 1.5; }
-.checkers-showcase__board { grid-template-columns: repeat(11, minmax(1.75rem, 1fr)); width: max-content; min-width: 100%; }
+.checkers-showcase__board { box-sizing: border-box; grid-template-columns: repeat(11, minmax(2.75rem, 1fr)); width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; padding: 0.2rem; }
 .checkers-showcase__board button { color: var(--demo-fg); background: var(--color-surface-raised); border-color: var(--color-border-strong); }
 .checkers-showcase__board button[data-owner="1"] { border-color: var(--demo-accent); }
 .checkers-showcase__board button[data-owner="4"] { border-color: #da978a; }
 .checkers-showcase__board button[data-legal] { color: var(--demo-bg); background: var(--demo-accent); }
 .checkers-showcase__board button[aria-pressed="true"] { outline-color: var(--demo-accent); }
 .checkers-showcase__notes { grid-column: 1; grid-row: 4; }
+.checkers-showcase__notes .checkers-showcase__policy,
+.checkers-showcase__notes .checkers-showcase__limitations { position: static; width: auto; max-width: none; margin: var(--space-sm) 0 0; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); }
 .checkers-showcase__notes p:last-child { margin-bottom: 0; }
 .checkers-showcase button:focus-visible,
 .checkers-showcase select:focus-visible,
@@ -394,7 +398,7 @@
   .checkers-showcase__board-panel,
   .checkers-showcase__notes { padding: var(--space-sm); }
   .checkers-showcase__intro h1 { font-size: clamp(2rem, 8vw, 3rem); }
-  .checkers-showcase__scene { min-height: 0; height: clamp(19rem, 80vw, 32rem); border-radius: var(--radius-md); }
+  .checkers-showcase__scene { position: relative; top: auto; align-self: stretch; aspect-ratio: auto; max-height: none; min-height: 0; height: clamp(19rem, 80vw, 32rem); border-radius: var(--radius-md); }
   .checkers-showcase__board-panel { max-height: 26rem; }
-  .checkers-showcase__board { overflow: visible; }
+  .checkers-showcase__board { overflow-x: auto; }
 }

@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"strings"
 	"syscall/js"
@@ -13,6 +14,7 @@ import (
 	"github.com/rivo/uniseg"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/client/bridge"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/vm"
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/ir"
@@ -1203,5 +1205,51 @@ func TestRuntimeUnifiedHydrateDispatcherUnknownSurfaceKind(t *testing.T) {
 	}
 	if got := hydrateRet.String(); !strings.Contains(got, "unknown surfaceKind") {
 		t.Fatalf("expected unknown surfaceKind error, got %q", got)
+	}
+}
+
+func TestPatchMailboxFallsBackForStalePatchChunk(t *testing.T) {
+	for _, binary := range []bool{false, true} {
+		t.Run(fmt.Sprint(binary), func(t *testing.T) {
+			var got []vm.PatchOp
+			capture := js.FuncOf(func(this js.Value, args []js.Value) any {
+				if binary {
+					data := make([]byte, args[1].Get("byteLength").Int())
+					js.CopyBytesToGo(data, args[1])
+					_, _, got, _ = runtimewasm.DecodePatchMailbox(data)
+				} else if err := json.Unmarshal([]byte(args[1].String()), &got); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			})
+			defer capture.Release()
+			patch := map[string]any{}
+			if binary {
+				patch["applyMailbox"] = capture
+			}
+			setGlobalValue(t, "__gosx", map[string]any{"host": map[string]any{"patch": patch}})
+			setGlobalValue(t, "__gosx_apply_patches", capture)
+			ops := []vm.PatchOp{
+				{Kind: vm.PatchSetDispatch, AttrName: "data-gosx-on-click", Text: "save"},
+				{Kind: vm.PatchRemoveDispatch, AttrName: "data-gosx-handler"},
+			}
+			mailbox, err := runtimewasm.EncodePatchMailbox("island", 1, ops)
+			if err != nil {
+				t.Fatal(err)
+			}
+			applyPatchMailbox("island", mailbox)
+			if len(got) != 2 || got[0].Kind != vm.PatchSetAttr || got[1].Kind != vm.PatchRemoveAttr || got[0].Text != "save" {
+				t.Fatalf("stale chunk received unsupported ops: %+v", got)
+			}
+			// The current patch chunk must retain the protected dispatch opcodes.
+			facade := js.Global().Get("__gosx")
+			for _, capability := range []int{1, 2} {
+				facade.Get("host").Get("patch").Set("dispatchOps", capability)
+				applyPatchMailbox("island", mailbox)
+				if len(got) != 2 || got[0].Kind != vm.PatchSetDispatch || got[1].Kind != vm.PatchRemoveDispatch {
+					t.Fatalf("chunk with dispatchOps=%d received legacy ops: %+v", capability, got)
+				}
+			}
+		})
 	}
 }

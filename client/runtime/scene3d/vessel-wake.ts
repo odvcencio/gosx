@@ -59,7 +59,7 @@
     const age=Math.max(0,Math.min(1,(time-point.time)/6)),spread=state.beam*.28+point.speed*age*6*.34;
     const cell=Math.min(foamAges-1,Math.floor(age*foamAges));
     for(let patch=0;patch<3;patch++) {
-      const side=patch-1,seed=Math.sin(point.x*4.5+point.z*5.2+side*7),offset=side*spread+(side?0:seed*.2);
+      const side=patch-1,seed=Math.sin(point.time*.7+side*7),offset=side*spread+(side?0:seed*.2);
       const x=point.x+co*offset,z=point.z-si*offset,water=sample(x,z,time),n=water.normal||{x:0,y:1,z:0};
       const nx=-n.x/Math.max(.4,n.y),nz=-n.z/Math.max(.4,n.y),width=(side?.38+.4*age:state.beam*.23*(1+.4*age))*(1+.15*seed),span=(.35+point.speed*6/limit*.52)*(1+.13*seed);
       const turn=Math.sin(seed*.18),straight=Math.cos(seed*.18);
@@ -67,9 +67,9 @@
         const across=(corner%2?1:-1)*width,along=(corner<2?-1:1)*span;
         const a=across*straight-along*turn,b=across*turn+along*straight;
         const xx=co*a+si*b,zz=-si*a+co*b,index=row*stride+patch*4+corner;
-        positions[index*3]=x+xx;positions[index*3+1]=water.y+.1+nx*xx+nz*zz;positions[index*3+2]=z+zz;
+        positions[index*3]=x+xx;positions[index*3+1]=water.y+.065+nx*xx+nz*zz;positions[index*3+2]=z+zz;
         normals[index*3]=n.x;normals[index*3+1]=n.y;normals[index*3+2]=n.z;
-        uvs[index*2]=seed<0?1-corner%2:corner%2;uvs[index*2+1]=(cell+Number(corner>=2))/foamAges;
+        uvs[index*2]=side<0?1-corner%2:corner%2;uvs[index*2+1]=(cell+Number(corner>=2))/foamAges;
       }
     }
   }

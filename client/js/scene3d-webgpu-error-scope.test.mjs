@@ -364,7 +364,8 @@ test("webgpu: resource scopes pop synchronously and authored async builds use pe
   // 2. beginWebGPUErrorScope's per-frame "validation" scope: guarded against
   //    re-entry by pendingWebGPUErrorScope.
   // 3. Builtin pipeline and shader-module scopes pop before returning.
-  assert.equal(pushes, 4, "pipeline, module, allocation and frame scopes must be accounted for");
+  // 4. Image mip generation pops before awaiting its validation result.
+  assert.equal(pushes, 5, "pipeline, module, mip, allocation and frame scopes must be accounted for");
   assert.match(webgpuSource, /device\.pushErrorScope\("out-of-memory"\)/);
   assert.match(webgpuSource, /device\.pushErrorScope\("validation"\)/);
 

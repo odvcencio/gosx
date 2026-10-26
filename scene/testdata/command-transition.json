@@ -1,0 +1,17 @@
+{
+  "from": [
+    {"kind": 2, "objectId": "form", "data": {"x": 2}},
+    {"kind": 3, "objectId": "form", "data": {"color": "#00ff00", "roughness": 0.2, "name": "before"}},
+    {"kind": 5, "data": {"z": 10, "fov": 50}}
+  ],
+  "to": [
+    {"kind": 2, "objectId": "form", "data": {"x": 6}},
+    {"kind": 3, "objectId": "form", "data": {"color": "#ff0000", "roughness": 0.8, "name": "after"}},
+    {"kind": 5, "data": {"z": 6, "fov": 40}}
+  ],
+  "midpoint": [
+    {"kind": 2, "objectId": "form", "data": {"x": 4, "y": 0, "z": 0, "rotationX": 0, "rotationY": 0, "rotationZ": 0, "scaleX": 1, "scaleY": 1, "scaleZ": 1}},
+    {"kind": 3, "objectId": "form", "data": {"color": "#808000", "roughness": 0.5, "name": "before"}},
+    {"kind": 5, "data": {"x": 0, "y": 0, "z": 8, "rotationX": 0, "rotationY": 0, "rotationZ": 0, "transitionMS": 0, "fov": 45}}
+  ]
+}

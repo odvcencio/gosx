@@ -1,0 +1,197 @@
+{
+  "schema": "gosx.constant-motion-evidence/v1",
+  "environment": {
+    "go": "go version go1.26.0 linux/amd64",
+    "node": "v22.23.2",
+    "wasmCompiler": "standard Go, GOOS=js GOARCH=wasm"
+  },
+  "baseline": {
+    "revision": "2fe4a7b099bd81807adbe67bbbb6fa51ea1dd4d5",
+    "evalSHA256": "f1cb0be50c26d5855daee46f6a85a9c788f690aaf3b312195d5613431a96cc8f",
+    "scope": "New regression drivers only; product runtime source byte-identical to unchanged main. Original raw native and both WASM failure traces retained.",
+    "native": {
+      "input": "NaN clock on a loaded one-key scalar track",
+      "expectedPackedWrites": [
+        0,
+        0,
+        0,
+        42
+      ],
+      "observed": "NaN: panic: runtime error: index out of range [1] with length 1"
+    },
+    "registeredWasm": {
+      "finiteInput": {
+        "constantWrites": 36,
+        "valueBitsPreserved": true,
+        "neighborValue": 5
+      },
+      "NaNInput": {
+        "observed": "Registered export test fails before observing constant output or the neighboring animation.",
+        "limit": "Failed test stalled during WASM callback unwinding and was interrupted; no successful process exit is claimed."
+      }
+    }
+  },
+  "candidate": {
+    "sourceSHA256": {
+      "motion/eval.go": "004e3927b6f386ba7f45fa37311863ea661520a90e80d2fbe296a2af1432dec8",
+      "motion/constant_track_test.go": "92637c9f371f18ee5ba60d290dc585c916761c4f7c288b66a8dd13ecfdfb0f75",
+      "client/wasm/motion_constant_track_test.go": "1c4564a39d5bd092994858b694a72f709f27d9d8aede709e364b14731b5cc699"
+    },
+    "nativeMotionCasesPassed": 234,
+    "clockAndOffsetMatrix": {
+      "valueArities": 6,
+      "interpolationModes": 4,
+      "keyTimes": 3,
+      "nestedOffsets": 5,
+      "reducedMotionPolicies": 2,
+      "clockSamples": 8,
+      "checkedCombinations": 5760,
+      "storedValueBitsPreserved": true
+    },
+    "warmConstantNaNSamplingAllocations": 0,
+    "raceChecksPassed": true,
+    "completeMotionPackageUnderStandardGoWasmPassed": true,
+    "registeredWasmSamples": [
+      {
+        "clock": "finite",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "NaN",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "-Inf",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "+Inf",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "finite-after-invalid",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "finite",
+        "reducedMotion": true,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "NaN",
+        "reducedMotion": true,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "-Inf",
+        "reducedMotion": true,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "+Inf",
+        "reducedMotion": true,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "finite-after-invalid",
+        "reducedMotion": true,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "finite",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "NaN",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "-Inf",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "+Inf",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      },
+      {
+        "clock": "finite-after-invalid",
+        "reducedMotion": false,
+        "expectedConstantWrites": 36,
+        "observedConstantWrites": 36,
+        "storedValueBitsPreserved": true,
+        "expectedNeighborValue": 5,
+        "observedNeighborValue": 5.0
+      }
+    ]
+  },
+  "reproduce": [
+    "go test ./motion -run \"^Test(EvalConstantTrackClockAndOffsets|RuntimeConstantTrackInvalidClock)$\" -count=1 -v",
+    "GOOS=js GOARCH=wasm go test -timeout=45s -exec=\"$(go env GOROOT)/lib/wasm/go_js_wasm_exec\" ./client/wasm -run \"^TestMotionExportConstantTrackInvalidClock$\" -count=1 -v"
+  ],
+  "limits": "Local observed correctness evidence, not CI or rendering/frame-rate certification. The baseline used new regression drivers with unchanged product source. Raw baseline/fixed outputs and a paired performance guard are retained in the task workspace."
+}

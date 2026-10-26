@@ -5,6 +5,18 @@
   const radians = Math.PI / 180;
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   const angle = v => Math.atan2(Math.sin(v), Math.cos(v));
+  const poses=new WeakMap(),poseKeys=['x','y','z','heading','pitch','roll'],tick=1/60;
+  // @ts-ignore TS7006 -- a reusable render pose leaves authoritative physics untouched.
+  function presentation(s,reset=false) {
+    let frame=poses.get(s);
+    if(!frame||reset) {frame={previous:{},pose:Object.create(s)};for(const key of poseKeys)frame.previous[key]=s[key];poses.set(s,frame);}
+    const alpha=clamp(s.accumulator/tick,0,1);
+    for(const key of poseKeys) {
+      const delta=s[key]-frame.previous[key];
+      frame.pose[key]=frame.previous[key]+(key==='heading'?angle(delta):delta)*alpha;
+    }
+    return frame.pose;
+  }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   function speedCurve(offWind) {
     const a = Math.abs(angle(offWind));
@@ -150,18 +162,22 @@
   }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   function advance(s, dt, time, input, sample, floor) {
+    if(!poses.has(s))presentation(s);
+    const previous=poses.get(s).previous;
     s.accumulator+=Math.max(0,Math.min(.1,dt));
-    const tick=1/60;
-    while(s.accumulator>=tick-1e-9) { s.accumulator-=tick;step(s,tick,time-s.accumulator,input,sample,floor); }
+    while(s.accumulator>=tick-1e-9) {
+      for(const key of poseKeys)previous[key]=s[key];
+      s.accumulator-=tick;step(s,tick,time-s.accumulator,input,sample,floor);
+    }
   }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-  function camera(s, previous, dt, seconds=0) {
+  function camera(s, previous, dt, seconds=0,pose=s) {
     const wheel=s.cameraMode === "wheel", h=s.helm,distance=s.followDistance||s.length*1.8;
-    const p=localPoint(s,wheel?h.x:Math.sin(s.lookYaw)*distance,wheel?h.y:distance*.25,wheel?h.z:Math.cos(s.lookYaw)*distance);
-    const target=localPoint(s,wheel?h.x:0,wheel?s.deck:s.length*.4,wheel?-s.length*.35: -s.length*.15);
+    const p=localPoint(pose,wheel?h.x:Math.sin(s.lookYaw)*distance,wheel?h.y:distance*.25,wheel?h.z:Math.cos(s.lookYaw)*distance);
+    const target=localPoint(pose,wheel?h.x:0,wheel?s.deck:s.length*.4,wheel?-s.length*.35: -s.length*.15);
     const yaw=Math.atan2(-(target.x-p.x),-(target.z-p.z))+(wheel?s.lookYaw:0), pitch=clamp(Math.atan2(target.y-p.y,Math.hypot(target.x-p.x,target.z-p.z))+s.lookPitch,-1.45,1.45);
     const bob=deckBob(s,seconds);
-    const result=Object.assign({},previous,{x:p.x,y:p.y+(wheel?bob:0),z:p.z,rotationX:pitch,rotationY:yaw,rotationZ:wheel&&!s.reduced?s.roll*.35:0,fov:65,near:wheel?.05:previous.near});
+    const result=Object.assign({},previous,{x:p.x,y:p.y+(wheel?bob:0),z:p.z,rotationX:pitch,rotationY:yaw,rotationZ:wheel&&!s.reduced?pose.roll*.35:0,fov:65,near:wheel?.05:previous.near});
     if (!wheel && s.cameraReady && s.camera) {
       const alpha=s.reduced?1:1-Math.exp(-dt*5);
       for(const key of ['x','y','z','rotationX']) result[key]=s.camera[key]+(result[key]-s.camera[key])*alpha;
@@ -171,5 +187,5 @@
   }
   // @ts-ignore TS7006 -- cosmetic deck motion never affects physics or boarding.
   function deckBob(s, seconds) { return s.reduced?0:.018*Math.sin(seconds*1.8)+clamp(s.vy,-1,1)*.018; }
-  window.__gosx_scene3d_vessel_physics={create,speedCurve,localPoint,canBoard,helm,toggleCamera,look,buoyancy,allowed,step,advance,camera,deckBob,windLoad};
+  window.__gosx_scene3d_vessel_physics={create,speedCurve,localPoint,canBoard,helm,toggleCamera,look,buoyancy,allowed,step,advance,presentation,camera,deckBob,windLoad};
 })();

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"m31labs.dev/gosx/internal/filepolicy"
 	"mime"
 	"net/http"
@@ -151,6 +152,11 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !filepolicy.Immutable() && a.serveDevGoWASM(w, r, root, name) {
+		MarkObservedRequest(r, "runtime", "/gosx/"+name)
+		return
+	}
+
 	if fsPath, ok := runtimeManifestDirectAssetPath(root, name); ok {
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
 		serveImmutableRuntimeFile(w, r, fsPath, !a.compressionOff)
@@ -187,6 +193,84 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+// serveDevGoWASM serves a Go WASM application module, named by the manifest's
+// goWASM table, from the file system on every request, so a rebuild shows up
+// on the next reload. A production server never gets here: it serves a hashed
+// file as immutable, and an old hash keeps naming its own build.
+//
+// In development, name is "assets/go-wasm/<module>.<hash>.wasm". The request
+// gets the module's current build, even when <hash> is an older one: an app
+// that read GoWASMURL once at startup keeps asking for that URL, and old
+// hashed files stay in dist after a rebuild. The response is revalidated on
+// every reload (no-cache with an ETag), and a compressed sidecar is used only
+// when it is not older than the file, because replacing a file in place leaves
+// its sidecar behind.
+func (a *App) serveDevGoWASM(w http.ResponseWriter, r *http.Request, root, name string) bool {
+	module, ok := devGoWASMModule(name)
+	if !ok {
+		return false
+	}
+	manifest, ok := a.runtimeBuildManifest(root)
+	if !ok {
+		return false
+	}
+	asset, ok := manifest.GoWASM[module]
+	if !ok {
+		return false
+	}
+	fsPath, ok := runtimeManifestDirectAssetPath(root, "assets/go-wasm/"+asset.File)
+	if !ok {
+		return false
+	}
+	serveDevRuntimeFile(w, r, fsPath, !a.compressionOff)
+	return true
+}
+
+// devGoWASMModule returns the module name in "assets/go-wasm/<module>.<hash>.wasm".
+func devGoWASMModule(name string) (string, bool) {
+	file, ok := strings.CutPrefix(name, "assets/go-wasm/")
+	if !ok || strings.Contains(file, "/") || !strings.HasSuffix(file, ".wasm") {
+		return "", false
+	}
+	module, _, ok := strings.Cut(file, ".")
+	if !ok || !buildmanifest.ValidGoWASMName(module) {
+		return "", false
+	}
+	return module, true
+}
+
+// serveDevRuntimeFile serves fsPath so the browser asks again on every reload
+// and gets the file as it is now.
+func serveDevRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {
+	setRuntimeContentType(w.Header(), fsPath)
+	w.Header().Set("Cache-Control", "no-cache")
+	info, err := os.Stat(fsPath)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	served, encoding := fsPath, ""
+	if compression {
+		addAcceptEncodingVary(w.Header())
+		for _, candidate := range []struct{ encoding, suffix string }{{"br", ".br"}, {"gzip", ".gz"}} {
+			if !canServeCompressedFile(r) || !requestAcceptsEncoding(r, candidate.encoding) {
+				continue
+			}
+			side, err := os.Stat(fsPath + candidate.suffix)
+			if err == nil && !side.IsDir() && !side.ModTime().Before(info.ModTime()) {
+				served, encoding = fsPath+candidate.suffix, candidate.encoding
+				break
+			}
+		}
+	}
+	if encoding != "" {
+		w.Header().Set("Content-Encoding", encoding)
+		info, _ = os.Stat(served)
+	}
+	w.Header().Set("ETag", fmt.Sprintf(`"%x-%x-%s"`, info.ModTime().UnixNano(), info.Size(), encoding))
+	http.ServeFile(w, r, served)
 }
 
 func serveImmutableRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {
@@ -302,6 +386,7 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		"bootstrap-feature-textlayout.js":              filepath.Join(buildDir, "bootstrap-feature-textlayout.js"),
 		"bootstrap-feature-scene3d.js":                 filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
 		"bootstrap-feature-scene3d-command.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"),
+		"bootstrap-feature-scene3d-experience.js":      filepath.Join(buildDir, "bootstrap-feature-scene3d-experience.js"),
 		"bootstrap-feature-scene3d-hydrate.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d-hydrate.js"),
 		"bootstrap-feature-scene3d-instance-stream.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-instance-stream.js"),
 		"patch.js":         filepath.Join(buildDir, "patch.js"),
@@ -414,6 +499,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "bootstrap-feature-scene3d-command.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCommand.File)
+	case "bootstrap-feature-scene3d-experience.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DExperience.File)
 	case "bootstrap-feature-scene3d-hydrate.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
 	case "bootstrap-feature-scene3d-webgpu.js":
@@ -430,6 +517,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWalk.File)
 	case "bootstrap-feature-scene3d-model-preparation.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DModelPreparation.File)
+	case "bootstrap-feature-scene3d-hierarchy.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DHierarchy.File)
 	case "bootstrap-feature-scene3d-particle-burst.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
 	case "bootstrap-feature-scene3d-zoom.js":

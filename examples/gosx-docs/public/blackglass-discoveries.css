@@ -57,7 +57,7 @@
 .bgb [data-gosx-scene3d-focus-layer]:focus-within { clip-path:none!important; z-index:13; }
 .bgb [data-gosx-scene-node]:focus-visible { top:68px; left:18px; width:max-content!important; max-width:calc(100% - 36px); height:auto!important; min-height:44px; box-sizing:border-box; margin:0!important; padding:10px 14px!important; border-radius:8px; background:#152326; color:#f2ead8; outline:2px solid #ebc998; font:12px/1.5 ui-sans-serif,system-ui; }
 .bgb [data-gosx-scene-node]:focus-visible::after { content:attr(aria-label); }
-@media(max-width:640px) { .bgb__tools { top:12px;left:12px;gap:6px; } .bgb__map { aspect-ratio:16/7; } .bgb__journal[open] { width:min(280px,calc(100vw - 72px)); } .bgb__tools:has(> details[open]) > details:not([open]) { display:none; } .bgb__group { flex-wrap:wrap; } .bgb__controls { max-width:100%; } }
+@media(max-width:640px) { .bgb__tools { top:12px;left:12px;gap:6px; } .bgb__map { aspect-ratio:16/7; } .bgb__journal[open] { width:min(280px,calc(100vw - 72px)); } .bgb__tools:has(details[open]) :is(.bgb__chart,.bgb__journal):not([open]) { display:none; } .bgb__group { flex-wrap:wrap; } .bgb__controls { max-width:100%; } }
 @media(scripting:none) { .bgb__journal-status,.bgb__journal > summary span { display:none; } }
 
 .bgb__chart [data-coast-survey],.bgb__chart [data-coast-land],.bgb__chart-places button { min-height:44px; padding:8px 10px; border:1px solid #ebc99850; border-radius:8px; color:#eee9de; background:#233237; font:inherit; cursor:pointer; }
@@ -67,3 +67,50 @@
 .bgb__map[data-survey="true"] text { font-size:11px; }
 .bgb__map[data-survey="true"] circle { r:3px; }
 .bgb__journal[open] { max-height:calc(100dvh - 210px); overflow-y:auto; }
+
+.bgb__spyglass-toggle { min-height:44px;padding:12px 15px;border:1px solid #f5e5c02e;border-radius:16px;background:#151d20ef;color:#f4eee2;box-shadow:0 8px 30px #0003;font:600 12px/1.55 ui-sans-serif,system-ui;cursor:pointer; }
+.bgb__spyglass-toggle:disabled { opacity:.45;cursor:default; }
+.bgb__spyglass-toggle[aria-pressed="true"] { background:#d8bc85;color:#182524; }
+.bgb__optics { display:contents; }
+.bgb__spyglass { position:fixed;inset:0;z-index:11;pointer-events:none;--lens:min(68vw,64vh,620px); }
+.bgb__spyglass[hidden] { display:none; }
+.bgb__spyglass-lens { position:absolute;left:50%;top:50%;width:var(--lens);height:var(--lens);transform:translate(-50%,-50%);border:3px solid #baa178;border-radius:50%;box-shadow:0 0 0 5px #162321,0 0 0 8px #b69d6850,0 0 0 150vmax #061012c9,inset 0 0 40px #06101270; }
+.bgb__spyglass-lens span { position:absolute;inset:calc(50% - 9px);border:1px solid #f2e4c68c;border-radius:50%; }
+.bgb__spyglass-lens::before,.bgb__spyglass-lens::after { content:"";position:absolute;background:#f2e4c68c; }
+.bgb__spyglass-lens::before { left:calc(50% - 22px);top:50%;width:44px;height:1px; }
+.bgb__spyglass-lens::after { top:calc(50% - 22px);left:50%;height:44px;width:1px; }
+.bgb__spyglass-instruments { position:absolute;left:18px;top:82px;width:218px;box-sizing:border-box;padding:14px 16px;border:1px solid #d6bf873d;border-radius:14px;background:#101e22e8;color:#f4eee2;pointer-events:auto;font:12px/1.5 ui-sans-serif,system-ui; }
+.bgb__spyglass-label { display:flex;justify-content:space-between;gap:12px;margin:0 0 8px;color:#d8bc85;font-size:9px;letter-spacing:.13em; }
+.bgb__spyglass-label span { font-size:11px;letter-spacing:0; }
+.bgb__spyglass-bearing { display:block;font-size:28px;font-weight:400;font-variant-numeric:tabular-nums; }
+.bgb__spyglass-instruments p:not(.bgb__spyglass-label) { margin:6px 0; }
+.bgb__spyglass-range { color:#adbbb7;font-size:11px; }
+.bgb__spyglass-instruments button { display:block;width:100%;min-height:44px;border:1px solid #a89b7e70;border-radius:8px;background:#263d3b;color:#f4eee2;margin-top:10px;font:12px ui-sans-serif,system-ui;cursor:pointer; }
+.bgb__spyglass-instruments button:disabled { opacity:.45;cursor:default; }
+.bgb__spyglass :is(button,output):focus-visible,.bgb__spyglass-toggle:focus-visible { outline:2px solid #f2c38c;outline-offset:3px; }
+.bgb:has(.bgb__spyglass:not([hidden])) .gosx-scene3d-vessel-controls { visibility:hidden; }
+.bgb:has(.bgb__spyglass:not([hidden])) .bgb__controls { z-index:12; }
+@media(max-width:640px) { .bgb__tools :is(.bgb__chart,.bgb__journal) > summary { padding:12px 8px;font-size:11px; } .bgb__journal > summary::before,.bgb__journal > summary span { display:none; } .bgb__spyglass-toggle { padding:11px 9px;font-size:11px; } .bgb__spyglass { --lens:min(78vw,calc(100dvh - 300px)); } .bgb__spyglass-lens { top:50%; } .bgb__spyglass-instruments { top:68px;left:12px;width:calc(100% - 24px);padding:8px 12px;display:grid;grid-template-columns:1fr 1fr;gap:0 10px; } .bgb__spyglass-label,.bgb__spyglass-range { grid-column:1/-1; } .bgb__spyglass-bearing { font-size:22px; } .bgb__spyglass-instruments button { margin-top:4px; } }
+@media(max-width:640px) {
+  .bgb__spyglass { --lens:min(78vw,calc(100dvh - 190px)); }
+  .bgb__spyglass-label { display:none; }
+  .bgb__spyglass-instruments button { position:fixed;bottom:max(20px,env(safe-area-inset-bottom));left:12px;width:calc(50% - 16px);margin:0; }
+  .bgb__spyglass-instruments [data-coast-spyglass-close] { left:auto;right:12px; }
+  .bgb:has(.bgb__spyglass:not([hidden])) .bgb__reveal { visibility:hidden; }
+  .bgb:has(.bgb__spyglass:not([hidden])) .bgb__controls { bottom:max(78px,calc(env(safe-area-inset-bottom) + 78px)); }
+  .bgb:has(.bgb__spyglass:not([hidden])) .bgb__controls > :not([aria-label="Light"]) { display:none!important; }
+}
+@media(max-height:450px) and (min-width:641px) { .bgb__spyglass { --lens:min(60vh,300px); } .bgb__spyglass-lens { left:50%;top:50%; } .bgb__spyglass-instruments { top:66px;width:205px;padding:8px 12px; } .bgb__spyglass-bearing { font-size:22px; } .bgb__spyglass-instruments button { margin-top:5px; } }
+
+.bgb__view-controls,.bgb__pocket-tools{display:contents}
+.bgb__day{display:flex;align-items:center;gap:10px;font-size:11px;color:#b4c7c4}
+.bgb__day .bgb__link{font-size:11px}
+.bgb__group button{font-family:inherit}
+.bgb__group button[aria-pressed="true"]{background:rgba(210,238,223,.17);border-color:rgba(210,238,223,.4)}
+
+@media(max-width:640px) {
+  .bgb__tools { right:48px; }
+  .bgb__tools:has(details[open]) .bgb__spyglass-toggle { display:none; }
+  .bgb__chart-body { max-height:max(80px,calc(100dvh - 330px)); }
+  .bgb__journal[open] { max-height:max(120px,calc(100dvh - 290px)); }
+}

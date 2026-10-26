@@ -178,7 +178,7 @@ func dielectricF0FromIOR(ior float64) (f0 float64, ok bool) {
 		return 1, true
 	}
 	t := (ior - 1) / (ior + 1)
-	return t * t, true
+	return float64(t * t), true
 }
 
 func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
@@ -280,7 +280,7 @@ func effectiveDielectricSpecular(mat engine.RenderMaterial, f0 float64) ([3]floa
 	}
 	var out [3]float32
 	for i := range out {
-		out[i] = float32(math.Min(f0*color[i], 1) * intensity)
+		out[i] = float32(math.Min(float64(f0*color[i]), 1) * intensity)
 	}
 	return out, float32(intensity)
 }

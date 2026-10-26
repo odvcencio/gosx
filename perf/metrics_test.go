@@ -152,3 +152,31 @@ func TestBuildSceneMetricCapturesRendererTelemetry(t *testing.T) {
 		t.Fatalf("geometry/pipeline telemetry missing: geometry=%v pipeline=%v", got.Geometry, got.Pipeline)
 	}
 }
+
+func TestBuildSceneMetricPrefersPerFrameGPUEvents(t *testing.T) {
+	snapshot := SceneTelemetrySnapshot{Available: true, WarmAt: 500,
+		AttributeSamples: []SceneTelemetrySample{{Name: "data-gosx-scene3d-webgpu-gpu-ms", NumericValue: 999, StartTime: 100}},
+	}
+	for i := 0; i < 60; i++ {
+		at := float64(100 + i*16)
+		snapshot.TelemetryEvents = append(snapshot.TelemetryEvents,
+			SceneTelemetryEvent{Type: "gosx:scene3d:perf", StartTime: at, Detail: map[string]interface{}{
+				"source": "gpu-timestamp", "scope": "frame", "gpuMS": float64(i + 1), "frameSeq": float64(i + 1),
+			}},
+			SceneTelemetryEvent{Type: "gosx:scene3d:perf", StartTime: at, Detail: map[string]interface{}{
+				"source": "gpu-timestamp", "scope": "passes", "mainMS": float64(i + 1), "shadowMS": 1.0, "sceneMS": float64(i + 2),
+			}})
+	}
+	got := BuildSceneMetric(nil, snapshot, 60)
+	if got.GPU == nil || got.GPU.Total == nil || got.GPU.Total.Stats.Count != 60 || got.GPU.Total.Stats.Max != 60 {
+		t.Fatalf("per-frame GPU events lost or mixed with DOM snapshots: %+v", got.GPU)
+	}
+	if got.GPU.Total.Source != "event:gosx:scene3d:perf:gpu-timestamp" || got.GPU.Total.Warm.Count == 0 || got.GPU.Total.Cold.Count == 0 {
+		t.Fatalf("GPU event source/phases lost: %+v", got.GPU.Total)
+	}
+	for _, name := range []string{"main", "shadow", "scene"} {
+		if got.GPU.Passes[name].Stats.Count != 60 {
+			t.Fatalf("pass %s samples lost: %+v", name, got.GPU.Passes[name])
+		}
+	}
+}

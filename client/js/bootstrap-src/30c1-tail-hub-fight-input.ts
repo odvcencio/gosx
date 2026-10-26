@@ -29,6 +29,13 @@
       mode: String(input.mode || "").trim().toLowerCase(),
       event: String(input.event || "input"),
       readyEvent: String(input.readyEvent || "ready"),
+      readyWhen: String(input.readyWhen || "").trim().toLowerCase() === "scene-committed" ? "scene-committed" : "socket",
+      edgeSend: !input.disableEdgeSend,
+      // A signal sink always carries absolute samples: the Go WASM engine on
+      // the other end derives edges and resolves opposite directions itself.
+      sink: String(input.sink || "").trim().toLowerCase() === "signal",
+      signalName: String(input.signalName || ""),
+      absolute: String(input.heldMode || "").trim().toLowerCase() === "absolute" || String(input.sink || "").trim().toLowerCase() === "signal",
       trainingEvent: String(input.trainingEvent || "training"),
       signal: String(input.signal || ""),
       trainingSignal: String(input.trainingSignal || ""),
@@ -66,6 +73,14 @@
     let disposed = false;
     let timer = 0;
     let readySent = false;
+    let readySocket = null;
+    let pendingReadySocket = null;
+    const lastSentInput = Object.create(null);
+    // heldMode "absolute" state: the frame being sampled, the latch for each
+    // player, and the pending animation frame handle.
+    let sampleFrame = 1;
+    const latch = Object.create(null);
+    let frameHandle = 0;
     let trainingVisible = false;
     let lastCue = "";
     let lastFeedbackSeq = 0;
@@ -119,7 +134,48 @@
       return payload;
     }
 
+    // sceneCommitted reports whether a Scene3D mount (inside config.root when
+    // set) has rendered and committed its model generation.
+    function sceneCommitted() {
+      const root = config.root ? controllerQuery(config.root) : document;
+      if (!root || typeof root.querySelector !== "function") return false;
+      const scene = root.querySelector('[data-gosx-scene3d-ready="true"][data-gosx-scene3d-model-hydration-committed="true"]');
+      return Boolean(scene) && scene.isConnected !== false;
+    }
+
+    function afterFrames(count, fn) {
+      if (count <= 0) {
+        fn();
+        return;
+      }
+      const next = function() { afterFrames(count - 1, fn); };
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(next);
+      } else {
+        setTimeout(next, 16);
+      }
+    }
+
+    // sendSceneReady sends the ready event at most once per socket, after the
+    // scene is committed and two animation frames have drawn the models.
+    function sendSceneReady() {
+      const socket = record && record.socket;
+      if (!socketOpen() || socket === readySocket || socket === pendingReadySocket) return;
+      if (!sceneCommitted()) return;
+      pendingReadySocket = socket;
+      afterFrames(2, function() {
+        if (pendingReadySocket !== socket) return;
+        pendingReadySocket = null;
+        if (disposed || record.socket !== socket || !socketOpen() || !sceneCommitted()) return;
+        if (send(config.readyEvent, basePayload(config.player))) readySocket = socket;
+      });
+    }
+
     function sendReady() {
+      if (config.readyWhen === "scene-committed") {
+        sendSceneReady();
+        return;
+      }
       if (readySent || !socketOpen()) return;
       readySent = send(config.readyEvent, basePayload(config.player));
     }
@@ -212,16 +268,17 @@
     }
 
     function updateTouch(key, active) {
-      if (!key) return;
+      if (!key) return false;
       const next = Math.max(0, (touchCounts[key] || 0) + (active ? 1 : -1));
       touchCounts[key] = next;
       const value = next > 0;
       const parts = key.split(":");
-      if (parts[0] === "dir" && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
+      if ((parts[0] === "dir" || parts[0] === "btn") && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
+        const changed = touch[parts[1]] !== value;
         touch[parts[1]] = value;
-      } else if (parts[0] === "btn" && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
-        touch[parts[1]] = value;
+        return changed;
       }
+      return false;
     }
 
     function onPointerDown(event) {
@@ -231,7 +288,7 @@
       if (!key) return;
       unlockArcadeAudio();
       activePointers.set(event.pointerId, key);
-      updateTouch(key, true);
+      const changed = updateTouch(key, true);
       if (control.setPointerCapture && event.pointerId != null) {
         try {
           control.setPointerCapture(event.pointerId);
@@ -240,23 +297,30 @@
         }
       }
       event.preventDefault();
+      if (changed) sendEdge();
     }
 
     function onPointerUp(event) {
       const fallback = touchKey(touchControl(event));
       const key = activePointers.get(event.pointerId) || fallback;
       activePointers.delete(event.pointerId);
-      updateTouch(key, false);
+      const changed = updateTouch(key, false);
       if (key) event.preventDefault();
+      if (changed) sendEdge();
     }
 
-    function onBlur() {
+    function releaseAll() {
       for (const key of Object.keys(keys)) keys[key] = false;
       for (const key of Object.keys(touchCounts)) {
         touchCounts[key] = 0;
         updateTouch(key, false);
       }
       activePointers.clear();
+    }
+
+    function onBlur() {
+      releaseAll();
+      sendEdge();
     }
 
     function gamepads() {
@@ -321,7 +385,31 @@
       return buttons;
     }
 
+    // readDirectionBits returns the held directions as raw screen-absolute
+    // bits (left 1, right 2, up 4, down 8). It resolves no opposite pairs and
+    // maps nothing by player slot: the simulation owns both.
+    function readDirectionBits(pad, includePrimary) {
+      let bits = 0;
+      if (includePrimary) {
+        if (keyDown("KeyW", "w", "ArrowUp", "arrowup") || touch.up) bits |= 4;
+        if (keyDown("KeyS", "s", "ArrowDown", "arrowdown") || touch.down) bits |= 8;
+        if (keyDown("KeyA", "a", "ArrowLeft", "arrowleft") || touch.left) bits |= 1;
+        if (keyDown("KeyD", "d", "ArrowRight", "arrowright") || touch.right) bits |= 2;
+      }
+      if (pad) {
+        const axes = Array.isArray(pad.axes) ? pad.axes : [];
+        if (gamepadPressed(pad, 12) || hubInputNumber(axes[1], 0) < -0.5) bits |= 4;
+        if (gamepadPressed(pad, 13) || hubInputNumber(axes[1], 0) > 0.5) bits |= 8;
+        if (gamepadPressed(pad, 14) || hubInputNumber(axes[0], 0) < -0.5) bits |= 1;
+        if (gamepadPressed(pad, 15) || hubInputNumber(axes[0], 0) > 0.5) bits |= 2;
+      }
+      return bits;
+    }
+
     function readInput(pad, includePrimary, player) {
+      if (config.absolute) {
+        return { dir: readDirectionBits(pad, includePrimary), btn: readButtons(pad, includePrimary) };
+      }
       return {
         dir: readDirection(pad, includePrimary, player),
         btn: readButtons(pad, includePrimary),
@@ -332,7 +420,139 @@
       const payload = basePayload(player);
       payload.dir = input.dir;
       payload.btn = input.btn;
-      send(config.event, payload);
+      if (config.absolute) payload.frame = sampleFrame;
+      if (send(config.event, payload)) lastSentInput[player] = inputKey(input);
+    }
+
+    function inputKey(input) {
+      return (config.absolute ? sampleFrame + ":" : "") + input.dir + ":" + input.btn;
+    }
+
+    // canEmit reports whether a sample has somewhere to go: the shared signal
+    // for a local sink, otherwise an open hub socket.
+    function canEmit() {
+      return config.sink ? Boolean(config.signalName) : socketOpen();
+    }
+
+    // publishSink writes the frame's latched samples for every player to the
+    // sink signal as one array of {player, dir, btn, frame}.
+    function publishSink() {
+      const players = framePlayers();
+      const samples = [];
+      for (let i = 0; i < players.length; i++) {
+        const held = latch[players[i]];
+        samples.push({ player: players[i], dir: held.dir, btn: held.btn, frame: sampleFrame });
+        lastSentInput[players[i]] = inputKey(held);
+      }
+      publishJSON(config.signalName, samples);
+    }
+
+    function framePlayers() {
+      return config.local ? [1, 2] : [config.player];
+    }
+
+    // sampleLatch folds one sample of every player's held state into the
+    // frame's latch: buttons are OR-ed, directions take the last sample.
+    function sampleLatch() {
+      const pads = gamepads();
+      const players = framePlayers();
+      for (let i = 0; i < players.length; i++) {
+        const player = players[i];
+        const input = readInput(pads[player === 2 && config.local ? 1 : 0], player === 1 || !config.local, player);
+        const held = latch[player];
+        latch[player] = { dir: input.dir, btn: (held ? held.btn : 0) | input.btn };
+      }
+      return pads;
+    }
+
+    // closeFrame samples once more, sends the frame's latched state for every
+    // player, then starts the next frame seeded with the current held state.
+    function closeFrame() {
+      if (disposed) return;
+      sampleLatch();
+      if (canEmit() && !config.spectator) {
+        if (config.sink) {
+          publishSink();
+        } else {
+          const players = framePlayers();
+          for (let i = 0; i < players.length; i++) sendInput(players[i], latch[players[i]]);
+        }
+      }
+      sampleFrame++;
+      for (const key of Object.keys(latch)) delete latch[key];
+      sampleLatch();
+    }
+
+    function frameLoop() {
+      frameHandle = 0;
+      if (disposed) return;
+      closeFrame();
+      frameHandle = requestAnimationFrame(frameLoop);
+    }
+
+    // sendEdge sends the full held state in the same event turn as a key or
+    // touch change, skipping players whose state matches the last send. Each
+    // message carries the whole state, so the timer pump and edges can mix.
+    function sendEdge() {
+      if (disposed || config.spectator) return;
+      if (config.absolute) {
+        // Always latch the event, even when edge sends are off, so a press and
+        // release inside one frame is not lost.
+        sampleLatch();
+        if (!config.edgeSend || !canEmit()) return;
+        const players = framePlayers();
+        if (config.sink) {
+          for (let i = 0; i < players.length; i++) {
+            if (lastSentInput[players[i]] !== inputKey(latch[players[i]])) {
+              publishSink();
+              break;
+            }
+          }
+          return;
+        }
+        for (let i = 0; i < players.length; i++) {
+          if (lastSentInput[players[i]] !== inputKey(latch[players[i]])) sendInput(players[i], latch[players[i]]);
+        }
+        return;
+      }
+      if (!config.edgeSend || !socketOpen()) return;
+      const pads = gamepads();
+      const changed = function(player, input) {
+        return lastSentInput[player] !== inputKey(input);
+      };
+      if (config.local) {
+        const first = readInput(pads[0], true, 1);
+        const second = readInput(pads[1], false, 2);
+        if (changed(1, first)) sendInput(1, first);
+        if (changed(2, second)) sendInput(2, second);
+        return;
+      }
+      const input = readInput(pads[0], true, config.player);
+      if (changed(config.player, input)) sendInput(config.player, input);
+    }
+
+    function editableTarget(event) {
+      const target = event && event.target;
+      return Boolean(target && typeof target.closest === "function" && target.closest("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]"));
+    }
+
+    // fightKeyNames lists the key codes and key values readDirection and
+    // readButtons read, so only those presses trigger an edge send.
+    const fightKeyNames = {
+      keyw: 1, w: 1, arrowup: 1, keys: 1, s: 1, arrowdown: 1, keya: 1, a: 1, arrowleft: 1,
+      keyd: 1, d: 1, arrowright: 1, keyu: 1, u: 1, keyi: 1, i: 1, keyj: 1, j: 1,
+      keyk: 1, k: 1, keyl: 1, l: 1, space: 1, " ": 1,
+    };
+
+    function mappedKey(event) {
+      return Boolean(event && ((event.code && fightKeyNames[String(event.code).toLowerCase()]) ||
+        (event.key && fightKeyNames[String(event.key).toLowerCase()])));
+    }
+
+    function onKey(event, active) {
+      setKey(event, active);
+      if (!event || event.repeat || !mappedKey(event) || editableTarget(event)) return;
+      sendEdge();
     }
 
     function fightAudioFallbackCue(kind, event) {
@@ -512,6 +732,13 @@
       sendReady();
       const pads = gamepads();
       publishCue(pads);
+      if (config.absolute) {
+        // Timer ticks are extra samples. Frame boundaries come from
+        // requestAnimationFrame; without it the timer closes the frame.
+        if (frameHandle) sampleLatch();
+        else closeFrame();
+        return;
+      }
       if (socketOpen() && !config.spectator) {
         if (config.local) {
           sendInput(1, readInput(pads[0], true, 1));
@@ -528,13 +755,17 @@
       timer = setTimeout(tick, config.sendEveryMS);
     }
 
-    addListener(document, "keydown", function(event) { setKey(event, true); }, { passive: false });
-    addListener(document, "keyup", function(event) { setKey(event, false); }, { passive: false });
+    addListener(document, "keydown", function(event) { onKey(event, true); }, { passive: false });
+    addListener(document, "keyup", function(event) { onKey(event, false); }, { passive: false });
     addListener(document, "pointerdown", onPointerDown, { passive: false });
     addListener(document, "pointerup", onPointerUp, { passive: false });
     addListener(document, "pointercancel", onPointerUp, { passive: false });
     addListener(window, "blur", onBlur);
     publishTrainingState();
+    if (config.absolute) {
+      sampleLatch();
+      if (typeof requestAnimationFrame === "function") frameHandle = requestAnimationFrame(frameLoop);
+    }
     tick();
 
     return {
@@ -546,8 +777,10 @@
           clearTimeout(timer);
           timer = 0;
         }
+        if (frameHandle && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frameHandle);
+        frameHandle = 0;
         disposeListeners();
-        onBlur();
+        releaseAll();
         publishJSON(config.signal, { connected: false, active: false, pads: 0 });
         publishJSON(config.trainingSignal, { enabled: false, paused: false, recording: false });
       },

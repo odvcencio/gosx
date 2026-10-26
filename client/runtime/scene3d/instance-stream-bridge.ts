@@ -217,7 +217,7 @@
       bucket = new Map();
       pendingFrames.set(mount, bucket);
     }
-    bucket.set(key, { sceneState: sceneState, bytes: view ? view.slice() : bytes, scheduleRender: scheduleRender });
+    bucket.set(key, { sceneState: sceneState, collection: sceneState.instancedMeshes, bytes: view ? view.slice() : bytes, scheduleRender: scheduleRender });
 
     return loadInstanceStreamBridge().then(function(loadedApply) {
       var fn = loadedApply || window.__gosx_scene3d_instance_stream_apply;
@@ -228,6 +228,8 @@
       bucket.delete(key);
       if (bucket.size === 0) pendingFrames.delete(mount);
       if (typeof fn !== "function") return reportChunkLoadFailure(mount, batchId);
+      // A declaration may have retired/recreated this ID while loading.
+      if (current.collection !== current.sceneState.instancedMeshes) return { applied: false, reason: "instance declaration changed while loading" };
       return fn(current.sceneState, current.bytes, current.scheduleRender, mount);
     }, function(_err) {
       var current = bucket.get(key);

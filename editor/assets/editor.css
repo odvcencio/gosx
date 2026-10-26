@@ -79,23 +79,27 @@
 
 .editor-surface-code .editor-code-toolbar {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   overflow: visible;
 }
 
-.editor-code-find {
+.editor-code-find,
+.editor-code-goto {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.2rem;
   min-width: 0;
   margin-left: auto;
 }
 
-.editor-code-find[hidden] {
+.editor-code-find[hidden],
+.editor-code-goto[hidden] {
   display: none;
 }
 
-.editor-code-find input {
+.editor-code-find input,
+.editor-code-goto input {
   width: clamp(7rem, 12vw, 12rem);
   min-width: 0;
   border: 1px solid var(--editor-border-strong);
@@ -111,6 +115,16 @@
   color: var(--editor-muted);
   font: 0.68rem var(--editor-mono);
   text-align: center;
+}
+
+.editor-code-goto [data-code-goto="status"] {
+  max-width: 24rem;
+  color: var(--editor-danger);
+  font: 0.72rem var(--editor-sans);
+}
+
+.editor-code-goto input[aria-invalid="true"] {
+  border-color: var(--editor-danger);
 }
 
 .editor-native-topbar {
@@ -577,6 +591,7 @@
   width: calc(var(--editor-gutter-width) - 0.65rem);
   overflow: hidden;
   padding-top: var(--editor-source-pad-block);
+  padding-bottom: var(--editor-source-pad-block);
   padding-right: 0.65rem;
   color: var(--editor-faint);
   font-family: var(--editor-mono);

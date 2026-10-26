@@ -32,8 +32,8 @@ const wasmCompilerPrebuilt wasmCompiler = "Prebuilt"
 //   - "prebuilt": skip the TinyGo probe and require a prebuilt runtime.
 const runtimeModeEnv = "GOSX_RUNTIME_MODE"
 
-// runtimeCacheEnv overrides the on-disk directory prebuilt runtime downloads
-// verify into and are cached under. Empty uses os.UserCacheDir()/gosx/runtime.
+// runtimeCacheEnv overrides the directory for verified release runtimes and
+// local TinyGo workspaces. Empty uses os.UserCacheDir()/gosx/runtime.
 const runtimeCacheEnv = "GOSX_RUNTIME_CACHE"
 
 // runtimeReleaseRepoEnv overrides the GitHub "owner/repo" prebuilt runtime
@@ -211,7 +211,9 @@ func resolveWASMCompilerForProject(opts BuildOptions, projectDir string, lookPat
 		if tinyGoErr == nil {
 			return compiler, path, nil, nil
 		}
-		if mode == "tinygo" {
+		if mode == "tinygo" || strings.TrimSpace(os.Getenv("TINYGO")) != "" {
+			// An explicit executable is a toolchain choice, not a hint to
+			// silently replace it with a downloaded runtime when unavailable.
 			return "", "", nil, tinyGoErr
 		}
 		bundle, prebuiltErr := resolvePrebuiltRuntimeForProject(context.Background(), opts, projectDir)

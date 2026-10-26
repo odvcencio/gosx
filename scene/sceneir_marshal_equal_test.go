@@ -399,7 +399,7 @@ func randomMarshalScene(rng *rand.Rand) Props {
 		Controls:   randomPick(rng, "", "orbit", "fly"),
 		Camera: PerspectiveCamera{
 			Position: randomMarshalVector(rng),
-			FOV:      35 + rng.Float64()*40,
+			FOV:      35 + float64(rng.Float64()*40),
 		},
 		Environment: Environment{
 			AmbientColor:     randomPick(rng, "", "#ffffff", "#101325"),
@@ -594,7 +594,7 @@ func randomMarshalVector(rng *rand.Rand) Vector3 {
 		if rng.IntN(3) == 0 {
 			return 0
 		}
-		return rng.Float64()*20 - 10
+		return float64(rng.Float64()*20) - 10
 	}
 	return Vector3{X: pick(), Y: pick(), Z: pick()}
 }

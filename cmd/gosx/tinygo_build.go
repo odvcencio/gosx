@@ -49,9 +49,24 @@ func resolveWASMCompiler(opts BuildOptions, lookPath func(string) (string, error
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
-	tinygoPath, err := lookPath("tinygo")
+	command := strings.TrimSpace(os.Getenv("TINYGO"))
+	if command == "" {
+		command = "tinygo"
+	}
+	tinygoPath, err := lookPath(command)
 	if err != nil {
+		if strings.TrimSpace(os.Getenv("TINYGO")) != "" {
+			return "", "", fmt.Errorf("TINYGO=%q is unavailable: %w", command, err)
+		}
 		return "", "", fmt.Errorf("production GoSX builds require TinyGo on PATH: %w", err)
+	}
+	// Compilation runs in a prepared module directory. Resolve relative tool
+	// paths before changing directories so an explicit compiler stays selected.
+	if !filepath.IsAbs(tinygoPath) {
+		tinygoPath, err = filepath.Abs(tinygoPath)
+		if err != nil {
+			return "", "", fmt.Errorf("resolve TinyGo executable: %w", err)
+		}
 	}
 	return wasmCompilerTinyGo, tinygoPath, nil
 }
@@ -70,12 +85,16 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraT
 		cmd := exec.Command(tinygoPath, tinyGoBuildArgs(outputPath, extraTags...)...)
 		cmd.Dir = scratchDir
 		cmd.Env = setEnv(candidate.env, "GOFLAGS", goModuleCommandFlags)
-		out, err := cmd.CombinedOutput()
+		out, err := runValidatedWASMCompiler(cmd, outputPath)
 		if err == nil {
 			if candidate.label != "" {
 				fmt.Printf("    TinyGo toolchain: %s\n", candidate.label)
 			}
 			return nil
+		}
+		var invalidOutput *invalidCompilerWASMOutput
+		if errors.As(err, &invalidOutput) {
+			return fmt.Errorf("tinygo build: %w", err)
 		}
 		failures = append(failures, tinyGoFailure(candidate.label, err, out))
 		if !tinyGoFailureLooksToolchainRelated(out) {
@@ -187,12 +206,9 @@ func prepareTinyGoWASMModule(gosxRoot string, tags ...string) (string, func(), e
 		return "", nil, err
 	}
 
-	scratchDir, err := os.MkdirTemp("", "gosx-tinygo-wasm-*")
+	scratchDir, cleanup, err := tinyGoScratchDirectory(gosxRoot, tags...)
 	if err != nil {
-		return "", nil, fmt.Errorf("create tinygo scratch module: %w", err)
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(scratchDir)
+		return "", nil, err
 	}
 
 	for _, pkg := range packages {
