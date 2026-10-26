@@ -28,6 +28,12 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 		return nil, fmt.Errorf("cycle controls are missing")
 	}
 	m := cycle.DefaultModel()
+	mappedModel, err := cycle.JT9D()
+	if err != nil {
+		return nil, err
+	}
+	mode := "generic"
+	var matched cycle.MappedResult
 	var result cycle.Result
 	var solveErr error
 	var downloadURL string
@@ -41,6 +47,13 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 		read := func(name string) float64 { return query("[name=" + name + "]").Get("valueAsNumber").Float() }
 		in := cycle.Inputs{AltitudeM: read("altitudeM"), Mach: read("mach"), TurbineInletK: read("turbineInletK"),
 			OverallPressureRatio: read("overallPressureRatio"), FanPressureRatio: read("fanPressureRatio"), BypassRatio: read("bypassRatio")}
+		root.Call("setAttribute", "data-cycle-mode", mode)
+		query("[name=altitudeM]").Set("disabled", mode == "mapped")
+		query("[name=mach]").Set("disabled", mode == "mapped")
+		query("[data-cycle-model=generic]").Call("setAttribute", "aria-pressed", strconv.FormatBool(mode == "generic"))
+		query("[data-cycle-model=mapped]").Call("setAttribute", "aria-pressed", strconv.FormatBool(mode == "mapped"))
+		fuel := read("fuelFlowKGS")
+		query("[data-cycle-input-label=fuelFlowKGS]").Set("textContent", fmt.Sprintf("%.4f kg/s", fuel))
 		for name, text := range map[string]string{
 			"altitudeM": fmt.Sprintf("%.1f km", in.AltitudeM/1000), "mach": fmt.Sprintf("M %.2f", in.Mach),
 			"turbineInletK": fmt.Sprintf("%.0f K", in.TurbineInletK), "overallPressureRatio": fmt.Sprintf("%.0f : 1", in.OverallPressureRatio),
@@ -50,6 +63,28 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 		}
 		result, solveErr = m.Solve(in)
 		view := cycle.Format(result, solveErr)
+		query("[data-lp-label]").Set("textContent", "Fan / LP shaft")
+		if mode == "mapped" {
+			matched, solveErr = mappedModel.Solve(cycle.MappedInputs{FuelFlowKGS: fuel})
+			result = matched.Cycle
+			view = cycle.FormatMapped(matched, solveErr)
+			query("[data-lp-label]").Set("textContent", "Fan + booster / LP shaft")
+		}
+		dots := root.Call("querySelectorAll", "[data-map-dot]")
+		for i := 0; i < dots.Length(); i++ {
+			dots.Index(i).Call("setAttribute", "visibility", "hidden")
+		}
+		if mode == "mapped" && solveErr == nil {
+			for _, p := range matched.MapPoints {
+				dot := query("[data-map-dot=" + p.Name + "]")
+				if dot.Truthy() {
+					x, y := mappedModel.PlotPoint(p)
+					dot.Call("setAttribute", "cx", x)
+					dot.Call("setAttribute", "cy", y)
+					dot.Call("setAttribute", "visibility", "visible")
+				}
+			}
+		}
 		outputs := root.Call("querySelectorAll", "[data-cycle-output]")
 		for i := 0; i < outputs.Length(); i++ {
 			node := outputs.Index(i)
@@ -66,10 +101,15 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 		// A transparent state snapshot also lets browser checks compare the
 		// running WASM calculation with the native analytical benchmark.
 		state := struct {
-			Valid  bool         `json:"valid"`
-			Result cycle.Result `json:"result"`
-			Error  string       `json:"error,omitempty"`
-		}{Valid: solveErr == nil, Result: result}
+			Mode    string              `json:"mode"`
+			Matched *cycle.MappedResult `json:"matched,omitempty"`
+			Valid   bool                `json:"valid"`
+			Result  cycle.Result        `json:"result"`
+			Error   string              `json:"error,omitempty"`
+		}{Mode: mode, Valid: solveErr == nil, Result: result}
+		if mode == "mapped" && solveErr == nil {
+			state.Matched = &matched
+		}
 		if solveErr != nil {
 			state.Error = solveErr.Error()
 		}
@@ -80,6 +120,9 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 	initial := cycle.DefaultInputs()
 	if err := ctx.DecodeProps(&initial); err != nil {
 		return nil, err
+	}
+	if model := ctx.Props().Get("model"); model.Type() == js.TypeString && model.String() == "mapped" {
+		mode = "mapped"
 	}
 	setInputs(initial)
 	input := js.FuncOf(func(_ js.Value, args []js.Value) any {
@@ -93,6 +136,23 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 			return nil
 		}
 		target := args[0].Get("target")
+		model := target.Call("closest", "[data-cycle-model]")
+		if model.Truthy() {
+			mode = model.Call("getAttribute", "data-cycle-model").String()
+			setInputs(cycle.DefaultInputs())
+			query("[name=fuelFlowKGS]").Set("value", "2.055")
+			update()
+		}
+		lto := target.Call("closest", "[data-cycle-lto]")
+		if lto.Truthy() {
+			mode = "mapped"
+			for _, p := range cycle.Reference().Points {
+				if p.Mode == lto.Call("getAttribute", "data-cycle-lto").String() {
+					query("[name=fuelFlowKGS]").Set("value", strconv.FormatFloat(p.FuelFlowKGS, 'g', -1, 64))
+				}
+			}
+			update()
+		}
 		button := target.Call("closest", "[data-cycle-preset]")
 		if button.Truthy() {
 			in := result.Inputs
@@ -112,7 +172,11 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 			if downloadURL != "" {
 				url.Call("revokeObjectURL", downloadURL)
 			}
-			blob := js.Global().Get("Blob").New([]any{m.CSV(result)}, map[string]any{"type": "text/csv;charset=utf-8"})
+			csv := m.CSV(result)
+			if mode == "mapped" {
+				csv = mappedModel.CSV(matched)
+			}
+			blob := js.Global().Get("Blob").New([]any{csv}, map[string]any{"type": "text/csv;charset=utf-8"})
 			downloadURL = url.Call("createObjectURL", blob).String()
 			a := js.Global().Get("document").Call("createElement", "a")
 			a.Set("href", downloadURL)

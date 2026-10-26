@@ -30,3 +30,20 @@ func TestTurbofanPageIncludesRuntime(t *testing.T) {
 		}
 	}
 }
+
+func TestMappedProfileServerFallback(t *testing.T) {
+	app, err := newApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest("GET", "/?model=jt9d", nil))
+	if w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	for _, s := range []string{`data-cycle-mode="mapped"`, `data-cycle-output="net-thrust">213.5`, `ICAO 1PW026`, `NASA MAP SHAPES`, `unfitted check`} {
+		if !strings.Contains(w.Body.String(), s) {
+			t.Errorf("mapped server page missing %q", s)
+		}
+	}
+}

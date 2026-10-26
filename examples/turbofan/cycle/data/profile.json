@@ -1,0 +1,15 @@
+{
+  "profile": "JT9D-7R4D / -7R4D1",
+  "uid": "1PW026",
+  "lowSpeedLoss": 1.0665884689267835,
+  "calibrationModes": [
+    "takeoff",
+    "approach"
+  ],
+  "unfittedModes": [
+    "climbout",
+    "idle"
+  ],
+  "groundThrustCheckTolerance": 0.05,
+  "protocol": "NASA map shapes scaled to rated thrust/fuel, OPR and BPR. Approach fits one common fan/booster low-corrected-speed efficiency correction. Climbout and idle are excluded from fitting. Public check points were inspected during development; this is not blind validation."
+}

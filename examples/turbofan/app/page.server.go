@@ -49,8 +49,24 @@ func pageData(query url.Values) map[string]any {
 	}
 	inputs := cycle.DefaultInputs()
 	result, err := cycle.DefaultModel().Solve(inputs)
+	mapped, mapErr := cycle.JT9D()
+	if mapErr != nil {
+		panic(mapErr)
+	}
+	mode := "generic"
+	display := cycle.Format(result, err)
+	if query.Get("model") == "jt9d" {
+		mode = "mapped"
+		r, e := mapped.Solve(cycle.MappedInputs{FuelFlowKGS: 2.055})
+		display = cycle.FormatMapped(r, e)
+	}
+	props := struct {
+		cycle.Inputs
+		Model string `json:"model"`
+	}{inputs, mode}
 	return map[string]any{
 		"scene": Turbofan(options), "view": options.View, "period": period,
-		"cycle": cycle.Format(result, err), "inputs": inputs,
+		"cycle": display, "inputs": inputs, "browserProps": props, "mode": mode,
+		"mapPlots": mapped.Plots(), "mapChecks": mapped.Checks(),
 	}
 }

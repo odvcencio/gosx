@@ -24,7 +24,7 @@ const browser = await chromium.launch({
 });
 const report = { browser: browser.version(), environment: 'Linux headless Chromium / software rendering', sourceSHA256: {}, checks: [], errors: [] };
 report.frameworkRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'browser/main.go', '../../scene/geom/lathe.go']) {
+for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', '../../scene/geom/lathe.go']) {
   report.sourceSHA256[file] = createHash('sha256').update(await readFile(path.join(root, file))).digest('hex');
 }
 const manifestBytes = await readFile(path.join(root, 'dist/build.json'));
@@ -188,6 +188,63 @@ try {
     invalidPoint: 'cleared results, empty plot and disabled export; reset restores the exact default',
     requests: 0, documentAndCanvas: 'preserved',
   } });
+
+  await click('JT9D maps');
+  const ratedMap = await cycleState();
+  assert.equal(ratedMap.mode, 'mapped');
+  assert(ratedMap.valid);
+  assert(Math.abs(ratedMap.result.netThrustN - 213500) < .01);
+  assert.equal(ratedMap.matched.mapPoints.length, 5);
+  assert(ratedMap.matched.matchResidual < 1e-8);
+  assert(await page.locator('[name=altitudeM]').isDisabled(), 'ground calibration must lock flight conditions');
+  const areas = [ratedMap.result.coreNozzle.areaM2, ratedMap.result.bypassNozzle.areaM2];
+  const ratedDot = await page.locator('[data-map-dot=Fan]').getAttribute('cx');
+  const nativeCalibration = JSON.parse(await readFile(path.join(root, 'calibration/report.json'), 'utf8'));
+  const mappedHandlerMs = await page.locator('[name=fuelFlowKGS]').evaluate(e => {
+    const start = performance.now();
+    e.value = '1.5'; e.dispatchEvent(new Event('input', { bubbles: true }));
+    return performance.now() - start;
+  });
+  assert((await cycleState()).valid, 'fuel slider must solve the mapped operating point');
+  await click('Climbout 85%');
+  const climboutMap = await cycleState();
+  const nativeClimbout = nativeCalibration.checks.find(c => c.mode === 'climbout');
+  assert.equal(climboutMap.matched.command.fuelFlowKGS, 1.678);
+  assert(Math.abs(climboutMap.result.netThrustN - nativeClimbout.predictedThrustN) < .01, 'WASM must reproduce the native unfitted check');
+  assert.notEqual(await page.locator('[data-map-dot=Fan]').getAttribute('cx'), ratedDot, 'operating point must move on the real map');
+  assert.equal(await page.locator('[data-map-dot=HPC]').getAttribute('visibility'), 'visible');
+  const [mappedDownload] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Export point/ }).click()]);
+  const mappedCSV = await readFile(await mappedDownload.path(), 'utf8');
+  assert(mappedCSV.includes('ICAO 1PW026'));
+  assert(mappedCSV.includes('fixed core area'));
+  assert(mappedCSV.includes('model N1'));
+  const mappedCSVThrust = Number(mappedCSV.split('\n').find(s => s.startsWith('net thrust,')).split(',')[1]);
+  assert(Math.abs(mappedCSVThrust - climboutMap.result.netThrustN) < 1e-7);
+  await mappedDownload.saveAs(path.join(output, 'mapped-climbout.csv'));
+  await page.locator('#cycle-workbench').screenshot({ path: path.join(root, 'mapped-preview.png') });
+  await click('Approach 30%');
+  const approachMap = await cycleState();
+  assert(approachMap.valid);
+  assert(Math.abs(approachMap.result.netThrustN - 64050) < .02);
+  assert.deepEqual([approachMap.result.coreNozzle.areaM2, approachMap.result.bypassNozzle.areaM2], areas, 'mapped controls must keep fixed geometry');
+  await click('Idle 7%');
+  assert.equal((await cycleState()).valid, false);
+  assert.equal(await page.locator('[data-cycle-output=net-thrust]').textContent(), '—');
+  assert.equal(await page.locator('[data-map-dot=Fan]').getAttribute('visibility'), 'hidden');
+  assert(await page.getByRole('button', { name: /Export point/ }).isDisabled());
+  await click('Takeoff 100%');
+  assert((await cycleState()).valid, 'rated preset must recover from unsupported idle');
+  assert(await canvas.evaluate(element => element === document.querySelector('canvas')));
+  assert(await document.evaluate(element => element === window.document));
+  assert.deepEqual(requests, [], 'model switching, matching and mapped CSV export must stay local');
+  report.checks.push({ name: 'five-map JT9D ground profile', observed: {
+    rated: ratedMap.matched, climbout: climboutMap.matched, approach: approachMap.matched,
+    idle: 'no converged point; numbers cleared, dots hidden, export disabled; rated preset recovers',
+    fixedAreasM2: areas, mappedSliderHandlerMs: mappedHandlerMs, nativeWASMAgreement: 'within 0.01 N at the unfitted climbout point',
+    csv: 'mapped-climbout.csv; model identity, fixed areas and current numerical results present', requests: 0,
+  } });
+  await click('Cycle design');
+  assert.deepEqual((await cycleState()).result, baselineCycle.result);
   await click('Pause rotation');
   const paused = await sceneSummary();
   assert.equal(paused.animation.paused, true);
@@ -242,6 +299,10 @@ try {
   await visit('?shell=bad&view=bad&motion=bad&unknown=discard');
   assert.equal(await page.getByRole('button', { name: 'Cutaway', exact: true }).getAttribute('aria-pressed'), 'true');
   report.checks.push({ name: 'invalid query values', observed: 'default cutaway/perspective/animation restored' });
+  await visit('?model=jt9d&backend=webgl');
+  assert.equal((await cycleState()).mode, 'mapped');
+  assert(Math.abs((await cycleState()).result.netThrustN - 213500) < .01);
+  report.checks.push({ name: 'mapped profile direct URL', observed: 'model=jt9d selects the mapped profile through server props' });
 
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, reducedMotion: 'reduce' });
   const phone = await mobile.newPage();
@@ -262,6 +323,14 @@ try {
   const scrollableTable = phone.getByRole('region', { name: 'Scrollable station conditions' });
   await scrollableTable.evaluate(e => { e.scrollLeft = e.scrollWidth; });
   assert(await scrollableTable.evaluate(e => e.scrollLeft > 0), 'all station columns must remain reachable on mobile');
+  await phone.getByRole('button', { name: 'JT9D maps', exact: true }).tap();
+  await phone.getByRole('button', { name: 'Climbout 85%', exact: true }).tap();
+  const mappedPhone = await phone.locator('#cycle-workbench').evaluate(e => JSON.parse(e.getAttribute('data-cycle-state')));
+  assert.equal(mappedPhone.mode, 'mapped');
+  assert(mappedPhone.valid);
+  assert(Math.abs(mappedPhone.result.netThrustN - nativeClimbout.predictedThrustN) < .02);
+  await fit(phone, 'mapped mobile');
+  await phone.screenshot({ path: path.join(root, 'mapped-mobile-preview.png'), fullPage: true });
   report.checks.push({ name: 'mobile reduced motion', observed: '390 × 844 touch viewport; identical canvas pixels across 700 ms' });
   report.checks.push({ name: 'mobile cycle controls', observed: 'touch cruise preset updates the local solver; station flow column reachable by scrolling' });
   await mobile.close();
@@ -272,6 +341,8 @@ try {
   assert.equal(await staticPage.locator('[data-cycle-output=net-thrust]').textContent(), '99.5');
   assert(await staticPage.locator('[name=altitudeM]').isDisabled());
   assert.equal(await staticPage.locator('[data-cycle-station]').count(), 8);
+  await staticPage.goto(`${base}/?model=jt9d`, { waitUntil: 'load' });
+  assert.equal(await staticPage.locator('[data-cycle-output=net-thrust]').textContent(), '213.5');
   report.checks.push({ name: 'server calculated fallback', observed: 'initial thrust and eight stations render without JavaScript; interactive controls remain disabled' });
   await noScript.close();
 

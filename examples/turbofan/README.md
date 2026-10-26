@@ -1,7 +1,7 @@
 # Inside the turbofan
 
-An orbitable, procedural two-spool turbofan cutaway with a steady thermodynamic
-cycle workbench, authored in Go and GSX. No external model, texture, custom
+An orbitable, procedural two-spool turbofan cutaway with a thermodynamic
+cycle workbench and a public-data JT9D ground profile, authored in Go and GSX. No external model, texture, custom
 shader, or application JavaScript is required.
 
 ![The running turbofan cutaway](preview.png)
@@ -25,6 +25,26 @@ rotor clock. Pause freezes the current pose; resume continues from that pose.
 Browser Back/Forward restores camera and casing choices.
 The framework also honors the browser's reduced-motion preference.
 
+Select **JT9D maps**, or open `/?model=jt9d`, for the mapped ground profile.
+Five NASA component maps solve spool speeds, airflow split and component
+operating points against fixed nozzles. Rated thrust/fuel and published
+pressure/bypass ratios anchor the cycle; approach fits one explicit low-speed
+loss correction. The unfitted climbout check has −0.55% thrust error at the
+reported fuel flow. Idle has no converged point within these maps and remains
+unsupported. The UI shows map curves, matched points, the calibration table,
+and a model-specific CSV export.
+
+NASA map shapes are scaled to the ICAO JT9D-7R4D / -7R4D1 entry, UID 1PW026.
+They are not proprietary manufacturer maps. Temperature-dependent frozen-air
+properties, cooling and other priors remain approximations. Calibration is
+sparse and limited to sea-level static conditions, with no flight, station,
+RPM or surge-margin validation. The generic mode retains its independent
+cycle design controls. [Sources and reproducible import](cycle/data/SOURCES.md).
+
+```sh
+GOWORK=off go run ./examples/turbofan/calibration --fit
+```
+
 The cycle workbench solves both streams, burner energy, two shaft power
 balances and convergent nozzles with choking and pressure thrust. Six sliders
 change flight conditions and design inputs. Results, station temperatures,
@@ -33,11 +53,11 @@ requests or navigation. Export a point to CSV with inputs, assumptions and
 unrounded results. Sea-level and cruise presets change flight conditions;
 Reset all restores the design. Infeasible combinations clear the results.
 
-This is a generic **design-point** calculator for cycle trends and energy
+The **Cycle design** mode is a generic design-point calculator for cycle trends and energy
 accounting. Constant gas properties and prescribed corrected airflow and
 efficiencies are explicit assumptions. Nozzle areas resize at each point.
-There is no real-engine calibration, component-map matching, surge prediction,
-CFD or transient shaft dynamics. The rotor animation is illustrative.
+That generic mode has no real-engine calibration or map matching. Neither mode
+provides surge prediction, CFD or transient shaft dynamics. The rotor animation is illustrative.
 See [equations, analytic benchmark and limits](MODEL.md).
 
 ![The calculated cycle workbench](cycle-preview.png)

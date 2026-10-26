@@ -1,0 +1,2 @@
+# Preserve whitespace in the retained third-party NASA MATLAB data.
+*.m -whitespace

@@ -40,7 +40,7 @@ func Page() Node {
 				<article class="stage"><span class="stage-number">04 <span>↗</span></span><h3>Turbine &amp; exhaust</h3><p>The turbines drive the compressor and fan. Remaining energy accelerates the exhaust through the core nozzle.</p><span class="stage-detail">EXTRACT &amp; ACCELERATE</span></article>
 			</div>
 		</section>
-		<footer class="colophon"><p>ANATOMY, WITH NUMBERS.</p><p>Steady cycle model · Uncalibrated engine · Geometry &amp; rotor speeds illustrative</p><a href="https://github.com/odvcencio/gosx/tree/main/examples/turbofan">Built with GoSX <span aria-hidden="true">↗</span></a></footer>
+		<footer class="colophon"><p>ANATOMY, WITH NUMBERS.</p><p>Cycle design &amp; JT9D ground calibration · Geometry &amp; rotor speeds illustrative</p><a href="https://github.com/odvcencio/gosx/tree/main/examples/turbofan">Built with GoSX <span aria-hidden="true">↗</span></a></footer>
 	</main>
 }
 
@@ -54,13 +54,15 @@ func CycleWorkbench() Node {
 			class="workbench"
 			runtime="go-wasm"
 			wasmPath={data.cycleWASMPath}
-			props={data.inputs}
+			props={data.browserProps}
+			data-cycle-mode={data.mode}
 		>
 			<p class="cycle-loading">Loading interactive cycle controls. The initial calculated point is shown below.</p>
 			<div class="workbench-grid">
 				<fieldset class="cycle-inputs" disabled>
-					<legend>Set a design point</legend>
-					<div class="cycle-presets" aria-label="Flight condition presets"><button type="button" data-cycle-preset="static">Sea level</button><button type="button" data-cycle-preset="cruise">Cruise</button><button type="button" data-cycle-preset="reset">Reset all</button></div>
+					<legend>Choose a model</legend>
+					<nav class="cycle-modes" aria-label="Numerical model"><button type="button" data-cycle-model="generic" aria-pressed="true">Cycle design</button><button type="button" data-cycle-model="mapped" aria-pressed="false">JT9D maps</button></nav>
+					<div class="cycle-presets" aria-label="Flight condition presets" data-design-only><button type="button" data-cycle-preset="static">Sea level</button><button type="button" data-cycle-preset="cruise">Cruise</button><button type="button" data-cycle-preset="reset">Reset all</button></div>
 					<label for="cycle-altitude"><span>Altitude</span><output for="cycle-altitude" data-cycle-input-label="altitudeM">0.0 km</output></label>
 					<input
 						id="cycle-altitude"
@@ -81,9 +83,10 @@ func CycleWorkbench() Node {
 						step="0.01"
 						value={data.inputs.Mach}
 					 />
-					<label for="cycle-t4"><span>Burner exit temperature</span><output for="cycle-t4" data-cycle-input-label="turbineInletK">1600 K</output></label>
+					<label for="cycle-t4" data-design-only><span>Burner exit temperature</span><output for="cycle-t4" data-cycle-input-label="turbineInletK">1600 K</output></label>
 					<input
 						id="cycle-t4"
+						data-design-only
 						name="turbineInletK"
 						type="range"
 						min="1000"
@@ -91,9 +94,10 @@ func CycleWorkbench() Node {
 						step="10"
 						value={data.inputs.TurbineInletK}
 					 />
-					<label for="cycle-opr"><span>Overall pressure ratio</span><output for="cycle-opr" data-cycle-input-label="overallPressureRatio">30 : 1</output></label>
+					<label for="cycle-opr" data-design-only><span>Overall pressure ratio</span><output for="cycle-opr" data-cycle-input-label="overallPressureRatio">30 : 1</output></label>
 					<input
 						id="cycle-opr"
+						data-design-only
 						name="overallPressureRatio"
 						type="range"
 						min="5"
@@ -101,9 +105,10 @@ func CycleWorkbench() Node {
 						step="1"
 						value={data.inputs.OverallPressureRatio}
 					 />
-					<label for="cycle-fpr"><span>Fan pressure ratio</span><output for="cycle-fpr" data-cycle-input-label="fanPressureRatio">1.50 : 1</output></label>
+					<label for="cycle-fpr" data-design-only><span>Fan pressure ratio</span><output for="cycle-fpr" data-cycle-input-label="fanPressureRatio">1.50 : 1</output></label>
 					<input
 						id="cycle-fpr"
+						data-design-only
 						name="fanPressureRatio"
 						type="range"
 						min="1.1"
@@ -111,9 +116,10 @@ func CycleWorkbench() Node {
 						step="0.01"
 						value={data.inputs.FanPressureRatio}
 					 />
-					<label for="cycle-bypass"><span>Bypass ratio</span><output for="cycle-bypass" data-cycle-input-label="bypassRatio">8.0 : 1</output></label>
+					<label for="cycle-bypass" data-design-only><span>Bypass ratio</span><output for="cycle-bypass" data-cycle-input-label="bypassRatio">8.0 : 1</output></label>
 					<input
 						id="cycle-bypass"
+						data-design-only
 						name="bypassRatio"
 						type="range"
 						min="1"
@@ -121,7 +127,18 @@ func CycleWorkbench() Node {
 						step="0.5"
 						value={data.inputs.BypassRatio}
 					 />
-					<p class="input-note">Each change solves a new design point. It does not simulate throttling a fixed engine.</p>
+					<p class="input-note" data-design-only>Each change solves a new design point. It does not simulate throttling a fixed engine.</p>
+					<div data-map-only><label for="cycle-fuel"><span>Fuel command</span><output for="cycle-fuel" data-cycle-input-label="fuelFlowKGS">2.0550 kg/s</output></label><input
+							id="cycle-fuel"
+							name="fuelFlowKGS"
+							type="range"
+							min="0.2054"
+							max="2.055"
+							step="0.0001"
+							value="2.055"
+						 />
+						<div class="cycle-presets lto-presets" aria-label="ICAO ground points"><button type="button" data-cycle-lto="takeoff">Takeoff 100%</button><button type="button" data-cycle-lto="climbout">Climbout 85%</button><button type="button" data-cycle-lto="approach">Approach 30%</button><button type="button" data-cycle-lto="idle">Idle 7%</button></div>
+						<p class="input-note">JT9D-7R4D / -7R4D1 · ICAO 1PW026. Fixed geometry; five component maps solve airflow, pressure ratios and spool speeds. Calibration covers ground points. Idle has no converged point within the available maps.</p></div>
 				</fieldset>
 				<div class="cycle-results">
 					<dl class="cycle-metrics">
@@ -142,10 +159,25 @@ func CycleWorkbench() Node {
 							<path class="temperature-line" data-cycle-plot d={data.cycle.TemperaturePath} />
 						</svg>
 					</figure>
-					<div class="shaft-powers"><p><span>Fan / LP shaft</span><strong data-cycle-output="fan-power">{data.cycle.Values["fan-power"]}</strong> MW</p><p><span>Compressor / HP shaft</span><strong data-cycle-output="compressor-power">{data.cycle.Values["compressor-power"]}</strong> MW</p></div>
+					<div class="shaft-powers"><p><span data-lp-label>Fan / LP shaft</span><strong data-cycle-output="fan-power">{data.cycle.Values["fan-power"]}</strong> MW</p><p><span>Compressor / HP shaft</span><strong data-cycle-output="compressor-power">{data.cycle.Values["compressor-power"]}</strong> MW</p></div>
 				</div>
 			</div>
 			<div class="cycle-status-row"><p class="balance-status" data-cycle-output="status" role="status">{data.cycle.Values["status"]}</p><button type="button" class="cycle-export" data-cycle-export disabled>Export point · CSV <span aria-hidden="true">↗</span></button></div>
+			<section class="mapped-details" data-map-only aria-label="JT9D mapped model">
+				<dl class="mapped-metrics"><div><dt>Model N1</dt><dd><output data-cycle-output="n1">—</output> rpm</dd></div><div><dt>Model N2</dt><dd><output data-cycle-output="n2">—</output> rpm</dd></div><div><dt>Solved OPR</dt><dd><output data-cycle-output="mapped-opr">—</output> : 1</dd></div><div><dt>Solved bypass</dt><dd><output data-cycle-output="mapped-bypass">—</output> : 1</dd></div></dl>
+				<div class="map-plot-grid"><Each of={data.mapPlots} as="plot"><figure class="component-map"><figcaption>{plot.Label}<span>NASA MAP SHAPES</span></figcaption><svg viewBox="0 0 360 210" role="img" aria-label={plot.Label}><path class="map-axis" d="M35 20V175H325" /><g class="map-speed-lines"><Each of={plot.Paths} as="path"><path d={path} /></Each></g><circle
+									class="map-operating-point"
+									data-map-dot={plot.Name}
+									cx="0"
+									cy="0"
+									r="4"
+									visibility="hidden"
+								 /><g class="map-labels"><text x="3" y="28">{plot.MaxPressure}</text><text x="19" y="178">1</text><text x="35" y="193">0</text><text x="295" y="193">{plot.MaxFlow}</text><text x="105" y="209">Corrected flow · kg/s</text></g></svg></figure></Each></div>
+				<p class="map-note">Horizontal: corrected flow. Vertical: pressure ratio. Grey curves are corrected-speed lines; orange marks the matched point. Map extrapolation is disabled. Booster exit: <output data-cycle-output="booster-temperature">—</output> K · Cooled HPT inlet: <output data-cycle-output="hpt-inlet-temperature">—</output> K · Largest matching residual: <output data-cycle-output="match-residual">—</output>.</p>
+				<details class="cycle-details calibration-details" open><summary>Calibration &amp; unfitted checks · sea-level static</summary><div class="station-scroll" tabindex="0" role="region" aria-label="Calibration comparison"><table class="station-table"><thead><tr><th scope="col">ICAO point</th><th scope="col">Fuel · kg/s</th><th scope="col">Target · kN</th><th scope="col">Model · kN</th><th scope="col">Error</th></tr></thead><tbody><Each of={data.mapChecks} as="check"><tr><th scope="row">{check.Mode}<span class="check-role">{check.Role}</span></th><td>{check.Fuel}</td><td>{check.Target}</td><td>{check.Prediction}</td><td>{check.Error}</td></tr></Each></tbody></table></div>
+					<p class="map-note">Takeoff anchors the rated cycle; approach fits one shared low-speed fan/booster efficiency correction. Climbout is excluded from fitting. Idle has no converged point inside these maps. This is a sparse ground calibration, with no validation of flight conditions, station measurements, spool RPM or surge margins.</p>
+					<p class="map-note">Sources: <a							href="https://github.com/nasa/T-MATS/tree/ad6e4d5d0d76c229db4eb72ca40ef58d5ddc4014/Trunk/TMATS_Examples/Example_JT9D/Simsetup">NASA T-MATS JT9D maps</a> and <a							href="https://www.easa.europa.eu/en/domains/environment/icao-aircraft-engine-emissions-databank">ICAO/EASA databank 03/2026</a>, UID 1PW026. The maps are scaled NASA model shapes, not proprietary manufacturer maps. Temperature-dependent NASA7 frozen-air properties, air-equivalent combustion products, 9% cooling bleed and prescribed component priors remain approximations. The 3D rotor speeds remain illustrative.</p></details>
+			</section>
 			<details class="cycle-details" open>
 				<summary>Station conditions &amp; nozzle sizing</summary>
 				<div class="station-scroll" tabindex="0" role="region" aria-label="Scrollable station conditions"><table class="station-table"><caption>Total temperature and pressure, except nozzle exit rows which show static conditions.</caption><thead><tr><th scope="col">Station</th><th scope="col">T · K</th><th scope="col">P · kPa</th><th scope="col">Flow · kg/s</th></tr></thead><tbody>
@@ -155,9 +187,9 @@ func CycleWorkbench() Node {
 			</details>
 			<details class="cycle-details assumptions">
 				<summary>Model assumptions &amp; what these numbers mean</summary>
-				<p>A one-dimensional, steady design-point Brayton cycle with separate core and bypass streams. Both shafts balance turbine work against their loads. Ideal convergent nozzles include choking and pressure thrust; their areas resize to pass the prescribed flow at every point.</p>
-				<p>Constant γ = 1.4, R = 287.05 J/(kg·K), cp = 1004.675 J/(kg·K). ISA troposphere. Corrected core airflow = 40 kg/s at 288.15 K and 101.325 kPa, referenced to inlet total conditions. Fan/compressor/turbine efficiencies = 0.90/0.88/0.91; shaft and combustion efficiencies = 0.99. Inlet/burner pressure recovery = 0.99/0.95. Fuel LHV = 43 MJ/kg.</p>
-				<p>Useful for cycle trends and energy accounting. This generic model has no engine calibration, component maps, surge margin, cooling, variable gas properties, shaft inertia, or fixed-geometry off-design matching. It does not predict a real engine’s performance or the rotor RPM shown above.</p>
+				<p data-design-only>A one-dimensional, steady design-point Brayton cycle with separate core and bypass streams. Both shafts balance turbine work against their loads. Ideal convergent nozzles include choking and pressure thrust; their areas resize to pass the prescribed flow at every point.</p>
+				<p data-design-only>Constant γ = 1.4, R = 287.05 J/(kg·K), cp = 1004.675 J/(kg·K). ISA troposphere. Corrected core airflow = 40 kg/s at 288.15 K and 101.325 kPa, referenced to inlet total conditions. Fan/compressor/turbine efficiencies = 0.90/0.88/0.91; shaft and combustion efficiencies = 0.99. Inlet/burner pressure recovery = 0.99/0.95. Fuel LHV = 43 MJ/kg.</p>
+				<p data-design-only>Useful for cycle trends and energy accounting. This generic model has no engine calibration, component maps, surge margin, cooling, variable gas properties, shaft inertia, or fixed-geometry off-design matching. It does not predict a real engine’s performance or the rotor RPM shown above.</p>
 				<p>Equations: <a href="https://www.grc.nasa.gov/www/k-12/airplane/compress.html">NASA compressor</a>, <a href="https://www.grc.nasa.gov/www/k-12/airplane/burnth.html">burner</a>, <a href="https://www.grc.nasa.gov/www/k-12/airplane/powtrbth.html">turbine</a>, <a href="https://www.grc.nasa.gov/www/k-12/airplane/isentrop.html">isentropic flow</a>, and <a href="https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/thrust-force/">thrust</a>. Largest relative conservation residual at this point: <output data-cycle-output="residual">{data.cycle.Values["residual"]}</output>.</p>
 			</details>
 		</Surface>
