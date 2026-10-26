@@ -25,6 +25,16 @@
   Nested schema and named-scalar checks retain the JSON fallback when a proof
   is stale or a comparison is ambiguous.
 
+## v0.57.24
+
+### Fixed
+
+- Preserve the caller-selected optimizer during docs deployment instead of
+  prepending TinyGo's directory and silently selecting its bundled `wasm-opt`.
+- Honor `TINYGO` in production CLI builds, including custom executable names and
+  relative paths. An unavailable explicit compiler fails without a prebuilt
+  fallback; explicit prebuilt mode and development builds retain their behavior.
+
 ## v0.57.23
 
 - Hydrate islands declared in sibling GoSX files or relative-imported shared
