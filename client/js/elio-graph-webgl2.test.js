@@ -73,7 +73,9 @@ test("a pass samples what the last pass wrote and never the texture it renders i
   const bad = setup(undefined, (g) => { g.passes[1].bindings[1].resource = "a0"; });
   const hostFB = bad.gl.createFramebuffer(); bad.gl.drawFB = hostFB;
   const warn = console.warn; console.warn = () => {};
+  const failureEpoch = bad.textureCache._sceneTextureEpoch;
   try { assert.equal(bad.step(), false); } finally { console.warn = warn; }
+  assert.ok(bad.textureCache._sceneTextureEpoch > failureEpoch, "failed draws invalidate displaced material texture bindings");
   assert.equal(bad.runner.failed, "error");
   assert.match(bad.runner.error.message, /reads a0, which it writes/);
   assert.equal(bad.gl.drawFB, hostFB);
@@ -258,4 +260,25 @@ test("a buffer read at another width than it was written is copied into a view o
   for (const target of [GLC.PIXEL_PACK_BUFFER, GLC.PIXEL_UNPACK_BUFFER]) assert.equal(s.gl.buffers[target], null);
   s.runner.dispose();
   for (const kind of Object.keys(s.gl.created)) assert.equal(s.gl.live(kind).length, 0, kind + " leaked");
+});
+
+
+test("construction failure invalidates texture bindings after releasing partially allocated resources", () => {
+  const context = runnerContext(), gl = new RecordingGL(), cache = { _sceneTextureEpoch: 0 };
+  const storage = gl.texStorage2D;
+  let calls = 0;
+  gl.texStorage2D = function (...args) {
+    if (++calls === 2) throw new Error("injected allocation failure");
+    return storage.apply(this, args);
+  };
+  const warn = console.warn;
+  console.warn = () => {};
+  let runner;
+  try {
+    runner = context.window.__gosx_elio_graph.create({ backend: "webgl2", graph: testGraph("webgl2"), module: context.window.__gosx_scene3d_elio_ocean, host: { gl, caps: floatCaps, textureCache: cache } });
+  } finally { console.warn = warn; }
+  assert.equal(runner.failed, "error");
+  assert.ok(gl.created.texture.length > 0);
+  assert.ok(cache._sceneTextureEpoch > 0, "construction changed texture units before throwing");
+  for (const kind of Object.keys(gl.created)) assert.equal(gl.live(kind).length, 0, kind + " leaked");
 });
