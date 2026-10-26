@@ -124,6 +124,9 @@ test("a pipeline that fails to build in the host surfaces as a disabled graph", 
       host: { device: fake.device, create() { throw new Error("validation rejected"); } } });
     assert.equal(r.failed, "error");
     assert.match(r.error.message, /validation rejected/);
+    assert.ok(fake.state.buffers.length > 0 && fake.state.textures.length > 0, "construction allocated resources before the failure");
+    assert.ok(fake.state.buffers.every((b) => b.destroyed), "constructor failure releases buffers");
+    assert.ok(fake.state.textures.every((t) => t.destroyed), "constructor failure releases textures");
   } finally { console.warn = warn; }
 });
 

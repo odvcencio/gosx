@@ -24,6 +24,16 @@
     const queue = device.queue;
     const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC, UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
 
+    function dispose(): void {
+      if (state.disposed) return;
+      state.disposed = true;
+      for (const b of buffers) b.destroy();
+      for (const t of textures) t.destroy();
+      buffers.length = textures.length = 0;
+      groups.clear(); views.clear();
+    }
+
+    try {
     for (const r of graph.resources) {
       if (r.kind === "buffer") {
         const size = Math.max(16, Math.ceil(r.count * (ELEMENT_BYTES[r.elementType] || 16) / 4) * 4);
@@ -110,14 +120,6 @@
     const lost = device.lost && device.lost.then ? device.lost : null;
     if (lost) lost.then(function () { dispose(); }, function () { dispose(); });
 
-    function dispose(): void {
-      if (state.disposed) return;
-      state.disposed = true;
-      for (const b of buffers) b.destroy();
-      for (const t of textures) t.destroy();
-      buffers.length = textures.length = 0;
-      groups.clear(); views.clear();
-    }
 
     return {
       isReady: function () {
@@ -156,6 +158,10 @@
       },
       dispose: dispose,
     };
+    } catch (error) {
+      dispose();
+      throw error;
+    }
   }
 
   window.__gosx_elio_graph.executors.webgpu = make;
