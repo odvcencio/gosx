@@ -268,6 +268,7 @@
      * @param {() => Promise<{factory: any, moduleRecord: any}>} fallback
      */
     async function resolve(entry, pending, fallback) {
+      if (pending && pending.closed) throw workerError("worker-terminated", "engine boot was cancelled");
       var record = null;
       // A native engine in the desktop host needs no Worker, no wasm and no
       // browser toolchain, so it is tried before the checks for those. A page
@@ -282,6 +283,7 @@
           // Older or temporarily unavailable hosts retain the legacy direct attach path.
         }
       }
+      if (pending && pending.closed) throw workerError("worker-terminated", "engine boot was cancelled");
       if (bridgeApi) {
         try {
           record = await boot(entry, pending, bridgeApi);

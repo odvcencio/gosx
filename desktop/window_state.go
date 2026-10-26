@@ -24,7 +24,8 @@ type WindowStateOptions struct {
 	Path string
 	// Zero selects the default 250 ms debounce; negative values are invalid.
 	Debounce time.Duration
-	// OnError receives best-effort load and save errors.
+	// OnError receives best-effort load and save errors outside persistence locks.
+	// The callback may close the window; close-time persistence runs once.
 	OnError func(error)
 }
 
@@ -172,26 +173,42 @@ func (p *windowStatePersister) schedule(placement WindowPlacement) {
 }
 
 func (p *windowStatePersister) persistPending(generation uint64) {
+	if err := p.savePending(generation); err != nil && p.onError != nil {
+		p.onError(err)
+	}
+}
+
+func (p *windowStatePersister) savePending(generation uint64) error {
 	p.saveMu.Lock()
 	defer p.saveMu.Unlock()
 	p.mu.Lock()
 	if p.stopped || generation != p.timerGeneration || !p.hasPending {
 		p.mu.Unlock()
-		return
+		return nil
 	}
 	placement := p.pending
 	p.hasPending = false
 	p.timer = nil
 	p.mu.Unlock()
-	if err := SaveWindowState(p.path, placement); err != nil && p.onError != nil {
-		p.onError(err)
-	}
+	return SaveWindowState(p.path, placement)
 }
 
 func (p *windowStatePersister) flush(closePlacement WindowPlacement) error {
+	err := p.flushPending(closePlacement)
+	if err != nil && p.onError != nil {
+		p.onError(err)
+	}
+	return err
+}
+
+func (p *windowStatePersister) flushPending(closePlacement WindowPlacement) error {
 	p.saveMu.Lock()
 	defer p.saveMu.Unlock()
 	p.mu.Lock()
+	if p.stopped {
+		p.mu.Unlock()
+		return nil
+	}
 	p.stopped = true
 	if p.timer != nil {
 		p.timer.Stop()
@@ -207,11 +224,7 @@ func (p *windowStatePersister) flush(closePlacement WindowPlacement) error {
 	if !validWindowPlacement(placement) {
 		return nil
 	}
-	err := SaveWindowState(p.path, placement)
-	if err != nil && p.onError != nil {
-		p.onError(err)
-	}
-	return err
+	return SaveWindowState(p.path, placement)
 }
 
 func (p *windowStatePersister) stop() {

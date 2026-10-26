@@ -570,3 +570,28 @@ test("native: unscoped hosts fall back instead of accepting unsafe lifecycle tra
     assert.equal(page.issues.filter(i => i.code === "worker-protocol").length, 1);
   }
 });
+
+test("native: navigation cancelled during discovery never attaches or starts a fallback", async () => {
+  let finishDiscovery;
+  const desktop = fakeDesktop({discovery:true,refreshMethods:() => new Promise(resolve => {finishDiscovery=resolve;})});
+  const page = bootPage({desktop,noWorker:true});
+  const pending = {};
+  const resolved = page.host.resolve(ENTRY,pending,async () => assert.fail("cancelled discovery must not start a fallback"));
+  const rejected = assert.rejects(resolved,error => error.code === "worker-terminated");
+  await tick();
+  pending.closed = true;
+  finishDiscovery(["gosx.engine.attach","gosx.engine.post"]);
+  try {
+    await rejected;
+    assert.equal(desktop.calls.length,0);
+    assert.equal(FakeWorker.all.length,0);
+  } finally {page.host.disposePage(new Set());}
+});
+
+test("native: already cancelled navigation does not start discovery", async () => {
+  const desktop = fakeDesktop({discovery:true});
+  const page = bootPage({desktop,noWorker:true});
+  await assert.rejects(page.host.resolve(ENTRY,{closed:true},async () => assert.fail("no fallback")),error => error.code === "worker-terminated");
+  assert.equal(desktop.discoveryCalls,0);
+  assert.equal(desktop.calls.length,0);
+});

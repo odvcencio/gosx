@@ -227,3 +227,51 @@ func TestWindowStateUnsupportedPlatformsReturnSentinel(t *testing.T) {
 		t.Fatalf("New error = %v, want ErrUnsupported", err)
 	}
 }
+
+func TestWindowStateErrorCallbackCanClose(t *testing.T) {
+	for _, debounced := range []bool{false, true} {
+		name := "close"
+		if debounced {
+			name = "debounced"
+		}
+		t.Run(name, func(t *testing.T) {
+			blocked := filepath.Join(t.TempDir(), "regular-file")
+			if err := os.WriteFile(blocked, []byte("blocked"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			placement := WindowPlacement{X: 10, Y: 20, Width: 640, Height: 480}
+			var p *windowStatePersister
+			reports := 0
+			p = newWindowStatePersister(filepath.Join(blocked, "window-state.json"), 0, func(error) {
+				reports++
+				if reports < 3 {
+					_ = p.flush(placement)
+				}
+			})
+			t.Cleanup(p.stop)
+			clock := &windowStateTestClock{}
+			p.afterFunc = clock.afterFunc
+			var done <-chan struct{}
+			if debounced {
+				p.schedule(placement)
+				done = clock.fireLatest()
+			} else {
+				finished := make(chan struct{})
+				done = finished
+				go func() { _ = p.flush(placement); close(finished) }()
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("OnError deadlocked while closing the window")
+			}
+			want := 1
+			if debounced {
+				want = 2
+			}
+			if reports != want {
+				t.Fatalf("error reports=%d, want %d bounded failed writes", reports, want)
+			}
+		})
+	}
+}
