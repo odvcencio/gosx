@@ -14,6 +14,15 @@
 //               page (self.__gosx.worker) plus worker-safe stand-ins for the
 //               page APIs Go calls (self.__gosx.scene3d, self.__gosx.netplay).
 //
+//   Native      The page half can also talk to an engine that runs natively in a
+//               GoSX desktop host (desktop/enginehost) instead of in a Worker. A
+//               small channel object (createNativeWorker) speaks the same message
+//               protocol over window.gosxDesktop, so the rest of the page half,
+//               and every island that reads the engine's signals or calls it,
+//               cannot tell the two apart. The page tries it first when the
+//               desktop bridge is present, and starts the Worker when the host
+//               has no native engine for the component.
+//
 // Applications write no JavaScript: Go opts in with engine.Config{Runtime:
 // engine.RuntimeGoWASM, Thread: engine.ThreadWorker}. See docs/engine-worker.md
 // for the message protocol.
@@ -163,6 +172,91 @@
       try { document.dispatchEvent(new CustomEvent("gosx:engine:" + name, { detail: detail })); } catch (_) {}
     }
 
+    // ---- native engine channel -----------------------------------------------
+    //
+    // A desktop host that registered a native engine (desktop/enginehost) answers
+    // on the typed desktop bridge. The capability check is the bridge itself:
+    // window.gosxDesktop with call and on. The channel below stands in for a
+    // Worker: postMessage sends page-to-engine messages with gosxDesktop.call,
+    // and the host's gosx.engine.msg events arrive as worker messages. The
+    // message protocol is the Worker's, so nothing after boot knows the engine
+    // is native.
+
+    var NATIVE_ATTACH = "gosx.engine.attach";
+    var NATIVE_POST = "gosx.engine.post";
+    var NATIVE_EVENT = "gosx.engine.msg";
+    var NATIVE_PROTOCOL = 2;
+    // Messages that mean something to a native engine. Input, app messages and
+    // netplay belong to a worker's page APIs and are not forwarded.
+    var NATIVE_FORWARD = { mount: 1, dispose: 1, visibility: 1, signal: 1, ack: 1, fault: 1 };
+
+    function nativeBridge() {
+      if (window.__gosx_engine_native_disable === true) return null;
+      var api = window.gosxDesktop;
+      if (!api || typeof api.call !== "function" || typeof api.on !== "function") return null;
+      return api;
+    }
+
+    function createNativeWorker(api, entry) {
+      var channel = { onmessage: null, onerror: null, onmessageerror: null };
+      var off = null, attached = false, ended = false, session = "";
+      function deliver(msg) {
+        if (ended || typeof channel.onmessage !== "function") return;
+        channel.onmessage({ data: msg });
+      }
+      function send(msg, onFail) {
+        var pending;
+        try { pending = api.call(NATIVE_POST, { id: entry.id, session: session, msg: msg }); } catch (error) { if (onFail) onFail(error); return; }
+        if (pending && typeof pending.then === "function") pending.then(null, function(error) { if (onFail) onFail(error); });
+      }
+      function attach(init) {
+        try {
+          off = api.on(NATIVE_EVENT, function(payload) {
+            if (attached && payload && payload.id === entry.id && payload.session === session && payload.msg) deliver(payload.msg);
+          });
+        } catch (error) {
+          deliver({ t: "fatal", code: "native-attach-failed", message: String(error && error.message || error) });
+          return;
+        }
+        var request = { id: entry.id, component: entry.component, props: init.props || {}, hidden: init.hidden === true };
+        var pending;
+        try { pending = api.call(NATIVE_ATTACH, request); } catch (error) { pending = Promise.reject(error); }
+        Promise.resolve(pending).then(function(answer) {
+          if (!answer || answer.v !== NATIVE_PROTOCOL || typeof answer.session !== "string" || !answer.session) {
+            deliver({ t: "fatal", code: "worker-protocol", message: "native engine host does not support scoped attachment protocol " + NATIVE_PROTOCOL });
+            return;
+          }
+          session = answer.session;
+          attached = true;
+          // The RPC may finish after navigation has already cancelled this record.
+          // Its session token prevents this cleanup from disposing a replacement.
+          if (ended) { send({ t: "dispose" }); return; }
+          deliver({ t: "booted", v: PROTOCOL });
+        }, function(error) {
+          var disabled = error && error.code === "engine.native_disabled";
+          var missing = error && (error.code === "engine.not_registered" || error.code === "bridge.not_found");
+          deliver({ t: "fatal", code: disabled ? "native-disabled" : missing ? "native-not-registered" : "native-attach-failed", message: String(error && error.message || error) });
+        });
+      }
+      channel.postMessage = function(msg) {
+        if (ended || !msg || typeof msg.t !== "string") return;
+        if (msg.t === "init") { attach(msg); return; }
+        if (!attached || !NATIVE_FORWARD[msg.t]) return;
+        if (msg.t === "mount") send(msg, function(error) { deliver({ t: "fatal", code: "native-mount-failed", message: String(error && error.message || error) }); });
+        else if (msg.t === "dispose") { disposeSent = true; send(msg, function() { deliver({ t: "disposed" }); }); }
+        else send(msg);
+      };
+      var disposeSent = false;
+      channel.terminate = function() {
+        if (ended) return;
+        // A page that drops the engine without Dispose still lets the host shut it down.
+        if (attached && !disposeSent) send({ t: "dispose" });
+        ended = true;
+        if (off) { try { off(); } catch (_) {} off = null; }
+      };
+      return channel;
+    }
+
     // ---- boot -------------------------------------------------------------
 
     /**
@@ -174,12 +268,40 @@
      * @param {() => Promise<{factory: any, moduleRecord: any}>} fallback
      */
     async function resolve(entry, pending, fallback) {
-      var reason = unsupportedReason(entry);
+      if (pending && pending.closed) throw workerError("worker-terminated", "engine boot was cancelled");
       var record = null;
-      if (!reason) {
+      // A native engine in the desktop host needs no Worker, no wasm and no
+      // browser toolchain, so it is tried before the checks for those. A page
+      // that forces the fallback still skips it.
+      var bridgeApi = entry && entry.forceWorkerFallback === true ? null : nativeBridge();
+      if (bridgeApi && typeof bridgeApi.hasMethod === "function" && typeof bridgeApi.refreshMethods === "function" &&
+          (!bridgeApi.hasMethod(NATIVE_ATTACH) || !bridgeApi.hasMethod(NATIVE_POST))) {
         try {
-          record = await boot(entry, pending);
+          var methods = await bridgeApi.refreshMethods();
+          if (!Array.isArray(methods) || !methods.includes(NATIVE_ATTACH) || !methods.includes(NATIVE_POST)) bridgeApi = null;
+        } catch (_) {
+          // Older or temporarily unavailable hosts retain the legacy direct attach path.
+        }
+      }
+      if (pending && pending.closed) throw workerError("worker-terminated", "engine boot was cancelled");
+      if (bridgeApi) {
+        try {
+          record = await boot(entry, pending, bridgeApi);
         } catch (error) {
+          if (error && error.code === "worker-terminated") throw error;
+          // A host without a native engine for this component is the ordinary case
+          // for an app that ships both; the worker path below takes over quietly.
+          if (!error || (error.code !== "native-not-registered" && error.code !== "native-disabled")) {
+            report(entry, "warn", (error && error.code) || "native-boot-failed", "native engine unavailable; trying the worker: " + (error && error.message || error), error);
+          }
+        }
+      }
+      var reason = record ? null : unsupportedReason(entry);
+      if (!reason && !record) {
+        try {
+          record = await boot(entry, pending, null);
+        } catch (error) {
+          if (error && error.code === "worker-terminated") throw error;
           reason = { code: (error && error.code) || "worker-boot-failed", message: (error && error.message) || String(error), error: error };
         }
       }
@@ -228,29 +350,29 @@
       };
     }
 
-    function boot(entry, pending) {
+    function boot(entry, pending, nativeApi) {
       return new Promise(function(resolveBoot, rejectBoot) {
         var worker;
         try {
-          worker = new Worker(workerScriptURL(), { name: "gosx-engine-" + entry.id });
+          worker = nativeApi ? createNativeWorker(nativeApi, entry) : new Worker(workerScriptURL(), { name: "gosx-engine-" + entry.id });
         } catch (error) {
           rejectBoot(workerError("worker-create-failed", "could not create the engine worker: " + (error && error.message), error));
           return;
         }
         var rec = {
-          entry: entry, worker: worker, state: "booting", ctx: null, disposed: false,
+          entry: entry, worker: worker, thread: nativeApi ? "native" : "worker", state: "booting", ctx: null, disposed: false,
           subs: new Map(), calls: new Map(), vessel: new Map(), crashedStatus: false, listeners: new Map(), appHandlers: new Map(), nets: new Map(), netModes: {}, mountWaiter: null,
           stats: { messagesIn: 0, framesIn: 0, frameBytes: 0, signalBatches: 0, signalBytes: 0, appMessages: 0, inputSent: 0, vesselRejected: 0 },
           terminate: function() { terminate(rec); },
         };
-        setStatus(entry, "booting", "worker", "");
+        setStatus(entry, "booting", rec.thread, "");
         var timer = setTimeout(function() {
           if (rec.state !== "booting") return;
-          rec.bootFailed = true;
-          terminate(rec);
-          rejectBoot(workerError("worker-boot-timeout", "timed out waiting for the engine worker to start"));
+          rec.bootDone(workerError("worker-boot-timeout", "timed out waiting for the engine worker to start"));
         }, bootTimeoutMS());
         rec.bootDone = function(error) {
+          if (rec.bootSettled) return;
+          rec.bootSettled = true;
           clearTimeout(timer);
           if (error) { rec.bootFailed = true; terminate(rec); rejectBoot(error); } else { rec.state = "ready"; resolveBoot(rec); }
         };
@@ -271,7 +393,7 @@
         try {
           worker.postMessage({
             t: "init", v: PROTOCOL, id: entry.id, component: entry.component, kind: entry.kind,
-            programRef: absolute(entry.programRef), wasmExec: wasmExecURL(), runtimeMode: entry.runtime || "go-wasm",
+            programRef: absolute(entry.programRef), wasmExec: nativeApi ? "" : wasmExecURL(), runtimeMode: entry.runtime || "go-wasm",
             props: entry.props || {}, capabilities: entry.capabilities || [], requiredCapabilities: entry.requiredCapabilities || [],
             hidden: documentHidden(), clock: { epochMs: nowStamp() }, rtc: typeof window.RTCPeerConnection === "function",
             frameHz: Number(entry.props && entry.props.workerFrameHz) > 0 ? Number(entry.props.workerFrameHz) : DEFAULT_FRAME_HZ,
@@ -291,7 +413,10 @@
       closeCalls(rec, rec.crashedStatus);
       // A boot failure continues as a fallback or "unsupported", which write
       // their own status. Every other path ends with a final status here.
-      if (!rec.bootFailed && !rec.finalStatus) { rec.finalStatus = true; setStatus(rec.entry, "disposed", "worker", ""); }
+      if (!rec.bootFailed && !rec.finalStatus) { rec.finalStatus = true; setStatus(rec.entry, "disposed", rec.thread, ""); }
+      if (rec.state === "booting" && !rec.bootSettled && rec.bootDone) {
+        rec.bootDone(workerError("worker-terminated", "engine boot was cancelled"));
+      }
       for (var off of rec.subs.values()) { try { off(); } catch (_) {} }
       rec.subs.clear();
       for (var off2 of rec.listeners.values()) { try { off2(); } catch (_) {} }
@@ -309,7 +434,7 @@
       if (rec.terminated) return;
       rec.crashedStatus = true;
       rec.finalStatus = true;
-      setStatus(rec.entry, "crashed", "worker", error.code);
+      setStatus(rec.entry, "crashed", rec.thread, error.code);
       failCalls(rec, "worker-crashed");
       report(rec.entry, "error", error.code, "engine worker crashed: " + error.message, error);
       dispatchDocumentEvent("worker-error", { engineID: rec.entry.id, component: rec.entry.component, code: error.code, message: error.message });
@@ -321,7 +446,7 @@
       if (rec.terminated) return;
       closeCalls(rec);
       rec.finalStatus = true;
-      setStatus(rec.entry, "disposed", "worker", "");
+      setStatus(rec.entry, "disposed", rec.thread, "");
       terminate(rec);
     }
 
@@ -412,12 +537,12 @@
     function mountRecord(rec, ctx) {
       if (rec.terminated) throw workerError("worker-terminated", "engine worker was terminated before mount");
       rec.ctx = ctx;
-      ctx.threadMode = "worker";
+      ctx.threadMode = rec.thread;
       return new Promise(function(ok, bad) {
         rec.mountWaiter = { ok: ok, bad: bad };
         rec.worker.postMessage({ t: "mount" });
       }).then(function() {
-        setStatus(rec.entry, "running", "worker", "");
+        setStatus(rec.entry, "running", rec.thread, "");
         startInput(rec);
         return { dispose: function() { if (rec.terminated) closeCalls(rec); else disposeRecord(rec); } };
       }, function(error) {
@@ -586,7 +711,7 @@
         else if (rec.mountWaiter) {
           // The worker died while mounting: say so, and fail the calls it declared.
           rec.finalStatus = true;
-          setStatus(rec.entry, "crashed", "worker", error.code);
+          setStatus(rec.entry, "crashed", rec.thread, error.code);
           failCalls(rec, "worker-crashed");
           var w = rec.mountWaiter; rec.mountWaiter = null; w.bad(error);
         }
@@ -608,12 +733,14 @@
       // ArrayBuffer; the page applies it through the same context method a
       // main-thread engine uses.
       signals: function(rec, msg) {
-        if (!current(rec) || !(msg.buf instanceof ArrayBuffer)) return;
+        // A worker sends the batch as a transferred buffer; a native host sends text.
+        var isText = typeof msg.text === "string";
+        if (!current(rec) || !(isText || msg.buf instanceof ArrayBuffer)) return;
         rec.stats.signalBatches++;
-        rec.stats.signalBytes += msg.buf.byteLength;
+        rec.stats.signalBytes += isText ? msg.text.length : msg.buf.byteLength;
         var applied = true;
         try {
-          var text = new TextDecoder("utf-8").decode(msg.buf);
+          var text = isText ? msg.text : new TextDecoder("utf-8").decode(msg.buf);
           rec.ctx.setSignalsJSON(text, msg.changedOnly === true);
         } catch (error) {
           applied = false;
@@ -847,6 +974,8 @@
       if (!rec) return null;
       return {
         id: id,
+        // "worker" or "native": where the engine runs.
+        thread: rec.thread,
         stats: function() { return Object.assign({}, rec.stats); },
         // Send an application message to the engine. `data` is JSON-encoded;
         // `bytes` (ArrayBuffer or typed array) is transferred.
@@ -886,7 +1015,8 @@
     return {
       version: 1,
       protocol: PROTOCOL,
-      supported: function() { return unsupportedReason(null) === null; },
+      supported: function() { return unsupportedReason(null) === null || nativeBridge() !== null; },
+      nativeSupported: function() { return nativeBridge() !== null; },
       resolve: resolve,
       get: get,
       ids: function() { return Array.from(records.keys()); },
