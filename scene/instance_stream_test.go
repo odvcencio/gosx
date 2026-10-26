@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
+	"reflect"
 	"testing"
 )
 
@@ -253,5 +254,46 @@ func TestInstanceStreamKindString(t *testing.T) {
 	}
 	if got := InstanceStreamKind(99).String(); got == "" {
 		t.Fatal("unknown kind should still describe itself")
+	}
+}
+
+func TestInstanceStreamTransformColorsPackOwnsAndReusesStorage(t *testing.T) {
+	records := []InstanceTransformColor{{Transform: [16]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 3, 4, 1}, Color: [4]float32{.25, .5, 1, 1}}}
+	f := InstanceStreamFrame{BatchID: "tinted", Revision: 7}
+	f.SetTransformColors(records)
+	first := &f.Data[0]
+	records[0].Color[1] = .75
+	if f.Data[17] != .5 || f.Kind != InstanceStreamTransformColor || f.Count != 1 {
+		t.Fatal("snapshot was not packed independently", f)
+	}
+	f.SetTransformColors(nil)
+	if f.Count != 0 || len(f.Data) != 0 {
+		t.Fatal("empty snapshot", f)
+	}
+	f.SetTransformColors(records)
+	if &f.Data[0] != first || f.Data[17] != .75 || f.BatchID != "tinted" || f.Revision != 7 {
+		t.Fatal("repack lost storage or metadata", f)
+	}
+	b, err := f.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeInstanceStreamFrame(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, f) {
+		t.Fatal("packed roundtrip mismatch", decoded, f)
+	}
+	for _, invalid := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+		f.Data[19] = invalid
+		dst := bytes.Repeat([]byte{0x7f}, 128)
+		before := append([]byte(nil), dst...)
+		if _, err := f.EncodeInto(dst); err == nil {
+			t.Fatal("accepted non-finite color")
+		}
+		if !bytes.Equal(dst, before) {
+			t.Fatal("invalid encode mutated destination")
+		}
 	}
 }

@@ -121,3 +121,55 @@ func benchCountLabel(count int) string {
 		return "instances=n"
 	}
 }
+
+// Compare changing count+color declarations to their retained binary snapshot.
+// This isolates packing/encoding; it makes no renderer or application FPS claim.
+func BenchmarkInstancedMeshCountColor(b *testing.B) {
+	for _, count := range []int{180, 2000} {
+		mesh := benchInstancedMeshIR(count)
+		mesh.Colors = make([]string, count)
+		records := make([]InstanceTransformColor, count)
+		for i := range records {
+			mesh.Colors[i] = "#ff8000"
+			for c := range records[i].Transform {
+				records[i].Transform[c] = float32(mesh.Transforms[i*16+c])
+			}
+			records[i].Color = [4]float32{1, 128.0 / 255, 0, 1}
+		}
+		b.Run(benchCountLabel(count), func(b *testing.B) {
+			batch := MountCommandBatch{Revision: 1, Commands: []Command{SetInstancedMeshesCommand([]InstancedMeshIR{mesh})}}
+			encoded, err := batch.Marshal()
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Run("Declaration", func(b *testing.B) {
+				b.ReportAllocs()
+				b.ReportMetric(float64(len(encoded)), "B/frame")
+				for i := 0; i < b.N; i++ {
+					batch.Revision = uint64(i + 1)
+					if _, err := batch.Marshal(); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			frame := InstanceStreamFrame{BatchID: mesh.ID, Revision: 1}
+			frame.SetTransformColors(records)
+			buffer, err := frame.Encode()
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Run("Retained", func(b *testing.B) {
+				b.ReportAllocs()
+				b.ReportMetric(float64(len(buffer)), "B/frame")
+				for i := 0; i < b.N; i++ {
+					frame.Revision = uint64(i + 1)
+					frame.SetTransformColors(records)
+					buffer, err = frame.EncodeInto(buffer)
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		})
+	}
+}

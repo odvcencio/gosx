@@ -175,3 +175,37 @@ test("named material wrappers retain the parent's composed stream across frames 
  mesh.transforms[12]=7;
  const edited=build();assert.equal(edited.transforms[12],57);assert.notEqual(edited.transforms,recolored.transforms);
 });
+
+test("streamed count/color snapshots preserve parent-space picking and re-declaration lifetimes", async () => {
+  const fs = require("node:fs"), path = require("node:path"), { execFileSync } = require("node:child_process");
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js"); await flushAsyncWork();
+  runScript(fs.readFileSync(path.join(__dirname, '../runtime/scene3d/instance-stream.ts'), 'utf8'), env.context, 'instance-stream.ts');
+  const api = env.context.__gosx_scene3d_api;
+  const fixtures = JSON.parse(execFileSync(process.env.GOSX_GO || 'go', ['run', './client/js/testdata/instance-stream-go-writer-fixture'], {cwd:path.join(__dirname, '../..'),encoding:'utf8'}));
+  const state = api.createSceneState({scene:{instancedMeshes:[{id:'tinted',count:0,kind:'box',size:.5,parentNode:'carrier',transforms:[],pickable:true}]}},{tier:'full'});
+  const pose = [1,0,0,0,0,1,0,0,0,0,1,0,10,0,0,1];
+  const carrier = api.normalizeSceneObject({id:'carrier',kind:'cube'},0); carrier.parentMatrix = pose;
+  for (const name of ['tinted-1','tinted-2','tinted-3','tinted-4','tinted-5']) {
+    const raw = Buffer.from(fixtures.find(f=>f.name===name).bytes,'base64');
+    const bytes = vm.runInContext(`new Uint8Array(${JSON.stringify([...raw])})`, env.context);
+    assert.equal(env.context.__gosx_scene3d_instance_stream_apply(state,bytes,()=>{},null).applied,true);
+    const bundle = bundleOf(api,[carrier],state.instancedMeshes), entry = bundle.instancedMeshes[0];
+    assert.equal(entry.count,state.instancedMeshes[0].count);
+    if (entry.count) {
+      const center = {x:entry.transforms[12],y:entry.transforms[13],z:entry.transforms[14]};
+      assert.equal(center.x,10);
+      const hit = api.sceneRaycastPickInstancedMeshes({origin:{...center,z:10},dir:{x:0,y:0,z:-1}},bundle.instancedMeshes,0);
+      assert.ok(hit, 'pick must follow streamed position under parent transform');
+      const miss = api.sceneRaycastPickInstancedMeshes({origin:{x:0,y:center.y,z:10},dir:{x:0,y:0,z:-1}},bundle.instancedMeshes,0);
+      assert.equal(miss,null,'old local position is not pickable in world space');
+    } else assert.equal(api.sceneRaycastPickInstancedMeshes({origin:{x:10,y:1,z:10},dir:{x:0,y:0,z:-1}},bundle.instancedMeshes,0),null);
+  }
+  api.applySceneCommands(state,[{kind:8,data:{instancedMeshes:[]}}]);
+  assert.equal(state.instancedMeshes.length,0);
+  api.applySceneCommands(state,[{kind:8,data:{instancedMeshes:[{id:'tinted',count:0,kind:'sphere',transforms:[]}]}}]);
+  const first = fixtures.find(f=>f.name==='tinted-1');
+  const bytes = vm.runInContext(`new Uint8Array(${JSON.stringify([...Buffer.from(first.bytes,'base64')])})`, env.context);
+  assert.equal(env.context.__gosx_scene3d_instance_stream_apply(state,bytes,()=>{},null).applied,true,'recreated declaration accepts a new stream lifetime');
+  assert.equal(state.instancedMeshes[0].kind,'sphere');
+});

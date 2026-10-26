@@ -25,6 +25,18 @@
   Nested schema and named-scalar checks retain the JSON fallback when a proof
   is stale or a comparison is ambiguous.
 
+## v0.57.22
+
+- Stream primitive instance counts, local transforms and normalized RGBA colors as
+  one retained binary snapshot. Batches can shrink to zero and re-grow without
+  resending geometry, materials or parent declarations. The typed Go
+  `SetTransformColors` helper reuses packing storage; fixed-count transform
+  frames and GLB pose streaming keep their established paths.
+- Reject non-finite count/color snapshots before modifying live state, retire
+  revision history on full declarations, and discard stale queued snapshots
+  when a declaration changes during lazy codec loading. Preserve picking and
+  shared parent transforms on WebGL and WebGPU.
+
 ## v0.57.21
 
 - Retain two private pose wrappers per local binary-updated GLB instance instead
