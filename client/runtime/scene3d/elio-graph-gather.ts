@@ -43,6 +43,10 @@
       const k = K[ctx.kernelKey(p.kernel)];
       if (!k.glsl || !k.gatherLayout) throw Object.assign(new Error("kernel " + p.kernel + " has no GLSL gather form"), { fallback: "kernel:" + p.kernel });
     }
+    function invalidateTextureBindings(): void {
+      const cache = ctx.host.textureCache;
+      if (cache) cache._sceneTextureEpoch = (cache._sceneTextureEpoch || 0) + 1;
+    }
     const textures: any[] = [], fbos: any[] = [], buffers: any[] = [], shaders: any[] = [], programs: any = Object.create(null);
     const exported: any = {};
     for (const k of Object.keys(graph.exports || {})) exported[graph.exports[k]] = true;
@@ -190,7 +194,7 @@
     });
 
     build();
-    } catch (error) { teardown(); throw error; } finally { restoreState(gl, saved); }
+    } catch (error) { teardown(); throw error; } finally { restoreState(gl, saved); invalidateTextureBindings(); }
 
     // A gather kernel indexes every buffer as an elio_width-wide texture. A buffer that a pass reads at another width than it was written (the
     // foam kernel reads each cascade's n-wide FFT field at the foam window's width) is copied, GPU to GPU through a pixel buffer, into a
@@ -273,9 +277,7 @@
             } else draw(plan, params);
           }
           exchange(graph.frameSwaps || []);
-        } finally { restoreState(gl, s); }
-        const cache = ctx.host.textureCache;
-        if (cache) cache._sceneTextureEpoch = (cache._sceneTextureEpoch || 0) + 1;
+        } finally { restoreState(gl, s); invalidateTextureBindings(); }
         return true;
       },
       // export names the texture a surface binds: { tex, width, height, levels } of the resource as of now.
