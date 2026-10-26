@@ -69,6 +69,19 @@ func TestTinyGoBuildArgsUseSlimRuntimeByDefault(t *testing.T) {
 	}
 }
 
+func TestTinyGoBuildArgsSizeGoroutineStacksForDeepIslandTrees(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
+
+	for _, args := range [][]string{
+		tinyGoBuildArgs("runtime.wasm"),
+		tinyGoBuildArgs("runtime.wasm", "gosx_tiny_islands_only"),
+	} {
+		if !stringSliceContains(args, "-stack-size=256KB") {
+			t.Fatalf("expected 256KB goroutine stacks in args: %v", args)
+		}
+	}
+}
+
 func TestTinyGoBuildArgsCanKeepFullRuntime(t *testing.T) {
 	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "1")
 
