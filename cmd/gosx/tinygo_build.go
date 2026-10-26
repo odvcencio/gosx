@@ -108,6 +108,16 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraT
 	return errors.New(strings.Join(failures, "\n"))
 }
 
+// tinyGoGoroutineStackSize sizes each goroutine stack in the TinyGo runtime.
+// TinyGo's wasm target defaults to 64 KiB, and the stacks cannot grow. Every
+// JS event runs on its own goroutine, and resolving a deeply nested island tree
+// (appendNodeRefs -> appendForEach -> appendNodeRefs ...) used more than
+// 64 KiB. Nothing checks for that at function entry: the C stack ran past the
+// stack block, overwrote the heap block below it, and later traps surfaced as
+// "memory access out of bounds" in runtime.alloc or "unreachable" in
+// task.Pause (the stack canary).
+const tinyGoGoroutineStackSize = "256KB"
+
 func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 	args := []string{
 		"build",
@@ -118,6 +128,7 @@ func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 		args = append(args, "-tags="+strings.Join(tags, " "))
 	}
 	args = append(args,
+		"-stack-size="+tinyGoGoroutineStackSize,
 		"-no-debug",
 		"-panic=trap",
 		"-o", outputPath,

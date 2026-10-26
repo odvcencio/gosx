@@ -212,7 +212,11 @@ func (a *windowsApp) Run() error {
 	}
 
 	placement := a.options.InitialPlacement
-	if !placement.IsZero() {
+	if a.options.savedWindowPlacement != nil {
+		placement = restoreSavedPlacement(
+			*a.options.savedWindowPlacement, enumerateMonitorAreas(), a.options.Width, a.options.Height,
+		)
+	} else if !placement.IsZero() {
 		placement = clampPlacement(placement, monitorWorkAreas())
 	}
 	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, placement, a)
@@ -996,6 +1000,16 @@ func (a *windowsApp) WindowPlacement() (WindowPlacement, error) {
 		return a.fullscreen.savedPlacement, nil
 	}
 	return getWindowPlacement(hwnd)
+}
+
+func (a *windowsApp) notifyPlacementChanged() {
+	if a.options.onPlacementChanged == nil {
+		return
+	}
+	placement, err := a.WindowPlacement()
+	if err == nil {
+		a.options.onPlacementChanged(placement)
+	}
 }
 
 // SetFullscreen toggles borderless-fullscreen mode for the hosted window.

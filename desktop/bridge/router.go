@@ -283,6 +283,8 @@ func (r *Router) Dispatch(raw string) error {
 	switch env.Op {
 	case OpRequest:
 		return r.dispatchRequest(env)
+	case OpListMethods:
+		return r.dispatchListMethods(env)
 	case OpEvent:
 		// Page-originated events are accepted but unhandled for now;
 		// a future API can let apps subscribe to event-method names.
@@ -297,6 +299,21 @@ func (r *Router) Dispatch(raw string) error {
 			Message: fmt.Sprintf("op %q is not accepted from the page", env.Op),
 		})
 	}
+}
+
+func (r *Router) dispatchListMethods(env Envelope) error {
+	if env.ID == "" {
+		return r.sendBridgeFault("", &Error{Code: CodeDecode, Message: "list_methods request missing id"})
+	}
+	response, err := newResponseEnvelope(env.ID, map[string][]string{"methods": r.MethodNames()})
+	if err != nil {
+		return r.sendBridgeFault(env.ID, &Error{Code: CodeInternal, Message: "method list could not be encoded", Detail: err.Error()})
+	}
+	raw, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	return r.sender(string(raw))
 }
 
 func (r *Router) dispatchRequest(env Envelope) error {

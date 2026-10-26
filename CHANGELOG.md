@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Build the TinyGo runtime with 256 KB goroutine stacks (`-stack-size=256KB`).
+  TinyGo's 64 KiB default cannot grow, and resolving deeply nested island
+  trees during a JS event overran it, corrupting the WASM heap ("memory access
+  out of bounds" in `runtime.alloc`, or `unreachable` from the stack canary).
+
+- Add the bridge `list_methods` query and `gosxDesktop.refreshMethods()` so an
+  engine mount can discover late native registrations before selecting its
+  transport. Capability changes affect the next resolution only; live engines
+  are never migrated.
+- Add `enginehost.Options.DisableNative` for exact component names or `"*"` to
+  intentionally use the WASM worker, with a quiet page-side fallback.
+- Add opt-in Windows window-state persistence with versioned atomic storage,
+  debounced move/resize saves, close flush, monitor-aware restoration and a
+  centered primary-monitor fallback. macOS and Linux remain unsupported.
+
 - Reuse live computed-value subscriptions when a recomputation reads the same
   ordered dependencies. Retain freshly tracked revisions, the replacement path
   for changed dependencies, batched reads, and disposal while reducing
