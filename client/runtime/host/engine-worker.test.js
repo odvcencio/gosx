@@ -1482,10 +1482,12 @@ test("page: terminating a pending engine mid-mount stops watchdogs, frees subscr
 test("page: a worker still booting when it is terminated does not stay at booting", async () => {
   const page = bootPage();
   const pending = {};
-  page.host.resolve(ENTRY, pending, fakeFallback());
+  const resolved = page.host.resolve(ENTRY, pending, fakeFallback());
+  const rejected = assert.rejects(resolved, error => error.code === "worker-terminated");
   await tick();
   pending.workerRecord.terminate();
   assert.equal(engineStatuses(page).at(-1), "disposed");
+  await rejected;
 });
 
 test("page: a boot failure falls back without a transient disposed status", async () => {

@@ -4,6 +4,11 @@ A Go-native web platform. Declare `.gsx` components with the strict, typed `comp
 
 Current release: **v0.57.24**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
+Desktop hosts can discover late native-engine registrations with
+`window.gosxDesktop.refreshMethods()`, force selected components onto the WASM
+worker with `enginehost.Options.DisableNative`, and opt into Windows window-state
+persistence with `desktop.Options.WindowState`.
+
 ## Agent Skills
 
 Agents helping someone use GoSX should start with the canonical M31 Labs skill: [using-gosx](https://github.com/odvcencio/m31labs-skills/blob/main/skills/using-gosx/SKILL.md).

@@ -136,3 +136,17 @@ func TestBootstrapScriptIsIdempotenceGuarded(t *testing.T) {
 		}
 	}
 }
+
+func TestBootstrapScriptExposesMethodRefresh(t *testing.T) {
+	script := BootstrapScript()
+	for _, want := range []string{
+		"refreshMethods: refreshMethods", `op: "list_methods"`,
+		"methodQueryGeneration", "queryGeneration === methodQueryGeneration",
+		"methodRevision === capturedRevision",
+		"setMethodCapabilities({ methods: payload.methods, revision: methodRevision + 1 })",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("BootstrapScript missing method refresh contract %q", want)
+		}
+	}
+}

@@ -100,7 +100,7 @@ in a handler, so it declares its own struct with the same field names.
 ```go
 type WorkerStatus struct{ State, Thread, Reason string }
 // State: booting | running | unsupported | crashed | disposed
-// Thread: "worker" or "main" (after a fallback). Reason: a code such as worker-forced-fallback.
+// Thread: "worker", "native" (an engine in the desktop host) or "main" (after a fallback). Reason: a code such as worker-forced-fallback.
 
 type Call[A any] struct { ID uint64; Name string; Args A }
 type Result[R any] struct { ID uint64; Name, Error string; Value R; Recent []ResultRef }
@@ -203,6 +203,117 @@ rendered into an island about 10 times per second.
 
 Keep signals small and separate. Every reader of a signal re-renders when any
 field of it changes, so put the fast fields in their own signal.
+
+### Run the same engine natively in a desktop app
+
+A GoSX desktop app can host the engine in its own process instead. The island,
+its signals and its calls stay the same; only the transport changes. The Go
+engine code is written once against `engine/host`, which holds the
+transport-neutral half of `wasm.NewView` and `wasm.ServeCalls`:
+
+| Need | `engine/host` | In a worker (`engine/wasm`) |
+|---|---|---|
+| Publish state at the page's pace | `host.NewView(ctx, opts)`; `*host.View` is a `host.Publisher` (`Set(map[string]any) error`) | `wasm.NewView` (an alias of the same type) |
+| Serve calls | `host.ServeCalls(ctx, channel, opts, handle)` | `wasm.ServeCalls` (same rules) |
+
+`wasm.View`, `wasm.ViewOptions` and `wasm.CallOptions` are aliases of the `host`
+types, so the pacing, acknowledgement, timeout and crash-error rules are
+written once. Write the engine against `host.Publisher` and plain call
+handlers, and put each transport in a small adapter.
+
+The desktop adapter is `desktop/enginehost`:
+
+```go
+app, _ := desktop.New(desktop.Options{NativeBridge: true /* ... */})
+engines := enginehost.New(app.Bridge(), enginehost.Options{})
+defer engines.Close()
+engines.Register("Sim", func(in *enginehost.Instance) (host.Handle, error) {
+    view := host.NewView(in, host.ViewOptions{})
+    calls, err := host.ServeCalls(in, "sim.cmd", host.CallOptions{}, handle)
+    ...
+})
+```
+
+The page declares the engine as before (`Thread: engine.ThreadWorker`, the
+component name `"Sim"`). When the page runs in a desktop window, the runtime
+sees `window.gosxDesktop` and asks the host to attach the engine for that
+component. If the host has registered it, no Worker starts and no wasm loads;
+the status signal reads `running` with `Thread: "native"`. If the host has no
+engine for the component, or the page runs in a browser, the Worker starts as
+described above. `ForceWorkerFallback` and `window.__gosx_engine_native_disable
+= true` skip the native engine. Note that an app that ships only a desktop
+engine still needs a `WASMPath`: the config requires one, and a browser would
+fetch it.
+
+Native method discovery is a query, not a registration event: the bridge accepts
+`list_methods` with a request ID and returns the current sorted registry snapshot.
+It is bridge infrastructure and does not appear among the registered methods.
+`window.gosxDesktop.hasMethod(name)` remains a synchronous cached view;
+`await window.gosxDesktop.refreshMethods()` asks the host for a fresh snapshot
+and returns the sorted cached method names. Concurrent queries and capability
+events are guarded by query generation and revision, and transport/host errors
+reject the promise.
+
+Before native attach, the engine runtime refreshes capabilities only when both
+helpers exist and either native method is absent from the current cache. If the
+query finds both attach and post methods, native attach proceeds. If it succeeds
+without both, the Worker starts without a blind attach or warning. A failed
+query preserves the legacy direct-attach path; old hosts and old pages remain
+compatible. Registration affects a later engine mount/resolution only: a live
+Worker or native engine is never replaced.
+
+To deliberately disable native engines from Go, pass `DisableNative` when
+constructing the host:
+
+```go
+engines := enginehost.New(app.Bridge(), enginehost.Options{
+    DisableNative: []string{"CounterEngine"}, // exact component name
+})
+```
+
+Names are case-sensitive and trimmed; `[]string{"*"}` disables every native
+component, while nil or an empty list enables all. The policy is fixed for that
+host. A disabled attach reports `engine.native_disabled`, which the page treats
+as an intentional, warning-free request to start the real WASM Worker. This is
+different from `ForceWorkerFallback`/`window.__gosx_engine_native_disable`,
+which bypass native and Worker execution and use the main-thread fallback.
+`WorkerRequired` still permits the real Worker and retains its existing failure
+policy.
+
+The worker protocol and lifecycle remain the same:
+
+- Views arrive as signal batches no faster than `MinInterval`, and the next one
+  waits for the page to apply the previous one (`AckTimeout` frees a lost
+  acknowledgement). Batches the page rejects are sent again. A hidden window
+  receives nothing until it shows again.
+- A call result has the same shape. The page watchdog still fails a call with
+  `timeout` when the host does not answer in `CallOptions.Timeout`. If the
+  engine calls `Instance.Fail(err)`, the status becomes `crashed` and pending and
+  later calls fail with `worker-crashed`. A handler that returns an error or
+  panics gives `Error` as before.
+- A call written before the engine attached is handled from the signal's
+  current value unless the result already answered it.
+
+What differs: the engine runs next to the window, so a call handler may block the
+engine goroutine but never the window thread (each instance runs its messages one
+at a time on its own goroutine). One instance exists per attach: a page reload
+attaches again, and the host disposes the old instance before it mounts the new
+one. Input forwarding, application messages and netplay are not carried over the
+native channel. The wire protocol is the worker message protocol below, carried
+as `gosx.engine.attach` and `gosx.engine.post` requests and `gosx.engine.msg`
+events on the desktop bridge. The outer native protocol is version 2: attach
+returns an opaque session token, every post includes it, and host events carry
+it. A replaced or disposed session cannot send traffic into a new attachment of
+the same engine ID. Cancelling boot rejects immediately; a late attach response
+is cleaned up with its own token instead of disposing its replacement. Older
+native hosts fall back to the worker transport. The inner worker protocol stays
+at version 1.
+
+The bridge caps page messages at 64 KiB and 200 per
+second by default (`Options.BridgeLimit`); a view batch travels host to page and
+is not capped. The native channel works wherever the typed bridge does; see
+`desktop` for which platforms have it. `examples/desktop-engine` is a complete
+small app.
 
 ### Two engines on one page
 

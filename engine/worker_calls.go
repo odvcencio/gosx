@@ -52,7 +52,7 @@ const (
 // disable its controls.
 //
 // Field names are the wire keys: island records are keyed by Go field name, so
-// there are no JSON tags. Thread is "worker" or "main" (after a fallback).
+// there are no JSON tags. Thread is "worker", "native" (an engine hosted by a desktop app) or "main" (after a fallback).
 // Reason is a machine-readable code such as "worker-disabled" or
 // "worker-crashed", and is empty while the engine is healthy.
 type WorkerStatus struct {
