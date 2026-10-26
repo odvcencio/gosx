@@ -20,6 +20,11 @@ Build the GoSX runtime assets once, from the repository root:
 go run ./cmd/gosx build-runtime build
 ```
 
+Pass `-worker` to set `enginehost.Options.DisableNative` to `[]string{"*"}` and
+run the same engine in the page's WASM Worker instead of in the host process.
+
+Windows window-state persistence is opt-in through `desktop.Options.WindowState`.
+When enabled, the window restores its saved placement and flushes updates on close.
 On Windows, put `WebView2Loader.dll` next to the executable, then:
 
 ```sh
