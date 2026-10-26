@@ -3,6 +3,7 @@ package bundle
 import (
 	"math"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/motion"
 )
@@ -19,9 +20,9 @@ type mat4 [16]float32
 func mat4FromQuat(q motion.Quat) mat4 {
 	qn := q.Normalize()
 	x, y, z, w := qn.X, qn.Y, qn.Z, qn.W
-	xx, yy, zz := x*x, y*y, z*z
-	xy, xz, yz := x*y, x*z, y*z
-	wx, wy, wz := w*x, w*y, w*z
+	xx, yy, zz := float64(x*x), float64(y*y), float64(z*z)
+	xy, xz, yz := float64(x*y), float64(x*z), float64(y*z)
+	wx, wy, wz := float64(w*x), float64(w*y), float64(w*z)
 	m := mat4Identity()
 	// Column 0.
 	m[0] = float32(1 - 2*(yy+zz))
@@ -50,7 +51,7 @@ func mat4Mul(a, b mat4) mat4 {
 		for row := 0; row < 4; row++ {
 			var sum float32
 			for k := 0; k < 4; k++ {
-				sum += a[k*4+row] * b[col*4+k]
+				sum += float32(a[k*4+row] * b[col*4+k])
 			}
 			r[col*4+row] = sum
 		}
@@ -59,14 +60,14 @@ func mat4Mul(a, b mat4) mat4 {
 }
 
 func mat4Perspective(fovRad, aspect, near, far float32) mat4 {
-	f := float32(1.0) / float32(math.Tan(float64(fovRad/2)))
+	f := float32(1.0) / float32(det.Tan(float64(fovRad/2)))
 	nf := 1 / (near - far)
 	var m mat4
 	m[0] = f / aspect
 	m[5] = f
-	m[10] = (far + near) * nf
+	m[10] = float32((far + near) * nf)
 	m[11] = -1
-	m[14] = (2 * far * near) * nf
+	m[14] = float32((2 * far * near) * nf)
 	return m
 }
 
@@ -95,16 +96,16 @@ func mat4Translate(x, y, z float32) mat4 {
 }
 
 func mat4RotateY(a float32) mat4 {
-	c := float32(math.Cos(float64(a)))
-	s := float32(math.Sin(float64(a)))
+	c := float32(det.Cos(float64(a)))
+	s := float32(det.Sin(float64(a)))
 	m := mat4Identity()
 	m[0], m[2], m[8], m[10] = c, -s, s, c
 	return m
 }
 
 func mat4RotateX(a float32) mat4 {
-	c := float32(math.Cos(float64(a)))
-	s := float32(math.Sin(float64(a)))
+	c := float32(det.Cos(float64(a)))
+	s := float32(det.Sin(float64(a)))
 	m := mat4Identity()
 	m[5], m[6], m[9], m[10] = c, s, -s, c
 	return m
@@ -115,26 +116,26 @@ func mat4RotateX(a float32) mat4 {
 func mat4LookAt(eye, center, upHint [3]float32) mat4 {
 	// Forward (camera -Z): from eye to center.
 	fx, fy, fz := center[0]-eye[0], center[1]-eye[1], center[2]-eye[2]
-	fl := float32(math.Sqrt(float64(fx*fx + fy*fy + fz*fz)))
+	fl := float32(math.Sqrt(float64(float32(fx*fx) + float32(fy*fy) + float32(fz*fz))))
 	if fl == 0 {
 		return mat4Identity()
 	}
 	fx, fy, fz = fx/fl, fy/fl, fz/fl
 
 	// Right = forward × up.
-	sx := fy*upHint[2] - fz*upHint[1]
-	sy := fz*upHint[0] - fx*upHint[2]
-	sz := fx*upHint[1] - fy*upHint[0]
-	sl := float32(math.Sqrt(float64(sx*sx + sy*sy + sz*sz)))
+	sx := float32(fy*upHint[2]) - float32(fz*upHint[1])
+	sy := float32(fz*upHint[0]) - float32(fx*upHint[2])
+	sz := float32(fx*upHint[1]) - float32(fy*upHint[0])
+	sl := float32(math.Sqrt(float64(float32(sx*sx) + float32(sy*sy) + float32(sz*sz))))
 	if sl == 0 {
 		return mat4Identity()
 	}
 	sx, sy, sz = sx/sl, sy/sl, sz/sl
 
 	// Up = right × forward.
-	ux := sy*fz - sz*fy
-	uy := sz*fx - sx*fz
-	uz := sx*fy - sy*fx
+	ux := float32(sy*fz) - float32(sz*fy)
+	uy := float32(sz*fx) - float32(sx*fz)
+	uz := float32(sx*fy) - float32(sy*fx)
 
 	// Column-major layout: m[col*4+row].
 	var m mat4
@@ -150,9 +151,9 @@ func mat4LookAt(eye, center, upHint [3]float32) mat4 {
 	m[9] = uz
 	m[10] = -fz
 	m[11] = 0
-	m[12] = -(sx*eye[0] + sy*eye[1] + sz*eye[2])
-	m[13] = -(ux*eye[0] + uy*eye[1] + uz*eye[2])
-	m[14] = fx*eye[0] + fy*eye[1] + fz*eye[2]
+	m[12] = -(float32(sx*eye[0]) + float32(sy*eye[1]) + float32(sz*eye[2]))
+	m[13] = -(float32(ux*eye[0]) + float32(uy*eye[1]) + float32(uz*eye[2]))
+	m[14] = float32(fx*eye[0]) + float32(fy*eye[1]) + float32(fz*eye[2])
 	m[15] = 1
 	return m
 }
@@ -233,9 +234,9 @@ func cameraViewToWorldRotation(cam engine.RenderCamera) mat4 {
 // so the translation column is deliberately ignored.
 func rotateVec3(m mat4, v [3]float32) [3]float32 {
 	return [3]float32{
-		m[0]*v[0] + m[4]*v[1] + m[8]*v[2],
-		m[1]*v[0] + m[5]*v[1] + m[9]*v[2],
-		m[2]*v[0] + m[6]*v[1] + m[10]*v[2],
+		float32(m[0]*v[0]) + float32(m[4]*v[1]) + float32(m[8]*v[2]),
+		float32(m[1]*v[0]) + float32(m[5]*v[1]) + float32(m[9]*v[2]),
+		float32(m[2]*v[0]) + float32(m[6]*v[1]) + float32(m[10]*v[2]),
 	}
 }
 
@@ -370,9 +371,9 @@ func cascadeSplitDistances(near, far float32, count int, lambda float32) [cascad
 	out[0] = near
 	for i := 0; i < count; i++ {
 		p := float64(i+1) / float64(count)
-		logSplit := float64(near) * math.Pow(ratio, p)
-		uniSplit := float64(near) + float64(far-near)*p
-		out[i+1] = float32(float64(lambda)*logSplit + (1-float64(lambda))*uniSplit)
+		logSplit := float64(float64(near) * det.Pow(ratio, p))
+		uniSplit := float64(near) + float64(float64(far-near)*p)
+		out[i+1] = float32(float64(float64(lambda)*logSplit) + float64((1-float64(lambda))*uniSplit))
 	}
 	// The last cascade always reaches the camera far plane, even when float
 	// rounding leaves the blend a hair short.
@@ -428,7 +429,7 @@ func computeCascades(cam engine.RenderCamera, lightDir [3]float32, lambda, aspec
 		toWorld:    cameraViewToWorldRotation(cam),
 		lightFrame: lightFrameMatrix(lightDir),
 		camPos:     [3]float32{float32(cam.X), float32(cam.Y), float32(cam.Z)},
-		tanHalf:    float32(math.Tan(float64(fov) / 2)),
+		tanHalf:    float32(det.Tan(float64(fov) / 2)),
 		aspect:     aspect,
 	}
 	for i := 0; i < cascadeCount; i++ {
@@ -471,10 +472,10 @@ func lightFrameMatrix(lightDir [3]float32) mat4 {
 // view-space depth inside a frustum with this field of view and aspect. It is
 // the length of the direction to a frustum corner, taken at unit depth.
 func radialRatio(fovRad, aspect float32) float32 {
-	tanHalf := float32(math.Tan(float64(fovRad) / 2))
-	x := tanHalf * aspect
+	tanHalf := float32(det.Tan(float64(fovRad) / 2))
+	x := float32(tanHalf * aspect)
 	y := tanHalf
-	return float32(math.Sqrt(float64(1 + x*x + y*y)))
+	return float32(math.Sqrt(float64(1 + float32(x*x) + float32(y*y))))
 }
 
 // buildCascadeMatrix returns the light-space view-projection fitted to the
@@ -495,15 +496,15 @@ func buildCascadeMatrix(shape cascadeShape, viewNear, viewFar float32) mat4 {
 	tanHalf, aspect := shape.tanHalf, shape.aspect
 	corners := [8][3]float32{
 		// Near plane corners.
-		{-tanHalf * viewNear * aspect, -tanHalf * viewNear, -viewNear},
-		{+tanHalf * viewNear * aspect, -tanHalf * viewNear, -viewNear},
-		{+tanHalf * viewNear * aspect, +tanHalf * viewNear, -viewNear},
-		{-tanHalf * viewNear * aspect, +tanHalf * viewNear, -viewNear},
+		{float32(-tanHalf * viewNear * aspect), float32(-tanHalf * viewNear), -viewNear},
+		{float32(+tanHalf * viewNear * aspect), float32(-tanHalf * viewNear), -viewNear},
+		{float32(+tanHalf * viewNear * aspect), float32(+tanHalf * viewNear), -viewNear},
+		{float32(-tanHalf * viewNear * aspect), float32(+tanHalf * viewNear), -viewNear},
 		// Far plane corners.
-		{-tanHalf * viewFar * aspect, -tanHalf * viewFar, -viewFar},
-		{+tanHalf * viewFar * aspect, -tanHalf * viewFar, -viewFar},
-		{+tanHalf * viewFar * aspect, +tanHalf * viewFar, -viewFar},
-		{-tanHalf * viewFar * aspect, +tanHalf * viewFar, -viewFar},
+		{float32(-tanHalf * viewFar * aspect), float32(-tanHalf * viewFar), -viewFar},
+		{float32(+tanHalf * viewFar * aspect), float32(-tanHalf * viewFar), -viewFar},
+		{float32(+tanHalf * viewFar * aspect), float32(+tanHalf * viewFar), -viewFar},
+		{float32(-tanHalf * viewFar * aspect), float32(+tanHalf * viewFar), -viewFar},
 	}
 	// Carry the corners back into world space through the true inverse of the
 	// camera view matrix: rotate by the transposed view rotation, then add the
@@ -530,7 +531,7 @@ func buildCascadeMatrix(shape cascadeShape, viewNear, viewFar float32) mat4 {
 	var r float32
 	for _, c := range corners {
 		dx, dy, dz := c[0]-cx, c[1]-cy, c[2]-cz
-		d := float32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+		d := float32(math.Sqrt(float64(float32(dx*dx) + float32(dy*dy) + float32(dz*dz))))
 		if d > r {
 			r = d
 		}
@@ -543,9 +544,9 @@ func buildCascadeMatrix(shape cascadeShape, viewNear, viewFar float32) mat4 {
 	// still reach the depth range.
 	const backOff = 20.0
 	lightFrame := shape.lightFrame
-	lx := lightFrame[0]*cx + lightFrame[4]*cy + lightFrame[8]*cz
-	ly := lightFrame[1]*cx + lightFrame[5]*cy + lightFrame[9]*cz
-	lz := lightFrame[2]*cx + lightFrame[6]*cy + lightFrame[10]*cz
+	lx := float32(lightFrame[0]*cx) + float32(lightFrame[4]*cy) + float32(lightFrame[8]*cz)
+	ly := float32(lightFrame[1]*cx) + float32(lightFrame[5]*cy) + float32(lightFrame[9]*cz)
+	lz := float32(lightFrame[2]*cx) + float32(lightFrame[6]*cy) + float32(lightFrame[10]*cz)
 
 	// Round the sphere centre to whole shadow-map texels. A tight fit follows
 	// the camera exactly, so without the rounding every sub-texel camera step
@@ -554,8 +555,8 @@ func buildCascadeMatrix(shape cascadeShape, viewNear, viewFar float32) mat4 {
 	size := 2 * r
 	texel := size / float32(shadowMapSize)
 	if texel > 0 {
-		lx = float32(math.Round(float64(lx/texel))) * texel
-		ly = float32(math.Round(float64(ly/texel))) * texel
+		lx = float32(float32(math.Round(float64(lx/texel))) * texel)
+		ly = float32(float32(math.Round(float64(ly/texel))) * texel)
 	}
 	// Put the snapped centre on the light frame's view axis, backOff + r in
 	// front of the eye.

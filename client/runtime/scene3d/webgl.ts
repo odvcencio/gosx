@@ -1145,10 +1145,12 @@
     "in vec3 a_normal;",
     "in vec2 a_uv;",
     "in vec4 a_tangent;",
+    "in vec4 a_instanceColor;",
     SCENE_CROWD_MOTION_ATTRIBUTES_GLSL,
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
+    "uniform bool u_hasInstanceColor;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -1170,7 +1172,7 @@
     "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));",
     "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
-    "    v_instanceColor = vec4(1.0);",
+    "    v_instanceColor = u_hasInstanceColor ? a_instanceColor : vec4(1.0);",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
   ].join("\n");
@@ -3922,7 +3924,7 @@
       var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
         ? Number(frameMeta.nowMS)
         : (sceneWebGLNow());
-      var active = lifecycleActive && (!frameMeta || frameMeta.active !== false);
+      var active = lifecycleActive && (frameMeta?.active !== false);
       var paused = lifecyclePaused || sceneBool(liveEntry.paused, false);
       var clockFrame = sceneWaterAdvanceRendererClock(waterClock, nowMS, active, paused, waterClockOptions);
 
@@ -4198,7 +4200,7 @@
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.disable(gl.CULL_FACE);
-      var compositeWorld = frameMeta && frameMeta.compositeWorld === true;
+      var compositeWorld = frameMeta?.compositeWorld === true;
       if (!compositeWorld || frameMeta.clearComposite === true) {
         var bg = compositeWorld
           ? sceneWaterRenderHexColor(frameMeta.background, [0.03, 0.08, 0.12])
@@ -5753,36 +5755,6 @@
     }
   }
 
-  // Per-distinct-string cache for sceneColorRGBA() results, consumed by
-  // sceneInstancedColorBuffer() (createScenePBRRenderer's instanced-mesh
-  // draw path, below). A hex/rgba() string is re-parsed through regex
-  // matching and parseInt on every call; an instanced mesh commonly reuses
-  // a small, fixed palette across hundreds of instances, so memoizing by
-  // the raw color value turns an O(instanceCount) parse into an O(distinct
-  // colors) parse per rebuild. sceneColorRGBA's result only depends on
-  // `value` here because every call below passes the same literal
-  // fallback; the loop only reads the returned array's components, so
-  // handing back the shared cached reference is safe. A color string
-  // always parses to the same RGBA, so this cache needs no invalidation
-  // (bounded defensively in case a caller streams unbounded distinct
-  // values instead of reusing a palette).
-  var sceneInstancedColorRGBACache = new Map();
-  var SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX = 512;
-
-  // @ts-ignore TS7006 -- this runtime source ships as JavaScript.
-  function sceneCachedInstancedColorRGBA(value, fallback) {
-    var cached = sceneInstancedColorRGBACache.get(value);
-    if (cached) {
-      return cached;
-    }
-    var rgba = sceneColorRGBA(value, fallback);
-    if (sceneInstancedColorRGBACache.size >= SCENE_INSTANCED_COLOR_RGBA_CACHE_MAX) {
-      sceneInstancedColorRGBACache.clear();
-    }
-    sceneInstancedColorRGBACache.set(value, rgba);
-    return rgba;
-  }
-
   // prepareRigidMeshBatches (createScenePBRRenderer's rigid-batch grouping
   // path, below) groups rigid mesh records into shared-VBO batches keyed
   // by everything that must match for a group to share one draw: material,
@@ -6127,7 +6099,7 @@
 
   function createSceneSelenaProgram(gl, material, skinned, selective = false) {
     var layout = sceneSelenaMaterialLayout(material);
-    if (!layout) return null;
+    if (!layout || (layout.requires && layout.requires.glVertexTextureUnits > sceneCachedGLParameter(gl, gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS))) return null; // device has too few vertex texture units
     var vertexSource = sceneWebGLNormalizeCustomShaderSource(material.customVertex);
     var fragmentSource = sceneWebGLNormalizeCustomShaderSource(selective ? material.specularFragmentGLSL : material.customFragment);
     var skinInfo = null;
@@ -6305,8 +6277,9 @@
   function createScenePBRCrowdMotionProgram(gl, detail = false) {
     return scenePBRCreateProgramInfo(gl, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Crowd motion PBR shader", function(program: any) {
 
-      var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState");
+      var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState instanceColor");
       var uniforms = scenePBRCacheBaseUniforms(gl, program);
+      uniforms.hasInstanceColor = gl.getUniformLocation(program, "u_hasInstanceColor");
       uniforms.crowdAtlas = gl.getUniformLocation(program, "u_crowdAtlas");
       uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
       uniforms.now = gl.getUniformLocation(program, "u_now");
@@ -7724,38 +7697,14 @@
     // Per-layer authored GLSL program cache: layerID → {program, attrs, uniforms} | {failed:true}
     var pointsAuthoredGLPrograms = new Map();
 
-    // Per-typed-array VBO cache.
-    //
-    // Root cause this fixes: the prior renderer allocated three shared
-    // global VBOs (pointsPositionBuffer/Size/Color) and re-uploaded the
-    // cached typed arrays to them on every entry on every frame via
-    // gl.bufferData(STREAM_DRAW). For an 8-12 entry galaxy scene with
-    // thousands of vertices per layer, that was ~30 bufferData calls and
-    // ~700KB of GPU upload per frame of already-cached, known-static data.
-    // Chrome's driver optimizes the pattern away; Firefox's does not, so
-    // the Scene3D draw loop on FF tripped the script watchdog and fell
-    // to 10-19 fps on particle-heavy pages.
-    //
-    // New approach:
-    //   - Static geometry data: WeakMap keyed by the typed-array
-    //     reference. Upload once with STATIC_DRAW, reuse the buffer
-    //     forever.
-    //   - Static point data: persistent VBO slots keyed by stable point id
-    //     plus attribute slot. Scene preparation may hand the renderer fresh
-    //     point wrapper objects while preserving the same id and source
-    //     buffers; keeping the GPU handle at renderer scope avoids treating
-    //     that wrapper churn as new geometry. When a live update replaces
-    //     positions/sizes/colors, the keyed slot deletes its old GL buffer
-    //     before uploading the replacement. This keeps long-lived tabs from
-    //     accumulating one stale color buffer per palette tick.
-    //   - Dynamic data (compute particle systems): persistent per-entry
-    //     buffer with bufferSubData each frame into DYNAMIC_DRAW storage.
-    //     Still avoids the bufferData reallocation churn of the old path;
-    //     only the data upload is paid, not the GPU memory allocator.
-    //
-    // All per-entry buffers — static and dynamic, points and meshes —
-    // register into pointsEntryBuffers so dispose() can free them on
-    // scene unmount without needing a per-subsystem bookkeeping pass.
+    // Keep GPU storage at renderer scope: repeated static uploads previously
+    // caused particle-heavy scenes to hit Firefox's script watchdog.
+    // Geometry uses a typed-array WeakMap and uploads once with STATIC_DRAW.
+    // Points use stable IDs plus attribute slots: fresh wrappers reuse VBOs,
+    // while replaced arrays delete the old VBO before allocating its successor.
+    // Dynamic particles reuse per-entry DYNAMIC_DRAW storage with bufferSubData.
+    // Instanced streams retain bit-exact snapshots and upload changed spans.
+    // Every owned buffer registers in pointsEntryBuffers for unmount cleanup.
     const staticMeshArrayVBOs = new WeakMap();
     const pointsEntryBuffers = new Set();
     const instancedStreamRecords = new Map();
@@ -7817,16 +7766,28 @@
       record.lastUsed = crowdFrame;
       return record;
     }
+    function disposeOwnedProgram(record: any) {
+      if (!record) return;
+      gl.deleteShader(record.vertexShader);
+      gl.deleteShader(record.fragmentShader);
+      gl.deleteProgram(record.program);
+    }
     function disposeCrowdResources() {
       for (const record of crowdAtlasTextures.values()) gl.deleteTexture(record.texture);
       crowdAtlasTextures.clear();
       crowdPaletteBytes = 0;
       for (const cp of [crowdProgram, crowdShadowProgram, crowdMotionProgram, crowdMotionShadowProgram]) {
-        if (cp) { gl.deleteProgram(cp.program); gl.deleteShader(cp.vertexShader); gl.deleteShader(cp.fragmentShader); }
+        disposeOwnedProgram(cp);
       }
       crowdProgram = crowdShadowProgram = null;
       crowdCapabilities = crowdCapabilityError = null;
       crowdMotionProgram = crowdMotionShadowProgram = crowdMotionShaderError = null;
+    }
+    function bindCrowdJointAttributes(obj: any, attributes: any, allowed: Record<number, boolean>) {
+      for (const name of ["joints", "weights"]) {
+        const location = attributes[name]; allowed[location] = true;
+        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
+      }
     }
     function bindCrowdBatch(batch, ip, allowed) {
       if (!batch.atlas) return;
@@ -7835,17 +7796,47 @@
       gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
       gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
       gl.uniform4fv(ip.uniforms.crowdCut, batch.cut || SCENE_NO_CUT);
-      const obj = batch.objects[0];
-      for (const name of ["joints", "weights"]) {
-        const location = ip.attributes[name]; allowed[location] = true;
-        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
-      }
+      bindCrowdJointAttributes(batch.objects[0], ip.attributes, allowed);
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const location = ip.attributes.pose; allowed[location] = true;
       gl.bindBuffer(gl.ARRAY_BUFFER, uploadPackedStream(batch, "poses", batch.poses));
       gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 12, 0); gl.vertexAttribDivisor(location, 1);
+      bindCrowdBatchColors(batch, ip, allowed);
     }
     function finishCrowdBatch(batch, ip) {
       if (batch.atlas) { gl.vertexAttribDivisor(ip.attributes.pose, 0); gl.disableVertexAttribArray(ip.attributes.pose); }
+      finishCrowdBatchColors(ip);
+    }
+
+    // Per-agent tints (linear RGBA, 4 floats per agent) as an instance-rate attribute.
+    // They upload when the record's colour generation changes, not with every pose revision.
+    // The shadow programs have no a_instanceColor and skip this.
+    function bindCrowdBatchColors(batch: any, ip: any, allowed: Record<number, boolean>) {
+      const location = ip.attributes.instanceColor;
+      if (!(location >= 0)) return;
+      // The program keeps its uniforms between draws: say "no tint" whenever this batch has none.
+      if (!batch.colors || batch.colors.length < batch.count * 4) { gl.uniform1i(ip.uniforms.hasInstanceColor, 0); return; }
+      allowed[location] = true;
+      const retained = batch._colorUploaded === undefined ? null : touchInstancedStream(batch, 0, "colors");
+      let buffer = retained;
+      if (!retained || batch._colorUploaded !== batch._colorGeneration) {
+        batch._colorUploaded = batch._colorGeneration;
+        buffer = uploadInstancedStream(batch, 0, "colors", batch.colors, batch.count * 4);
+      }
+      bindInstanceColors(ip, buffer);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 1);
+    }
+    function bindInstanceColors(ip: any, buffer: WebGLBuffer | null) {
+      const location = ip.attributes.instanceColor;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, 4, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(location, 1);
+    }
+    function finishCrowdBatchColors(ip: any) {
+      const location = ip.attributes.instanceColor;
+      if (!(location >= 0)) return;
+      gl.vertexAttribDivisor(location, 0);
+      gl.disableVertexAttribArray(location);
     }
 
     // --- GPU-driven crowd motion batch binding ---
@@ -7990,11 +7981,7 @@
       gl.uniform1f(ip.uniforms.motionExtrapolationSeconds, SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS);
       gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
       gl.uniform4fv(ip.uniforms.crowdCut, batch.cut || SCENE_NO_CUT);
-      const obj = batch.objects[0];
-      for (const name of ["joints", "weights"]) {
-        const location = ip.attributes[name]; allowed[location] = true;
-        bindScenePBRDirectAttribute(obj, name, location, 4, obj.vertices[name]);
-      }
+      bindCrowdJointAttributes(batch.objects[0], ip.attributes, allowed);
       const buffer = crowdMotionStreamBuffer(batch);
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       const stride = SCENE_CROWD_MOTION_RECORD_FLOATS * 4;
@@ -8012,10 +7999,12 @@
         gl.vertexAttribPointer(location, components, gl.FLOAT, false, stride, byteOffset);
         gl.vertexAttribDivisor(location, 1);
       }
+      bindCrowdBatchColors(batch, ip, allowed);
     }
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
     function finishCrowdMotionBatch(batch, ip) {
       if (!batch.atlas) return;
+      finishCrowdBatchColors(ip);
       for (const name of ["motionPrevPos", "motionPrevRot", "motionPrevScale", "tPrev", "motionNextPos", "motionNextRot", "motionNextScale", "tNext", "animState"]) {
         gl.vertexAttribDivisor(ip.attributes[name], 0);
         gl.disableVertexAttribArray(ip.attributes[name]);
@@ -8266,15 +8255,10 @@
     }
 
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
-    function uploadInstancedStream(mesh, index, slot, data, activeLength, dirtyRanges = null) {
+    function uploadInstancedStream(mesh, index, slot, data, activeLength = data.length, dirtyRanges = null) {
       // Commands replace JS arrays frequently. Their identity is not a GPU
       // lifetime: own mutable streams by batch ID, with frame retirement.
-      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
-      let record = instancedStreamRecords.get(key);
-      if (!record) {
-        record = {};
-        instancedStreamRecords.set(key, record);
-      }
+      const record = instancedStreamOwner(mesh, index);
       let stream = record[slot];
       if (!stream) {
         stream = { buffer: gl.createBuffer(), bytes: 0, epoch: 0 };
@@ -8287,20 +8271,63 @@
       if (resized) {
         gl.bufferData(gl.ARRAY_BUFFER, dirtyRanges ? data.byteLength : data, gl.DYNAMIC_DRAW);
         stream.bytes = data.byteLength;
+        stream.snapshot = null;
       }
       if (dirtyRanges) {
+        stream.snapshot = stream.words = null;
         for (let i = 0; i < dirtyRanges.length; i += 2) {
           const start = Math.max(0, Math.min(data.length, dirtyRanges[i]));
           const end = Math.max(start, Math.min(data.length, dirtyRanges[i + 1]));
           if (end > start) gl.bufferSubData(gl.ARRAY_BUFFER, start * data.BYTES_PER_ELEMENT, data.subarray(start, end));
         }
-      } else if (!resized) {
+      } else {
         const length = Number.isFinite(activeLength)
           ? Math.max(0, Math.min(data.length, Math.floor(activeLength)))
           : data.length;
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, length === data.length ? data : data.subarray(0, length));
+        if (data.BYTES_PER_ELEMENT === 4) {
+          uploadChangedInstancedStream(stream, data, length, resized);
+        } else {
+          stream.snapshot = stream.words = null;
+          if (!resized) gl.bufferSubData(gl.ARRAY_BUFFER, 0, length === data.length ? data : data.subarray(0, length));
+        }
       }
       return stream.buffer;
+    }
+
+    // Own bit-exact snapshots: fresh equal arrays and camera-only frames skip
+    // uploads, while in-place edits submit only the first-to-last changed span.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function uploadChangedInstancedStream(stream, data, length, allocated) {
+      let words = stream.words;
+      if (!words || words.buffer !== data.buffer || words.byteOffset !== data.byteOffset || words.length !== data.length) {
+        words = stream.words = new Uint32Array(data.buffer, data.byteOffset, data.length);
+      }
+      if (!stream.snapshot) {
+        stream.snapshot = new Uint32Array(words.length);
+        stream.validLength = 0;
+      }
+      const snapshot = stream.snapshot;
+      if (allocated) {
+        snapshot.set(words);
+        stream.validLength = words.length;
+        return;
+      }
+      let start = 0, end = length;
+      const valid = stream.validLength;
+      while (start < end && start < valid && words[start] === snapshot[start]) start++;
+      while (end > start && end <= valid && words[end - 1] === snapshot[end - 1]) end--;
+      if (end > start) {
+        gl.bufferSubData(gl.ARRAY_BUFFER, start * 4, start === 0 && end === data.length ? data : data.subarray(start, end));
+        snapshot.set(start === 0 && end === words.length ? words : words.subarray(start, end), start);
+      }
+      stream.validLength = Math.max(valid, length);
+    }
+
+    function instancedStreamOwner(mesh: any, index: number) {
+      const key = mesh.id ? "id:" + mesh.id : "index:" + index;
+      let owner = instancedStreamRecords.get(key);
+      if (!owner) { owner = {}; instancedStreamRecords.set(key, owner); }
+      return owner;
     }
 
     // Crowd batches repack only when their revision changes (_packGeneration),
@@ -8849,7 +8876,7 @@
         }
       }
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
-      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      detailEnabled = frameMeta?.detailEnabled !== false;
       sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
@@ -8886,6 +8913,7 @@
       beginWebGLDirectMeshBufferFrame(bundle);
       if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
+        retireInstancedStreams();
         return "empty";
       }
 
@@ -9058,7 +9086,7 @@
         }
         var temporalActive = false;
         if (temporalRequested) {
-          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true), bundle.lights);
+          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (frameMeta?.compositeOverWater !== true), bundle.lights);
           if (temporalActive) sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
         } else postProcessor.resetTemporal();
         var antialiasing = temporalActive ? "taa" : temporalRequested || spatialRequested ? "fxaa" : "none";
@@ -9084,7 +9112,7 @@
         bg[3] = 0;
       }
 
-      if (!frameMeta || frameMeta.compositeOverWater !== true) {
+      if (frameMeta?.compositeOverWater !== true) {
         // Fullscreen post passes disable depth writes. Clear must restore the
         // write mask first, or last frame's glass occludes this frame's opaque
         // transmission capture even though the color attachment was cleared.
@@ -9096,7 +9124,7 @@
       }
 
       var skyState = "none";
-      if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
+      if (bundle.environment && bundle.environment.sky && (frameMeta?.compositeOverWater !== true)) {
         if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
         skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
           camera: cam, aspect: aspect, linear: frameLinear }) : "unavailable";
@@ -9150,11 +9178,11 @@
       // Draw opaque pass.
       applyBlendMode(gl, "opaque");
       applyDepthMode(gl, "opaque");
-      drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta && frameMeta.frameRequest);
+      drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta?.frameRequest);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
       const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
-      sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
+      sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: sceneSelenaFrameTime, quality: frameMeta?.oceanTier,
         meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
       // Shared water must be present in the opaque capture sampled by glass.
       scenePBRCompositePass(gl, frameMeta, renderTarget);
@@ -9170,7 +9198,7 @@
       if (drawList && drawList.alpha.length > 0) {
         applyBlendMode(gl, "alpha");
         applyDepthMode(gl, "alpha");
-        drawPBRObjectList(gl, drawList.alpha, bundle, materials, frameMeta && frameMeta.frameRequest);
+        drawPBRObjectList(gl, drawList.alpha, bundle, materials, frameMeta?.frameRequest);
       }
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "alpha");
 
@@ -9178,7 +9206,7 @@
       if (drawList && drawList.additive.length > 0) {
         applyBlendMode(gl, "additive");
         applyDepthMode(gl, "additive");
-        drawPBRObjectList(gl, drawList.additive, bundle, materials, frameMeta && frameMeta.frameRequest);
+        drawPBRObjectList(gl, drawList.additive, bundle, materials, frameMeta?.frameRequest);
       }
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "additive");
 
@@ -9677,6 +9705,7 @@
       batch.atlas = obj.crowdAtlas; batch.clipTable = obj.crowdClipTable;
       batch.members = obj.crowdMembers; batch.shape = obj.crowdShape; batch.count = obj.instanceCount;
       batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses; batch.parent = obj.crowdParentMatrix || null; batch.cut = obj.crowdCut || null;
+      batch.colors = obj.crowdColors || null; batch._colorGeneration = obj.crowdColorGen;
       if (batch._packedRevision !== obj.crowdRevision) {
         // Dirty slot ranges describe one revision. Use them only when this
         // batch packed the revision just before it.
@@ -9795,6 +9824,7 @@
             batch.transforms = null;
             continue;
           }
+          if (batch.atlas) scenePrepareCrowdColors(batch);
           if (batch.motion) {
             // GPU-motion crowd batch: no CPU transform/pose math here at all,
             // and prepareCrowdMotionRecords re-copies/re-uploads only when an
@@ -9829,12 +9859,16 @@
       const base = attributes.instanceMatrix;
       if (!(base >= 0)) return false;
       gl.bindBuffer(gl.ARRAY_BUFFER, uploadPackedStream(batch, "transforms", batch.transforms, batch.count * 16));
+      bindInstanceMatrixAttributes(base);
+      return true;
+    }
+
+    function bindInstanceMatrixAttributes(base: number) {
       for (let col = 0; col < 4; col++) {
         gl.enableVertexAttribArray(base + col);
         gl.vertexAttribPointer(base + col, 4, gl.FLOAT, false, 64, col * 16);
         gl.vertexAttribDivisor(base + col, 1);
       }
-      return true;
     }
 
     function finishRigidBatchMatrices(attributes) {
@@ -10468,7 +10502,7 @@
         computeEntry.renderShaderLayout = sourceEntry.renderShaderLayout && typeof sourceEntry.renderShaderLayout === "object"
           ? sourceEntry.renderShaderLayout
           : null;
-        computeEntry._computeParticlesSynthetic = true;
+        Object.assign(computeEntry, {_computeParticlesSynthetic: true, parentMatrix: sourceEntry.parentMatrix || null});
         // Model-matrix transform from the emitter: position, rotation, spin.
         // Particles are stored in LOCAL space so the renderer's model matrix
         // applies position + rotation + time-based spin uniformly.
@@ -10741,45 +10775,10 @@
       return geom;
     }
 
-    // Draw all instanced meshes from the render bundle.
-    function sceneInstancedColorBuffer(mesh, count) {
-      if (!mesh || count <= 0) {
-        return null;
-      }
-      if (mesh._cachedInstanceColors && mesh._cachedInstanceColors.length >= count * 4) {
-        return mesh._cachedInstanceColors;
-      }
-      mesh._cachedInstanceColors = null;
-      var rawColors = mesh.colors;
-      if (!rawColors || typeof rawColors.length !== "number") {
-        return null;
-      }
-      if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-        mesh._cachedInstanceColors = new Float32Array(count * 4);
-        for (var ci = 0; ci < count; ci++) {
-          var rgba = sceneCachedInstancedColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
-          mesh._cachedInstanceColors[ci * 4] = rgba[0];
-          mesh._cachedInstanceColors[ci * 4 + 1] = rgba[1];
-          mesh._cachedInstanceColors[ci * 4 + 2] = rgba[2];
-          mesh._cachedInstanceColors[ci * 4 + 3] = rgba[3];
-        }
-        return mesh._cachedInstanceColors;
-      }
-      if (rawColors.length >= count * 4) {
-        mesh._cachedInstanceColors = rawColors instanceof Float32Array ? rawColors : new Float32Array(rawColors);
-        return mesh._cachedInstanceColors;
-      }
-      if (rawColors.length >= count * 3) {
-        mesh._cachedInstanceColors = new Float32Array(count * 4);
-        for (var ni = 0; ni < count; ni++) {
-          mesh._cachedInstanceColors[ni * 4] = rawColors[ni * 3];
-          mesh._cachedInstanceColors[ni * 4 + 1] = rawColors[ni * 3 + 1];
-          mesh._cachedInstanceColors[ni * 4 + 2] = rawColors[ni * 3 + 2];
-          mesh._cachedInstanceColors[ni * 4 + 3] = 1;
-        }
-        return mesh._cachedInstanceColors;
-      }
-      return null;
+    function sceneInstancedColorBuffer(mesh: any, count: number, owner: object) {
+      if (!mesh || count <= 0) return null;
+      if (mesh._cachedInstanceColors && mesh._cachedInstanceColors.length >= count * 4) return mesh._cachedInstanceColors;
+      return mesh._cachedInstanceColors = scenePrepareInstancedColors(owner, mesh.colors, count);
     }
 
     function drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, renderPass) {
@@ -10864,38 +10863,19 @@
         bindInstancedVertexAttribute(ip.attributes.uv, geom.uvs, 2, [0, 0]);
         bindInstancedVertexAttribute(ip.attributes.tangent, geom.tangents, 4, [1, 0, 0, 1]);
 
-        // Cache the transforms Float32Array on the mesh entry (same
-        // pattern as points _cachedPos). normalizeSceneInstancedMeshEntry
-        // now carries _cachedTransforms forward across ticks when
-        // mesh.transforms is unchanged by reference, so this branch
-        // only allocates on the first draw of a mesh identity.
-        if (!mesh._cachedTransforms) {
-          if (mesh.transforms instanceof Float32Array) {
-            mesh._cachedTransforms = mesh.transforms;
-          } else if (Array.isArray(mesh.transforms)) {
-            mesh._cachedTransforms = new Float32Array(mesh.transforms);
-          }
-        }
+        const preparationOwner = instancedStreamOwner(mesh, i);
+        if (!mesh._cachedTransforms) mesh._cachedTransforms = scenePrepareInstancedTransforms(preparationOwner, mesh.transforms);
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
         instanceCount = Math.min(instanceCount, sceneInstancedAttributeCapacity(transformData, 16));
         if (instanceCount <= 0) continue;
 
-        // -----------------------------------------------------------------------
-        // CPU frustum cull (WebGL2 path — gpu-cull capability absent).
-        // When a mesh carries a cull kernel (cullKernelWGSL present), run a
-        // per-instance sphere-vs-frustum test using extractFrustumPlanesJS +
-        // instancePassesCullTest (both defined in 11-scene-math.ts).
-        // Survivors are compacted into scratch Float32Arrays; instanceCount is
-        // reduced to the survivor count. The compacted data is uploaded to
-        // dedicated dynamic VBOs (_cpuCullTransformVBO/_cpuCullColorVBO) owned
-        // by the mesh entry so bufferSubData runs per-frame without cache
-        // invalidation. When no cull config is present the mesh draws all
-        // instances unchanged via the normal static-VBO path.
-        // -----------------------------------------------------------------------
+        // WebGL2 culls configured instances by sphere against the CPU frustum.
+        // Compact survivors into reusable scratch arrays, then upload through
+        // the same retained instance streams. Unconfigured meshes draw all.
         var hasCullConfig = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
         // Fetch full color buffer (indexed by original instance) before compaction.
-        var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount);
+        var instanceColorData = sceneInstancedColorBuffer(mesh, instanceCount, preparationOwner);
         if (hasCullConfig) {
           var cullRadius = (typeof mesh.cullRadius === "number" && mesh.cullRadius > 0) ? mesh.cullRadius : 2.0;
           var planes = extractFrustumPlanesJS(scratchSelenaViewProjection);
@@ -10958,39 +10938,17 @@
           instancedAllowedAttribs[ip.attributes.instanceColor] = true;
         }
         sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
-/* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
         gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "transforms", transformData));
 
-        // Set up mat4 attribute (4 × vec4, each with divisor 1).
-        // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
-        for (var col = 0; col < 4; col++) {
-          var loc = baseLoc + col;
-          gl.enableVertexAttribArray(loc);
-          gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, 64, col * 16);
-          gl.vertexAttribDivisor(loc, 1);
-        }
+        bindInstanceMatrixAttributes(baseLoc);
 
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (hasInstanceColor) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, uploadInstancedStream(mesh, i, "colors", instanceColorData));
-          gl.enableVertexAttribArray(ip.attributes.instanceColor);
-          gl.vertexAttribPointer(ip.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
-          gl.vertexAttribDivisor(ip.attributes.instanceColor, 1);
-        }
+        if (hasInstanceColor) bindInstanceColors(ip, uploadInstancedStream(mesh, i, "colors", instanceColorData));
 
         // Draw instanced.
         gl.drawArraysInstanced(gl.TRIANGLES, 0, drawVertexCount, instanceCount);
 
-        if (hasInstanceColor) {
-          gl.vertexAttribDivisor(ip.attributes.instanceColor, 0);
-          gl.disableVertexAttribArray(ip.attributes.instanceColor);
-        }
-
-        // Reset divisors and disable instance attribute slots.
-        for (var col = 0; col < 4; col++) {
-          var loc2 = baseLoc + col;
-          gl.vertexAttribDivisor(loc2, 0);
-          gl.disableVertexAttribArray(loc2);
-        }
+        if (hasInstanceColor) finishCrowdBatchColors(ip);
+        finishRigidBatchMatrices(ip.attributes);
       }
 
       // Switch back to regular PBR program.
@@ -11040,11 +10998,7 @@
       disposeCrowdResources();
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
-      if (rigidShadowProgram) {
-        gl.deleteProgram(rigidShadowProgram.program);
-        gl.deleteShader(rigidShadowProgram.vertexShader);
-        gl.deleteShader(rigidShadowProgram.fragmentShader);
-      }
+      disposeOwnedProgram(rigidShadowProgram);
       staticPointEntries.clear();
       activeStaticPointEntries.clear();
       staticPointKeyedVBOs.clear();
@@ -11082,65 +11036,39 @@
         postProcessor = null;
       }
 
-      if (shadowProgram) {
-        gl.deleteShader(shadowProgram.vertexShader);
-        gl.deleteShader(shadowProgram.fragmentShader);
-        gl.deleteProgram(shadowProgram.program);
-      }
+      disposeOwnedProgram(shadowProgram);
 
       // Clean up skinned PBR program.
-      if (skinnedProgram) {
-        gl.deleteShader(skinnedProgram.vertexShader);
-        gl.deleteShader(skinnedProgram.fragmentShader);
-        gl.deleteProgram(skinnedProgram.program);
-        skinnedProgram = null;
-      }
+      disposeOwnedProgram(skinnedProgram);
+      skinnedProgram = null;
 
       // Clean up points program.
-      if (pointsProgram) {
-        gl.deleteShader(pointsProgram.vertexShader);
-        gl.deleteShader(pointsProgram.fragmentShader);
-        gl.deleteProgram(pointsProgram.program);
-        pointsProgram = null;
-      }
+      disposeOwnedProgram(pointsProgram);
+      pointsProgram = null;
       // Authored points programs own their shader objects independently of the
       // builtin points program. Clear both maps so repeated disposal cannot
       // delete the same GL objects twice or retain failed layer IDs.
       for (const authoredRecord of pointsAuthoredGLPrograms.values()) {
         if (!authoredRecord || authoredRecord.failed) continue;
-        gl.deleteShader(authoredRecord.vertexShader);
-        gl.deleteShader(authoredRecord.fragmentShader);
-        gl.deleteProgram(authoredRecord.program);
+        disposeOwnedProgram(authoredRecord);
       }
       pointsAuthoredGLPrograms.clear();
 
       // Clean up instanced PBR program.
-      if (instancedProgram) {
-        gl.deleteShader(instancedProgram.vertexShader);
-        gl.deleteShader(instancedProgram.fragmentShader);
-        gl.deleteProgram(instancedProgram.program);
-        instancedProgram = null;
-      }
+      disposeOwnedProgram(instancedProgram);
+      instancedProgram = null;
       instancedGeometryCache = {};
 
       for (const record of customProgramCache.values()) {
         const cp = record && record.program;
-        if (cp) {
-          gl.deleteShader(cp.vertexShader);
-          gl.deleteShader(cp.fragmentShader);
-          gl.deleteProgram(cp.program);
-        }
+        disposeOwnedProgram(cp);
       }
       customProgramCache.clear();
       scenePBRAuthoredProgramKeys.delete(customProgramCache);
 
       for (const record of selenaProgramCache.values()) {
         const sp = record && record.program;
-        if (sp) {
-          gl.deleteShader(sp.vertexShader);
-          gl.deleteShader(sp.fragmentShader);
-          gl.deleteProgram(sp.program);
-        }
+        disposeOwnedProgram(sp);
       }
       selenaProgramCache.clear();
       scenePBRAuthoredProgramKeys.delete(selenaProgramCache);

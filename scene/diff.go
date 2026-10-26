@@ -30,6 +30,7 @@ const (
 	CommandSetAnimations
 	CommandSetEnvironment
 	CommandSetPostUniforms
+	CommandSetGroups
 	// commandKindCount is one past the last declared kind. It lets a test walk
 	// every kind and prove each one is either emitted by a Diff function or
 	// recorded as constructor-only. Keep it last.
@@ -62,6 +63,7 @@ var commandKindOrigins = map[CommandKind]struct {
 	origin commandKindOrigin
 	reason string
 }{
+	CommandSetGroups:    {originDiffScene, ""},
 	CommandCreateObject: {originDiffScene, ""},
 	CommandRemoveObject: {originDiffScene, ""},
 	CommandSetTransform: {originDiffSceneOption, "DiffOptions.PatchTransforms turns it on. " +
@@ -169,6 +171,9 @@ func DiffCommands(previous, next SceneIR) []Command {
 // changed fields the command protocol cannot carry.
 func DiffScene(previous, next SceneIR, options DiffOptions) Diff {
 	var commands []Command
+	if !sceneRecordJSONEqual(previous.Groups, next.Groups) {
+		commands = append(commands, SetGroupsCommand(next.Groups))
+	}
 	var objectPatch func(previous, next *ObjectIR) (Command, bool)
 	if options.PatchObjectState {
 		objectPatch = objectStatePatch
@@ -262,6 +267,7 @@ type sceneIRFieldPolicy struct {
 // the browser runtime switches on. Adding one needs a matching runtime change, so
 // the honest answer today is to report the change and let the caller remount.
 var sceneIRFieldPolicies = map[string]sceneIRFieldPolicy{
+	"Groups":             {policy: sceneIRDiffed},
 	"Objects":            {policy: sceneIRDiffed},
 	"Models":             {policy: sceneIRDiffed},
 	"Points":             {policy: sceneIRDiffed},
@@ -377,6 +383,7 @@ var sceneIRRemountFieldNames = sortedRemountFieldNames()
 
 func sortedRemountFieldNames() []string {
 	names := make([]string, 0, len(sceneIRFieldPolicies))
+	//gosx:allow map-range keys are sorted on the next lines
 	for name, policy := range sceneIRFieldPolicies {
 		if policy.policy == sceneIRRemount {
 			names = append(names, name)
@@ -1186,4 +1193,14 @@ func provenFloatEqual(left, right float64) bool {
 		return false
 	}
 	return math.Float64bits(left) == math.Float64bits(right)
+}
+
+// SetGroupsCommand replaces retained transform boundaries, including clearing
+// them. Descendant geometry and its local transforms remain unchanged.
+func SetGroupsCommand(groups []GroupIR) Command {
+	copyGroups := append([]GroupIR(nil), groups...)
+	for i := range copyGroups {
+		copyGroups[i].ParentMatrix = append([]float64(nil), groups[i].ParentMatrix...)
+	}
+	return Command{Kind: CommandSetGroups, Data: map[string]any{"groups": copyGroups}}
 }

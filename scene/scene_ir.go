@@ -2,6 +2,8 @@ package scene
 
 import (
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 
 	"m31labs.dev/gosx/motion"
@@ -49,6 +51,7 @@ type CompressedArray struct {
 // before any renderer sees them.
 type SceneIR struct {
 	Schema             string               `json:"schema,omitempty"`
+	Groups             []GroupIR            `json:"groups,omitempty"`
 	Objects            []ObjectIR           `json:"objects,omitempty"`
 	Models             []ModelIR            `json:"models,omitempty"`
 	Points             []PointsIR           `json:"points,omitempty"`
@@ -173,6 +176,9 @@ type InstancedGLBMeshIR struct {
 	// ParentNode names the scene node whose world matrix carries the batch;
 	// see InstancedGLBMesh.ParentNode.
 	ParentNode string `json:"parentNode,omitempty"`
+	// Palette lists the distinct instance colours of the batch, in first-use
+	// order. MeshInstanceIR.Tint indexes it, 1-based.
+	Palette []string `json:"palette,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
@@ -191,10 +197,13 @@ type MeshInstanceIR struct {
 	RotationY     float64   `json:"rotationY,omitempty"`
 	RotationZ     float64   `json:"rotationZ,omitempty"`
 	ParentMatrix  []float64 `json:"parentMatrix,omitempty"`
+	// Tint is a 1-based index into the batch's Palette; 0 means untinted.
+	Tint int `json:"tint,omitempty"`
 }
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
+	ParentNode string `json:"parentNode,omitempty"`
 	// VerticesURL references immutable MeshVertices JSON served by GeometryAssets.
 	VerticesURL          string      `json:"verticesURL,omitempty"`
 	Detail               *Detail     `json:"detail,omitempty"`
@@ -423,6 +432,7 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 
 // LabelIR is the typed compatibility record for one lowered scene label.
 type LabelIR struct {
+	ParentNode  string         `json:"parentNode,omitempty"`
 	ID          string         `json:"id"`
 	Text        string         `json:"text"`
 	ClassName   string         `json:"className,omitempty"`
@@ -459,6 +469,7 @@ type LabelIR struct {
 
 // SpriteIR is the typed compatibility record for one projected sprite overlay.
 type SpriteIR struct {
+	ParentNode string         `json:"parentNode,omitempty"`
 	ID         string         `json:"id"`
 	Src        string         `json:"src"`
 	ClassName  string         `json:"className,omitempty"`
@@ -489,6 +500,7 @@ type SpriteIR struct {
 
 // HTMLIR is the typed compatibility record for one DOM-backed scene overlay.
 type HTMLIR struct {
+	ParentNode       string       `json:"parentNode,omitempty"`
 	ID               string       `json:"id"`
 	Target           string       `json:"target,omitempty"`
 	Mode             string       `json:"mode,omitempty"`
@@ -534,6 +546,7 @@ type HTMLIR struct {
 
 // LightIR is the typed compatibility record for one lowered scene light.
 type LightIR struct {
+	ParentNode     string         `json:"parentNode,omitempty"`
 	ID             string         `json:"id"`
 	Kind           string         `json:"kind"`
 	Color          string         `json:"color,omitempty"`
@@ -594,6 +607,7 @@ type PointsGeneratorIR struct {
 
 // PointsIR is the typed compatibility record for one lowered particle system.
 type PointsIR struct {
+	ParentNode          string            `json:"parentNode,omitempty"`
 	ID                  string            `json:"id"`
 	Count               int               `json:"count"`
 	Positions           []float64         `json:"positions,omitempty"`
@@ -656,6 +670,8 @@ type PointsIR struct {
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
 type InstancedMeshIR struct {
+	// ParentNode names a retained group or scene node carrying this batch.
+	ParentNode           string                     `json:"parentNode,omitempty"`
 	Detail               *Detail                    `json:"detail,omitempty"`
 	ID                   string                     `json:"id"`
 	Count                int                        `json:"count"`
@@ -744,6 +760,7 @@ type InstancedMeshIR struct {
 
 // ComputeParticlesIR is the typed compatibility record for one GPU particle system.
 type ComputeParticlesIR struct {
+	ParentNode string             `json:"parentNode,omitempty"`
 	ID         string             `json:"id"`
 	Count      int                `json:"count"`
 	Emitter    ParticleEmitterIR  `json:"emitter"`
@@ -1176,9 +1193,10 @@ func (p Props) SceneIR() SceneIR {
 	}
 	if len(p.PointQualityGroups) > 0 {
 		groups := make(map[string]string, len(p.PointQualityGroups))
-		for name, group := range p.PointQualityGroups {
-			name = strings.TrimSpace(name)
-			group = strings.TrimSpace(group)
+		// Sorted so that two names that trim to one resolve the same way every run.
+		for _, rawName := range slices.Sorted(maps.Keys(p.PointQualityGroups)) {
+			name := strings.TrimSpace(rawName)
+			group := strings.TrimSpace(p.PointQualityGroups[rawName])
 			if name == "" || group == "" {
 				continue
 			}
@@ -1268,6 +1286,7 @@ func customShaderUnservedBackends(ir SceneIR, r capability.ShaderResolver) []cap
 		}
 		src := capability.CustomMaterialSources{GLSL: hasGLSL, WGSL: hasWGSL}
 		served := r.Serves(src)
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for b, ok := range served {
 			if !ok {
 				seen[b] = true
@@ -1277,10 +1296,7 @@ func customShaderUnservedBackends(ir SceneIR, r capability.ShaderResolver) []cap
 	if len(seen) == 0 {
 		return nil
 	}
-	out := make([]capability.Backend, 0, len(seen))
-	for b := range seen {
-		out = append(out, b)
-	}
+	out := slices.Sorted(maps.Keys(seen))
 	return out
 }
 
@@ -1393,6 +1409,7 @@ func (g Graph) SceneIR() SceneIR {
 		lowerer.lowerNode(node, identityTransform())
 	}
 	ir := SceneIR{
+		Groups:             lowerer.groups,
 		Objects:            lowerer.objects,
 		Models:             lowerer.models,
 		Points:             lowerer.points,
@@ -1628,6 +1645,7 @@ func cloneShaderLibCollections(ir *SceneIR) {
 	// entries the caller never asked for.
 	if len(ir.ShaderLib) > 0 {
 		cloned := make(map[string]string, len(ir.ShaderLib))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for id, src := range ir.ShaderLib {
 			cloned[id] = src
 		}
@@ -1858,6 +1876,7 @@ func hoistShaderLib(ir *SceneIR) {
 	}
 
 	lib := make(map[string]string)
+	//gosx:allow map-range keys are content hashes, so each source has one id; order does not matter
 	for s, n := range counts {
 		if n >= 2 {
 			lib[shaderLibID(s)] = s
@@ -1868,6 +1887,7 @@ func hoistShaderLib(ir *SceneIR) {
 	}
 
 	sourceToID := make(map[string]string, len(lib))
+	//gosx:allow map-range keys are content hashes, so each source has one id; order does not matter
 	for id, s := range lib {
 		sourceToID[s] = id
 	}
@@ -1883,6 +1903,7 @@ func hoistShaderLib(ir *SceneIR) {
 	if ir.ShaderLib == nil {
 		ir.ShaderLib = make(map[string]string, len(lib))
 	}
+	//gosx:allow map-range copies each entry independently; order does not matter
 	for id, s := range lib {
 		ir.ShaderLib[id] = s
 	}
@@ -1913,7 +1934,7 @@ func inflateShaderLibStruct(ir *SceneIR) {
 }
 
 func (ir SceneIR) isZero() bool {
-	return strings.TrimSpace(ir.Schema) == "" && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.WaterSystems) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0 && len(ir.QualityLadder) == 0 && len(ir.PointQualityGroups) == 0
+	return strings.TrimSpace(ir.Schema) == "" && len(ir.Groups) == 0 && len(ir.Objects) == 0 && len(ir.Models) == 0 && len(ir.Points) == 0 && len(ir.InstancedMeshes) == 0 && len(ir.InstancedGLBMeshes) == 0 && len(ir.ComputeParticles) == 0 && len(ir.WaterSystems) == 0 && len(ir.Animations) == 0 && len(ir.Labels) == 0 && len(ir.Sprites) == 0 && len(ir.HTML) == 0 && len(ir.Lights) == 0 && ir.Environment.IsZero() && len(ir.PostEffects) == 0 && len(ir.QualityLadder) == 0 && len(ir.PointQualityGroups) == 0
 }
 
 func (ir SceneIR) legacyProps() map[string]any {
@@ -1929,6 +1950,13 @@ func (ir SceneIR) legacyProps() map[string]any {
 	out := make(map[string]any, 16)
 	if strings.TrimSpace(ir.Schema) != "" {
 		out["schema"] = strings.TrimSpace(ir.Schema)
+	}
+	if len(ir.Groups) > 0 {
+		groups := make([]map[string]any, len(ir.Groups))
+		for index := range ir.Groups {
+			groups[index] = groupLegacyProps(ir.Groups[index])
+		}
+		out["groups"] = groups
 	}
 	if objects := legacyObjects(ir.Objects); len(objects) > 0 {
 		out["objects"] = objects
@@ -1997,6 +2025,7 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if len(ir.PointQualityGroups) > 0 {
 		groups := make(map[string]string, len(ir.PointQualityGroups))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for name, group := range ir.PointQualityGroups {
 			groups[name] = group
 		}
@@ -2007,6 +2036,7 @@ func (ir SceneIR) legacyProps() map[string]any {
 	}
 	if len(ir.ShaderLib) > 0 {
 		lib := make(map[string]string, len(ir.ShaderLib))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for key, source := range ir.ShaderLib {
 			lib[key] = source
 		}
@@ -2197,6 +2227,7 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "driftSpeed", item.DriftSpeed)
 	setNumeric(record, "driftPhase", item.DriftPhase)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	setString(record, "parentNode", item.ParentNode)
 	return record
 }
 
@@ -2422,6 +2453,7 @@ func (item PointsIR) legacyProps() map[string]any {
 	}
 	setString(record, "qualityGroup", item.QualityGroup)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	setString(record, "parentNode", item.ParentNode)
 	return record
 }
 
@@ -2551,6 +2583,7 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setString(record, "cullKernelEntry", item.CullKernelEntry)
 	setNumeric(record, "cullRadius", item.CullRadius)
 	setString(record, "cullBackend", item.CullBackend)
+	setString(record, "parentNode", item.ParentNode)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }
@@ -2629,6 +2662,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 		record["sharedAppearance"] = true
 	}
 	setString(record, "parentNode", item.ParentNode)
+	if len(item.Palette) > 0 {
+		record["palette"] = append([]string(nil), item.Palette...)
+	}
 	if len(item.Instances) > 0 {
 		instances := make([]map[string]any, 0, len(item.Instances))
 		for _, inst := range item.Instances {
@@ -2653,6 +2689,7 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 			if len(inst.ParentMatrix) > 0 {
 				instRecord["parentMatrix"] = append([]float64(nil), inst.ParentMatrix...)
 			}
+			setInt(instRecord, "tint", inst.Tint)
 			instances = append(instances, instRecord)
 		}
 		record["instances"] = instances
@@ -2752,6 +2789,7 @@ func (item ComputeParticlesIR) legacyProps() map[string]any {
 		record["renderShaderSourceFiles"] = cloneSceneStringMap(item.RenderShaderSourceFiles)
 	}
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	setString(record, "parentNode", item.ParentNode)
 	return record
 }
 
@@ -3010,6 +3048,7 @@ func (item WaterSystemIR) legacyProps() map[string]any {
 	setString(record, "duckMaterialFragmentGLES", item.DuckMaterialFragmentGLES)
 	if len(item.ShaderDescriptors) > 0 {
 		descriptors := make(map[string]any, len(item.ShaderDescriptors))
+		//gosx:allow map-range copies each entry independently; order does not matter
 		for k, v := range item.ShaderDescriptors {
 			clone := make(json.RawMessage, len(v))
 			copy(clone, v)
@@ -3150,6 +3189,7 @@ func (item LabelIR) legacyProps() map[string]any {
 	setString(record, "whiteSpace", item.WhiteSpace)
 	setString(record, "textAlign", item.TextAlign)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	setString(record, "parentNode", item.ParentNode)
 	return record
 }
 
@@ -3185,6 +3225,7 @@ func (item SpriteIR) legacyProps() map[string]any {
 	}
 	setString(record, "fit", item.Fit)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	setString(record, "parentNode", item.ParentNode)
 	return record
 }
 
@@ -3239,6 +3280,7 @@ func (item HTMLIR) legacyProps() map[string]any {
 	}
 	setString(record, "pointerEvents", item.PointerEvents)
 	applySceneLifecycleRecord(record, item.Transition, nil, nil, item.Live)
+	setString(record, "parentNode", item.ParentNode)
 	return record
 }
 
@@ -3290,6 +3332,7 @@ func (item LightIR) legacyProps() map[string]any {
 	setInt(record, "shadowCascades", item.ShadowCascades)
 	setNumeric(record, "shadowSoftness", item.ShadowSoftness)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
+	setString(record, "parentNode", item.ParentNode)
 	return record
 }
 
@@ -3643,8 +3686,7 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 			delete(seen, f)
 		}
 	}
-	for f := range seen {
-		features = append(features, f)
-	}
+	// Features outside collectFeatureOrder follow in name order.
+	features = append(features, slices.Sorted(maps.Keys(seen))...)
 	return features
 }

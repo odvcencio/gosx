@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/render/gpu"
 )
@@ -549,14 +550,14 @@ func raySphereIntersects(ray pickRay, model mat4, radius float32) bool {
 	oy := cy - ray.origin[1]
 	oz := cz - ray.origin[2]
 	// Project the centre onto the ray, then measure the perpendicular distance.
-	t := ox*ray.dir[0] + oy*ray.dir[1] + oz*ray.dir[2]
+	t := float32(ox*ray.dir[0]) + float32(oy*ray.dir[1]) + float32(oz*ray.dir[2])
 	if t < -radius {
 		return false
 	}
-	px := ox - ray.dir[0]*t
-	py := oy - ray.dir[1]*t
-	pz := oz - ray.dir[2]*t
-	return px*px+py*py+pz*pz <= radius*radius
+	px := ox - float32(ray.dir[0]*t)
+	py := oy - float32(ray.dir[1]*t)
+	pz := oz - float32(ray.dir[2]*t)
+	return float32(px*px)+float32(py*py)+float32(pz*pz) <= radius*radius
 }
 
 func pickRayForCamera(cam engine.RenderCamera, x, y, width, height int) pickRay {
@@ -576,7 +577,7 @@ func pickRayForCamera(cam engine.RenderCamera, x, y, width, height int) pickRay 
 			halfHeight = 1
 		}
 		invRot := mat4Mul(mat4RotateY(-float32(cam.RotationY)), mat4RotateX(-float32(cam.RotationX)))
-		offset := transformVector(invRot, [3]float32{nxNorm * halfWidth, nyNorm * halfHeight, 0})
+		offset := transformVector(invRot, [3]float32{float32(nxNorm * halfWidth), float32(nyNorm * halfHeight), 0})
 		forward := transformVector(invRot, [3]float32{0, 0, -1})
 		forward = normalize3(forward[0], forward[1], forward[2])
 		return pickRay{
@@ -592,8 +593,8 @@ func pickRayForCamera(cam engine.RenderCamera, x, y, width, height int) pickRay 
 	if height > 0 {
 		aspect = float32(width) / float32(height)
 	}
-	tanHalf := float32(math.Tan(float64(fov) / 2))
-	dir := [3]float32{nxNorm * aspect * tanHalf, nyNorm * tanHalf, -1}
+	tanHalf := float32(det.Tan(float64(fov) / 2))
+	dir := [3]float32{float32(nxNorm * aspect * tanHalf), float32(nyNorm * tanHalf), -1}
 	invRot := mat4Mul(mat4RotateY(-float32(cam.RotationY)), mat4RotateX(-float32(cam.RotationX)))
 	dir = transformVector(invRot, dir)
 	dir = normalize3(dir[0], dir[1], dir[2])
@@ -635,9 +636,9 @@ func raycastPrimitiveInstance(ray pickRay, geo *primitiveGeometry, model mat4) (
 			triangleIndex: tri / 3,
 			localPosition: barycentric3(lp0, lp1, lp2, w, u, v),
 			worldPosition: [3]float32{
-				ray.origin[0] + ray.dir[0]*dist,
-				ray.origin[1] + ray.dir[1]*dist,
-				ray.origin[2] + ray.dir[2]*dist,
+				ray.origin[0] + float32(ray.dir[0]*dist),
+				ray.origin[1] + float32(ray.dir[1]*dist),
+				ray.origin[2] + float32(ray.dir[2]*dist),
 			},
 			uv:    barycentric2(primitiveUVAt(geo, tri), primitiveUVAt(geo, tri+1), primitiveUVAt(geo, tri+2), w, u, v),
 			depth: dist,
@@ -658,16 +659,16 @@ func rayIntersectsTriangle(origin, dir, v0, v1, v2 [3]float32) (float32, float32
 	}
 	f := 1 / a
 	s := sub3(origin, v0)
-	u := f * dot3(s, h)
+	u := float32(f * dot3(s, h))
 	if u < 0 || u > 1 {
 		return 0, 0, 0, false
 	}
 	q := cross3(s, edge1)
-	v := f * dot3(dir, q)
+	v := float32(f * dot3(dir, q))
 	if v < 0 || u+v > 1 {
 		return 0, 0, 0, false
 	}
-	t := f * dot3(edge2, q)
+	t := float32(f * dot3(edge2, q))
 	if t <= eps {
 		return 0, 0, 0, false
 	}
@@ -692,32 +693,32 @@ func primitiveUVAt(geo *primitiveGeometry, index int) [2]float32 {
 
 func transformPoint(m mat4, p [3]float32) [3]float32 {
 	return [3]float32{
-		m[0]*p[0] + m[4]*p[1] + m[8]*p[2] + m[12],
-		m[1]*p[0] + m[5]*p[1] + m[9]*p[2] + m[13],
-		m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14],
+		float32(m[0]*p[0]) + float32(m[4]*p[1]) + float32(m[8]*p[2]) + m[12],
+		float32(m[1]*p[0]) + float32(m[5]*p[1]) + float32(m[9]*p[2]) + m[13],
+		float32(m[2]*p[0]) + float32(m[6]*p[1]) + float32(m[10]*p[2]) + m[14],
 	}
 }
 
 func transformVector(m mat4, p [3]float32) [3]float32 {
 	return [3]float32{
-		m[0]*p[0] + m[4]*p[1] + m[8]*p[2],
-		m[1]*p[0] + m[5]*p[1] + m[9]*p[2],
-		m[2]*p[0] + m[6]*p[1] + m[10]*p[2],
+		float32(m[0]*p[0]) + float32(m[4]*p[1]) + float32(m[8]*p[2]),
+		float32(m[1]*p[0]) + float32(m[5]*p[1]) + float32(m[9]*p[2]),
+		float32(m[2]*p[0]) + float32(m[6]*p[1]) + float32(m[10]*p[2]),
 	}
 }
 
 func barycentric3(a, b, c [3]float32, wa, wb, wc float32) [3]float32 {
 	return [3]float32{
-		a[0]*wa + b[0]*wb + c[0]*wc,
-		a[1]*wa + b[1]*wb + c[1]*wc,
-		a[2]*wa + b[2]*wb + c[2]*wc,
+		float32(a[0]*wa) + float32(b[0]*wb) + float32(c[0]*wc),
+		float32(a[1]*wa) + float32(b[1]*wb) + float32(c[1]*wc),
+		float32(a[2]*wa) + float32(b[2]*wb) + float32(c[2]*wc),
 	}
 }
 
 func barycentric2(a, b, c [2]float32, wa, wb, wc float32) [2]float32 {
 	return [2]float32{
-		a[0]*wa + b[0]*wb + c[0]*wc,
-		a[1]*wa + b[1]*wb + c[1]*wc,
+		float32(a[0]*wa) + float32(b[0]*wb) + float32(c[0]*wc),
+		float32(a[1]*wa) + float32(b[1]*wb) + float32(c[1]*wc),
 	}
 }
 
@@ -726,14 +727,14 @@ func sub3(a, b [3]float32) [3]float32 {
 }
 
 func dot3(a, b [3]float32) float32 {
-	return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+	return float32(a[0]*b[0]) + float32(a[1]*b[1]) + float32(a[2]*b[2])
 }
 
 func cross3(a, b [3]float32) [3]float32 {
 	return [3]float32{
-		a[1]*b[2] - a[2]*b[1],
-		a[2]*b[0] - a[0]*b[2],
-		a[0]*b[1] - a[1]*b[0],
+		float32(a[1]*b[2]) - float32(a[2]*b[1]),
+		float32(a[2]*b[0]) - float32(a[0]*b[2]),
+		float32(a[0]*b[1]) - float32(a[1]*b[0]),
 	}
 }
 

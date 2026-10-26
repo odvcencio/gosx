@@ -1,10 +1,5 @@
 package signal
 
-import (
-	"runtime"
-	"sync"
-)
-
 // Goroutine identity for scoping the dependency tracker and the batch depth.
 //
 // Reactive tracking is inherently goroutine-scoped: a tracking window covers
@@ -20,24 +15,6 @@ import (
 // helper returns 0. Every goroutine then shares one scope, which matches the
 // single-threaded browser target the package documents.
 const goroutinePrefix = "goroutine "
-
-// stackBufPool reuses the small scratch buffer that runtime.Stack fills. The
-// argument escapes to the heap, so a pool keeps the lookup allocation free.
-var stackBufPool = sync.Pool{
-	New: func() any {
-		buf := make([]byte, 32)
-		return &buf
-	},
-}
-
-func goroutineID() uint64 {
-	bufPtr := stackBufPool.Get().(*[]byte)
-	buf := *bufPtr
-	n := runtime.Stack(buf, false)
-	id := parseGoroutineID(buf[:n])
-	stackBufPool.Put(bufPtr)
-	return id
-}
 
 func parseGoroutineID(header []byte) uint64 {
 	if len(header) <= len(goroutinePrefix) {

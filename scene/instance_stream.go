@@ -10,11 +10,9 @@ import (
 // InstanceStreamEvent is the name a mounted Scene3D surface's lazy-loaded
 // instance-stream bridge dispatches a decoded frame through. It is a
 // SEPARATE, opt-in channel from MountCommandsEvent: MountCommandBatch still
-// carries every scene mutation a page makes (geometry, material, count,
-// membership); InstanceStreamFrame carries ONLY the per-instance transform
-// (and, for a skinned batch, clip/time) data for a batch already registered
-// through a normal CommandSetInstancedMeshes or CommandSetInstancedGLBMeshes
-// command. See client/runtime/scene3d/instance-stream.ts.
+// declares geometry and materials. InstanceStreamFrame updates a retained
+// primitive batch's transforms, colors and active count without resending
+// geometry. Skinned GLB batches use PoseFrame instead.
 const InstanceStreamEvent = "gosx:scene3d:instance-stream"
 
 // InstanceStreamKind selects the per-instance record layout an
@@ -30,8 +28,12 @@ const (
 	// primitives) streams every frame.
 	InstanceStreamTransform InstanceStreamKind = iota
 	// InstanceStreamTransformColor carries a 4x4 matrix plus an RGBA color
-	// (20 float32s) per instance, for a batch whose per-instance color also
-	// changes every frame.
+	// (20 finite float32s) per instance. Colors are normalized RGBA, matching
+	// the runtime's numeric color path (for #808080 use 128/255 per RGB channel).
+	// Count, transforms and colors replace the batch's active instances
+	// atomically. Count may grow, shrink or become zero; geometry, material,
+	// parent and per-instance attributes stay as declared. Re-declare the
+	// batch when those fields change. Stable instance indices are positional.
 	InstanceStreamTransformColor
 	// InstanceStreamSkinnedPose carries a 4x4 matrix plus a clip index and a
 	// clip time (18 float32s) per instance, for an InstancedGLBMesh batch
@@ -80,7 +82,7 @@ const (
 )
 
 // InstanceStreamFrame is one binary per-frame update for a single already
-// registered instanced batch (InstancedMesh or InstancedGLBMesh), addressed
+// registered primitive InstancedMesh batch, addressed
 // by the batch's existing scene-node ID. It exists to give a Go/WASM game
 // loop a typed, allocation-light alternative to re-marshaling a whole
 // MountCommandBatch (JSON) every frame when only instance poses moved: see
@@ -93,24 +95,46 @@ const (
 // runtime that already reads that layout on the JSON path reads this layout
 // unchanged.
 type InstanceStreamFrame struct {
-	// BatchID is the InstancedMeshIR.ID / InstancedGLBMeshIR.ID the frame
-	// updates. The batch must already be mounted (via a normal
-	// CommandSetInstancedMeshes / CommandSetInstancedGLBMeshes command) with
-	// this ID and Count; InstanceStreamFrame carries no geometry, material,
-	// or membership data and cannot create a batch.
+	// BatchID is the mounted InstancedMeshIR.ID. A frame cannot create a
+	// batch or change its geometry/material. A zero-count frame keeps the
+	// declaration available for re-growth; removing the declaration retires it.
 	BatchID string
 	// Revision must be positive and strictly increase per BatchID, mirroring
-	// MountCommandBatch.Revision. The browser runtime drops a stale or
-	// replayed frame.
+	// MountCommandBatch.Revision. The browser runtime drops stale/replayed
+	// frames. A new full declaration starts a new stream lifetime.
 	Revision uint64
 	Kind     InstanceStreamKind
 	// Count is the instance count this frame carries. It must equal
-	// len(Data) / Kind.Stride(), and the browser runtime rejects (fails
-	// named, does not truncate or pad) a frame whose Count disagrees with
-	// the batch's last-known instance count.
+	// len(Data) / Kind.Stride(). Transform-only frames require the mounted
+	// count; TransformColor frames replace it, including zero.
 	Count int
 	// Data is Count*Kind.Stride() float32s. See the type doc for layout.
 	Data []float32
+}
+
+// InstanceTransformColor is one local column-major matrix and normalized RGBA.
+// Color multiplies the batch material; use [4]float32{1, 1, 1, 1} for no tint.
+type InstanceTransformColor struct {
+	Transform [16]float32
+	Color     [4]float32
+}
+
+// SetTransformColors packs a typed snapshot into reusable frame storage and
+// sets Kind and Count. BatchID and Revision remain caller-owned. Input may be
+// reused immediately; Data is retained until this frame is repacked.
+func (f *InstanceStreamFrame) SetTransformColors(instances []InstanceTransformColor) {
+	f.Kind = InstanceStreamTransformColor
+	f.Count = len(instances)
+	needed := len(instances) * 20
+	if cap(f.Data) < needed {
+		f.Data = make([]float32, needed)
+	} else {
+		f.Data = f.Data[:needed]
+	}
+	for i := range instances {
+		copy(f.Data[i*20:], instances[i].Transform[:])
+		copy(f.Data[i*20+16:], instances[i].Color[:])
+	}
 }
 
 // Encode validates f and serializes it to the wire format
@@ -164,6 +188,13 @@ func (f InstanceStreamFrame) EncodeInto(dst []byte) ([]byte, error) {
 	}
 	if len(f.Data) != f.Count*stride {
 		return nil, fmt.Errorf("scene: instance stream data length %d does not match count %d * stride %d", len(f.Data), f.Count, stride)
+	}
+	if f.Kind == InstanceStreamTransformColor {
+		for _, v := range f.Data {
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+				return nil, errors.New("scene: instance stream transform/color must be finite")
+			}
+		}
 	}
 
 	payloadBytes := len(f.Data) * 4

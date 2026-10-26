@@ -2,9 +2,9 @@ package scene
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/physics"
 )
 
@@ -190,16 +190,16 @@ func shapeNameToKind(name string) (physics.ColliderShape, error) {
 // Scene3D renderer. Fine for static initial poses; runtime updates from
 // the solver use quaternions directly.
 func eulerToQuat(e IRVector3) physics.Quat {
-	cx := math.Cos(e.X * 0.5)
-	sx := math.Sin(e.X * 0.5)
-	cy := math.Cos(e.Y * 0.5)
-	sy := math.Sin(e.Y * 0.5)
-	cz := math.Cos(e.Z * 0.5)
-	sz := math.Sin(e.Z * 0.5)
+	cx := det.Cos(e.X * 0.5)
+	sx := det.Sin(e.X * 0.5)
+	cy := det.Cos(e.Y * 0.5)
+	sy := det.Sin(e.Y * 0.5)
+	cz := det.Cos(e.Z * 0.5)
+	sz := det.Sin(e.Z * 0.5)
 	return physics.Quat{
-		X: sx*cy*cz - cx*sy*sz,
-		Y: cx*sy*cz + sx*cy*sz,
-		Z: cx*cy*sz - sx*sy*cz,
-		W: cx*cy*cz + sx*sy*sz,
+		X: float64(sx*cy*cz) - float64(cx*sy*sz),
+		Y: float64(cx*sy*cz) + float64(sx*cy*sz),
+		Z: float64(cx*cy*sz) - float64(sx*sy*cz),
+		W: float64(cx*cy*cz) + float64(sx*sy*sz),
 	}.Normalize()
 }

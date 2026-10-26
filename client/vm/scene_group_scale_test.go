@@ -157,3 +157,24 @@ func assertPointNear(t *testing.T, got, want point3, tolerance float64) {
 		t.Fatalf("point = %#v, want %#v", got, want)
 	}
 }
+
+func TestGroupSpinSharedBundleDoesNotBakeAnimatedParent(t *testing.T) {
+	props := map[string]any{"scene": map[string]any{"groups": []any{map[string]any{"id": "rotor", "spinZ": math.Pi / 2}}}}
+	nodes := []resolvedNode{{Kind: "mesh", Geometry: "box", Props: map[string]any{"id": "blade", "parentNode": "rotor", "x": 2.0, "width": 0.4, "height": 0.4, "depth": 0.4, "wireframe": false}}}
+	store := &worldBakeStore{cache: map[int]*objectWorldBake{}, gen: []uint64{0}}
+	for _, seconds := range []float64{0, 1, 2, 3, 4, .5} {
+		bundle := buildRenderBundleCached(props, nodes, 640, 480, seconds, newSpinScratch(), store)
+		if len(bundle.Diagnostics) > 0 {
+			t.Fatalf("unexpected diagnostics: %v", bundle.Diagnostics)
+		}
+		object := bundleObjectByID(t, bundle.MeshObjects, "blade")
+		center := point3{X: (object.Bounds.MinX + object.Bounds.MaxX) / 2, Y: (object.Bounds.MinY + object.Bounds.MaxY) / 2, Z: (object.Bounds.MinZ + object.Bounds.MaxZ) / 2}
+		assertPointNear(t, center, point3{X: 2 * math.Cos(seconds*math.Pi/2), Y: 2 * math.Sin(seconds*math.Pi/2)}, 1e-12)
+	}
+	if len(store.cache) != 0 {
+		t.Fatal("animated parent entered the static world cache")
+	}
+	if nodes[0].Props["parentMatrix"] != nil {
+		t.Fatal("rendering modified the authored node")
+	}
+}

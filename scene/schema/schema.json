@@ -9,6 +9,7 @@
       "type": "string",
       "const": "gosx.scene3d.ir.v1"
     },
+    "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } },
     "objects": {
       "type": "array",
       "items": { "$ref": "#/$defs/object" }
@@ -94,6 +95,11 @@
     }
   },
   "$defs": {
+    "group": {
+      "allOf": [ { "$ref": "#/$defs/transformFields" } ],
+      "type": "object", "required": ["id"],
+      "properties": { "id": { "type": "string", "minLength": 1 } }
+    },
     "id": {
       "type": "string",
       "minLength": 1
@@ -213,6 +219,7 @@
         "scaleX": { "type": "number" },
         "scaleY": { "type": "number" },
         "scaleZ": { "type": "number" },
+        "parentNode": { "type": "string" },
         "parentMatrix": { "$ref": "#/$defs/affineMatrix" },
         "rotationX": { "type": "number" },
         "rotationY": { "type": "number" },
@@ -540,6 +547,7 @@
               "type": "string",
               "minLength": 1
             },
+            "palette": { "type": "array", "items": { "type": "string", "minLength": 1 } },
             "roughness": { "type": "number" },
             "metalness": { "type": "number" },
             "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
@@ -567,6 +575,7 @@
           "additionalProperties": true,
           "properties": {
             "id": { "type": "string" },
+            "tint": { "type": "integer", "minimum": 0 },
             "animation": { "type": "string" },
             "animationTime": { "type": "number", "minimum": 0 },
             "animationLoop": { "type": "boolean" }

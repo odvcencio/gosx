@@ -3,6 +3,8 @@ package scene
 import (
 	"fmt"
 	"math"
+
+	"m31labs.dev/gosx/det"
 )
 
 // The physical sky follows Preetham, Shirley and Smits, "A Practical
@@ -41,11 +43,11 @@ var (
 func SunDirectionFromAngles(elevationDeg, azimuthDeg float64) Vector3 {
 	el := elevationDeg * math.Pi / 180
 	az := azimuthDeg * math.Pi / 180
-	return Vector3{X: math.Sin(az) * math.Cos(el), Y: math.Sin(el), Z: -math.Cos(az) * math.Cos(el)}
+	return Vector3{X: float64(det.Sin(az) * det.Cos(el)), Y: det.Sin(el), Z: float64(-det.Cos(az) * det.Cos(el))}
 }
 
 func normalizeSunDirection(v Vector3) Vector3 {
-	length := math.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z)
+	length := math.Sqrt(float64(v.X*v.X) + float64(v.Y*v.Y) + float64(v.Z*v.Z))
 	if length < 1e-9 || math.IsNaN(length) || math.IsInf(length, 0) {
 		return SunDirectionFromAngles(6, 0)
 	}
@@ -79,21 +81,21 @@ func newPhysicalSkyParams(s Sky) physicalSkyParams {
 	g := physicalSkyDefault(s.MieDirectionalG, physicalSkyDefaultMieG)
 	disk := physicalSkyDefault(s.SunDiskRadius, physicalSkyDefaultDiskDeg)
 	p := physicalSkyParams{sun: sun, g: g, intensity: physicalSkyDefault(s.Intensity, 1)}
-	zenith := math.Acos(math.Max(-1, math.Min(1, sun.Y)))
-	p.sunE = physicalSkySunEE * math.Max(0, 1-math.Exp(-((physicalSkySunCutoff-zenith)/physicalSkySunSteepness)))
-	p.sunFade = 1 - math.Max(0, math.Min(1, 1-math.Exp(sun.Y)))
+	zenith := det.Acos(math.Max(-1, math.Min(1, sun.Y)))
+	p.sunE = float64(physicalSkySunEE * math.Max(0, 1-det.Exp(-((physicalSkySunCutoff-zenith)/physicalSkySunSteepness))))
+	p.sunFade = 1 - math.Max(0, math.Min(1, 1-det.Exp(sun.Y)))
 	// Below the horizon the fade can exceed a small authored Rayleigh value;
 	// a negative coefficient would make the extinction grow and pow() NaN.
 	rayleighCoefficient := math.Max(0, rayleigh-(1-p.sunFade))
-	c := 0.2 * turbidity * 10e-18
+	c := float64(0.2 * turbidity * 10e-18)
 	for i := 0; i < 3; i++ {
-		p.betaR[i] = physicalSkyTotalRayleigh[i] * rayleighCoefficient
-		p.betaM[i] = 0.434 * c * physicalSkyMieConst[i] * mie
+		p.betaR[i] = float64(physicalSkyTotalRayleigh[i] * rayleighCoefficient)
+		p.betaM[i] = float64(0.434 * c * physicalSkyMieConst[i] * mie)
 	}
 	if disk < 0 {
 		p.diskCos = 2 // cos never exceeds 1: no disk
 	} else {
-		p.diskCos = math.Cos(disk * math.Pi / 180)
+		p.diskCos = det.Cos(disk * math.Pi / 180)
 	}
 	return p
 }
@@ -114,40 +116,40 @@ func (s Sky) PhysicalRadiance(dir Vector3, includeSun bool) (r, g, b float64) {
 }
 
 func (p physicalSkyParams) radiance(dir Vector3) [3]float64 {
-	zenith := math.Acos(math.Max(0, math.Min(1, dir.Y)))
-	inverse := 1 / (math.Cos(zenith) + 0.15*math.Pow(93.885-zenith*180/math.Pi, -1.253))
-	sR := physicalSkyRayleighZenith * inverse
-	sM := physicalSkyMieZenith * inverse
-	cosTheta := dir.X*p.sun.X + dir.Y*p.sun.Y + dir.Z*p.sun.Z
-	rPhase := 3 / (16 * math.Pi) * (1 + cosTheta*cosTheta)
-	g2 := p.g * p.g
-	mPhase := 1 / (4 * math.Pi) * (1 - g2) / math.Pow(1-2*p.g*cosTheta+g2, 1.5)
-	horizonMix := math.Max(0, math.Min(1, math.Pow(1-p.sun.Y, 5)))
+	zenith := det.Acos(math.Max(0, math.Min(1, dir.Y)))
+	inverse := 1 / (det.Cos(zenith) + float64(0.15*det.Pow(93.885-zenith*180/math.Pi, -1.253)))
+	sR := float64(physicalSkyRayleighZenith * inverse)
+	sM := float64(physicalSkyMieZenith * inverse)
+	cosTheta := float64(dir.X*p.sun.X) + float64(dir.Y*p.sun.Y) + float64(dir.Z*p.sun.Z)
+	rPhase := float64(3 / (16 * math.Pi) * (1 + float64(cosTheta*cosTheta)))
+	g2 := float64(p.g * p.g)
+	mPhase := 1 / (4 * math.Pi) * (1 - g2) / det.Pow(1-float64(2*p.g*cosTheta)+g2, 1.5)
+	horizonMix := math.Max(0, math.Min(1, det.Pow(1-p.sun.Y, 5)))
 	disk := 0.0
 	if p.diskCos <= 1 {
 		disk = smoothstepSky(p.diskCos, p.diskCos+0.00002, cosTheta)
 	}
-	exponent := 1 / (1.2 + 1.2*p.sunFade)
+	exponent := 1 / (1.2 + float64(1.2*p.sunFade))
 	offset := [3]float64{0, 0.0003, 0.00075}
 	var out [3]float64
 	for i := 0; i < 3; i++ {
-		fex := math.Exp(-(p.betaR[i]*sR + p.betaM[i]*sM))
-		scatter := (p.betaR[i]*rPhase + p.betaM[i]*mPhase) / math.Max(p.betaR[i]+p.betaM[i], 1e-30)
-		lin := math.Pow(math.Max(p.sunE*scatter*(1-fex), 0), 1.5)
-		lin *= mix1(1, math.Pow(math.Max(p.sunE*scatter*fex, 0), 0.5), horizonMix)
-		l0 := 0.1*fex + p.sunE*19000*fex*disk
-		color := (lin+l0)*0.04 + offset[i]
-		out[i] = math.Pow(math.Max(color, 0), exponent) * p.intensity
+		fex := det.Exp(-(float64(p.betaR[i]*sR) + float64(p.betaM[i]*sM)))
+		scatter := (float64(p.betaR[i]*rPhase) + float64(p.betaM[i]*mPhase)) / math.Max(p.betaR[i]+p.betaM[i], 1e-30)
+		lin := det.Pow(math.Max(float64(p.sunE*scatter*(1-fex)), 0), 1.5)
+		lin = float64(lin * mix1(1, det.Pow(math.Max(float64(p.sunE*scatter*fex), 0), 0.5), horizonMix))
+		l0 := float64(0.1*fex) + float64(p.sunE*19000*fex*disk)
+		color := float64((lin+l0)*0.04) + offset[i]
+		out[i] = float64(det.Pow(math.Max(color, 0), exponent) * p.intensity)
 	}
 	return out
 }
 
 func smoothstepSky(e0, e1, x float64) float64 {
 	t := math.Max(0, math.Min(1, (x-e0)/(e1-e0)))
-	return t * t * (3 - 2*t)
+	return float64(t * t * (3 - 2*t))
 }
 
-func mix1(a, b, t float64) float64 { return a + (b-a)*t }
+func mix1(a, b, t float64) float64 { return a + float64((b-a)*t) }
 
 // fillPhysicalSkyGradient sets any unset gradient stop to the model's color
 // at the zenith, the horizon (facing the sun's azimuth) and below the
@@ -156,7 +158,7 @@ func mix1(a, b, t float64) float64 { return a + (b-a)*t }
 func fillPhysicalSkyGradient(s *Sky) {
 	p := newPhysicalSkyParams(*s)
 	p.diskCos = 2
-	flat := math.Hypot(p.sun.X, p.sun.Z)
+	flat := det.Hypot(p.sun.X, p.sun.Z)
 	toward := Vector3{X: 0, Y: 0, Z: -1}
 	if flat > 1e-6 {
 		toward = Vector3{X: p.sun.X / flat, Z: p.sun.Z / flat}
@@ -165,7 +167,7 @@ func fillPhysicalSkyGradient(s *Sky) {
 		c := p.radiance(normalizeSunDirection(dir))
 		var b [3]int
 		for i := range c {
-			b[i] = int(math.Round(srgbEncodeSky(acesSky(c[i])) * 255))
+			b[i] = int(math.Round(float64(srgbEncodeSky(acesSky(c[i])) * 255)))
 		}
 		return fmt.Sprintf("#%02x%02x%02x", b[0], b[1], b[2])
 	}
@@ -182,13 +184,13 @@ func fillPhysicalSkyGradient(s *Sky) {
 
 // acesSky is the Narkowicz fit of the ACES filmic curve.
 func acesSky(x float64) float64 {
-	v := (x * (2.51*x + 0.03)) / (x*(2.43*x+0.59) + 0.14)
+	v := (x * (float64(2.51*x) + 0.03)) / (float64(x*(float64(2.43*x)+0.59)) + 0.14)
 	return math.Max(0, math.Min(1, v))
 }
 
 func srgbEncodeSky(c float64) float64 {
 	if c <= 0.0031308 {
-		return c * 12.92
+		return float64(c * 12.92)
 	}
-	return 1.055*math.Pow(c, 1/2.4) - 0.055
+	return float64(1.055*det.Pow(c, 1/2.4)) - 0.055
 }

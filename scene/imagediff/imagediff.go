@@ -1,3 +1,5 @@
+//gosx:deterministic
+
 // Package imagediff compares two rendered frames and reports where they
 // differ. It closes the last browser-shaped hole in the native authoring loop:
 // a frame hash proves that something changed, but it cannot say what. This
@@ -224,7 +226,7 @@ func (r Result) Summary() string {
 		return fmt.Sprintf("identical: %d pixels compared at tolerance %d", r.ComparedPixels, r.Tolerance)
 	}
 	return fmt.Sprintf("%d of %d pixels changed (%.4f%%), max channel delta %d, %d %s",
-		r.ChangedPixels, r.ComparedPixels, r.ChangedFraction*100, r.MaxChannelDelta,
+		r.ChangedPixels, r.ComparedPixels, float64(r.ChangedFraction*100), r.MaxChannelDelta,
 		r.RegionCount, plural(r.RegionCount, "region", "regions"))
 }
 

@@ -1,6 +1,10 @@
 package motion
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // EaseKind identifies the easing function.
 type EaseKind uint8
@@ -40,18 +44,18 @@ func (e Ease) Apply(t float64) float64 {
 
 	case EaseInPow:
 		p := powArg(e.Args)
-		return math.Pow(t, p)
+		return det.Pow(t, p)
 
 	case EaseOutPow:
 		p := powArg(e.Args)
-		return 1 - math.Pow(1-t, p)
+		return 1 - det.Pow(1-t, p)
 
 	case EaseInOutPow:
 		p := powArg(e.Args)
 		if t < 0.5 {
-			return 0.5 * math.Pow(2*t, p)
+			return 0.5 * det.Pow(2*t, p)
 		}
-		return 1 - 0.5*math.Pow(2-2*t, p)
+		return 1 - 0.5*det.Pow(2-2*t, p)
 
 	case EaseCubicBezier:
 		x1, y1, x2, y2 := 0.0, 0.0, 0.0, 0.0
@@ -66,29 +70,29 @@ func (e Ease) Apply(t float64) float64 {
 		if len(e.Args) >= 1 && e.Args[0] >= 1 {
 			n = e.Args[0]
 		}
-		return math.Floor(t*n) / n
+		return math.Floor(float64(t*n)) / n
 
 	case EaseInBack:
 		s := backArg(e.Args)
 		c3 := s + 1
-		return c3*t*t*t - s*t*t
+		return float64(c3*t*t*t) - float64(s*t*t)
 
 	case EaseOutBack:
 		s := backArg(e.Args)
 		c3 := s + 1
 		t1 := t - 1
-		return 1 + c3*t1*t1*t1 + s*t1*t1
+		return 1 + float64(c3*t1*t1*t1) + float64(s*t1*t1)
 
 	case EaseInOutBack:
 		s := backArg(e.Args)
-		s2 := s * 1.525
+		s2 := float64(s * 1.525)
 		c3 := s2 + 1
 		if t < 0.5 {
 			tt := 2 * t
-			return 0.5 * (c3*tt*tt*tt - s2*tt*tt)
+			return 0.5 * (float64(c3*tt*tt*tt) - float64(s2*tt*tt))
 		}
 		tt := 2*t - 2
-		return 0.5*(c3*tt*tt*tt+s2*tt*tt) + 1
+		return 0.5*(float64(c3*tt*tt*tt)+float64(s2*tt*tt)) + 1
 
 	default:
 		return t
@@ -118,7 +122,7 @@ func backArg(args []float64) float64 {
 // bezierValue(u) = 3*(1-u)^2*u*c1 + 3*(1-u)*u^2*c2 + u^3
 func cubicBezierValue(u, c1, c2 float64) float64 {
 	v := 1 - u
-	return 3*v*v*u*c1 + 3*v*u*u*c2 + u*u*u
+	return float64(3*v*v*u*c1) + float64(3*v*u*u*c2) + float64(u*u*u)
 }
 
 // solveCubicBezierX finds the bezier parameter u such that bezierX(u) ≈ x,
@@ -168,5 +172,5 @@ func solveCubicBezierX(x, x1, x2 float64) float64 {
 // bezierX(u) = 3*(1-u)^2*u*x1 + 3*(1-u)*u^2*x2 + u^3
 // d/du = 3*x1*(1-u)*(1-3u) + 3*x2*u*(2-3u) + 3*u^2
 func cubicBezierDerivX2(u, x1, x2 float64) float64 {
-	return 3*x1*(1-u)*(1-3*u) + 3*x2*u*(2-3*u) + 3*u*u
+	return float64(3*x1*(1-u)*(1-float64(3*u))) + float64(3*x2*u*(2-float64(3*u))) + float64(3*u*u)
 }

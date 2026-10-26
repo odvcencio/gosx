@@ -51,7 +51,12 @@ repository: export them, or define them in `$HOME/.config/gosx/deploy.env`
 both values.
 
 `GOSX_TINYGO_GOROOT` must point at the Go 1.25.5 compatibility toolchain used
-by TinyGo. The target Deployment and `gosx-docs` Secret must already exist; the
+by TinyGo. The deployment passes its validated TinyGo executable to the CLI
+through `TINYGO`, preserving the caller's `PATH` and selected `wasm-opt`.
+The CLI also accepts `TINYGO` for custom compiler paths during ordinary builds;
+an unavailable explicit compiler fails in auto/tinygo mode instead of selecting
+a prebuilt runtime. Explicit prebuilt mode keeps its existing behavior.
+The target Deployment and `gosx-docs` Secret must already exist; the
 script verifies that the Secret's `session-secret` is present without passing it
 to local build or identity probes. Those use independently random keys. The deploy script refuses
 a dirty tree, clears and regenerates the entire production `dist/` bundle with

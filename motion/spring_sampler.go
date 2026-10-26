@@ -56,9 +56,9 @@ func prepareSpring(s Spring, from, to, duration float64, count int) *PreparedSpr
 	sampler.checkpoints[0] = springCheckpoint{x, velocity}
 	for checkpoint := 1; checkpoint < count; checkpoint++ {
 		for step := 0; step < springCheckpointSteps; step++ {
-			force := -p.Stiffness*(x-to) - p.Damping*velocity
-			velocity += (force / p.Mass) * SpringDT
-			x += velocity * SpringDT
+			force := float64(-p.Stiffness*(x-to)) - float64(p.Damping*velocity)
+			velocity += float64((force / p.Mass) * SpringDT)
+			x += float64(velocity * SpringDT)
 		}
 		sampler.checkpoints[checkpoint] = springCheckpoint{x, velocity}
 	}
@@ -89,9 +89,9 @@ func (p *PreparedSpring) Value(t float64) float64 {
 	x, velocity := state.x, state.velocity
 	physics := p.spring
 	for step := checkpoint * springCheckpointSteps; step < steps; step++ {
-		force := -physics.Stiffness*(x-p.to) - physics.Damping*velocity
-		velocity += (force / physics.Mass) * SpringDT
-		x += velocity * SpringDT
+		force := float64(-physics.Stiffness*(x-p.to)) - float64(physics.Damping*velocity)
+		velocity += float64((force / physics.Mass) * SpringDT)
+		x += float64(velocity * SpringDT)
 	}
 	return x
 }

@@ -50,6 +50,7 @@ func perfAssetRendererFixture(t *testing.T) (*Renderer, *buildmanifest.Manifest)
 		{"bootstrap-feature-scene3d-compute.js", &m.Runtime.BootstrapFeatureScene3DCompute}, {"bootstrap-feature-scene3d-decompress.js", &m.Runtime.BootstrapFeatureScene3DDecompress},
 		{"bootstrap-feature-scene3d-gltf.js", &m.Runtime.BootstrapFeatureScene3DGLTF}, {"bootstrap-feature-scene3d-animation.js", &m.Runtime.BootstrapFeatureScene3DAnimation},
 		{"bootstrap-feature-scene3d-command.js", &m.Runtime.BootstrapFeatureScene3DCommand}, {"bootstrap-feature-scene3d-instance-stream.js", &m.Runtime.BootstrapFeatureScene3DInstanceStream},
+		{"bootstrap-feature-scene3d-hierarchy.js", &m.Runtime.BootstrapFeatureScene3DHierarchy},
 		{"bootstrap-feature-scene3d-timeline.js", &m.Runtime.BootstrapFeatureScene3DTimeline}, {"bootstrap-feature-scene3d-particle-burst.js", &m.Runtime.BootstrapFeatureScene3DParticleBurst},
 		{"bootstrap-feature-textlayout.js", &m.Runtime.BootstrapFeatureTextlayout},
 		{"hls.min.js", &m.Runtime.VideoHLS},

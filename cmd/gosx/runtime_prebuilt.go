@@ -211,7 +211,9 @@ func resolveWASMCompilerForProject(opts BuildOptions, projectDir string, lookPat
 		if tinyGoErr == nil {
 			return compiler, path, nil, nil
 		}
-		if mode == "tinygo" {
+		if mode == "tinygo" || strings.TrimSpace(os.Getenv("TINYGO")) != "" {
+			// An explicit executable is a toolchain choice, not a hint to
+			// silently replace it with a downloaded runtime when unavailable.
 			return "", "", nil, tinyGoErr
 		}
 		bundle, prebuiltErr := resolvePrebuiltRuntimeForProject(context.Background(), opts, projectDir)

@@ -32,7 +32,7 @@
     if (!Array.isArray(input) || input.length > 10000) throw new RangeError("scene transition supports at most 10000 commands per pose");
     const result = new Map();
     for (const raw of input) {
-      if (!raw || !Number.isInteger(raw.kind) || raw.kind < 0 || raw.kind > 14 || raw.kind <= 4 && !raw.objectId || raw.objectId != null && (typeof raw.objectId !== "string" || raw.objectId.length > 256) || raw.kind !== 1 && raw.data == null) throw new TypeError("scene transition contains an invalid command");
+      if (!raw || !Number.isInteger(raw.kind) || raw.kind < 0 || raw.kind > 15 || raw.kind <= 4 && !raw.objectId || raw.objectId != null && (typeof raw.objectId !== "string" || raw.objectId.length > 256) || raw.kind !== 1 && raw.data == null) throw new TypeError("scene transition contains an invalid command");
       const command = {kind: raw.kind};
       if (raw.objectId) command.objectId = raw.objectId;
       const snapshot = copy(raw.data == null ? null : raw.data, 0, budget);

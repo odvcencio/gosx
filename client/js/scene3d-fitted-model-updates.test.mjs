@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const ts = createRequire(import.meta.url)('../runtime/node_modules/typescript');
 const source = fs.readFileSync(path.join(root, 'client/runtime/scene3d/mount-webgl.ts'), 'utf8');
 function functions(first, next) {
   return source.slice(source.indexOf('  function ' + first + '('), source.indexOf('  function ' + next + '('));
@@ -20,6 +22,9 @@ function fixture() {
   }
   context.sceneHydrationModels = state => state.models;
   context.sceneOwns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  context.sceneApplyModelSkinPose = () => { throw new Error('unexpected skin playback in rigid fit fixture'); };
+  vm.runInContext(ts.transpileModule(fs.readFileSync(path.join(root, 'client/runtime/scene3d/model-pose-data.ts'), 'utf8'),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   vm.runInContext(
     functions('sceneModelLocalTransformVector', 'sceneModelMaxScale') +
     functions('sceneModelTransformMatrix', 'sceneModelIdentityBindMatrices') +

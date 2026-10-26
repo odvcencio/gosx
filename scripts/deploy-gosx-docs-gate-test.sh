@@ -46,6 +46,11 @@ write_fake_tools() {
 		'printf "%s\n" "gosx:$*" >>"${GOSX_FAKE_DEPLOY_LOG}"' \
 		'if [ "$#" -ge 1 ] && [ "$1" = "version" ]; then echo "gosx v0.53.9"; exit 0; fi' \
 		'if [ "$#" -ge 2 ] && [ "$1" = "build" ] && [ "$2" = "--prod" ]; then' \
+		'  if [ -n "${GOSX_FAKE_EXPECT_WASM_OPT:-}" ]; then' \
+		'    if [ "$(command -v wasm-opt)" != "$GOSX_FAKE_EXPECT_WASM_OPT" ]; then echo "pinned optimizer changed" >&2; exit 1; fi' \
+		'    if [ "${TINYGO:-}" != "$GOSX_FAKE_EXPECT_TINYGO" ]; then echo "selected TinyGo changed" >&2; exit 1; fi' \
+		'    printf "%s\n" "gosx:compiler-selection-preserved" >>"${GOSX_FAKE_DEPLOY_LOG}"' \
+		'  fi' \
 		'  dist="examples/gosx-docs/dist"' \
 		'  mkdir -p "${dist}/server"' \
 		'  printf "{}\n" >"${dist}/build.json"' \
@@ -161,17 +166,36 @@ run_deploy() {
 	out_file="${tmp_dir}/${label}.out"
 	fake_go_root="${tmp_dir}/${label}-go-root"
 	write_fake_tools "$tools_dir"
+	tinygo_tool="${tools_dir}/tinygo"
+	tools_path="$tools_dir"
+	expected_optimizer=""
+	expected_tinygo=""
+	if [ "$label" = "toolchain-selection" ]; then
+		pinned_tools="${tmp_dir}/${label}-pinned"
+		tinygo_tools="${tmp_dir}/${label}-tinygo"
+		mkdir -p "$pinned_tools" "$tinygo_tools"
+		write_file "${pinned_tools}/wasm-opt" '#!/usr/bin/env sh' 'exit 0'
+		write_file "${tinygo_tools}/wasm-opt" '#!/usr/bin/env sh' 'echo bundled-optimizer >&2' 'exit 1'
+		cp "${tools_dir}/tinygo" "${tinygo_tools}/custom-tinygo"
+		chmod +x "${pinned_tools}/wasm-opt" "${tinygo_tools}/wasm-opt" "${tinygo_tools}/custom-tinygo"
+		tinygo_tool="${tinygo_tools}/custom-tinygo"
+		tools_path="${pinned_tools}:${tools_dir}"
+		expected_optimizer="${pinned_tools}/wasm-opt"
+		expected_tinygo="$tinygo_tool"
+	fi
 	mkdir -p "${fake_go_root}/bin"
 	cp "${tools_dir}/go" "${fake_go_root}/bin/go"
 	if (cd "$repo_dir" && \
-		PATH="${tools_dir}:$PATH" \
+		PATH="${tools_path}:$PATH" \
 		GOSX_DEPLOY_ENV=/dev/null \
 		GOSX_DOCS_REGISTRY="registry.example.com/test/gosx-docs" \
 		GOSX_DOCS_NAMESPACE="gosx-docs-test" \
 		GO="${tools_dir}/go" \
 		DOCKER="${tools_dir}/docker" \
 		KUBECTL="${tools_dir}/kubectl" \
-		TINYGO="${tools_dir}/tinygo" \
+		TINYGO="$tinygo_tool" \
+		GOSX_FAKE_EXPECT_WASM_OPT="$expected_optimizer" \
+		GOSX_FAKE_EXPECT_TINYGO="$expected_tinygo" \
 		GOSX_TINYGO_GOROOT="$fake_go_root" \
 		GOSX_FAKE_DEPLOY_LOG="$log_file" \
 		GOSX_FAKE_IDENTITY_APP_SRC="${repo_dir}/scripts/testdata/fake-gosx-docs-built-identity-app.py" \
@@ -277,6 +301,17 @@ fi
 if ! grep -E '^[0-9a-f]{64}$' "$identity_secret_log" >/dev/null; then
 	echo "gosx docs deploy gate test: local identity process did not receive a disposable secret" >&2
 	cat "$identity_secret_log" >&2
+	exit 1
+fi
+
+repo_toolchain="$(setup_repo toolchain-selection)"
+result="$(run_deploy toolchain-selection "$repo_toolchain" env GOSX_FAKE_IDENTITY_APP_MODE=bad-identity)"
+assert_failed "$result"
+assert_output_contains "$result" "/api/site does not match the intended deployment identity"
+assert_no_mutations "$(result_log "$result")"
+if ! grep -F "gosx:compiler-selection-preserved" "$(result_log "$result")" >/dev/null; then
+	echo "gosx docs deploy gate test: compiler selection changed before the identity gate" >&2
+	cat "$(result_out "$result")" >&2
 	exit 1
 fi
 
