@@ -36,6 +36,11 @@ type fileProgramRenderer struct {
 	opts           fileRenderOptions
 	replaced       bool
 	err            error
+
+	// siblings holds the components of the other .gsx files in this file's
+	// directory, loaded on the first unresolved tag of one render.
+	siblings       map[string]sharedComponentTarget
+	siblingsLoaded bool
 }
 
 func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (output string, replaced bool, renderErr error) {
@@ -395,6 +400,10 @@ func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, 
 
 	if handled, out := r.renderBoundComponent(node, env); handled {
 		b.WriteString(out)
+		return
+	}
+
+	if r.writeSiblingComponent(b, node, env) {
 		return
 	}
 

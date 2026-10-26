@@ -25,6 +25,20 @@
   Nested schema and named-scalar checks retain the JSON fallback when a proof
   is stale or a comparison is ambiguous.
 
+## v0.57.23
+
+- Hydrate islands declared in sibling GoSX files or relative-imported shared
+  directories while preserving package boundaries and the declaring file's
+  render context.
+- Create dynamic SVG and MathML in the proper namespace, including HTML
+  integration points, MathML annotations, and namespaced attributes.
+- Keep island table paths aligned with server-added row groups. Preserve
+  grouping through row insertion, section replacement and keyed reordering.
+- Retain keyed row identity around compiler-identified whitespace and static
+  siblings. Ambiguous structures keep positional reconciliation; ordinary
+  fully keyed lists keep their existing path. Reuse row-key strings rather
+  than allocating a new key per row while matching stable source anchors.
+
 ## v0.57.22
 
 - Stream primitive instance counts, local transforms and normalized RGBA colors as
