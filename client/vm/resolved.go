@@ -1,6 +1,10 @@
 package vm
 
-import "strings"
+import (
+	"strings"
+
+	"m31labs.dev/gosx/internal/htmlattr"
+)
 
 // ResolvedTree is the fully evaluated DOM tree produced by the VM after
 // evaluating all expressions and resolving dynamic content.
@@ -54,6 +58,8 @@ type ResolvedAttr struct {
 	Name  string
 	Value string
 	Bool  bool
+	// generatedDispatch is set only when materializing framework event bindings.
+	generatedDispatch bool
 }
 
 // ResolvedEvent is a delegated DOM event binding attached to a concrete node.
@@ -74,25 +80,44 @@ func (node *ResolvedNode) effectiveDOMAttrs() []ResolvedAttr {
 }
 
 func materializeDOMAttrs(attrs []ResolvedAttr, events []ResolvedEvent) []ResolvedAttr {
-	// Fast path: no events → alias the attrs slice directly instead of
+	// Fast path: no events or reserved names → alias the attrs slice instead of
 	// allocating a copy. The returned slice is treated as read-only by
 	// the reconcile walker (it only indexes DOMAttrs, never appends),
 	// so aliasing is safe.
-	if len(events) == 0 {
+	reserved := false
+	for _, attr := range attrs {
+		if htmlattr.ReservedDispatchName(attr.Name) {
+			reserved = true
+			break
+		}
+	}
+	if len(events) == 0 && !reserved {
 		return attrs
 	}
 	out := make([]ResolvedAttr, 0, len(attrs)+(len(events)*2))
-	out = append(out, attrs...)
+	for _, attr := range attrs {
+		if !htmlattr.ReservedDispatchName(attr.Name) {
+			out = append(out, attr)
+		}
+	}
+	return appendGeneratedDispatchAttrs(out, events)
+}
+
+// appendGeneratedDispatchAttrs is the only constructor for privileged DOM
+// markers, shared by VM evaluation and lazy resolved-node materialization.
+func appendGeneratedDispatchAttrs(out []ResolvedAttr, events []ResolvedEvent) []ResolvedAttr {
 	for _, event := range events {
 		eventType := eventAttrType(event.Name)
 		out = append(out, ResolvedAttr{
-			Name:  eventMarkerAttr(eventType),
-			Value: event.Handler,
+			generatedDispatch: true,
+			Name:              eventMarkerAttr(eventType),
+			Value:             event.Handler,
 		})
 		if eventType == "click" {
 			out = append(out, ResolvedAttr{
-				Name:  "data-gosx-handler",
-				Value: event.Handler,
+				generatedDispatch: true,
+				Name:              "data-gosx-handler",
+				Value:             event.Handler,
 			})
 		}
 	}

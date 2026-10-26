@@ -1,36 +1,11 @@
+// BEGIN SELENA CLOUDS: generated from scene/clouds.sel; do not edit.
+const SCENE_CLOUD_LIBRARY_WGSL = "fn gosxCloudSurface(ray:vec3f,eye:vec3f,settings:vec4f,drift:vec4f,ambient:vec3f,sunLight:vec3f,sun:vec3f,horizon:vec3f)->vec4f {\nlet origin = (eye + vec3<f32>(0.0, 6371000.0, 0.0));\n  let b = dot(origin, ray);\n  let radius = (6371000.0 + settings.y);\n  let t = max(((-b) + sqrt(max((((b * b) - dot(origin, origin)) + (radius * radius)), 0.0))), 0.0);\n  var p : vec2<f32> = (((eye.xz + (ray.xz * t)) - (drift.xy * drift.z)) / settings.z);\n  var footprint : f32 = length(fwidth(p));\n  var density : f32 = 0.0;\n  var weight : f32 = 0.52;\n  var total : f32 = 0.0;\n  for (var i : i32 = 0i; (i < 5i); i = (i + 1i)) {\n    if ((f32(i) >= drift.w)) {\n      break;\n    }\n    let filtered = (1.0 - smoothstep(0.3, 1.0, footprint));\n    let q = floor(p);\n    let f = fract(p);\n    let blend = ((f * f) * (3.0 - (2.0 * f)));\n    let selenaLib0 = q;\n    let selenaLib1 = fract((selenaLib0 * vec2<f32>(0.1031, 0.103)));\n    let selenaLib2 = (selenaLib1 + dot(selenaLib1, (selenaLib1.yx + 33.33)));\n    let selenaLib3 = fract(((selenaLib2.x + selenaLib2.y) * selenaLib2.x));\n    let a = selenaLib3;\n    let selenaLib4 = (q + vec2<f32>(1.0, 0.0));\n    let selenaLib5 = fract((selenaLib4 * vec2<f32>(0.1031, 0.103)));\n    let selenaLib6 = (selenaLib5 + dot(selenaLib5, (selenaLib5.yx + 33.33)));\n    let selenaLib7 = fract(((selenaLib6.x + selenaLib6.y) * selenaLib6.x));\n    let b0 = selenaLib7;\n    let selenaLib8 = (q + vec2<f32>(0.0, 1.0));\n    let selenaLib9 = fract((selenaLib8 * vec2<f32>(0.1031, 0.103)));\n    let selenaLib10 = (selenaLib9 + dot(selenaLib9, (selenaLib9.yx + 33.33)));\n    let selenaLib11 = fract(((selenaLib10.x + selenaLib10.y) * selenaLib10.x));\n    let c = selenaLib11;\n    let selenaLib12 = (q + vec2<f32>(1.0, 1.0));\n    let selenaLib13 = fract((selenaLib12 * vec2<f32>(0.1031, 0.103)));\n    let selenaLib14 = (selenaLib13 + dot(selenaLib13, (selenaLib13.yx + 33.33)));\n    let selenaLib15 = fract(((selenaLib14.x + selenaLib14.y) * selenaLib14.x));\n    let d = selenaLib15;\n    density = (density + (weight * mix(0.5, mix(mix(a, b0, blend.x), mix(c, d, blend.x), blend.y), filtered)));\n    total = (total + weight);\n    p = ((p * 2.03) + vec2<f32>(17.1, 9.2));\n    footprint = (footprint * 2.03);\n    weight = (weight * 0.5);\n  }\n  let threshold = (1.0 - settings.x);\n  let shape = (smoothstep((threshold - 0.12), (threshold + 0.18), (density / max(total, 0.1))) * smoothstep(0.0, 0.025, settings.x));\n  let tau = (shape * 3.5);\n  let beer = exp((-tau));\n  let powder = (1.0 - exp(((-tau) * 2.0)));\n  let silver = (((pow(max(dot(ray, sun), 0.0), 32.0) * exp(((-tau) * 0.7))) * (1.0 - beer)) * 2.2);\n  let lighting = ((ambient * (0.45 + (0.4 * beer))) + ((sunLight * ((0.35 * powder) + silver)) * smoothstep((-0.04), 0.03, sun.y)));\n  let color = mix(lighting, horizon, (1.0 - exp(((-t) / 65000.0))));\n  let alpha = (((1.0 - beer) * settings.w) * smoothstep((-0.005), 0.025, ray.y));\n  return vec4<f32>((color * alpha), alpha);\n}\n";
+// END SELENA CLOUDS
 // Living daylight sky overlay, drawn before opaque geometry.
-const SCENE_CLOUD_WGSL = [
- "fn cloudHash(q: vec2f) -> f32 { var p=fract(q*vec2f(0.1031,0.1030)); p+=dot(p,p.yx+33.33); return fract((p.x+p.y)*p.x); }",
- "fn cloudNoise(p: vec2f) -> f32 {",
- " let i=floor(p); var f=fract(p); f=f*f*(3.0-2.0*f);",
- " return mix(mix(cloudHash(i),cloudHash(i+vec2f(1,0)),f.x),mix(cloudHash(i+vec2f(0,1)),cloudHash(i+1.0),f.x),f.y);",
- "}",
- "fn gosxClouds(ray: vec3f, eye: vec3f, settings: vec4f, drift: vec4f, ambient: vec3f, sunLight: vec3f, sun: vec3f) -> vec4f {",
- " if(cloud.p[11].x<=0.0) { return vec4f(0.0); }",
- " let origin=eye+vec3f(0,6371000.0,0);",
- " let b=dot(origin,ray); let radius=6371000.0+settings.y;",
- " let t=max(-b+sqrt(max(b*b-dot(origin,origin)+radius*radius,0.0)),0.0);",
- " var p=(eye.xz+ray.xz*t-drift.xy*drift.z)/settings.z;",
- " var footprint=length(fwidth(p));",
- " var density=0.0; var weight=0.52; var total=0.0;",
- " for(var i=0;i<5;i++) {",
- "  if(f32(i)>=cloud.p[12].w) { break; }",
- "  let filtered=1.0-smoothstep(0.3,1.0,footprint);",
- "  density+=weight*mix(0.5,cloudNoise(p),filtered); total+=weight;",
- "  p=p*2.03+vec2f(17.1,9.2); footprint*=2.03; weight*=0.5;",
- " }",
- " density/=max(total,0.1);",
- " let threshold=1.0-settings.x;",
- " let shape=smoothstep(threshold-0.12,threshold+0.18,density)*smoothstep(0.0,0.025,settings.x);",
- " let tau=shape*3.5; let beer=exp(-tau); let powder=1.0-exp(-tau*2.0);",
- " let mu=max(dot(ray,sun),0.0);",
- " let silver=pow(mu,32.0)*exp(-tau*0.7)*(1.0-beer)*2.2;",
- " var lighting=ambient*(0.45+0.4*beer)+sunLight*(0.35*powder+silver)*smoothstep(-0.04,0.03,sun.y);",
+const SCENE_CLOUD_WGSL = SCENE_CLOUD_LIBRARY_WGSL + [
+ "fn gosxClouds(ray:vec3f,eye:vec3f,settings:vec4f,drift:vec4f,ambient:vec3f,sunLight:vec3f,sun:vec3f)->vec4f {",
  " let horizon=gosxPhysicalSky(normalize(vec3f(ray.x,0.025,ray.z)),cloud.p[7],cloud.p[8],vec4f(cloud.p[9].xyz,2.0),cloud.p[10].x)*cloud.p[3].w;",
- " lighting=mix(lighting,horizon,1.0-exp(-t/65000.0));",
- " let alpha=(1.0-beer)*settings.w*smoothstep(-0.005,0.025,ray.y);",
- " return vec4f(lighting*alpha,alpha);",
- "}"
+ " return gosxCloudSurface(ray,eye,settings,drift,ambient,sunLight,sun,horizon); }"
 ].join("\n");
 const SCENE_CLOUD_SHADER_WGSL = [
  "struct Cloud { p: array<vec4f,16> }; @group(0) @binding(0) var<uniform> cloud: Cloud;",

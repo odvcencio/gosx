@@ -87,7 +87,7 @@ func intrinsicStringsReplace(args []Value) (Value, error) {
 	case 3:
 		return StringVal(strings.ReplaceAll(args[0].text(), args[1].text(), args[2].text())), nil
 	case 4:
-		return StringVal(strings.Replace(args[0].text(), args[1].text(), args[2].text(), int(args[3].num))), nil
+		return StringVal(strings.Replace(args[0].text(), args[1].text(), args[2].text(), safeBoundInt(args[3].number()))), nil
 	default:
 		return Value{}, errors.New("strings.Replace expects 3 or 4 arguments")
 	}

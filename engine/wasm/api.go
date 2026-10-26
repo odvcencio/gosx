@@ -11,11 +11,16 @@
 // context supplied to asynchronous scene/navigation operations and dispose
 // subscriptions from the engine Handle; PlayFrames and TransitionCamera then
 // release their frame callbacks and pause naturally while the page is hidden.
+//
+// A loop on the page must wait for the browser between iterations, or the page
+// freezes: write it with EachFrame (docs/engine-frame-loop.md).
 package wasm
 
 import (
 	"encoding/json"
 	"errors"
+
+	"m31labs.dev/gosx/engine/host"
 )
 
 var (
@@ -28,19 +33,10 @@ var (
 
 // Handle owns one mounted engine instance. GoSX calls Dispose exactly once
 // when the instance is replaced or the page is disposed.
-type Handle interface {
-	Dispose()
-}
+type Handle = host.Handle
 
 // HandleFunc adapts a function to Handle.
-type HandleFunc func()
-
-// Dispose calls f when it is non-nil.
-func (f HandleFunc) Dispose() {
-	if f != nil {
-		f()
-	}
-}
+type HandleFunc = host.HandleFunc
 
 // Factory creates one independent engine instance for a browser context.
 type Factory func(Context) (Handle, error)

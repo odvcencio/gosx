@@ -32,4 +32,9 @@ const (
 	// else. Removing it means removing the JS branch and its test in the same
 	// change.
 	PatchSetHTML
+
+	// Dispatch operations are emitted only for materialized event bindings.
+	// Ordinary attribute operations cannot write or remove dispatch markers.
+	PatchSetDispatch
+	PatchRemoveDispatch
 )

@@ -706,9 +706,9 @@ func TestSliceValNegativeEndDoesNotPanic(t *testing.T) {
 // range [:-9223372036854775808]".
 //
 // The fixed SliceVal clamps end into [0, n] regardless of how it
-// got there. The degenerate cast lands on a deeply negative int
-// here, so the safe, non-panicking answer is an empty slice, not
-// the full array.
+// got there. Overflowing float-to-int conversion is platform dependent,
+// so exercise both integer extremes explicitly and check that either
+// infinity cast is non-panicking on the current target.
 //
 // vm.go's safeBoundInt intercepts the float itself before this
 // conversion happens. So a real OpSlice dispatch sees +Inf clamp
@@ -717,10 +717,14 @@ func TestSliceValNegativeEndDoesNotPanic(t *testing.T) {
 // test pins SliceVal's own defense-in-depth clamp in isolation.
 func TestSliceValInfEndDoesNotPanic(t *testing.T) {
 	v := ArrayVal([]Value{IntVal(1), IntVal(2)})
-	end := int(math.Inf(1))
-	got := v.SliceVal(0, end)
-	if len(got.List()) != 0 {
-		t.Fatalf("SliceVal(0, MinInt64-from-+Inf) = %+v, want an empty (not panicking) result", got)
+	maxInt := int(^uint(0) >> 1)
+	for _, tc := range []struct{ end, want int }{{-maxInt - 1, 0}, {maxInt, 2}} {
+		if got := v.SliceVal(0, tc.end); len(got.List()) != tc.want {
+			t.Fatalf("SliceVal(0, %d) = %+v, want %d items", tc.end, got, tc.want)
+		}
+	}
+	for _, overflow := range []float64{math.Inf(1), math.Inf(-1)} {
+		v.SliceVal(0, int(overflow))
 	}
 }
 
@@ -803,14 +807,21 @@ func TestSubstringValNegativeEndDoesNotPanic(t *testing.T) {
 }
 
 // TestSubstringValInfEndDoesNotPanic mirrors
-// TestSliceValInfEndDoesNotPanic for the string path: the degenerate
-// MinInt64 cast clamps to an empty result rather than panicking.
+// TestSliceValInfEndDoesNotPanic for the string path. Both integer
+// extremes have fixed expectations; infinity casts must not panic.
 func TestSubstringValInfEndDoesNotPanic(t *testing.T) {
 	v := StringVal("hello")
-	end := int(math.Inf(1))
-	got := v.SubstringVal(0, end)
-	if got.Text() != "" {
-		t.Fatalf("SubstringVal(0, MinInt64-from-+Inf) = %q, want an empty (not panicking) result", got.Text())
+	maxInt := int(^uint(0) >> 1)
+	for _, tc := range []struct {
+		end  int
+		want string
+	}{{-maxInt - 1, ""}, {maxInt, "hello"}} {
+		if got := v.SubstringVal(0, tc.end); got.Text() != tc.want {
+			t.Fatalf("SubstringVal(0, %d) = %q, want %q", tc.end, got.Text(), tc.want)
+		}
+	}
+	for _, overflow := range []float64{math.Inf(1), math.Inf(-1)} {
+		v.SubstringVal(0, int(overflow))
 	}
 }
 

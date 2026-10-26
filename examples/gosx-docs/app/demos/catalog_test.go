@@ -455,7 +455,6 @@ func TestBespokeDemoScriptDebtDoesNotGrow(t *testing.T) {
 	legacy := map[string]bool{
 		"checkers/page.gsx":      true,
 		"cms/page.gsx":           true,
-		"collab/page.gsx":        true,
 		"fluid/page.gsx":         true,
 		"livesim/page.gsx":       true,
 		"playground/page.gsx":    true,

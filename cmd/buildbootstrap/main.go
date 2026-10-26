@@ -150,6 +150,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26-runtime-blocks.ts"),
 			sourceFile(runtimePrimitivesFile),
 			sourceFile(runtimeSceneUtilsFile),
+			sourceFile("../runtime/scene3d/instanced-data.ts"),
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.ts"),
 			sourceFile("bootstrap-src/11-scene-base64.ts"),
@@ -212,6 +213,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
@@ -229,6 +231,7 @@ var outputs = []output{
 			// but it costs a few hundred bytes and keeps one source order.
 			sourceFile("bootstrap-src/16d-scene-webgl-bridge.ts"),
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
+			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
@@ -241,6 +244,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-input.ts"),
 			sourceFile("../runtime/scene3d/geometry-assets.ts"),
 			sourceFile("../runtime/scene3d/mount-lifecycle.ts"),
+			sourceFile("../runtime/scene3d/mount-presentation.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
 			// 28 installs window.__gosx_video_sync_js_create — the pure-JS drift
 			// engine the video factory (in 30b) uses on the brain-absent path. It
@@ -377,6 +381,19 @@ var outputs = []output{
 		},
 	},
 	{
+		// The procedural arcade synth without the hub chunk. A page whose Go
+		// WASM engine plays arcade cues, and that has no hub (for example one
+		// that reads the local fight-input sink), requires it with
+		// RequireFeature("arcade-audio"). 30c2 is the same source the hubs chunk
+		// carries, so scene.AudioCue behaves identically.
+		name: "bootstrap-feature-arcade-audio.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26m-feature-arcade-audio-prefix.ts"),
+			sourceFile(tailArcadeAudioFile),
+			sourceFile("bootstrap-src/26m-feature-arcade-audio-suffix.ts"),
+		},
+	},
+	{
 		name: "bootstrap-feature-controllers.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26h-feature-controllers-prefix.ts"),
@@ -392,6 +409,24 @@ var outputs = []output{
 	{
 		name:    "bootstrap-feature-workbench.js",
 		sources: []source{sourceFile("../runtime/host/workbench.ts")},
+	},
+	{
+		name:    "bootstrap-feature-hub-document.js",
+		sources: []source{sourceFile("../runtime/host/hub-document.ts")},
+	},
+	{
+		// Browser half of netplay: RTCPeerConnection and one unreliable data
+		// channel per connection, polled by Go WASM (netplay/client). It loads
+		// only for a page that calls RequireFeature("netplay").
+		name:    "bootstrap-feature-netplay.js",
+		sources: []source{sourceFile("../runtime/host/netplay.ts")},
+	},
+	{
+		// Host for engines with Thread: worker. The same file is the page
+		// half (starts the Worker, relays calls and binary frames) and the
+		// Worker script. It loads only for a page that has such an engine.
+		name:    "bootstrap-feature-engine-worker.js",
+		sources: []source{sourceFile("../runtime/host/engine-worker.ts")},
 	},
 
 	{
@@ -421,6 +456,7 @@ var outputs = []output{
 			// another, so a Chromium Scene3D page downloaded the same helpers
 			// twice. 26d-feature-scene3d-prefix.js now bridges the eight names
 			// this chunk reads from window.__gosx_runtime_api.
+			sourceFile("../runtime/scene3d/instanced-data.ts"),
 			sourceFile(runtimeSceneCoreFile),
 			sourceFile("bootstrap-src/11-scene-math.ts"),
 			// 11-scene-base64.ts stays eager. 20-scene-mount.js decodes a motion
@@ -496,6 +532,7 @@ var outputs = []output{
 			// code that may fetch the WebGL chunk.
 			sourceFile("bootstrap-src/16d-scene-webgl-bridge.ts"),
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
+			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
@@ -549,6 +586,10 @@ var outputs = []output{
 		},
 	},
 	{
+		name:    "bootstrap-feature-scene3d-experience.js",
+		sources: []source{sourceFile("../runtime/scene3d/mount-presentation.ts")},
+	},
+	{
 		name: "bootstrap-feature-scene3d-command.js",
 		sources: []source{
 			sourceFile("../runtime/scene3d/command-runtime.ts"),
@@ -597,6 +638,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
 	},
@@ -621,13 +663,21 @@ var outputs = []output{
 	{
 		name: "bootstrap-feature-scene3d-vessel.js",
 		sources: []source{
+			sourceFile("../runtime/scene3d/vessel-instruments.ts"),
 			sourceFile("../runtime/scene3d/vessel-navigation.ts"),
 			sourceFile("../runtime/scene3d/vessel-physics.ts"),
 			sourceFile("../runtime/scene3d/vessel-input.ts"),
 			sourceFile("../runtime/scene3d/vessel-model.ts"),
 			sourceFile("../runtime/scene3d/vessel-wake.ts"),
+			sourceFile("../runtime/scene3d/vessel-external.ts"),
+			sourceFile("../runtime/scene3d/vessel-decks.ts"),
+			sourceFile("../runtime/scene3d/vessel-cutaway.ts"),
 			sourceFile("../runtime/scene3d/mount-vessel.ts"),
 		},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-hierarchy.js",
+		sources: []source{sourceFile("../runtime/scene3d/hierarchy.ts")},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",
@@ -636,6 +686,22 @@ var outputs = []output{
 	{
 		name:    "bootstrap-feature-scene3d-model-preparation.js",
 		sources: []source{sourceFile("../runtime/scene3d/model-preparation.ts")},
+	},
+	{
+		name:    "bootstrap-feature-motion-transport.js",
+		sources: []source{sourceFile("../runtime/motion/transport.ts")},
+	},
+	{
+		name:    "bootstrap-feature-motion-track.js",
+		sources: []source{sourceFile("../runtime/motion/track.ts")},
+	},
+	{
+		name:    "bootstrap-feature-motion-scene.js",
+		sources: []source{sourceFile("../runtime/motion/easing.ts"), sourceFile("../runtime/motion/scene.ts")},
+	},
+	{
+		name:    "bootstrap-feature-motion-svg.js",
+		sources: []source{sourceFile("../runtime/motion/easing.ts"), sourceFile("../runtime/motion/svg.ts")},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-timeline.js",
@@ -847,11 +913,15 @@ type sidecar struct {
 }
 
 // Release sidecars use an iterative DEFLATE search to reduce wire bytes.
-// The five passes only affect build time; browsers use ordinary gzip decoding.
+// Large compatibility bundles use a longer search; ordinary chunks retain the
+// five-pass build path. Browsers use ordinary gzip decoding in either case.
 func gzipCompress(raw []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	options := zopfli.DefaultOptions()
 	options.NumIterations = 5
+	if len(raw) > 1<<20 {
+		options.NumIterations = 8
+	}
 	if err := zopfli.GzipCompress(&options, raw, &buf); err != nil {
 		return nil, err
 	}
@@ -1447,6 +1517,9 @@ func run() error {
 
 	dir, err := findClientJS(*dirFlag)
 	if err != nil {
+		return err
+	}
+	if err := generateCloudLibrary(dir, *check); err != nil {
 		return err
 	}
 

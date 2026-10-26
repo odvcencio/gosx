@@ -93,11 +93,13 @@ test("WebGPU Selena reuses IBL views, updates bind groups on readiness/replaceme
   const source = readSceneRendererBackendSrc("webgpu");
   const buffer={}, cube={}, image={}, sampler={}, groups=[];
   const context=vm.createContext({
+    webGPUInstancedCacheOwner:()=>{throw Error("unexpected mesh ID");},
     selenaFrame:{}, iblResources:{active:false}, placeholderCubeView:cube,placeholderView:image,
     envMapSampler:sampler,linearSampler:{},GPUBufferUsage:{UNIFORM:1,COPY_DST:2},
     device:{createBindGroup:d=>{groups.push(d);return d;}},
     sceneNumber:(v,f)=>Number.isFinite(v)?v:f,
     sceneSelenaUniformData:()=>new Float32Array(4),sceneSelenaUniformBufferSlot:()=>"uniforms",
+    sceneWaterMainSelenaContext:()=>undefined,
     wgpuCachedTrackedBuffer:()=>buffer,sceneSelenaTextureDescriptors:l=>l.textures,
     sceneSelenaStorageBufferDescriptors:()=>[],sceneSelenaStateDescriptors:()=>[],
     sceneSelenaLiveTextureView:()=>null,

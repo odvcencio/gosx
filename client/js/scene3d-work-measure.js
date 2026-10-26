@@ -164,7 +164,7 @@ function instrumentGPU(fake, work) {
   };
 }
 
-async function mountScene(props, profileName, backend) {
+async function mountScene(props, profileName, backend, options = {}) {
   const profile = profiles[profileName];
   let now = 0, renders = 0, seed = 1;
   const work = counters();
@@ -228,8 +228,10 @@ async function mountScene(props, profileName, backend) {
   runBundle("scene3d-compute", c);
   runBundle(`scene3d-${backend}`, c);
   const registry = c.__gosx_scene3d_api.sceneBackendRegistry;
+  if (options.directDraw) c.__gosx_scene3d_webgpu_render_bundles = false;
   const entry = registry.list().find(entry => entry.kind === backend);
   assert.ok(entry, "the requested renderer chunk must register its backend");
+  let warming = true;
   const create = entry.create;
   entry.create = function(...args) {
     const renderer = create.apply(this, args);
@@ -238,6 +240,7 @@ async function mountScene(props, profileName, backend) {
     const render = renderer.render;
     renderer.render = function(...frameArgs) {
       const outcome = render.apply(this, frameArgs);
+      if (warming && outcome === "pending") return outcome;
       assert.equal(outcome, "submitted", "each counted frame must submit real renderer work");
       renders++;
       return outcome;
@@ -259,6 +262,7 @@ async function mountScene(props, profileName, backend) {
     await step(1000 / 30);
     if (i === 0 || i === 7) await H.flushAsyncWork();
   }
+  warming = false;
   assert.ok(mount.__gosxScene3DHandle, `bootstrap must mount Scene3D (${profileName}/${backend}): ${JSON.stringify(env.consoleLogs)}`);
   const canvas = mount.children.find(child => child.tagName === "CANVAS");
   assert.ok(canvas);
@@ -327,4 +331,26 @@ async function measureAll() {
   return cases;
 }
 
-module.exports = { measureAll, metricNames, profiles, scenes, uploadBytes };
+async function measureDirectDraws({ objects = 10000, frames = 30 } = {}) {
+  const clock = require("node:perf_hooks").performance;
+  const props = { ...base, scene: { objects: Array.from({ length: objects }, (_, i) => ({
+    ...box, id: `direct-${i}`, kind: "pyramid", castShadow: false, receiveShadow: false,
+    color: `#${(0x100000 + i).toString(16)}`,
+  })) } };
+  const h = await mountScene(props, "desktop-full", "webgpu", { directDraw: true });
+  try {
+    const start = { ...h.work }, renders = h.renders(), timings = [];
+    for (let frame = 0; frame < frames; frame++) {
+      const before = clock.now();
+      await h.step(1000 / 30, true);
+      timings.push(clock.now() - before);
+    }
+    assert.equal(h.renders() - renders, frames);
+    const work = delta(start, h.work);
+    assert.equal(work.draws, objects * frames, "the benchmark must encode each object directly");
+    timings.sort((a, b) => a - b);
+    return { objects, frames, medianMS: timings[Math.floor(frames / 2)], p95MS: timings[Math.floor(frames * 0.95)], work };
+  } finally { h.dispose(); }
+}
+
+module.exports = { measureAll, measureDirectDraws, metricNames, profiles, scenes, uploadBytes };

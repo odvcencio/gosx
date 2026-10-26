@@ -7,7 +7,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const moduleSrc = fs.readFileSync(
+const moduleSrc = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8") + "\n" + fs.readFileSync(
   path.join(__dirname, "bootstrap-src", "26-runtime-blocks.ts"),
   "utf8"
 );
@@ -190,4 +190,15 @@ test("core stream reconciliation defers node lifecycle to an outer DOM transacti
   context.window.__gosx.stream.reconcileHTML(root, "<p>new</p>");
   assert.deepEqual(calls, []);
   assert.equal(root.children[0].textContent, "new");
+});
+
+
+test("stream keys cannot be used to inject reserved dispatch attributes", () => {
+  for (const keyAttribute of ["data-gosx-handler", "data-gosx-path", "DATA-GOSX-ON-CLICK", "data-gosx-on-"]) {
+    const context = runModule();
+    const root = makeRoot();
+    context.window.__gosx.stream.reconcileBlocks(root, [{ key: "evil", html: "<button>ok</button>" }], { keyAttribute });
+    assert.equal(root.children[0].getAttribute(keyAttribute), null);
+    assert.equal(root.children[0].getAttribute("data-gosx-stream-key"), "evil");
+  }
 });

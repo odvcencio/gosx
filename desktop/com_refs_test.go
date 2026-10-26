@@ -10,6 +10,7 @@ func TestDesktopCOMHandlerIIDMatching(t *testing.T) {
 		name string
 		iid  comGUID
 	}{
+		{"script completed", iidAddScriptToExecuteOnDocumentCreatedCompletedHandler},
 		{"environment completed", iidCreateCoreWebView2EnvironmentCompletedHandler},
 		{"controller completed", iidCreateCoreWebView2ControllerCompletedHandler},
 		{"web message received", iidWebMessageReceivedEventHandler},

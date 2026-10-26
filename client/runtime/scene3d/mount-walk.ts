@@ -63,7 +63,7 @@ interface SceneWalkState {
     return ground.minHeight + (a * (1 - tz) + b * tz) / 65535 * (ground.maxHeight - ground.minHeight);
   }
   function groundHeight(s: SceneWalkState, x: number, z: number): number {
-    const deck = surfaceHeight(s.config.surfaces, x, z, -Infinity);
+    const deck = surfaceHeight(s.config.surfaces, x, z, -Infinity, s.eyeY - s.eyeHeight);
     return Math.max(deck, sampleGrounds(s.ground, s.grounds, x, z, Number.isFinite(deck) ? -Infinity : s.config.outsideHeight));
   }
   // Sparse patches retain local walking detail without a continent-sized grid.

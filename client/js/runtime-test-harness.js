@@ -2297,8 +2297,8 @@ function createContext(options) {
         this.onload = null;
         this.onerror = null;
         this.complete = false;
-        this.naturalWidth = 1;
-        this.naturalHeight = 1;
+        this.width = this.naturalWidth = 1;
+        this.height = this.naturalHeight = 1;
         this._src = "";
       }
 
@@ -3061,12 +3061,14 @@ function motionMeshExtents(gl) {
 // single TargetMaterial track (mesh "glow-cube", uniform "emissive"); the tick
 // stub writes one packed Color record. The seam must decode it and write the
 // color into the mesh's customUniforms so selena's per-frame re-pack sees it.
-// motionFlag toggles whether window.__gosx_motion_wasm is set, proving the
-// seam is fully inert (tick never called, customUniforms untouched) when off.
-async function mountMaterialMotionScene(motionFlag) {
+// The legacy transform flag is optional; declared material programs run
+// independently. Counters expose program ownership for lifecycle assertions.
+async function mountMaterialMotionScene(motionFlag, options = {}) {
   const mount = new FakeElement("div", null);
   mount.id = "scene-material-motion-root";
   let tickCalls = 0;
+  let loadCalls = 0;
+  const unloadCalls = [];
   // The decoded color the stub emits (r,g,b,a). arity 5 (Color) → width 4.
   const color = [0.2, 0.6, 0.9, 1.0];
   const tick = (handle, t, reduced, outU8) => {
@@ -3133,19 +3135,11 @@ async function mountMaterialMotionScene(motionFlag) {
     onRenderEngine: () => "",
   });
 
-  if (motionFlag) {
-    env.context.__gosx_motion_wasm = true;
-    env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["emissive"] });
-    env.context.__gosx_motion_tick = tick;
-    env.context.__gosx_motion_unload = () => {};
-  } else {
-    // Exports present but the opt-in flag deliberately unset.
-    env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["emissive"] });
-    env.context.__gosx_motion_tick = tick;
-    env.context.__gosx_motion_unload = () => {};
-  }
+  if (motionFlag) env.context.__gosx_motion_wasm = true;
+  env.context.__gosx_motion_load = () => ++loadCalls;
+  env.context.__gosx_motion_refs = () => options.refs === undefined ? { target: ["1"], prop: ["emissive"] } : options.refs;
+  env.context.__gosx_motion_tick = tick;
+  env.context.__gosx_motion_unload = handle => unloadCalls.push(handle);
 
   const raf = installManualRAF(env.context);
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -3156,7 +3150,7 @@ async function mountMaterialMotionScene(motionFlag) {
   await flushAsyncWork();
 
   const state = mount.__gosxScene3DState;
-  return { env, mount, state, color, tickCalls: () => tickCalls };
+  return { env, mount, state, color, raf, tickCalls: () => tickCalls, loadCalls: () => loadCalls, unloadCalls };
 }
 
 // Fixture: byte-identical to the GLSL m31labs.dev/selena emits for a default
@@ -4264,11 +4258,25 @@ function makeFakeGPUDevice(options) {
       return pipeline;
     },
     createComputePipelineAsync(desc) {
-      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+      return Promise.resolve().then(() => device.createComputePipeline(desc));
     },
     createRenderPipeline(desc) {
       validateRenderPipelineDesc(desc);
-      const pipeline = { __kind: "renderPipeline", desc };
+      const pipeline = { __kind: "renderPipeline", desc, getBindGroupLayout(index) {
+        if (desc.layout !== "auto") return desc.layout.desc.bindGroupLayouts[index];
+        const declarations = parseWGSLBindingKinds([desc.vertex?.module?.code, desc.fragment?.module?.code].join("\n"));
+        const entries = [];
+        for (const [key, kind] of declarations) {
+          const [group, binding] = key.split(":").map(Number);
+          if (group !== index) continue;
+          const entry = { binding, visibility: 3 };
+          if (kind === "texture") entry.texture = {};
+          else if (kind === "sampler") entry.sampler = {};
+          else entry.buffer = { type: kind === "uniform" ? "uniform" : kind === "storage-read" ? "read-only-storage" : "storage" };
+          entries.push(entry);
+        }
+        return device.createBindGroupLayout({ entries });
+      } };
       state.renderPipelines.push(pipeline);
       return pipeline;
     },
@@ -4836,6 +4844,17 @@ function deviceCallDelta(before, after) {
   };
 }
 
+// Retry the same frame after builtin pipeline compilation settles. Authored
+// shader fallback/recovery remains visible to tests after the first submission.
+async function renderPreparedFrame(renderer, ...args) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const result = renderer.render(...args);
+    if (result !== "pending") return result;
+    await flushAsyncWork();
+  }
+  assert.fail("frame stayed pending after pipeline preparation");
+}
+
 // renderWaterPerfShapeFrames renders N consecutive frames of one scenario
 // (`duck` true/false) against a FRESH harness (fresh device + renderer), and
 // returns the per-frame device-call delta array. Each frame rebuilds the
@@ -4865,13 +4884,16 @@ async function renderWaterPerfShapeFrames(duck, frameCount, resolution) {
       objects, [], [], [], [], {}, frame * 0.016, [], [], [], state.waterSystems, [], 0, false,
     );
     const before = deviceCallSnapshot(harness.fake);
-    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, {
       nowMS: frame * 17,
       displayDeltaMS: frame === 0 ? 0 : 17,
       active: true,
       qualityTier: resolution === 128 ? "survival" : (resolution === 192 ? "balanced" : "full"),
       qualityRevision: 0,
     });
+    // Image.onload uses a timer turn; finish decode/upload inside warmup so
+    // steady-state measurements cover cached targets, not pending retries.
+    if (frame === 0) await flushAsyncWork();
     const after = deviceCallSnapshot(harness.fake);
     deltas.push(deviceCallDelta(before, after));
   }
@@ -5212,6 +5234,13 @@ function makeFakeGPUDeviceForCompute(options) {
 // createBoardWebGPUHarness but injects a caller-supplied fake device instead
 // of the default makeFakeGPUDevice(), enabling per-test async pipeline control.
 async function createComputeParticleHarness(fakeDevice, options) {
+  // Callers inject authored-shader failures. Builtin parallel preparation has
+  // its own coverage in scene3d-webgpu-first-frame.test.js.
+  const authoredRenderAsync = fakeDevice.createRenderPipelineAsync;
+  if (typeof authoredRenderAsync === "function") fakeDevice.createRenderPipelineAsync = function(desc) {
+    if (/^gosx-(?:points-authored|particle-render-authored|selena-post)/.test(desc.label || "")) return authoredRenderAsync.call(fakeDevice, desc);
+    return Promise.resolve().then(() => fakeDevice.createRenderPipeline(desc));
+  };
   const opts = options || {};
   const env = createContext({
     enableWebGPU: true,
@@ -5313,6 +5342,9 @@ function makeFakeGPUDeviceForPoints(options) {
     return Promise.resolve(null);
   };
   device.createRenderPipelineAsync = function(desc) {
+    if (!/^gosx-(?:points-authored|particle-render-authored|selena-post)/.test(desc.label || "")) {
+      return Promise.resolve().then(() => device.createRenderPipeline(desc));
+    }
     renderPipelineAsyncCalls.push(desc);
     if (typeof opts.pipelineAsyncBehavior === "function") {
       return opts.pipelineAsyncBehavior(desc);
@@ -5513,7 +5545,7 @@ function createWebGLRendererForPost(options) {
   const canvas = env.document.createElement("canvas");
   canvas.width = 320;
   canvas.height = 180;
-  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  const renderer = backend.create(canvas, opts.props || { background: "#000000" }, { tier: "full" });
   const warnLog = [];
   const orig = env.context.console.warn;
   env.context.console.warn = function() {
@@ -5643,7 +5675,7 @@ async function createCullSystemHarness(fakeDevice) {
 
 // bundleMeshScene builds a mesh-only scene. Mesh-only matters: water, points,
 // labels, screen lines, surfaces and world lines all keep the direct path.
-function bundleMeshScene(api, objects) {
+function bundleMeshScene(api, objects, rendererCapabilities) {
   const state = api.createSceneState({
     scene: {
       materials: [{ id: "m", color: "#8de1ff", roughness: 0.4, metalness: 0.1 }],
@@ -5654,7 +5686,7 @@ function bundleMeshScene(api, objects) {
   return api.createSceneRenderBundle(
     64, 64, "#000000",
     { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
-    withMaterials, [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+    withMaterials, [], [], [], [], {}, 0, [], [], [], [], [], 0, false, rendererCapabilities,
   );
 }
 
@@ -5944,6 +5976,7 @@ module.exports = {
   deviceCallSnapshot,
   deviceCallDelta,
   renderWaterPerfShapeFrames,
+  renderPreparedFrame,
   waterComputeKernelPipeline,
   assertWaterComputeKernelBindings,
   loadBoardLabels,

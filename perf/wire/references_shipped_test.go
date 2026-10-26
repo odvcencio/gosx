@@ -173,6 +173,9 @@ func shippedJavaScriptFiles(t *testing.T) []string {
 // do not justify treating any ordinary call's strings as URLs.
 var shippedReferenceAllowlist = map[string][]Reference{
 	"server/emoji_complete.ts": {{URL: "/_gosx/emoji-codes.json", Kind: KindOther}}, // fetch at server/emoji_complete.ts:17
+	// The optional Game Boy core resolves its WASM beside the framework module
+	// at boytacean.js:2992, then fetches it at line 2997.
+	"gameboy/assets/vendor/boytacean-0.13.2/boytacean.js": {{URL: "boytacean_bg.wasm", Kind: KindWASM}},
 }
 
 func TestReferencesShippedJavaScript(t *testing.T) {
@@ -207,6 +210,10 @@ func TestReferencesShippedJavaScript(t *testing.T) {
 			}
 			if !reflect.DeepEqual(referenceValues(set.Resources), want) {
 				t.Errorf("framework references must match fetching-line allowlist: got=%+v want=%+v", set.Resources, want)
+			}
+			if path == "gameboy/assets/vendor/boytacean-0.13.2/boytacean.js" &&
+				(len(set.Resources) != 1 || set.Resources[0].Base != ReferenceBaseSource) {
+				t.Fatal("Game Boy WASM must resolve beside the framework module")
 			}
 			if path == "auth/webauthn_runtime.ts" || path == "server/emoji_complete.ts" {
 				// These embeds are rendered inline; use the document entry point

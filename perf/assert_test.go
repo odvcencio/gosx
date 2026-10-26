@@ -108,12 +108,14 @@ func TestResolveMetricScene(t *testing.T) {
 			Scene: &SceneMetric{
 				FirstFrameMs: 8.5,
 				FrameStats: FrameStats{
-					P50: 5.0,
-					P95: 11.3,
-					P99: 14.2,
-					Max: 18.0,
+					Count: 120,
+					P50:   5.0,
+					P95:   11.3,
+					P99:   14.2,
+					Max:   18.0,
 				},
 				DroppedFrames: 3,
+				Presentation:  &PresentationMetric{TelemetrySeries: TelemetrySeries{Stats: FrameStats{Count: 120}}},
 				FrameCount:    120,
 			},
 		},

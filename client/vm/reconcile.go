@@ -267,7 +267,11 @@ func reconcileElementNodePair(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode)
 
 func reconcileChildren(w *diffWalk, ops *[]PatchOp, prevNode, nextNode *ResolvedNode) {
 	if childrenAreFullyKeyed(w.prev, prevNode) && childrenAreFullyKeyed(w.next, nextNode) {
-		reconcileKeyedChildren(w, ops, prevNode, nextNode)
+		reconcileKeyedChildren(w, ops, prevNode, nextNode, nil, nil)
+		return
+	}
+	if previousKeys, nextKeys, ok := mixedChildKeys(w.prev, w.next, prevNode, nextNode); ok {
+		reconcileKeyedChildren(w, ops, prevNode, nextNode, previousKeys, nextKeys)
 		return
 	}
 	reconcilePositionalChildren(w, ops, prevNode, nextNode)
@@ -286,29 +290,29 @@ func childrenAreFullyKeyed(tree *ResolvedTree, node *ResolvedNode) bool {
 	return true
 }
 
-func reconcileKeyedChildren(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode) {
-	plan, ok := buildKeyedChildrenPlan(w.prev, w.next, pn, nn)
+func reconcileKeyedChildren(w *diffWalk, ops *[]PatchOp, pn, nn *ResolvedNode, previousKeys, nextKeys []string) {
+	plan, ok := buildKeyedChildrenPlan(w.prev, w.next, pn, nn, previousKeys, nextKeys)
 	if !ok {
 		reconcilePositionalChildren(w, ops, pn, nn)
 		return
 	}
 
-	removeMissingKeyedChildren(ops, w.prev, pn, plan.nextKeys, &w.path)
+	removeMissingKeyedChildren(ops, w.prev, pn, plan.nextKeys, &w.path, previousKeys)
 	plan.currentOrder = appendMissingKeyedChildren(w, ops, plan)
 	appendKeyedReorderOp(ops, &w.path, plan.currentOrder, plan.desiredOrder)
 	reconcileExistingKeyedChildren(w, ops, plan)
 }
 
-func buildKeyedChildrenPlan(prev, next *ResolvedTree, pn, nn *ResolvedNode) (keyedChildrenPlan, bool) {
-	prevByKey, prevKeysUnique := buildPrevKeyIndex(prev, pn)
+func buildKeyedChildrenPlan(prev, next *ResolvedTree, pn, nn *ResolvedNode, previousKeys, nextChildKeys []string) (keyedChildrenPlan, bool) {
+	prevByKey, prevKeysUnique := buildPrevKeyIndex(prev, pn, previousKeys)
 	if !prevKeysUnique {
 		return keyedChildrenPlan{}, false
 	}
-	nextChildren, nextKeys, desiredOrder, nextKeysUnique := collectNextKeyedChildren(next, nn)
+	nextChildren, nextKeys, desiredOrder, nextKeysUnique := collectNextKeyedChildren(next, nn, nextChildKeys)
 	if !nextKeysUnique {
 		return keyedChildrenPlan{}, false
 	}
-	currentOrder, prevKeysComplete := currentKeyOrder(prev, pn, nextKeys)
+	currentOrder, prevKeysComplete := currentKeyOrder(prev, pn, nextKeys, previousKeys)
 	if !prevKeysComplete {
 		return keyedChildrenPlan{}, false
 	}
@@ -321,65 +325,69 @@ func buildKeyedChildrenPlan(prev, next *ResolvedTree, pn, nn *ResolvedNode) (key
 	}, true
 }
 
-func collectNextKeyedChildren(next *ResolvedTree, node *ResolvedNode) ([]keyedNextChild, map[string]struct{}, []string, bool) {
+func collectNextKeyedChildren(next *ResolvedTree, node *ResolvedNode, childKeys []string) ([]keyedNextChild, map[string]struct{}, []string, bool) {
 	children := make([]keyedNextChild, 0, len(node.Children))
 	keys := make(map[string]struct{}, len(node.Children))
 	order := make([]string, 0, len(node.Children))
 	for elemIdx, childIdx := range node.Children {
 		child := resolvedNodeAt(next, childIdx)
-		if child == nil || child.Key == "" {
+		key := childReconcileKey(child, elemIdx, childKeys)
+		if child == nil || key == "" {
 			return nil, nil, nil, false
 		}
-		if _, exists := keys[child.Key]; exists {
+		if _, exists := keys[key]; exists {
 			return nil, nil, nil, false
 		}
-		keys[child.Key] = struct{}{}
+		keys[key] = struct{}{}
 		children = append(children, keyedNextChild{
 			elementIdx: elemIdx,
 			nodeIdx:    childIdx,
-			key:        child.Key,
+			key:        key,
 		})
-		order = append(order, child.Key)
+		order = append(order, key)
 	}
 	return children, keys, order, true
 }
 
-func currentKeyOrder(prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]struct{}) ([]string, bool) {
+func currentKeyOrder(prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]struct{}, childKeys []string) ([]string, bool) {
 	order := make([]string, 0, len(node.Children))
-	for _, childIdx := range node.Children {
+	for elemIdx, childIdx := range node.Children {
 		child := resolvedNodeAt(prev, childIdx)
-		if child == nil || child.Key == "" {
+		key := childReconcileKey(child, elemIdx, childKeys)
+		if child == nil || key == "" {
 			return nil, false
 		}
-		if _, ok := nextKeys[child.Key]; ok {
-			order = append(order, child.Key)
+		if _, ok := nextKeys[key]; ok {
+			order = append(order, key)
 		}
 	}
 	return order, true
 }
 
-func buildPrevKeyIndex(prev *ResolvedTree, node *ResolvedNode) (map[string]keyedChildIndex, bool) {
+func buildPrevKeyIndex(prev *ResolvedTree, node *ResolvedNode, childKeys []string) (map[string]keyedChildIndex, bool) {
 	byKey := make(map[string]keyedChildIndex, len(node.Children))
-	for _, childIdx := range node.Children {
+	for elemIdx, childIdx := range node.Children {
 		child := resolvedNodeAt(prev, childIdx)
-		if child == nil || child.Key == "" {
+		key := childReconcileKey(child, elemIdx, childKeys)
+		if child == nil || key == "" {
 			continue
 		}
-		if _, exists := byKey[child.Key]; exists {
+		if _, exists := byKey[key]; exists {
 			return nil, false
 		}
-		byKey[child.Key] = keyedChildIndex{nodeIdx: childIdx}
+		byKey[key] = keyedChildIndex{nodeIdx: childIdx}
 	}
 	return byKey, true
 }
 
-func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]struct{}, path *patchPath) {
+func removeMissingKeyedChildren(ops *[]PatchOp, prev *ResolvedTree, node *ResolvedNode, nextKeys map[string]struct{}, path *patchPath, childKeys []string) {
 	for i := len(node.Children) - 1; i >= 0; i-- {
 		child := resolvedNodeAt(prev, node.Children[i])
-		if child == nil || child.Key == "" {
+		key := childReconcileKey(child, i, childKeys)
+		if child == nil || key == "" {
 			continue
 		}
-		if _, ok := nextKeys[child.Key]; ok {
+		if _, ok := nextKeys[key]; ok {
 			continue
 		}
 		appendRemoveChild(ops, path.child(i))
@@ -887,8 +895,12 @@ func appendValueAttrSetOp(ops *[]PatchOp, attr ResolvedAttr, valueElem bool, pat
 }
 
 func appendAttrSetOp(ops *[]PatchOp, attr ResolvedAttr, path *patchPath) {
+	kind := PatchSetAttr
+	if attr.generatedDispatch {
+		kind = PatchSetDispatch
+	}
 	*ops = append(*ops, PatchOp{
-		Kind:     PatchSetAttr,
+		Kind:     kind,
 		Path:     path.String(),
 		AttrName: attr.Name,
 		Text:     attr.Value,
@@ -900,8 +912,12 @@ func appendAttrRemoveOps(ops *[]PatchOp, prevAttrs []ResolvedAttr, nextAttrs att
 		if nextAttrs.has(attr.Name) {
 			continue
 		}
+		kind := PatchRemoveAttr
+		if attr.generatedDispatch {
+			kind = PatchRemoveDispatch
+		}
 		*ops = append(*ops, PatchOp{
-			Kind:     PatchRemoveAttr,
+			Kind:     kind,
 			Path:     path.String(),
 			AttrName: attr.Name,
 		})

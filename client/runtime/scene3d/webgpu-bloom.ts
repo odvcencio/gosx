@@ -98,6 +98,12 @@ function createSceneWebGPUMipBloom(host) {
   }
 
   return {
+    preparePipelines: function() {
+      host.getPipeline("bloomMipPrefilter", prefilterSource, host.paramsLayout());
+      host.getPipeline("bloomMipDownsample", downsampleSource, host.paramsLayout());
+      host.getPipeline("bloomMipUpsample", upsampleSource, host.compositeLayout());
+      host.getPipeline("bloomComposite", host.compositeSource, host.compositeLayout());
+    },
     dispose: dispose,
     apply: function(args) {
       var effect = args.effect;

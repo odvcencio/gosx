@@ -144,7 +144,8 @@ var demoSources = map[string][]string{
 		"examples/gosx-docs/app/demos/collab/page.server.go",
 		"examples/gosx-docs/app/demos/collab/presence.go",
 		"examples/gosx-docs/app/demos/collab/route.config.json",
-		"examples/gosx-docs/public/collab-client.js",
+		"hydrate/hub_document.go",
+		"client/runtime/host/hub-document.ts",
 	},
 	"scene3d": {
 		"examples/gosx-docs/app/demos/scene3d/page.css",

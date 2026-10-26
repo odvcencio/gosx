@@ -11,7 +11,7 @@ import (
 
 func TestIslandAOTCheckerIndependentProfile(t *testing.T) {
 	for _, tc := range []struct{ name, body, reason string }{
-		{"reserved attribute", `count := signal.New(0); target := signal.New("change"); change := func(){count.Set(1)}; return <button data-gosx-on-click={target.Get()} onClick={change}>{count.Get()}</button>`, "reserved_attribute"},
+		{"reserved attribute", `count := signal.New(0); target := signal.New("change"); change := func(){count.Set(1)}; return <button data-gosx-region={target.Get()} onClick={change}>{count.Get()}</button>`, "reserved_attribute"},
 		{"shared signal", `count := signal.NewShared("count", 0); return <div>{count.Get()}</div>`, "shared_signal_profile"},
 		{"nonliteral shared key", `key := "count"; count := signal.NewShared(key, 0); return <div>{count.Get()}</div>`, "shared_signal_profile"},
 		{"duplicate shared key", `first := signal.NewShared("count", 0); second := signal.NewShared("count", "x"); return <div>{first.Get()}{second.Get()}</div>`, "duplicate_signal_key"},

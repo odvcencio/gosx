@@ -156,7 +156,10 @@
     return {
       kind: "canvas",
       render(bundle, viewport) {
-        const devicePixelRatio = Math.max(1, sceneViewportValue(viewport, "devicePixelRatio", 1));
+        const cssWidth = sceneViewportValue(viewport, "cssWidth", canvas.width);
+        const cssHeight = sceneViewportValue(viewport, "cssHeight", canvas.height);
+        const scaleX = canvas.width / Math.max(1, cssWidth);
+        const scaleY = canvas.height / Math.max(1, cssHeight);
         const lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
         ctx2d.clearRect(0, 0, canvas.width, canvas.height);
         ctx2d.fillStyle = bundle && bundle.background ? bundle.background : "#08151f";
@@ -164,11 +167,9 @@
         if (typeof ctx2d.save === "function") {
           ctx2d.save();
         }
-        if (devicePixelRatio !== 1 && typeof ctx2d.scale === "function") {
-          ctx2d.scale(devicePixelRatio, devicePixelRatio);
+        if ((scaleX !== 1 || scaleY !== 1) && typeof ctx2d.scale === "function") {
+          ctx2d.scale(scaleX, scaleY);
         }
-        const cssWidth = sceneViewportValue(viewport, "cssWidth", canvas.width);
-        const cssHeight = sceneViewportValue(viewport, "cssHeight", canvas.height);
         renderSceneCanvasPoints(ctx2d, bundle, cssWidth, cssHeight);
         if (sceneBundleUsesWorldProjection(bundle)) {
           renderSceneCanvasWorldBundle(ctx2d, bundle, cssWidth, cssHeight);

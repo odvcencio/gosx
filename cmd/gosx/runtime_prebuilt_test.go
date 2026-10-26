@@ -76,7 +76,9 @@ func buildFakeRuntimeRelease(tag string) *fakeRuntimeArtifactFetcher {
 		tag + "/" + runtimeManifestWASMExecName: shimData,
 	}
 	for _, v := range variants {
-		data := []byte("wasm bytes for " + v.id + " @ " + tag)
+		// A valid custom section keeps each asset distinct and its provenance
+		// marker observable while exercising the real production WASM guard.
+		data := wasmOutputFixture("wasm bytes for " + v.id + " @ " + tag)
 		assets[tag+"/"+v.file] = data
 		evidence.Variants = append(evidence.Variants, ouroboros.RuntimeArtifactVariant{
 			ID:     v.id,

@@ -4,10 +4,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx"
 	_ "m31labs.dev/gosx/examples/dashboard/modules"
+	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/route"
 )
 
@@ -62,5 +64,25 @@ func TestDashboardRootPageStrictPropsMatchLegacyBytes(t *testing.T) {
 	got = dashboardFooterVersionRE.ReplaceAllString(got, "GoSX VERSION")
 	if got != dashboardConversionGolden {
 		t.Fatalf("rendered body does not byte-match the pre-conversion golden.\ngot:  %s\nwant: %s", got, dashboardConversionGolden)
+	}
+}
+
+func TestDashboardHandwrittenIslandMarkersRender(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		page     func(*island.Renderer) gosx.Node
+		handlers []string
+	}{
+		{"counter", func(r *island.Renderer) gosx.Node { return CounterPage(0, r) }, []string{"decrement", "increment"}},
+		{"kitchen sink", KitchenSinkPage, []string{"addItem", "clearAll", "updateName", "fillName", "validateForm", "removeLastItem", "clearItems"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gosx.RenderHTML(tc.page(island.NewRenderer("test")))
+			for _, handler := range tc.handlers {
+				if !strings.Contains(got, `data-gosx-on-click="`+handler+`"`) && !strings.Contains(got, `data-gosx-on-input="`+handler+`"`) {
+					t.Fatalf("missing handler %s: %s", handler, got)
+				}
+			}
+		})
 	}
 }

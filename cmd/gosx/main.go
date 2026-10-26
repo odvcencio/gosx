@@ -8,6 +8,7 @@
 //	gosx build-runtime [flags] [outdir]   Build TinyGo production WASM runtimes
 //	gosx dev [--scene-inspector] <dir>
 //	                              Start development server with hot reload
+//	gosx detlint <packages>      Check //gosx:deterministic packages for cross-platform hazards
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
 //	gosx desktop package         Package a Windows desktop app for direct download
 //	gosx export <dir>            Pre-render static GoSX pages
@@ -76,6 +77,8 @@ func main() {
 		cmdBuildRuntime()
 	case "dev":
 		cmdDev()
+	case "detlint":
+		cmdDetlint()
 	case "deploy":
 		cmdDeploy()
 	case "desktop":
@@ -177,6 +180,8 @@ Usage:
   gosx desktop package --input <staged-app> --config <config.json> [flags]
 
 `)
+	case "detlint":
+		detlintUsage(w)
 	case "export":
 		fmt.Fprintf(w, `gosx export - Pre-render static GoSX pages
 
@@ -276,6 +281,7 @@ Commands:
                        Build TinyGo production WASM runtimes
   dev [--scene-inspector] <dir>
                        Start development server with hot reload
+  detlint <packages>   Check //gosx:deterministic packages for cross-platform hazards
   deploy check [--json] <dist>
                        Validate a built server bundle before deployment
   desktop [dev] <dir>  Start dev server in a native desktop host

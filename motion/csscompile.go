@@ -85,6 +85,7 @@ func CompileCSS(p *Program) (css string, rest *Program, err error) {
 			propertyCount[propertyKey(binding)]++
 		}
 	}
+	//gosx:allow map-range deletes entries while ranging; the result does not depend on visit order
 	for i, item := range compiled {
 		if propertyCount[propertyKey(item.binding)] > 1 {
 			delete(compiled, i)
@@ -119,7 +120,7 @@ func CompileCSS(p *Program) (css string, rest *Program, err error) {
 			if !valid {
 				continue
 			}
-			fmt.Fprintf(&body, "      %s%% { %s: %s; }\n", formatCSSFloat(stop.at*100), property, value)
+			fmt.Fprintf(&body, "      %s%% { %s: %s; }\n", formatCSSFloat(float64(stop.at*100)), property, value)
 		}
 		body.WriteString("    }\n")
 		selector := scopedCSSSelector(p.ID, item.binding.Selector)
@@ -408,6 +409,10 @@ func cloneMotionProgram(p *Program) Program {
 	copy.Signals = append([]SignalSpec(nil), p.Signals...)
 	copy.Bindings = append([]Binding(nil), p.Bindings...)
 	copy.Pins = append([]PinBinding(nil), p.Pins...)
+	copy.SVGMorphs = append([]SVGMorphBinding(nil), p.SVGMorphs...)
+	for i := range copy.Bindings {
+		copy.Bindings[i].Transition = append([]byte(nil), copy.Bindings[i].Transition...)
+	}
 	return copy
 }
 

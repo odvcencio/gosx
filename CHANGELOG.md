@@ -2,6 +2,609 @@
 
 ## Unreleased
 
+- Enable Scene3D adaptive quality by default, including effects and resolution
+  reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
+  The full tier starts at the capability DPR cap, telemetry reports rendered
+  DPR, and rAF-only timing can recover quality after sustained clean cadence.
+
+- Build the TinyGo runtime with 256 KB goroutine stacks (`-stack-size=256KB`).
+  TinyGo's 64 KiB default cannot grow, and resolving deeply nested island
+  trees during a JS event overran it, corrupting the WASM heap ("memory access
+  out of bounds" in `runtime.alloc`, or `unreachable` from the stack canary).
+
+- Add the bridge `list_methods` query and `gosxDesktop.refreshMethods()` so an
+  engine mount can discover late native registrations before selecting its
+  transport. Capability changes affect the next resolution only; live engines
+  are never migrated.
+- Add `enginehost.Options.DisableNative` for exact component names or `"*"` to
+  intentionally use the WASM worker, with a quiet page-side fallback.
+- Add opt-in Windows window-state persistence with versioned atomic storage,
+  debounced move/resize saves, close flush, monitor-aware restoration and a
+  centered primary-monitor fallback. macOS and Linux remain unsupported.
+
+- Reuse live computed-value subscriptions when a recomputation reads the same
+  ordered dependencies. Retain freshly tracked revisions, the replacement path
+  for changed dependencies, batched reads, and disposal while reducing
+  subscription allocation churn in islands and engines.
+
+- Reject SceneIR transform and state patches with known non-patch edits before
+  copying large mesh records. Cache scalar comparison fields from the authored
+  patch types, retaining the JSON fallback for ambiguous comparisons.
+
+- Match SceneIR records with one ID table instead of building two maps.
+  Preserve the handling of repeated and empty IDs, sorted removals, and the
+  order of updates and optional patches without mutating either snapshot.
+
+- Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
+  Identical negative thresholds and standalone omitted values still reach the
+  JSON rejection path instead of silently suppressing the update. Carrying
+  omitzero fields keep their omission semantics, including nested records.
+
+- Compare lowered material texture descriptors with generated typed field proofs
+  during SceneIR updates, avoiding repeated reflection over texture slots.
+  Nested schema and named-scalar checks retain the JSON fallback when a proof
+  is stale or a comparison is ambiguous.
+
+## v0.57.24
+
+### Fixed
+
+- Preserve the caller-selected optimizer during docs deployment instead of
+  prepending TinyGo's directory and silently selecting its bundled `wasm-opt`.
+- Honor `TINYGO` in production CLI builds, including custom executable names and
+  relative paths. An unavailable explicit compiler fails without a prebuilt
+  fallback; explicit prebuilt mode and development builds retain their behavior.
+
+## v0.57.23
+
+- Hydrate islands declared in sibling GoSX files or relative-imported shared
+  directories while preserving package boundaries and the declaring file's
+  render context.
+- Create dynamic SVG and MathML in the proper namespace, including HTML
+  integration points, MathML annotations, and namespaced attributes.
+- Keep island table paths aligned with server-added row groups. Preserve
+  grouping through row insertion, section replacement and keyed reordering.
+- Retain keyed row identity around compiler-identified whitespace and static
+  siblings. Ambiguous structures keep positional reconciliation; ordinary
+  fully keyed lists keep their existing path. Reuse row-key strings rather
+  than allocating a new key per row while matching stable source anchors.
+
+## v0.57.22
+
+- Stream primitive instance counts, local transforms and normalized RGBA colors as
+  one retained binary snapshot. Batches can shrink to zero and re-grow without
+  resending geometry, materials or parent declarations. The typed Go
+  `SetTransformColors` helper reuses packing storage; fixed-count transform
+  frames and GLB pose streaming keep their established paths.
+- Reject non-finite count/color snapshots before modifying live state, retire
+  revision history on full declarations, and discard stale queued snapshots
+  when a declaration changes during lazy codec loading. Preserve picking and
+  shared parent transforms on WebGL and WebGPU.
+
+## v0.57.21
+
+- Retain two private pose wrappers per local binary-updated GLB instance instead
+  of re-expanding every model each frame. Validate shared declarations once per
+  batch, preserve atomic rejection and live skin playback, and retire cached
+  wrappers across membership and palette changes. Parented, paletted, fitted,
+  and pending declarations retain their established update path.
+
+- Rotate an entire subtree around its shared local origin with `Group.Spin`.
+  Preserve child-local transforms, nested parents, inherited scale, animation
+  transport, and picking on both GPU backends and the Go renderer. Groups
+  without spin keep their existing flattened representation.
+
+- Colour crowd agents one by one. `MeshInstance.Color` tints an instance of an
+  animated `InstancedGLBMesh`, so a body part that comes in five colours is one
+  batch instead of five. The batch ships a palette and each instance a 1-based
+  index (about 9 bytes per coloured agent for 1,000 agents; a colour string per
+  agent would take 18), and a batch without colours keeps its old wire form. The
+  WebGL pose and motion shaders read the tint as an instance attribute and the
+  WebGPU crowd colour shader as a storage buffer; a colour uploads only when it
+  changes. Vertex colours are not read: neither renderer's mesh path has them.
+
+- Carry instanced meshes on a moving scene node. `InstancedMesh.ParentNode`
+  names the node (a `Vessel.NodeID`, a model ID or an object ID); instance
+  positions are then relative to it, and each render bundle composes the node's
+  current world matrix into the transforms the WebGL2 and WebGPU renderers read.
+  A ship that heaves, pitches and rolls under `DispatchVesselPose` now carries
+  its windows, rails and lifeboats; before, the instances stayed where the scene
+  first placed them. Unchanged composed transforms retain their GPU stream.
+  The same parent search no longer picks a crowd agent as the node, so a
+  crowd batch ID may start with its parent's ID.
+
+- Skip unused normal preparation for unlit Scene3D line geometry in animated
+  frames and static world bakes. Preserve lit colors, solid mesh normals, and
+  lighting changes that invalidate cached geometry colors.
+
+## v0.57.20
+
+- Keep ocean rendering on the shared Scene3D animation clock in WebGL2 and
+  WebGPU, matching vessel buoyancy through pause, seek, and resume. Use the same
+  hardware wave tier for rendering and water queries.
+
+- Prepare camera projection once per Scene3D frame and reuse camera-local line
+  endpoints through clipping and screen projection. Preserve near-plane rounding,
+  culling, resize behavior, and camera-independent world geometry caches.
+
+- Prepare base rotation and drift once per animated object per frame in the Go
+  Scene3D renderer. Reuse them for line and solid mesh positions and normals,
+  preserving clip, spin, scale, parent transforms, and the static bake cache.
+
+- Skip redundant dependency ownership lookups when a single reactive tracking
+  window has already read a source. Preserve the first revision, nested and
+  concurrent tracking isolation, and TinyGo's existing shared-scope path.
+
+- Retain renderer-owned instance matrix and color preparation storage across
+  fresh SceneIR bundles in WebGL2 and WebGPU. Preserve mutable inputs, palette
+  changes, GPU-driven updates, palette reads bounded by the active count, and
+  retirement when the last batch disappears.
+
+- Retain WebGL2 instance stream snapshots across camera-only frames and upload
+  only changed spans, preserving in-place edits, dirty ranges and buffer retirement.
+
+- Reuse retired dependency storage for derived values and effects without
+  recycling lists still read by a refresh. Avoid TinyGo WASM goroutine-identity
+  lookups and a constant-key tracking map while preserving native Go isolation.
+
+- Compile authored Selena vertex texture sampling through SceneIR. Expose only
+  vertex-sampled textures to the WebGPU vertex stage and reject unsupported
+  WebGL device limits before shader compilation, retaining material fallbacks.
+- Bound an orbit's pitch on each side, and give it a floor. `scene.Orbit` gains
+  `MinPitch` and `MaxPitch` (radians of camera elevation above the target's
+  horizon; pointers, because zero is valid) and `MinHeight` (a world y the
+  camera never goes below, at any distance). `PitchLimit` stays the symmetric
+  shorthand. A drag, inertia, a key, a zoom or a camera command all stop on the
+  range and the floor, so a preset aimed near the waterline cannot orbit under
+  the sea. The floor is a fixed height; it does not follow the waves.
+
+- Change a mounted Scene3D scene's orbit target, distance limits and pitch limit
+  after mount. Put `scene.Orbit` on a camera (`PerspectiveCamera.Orbit`,
+  `IRCamera.Orbit`) and the orbit controls take the new target when the camera
+  command runs, so mouse orbit continues around it. `Scene3D.SetOrbit` (and the
+  page-side `__gosx.scene3d.setOrbit` and handle `setOrbit`) changes them alone:
+  the camera keeps its position and turns to the new target. Props with
+  `Controls: ControlOrbit` carry `ControlTarget` and the control limits in the
+  canonical camera record, so a Go-side scene update that changes them reaches
+  the mounted controls.
+
+- Apply a dispatched `SetCamera` command to the built-in camera controls.
+  `Scene3D.Dispatch` with a camera command used to update only the scene state,
+  and orbit, fly and first-person controls kept their own camera, so the camera
+  never moved once the user had touched it. It now takes the same path as
+  `Scene3D.SetCamera` and publishes the new camera.
+
+- Add `wasm.EachFrame`, the way to write a loop in a page-side Go WASM engine.
+  A loop made only of Scene3D calls never lets the browser draw or handle
+  input, because each call waits on an already-resolved promise: the page
+  freezes for the length of the loop. `EachFrame` runs a step once per visible
+  animation frame, pauses while the page is hidden, and ends with its context.
+  See docs/engine-frame-loop.md.
+
+- Boot multi-component Go WASM modules in engine workers. Worker startup
+  accepts each module-local factory and mounts only the requested component,
+  matching page-side registration. Wrong tokens, duplicate names and factory
+  registrations after synchronous module startup are rejected.
+
+- Serve the current Go WASM build from a development server. A hashed Go WASM
+  module is revalidated on each reload (`no-cache` with an ETag), a compressed
+  sidecar older than its file is not used, and a request for an older hash gets
+  the manifest's current build for that module. A production server still
+  serves a hashed file as immutable and never remaps a hash.
+
+- Reuse live computed-value subscriptions when a recomputation reads the same
+  ordered dependencies. Retain freshly tracked revisions, the replacement path
+  for changed dependencies, batched reads, and disposal while reducing
+  subscription allocation churn in islands and engines.
+
+- Reject SceneIR transform and state patches with known non-patch edits before
+  copying large mesh records. Cache scalar comparison fields from the authored
+  patch types, retaining the JSON fallback for ambiguous comparisons.
+
+- Match SceneIR records with one ID table instead of building two maps.
+  Preserve the handling of repeated and empty IDs, sorted removals, and the
+  order of updates and optional patches without mutating either snapshot.
+
+- Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
+  Identical negative thresholds and standalone omitted values still reach the
+  JSON rejection path instead of silently suppressing the update. Carrying
+  omitzero fields keep their omission semantics, including nested records.
+
+- Compare lowered material texture descriptors with generated typed field proofs
+  during SceneIR updates, avoiding repeated reflection over texture slots.
+  Nested schema and named-scalar checks retain the JSON fallback when a proof
+  is stale or a comparison is ambiguous.
+
+## v0.57.19
+
+- Select Scene3D model-map variants by each mount's delivery profile and actual
+  WebGL or WebGPU texture capabilities. Low and standard require compatible
+  built KTX2 maps, including bounded uncompressed variants on devices without
+  BC support; unsupported or failed variants return preparation errors rather
+  than loading full-size authored images. Preserve material role and color-space
+  metadata for external, embedded, and data-URI glTF images. One sRGB image can
+  serve base color and emissive maps; transparent materials require a
+  four-channel alpha-preserving variant.
+- Add `Surface.ApplyTextureProfile` to prepare target maps and rehydrate active
+  models before committing a live quality change. Failed, canceled, superseded,
+  or stale changes retain the last working textured scene. Existing cached maps
+  from the old profile may remain resident after a switch. BC5 normal maps are
+  rejected until the shaders reconstruct their missing Z channel.
+
+- Reuse mount-owned decoded model scopes when revisiting the same texture
+  profile, backend, capabilities and manifest. Retire obsolete manifest scopes
+  and evict their model-cache entries on disposal; late asynchronous decodes
+  cannot repopulate a retired scope.
+
+- Recover failed material textures through explicit Scene3D model preparation on
+  the existing WebGL or WebGPU renderer. Concurrent preparations share one retry;
+  normal drawing keeps settled cache behavior without repeated image requests.
+  Retain cached records and ignore superseded image callbacks.
+
+- Reduce SceneIR comparison CPU and temporary patch allocations with generated,
+  schema-checked ObjectIR equality proofs, including embedded model records.
+  Transform and interaction updates
+  avoid copying whole mesh records on the common path while preserving the
+  reference JSON fallback for ambiguous values and mixed edits.
+
+- Reduce allocation churn in `signal.Derive` and `signal.Watch` dependency
+  tracking, including computed values used by islands and Scene3D engines.
+  Reuse cleared tracking scratch with bounded capacity while preserving
+  goroutine isolation, nested tracking and fresh derived reads inside `Batch`.
+
+- Let islands talk to a worker engine with typed request and reply, a paced
+  view and a visible status, with no page JavaScript. `wasm.ServeCalls` answers
+  `engine.Call` values written to a shared signal with `engine.Result` values on
+  `<channel>.result`: it ignores repeated IDs, answers bad arguments with an
+  error, handles a call written before it subscribed, and keeps the last replies
+  in `Recent`. On a worker engine the page fails a call with `timeout` or
+  `worker-crashed` when no reply comes. `wasm.NewView` sends the newest state
+  at most once per `MinInterval` and only after the page applied the previous
+  batch, skips unchanged signals, and pauses while the tab is hidden. The page
+  writes `engine.WorkerStatus` to `$gosx.engine.<id>` on boot, mount, fallback,
+  crash and dispose. `engine.Config.Worker: WorkerRequired` never runs the engine
+  on the main thread, and `ForceWorkerFallback` forces the fallback from the
+  server for tests (the JavaScript `__gosx_engine_worker_disable` still works).
+  `scene.DispatchVesselPose` and `DispatchVesselCutaway` now work from an engine
+  worker. `bootstrap-feature-engine-worker.js` grows from 28,462 to 33,566 bytes
+  raw (9,351 to 10,837 gzip, 8,682 to 10,130 Brotli) and now has a size budget; no
+  other bundle changes. `docs/engine-worker.md` no longer says the worker needs
+  no JavaScript for everything: only signals, calls, views and status are
+  JavaScript-free.
+
+- Add large powered ships to GoSX. The new deterministic `vessel` package models
+  a powered displacement hull (power roughly proportional to speed cubed,
+  rudder or pod steering with turning circles and stopping distances, roll and
+  pitch from the wave field, optional stabilizers) with expedition, liner and
+  megaship presets, and gives the same bits on js/wasm, amd64 and arm64
+  (checked on a real Apple Silicon Mac). `Vessel.ExternalPose` lets Go own a
+  vessel's pose: send `scene.VesselPoseFrame` (wire format GSV1, 62 bytes for one
+  ship) with `scene.DispatchVesselPose`; the browser runs no sailing physics and
+  blends between ticks, and walkers, wake and `ParentNode` crowds follow.
+  `Vessel.Decks` gives a ship many walkable decks (polygons with holes and stair
+  ramps, generated from short `vessel.DeckPlan` descriptions or
+  `vessel.StandardLayout`); `vessel.Layout` also answers deck, route, stairs and
+  lift-capacity queries for simulation. `Vessel.Cutaway` and
+  `scene.DispatchVesselCutaway` hide or ghost everything above a deck and can
+  slice the hull; parented crowd agents above the cut are culled and cast no
+  shadow. The cutaway works on WebGL only. For a 290 m, 14-deck liner with 2,900
+  parented agents, a 10 Hz tick is 13.6 KB and the mean frame costs 0.66 ms of
+  main thread in Node. Sailing vessels behave as before. Several Scene3D size
+  targets rise by the measured growth. See `docs/scene3d-powered-vessels.md`.
+
+- Add two opt-in features for thousands of animated agents on a moving ship.
+  `scene.PartialMotionFrame` (wire format GSP5) names each agent by slot and
+  carries only the agents that changed; send it with
+  `scene.DispatchPartialMotionFrame` or `scene.EncodePartialMotionFrame`, after
+  a full `MotionFrame` has stated every agent. The browser merges queued
+  partial frames, rejects one built for a different batch size, and copies only
+  the changed slots into the renderer. `InstancedGLBMesh.ParentNode` makes a
+  batch ride a scene node: instance transforms and motion frames are relative
+  to the node, and the renderer applies the node's world matrix once per frame,
+  including a pose computed in the browser, as `scene.Vessel` does. Culling,
+  depth sorting, shadows and picking use the parented positions. For 5,000
+  agents with 5% changing per 10 Hz tick, a tick drops from 513,917 to 23,279
+  bytes and its decode and apply time from 27 ms to 1.2 ms (Node benchmark).
+  The WebGL and WebGPU crowd paths follow a parent; a selected agent of a parented
+  batch draws without an outline. A per-instance `ParentMatrix` is still
+  rejected in motion frames. Existing crowds and frames behave as before. See
+  `docs/scene3d-crowd-motion.md`.
+- Draw animated crowds on the WebGPU renderer. A scene that sets `PreferWebGPU`
+  now hydrates its `InstancedGLBMesh` agents as crowd batches, and the WebGPU
+  renderer draws them with the same features as WebGL: palette-skinned poses,
+  `MotionFrame` motion with GPU interpolation, `PartialMotionFrame` updates that
+  upload only the changed slot runs, `ParentNode`, and shadows. The batch record
+  and the planner are shared with WebGL. `scene.GPUDriven` now covers crowd
+  batches too: one compute dispatch per batch culls every agent against the
+  camera frustum, and with `Occlusion` the main pass runs in two phases and a
+  Hi-Z pyramid built from that frame's depth hides the agents behind decks and
+  walls, with no per-agent work on the CPU. A frustum cull changes no pixel; Hi-Z
+  removes only stray pixels that an occluded agent leaks through a wall (26 to 30
+  of 230,400 in the 5,000 and 7,800 agent ship benchmark, where it draws 45% and
+  44% of the agents). Measured on SwiftShader, not on a GPU: main thread 1.3 to
+  2.9 ms per frame for 5,000 to 7,800 agents. Limits: agents are not GPU pick
+  targets on WebGPU, crowd materials draw without detail layers, and water and
+  ocean reflection passes skip crowds. See `docs/scene3d-crowd-motion.md`.
+- Fix GPU-driven instancing in the shipped WebGPU bundle. The bundle build
+  strips the indentation of the renderer's WGSL and renames its locals, so the
+  host's text anchors never matched, and a `GPUDriven` scene with an eligible
+  instanced mesh failed over to WebGL2 on its first frame. The host now matches its anchors without depending on
+  indentation or local names.
+- Run the fighting input controller without a hub socket. `HubInputConfig.Sink`
+  `"signal"` with `SignalName` (register it with `Manifest.AddLocalInput`)
+  publishes each closed frame's absolute held samples, `[{player, dir, btn,
+  frame}]` with both players in local mode, to a shared signal that a Go WASM
+  engine reads. It uses the same per-frame latch and same-turn edge writes as
+  `HeldMode: "absolute"`, and makes a game's own keyboard, touch and pad
+  reading unnecessary. Hub input is unchanged. See `docs/fight-input.md`.
+
+- Add `Scene3D.Live(ctx, event, data)` to `engine/wasm` and
+  `window.__gosx.scene3d.live`, which feed a named Live event to a mounted
+  scene through the same path as a hub event. Engines no longer need to
+  dispatch the internal `gosx:hub:event` document event.
+
+- Add the `arcade-audio` feature chunk (`RequireFeature("arcade-audio")`) so a
+  page without hubs gets `window.__gosx.arcadeAudio`. Several bundle size
+  targets rise by the measured growth.
+- Add engine workers: set `engine.Config{Runtime: engine.RuntimeGoWASM, Thread:
+  engine.ThreadWorker}` and GoSX runs the Go WASM engine in a dedicated Web
+  Worker instead of the main thread. Apps write no JavaScript; `Thread` defaults
+  to the main thread, so existing engines do not change. If the browser cannot
+  start the worker, the engine falls back to the main thread and the runtime
+  reports why (`Context.ThreadFallbackReason`, a `gosx:engine:thread-fallback`
+  event). In the worker, `game/loop` and `game/host.FrameSourceJS` run on a
+  fixed-rate timer clock (60 Hz by default) and `Hidden()` follows the page's
+  visibility; the new `loop.Driver.RunWhileHidden` keeps a simulation stepping in
+  a hidden tab. Binary frames (GSP2, GSP3, GSP4, GSXI) and signal batches reach
+  the page as transferred buffers and go to the same Scene3D and signal code as
+  on the main thread. `scene.Surface`, `StreamWriter` and the frame dispatchers
+  work in a worker; `Context.Scene3DByID` targets a mount by id. Page input is
+  forwarded to the worker with timestamps (`host.NewForwardedInput`, a
+  `game/gamepad` source). `netplay/client` works in a worker: the page keeps the
+  `RTCPeerConnection` and transfers the data channel to the worker where the
+  browser allows it, and relays datagrams over the port where it does not. In
+  headless Chrome 153 a worker engine held 60.0 frames per second while the page
+  was busy 60% of the time (a main-thread engine ran at 34), and in a tab hidden
+  for 25 s the worker clock kept 60 ticks per second while a page timer ran at
+  about 1. The new chunk `bootstrap-feature-engine-worker.js` loads only for
+  pages with a worker engine; the engines chunk grows by 246 bytes. New make
+  targets: `test-engine-worker-wasm`, `test-engine-worker-browser`,
+  `test-engine-worker-hidden`. See `docs/engine-worker.md`.
+
+- Add sampled clip frames to Scene3D, so an app can pose a skinned model from
+  its own simulation clock. Declare `scene.Model{ID: ..., ClipSampled: true}`,
+  then send `scene.ClipFrame` (up to four layers per model: clip name or
+  index, exact clip time, weight, loop flag) through `scene.DispatchClipFrame`
+  or `window.__gosx.scene3d.dispatchClipFrame`. The new binary frame type GSP4
+  takes 11 bytes per layer, with no JSON per frame. The browser runs no clock
+  for a sampled model, and the same layers give the same pose after a jump
+  backwards (a rollback) or forwards. Time past a clip's end wraps for a
+  looping layer and holds the last key otherwise. Clip root motion is ignored
+  by default (horizontal translation of root nodes keeps its authored value);
+  `Model.RootMotion` applies it. Existing models and `PoseFrame`/`MotionFrame`
+  behave as before. Evaluating a frame allocates almost nothing in steady
+  state. The IR mesh node (`IRMeshNode`) also carries `clipSampled` and
+  `rootMotion`. See `docs/scene3d-clip-frames.md`.
+
+- Add `m31labs.dev/gosx/det`, assembly-free and fusion-proof versions of Exp,
+  Exp2, Log, Log2, Log10, Pow, Sin, Cos, Tan, Asin, Acos, Atan, Atan2, Hypot,
+  Sinh, Cosh and Tanh that return the same bits on js/wasm, amd64 and arm64,
+  plus `det.MulAdd`. Add `det/parity` to record and compare per-step state
+  hashes, `gosx detlint` and `gosx-detlint` (a `go vet -vettool`) to check
+  packages marked `//gosx:deterministic`, and the make targets
+  `test-det-parity`, `test-det-parity-arm64-remote`,
+  `build-det-parity-darwin-arm64` and `lint-deterministic`. See
+  `docs/deterministic-simulation.md`. Go 1.26's `math.Log` on amd64 returns
+  wrong values for subnormal inputs; `det.Log` does not.
+
+- Make `physics` bit-identical whether or not the build fuses a multiply and an
+  add. The package is now marked `//gosx:deterministic`: float products are
+  rounded explicitly, `math.Sin/Cos/Acos/Atan2/Hypot` became `det` calls, and
+  the static broadphase prune walks slots in index order instead of ranging a
+  map. The parity corpus now passes at `GOAMD64=v3` and on arm64.
+- Add `HubInputConfig.HeldMode = "absolute"` for fighting hubs whose simulation
+  derives press edges and resolves opposite directions itself. Each sample
+  carries `dir` (wire contract, bit mask: left 1, right 2, up 4, down 8, with
+  no client SOCD and no forward/back mapping by player slot), `btn` (bit mask:
+  LP 1, HP 2, LK 4, HK 8, Guard 16; 32 is reserved for Transform) and `frame` (a local sample frame number, +1 per animation frame). All
+  samples in one frame combine by one latch rule for keyboard, touch and
+  gamepad: buttons are OR-ed and directions take the last sample, so a press
+  and release inside one frame still counts. Edge sends still go out in the
+  same event turn. Default behavior is unchanged.
+- Add `netplay`, a transport-agnostic rollback netcode engine for two-player
+  deterministic simulations, standard library only. `Session` predicts the
+  remote input, rolls back within one tick, stalls at an 8-frame prediction
+  window, syncs frame advantage and exchanges confirmed-frame checksums over a
+  versioned binary packet under 1,200 bytes. `Relay` forwards packets, verifies
+  checksums with a native copy of the game, repairs a desync with its `Save`
+  blob, flags late inputs and streams delayed inputs to spectators.
+  `EventLedger` starts, cancels or keeps presentation effects after a rollback.
+  Replays are versioned and refuse a different simulation identity; the
+  `netplay-identity` generator hashes sources, data files, the Go version and
+  an optional det version. `LossyNet` and `Loopback` are in-process transports.
+  Ten thousand seeded lossy sessions agree with zero desyncs, and a steady-state
+  frame allocates nothing on native and js/wasm. See `docs/netplay.md`.
+
+- Add a network transport for `netplay`: WebRTC data channels between browsers
+  and a Go relay, with a WebSocket fallback. Apps write no JavaScript. The relay
+  uses `m31labs.dev/gosx/netplay/webrtc`, a nested Go module that holds the
+  only pion dependency, so the core `go.mod` gains no requirements and the
+  js/wasm build imports no pion. `webrtc.Server` answers browser offers over the
+  hub WebSocket, opens one unordered, zero-retransmit data channel per peer,
+  takes STUN and TURN servers from `webrtc.Config`, and gives the relay a
+  `Link` per client that answers on the path the client uses. In the browser,
+  `netplay/client.Dial` returns a `netplay.Transport`; after a timeout, or when
+  WebRTC fails, it uses hub binary frames and reports `Degraded()`. A page
+  loads the new `bootstrap-feature-netplay.js` chunk (4,353 bytes, none for
+  other pages) through `RequireFeature("netplay")`. New core packages:
+  `netplay/signal` (signaling messages with size limits and validation),
+  `netplay/hubnet` and `netplay/dgram`. `hub.Hub.SendBinary` sends one binary
+  frame to one client, and `hubclient` gains `Options.OnBinary` and
+  `Client.SendBinary`; before, `hubclient` dropped every binary frame. Native
+  `hubclient` writes are now serialized. Make targets: `test-netplay-webrtc`
+  and `test-netplay-browser`. See `docs/netplay.md`.
+
+- Keep derived reads current inside batched actions and source observers,
+  preserving cached descendants when a derived value stays equal. Match the
+  same settled reads and callback order in AOT islands. Deliver shared peers
+  once after each handler, before the writer returns its final patches.
+
+## v0.57.18
+
+- Preserve asset fitting through retained model updates, keep Water shapes
+  pickable through selection changes, and match their refraction and shadows to
+  the selected geometry. Clear inactive object and shadow targets consistently.
+- Keep retained navigation stylesheets connected when head order has not changed,
+  preventing unstyled flashes during enhanced page updates. Let applications
+  claim local history entries through the cancelable `gosx:popstate` event,
+  preserving in-place editor selection during Back and Forward.
+- Derive GPU-driven shaders from emitted production shader strings as well as
+  source strings. Report actual benchmark backend/fallback state in the UI and
+  exported measurements instead of attributing failed submissions to WebGPU.
+- Repair demo diagnostics overflow, preview anchor offsets, Checkers disclosure
+  flow and renderer status, chart hydration defaults, Greeter labeling, and
+  keyboard dismissal of the documentation's mobile menu.
+- Build list auto-keys directly without formatting and boxing overhead,
+  preserving source identity and full-width integer indices.
+- Add opt-in rigid-model CPU geometry preparation without hidden scene nodes.
+  Reuse prepared streams on first hydration; reject animated or skinned assets
+  instead of freezing them. GPU buffer and shader work remains first-render work.
+
+- Settle individual shared-signal writes through the same reader boundary as
+  batches. Derived values update on the same write, and nested observer writes
+  produce one settled island update while preserving each signal notification.
+
+- Reconcile shared-signal batch readers after notifications and derived values
+  have settled. Each affected island evaluates once per store batch, preserving
+  individual signal events and reentrant observer updates. Group subscriptions,
+  reuse the pending-reader queue, and ignore callbacks from retired programs.
+  Remove repeated canonical lookups and JSON string-to-byte round trips.
+- Fix a data race in `sim`: a spectator join read `Simulation.Snapshot` on the
+  HTTP goroutine while the tick goroutine ran `Tick`. The runner now serializes
+  all calls into the simulation.
+- Make `game.Runtime.ApplyNetworkInputs` order-stable: inputs apply in ascending
+  player ID order, so event order and the last pointer position no longer depend
+  on map iteration. Add `sim.SortedPlayerIDs` and `sim.EachInput`.
+- Store default `game` snapshot time as integer nanoseconds (`timeNanos`),
+  still reading older `timeSeconds` snapshots. Add `sim.Runner.Restore`, which
+  also restores the frame counter, and extend `sim.ReplayLog` with `Initial`,
+  `InitialFrame`, `Seed` and `Truncated`. New `Options.Seed` and
+  `Options.ReplayMaxFrames`. Replay now takes one extra `Snapshot` call at start.
+- Add `sim.Options` `Broadcaster`, `RingSize` (`sim.RingDisabled`),
+  `SnapshotEvery`, `BroadcastEvery`, `CatchUpBudget`, `InputQueue` and
+  `InputQueueDepth`; `sim.NewBinarySnapshotBroadcaster`; `Runner.Pause`,
+  `Resume`, `SetSpeed`, `ReceiveInputAt` and `SnapshotAt`; and
+  `TickEvent.Behind`. Defaults keep the previous behavior.
+- Add `game.Clock` and `game.Runtime` pause and time scale, `Frame.RealDelta`,
+  `Frame.Steps`, `Context.Tick`, and the `game.Every` and `game.EveryInterval`
+  system cadence wrappers. `Frame.Delta` is now game time (unchanged at scale
+  1). A default `MaxDelta` no longer clamps a coarse `FixedStep` below one step.
+- Add `game.SaveCodec` to export and import `World` entities, registered
+  component columns and resources, and a `SnapshotCodec` helper that includes
+  them.
+- Send fighting-mode hub input on key and touch edges. A mapped key or touch
+  control that changes held state now sends the full input state in the same
+  event turn instead of waiting up to `SendEveryMS` for the timer. Key repeat,
+  typing in inputs, textareas and contenteditable, and states identical to the
+  last send are skipped, and window blur sends the release. The timer still
+  polls gamepads. Set `HubInputConfig.DisableEdgeSend` to keep timer-only sends.
+
+- Add `HubInputConfig.ReadyWhen` (`"scene-committed"`) so a fighting hub sends
+  its ready event only after the socket opens, a Scene3D mount reports
+  `data-gosx-scene3d-ready` and `data-gosx-scene3d-model-hydration-committed`,
+  and two animation frames pass. It sends at most once per socket, so it holds
+  across reconnects and enhanced navigation. Default behavior is unchanged.
+- Cut the per-frame main-thread cost of animated crowds. A WebGL
+  crowd (palette-skinned `InstancedGLB` actors or GSP3 motion batches) now
+  reaches the render bundle as one record per batch instead of one per agent,
+  and the batch keeps that record from frame to frame. Moving agents, pose
+  frames and motion frames bump a batch revision; the renderer repacks and
+  uploads a batch only when its revision changes. The prepared scene no longer
+  rebuilds when only the camera, the viewport or opaque mesh depth changes, and
+  translucent objects still sort by the current camera. At 5,000 agents, bundle
+  plus planner time falls from about 26 ms to about 1 ms per frame in the Node
+  benchmark (`node client/js/scene3d-crowd-frame.bench.mjs`). The color pass
+  now culls a crowd batch as a whole rather than agent by agent; every agent
+  still casts shadows.
+
+- Preserve signed 64-bit integer values in shared-signal JSON batches, including
+  nested IDs and counters. State snapshots and event batches use the same exact
+  decoder as individual writes, so adjacent large IDs remain distinct.
+
+- Freeze inactive windows in long Go scene timeline sequences using existing
+  clamp signals. Steady playback samples the active bucket and selection path;
+  gaps, cuts and reverse seeks retain their native poses. Sequences of eight or
+  fewer tweens per property retain identical motion programs.
+
+- Preserve all wide-integer bits in strict state-snapshot comparisons. Compare
+  packed metadata once and reject non-finite numbers with the existing payload
+  bits, keeping the core runtime under its wire limit.
+
+- Bind Go scene timelines to motion programs with `Timeline.BindMotion`.
+  Existing Go playback controls now seek node and camera sequences alongside
+  DOM and Selena animation, including exact cuts, holds and backward seeks.
+  Preserve exact tween/mix endpoints and authored zero map/clamp bounds.
+
+- Keep single-key motion tracks constant through invalid clock values and
+  timeline offsets, preventing a NaN seek from panicking the evaluator.
+
+- Use logarithmic keyframe lookup for long motion tracks, preserving exact
+  interpolation, arbitrary seeks and allocation-free sampling. Short tracks
+  retain their linear lookup path.
+
+- Accept Go's `append(slice, first, second)` spelling with individual element
+  arguments in island expressions. Lower to existing immutable VM operations,
+  preserve handler shadowing, and demonstrate a live collection in the docs.
+  Preserve slice element types in strict island loops and project typed implicit
+  event values into server Go handlers without adding runtime instructions.
+
+- Apply `browser.Focus` after native event defaults so disabling the clicked
+  control cannot steal the requested focus. Cancel queued focus when its island
+  has been replaced during navigation.
+
+- Add typed Hub document views with debounced editing, server-rendered previews,
+  presence, UTF-16 remote carets, reconnect recovery and navigation cleanup in an
+  optional browser host. Replace the collaboration demo's application script
+  with the GoSX binding and keep preview parsing on the server.
+
+- Enforce `content.MDPPOptions.Sanitize` in the GoSX content renderer. Preserve
+  Markdown formatting and source positions while removing executable URL
+  schemes, active embeds, active form controls and framework dispatch attributes.
+
+- Compose static `func()` callback props inside islands. Same-file views forward
+  parent-owned handlers without another VM or runtime instructions. Check
+  callback ownership and signatures, keep callbacks out of serialized data, and
+  prove forwarded bindings during scalar AOT admission.
+
+- Lower VM engine-surface packages together so Go helpers, struct layouts and
+  file-local import aliases work across source files. Preserve source locations
+  in compiler diagnostics, retain callable functions from every file, and reject
+  packages that exceed the VM expression limit before IDs can wrap.
+
+- Keep declarative action buttons disabled while reading the response body,
+  including failed responses, and restore them before the result updates focus.
+  Slow response bodies no longer invite an early second click.
+
+- Reuse TinyGo package caches across production rebuilds with stable runtime
+  source directories. Each build stages current sources, with process locks
+  and temporary-directory fallback for concurrent or unavailable workspaces.
+
+- Add adapter details to native Scene3D status bindings, including backend
+  fallback updates. Motion docs use these bindings without a page script.
+
+- Make copy controls ready before engine startup completes and restore their
+  readiness after navigation. Docs use the framework handler directly.
+
+- Reduce steady WebGPU uploads by sharing material uniforms and batching
+  retained mesh transforms. Skip settled transforms, bound changed matrices
+  to one upload span, and preserve exact command validation during bundle replay.
+
+- Send enhanced GET and HEAD form fields in the URL query. Preserve repeated
+  controls, unrelated query parameters and the clicked submit button's value.
+
+- Add `command.Action.Submit`, a CSS selector for a managed form or its submit
+  button. The workbench calls `requestSubmit` on it, so a chord submits through
+  the page's managed form path. `commands.list()` rows carry `submit`.
 - Add opt-in workbench drag handles with pointer capture, cancellation, fine
   adjustment, reset, keyboard controls and synchronized ARIA values. Share the
   input chunk's pointer gesture helper with controller drag-and-drop.
@@ -12,6 +615,14 @@
 - Add splitpane, dock, tabs and collapsible UI recipes. Layout signals can persist
   through controller storage; document the controls in `docs/workbench.md`.
 
+- Keep the entire `data-gosx-*` framework namespace, style and `srcdoc` out of
+  attribute spreads, including Scene3D mount attributes. Write trusted framework
+  attributes explicitly; unresolved component fallbacks preserve them.
+  Declarative attribute bindings now allow only inert text, boolean, application
+  data and ARIA attributes, plus safe HTTP(S) and relative `href` values. They
+  cannot write framework attributes, CSRF tokens, HTML documents or SVG animation
+  targets, or introduce executable URLs through ASCII control characters.
+
 - Reuse template, CSS, metadata, and runtime-manifest lookups in production
   mode (`GOSX_ENV=production` or `prod`). Restart after replacing build files;
   `GOSX_DEV=1` keeps file-change checks active.
@@ -19,15 +630,96 @@
 - Preserve integer JSON literals in Scene3D props during hydration, including
   values above the exact float64 integer range.
 
+- Make `sky.blur` take effect on WebGPU image environment maps, matching
+  WebGL. Scenes tuned on WebGPU now look blurrier where blur is set.
+
 - Add pre-Build trusted proxy policies and one cached `ClientIP` resolver.
   Normalize genuine peers and bounded X-Forwarded-For chains without changing
   RemoteAddr or origin policies. Nested handlers and completion observers share
   the result; malformed or repeated headers fall back to the peer.
 
-- Enable Scene3D adaptive quality by default, including effects and resolution
-  reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
-  The full tier starts at the capability DPR cap, telemetry reports rendered
-  DPR, and rAF-only timing can recover quality after sustained clean cadence.
+- Reject authored `data-gosx-on-*`, `data-gosx-handler` and `data-gosx-path`
+  attributes (any letter case) on HTML elements inside a `//gosx:island`
+  component: `gosx check` and the build now report the attribute as reserved
+  and suggest a `data-app-*` name. The island renderer also drops any such
+  attribute from a resolved node before it appends its own dispatch markers.
+  Before this, HTML kept the first duplicate, so an authored
+  `data-gosx-on-click={expr}` beat the real marker and a runtime value could
+  choose which handler fired. Other authored `data-gosx-*` names (`data-gosx-link`,
+  `data-gosx-region`) are unchanged. Island components reject `{...spread}`
+  at compile time; server renderers also filter reserved names from spreads.
+  Server component renderers and the WASM
+  VM also discard these names. Browser attribute patches, navigation and
+  declarative bindings cannot change dispatch markers; generated event
+  bindings use dedicated dispatch patch operations. Regenerate the browser
+  runtime and WASM together when updating. ABI version 4 rejects older WASM;
+  the current WASM also negotiates dispatch op support with the separately
+  loaded patch chunk and falls back to legacy attribute ops when needed.
+  Current patch chunks also accept legacy marker ops from an ABI-3 bootstrap.
+  Handwritten `RenderIsland` content can bind trusted handlers with
+  `gosx.DispatchAttr("click", "handler")`; ordinary attributes and spreads
+  cannot manufacture these markers.
+- Cap Scene3D main canvases at 2,073,600 backing pixels and ambient animation
+  at 60 fps by default. Input and transitions follow the display. Set
+  `Props.MaxPixels` to another positive budget or `scene.MaxPixelsUnbounded`,
+  an explicit `Props.MinDevicePixelRatio` overrides the default pixel budget.
+  Set `Props.MaxFrameRate` above 60 or use `FramePacing: "vsync-divisor"`
+  to opt out of the ambient cap.
+
+- Upgrade gotreesitter to v0.56.0. Explicit generic signal constructors that
+  were silently dropped now lower correctly, and valid Go that previously
+  produced ERROR nodes now parses. Parse allocations are about 98% lower.
+- Disable unused WebGL canvas MSAA for initial, undeferred Scene3D post
+  effects by default, and remove depth buffers from color-only post targets.
+  If the post chain turns off, FXAA retains edge filtering. Explicit
+  `Props.MSAASamples` preserves the authored canvas multisampling request.
+
+## v0.57.17
+
+- Add the macOS desktop backend on darwin/amd64 and darwin/arm64: an `NSWindow`
+  hosting `WKWebView`, built with `CGO_ENABLED=0`. Support navigation, HTML,
+  scripts, lifecycle callbacks, native menus and Edit responder roles, window
+  size limits, URL opening and message alerts. Call `App.Run` from the main
+  goroutine.
+- Add native macOS open/save panels, Finder document delivery and Go/WKWebView
+  messaging. HTML file inputs support single/multiple files and directories;
+  JavaScript alert, confirm and prompt dialogs use native panels.
+- Fit the initial macOS web view to the window's actual content bounds after
+  AppKit constrains an oversized window. Keep the web view fitted on resize.
+- Report typed desktop service and window availability from synchronous
+  registered-method metadata. Partial or unbound service proxies no longer
+  advertise privacy or diagnostics support; Bind/Unbind updates current and
+  future pages. Hosts without metadata report availability as false while
+  explicit service operations and raw bridge calls remain usable.
+- Replace superseded Windows document-start scripts instead of retaining a
+  script for every service update, and wait for initial bootstrap registration
+  before navigation. Immediate preload errors preserve the prior binding and
+  metadata.
+- Share a Go-authored motion transport across DOM, Scene3D and Selena shader
+  surfaces, with play, pause, seek, reverse, replay and named labels. Shader
+  clocks follow absolute scene time on WebGL and WebGPU; semantic playback
+  controls and capture use the same transport.
+- Add optional Go-authored SVG morphs and prepared Scene3D command transitions
+  on the shared motion lifecycle. Compatible SVG geometry and prepared scene
+  poses support absolute forward and reverse sampling; incompatible SVG
+  geometry falls back to a valid destination path and fade.
+- Add `Program.SampleTrack` for per-key easing, anticipation, overshoot, holds
+  and stepped timing from a playhead or scalar input. Compose same-element DOM
+  bindings, apply scene overrides before geometry baking and material interning,
+  and preserve finite timelines without the optional scalar-track adapter.
+- Reuse canonical WebGL authored shader program keys across frames and retain
+  dense immutable Scene3D world geometry within an 8 MiB shared cache. Preserve
+  layout invalidation, exact geometry, disposal and stale-owner cleanup.
+- Simplify Blackglass mobile controls into compact, exclusive GoSX panels while
+  preserving touch steering, keyboard support and the mounted scene.
+
+## v0.57.16
+
+- Keep typed browser audio worklet contracts independent of server HTTP asset
+  delivery. JS/WASM imports exclude the HTTP handler and its TLS dependencies;
+  unused worklets no longer initialize or retain the processor asset. Portable
+  `Path` and `Source` APIs retain the same content-addressed processor, while
+  native `Handler` serving, HEAD, cache policy and ETags remain unchanged.
 
 ## v0.57.15
 

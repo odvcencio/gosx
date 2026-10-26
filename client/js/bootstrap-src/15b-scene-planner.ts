@@ -99,6 +99,7 @@
       caches: lastPrepared && lastPrepared.caches ? lastPrepared.caches : new Map(),
       shadowPassHash: scenePlannerShadowHash(source),
       materialsHash: scenePlannerMaterialsHash(source),
+      pipelineVariantHash: pbrPasses.pipelineVariantHash,
       resolvedEnv: source.environment || {},
       cssDynamic: Boolean(cssResolved.dynamic),
       cssCache: cssResolved.cache,
@@ -1357,6 +1358,8 @@
     const alpha = passes.alpha;
     const additive = passes.additive;
     opaque.length = alpha.length = additive.length = 0;
+    let pipelineVariants = 0;
+    const pipelineMaterials = new Set();
 
     for (let index = 0; index < objects.length; index += 1) {
       const object = objects[index];
@@ -1367,6 +1370,14 @@
       const pass = typeof scenePBRObjectRenderPass === "function"
         ? scenePBRObjectRenderPass(object, material)
         : scenePlannerObjectRenderPass(object, material);
+      const reflected = Boolean(object.directVertices && sceneAffineDeterminant(object.modelMatrix, 0) < 0);
+      const depthWrite = typeof sceneTransmissionDepthWrite === "function" ? sceneTransmissionDepthWrite(object, material, pass === "opaque") : pass === "opaque";
+      const variant = (reflected ? 1 : 0) | (depthWrite ? 2 : 0) | (material && material.detail ? 4 : 0);
+      pipelineVariants |= 1 << ((pass === "alpha" ? 8 : pass === "additive" ? 16 : 0) + variant);
+      if (object.skin) pipelineVariants |= 1 << 24;
+      if (object.computedMorph) pipelineVariants |= 1 << 25;
+      if (object.doubleSided) pipelineVariants |= 1 << 26;
+      pipelineMaterials.add(object.materialIndex || 0);
       if (pass === "alpha") {
         alpha.push(object);
       } else if (pass === "additive") {
@@ -1376,6 +1387,28 @@
       }
     }
 
+    // Stable sorting preserves authored order within a pipeline/material group.
+    // Explicit depth-mask draws stay last, in authored order.
+    const pipelineKey = function(object) {
+      const material = materials[object.materialIndex] || {};
+      const reflected = object.directVertices && object.modelMatrix &&
+        typeof sceneAffineDeterminant === "function" && sceneAffineDeterminant(object.modelMatrix, 0) < 0;
+      return (material.shaderBackend || "pbr") + ":" + (material.detail ? "1" : "0") + ":" +
+        (object.skin ? "1" : "0") + ":" + (object.doubleSided ? "1" : "0") + ":" + (reflected ? "1" : "0") + ":" +
+        (material.customVertex || material.customVertexWGSL || "") + ":" +
+        (material.customFragment || material.customFragmentWGSL || "");
+    };
+    const keys = new Map();
+    for (const object of opaque) keys.set(object, pipelineKey(object));
+    // Board wire bundles omit depth metadata and require painter order.
+    if (opaque.every(function(object) { return Number.isFinite(object.depthCenter); })) opaque.sort(function(a, b) {
+      const aOverride = a.depthWrite != null || sceneNumber((materials[a.materialIndex] || {}).transmission, 0) > 0;
+      const bOverride = b.depthWrite != null || sceneNumber((materials[b.materialIndex] || {}).transmission, 0) > 0;
+      if (aOverride || bOverride) return Number(aOverride) - Number(bOverride);
+      const aKey = keys.get(a), bKey = keys.get(b);
+      return aKey < bKey ? -1 : aKey > bKey ? 1 : (a.materialIndex || 0) - (b.materialIndex || 0);
+    });
+
     if (typeof scenePBRDepthSort === "function") {
       alpha.sort(scenePBRDepthSort);
       additive.sort(scenePBRDepthSort);
@@ -1384,7 +1417,7 @@
       additive.sort(scenePlannerDepthSort);
     }
 
-    return passes;
+    return Object.assign(passes, { pipelineVariantHash: pipelineVariants + ":" + Array.from(pipelineMaterials).sort().join(",") });
   }
 
   function scenePreparedPassList(worldDrawPlan, pbrPasses) {
@@ -1532,8 +1565,11 @@
     let hash = 2166136261 >>> 0;
     hash = scenePlannerHashString(hash, "v");
     hash = scenePlannerHashNumber(hash, sceneNumber(bundle && (bundle.bundleVersion != null ? bundle.bundleVersion : bundle.version), 0));
-    hash = scenePlannerHashCamera(hash, camera);
-    hash = scenePlannerHashViewport(hash, viewport);
+    // The camera and viewport are deliberately not hashed. The plan holds
+    // pass buckets and counts. A cache hit refreshes the buckets and re-sorts
+    // the translucent ones from the current records, and the renderer reads the
+    // camera and viewport from the bundle for its uniforms. Hashing them
+    // rebuilt the plan on every camera move.
     hash = scenePlannerHashCollection(hash, bundle && bundle.meshObjects, scenePlannerHashMeshObject);
     hash = scenePlannerHashCollection(hash, bundle && bundle.objects, scenePlannerHashLineObject);
     hash = scenePlannerHashCollection(hash, bundle && bundle.materials, scenePlannerHashMaterial);
@@ -1631,32 +1667,6 @@
     return String(a && a.id || "").localeCompare(String(b && b.id || ""));
   }
 
-  function scenePlannerHashCamera(hash, camera) {
-    hash = scenePlannerHashString(hash, camera && camera.kind);
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.x, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.y, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.z, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationX, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.fov, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.left, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.right, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.top, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.bottom, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.zoom, 1));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.near, 0));
-    return scenePlannerHashNumber(hash, sceneNumber(camera && camera.far, 0));
-  }
-
-  function scenePlannerHashViewport(hash, viewport) {
-    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.cssWidth, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.cssHeight, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelWidth, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelHeight, 0));
-    return scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelRatio, 0));
-  }
-
   function scenePlannerHashCollection(hash, collection, itemFn) {
     if (!Array.isArray(collection)) {
       return scenePlannerHashNumber(hash, 0);
@@ -1674,7 +1684,10 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.materialIndex, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexOffset, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexCount, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.depthCenter, 0));
+    // depthCenter is not hashed: only the translucent passes read it, and a
+    // cache hit re-sorts them from the current records (see
+    // prepareScenePBRPasses). viewCulled still is, because it decides which
+    // records the passes contain.
     hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.castShadow ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
@@ -1691,6 +1704,13 @@
       // buckets with records from the current bundle, so hashing every row
       // would only recreate the per-instance planner work batching removes.
       if (object._rigidImportedBatch === true) {
+        return scenePlannerHashNumber(hash, sceneNumber(object.instanceCount, 0));
+      }
+      // A crowd batch record is stable while agents move. Its membership
+      // count and draw mode shape the passes; its revision changes whenever an
+      // agent's pose or motion does and only the renderer reads it.
+      if (object._crowdBatch === true) {
+        hash = scenePlannerHashNumber(hash, object.crowdMotion === true ? 1 : 0);
         return scenePlannerHashNumber(hash, sceneNumber(object.instanceCount, 0));
       }
       // Retained geometry is immutable between explicit revisions, so hashing

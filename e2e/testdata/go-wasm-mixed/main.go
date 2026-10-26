@@ -41,6 +41,20 @@ func main() {
 	app.Page("/managed", func(ctx *server.Context) gosx.Node {
 		return renderMixed(ctx)
 	})
+	app.Page("/frames", func(ctx *server.Context) gosx.Node {
+		return gosx.El("main",
+			ctx.Runtime().Island(program.CounterProgram(), map[string]int{"initial": 0}),
+			ctx.Engine(engine.Config{
+				Name: "GoWASMFrameFixture", Kind: engine.KindSurface,
+				Runtime: engine.RuntimeGoWASM, WASMPath: "__ENGINE_WASM_PATH__",
+			}, gosx.El("div", gosx.Text("Main frame loop"))),
+			ctx.Engine(engine.Config{
+				Name: "GoWASMFrameWorkerFixture", Kind: engine.KindWorker,
+				Runtime: engine.RuntimeGoWASM, WASMPath: "__ENGINE_WASM_PATH__",
+				Thread: engine.ThreadWorker, Worker: engine.WorkerRequired,
+			}, gosx.El("div", gosx.Text("Worker frame loop"))),
+		)
+	})
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

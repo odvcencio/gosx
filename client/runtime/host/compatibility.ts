@@ -18,6 +18,7 @@
  * @property {object} [compatibility]
  * @property {object} [patch]
  * @property {object} [requests] - Scoped request policies.
+ * @property {object} [attributes] - Shared dispatch attribute ownership policy.
  *
  * @typedef {object} GoSXBrowserNamespace
  * @property {GoSXHostNamespace} [host]
@@ -142,4 +143,13 @@ gosxHost.surfaces = gosxHost.surfaces || {
 gosxHost.lifecycle = gosxHost.lifecycle || {
   bootstrapPage: function() { return gosxHostCompatibility.forward("__gosx_bootstrap_page", arguments); },
   disposePage: function() { return gosxHostCompatibility.forward("__gosx_dispose_page", arguments); },
+};
+
+// Shared by every independently loaded host module. Attribute data cannot own
+// dispatch metadata; framework event bindings use dedicated patch operations.
+gosxHost.attributes = gosxHost.attributes || {
+  isReservedDispatchName: function(name) {
+    var lower = String(name).replace(/[A-Z]/g, c => c.toLowerCase());
+    return /^data-gosx-(handler$|path$|on-)/.test(lower);
+  }
 };

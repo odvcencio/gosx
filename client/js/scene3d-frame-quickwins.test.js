@@ -98,16 +98,37 @@ test("planner vertex scans hit by revision and invalidate on resize and material
   const viewport = { cssWidth: 640, cssHeight: 360, pixelWidth: 640, pixelHeight: 360, pixelRatio: 1 };
   const signature = api.scenePreparedSignature(bundle, camera, viewport);
   assert.equal(api.scenePreparedSignature(bundle, camera, viewport), signature);
-  assert.notEqual(api.scenePreparedSignature(bundle, camera, { ...viewport, cssWidth: 800, pixelWidth: 800 }), signature);
+  // Camera and viewport reach the renderer as uniforms; they do not rebuild the plan.
+  assert.equal(api.scenePreparedSignature(bundle, camera, { ...viewport, cssWidth: 800, pixelWidth: 800 }), signature);
+  assert.equal(api.scenePreparedSignature(bundle, { ...camera, x: 3, fov: 80 }, viewport), signature);
   bundle.materials[0].color = "#445566";
   assert.notEqual(api.scenePreparedSignature(bundle, camera, viewport), signature);
 });
 
-test("WebGL constant, color, and rigid key caches hit and invalidate", () => {
+test("shared instance color parsing retains cache hits and bounds string entries", () => {
   let parses = 0;
   const api = vm.createContext({
     sceneColorRGBA: value => { parses += 1; return [value, 1, 1, 1]; },
   });
+  const ts = require("../runtime/node_modules/typescript");
+  const source = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/instanced-data.ts"), "utf8");
+  vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, api);
+  const first = api.sceneInstancedPreparedColor("#112233");
+  assert.equal(api.sceneInstancedPreparedColor("#112233"), first);
+  assert.equal(parses, 1);
+  api.sceneInstancedPreparedColor("#445566");
+  assert.equal(parses, 2);
+  for (let i = 0; i < 512; i++) api.sceneInstancedPreparedColor("color-" + i);
+  assert.notEqual(api.sceneInstancedPreparedColor("#112233"), first);
+  assert.equal(parses, 515, "a bounded cache reparses an evicted color");
+  const mutableColor = {};
+  api.sceneInstancedPreparedColor(mutableColor);
+  api.sceneInstancedPreparedColor(mutableColor);
+  assert.equal(parses, 517, "mutable non-string colors cannot reuse a parsed snapshot");
+});
+
+test("WebGL constant and rigid key caches hit and invalidate", () => {
+  const api = vm.createContext({});
   sourceSection(readSceneRendererBackendSrc("webgl"), "  var sceneGLConstantCache = new WeakMap();",
     "  function scenePBRHDRIBLTextureMinimum(", api);
   let queries = 0;
@@ -123,12 +144,6 @@ test("WebGL constant, color, and rigid key caches hit and invalidate", () => {
   const restoredGL = { getParameter: () => ++queries };
   api.sceneCachedGLParameter(restoredGL, 1);
   assert.equal(queries, 4);
-
-  assert.equal(api.sceneCachedInstancedColorRGBA("#112233", [1, 1, 1, 1]),
-    api.sceneCachedInstancedColorRGBA("#112233", [1, 1, 1, 1]));
-  assert.equal(parses, 1);
-  api.sceneCachedInstancedColorRGBA("#445566", [1, 1, 1, 1]);
-  assert.equal(parses, 2);
 
   const owner = Object.freeze({});
   const rigid = { resourceOwner: owner, materialIndex: 0, vertexCount: 12,
@@ -185,4 +200,103 @@ test("WebGL particle attributes publish again when the mount changes", () => {
   assert.equal(writes.length, 2);
   api.publishWebGLComputeParticleStatAttr(mount(), "draws", "1");
   assert.equal(writes.length, 3);
+});
+
+test("a SwiftShader WebGPU adapter preserves constrained tier and one MSAA sample without probing WebGL", () => {
+  const api = sceneCore();
+  sourceSection("../runtime/scene3d/mount-backend.ts", "  function sceneWebGLRendererLooksSoftware", "  function sceneProbeWebGLRenderer", api);
+  sourceSection("../runtime/scene3d/mount-backend.ts", "  function sceneWebGPUOptions", "  function sceneWebGPUPresentationOptions", api);
+  sourceSection("../runtime/scene3d/mount-webgl.ts", "  function sceneCapabilityProfile(props)", "  function sceneCapabilityWebGLPreference", api);
+  let probes = 0;
+  const adapter = { info: { vendor: "google", architecture: "swiftshader", description: "SwiftShader Device" }, isFallbackAdapter: false };
+  Object.assign(api, {
+    window: { navigator: {}, __gosx_scene3d_webgpu_probe: () => ({ ready: true, adapter }) }, normalizeSceneCapabilityTier: value => value || "", gosxLowEndHardware: () => false,
+    sceneEnvironmentState: () => ({ coarsePointer: false, hover: true, lowPower: false }),
+    sceneProbeWebGLRenderer: () => { probes++; return { available: true, software: true }; },
+    sceneWebGPUAvailable: () => true, scenePrefersWebGPU: props => props.preferWebGPU === true,
+    sceneRequiresWebGL: props => props.requireWebGL === true, sceneForcesWebGL: props => props.forceWebGL === true,
+    sceneNeedsWebGLForWebGPUCoverage: () => false,
+    sceneBackendCapsOf: () => null, chooseSceneBackend: () => null,
+    sceneWebGPUPowerPreference: () => "default", sceneWebGPUPresentationOptions: () => ({}),
+  });
+  const props = { preferWebGPU: true };
+  const capability = api.sceneCapabilityProfile(props);
+  assert.equal(capability.softwareWebGL, true);
+  assert.equal(capability.lowPower, true);
+  assert.equal(capability.tier, "constrained");
+  assert.equal(api.sceneWebGPUOptions(props, capability).msaaSamples, 1);
+  assert.equal(probes, 0);
+  adapter.info = {};
+  adapter.isFallbackAdapter = true;
+  assert.equal(api.sceneCapabilityProfile(props).tier, "constrained");
+  assert.equal(probes, 0);
+  adapter.isFallbackAdapter = false;
+  assert.equal(api.sceneCapabilityProfile(props).tier, "constrained", "unknown GPU metadata retains legacy classification");
+  assert.equal(probes, 1);
+  api.sceneWebGPUAvailable = () => false;
+  assert.equal(api.sceneCapabilityProfile({ preferWebGPU: true }).softwareWebGL, true);
+  assert.equal(probes, 2);
+  api.sceneWebGPUAvailable = () => true;
+  api.sceneCapabilityProfile({ forceWebGL: true, preferWebGPU: true });
+  api.sceneCapabilityProfile({});
+  assert.equal(probes, 4, "forced WebGL and default backend classification stay unchanged");
+});
+
+test("settling WebGPU has no extra animation-frame boundary", async () => {
+  let frames = 0;
+  const preparation = [];
+  const api = sourceSection("../runtime/scene3d/mount-webgl.ts", "  async function ensurePreferredWebGPUBackend", "  function ensureWebGLFeatureLoaded", vm.createContext({
+    window: { __gosx_scene3d_webgpu_probe_ready: async () => { preparation.push("probe"); return true; } },
+    sceneCapabilityWebGPUPreference: () => "prefer",
+    sceneNeedsWebGLForWebGPUCoverage: () => false,
+    ensureWebGPUFeatureLoaded: async () => { preparation.push("load"); },
+    sceneWebGPUAvailable: () => true, sceneNextFrame: async () => { frames++; },
+  }));
+  assert.equal(await api.ensurePreferredWebGPUBackend({}, {}), true);
+  assert.deepEqual(preparation, ["probe", "load"]);
+  assert.equal(frames, 0);
+});
+
+test("named materials reuse the WebGL rigid key across persistent-state frames", () => {
+  const api = sceneCore();
+  sourceSection(readSceneRendererBackendSrc("webgl"), "  var sceneGLConstantCache = new WeakMap();",
+    "  function scenePBRHDRIBLTextureMinimum(", api);
+  const state = api.createSceneState({ scene: { materials: [{ id: "m", color: "#112233" }],
+    objects: [{ id: "box", kind: "box", material: "m", wireframe: false }] } }, { tier: "full" });
+  let first;
+  let hits = 0;
+  for (let frame = 0; frame < 30; frame++) {
+    const bundle = api.createSceneRenderBundle(640, 480, "#000000", { x: 0, y: 0, z: 5 },
+      api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+      { retainedGeometry: true });
+    const obj = bundle.meshObjects[0];
+    const prior = obj.resourceOwner._rigidBatchKeyCache;
+    api.sceneRigidBatchKey(obj, true);
+    if (prior === obj.resourceOwner._rigidBatchKeyCache) hits++;
+    if (!first) first = obj.resourceOwner;
+    assert.equal(obj.resourceOwner, first);
+  }
+  assert.equal(hits, 29, "29 cache hits after the initial miss");
+});
+
+
+test("opaque planner groups pipelines and materials stably and keeps depth overrides last", () => {
+  const api = sceneCore();
+  const obj = (id, materialIndex, extra = {}) => ({ id, materialIndex, vertexOffset: 0,
+    vertexCount: 3, depthCenter: 1, ...extra });
+  const a = obj("a", 1), b = obj("b", 0), c = obj("c", 1);
+  const override = obj("override", 0, { depthWrite: false });
+  const detail = obj("detail", 2);
+  const passes = api.prepareScenePBRPasses({ materials: [{}, {}, { detail: {} }],
+    meshObjects: [override, detail, a, b, c] });
+  assert.deepEqual(Array.from(passes.opaque, o => o.id), ["b", "a", "c", "detail", "override"]);
+});
+
+
+test("opaque planner preserves painter order without depth metadata", () => {
+  const api = sceneCore();
+  const objects = [{ id: "fill", materialIndex: 0, vertexOffset: 0, vertexCount: 6 },
+    { id: "sprite", materialIndex: 1, vertexOffset: 6, vertexCount: 6 }];
+  const passes = api.prepareScenePBRPasses({ materials: [{ shaderBackend: "selena" }, {}], meshObjects: objects });
+  assert.deepEqual(Array.from(passes.opaque, o => o.id), ["fill", "sprite"]);
 });

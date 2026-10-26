@@ -20,6 +20,7 @@ const {
   createContext,
   runScript,
   flushAsyncWork,
+  renderPreparedFrame,
   goBoardBundleRectsJSON,
   goBoardBundleMixedJSON,
   makeFakeGPUDevice,
@@ -127,8 +128,8 @@ test("Scene3D WebGPU pool pass routes through the generic Selena render path wit
 
   harness.canvas.width = 64;
   harness.canvas.height = 64;
-  assert.doesNotThrow(() => {
-    harness.renderer.render(sceneState, { width: 64, height: 64 });
+  await assert.doesNotReject(async () => {
+    await renderPreparedFrame(harness.renderer, sceneState, { width: 64, height: 64 });
   }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch between the pool WGSL and the renderer's bind group layout/bind group");
 
   const mount = harness.mount;
@@ -228,8 +229,8 @@ test("Scene3D WebGPU water surface/surface-below/caustics passes route through t
 
   harness.canvas.width = 64;
   harness.canvas.height = 64;
-  assert.doesNotThrow(() => {
-    harness.renderer.render(sceneState, { width: 64, height: 64 });
+  await assert.doesNotReject(async () => {
+    await renderPreparedFrame(harness.renderer, sceneState, { width: 64, height: 64 });
   }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch");
 
   const mount = harness.mount;
@@ -403,9 +404,9 @@ test("Scene3D WebGPU water compound-shadow / object-mesh-shadow passes route thr
 
   harness.canvas.width = 64;
   harness.canvas.height = 64;
-  assert.doesNotThrow(() => {
-    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
-    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 17, active: true });
+  await assert.doesNotReject(async () => {
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, { nowMS: 17, active: true });
   }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch");
 
   const mount = harness.mount;
@@ -443,8 +444,8 @@ test("Scene3D WebGPU water compound-shadow / object-mesh-shadow passes route thr
     { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
     [], [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
   );
-  assert.doesNotThrow(() => {
-    harness.renderer.render(bundleNoMesh, { width: 64, height: 64 });
+  await assert.doesNotReject(async () => {
+    await renderPreparedFrame(harness.renderer, bundleNoMesh, { width: 64, height: 64 });
   }, "render() must not throw on the mesh-less frame");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-object-shadow-passes"), "1", "compound-shadow must have routed through the Selena post-kind path once the mesh subject is absent");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-water-selena-object-shadow-fallbacks"), "0");
@@ -541,15 +542,14 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
 
   harness.canvas.width = 64;
   harness.canvas.height = 64;
-  assert.doesNotThrow(() => {
-    harness.renderer.render(bundle, { width: 64, height: 64 });
+  await assert.doesNotReject(async () => {
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 });
   }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch");
 
   // Both materials are drawn through drawPBRObjects' fully-generic Selena
-  // mesh path (getSelenaPipeline/createSelenaBindGroup) -- the SAME path
-  // pool/surface use, generalized by sceneSelenaGridUniformData's
-  // material.customUniforms.grid fallback (drawPBRObjects supplies no
-  // renderContext at all, unlike the water-system-owned passes above).
+  // mesh path (getSelenaPipeline/createSelenaBindGroup). The binder resolves
+  // live water context from the material's resource reference; ordinary
+  // authored parameters still use material.customUniforms.
   const objectMatPipeline = harness.fake.state.renderPipelines.find(
     (p) => p.desc && p.desc.label && String(p.desc.label).indexOf("WaterObjectMaterial") >= 0,
   );
@@ -574,22 +574,17 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   const duckMatBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === duckMatBGL);
   assert.ok(duckMatBindGroup, "expected a bind group built against the duck-material bind group layout");
 
-  // VALUES GATE: object-material/duck-material draw through drawPBRObjects,
-  // which supplies NO renderContext at all (see createSelenaBindGroup(mat,
-  // selenaResource, obj) in 16a-scene-webgpu.js -- only 3 args), so every
-  // uniform field must resolve via material.customUniforms or a compiled
-  // descriptor default. lightDir is a `context` field with NO compiled
-  // default and baseColor is a `param` with NO literal default either -- both
-  // fall to sceneSelenaUniformValue's zero fallback if customUniforms is ever
-  // dropped, which reads as "TorusKnot pure white" / "duck flat/unlit" in a
-  // real browser (lightDir=(0,0,0) normalizes to NaN; baseColor=(0,0,0,0)
-  // zeroes the albedo). Assert the actual packed bytes carry the entry
-  // config, not that value-free zero.
+  // VALUES GATE: live context supplies the current water light instead of
+  // the stale authored direction, while baseColor and main-scene pass flags
+  // remain authored parameters. Assert actual packed bytes, not just bindings.
+  const liveLight = [waterEntry.lightDirectionX, waterEntry.lightDirectionY, waterEntry.lightDirectionZ];
+  const liveLightLength = Math.hypot(...liveLight);
+  const liveLightDir = Array.from(Float32Array.from(liveLight, value => value / liveLightLength));
   const objectMatFloats = waterSelenaLastUniformWrite(harness.fake, objectMatBindGroup);
   const objectBaseColor = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "baseColor", 4);
   assert.deepEqual(objectBaseColor, [0.5, 0.5, 0.5, 1], "object-material baseColor must match the entry config (0.5,0.5,0.5,1), not the default-white/zero fallback");
   const objectLightDir = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "lightDir", 3);
-  assert.deepEqual(objectLightDir, [2, 3, -1], "object-material lightDir must be the nonzero entry config (2,3,-1), not zero");
+  assert.deepEqual(objectLightDir, liveLightDir, "object-material lightDir must follow the normalized live water light, not stale authored parameters");
   const objectIsTexturePass = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "isTexturePass", 1)[0];
   assert.equal(objectIsTexturePass, 0, "isTexturePass must be 0 on the main-scene draw (only the RTT reflection/refraction/clipped passes set it)");
 
@@ -597,7 +592,7 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   const duckBaseColor = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "baseColor", 4);
   assert.deepEqual(duckBaseColor, [1, 1, 1, 1], "duck-material baseColor must match the entry config (1,1,1,1)");
   const duckLightDir = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "lightDir", 3);
-  assert.deepEqual(duckLightDir, [2, 3, -1], "duck-material lightDir must be the nonzero entry config (2,3,-1), not zero");
+  assert.deepEqual(duckLightDir, liveLightDir, "duck-material lightDir must follow the normalized live water light");
   const duckIsTexturePass = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "isTexturePass", 1)[0];
   assert.equal(duckIsTexturePass, 0, "isTexturePass must be 0 on the main-scene draw");
 
@@ -638,7 +633,7 @@ test("[perf-shape] moving duck alternates only its two required RTT targets", as
       objects, [], [], [], [], {}, frame * 0.016, [], [], [], state.waterSystems, [], 0, false,
     );
     const passStart = harness.fake.state.renderPasses.length;
-    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, {
       nowMS: frame * 17,
       displayDeltaMS: frame === 0 ? 0 : 17,
       active: true,
@@ -692,7 +687,7 @@ test("[perf-shape] adaptive survival quality cadences moving duck RTT work", asy
       objects, [], [], [], [], {}, frame * 0.016, [], [], [], state.waterSystems, [], 0, false,
     );
     const start = harness.fake.state.renderPasses.length;
-    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, {
       nowMS: frame * 17,
       displayDeltaMS: frame === 0 ? 0 : 17,
       active: true,
@@ -739,21 +734,21 @@ test("Scene3D WebGPU submits only the water surface side facing the camera", asy
   harness.canvas.width = 64;
   harness.canvas.height = 64;
 
-  function renderAtCameraY(cameraY, nowMS) {
+  async function renderAtCameraY(cameraY, nowMS) {
     const bundle = api.createSceneRenderBundle(
       64, 64, "#000000", { x: 0, y: cameraY, z: 4, fov: 60, near: 0.05, far: 128 },
       objects, [], [], [], [], {}, nowMS / 1000, [], [], [], state.waterSystems, [], 0, false,
     );
-    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS, active: true });
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, { nowMS, active: true });
     return harness.mount.__gosxScene3DWebGPUStats;
   }
 
-  const above = renderAtCameraY(1, 0);
+  const above = await renderAtCameraY(1, 0);
   assert.equal(above.waterSurfaceAboveDrawCalls, 1);
   assert.equal(above.waterSurfaceBelowDrawCalls, 0);
   assert.equal(above.waterDrawVertices, above.waterVertices, "above-water cameras must submit the grid once");
 
-  const below = renderAtCameraY(-1, 17);
+  const below = await renderAtCameraY(-1, 17);
   assert.equal(below.waterSurfaceAboveDrawCalls, 0);
   assert.equal(below.waterSurfaceBelowDrawCalls, 1);
   assert.equal(below.waterDrawVertices, below.waterVertices, "below-water cameras must submit the grid once");
@@ -771,13 +766,13 @@ test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events
   harness.canvas.width = 64;
   harness.canvas.height = 64;
 
-  function renderAt(nowMS) {
+  async function renderAt(nowMS) {
     const bundle = api.createSceneRenderBundle(
       64, 64, "#000000",
       { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
       objects, [], [], [], [], {}, nowMS / 1000, [], [], [], state.waterSystems, [], 0, false,
     );
-    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, {
       nowMS,
       displayDeltaMS: 0,
       active: true,
@@ -787,7 +782,7 @@ test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events
     return harness.mount.__gosxScene3DWebGPUStats;
   }
 
-  let stats = renderAt(0);
+  let stats = await renderAt(0);
   assert.equal(stats.waterSimulationTicks, 0, "first frame only anchors the clock");
   assert.equal(stats.waterSurfaceResolution, 192, "adaptive-disabled frame metadata must preserve authored WebGPU topology");
   assert.equal(stats.waterSolverSubsteps, 0);
@@ -796,18 +791,18 @@ test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events
   assert.equal(stats.waterSampledStateSyncSeq, 1);
   assert.equal(harness.fake.state.copyBufferToTextureCalls.length, 1);
 
-  stats = renderAt(8);
+  stats = await renderAt(8);
   assert.equal(stats.waterSimulationTicks, 0, "120Hz display-only frame must not advance 60Hz simulation");
   assert.equal(stats.waterNormalDispatches, 0);
   assert.equal(stats.waterSampledStateCopies, 0, "display-only frames must reuse the sampled state texture");
 
-  stats = renderAt(17);
+  stats = await renderAt(17);
   assert.equal(stats.waterSimulationTicks, 1);
   assert.equal(stats.waterSolverSubsteps, 2, "one fixed tick must execute two solver substeps");
   assert.equal(stats.waterNormalDispatches, 1, "N ticks must batch into one normal recompute");
   assert.equal(stats.waterSampledStateCopies, 1, "a simulation tick must refresh sampled state exactly once after normals");
 
-  stats = renderAt(51);
+  stats = await renderAt(51);
   assert.equal(stats.waterSimulationCatchUpCap, 1);
   assert.equal(stats.waterSimulationTicks, 1);
   assert.equal(stats.waterSolverSubsteps, 2, "a slow frame must remain bounded to two solver substeps");
@@ -833,7 +828,7 @@ test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events
     objectDisplacementScale: 1,
   }];
   harness.renderer.setLifecycle({ nowMS: 60, active: true, paused: true });
-  stats = renderAt(1000);
+  stats = await renderAt(1000);
   assert.equal(stats.waterLastDropEventID, 0, "paused drop ID must remain unconsumed");
   assert.equal(stats.waterLastObjectDisplacementEventID, 0, "paused object event ID must remain unconsumed");
   assert.equal(stats.waterSimulationTicks, 0);
@@ -841,11 +836,11 @@ test("Scene3D fake WebGPU water executes fixed ticks, normals, and queued events
 
   entry.paused = false;
   harness.renderer.setLifecycle({ nowMS: 1100, active: true, paused: false });
-  stats = renderAt(1100);
+  stats = await renderAt(1100);
   assert.equal(stats.waterSimulationTicks, 0, "resume frame must anchor without catch-up");
   assert.equal(stats.waterLastDropEventID, 0, "resume anchor must not consume queued drops without a tick");
   assert.equal(stats.waterLastObjectDisplacementEventID, 0, "resume anchor must not consume queued object events without a tick");
-  stats = renderAt(1117);
+  stats = await renderAt(1117);
   assert.equal(stats.waterSimulationTicks, 1, "first post-resume fixed tick must drain queued events");
   assert.equal(stats.waterLastDropEventID, 7, "queued drop must process once after resume");
   assert.equal(stats.waterLastObjectDisplacementEventID, 9, "queued object event must process once after resume");
@@ -863,19 +858,19 @@ test("Scene3D fake WebGPU water drains an ENTIRE queued dropEvents burst in one 
   harness.canvas.width = 64;
   harness.canvas.height = 64;
 
-  function renderAt(nowMS) {
+  async function renderAt(nowMS) {
     const bundle = api.createSceneRenderBundle(
       64, 64, "#000000",
       { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
       objects, [], [], [], [], {}, nowMS / 1000, [], [], [], state.waterSystems, [], 0, false,
     );
-    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, {
       nowMS, displayDeltaMS: 0, active: true, qualityTier: "balanced", qualityRevision: 0,
     });
     return harness.mount.__gosxScene3DWebGPUStats;
   }
 
-  renderAt(0); // anchor the fixed clock
+  await renderAt(0); // anchor the fixed clock
 
   // Simulate a fast drag: 5 drops queued between two rendered frames, the
   // shape sceneManagedFluidObjectQueueDrop's bounded controlState.dropEvents
@@ -889,7 +884,7 @@ test("Scene3D fake WebGPU water drains an ENTIRE queued dropEvents burst in one 
     { id: 4, x: 0.3, z: 0.3, radius: 0.03, strength: 0.01 },
     { id: 5, x: 0.6, z: 0.6, radius: 0.03, strength: 0.01 },
   ];
-  const stats = renderAt(17); // one 60Hz tick past the anchor
+  const stats = await renderAt(17); // one 60Hz tick past the anchor
   assert.equal(stats.waterSimulationTicks, 1, "must actually tick to drain events");
   assert.equal(stats.waterLastDropEventID, 5, "every queued id must be consumed, not just the first");
   assert.equal(stats.waterDropDispatches, 5, "every one of the 5 queued drops must get its own compute dispatch this frame");
@@ -898,7 +893,7 @@ test("Scene3D fake WebGPU water drains an ENTIRE queued dropEvents burst in one 
   // must not redispatch (the array is re-supplied unchanged every command,
   // per normalizeSceneWaterOneShotEvents's fallback -- see
   // 10-runtime-scene-core.js).
-  const stats2 = renderAt(34);
+  const stats2 = await renderAt(34);
   assert.equal(stats2.waterDropDispatches, 0, "already-consumed ids must not redispatch");
   assert.equal(stats2.waterLastDropEventID, 5);
 });
@@ -915,17 +910,17 @@ test("Scene3D fake WebGPU quality transitions preserve simulation buffers and au
   entry.objectTexturePixelBudget = 786432;
   harness.canvas.width = 64;
   harness.canvas.height = 64;
-  function renderProfile(nowMS, revision, profile) {
+  async function renderProfile(nowMS, revision, profile) {
     const bundle = api.createSceneRenderBundle(
       64, 64, "#000000",
       { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
       objects, [], [], [], [], {}, nowMS / 1000, [], [], [], state.waterSystems, [], 0, false,
     );
-    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS, active: true, qualityEnabled: true, qualityRevision: revision, qualityProfile: profile });
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, { nowMS, active: true, qualityEnabled: true, qualityRevision: revision, qualityProfile: profile });
     return harness.mount.__gosxScene3DWebGPUStats;
   }
   const balanced = { tier: "balanced", dprCap: 1.25, surfaceResolution: 128, causticsResolution: 384, objectShadowResolution: 384, objectTextureMaxSide: 384, objectTexturePixelBudget: 442368, expensivePassCadence: 2 };
-  let stats = renderProfile(0, 1, balanced);
+  let stats = await renderProfile(0, 1, balanced);
   assert.equal(stats.waterQualityTier, "balanced");
   assert.equal(stats.waterSurfaceResolution, 128);
   assert.equal(stats.waterActiveCausticsResolution, 384);
@@ -934,7 +929,7 @@ test("Scene3D fake WebGPU quality transitions preserve simulation buffers and au
   assert.equal(simulationBuffers.length, 2);
 
   const survival = { tier: "survival", dprCap: 1, surfaceResolution: 96, causticsResolution: 256, objectShadowResolution: 256, objectTextureMaxSide: 256, objectTexturePixelBudget: 196608, expensivePassCadence: 3 };
-  stats = renderProfile(17, 2, survival);
+  stats = await renderProfile(17, 2, survival);
   assert.equal(stats.waterQualityTier, "survival");
   assert.equal(stats.waterSurfaceResolution, 96);
   assert.equal(stats.waterActiveCausticsResolution, 256);
@@ -944,7 +939,7 @@ test("Scene3D fake WebGPU quality transitions preserve simulation buffers and au
   assert.equal(stats.waterSimulationTickSeq, 1, "profile transition must advance the existing fixed clock without reseeding");
 
   const oversized = { tier: "full", dprCap: 2, surfaceResolution: 320, causticsResolution: 1024, objectShadowResolution: 1024, objectTextureMaxSide: 1024, objectTexturePixelBudget: 3_145_728, expensivePassCadence: 1 };
-  stats = renderProfile(34, 3, oversized);
+  stats = await renderProfile(34, 3, oversized);
   assert.equal(stats.waterSurfaceResolution, 192, "surface cap cannot exceed authored simulation topology");
   assert.equal(stats.waterActiveCausticsResolution, 512, "full profile cannot exceed authored caustics cap");
   assert.equal(stats.waterActiveObjectShadowResolution, 512, "full profile cannot exceed authored shadow cap");
@@ -967,7 +962,7 @@ test("Scene3D fake WebGPU ignores supplied quality profiles when adaptive qualit
     64, 64, "#000000", { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
     objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
   );
-  harness.renderer.render(bundle, { width: 64, height: 64 }, {
+  await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, {
     nowMS: 0,
     active: true,
     qualityEnabled: false,
@@ -988,7 +983,15 @@ test("Scene3D fake WebGPU ignores supplied quality profiles when adaptive qualit
 
 test("Scene3D fake WebGPU timestamp ring is supported and nonblocking", async () => {
   let nowMS = 0;
-  const harness = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false, performanceNow: () => nowMS, fakeDeviceOptions: { timestampQuery: true } });
+  const waiting = [];
+  const harness = await createBoardWebGPUHarness({ fresh: true, configureDevice(device) {
+    const create = device.createBuffer.bind(device);
+    device.createBuffer = desc => {
+      const buffer = create(desc);
+      if (buffer.mapAsync) buffer.mapAsync = () => new Promise(resolve => waiting.push(resolve));
+      return buffer;
+    };
+  }, verboseTelemetry: false, performanceNow: () => nowMS, fakeDeviceOptions: { timestampQuery: true } });
   const api = harness.env.context.__gosx_scene3d_api;
   const { state, objects } = waterPerfShapeScene(api, false, 192);
   state.waterSystems[0].seedDrops = 0;
@@ -999,9 +1002,10 @@ test("Scene3D fake WebGPU timestamp ring is supported and nonblocking", async ()
       64, 64, "#000000", { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
       objects, [], [], [], [], {}, frame * 0.017, [], [], [], state.waterSystems, [], 0, false,
     );
-    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 17, active: true });
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, { nowMS: frame * 17, active: true });
     if (frame < 2) assert.equal(harness.renderer.pollPerformanceSample(), null, "timestamp polling must not wait for unresolved GPU work");
   }
+  for (const resolve of waiting) resolve();
   await flushAsyncWork();
   const status = harness.renderer.getPerformanceTimingStatus();
   assert.equal(status.available, true);
@@ -1030,7 +1034,7 @@ test("Scene3D WebGPU advertised timestamp queries fall back when encoder timesta
     64, 64, "#000000", { x: 0, y: 1, z: 4, fov: 60, near: 0.05, far: 128 },
     objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
   );
-  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
   assert.deepEqual(
     JSON.parse(JSON.stringify(harness.renderer.getPerformanceTimingStatus())),
     { available: false, active: false, pending: false, failed: false, source: "gpu-timestamp" },
@@ -1065,7 +1069,7 @@ test("Scene3D fake WebGPU timing partial allocation failure destroys candidates 
     64, 64, "#000000", { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
     objects, [], [], [], [], {}, 0, [], [], [], state.waterSystems, [], 0, false,
   );
-  assert.doesNotThrow(() => harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true }));
+  await assert.doesNotReject(async () => await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, { nowMS: 0, active: true }));
   assert.equal(querySet.destroyed, true, "partially-created query set must be destroyed");
   assert.equal(timingBuffers.length, 1);
   assert.equal(timingBuffers[0].destroyed, true, "partially-created timing buffer must be destroyed");
@@ -1443,23 +1447,23 @@ test("[perf-shape] Scene3D WebGPU keeps exact frame proof while throttling broad
     attributeWrites += 1;
     return originalSetAttribute(name, value);
   };
-  function renderFrame(time) {
+  async function renderFrame(time) {
     const bundle = api.createSceneRenderBundle(
       64, 64, "#000000",
       { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
       objects, [], [], [], [], {}, time, [], [], [], state.waterSystems, [], 0, false,
     );
-    harness.renderer.render(bundle, { width: 64, height: 64 });
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 });
   }
 
-  renderFrame(0);
+  await renderFrame(0);
   const firstFrameWrites = attributeWrites;
   assert.ok(firstFrameWrites > 50, "first frame should publish the full diagnostic snapshot, got " + firstFrameWrites);
   nowMS = 16;
-  renderFrame(0.016);
+  await renderFrame(0.016);
   const secondFrameWrites = attributeWrites - firstFrameWrites;
   nowMS = 32;
-  renderFrame(0.032);
+  await renderFrame(0.032);
   const thirdFrameWrites = attributeWrites - firstFrameWrites - secondFrameWrites;
   assert.ok(secondFrameWrites <= 12, "second frame should only publish essential proof attrs, got " + secondFrameWrites);
   assert.ok(thirdFrameWrites <= 12, "third frame should only publish essential proof attrs, got " + thirdFrameWrites);
@@ -1470,7 +1474,7 @@ test("[perf-shape] Scene3D WebGPU keeps exact frame proof while throttling broad
   harness.env.context.__gosx_scene3d_webgpu_telemetry = true;
   const beforeVerbose = attributeWrites;
   nowMS = 48;
-  renderFrame(0.048);
+  await renderFrame(0.048);
   assert.ok(attributeWrites - beforeVerbose < 50, "explicit diagnostics should write only changed attributes");
   assert.equal(harness.mount.__gosxScene3DWebGPUStats.frameSeq, 4);
 });
@@ -1521,7 +1525,7 @@ test("[perf-shape] Scene3D WebGPU wgpuStablePBRAttributeBuffer still re-uploads 
       objects, [], [], [], [], {}, frame * 0.25, [], [], [], [], [], 0, false,
     );
     const beforeBytes = harness.fake.state.writeBufferCalls.reduce((s, c) => s + (c.data && c.data.byteLength || 0), 0);
-    harness.renderer.render(bundle, { width: 64, height: 64 });
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 });
     const afterBytes = harness.fake.state.writeBufferCalls.reduce((s, c) => s + (c.data && c.data.byteLength || 0), 0);
     bytesPerFrame.push(afterBytes - beforeBytes);
   }
@@ -1624,9 +1628,9 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
 
   harness.canvas.width = 64;
   harness.canvas.height = 64;
-  assert.doesNotThrow(() => {
-    harness.renderer.render(sceneState, { width: 64, height: 64 }, { nowMS: 0, active: true, qualityTier: "full" });
-    harness.renderer.render(sceneState, { width: 64, height: 64 }, { nowMS: 17, active: true, qualityTier: "full" });
+  await assert.doesNotReject(async () => {
+    await renderPreparedFrame(harness.renderer, sceneState, { width: 64, height: 64 }, { nowMS: 0, active: true, qualityTier: "full" });
+    await renderPreparedFrame(harness.renderer, sceneState, { width: 64, height: 64 }, { nowMS: 17, active: true, qualityTier: "full" });
   }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch between a compute kernel's WGSL and the renderer's bind group layout/bind group");
 
   const mount = harness.mount;
@@ -1671,7 +1675,7 @@ test("16a render() adapts a Go-marshaled ortho-2D board bundle and draws its rec
   const worldNormalsRef = bundle.worldNormals;
   const worldUVsRef = bundle.worldUVs;
 
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
 
   // (a) Zero-copy aliasing: meshObjects IS the Go objects array (identity).
   assert.equal(bundle.meshObjects, objectsRef, "meshObjects must alias bundle.objects by identity");
@@ -1735,7 +1739,7 @@ test("16a render() adapts a Go-marshaled ortho-2D board bundle and draws its rec
   // !bundle.meshObjects re-entry guard must keep the aliases (and 16a's
   // typed-array canonicalization) stable instead of re-clobbering them.
   const typedPositionsAfterFirstFrame = bundle.worldMeshPositions;
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
   assert.equal(bundle.meshObjects, objectsRef, "meshObjects identity must survive re-render");
   assert.equal(
     bundle.worldMeshPositions,
@@ -1772,7 +1776,7 @@ test("16a render() draws board rect+line+sprite quads from the Go GPU bundle (M1
   // remain inside 16a's supported envelope at mount-selection time too.
   assert.equal(harness.renderer.supportsBundle(bundle), true, "board wire bundle must stay WebGPU-supported");
 
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
 
   // All four quads draw 6 vertices each through the meshObjects path, in
   // array order — GPU z-order parity with the 26b1 painter.
@@ -1811,7 +1815,7 @@ test("16a board sprite texture lifecycle: placeholder on first frame, image uplo
   // it through wgpuLoadTexture, which immediately creates a 1×1 white
   // placeholder texture (so the sprite shows a white box, not garbage, while
   // the image loads) and kicks off an async Image load.
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
   const placeholderWrites = harness.fake.state.writeTextureCalls.filter(
     (call) => call.data && call.data.length === 4 && call.data[0] === 255 && call.data[1] === 255 && call.data[2] === 255 && call.data[3] === 255,
   );
@@ -1834,7 +1838,7 @@ test("16a board sprite texture lifecycle: placeholder on first frame, image uplo
   // Second frame, same bundle/URL: the textureCache is keyed by URL, so
   // wgpuLoadTexture must return the cached record without constructing another
   // Image or issuing another upload.
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
   await flushAsyncWork();
   assert.equal(
     harness.env.imageLoads.filter((src) => src === "/logo.png").length,
@@ -1854,9 +1858,9 @@ test("16a board sprite draws on the default PBR pipeline with its albedo texture
 
   // Render once (placeholder), flush the load, render again so the material
   // bind group is rebuilt with the resolved (non-placeholder) albedo view.
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
   await flushAsyncWork();
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
 
   const mains = mainRenderPasses(harness.fake);
   const main = mains[mains.length - 1];
@@ -1914,7 +1918,7 @@ test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D 
     objects: [{ id: "r", kind: "rect", vertexCount: 6, bounds: { maxX: 10, maxY: 10 } }],
     worldPositions: [0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 0, 0, 10, 10, 0, 0, 10, 0],
   };
-  harness.renderer.render(partial, {});
+  await renderPreparedFrame(harness.renderer, partial, {});
   assert.equal(partial.meshObjects, partial.objects, "meshObjects must alias objects by identity");
   assert.equal(partial.worldMeshPositions, partial.worldPositions, "worldMeshPositions must alias worldPositions by identity (zero-copy)");
   assert.equal(partial.worldMeshNormals, undefined, "absent worldNormals alias to undefined");
@@ -1930,7 +1934,7 @@ test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D 
     worldColors: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     worldNormals: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
   };
-  harness.renderer.render(perspective, {});
+  await renderPreparedFrame(harness.renderer, perspective, {});
   assert.equal(perspective.meshObjects, undefined, "non-ortho2d bundles must not gain meshObjects");
   assert.equal(perspective.worldMeshPositions, undefined, "non-ortho2d bundles must not gain worldMesh aliases");
 
@@ -1946,7 +1950,7 @@ test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D 
     worldMeshPositions: presetPositions,
     worldPositions: [9, 9, 9],
   };
-  harness.renderer.render(already, {});
+  await renderPreparedFrame(harness.renderer, already, {});
   assert.equal(already.meshObjects, presetMeshObjects, "existing meshObjects must keep identity");
   assert.equal(already.worldMeshPositions, presetPositions, "existing worldMeshPositions must keep identity");
 
@@ -1955,7 +1959,7 @@ test("16a adaptOrtho2DBoardBundle gate: aliases exactly once, only for ortho-2D 
     camera: { mode: "ortho2d", z: 1, near: -1, far: 1 },
     objects: [],
   };
-  harness.renderer.render(empty, {});
+  await renderPreparedFrame(harness.renderer, empty, {});
   assert.equal(empty.meshObjects, undefined, "empty board bundles gain no aliases");
 });
 
@@ -1975,7 +1979,7 @@ test("16a board rects draw through the Selena BoardFill pipeline: custom WGSL mo
     assert.equal(material.customUniforms.baseColor.length, 3);
   }
 
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
 
   // (1) The BoardFill WGSL reached createShaderModule verbatim.
   const fillModules = harness.fake.state.shaderModules.filter(
@@ -2050,7 +2054,7 @@ test("16a splits SUBMITTED mesh draws from CULLED ones (mesh-draw-calls / mesh-v
     worldMeshNormals: new Float32Array(18),
   };
 
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
 
   const mains = mainRenderPasses(harness.fake);
   assert.equal(mains.length, 1, "exactly one main render pass");
@@ -2083,7 +2087,7 @@ test("16a Selena mesh draws request cullMode:none only for doubleSided:true obje
     worldMeshNormals: new Float32Array(18),
   };
 
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
 
   const mains = mainRenderPasses(harness.fake);
   assert.equal(mains.length, 1);
@@ -2148,7 +2152,7 @@ test("16a Selena skinned mesh draws preserve per-object doubleSided cull mode", 
     worldMeshNormals: new Float32Array(0),
   };
 
-  harness.renderer.render(bundle, {});
+  await renderPreparedFrame(harness.renderer, bundle, {});
 
   const mains = mainRenderPasses(harness.fake);
   assert.equal(mains.length, 1);
@@ -2220,7 +2224,7 @@ test("16a Selena skinned LBS packs per-vertex normals/tangents into the gosx-eli
       worldMeshNormals: new Float32Array(0),
     };
 
-    harness.renderer.render(bundle, {});
+    await renderPreparedFrame(harness.renderer, bundle, {});
 
     // (1) Exactly one LBS dispatch, one workgroup for the 64-slot padded batch.
     const lbsDispatches = [];
@@ -2371,7 +2375,7 @@ test("16a skinned LBS output survives renderer disposal with a fresh bind group 
 
   // Renderer 1: one frame caches the skin record, output buffer and bind group.
   const first = await createBoardWebGPUHarness({ fresh: true });
-  first.renderer.render(bundle, {});
+  await renderPreparedFrame(first.renderer, bundle, {});
   const record = meshObject._gosxWGPUElioSkinRecord;
   assert.ok(record && record.outputBuffer, "first render must cache a skin record with an LBS output buffer");
   assert.ok(record.bindGroup, "first render must cache a compute bind group");
@@ -2384,7 +2388,7 @@ test("16a skinned LBS output survives renderer disposal with a fresh bind group 
   // Renderer 2 (own fake device): render the SAME object. The stale guard
   // must drop the dead buffer reference AND its bind group, then reallocate.
   const second = await createBoardWebGPUHarness({ fresh: true });
-  second.renderer.render(bundle, {});
+  await renderPreparedFrame(second.renderer, bundle, {});
 
   const record2 = meshObject._gosxWGPUElioSkinRecord;
   assert.strictEqual(record2, record, "the skin record persists across renderers by design");
@@ -2425,7 +2429,15 @@ test("16a skinned LBS output survives renderer disposal with a fresh bind group 
 });
 
 test("Scene3D completion timestamps enclose water and post without encoder.writeTimestamp", async () => {
-  const harness = await createBoardWebGPUHarness({ fresh: true,
+  const waiting = [];
+  const harness = await createBoardWebGPUHarness({ fresh: true, configureDevice(device) {
+    const create = device.createBuffer.bind(device);
+    device.createBuffer = desc => {
+      const buffer = create(desc);
+      if (buffer.mapAsync) buffer.mapAsync = () => new Promise(resolve => waiting.push(resolve));
+      return buffer;
+    };
+  },
     fakeDeviceOptions: { timestampQuery: true, writeTimestamp: false } });
   const api = harness.env.context.__gosx_scene3d_api;
   const { state, objects } = waterPerfShapeScene(api, false, 96);
@@ -2444,18 +2456,20 @@ test("Scene3D completion timestamps enclose water and post without encoder.write
     }
     return encoder;
   };
-  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
   assert.equal(harness.renderer.getFrameTiming().status, "pending");
+  for (const resolve of waiting) resolve();
   await flushAsyncWork();
-  const start = events.findIndex(e => e[1] === "gosx-frame-timer-start");
-  const end = events.findIndex(e => e[1] === "gosx-frame-timer-end");
-  const draws = events.map((e, i) => e[0] === "beginRenderPass" ? i : -1).filter(i => i >= 0);
+  const start = events.findLastIndex(e => e[1] === "gosx-frame-timer-start");
+  const end = events.findLastIndex(e => e[1] === "gosx-frame-timer-end");
+  const draws = events.map((e, i) => e[0] === "beginRenderPass" ? i : -1).filter(i => i > start);
   assert.ok(draws.length > 2, "water and post add passes to the main draw");
   assert.ok(draws.every(i => i > start && i < end), "all frame draws precede the completion timestamp");
   const sample = harness.renderer.pollPerformanceSample();
   assert.equal(sample.scope, "frame");
   assert.equal(harness.renderer.getFrameTiming().gpuMS, sample.gpuMS, "public snapshot survives adaptive-quality consumption");
-  assert.equal(harness.renderer.getFrameTiming().frameSeq, 1);
+  assert.equal(harness.renderer.getFrameTiming().frameSeq, sample.frameSeq);
+  assert.equal(harness.renderer.diagnostics().frameSeq, 1, "only complete canvas frames advance the renderer receipt");
   harness.renderer.dispose();
   assert.equal(harness.renderer.getFrameTiming().status, "disposed");
   assert.equal(harness.renderer.getFrameTiming().gpuMS, null);

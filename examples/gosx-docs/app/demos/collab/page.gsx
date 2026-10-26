@@ -2,10 +2,11 @@ package collab
 
 func Page() Node {
 	return <section
+		id="collab-editor"
 		class="collab"
 		aria-label="Last-write-wins Hub synchronization demo with live presence and cursors"
 		data-initial-version={data.initialVersion}
-		data-view="write"
+		data-gosx-document-view="write"
 	>
 		<header class="collab__header">
 			<div class="collab__heading">
@@ -17,34 +18,34 @@ func Page() Node {
 			</div>
 			<div class="collab__session">
 				<div class="collab__status" aria-live="polite">
-					<span id="collab-status-dot" class="collab__status-dot"></span>
-					<span id="collab-status" role="status">connecting…</span>
+					<span id="collab-status-dot" class="collab__status-dot" data-gosx-document-indicator></span>
+					<span id="collab-status" role="status" data-gosx-document-status>connecting…</span>
 					<span aria-hidden="true">·</span>
 					<span>
 						v
-						<span id="collab-version">{data.initialVersion}</span>
+						<span id="collab-version" data-gosx-document-version>{data.initialVersion}</span>
 					</span>
 					<span aria-hidden="true">·</span>
-					<span id="collab-presence" class="collab__presence" role="status">connecting…</span>
+					<span id="collab-presence" class="collab__presence" role="status" data-gosx-document-presence>connecting…</span>
 				</div>
-				<span id="collab-self" class="collab__self" aria-live="polite"></span>
+				<span id="collab-self" class="collab__self" aria-live="polite" data-gosx-document-identity></span>
 			</div>
 		</header>
 		<div class="collab__mobile-tabs" aria-label="Editor view">
-			<button type="button" data-collab-view="write" aria-pressed="true">Write</button>
-			<button type="button" data-collab-view="preview" aria-pressed="false">Preview</button>
+			<button type="button" data-gosx-document-view="write" aria-pressed="true">Write</button>
+			<button type="button" data-gosx-document-view="preview" aria-pressed="false">Preview</button>
 		</div>
 		<div class="collab__body">
 			<div class="collab__pane collab__pane--editor">
 				<h2 class="collab__pane-label">Markdown</h2>
 				<div class="collab__editor-wrap">
-					<textarea id="collab-source" class="collab__source" spellcheck="false" aria-label="Markdown source">{data.initialText}</textarea>
-					<div id="collab-cursors" class="collab__cursor-layer" aria-hidden="true"></div>
+					<textarea id="collab-source" class="collab__source" spellcheck="false" wrap="off" aria-label="Markdown source" data-gosx-document-source>{data.initialText}</textarea>
+					<div id="collab-cursors" class="collab__cursor-layer" aria-hidden="true" data-gosx-document-cursors></div>
 				</div>
 			</div>
 			<div class="collab__pane collab__pane--preview">
 				<h2 class="collab__pane-label">Live preview</h2>
-				<div id="collab-preview" class="collab__preview"></div>
+				<div id="collab-preview" class="collab__preview" data-gosx-document-preview>{RawHTML(data.initialHTML)}</div>
 			</div>
 		</div>
 		<div class="collab__footer">
@@ -52,6 +53,5 @@ func Page() Node {
 				One shared document. The last accepted edit wins. This demo stores changes in memory only.
 			</span>
 		</div>
-		<script src="/collab-client.js" defer></script>
 	</section>
 }

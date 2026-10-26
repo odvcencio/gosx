@@ -2,6 +2,17 @@ package htmlattr
 
 import "testing"
 
+func TestSafeSpreadNameRejectsSrcdoc(t *testing.T) {
+	for _, name := range []string{"srcdoc", "SRCDOC", "srcDoc"} {
+		if SafeSpreadName(name) {
+			t.Errorf("executable HTML accepted from spread: %s", name)
+		}
+		if !SafeAuthoredName(name) {
+			t.Errorf("explicit authored attribute refused: %s", name)
+		}
+	}
+}
+
 func TestSafeNamesAndURLs(t *testing.T) {
 	for _, name := range []string{"", "x y", "x=y", "x\x00", "x<y", "x`y", "x\"y", "x/y", "x\u00a0y"} {
 		if ValidName(name) {
@@ -42,5 +53,40 @@ func TestSafeNamesAndURLs(t *testing.T) {
 	}
 	if FilterURL("data-value", "javascript:example") != "javascript:example" {
 		t.Fatal("changed non-URL data")
+	}
+}
+
+func TestReservedDispatchName(t *testing.T) {
+	for _, name := range []string{"data-gosx-handler", "DATA-GOSX-PATH", "data-gosx-on-click", "Data-Gosx-On-Input", "data-gosx-on-"} {
+		if !ReservedDispatchName(name) || SafeAuthoredName(name) || SafeSpreadName(name) {
+			t.Errorf("dispatch name allowed: %q", name)
+		}
+	}
+	for _, name := range []string{"data-gosx-link", "data-gosx-region", "data-gosx-handlers", "data-gosx-pathology", "data-gosx-on"} {
+		if ReservedDispatchName(name) || !SafeAuthoredName(name) || SafeSpreadName(name) {
+			t.Errorf("ordinary name refused: %q", name)
+		}
+	}
+}
+
+func TestReservedDispatchNameUsesASCIIOnly(t *testing.T) {
+	for _, name := range []string{"data-goſx-handler", "data-gosx-on-İnput", "data-goſx-path"} {
+		want := name == "data-gosx-on-İnput" // the event suffix does not affect prefix ownership
+		if got := ReservedDispatchName(name); got != want {
+			t.Errorf("ReservedDispatchName(%q)=%v want %v", name, got, want)
+		}
+	}
+}
+
+func TestSafeSpreadNameRejectsFrameworkNamespace(t *testing.T) {
+	for _, name := range []string{"data-gosx-", "data-gosx-bind-source", "DATA-GOSX-BIND-ATTR", "data-gosx-action", "data-gosx-action-target", "data-gosx-on-click", "data-gosx-live-bind-attr"} {
+		if SafeSpreadName(name) {
+			t.Errorf("framework attribute accepted from spread: %s", name)
+		}
+	}
+	for _, name := range []string{"data-app-id", "data-gosx", "aria-label", "href"} {
+		if !SafeSpreadName(name) {
+			t.Errorf("ordinary attribute rejected: %s", name)
+		}
 	}
 }

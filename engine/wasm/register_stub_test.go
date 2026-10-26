@@ -37,11 +37,14 @@ func TestNativeRuntimeAPIsAreExplicitlyUnsupported(t *testing.T) {
 	if err := ctx.SetSignals(map[string]any{"$value": 1}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("batch=%v", err)
 	}
+	if err := ctx.SetChangedSignals(map[string]any{"$value": 1}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("changed batch=%v", err)
+	}
 	if err := ctx.Navigate(context.Background(), "/", NavigationOptions{}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("navigation=%v", err)
 	}
 	target := ctx.Scene3D(nil)
-	for _, err := range []error{target.Ready(context.Background()), target.Dispatch(context.Background(), nil), target.SetCamera(context.Background(), nil), target.SetAnimationClock(context.Background(), 0, true)} {
+	for _, err := range []error{target.Ready(context.Background()), target.Dispatch(context.Background(), nil), target.Live(context.Background(), "attack", nil), target.SetCamera(context.Background(), nil), target.SetAnimationClock(context.Background(), 0, true)} {
 		if !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("scene=%v", err)
 		}

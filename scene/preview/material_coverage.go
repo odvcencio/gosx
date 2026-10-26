@@ -121,6 +121,7 @@ func materialCoverageDiagnostic(ir scene.SceneIR) (engine.RenderDiagnostic, bool
 		return engine.RenderDiagnostic{}, false
 	}
 	names := make([]string, 0, len(used))
+	//gosx:allow map-range names are sorted on the next lines
 	for name := range used {
 		names = append(names, fmt.Sprintf("%s(%d)", name, used[name]))
 	}
@@ -216,6 +217,7 @@ func (r *textureResolver) diagnostics() []engine.RenderDiagnostic {
 		return nil
 	}
 	sources := make([]string, 0, len(r.misses))
+	//gosx:allow map-range sources are sorted on the next lines
 	for source := range r.misses {
 		sources = append(sources, source)
 	}

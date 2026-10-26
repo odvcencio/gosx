@@ -77,7 +77,10 @@ type windowsApp struct {
 	// Pending bootstrap script to register on the next controller creation.
 	// Cached because AddScriptToExecuteOnDocumentCreated requires a live
 	// webview; callers may queue before Run starts.
-	pendingBootstrap string
+	pendingBootstrap             string
+	bootstrapScriptID            string
+	bootstrapGeneration          uint64
+	bootstrapInstalledGeneration uint64
 
 	// Registered (prefix, handler) routes for the app:// (or any scheme)
 	// web-resource filter. Ordered list: first match wins. Initially
@@ -209,7 +212,11 @@ func (a *windowsApp) Run() error {
 	}
 
 	placement := a.options.InitialPlacement
-	if !placement.IsZero() {
+	if a.options.savedWindowPlacement != nil {
+		placement = restoreSavedPlacement(
+			*a.options.savedWindowPlacement, enumerateMonitorAreas(), a.options.Width, a.options.Height,
+		)
+	} else if !placement.IsZero() {
 		placement = clampPlacement(placement, monitorWorkAreas())
 	}
 	hwnd, err := createDesktopWindow(a.options.Title, a.options.Width, a.options.Height, placement, a)
@@ -603,17 +610,6 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 	url := a.options.URL
 	bootstrap := a.pendingBootstrap
 	a.mu.Unlock()
-	if a.options.MuteAudio {
-		bootstrap = muteMediaAudioScript + bootstrap
-	}
-
-	if bootstrap != "" {
-		if err := webview.addScriptToExecuteOnDocumentCreated(bootstrap); err != nil {
-			a.failSetup(err)
-			return
-		}
-	}
-
 	if err := a.resizeWebView(); err != nil {
 		a.failSetup(err)
 		return
@@ -628,13 +624,25 @@ func (a *windowsApp) onControllerCreated(hr uintptr, controller *coreWebView2Con
 		return
 	}
 	a.markStartup(&a.timeline.ControllerReady)
-	if html != "" {
-		err = webview.navigateToString(html)
-	} else {
-		err = webview.navigate(url)
+	navigate := func(err error) {
+		if err == nil {
+			if html != "" {
+				err = webview.navigateToString(html)
+			} else {
+				err = webview.navigate(url)
+			}
+		}
+		if err != nil {
+			a.failSetup(err)
+		}
 	}
-	if err != nil {
-		a.failSetup(err)
+	// WebView2 only guarantees document-start installation after completion.
+	if bootstrap != "" || a.options.MuteAudio {
+		if err := a.installBootstrapOnUI(bootstrap, navigate); err != nil {
+			a.failSetup(err)
+		}
+	} else {
+		navigate(nil)
 	}
 }
 
@@ -872,12 +880,16 @@ func (a *windowsApp) openDevToolsFromShortcut() {
 func (a *windowsApp) prependBootstrapScriptOnUI(script string) error {
 	a.mu.Lock()
 	webview := a.webview
+	a.mu.Unlock()
+	if webview != nil {
+		if err := a.installBootstrapOnUI(script, nil); err != nil {
+			return err
+		}
+	}
+	a.mu.Lock()
 	a.pendingBootstrap = script
 	a.mu.Unlock()
-	if webview == nil {
-		return nil
-	}
-	return webview.addScriptToExecuteOnDocumentCreated(script)
+	return nil
 }
 
 // Minimize hides the native window in the taskbar without destroying the
@@ -988,6 +1000,16 @@ func (a *windowsApp) WindowPlacement() (WindowPlacement, error) {
 		return a.fullscreen.savedPlacement, nil
 	}
 	return getWindowPlacement(hwnd)
+}
+
+func (a *windowsApp) notifyPlacementChanged() {
+	if a.options.onPlacementChanged == nil {
+		return
+	}
+	placement, err := a.WindowPlacement()
+	if err == nil {
+		a.options.onPlacementChanged(placement)
+	}
 }
 
 // SetFullscreen toggles borderless-fullscreen mode for the hosted window.

@@ -14,7 +14,7 @@
     if (!node) return "";
     if (node.nodeType === 1) {
       const clone = node.cloneNode(true);
-      const keyAttribute = options && options.keyAttribute || "data-gosx-stream-key";
+      const keyAttribute = streamKeyAttribute(options);
       if (clone.removeAttribute) clone.removeAttribute(keyAttribute);
       return clone.outerHTML || "";
     }
@@ -98,6 +98,11 @@
     return reconcileNodes(root, parseHTML(html), options || {});
   }
 
+  function streamKeyAttribute(options) {
+    const name = options && options.keyAttribute || "data-gosx-stream-key";
+    return gosxHost.attributes.isReservedDispatchName(name) ? "data-gosx-stream-key" : name;
+  }
+
   function blockKey(node, keyAttribute) {
     if (!node) return "";
     return String(node.getAttribute ? node.getAttribute(keyAttribute) || "" : "");
@@ -112,7 +117,7 @@
   function reconcileBlocks(root, blocks, options) {
     if (!root) return { firstChanged: 0, changed: false };
     const config = options || {};
-    const keyAttribute = config.keyAttribute || "data-gosx-stream-key";
+    const keyAttribute = streamKeyAttribute(config);
     const currentByKey = new Map();
     Array.from(root.children || []).forEach((node, index) => {
       currentByKey.set(blockKey(node, keyAttribute) || String(index), node);

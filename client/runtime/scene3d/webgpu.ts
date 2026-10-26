@@ -5,7 +5,7 @@
   }
 
   function wgpuCreatePipelineGuard(canvas: any): any {
-    var guard = { pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
+    var guard: any = { frameAbort: null, pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
     var notificationPending = false;
     function changed() {
       if (guard.disposed || notificationPending) return;
@@ -32,7 +32,7 @@
           wgpuSubmitPendingFrame(guard, error);
           if (!error || !error.pipelineValidation) fail("frame", String(error && error.message || error));
           return error && error.pipelineValidation ? "pending" : "failed";
-        } finally { guard.frameEncoder = guard.framePass = guard.frameCleanup = null; endFrame(); }
+        } finally { guard.frameEncoder = guard.framePass = guard.frameCleanup = guard.frameAbort = null; endFrame(); }
       };
     }
     function release(raw: any) {
@@ -55,12 +55,12 @@
   function wgpuRequirePipeline(pipeline: any): any {
     var state = pipeline && wgpuPipelineValidation.get(pipeline);
     if (state && !state.ready) throw state;
-    return pipeline;
+    return state && state.pipeline || pipeline;
   }
 
   function wgpuCreateValidatedPipeline(device: any, kind: string, descriptor: any): any {
     var guard = device.__gosxPipelineGuard;
-    var state = { ready: false, pipelineValidation: true };
+    var state: any = { ready: false, pipelineValidation: true };
     var pipeline: any;
     var scoped = false;
     var error: any = null;
@@ -72,6 +72,20 @@
         if (failure && !guard.disposed) guard.fail(descriptor.label || kind, failure.message || String(failure));
         if (!guard.pending) guard.changed();
       }
+    }
+    var createAsync = kind === "render" ? device.createRenderPipelineAsync : device.createComputePipelineAsync;
+    if (typeof createAsync === "function") {
+      // Async creation reports validation on this descriptor's promise, without
+      // sharing a device error scope with parallel builds or frame encoding.
+      pipeline = {};
+      wgpuPipelineValidation.set(pipeline, state);
+      try {
+        createAsync.call(device, descriptor).then(function(result: any) {
+          state.pipeline = result;
+          finish(null);
+        }, finish);
+      } catch (failure) { finish(failure); }
+      return pipeline;
     }
     try {
       device.pushErrorScope("validation");
@@ -99,6 +113,7 @@
     if (!error || !error.pipelineValidation || !guard.frameEncoder) return;
     try {
       if (guard.framePass) guard.framePass.end();
+      if (guard.frameAbort) guard.frameAbort();
       if (guard.frameCleanup) guard.frameCleanup();
       guard.submit([guard.frameEncoder.finish()]);
     } catch (failure) { guard.fail("frame", String(failure && failure.message || failure)); }
@@ -108,25 +123,105 @@
     if (host) host.finishEncoding(encoder);
   }
 
+  function wgpuDeferredCanvasView(guard: any, context: any): any {
+    guard.canvasContext = context;
+    if (guard.framePipelinesReady) return context.getCurrentTexture().createView();
+    return guard.canvasView || (guard.canvasView = {});
+  }
+
+  function wgpuReplayFrameCommands(encoder: any, guard: any, commands: any[], view: any) {
+    for (var i = 0; i < commands.length; i += 4) {
+      var record = commands[i], method = commands[i + 1], args = commands[i + 2], group = commands[i + 3];
+      if (method === "beginRenderPass" || method === "beginComputePass") {
+        var descriptor = args[0];
+        if (record.canvas) descriptor = Object.assign({}, descriptor, { colorAttachments: descriptor.colorAttachments.map(function(attachment: any) {
+          if (!attachment) return attachment;
+          var resolved = Object.assign({}, attachment);
+          if (resolved.view === guard.canvasView) resolved.view = view;
+          if (resolved.resolveTarget === guard.canvasView) resolved.resolveTarget = view;
+          return resolved;
+        }) });
+        record.pass = encoder[method](descriptor);
+      } else {
+        if (group) {
+          if (group.view !== view) { group.group = group.create(view); group.view = view; }
+          args[1] = group.group;
+        }
+        var target = record ? record.pass : encoder;
+        target[method].apply(target, args);
+      }
+    }
+  }
+
+  var renderMethods = new Set(["setPipeline", "setBindGroup", "setVertexBuffer", "setIndexBuffer", "setViewport", "setScissorRect", "setBlendConstant", "setStencilReference", "draw", "drawIndexed", "drawIndirect", "drawIndexedIndirect", "executeBundles", "beginOcclusionQuery", "endOcclusionQuery", "pushDebugGroup", "popDebugGroup", "insertDebugMarker", "end"]);
+  var computeMethods = new Set(["setPipeline", "setBindGroup", "dispatchWorkgroups", "dispatchWorkgroupsIndirect", "pushDebugGroup", "popDebugGroup", "insertDebugMarker", "end"]);
+
+  function wgpuFramePassProxy(record: any, prototype: any, guard: any, commands: any[], state: any, kind: string) {
+    var wrappers: any = Object.create(null), active: any;
+    active = new Proxy({}, { get: function(_, method) {
+      if (wrappers[method]) return wrappers[method];
+      var source = record.pass || prototype;
+      var member = source ? Reflect.get(source, method, source) : null;
+      if (source && typeof member !== "function") return member;
+      if (!source && (typeof method !== "string" || !(kind === "render" ? renderMethods : computeMethods).has(method))) return undefined;
+      if (!source && method === "executeBundles" && !guard.supportsBundles) return undefined;
+      return wrappers[method] = function(...args: any[]) {
+        if (method === "end" && guard.framePass === active) guard.framePass = null;
+        if (state.recording) {
+          var group = method === "setBindGroup" && guard.canvasGroups && guard.canvasGroups.get(args[1]);
+          if (method === "setBindGroup" && args[2] && typeof args[2] === "object") args[2] = args[2].slice ? args[2].slice() : Array.from(args[2]);
+          commands.push(record, method, args, group || null);
+        } else return record.pass[method].apply(record.pass, args);
+      };
+    } });
+    guard.framePass = active;
+    return active;
+  }
+
   function wgpuTrackFrameEncoder(encoder: any, guard: any): any {
     guard.frameEncoder = encoder;
+    guard.framePass = null;
+    guard.frameAbort = null;
+    if (guard.framePipelinesReady) return encoder;
+    var commands: any[] = [], state = { recording: false }, methods: any = Object.create(null);
+    guard.frameAbort = function() { state.recording = false; commands.length = 0; };
     return new Proxy(encoder, { get: function(target, key) {
       var value = Reflect.get(target, key, target);
-      if (key !== "beginRenderPass" && key !== "beginComputePass") return typeof value === "function" ? value.bind(target) : value;
-      return function(descriptor) {
-        var pass = value.call(target, descriptor);
-        guard.framePass = pass;
-        var methods = Object.create(null);
-        return new Proxy(pass, { get: function(active, method) {
-          if (method === "end") return function() {
-            active.end();
-            if (guard.framePass === active) guard.framePass = null;
-          };
-          var fn = Reflect.get(active, method, active);
-          if (typeof fn !== "function") return fn;
-          if (!methods[method]) methods[method] = fn.bind(active);
-          return methods[method];
-        } });
+      if (typeof value !== "function") return value;
+      if (methods[key]) return methods[key];
+      if (key === "finish") return methods[key] = function(descriptor: any) {
+        var view = state.recording ? guard.canvasContext.getCurrentTexture().createView() : null;
+        wgpuReplayFrameCommands(target, guard, commands, view);
+        return target.finish(descriptor);
+      };
+      if (key !== "beginRenderPass" && key !== "beginComputePass") return methods[key] = function(...args: any[]) {
+        if (state.recording) { commands.push(null, key, args, null); return; }
+        return value.apply(target, args);
+      };
+      return methods[key] = function(descriptor: any) {
+        var kind = key === "beginRenderPass" ? "render" : "compute";
+        var canvasPass = guard.canvasView && kind === "render" && descriptor.colorAttachments.some(function(attachment: any) {
+          return attachment && (attachment.view === guard.canvasView || attachment.resolveTarget === guard.canvasView);
+        });
+        if (canvasPass) state.recording = true;
+        if (state.recording) {
+          descriptor = Object.assign({}, descriptor);
+          if (descriptor.colorAttachments) descriptor.colorAttachments = descriptor.colorAttachments.map(function(attachment: any) { return attachment && Object.assign({}, attachment); });
+          if (descriptor.depthStencilAttachment) descriptor.depthStencilAttachment = Object.assign({}, descriptor.depthStencilAttachment);
+        }
+        var pass: any = state.recording ? null : value.call(target, descriptor);
+        var types: any = globalThis, constructor = types[kind === "render" ? "GPURenderPassEncoder" : "GPUComputePassEncoder"];
+        var prototype = constructor && constructor.prototype || guard[kind + "PassPrototype"];
+        if (pass && !prototype) {
+          prototype = Object.create(null);
+          (kind === "render" ? renderMethods : computeMethods).forEach(function(method: string) {
+            if (typeof pass[method] === "function") prototype[method] = pass[method];
+          });
+          guard[kind + "PassPrototype"] = prototype;
+        }
+        var record: any = { pass: pass, canvas: canvasPass };
+        if (state.recording) commands.push(record, key, [descriptor], null);
+        return wgpuFramePassProxy(record, prototype, guard, commands, state, kind);
       };
     } });
   }
@@ -134,12 +229,26 @@
   function wgpuGuardDevice(raw: any, guard: any): any {
     var methods = Object.create(null);
     guard.submit = raw.queue.submit.bind(raw.queue);
+    guard.supportsBundles = typeof raw.createRenderBundleEncoder === "function";
     return new Proxy(raw, {
       get: function(target, key) {
         if (key === "__gosxPipelineGuard") return guard;
         if (key === "createCommandEncoder") return function(descriptor) {
           var encoder = target.createCommandEncoder(descriptor);
           return descriptor && descriptor.label === "gosx-frame" ? wgpuTrackFrameEncoder(encoder, guard) : encoder;
+        };
+        if (key === "createBindGroup") return function(descriptor: any) {
+          if (guard.canvasView && descriptor.entries.some(function(entry: any) { return entry.resource === guard.canvasView; })) {
+            var handle = {}, record: any = { view: null, group: null, create: function(view: any) {
+              return target.createBindGroup(Object.assign({}, descriptor, { entries: descriptor.entries.map(function(entry: any) {
+                return entry.resource === guard.canvasView ? Object.assign({}, entry, { resource: view }) : entry;
+              }) }));
+            } };
+            if (!guard.canvasGroups) guard.canvasGroups = new WeakMap();
+            guard.canvasGroups.set(handle, record);
+            return handle;
+          }
+          return target.createBindGroup(descriptor);
         };
         if (key === "createShaderModule") return function(descriptor) {
           target.pushErrorScope("validation");
@@ -290,7 +399,7 @@
     "    hasIBL: u32,",
     "    radianceMipLevels: u32,",
     "    hasEnvMap: u32,",
-    "    _pad1: u32,",
+    "    envMapMaxLod: f32,",
     "    _pad2: u32,",
     "    _pad3: u32,",
     "};",
@@ -413,15 +522,16 @@
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
     "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
+    "@group(1) @binding(19) var<uniform> objectModel: mat4x4f;",
     "",
     "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    var out: VertexOutput;",
-    "    let worldPosition = material.modelMatrix * vec4f(in.position, 1.0);",
-    "    let an = gosxAffineNormal(material.modelMatrix, in.normal);",
+    "    let worldPosition = objectModel * vec4f(in.position, 1.0);",
+    "    let an = gosxAffineNormal(objectModel, in.normal);",
     "    out.worldPos = worldPosition.xyz;",
     "    out.normal = an.xyz;",
     "    out.uv = in.uv;",
-    "    let rawT = (material.modelMatrix * vec4f(in.tangent.xyz, 0.0)).xyz;",
+    "    let rawT = (objectModel * vec4f(in.tangent.xyz, 0.0)).xyz;",
     "    let N = out.normal;",
     "    var tangentFrame = rawT - N * dot(N, rawT);",
     "    if (dot(tangentFrame, tangentFrame) < 1e-12) {",
@@ -2252,18 +2362,12 @@
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
     "        specularEnvironment = specularIBL * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
-    // NOTE: unlike the WebGL2 renderer, the WebGPU equirect environment
-    // texture is currently uploaded with a single mip level (WebGPU has no
-    // gl.generateMipmap equivalent; a downsample chain needs its own WGSL
-    // compute/render pipeline). textureSample here already resolves to that
-    // one level, so a roughness-driven textureSampleLevel would be a no-op
-    // that implies a blur this renderer cannot yet produce. Tracked as a
-    // follow-up: build the mip chain, then switch both samples below to
-    // textureSampleLevel exactly like the WebGL2 fix.
+    // Explicit LOD avoids seam/pole derivative blur and matches WebGL2.
     "        let Nr = rotateEnvY(N, env.envRotation);",
     "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
-    "        let envDiffuse = textureSample(envMapTex, envMapSampler, envEquirectUV(Nr)).rgb * albedo;",
-    "        let envSpecular = textureSample(envMapTex, envMapSampler, envEquirectUV(Rr)).rgb;",
+    "        let maxLod = env.envMapMaxLod;",
+    "        let envDiffuse = textureSampleLevel(envMapTex, envMapSampler, envEquirectUV(Nr), maxLod).rgb * albedo;",
+    "        let envSpecular = textureSampleLevel(envMapTex, envMapSampler, envEquirectUV(Rr), roughness * maxLod).rgb;",
     "        let Fenv = fresnelSchlickRoughness(NoV, F0, F90, roughness);",
     "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
@@ -2929,7 +3033,6 @@
     "    return out;",
     "}",
   ].join("\n");
-
   var WGSL_POST_BLIT_FRAGMENT = [
     "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
     "@group(0) @binding(1) var inputSamp: sampler;",
@@ -2938,7 +3041,6 @@
     "    return textureSample(inputTex, inputSamp, uv);",
     "}",
   ].join("\n");
-
   var WGSL_POST_TONEMAPPING_FRAGMENT = [
     "struct ToneMappingParams {",
     "    exposure: f32,",
@@ -2998,7 +3100,6 @@
     }
     return 1;
   }
-
   var WGSL_POST_BLOOM_BRIGHT_FRAGMENT = [
     "struct BloomBrightParams {",
     "    threshold: f32,",
@@ -3026,7 +3127,6 @@
     "    return vec4f(color * (excess / (excess + 1.0)), 1.0);",
     "}",
   ].join("\n");
-
   // -----------------------------------------------------------------------
   // shader-f16 in the post chain
   // -----------------------------------------------------------------------
@@ -3064,7 +3164,6 @@
     }
     return ["enable f16;", "alias pf = f16;", "alias pf3 = vec3h;", ""];
   }
-
   function sceneWebGPUPostShaderSource(bodyLines, useF16) {
     return sceneWebGPUPostPrecisionPreamble(useF16).concat(bodyLines).join("\n");
   }
@@ -3390,7 +3489,6 @@
       ? window.__gosx_scene3d_ktx2
       : null;
   }
-
   function wgpuNotifyTextureSettled(record) {
     if (record && typeof notifySceneTextureLoaded === "function") {
       notifySceneTextureLoaded(record.src, Boolean(record.loaded && !record.failed));
@@ -3407,7 +3505,6 @@
     }
     generation.onResourceReady();
   }
-
   // wgpuUploadKTX2Texture fetches, decodes and uploads one KTX2 container into
   // an existing cache record.
   //
@@ -3462,7 +3559,6 @@
       return record;
     });
   }
-
   function wgpuTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
     var descriptor = raw && typeof raw === "object" ? raw : {};
     return {
@@ -3481,7 +3577,6 @@
       wrapT: [33071, 33648, 10497].indexOf(descriptor.wrapT) >= 0 ? descriptor.wrapT : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
     };
   }
-
   function wgpuTextureCacheKey(descriptor) {
     return [
       descriptor.uri,
@@ -3497,9 +3592,7 @@
       descriptor.wrapT,
     ].join("\u0000");
   }
-
   var wgpuMaterialSamplerCache = new WeakMap();
-
   function wgpuMaterialSampler(device, linearSampler, rawDescriptor, role) {
     var descriptor = wgpuTextureDescriptor(rawDescriptor, "", role, "linear");
     if (descriptor.wrapS === 33071 && descriptor.wrapT === 33071) return linearSampler;
@@ -3520,16 +3613,89 @@
     }
     return cache.get(key);
   }
-
-
-  function wgpuLoadTexture(device, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
+  // Device ownership fences cached pipelines across device-loss recovery.
+  var wgpuTextureMipCaches = new WeakMap();
+  function wgpuGenerateTextureMips(device: any, texture: any, format: string, levels: number) {
+    if (levels <= 1) return Promise.resolve();
+    var cache = wgpuTextureMipCaches.get(device);
+    if (!cache) wgpuTextureMipCaches.set(device, cache = new Map());
+    var resources = cache.get(format);
+    var error: any = null;
+    device.pushErrorScope("validation");
+    try {
+      if (!resources) {
+        var layout = device.createBindGroupLayout({ entries: [
+          { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+          { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+        ] });
+        resources = {
+          layout: layout,
+          sampler: device.createSampler({ minFilter: "linear", magFilter: "linear" }),
+          pipeline: device.createRenderPipeline({
+            label: "gosx-texture-mips-" + format,
+            layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+            vertex: { module: device.createShaderModule({ code: WGSL_POST_VERTEX }), entryPoint: "vertexMain" },
+            fragment: { module: device.createShaderModule({ code: WGSL_POST_BLIT_FRAGMENT }), entryPoint: "fragmentMain", targets: [{ format: format }] },
+            primitive: { topology: "triangle-strip" },
+          }),
+        };
+        cache.set(format, resources);
+      }
+      var encoder = device.createCommandEncoder({ label: "gosx-texture-mips" });
+      for (var level = 1; level < levels; level++) {
+        var group = device.createBindGroup({ layout: resources.layout, entries: [
+          { binding: 0, resource: texture.createView({ baseMipLevel: level - 1, mipLevelCount: 1 }) },
+          { binding: 1, resource: resources.sampler },
+        ] });
+        var pass = encoder.beginRenderPass({ label: "gosx-texture-mip-" + level, colorAttachments: [{
+          view: texture.createView({ baseMipLevel: level, mipLevelCount: 1 }),
+          loadOp: "clear", clearValue: [0, 0, 0, 0], storeOp: "store",
+        }] });
+        pass.setPipeline(resources.pipeline);
+        pass.setBindGroup(0, group);
+        pass.draw(4);
+        pass.end();
+      }
+      // Queue order keeps mip generation between upload and publication.
+      device.queue.submit([encoder.finish()]);
+    } catch (failure) { error = failure; }
+    // Pop before yielding: concurrent image loads cannot swap device scopes.
+    return Promise.resolve(device.popErrorScope()).then(function(failure) {
+      if (error || failure) throw error || failure;
+    }).catch(function(failure) {
+      if (cache.get(format) === resources) cache.delete(format);
+      throw failure;
+    });
+  }
+  function wgpuCreateImageTexture(device: any, width: number, height: number, colorSpace: string) {
+    var format = colorSpace === "srgb" ? "rgba8unorm-srgb" : "rgba8unorm";
+    var levels = Math.floor(Math.log2(Math.max(1, width, height))) + 1;
+    return { format: format, levels: levels, texture: device.createTexture({
+      size: [width, height, 1], format: format, mipLevelCount: levels,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    }) };
+  }
+  function wgpuTextureRecordDisposed(record: any): boolean { return !!(record.disposed || record.generation && record.generation.disposed); }
+  function wgpuEnvMapMaxLod(envMap: any): number {
+    return envMap.active ? Math.max(0, sceneNumber(envMap.record && envMap.record.levels, 1) - 1) : 0;
+  }
+  function wgpuLoadTexture(device, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace, retryFailed = false) {
     if (!cache) return null;
     var descriptor = wgpuTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
     var key = descriptor.uri;
     if (!key) return null;
     var cacheKey = wgpuTextureCacheKey(descriptor);
-    if (cache.has(cacheKey)) return cache.get(cacheKey);
-
+    var cached = cache.get(cacheKey);
+    if (cached) {
+      if (retryFailed && cached.failed && !wgpuTextureRecordDisposed(cached)) {
+        cached.failed = false;
+        cached.loaded = false;
+        cached.pending = true;
+        cached.error = undefined;
+        wgpuStartTextureLoad(device, cached);
+      }
+      return cached;
+    }
     // Placeholder: 1x1 white pixel.
     var cube = descriptor.view === "cube";
     var placeholderTex = cube ? wgpuCreatePlaceholderCubeTexture(device) : device.createTexture({
@@ -3545,13 +3711,13 @@
         [1, 1, 1]
       );
     }
-
     var record = {
       texture: placeholderTex,
       view: placeholderTex.createView({ dimension: cube ? "cube" : "2d" }),
       src: key,
       descriptor: descriptor,
       colorSpace: "",
+      levels: 1,
       loaded: false,
       pending: true,
       failed: false,
@@ -3559,42 +3725,36 @@
       disposed: false,
     };
     cache.set(cacheKey, record);
-
-    // A .ktx2 URI holds a block-compressed container, not an image an <img>
-    // element can decode. Hand it to the KTX2 reader instead. Feeding it to an
-    // image element produces a broken texture that still reports success, which
-    // is exactly the defect class the upload gate exists to prevent.
+    wgpuStartTextureLoad(device, record);
+    return record;
+  }
+  function wgpuStartTextureLoad(device, record) {
+    var descriptor = record.descriptor, key = record.src;
+    var cube = descriptor.view === "cube";
+    // KTX2 uploads supplied mips through its decoder, outside the Image path.
     if (wgpuIsKTX2URL(key) && wgpuKTX2API()) {
       wgpuUploadKTX2Texture(device, key, record);
       return record;
     }
-
     if (cube) {
       record.failed = true;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.pending = false;
+      record.pending = false;
       record.error = "cube descriptors require a KTX2 upload path";
       wgpuNotifyTextureSettled(record);
     } else if (typeof Image === "function") {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var image = new Image();
+      var image = new Image();
       record.image = image;
       image.onload = function() {
-        if (record.disposed || record.generation && record.generation.disposed) return;
-        // Specular-color and base-color maps store meaningful RGB under a
-        // possibly-zero alpha channel; base-color alpha additionally drives
-        // MASK coverage. Browser bitmap decode can premultiply, zeroing RGB
-        // wherever alpha is 0, which makes the specular tint or albedo
-        // collapse to black. Request explicitly unpremultiplied decode and
-        // copy for these roles only; other roles keep their prior behavior.
+        if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
+        // Preserve base/specular RGB under transparent pixels and MASK alpha
+        // by decoding/copying these roles unpremultiplied.
         var needsUnpremultipliedAlpha = ["specular-color", "base-color"].indexOf(descriptor.role) >= 0;
         var w = image.width;
         var h = image.height;
-        var tex = device.createTexture({
-          size: [w, h, 1],
-          format: descriptor.colorSpace === "srgb" ? "rgba8unorm-srgb" : "rgba8unorm",
-          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-        });
-        // Chromium rejects an ImageBitmap made from an SVG foreignObject.
-        // Drawing the Image to a canvas gives WebGPU a readable upload source.
+        if (!w || !h) { image.onerror(""); return; }
+        var imageTexture = wgpuCreateImageTexture(device, w, h, descriptor.colorSpace);
+        var tex = imageTexture.texture;
+        // Canvas makes SVG foreignObject pixels readable by Chromium WebGPU.
         var isHTMLTexture = key.indexOf("data:image/svg+xml") === 0 && key.indexOf("foreignObject") >= 0;
         var htmlCanvas = null;
         if (isHTMLTexture && typeof document !== "undefined" && document.createElement) {
@@ -3610,28 +3770,30 @@
           imagePromise = createImageBitmap(image, bitmapOptions);
         }
         if (imagePromise) {
-          imagePromise.then(function(bitmap) {
-            if (record.disposed || record.generation && record.generation.disposed) {
-              tex.destroy();
+          imagePromise.then(async function(bitmap) {
+            try {
+              if (record.image !== image || wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
+              device.queue.copyExternalImageToTexture(
+                { source: bitmap },
+                needsUnpremultipliedAlpha || isHTMLTexture ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
+                [w, h]
+              );
+              await wgpuGenerateTextureMips(device, tex, imageTexture.format, imageTexture.levels);
+              if (record.image !== image || wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
+              record.texture.destroy();
+              record.texture = tex;
+              record.view = tex.createView();
+              record.levels = imageTexture.levels;
+              record.colorSpace = descriptor.colorSpace === "srgb" ? "srgb" : "linear";
+              record.loaded = true;
+              record.pending = false;
+              wgpuNotifyTextureSettled(record);
+            } finally {
               if (typeof ImageBitmap !== "undefined" && bitmap instanceof ImageBitmap) bitmap.close();
-              return;
             }
-            device.queue.copyExternalImageToTexture(
-              { source: bitmap },
-              needsUnpremultipliedAlpha || isHTMLTexture ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
-              [w, h]
-            );
-            record.texture.destroy();
-            record.texture = tex;
-            record.view = tex.createView();
-            record.colorSpace = descriptor.colorSpace === "srgb" ? "srgb" : "linear";
-            record.loaded = true;
-            record.pending = false;
-            if (typeof ImageBitmap !== "undefined" && bitmap instanceof ImageBitmap) bitmap.close();
-            wgpuNotifyTextureSettled(record);
           }).catch(function() {
             tex.destroy();
-            if (record.disposed || record.generation && record.generation.disposed) return;
+            if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
             record.failed = true;
             record.pending = false;
             wgpuNotifyTextureSettled(record);
@@ -3643,7 +3805,7 @@
         }
       };
       image.onerror = function() {
-        if (record.disposed || record.generation && record.generation.disposed) return;
+        if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
         record.failed = true;
         record.pending = false;
         wgpuNotifyTextureSettled(record);
@@ -3655,10 +3817,7 @@
       record.pending = false;
       wgpuNotifyTextureSettled(record);
     }
-
-    return record;
   }
-
   function wgpuWaterCubeMapFaceURLs(value) {
     var base = typeof value === "string" ? value.trim() : "";
     if (!base) return null;
@@ -3672,7 +3831,6 @@
       return base + face;
     });
   }
-
   function wgpuCreatePlaceholderCubeTexture(device) {
     var tex = device.createTexture({
       size: [1, 1, 6],
@@ -3698,14 +3856,12 @@
     }
     return tex;
   }
-
   function wgpuLoadCubeTexture(device, value, cache) {
     if (!cache) return null;
     var urls = wgpuWaterCubeMapFaceURLs(value);
     if (!urls) return null;
     var key = "cube:" + urls.join("|");
     if (cache.has(key)) return cache.get(key);
-
     var placeholder = wgpuCreatePlaceholderCubeTexture(device);
     var record = {
       texture: placeholder,
@@ -3717,13 +3873,11 @@
       failed: false,
     };
     cache.set(key, record);
-
     if (typeof Image !== "function" || typeof createImageBitmap !== "function") {
       record.failed = true;
       record.pending = false;
       return record;
     }
-
     var images = new Array(6);
     var loaded = 0;
     var failed = false;
@@ -3777,14 +3931,11 @@
       image.crossOrigin = "anonymous";
       image.src = url;
     });
-
     return record;
   }
-
   // -----------------------------------------------------------------------
   // Bind Group Layout Definitions
   // -----------------------------------------------------------------------
-
   function wgpuCreateFrameBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-frame",
@@ -3810,34 +3961,18 @@
       ],
     });
   }
-
-  function wgpuCreateMaterialBindGroupLayout(device) {
-    return device.createBindGroupLayout({
-      label: "gosx-material",
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 8, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 10, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 11, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 16, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 17, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 18, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-      ],
-    });
+  function wgpuCreateMaterialBindGroupLayout(device, models = false) {
+    var entries: any[] = [
+      { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+    ];
+    // Nine texture/sampler pairs retain the material ABI at bindings 1..18.
+    for (var binding = 1; binding < 19; binding += 2) entries.push(
+      { binding: binding, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+      { binding: binding + 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} });
+    if (models) entries.push({ binding: 19, visibility: GPUShaderStage.VERTEX,
+      buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 64 } });
+    return device.createBindGroupLayout({ label: "gosx-material", entries: entries });
   }
-
   function wgpuCreatePointsBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-points",
@@ -3847,7 +3982,6 @@
       ],
     });
   }
-
   function wgpuCreatePointsUniformBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-points-uniform",
@@ -3856,7 +3990,6 @@
       ],
     });
   }
-
   function wgpuCreateShadowBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-shadow-frame",
@@ -3865,7 +3998,6 @@
       ],
     });
   }
-
   function wgpuCreatePostBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-post",
@@ -3875,7 +4007,6 @@
       ],
     });
   }
-
   function wgpuCreatePostWithParamsBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-post-params",
@@ -3886,7 +4017,6 @@
       ],
     });
   }
-
   function wgpuCreateBloomCompositeBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-bloom-composite",
@@ -3899,7 +4029,6 @@
       ],
     });
   }
-
   function wgpuCreateSSAOBindGroupLayout(device) {
     return device.createBindGroupLayout({
       label: "gosx-ssao",
@@ -3911,11 +4040,9 @@
       ],
     });
   }
-
   // -----------------------------------------------------------------------
   // Pipeline Creation
   // -----------------------------------------------------------------------
-
   // PBR vertex buffer layout (position, normal, uv, tangent).
   var WGPU_PBR_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
@@ -3923,7 +4050,6 @@
     { arrayStride: 8,  stepMode: "vertex", attributes: [{ format: "float32x2", offset: 0, shaderLocation: 2 }] },
     { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 3 }] },
   ];
-
   var WGPU_PBR_INSTANCED_VERTEX_LAYOUT = WGPU_PBR_VERTEX_LAYOUT.concat([
     {
       arrayStride: 64,
@@ -3937,7 +4063,6 @@
     },
     { arrayStride: 16, stepMode: "instance", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 8 }] },
   ]);
-
   // Cull-path instanced layout: 80-byte InstanceRecord (mat4 @ 0-63, pickData
   // uint32x4 @ 64-79). Location 8 carries pickData (vec4u) instead of the
   // non-cull layout's instanceColor (vec4f). Material color comes from the
@@ -3956,12 +4081,10 @@
       ],
     },
   ]);
-
   // Shadow vertex buffer layout (position only).
   var WGPU_SHADOW_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
   ];
-
   var WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT = WGPU_SHADOW_VERTEX_LAYOUT.concat([
     {
       arrayStride: 64,
@@ -3974,18 +4097,15 @@
       ],
     },
   ]);
-
   var WGPU_SCENE_COLOR_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
     { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 1 }] },
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 2 }] },
   ];
-
   var WGPU_SURFACE_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
     { arrayStride: 8, stepMode: "vertex", attributes: [{ format: "float32x2", offset: 0, shaderLocation: 1 }] },
   ];
-
   var WGPU_THICK_LINE_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 1 }] },
@@ -3995,7 +4115,6 @@
     { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 5 }] },
     { arrayStride: 4, stepMode: "vertex", attributes: [{ format: "float32", offset: 0, shaderLocation: 6 }] },
   ];
-
   var WGPU_POINTS_INSTANCE_VERTEX_LAYOUT = [
     {
       arrayStride: 32,
@@ -4007,7 +4126,6 @@
       ],
     },
   ];
-
   function wgpuBlendState(mode) {
     if (mode === "alpha") {
       return {
@@ -4023,7 +4141,6 @@
     }
     return undefined; // opaque -- no blending
   }
-
   // The sample-count sign carries the determinant-selected front face while
   // its magnitude remains the actual MSAA count. This keeps the governed
   // factory signature at eight parameters without an allocation per variant.
@@ -4046,7 +4163,6 @@
       },
     });
   }
-
   function wgpuCreatePBRInstancedPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
     return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-pbr-instanced-" + blendMode,
@@ -4066,7 +4182,6 @@
       },
     });
   }
-
   // Cull-path pipeline: uses WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT (80-byte
   // InstanceRecord with pickData uint32x4 at location 8). The same fragment
   // module is used — no per-instance color from vertex; fragment reads the
@@ -4090,7 +4205,6 @@
       },
     });
   }
-
   // Both shadow pipelines set cullMode "front" and set no frontFace, so the
   // WebGPU default "ccw" stands. 12-scene-geometry.ts and 16c-scene-shared-pbr.ts
   // wind their solids counter-clockwise as seen from outside, so the lit face is
@@ -4118,7 +4232,6 @@
       },
     });
   }
-
   function wgpuCreateShadowInstancedPipeline(device, shadowLayout, vertexModule, fragmentModule) {
     return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-shadow-instanced",
@@ -4137,7 +4250,6 @@
       },
     });
   }
-
   function wgpuCreateSceneColorPipeline(device, pipelineLayout, vertexModule, fragmentModule, topology, blendMode, depthWrite, targetFormat, sampleCount) {
     return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-scene-color-" + topology + "-" + blendMode,
@@ -4801,8 +4913,8 @@
     }
 
     // Resolve covered MSAA depth before a depth-reading post pass.
-    function resolveSceneDepth(encoder: any, sourceView: any, effects: any[], samples: number) {
-      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST].includes(effect.kind))) return;
+    function prepareSceneDepth(effects: any[], samples: number) {
+      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST].includes(effect.kind))) return false;
       if (!depthResolvePipeline) {
         depthResolveLayout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: true } }] });
         var module = device.createShaderModule({ label: "post-depth-resolve", code: `@group(0) @binding(0) var source: texture_depth_multisampled_2d;
@@ -4813,11 +4925,38 @@
           vertex: { module: device.createShaderModule({ code: WGSL_POST_VERTEX }), entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [] },
           primitive: { topology: "triangle-strip" }, depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "always" } });
       }
+      return true;
+    }
+    function resolveSceneDepth(encoder: any, sourceView: any, effects: any[], samples: number) {
+      if (!prepareSceneDepth(effects, samples)) return;
       var group = device.createBindGroup({ layout: depthResolveLayout, entries: [{ binding: 0, resource: sourceView }] });
       var pass = encoder.beginRenderPass({ label: "gosx-post-depth-resolve", colorAttachments: [], depthStencilAttachment: { view: depthTexView, depthLoadOp: "clear", depthClearValue: 1, depthStoreOp: "store" } });
       pass.setPipeline(wgpuRequirePipeline(depthResolvePipeline)); pass.setBindGroup(0, group); pass.draw(4); pass.end();
     }
+    function preparePipelines(effects: any[], samples: number) {
+      prepareSceneDepth(effects, samples);
+      getPipeline("blit", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
+      getPipeline("present", WGSL_POST_BLIT_FRAGMENT, getPostBlitLayout());
+      for (var effect of effects) {
+        switch (effect.kind) {
+          case SCENE_POST_TONE_MAPPING: getPipeline("toneMapping", WGSL_POST_TONEMAPPING_FRAGMENT, getPostParamsLayout()); break;
+          case SCENE_POST_BLOOM:
+            if (effect.mode === "mip") { mipBloom.preparePipelines(); break; }
+            getPipeline("bloomBright", WGSL_POST_BLOOM_BRIGHT_FRAGMENT, getPostParamsLayout());
+            getPipeline("blur", postUsesF16 ? WGSL_POST_BLUR_FRAGMENT_F16 : WGSL_POST_BLUR_FRAGMENT, getPostParamsLayout());
+            getPipeline("bloomComposite", WGSL_POST_BLOOM_COMPOSITE_FRAGMENT, getBloomCompositeLayout()); break;
+          case "contactShadows": getPipeline("contactShadows", WGSL_POST_CONTACT_SHADOWS_FRAGMENT, getSSAOLayout()); break;
+          case SCENE_POST_SSAO: getPipeline("ssao", WGSL_POST_SSAO_FRAGMENT, getSSAOLayout()); break;
+          case SCENE_POST_DOF: getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout()); break;
+          case "taa":
+          case SCENE_POST_FXAA: getPipeline("fxaa", postUsesF16 ? WGSL_POST_FXAA_FRAGMENT_F16 : WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout()); break;
+          case SCENE_POST_VIGNETTE: getPipeline("vignette", WGSL_POST_VIGNETTE_FRAGMENT, getPostParamsLayout()); break;
+          case SCENE_POST_COLOR_GRADE: getPipeline("colorGrade", WGSL_POST_COLORGRADE_FRAGMENT, getPostParamsLayout()); break;
+        }
+      }
+    }
     return {
+      preparePipelines: preparePipelines,
       setSpecularSource: function(view: any) { specularSource = view; },
       getSceneTarget: function(width, height) {
         ensureFBOs(width, height);
@@ -5320,7 +5459,7 @@
   // must draw exactly the set that file picks, so a non-pickable object never
   // occludes a pickable one in the ID buffer.
   function sceneWebGPUPickAllowsObject(object) {
-    if (!object || object.viewCulled) return false;
+    if (!object || object.viewCulled || object._crowdBatch === true || object._crowdSkin) return false;
     if (typeof object.pickable === "boolean") return object.pickable;
     if (object.kind === "plane") return false;
     var extents = sceneWebGPUPickBoundsExtents(object.bounds);
@@ -5928,6 +6067,7 @@
     }
 
     return {
+      preparePipelines: ensureResources,
       queuePick: queuePick,
       recordPickPass: recordPickPass,
       finishReadback: finishReadback,
@@ -6436,6 +6576,7 @@
     var encodes = 0;
     var replays = 0;
     var lastDrawCount = 0;
+    var consecutiveMisses = 0, previousMissTokens = null;
 
     return {
       recorder: recorder,
@@ -6453,9 +6594,21 @@
         if (recorder.drawCount() === 0) {
           return { reusable: false, eligible: false, reason: "no-draws" };
         }
+        // Ping-pong bindings never settle. Encode directly until two command
+        // streams agree again, so temporary churn does not disable bundles forever.
+        if (consecutiveMisses >= 4) {
+          if (!sceneWebGPUBundleTokensMatch(recorder.tokens(), recorder.length(), previousMissTokens)) {
+            previousMissTokens = sceneWebGPUCopyBundleTokens(recorder.tokens(), recorder.length());
+            return { reusable: false, eligible: false, reason: "binding-thrash" };
+          }
+          consecutiveMisses = 0;
+        }
         var reusable = bundle !== null &&
           savedLayout === layoutKey &&
           sceneWebGPUBundleTokensMatch(recorder.tokens(), recorder.length(), savedTokens);
+        consecutiveMisses = reusable ? 0 : consecutiveMisses + 1;
+        previousMissTokens = reusable ? null : sceneWebGPUCopyBundleTokens(recorder.tokens(), recorder.length());
+        if (consecutiveMisses >= 4) return { reusable: false, eligible: false, reason: "binding-thrash" };
         return { reusable: reusable, eligible: true, reason: reusable ? "replay" : "re-encode" };
       },
       // adopt stores a freshly finished bundle together with the stream the
@@ -6473,6 +6626,7 @@
         bundle = null;
         savedTokens = null;
         savedLayout = "";
+        consecutiveMisses = 0; previousMissTokens = null;
       },
       stats: function() {
         return { encodes: encodes, replays: replays, draws: lastDrawCount };
@@ -6500,10 +6654,9 @@
   //      frame, so their command stream rarely repeats. Recording them would
   //      cost the walk and never earn a replay.
   //
-  // The three per-object exclusions — skinned, computed-morph and Selena
-  // material draws — bind buffers a compute pass rewrites or bind groups a
-  // per-frame uniform owns. The recorder WOULD catch a change in those, so this
-  // is a payoff limit rather than a correctness limit.
+  // Skinned and computed-morph draws bind buffers a compute pass rewrites.
+  // The recorder would catch resource changes; these paths stay direct
+  // because they rarely reuse the same command stream.
   function sceneWebGPUBundleIneligibleReason(flags) {
     if (!flags) return "no-flags";
     if (flags.disabled) return "disabled";
@@ -6618,7 +6771,7 @@
   }
 
   function selenaPipelineFrontFace(options) {
-    return options && options.frontFace === "cw" ? "cw" : "ccw";
+    return options?.frontFace === "cw" ? "cw" : "ccw";
   }
 
   function sceneWebGPUPointModelMatrix(entry, _pointsTilt, _pointsModelMat) {
@@ -7012,8 +7165,8 @@
     var pointsAuthoredStoragePipelineLayout = null;  // [frame, userUniform, pointsStorage] for ComputeParticle render
     var shadowBindGroupLayout = null;
     var pbrPipelineLayout = null;
-    var elioSkinPipelineLayout = null;
-    var computedMorphPipelineLayout = null;
+    var elioSkinPipelineLayout: any = null;
+    var computedMorphPipelineLayout: any = null;
     var pointsPipelineLayout = null;
     var pointsVertexPipelineLayout = null;
     var selenaPipelineCache = new Map();
@@ -7045,34 +7198,34 @@
     var pbrInstancedVertexModule = null;
     var pbrInstancedCullVertexModule = null;
     var pbrFragmentModule = null;
-    var elioSkinShaderModule = null;
-    var elioSkinPipeline = null;
-    var computedMorphShaderModule = null;
-    var computedMorphPipeline = null;
-    var waterComputeShaderModule = null;
-    var waterRenderVertexModule = null;
-    var waterRenderFragmentModule = null;
-    var waterRenderBelowFragmentModule = null;
-    var waterPoolVertexModule = null;
-    var waterPoolFragmentModule = null;
-    var waterCausticsVertexModule = null;
-    var waterCausticsFragmentModule = null;
-    var waterObjectTextureVertexModule = null;
-    var waterObjectTextureFragmentModule = null;
-    var waterObjectShadowFragmentModule = null;
-    var waterObjectMeshShadowVertexModule = null;
-    var waterObjectMeshShadowFragmentModule = null;
-    var waterObjectMeshRefractionFragmentModule = null;
-    var waterObjectMeshClippedFragmentModule = null;
-    var waterSeedPipeline = null;
-    var waterDropPipeline = null;
-    var waterDisplacementPipeline = null;
-    var waterStepPipeline = null;
-    var waterNormalPipeline = null;
-    var waterCausticsPipeline = null;
-    var waterObjectTexturePipeline = null;
-    var waterObjectShadowPipeline = null;
-    var waterObjectMeshShadowPipeline = null;
+    var elioSkinShaderModule: any = null;
+    var elioSkinPipeline: any = null;
+    var computedMorphShaderModule: any = null;
+    var computedMorphPipeline: any = null;
+    var waterComputeShaderModule: any = null;
+    var waterRenderVertexModule: any = null;
+    var waterRenderFragmentModule: any = null;
+    var waterRenderBelowFragmentModule: any = null;
+    var waterPoolVertexModule: any = null;
+    var waterPoolFragmentModule: any = null;
+    var waterCausticsVertexModule: any = null;
+    var waterCausticsFragmentModule: any = null;
+    var waterObjectTextureVertexModule: any = null;
+    var waterObjectTextureFragmentModule: any = null;
+    var waterObjectShadowFragmentModule: any = null;
+    var waterObjectMeshShadowVertexModule: any = null;
+    var waterObjectMeshShadowFragmentModule: any = null;
+    var waterObjectMeshRefractionFragmentModule: any = null;
+    var waterObjectMeshClippedFragmentModule: any = null;
+    var waterSeedPipeline: any = null;
+    var waterDropPipeline: any = null;
+    var waterDisplacementPipeline: any = null;
+    var waterStepPipeline: any = null;
+    var waterNormalPipeline: any = null;
+    var waterCausticsPipeline: any = null;
+    var waterObjectTexturePipeline: any = null;
+    var waterObjectShadowPipeline: any = null;
+    var waterObjectMeshShadowPipeline: any = null;
     var waterObjectMeshPipelineCache = {};
     var waterPoolPipelineCache = {};
     var shadowVertexModule = null;
@@ -7701,12 +7854,12 @@
     var waterCausticsBindGroupLayout = null;
     var waterObjectTextureBindGroupLayout = null;
     var waterObjectMeshShadowBindGroupLayout = null;
-    var waterComputePipelineLayout = null;
-    var waterRenderPipelineLayout = null;
-    var waterPoolPipelineLayout = null;
-    var waterCausticsPipelineLayout = null;
-    var waterObjectTexturePipelineLayout = null;
-    var waterObjectMeshShadowPipelineLayout = null;
+    var waterComputePipelineLayout: any = null;
+    var waterRenderPipelineLayout: any = null;
+    var waterPoolPipelineLayout: any = null;
+    var waterCausticsPipelineLayout: any = null;
+    var waterObjectTexturePipelineLayout: any = null;
+    var waterObjectMeshShadowPipelineLayout: any = null;
     var waterRenderPipelineCache = new Map();
     var WATER_MAX_DISPLACEMENT_SPHERES = 32;
     var WATER_CAUSTICS_TEXTURE_FORMAT = "rgba8unorm";
@@ -7755,6 +7908,7 @@
     textureCache._gosxGeneration = {
       disposed: false,
       onResourceReady: function() {
+        materialFrame.textureRevision++;
         if (canvas && typeof canvas.dispatchEvent === "function") {
           var event = typeof CustomEvent === "function"
             ? new CustomEvent("gosx:scene3d:resource-ready")
@@ -7791,7 +7945,9 @@
     // (device=null, initFailed=true) and recovery always calls createRenderer()
     // again for a brand new one.
     var pbrSceneAttributeCache = {};
-    var retainedMaterialOwners = new WeakMap();
+    var materialFrame: any = { resources: new Map(), groups: [], signatures: [], textureRevision: 0,
+      buffer: null, capacity: 0, data: null, words: null, offsets: new WeakMap() };
+    var modelDynamicOffsets = [0];
 
     // 1x1 white placeholder texture (for unbound material maps).
     var placeholderTex = null;
@@ -7930,9 +8086,14 @@
     }
     function wgpuCachedTrackedBuffer(owner, slot, typedArray, usage, dynamic) {
       if (!owner || !typedArray) return null;
-      // Foreign buffers can still report a size after device-loss disposal.
-      // Retire them and their bind-group caches so recovery allocates resources
-      // tracked by this renderer's device.
+      // Cross-renderer staleness guard: if the buffer cached at owner[slot] was
+      // created by a prior renderer (not in this renderer's pointsEntryGPUBuffers
+      // set), the underlying GPU resource was destroyed when that renderer was
+      // disposed or lost its device. Clear the stale JS reference so that the
+      // alloc path below creates a fresh buffer on the current device. Without
+      // this, sceneCachedSlotBuffer would blindly reuse the dead buffer (its .size
+      // property survives .destroy()), causing "Buffer with '' label is invalid"
+      // errors on every frame after device-loss recovery until the page is reloaded.
       var staleCandidate = owner[slot];
       if (staleCandidate && !pointsEntryGPUBuffers.has(staleCandidate)) {
         owner[slot] = null;
@@ -8109,7 +8270,7 @@
 
         // Create bind group layouts.
         frameBindGroupLayout = wgpuCreateFrameBindGroupLayout(device);
-        materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(device);
+        materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(device, true);
         elioSkinBindGroupLayout = device.createBindGroupLayout({
           label: "gosx-elio-skin-lbs",
           entries: [
@@ -8243,106 +8404,6 @@
         pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
         pbrInstancedCullVertexModule = device.createShaderModule({ label: "pbr-instanced-cull-vert", code: WGSL_PBR_INSTANCED_CULL_VERTEX });
         pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
-        elioSkinShaderModule = device.createShaderModule({ label: "elio-skin-lbs", code: SCENE_ELIO_SKIN_LBS_SOURCE });
-        elioSkinPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-          label: "gosx-elio-skin-lbs",
-          layout: elioSkinPipelineLayout,
-          compute: { module: elioSkinShaderModule, entryPoint: "skin" },
-        });
-        computedMorphShaderModule = device.createShaderModule({ label: "computed-morph", code: SCENE_COMPUTED_MORPH_SOURCE });
-        computedMorphPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-          label: "gosx-computed-morph",
-          layout: computedMorphPipelineLayout,
-          compute: { module: computedMorphShaderModule, entryPoint: "morphPose" },
-        });
-        waterComputeShaderModule = device.createShaderModule({ label: "gosx-water-compute", code: SCENE_WATER_COMPUTE_SOURCE });
-        waterSeedPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-          label: "gosx-water-seed-drops",
-          layout: waterComputePipelineLayout,
-          compute: { module: waterComputeShaderModule, entryPoint: "seedDrops" },
-        });
-        waterDropPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-          label: "gosx-water-add-drop",
-          layout: waterComputePipelineLayout,
-          compute: { module: waterComputeShaderModule, entryPoint: "addDrop" },
-        });
-        waterDisplacementPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-          label: "gosx-water-displace-object",
-          layout: waterComputePipelineLayout,
-          compute: { module: waterComputeShaderModule, entryPoint: "displaceObject" },
-        });
-        waterStepPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-          label: "gosx-water-step",
-          layout: waterComputePipelineLayout,
-          compute: { module: waterComputeShaderModule, entryPoint: "stepSimulation" },
-        });
-        waterNormalPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-          label: "gosx-water-normals",
-          layout: waterComputePipelineLayout,
-          compute: { module: waterComputeShaderModule, entryPoint: "updateNormals" },
-        });
-        waterRenderVertexModule = device.createShaderModule({ label: "gosx-water-render-vert", code: SCENE_WATER_RENDER_VERTEX_SOURCE });
-        waterRenderFragmentModule = device.createShaderModule({ label: "gosx-water-render-frag", code: SCENE_WATER_RENDER_FRAGMENT_SOURCE });
-        waterRenderBelowFragmentModule = device.createShaderModule({ label: "gosx-water-render-below-frag", code: SCENE_WATER_RENDER_BELOW_FRAGMENT_SOURCE });
-        waterPoolVertexModule = device.createShaderModule({ label: "gosx-water-pool-vert", code: SCENE_WATER_POOL_VERTEX_SOURCE });
-        waterPoolFragmentModule = device.createShaderModule({ label: "gosx-water-pool-frag", code: SCENE_WATER_POOL_FRAGMENT_SOURCE });
-        waterCausticsVertexModule = device.createShaderModule({ label: "gosx-water-caustics-vert", code: SCENE_WATER_CAUSTICS_VERTEX_SOURCE });
-        waterCausticsFragmentModule = device.createShaderModule({ label: "gosx-water-caustics-frag", code: SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE });
-        waterCausticsPipeline = wgpuCreateValidatedPipeline(device, "render", {
-          label: "gosx-water-caustics-pass",
-          layout: waterCausticsPipelineLayout,
-          vertex: { module: waterCausticsVertexModule, entryPoint: "vertexMain", buffers: [] },
-          fragment: {
-            module: waterCausticsFragmentModule,
-            entryPoint: "fragmentMain",
-            targets: [{ format: WATER_CAUSTICS_TEXTURE_FORMAT }],
-          },
-          primitive: { topology: "triangle-list" },
-        });
-        waterObjectTextureVertexModule = device.createShaderModule({ label: "gosx-water-object-texture-vert", code: SCENE_WATER_OBJECT_TEXTURE_VERTEX_SOURCE });
-        waterObjectTextureFragmentModule = device.createShaderModule({ label: "gosx-water-object-texture-frag", code: SCENE_WATER_OBJECT_TEXTURE_FRAGMENT_SOURCE });
-        waterObjectShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-shadow-frag", code: SCENE_WATER_OBJECT_SHADOW_FRAGMENT_SOURCE });
-        waterObjectMeshShadowVertexModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-vert", code: SCENE_WATER_OBJECT_MESH_SHADOW_VERTEX_SOURCE });
-        waterObjectMeshShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-frag", code: SCENE_WATER_OBJECT_MESH_SHADOW_FRAGMENT_SOURCE });
-        waterObjectMeshRefractionFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-texture-frag", code: sceneWaterObjectMeshFragmentSource(1) });
-        waterObjectMeshClippedFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-clipped-frag", code: sceneWaterObjectMeshFragmentSource(2) });
-        waterObjectTexturePipeline = wgpuCreateValidatedPipeline(device, "render", {
-          label: "gosx-water-object-texture-pass",
-          layout: waterObjectTexturePipelineLayout,
-          vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
-          fragment: {
-            module: waterObjectTextureFragmentModule,
-            entryPoint: "fragmentMain",
-            targets: [
-              { format: WATER_OBJECT_TEXTURE_FORMAT },
-              { format: WATER_OBJECT_TEXTURE_FORMAT },
-              { format: WATER_OBJECT_TEXTURE_FORMAT },
-            ],
-          },
-          primitive: { topology: "triangle-list" },
-        });
-        waterObjectShadowPipeline = wgpuCreateValidatedPipeline(device, "render", {
-          label: "gosx-water-object-shadow-pass",
-          layout: waterObjectTexturePipelineLayout,
-          vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
-          fragment: {
-            module: waterObjectShadowFragmentModule,
-            entryPoint: "shadowMain",
-            targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
-          },
-          primitive: { topology: "triangle-list" },
-        });
-        waterObjectMeshShadowPipeline = wgpuCreateValidatedPipeline(device, "render", {
-          label: "gosx-water-object-mesh-shadow-pass",
-          layout: waterObjectMeshShadowPipelineLayout,
-          vertex: { module: waterObjectMeshShadowVertexModule, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
-          fragment: {
-            module: waterObjectMeshShadowFragmentModule,
-            entryPoint: "fragmentMain",
-            targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
-          },
-          primitive: { topology: "triangle-list", cullMode: "none" },
-        });
         shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
         shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
         shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
@@ -8505,6 +8566,169 @@
       return mainMSAAView;
     }
 
+    function ensureElioSkinPipeline() {
+      if (elioSkinPipeline) return;
+      elioSkinShaderModule = device.createShaderModule({ label: "elio-skin-lbs", code: SCENE_ELIO_SKIN_LBS_SOURCE });
+      elioSkinPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+        label: "gosx-elio-skin-lbs",
+        layout: elioSkinPipelineLayout,
+        compute: { module: elioSkinShaderModule, entryPoint: "skin" },
+      });
+    }
+
+    function ensureComputedMorphPipeline() {
+      if (computedMorphPipeline) return;
+      computedMorphShaderModule = device.createShaderModule({ label: "computed-morph", code: SCENE_COMPUTED_MORPH_SOURCE });
+      computedMorphPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+        label: "gosx-computed-morph",
+        layout: computedMorphPipelineLayout,
+        compute: { module: computedMorphShaderModule, entryPoint: "morphPose" },
+      });
+    }
+
+    function ensureWaterPipelines() {
+      if (waterComputeShaderModule) return;
+      waterComputeShaderModule = device.createShaderModule({ label: "gosx-water-compute", code: SCENE_WATER_COMPUTE_SOURCE });
+      waterSeedPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+        label: "gosx-water-seed-drops",
+        layout: waterComputePipelineLayout,
+        compute: { module: waterComputeShaderModule, entryPoint: "seedDrops" },
+      });
+      waterDropPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+        label: "gosx-water-add-drop",
+        layout: waterComputePipelineLayout,
+        compute: { module: waterComputeShaderModule, entryPoint: "addDrop" },
+      });
+      waterDisplacementPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+        label: "gosx-water-displace-object",
+        layout: waterComputePipelineLayout,
+        compute: { module: waterComputeShaderModule, entryPoint: "displaceObject" },
+      });
+      waterStepPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+        label: "gosx-water-step",
+        layout: waterComputePipelineLayout,
+        compute: { module: waterComputeShaderModule, entryPoint: "stepSimulation" },
+      });
+      waterNormalPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+        label: "gosx-water-normals",
+        layout: waterComputePipelineLayout,
+        compute: { module: waterComputeShaderModule, entryPoint: "updateNormals" },
+      });
+      waterRenderVertexModule = device.createShaderModule({ label: "gosx-water-render-vert", code: SCENE_WATER_RENDER_VERTEX_SOURCE });
+      waterRenderFragmentModule = device.createShaderModule({ label: "gosx-water-render-frag", code: SCENE_WATER_RENDER_FRAGMENT_SOURCE });
+      waterRenderBelowFragmentModule = device.createShaderModule({ label: "gosx-water-render-below-frag", code: SCENE_WATER_RENDER_BELOW_FRAGMENT_SOURCE });
+      waterPoolVertexModule = device.createShaderModule({ label: "gosx-water-pool-vert", code: SCENE_WATER_POOL_VERTEX_SOURCE });
+      waterPoolFragmentModule = device.createShaderModule({ label: "gosx-water-pool-frag", code: SCENE_WATER_POOL_FRAGMENT_SOURCE });
+      waterCausticsVertexModule = device.createShaderModule({ label: "gosx-water-caustics-vert", code: SCENE_WATER_CAUSTICS_VERTEX_SOURCE });
+      waterCausticsFragmentModule = device.createShaderModule({ label: "gosx-water-caustics-frag", code: SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE });
+      waterCausticsPipeline = wgpuCreateValidatedPipeline(device, "render", {
+        label: "gosx-water-caustics-pass",
+        layout: waterCausticsPipelineLayout,
+        vertex: { module: waterCausticsVertexModule, entryPoint: "vertexMain", buffers: [] },
+        fragment: {
+          module: waterCausticsFragmentModule,
+          entryPoint: "fragmentMain",
+          targets: [{ format: WATER_CAUSTICS_TEXTURE_FORMAT }],
+        },
+        primitive: { topology: "triangle-list" },
+      });
+      waterObjectTextureVertexModule = device.createShaderModule({ label: "gosx-water-object-texture-vert", code: SCENE_WATER_OBJECT_TEXTURE_VERTEX_SOURCE });
+      waterObjectTextureFragmentModule = device.createShaderModule({ label: "gosx-water-object-texture-frag", code: SCENE_WATER_OBJECT_TEXTURE_FRAGMENT_SOURCE });
+      waterObjectShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-shadow-frag", code: SCENE_WATER_OBJECT_SHADOW_FRAGMENT_SOURCE });
+      waterObjectMeshShadowVertexModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-vert", code: SCENE_WATER_OBJECT_MESH_SHADOW_VERTEX_SOURCE });
+      waterObjectMeshShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-frag", code: SCENE_WATER_OBJECT_MESH_SHADOW_FRAGMENT_SOURCE });
+      waterObjectMeshRefractionFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-texture-frag", code: sceneWaterObjectMeshFragmentSource(1) });
+      waterObjectMeshClippedFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-clipped-frag", code: sceneWaterObjectMeshFragmentSource(2) });
+      waterObjectTexturePipeline = wgpuCreateValidatedPipeline(device, "render", {
+        label: "gosx-water-object-texture-pass",
+        layout: waterObjectTexturePipelineLayout,
+        vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
+        fragment: {
+          module: waterObjectTextureFragmentModule,
+          entryPoint: "fragmentMain",
+          targets: [
+            { format: WATER_OBJECT_TEXTURE_FORMAT },
+            { format: WATER_OBJECT_TEXTURE_FORMAT },
+            { format: WATER_OBJECT_TEXTURE_FORMAT },
+          ],
+        },
+        primitive: { topology: "triangle-list" },
+      });
+      waterObjectShadowPipeline = wgpuCreateValidatedPipeline(device, "render", {
+        label: "gosx-water-object-shadow-pass",
+        layout: waterObjectTexturePipelineLayout,
+        vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
+        fragment: {
+          module: waterObjectShadowFragmentModule,
+          entryPoint: "shadowMain",
+          targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
+        },
+        primitive: { topology: "triangle-list" },
+      });
+      waterObjectMeshShadowPipeline = wgpuCreateValidatedPipeline(device, "render", {
+        label: "gosx-water-object-mesh-shadow-pass",
+        layout: waterObjectMeshShadowPipelineLayout,
+        vertex: { module: waterObjectMeshShadowVertexModule, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
+        fragment: {
+          module: waterObjectMeshShadowFragmentModule,
+          entryPoint: "fragmentMain",
+          targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
+        },
+        primitive: { topology: "triangle-list", cullMode: "none" },
+      });
+    }
+
+    var initialPipelinesPrepared = false, initialPipelinesReady = false, preparedPipelineKey = "";
+    function getObjectSelenaPipeline(object: any, material: any, blend: string, depth: boolean) {
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
+      var options = sceneWebGPUSelenaPipelineOptions(object, sceneWebGPUObjectReflected(object));
+      return webGPUObjectIsSkinned(object) ? getSelenaSkinnedPipeline(material, blend, depth, options) : getSelenaPipeline(material, blend, depth, options);
+    }
+    function instancedMeshUsesCull(mesh: any) {
+      return Boolean(typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) || webGPUBuiltinCullEligible(mesh);
+    }
+    function prepareBundlePipelines(bundle: any, prepared: any, effects: any[], post: boolean) {
+      var materials = bundle.materials || [];
+      var instancedVariants = (bundle.instancedMeshes || []).map(function(mesh: any) {
+        var material = instancedMeshMaterial(mesh, materials), blend = scenePBRObjectRenderPass(mesh, material);
+        return [blend, sceneTransmissionDepthWrite(mesh, material, blend === "opaque"), Boolean(material && material.detail), instancedMeshUsesCull(mesh)].join(":");
+      }).sort().join(",");
+      var key = prepared ? [prepared.pipelineVariantHash, prepared.materialsHash, prepared.shadowPassHash, instancedVariants, (bundle.instancedMeshes || []).length, (bundle.waterSystems || []).length, targetFormat, activeSampleCount, selectiveBloom, post, effects.map(function(effect: any) { return effect.kind + ":" + effect.mode; }).join(",")].join("|") : "";
+      if (key && key === preparedPipelineKey) return;
+      var passes = prepared && prepared.pbrPasses || buildDrawList(bundle);
+      var shadows = Array.isArray(bundle.lights) && bundle.lights.some(function(light: any) { return light.castShadow; });
+      if (shadows) getShadowPipeline(false);
+      for (var blend of ["opaque", "alpha", "additive"]) {
+        var objects = passes[blend] || [];
+        var depth = blend === "opaque";
+        for (var object of objects) {
+          var material = materials[object.materialIndex];
+          var reflected = sceneWebGPUObjectReflected(object);
+          if (!getObjectSelenaPipeline(object, material, blend, depth)) getPBRPipeline(blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", Boolean(material && material.detail));
+          if (shadows && object.castShadow) getShadowPipeline(reflected);
+          if (webGPUObjectIsSkinned(object)) ensureElioSkinPipeline();
+          if (object.computedMorph) ensureComputedMorphPipeline();
+        }
+      }
+      for (var mesh of bundle.instancedMeshes || []) {
+        var material = instancedMeshMaterial(mesh, materials);
+        var meshBlend = scenePBRObjectRenderPass(mesh, material);
+        var meshDepth = sceneTransmissionDepthWrite(mesh, material, meshBlend === "opaque"), meshDetail = Boolean(material && material.detail);
+        getPBRInstancedPipeline(meshBlend, meshDepth, meshDetail);
+        if (instancedMeshUsesCull(mesh)) getPBRInstancedCullPipeline(meshBlend, meshDepth, meshDetail);
+        if (shadows && mesh.castShadow) getShadowInstancedPipeline();
+      }
+      if (bundle.waterSystems && bundle.waterSystems.length) ensureWaterPipelines();
+      if (post) {
+        if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, presentationFormat, reportWebGPUFrameError, function(material: any, owner: any, context: any) {
+          return sceneSelenaUniformData(material, owner, context, selenaFrame);
+        });
+        postProcessor.preparePipelines(effects, activeSampleCount);
+      }
+      initialPipelinesPrepared = true;
+      preparedPipelineKey = key;
+    }
+
     // Get or create a PBR pipeline for the given blend mode.
     function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
       var reflected = frontFace === "cw";
@@ -8561,18 +8785,6 @@
       var pipeline = wgpuCreateSurfacePipeline(device, pbrPipelineLayout, surfaceVertexModule, surfaceFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
-    }
-
-    function sceneSelenaIsMaterial(material) {
-      return Boolean(
-        material &&
-        material.shaderBackend === "selena" &&
-        sceneSelenaMaterialLayout(material) &&
-        (
-          (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
-          (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())
-        )
-      );
     }
 
     function sceneSelenaWGSLSource(material) {
@@ -8726,19 +8938,19 @@
       var textures = sceneSelenaTextureDescriptors(layout);
       for (var i = 0; i < textures.length; i++) {
         var wgsl = textures[i] && textures[i].wgsl || {};
-        // dimension:"cube" (e.g. the water surface/surface-below passes' "sky"
-        // environment map) needs viewDimension:"cube" in the bind group layout
-        // entry; every other texture (the overwhelming majority) keeps the
-        // existing "2d" default.
+        // Cube maps require cube views; other material textures use 2D.
         var texDimension = textures[i] && textures[i].dimension === "cube" ? "cube" : "2d";
+        var textureVisibility = textures[i] && textures[i].vertexStage === true
+          ? visibility
+          : (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2);
         entries.push({
           binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
           texture: { sampleType: "float", viewDimension: texDimension },
         });
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
           sampler: { type: "filtering" },
         });
       }
@@ -8864,7 +9076,7 @@
     // variant using WGPU_PBR_VERTEX_LAYOUT, no attrs). Keep the two in sync —
     // any substantive change here must be mirrored there.
     function getSelenaPipeline(material, blendMode, depthWrite, options) {
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
       const selective = selectiveBloom && !(options && options.targetFormat);
       var pipelineSampleCount = Math.max(1, Math.floor(sceneNumber(
@@ -8894,7 +9106,7 @@
       // caustics/object-mesh-shadow offscreen RTT passes): WebGPU requires a
       // render pipeline's depthStencil state to exactly match whether the
       // render pass it's used in has a depthStencilAttachment.
-      var pipelineDepthStencil = !(options && options.depthStencil === false);
+      var pipelineDepthStencil = options?.depthStencil !== false;
       // Per-material memo (perf): getSelenaPipeline is called once PER OBJECT
       // PER FRAME, and the content key below stringifies the whole shader (~1.2KB)
       // + JSON.stringify(layout) on every call. Board frames are fresh-parsed,
@@ -9007,7 +9219,7 @@
     // deliberately does NOT expose an attrs field (avoids double-binding).
     function getSelenaSkinnedPipeline(material, blendMode, depthWrite, options) {
       const selective = selectiveBloom;
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
       var pipelineFrontFace = selenaPipelineFrontFace(options);
       // Per-material memo, mirroring getSelenaPipeline. A SEPARATE stamp slot
@@ -9120,10 +9332,17 @@
       return new Uint32Array([width, height]);
     }
 
-    function createSelenaBindGroup(material, resource, cacheOwner, renderContext) {
+    function sceneWaterMainSelenaContext(material) {
+      var water = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, { name: "causticTexture" }));
+      return water ? sceneWaterObjectTextureSelenaContext(water.system, 0, "scene") : undefined;
+    }
+
+    function createSelenaBindGroup(material, resource, cacheOwner, renderContext = sceneWaterMainSelenaContext(material)) {
       var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext, selenaFrame);
       if (!uniformData || !resource) return null;
-      var owner = (cacheOwner && typeof cacheOwner === "object") ? cacheOwner : material;
+      var owner = cacheOwner?.id
+        ? webGPUInstancedCacheOwner(cacheOwner.id, undefined, "selena")
+        : (cacheOwner?.resourceOwner || cacheOwner || material);
       var uniformSlot = sceneSelenaUniformBufferSlot(renderContext);
       var uniformBuffer = wgpuCachedTrackedBuffer(
         owner,
@@ -9197,22 +9416,15 @@
           cacheStorages.push(stateBuffer);
         }
       }
-      // Memoize the bind group. GPUBindGroups have no destroy() (GC-only), so
-      // creating one per frame causes allocation and GC pressure. The uniform
-      // buffer data is written by wgpuCachedTrackedBuffer above (dynamic=true)
-      // and the bind group references it by identity, so the same bind group
-      // remains valid across frames as long as the resource objects are unchanged.
-      // The ping-pong waterState storage buffer produces 2 variants (bufferA /
-      // bufferB), so the pool stabilises at 2 entries. Pool is capped at 4 to
-      // handle rare extra variants (resolution change, etc.) without unbounded
-      // growth. Device-loss recovery: a new renderer has a different `device`
-      // closure, so pc.device !== device evicts stale entries automatically.
+      // Uniform contents change while resource identities stay stable.
+      // Keep at most four variants for ping-pong storage or resized resources;
+      // device changes reject groups from the previous renderer.
       var bgPoolSlot = "_gosxWGPUSBGC" + uniformSlot;
       var pool = owner[bgPoolSlot];
       if (!Array.isArray(pool)) { pool = []; owner[bgPoolSlot] = pool; }
       for (var pi = 0; pi < pool.length; pi++) {
         var pc = pool[pi];
-        if (!pc || pc.device !== device || pc.uniformBuffer !== uniformBuffer) continue;
+        if (!pc || pc.device !== device || pc.layout !== resource.bindGroupLayout || pc.uniformBuffer !== uniformBuffer) continue;
         if (pc.views.length !== cacheViews.length || pc.storages.length !== cacheStorages.length) continue;
         var match = true;
         for (var vi = 0; vi < cacheViews.length && match; vi++) {
@@ -9225,7 +9437,7 @@
       }
       var newBG = device.createBindGroup({ layout: resource.bindGroupLayout, entries: entries });
       if (pool.length >= 4) pool.shift();
-      pool.push({ device: device, uniformBuffer: uniformBuffer, views: cacheViews, storages: cacheStorages, bg: newBG });
+      pool.push({ device: device, layout: resource.bindGroupLayout, uniformBuffer: uniformBuffer, views: cacheViews, storages: cacheStorages, bg: newBG });
       return newBG;
     }
 
@@ -9318,7 +9530,7 @@
     // compute pipeline has none of those), so the per-material memo is simpler
     // than the render path's.
     function getSelenaComputePipeline(material) {
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var memo = material._gosxWGPUSelenaComputeResource;
       if (memo) return memo.failed ? null : memo.resource;
       var layout = sceneSelenaMaterialLayout(material);
@@ -9491,7 +9703,7 @@
     }
 
     function getSelenaPostPipeline(material, options) {
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var layout = sceneSelenaMaterialLayout(material);
       if (!layout || layout.kind !== "post") return null;
       var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
@@ -11323,6 +11535,8 @@
       }
       system._cubemapRenderBindGroups = null;
       system._poolBindGroups = null;
+      system.waterObjectTextureSubject = null;
+      system.waterObjectShadowSignature = null;
       system.waterExpensiveCadenceBucket = null;
       system._qualityResourceKey = key;
       system.qualityAllocationPending = false;
@@ -11536,7 +11750,7 @@
         var materialIndex = Math.max(0, Math.floor(sceneNumber(obj.materialIndex, 0)));
         var material = materialList[materialIndex] || {};
         var materialName = String(material.name || material.id || obj.material || material.kind || material.materialKind || "?");
-        var materialBackend = sceneSelenaIsMaterial(material) ? "selena" : String(material.shaderBackend || material.kind || material.materialKind || "pbr");
+        var materialBackend = sceneWebGPUIsSelenaMaterial(material) ? "selena" : String(material.shaderBackend || material.kind || material.materialKind || "pbr");
         parts.push([
           sceneWaterMeshObjectID(obj) || "?",
           String(obj.kind || "?"),
@@ -11670,7 +11884,7 @@
     }
 
     function sceneWaterObjectTextureSelenaUniforms(system, texturePassMode) {
-      var mode = texturePassMode === 2 ? 2 : 1;
+      var mode = texturePassMode === 0 ? 0 : texturePassMode === 2 ? 2 : 1;
       var entry = system && system.entry || {};
       var resolution = Math.max(1, sceneNumber(system && system.waterResolution, system && system.resolution ? system.resolution : sceneWaterResolution(entry && entry.resolution)));
       var poolWidth = Math.max(0.01, sceneNumber(system && system.waterPoolWidth, sceneNumber(entry && entry.poolWidth, 1.0)));
@@ -11684,18 +11898,23 @@
       var kind = Math.max(0, Math.floor(sceneNumber(system && system.waterObjectKind, sceneWaterObjectKind(entry))));
       var subtype = Math.max(0, Math.floor(sceneNumber(system && system.waterObjectSubtype, sceneWaterObjectSubtype(entry, kind))));
       var radius = Math.max(0.0001, sceneNumber(system && system.waterObjectRadius, sceneNumber(entry && entry.objectRadius, kind === 1 ? 0.25 : 0.31)));
+      var center = system && system.waterObjectCenter || {};
       return {
-        isTexturePass: [1, 0, 0, 0],
-        texturePassMode: [mode, 0, 0, 0],
-        waterObjectTexturePassMode: [mode, 0, 0, 0],
+        isTexturePass: mode ? [1, 0, 0, 0] : undefined,
+        texturePassMode: mode ? [mode, 0, 0, 0] : undefined,
+        waterObjectTexturePassMode: mode ? [mode, 0, 0, 0] : undefined,
         lightDir: [light.x / lightLen, light.y / lightLen, light.z / lightLen, 0],
+        poolWidth, poolHeight, poolLength,
+        objectKind: kind,
+        objectRadius: radius,
+        objectCenter: [sceneNumber(center.x, sceneNumber(entry.objectX, 0)), sceneNumber(center.y, sceneNumber(entry.objectY, 0)), sceneNumber(center.z, sceneNumber(entry.objectZ, 0))],
         poolSize: [poolWidth, poolHeight, poolLength, cornerRadius],
         params: [resolution, radius, kind, subtype],
       };
     }
 
     function sceneWaterObjectTextureSelenaContext(system, texturePassMode, targetName) {
-      var mode = texturePassMode === 2 ? 2 : 1;
+      var mode = texturePassMode === 0 ? 0 : texturePassMode === 2 ? 2 : 1;
       var target = String(targetName || "target").trim() || "target";
       var waterID = String(system && (system.id || system.entry && system.entry.id) || "water-system");
       return {
@@ -11703,6 +11922,19 @@
         uniformSlotSuffix: ["water-object-texture", waterID, target, mode].join("-"),
         uniforms: sceneWaterObjectTextureSelenaUniforms(system, mode),
       };
+    }
+
+    // Never retain a white upload placeholder in a cached projected view.
+    function sceneWaterObjectSelenaTexturesPending(material, layout) {
+      var textures = sceneSelenaTextureDescriptors(layout);
+      for (var i = 0; i < textures.length; i++) {
+        var texture = textures[i];
+        if (sceneSelenaResourceRef(material, texture)) continue;
+        var url = sceneSelenaTextureURL(material, texture, i);
+        var record = url && (texture.dimension === "cube" ? wgpuLoadCubeTexture(device, url, textureCache) : wgpuLoadTexture(device, url, textureCache, null, undefined, undefined));
+        if (record && record.pending && !record.loaded && !record.failed) return true;
+      }
+      return false;
     }
 
     function drawWaterObjectMeshObjects(pass, objectList, bundle, materials, frameBindGroup, pbrBuffers, texturePassMode, renderContext) {
@@ -11726,6 +11958,7 @@
           labelSuffix: "water-object-texture",
         });
         if (selenaResource) {
+          if (sceneWaterObjectSelenaTexturesPending(mat, selenaResource.layout)) return { drawCalls: 0, selenaDrawCalls: 0 };
           var selenaKey = "selena:" + texturePassMode + ":" + (mat && mat.key || matIndex) + ":" + blendMode + ":" + (depthWrite ? "1" : "0");
           if (currentPipelineKey !== selenaKey) {
             pass.setPipeline(wgpuRequirePipeline(selenaResource.pipeline));
@@ -11754,8 +11987,8 @@
         }
 
         var receiveShadow = false;
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
-          pass.setBindGroup(1, createMaterialBindGroup(mat, receiveShadow, mat || obj));
+        if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow) {
+          pass.setBindGroup(1, createMaterialBindGroup(mat, receiveShadow, mat || obj), [0]);
           lastMaterialIndex = matIndex;
           lastReceiveShadow = receiveShadow;
         }
@@ -11944,7 +12177,7 @@
       }
       pass.end();
       return {
-        passes: hasSubject ? 1 : 0,
+        passes: 1,
         authored: !!(pipelineRecord && pipelineRecord.authored && hasSubject && !drewSelena),
         failed: !!(pipelineRecord && pipelineRecord.failed),
         selena: selena,
@@ -12170,8 +12403,15 @@
       var restoredFrame = false;
       for (var i = 0; i < records.length; i++) {
         var system = records[i] && records[i].system;
-        if (!system || !waterSystemHasObjectTextureSubject(system)) continue;
+        if (!system) continue;
         var entry = system.entry || {};
+        var textureSubject = waterSystemHasObjectTextureSubject(system) ? sceneWaterActiveObjectID(entry) || "mesh" : "";
+        if (system.waterObjectTextureSubject !== textureSubject) {
+          system.waterObjectTextureSubject = textureSubject;
+          system.waterObjectTextureReadySlots = 0;
+          system.waterObjectTextureSignature = null;
+        }
+        if (!textureSubject) continue;
         var optics = sceneWaterOpticsFlags(entry, {
           kind: sceneWaterObjectKind(entry),
           displacementScale: Math.max(0, sceneNumber(entry.objectDisplacementScale, 1)),
@@ -12286,11 +12526,12 @@
         }
         restoredFrame = true;
         var passCount = refraction.passes + reflection.passes + clipped.passes;
+        if (passCount > 0) system.waterObjectTextureReadySlots |= 1 << passSlot;
         var drawCalls = refraction.drawCalls + reflection.drawCalls + clipped.drawCalls;
         var selenaDrawCalls = refraction.selenaDrawCalls + reflection.selenaDrawCalls + clipped.selenaDrawCalls;
         if (passCount > 0) addWaterObjectTextureStats(stats, system, passCount, passCount, drawCalls, 0, selenaDrawCalls);
         system.waterObjectTextureRefreshCursor = (refreshCursor + 1) % targetSlots.length;
-        system.waterObjectTextureRefreshRemaining = Math.max(0, refreshRemaining - 1);
+        system.waterObjectTextureRefreshRemaining = Math.max(0, refreshRemaining - (passCount > 0 ? 1 : 0));
       }
       if (restoredFrame) {
         uploadFrameUniforms(bundle && bundle.camera, width, height, toneMap);
@@ -12527,6 +12768,9 @@
         if (optics.reflection) stats.waterReflectionSystems += 1;
         if (optics.refraction) stats.waterRefractionSystems += 1;
         if (optics.object) stats.waterObjectOpticsSystems += 1;
+        // Resolve every authored compute stage before advancing the clock or
+        // consuming events. A pending compilation must leave this tick intact.
+        prepareWaterComputePipelines(system, entry);
         var waterPaused = sceneBool(entry && entry.paused, false);
         var waterClock = waterClockAPI.sceneWaterAdvanceClock(system.waterClock, currentNowMS, waterLifecycleActive, waterPaused, {
           simulationHz: 60,
@@ -12743,7 +12987,7 @@
         // stale below so the very next refresh (on wake) is unconditional.
         var refreshExpensivePasses = waterStateDirty || (!system.waterAtRest && system.waterExpensiveCadenceBucket !== expensiveCadenceBucket);
         if (refreshExpensivePasses) system.waterExpensiveCadenceBucket = expensiveCadenceBucket;
-        if (optics.object || optics.caustics) {
+        if (optics.object || optics.caustics || system.waterObjectShadowSignature != null) {
           var objectShadowPasses = 0;
           var meshShadow = { passes: 0, drawCalls: 0 };
           var hasShadowSubject = waterSystemHasObjectTextureSubject(system);
@@ -12751,10 +12995,9 @@
           // M4: includeCamera=false -- the object-shadow RTT is a light-space
           // projection (see sceneWaterObjectRenderSignature's comment above),
           // so orbiting the camera must NOT invalidate this cache.
-          var shadowSignature = sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false);
+          var shadowSignature = hasShadowSubject ? sceneWaterObjectRenderSignature(system, entry, bundle, objectList, false) : "";
           var refreshObjectShadow = system.waterObjectShadowSignature !== shadowSignature;
-          hasShadowSubject = hasShadowSubject && refreshObjectShadow;
-          if (hasShadowSubject && objectList.length > 0 && pbrBuffers) {
+          if (refreshObjectShadow && hasShadowSubject && objectList.length > 0 && pbrBuffers) {
             meshShadow = renderWaterObjectMeshShadowPass(encoder, system, objectList, pbrBuffers);
           }
           if (meshShadow.passes > 0) {
@@ -12765,9 +13008,9 @@
             /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (meshShadow.failed) stats.waterAuthoredObjectMeshShadowFallbacks += 1;
             /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ stats.waterSelenaObjectMeshShadowPasses += meshShadow.selena || 0;
             stats.waterSelenaObjectMeshShadowFallbacks += meshShadow.selenaFallback || 0;
-          } else if (hasShadowSubject) {
-            if (objectList.length === 0) stats.waterObjectShadowFallbackMissingObjects += 1;
-            if (!pbrBuffers) stats.waterObjectShadowFallbackMissingResources += 1;
+          } else if (refreshObjectShadow) {
+            if (hasShadowSubject && objectList.length === 0) stats.waterObjectShadowFallbackMissingObjects += 1;
+            if (hasShadowSubject && !pbrBuffers) stats.waterObjectShadowFallbackMissingResources += 1;
             var shadowResult = renderWaterObjectShadowPass(encoder, system);
             objectShadowPasses = shadowResult && shadowResult.passes || 0;
             if (shadowResult && shadowResult.authored) stats.waterAuthoredObjectShadowPasses += objectShadowPasses;
@@ -13188,6 +13431,7 @@
           objectKind: sceneNumber(system && system.waterObjectKind, 0),
           objectSubtype: sceneNumber(system && system.waterObjectSubtype, 0),
           objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
+          meshTextureEnable: waterSystemHasObjectTextureSubject(system) && sceneWaterObjectTextureTargetSlots(system).every(slot => (system.waterObjectTextureReadySlots & (1 << slot)) !== 0) ? 1 : 0,
           opticsEnable: optics.object ? 1 : 0,
           waterColor: [waterColor[0], waterColor[1], waterColor[2]],
           lightDir: [sceneNumber(light.x, 0.3), sceneNumber(light.y, 0.9), sceneNumber(light.z, 0.45)],
@@ -13703,6 +13947,17 @@
       var bindGroup = createSelenaComputeBindGroup(system, selenaResource, inBuf, outBuf, renderContext);
       if (!bindGroup) return null;
       return { pipeline: selenaResource.pipeline, bindGroup: bindGroup };
+    }
+
+    function prepareWaterComputePipelines(system: any, entry: any) {
+      var resources = [];
+      for (var stage of ["seed", "drop", "displacement", "simulation", "normal"]) {
+        var fields = sceneWaterComputeStageFields(stage);
+        var material = sceneWaterSelenaMaterial(system, entry, fields.wgslField, fields.descKey, fields.memoSlot);
+        var resource = material && getSelenaComputePipeline(material);
+        if (resource) resources.push(resource.pipeline);
+      }
+      for (var pipeline of resources) wgpuRequirePipeline(pipeline);
     }
 
     function getWaterComputeStageSelenaDraw(system, entry, stage, readBuffer, writeBuffer) {
@@ -14652,11 +14907,8 @@
       }
       if (envMapResources.key !== url) {
         envMapResources.key = url;
-        // The legacy equirect environment map is an ordinary sRGB-encoded
-        // PNG/JPEG, not a raw linear radiance buffer — see the matching fix
-        // in the WebGL2 renderer (scenePBRUploadEnvironmentMap). Loading it
-        // as "linear" skipped the rgba8unorm-srgb decode and left every
-        // sample ~2.2x too bright.
+        // Legacy equirect PNG/JPEG is sRGB, as in WebGL2; uploading it as
+        // linear skipped decoding and made samples about 2.2x too bright.
         envMapResources.record = wgpuLoadTexture(device, url, textureCache, null, "environment-radiance", "srgb");
       }
       var record = envMapResources.record;
@@ -14672,9 +14924,7 @@
       var ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
       var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
       var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
-
-      // EnvUniforms: three vec3+scalar pairs, one IBL control vec4, and one
-      // envMap control vec4 (only word 0 used today) = 80 bytes.
+      // 80-byte EnvUniforms, matching WGSL.
       var data = _envUniformF;
       var words = _envUniformU;
       data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
@@ -14688,10 +14938,10 @@
       words[14] = ibl.active ? 1 : 0;
       words[15] = ibl.active ? Math.max(1, ibl.diagnostics.radianceMipLevels | 0) : 0;
       words[16] = envMap.active ? 1 : 0;
-      words[17] = 0; words[18] = 0; words[19] = 0;
+      data[17] = wgpuEnvMapMaxLod(envMap);
+      words[18] = 0; words[19] = 0;
       device.queue.writeBuffer(envUniformBuffer, 0, data);
     }
-
     function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
       var lightArray = Array.isArray(lights) ? lights : [];
       // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + pad(8) = 160. Round up to 256.
@@ -14867,18 +15117,11 @@
       return valid ? color : [1, 1, 1];
     }
 
-    function materialUniformData(material, receiveShadow, modelMatrix) {
+    function materialUniformData(material, receiveShadow) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
-      // MaterialUniforms: PBR fields (80 bytes) + per-object model matrix
-      // (64 bytes) + three scale signs (16-byte aligned) + one trailing
-      // dielectric-F0 scalar plus the vec3f-aligned effective specular
-      // factors and F90 (struct padded to 208 bytes). The signs recover
-      // the rotation-only normal/tangent transform used by the CPU-baked path,
-      // including negative and non-uniform scale. World-baked and instanced
-      // draws receive identity.
-      // Uses hoisted module-scope scratch; caller consumes synchronously before next call.
+      // Stable material fields retain their ABI; model transforms use the frame arena.
       var f = _materialUniformF;
       var u = _materialUniformU;
 
@@ -14895,26 +15138,12 @@
       f[10] = clamp01(sceneNumber(mat.iridescence, 0));
       f[11] = Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0)));
       u[12] = (mat.unlit || mat.kind === "flat" || mat.materialKind === "flat") ? 1 : 0;
-      // u[13..17] set by caller (texture-loaded flags); zero here for fields not written below
       u[13] = 0; u[14] = 0; u[15] = 0; u[16] = 0; u[17] = 0;
       u[18] = receiveShadow ? 1 : 0;
       u[19] = 0; // hasOcclusionMap, set by createMaterialBindGroup
-      var model = modelMatrix && typeof modelMatrix.length === "number" && modelMatrix.length >= 16
-        ? modelMatrix
-        : null;
-      for (var mi = 0; mi < 16; mi++) {
-        f[20 + mi] = model ? sceneNumber(model[mi], mi % 5 === 0 ? 1 : 0) : (mi % 5 === 0 ? 1 : 0);
-      }
+      for (var mi = 0; mi < 16; mi++) f[20 + mi] = mi % 5 === 0 ? 1 : 0;
       f[36] = f[37] = f[38] = 1;
       f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1; // modelScaleSigns.w: normal-map U scale
-      // Dedicated trailing material scalars: normal-incidence dielectric F0
-      // from the authored IOR, then the vec3f alignment word at index 41
-      // reused as the hasSpecularIntensityMap flag (u[41], set by
-      // createMaterialBindGroup and zeroed here so a plain pack stays
-      // neutral), then the effective specular factors (F0 rgb, F90 =
-      // intensity) at the vec3f-aligned slots 44..47. Slot 42 carries the
-      // float32 alpha cutoff; slot 43 carries the normal-map V scale.
-      // Absent scales upload [1, 1], preserving explicit zero and negatives.
       f[40] = sceneWebGPUDielectricF0(mat.ior);
       f[41] = 0; // hasSpecularIntensityMap, set by createMaterialBindGroup
       var alphaCutoff = sceneNormalizeMaterialAlphaCutoff(mat.alphaCutoff, null);
@@ -14927,24 +15156,11 @@
       f[45] = specular.f0[1];
       f[46] = specular.f0[2];
       f[47] = specular.f90;
-      // Per-channel log2 of the authored dielectric specular coefficient.
-      // The shader reconstructs min(coefficient * texel, 1) * combined
-      // intensity via exp2(min(logCoef + log2(texel), 0)), so only safe
-      // finite logs are packed: an exact-zero coefficient uses the -1e30
-      // sentinel (shader maps it to exact-zero F0); finite log sums are
-      // stored as-is and the shader clamps the exponent to 0 before exp2.
-      // No arbitrary ceiling is applied to finite color components, so
-      // IOR = 1 + EPSILON with Number.MAX_VALUE color still keeps its huge
-      // finite log. hasSpecularColorMap (u[51]) stays zero here so a plain
-      // pack stays neutral until createMaterialBindGroup sets it.
       var colorLogs = sceneWebGPUSpecularColorLogs(mat);
       f[48] = colorLogs[0];
       f[49] = colorLogs[1];
       f[50] = colorLogs[2];
       u[51] = 0; // hasSpecularColorMap, set by createMaterialBindGroup
-      // Trailing fields (see WGSL_MATERIAL_STRUCT for exact layout): core
-      // glTF normal-scale/occlusion-strength factors, the emissive colour
-      // factor with its has-flag, and the optional rim-light term.
       f[52] = sceneNumber(mat.normalScale, 1);
       f[53] = clamp01(sceneNumber(mat.occlusionStrength, 1));
       u[54] = sceneWebGPUHasEmissiveColor(mat) ? 1 : 0;
@@ -14994,9 +15210,9 @@
       return bg;
     }
 
-    function createMaterialBindGroup(material, receiveShadow, cacheOwner, modelMatrix) {
+    function createMaterialBindGroup(material, receiveShadow, cacheOwner) {
       var mat = material || {};
-      var uniform = materialUniformData(mat, receiveShadow, modelMatrix);
+      var uniform = materialUniformData(mat, receiveShadow);
       var u = uniform.u;
       // Texture records.
       var textureMaps = [
@@ -15010,7 +15226,6 @@
         { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", index: 51 },
         { prop: "thicknessMap", descriptor: "thickness", role: "data", colorSpace: "linear", index: 71 },
       ];
-
       var texViews = [];
       var texSamplers = [];
       for (var ti = 0; ti < textureMaps.length; ti++) {
@@ -15025,7 +15240,6 @@
         texViews.push(loaded ? record.view : placeholderView);
         texSamplers.push(wgpuMaterialSampler(device, linearSampler, descriptor, tm.role));
       }
-
       var owner = (cacheOwner && typeof cacheOwner === "object")
         ? cacheOwner
         : ((material && typeof material === "object") ? material : defaultMaterialOwner);
@@ -15037,7 +15251,6 @@
         GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         true
       );
-
       // Memoize the bind group. The material uniform buffer is written above
       // (dynamic=true) and referenced by identity in the bind group, so the
       // same bind group remains valid across frames as long as the material
@@ -15045,7 +15258,8 @@
       // (device-loss recovery) or when a texture finishes async loading.
       var bgCacheSlot = receiveShadow ? "_gosxWGPUMatBGCacheS" : "_gosxWGPUMatBGCache";
       var bgCache = owner[bgCacheSlot];
-      if (bgCache && bgCache.device === device && bgCache.materialBuffer === materialBuffer) {
+      if (bgCache && bgCache.device === device && bgCache.materialBuffer === materialBuffer &&
+          bgCache.modelBuffer === materialFrame.buffer) {
         var viewsMatch = true;
         for (var ti2 = 0; ti2 < texViews.length && viewsMatch; ti2++) {
           if (bgCache.texViews[ti2] !== texViews[ti2] || bgCache.texSamplers[ti2] !== texSamplers[ti2]) viewsMatch = false;
@@ -15053,44 +15267,18 @@
         if (viewsMatch) return bgCache.bg;
       }
       // Create bind group with texture views and sampler.
-      var matBG = device.createBindGroup({
-        layout: materialBindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: materialBuffer } },
-          { binding: 1, resource: texViews[0] },
-          { binding: 2, resource: texSamplers[0] },
-          { binding: 3, resource: texViews[1] },
-          { binding: 4, resource: texSamplers[1] },
-          { binding: 5, resource: texViews[2] },
-          { binding: 6, resource: texSamplers[2] },
-          { binding: 7, resource: texViews[3] },
-          { binding: 8, resource: texSamplers[3] },
-          { binding: 9, resource: texViews[4] },
-          { binding: 10, resource: texSamplers[4] },
-          { binding: 11, resource: texViews[5] },
-          { binding: 12, resource: texSamplers[5] },
-          { binding: 13, resource: texViews[6] },
-          { binding: 14, resource: texSamplers[6] },
-          { binding: 15, resource: texViews[7] },
-          { binding: 16, resource: texSamplers[7] },
-          { binding: 17, resource: texViews[8] },
-          { binding: 18, resource: texSamplers[8] },
-        ],
-      });
-      owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews, texSamplers: texSamplers, bg: matBG };
+      var entries: any[] = [{ binding: 0, resource: { buffer: materialBuffer } }];
+      for (var textureIndex = 0; textureIndex < texViews.length; textureIndex++) entries.push(
+        { binding: textureIndex * 2 + 1, resource: texViews[textureIndex] },
+        { binding: textureIndex * 2 + 2, resource: texSamplers[textureIndex] });
+      var modelBuffer = materialFrame.buffer;
+      if (modelBuffer) entries.push({ binding: 19, resource: { buffer: modelBuffer, size: 64 } });
+      var matBG = device.createBindGroup({ layout: materialBindGroupLayout, entries: entries });
+      owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews,
+        texSamplers: texSamplers, modelBuffer: modelBuffer, bg: matBG };
       return matBG;
     }
-
-    // _frameBindGroupCache memoizes the frame bind group. Every entry is a
-    // buffer, a texture view or a sampler held BY REFERENCE, and every one of
-    // them is written with queue.writeBuffer rather than replaced, so the same
-    // bind group stays correct across frames. Rebuilding it each frame cost one
-    // createBindGroup per frame and, worse, gave the render-bundle recorder a
-    // new object identity every frame, so no bundle could ever replay.
-    //
-    // The cache compares identities, so a grown light buffer, a resized shadow
-    // map or a device-loss recovery rebuilds it.
-    // These opaque backend handles stay JavaScript-readable in raw-source tests.
+    // _frameBindGroupCache memoizes the frame group by GPU resource identity.
     var _frameBindGroupCache = JSON.parse("null");
     var transmissionResources = JSON.parse("null"), transmissionView = JSON.parse("null");
 
@@ -15228,67 +15416,6 @@
       return record.view;
     }
 
-    function webGPURetainedMaterialSource(obj) {
-      return obj && obj.resourceOwner && typeof obj.resourceOwner === "object"
-        ? obj.resourceOwner
-        : (obj && obj.vertices && typeof obj.vertices === "object" ? obj.vertices : obj);
-    }
-
-    function webGPURetireRetainedMaterialOwner(entry) {
-      if (!entry || !entry.materialOwner) return;
-      var owner = entry.materialOwner;
-      // A resource owner may be shared by multiple retained entries. Do not
-      // retire its material buffers until the final associated entry leaves.
-      for (const pair of retainedMeshAttributeCache.entries()) {
-        if (pair[1] !== entry && pair[1] && pair[1].materialOwner === owner) {
-          return;
-        }
-      }
-      var slots = ["_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"];
-      for (var slotIndex = 0; slotIndex < slots.length; slotIndex++) {
-        var slot = slots[slotIndex];
-        var buffer = owner[slot];
-        if (buffer) {
-          pointsEntryGPUBuffers.delete(buffer);
-          try { buffer.destroy(); } catch (_err) {}
-        }
-        owner[slot] = null;
-        owner[slot + "Bytes"] = 0;
-        owner[slot + "Source"] = null;
-      }
-      owner["_gosxWGPUMatBGCache"] = null;
-      owner["_gosxWGPUMatBGCacheS"] = null;
-      if (
-        entry.materialSource &&
-        retainedMaterialOwners.get(entry.materialSource) === owner
-      ) {
-        retainedMaterialOwners.delete(entry.materialSource);
-      }
-      entry.materialOwner = null;
-      entry.materialSource = null;
-    }
-
-    function webGPURetainedMaterialOwner(obj) {
-      var vertices = obj && obj.vertices;
-      var entry = vertices && retainedMeshAttributeCache.get(vertices);
-      // Retire the old material buffer before createMaterialBindGroup writes
-      // and binds the replacement revision. Waiting for the later vertex
-      // binding path would destroy a buffer already referenced by this frame.
-      if (entry && entry.revision !== obj.geometryRevision) {
-        retainedMeshBufferStats.rebuilds += 1;
-        retainedMeshBufferStats.revisionInvalidations += 1;
-        webGPURetireRetainedMeshEntry(vertices, entry);
-      }
-      var source = webGPURetainedMaterialSource(obj);
-      if (!source || typeof source !== "object") return defaultMaterialOwner;
-      var owner = retainedMaterialOwners.get(source);
-      if (!owner) {
-        owner = {};
-        retainedMaterialOwners.set(source, owner);
-      }
-      return owner;
-    }
-
     function webGPURetireRetainedMeshAttribute(entry, key) {
       var record = entry && entry.attributes && entry.attributes[key];
       if (!record) return;
@@ -15307,7 +15434,6 @@
       for (var i = 0; i < keys.length; i++) {
         webGPURetireRetainedMeshAttribute(entry, keys[i]);
       }
-      webGPURetireRetainedMaterialOwner(entry);
       retainedMeshAttributeCache.delete(vertices);
     }
 
@@ -15316,9 +15442,7 @@
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        // Direct-vertex entries (including skinned/morph draws that carry an
-        // authored index stream) are marked so their cached GPU buffers survive
-        // the sweep exactly like fully retained ones.
+        // Keep retained and indexed direct-vertex resources alive for this frame.
         if (!obj || !obj.vertices) continue;
         if (!obj.retainedGeometry && !obj.directVertices) continue;
         var entry = retainedMeshAttributeCache.get(obj.vertices);
@@ -15377,11 +15501,6 @@
           attributes: Object.create(null),
         };
         retainedMeshAttributeCache.set(vertices, entry);
-      }
-      var materialSource = webGPURetainedMaterialSource(obj);
-      if (materialSource && typeof materialSource === "object") {
-        entry.materialSource = materialSource;
-        entry.materialOwner = retainedMaterialOwners.get(materialSource) || null;
       }
       entry.lastSeenEpoch = retainedMeshAttributeEpoch;
       var record = entry.attributes[key];
@@ -15444,11 +15563,6 @@
           attributes: Object.create(null),
         };
         retainedMeshAttributeCache.set(vertices, entry);
-      }
-      var materialSource = webGPURetainedMaterialSource(obj);
-      if (materialSource && typeof materialSource === "object" && !entry.materialSource) {
-        entry.materialSource = materialSource;
-        entry.materialOwner = retainedMaterialOwners.get(materialSource) || null;
       }
       entry.lastSeenEpoch = retainedMeshAttributeEpoch;
       var record = entry.attributes.indices;
@@ -15646,7 +15760,8 @@
     }
 
     function webGPUElioSkinRecord(obj) {
-      if (!webGPUObjectIsSkinned(obj) || !elioSkinPipeline || !elioSkinBindGroupLayout) return null;
+      if (!webGPUObjectIsSkinned(obj)) return null;
+      ensureElioSkinPipeline();
       var count = webGPUObjectVertexCount(obj);
       var skin = obj.skin;
       var jointCount = Math.floor(sceneNumber(skin && skin.jointMatrices && skin.jointMatrices.length, 0) / 16);
@@ -15762,7 +15877,7 @@
 
     function webGPUComputedMorphData(obj) {
       var morph = obj && obj.computedMorph;
-      if (!morph || !computedMorphPipeline || !computedMorphBindGroupLayout) return null;
+      if (!morph || !computedMorphBindGroupLayout) return null;
       var requested = Math.max(0, Math.floor(sceneNumber(morph.count, sceneNumber(obj && obj.vertexCount, 0))));
       var objCount = Math.max(0, Math.floor(sceneNumber(obj && obj.vertexCount, requested)));
       var count = Math.min(requested, objCount);
@@ -15880,6 +15995,7 @@
     function webGPUComputedMorphRecord(obj) {
       var data = webGPUComputedMorphData(obj);
       if (!data) return null;
+      ensureComputedMorphPipeline();
       var morph = data.morph;
       var record = morph._gosxWGPUComputedMorphRecord;
       if (!record) {
@@ -16201,6 +16317,7 @@
         if (!obj || obj.viewCulled) continue;
         if (!obj.castShadow) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+        if (obj._crowdBatch === true || obj._crowdSkin) continue;
         if (webGPUObjectIsSkinned(obj)) {
           var skinnedPositionBuffer = obj._gosxWGPUElioSkinOutputBuffer;
           if (!skinnedPositionBuffer) continue;
@@ -16235,7 +16352,7 @@
           // meshes use drawIndexed; expanded procedural triangle lists use
           // draw. The shadow uniform carries the light view-projection alone,
           // so every model-space caster folds in its own transform per draw.
-          var reflectedCaster = sceneAffineDeterminant(obj.modelMatrix, 0) < 0, retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
+          var reflectedCaster = sceneWebGPUObjectReflected(obj), retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
           if (currentShadowPipeline !== retainedPipelineKind) {
             pass.setPipeline(wgpuRequirePipeline(getShadowPipeline(reflectedCaster)));
             currentShadowPipeline = retainedPipelineKind;
@@ -16268,6 +16385,7 @@
       }
 
       pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+      webGPUCrowdHost().drawShadow(pass, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
       drawInstancedShadowMeshes(pass, bundle, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
       pass.end();
     }
@@ -16280,6 +16398,7 @@
       var lastMaterialIndex = -1;
       var lastReceiveShadow = null;
       var lastMaterialOwner = null;
+      var lastModelOffset = -1;
       var currentPipelineKind = "";
       var objectDepthWrite = depthWrite, worldBuffersBound = false;
       function bindMeshAttribute(attr, obj, offset, count) {
@@ -16321,6 +16440,7 @@
       }
       for (var i = 0; i < objectList.length; i++) {
         var obj = objectList[i];
+        if (obj._crowdBatch === true || obj._crowdSkin) continue;
         var matIndex = sceneNumber(obj.materialIndex, 0);
         var mat = materials[matIndex] || null;
         objectDepthWrite = sceneTransmissionDepthWrite(obj, mat, depthWrite);
@@ -16368,17 +16488,15 @@
         // render/bundle/shadow_drift_test.go measures that move and pins all
         // three settings. See client/js/12-scene-geometry-winding.test.mjs for
         // the winding numbers.
-        var reflectedDirect = sceneWebGPUObjectReflected(obj), selenaPipelineOptions = sceneWebGPUSelenaPipelineOptions(obj, reflectedDirect);
-        var selenaResource = isSkinned
-          ? getSelenaSkinnedPipeline(mat, blendMode, depthWrite, selenaPipelineOptions)
-          : getSelenaPipeline(mat, blendMode, depthWrite, selenaPipelineOptions);
+        var reflectedDirect = sceneWebGPUObjectReflected(obj);
+        var selenaResource = getObjectSelenaPipeline(obj, mat, blendMode, depthWrite);
         if (selenaResource) {
           worldBuffersBound = false;
           var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + sceneWebGPUSelenaPipelineSuffix(obj, reflectedDirect);
           if (currentPipelineKind !== selenaKey) {
             pass.setPipeline(wgpuRequirePipeline(selenaResource.pipeline));
             currentPipelineKind = selenaKey;
-          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
+          }
           var selenaBG = createSelenaBindGroup(mat, selenaResource, obj);
           if (selenaBG) {
             pass.setBindGroup(0, selenaBG);
@@ -16416,9 +16534,10 @@
         if (isSkinned) {
           bindPBRPipeline(reflectedDirect, mat);
           var skinnedOwner = mat || obj;
-          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
-            var skinnedMatBG = createMaterialBindGroup(mat, receiveShadow, mat || obj);
-            pass.setBindGroup(1, skinnedMatBG);
+          if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
+            var skinnedMatBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
+            pass.setBindGroup(1, skinnedMatBG, [0]);
+            lastModelOffset = 0;
             lastMaterialIndex = matIndex;
             lastReceiveShadow = receiveShadow;
             lastMaterialOwner = skinnedOwner;
@@ -16433,19 +16552,16 @@
           continue;
         }
         bindPBRPipeline(reflectedDirect, mat);
-        // Recreate material bind group when material or receiveShadow changes.
-        var materialOwner = obj.retainedGeometry ? webGPURetainedMaterialOwner(obj) : (mat || obj);
-        if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || materialOwner !== lastMaterialOwner) {
-          var matBG = createMaterialBindGroup(
-            mat,
-            receiveShadow,
-            materialOwner,
-            obj.retainedGeometry ? webGPUObjectModelMatrix(obj) : null
-          );
-          pass.setBindGroup(1, matBG);
+
+        var matBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
+        var modelOffset = obj.retainedGeometry ? (materialFrame.offsets.get(obj.modelMatrix) || 0) : 0;
+        if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || matBG !== lastMaterialOwner || modelOffset !== lastModelOffset) {
+          modelDynamicOffsets[0] = modelOffset;
+          pass.setBindGroup(1, matBG, modelDynamicOffsets);
           lastMaterialIndex = matIndex;
           lastReceiveShadow = receiveShadow;
-          lastMaterialOwner = materialOwner;
+          lastMaterialOwner = matBG;
+          lastModelOffset = modelOffset;
         }
         if (computedMorphRecord) {
           if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, count, 3)) continue;
@@ -16498,63 +16614,13 @@
     }
     function instancedMeshTransformData(mesh, count) {
       if (!mesh || count <= 0 || !mesh.transforms) return null;
-      if (!mesh._cachedTransforms) {
-        if (mesh.transforms instanceof Float32Array) {
-          mesh._cachedTransforms = mesh.transforms;
-        } else if (Array.isArray(mesh.transforms)) {
-          mesh._cachedTransforms = new Float32Array(mesh.transforms);
-        }
-      }
+      if (!mesh._cachedTransforms) mesh._cachedTransforms = scenePrepareInstancedTransforms(webGPUInstancedCacheOwner(mesh.id, mesh), mesh.transforms);
       var data = mesh._cachedTransforms;
       return data && data.length >= count * 16 ? data : null;
     }
     function instancedMeshColorData(mesh, count) {
       if (!mesh || count <= 0) return null;
-      var rawColors = mesh.colors;
-      if (wgpuIsPackedInstanceColors(rawColors, count)) return rawColors;
-      var owner = webGPUInstancedCacheOwner(mesh.id, mesh);
-      if (owner._cachedWGPUInstanceColors &&
-        owner._cachedWGPUInstanceColorCount === count &&
-        wgpuArrayContentsMatch(owner._cachedWGPUInstanceColorSource, rawColors)
-      ) {
-        return owner._cachedWGPUInstanceColors;
-      }
-      var data = null;
-      if (rawColors && typeof rawColors.length === "number" && rawColors.length > 0) {
-        if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-          data = new Float32Array(count * 4);
-          for (var ci = 0; ci < count; ci++) {
-            var rgba = sceneColorRGBA(rawColors[ci] || rawColors[rawColors.length - 1], [1, 1, 1, 1]);
-            data[ci * 4] = rgba[0];
-            data[ci * 4 + 1] = rgba[1];
-            data[ci * 4 + 2] = rgba[2];
-            data[ci * 4 + 3] = rgba[3];
-          }
-        } else if (rawColors.length >= count * 4) {
-          data = new Float32Array(rawColors);
-        } else if (rawColors.length >= count * 3) {
-          data = new Float32Array(count * 4);
-          for (var ni = 0; ni < count; ni++) {
-            data[ni * 4] = rawColors[ni * 3];
-            data[ni * 4 + 1] = rawColors[ni * 3 + 1];
-            data[ni * 4 + 2] = rawColors[ni * 3 + 2];
-            data[ni * 4 + 3] = 1;
-          }
-        }
-      }
-      if (!data) {
-        data = new Float32Array(count * 4);
-        for (var di = 0; di < count; di++) {
-          data[di * 4] = 1;
-          data[di * 4 + 1] = 1;
-          data[di * 4 + 2] = 1;
-          data[di * 4 + 3] = 1;
-        }
-      }
-      owner._cachedWGPUInstanceColors = data;
-      owner._cachedWGPUInstanceColorCount = count;
-      owner._cachedWGPUInstanceColorSource = rawColors ? Array.prototype.slice.call(rawColors) : null;
-      return data;
+      return mesh._cachedInstanceColors = scenePrepareInstancedColors(webGPUInstancedCacheOwner(mesh.id, mesh), mesh.colors, count, true);
     }
     function getInstancedGeometry(mesh) {
       if (typeof generateInstancedGeometry !== "function") return null;
@@ -16595,17 +16661,14 @@
       return wgpuCachedTrackedBuffer(geom, slot, data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
     }
 
-    // webGPUInstancedCacheOwner returns the object that owns one instanced
-    // mesh's cached GPU buffers and bind groups. The render bundle hands the
-    // renderer a fresh shallow copy of every instanced mesh each frame, so
-    // caching on that copy created a uniform buffer and a bind group per mesh
-    // per frame and kept render bundles from replaying. Key by mesh id.
-    function webGPUInstancedCacheOwner(meshId = "", fallback?: any) {
+    // Persistent mesh IDs own buffers and groups across transient draw records.
+    function webGPUInstancedCacheOwner(meshId = "", fallback?: any, namespace = "instanced") {
       if (!meshId) return fallback;
-      var owner = instancedCacheOwners.get(meshId);
+      var key = namespace + ":" + meshId;
+      var owner = instancedCacheOwners.get(key);
       if (!owner) {
         owner = { meshId: meshId, seenEpoch: 0 };
-        instancedCacheOwners.set(meshId, owner);
+        instancedCacheOwners.set(key, owner);
       }
       owner.seenEpoch = instancedCacheOwnerEpoch;
       return owner;
@@ -16616,7 +16679,7 @@
     function webGPUSweepInstancedCacheOwners() {
       instancedCacheOwners.forEach(function(owner, meshId) {
         if (instancedCacheOwnerEpoch - owner.seenEpoch <= 120) return;
-        var slots = ["_gosxWGPUInstanceTransformBuffer", "_gosxWGPUInstanceColorBuffer", "_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"];
+        var slots = Object.keys(owner).filter(function(slot) { return pointsEntryGPUBuffers.has(owner[slot]); });
         for (var i = 0; i < slots.length; i++) {
           var buffer = owner[slots[i]];
           if (!buffer) continue;
@@ -16637,6 +16700,7 @@
       var api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
       if (!device || !api || typeof api.createSceneGPUDrivenHost !== "function") return SCENE_GPU_DRIVEN_INERT_HOST;
       host = api.createSceneGPUDrivenHost(device, {
+        onResourceReady: pipelineGuard.changed,
         createFrameBindGroupLayout: wgpuCreateFrameBindGroupLayout,
         createMaterialBindGroupLayout: wgpuCreateMaterialBindGroupLayout,
         createShadowBindGroupLayout: wgpuCreateShadowBindGroupLayout,
@@ -16655,6 +16719,23 @@
         drawInstancedMeshes: drawInstancedMeshes,
       });
       gpuDrivenHosts.set("host", host);
+      return host;
+    }
+
+    // webGPUCrowdHost returns this renderer's crowd host (webgpu-crowd.ts). The
+    // hooks bind a batch record's retained geometry and its material group.
+    function webGPUCrowdHost() {
+      var host = gpuDrivenHosts.get("crowd");
+      if (host) return host;
+      host = createSceneWebGPUCrowd(device, {
+        bindAttribute: webGPUBindRetainedMeshAttribute,
+        bindIndex: webGPUBindRetainedMeshIndexBuffer,
+        materialGroup: function(record, materials) {
+          var index = sceneNumber(record.materialIndex, 0);
+          return webGPUFrameMaterialGroup(materialFrame, index, materials[index] || null, !!record.receiveShadow, createMaterialBindGroup);
+        },
+      });
+      gpuDrivenHosts.set("crowd", host);
       return host;
     }
 
@@ -16700,15 +16781,14 @@
 
         var mat = instancedMeshMaterial(mesh, materials);
         var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh, null));
+        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
         if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
         if (webGPUGPUDrivenHost().drawMesh(pass, mesh, meshDepthWrite)) continue;
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
         // not-ready / no kernel / capability absent → draw-all).
         var meshId = (typeof mesh.id === "string" && mesh.id) ? mesh.id : ("mesh-" + i);
-        var hasCullWGSL = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
-        var cullRecord = (hasCullWGSL || webGPUBuiltinCullEligible(mesh)) ? instancedCullSystems.get(meshId) : null;
+        var cullRecord = instancedMeshUsesCull(mesh) ? instancedCullSystems.get(meshId) : null;
         var cullSys = cullRecord && cullRecord.system;
 
         if (cullSys && cullSys.isReady()) {
@@ -17195,8 +17275,8 @@
         var positions = toSceneFloat32Array(surface.positions);
         var uvs = toSceneFloat32Array(surface.uv);
         var vertexCount = Math.min(Math.floor(positions.length / 3), Math.floor(uvs.length / 2), Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))));
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (vertexCount <= 0) continue;
-        renderPass.setBindGroup(1, createMaterialBindGroup(mat, false, surface));
+        if (vertexCount <= 0) continue;
+        renderPass.setBindGroup(1, createMaterialBindGroup(mat, false, surface), [0]);
         renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(surface, "_gosxWGPUSurfacePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
         renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(surface, "_gosxWGPUSurfaceUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
         renderPass.draw(vertexCount);
@@ -17389,8 +17469,8 @@
           ]);
           pipeline = getPointsVertexPipeline(validBlend, depthWrite);
           pass.setPipeline(wgpuRequirePipeline(pipeline));
-          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ pass.setVertexBuffer(0, pointsParticleBuffer);
-          pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));
+          pass.setVertexBuffer(0, pointsParticleBuffer);
+          pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner), [0]);
           pass.setBindGroup(2, pointsBG);
         }
         pass.draw(6, count); // 6 vertices per quad, count instances
@@ -17490,7 +17570,7 @@
         pointsUniformScratchF.fill(0);
         var puF = pointsUniformScratchF;
         var puU = pointsUniformScratchU;
-        puF.set(_computeModelMat, 0);
+        puF.set(sceneWebGPUPointModelMatrix(entry, _computeTilt, _computeModelMat), 0);
 
         var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
         puF[16] = defaultColorRGBA[0];
@@ -17558,8 +17638,8 @@
             { binding: 1, resource: { buffer: system.renderBuffer } },
           ]);
           pipeline = getPointsPipeline(validBlend, depthWrite);
-          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ pass.setPipeline(wgpuRequirePipeline(pipeline));
-          pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));
+          pass.setPipeline(wgpuRequirePipeline(pipeline));
+          pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner), [0]);
           pass.setBindGroup(2, pointsBG);
         }
         pass.draw(6, system.count);
@@ -17602,31 +17682,6 @@
         total += Math.max(0, Math.floor(sceneNumber(source[i] && source[i].count, 0)));
       }
       return total;
-    }
-
-    function webGPUCustomMaterialStats(materials) {
-      var stats = { customMaterialFallbacks: 0, customWGSLFallbacks: 0, customUniformFallbacks: 0 };
-      var source = Array.isArray(materials) ? materials : [];
-      for (var i = 0; i < source.length; i++) {
-        var material = source[i] || {};
-        if (sceneSelenaIsMaterial(material)) {
-          continue;
-        }
-        var hasWGSL = (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
-          (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim());
-        var hasCustomUniforms = material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0;
-        if (!hasWGSL && !hasCustomUniforms) {
-          continue;
-        }
-        stats.customMaterialFallbacks += 1;
-        if (hasWGSL) {
-          stats.customWGSLFallbacks += 1;
-        }
-        if (hasCustomUniforms) {
-          stats.customUniformFallbacks += 1;
-        }
-      }
-      return stats;
     }
 
     function publishWebGPUFrameStats(stats: any) {
@@ -18461,15 +18516,14 @@
       return { dispatches: dispatches, skipped: skipped, builtin: builtin };
     }
 
-    // webGPUObjectBlocksBundle names the three per-object draw paths the bundled
-    // set excludes. Each binds a resource a compute pass or a per-frame uniform
-    // owns, so its command stream changes nearly every frame.
+    // Compute-owned mesh resources keep the direct encoder. Selena uniforms
+    // now have stable owners; the recorder uploads their current values and
+    // checks resource identities before replaying.
     function webGPUObjectBlocksBundle(obj, materials) {
       if (!obj) return false;
       if (webGPUObjectIsSkinned(obj)) return true;
       if (webGPUObjectComputedMorphDrawRecord(obj)) return true;
-      var mat = materials[sceneNumber(obj.materialIndex, 0)] || null;
-      return Boolean(mat && typeof sceneSelenaIsMaterial === "function" && sceneSelenaIsMaterial(mat));
+      return obj._crowdBatch === true || Boolean(obj._crowdSkin);
     }
 
     // encodeBundleableSceneDraws drives ONE target through the PBR and instanced
@@ -18485,10 +18539,8 @@
       for (var p = 0; p < passes.length; p++) {
         var spec = passes[p];
         var meshList = ctx.drawList[spec.name];
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (meshList && meshList.length > 0) {
-          target.setPipeline(wgpuRequirePipeline(getPBRPipeline(spec.blend, spec.depthWrite)));
-          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ target.setBindGroup(0, ctx.frameBindGroup);
-          drawPBRObjects(target, meshList, ctx.bundle, ctx.materials, ctx.frameBindGroup, spec.blend, spec.depthWrite, ctx.pbrBuffers);
+        if (meshList && meshList.length > 0) {
+          drawPBRObjects(target, meshList, ctx.bundle, ctx.materials, ctx.frameBindGroup, spec.blend, spec.depthWrite, ctx.pbrBuffers, null);
         }
         var instancedList = ctx.instancedDrawList[spec.name];
         if (instancedList && instancedList.length > 0) {
@@ -18589,6 +18641,7 @@
         hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
       }
       webGPUBeginRetainedMeshFrame(bundle);
+      webGPUPrepareMaterialFrame(materialFrame, device, bundle, retainedMeshAttributeEpoch, wgpuCreateTrackedBuffer, destroyRendererGPUResource, pointsEntryGPUBuffers);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
       if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer && !oceanResources.renderer) {
@@ -18641,6 +18694,20 @@
       var scaledH = Math.max(1, Math.floor(height * postfxFactor));
       var sampleCount = resolveWebGPUSampleCount(bundle);
       activeSampleCount = sampleCount;
+      detailResources = sceneWebGPUEnsureDetailResources(device, detailResources, bundle.materials, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT);
+      detailEnabled = frameMeta?.detailEnabled !== false;
+      if (detailEnabled && detailResources) sceneWebGPUDetailBakeResources(device, detailResources, placeholderView);
+      if (scenePicker && scenePicker.hasPending()) scenePicker.preparePipelines();
+      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing);
+      if (pipelineGuard.coreError) return "failed";
+      if (pipelineGuard.pending) return "pending";
+      // The standard mesh, shadow and post variants are prepared above. Other
+      // feature renderers can discover pipelines while encoding; defer their
+      // canvas commands until the entire frame has encoded successfully.
+      pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost().present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
+        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds) ||
+        (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
+        postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST; }));
 
       // Upload per-frame uniforms (use scaled dims so point sprites and
       // projection aspect match the actual render target, not the canvas).
@@ -18668,20 +18735,18 @@
       pollGPUPassTimingReadback();
       beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
-      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
       // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
-      detailResources = sceneWebGPUEnsureDetailResources(device, detailResources, bundle.materials, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT);
       detailResources = sceneWebGPUPrepareDetailFrame(device, detailResources, bundle.materials, textureCache, {
         placeholderView: placeholderView, enabled: detailEnabled,
       });
       // Reuse uniforms when color or detail controls change; retire buffers and
       // atlases that no longer belong to the active draw set.
 
-      var frameNowMS = frameMeta && Number.isFinite(frameMeta.nowMS)
+      var frameNowMS = Number.isFinite(frameMeta?.nowMS)
         ? frameMeta.nowMS
         : performance.now();
-      var frameActive = !frameMeta || frameMeta.active !== false;
-      var frameQualityEnabled = Boolean(frameMeta && frameMeta.qualityEnabled === true);
+      var frameActive = frameMeta?.active !== false;
+      var frameQualityEnabled = frameMeta?.qualityEnabled === true;
       var frameQualityProfile = frameQualityEnabled && frameMeta.qualityProfile
         ? frameMeta.qualityProfile
         : null;
@@ -18693,7 +18758,9 @@
             : (Number.isFinite(frameMeta.revision) ? frameMeta.revision : 0)))
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
-      selenaFrame.time = frameTimeSeconds; selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before every Selena draw this frame
+      // Shader time is seekable; telemetry and compute retain wall time.
+      selenaFrame.time = frameMeta?.sceneTime ?? frameTimeSeconds;
+      selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
       var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
@@ -18707,11 +18774,8 @@
       var waterUpdateStats = sceneWebGPUWaterDebugSkipsUpdate(waterDebugMode)
         ? updateWaterSystems([], encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH)
         : updateWaterSystems(bundle.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH);
-      // GPU frustum cull: runs AFTER uploadFrameUniforms so scratchSelenaViewProjection
-      // is ready (WebGPU post-depth-remap VP). Runs BEFORE shadow and main passes
-      // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
-      // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
-      // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
+      // After frame uniform upload, cull before render passes.
+      // Meshes without a cull kernel retain draw-all behavior.
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       var instancedDrawList = hasInstancedData
         ? buildInstancedDrawList(bundle, materials)
@@ -18721,6 +18785,8 @@
         var material = instancedMeshMaterial(mesh, bundle.materials);
         return !material || !material.detail;
       }) : instancedDrawList.opaque });
+      var crowd = webGPUCrowdHost();
+      crowd.beginFrame(bundle, encoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
@@ -18757,6 +18823,7 @@
         shadowLightIndices[slot] = li;
 
         gpuDriven.lightView(encoder, lightMatrix, slot);
+        crowd.lightView(encoder, lightMatrix, slot);
         renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots[slot].view, lightSlot: slot }, pbrSceneBuffers);
         activeShadowCount++;
       }
@@ -18836,8 +18903,7 @@
           mainDepthTargetView = postTarget.depthView;
         }
       } else {
-        var currentTexture = gpuCtx.getCurrentTexture();
-        var currentView = currentTexture.createView();
+        var currentView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
         if (sampleCount > 1) {
           mainColorView = ensureMSAAColor(width, height, sampleCount);
           mainResolveView = currentView;
@@ -18875,6 +18941,7 @@
       };
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites("main");
       if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
+      crowd.prepareMainPass(mainPassDescriptor);
       gpuDriven.prepareMainPass(mainPassDescriptor);
       var mainPass = encoder.beginRenderPass(mainPassDescriptor);
       var skyState = "none";
@@ -19046,15 +19113,13 @@
 
       // --- Render bundle decision ---
       //
-      // A frame qualifies when it draws PBR meshes and instanced meshes only.
-      // Everything else keeps the direct encoder; see
-      // sceneWebGPUBundleIneligibleReason for why.
+      // Non-bundleable paths retain the direct encoder.
       var bundleableDraws = (hasPBRData && (drawList.opaque.length + drawList.alpha.length + drawList.additive.length) > 0) ||
         (hasInstancedData && (instancedDrawList.opaque.length + instancedDrawList.alpha.length + instancedDrawList.additive.length) > 0);
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: Boolean(frameMeta && frameMeta.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
+        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
@@ -19118,17 +19183,15 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
       // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
       const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.opaque.length > 0) {
-          var opaquePipeline = getPBRPipeline("opaque", true);
-          mainPass.setPipeline(wgpuRequirePipeline(opaquePipeline));
-          mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+        if (drawList.opaque.length > 0) {
+          drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
+        frameStats.meshDrawCalls += crowd.drawColor(mainPass, frameBindGroup, materials);
         if (instancedDrawList.opaque.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
           drawInstancedMeshes(mainPass, instancedDrawList.opaque, materials, "opaque", true);
@@ -19145,6 +19208,7 @@
         // Two-phase occlusion: end the early pass, cull against its depth, and
         // draw the newly visible instances in a late pass that loads it.
         mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
+        mainPass = crowd.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials);
 
         prepareOceanReflection();
         // The water surface writes depth before translucent world surfaces.
@@ -19160,6 +19224,7 @@
           mainPass.end();
           transmissionResources.capture(encoder, postTarget.colorView);
           gpuDriven.resumeMainPass(mainPassDescriptor);
+          crowd.resumeMainPass(mainPassDescriptor);
           mainColorAttachment.loadOp = "load";
           if (specularAttachment) specularAttachment.loadOp = "load";
           mainPassDescriptor.depthStencilAttachment.depthLoadOp = "load";
@@ -19168,11 +19233,8 @@
         }
 
         // Alpha pass.
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.alpha.length > 0) {
-          var alphaPipeline = getPBRPipeline("alpha", false);
-          mainPass.setPipeline(wgpuRequirePipeline(alphaPipeline));
-          mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+        if (drawList.alpha.length > 0) {
+          drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
         if (instancedDrawList.alpha.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
@@ -19188,11 +19250,8 @@
         }
 
         // Additive pass.
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.additive.length > 0) {
-          var additivePipeline = getPBRPipeline("additive", false);
-          mainPass.setPipeline(wgpuRequirePipeline(additivePipeline));
-          mainPass.setBindGroup(0, frameBindGroup);
-          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
+        if (drawList.additive.length > 0) {
+          drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, frameStats, frameMeta?.frameRequest);
         }
         if (instancedDrawList.additive.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
@@ -19228,10 +19287,10 @@
       // Draw points.
       if (hasPointsData) {
         mainPass.setBindGroup(0, frameBindGroup);
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Create a dummy material bind group for group 1 (points pipeline layout requires it).
+        // Create a dummy material bind group for group 1 (points pipeline layout requires it).
         var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
-        mainPass.setBindGroup(1, dummyMatBG);
-        Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds));
+        mainPass.setBindGroup(1, dummyMatBG, [0]);
+        Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, selenaFrame.time));
         Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds));
       }
 
@@ -19254,15 +19313,16 @@
 
       // Post-processing.
       if (usePostProcessing && postProcessor) {
-        var screenView = gpuCtx.getCurrentTexture().createView();
+        var screenView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
         Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }));
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
       gpuDriven.finishEncoding(encoder);
+      crowd.finishEncoding(encoder);
       device.queue.submit([encoder.finish()]);
-      Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink));
+      Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink), crowd.endFrame());
       pollGPUTimingReadback();
       // Pick readback starts after submit and does not wait in this frame.
       if (scenePicker) scenePicker.finishReadback();
@@ -19277,6 +19337,7 @@
         performance.clearMarks("scene3d-render-start");
         performance.clearMarks("scene3d-render-end");
       }
+      initialPipelinesReady = true;
       return "submitted";
     }
 
@@ -19353,9 +19414,9 @@
         destroyRendererGPUResource(buffer);
       });
       pointsEntryGPUBuffers.clear();
+      materialFrame.resources.clear(); materialFrame.groups = []; materialFrame.buffer = materialFrame.data = null;
       // Board glyph atlases are textures (not tracked in pointsEntryGPUBuffers);
       // destroy them explicitly. The per-label glyph buffers are tracked buffers,
-      // already freed above; just drop the owner map.
       boardGlyphAtlases.forEach(function(a) {
         if (a) destroyRendererGPUResource(a.texture);
       });
@@ -19596,7 +19657,7 @@
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterDroppedTicks = lastWebGPUFrameStats && lastWebGPUFrameStats.waterDroppedTicks || 0;
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterNormalDispatchSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
-      out.postProcessing = !!postProcessor; pipelineGuard.snapshot(out);
+      out.postProcessing = !!postProcessor; pipelineGuard.snapshot(out); Object.assign(out, { initialPipelinesReady: initialPipelinesReady });
       // Frame-error resilience state (see reportWebGPUFrameError /
       // disablePostProcessing / enablePostProcessing above and
       // 20-scene-mount.js's checkSceneWebGPUFrameErrorWatchdog, the poller
@@ -19620,7 +19681,6 @@
       if (scenePicker) Object.assign(out, scenePicker.diagnostics());
       // Render truth: implementation identity, the post-chain dispatch record
       // and the event journal, so a single diagnostics() call is a complete
-      // dump rather than a starting point for DOM scraping.
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var truthApi = renderTruth();
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.implementation = truthApi.implementation(out.adapterInfo || {});
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.browserEngine = typeof truthApi.browserEngine === "function" ? truthApi.browserEngine() : "";
@@ -19642,7 +19702,9 @@
       kind: "webgpu",
       type: "webgpu",
       supportsRetainedGeometry: true,
-      supportsBundle: supportsBundle, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace) },
+      supportsBundle: supportsBundle,
+      prepareCrowdAtlas: function(atlas: any) { return webGPUCrowdHost().prepareCrowdAtlas(atlas); },
+      prepareCrowdMotionShaders: function() { return webGPUCrowdHost().prepareCrowdMotionShaders(); }, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace, retryFailed) },
       queuePick: queuePick,
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,
@@ -19683,11 +19745,8 @@
   //     (the sub-feature chunk), whose suffix publishes
   //     createSceneWebGPURenderer to the api so the stub can dispatch.
   //
-  // createSceneWebGPURenderer itself (the real factory, ~1300 lines
-  // above) is still defined in this file and is exported by the suffix.
 
-  // Local sceneWebGPUAvailable for use by createSceneWebGPURenderer's
-  // own startup paths — checks the probe shared by the main bundle.
+  // Local availability checks the probe shared by the main bundle.
   // _externalProbe is a function (not a snapshot) so each call sees
   // the current probe state — the main bundle's probe is async and
   // may still be pending when this chunk first loads.
@@ -19711,4 +19770,111 @@
   // rather than the function keeps 19-scene-gltf.js free of a backend choice.
   if (typeof window !== "undefined") {
     window.__gosx_scene3d_ktx2_texture_loader = wgpuUploadKTX2Texture;
+  }
+  // Exact material signatures also catch mutable callers without revisions.
+  var materialCacheFields = "kind materialKind color roughness metalness emissive opacity clearcoat sheen transmission iridescence anisotropy unlit normalUVScale ior alphaCutoff specularIntensity specularColor normalScale occlusionStrength emissiveColor rimPower rimStrength rimColor specularAA thickness attenuationDistance attenuationColor texture normalMap roughnessMap metalnessMap emissiveMap occlusionMap specularIntensityMap specularColorMap thicknessMap textureDescriptors blendMode renderPass revision version".split(" ");
+  function webGPUMaterialSignature(material: any): string {
+    var mat = material || {};
+    return JSON.stringify(materialCacheFields.map(key => mat[key]));
+  }
+  function webGPUPrepareMaterialFrame(materialFrame: any, device: any, bundle: any, epoch: number, createBuffer: any, destroyBuffer: any, buffers: Set<any>) {
+    materialFrame.epoch = epoch;
+    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+    var alignment = Math.max(16, sceneNumber(device.limits && device.limits.minUniformBufferOffsetAlignment, 256));
+    materialFrame.stride = Math.ceil(64 / alignment) * alignment;
+    var required = 1 + objects.filter(object => object && object.retainedGeometry).length;
+    var resized = !materialFrame.buffer || required > materialFrame.capacity;
+    if (resized) {
+      var capacity = Math.max(1, materialFrame.capacity);
+      while (capacity < required) capacity *= 2;
+      if (materialFrame.buffer) {
+        buffers.delete(materialFrame.buffer);
+        destroyBuffer(materialFrame.buffer);
+      }
+      materialFrame.capacity = capacity;
+      materialFrame.buffer = createBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        capacity * materialFrame.stride);
+      materialFrame.data = new Float32Array(capacity * materialFrame.stride / 4);
+      materialFrame.words = new Uint32Array(materialFrame.data.buffer);
+      for (var mi = 0; mi < 16; mi++) materialFrame.data[mi] = mi % 5 === 0 ? 1 : 0;
+      device.queue.writeBuffer(materialFrame.buffer, 0, materialFrame.data.subarray(0, 16));
+    }
+    var slotIndex = 0, firstDirty = 0, lastDirty = 0;
+    for (var i = 0; i < objects.length; i++) {
+      var object = objects[i];
+      if (!object || !object.retainedGeometry) continue;
+      var matrix = webGPUObjectModelMatrix(object);
+      var offset = ++slotIndex * materialFrame.stride;
+      if (matrix) materialFrame.offsets.set(matrix, offset);
+      var changed = resized;
+      for (var column = 0; column < 16; column++) {
+        var index = offset / 4 + column, before = materialFrame.words[index];
+        materialFrame.data[index] = matrix
+          ? sceneNumber(matrix[column], column % 5 === 0 ? 1 : 0) : (column % 5 === 0 ? 1 : 0);
+        // Compare stored float32 bits, including the rounding of wire numbers.
+        if (materialFrame.words[index] !== before) changed = true;
+      }
+      if (changed) { if (!firstDirty) firstDirty = slotIndex; lastDirty = slotIndex; }
+    }
+    if (lastDirty) device.queue.writeBuffer(materialFrame.buffer, firstDirty * materialFrame.stride,
+      materialFrame.data.subarray(firstDirty * materialFrame.stride / 4, (lastDirty * materialFrame.stride + 64) / 4));
+    var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+    var signatures = materialFrame.signatures;
+    signatures.length = materials.length;
+    if (objects.some(object => object && !materials[object.materialIndex])) signatures.length++;
+    materialFrame.groups = [];
+    for (var index = 0; index < signatures.length; index++) {
+      var signature = signatures[index] = webGPUMaterialSignature(materials[index]);
+      for (var shadow = 0; shadow < 2; shadow++) {
+        var record = materialFrame.resources.get(signature + ":" + shadow);
+        if (record) record.seenEpoch = epoch;
+      }
+    }
+    materialFrame.resources.forEach(function(record: any, key: string) {
+      if (record.seenEpoch === epoch) return;
+      for (var slot of ["_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"]) {
+        var buffer = record.owner[slot];
+        if (buffer) { buffers.delete(buffer); destroyBuffer(buffer); }
+      }
+      materialFrame.resources.delete(key);
+    });
+  }
+  function webGPUFrameMaterialGroup(materialFrame: any, index: number, material: any, receiveShadow: boolean, createGroup: any): any {
+    var shadow = receiveShadow ? 1 : 0;
+    var groups = materialFrame.groups[index];
+    if (!groups) groups = materialFrame.groups[index] = [];
+    if (groups[shadow]) return groups[shadow];
+    var key = (materialFrame.signatures[index] || webGPUMaterialSignature(material)) + ":" + shadow;
+    var record = materialFrame.resources.get(key);
+    if (!record) {
+      record = { owner: {}, bg: null, textureRevision: -1, modelBuffer: null, seenEpoch: materialFrame.epoch };
+      materialFrame.resources.set(key, record);
+    }
+    record.seenEpoch = materialFrame.epoch;
+    if (!record.bg || record.textureRevision !== materialFrame.textureRevision || record.modelBuffer !== materialFrame.buffer) {
+      record.bg = createGroup(material, receiveShadow, record.owner);
+      record.textureRevision = materialFrame.textureRevision; record.modelBuffer = materialFrame.buffer;
+    }
+    return groups[shadow] = record.bg;
+  }
+  function sceneWebGPUIsSelenaMaterial(material: any) {
+    return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) &&
+      ((typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
+       (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())));
+  }
+  function webGPUCustomMaterialStats(materials: any) {
+    var stats = { customMaterialFallbacks: 0, customWGSLFallbacks: 0, customUniformFallbacks: 0 };
+    var source = Array.isArray(materials) ? materials : [];
+    for (var i = 0; i < source.length; i++) {
+      var material = source[i] || {};
+      if (sceneWebGPUIsSelenaMaterial(material)) continue;
+      var hasWGSL = (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
+        (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim());
+      var hasCustomUniforms = material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0;
+      if (!hasWGSL && !hasCustomUniforms) continue;
+      stats.customMaterialFallbacks += 1;
+      if (hasWGSL) stats.customWGSLFallbacks += 1;
+      if (hasCustomUniforms) stats.customUniformFallbacks += 1;
+    }
+    return stats;
   }

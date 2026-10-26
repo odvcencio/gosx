@@ -18,9 +18,9 @@ Each row is one case from `internal/evalparity`'s differential test table (`case
 
 | Backend | Agrees | Diverges | Unsupported | Total |
 |---|---|---|---|---|
-| transpile | 47 | 0 | 20 | 67 |
-| route | 63 | 4 | 0 | 67 |
-| client-vm | 63 | 4 | 0 | 67 |
+| transpile | 55 | 0 | 20 | 75 |
+| route | 74 | 1 | 0 | 75 |
+| client-vm | 73 | 2 | 0 | 75 |
 
 ## numeric
 
@@ -40,14 +40,22 @@ Each row is one case from `internal/evalparity`'s differential test table (`case
 | `numeric_float_format_small` | `0.0001` | agrees: `0.0001` | agrees: `0.0001` | agrees: `0.0001` |
 | `numeric_float_negative` | `-3.5` | agrees: `-3.5` | agrees: `-3.5` | agrees: `-3.5` |
 | `numeric_float_repeating` | `1.0 / 3.0` | agrees: `0.3333333333333333` | agrees: `0.3333333333333333` | agrees: `0.3333333333333333` |
-| `numeric_precision_large_int` | `props.A + 0` | agrees: `9007199254740993` | diverges: `9.007199254740992e+15` | diverges: `9007199254740992` |
-| `equality_large_integers` | `props.A == props.B` | agrees: `false` | agrees: `false` | diverges: `true` |
+| `numeric_precision_large_int` | `props.A + 0` | agrees: `9007199254740993` | agrees: `9007199254740993` | agrees: `9007199254740993` |
+| `numeric_precision_sub` | `props.A - props.B` | agrees: `9007199254740992` | agrees: `9007199254740992` | agrees: `9007199254740992` |
+| `numeric_precision_mul` | `props.A * props.B` | agrees: `27021597764222979` | agrees: `27021597764222979` | agrees: `27021597764222979` |
+| `numeric_precision_div` | `props.A / props.B` | agrees: `3002399751580331` | agrees: `3002399751580331` | agrees: `3002399751580331` |
+| `numeric_precision_mod` | `props.A % props.B` | agrees: `0` | agrees: `0` | agrees: `0` |
+| `numeric_precision_order` | `props.A > props.B` | agrees: `true` | agrees: `true` | agrees: `true` |
+| `numeric_precision_negative` | `-props.A` | agrees: `-9007199254740993` | agrees: `-9007199254740993` | agrees: `-9007199254740993` |
+| `numeric_precision_overflow` | `props.A + props.B` | agrees: `-9223372036854775808` | agrees: `-9223372036854775808` | agrees: `-9223372036854775808` |
+| `numeric_precision_min_div` | `props.A / props.B` | agrees: `-9223372036854775808` | agrees: `-9223372036854775808` | agrees: `-9223372036854775808` |
+| `equality_large_integers` | `props.A == props.B` | agrees: `false` | agrees: `false` | agrees: `false` |
 | `equality_number_nonnumeric_string` | `props.A == props.S` | unsupported | agrees: `false` | agrees: `false` |
 | `equality_number_exact_string` | `props.A == props.S` | unsupported | agrees: `true` | diverges: `false` |
 | `equality_fractional_float_string` | `props.F == props.S` | unsupported | agrees: `true` | diverges: `false` |
 | `equality_bounded_hexadecimal_string` | `props.A == props.S` | unsupported | agrees: `false` | agrees: `false` |
 | `numeric_unary_neg_props` | `-props.A` | agrees: `-5` | agrees: `-5` | agrees: `-5` |
-| `numeric_negative_literal_div` | `-7 / 2` | agrees: `-3` | diverges: `-3.5` | agrees: `-3` |
+| `numeric_negative_literal_div` | `-7 / 2` | agrees: `-3` | agrees: `-3` | agrees: `-3` |
 
 Notes:
 
@@ -66,11 +74,16 @@ Notes:
 - `numeric_float_format_small`: small float literal keeps decimal notation
 - `numeric_float_negative`: negative float literal
 - `numeric_float_repeating`: a repeating-decimal float division formats identically (shortest round-trip representation, both strconv and fmt)
-- `numeric_precision_large_int`: a bare props.A read (no arithmetic) preserves full int64 precision on every backend — reflect and JSON round-trips both pass the exact value through untouched. Arithmetic is what loses precision: route's numericValue and the VM's Value both fold every number through a float64 field, which cannot represent 2^53+1 exactly; transpile keeps the real Go int64
-  - route diverges: route/fileeval.go's applyFileBinaryOp ADD always returns numericValue(left)+numericValue(right) as a bare float64, which cannot represent 2^53+1 exactly (rounds to 9007199254740992) and then formats through fmt.Sprint's large-magnitude float path as scientific notation
-  - client-vm diverges: client/vm/value.go's Value packs every number into a float64 num field; Add keeps the TypeInt tag when both operands are int-kind, but the value it carries already rounded to the nearest representable float64 (9007199254740992) before Add ever ran
-- `equality_large_integers`: route compares integer identifiers without float64 rounding
-  - client-vm diverges: the VM stores both identifiers in float64 and rounds them to the same value
+- `numeric_precision_large_int`: all backends preserve signed int64 precision through props and integer arithmetic
+- `numeric_precision_sub`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_mul`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_div`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_mod`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_order`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_negative`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_overflow`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_min_div`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `equality_large_integers`: all backends compare integer identifiers without float64 rounding
 - `equality_number_nonnumeric_string`: failed numeric string conversion cannot match a numeric identifier
   - transpile unsupported: Go rejects equality between int and string
 - `equality_number_exact_string`: route accepts a fully parsed numeric string without losing integer precision
@@ -82,8 +95,7 @@ Notes:
 - `equality_bounded_hexadecimal_string`: route rejects hexadecimal exponents outside the request-data parsing limit
   - transpile unsupported: Go rejects equality between int and string
 - `numeric_unary_neg_props`: unary minus on a direct int prop read (not a nested sub-expression) agrees everywhere
-- `numeric_negative_literal_div`: -7 / 2: real Go and the VM truncate toward zero (-3); route's applyFileUnaryOp SUB case converts through numericValue (float64) before QUO ever sees the operand, discarding the int-ness the QUO fix (route/exprlower.go) depends on — a known, narrower-than-full-fix gap: QUO's fix only recovers int-ness from a DIRECT int operand (a struct field, a bare positive literal), not one already erased by a prior unary/binary op. Fixing that fully means every arithmetic op preserving Go's static type through the interpreter's untyped `any` pipeline, a materially bigger change than this harness's targeted QUO fix
-  - route diverges: applyFileUnaryOp's SUB case returns -numericValue(value) (always float64); QUO's isIntegerKind check then sees a float64 left operand and falls back to float division
+- `numeric_negative_literal_div`: Integer negation keeps its integer kind, so chained integer division truncates toward zero on every backend.
 
 ## string
 
@@ -166,7 +178,7 @@ Notes:
 | `index_slice_inbounds` | `props.Items[1]` | agrees: `20` | agrees: `20` | agrees: `20` |
 | `index_map_present` | `props.M["k"]` | agrees: `42` | agrees: `42` | agrees: `42` |
 | `index_slice_out_of_range` | `props.Items[9]` | unsupported | diverges: `(empty)` | agrees: `0` |
-| `index_map_missing_key` | `props.M["missing"]` | agrees: `0` | diverges: `(empty)` | agrees: `0` |
+| `index_map_missing_key` | `props.M["missing"]` | agrees: `0` | agrees: `0` | agrees: `0` |
 | `index_nested_struct_field` | `props.Nested.X` | agrees: `5` | agrees: `5` | agrees: `5` |
 
 Notes:
@@ -176,8 +188,7 @@ Notes:
 - `index_slice_out_of_range`: out-of-range slice index: real Go panics at runtime (recovered by the harness — see caseCallLine); route fails soft to "", VM fails soft to the element type's zero value. Documented, not fixed: ir/lower.go's strict-renderer validator already refuses index expressions for exactly this reason ("out-of-range behavior differs from Go")
   - transpile unsupported: real Go panics at runtime: "index out of range [9] with length 3"
   - route diverges: route/fileeval.go's indexSequentialValue returns the zero any (nil) past the slice bound instead of erroring, which renders as empty text rather than a zero-valued element
-- `index_map_missing_key`: missing map key: real Go returns the value type's zero value at compile-checked type, matching VM; route fails soft to "" the same way index_slice_out_of_range does
-  - route diverges: route/fileeval.go's indexMapValue (via mapLookup) returns nil for a missing key instead of the value type's zero value, which renders as empty text instead of "0"
+- `index_map_missing_key`: missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends. File routes preserve other element zero types; dynamically nil values render as empty text and compare equal to nil
 - `index_nested_struct_field`: field access on a nested named-struct props field
 
 ## bool-coercion

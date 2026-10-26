@@ -428,7 +428,7 @@ func checkBrowserReflectionFrontFaceContract(webgpu, webgl string) []string {
 		{"webgpu-reflected-static-cw", jsWebGPURendererFile, webgpu, `shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "cw")`},
 		{"webgpu-instanced-orientation", jsWebGPURendererFile, webgpu, `out.orientation = gosxAffineNormal(model, vec3f(0.0,0.0,1.0)).w;`},
 		{"webgpu-instanced-fragment-classifier", jsWebGPURendererFile, webgpu, `if (frontFacing != (in.orientation > 0.0)) { discard; }`},
-		{"webgl-reflected-static-front-face", jsWebGLRendererFile, webgl, `gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);`},
+		{"webgl-reflected-static-front-face", jsWebGLRendererFile, webgl, `gl.frontFace(obj.directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);`},
 		{"webgl-front-face-restore", jsWebGLRendererFile, webgl, `gl.frontFace(gl.CCW);`},
 	}
 	var problems []string
@@ -604,7 +604,7 @@ var shadowCullGuardMutations = []shadowCullMutation{
 	{
 		name:    "browser WebGL2 drops determinant-aware retained winding",
 		side:    "webgl",
-		from:    "gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);",
+		from:    "gl.frontFace(obj.directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);",
 		to:      "gl.frontFace(gl.CCW);",
 		wantRow: "webgl-reflected-static-front-face",
 	},

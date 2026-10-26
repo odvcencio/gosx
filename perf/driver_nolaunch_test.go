@@ -5,6 +5,7 @@ import (
 )
 
 func TestDriverNoChromeError(t *testing.T) {
+	t.Setenv("CHROME_WS_URL", "")
 	t.Setenv("CHROME_PATH", "/nonexistent/chrome-binary")
 	_, err := New()
 	if err == nil {

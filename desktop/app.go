@@ -47,11 +47,13 @@ type Options struct {
 	// InitialPlacement restores a previous window's bounds and maximized state.
 	// Zero keeps the normal Width and Height startup behavior.
 	InitialPlacement WindowPlacement
-	AppID            string
-	Version          string
-	UpdateFeed       string
-	URL              string
-	HTML             string
+	// WindowState opts into Windows-only automatic placement persistence. Nil disables it.
+	WindowState *WindowStateOptions
+	AppID       string
+	Version     string
+	UpdateFeed  string
+	URL         string
+	HTML        string
 	// BrowserExecutableFolder selects a Fixed Version WebView2 runtime. The
 	// empty value selects the installed Evergreen runtime.
 	BrowserExecutableFolder string
@@ -109,6 +111,11 @@ type Options struct {
 	// SingleInstance is true and a later launch forwards its argv payload.
 	OnSecondInstance func(message InstanceMessage)
 
+	// OnOpenFiles receives documents opened by the operating system, including
+	// Finder launches on macOS. Paths are absolute. The callback runs on the
+	// window thread and should return quickly; it may arrive during startup.
+	OnOpenFiles func(paths []string)
+
 	// OnSuspend and OnResume mirror OS lifecycle notifications where the
 	// backend exposes them. Windows wires these to WM_POWERBROADCAST.
 	OnSuspend func()
@@ -153,17 +160,23 @@ type Options struct {
 	// OnBeforeClose runs on the window thread before the native window is
 	// destroyed, with its current placement. Keep the callback short.
 	OnBeforeClose func(WindowPlacement)
+
+	savedWindowPlacement *WindowPlacement
+	onPlacementChanged   func(WindowPlacement)
 }
 
 // App is a native desktop host for a GoSX application or HTML document.
 type App struct {
-	options        Options
-	impl           platformApp
-	bridge         *bridge.Router
-	preloadMu      sync.Mutex
-	preloadScripts []string
-	serviceMu      sync.RWMutex
-	services       map[string]ServiceBinding
+	options         Options
+	windowState     *windowStatePersister
+	impl            platformApp
+	bridge          *bridge.Router
+	preloadMu       sync.Mutex
+	preloadScripts  []string
+	methodRevision  uint64
+	serviceUpdateMu sync.Mutex
+	serviceMu       sync.RWMutex
+	services        map[string]ServiceBinding
 }
 
 type platformApp interface {
@@ -209,11 +222,15 @@ func New(options Options) (*App, error) {
 		return nil, err
 	}
 
+	statePersister, err := prepareWindowState(&normalized)
+	if err != nil {
+		return nil, err
+	}
 	// Keep the caller's raw-message callback so the bridge can chain to
 	// it after the typed router has had a chance to dispatch.
 	userCallback := normalized.OnWebMessage
 
-	app := &App{options: normalized}
+	app := &App{options: normalized, windowState: statePersister}
 	userFocusCallback := normalized.OnFocusChanged
 	normalized.OnFocusChanged = func(focused bool) {
 		if userFocusCallback != nil {
@@ -255,7 +272,7 @@ func New(options Options) (*App, error) {
 		}
 	}
 
-	if err := app.addPreloadScript(bridge.BootstrapScript()); err != nil {
+	if err := app.refreshBridgeCapabilities(); err != nil {
 		return nil, err
 	}
 
@@ -421,6 +438,47 @@ func (a *App) addPreloadScript(script string) error {
 	combined := strings.Join(a.preloadScripts, "\n;\n")
 	a.preloadMu.Unlock()
 	return a.impl.PrependBootstrapScript(combined)
+}
+
+// refreshBridgeCapabilities updates document-start metadata and the current
+// page. It does not register methods or restrict the raw bridge transport.
+func (a *App) refreshBridgeCapabilities() error {
+	publish, err := a.prepareBridgeCapabilities(a.bridge.MethodNames())
+	if err == nil {
+		publish()
+	}
+	return err
+}
+
+// prepareBridgeCapabilities installs the prospective document-start snapshot
+// before a service mutation commits. On failure the previous preload remains
+// current. The returned function publishes the snapshot after registration.
+func (a *App) prepareBridgeCapabilities(methods []string) (func(), error) {
+	if a.impl == nil {
+		return func() {}, nil
+	}
+	a.preloadMu.Lock()
+	defer a.preloadMu.Unlock()
+	revision := a.methodRevision + 1
+	script := bridge.BootstrapScriptWithMethods(methods, revision)
+	scripts := append([]string(nil), a.preloadScripts...)
+	if len(scripts) == 0 {
+		scripts = append(scripts, script)
+	} else {
+		scripts[0] = script
+	}
+	if err := a.impl.PrependBootstrapScript(strings.Join(scripts, "\n;\n")); err != nil {
+		return nil, err
+	}
+	a.preloadScripts = scripts
+	a.methodRevision = revision
+	// Before Run there is no page to receive events. The synchronous preload
+	// snapshot still advertises the complete registry on first navigation.
+	return func() {
+		_ = a.bridge.Emit("gosx.desktop.methods.changed", map[string]any{
+			"methods": methods, "revision": revision,
+		})
+	}, nil
 }
 
 func (a *App) registerNativeBridgeMethods() error {
@@ -841,6 +899,19 @@ func normalizeOptions(options Options) (Options, error) {
 	options.Accessibility.Name = strings.TrimSpace(options.Accessibility.Name)
 	options.Accessibility.Description = strings.TrimSpace(options.Accessibility.Description)
 
+	if options.WindowState != nil {
+		state := *options.WindowState
+		if state.Debounce < 0 {
+			return Options{}, fmt.Errorf("%w: window-state debounce must not be negative", ErrInvalidOptions)
+		}
+		if state.Debounce == 0 {
+			state.Debounce = defaultWindowStateDebounce
+		}
+		if strings.ContainsRune(state.Path, '\x00') {
+			return Options{}, fmt.Errorf("%w: window-state path contains NUL", ErrInvalidOptions)
+		}
+		options.WindowState = &state
+	}
 	if options.URL != "" && options.HTML != "" {
 		return Options{}, fmt.Errorf("%w: url and html are mutually exclusive", ErrInvalidOptions)
 	}

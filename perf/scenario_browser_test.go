@@ -168,9 +168,11 @@ func TestRunScenarioAttributesScene3DRouteDeadlineToScenePhase(t *testing.T) {
 
 	var diagnostics bytes.Buffer
 	report, err := RunScenario(&Scenario{
-		URLs:        []string{srv.URL},
-		Frames:      999,
-		Timeout:     600 * time.Millisecond,
+		URLs:   []string{srv.URL},
+		Frames: 999,
+		// Allow navigation and the 300 ms settle phase on loaded runners.
+		// This fixture never renders, so the deadline must occur in scene wait.
+		Timeout:     3 * time.Second,
 		Headless:    true,
 		diagnostics: &diagnostics,
 	})

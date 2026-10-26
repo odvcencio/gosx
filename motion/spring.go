@@ -1,10 +1,16 @@
 package motion
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // SpringDT is the fixed internal timestep used by the spring integrator (seconds).
 // Both native Go and WASM use this constant to guarantee deterministic output.
 const SpringDT = 1.0 / 240.0
+
+const springMaxTime = 10.0
 
 // Spring drives a scalar from `from` to `to` under physics.
 // Zero values are replaced by sane defaults before integration.
@@ -38,16 +44,22 @@ func (s Spring) defaults() Spring {
 // No mutable state is used or modified across calls.
 //
 //   - t <= 0  → returns from exactly.
+//   - NaN t holds from; positive infinity holds to.
 //   - t >= Duration(from,to)  → returns to exactly (early-out).
 //   - otherwise: runs int(t/SpringDT) fixed-dt steps from t0 and returns x.
+//     Replay never exceeds the ten-second duration cap, even with invalid
+//     physics whose settle-time calculation produces NaN.
 func (s Spring) Value(from, to, t float64) float64 {
-	if t <= 0 {
+	if !(t > 0) {
 		return from
 	}
 
 	// Early-out: if the spring has settled, return to exactly.
-	if t >= s.Duration(from, to) {
+	if math.IsInf(t, 1) || t >= s.Duration(from, to) {
 		return to
+	}
+	if t > springMaxTime {
+		t = springMaxTime
 	}
 
 	p := s.defaults()
@@ -56,9 +68,9 @@ func (s Spring) Value(from, to, t float64) float64 {
 	x := from
 	v := p.Velocity
 	for i := 0; i < steps; i++ {
-		F := -p.Stiffness*(x-to) - p.Damping*v
-		v += (F / p.Mass) * SpringDT
-		x += v * SpringDT
+		F := float64(-p.Stiffness*(x-to)) - float64(p.Damping*v)
+		v += float64((F / p.Mass) * SpringDT)
+		x += float64(v * SpringDT)
 	}
 	return x
 }
@@ -99,7 +111,6 @@ func (s Spring) Value(from, to, t float64) float64 {
 // Guard: if rate ≤ 0 (unreachable with Damping > 0 after defaults), the
 // 10 s cap is returned.
 func (s Spring) Duration(from, to float64) float64 {
-	const maxTime = 10.0
 	const settleTol = 1e-3
 	const safety = 1.4
 
@@ -109,33 +120,33 @@ func (s Spring) Duration(from, to float64) float64 {
 	c := p.Damping
 
 	omega0 := math.Sqrt(k / m)
-	zeta := c / (2 * math.Sqrt(k*m))
+	zeta := c / (2 * math.Sqrt(float64(k*m)))
 
 	var rate float64
 	if zeta >= 1 {
 		// Critically damped or overdamped: slower pole dominates.
 		// At zeta == 1, sqrt(zeta²-1) == 0 so rate = omega0 (correct limit).
-		rate = omega0 * (zeta - math.Sqrt(zeta*zeta-1))
+		rate = float64(omega0 * (zeta - math.Sqrt(float64(zeta*zeta)-1)))
 	} else {
 		// Underdamped: envelope decays as exp(-zeta*omega0*t).
-		rate = zeta * omega0
+		rate = float64(zeta * omega0)
 	}
 
 	if rate <= 0 {
-		return maxTime
+		return springMaxTime
 	}
 
 	var ts float64
 	if zeta >= 1 {
 		// Polynomial prefactor correction (one Newton step from the pure-exponential estimate).
-		t0 := -math.Log(settleTol) / rate
-		ts = safety * ((-math.Log(settleTol) + math.Log(1+rate*t0)) / rate)
+		t0 := -det.Log(settleTol) / rate
+		ts = float64(safety * ((-det.Log(settleTol) + det.Log(1+float64(rate*t0))) / rate))
 	} else {
-		ts = safety * (-math.Log(settleTol) / rate)
+		ts = float64(safety * (-det.Log(settleTol) / rate))
 	}
 
-	if ts > maxTime {
-		return maxTime
+	if ts > springMaxTime {
+		return springMaxTime
 	}
 	return ts
 }

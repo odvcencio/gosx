@@ -88,3 +88,11 @@ func TestHandshakeRejectsContractAndVariantDrift(t *testing.T) {
 		t.Fatal("stale manifest identity was accepted")
 	}
 }
+
+func TestHandshakeRejectsPreDispatchOpsRuntime(t *testing.T) {
+	h := NewHandshake(VariantCore)
+	h.ABIVersion = 3
+	if err := h.Validate(FeatureCore); err == nil {
+		t.Fatal("pre-dispatch-op WASM accepted by current bootstrap contract")
+	}
+}

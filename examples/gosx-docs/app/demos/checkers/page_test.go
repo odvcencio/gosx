@@ -24,8 +24,9 @@ func TestCheckersPageCompilesWithSemanticFallback(t *testing.T) {
 	for _, required := range []string{
 		"<Scene3D",
 		"/demos/posters/checkers.webp",
-		"Static poster",
-		"interactive Scene3D when available",
+		`data-gosx-scene3d-status-scope`,
+		`data-gosx-scene3d-status="renderer"`,
+		`data-gosx-scene3d-status="fallback"`,
 		"Keyboard board · 121 holes",
 		"data-checkers-hole",
 		"checkers-status",
@@ -47,6 +48,9 @@ func TestCheckersPageCompilesWithSemanticFallback(t *testing.T) {
 	}
 	if strings.Contains(text, "/checkers-native-telemetry.json") {
 		t.Fatal("public demo page links to renderer telemetry")
+	}
+	if strings.Contains(text, "Static poster · interactive Scene3D when available") {
+		t.Fatal("renderer status must reflect the mounted runtime, not a permanent poster label")
 	}
 }
 

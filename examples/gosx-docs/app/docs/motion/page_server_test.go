@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,9 +13,7 @@ import (
 	"m31labs.dev/gosx/route"
 )
 
-// The adapter report is demo diagnostics. It ships as a page-scoped lifecycle
-// script on this route, not in the core bootstrap that every GoSX page loads.
-func TestMotionPageLoadsAdapterReportAsPageScript(t *testing.T) {
+func TestMotionPageUsesNativeSceneStatus(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve test source")
@@ -31,20 +28,20 @@ func TestMotionPageLoadsAdapterReportAsPageScript(t *testing.T) {
 		t.Fatalf("load motion page: %v", err)
 	}
 	head := gosx.RenderHTML(ctx.Head())
-	if !strings.Contains(head, `src="/motion-adapter-report.js"`) || !strings.Contains(head, `data-gosx-script="lifecycle"`) {
-		t.Fatalf("motion page head does not load /motion-adapter-report.js as a lifecycle script:\n%s", head)
+	if strings.Contains(head, "motion-adapter-report.js") {
+		t.Fatal("motion page must use Scene3D status bindings instead of an app script")
 	}
 
-	source, err := os.ReadFile(filepath.Join(dir, "..", "..", "..", "public", "motion-adapter-report.js"))
+	source, err := os.ReadFile(filepath.Join(dir, "page.gsx"))
 	if err != nil {
-		t.Fatalf("read motion-adapter-report.js: %v", err)
+		t.Fatal(err)
 	}
-	if strings.Contains(string(source), "innerHTML") {
-		t.Fatal("motion-adapter-report.js must write text only")
+	for _, marker := range []string{"data-gosx-scene3d-status-scope", `data-gosx-scene3d-status="renderer"`, `data-gosx-scene3d-status="adapter"`} {
+		if !strings.Contains(string(source), marker) {
+			t.Errorf("motion page is missing %q", marker)
+		}
 	}
-	// The script writes inside the tree it observes; observing childList would
-	// let its own textContent write re-trigger it without end.
-	if regexp.MustCompile(`childList\s*:`).Match(source) {
-		t.Fatal("motion-adapter-report.js must observe only the scene truth attribute, not childList")
+	if _, err := os.Stat(filepath.Join(dir, "..", "..", "..", "public", "motion-adapter-report.js")); !os.IsNotExist(err) {
+		t.Fatal("motion docs must not ship an app-authored adapter reporter")
 	}
 }

@@ -1,4 +1,4 @@
-//go:build !windows || (windows && !amd64 && !arm64)
+//go:build !(windows && (amd64 || arm64)) && !(darwin && !ios && (amd64 || arm64))
 
 package desktop
 

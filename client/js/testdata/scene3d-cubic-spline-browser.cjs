@@ -1221,7 +1221,7 @@ window.__affineInputEvents = [];
   function wgPassState(pass) {
     var state = wgPassStates.get(pass);
     if (!state) {
-      state = { vertexBuffers: Object.create(null), groups: Object.create(null),
+      state = { vertexBuffers: Object.create(null), groups: Object.create(null), dynamicOffsets: Object.create(null),
         frontFace: '', cullMode: '', records: [] };
       wgPassStates.set(pass, state);
     }
@@ -1236,7 +1236,10 @@ window.__affineInputEvents = [];
       var entries = args[0] && Array.isArray(args[0].entries) ? args[0].entries : [];
       entries.forEach(function (entry) {
         var resource = entry && entry.resource;
-        if (resource && resource.buffer) bindings[String(entry.binding)] = wgBufferID(resource.buffer);
+        if (resource && resource.buffer) {
+          bindings[String(entry.binding)] = wgBufferID(resource.buffer);
+          if (entry.binding === 19) bindings.modelBaseOffset = Number(resource.offset || 0);
+        }
       });
       wgBindGroups.set(group, bindings); return group;
     });
@@ -1249,6 +1252,17 @@ window.__affineInputEvents = [];
       });
       return pipeline;
     });
+    wrap(GPUDevice.prototype, 'createRenderPipelineAsync', function (orig, args) {
+      var primitive = args[0] && args[0].primitive || {};
+      var state = {
+        frontFace: String(primitive.frontFace || 'ccw'),
+        cullMode: String(primitive.cullMode || 'none'),
+      };
+      return orig.apply(this, args).then(function (pipeline) {
+        wgPipelines.set(pipeline, state);
+        return pipeline;
+      });
+    });
   }
   if (typeof GPUCommandEncoder !== 'undefined' && GPUCommandEncoder.prototype &&
       GPUCommandEncoder.prototype.beginRenderPass) {
@@ -1259,7 +1273,7 @@ window.__affineInputEvents = [];
   if (typeof GPUQueue !== 'undefined' && GPUQueue.prototype) {
     wrap(GPUQueue.prototype, 'writeBuffer', function (orig, args) {
       var values = floats(args[2]);
-      if (values) window.__affineWGUploads.push({ buffer: wgBufferID(args[0]), values: values });
+      if (values) window.__affineWGUploads.push({ buffer: wgBufferID(args[0]), offset: Number(args[1] || 0), values: values });
       return orig.apply(this, args);
     });
     wrap(GPUQueue.prototype, 'submit', function (orig, args) {
@@ -1274,6 +1288,7 @@ window.__affineInputEvents = [];
     });
     wrap(proto, 'setBindGroup', function (orig, args) {
       wgPassState(this).groups[String(args[0])] = wgBindGroups.get(args[1]) || null;
+      wgPassState(this).dynamicOffsets[String(args[0])] = Array.from(args[2] || []).slice(args[3] || 0, args[4] == null ? undefined : (args[3] || 0) + args[4]);
       return orig.apply(this, args);
     });
     wrap(proto, 'setPipeline', function (orig, args) {
@@ -1288,6 +1303,8 @@ window.__affineInputEvents = [];
         var record = { kind: name,
           positionBuffer: state.vertexBuffers['0'] || 0,
           materialBuffer: material && material['0'] || 0,
+          modelBuffer: material && material['19'] || 0,
+          modelOffset: (material && material.modelBaseOffset || 0) + ((state.dynamicOffsets['1'] || [])[0] || 0),
           frontFace: state.frontFace, cullMode: state.cullMode,
           bundle: retained ? -1 : 0 };
         window.__affineWGDrawRecords.push(record);
@@ -1494,17 +1511,20 @@ function affineEvidenceExpr() {
       'var record=glRecords[j],hasMatrix=false;' +
       'for(var k=0;k<record.matrices.length;k++)if(close(record.matrices[k],model)){hasMatrix=true;break;}' +
       'if(record.buffers.indexOf(glUpload.buffer)>=0&&hasMatrix){glDraw=record;break;}}' +
-    'var wgPosition=null,wgMaterial=null,wgDraw=null,wgUploads=window.__affineWGUploads||[];' +
-    'for(var wi=0;wi<wgUploads.length;wi++){' +
-      'var upload=wgUploads[wi];if(!wgPosition&&close(upload.values,local))wgPosition=upload;' +
-      'if(!wgMaterial&&upload.values&&upload.values.length>=36&&close(upload.values.slice(20,36),model))wgMaterial=upload;}' +
+    'var wgPosition=null,wgMaterial=null,wgModel=null,wgDraw=null,wgUploads=window.__affineWGUploads||[];' +
+    'for(var wi=0;wi<wgUploads.length;wi++)if(close(wgUploads[wi].values,local)){wgPosition=wgUploads[wi];break;}' +
     'var wgRecords=window.__affineWGDrawRecords||[];' +
     'var executed=window.__affineWGExecutedBundles||[];' +
-    'for(var wj=0;wgPosition&&wgMaterial&&wj<wgRecords.length;wj++){' +
-      'if(wgRecords[wj].positionBuffer===wgPosition.buffer&&' +
-        'wgRecords[wj].materialBuffer===wgMaterial.buffer&&' +
-        '(wgRecords[wj].bundle===0||executed.indexOf(wgRecords[wj].bundle)>=0)){' +
-          'wgDraw=wgRecords[wj];break;}}' +
+    'for(var wj=0;wgPosition&&wj<wgRecords.length&&!wgDraw;wj++){' +
+      'var draw=wgRecords[wj];if(draw.positionBuffer!==wgPosition.buffer||' +
+        '(draw.bundle!==0&&executed.indexOf(draw.bundle)<0))continue;' +
+      'var materialUpload=null,modelUpload=null;' +
+      'for(var ui=0;ui<wgUploads.length;ui++){' +
+        'var upload=wgUploads[ui];if(upload.buffer===draw.materialBuffer&&upload.values.length===72)materialUpload=upload;' +
+        'var row=(draw.modelOffset-(upload.offset||0))/4;' +
+        'if(upload.buffer===draw.modelBuffer&&row>=0&&Number.isInteger(row)&&close(upload.values.slice(row,row+16),model))' +
+          'modelUpload={buffer:upload.buffer,offset:draw.modelOffset,values:upload.values.slice(row,row+16)};}' +
+      'if(materialUpload&&modelUpload){wgMaterial=materialUpload;wgModel=modelUpload;wgDraw=draw;}}' +
     'var picked=null,events=window.__affineInputEvents||[];' +
     'for(var ei=0;ei<events.length;ei++){' +
       'var input=events[ei]&&events[ei].input;' +
@@ -1512,7 +1532,7 @@ function affineEvidenceExpr() {
     'var snapshot=window.__gosx_scene3d_debug&&window.__gosx_scene3d_debug.inspect(r.mount.id);' +
     'var stats=snapshot&&snapshot.webgpuStats||{},diagnostics=snapshot&&snapshot.rendererDiagnostics||{};' +
     'return {parent:Array.prototype.slice.call(r.object.parentMatrix||[]),' +
-      'glUpload:glUpload,glDraw:glDraw,wgPosition:wgPosition,wgMaterial:wgMaterial,wgDraw:wgDraw,' +
+      'glUpload:glUpload,glDraw:glDraw,wgPosition:wgPosition,wgMaterial:wgMaterial,wgModel:wgModel,wgDraw:wgDraw,' +
       'pick:picked,draws:window.__cubicGLDraws,gl:window.__cubicGLContext,' +
       'wgPasses:window.__cubicWGPasses,wgSubmits:window.__cubicWGSubmits,' +
       'executedBundles:executed.slice(),' +
@@ -1961,11 +1981,11 @@ async function runAffineCase(send, c, sessionId) {
         fail('[' + c.name + '] native WebGL2 draw evidence missing: ' + JSON.stringify(evidence));
       }
     } else {
-      if (!evidence.wgPosition || !evidence.wgMaterial || !evidence.wgDraw) {
+      if (!evidence.wgPosition || !evidence.wgMaterial || !evidence.wgModel || !evidence.wgDraw) {
         fail('[' + c.name + '] no WebGPU draw joined retained local vertices to affine material: ' +
           JSON.stringify(evidence));
       } else {
-        const submittedModel = evidence.wgMaterial.values.slice(20, 36);
+        const submittedModel = evidence.wgModel.values;
         assertClose(evidence.wgPosition.values, AFFINE_LOCAL_POSITIONS,
           '[' + c.name + '] submitted retained local vertices', 1e-6);
         assertClose(submittedModel, AFFINE_MODEL_MATRIX,

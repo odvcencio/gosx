@@ -162,11 +162,11 @@ func closestPointsBetweenSegments(a1, a2, b1, b2 Vec3) (Vec3, Vec3) {
 			s = clampFloat(-c/a, 0, 1)
 		} else {
 			b := d1.Dot(d2)
-			denom := a*e - b*b
+			denom := float64(a*e) - float64(b*b)
 			if denom > epsilon {
-				s = clampFloat((b*f-c*e)/denom, 0, 1)
+				s = clampFloat((float64(b*f)-float64(c*e))/denom, 0, 1)
 			}
-			t = (b*s + f) / e
+			t = (float64(b*s) + f) / e
 			if t < 0 {
 				t = 0
 				s = clampFloat(-c/a, 0, 1)

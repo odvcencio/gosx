@@ -493,7 +493,11 @@
       const nextConfig = selected === "None" ? null : objects[selected] || objects.Sphere || null;
       const nextState = sceneManagedFluidObjectObjectState(state, nextConfig);
       if (nextState) {
-        nextState.position = sceneManagedFluidObjectClampObjectPosition(sceneManagedFluidObjectCopyVec3(state.sharedPosition || sceneManagedFluidObjectConfigPosition(nextConfig)), nextConfig, controls);
+        const position = sceneManagedFluidObjectCopyVec3(state.sharedPosition || sceneManagedFluidObjectConfigPosition(nextConfig));
+        // Selection visibility is not a collision floor: a selected model may
+        // start above the previous object, then freely submerge while dragged.
+        position.y = Math.max(position.y, sceneNumber(nextConfig.selectionMinY, position.y));
+        nextState.position = sceneManagedFluidObjectClampObjectPosition(position, nextConfig, controls);
         nextState.pendingPrevious = {
           x: nextState.position.x,
           y: sceneManagedFluidObjectInactiveY(profile),
@@ -528,7 +532,7 @@
         objectState.position.y = floor;
         objectState.velocity.y = 0;
       }
-    } else {
+    } else if (state.pointerMode !== "MoveObject") {
       sceneManagedFluidObjectStepPhysics(objectState, config, controls, profile, seconds);
     }
     const position = sceneManagedFluidObjectClampObjectPosition(sceneManagedFluidObjectCopyVec3(objectState.position), config, controls);
@@ -1107,19 +1111,7 @@
   function sceneManagedFluidObjectHitMatchesConfig(hit, config) {
     const id = sceneManagedFluidObjectHitObjectID(hit);
     const wanted = String(config && (config.id || config.label || config.objectID) || "").trim();
-    return !!id && !!wanted && id === wanted;
-  }
-
-  function sceneManagedFluidObjectFindBundleObject(entries, config) {
-    if (!Array.isArray(entries) || !config) return null;
-    const wanted = String(config.id || config.objectID || config.label || "").trim();
-    if (!wanted) return null;
-    for (let i = 0; i < entries.length; i += 1) {
-      const entry = entries[i];
-      const id = String(entry && (entry.id || entry.objectID || entry.name || entry.label) || "").trim();
-      if (id === wanted) return entry;
-    }
-    return null;
+    return !!id && !!wanted && (id === wanted || id.startsWith(wanted + "/"));
   }
 
   function sceneManagedFluidObjectHitTestMode(config) {
@@ -1134,14 +1126,16 @@
 
   function sceneManagedFluidObjectPickConfigObject(raySample, bundle, config) {
     if (!raySample || !bundle || !config || typeof sceneRaycastPickGroup !== "function") return null;
-    const meshObject = sceneManagedFluidObjectFindBundleObject(bundle.meshObjects, config);
-    if (meshObject && bundle.worldMeshPositions) {
-      const meshHit = sceneRaycastPickGroup(raySample.ray, [meshObject], bundle.worldMeshPositions, 0, bundle.worldMeshUVs);
-      if (meshHit) return meshHit;
-    }
-    const object = sceneManagedFluidObjectFindBundleObject(bundle.objects, config);
-    if (object && bundle.worldPositions) {
-      return sceneRaycastPickGroup(raySample.ray, [object], bundle.worldPositions, 0, null);
+    for (const [entries, positions, uvs] of [
+      [bundle.meshObjects, bundle.worldMeshPositions, bundle.worldMeshUVs],
+      [bundle.objects, bundle.worldPositions, null],
+    ]) {
+      const objects = Array.isArray(entries) ? entries.filter(function(object) {
+        return sceneManagedFluidObjectHitMatchesConfig({ object }, config);
+      }) : [];
+      if (!objects.length || !positions) continue;
+      const hit = sceneRaycastPickGroup(raySample.ray, objects, positions, 0, uvs);
+      if (hit) return hit;
     }
     return null;
   }

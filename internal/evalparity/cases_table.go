@@ -143,30 +143,84 @@ var cases = []Case{
 	{
 		ID:           "numeric_precision_large_int",
 		Category:     "numeric",
-		Note:         "a bare props.A read (no arithmetic) preserves full int64 precision on every backend — reflect and JSON round-trips both pass the exact value through untouched. Arithmetic is what loses precision: route's numericValue and the VM's Value both fold every number through a float64 field, which cannot represent 2^53+1 exactly; transpile keeps the real Go int64",
+		Note:         "all backends preserve signed int64 precision through props and integer arithmetic",
 		Expr:         "props.A + 0",
 		PropsFields:  "A int64",
 		PropsLiteral: "A: 9007199254740993",
 		PropsValue:   map[string]any{"A": int64(9007199254740993)},
 		Want:         "9007199254740993",
-		Diverges: map[Backend]string{
-			Route: "9.007199254740992e+15",
-			VM:    "9007199254740992",
-		},
-		DivergesReason: map[Backend]string{
-			Route: "route/fileeval.go's applyFileBinaryOp ADD always returns numericValue(left)+numericValue(right) as a bare float64, which cannot represent 2^53+1 exactly (rounds to 9007199254740992) and then formats through fmt.Sprint's large-magnitude float path as scientific notation",
-			VM:    "client/vm/value.go's Value packs every number into a float64 num field; Add keeps the TypeInt tag when both operands are int-kind, but the value it carries already rounded to the nearest representable float64 (9007199254740992) before Add ever ran",
-		},
+	},
+
+	{
+		ID: "numeric_precision_sub", Category: "numeric",
+		Note: "Signed 64-bit integer operations agree with native Go without floating-point conversion.",
+		Expr: "props.A - props.B", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: 9007199254740993, B: 1",
+		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(1)}, Want: "9007199254740992",
+	},
+
+	{
+		ID: "numeric_precision_mul", Category: "numeric",
+		Note: "Signed 64-bit integer operations agree with native Go without floating-point conversion.",
+		Expr: "props.A * props.B", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: 9007199254740993, B: 3",
+		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(3)}, Want: "27021597764222979",
+	},
+
+	{
+		ID: "numeric_precision_div", Category: "numeric",
+		Note: "Signed 64-bit integer operations agree with native Go without floating-point conversion.",
+		Expr: "props.A / props.B", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: 9007199254740993, B: 3",
+		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(3)}, Want: "3002399751580331",
+	},
+
+	{
+		ID: "numeric_precision_mod", Category: "numeric",
+		Note: "Signed 64-bit integer operations agree with native Go without floating-point conversion.",
+		Expr: "props.A % props.B", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: 9007199254740993, B: 3",
+		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(3)}, Want: "0",
+	},
+
+	{
+		ID: "numeric_precision_order", Category: "numeric",
+		Note: "Signed 64-bit integer operations agree with native Go without floating-point conversion.",
+		Expr: "props.A > props.B", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: 9007199254740993, B: 9007199254740992",
+		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(9007199254740992)}, Want: "true",
+	},
+
+	{
+		ID: "numeric_precision_negative", Category: "numeric",
+		Note: "Signed 64-bit integer operations agree with native Go without floating-point conversion.",
+		Expr: "-props.A", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: 9007199254740993, B: 0",
+		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(0)}, Want: "-9007199254740993",
+	},
+
+	{
+		ID: "numeric_precision_overflow", Category: "numeric",
+		Note: "Signed 64-bit integer operations agree with native Go without floating-point conversion.",
+		Expr: "props.A + props.B", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: 9223372036854775807, B: 1",
+		PropsValue:   map[string]any{"A": int64(9223372036854775807), "B": int64(1)}, Want: "-9223372036854775808",
+	},
+
+	{
+		ID: "numeric_precision_min_div", Category: "numeric",
+		Note: "Signed 64-bit integer operations agree with native Go without floating-point conversion.",
+		Expr: "props.A / props.B", PropsFields: "A int64\nB int64",
+		PropsLiteral: "A: -9223372036854775808, B: -1",
+		PropsValue:   map[string]any{"A": int64(-9223372036854775808), "B": int64(-1)}, Want: "-9223372036854775808",
 	},
 
 	{
 		ID: "equality_large_integers", Category: "numeric",
-		Note: "route compares integer identifiers without float64 rounding",
+		Note: "all backends compare integer identifiers without float64 rounding",
 		Expr: "props.A == props.B", PropsFields: "A int64\nB int64",
 		PropsLiteral: "A: 9007199254740993, B: 9007199254740992",
 		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(9007199254740992)}, Want: "false",
-		Diverges:       map[Backend]string{VM: "true"},
-		DivergesReason: map[Backend]string{VM: "the VM stores both identifiers in float64 and rounds them to the same value"},
 	},
 	{
 		ID: "equality_number_nonnumeric_string", Category: "numeric",
@@ -452,18 +506,12 @@ var cases = []Case{
 	{
 		ID:           "index_map_missing_key",
 		Category:     "indexing",
-		Note:         "missing map key: real Go returns the value type's zero value at compile-checked type, matching VM; route fails soft to \"\" the same way index_slice_out_of_range does",
+		Note:         "missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends. File routes preserve other element zero types; dynamically nil values render as empty text and compare equal to nil",
 		Expr:         `props.M["missing"]`,
 		PropsFields:  "M map[string]int",
 		PropsLiteral: `M: map[string]int{"k": 42}`,
 		PropsValue:   map[string]any{"M": map[string]int{"k": 42}},
 		Want:         "0",
-		Diverges: map[Backend]string{
-			Route: "",
-		},
-		DivergesReason: map[Backend]string{
-			Route: "route/fileeval.go's indexMapValue (via mapLookup) returns nil for a missing key instead of the value type's zero value, which renders as empty text instead of \"0\"",
-		},
 	},
 	{
 		ID:           "index_nested_struct_field",
@@ -678,15 +726,9 @@ var cases = []Case{
 	{
 		ID:       "numeric_negative_literal_div",
 		Category: "numeric",
-		Note:     "-7 / 2: real Go and the VM truncate toward zero (-3); route's applyFileUnaryOp SUB case converts through numericValue (float64) before QUO ever sees the operand, discarding the int-ness the QUO fix (route/exprlower.go) depends on — a known, narrower-than-full-fix gap: QUO's fix only recovers int-ness from a DIRECT int operand (a struct field, a bare positive literal), not one already erased by a prior unary/binary op. Fixing that fully means every arithmetic op preserving Go's static type through the interpreter's untyped `any` pipeline, a materially bigger change than this harness's targeted QUO fix",
+		Note:     "Integer negation keeps its integer kind, so chained integer division truncates toward zero on every backend.",
 		Expr:     "-7 / 2",
 		Want:     "-3",
-		Diverges: map[Backend]string{
-			Route: "-3.5",
-		},
-		DivergesReason: map[Backend]string{
-			Route: "applyFileUnaryOp's SUB case returns -numericValue(value) (always float64); QUO's isIntegerKind check then sees a float64 left operand and falls back to float division",
-		},
 	},
 	{
 		ID:       "bool_literal_true",

@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -38,6 +39,7 @@ type Bridge struct {
 	signalFn       func(name, valueJSON string)          // callback to notify JS of shared signal changes
 	dispatching    map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
 	unsubs         map[string][]func()                   // per-island unsubscribe handles for shared signals
+	pendingReaders []*sharedIslandReader                 // shared readers awaiting the outermost store update
 	hostFactories  map[string]HostReceiverFactory        // receiver name -> per-island capability factory
 	hostReceivers  map[string]map[string]vm.HostReceiver // island id -> live receiver bindings
 
@@ -68,6 +70,14 @@ type Bridge struct {
 	relayInboundDepth int
 }
 
+// sharedIslandReader groups an island's subscriptions. A queued callback from
+// a disposed or reloaded program must never render its replacement.
+type sharedIslandReader struct {
+	id      string
+	island  *vm.Island
+	pending bool
+}
+
 // SetPatchCallback registers the function called when shared signal changes
 // trigger a re-render on an island. In WASM, this calls __gosx_apply_patches.
 func (b *Bridge) SetPatchCallback(fn func(islandID, patchJSON string)) {
@@ -93,8 +103,10 @@ func (b *Bridge) EmitPatches(islandID string, patches []vm.PatchOp) {
 // Any island can read/write shared signals. When a shared signal changes,
 // all islands that reference it are re-rendered — like Redux, but reactive.
 type Store struct {
-	signals  map[string]*signal.Signal[vm.Value]
-	onChange func(name string, value vm.Value)
+	signals     map[string]*signal.Signal[vm.Value]
+	onChange    func(name string, value vm.Value)
+	updating    bool
+	afterUpdate func()
 }
 
 // NewStore creates an empty shared store.
@@ -115,16 +127,14 @@ func (s *Store) SetObserver(fn func(name string, value vm.Value)) {
 // pass here is defensive for hand-rolled callers that haven't migrated.
 func (s *Store) Set(name string, val vm.Value) {
 	name = signal.ResolveAlias(name)
+	if !s.updating {
+		s.updating = true
+		defer s.endUpdate()
+	}
 	if sig, ok := s.signals[name]; ok {
 		sig.Set(val)
 	} else {
-		sig := signal.New(val)
-		s.signals[name] = sig
-		sig.Subscribe(func() {
-			if s.onChange != nil {
-				s.onChange(name, sig.Get())
-			}
-		})
+		sig := s.Signal(name, val)
 		if s.onChange != nil {
 			s.onChange(name, sig.Get())
 		}
@@ -132,15 +142,45 @@ func (s *Store) Set(name string, val vm.Value) {
 }
 
 // SetBatch creates or updates multiple shared signals in one notification pass.
+// Islands reconcile after the outermost batch's notifications have settled,
+// including derived values and writes from observers. Signal notifications
+// retain their individual delivery semantics.
 func (s *Store) SetBatch(values map[string]vm.Value) {
 	if len(values) == 0 {
 		return
 	}
+	if !s.updating {
+		s.updating = true
+		defer s.endUpdate()
+	}
 	signal.Batch(func() {
+		var created []string
 		for name, value := range values {
-			s.Set(name, value)
+			name = signal.ResolveAlias(name)
+			if sig, exists := s.signals[name]; exists {
+				sig.Set(value)
+			} else {
+				s.Signal(name, value)
+				created = append(created, name)
+			}
+		}
+		// Newly created signals have no Set notification to defer. Publish
+		// their first notification only after the complete batch is installed.
+		for _, name := range created {
+			if s.onChange != nil {
+				s.onChange(name, s.signals[name].Get())
+			}
 		}
 	})
+}
+
+// endUpdate keeps readers behind the complete notification pass for both
+// individual writes and batches, including reentrant observer writes.
+func (s *Store) endUpdate() {
+	s.updating = false
+	if s.afterUpdate != nil {
+		s.afterUpdate()
+	}
 }
 
 // Get reads a shared signal value.
@@ -194,9 +234,8 @@ func New() *Bridge {
 		hostFactories:  make(map[string]HostReceiverFactory),
 		hostReceivers:  make(map[string]map[string]vm.HostReceiver),
 	}
-	b.store.SetObserver(func(name string, value vm.Value) {
-		b.notifySharedSignal(name, value)
-	})
+	b.store.SetObserver(b.notifySharedSignal)
+	b.store.afterUpdate = b.flushSharedIslands
 	return b
 }
 
@@ -230,7 +269,7 @@ const (
 // See bridge_reconciler_full.go vs bridge_reconciler_islands.go.
 func (b *Bridge) HydrateReconciler(surfaceKind, id, componentName, propsJSON string, programData []byte, format string) error {
 	if surfaceKind == SurfaceKindScene3D {
-		return fmt.Errorf("scene3d hydration requires HydrateReconcilerOutput")
+		return errors.New("scene3d hydration requires HydrateReconcilerOutput")
 	}
 	_, err := b.HydrateReconcilerOutput(surfaceKind, id, componentName, propsJSON, programData, format)
 	return err
@@ -273,9 +312,8 @@ func (b *Bridge) hydrateIsland(id, componentName, propsJSON string, programData 
 		b.bindSharedSignals(island, defs)
 		hydrationPatches = island.Reconcile()
 	}
-	b.unsubs[id] = b.subscribeSharedSignals(id, defs)
-
 	b.islands[id] = island
+	b.unsubs[id] = b.subscribeSharedSignals(id, defs)
 	b.reconcilers[id] = island
 	if compute {
 		b.computeIslands[id] = struct{}{}
@@ -323,6 +361,14 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 		b.dispatching = make(map[string]uint32)
 	}
 
+	// Keep peers behind the complete handler notification pass. Deliver them
+	// before the writer reconciles, so peer callbacks can update its result.
+	ownsUpdate := !b.store.updating
+	var flush func()
+	if ownsUpdate {
+		b.store.updating = true
+		flush = b.store.afterUpdate
+	}
 	b.dispatching[islandID]++
 	defer func() {
 		if b.dispatching[islandID] <= 1 {
@@ -331,14 +377,21 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 			b.dispatching[islandID]--
 		}
 	}()
+	// Flush failed handlers before releasing their writer guard. The separate
+	// cleanup defer still runs if an observer panics during this fallback.
+	defer func() {
+		if ownsUpdate && b.store.updating {
+			b.store.endUpdate()
+		}
+	}()
 
-	return island.Dispatch(handlerName, eventDataJSON), nil
+	return island.DispatchWithFlush(handlerName, eventDataJSON, flush), nil
 }
 
 // SetSharedSignalJSON updates a shared signal from a JSON payload.
 // This is used by hub/websocket clients to drive island state from realtime events.
 func (b *Bridge) SetSharedSignalJSON(name, valueJSON string) error {
-	value, err := decodeSharedSignalValue(name, []byte(valueJSON))
+	value, err := decodeSharedSignalValue(name, valueJSON)
 	if err != nil {
 		return err
 	}
@@ -349,22 +402,47 @@ func (b *Bridge) SetSharedSignalJSON(name, valueJSON string) error {
 // SetSharedSignalBatchJSON updates multiple shared signals from a JSON object.
 // The payload shape is {"$signal.name": <json value>, ...}.
 func (b *Bridge) SetSharedSignalBatchJSON(batchJSON string) error {
+	return b.setSharedSignalBatchJSON(batchJSON, false)
+}
+
+// SetChangedSharedSignalBatchJSON applies a state snapshot, notifying only
+// signals whose current value differs. Event/pulse writes should continue to
+// use SetSharedSignalBatchJSON. Both paths validate the whole batch first.
+func (b *Bridge) SetChangedSharedSignalBatchJSON(batchJSON string) error {
+	return b.setSharedSignalBatchJSON(batchJSON, true)
+}
+
+func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) error {
 	if batchJSON == "" {
 		batchJSON = "{}"
 	}
 
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(batchJSON), &payload); err != nil {
+	// Use the same number-preserving decoder as individual writes. Decoding
+	// into map[string]any with json.Unmarshal rounds wide integers to float64
+	// before the VM can represent them. Reuse the resulting VM map directly.
+	payload, err := vm.ValueFromJSON(batchJSON)
+	if err != nil {
 		return fmt.Errorf("decode shared signal batch: %w", err)
 	}
-
-	values := make(map[string]vm.Value, len(payload))
-	for name, raw := range payload {
-		value, err := decodeSharedSignalValue(name, raw)
-		if err != nil {
-			return err
+	if !payload.IsMap() {
+		// Preserve null as an empty batch, matching map decoding. All other
+		// non-object JSON values are invalid batch payloads.
+		if payload.Type == program.TypeAny && !payload.IsList() {
+			return nil
 		}
-		values[name] = value
+		return errors.New("decode shared signal batch: expected JSON object")
+	}
+
+	values := payload.Map()
+	for name, value := range values {
+		if name == "" {
+			return errors.New("shared signal name required")
+		}
+		if changedOnly {
+			if current, ok := b.store.Get(name); ok && vm.EqualJSON(current, value) {
+				delete(values, name)
+			}
+		}
 	}
 
 	b.store.SetBatch(values)
@@ -375,7 +453,7 @@ func (b *Bridge) SetSharedSignalBatchJSON(batchJSON string) error {
 // Missing signals return JSON null.
 func (b *Bridge) GetSharedSignalJSON(name string) (string, error) {
 	if strings.TrimSpace(name) == "" {
-		return "", fmt.Errorf("shared signal name required")
+		return "", errors.New("shared signal name required")
 	}
 	value, ok := b.store.Get(name)
 	if !ok {
@@ -490,15 +568,15 @@ func normalizePropsJSON(componentName, propsJSON string) (string, error) {
 	return propsJSON, nil
 }
 
-func decodeSharedSignalValue(name string, raw []byte) (vm.Value, error) {
+func decodeSharedSignalValue(name, raw string) (vm.Value, error) {
 	if name == "" {
-		return vm.Value{}, fmt.Errorf("shared signal name required")
+		return vm.Value{}, errors.New("shared signal name required")
 	}
-	if len(raw) == 0 {
-		raw = []byte("null")
+	if raw == "" {
+		raw = "null"
 	}
 
-	value, err := vm.ValueFromJSON(string(raw))
+	value, err := vm.ValueFromJSON(raw)
 	if err != nil {
 		return vm.Value{}, fmt.Errorf("decode shared signal %q: %w", name, err)
 	}
@@ -542,29 +620,50 @@ func (b *Bridge) bindSharedSignals(island *vm.Island, defs []program.SignalDef) 
 }
 
 func (b *Bridge) subscribeSharedSignals(islandID string, defs []program.SignalDef) []func() {
-	unsubs := make([]func(), 0, len(defs))
+	if len(defs) == 0 {
+		return nil
+	}
+	reader := &sharedIslandReader{id: islandID, island: b.islands[islandID]}
+	notify := func() { b.reconcileSharedIsland(reader) }
+	unsubs := make([]func(), 0, len(defs)+1)
+	unsubs = append(unsubs, func() { reader.island = nil })
 	for _, def := range defs {
-		unsubs = append(unsubs, b.subscribeSharedSignal(islandID, def))
+		sig := b.store.Signal(def.Name, vm.ZeroValue(def.Type))
+		unsubs = append(unsubs, sig.Subscribe(notify))
 	}
 	return unsubs
 }
 
-func (b *Bridge) subscribeSharedSignal(islandID string, def program.SignalDef) func() {
-	sig := b.store.Signal(def.Name, vm.ZeroValue(def.Type))
-	return sig.Subscribe(func() {
-		b.reconcileSharedIsland(islandID)
-	})
+func (b *Bridge) reconcileSharedIsland(reader *sharedIslandReader) {
+	if reader.island == nil || b.dispatching[reader.id] > 0 {
+		return
+	}
+	if b.store.updating {
+		if !reader.pending {
+			reader.pending = true
+			b.pendingReaders = append(b.pendingReaders, reader)
+		}
+		return
+	}
+	b.pushPatches(reader.id, reader.island.Reconcile())
 }
 
-func (b *Bridge) reconcileSharedIsland(islandID string) {
-	if b.dispatching[islandID] > 0 {
-		return
+func (b *Bridge) flushSharedIslands() {
+	b.store.updating = false
+	// Detach before rendering: patch callbacks may start a separate batch.
+	// Its pending readers belong to that batch, not the one being drained.
+	pending := b.pendingReaders
+	b.pendingReaders = nil
+	for _, reader := range pending {
+		reader.pending = false
 	}
-	island, ok := b.islands[islandID]
-	if !ok {
-		return
+	for i, reader := range pending {
+		pending[i] = nil
+		b.reconcileSharedIsland(reader)
 	}
-	b.pushPatches(islandID, island.Reconcile())
+	if b.pendingReaders == nil {
+		b.pendingReaders = pending[:0]
+	}
 }
 
 func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {

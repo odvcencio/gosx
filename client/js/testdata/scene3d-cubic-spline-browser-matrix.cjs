@@ -473,13 +473,12 @@ function checkAffine(failures, value, webgpu) {
       check(failures, affine.path && affine.path.retainedMeshObjects === 1 &&
         affine.path.bundleState === 'encoded',
       name + '.affine retained bundle path is invalid: ' + JSON.stringify(affine.path));
-      check(failures, affine.wgPosition && affine.wgMaterial && affine.wgDraw,
+      check(failures, affine.wgPosition && affine.wgMaterial && affine.wgModel && affine.wgDraw,
         name + '.affine retained WebGPU receipts are missing');
-      if (affine.wgPosition && affine.wgMaterial && affine.wgDraw) {
+      if (affine.wgPosition && affine.wgMaterial && affine.wgModel && affine.wgDraw) {
         closeArray(failures, affine.wgPosition.values, AFFINE_LOCAL_POSITIONS,
           name + '.affine.localPositions', 1e-6);
-        closeArray(failures, affine.wgMaterial.values &&
-          affine.wgMaterial.values.slice(20, 36), AFFINE_MODEL_MATRIX,
+        closeArray(failures, affine.wgModel.values, AFFINE_MODEL_MATRIX,
         name + '.affine.modelMatrix', 2e-5);
         exact(failures, affine.wgDraw.kind, 'drawIndexed',
           name + '.affine.wgDraw.kind');
@@ -487,6 +486,10 @@ function checkAffine(failures, value, webgpu) {
           name + '.affine.wgDraw.positionBuffer');
         exact(failures, affine.wgDraw.materialBuffer, affine.wgMaterial.buffer,
           name + '.affine.wgDraw.materialBuffer');
+        exact(failures, affine.wgDraw.modelBuffer, affine.wgModel.buffer,
+          name + '.affine.wgDraw.modelBuffer');
+        exact(failures, affine.wgDraw.modelOffset, affine.wgModel.offset,
+          name + '.affine.wgDraw.modelOffset');
         exact(failures, affine.wgDraw.frontFace, 'cw',
           name + '.affine.wgDraw.frontFace');
         exact(failures, affine.wgDraw.cullMode, 'none',
@@ -499,6 +502,7 @@ function checkAffine(failures, value, webgpu) {
     } else {
       exact(failures, affine.wgPosition, null, name + '.affine.wgPosition');
       exact(failures, affine.wgMaterial, null, name + '.affine.wgMaterial');
+      exact(failures, affine.wgModel, null, name + '.affine.wgModel');
       exact(failures, affine.wgDraw, null, name + '.affine.wgDraw');
       exact(failures, affine.wgPasses, 0, name + '.affine.wgPasses');
       exact(failures, affine.wgSubmits, 0, name + '.affine.wgSubmits');

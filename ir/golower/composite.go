@@ -4,8 +4,8 @@
 // (keyExpr, valueExpr) per the encoding documented on
 // program.OpComposite.
 //
-// The lowerer builds a per-file struct type registry at the start of
-// LowerASTFile so it can map positional struct literals like
+// The lowerer builds a package-wide struct type registry before lowering
+// function bodies so it can map positional struct literals like
 // `vec2{x, y}` to their named-field equivalent (`{X:x, Y:y}`) without
 // requiring the author to spell the names. Named literals
 // (`vec2{X:x, Y:y}`) skip the registry lookup entirely.
@@ -93,6 +93,12 @@ func (c *lowerCtx) lowerCompositeLit(lit *ast.CompositeLit) program.ExprID {
 	case *ast.Ident:
 		// `Name{ ... }` — named struct literal.
 		return c.lowerStructLit(t.Name, lit)
+	case *ast.SelectorExpr:
+		if pkg, ok := t.X.(*ast.Ident); ok {
+			return c.lowerStructLit(pkg.Name+"."+t.Sel.Name, lit)
+		}
+		c.addIssue(lit, "qualified composite type must use a package identifier", escapeHatchSuggestion)
+		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
 	case *ast.ArrayType:
 		// `[]T{ ... }` — slice or array literal.
 		return c.lowerSliceLit(lit)

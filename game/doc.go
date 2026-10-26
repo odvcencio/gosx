@@ -7,4 +7,7 @@
 // server-authoritative ticking. Package game ties those pieces together with a
 // deterministic fixed-step loop, ECS-style world storage, input action mapping,
 // asset manifests, and Scene3D/physics bridge helpers.
+//
+// Clock supports pause and time scale, Every and EveryInterval run systems at
+// slower rates, and SaveCodec saves and loads World content; see the README.
 package game

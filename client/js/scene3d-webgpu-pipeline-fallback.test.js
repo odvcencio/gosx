@@ -19,6 +19,9 @@ async function failureHarness(pattern, mode = "scope", options = {}) {
     configureDevice(device, state, env) {
       env.context.__gosx_emit = (level, category, message, detail) => events.push({ message, detail });
       env.context.console = { warn: message => warnings.push(message), error() {}, log() {} };
+      // These cases exercise the synchronous compatibility/error-scope path.
+      // Async rejection coverage lives with the first-frame pipeline tests.
+      device.createComputePipelineAsync = undefined;
       device.pushErrorScope = (filter) => stack.push({ filter, error: null });
       device.popErrorScope = () => {
         const error = stack.pop().error;
@@ -132,6 +135,8 @@ test("WebGPU disposes detail atlases even when their first bake is still pending
   const h = await failureHarness(/does-not-match/);
   h.scene.materials[0].detail = { ground: { scale: 3 } };
   h.renderer.render(h.scene, { width: 64, height: 64 });
+  await flushAsyncWork();
+  h.renderer.render(h.scene, { width: 64, height: 64 });
   const atlases = h.fake.state.textures.filter(texture => texture.desc.label === "detail-atlas");
   assert.equal(atlases.length, 1);
   assert.equal(atlases[0].destroyed, undefined);
@@ -151,8 +156,8 @@ test("a newly enabled post pass preserves water simulation commands while its pi
   const beforeSteps = dispatches("gosx-water-step"), beforeSubmits = h.fake.state.submitCount;
   h.scene.postEffects = [{ kind: "fxaa" }];
   h.renderer.render(h.scene, { width: 64, height: 64 }, { nowMS: 170, active: true });
-  assert.ok(dispatches("gosx-water-step") > beforeSteps, "the live simulation advances before a newly required pipeline pauses the frame");
-  assert.ok(h.fake.state.submitCount > beforeSubmits, "the advanced simulation must reach the GPU before retrying");
+  assert.equal(dispatches("gosx-water-step"), beforeSteps, "known pending post pipelines pause before simulation advances");
+  assert.equal(h.fake.state.submitCount, beforeSubmits, "preparation submits no incomplete frame");
   assert.ok(h.fake.state.renderPasses.every(pass => pass.ended));
   await flushAsyncWork();
   for (let i = 0; i < 8; i++) {
@@ -237,6 +242,7 @@ test("the honesty gate swaps a core-failed WebGPU scene to WebGL2 on a replaceme
 
 test("an invalid core compute pipeline requests fallback without dispatching", async () => {
   const h = await failureHarness(/^gosx-water-step$/);
+  h.scene.waterSystems = h.env.context.__gosx_scene3d_api.createSceneState({ scene: { waterSystems: [{ id: "invalid-step", grid: 4 }] } }).waterSystems;
   await frames(h, 5);
   assert.equal(h.renderer.getFailureReason(), "webgpu-pipeline-failed");
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 1);

@@ -118,3 +118,18 @@ func TestTimelinePlayerOwnsPreparedTracks(t *testing.T) {
 		t.Fatal("prepared tracks alias the source")
 	}
 }
+
+func TestTimelineSamplePreservesExactEndpoints(t *testing.T) {
+	for _, endpoints := range [][2]float64{{1e20, 1}, {math.MaxFloat64, -math.MaxFloat64}, {0, math.Copysign(0, -1)}} {
+		plan := NewTimeline("endpoints").At(time.Second, Tween{Node: "piece", Property: "x", From: endpoints[0], To: endpoints[1], Duration: time.Second})
+		for _, sample := range []struct{ at, want float64 }{{-1, endpoints[0]}, {1, endpoints[0]}, {2, endpoints[1]}, {3, endpoints[1]}} {
+			commands, err := plan.Sample(sample.at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := commands[0].Data.(map[string]float64)["x"]; math.Float64bits(got) != math.Float64bits(sample.want) {
+				t.Fatalf("endpoints %v at %g: got %g, want exact %g", endpoints, sample.at, got, sample.want)
+			}
+		}
+	}
+}

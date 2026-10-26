@@ -29,6 +29,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -36,6 +39,11 @@ const srcDir = path.join(__dirname, "bootstrap-src");
 function readSource(name) {
   return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
+
+// Match the production TypeScript syntax before evaluating the real loader.
+const gltfSource = ts.transpileModule(readSource("../runtime/scene3d/gltf.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 function createLoaderContext() {
   const warnings = [];
@@ -69,7 +77,7 @@ function createLoaderContext() {
 
   const context = vm.createContext(sandbox);
   vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
-  vm.runInContext(readSource("../runtime/scene3d/gltf.ts"), context, { filename: "gltf.ts" });
+  vm.runInContext(gltfSource, context, { filename: "gltf.ts" });
   return { context };
 }
 

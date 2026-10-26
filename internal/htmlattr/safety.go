@@ -18,6 +18,36 @@ func ValidName(name string) bool {
 	return true
 }
 
+// ReservedDispatchName identifies attributes owned by island event dispatch.
+// Match HTML names without case sensitivity, including the bare event prefix.
+func ReservedDispatchName(name string) bool {
+	return equalFoldASCII(name, "data-gosx-handler") ||
+		equalFoldASCII(name, "data-gosx-path") ||
+		(len(name) >= len("data-gosx-on-") && equalFoldASCII(name[:len("data-gosx-on-")], "data-gosx-on-"))
+}
+
+// HTML attribute names fold ASCII letters only.
+func equalFoldASCII(name, want string) bool {
+	if len(name) != len(want) {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// SafeAuthoredName permits HTML names that cannot replace dispatch metadata.
+func SafeAuthoredName(name string) bool {
+	return ValidName(name) && !ReservedDispatchName(name)
+}
+
 // ValidTag permits HTML, SVG and custom element names, without HTML syntax.
 func ValidTag(name string) bool {
 	if name == "" {
@@ -36,10 +66,10 @@ func ValidTag(name string) bool {
 }
 
 // SafeSpreadName permits data-driven attributes without executable handlers
-// or CSS. Authors can supply trusted style explicitly instead of in a spread.
+// or CSS or framework behavior. Authors can supply trusted attributes explicitly.
 func SafeSpreadName(name string) bool {
 	name = strings.ToLower(name)
-	return ValidName(name) && !strings.HasPrefix(name, "on") && name != "style"
+	return SafeAuthoredName(name) && !strings.HasPrefix(name, "on") && name != "style" && name != "srcdoc" && !strings.HasPrefix(name, "data-gosx-")
 }
 
 // FilterURL allows web, email and telephone URLs and relative references.

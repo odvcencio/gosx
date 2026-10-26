@@ -297,7 +297,7 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 				"        run: scripts/install-ci-tinygo.sh\n",
 				"\n      - name: Poison later shells\n        run: |\n          printf '%s\\n' 'sh() { :; }' 'make() { :; }' > /tmp/fail-open-shell-prelude\n          printf '%s\\n' 'BASH_ENV=/tmp/fail-open-shell-prelude' >> \"$GITHUB_ENV\"\n",
 			),
-			want: "browser-tests job.steps: got 13 steps, want exact governed roster of 12",
+			want: "browser-tests job.steps: got 14 steps, want exact governed roster of 13",
 		},
 		{
 			name: "governed ordering interrupted",
@@ -362,6 +362,27 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 				"          GO_TESTS_RESULT: ${{ needs.browser-tests.result }}\n",
 			),
 			want: "aggregate dependency assertion.env.GO_TESTS_RESULT",
+		},
+		{
+			name:   "native macOS aggregate contract omitted",
+			mutate: removeAggregateSlot("desktop-macos", "DESKTOP_MACOS_RESULT"),
+			want:   "aggregate test job.needs",
+		},
+		{
+			name: "native macOS result binding omitted",
+			mutate: replace(
+				"          DESKTOP_MACOS_RESULT: ${{ needs.desktop-macos.result }}\n",
+				"",
+			),
+			want: "aggregate dependency assertion.env: missing field \"DESKTOP_MACOS_RESULT\"",
+		},
+		{
+			name: "native macOS result binding redirected",
+			mutate: replace(
+				"          DESKTOP_MACOS_RESULT: ${{ needs.desktop-macos.result }}\n",
+				"          DESKTOP_MACOS_RESULT: ${{ needs.go-tests.result }}\n",
+			),
+			want: "aggregate dependency assertion.env.DESKTOP_MACOS_RESULT",
 		},
 		{
 			name: "aggregate failure exit weakened",
@@ -486,6 +507,16 @@ func TestStableRendererProofComposition(t *testing.T) {
 		mutate func(*testing.T, string) string
 		want   string
 	}{
+		{
+			name:   "stable Node drifts to a floating major",
+			mutate: replaceStableOnce("          node-version: '22.23.4'", "          node-version: '22'"),
+			want:   "stable Scene3D renderer proof Node setup.with.node-version",
+		},
+		{
+			name:   "stable Node rolls back before the decoder fix",
+			mutate: replaceStableOnce("          node-version: '22.23.4'", "          node-version: '22.23.2'"),
+			want:   "stable Scene3D renderer proof Node setup.with.node-version",
+		},
 		{
 			name:   "numeric fixture leaks into stable lane",
 			mutate: replaceStableOnce("          chrome-version: stable", "          chrome-version: '1688711'"),
@@ -817,7 +848,11 @@ func assertActionlintValid(t *testing.T, workflow string) {
 	if err != nil {
 		return
 	}
-	command := exec.Command(actionlint, "-")
+	// Stdin workflows have no file path from which actionlint can discover
+	// the repository config (including hosted labels newer than local tools).
+	_, file, _, _ := runtime.Caller(0)
+	config := filepath.Join(filepath.Dir(file), "..", "..", ".github", "actionlint.yaml")
+	command := exec.Command(actionlint, "-config-file", config, "-")
 	command.Stdin = strings.NewReader(workflow)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("mutation must remain actionlint-valid: %v\n%s", err, output)
@@ -1034,7 +1069,7 @@ func ensureStableProof(t *testing.T, source string) string {
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.4'
 
       - name: Run Scene3D CUBICSPLINE browser renderer proof
         env:
@@ -1130,12 +1165,12 @@ func TestShardLaneMutationsFailClosed(t *testing.T) {
 		{
 			name:   "browser-tests-b drops the TinyGo step",
 			mutate: replaceJobOnce("browser-tests-b", "      - name: Install TinyGo\n        env:\n          TINYGO_VERSION: 0.41.1\n        run: scripts/install-ci-tinygo.sh\n\n", ""),
-			want:   "browser-tests-b job.steps: got 4 steps",
+			want:   "browser-tests-b job.steps: got 5 steps",
 		},
 		{
 			name:   "browser-tests-c extra step",
 			mutate: replaceJobOnce("browser-tests-c", "        run: make test-e2e E2E_SHARD=2", "        run: make test-e2e E2E_SHARD=2\n\n      - name: Extra\n        run: echo extra"),
-			want:   "browser-tests-c job.steps: got 6 steps",
+			want:   "browser-tests-c job.steps: got 7 steps",
 		},
 		{
 			name:   "browser-tests-b binds the browser path to the wrong output",
@@ -1342,5 +1377,33 @@ func removeJobAndSlot(job, envName string) func(*testing.T, string) string {
 	return func(t *testing.T, source string) string {
 		t.Helper()
 		return removeAggregateSlot(job, envName)(t, removeJob(job)(t, source))
+	}
+}
+
+// Every browser shard retains the same source-bound proof directory. Pin the
+// upload as tightly as the existing test steps so evidence cannot redirect
+// execution, hide failures, or silently refer to a different shard.
+func TestBrowserEvidenceMutationsFailClosed(t *testing.T) {
+	for shard, job := range browserShardJobs {
+		t.Run(job, func(t *testing.T) {
+			artifactName := fmt.Sprintf("gosx-browser-proof-${{ github.run_id }}-${{ github.run_attempt }}-%d", shard)
+			tests := []struct{ name, old, replacement, want string }{
+				{"proof directory absent", "          GOSX_E2E_PROOF_DIR: ${{ runner.temp }}/gosx-e2e-proof\n", "", "browser docs E2E gate.env"},
+				{"proof directory redirected", "GOSX_E2E_PROOF_DIR: ${{ runner.temp }}/gosx-e2e-proof", "GOSX_E2E_PROOF_DIR: /other-proof", "browser docs E2E gate.env.GOSX_E2E_PROOF_DIR"},
+				{"upload skips successful evidence", "        if: always()", "        if: failure()", "browser behavior evidence upload.if"},
+				{"upload action changed", "if: always()\n        uses: actions/upload-artifact@v4", "if: always()\n        uses: actions/upload-artifact@v5", "browser behavior evidence upload.uses"},
+				{"artifact shard changed", "name: " + artifactName, "name: wrong-shard", "browser behavior evidence upload.with.name"},
+				{"upload directory redirected", "path: ${{ runner.temp }}/gosx-e2e-proof", "path: /other-proof", "browser behavior evidence upload.with.path"},
+				{"retention changed", "retention-days: 14", "retention-days: 15", "browser behavior evidence upload.with.retention-days"},
+				{"upload ignores failure", "      - name: Retain browser behavior evidence\n", "      - name: Retain browser behavior evidence\n        continue-on-error: true\n", "browser behavior evidence upload: unexpected field \"continue-on-error\""},
+				{"upload adds an ungoverned output", "      - name: Retain browser behavior evidence\n", "      - name: Retain browser behavior evidence\n        id: ungoverned\n", "browser behavior evidence upload: unexpected field \"id\""},
+			}
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					mutated := replaceJobOnce(job, test.old, test.replacement)(t, string(repositoryWorkflow(t)))
+					assertCausalRejection(t, mutated, test.want)
+				})
+			}
+		})
 	}
 }

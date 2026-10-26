@@ -749,20 +749,37 @@ func runBrowserShard(args []string, goBinary string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
-	// Each docs test starts `gosx dev`, which waits only 45s for /readyz. In the
-	// single-job suite earlier tests had already filled the Go build cache; a
-	// shard whose first test is a docs test would start cold and miss that
-	// deadline (run 37906534414, browser-tests-b). Build both programs first.
-	for _, pkg := range []string{"./cmd/gosx", "./examples/gosx-docs"} {
+	if err := warmBrowserBuildCache(goBinary, stderr); err != nil {
+		return err
+	}
+	return runShard(browserLayout, index, goBinary,
+		[]string{"-tags", browserBuildTag, "-v", "-timeout", "30m"}, "./"+browserRelativePath, stdout, stderr)
+}
+
+// Docs readiness includes dev asset staging. Warm both native programs and
+// the standard-Go browser runtime before the unchanged 45s readiness checks.
+func warmBrowserBuildCache(goBinary string, stderr io.Writer) error {
+	for _, pkg := range []string{"./cmd/gosx", "./examples/gosx-docs", "./client/wasm"} {
 		warm := exec.Command(goBinary, "build", "-o", os.DevNull, pkg)
+		if pkg == "./client/wasm" {
+			// Match prepareDevAssetsWithPrograms, retaining the selected Go tool,
+			// GOCACHE, GOMODCACHE and toolchain environment from this CI run.
+			warm.Env = make([]string, 0, len(os.Environ())+4)
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				if key != "GOOS" && key != "GOARCH" && key != "GOWORK" && key != "GOFLAGS" {
+					warm.Env = append(warm.Env, entry)
+				}
+			}
+			warm.Env = append(warm.Env, "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS=-mod=mod -buildvcs=false")
+		}
 		warm.Stdout, warm.Stderr = stderr, stderr
 		fmt.Fprintf(stderr, "citest: warming build cache: go build %s\n", pkg)
 		if err := warm.Run(); err != nil {
 			return fmt.Errorf("warm build cache %s: %w", pkg, err)
 		}
 	}
-	return runShard(browserLayout, index, goBinary,
-		[]string{"-tags", browserBuildTag, "-v", "-timeout", "30m"}, "./"+browserRelativePath, stdout, stderr)
+	return nil
 }
 
 // tagFlags keeps only the build-tag flag pair: listing needs the tag but not

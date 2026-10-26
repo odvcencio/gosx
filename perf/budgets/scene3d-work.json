@@ -4,15 +4,15 @@
   "cases": {
     "hero/desktop-full/webgl": {
       "mount": {
-        "backingPixels": 5184000,
-        "samples": 4,
-        "backingPixelSamples": 20736000,
+        "backingPixels": 2072298,
+        "samples": 1,
+        "backingPixelSamples": 2072298,
         "postTargetPixels": 4144596,
         "shadowMapPixels": 65536,
         "contextAttributes": {
           "alpha": false,
           "premultipliedAlpha": false,
-          "antialias": true,
+          "antialias": false,
           "depth": true,
           "powerPreference": "high-performance"
         }
@@ -50,15 +50,15 @@
     },
     "post/desktop-full/webgl": {
       "mount": {
-        "backingPixels": 5184000,
-        "samples": 4,
-        "backingPixelSamples": 20736000,
-        "postTargetPixels": 10360352,
+        "backingPixels": 2072298,
+        "samples": 1,
+        "backingPixelSamples": 2072298,
+        "postTargetPixels": 7252474,
         "shadowMapPixels": 65536,
         "contextAttributes": {
           "alpha": false,
           "premultipliedAlpha": false,
-          "antialias": true,
+          "antialias": false,
           "depth": true,
           "powerPreference": "high-performance"
         }
@@ -96,9 +96,9 @@
     },
     "dense/desktop-full/webgl": {
       "mount": {
-        "backingPixels": 5184000,
+        "backingPixels": 2072298,
         "samples": 4,
-        "backingPixelSamples": 20736000,
+        "backingPixelSamples": 8289192,
         "postTargetPixels": 0,
         "shadowMapPixels": 0,
         "contextAttributes": {
@@ -154,10 +154,10 @@
     },
     "hero/desktop-full/webgpu": {
       "mount": {
-        "backingPixels": 5184000,
+        "backingPixels": 2072298,
         "samples": 4,
-        "backingPixelSamples": 20736000,
-        "postTargetPixels": 20722980,
+        "backingPixelSamples": 8289192,
+        "postTargetPixels": 18650682,
         "shadowMapPixels": 65537,
         "contextAttributes": {
           "format": "rgba8unorm",
@@ -166,12 +166,12 @@
         }
       },
       "steady": {
-        "draws": 12,
+        "draws": 11,
         "programBinds": 0,
-        "pipelineBinds": 7,
+        "pipelineBinds": 5,
         "framebufferBinds": 0,
-        "renderPasses": 4,
-        "bufferUploadBytes": 3412,
+        "renderPasses": 3,
+        "bufferUploadBytes": 2804,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 1,
@@ -181,12 +181,12 @@
         "domAttributeWrites": 5
       },
       "steadyTotal": {
-        "draws": 1440,
+        "draws": 1320,
         "programBinds": 0,
-        "pipelineBinds": 840,
+        "pipelineBinds": 600,
         "framebufferBinds": 0,
-        "renderPasses": 480,
-        "bufferUploadBytes": 409440,
+        "renderPasses": 360,
+        "bufferUploadBytes": 336480,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 120,
@@ -198,9 +198,9 @@
     },
     "post/desktop-full/webgpu": {
       "mount": {
-        "backingPixels": 5184000,
+        "backingPixels": 2072298,
         "samples": 4,
-        "backingPixelSamples": 20736000,
+        "backingPixelSamples": 8289192,
         "postTargetPixels": 21758560,
         "shadowMapPixels": 65537,
         "contextAttributes": {
@@ -210,12 +210,12 @@
         }
       },
       "steady": {
-        "draws": 8,
+        "draws": 7,
         "programBinds": 0,
-        "pipelineBinds": 9,
+        "pipelineBinds": 7,
         "framebufferBinds": 0,
-        "renderPasses": 8,
-        "bufferUploadBytes": 1060,
+        "renderPasses": 7,
+        "bufferUploadBytes": 772,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 5,
@@ -225,12 +225,12 @@
         "domAttributeWrites": 9
       },
       "steadyTotal": {
-        "draws": 960,
+        "draws": 840,
         "programBinds": 0,
-        "pipelineBinds": 1080,
+        "pipelineBinds": 840,
         "framebufferBinds": 0,
-        "renderPasses": 960,
-        "bufferUploadBytes": 127200,
+        "renderPasses": 840,
+        "bufferUploadBytes": 92640,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 600,
@@ -242,9 +242,9 @@
     },
     "dense/desktop-full/webgpu": {
       "mount": {
-        "backingPixels": 5184000,
+        "backingPixels": 2072298,
         "samples": 4,
-        "backingPixelSamples": 20736000,
+        "backingPixelSamples": 8289192,
         "postTargetPixels": 0,
         "shadowMapPixels": 1,
         "contextAttributes": {
@@ -256,10 +256,10 @@
       "steady": {
         "draws": 134,
         "programBinds": 0,
-        "pipelineBinds": 3,
+        "pipelineBinds": 2,
         "framebufferBinds": 0,
         "renderPasses": 1,
-        "bufferUploadBytes": 190980,
+        "bufferUploadBytes": 152676,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 0,
@@ -271,10 +271,10 @@
       "steadyTotal": {
         "draws": 16080,
         "programBinds": 0,
-        "pipelineBinds": 360,
+        "pipelineBinds": 240,
         "framebufferBinds": 0,
         "renderPasses": 120,
-        "bufferUploadBytes": 22917600,
+        "bufferUploadBytes": 18321120,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 0,
@@ -347,7 +347,7 @@
         "backingPixels": 740610,
         "samples": 1,
         "backingPixelSamples": 740610,
-        "postTargetPixels": 3701784,
+        "postTargetPixels": 2591502,
         "shadowMapPixels": 65536,
         "contextAttributes": {
           "alpha": false,
@@ -462,10 +462,10 @@
       "steady": {
         "draws": 11,
         "programBinds": 0,
-        "pipelineBinds": 6,
+        "pipelineBinds": 5,
         "framebufferBinds": 0,
         "renderPasses": 3,
-        "bufferUploadBytes": 3412,
+        "bufferUploadBytes": 2804,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 1,
@@ -477,10 +477,10 @@
       "steadyTotal": {
         "draws": 1320,
         "programBinds": 0,
-        "pipelineBinds": 720,
+        "pipelineBinds": 600,
         "framebufferBinds": 0,
         "renderPasses": 360,
-        "bufferUploadBytes": 409440,
+        "bufferUploadBytes": 336480,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 120,
@@ -506,10 +506,10 @@
       "steady": {
         "draws": 7,
         "programBinds": 0,
-        "pipelineBinds": 8,
+        "pipelineBinds": 7,
         "framebufferBinds": 0,
         "renderPasses": 7,
-        "bufferUploadBytes": 1060,
+        "bufferUploadBytes": 772,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 5,
@@ -521,10 +521,10 @@
       "steadyTotal": {
         "draws": 840,
         "programBinds": 0,
-        "pipelineBinds": 960,
+        "pipelineBinds": 840,
         "framebufferBinds": 0,
         "renderPasses": 840,
-        "bufferUploadBytes": 127200,
+        "bufferUploadBytes": 92640,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 600,
@@ -550,10 +550,10 @@
       "steady": {
         "draws": 134,
         "programBinds": 0,
-        "pipelineBinds": 3,
+        "pipelineBinds": 2,
         "framebufferBinds": 0,
         "renderPasses": 1,
-        "bufferUploadBytes": 190980,
+        "bufferUploadBytes": 152676,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 0,
@@ -565,10 +565,10 @@
       "steadyTotal": {
         "draws": 16080,
         "programBinds": 0,
-        "pipelineBinds": 360,
+        "pipelineBinds": 240,
         "framebufferBinds": 0,
         "renderPasses": 120,
-        "bufferUploadBytes": 22917600,
+        "bufferUploadBytes": 18321120,
         "textureUploadBytes": 0,
         "gpuBuffersCreated": 0,
         "bindGroupsCreated": 0,

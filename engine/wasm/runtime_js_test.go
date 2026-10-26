@@ -4,6 +4,7 @@ package wasm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"syscall/js"
 	"testing"
@@ -11,6 +12,37 @@ import (
 
 	"m31labs.dev/gosx/scene"
 )
+
+func TestSignalJSONHandoffAvoidsRedundantBrowserConversions(t *testing.T) {
+	host := js.Global().Call("eval", `({calls:0,setSignalsJSON(raw,changed){this.calls++;this.raw=raw;this.changed=changed;},subscribeSignalJSON(name,callback){this.callback=callback;return ()=>{this.callback=null}},deliver(raw){if(this.callback)this.callback(raw)}})`)
+	ctx := Context{value: host}
+	if err := ctx.SetChangedSignals(map[string]any{"$view": map[string]any{"turn": "west"}}); err != nil {
+		t.Fatal(err)
+	}
+	if host.Get("raw").String() != `{"$view":{"turn":"west"}}` || !host.Get("changed").Bool() {
+		t.Fatal("encoded snapshot/changed-only flag lost")
+	}
+	if err := ctx.SetSignals(map[string]any{"$pulse": true}); err != nil || host.Get("changed").Bool() {
+		t.Fatal("pulse batch changed semantics")
+	}
+	if err := ctx.SetChangedSignals(map[string]any{"$bad": make(chan int)}); err == nil || host.Get("calls").Int() != 2 {
+		t.Fatal("invalid batch reached the browser")
+	}
+	var got json.RawMessage
+	dispose, err := ctx.SubscribeSignal("$view", func(raw json.RawMessage) { got = raw })
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.Call("deliver", `{"turn":"west","hand":[1,2]}`)
+	if string(got) != `{"turn":"west","hand":[1,2]}` {
+		t.Fatal("raw subscriber data was re-encoded")
+	}
+	dispose.Dispose()
+	host.Call("deliver", `{"turn":"east"}`)
+	if string(got) != `{"turn":"west","hand":[1,2]}` {
+		t.Fatal("disposed subscriber called")
+	}
+}
 
 func TestTypedSignalReadAndBatchFailureIsAtomic(t *testing.T) {
 	host := js.Global().Call("eval", `({values:{"$selected":"tile"}, calls:0, getSignal(n){return this.values[n]}, setSignals(v){this.calls++; Object.assign(this.values,v)}})`)
@@ -38,10 +70,11 @@ func TestTypedSignalReadAndBatchFailureIsAtomic(t *testing.T) {
 
 func TestSceneCommandsCameraAndCancellation(t *testing.T) {
 	host := js.Global().Call("eval", `({current:true, isCurrent(){return this.current}, calls:[], scene3D(method,mount,...args){
-   this.calls.push(method); this.mount=mount;
+   this.calls.push(method); this.mount=mount; this.method=method;
    if(method==='getCamera') return {kind:'perspective', x:3,y:4,z:5,fov:41,near:.5,far:90};
    this.signal=args.at(-1).signal;
    if(method==='whenReady') return new Promise(resolve => {this.complete=resolve});
+   if(method==='live'){this.liveEvent=args[0]; this.payload=args[1]; return Promise.resolve();}
    this.payload=args[0]; return Promise.resolve();
  }})`)
 	engine := Context{value: host}
@@ -62,6 +95,34 @@ func TestSceneCommandsCameraAndCancellation(t *testing.T) {
 	}
 	if host.Get("payload").Length() != 1 {
 		t.Fatal("commands not forwarded")
+	}
+	if err = target.SetCamera(context.Background(), scene.PerspectiveCamera{FOV: 50, Orbit: &scene.Orbit{Target: scene.Vec3(0, 20, -260), MaxDistance: 300}}); err != nil {
+		t.Fatal(err)
+	}
+	if orbit := host.Get("payload").Get("orbit"); orbit.Get("target").Get("z").Int() != -260 || orbit.Get("maxDistance").Int() != 300 || orbit.Get("target").Get("x").Int() != 0 {
+		t.Fatal("camera orbit lost")
+	}
+	if err = target.SetOrbit(context.Background(), scene.Orbit{Target: scene.Vec3(1, 2, 3), MinPitch: scene.Float(0), MinHeight: scene.Float(2)}); err != nil {
+		t.Fatal(err)
+	}
+	if p := host.Get("payload"); p.Get("minPitch").Type() != js.TypeNumber || p.Get("minPitch").Float() != 0 || p.Get("minHeight").Float() != 2 || !p.Get("maxPitch").IsUndefined() {
+		t.Fatal("pitch range or floor lost")
+	}
+	if err = target.SetOrbit(context.Background(), scene.Orbit{Target: scene.Vec3(1, 2, 3), PitchLimit: .5}); err != nil {
+		t.Fatal(err)
+	}
+	if host.Get("method").String() != "setOrbit" || host.Get("payload").Get("target").Get("y").Int() != 2 || host.Get("payload").Get("pitchLimit").Float() != .5 {
+		t.Fatal("orbit payload lost")
+	}
+	if err = target.Live(context.Background(), "attack", map[string]any{"rig": map[string]any{"animationSeq": "hit-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if host.Get("method").String() != "live" || host.Get("liveEvent").String() != "attack" ||
+		host.Get("payload").Get("rig").Get("animationSeq").String() != "hit-1" || !host.Get("mount").Equal(mount) {
+		t.Fatal("live event, data or mount lost")
+	}
+	if err = target.Live(context.Background(), "", nil); err == nil {
+		t.Fatal("empty live event name accepted")
 	}
 	if err = target.SetAnimationClock(context.Background(), 2.5, true); err != nil {
 		t.Fatal(err)

@@ -808,3 +808,40 @@ func hasBinding(bindings []Binding, action string) bool {
 	}
 	return false
 }
+
+func TestApplyNetworkInputsIsDeterministicAcrossPlayers(t *testing.T) {
+	for run := 0; run < 50; run++ {
+		inputs := map[string]sim.Input{}
+		for _, id := range []string{"p3", "p1", "p5", "p2", "p4"} {
+			x := float64(id[1] - '0')
+			data, _ := json.Marshal(InputEvent{Kind: EventPointerMove, X: x, Y: x})
+			inputs[id] = sim.Input{Data: data}
+		}
+		rt := New(Config{})
+		rt.ApplyNetworkInputs(inputs)
+		if x, _ := rt.Input().Pointer(); x != 5 {
+			t.Fatalf("run %d: last pointer position should come from p5 (sorted order), got %v", run, x)
+		}
+	}
+}
+
+func TestSnapshotKeepsNanosecondTimeAfterManyDays(t *testing.T) {
+	rt := New(Config{})
+	want := 200*24*time.Hour + 123*time.Nanosecond
+	rt.clock.restore(9, want)
+	rt.frame.Index, rt.frame.Time = 9, want
+	snap := rt.Snapshot()
+	rt2 := New(Config{})
+	rt2.Restore(snap)
+	if rt2.Frame().Time != want {
+		t.Fatalf("time %v != %v", rt2.Frame().Time, want)
+	}
+}
+
+func TestRestoreReadsLegacyTimeSeconds(t *testing.T) {
+	rt := New(Config{})
+	rt.Restore([]byte(`{"frame":4,"timeSeconds":1.5}`))
+	if rt.Frame().Time != 1500*time.Millisecond || rt.Frame().Index != 4 {
+		t.Fatalf("frame %+v", rt.Frame())
+	}
+}

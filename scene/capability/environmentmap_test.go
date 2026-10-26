@@ -64,13 +64,15 @@ func TestWebGPUReadsTheEnvironmentMap(t *testing.T) {
 			"var envMapSampler: sampler",
 			"fn envEquirectUV(dir: vec3f) -> vec2f",
 			"env.hasEnvMap != 0u",
-			"textureSample(envMapTex, envMapSampler, envEquirectUV(Nr))",
-			"textureSample(envMapTex, envMapSampler, envEquirectUV(Rr))",
+			"let maxLod = env.envMapMaxLod;",
+			"data[17] = wgpuEnvMapMaxLod(envMap);",
+			"textureSampleLevel(envMapTex, envMapSampler, envEquirectUV(Nr), maxLod)",
+			"textureSampleLevel(envMapTex, envMapSampler, envEquirectUV(Rr), roughness * maxLod)",
 			"(1.0 - roughness * 0.65)",
 		)
 	evidence.assertAgrees("The WebGPU renderer binds a dedicated envMap sampler and texture at group(0) " +
 		"bindings 13/14, ports envEquirectUV verbatim from the GLSL source, and taps it for both the " +
-		"diffuse and specular terms, so it reads the authored legacy image. That is what this cell asks.")
+		"diffuse and specular terms with explicit LOD, so it reads the authored image without wrap-derivative seams.")
 }
 
 // TestEnvironmentMapExcludesNoBackend pins that the row reports and does not

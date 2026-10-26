@@ -19,6 +19,7 @@ test("WebGL water blends over the depth-tested world in one context", () => {
     sceneNumber: (value, fallback) => Number(value) || fallback,
     sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
     window: {
+      __gosx_scene3d_api: {},
       __gosx_scene3d_webgl_api: {
         createSceneWaterRendererWebGL(receivedGL) {
           assert.equal(receivedGL, gl);
@@ -76,7 +77,7 @@ test("water wrapper follows live world state and timing methods", () => {
   const context = {
     sceneNumber: (value, fallback) => Number(value) || fallback,
     sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
-    window: { __gosx_scene3d_webgl_api: {
+    window: { __gosx_scene3d_api: {}, __gosx_scene3d_webgl_api: {
       createSceneWaterRendererWebGL: () => ({kind:"webgl", isWaterForced:true, pollPerformanceSample:waterSample, render() {}, dispose() {}}),
       createScenePBRRendererOrFallback: () => ({pollPerformanceSample:worldSample, render() {}, renderSurfaces() {}, dispose() {}}),
     } },
@@ -188,7 +189,7 @@ test("water composition propagates complete outcomes and rejects partial subpass
         const context = {
           sceneNumber: (v, fallback) => Number(v) || fallback,
           sceneBool: (v, fallback) => v == null ? fallback : Boolean(v),
-          window: { __gosx_scene3d_webgl_api: {
+          window: { __gosx_scene3d_api: {}, __gosx_scene3d_webgl_api: {
             createSceneWaterRendererWebGL: () => ({ render() { calls.push("water"); return waterOutcome; }, dispose() {} }),
             createScenePBRRendererOrFallback: () => ({
               render(bundle, viewport, meta) {
@@ -212,4 +213,38 @@ test("water composition propagates complete outcomes and rejects partial subpass
       }
     }
   }
+});
+
+test("water-only post requests keep canvas MSAA while composite post disables it", () => {
+  for (const models of [[], [{id: "world"}]]) {
+    let options;
+    const context = {
+      sceneNumber: (value, fallback) => Number(value) || fallback,
+      sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
+      window: {__gosx_scene3d_api: {}, __gosx_scene3d_webgl_api: {
+        createSceneWaterRendererWebGL: () => ({render() {}, dispose() {}}),
+        createScenePBRRendererOrFallback: () => ({render() {}, renderSurfaces() {}, dispose() {}}),
+      }},
+    };
+    vm.createContext(context);
+    vm.runInContext(ts.transpileModule(source, {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText, context);
+    const canvas = {getContext(kind, received) {options = received; return {};}};
+    context.createSceneWaterWebGLResult(canvas, {scene: {models, waterSystems: [{id: "cove"}], postEffects: [{kind: "bloom"}]}}, {tier: "full"}, "");
+    assert.equal(options.antialias, models.length === 0);
+  }
+});
+
+test("legacy shader-failure renderer keeps the canvas MSAA request", () => {
+  let options;
+  const context = {
+    sceneNumber: (value, fallback) => Number(value) || fallback,
+    sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
+    window: {__gosx_scene3d_api: {
+      createSceneWebGLRenderer(canvas, received) {options = received; return {render() {}};},
+    }},
+  };
+  vm.createContext(context);
+  vm.runInContext(ts.transpileModule(source, {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText, context);
+  context.createSceneWebGLResult({}, {scene: {postEffects: [{kind: "bloom"}]}}, {tier: "full"}, "webgl-shader-failed");
+  assert.equal(options.antialias, true);
 });

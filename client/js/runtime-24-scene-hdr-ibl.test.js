@@ -262,7 +262,9 @@ test("WebGPU consumes the same split-sum contract and keeps color/data texture f
   assert.match(source, /prefiltered \* \(F0 \* brdf\.x \+ vec3f\(F90\) \* brdf\.y\)/);
   assert.match(source, /irradiance \* albedo \* kDenv/);
   assert.match(source, /ambient = ambient \* ambientOcclusion/);
-  assert.match(source, /descriptor\.colorSpace === "srgb" \? "rgba8unorm-srgb" : "rgba8unorm"/);
+  const imageTexture = source.slice(source.indexOf("function wgpuCreateImageTexture"), source.indexOf("function wgpuLoadTexture"));
+  assert.match(imageTexture, /colorSpace === "srgb" \? "rgba8unorm-srgb" : "rgba8unorm"/);
+  assert.match(source, /wgpuCreateImageTexture\(device, w, h, descriptor\.colorSpace\)/);
   assert.match(source, /@group\(0\) @binding\(9\) var iblIrradiance: texture_cube<f32>/);
   assert.match(source, /@group\(0\) @binding\(10\) var iblRadiance: texture_cube<f32>/);
   assert.match(source, /@group\(0\) @binding\(11\) var iblBRDFLUT: texture_2d<f32>/);

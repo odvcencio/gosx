@@ -54,6 +54,16 @@ test('Go-authored wire fixture samples easing, parallel tracks, gaps and backwar
   }
 });
 
+test('timeline endpoints remain exact across cancellation, overflow and signed zero', () => {
+  const { api } = runtime();
+  for (const [from, to] of [[1e20, 1], [Number.MAX_VALUE, -Number.MAX_VALUE], [0, -0]]) {
+    const plan = { version: 1, id: 'exact', tweens: [{ node: 'piece', property: 'x', from, to, at: 1, duration: 1 }] };
+    for (const [seconds, want] of [[-1, from], [1, from], [2, to], [3, to]]) {
+      assert.ok(Object.is(api.sample(plan, seconds)[0].data.x, want), `${from} -> ${to} at ${seconds}`);
+    }
+  }
+});
+
 test('playback shares the scheduler, pauses, seeks, completes and stops scheduling', async () => {
   const r = runtime(), player = r.play();
   r.frame(); r.frame(100);
@@ -168,26 +178,29 @@ test('public playback cannot fetch an unadvertised timeline', async () => {
 });
 
 test('shared render bundles receive node bindings and release the camera after settling', async () => {
-  const r = runtime(), state = {}, poses = [], handle = {};
-  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/mount-controls.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
-  const playback = r.api.playMounted(fixture, state, handle, (_state, commands) => poses.push(plain(commands)), null, () => {}, () => {}, () => true);
-  playback.pause(); playback.seek(0.1); r.frame();
-  const bundle = { camera: { y: 4, z: 6 }, meshObjects: [{ id: 'piece', y: 1, x: 2 }] };
-  const cameras = [];
-  r.context.applyMotionBindingsToRuntimeBundle(bundle, state, { applyCamera: camera => cameras.push({ ...camera }) });
-  assert.equal(bundle.meshObjects[0].y, 0.25);
-  assert.equal(bundle.meshObjects[0].x, 2);
-  assert.equal(bundle.camera.y, 3.5);
-  assert.equal(cameras.length, 1);
-  playback.finish(); r.frame(); await playback.finished;
-  const next = { camera: { y: 8 }, meshObjects: [{ id: 'piece', y: 1 }] };
-  r.context.applyMotionBindingsToRuntimeBundle(next, state, null);
-  assert.equal(next.camera.y, 8, 'camera must be free for user control after completion');
-  assert.equal(next.meshObjects[0].y, 0, 'settled pose must survive the shared runtime frame');
-  r.api.clear(state, handle, [{ kind: 6 }]);
-  assert.equal(state._gosxMotionRuntimeBindings.size, 1, 'particle updates preserve settled transforms');
-  r.api.clear(state, handle, [{ kind: 2 }]);
-  assert.equal(state._gosxMotionRuntimeBindings.size, 0, 'authoritative transforms supersede presentation');
+  for (const withTracks of [false, true]) {
+    const r = runtime(), state = {}, poses = [], handle = {};
+    if (withTracks) vm.runInContext(read('../runtime/motion/track.ts'), r.context);
+    vm.runInContext(ts.transpileModule(read('../runtime/scene3d/mount-controls.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
+    const playback = r.api.playMounted(fixture, state, handle, (_state, commands) => poses.push(plain(commands)), null, () => {}, () => {}, () => true);
+    playback.pause(); playback.seek(0.1); r.frame();
+    const bundle = { camera: { y: 4, z: 6 }, meshObjects: [{ id: 'piece', y: 1, x: 2 }] };
+    const cameras = [];
+    r.context.applyMotionBindingsToRuntimeBundle(bundle, state, { applyCamera: camera => cameras.push({ ...camera }) });
+    assert.equal(bundle.meshObjects[0].y, 0.25);
+    assert.equal(bundle.meshObjects[0].x, 2);
+    assert.equal(bundle.camera.y, 3.5);
+    assert.equal(cameras.length, 1);
+    playback.finish(); r.frame(); await playback.finished;
+    const next = { camera: { y: 8 }, meshObjects: [{ id: 'piece', y: 1 }] };
+    r.context.applyMotionBindingsToRuntimeBundle(next, state, null);
+    assert.equal(next.camera.y, 8, 'camera must be free for user control after completion');
+    assert.equal(next.meshObjects[0].y, 0, 'settled pose must survive the shared runtime frame');
+    r.api.clear(state, handle, [{ kind: 6 }]);
+    assert.equal(state._gosxMotionRuntimeBindings.size, 1, 'particle updates preserve settled transforms');
+    r.api.clear(state, handle, [{ kind: 2 }]);
+    assert.equal(state._gosxMotionRuntimeBindings.size, 0, 'authoritative transforms supersede presentation');
+  }
 });
 
 test('demand-loaded adapters cancel paused playback on disposal and restore host methods', async () => {

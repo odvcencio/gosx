@@ -255,7 +255,13 @@ func inputBatchRuntimeFunc(b *bridge.Bridge) js.Func {
 		if err != nil {
 			return jsError(err)
 		}
-		if err := b.SetSharedSignalBatchJSON(batchJSON); err != nil {
+		var applyErr error
+		if len(args) > 1 && args[1].Type() == js.TypeBoolean && args[1].Bool() {
+			applyErr = b.SetChangedSharedSignalBatchJSON(batchJSON)
+		} else {
+			applyErr = b.SetSharedSignalBatchJSON(batchJSON)
+		}
+		if err := applyErr; err != nil {
 			return jsError(err)
 		}
 		return js.Null()
@@ -343,26 +349,46 @@ func applyLegacyPatches(islandID, patchJSON string) {
 }
 
 func applyPatchMailbox(islandID string, mailbox []byte) {
-	apply := js.Undefined()
+	apply, patch := js.Undefined(), js.Undefined()
 	facade := js.Global().Get("__gosx")
 	if facade.Type() == js.TypeObject {
 		host := facade.Get("host")
 		if host.Type() == js.TypeObject {
-			patch := host.Get("patch")
+			patch = host.Get("patch")
 			if patch.Type() == js.TypeObject {
 				apply = patch.Get("applyMailbox")
 			}
 		}
 	}
-	if apply.Type() == js.TypeFunction {
+	dispatchOps := patch.Type() == js.TypeObject && patch.Get("dispatchOps").Type() == js.TypeNumber && patch.Get("dispatchOps").Int() >= 1
+	if apply.Type() == js.TypeFunction && dispatchOps {
 		apply.Invoke(islandID, bytesToUint8Array(mailbox))
 		return
 	}
-	// A stale patch.js may not know the binary path yet. Decode only in that
-	// compatibility case and preserve the old JSON callback contract.
-	_, _, patches, err := runtimewasm.DecodePatchMailbox(mailbox)
+	// patch.js ships independently from the bootstrap. Older chunks support
+	// attribute ops 1/2, but do not understand the protected dispatch ops 10/11.
+	header, _, patches, err := runtimewasm.DecodePatchMailbox(mailbox)
 	if err != nil {
 		logRuntimeError("patch mailbox decode", err)
+		return
+	}
+	if !dispatchOps {
+		for i := range patches {
+			switch patches[i].Kind {
+			case vm.PatchSetDispatch:
+				patches[i].Kind = vm.PatchSetAttr
+			case vm.PatchRemoveDispatch:
+				patches[i].Kind = vm.PatchRemoveAttr
+			}
+		}
+	}
+	if apply.Type() == js.TypeFunction {
+		legacyMailbox, err := runtimewasm.EncodePatchMailbox(islandID, header.RequestID, patches)
+		if err != nil {
+			logRuntimeError("patch mailbox fallback", err)
+			return
+		}
+		apply.Invoke(islandID, bytesToUint8Array(legacyMailbox))
 		return
 	}
 	patchJSON, err := bridge.MarshalPatches(patches)

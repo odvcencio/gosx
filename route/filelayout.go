@@ -620,8 +620,8 @@ func injectHTMLTagAttr(tag, name, value string) string {
 }
 
 type fileComponentHTMLAttrs struct {
-	values         map[string]any
-	authoredStyles map[string]bool
+	values        map[string]any
+	authoredNames map[string]bool
 }
 
 // defaultRenderedComponent emits the fallback markup for an unresolved
@@ -643,7 +643,11 @@ func defaultRenderedComponent(tag string, attrs fileComponentHTMLAttrs, children
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if !htmlattr.SafeSpreadName(name) && !(attrs.authoredStyles[name] && strings.EqualFold(name, "style") && htmlattr.ValidName(name)) {
+		if attrs.authoredNames[name] {
+			if !htmlattr.SafeAuthoredName(name) {
+				continue
+			}
+		} else if !htmlattr.SafeSpreadName(name) {
 			continue
 		}
 		value := attrs.values[name]

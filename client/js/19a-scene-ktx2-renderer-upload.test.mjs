@@ -26,7 +26,7 @@ import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { freshFeatureBundleSource } = require("./runtime-test-harness.js");
+const { freshFeatureBundleSource, makeFakeGPUDevice } = require("./runtime-test-harness.js");
 const webglChunk = freshFeatureBundleSource("scene3d-webgl");
 const webgpuChunk = freshFeatureBundleSource("scene3d-webgpu");
 const gltfChunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-gltf.js"), "utf8");
@@ -400,8 +400,11 @@ test("specular-color and base-color WebGPU uploads decode unpremultiplied; other
   };
   const copies = [];
   const formats = [];
+  win.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2 };
   const device = {
+    ...makeFakeGPUDevice({}).device,
     queue: {
+      submit() {},
       writeTexture() {},
       copyExternalImageToTexture(source, destination, size) {
         copies.push({ destination, size });

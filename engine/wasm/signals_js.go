@@ -35,6 +35,20 @@ func (c Context) SetSignal(name string, value any) (err error) {
 // SubscribeSignal receives JSON from subsequent writes to a page shared signal.
 // Dispose the returned HandleFunc to detach and release the Go callback.
 func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (dispose HandleFunc, err error) {
+	return c.subscribeSignal(name, handler, false)
+}
+
+// subscribeSignalReplay is SubscribeSignal that also delivers the signal's
+// current value once. ServeCalls uses it so a call written before the engine
+// subscribed is answered. On the main thread the current value arrives before
+// this function returns, and a signal with no value delivers JSON null. In a
+// worker it arrives later, as a message, and a signal with no value delivers
+// nothing.
+func (c Context) subscribeSignalReplay(name string, handler func(json.RawMessage)) (HandleFunc, error) {
+	return c.subscribeSignal(name, handler, true)
+}
+
+func (c Context) subscribeSignal(name string, handler func(json.RawMessage), replay bool) (dispose HandleFunc, err error) {
 	if handler == nil {
 		return nil, fmt.Errorf("shared signal handler is required")
 	}
@@ -48,7 +62,13 @@ func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (di
 			callback.Release()
 		}
 	}()
-	subscribe := c.value.Get("subscribeSignal")
+	method := "subscribeSignalJSON"
+	subscribe := c.value.Get(method)
+	rawJSON := subscribe.Type() == js.TypeFunction
+	if !rawJSON {
+		method = "subscribeSignal"
+		subscribe = c.value.Get(method)
+	}
 	if subscribe.Type() != js.TypeFunction {
 		return nil, fmt.Errorf("shared signal bridge is unavailable")
 	}
@@ -56,14 +76,17 @@ func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (di
 		if len(args) == 0 {
 			return nil
 		}
-		encoded := js.Global().Get("JSON").Call("stringify", args[0])
+		encoded := args[0]
+		if !rawJSON {
+			encoded = js.Global().Get("JSON").Call("stringify", encoded)
+		}
 		if encoded.Type() == js.TypeString {
 			handler(json.RawMessage(encoded.String()))
 		}
 		return nil
 	})
 	created = true
-	unsubscribe := c.value.Call("subscribeSignal", name, callback, map[string]any{"immediate": false})
+	unsubscribe := c.value.Call(method, name, callback, map[string]any{"immediate": replay})
 	if unsubscribe.Type() != js.TypeFunction {
 		return nil, fmt.Errorf("shared signal subscription is unavailable")
 	}
@@ -97,6 +120,19 @@ func (c Context) SignalJSON(name string) (data json.RawMessage, err error) {
 // SetSignals publishes all values as one cross-island update. Serialization
 // completes before any write, and subscribers observe the complete batch.
 func (c Context) SetSignals(values map[string]any) (err error) {
+	return c.setSignals(values, false)
+}
+
+// SetChangedSignals publishes a state snapshot as one batch, notifying only
+// signals whose current JSON value differs. Unlike SetSignals, an identical
+// write is not an event. Use SetSignals for repeated event/pulse deliveries.
+// Comparison happens in the shared store, so intervening island writes and
+// in-place edits are observed rather than hidden by a sender-side cache.
+func (c Context) SetChangedSignals(values map[string]any) error {
+	return c.setSignals(values, true)
+}
+
+func (c Context) setSignals(values map[string]any, changedOnly bool) (err error) {
 	defer func() {
 		if failure := recover(); failure != nil {
 			err = fmt.Errorf("set shared signals: %v", failure)
@@ -105,14 +141,24 @@ func (c Context) SetSignals(values map[string]any) (err error) {
 	if values == nil {
 		values = map[string]any{}
 	}
-	encoded, err := encodeEventDetail(values)
+	encoded, err := json.Marshal(values)
 	if err != nil {
 		return err
 	}
+	if c.value.Get("setSignalsJSON").Type() == js.TypeFunction {
+		result := c.value.Call("setSignalsJSON", string(encoded), changedOnly)
+		if result.Type() == js.TypeString && result.String() != "" {
+			return fmt.Errorf("set shared signals: %s", result.String())
+		}
+		return nil
+	}
+	// Older hosts accept decoded values and always notify. Keep this compatible
+	// fallback rather than caching writes that another island may have changed.
 	if c.value.Get("setSignals").Type() != js.TypeFunction {
 		return fmt.Errorf("shared signal batch bridge is unavailable")
 	}
-	result := c.value.Call("setSignals", encoded)
+	value := js.Global().Get("JSON").Call("parse", string(encoded))
+	result := c.value.Call("setSignals", value)
 	if result.Type() == js.TypeString && result.String() != "" {
 		return fmt.Errorf("set shared signals: %s", result.String())
 	}

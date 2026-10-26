@@ -2,7 +2,12 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.57.15**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.57.24**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+
+Desktop hosts can discover late native-engine registrations with
+`window.gosxDesktop.refreshMethods()`, force selected components onto the WASM
+worker with `enginehost.Options.DisableNative`, and opt into Windows window-state
+persistence with `desktop.Options.WindowState`.
 
 ## Agent Skills
 
@@ -115,20 +120,30 @@ supported signals, computed values, and handlers, compiles expressions to VM
 instructions, and serializes an island program. Server components emit static
 HTML with no client-side cost.
 
+Island expressions accept `append(items.Get(), first, second)` for individual
+slice elements, including no new elements. Additions use the VM's existing
+immutable append operation; earlier slice values remain independent. Variadic
+slice expansion (`append(items, more...)`) is not in this expression subset.
+
 Strict `//gosx:engine` declarations and automatic `.gsx` engine-surface
 discovery remain preview/post-v1. The v1 engine contract is the programmatic
 `engine.Config` / `ctx.Engine` surface described below.
+
+Within that preview, VM engine surfaces share helper functions and struct layouts
+across their Go source files, while import aliases stay local to each file.
+The existing VM Go subset and 65,535-expression package limit apply.
 
 An island may compose same-file strict **pure-view** components. GoSX inlines
 each invocation into the parent island program at compile time, so composition
 adds no browser component runtime: the result still has one hydration root,
 one VM, and the same `.gxi` shape as equivalent hand-flattened markup. Direct
-typed scalar props, caller-owned children, and named slots are supported;
+typed scalar props, static `func()` callback props, caller-owned children, and
+named slots are supported;
 projected children keep access to the parent island's signals and handlers.
 
 The v1 boundary is deliberately fail-closed. A composed callee cannot be an
 island, engine, legacy or imported component; own signals, computed values,
-handlers, or effects; accept handler-valued props; read nested/slice props; or
+handlers, or effects; read nested/slice props; or
 use spreads. Recursion is rejected, composition depth is capped at 32, and the
 expanded island retains the VM's 65,535-node and expression limits. Put state
 and behavior in the parent island and pass scalar view data down.
@@ -137,6 +152,12 @@ Root island call-site children and named slots are not supported: island
 program assets are compiled per component, before any individual server call
 site exists. Put the slot-bearing pure-view component *inside* the island when
 you need that composition shape.
+
+Callback props bind an existing parent island handler, or forward another view's
+callback prop, to a supported DOM event. The handler takes no arguments and
+returns no value. Callbacks remain compiler bindings: they cannot be rendered,
+evaluated as data, or supplied to a root island from server props. Composition
+reuses the same handler and VM instructions as the equivalent flat markup.
 
 ### Legacy component syntax (deprecated)
 
@@ -604,6 +625,8 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 
 [Scene3D timelines](docs/scene3d-timeline.md) sequence object and camera tweens in Go, with seekable browser playback and reduced-motion settling.
 
+[Shared motion and shader surfaces](docs/motion-transport.md) coordinate HTML, cameras, uniforms and Selena time from Go, with typed playback controls and the same material in 2D and 3D.
+
 [Text3D](docs/scene3d-text.md) draws Go-authored scores and labels on world-space texture planes.
 
 The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
@@ -745,6 +768,38 @@ h.On("update", func(client *hub.Client, msg hub.Message) {
 ```
 
 Hubs handle client lifecycle, message framing, broadcast patterns, per-connection state, and typed message dispatch. They integrate cleanly with the `crdt` package for conflict-free collaborative state and with the `sim` package for authoritative game loops.
+
+Server-rendered text views can use a typed Hub document binding:
+
+```go
+_, err := ctx.Runtime().BindHubDocument("notes", "/notes/ws", hydrate.HubDocumentConfig{
+    RootID: "notes-editor",
+    Version: state.Version,
+})
+```
+
+Inside that root, mark a textarea with `data-gosx-document-source` and a preview
+with `data-gosx-document-preview`. Optional `data-gosx-document-status`,
+`-version`, `-presence`, `-identity` and `-cursors` elements receive the matching
+state. Remote caret overlays use an unwrapped textarea (`wrap="off"`) and a
+positioned cursor layer. The collaboration demo shows the complete markup.
+
+The server handles `doc:edit` with `{text, version}`, broadcasts `doc:update`
+with `{text, version, html?}`, and answers `doc:sync` with a current snapshot.
+Optional presence and cursor events have configurable names in
+`hydrate.HubDocumentEvents`; cursor offsets use native textarea UTF-16 units.
+Render preview HTML on the server. GoSX's content renderer enforces an inert
+Markdown HTML policy when `content.MDPPOptions.Sanitize` is true, excluding
+active embeds, forms, SVG and MathML and rejecting executable URL schemes.
+
+The binding loads one optional browser host and needs no WASM or application
+JavaScript. It debounces edits, protects newer local input from delayed replies,
+keeps unsent input on the page during reconnect, and flushes pending edits before
+soft navigation. Caret layout coalesces into animation frames and caches unchanged line and width
+measurements; disposal removes
+listeners, carets and timers. Authorization, document storage and conflict policy
+remain server responsibilities. The demo uses last-write-wins snapshots; the
+separate editor package supplies the richer CRDT editing surface.
 
 ## Collaboration: CRDT + Workspace
 
@@ -923,7 +978,7 @@ Controls:
 | `GOSX_RUNTIME_MODE=tinygo` | Require TinyGo; never fall back to a prebuilt runtime. |
 | `GOSX_RUNTIME_MODE=prebuilt` | Skip the TinyGo probe; always resolve a prebuilt runtime. |
 | `GOSX_RUNTIME_MODE=auto` (default) | Prefer TinyGo; fall back to prebuilt only when TinyGo is missing. |
-| `GOSX_RUNTIME_CACHE=<dir>` | Override the verified-artifact cache directory. |
+| `GOSX_RUNTIME_CACHE=<dir>` | Override the verified-runtime and compiler-workspace cache directory. |
 | `GOSX_RUNTIME_RELEASE_REPO=<owner>/<repo>` | Resolve prebuilt runtimes from a fork's own releases. |
 | `gosx build --offline` | Disable the prebuilt *network fetch*; an already cached, verified version still resolves. |
 
@@ -932,6 +987,13 @@ A project still building against unreleased GoSX source (a `go.mod` local
 always requires TinyGo — there is no prebuilt runtime for source that was
 never tagged. `gosx dev` never needs TinyGo; it always uses the standard Go
 WASM compiler.
+
+When building runtimes with TinyGo, `gosx build` uses stable source-module
+paths under `$GOSX_RUNTIME_CACHE/tinygo-build` so TinyGo can reuse its package
+cache across rebuilds. Every build stages current source and dependency files;
+edited, added and deleted files take effect immediately. Workspaces are scoped
+to the GoSX source location and runtime tags and protected by process locks.
+Concurrent builds or unavailable cache storage use isolated temporary modules.
 
 ## Performance Budgets
 
@@ -1358,7 +1420,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.57.15**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.57.24**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

@@ -36,6 +36,7 @@ import (
 	"unicode"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
+	"m31labs.dev/gosx/internal/htmlattr"
 	"m31labs.dev/gosx/internal/strictcomponent"
 )
 
@@ -58,22 +59,26 @@ func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) 
 }
 
 type lowerer struct {
-	src          []byte
-	srcStr       string
-	lang         *gotreesitter.Language
-	prog         *Program
-	errs         []Diagnostic
-	imports      *ImportTable // file-wide import table; see binding.go
-	strict       bool
-	strictNames  map[string]struct{}
-	legacyNames  map[string]struct{}
-	strictProps  map[string]string
-	strictReads  map[string]map[string]strictReadClass
-	structFields map[string]map[string]string
-	structTypes  map[string]map[string]string
-	strictServer bool
+	src           []byte
+	srcStr        string
+	lang          *gotreesitter.Language
+	prog          *Program
+	errs          []Diagnostic
+	imports       *ImportTable // file-wide import table; see binding.go
+	strict        bool
+	strictNames   map[string]struct{}
+	legacyNames   map[string]struct{}
+	strictProps   map[string]string
+	strictReads   map[string]map[string]strictReadClass
+	structFields  map[string]map[string]string
+	structTypes   map[string]map[string]string
+	clientStructs map[string]bool
+	strictServer  bool
 
 	scalarTypeShadows map[string]bool
+	// inIsland is true while the body of a //gosx:island component is being
+	// lowered. Reserved dispatch attribute names are rejected only there.
+	inIsland bool
 
 	// legacyProps records every legacy (func-spelled) renderer's declared
 	// props type text, and typedLegacyProps the subset whose base type is a
@@ -189,6 +194,8 @@ const (
 	strictReadScalar strictReadClass = 1 << iota
 	strictReadLoopSource
 	strictReadSpreadForward
+	strictReadCallback
+	strictReadState
 )
 
 func (c strictReadClass) has(bit strictReadClass) bool { return c&bit != 0 }
@@ -516,6 +523,9 @@ func (l *lowerer) analyzeBody(funcDecl, bodyNode *gotreesitter.Node) *ComponentS
 	}
 
 	propsName, propsType := l.extractProps(funcDecl)
+	if l.nodeType(funcDecl) == "gosx_component_declaration" {
+		propsName, propsType = l.extractStrictProps(funcDecl)
+	}
 	if propsName == "props" {
 		scope.SourcePropsPaths = make(map[string]string)
 		sources := []string{}
@@ -748,6 +758,22 @@ func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotrees
 }
 
 func (l *lowerer) signalSourceType(call *gotreesitter.Node, source string) string {
+	// Depending on argument count and context, explicit generic calls use
+	// either a conversion's type_arguments or a call's index_expression.
+	// Preserve the explicit type from either shape.
+	if gt := l.conversionGenericType(call); gt != nil && l.nodeType(call) == "type_conversion_expression" {
+		if types := l.childByField(gt, "type_arguments"); types != nil {
+			if types.NamedChildCount() != 1 {
+				return ""
+			}
+			return strings.TrimSpace(l.text(types.NamedChild(0)))
+		}
+	}
+	if fn := l.childByField(call, "function"); fn != nil && l.nodeType(fn) == "index_expression" {
+		if idx := l.childByField(fn, "index"); idx != nil {
+			return strings.TrimSpace(l.text(idx))
+		}
+	}
 	if types := l.childByField(call, "type_arguments"); types != nil {
 		// An explicit type controls the signal's Go type. Preserve its spelling
 		// for diagnostics. The host checker resolves the actual type.
@@ -764,8 +790,7 @@ func (l *lowerer) signalSourceType(call *gotreesitter.Node, source string) strin
 }
 
 func (l *lowerer) computedSourceType(args *gotreesitter.Node) string {
-	for i := 0; i < int(args.NamedChildCount()); i++ {
-		fn := args.NamedChild(i)
+	for _, fn := range l.argNodes(args) {
 		if l.nodeType(fn) == "func_literal" {
 			if result := l.childByField(fn, "result"); result != nil {
 				name := l.text(result)
@@ -788,8 +813,10 @@ func (l *lowerer) handlerInfoForAssignedExpr(varName string, rightExpr *gotreesi
 		return HandlerInfo{}, false
 	}
 	return HandlerInfo{
-		Name:       varName,
-		Statements: l.extractStatements(body),
+		Name:          varName,
+		Statements:    l.extractStatements(body),
+		HasParameters: l.functionHasParameters(rightExpr),
+		HasResults:    l.functionHasResults(rightExpr),
 	}, true
 }
 
@@ -861,7 +888,26 @@ func (l *lowerer) signalCallKind(funcNode *gotreesitter.Node, lex *LexicalScope)
 }
 
 func (l *lowerer) signalCallExpr(n *gotreesitter.Node, lex *LexicalScope) (signalCall, *gotreesitter.Node, bool) {
-	if n == nil || l.nodeType(n) != "call_expression" {
+	if n == nil {
+		return signalCallUnknown, nil, false
+	}
+	if l.nodeType(n) == "type_conversion_expression" {
+		// One-argument generic calls can use the conversion shape, depending
+		// on context; v0.50.1 also produced it in some contexts. Treat the
+		// generic type as the callee; argNodes skips its leading type.
+		if gt := l.conversionGenericType(n); gt != nil {
+			_, name := l.callName(gt)
+			if name == "Computed" {
+				args := l.argNodes(n)
+				if len(args) != 1 || l.nodeType(args[0]) != "func_literal" {
+					return signalCallUnknown, nil, false
+				}
+			}
+			return l.signalCallKind(gt, lex), n, true
+		}
+		return signalCallUnknown, nil, false
+	}
+	if l.nodeType(n) != "call_expression" {
 		return signalCallUnknown, nil, false
 	}
 	funcNode := l.childByField(n, "function")
@@ -880,8 +926,44 @@ func (l *lowerer) callName(funcNode *gotreesitter.Node) (string, string) {
 			return "", ""
 		}
 		return l.text(funcNode.NamedChild(0)), l.text(funcNode.NamedChild(1))
+	case "generic_type":
+		// pkg.Name[T] or Name[T] parsed as a type: the callee is its base type.
+		if funcNode.NamedChildCount() < 1 {
+			return "", ""
+		}
+		return l.callName(funcNode.NamedChild(0))
+	case "qualified_type":
+		if funcNode.NamedChildCount() < 2 {
+			return "", ""
+		}
+		return l.text(funcNode.NamedChild(0)), l.text(funcNode.NamedChild(1))
+	case "type_identifier":
+		return "", l.text(funcNode)
+	case "index_expression":
+		// Zero-argument and two-or-more-argument generic calls use an indexed
+		// callee; one-argument calls can instead use a conversion, depending
+		// on context. A value index must not be mistaken for a type argument.
+		if !l.isTypeArgument(l.childByField(funcNode, "index")) {
+			return "", ""
+		}
+		return l.callName(l.childByField(funcNode, "operand"))
 	default:
 		return "", ""
+	}
+}
+
+func (l *lowerer) isTypeArgument(n *gotreesitter.Node) bool {
+	if n == nil {
+		return false
+	}
+	switch l.nodeType(n) {
+	case "identifier", "type_identifier", "qualified_type", "pointer_type",
+		"generic_type", "slice_type", "map_type", "array_type":
+		return true
+	case "selector_expression":
+		return n.NamedChildCount() == 2 && l.nodeType(n.NamedChild(0)) == "identifier"
+	default:
+		return false
 	}
 }
 
@@ -891,13 +973,43 @@ func (l *lowerer) extractArg(argsNode *gotreesitter.Node, index int) string {
 	if index < 0 {
 		return ""
 	}
-	for i := 0; i < int(argsNode.NamedChildCount()); i++ {
-		child := argsNode.NamedChild(i)
-		if i == index {
-			return l.text(child)
-		}
+	args := l.argNodes(argsNode)
+	if index < len(args) {
+		return l.text(args[index])
 	}
 	return ""
+}
+
+// conversionGenericType returns the generic_type of a type_conversion_expression
+// or nil when the conversion's type is not a generic instantiation.
+func (l *lowerer) conversionGenericType(n *gotreesitter.Node) *gotreesitter.Node {
+	if n == nil || n.NamedChildCount() < 1 {
+		return nil
+	}
+	if first := n.NamedChild(0); first != nil && l.nodeType(first) == "generic_type" {
+		return first
+	}
+	return nil
+}
+
+// argNodes lists the argument expressions held by argsNode: the children of an
+// argument_list, or the operand of a type_conversion_expression that stands in
+// for a one-argument generic call.
+func (l *lowerer) argNodes(argsNode *gotreesitter.Node) []*gotreesitter.Node {
+	if argsNode == nil {
+		return nil
+	}
+	start := 0
+	if l.nodeType(argsNode) == "type_conversion_expression" {
+		start = 1
+	}
+	var out []*gotreesitter.Node
+	for i := start; i < int(argsNode.NamedChildCount()); i++ {
+		if c := argsNode.NamedChild(i); c != nil && l.nodeType(c) != "comment" {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func (l *lowerer) normalizeSharedSignalName(expr string) string {
@@ -925,12 +1037,12 @@ func (l *lowerer) normalizeSharedSignalName(expr string) string {
 // from silently discarding setup or control-flow statements.
 func (l *lowerer) extractDeriveBody(argsNode *gotreesitter.Node) (string, error) {
 	var funcLit *gotreesitter.Node
-	if argsNode.NamedChildCount() != 1 {
+	argList := l.argNodes(argsNode)
+	if len(argList) != 1 {
 		return "", fmt.Errorf("requires exactly one function literal argument")
 	}
-	for i := 0; i < int(argsNode.NamedChildCount()); i++ {
-		child := argsNode.NamedChild(i)
-		if child != nil && l.nodeType(child) == "func_literal" {
+	for _, child := range argList {
+		if l.nodeType(child) == "func_literal" {
 			funcLit = child
 		}
 	}
@@ -1225,6 +1337,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictReads = make(map[string]map[string]strictReadClass)
 	l.structFields = make(map[string]map[string]string)
 	l.structTypes = make(map[string]map[string]string)
+	l.clientStructs = make(map[string]bool)
 	l.collectFormStateSchemas()
 	l.legacyProps = make(map[string]string)
 	l.typedLegacyProps = make(map[string]string)
@@ -1468,6 +1581,7 @@ func (l *lowerer) componentDeclaredSlots(decl *gotreesitter.Node) []string {
 // whether a given <Each> is the builtin or a shadowing component call.
 func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]strictReadClass {
 	reads := make(map[string]strictReadClass)
+	readClass := strictReadScalar
 	var walk func(*gotreesitter.Node)
 	walk = func(node *gotreesitter.Node) {
 		if node == nil {
@@ -1476,13 +1590,13 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]strict
 		switch l.nodeType(node) {
 		case "selector_expression", "index_expression":
 			if path, ok := strictcomponent.ServerPropPath(l.text(node)); ok {
-				registerStrictPropRead(reads, path, strictReadScalar)
+				registerStrictPropRead(reads, path, readClass)
 				return
 			}
 		case "jsx_attribute_expression":
 			expr := stripGSXAttributeExpressionText(l.text(node))
 			for _, path := range strictcomponent.ServerExpressionPropPaths(expr) {
-				registerStrictPropRead(reads, path, strictReadScalar)
+				registerStrictPropRead(reads, path, readClass)
 			}
 			return
 		case "jsx_element", "jsx_self_closing_element":
@@ -1493,7 +1607,25 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]strict
 			walk(node.NamedChild(i))
 		}
 	}
-	walk(n)
+	if l.hasIslandDirective(n) && l.nodeType(n) == "gosx_component_declaration" {
+		body := l.childByField(n, "body")
+		statements := l.statementListNode(body)
+		if statements == nil {
+			statements = body
+		}
+		if statements != nil {
+			for i := 0; i < int(statements.NamedChildCount()); i++ {
+				statement := statements.NamedChild(i)
+				readClass = strictReadState
+				if l.nodeType(statement) == "return_statement" {
+					readClass = strictReadScalar
+				}
+				walk(statement)
+			}
+		}
+	} else {
+		walk(n)
+	}
 	return reads
 }
 
@@ -1549,6 +1681,9 @@ func (l *lowerer) collectStrictElementReads(node *gotreesitter.Node, reads map[s
 	isSpreadForwardTag := isStrictCallee
 	for i := 0; i < int(open.NamedChildCount()); i++ {
 		attrChild := open.NamedChild(i)
+		if l.collectStrictCallbackRead(tag, attrChild, reads) {
+			continue
+		}
 		if isEach && l.nodeType(attrChild) == "jsx_attribute" {
 			nameNode := l.childByField(attrChild, "name")
 			if nameNode != nil && l.text(nameNode) == "of" {
@@ -1613,23 +1748,30 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 			}
 			fields := make(map[string]string)
 			fieldTypes := make(map[string]string)
+			plainClientStruct := true
 			var collectFields func(*gotreesitter.Node)
 			collectFields = func(current *gotreesitter.Node) {
 				if current == nil {
 					return
 				}
 				if l.nodeType(current) == "field_declaration" {
+					namedField := false
 					fieldType := ""
 					if fieldTypeNode := l.childByField(current, "type"); fieldTypeNode != nil {
 						fieldType = strings.TrimSpace(l.text(fieldTypeNode))
+						if l.nodeType(fieldTypeNode) == "function_type" && !l.functionHasParameters(fieldTypeNode) && !l.functionHasResults(fieldTypeNode) {
+							fieldType = "func()"
+						}
 					}
 					for i := 0; i < int(current.NamedChildCount()); i++ {
 						fieldNode := current.NamedChild(i)
 						if l.nodeType(fieldNode) != "field_identifier" {
 							continue
 						}
+						namedField = true
 						field := l.text(fieldNode)
-						if field == "" || field[0] < 'A' || field[0] > 'Z' {
+						if field == "" || !unicode.IsUpper([]rune(field)[0]) {
+							plainClientStruct = false
 							continue
 						}
 						fields[field] = field
@@ -1641,6 +1783,9 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 							fields[alias] = field
 						}
 					}
+					if !namedField {
+						plainClientStruct = false
+					}
 					return
 				}
 				for i := 0; i < int(current.NamedChildCount()); i++ {
@@ -1648,6 +1793,7 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 				}
 			}
 			collectFields(typeNode)
+			l.clientStructs[l.text(nameNode)] = plainClientStruct
 			if len(fields) > 0 {
 				name := l.text(nameNode)
 				l.structFields[name] = fields
@@ -1681,10 +1827,25 @@ func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentNam
 	for _, path := range paths {
 		class := reads[path]
 		segments := strings.Split(path, ".")
+		if class.has(strictReadState) {
+			resolved := l.walkStrictHops("props", baseType, segments)
+			if resolved.failKind != strictHopOK {
+				l.errorf(n, "%s", strictHopMessage(componentName, resolved))
+			}
+		}
 		if class.has(strictReadScalar) {
 			l.resolveStrictSelectorPath(n, componentName, propsType, segments)
 		}
+		if class.has(strictReadCallback) {
+			resolved := l.walkStrictHops("props", baseType, segments)
+			if len(segments) != 1 || resolved.failKind != strictHopOK || !islandCallbackType(resolved.leafType) {
+				l.errorf(n, "strict component %s callback props.%s must be a direct func() field", componentName, path)
+			}
+		}
 		if class.has(strictReadLoopSource) {
+			if l.hasIslandDirective(n) {
+				continue // Island JSON collections are checked by collectClientProps.
+			}
 			if elem := l.resolveStrictEachSourceType(n, componentName, propsType, segments); elem != "" {
 				if l.strictEachElems == nil {
 					l.strictEachElems = make(map[string]map[string]string)
@@ -2693,6 +2854,23 @@ func (l *lowerer) validateStrictConditionalCall(n *gotreesitter.Node, attrs []At
 	}
 }
 
+// validateReservedGosxAttrs rejects an authored dispatch-marker attribute on an
+// HTML element inside an island. HTML keeps the first of two duplicate
+// attributes and authored attributes render before the synthesized markers, so
+// an authored data-gosx-on-click would choose which handler fires.
+func (l *lowerer) validateReservedGosxAttrs(n *gotreesitter.Node, tag string, attrs []Attr) {
+	if !l.inIsland || IsComponent(tag) {
+		return
+	}
+	for _, attr := range attrs {
+		if attr.Kind == AttrSpread || !htmlattr.ReservedDispatchName(attr.Name) {
+			continue
+		}
+		l.errorf(n, "attribute %q is reserved: the island renderer generates it for event dispatch, and an authored value would override the real handler", attr.Name)
+		l.hintLast("use a non-reserved name such as data-app-" + strings.TrimPrefix(strings.ToLower(attr.Name), "data-gosx-"))
+	}
+}
+
 func (l *lowerer) validateStrictHTMLElement(n *gotreesitter.Node, tag string, attrs []Attr) {
 	if !l.strictServer || IsComponent(tag) {
 		return
@@ -2810,7 +2988,10 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	prevLegacyPropsName := l.currentLegacyPropsName
 	l.currentLegacyComponent = name
 	l.currentLegacyPropsName = propsName
+	prevInIsland := l.inIsland
+	l.inIsland = l.hasIslandDirective(n)
 	rootID := l.lowerGSXNode(gsxRoot)
+	l.inIsland = prevInIsland
 	l.currentLegacyComponent = prevLegacyComponent
 	l.currentLegacyPropsName = prevLegacyPropsName
 
@@ -2918,7 +3099,10 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	l.strictServer = !isIsland && !isEngine
 	l.currentStrictComponent = componentName
 	l.currentStrictPropsType = propsType
+	prevInIsland := l.inIsland
+	l.inIsland = isIsland
 	rootID := l.lowerGSXNode(gsxRoot)
+	l.inIsland = prevInIsland
 	l.strict = wasStrict
 	l.strictServer = wasStrictServer
 	l.currentStrictComponent = prevComponent
@@ -2954,6 +3138,11 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 
 	if !isIsland && !isEngine {
 		comp.PropsSlices = l.validateStrictServerExpressions(comp.Root, componentName, propsType)
+	}
+	if isIsland {
+		if err := l.collectClientProps(&comp); err != nil {
+			l.errorf(n, "%v", err)
+		}
 	}
 	l.prog.Components = append(l.prog.Components, comp)
 }
@@ -3184,6 +3373,9 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 			return
 		}
 		for _, attr := range node.Attrs {
+			if attr.Kind == AttrExpr && l.strictCallbackAttribute(node.Tag, attr.Name) {
+				continue
+			}
 			if isBuiltinIf && attr.Name == "cond" && attr.Kind == AttrExpr {
 				l.validateStrictConditionalExpression(node.Span, attr.Expr, componentName, propsType, scope)
 				continue
@@ -3799,6 +3991,7 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 	l.validateStrictComponentCall(n, tag, attrs, children)
 	l.validateStrictCalleeSlots(n, tag, slots)
 	l.validateStrictHTMLElement(n, tag, attrs)
+	l.validateReservedGosxAttrs(n, tag, attrs)
 	if l.strict && !IsComponent(tag) {
 		normalizeStrictHTMLAttrs(attrs)
 	} else if IsComponent(tag) {

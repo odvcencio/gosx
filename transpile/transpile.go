@@ -64,7 +64,8 @@ func Transpile(source []byte, opts Options) (string, error) {
 	// Transpilation must apply the same semantic gate as the IR renderer. In
 	// particular, strict components may not contain Go statements that would
 	// survive in generated Go but be ignored by file-routed IR rendering.
-	if _, err := gosx.Compile(source); err != nil {
+	compiled, err := gosx.Compile(source)
+	if err != nil {
 		return "", err
 	}
 
@@ -76,11 +77,16 @@ func Transpile(source []byte, opts Options) (string, error) {
 		strictProjection: opts.strictProjection,
 		importNames:      opts.importNames,
 		sharedImports:    opts.SharedImports,
+		islandSliceTypes: islandSliceTypes(compiled),
 	}
 
 	result := t.emit(root)
 	if len(t.errs) > 0 {
 		return "", fmt.Errorf("transpile errors:\n%s", strings.Join(t.errs, "\n"))
+	}
+	result, err = projectIslandEvents(result, compiled, t.imports)
+	if err != nil {
+		return "", err
 	}
 
 	// Last line of defense: the transpiler must never hand back Go that does
@@ -128,7 +134,9 @@ type transpiler struct {
 	// is currently being emitted (empty outside strict emission) — needed
 	// to resolve a same-file <Each of> or spread source's element/struct
 	// type by walking structFieldTypes from the right root.
-	currentPropsType string
+	currentPropsType  string
+	islandSliceTypes  map[string]map[string]string
+	currentSliceTypes map[string]string
 	// verbatimTextDepth counts nesting inside a <pre> or <textarea> element.
 	// emitGSXText only drops a whole-line `//` comment (issue: developer
 	// comments rendered as page text) when this is 0 — a <pre>/<textarea>
@@ -898,11 +906,14 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 	params += strictcomponent.ChildrenBinding + " ..." + t.gosxRef("Node")
 
 	prevPropsType := t.currentPropsType
+	prevSliceTypes := t.currentSliceTypes
 	t.currentPropsType = t.propsTypes[t.text(nameNode)]
+	t.currentSliceTypes = t.islandSliceTypes[t.text(nameNode)]
 	t.strict++
 	body := t.emitDefault(bodyNode)
 	t.strict--
 	t.currentPropsType = prevPropsType
+	t.currentSliceTypes = prevSliceTypes
 	return "func " + t.text(nameNode) + "(" + params + ") " + t.gosxRef("Node") + " " + body
 }
 
@@ -1234,6 +1245,15 @@ func trimGSXStringLiteral(attr *gotreesitter.Node, t *transpiler) string {
 // (unreachable once gosx.Compile has run), so a transpiler bug fails as an
 // invalid-Go build error instead of a panic.
 func (t *transpiler) strictEachElemType(ofExpr string) string {
+	if expression, err := parser.ParseExpr(ofExpr); err == nil {
+		if call, ok := expression.(*ast.CallExpr); ok && len(call.Args) == 0 {
+			if method, ok := call.Fun.(*ast.SelectorExpr); ok && method.Sel.Name == "Get" {
+				if name, ok := method.X.(*ast.Ident); ok && t.currentSliceTypes[name.Name] != "" {
+					return t.currentSliceTypes[name.Name]
+				}
+			}
+		}
+	}
 	path, ok := strictcomponent.ServerPropPath(ofExpr)
 	if !ok || len(path) != 1 {
 		return "any"

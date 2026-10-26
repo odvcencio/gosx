@@ -736,7 +736,7 @@
 .cms-input { min-height: 2.75rem; padding: var(--space-xs) var(--space-sm); color: var(--demo-fg); background: var(--color-surface); border-color: var(--color-border-strong); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 0.85rem; }
 .cms-input:focus { border-color: var(--demo-accent); background: var(--color-surface); box-shadow: 0 0 0 2px color-mix(in srgb, var(--demo-accent) 18%, transparent); }
 .cms-input--textarea { min-height: 6rem; }
-.cms-preview__canvas { gap: 0; padding: var(--space-sm); color: #192934; background: #e9e2d6; }
+.cms-preview__canvas { gap: 0; padding: var(--space-sm); color: #192934; background: #e9e2d6; scroll-margin-block-start: calc(var(--site-nav-offset, 4rem) + var(--space-md)); }
 .cms-preview-block { border-radius: 0; }
 .cms-preview-hero { padding: 2.5rem 1.5rem 2rem; color: #192934; background: #f8f2e8; border-top-color: #a76024; border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
 .cms-preview-hero h2 { margin: 0 0 var(--space-sm); color: #192934; font: 700 clamp(1.75rem, 2vw, 2.4rem)/1.1 var(--font-display); letter-spacing: -0.05em; }

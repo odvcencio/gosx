@@ -755,6 +755,19 @@
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
 
+      if (obj && obj._crowdBatch === true) {
+        // One bundle record stands for every agent of a crowd batch. Test the
+        // agents, which the record builds on demand, and report the hit
+        // against the batch record's slot.
+        if (obj.pickable === false || obj.viewCulled || typeof obj.crowdPickRecords !== "function") continue;
+        var crowdHit = sceneRaycastPickGroup(ray, obj.crowdPickRecords(), positions, 0, uvs);
+        if (crowdHit && (!closest || crowdHit.distance < closest.distance)) {
+          crowdHit.index = safeIndexOffset + i;
+          closest = crowdHit;
+        }
+        continue;
+      }
+
       if (!sceneObjectAllowsPointerPick(obj)) continue;
       if (obj.viewCulled) continue;
 

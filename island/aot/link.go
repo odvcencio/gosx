@@ -621,7 +621,7 @@ func commonFunctions(e *expressionEmitter) []uint32 {
 	indices = append(indices, e.inputUTF8, e.rootCopy)
 	indices = append(indices, e.transactions[:]...)
 	return append(indices, e.computed.begin, e.computed.commit, e.computed.abort, e.dom.patch,
-		e.computed.snapshot, e.computed.deliver, e.computed.flush)
+		e.computed.snapshot, e.computed.deliver, e.computed.flush, e.computed.invalidate)
 }
 
 // linkProgramCode combines already proved programs without decoding source at
@@ -1302,10 +1302,11 @@ func (l *linkedLayout) publishFunction(c *linkedCode) wasmgen.Function {
 	b.index(0x10, c.indices[0][c.programs[0].computed.snapshot])
 	b.set(4)
 	b.statusGuard()
+	invalidateSnapshot(&b, 4, 5, c.indices[0][c.programs[0].computed.invalidate])
 	b.get(4)
 	b.index(0x10, c.indices[0][c.programs[0].computed.deliver])
 	b.op(0x0b)
-	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 2, Body: b}
+	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 3, Body: b}
 }
 
 // Validate a scalar inside one bounded interval without allocating, importing

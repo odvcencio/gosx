@@ -110,3 +110,66 @@ transforms = game.QueryInto(ctx.World, transforms[:0])
 
 Use `rt.Mount(ctx, fallback)` from a server page state/runtime, or
 `ctx.Engine(rt.EngineConfig(), fallback)` directly.
+
+## Time control and multi-rate systems
+
+`Clock` (and `Runtime`) can pause and scale game time:
+
+```go
+rt.SetPaused(true)       // frames still advance; no fixed steps, no game time
+rt.SetTimeScale(2)       // double speed; 0 stops time; NaN/negative ignored
+```
+
+`Frame.Delta` is game time (clamped real delta times the scale, zero when
+paused); `Frame.RealDelta` is the unscaled value; `Frame.Steps` counts fixed
+steps since the clock started. Sub-nanosecond remainders of scaled deltas are
+carried, so a scale of 0.3 does not drift. `Snapshot` saves the pause flag and
+scale; older snapshots leave them alone.
+
+For a simulation that runs fast, use coarse steps and multi-rate systems, not
+more substeps. One game year per real minute is a scale of 525,600. With
+`FixedStep: time.Hour`, that is about 2.4 steps per frame at 60 fps:
+
+```go
+rt := game.New(game.Config{
+    FixedStep: time.Hour, // MaxDelta defaults to at least FixedStep*MaxSubsteps
+    Systems: []game.System{
+        game.Func("weather", game.PhaseFixedUpdate, weather),            // every hour
+        game.Every(24, game.Func("economy", game.PhaseFixedUpdate, econ)), // daily
+        game.EveryInterval(30*24*time.Hour, game.Func("census", game.PhaseFixedUpdate, census)),
+    },
+})
+rt.SetTimeScale(525600)
+```
+
+`Every(n, sys)` runs a system every n ticks (fixed steps for `PhaseFixedUpdate`,
+frames otherwise) using `Context.Tick`, so the schedule is the same on every run.
+On a run, `ctx.Delta` holds the game time gathered since the last run.
+`EveryInterval(d, sys)` runs on accumulated game time instead. Frames cap at
+`MaxSubsteps` fixed steps; at extreme scales raise `MaxSubsteps` or the step
+size, or game time falls behind the scale. Cadence accumulators are not saved.
+
+## Saving the world
+
+`World` keeps its columns private, so register each persistent type under a
+stable name with a `SaveCodec`:
+
+```go
+codec := game.NewSaveCodec()
+_ = game.RegisterComponent[game.Transform](codec, "transform")        // JSON
+_ = game.RegisterComponent[Treasury](codec, "treasury", game.ValueCodec[Treasury]{
+    Marshal: encodeTreasury, Unmarshal: decodeTreasury,                // custom
+})
+_ = game.RegisterResource[Calendar](codec, "calendar")
+
+rt := game.New(game.Config{Snapshot: codec.SnapshotCodec()})
+save, err := codec.ExportWorld(rt.World()) // game.WorldSave, JSON-encodable
+err = codec.ImportWorld(rt.World(), save)  // replaces the world; atomic on error
+```
+
+Only registered types are saved; entity IDs, names and the ID counter are kept.
+Saves are byte-identical for the same world. `SkipUnknown` loads saves from a
+newer build, and `IncludeWorldInState` adds the world to the per-tick `State`
+(off by default because the world can be large). With `SnapshotCodec`,
+`Runtime.Snapshot` and `Runtime.Restore` (and so `sim.Runner.Restore` and
+spectator joins) carry the world.

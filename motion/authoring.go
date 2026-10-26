@@ -8,32 +8,6 @@ import (
 	"time"
 )
 
-var motionCSSUnits = map[string]struct{}{
-	"": {}, "px": {}, "%": {}, "em": {}, "rem": {}, "vh": {}, "vw": {},
-	"vmin": {}, "vmax": {}, "deg": {}, "rad": {}, "turn": {}, "ms": {}, "s": {},
-}
-
-var motionStyleProperties = map[string]struct{}{
-	"opacity": {}, "color": {}, "background": {}, "backgroundColor": {}, "background-color": {},
-	"transform": {}, "transform.x": {}, "transform.y": {}, "transform.z": {}, "transform.scale": {}, "transform.rotate": {}, "transform.rotation": {},
-	"width": {}, "height": {}, "minWidth": {}, "maxWidth": {}, "minHeight": {}, "maxHeight": {},
-	"top": {}, "right": {}, "bottom": {}, "left": {}, "margin": {}, "marginTop": {}, "marginRight": {}, "marginBottom": {}, "marginLeft": {},
-	"padding": {}, "paddingTop": {}, "paddingRight": {}, "paddingBottom": {}, "paddingLeft": {},
-	"borderRadius": {}, "filter": {}, "clipPath": {}, "letterSpacing": {}, "wordSpacing": {},
-}
-
-var motionSceneProperties = map[string]struct{}{
-	"x": {}, "y": {}, "z": {}, "position.x": {}, "position.y": {}, "position.z": {},
-	"rotation.x": {}, "rotation.y": {}, "rotation.z": {}, "rotationX": {}, "rotationY": {}, "rotationZ": {},
-	"scale.x": {}, "scale.y": {}, "scale.z": {}, "opacity": {},
-}
-
-var motionCameraProperties = map[string]struct{}{
-	"x": {}, "y": {}, "z": {}, "position.x": {}, "position.y": {}, "position.z": {},
-	"rotation.x": {}, "rotation.y": {}, "rotation.z": {}, "rotationX": {}, "rotationY": {}, "rotationZ": {},
-	"fov": {}, "near": {}, "far": {}, "zoom": {},
-}
-
 // SignalRef names a motion value in a Program.
 type SignalRef string
 
@@ -52,6 +26,7 @@ type SignalKind string
 
 const (
 	SignalTime       SignalKind = "time"
+	SignalPlayhead   SignalKind = "playhead"
 	SignalVisibility SignalKind = "visibility"
 	SignalScroll     SignalKind = "scroll"
 	SignalPointer    SignalKind = "pointer"
@@ -64,6 +39,7 @@ const (
 	SignalMix        SignalKind = "mix"
 	SignalVelocity   SignalKind = "velocity"
 	SignalCurve      SignalKind = "curve"
+	SignalTrack      SignalKind = "track"
 )
 
 // MotionAxis names the axis for scroll and pointer sources.
@@ -89,9 +65,11 @@ type MotionEase struct {
 
 // MotionKeyframe is a scalar or vector sample in a keyframe signal.
 type MotionKeyframe struct {
-	At    float64     `json:"at"`
-	Value any         `json:"value"`
-	Ease  *MotionEase `json:"ease,omitempty"`
+	At         float64     `json:"at"`
+	Value      any         `json:"value"`
+	Ease       *MotionEase `json:"ease,omitempty"`
+	InTangent  any         `json:"inTangent,omitempty"`
+	OutTangent any         `json:"outTangent,omitempty"`
 }
 
 // SignalSpec describes one signal in a serializable motion Program.
@@ -115,6 +93,8 @@ type SignalSpec struct {
 	Max           float64             `json:"max,omitempty"`
 	Ease          *MotionEase         `json:"ease,omitempty"`
 	Frames        []MotionKeyframe    `json:"frames,omitempty"`
+	Arity         ValueArity          `json:"arity,omitempty"`
+	Interp        Interp              `json:"interp,omitempty"`
 	Smooth        bool                `json:"smooth,omitempty"`
 	ReducedMotion ReducedMotionPolicy `json:"reducedMotion,omitempty"`
 }
@@ -128,16 +108,18 @@ const (
 	BindingSceneNode       BindingTarget = "sceneNode"
 	BindingMaterialUniform BindingTarget = "materialUniform"
 	BindingCamera          BindingTarget = "camera"
+	BindingSceneTransition BindingTarget = "sceneTransition"
 )
 
 // Binding connects one signal to an HTML style, CSS variable, or scene value.
 type Binding struct {
-	Signal   SignalRef     `json:"signal"`
-	Target   BindingTarget `json:"target"`
-	Selector string        `json:"selector"`
-	Node     string        `json:"node,omitempty"`
-	Property string        `json:"property"`
-	Unit     string        `json:"unit,omitempty"`
+	Signal     SignalRef       `json:"signal"`
+	Target     BindingTarget   `json:"target"`
+	Selector   string          `json:"selector"`
+	Node       string          `json:"node,omitempty"`
+	Property   string          `json:"property"`
+	Unit       string          `json:"unit,omitempty"`
+	Transition json.RawMessage `json:"transition,omitempty"`
 }
 
 // PinBinding keeps a Scene3D node aligned with a DOM element's cached rect.
@@ -150,11 +132,13 @@ type PinBinding struct {
 // Program is a serializable graph of motion signals and their bindings.
 // The JavaScript runtime evaluates it alongside the Scene3D renderer.
 type Program struct {
-	Version  int          `json:"version"`
-	ID       string       `json:"id"`
-	Signals  []SignalSpec `json:"signals"`
-	Bindings []Binding    `json:"bindings,omitempty"`
-	Pins     []PinBinding `json:"pins,omitempty"`
+	Transport *TransportSpec    `json:"transport,omitempty"`
+	Version   int               `json:"version"`
+	ID        string            `json:"id"`
+	Signals   []SignalSpec      `json:"signals"`
+	Bindings  []Binding         `json:"bindings,omitempty"`
+	Pins      []PinBinding      `json:"pins,omitempty"`
+	SVGMorphs []SVGMorphBinding `json:"svgMorphs,omitempty"`
 	// CSSCompiled lists the indexes of Bindings that CompileCSS turned into
 	// CSS. The browser runtime skips them when it supports scroll timelines.
 	CSSCompiled []int `json:"cssCompiled,omitempty"`
@@ -266,19 +250,18 @@ func (p *Program) BindCSSVariable(signal SignalRef, selector, name, unit string)
 	p.bind(Binding{Signal: signal, Target: BindingCSSVariable, Selector: selector, Property: name, Unit: unit})
 }
 
-// BindSceneNode binds a scalar signal to a node property such as position.y,
-// rotation.z, scale.x, or opacity.
+// BindSceneNode binds a scalar property, a Vec3 position/scale, or a quaternion
+// rotation. Component properties such as position.y continue to take scalars.
 func (p *Program) BindSceneNode(signal SignalRef, sceneSelector, node, property string) {
 	p.bind(Binding{Signal: signal, Target: BindingSceneNode, Selector: sceneSelector, Node: node, Property: property})
 }
 
-// BindMaterialUniform binds a scalar signal to a mesh's named material uniform.
+// BindMaterialUniform binds a scalar, vector, or color to a named material uniform.
 func (p *Program) BindMaterialUniform(signal SignalRef, sceneSelector, mesh, uniform string) {
 	p.bind(Binding{Signal: signal, Target: BindingMaterialUniform, Selector: sceneSelector, Node: mesh, Property: uniform})
 }
 
-// BindCamera binds a scalar signal to a camera property such as position.z,
-// rotation.y, or fov.
+// BindCamera binds a scalar camera property, Vec3 position, or quaternion rotation.
 func (p *Program) BindCamera(signal SignalRef, sceneSelector, property string) {
 	p.bind(Binding{Signal: signal, Target: BindingCamera, Selector: sceneSelector, Property: property})
 }
@@ -304,6 +287,9 @@ func (p *Program) Marshal() ([]byte, error) {
 	if strings.TrimSpace(p.ID) == "" {
 		return nil, errors.New("motion: program id is required")
 	}
+	if err := p.Transport.validate(); err != nil {
+		return nil, err
+	}
 	ids := make(map[string]struct{}, len(p.Signals))
 	for _, signal := range p.Signals {
 		id := strings.TrimSpace(signal.ID)
@@ -316,8 +302,16 @@ func (p *Program) Marshal() ([]byte, error) {
 		ids[id] = struct{}{}
 	}
 	for _, signal := range p.Signals {
+		if signal.Kind == SignalPlayhead && p.Transport == nil {
+			return nil, errors.New("motion: playhead signal requires a transport")
+		}
 		if signal.Kind == SignalCurve {
 			if err := validateCurveSignal(signal); err != nil {
+				return nil, err
+			}
+		}
+		if signal.Kind == SignalTrack {
+			if err := validateTrackSignal(signal); err != nil {
 				return nil, err
 			}
 		}
@@ -332,6 +326,10 @@ func (p *Program) Marshal() ([]byte, error) {
 			}
 		}
 	}
+	arities, err := programValueArities(p.Signals)
+	if err != nil {
+		return nil, err
+	}
 	for _, binding := range p.Bindings {
 		if _, exists := ids[string(binding.Signal)]; !exists {
 			return nil, fmt.Errorf("motion: binding references unknown signal %q", binding.Signal)
@@ -342,6 +340,20 @@ func (p *Program) Marshal() ([]byte, error) {
 		if err := validateBinding(binding); err != nil {
 			return nil, err
 		}
+		if err := validateBindingArity(binding, arities[binding.Signal]); err != nil {
+			return nil, err
+		}
+	}
+	for _, binding := range p.SVGMorphs {
+		if arities[binding.Signal] != ArityScalar {
+			return nil, fmt.Errorf("motion: SVG morph progress %q must be scalar", binding.Signal)
+		}
+	}
+	if err := validateSVGMorphs(p.SVGMorphs, ids); err != nil {
+		return nil, err
+	}
+	if err := validateSceneTransitions(p.Bindings, ids); err != nil {
+		return nil, err
 	}
 	for _, index := range p.CSSCompiled {
 		if index < 0 || index >= len(p.Bindings) {
@@ -364,12 +376,16 @@ func validateBinding(binding Binding) error {
 	if property != binding.Property || unit != binding.Unit {
 		return errors.New("motion: binding property and unit must not contain surrounding whitespace")
 	}
-	if _, ok := motionCSSUnits[unit]; !ok {
+	if !validMotionCSSUnit(unit) {
 		return fmt.Errorf("motion: unsupported binding unit %q", binding.Unit)
 	}
 	switch binding.Target {
+	case BindingSceneTransition:
+		if property != "pose" || unit != "" {
+			return errors.New("motion: scene transition requires the pose property without a unit")
+		}
 	case BindingStyle:
-		if _, ok := motionStyleProperties[property]; !ok {
+		if !validMotionStyleProperty(property) {
 			return fmt.Errorf("motion: unsupported style binding property %q", binding.Property)
 		}
 	case BindingCSSVariable:
@@ -377,7 +393,7 @@ func validateBinding(binding Binding) error {
 			return fmt.Errorf("motion: invalid CSS variable binding property %q", binding.Property)
 		}
 	case BindingSceneNode:
-		if _, ok := motionSceneProperties[property]; !ok || strings.TrimSpace(binding.Node) == "" || unit != "" {
+		if !validMotionSceneProperty(property) || strings.TrimSpace(binding.Node) == "" || unit != "" {
 			return fmt.Errorf("motion: unsupported scene-node binding property %q", binding.Property)
 		}
 	case BindingMaterialUniform:
@@ -385,13 +401,54 @@ func validateBinding(binding Binding) error {
 			return fmt.Errorf("motion: invalid material-uniform binding property %q", binding.Property)
 		}
 	case BindingCamera:
-		if _, ok := motionCameraProperties[property]; !ok || unit != "" {
+		if !validMotionCameraProperty(property) || unit != "" {
 			return fmt.Errorf("motion: unsupported camera binding property %q", binding.Property)
 		}
 	default:
 		return fmt.Errorf("motion: unsupported binding target %q", binding.Target)
 	}
 	return nil
+}
+
+// Keep authoring allowlists as code so runtime-only motion users can discard them.
+func validMotionCSSUnit(unit string) bool {
+	switch unit {
+	case "", "px", "%", "em", "rem", "vh", "vw", "vmin", "vmax", "deg", "rad", "turn", "ms", "s":
+		return true
+	}
+	return false
+}
+
+func validMotionStyleProperty(property string) bool {
+	switch property {
+	case "opacity", "color", "background", "backgroundColor", "background-color", "transform",
+		"transform.x", "transform.y", "transform.z", "transform.scale", "transform.rotate",
+		"transform.rotation", "width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight", "top",
+		"right", "bottom", "left", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
+		"padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderRadius", "filter",
+		"clipPath", "letterSpacing", "wordSpacing":
+		return true
+	}
+	return false
+}
+
+func validMotionSceneProperty(property string) bool {
+	switch property {
+	case "position", "scale", "rotation", "x", "y", "z", "position.x", "position.y", "position.z",
+		"rotation.x", "rotation.y", "rotation.z", "rotationX", "rotationY", "rotationZ", "scale.x", "scale.y",
+		"scale.z", "opacity":
+		return true
+	}
+	return false
+}
+
+func validMotionCameraProperty(property string) bool {
+	switch property {
+	case "position", "rotation", "x", "y", "z", "position.x", "position.y", "position.z", "rotation.x",
+		"rotation.y", "rotation.z", "rotationX", "rotationY", "rotationZ", "fov", "near", "far", "zoom":
+		return true
+	}
+	return false
 }
 
 func validCSSVariable(property string) bool {

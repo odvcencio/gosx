@@ -21,6 +21,19 @@ import (
 	"m31labs.dev/gosx/client/vm"
 )
 
+func TestLowerImportedRecordLiteral(t *testing.T) {
+	prog, err := LowerFile([]byte(`package handlers
+func F() string { command := scene.VesselCommand{Action:"helm"}; return command.Action }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := findHandler(t, prog.Handlers, "F")
+	got := vm.NewVM(prog, nil).EvalWithFrame(handler.Body[0])
+	if got.Text() != "helm" {
+		t.Fatalf("imported record = %q", got.Text())
+	}
+}
+
 // TestLowerPositionalStructLiteral verifies `vec2{x, y}` lowers to a
 // composite value whose Fields["X"] / Fields["Y"] hold the operand
 // values in declaration order.

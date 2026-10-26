@@ -1,6 +1,10 @@
 package motion
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // Eval samples the timeline at time t (seconds) and appends packed writes to out.
 // Pure function of t — no mutable cross-call state. Zero heap allocation on the hot
@@ -9,11 +13,11 @@ import "math"
 // When policy.ReducedMotion is true, each track immediately emits its rest/final
 // state instead of animating (1.6d).
 func Eval(tl *Timeline, t float64, policy Policy, out *WriteBuf) {
-	evalTimeline(tl, t, 0, policy, out)
+	evalTimeline(tl, t, 0, policy, out, nil)
 }
 
 // evalTimeline recurses into a timeline with a base offset applied to t.
-func evalTimeline(tl *Timeline, t, baseOffset float64, policy Policy, out *WriteBuf) {
+func evalTimeline(tl *Timeline, t, baseOffset float64, policy Policy, out *WriteBuf, springs map[*Track]*PreparedSpring) {
 	for i := range tl.Children {
 		child := &tl.Children[i]
 
@@ -24,12 +28,21 @@ func evalTimeline(tl *Timeline, t, baseOffset float64, policy Policy, out *Write
 		}
 
 		if child.Track != nil {
-			evalTrack(child.Track, t, start, policy, out)
+			var sampler *PreparedSpring
+			if springs != nil && !policy.ReducedMotion && child.Track.Gen != nil && child.Track.Gen.Kind == GenSpring {
+				sampler = springs[child.Track]
+			}
+			if sampler == nil {
+				evalTrack(child.Track, t, start, policy, out)
+			} else {
+				// Generators use global time, including within offset timelines.
+				out.Push(child.Track.TargetID, child.Track.PropID, ScalarV(sampler.Value(t)))
+			}
 		}
 
 		if child.Sub != nil {
 			// TODO(1.6): nested timeline positioning (PosRel, PosLabel, PosPrevRel)
-			evalTimeline(child.Sub, t, start, policy, out)
+			evalTimeline(child.Sub, t, start, policy, out, springs)
 		}
 	}
 }
@@ -88,7 +101,7 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 
 	switch gen.Kind {
 	case GenSpin:
-		q := QuatFromEuler(gen.Spin[0]*t, gen.Spin[1]*t, gen.Spin[2]*t)
+		q := QuatFromEuler(float64(gen.Spin[0]*t), float64(gen.Spin[1]*t), float64(gen.Spin[2]*t))
 		scratch[0] = q.X
 		scratch[1] = q.Y
 		scratch[2] = q.Z
@@ -100,7 +113,7 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 			return
 		}
 		for a := 0; a < 3; a++ {
-			scratch[a] = gen.Base.F[a] + gen.Drift[a]*math.Sin(t*gen.DriftSpeed[a]+gen.DriftPhase[a])
+			scratch[a] = gen.Base.F[a] + float64(gen.Drift[a]*det.Sin(float64(t*gen.DriftSpeed[a])+gen.DriftPhase[a]))
 		}
 		out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch})
 
@@ -116,7 +129,7 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 		// Per-component sinusoidal pulse at the output arity (zero-alloc).
 		w := gen.OscArity.Width()
 		for a := 0; a < w; a++ {
-			scratch[a] = gen.OscBase[a] + gen.OscAmp[a]*math.Sin(t*gen.OscFreq[a]*2*math.Pi+gen.OscPhase[a])
+			scratch[a] = gen.OscBase[a] + float64(gen.OscAmp[a]*det.Sin(float64(t*gen.OscFreq[a]*2*math.Pi)+gen.OscPhase[a]))
 		}
 		out.Push(track.TargetID, track.PropID, Value{Arity: gen.OscArity, F: scratch})
 
@@ -133,8 +146,12 @@ func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
 		return
 	}
 
-	// Skip tracks with no keys.
-	if len(track.Keys) == 0 {
+	// Empty tracks emit nothing. A constant track has no interpolation interval
+	// and keeps its sole value regardless of the clock or timeline offsets.
+	if len(track.Keys) < 2 {
+		if len(track.Keys) == 1 {
+			out.Push(track.TargetID, track.PropID, track.Keys[0].Value)
+		}
 		return
 	}
 
@@ -168,10 +185,25 @@ func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
 		out.Push(track.TargetID, track.PropID, Value{Arity: last.Value.Arity, F: scratch})
 
 	default:
-		// Find surrounding pair by linear scan.
+		// Short tracks stay on the cheap linear path. Long clips use an upper
+		// bound so playback and arbitrary seeks take logarithmic lookup work.
+		// Equal timestamps retain the last matching key, as the scan does.
 		i := 0
-		for i < len(keys)-2 && keys[i+1].T <= localT {
-			i++
+		if len(keys) > 8 {
+			lo, hi := 1, len(keys)-1
+			for lo < hi {
+				mid := lo + (hi-lo)/2
+				if keys[mid].T <= localT {
+					lo = mid + 1
+				} else {
+					hi = mid
+				}
+			}
+			i = lo - 1
+		} else {
+			for i < len(keys)-2 && keys[i+1].T <= localT {
+				i++
+			}
 		}
 		ka := keys[i]
 		kb := keys[i+1]

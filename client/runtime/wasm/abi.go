@@ -14,7 +14,7 @@ import (
 const (
 	// ABIVersion changes whenever the direct browser/WASM contract changes in a
 	// way that cannot be handled by a compatibility reader.
-	ABIVersion uint32 = 3
+	ABIVersion uint32 = 4
 
 	// MailboxVersion is independent from the export ABI.  It lets the mailbox
 	// codec evolve while the direct function surface remains compatible.
@@ -45,7 +45,7 @@ const (
 
 // wasmManifestIdentity is checked against the host-computed contract digest
 // by TestWASMManifestIdentityMatchesContract. Update it when the ABI changes.
-const wasmManifestIdentity = "c9b55465b8f4a4015f7108b1172dabce6f38390b4996dc39059c3719126d2dc8"
+const wasmManifestIdentity = "430e81b149da21c2c64daf679765cb676e7d1fe25c2fdaf557ac4654162a108c"
 
 var publishedVariants = [...]Variant{
 	VariantCore,

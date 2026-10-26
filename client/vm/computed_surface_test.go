@@ -85,3 +85,23 @@ func TestCanvasBoardAdapterComputedDependencyTracksSharedBase(t *testing.T) {
 		t.Fatalf("board computed x = %v, want 14", got)
 	}
 }
+
+// BenchmarkSceneAdapterComputedTransform measures a shared state update through
+// a derived value and into the incremental command consumed by the renderer.
+// It measures CPU reconciliation work, not rendering or presentation time.
+func BenchmarkSceneAdapterComputedTransform(b *testing.B) {
+	rt := NewSceneAdapter(computedSurfaceProgram("mesh", "$scene.x"), `{}`)
+	defer rt.Dispose()
+	shared := signal.New(FloatVal(0))
+	rt.SetSharedSignal("$scene.x", shared)
+	rt.Reconcile()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		shared.Set(FloatVal(float64(i + 1)))
+		commands := rt.Reconcile()
+		if len(commands) != 1 || commands[0].Kind != rootengine.CommandSetTransform {
+			b.Fatalf("derived update did not produce a transform: %#v", commands)
+		}
+	}
+}

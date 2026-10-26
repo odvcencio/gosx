@@ -108,11 +108,11 @@ func raycastSphere(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool)
 	}
 	m := ray.Origin.Sub(center)
 	b := m.Dot(ray.Direction)
-	cc := m.Dot(m) - radius*radius
+	cc := m.Dot(m) - float64(radius*radius)
 	if cc > 0 && b > 0 {
 		return RaycastHit{}, false
 	}
-	discriminant := b*b - cc
+	discriminant := float64(b*b) - cc
 	if discriminant < 0 {
 		return RaycastHit{}, false
 	}
@@ -175,8 +175,8 @@ func raycastBox(c *Collider, ray Ray, maxDistance float64) (RaycastHit, bool) {
 			continue
 		}
 		invD := 1 / dirs[i]
-		t1 := (mins[i] - origins[i]) * invD
-		t2 := (maxs[i] - origins[i]) * invD
+		t1 := float64((mins[i] - origins[i]) * invD)
+		t2 := float64((maxs[i] - origins[i]) * invD)
 		n1 := axes[i].Neg()
 		n2 := axes[i]
 		if t1 > t2 {

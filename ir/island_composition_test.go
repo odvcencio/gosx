@@ -599,3 +599,16 @@ func decimal(value int) string {
 	}
 	return string(digits[i:])
 }
+
+func TestLowerIslandComposedViewRejectsReservedDispatchAttrs(t *testing.T) {
+	for _, name := range []string{"data-gosx-handler", "data-gosx-path", "DATA-GOSX-ON-CLICK", "data-gosx-on-"} {
+		for _, kind := range []AttrKind{AttrStatic, AttrExpr, AttrBool} {
+			prog := basicComposedIslandProgram()
+			prog.Nodes[2].Attrs = []Attr{{Kind: kind, Name: name, Value: "evil", Expr: "props.Label"}}
+			_, err := LowerIsland(prog, 0)
+			if err == nil || !strings.Contains(err.Error(), "reserved") || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "data-app-") {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+	}
+}

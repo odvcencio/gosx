@@ -956,6 +956,7 @@ function preflightExpr(c) {
       runtimeReady: window.__adapterRuntimeReady === true,
       runtimeExited: window.__adapterRuntimeExited === true,
       handshake: window.__adapterHandshake || null,
+      contract: window.__gosx_runtime_contract || null,
       hydrates: (window.__adapterHydrates || []).slice(),
       firstPending: window.__adapterFirstPending === true,
       ssrIdentity: !!(mount && mount.firstChild === window.__adapterSSR),
@@ -1907,6 +1908,11 @@ function assertEnvelope(call, c, generation, programName, commandIDs) {
   }
 }
 
+function fullHandshakeMatchesContract(handshake, contract) {
+  return !!(contract && Number.isInteger(contract.abiVersion) && contract.abiVersion > 0 &&
+    handshake && handshake.abiVersion === contract.abiVersion && handshake.variant === 'full');
+}
+
 async function runCase(send, c) {
   const evidence = {
     name: c.name,
@@ -1934,8 +1940,8 @@ async function runCase(send, c) {
   if (pre.bootErrors.length || !pre.runtimeReady || pre.runtimeExited || !pre.firstPending) {
     fail('[' + c.name + '] runtime/preflight state invalid: ' + JSON.stringify(pre));
   }
-  if (!pre.handshake || pre.handshake.abiVersion !== 3 || pre.handshake.variant !== 'full') {
-    fail('[' + c.name + '] ABI 3 full handshake missing: ' + JSON.stringify(pre.handshake));
+  if (!fullHandshakeMatchesContract(pre.handshake, pre.contract)) {
+    fail('[' + c.name + '] current full ABI handshake missing: ' + JSON.stringify(pre.handshake));
   }
   if (!pre.ssrIdentity || pre.childCount !== 1 || pre.canvasCount !== 0 || pre.hasState || pre.hasHandle || pre.registered) {
     fail('[' + c.name + '] blocked generation mutated SSR/mount/registry: ' + JSON.stringify(pre));

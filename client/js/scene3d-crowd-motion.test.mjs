@@ -233,7 +233,7 @@ test('crowd bundle carries motion records and their swept bounds to WebGL', () =
   let transformed = 0;
   const c = vm.createContext({
     bundle, object: { id: 'actor', kind: 'mesh', _crowdSkin: skin, _crowdMotion: motion },
-    vertices: { count: 3 }, camera: {}, timeSeconds: 0, objectPassString: 'opaque', materialIndex: 0,
+    resourceOwner: {}, vertices: { count: 3 }, camera: {}, timeSeconds: 0, objectPassString: 'opaque', materialIndex: 0,
     sceneObjectModelMatrix: () => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
     sceneTransformMeshBounds: () => { transformed++; return {}; },
     sceneBoundsDepthMetrics: () => ({ near: 0, far: 1, center: .5 }),

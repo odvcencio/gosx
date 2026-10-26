@@ -49,9 +49,24 @@ func resolveWASMCompiler(opts BuildOptions, lookPath func(string) (string, error
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
-	tinygoPath, err := lookPath("tinygo")
+	command := strings.TrimSpace(os.Getenv("TINYGO"))
+	if command == "" {
+		command = "tinygo"
+	}
+	tinygoPath, err := lookPath(command)
 	if err != nil {
+		if strings.TrimSpace(os.Getenv("TINYGO")) != "" {
+			return "", "", fmt.Errorf("TINYGO=%q is unavailable: %w", command, err)
+		}
 		return "", "", fmt.Errorf("production GoSX builds require TinyGo on PATH: %w", err)
+	}
+	// Compilation runs in a prepared module directory. Resolve relative tool
+	// paths before changing directories so an explicit compiler stays selected.
+	if !filepath.IsAbs(tinygoPath) {
+		tinygoPath, err = filepath.Abs(tinygoPath)
+		if err != nil {
+			return "", "", fmt.Errorf("resolve TinyGo executable: %w", err)
+		}
 	}
 	return wasmCompilerTinyGo, tinygoPath, nil
 }
@@ -70,12 +85,16 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraT
 		cmd := exec.Command(tinygoPath, tinyGoBuildArgs(outputPath, extraTags...)...)
 		cmd.Dir = scratchDir
 		cmd.Env = setEnv(candidate.env, "GOFLAGS", goModuleCommandFlags)
-		out, err := cmd.CombinedOutput()
+		out, err := runValidatedWASMCompiler(cmd, outputPath)
 		if err == nil {
 			if candidate.label != "" {
 				fmt.Printf("    TinyGo toolchain: %s\n", candidate.label)
 			}
 			return nil
+		}
+		var invalidOutput *invalidCompilerWASMOutput
+		if errors.As(err, &invalidOutput) {
+			return fmt.Errorf("tinygo build: %w", err)
 		}
 		failures = append(failures, tinyGoFailure(candidate.label, err, out))
 		if !tinyGoFailureLooksToolchainRelated(out) {
@@ -89,6 +108,16 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraT
 	return errors.New(strings.Join(failures, "\n"))
 }
 
+// tinyGoGoroutineStackSize sizes each goroutine stack in the TinyGo runtime.
+// TinyGo's wasm target defaults to 64 KiB, and the stacks cannot grow. Every
+// JS event runs on its own goroutine, and resolving a deeply nested island tree
+// (appendNodeRefs -> appendForEach -> appendNodeRefs ...) used more than
+// 64 KiB. Nothing checks for that at function entry: the C stack ran past the
+// stack block, overwrote the heap block below it, and later traps surfaced as
+// "memory access out of bounds" in runtime.alloc or "unreachable" in
+// task.Pause (the stack canary).
+const tinyGoGoroutineStackSize = "256KB"
+
 func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 	args := []string{
 		"build",
@@ -99,6 +128,7 @@ func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 		args = append(args, "-tags="+strings.Join(tags, " "))
 	}
 	args = append(args,
+		"-stack-size="+tinyGoGoroutineStackSize,
 		"-no-debug",
 		"-panic=trap",
 		"-o", outputPath,
@@ -176,12 +206,9 @@ func prepareTinyGoWASMModule(gosxRoot string, tags ...string) (string, func(), e
 		return "", nil, err
 	}
 
-	scratchDir, err := os.MkdirTemp("", "gosx-tinygo-wasm-*")
+	scratchDir, cleanup, err := tinyGoScratchDirectory(gosxRoot, tags...)
 	if err != nil {
-		return "", nil, fmt.Errorf("create tinygo scratch module: %w", err)
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(scratchDir)
+		return "", nil, err
 	}
 
 	for _, pkg := range packages {

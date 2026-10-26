@@ -11,9 +11,6 @@ import (
 func init() {
 	docsapp.RegisterDocsPage("Motion", "Server-authored motion presets with reduced-motion awareness.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
-			// Demo diagnostics: shows the demo scene's renderer and GPU adapter.
-			// It is page-scoped, so it ships only on this route.
-			ctx.AddHead(server.LifecycleScript("/motion-adapter-report.js"))
 			program, err := motionDemoProgram()
 			if err != nil {
 				return nil, err

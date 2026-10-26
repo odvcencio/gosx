@@ -169,6 +169,19 @@ func (r *PageRuntime) BindHub(name, path string, bindings []hydrate.HubBinding) 
 	return r.renderer.BindHub(name, path, bindings)
 }
 
+// BindHubDocument declares a framework-owned document view over an ordinary
+// Hub. The page supplies Go-rendered markup and server document handlers.
+func (r *PageRuntime) BindHubDocument(name, path string, config hydrate.HubDocumentConfig) (string, error) {
+	if r == nil || r.renderer == nil {
+		return "", fmt.Errorf("page runtime is nil")
+	}
+	id, err := r.renderer.BindHubDocument(name, path, config)
+	if err == nil {
+		r.active = true
+	}
+	return id, err
+}
+
 // BindHubInput registers a realtime hub and asks the GoSX bootstrap to forward
 // browser input snapshots to it.
 func (r *PageRuntime) BindHubInput(name, path string, bindings []hydrate.HubBinding, input hydrate.HubInputConfig) string {
@@ -190,9 +203,9 @@ func (r *PageRuntime) BindHubWithRoundTrip(name, path string, bindings []hydrate
 }
 
 // SetTextureVariants publishes built assetpipe texture variants to the current
-// page manifest. Scene3D uses them to choose a block-compressed texture only
-// when the selected renderer reports the required device capability; other
-// devices keep the authored PNG or WebP URI.
+// page manifest. Scene3D checks the selected renderer's actual upload
+// capabilities. A scene with an explicit low or standard delivery profile may
+// also choose a compatible uncompressed KTX2 tier on devices without BC.
 func (r *PageRuntime) SetTextureVariants(manifest assetpipe.VariantManifest) {
 	if r == nil || r.renderer == nil {
 		return

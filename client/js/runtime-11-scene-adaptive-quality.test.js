@@ -78,6 +78,49 @@ test("Scene3D declarative status bindings expose backend fallback and quality wi
   assert.equal(fallback.hidden, true);
 });
 
+test("Scene3D adapter status follows live render truth, stays text-only, and skips unchanged writes", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const scope = new FakeElement("section", null);
+  const mount = new FakeElement("div", null);
+  const adapter = new FakeElement("output", null);
+  scope.setAttribute("data-gosx-scene3d-status-scope", "");
+  adapter.setAttribute("data-gosx-scene3d-status", "adapter");
+  scope.appendChild(mount);
+  scope.appendChild(adapter);
+  let text = "Waiting for adapter details";
+  let writes = 0;
+  Object.defineProperty(adapter, "textContent", {
+    get() { return text; },
+    set(value) { text = value; writes++; },
+  });
+  Object.defineProperty(adapter, "innerHTML", {
+    set() { assert.fail("adapter details must never enter an HTML sink"); },
+  });
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(writes, 0, "keep the authored fallback until the renderer publishes truth");
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgpu");
+  const label = '<img src=x onerror="throw 1">';
+  mount.__gosxScene3DRenderBackendTruth = { backend: "webgpu", adapter: label, adapterInfo: { vendor: "other" } };
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(adapter.textContent, label, "preserve the renderer's canonical label as plain text");
+  assert.equal(adapter.getAttribute("data-state"), "ready");
+  api.sceneSyncStatusBindings(mount);
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(writes, 1, "quality refreshes must not keep mutating an unchanged report");
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgl");
+  mount.__gosxScene3DRenderBackendTruth = { backend: "webgl", adapterInfo: { vendor: "Google", device: "SwiftShader" } };
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(adapter.textContent, "Google SwiftShader", "backend fallback keeps software adapter details visible");
+  assert.equal(writes, 2);
+
+  mount.__gosxScene3DRenderBackendTruth = { backend: "webgl" };
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(adapter.textContent, "adapter details unavailable");
+  assert.equal(adapter.getAttribute("data-state"), "unavailable");
+});
+
 test("Scene3D status changes invalidate a keeper ledger texture once per changed value", () => {
   const { api, context } = loadSceneAdaptiveQualityAPI();
   const invalidated = [];
