@@ -3,13 +3,34 @@
   "environment": "Linux headless Chromium / software rendering",
   "sourceSHA256": {
     "main.go": "43fff7bb0af339fa7767af6340fedf12a4995924dec26a0fe131d7846d6096bd",
+    "main_test.go": "b5912df5c5c7cfdcb4deb861bfaba375de72ea123edbc2db12dc70c5832bd5f6",
+    "gosx.config.json": "f892b2e5717648be34a1079cd327ef3b1578077f578b617cc2d51c2913ebbe27",
+    "verify.mjs": "ce80937f87b89e30ce17ae2c2a3d21f4f3ed8a1c19a2c8cf109c1283639924a6",
     "app/program.go": "d4c569edc410af2a6bd64cae370df49e43c3073da8dfcf26980271b2c57b65ed",
-    "app/page.server.go": "7a6e3696fc2775c5e231615575ec1a0619682da600e5c1fcf3364ecaec305a81",
-    "app/page.gsx": "da44e749983f3f7026cad2a8618ee740a8bd2cba7c6afed962e39f3f53cb0676",
-    "public/turbofan.css": "e9d68786aa807a63910ec807b0b15450dbf0401db76c4431c24e4deae6ad753f",
+    "app/page.server.go": "368ed3eef04e7c5e92f20819df81d334094ddb96941ce46dc9e1c0d1cf7cd045",
+    "app/page.gsx": "16ff1b6914a0b5d624395e24aba4b772932224061e0e4671dc1098759a983964",
+    "public/turbofan.css": "e182cc72a41dfa944b06f27670c751f61fa82868f93b0bad44c30fe87f164b32",
+    "cycle/model.go": "d856ea076a35b81a1869653e2e9a4f77bfe926c0b7c643069084224b02c2b047",
+    "cycle/model_test.go": "41524525bbb1fa4f01a5adb8d103b27ddb9e4450548c431354879a682164d214",
+    "cycle/view.go": "9d593c8a6dcbabd0fba3673318162013f4a028e4b575c2a6dd9e77f23dee776a",
+    "browser/main.go": "f73693592f03550017765a7ed6f3bbd594826de2c8c33f89be16261230cdfeb7",
     "../../scene/geom/lathe.go": "1da64e8012ec06246a60f581a303eeb5c01ef95e64b31e9e7e315c973e276bd6"
   },
   "checks": [
+    {
+      "name": "compressed Go/WASM delivery",
+      "observed": {
+        "bytes": 4847990,
+        "sha256": "df8b70f02de88611341c00e97b0ac8ca3a1575971ac7ccaeeb6189e5aaaf28b8",
+        "brotliBytes": 977706,
+        "gzipBytes": 1327865,
+        "response": {
+          "status": 200,
+          "encoding": "br",
+          "contentType": "application/wasm"
+        }
+      }
+    },
     {
       "name": "desktop fit",
       "observed": {
@@ -39,6 +60,18 @@
             "x": 56,
             "width": 1328,
             "height": 40
+          },
+          {
+            "name": "workbench",
+            "x": 56,
+            "width": 1328,
+            "height": 1300.25
+          },
+          {
+            "name": "workbench-grid",
+            "x": 85,
+            "width": 1270,
+            "height": 614.46875
           }
         ]
       }
@@ -69,7 +102,7 @@
         "objects": 88,
         "visibleObjects": 78,
         "animation": {
-          "timeSeconds": 0.4501,
+          "timeSeconds": 0.45010000000000006,
           "paused": false,
           "pending": false
         },
@@ -108,7 +141,7 @@
           },
           "events": [
             {
-              "at": 514,
+              "at": 548,
               "kind": "backend",
               "detail": "webgl"
             }
@@ -117,9 +150,281 @@
       }
     },
     {
+      "name": "local thermodynamic cycle and export",
+      "observed": {
+        "baseline": {
+          "inputs": {
+            "altitudeM": 0,
+            "mach": 0,
+            "turbineInletK": 1600,
+            "overallPressureRatio": 30,
+            "fanPressureRatio": 1.5,
+            "bypassRatio": 8
+          },
+          "ambient": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 0
+          },
+          "inlet": {
+            "temperatureK": 288.15,
+            "pressurePa": 100311.75,
+            "massFlowKGS": 356.40000000000003
+          },
+          "fan": {
+            "temperatureK": 327.47423454826856,
+            "pressurePa": 150467.625,
+            "massFlowKGS": 356.40000000000003
+          },
+          "compressor": {
+            "temperatureK": 831.1693855974764,
+            "pressurePa": 3009352.5,
+            "massFlowKGS": 39.6
+          },
+          "burner": {
+            "temperatureK": 1600,
+            "pressurePa": 2858884.875,
+            "massFlowKGS": 40.34673203557751
+          },
+          "highTurbine": {
+            "temperatureK": 1100.633507957916,
+            "pressurePa": 657266.375932948,
+            "massFlowKGS": 40.34673203557751
+          },
+          "lowTurbine": {
+            "temperatureK": 749.7569010274372,
+            "pressurePa": 145271.205831351,
+            "massFlowKGS": 40.34673203557751
+          },
+          "coreNozzle": {
+            "exit": {
+              "temperatureK": 676.4205260643494,
+              "pressurePa": 101325,
+              "massFlowKGS": 40.34673203557751
+            },
+            "mach": 0.7362686904780036,
+            "velocityMPS": 383.87295428576425,
+            "areaM2": 0.20140885732040553,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "bypassNozzle": {
+            "exit": {
+              "temperatureK": 292.4909510551387,
+              "pressurePa": 101325,
+              "massFlowKGS": 316.8
+            },
+            "mach": 0.7733196925099789,
+            "velocityMPS": 265.1295168156886,
+            "areaM2": 0.9901032042160046,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "flightSpeedMPS": 0,
+          "coreFlowKGS": 39.6,
+          "bypassFlowKGS": 316.8,
+          "fuelFlowKGS": 0.7467320355775052,
+          "fuelAirRatio": 0.018856869585290537,
+          "coreThrustN": 15488.019222273226,
+          "bypassThrustN": 83993.03092721014,
+          "netThrustN": 99481.05014948337,
+          "tsfcKgPerNS": 7.506274154278047e-06,
+          "compressorPowerW": 20039577.06486237,
+          "fanPowerW": 14080678.05288021,
+          "burnerResidualW": 1.1175870895385742e-08,
+          "highShaftResidualW": 0,
+          "lowShaftResidualW": 0,
+          "energyResidualW": 1.1175870895385742e-08,
+          "massResidualKGS": 3.4416913763379853e-15,
+          "maxRelativeResidual": 3.4805520846617037e-16
+        },
+        "hot": {
+          "inputs": {
+            "altitudeM": 0,
+            "mach": 0,
+            "turbineInletK": 1800,
+            "overallPressureRatio": 30,
+            "fanPressureRatio": 1.5,
+            "bypassRatio": 8
+          },
+          "ambient": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 0
+          },
+          "inlet": {
+            "temperatureK": 288.15,
+            "pressurePa": 100311.75,
+            "massFlowKGS": 356.40000000000003
+          },
+          "fan": {
+            "temperatureK": 327.47423454826856,
+            "pressurePa": 150467.625,
+            "massFlowKGS": 356.40000000000003
+          },
+          "compressor": {
+            "temperatureK": 831.1693855974764,
+            "pressurePa": 3009352.5,
+            "massFlowKGS": 39.6
+          },
+          "burner": {
+            "temperatureK": 1800,
+            "pressurePa": 2858884.875,
+            "massFlowKGS": 40.54562201008583
+          },
+          "highTurbine": {
+            "temperatureK": 1303.0830693149437,
+            "pressurePa": 806693.2847655299,
+            "massFlowKGS": 40.54562201008583
+          },
+          "lowTurbine": {
+            "temperatureK": 953.9276306869417,
+            "pressurePa": 237993.36284528507,
+            "massFlowKGS": 40.54562201008583
+          },
+          "coreNozzle": {
+            "exit": {
+              "temperatureK": 794.9396922391181,
+              "pressurePa": 125727.55918872931,
+              "massFlowKGS": 40.54562201008583
+            },
+            "mach": 0.9999999999999998,
+            "velocityMPS": 565.2100619416947,
+            "areaM2": 0.13019530753444905,
+            "pressureThrustN": 3177.098698204208,
+            "choked": true
+          },
+          "bypassNozzle": {
+            "exit": {
+              "temperatureK": 292.4909510551387,
+              "pressurePa": 101325,
+              "massFlowKGS": 316.8
+            },
+            "mach": 0.7733196925099789,
+            "velocityMPS": 265.1295168156886,
+            "areaM2": 0.9901032042160046,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "flightSpeedMPS": 0,
+          "coreFlowKGS": 39.6,
+          "bypassFlowKGS": 316.8,
+          "fuelFlowKGS": 0.9456220100858265,
+          "fuelAirRatio": 0.02387934368903602,
+          "coreThrustN": 26093.89222598936,
+          "bypassThrustN": 83993.03092721014,
+          "netThrustN": 110086.9231531995,
+          "tsfcKgPerNS": 8.589775997008083e-06,
+          "compressorPowerW": 20039577.06486237,
+          "fanPowerW": 14080678.05288021,
+          "burnerResidualW": 7.450580596923828e-09,
+          "highShaftResidualW": -3.725290298461914e-09,
+          "lowShaftResidualW": 0,
+          "energyResidualW": 0,
+          "massResidualKGS": -2.7422508708241367e-14,
+          "maxRelativeResidual": 1.8323316754419097e-16
+        },
+        "cruise": {
+          "inputs": {
+            "altitudeM": 11000,
+            "mach": 0.78,
+            "turbineInletK": 1800,
+            "overallPressureRatio": 30,
+            "fanPressureRatio": 1.5,
+            "bypassRatio": 8
+          },
+          "ambient": {
+            "temperatureK": 216.64999999999998,
+            "pressurePa": 22631.70090992698,
+            "massFlowKGS": 0
+          },
+          "inlet": {
+            "temperatureK": 243.011972,
+            "pressurePa": 33488.35437190348,
+            "massFlowKGS": 129.5612627587656
+          },
+          "fan": {
+            "temperatureK": 276.17615657388603,
+            "pressurePa": 50232.53155785522,
+            "massFlowKGS": 129.5612627587656
+          },
+          "compressor": {
+            "temperatureK": 700.9686325180327,
+            "pressurePa": 1004650.6311571044,
+            "massFlowKGS": 14.395695862085065
+          },
+          "burner": {
+            "temperatureK": 1800,
+            "pressurePa": 954418.0995992491,
+            "massFlowKGS": 14.785653367081059
+          },
+          "highTurbine": {
+            "temperatureK": 1382.2333539815,
+            "pressurePa": 340557.2633340622,
+            "massFlowKGS": 14.785653367081059
+          },
+          "lowTurbine": {
+            "temperatureK": 1088.692346365506,
+            "pressurePa": 134350.54245579534,
+            "massFlowKGS": 14.785653367081059
+          },
+          "coreNozzle": {
+            "exit": {
+              "temperatureK": 907.243621971255,
+              "pressurePa": 70974.94474931968,
+              "massFlowKGS": 14.785653367081059
+            },
+            "mach": 0.9999999999999998,
+            "velocityMPS": 603.8161925301342,
+            "areaM2": 0.0898487784438166,
+            "pressureThrustN": 4343.581404980996,
+            "choked": true
+          },
+          "bypassNozzle": {
+            "exit": {
+              "temperatureK": 230.14679714490504,
+              "pressurePa": 26536.93157294313,
+              "massFlowKGS": 115.16556689668052
+            },
+            "mach": 0.9999999999999998,
+            "velocityMPS": 304.1201955948058,
+            "areaM2": 0.9427340005685724,
+            "pressureThrustN": 3681.593726088271,
+            "choked": true
+          },
+          "flightSpeedMPS": 230.15305437512663,
+          "coreFlowKGS": 14.395695862085065,
+          "bypassFlowKGS": 115.16556689668052,
+          "fuelFlowKGS": 0.3899575049959951,
+          "fuelAirRatio": 0.02708847899621532,
+          "coreThrustN": 9958.18495264799,
+          "bypassThrustN": 12200.061476379447,
+          "netThrustN": 22158.246429027437,
+          "tsfcKgPerNS": 1.7598752962921668e-05,
+          "compressorPowerW": 6143771.770066328,
+          "fanPowerW": 4316881.1419859165,
+          "burnerResidualW": -1.862645149230957e-09,
+          "highShaftResidualW": -1.862645149230957e-09,
+          "lowShaftResidualW": -9.313225746154785e-10,
+          "energyResidualW": -1.862645149230957e-09,
+          "massResidualKGS": -1.8596235662471372e-14,
+          "maxRelativeResidual": 1.4353237431080245e-16
+        },
+        "inputHandlerMs": [
+          0.9000000357627869,
+          0.5999999642372131,
+          1
+        ],
+        "csv": "cycle-cruise.csv; assumptions and station results present",
+        "invalidPoint": "cleared results, empty plot and disabled export; reset restores the exact default",
+        "requests": 0,
+        "documentAndCanvas": "preserved"
+      }
+    },
+    {
       "name": "pause at current pose",
       "observed": {
-        "clock": 3.3,
+        "clock": 2.917,
         "pixelResult": "identical canvas pixels across 700 ms"
       }
     },
@@ -160,6 +465,18 @@
             "x": 18,
             "width": 354,
             "height": 35
+          },
+          {
+            "name": "workbench",
+            "x": 18,
+            "width": 354,
+            "height": 1678.1875
+          },
+          {
+            "name": "workbench-grid",
+            "x": 37,
+            "width": 316,
+            "height": 989.3125
           }
         ]
       }
@@ -169,10 +486,18 @@
       "observed": "390 \u00d7 844 touch viewport; identical canvas pixels across 700 ms"
     },
     {
+      "name": "mobile cycle controls",
+      "observed": "touch cruise preset updates the local solver; station flow column reachable by scrolling"
+    },
+    {
+      "name": "server calculated fallback",
+      "observed": "initial thrust and eight stations render without JavaScript; interactive controls remain disabled"
+    },
+    {
       "name": "WebGPU preference",
       "observed": {
         "backend": "webgl",
-        "clock": 4.133,
+        "clock": 4.083,
         "reducedMotion": "false",
         "camera": {
           "kind": "perspective",
@@ -194,7 +519,7 @@
         "objects": 88,
         "visibleObjects": 78,
         "animation": {
-          "timeSeconds": 4.133199999999999,
+          "timeSeconds": 4.083499999999999,
           "paused": false,
           "pending": false
         },
@@ -233,22 +558,22 @@
           },
           "events": [
             {
-              "at": 806,
+              "at": 697,
               "kind": "webgpu-device-ready",
               "detail": "webkit-webgpu"
             },
             {
-              "at": 808,
+              "at": 698,
               "kind": "backend",
               "detail": "webgpu"
             },
             {
-              "at": 962,
+              "at": 829,
               "kind": "device-lost",
               "detail": "destroyed Device was destroyed."
             },
             {
-              "at": 2823,
+              "at": 2714,
               "kind": "backend",
               "detail": "webgl fallback=webgpu-device-lost"
             }
@@ -258,23 +583,73 @@
     }
   ],
   "errors": [],
-  "buildManifestSHA256": "7df1a319e64def1a208aff0972ba1685fdc87152a92f1e3e8504ed98d5e6d4b4",
+  "frameworkRevision": "691377281c9574094aa21d718f067e28bb4586a3",
+  "buildManifestSHA256": "ce62d6817796ca7beb4d1af1219c814c25cf134a9961f570d78e1668754ddc48",
+  "cycleEngine": {
+    "bytes": 4847990,
+    "sha256": "df8b70f02de88611341c00e97b0ac8ca3a1575971ac7ccaeeb6189e5aaaf28b8",
+    "brotliBytes": 977706,
+    "gzipBytes": 1327865,
+    "response": {
+      "status": 200,
+      "encoding": "br",
+      "contentType": "application/wasm"
+    }
+  },
   "result": "pass",
-  "limits": [
-    "WebGPU lost its software device on this host and recovered through WebGL2; native WebGPU visual parity and hardware GPU frame rates are unverified.",
-    "TinyGo production build completed without optional wasm-opt because Binaryen is unavailable on PATH."
-  ],
   "performance": {
-    "profile": "docs-scene3d-ci",
-    "budget": "perf/budgets/default.json",
     "result": "pass",
-    "browserCache": "fresh Chromium profile",
-    "backend": "WebGL2 / ANGLE SwiftShader",
-    "javascriptKiB": 1323.31,
-    "networkKiB": 558.17,
-    "lcpMs": 472,
-    "totalBlockingTimeMs": 32,
-    "command": "CHROME_WS_URL=<software Chromium CDP endpoint> GOWORK=off go run ./cmd/gosx perf --json --coverage --frames 45 --budget perf/budgets/default.json --budget-profile docs-scene3d-ci http://127.0.0.1:8096/?backend=webgl",
-    "note": "networkKiB is the profiler resource-waterfall metric; it excludes the main HTML document. Hardware performance is not inferred from software rendering."
-  }
+    "profile": "docs-scene3d-ci",
+    "cache": "fresh Chromium profile",
+    "javascriptKiB": 1340.38,
+    "resourceNetworkKiB": 1519.408203125,
+    "lcpMs": 340,
+    "totalBlockingTimeMs": 0,
+    "limits": {
+      "javascriptKiB": 1650,
+      "resourceNetworkKiB": 1615,
+      "lcpMs": 18000,
+      "totalBlockingTimeMs": 15000
+    },
+    "networkNote": "Resource-waterfall transfer metric excludes the main HTML document. Includes the managed cycle WASM module.",
+    "command": "CHROME_WS_URL=http://127.0.0.1:9226 GOWORK=off go run ./cmd/gosx perf --json --coverage --frames 45 --timeout 60s --budget perf/budgets/default.json --budget-profile docs-scene3d-ci 'http://127.0.0.1:8096/?backend=webgl'"
+  },
+  "nativeEvidence": {
+    "result": "pass",
+    "command": "GOWORK=off go test -json ./examples/turbofan ./examples/turbofan/app ./examples/turbofan/cycle",
+    "packages": [
+      "m31labs.dev/gosx/examples/turbofan/app",
+      "m31labs.dev/gosx/examples/turbofan/cycle",
+      "m31labs.dev/gosx/examples/turbofan"
+    ],
+    "modelTests": [
+      "TestIdealCycleAnalyticBenchmark",
+      "TestConservationAndDomainAcrossEnvelope",
+      "TestTrendsScalingAndInvalidInputs",
+      "TestNozzleChokingBoundary",
+      "TestCSVContainsInputsAssumptionsAndUnroundedStates"
+    ],
+    "observed": [
+      "model_test.go:94: 506 feasible points conserve mass/energy/shaft power; 223 infeasible points rejected",
+      "model_test.go:192: default point: thrust=99481.050149483 N; fuel=0.746732036 kg/s; TSFC=7.506274154 mg/(N s); residual=3.4805520846617037e-16"
+    ]
+  },
+  "productionBuild": {
+    "result": "pass",
+    "command": "GOWORK=off go run ./cmd/gosx build --prod examples/turbofan",
+    "cycleEngine": "standard Go/WASM through build.goWASM",
+    "sharedRuntime": "TinyGo",
+    "optionalOptimizer": "wasm-opt unavailable; compiled WASM retained"
+  },
+  "artifactsSHA256": {
+    "preview.png": "e8c1c2ddaaa93cf936b7ec5d34ed0b60f0512304b67ca9153e0a7ca40265c243",
+    "cycle-preview.png": "40ed011496edfb5212fd0c29f6cf4567f47011a70825c960fd2dd654cd97495e",
+    "mobile-preview.png": "cbad88b24aa58f8aba63f6a6d7eb5bc7e9c3ef13fa339f89f8c856f755d128b6"
+  },
+  "limits": [
+    "Generic design-point cycle with constant gas properties and prescribed efficiencies/corrected airflow; no real-engine calibration, component-map matching, CFD or transient shaft dynamics.",
+    "Nozzle areas resize between points; anatomy and slowed rotor speeds are illustrative.",
+    "Linux Chromium / ANGLE SwiftShader verification; software WebGPU device-loss recovery observed through WebGL2. Native WebGPU parity and hardware GPU frame rates remain unverified.",
+    "Input handler measurements are three event-dispatch samples including solver and DOM updates; not a cross-device latency guarantee."
+  ]
 }
