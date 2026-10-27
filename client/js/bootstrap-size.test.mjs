@@ -15,7 +15,7 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Keeping tone mapping while adaptive quality suppresses post effects adds 79 raw
 // and 7 gzip bytes to bootstrap-feature-scene3d.js (Brotli falls by 76) and 79 raw,
 // 14 gzip and 88 Brotli bytes to the monolith. Each target below was already at its
-// exact measured minimum, so the six Scene3D entries and the monolith move to the
+// exact measured minimum, so the five Scene3D entries and the monolith move to the
 // smallest value that clears the new size. Allowances and other targets stay fixed.
 // Scene defaults review moves exhausted targets to measured minima: vessel
 // raw +1, monolith raw +619, labeled WebGL Brotli +148 and device-loss-route
