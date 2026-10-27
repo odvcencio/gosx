@@ -167,8 +167,14 @@ func TestUIDispatcherConcurrentCallersAllRunOnOwner(t *testing.T) {
 
 func TestUIDispatcherCoalescesWakes(t *testing.T) {
 	var wakes atomic.Int32
-	d := &uiDispatcher{current: func() uint32 { return 2 }, wake: func() error { wakes.Add(1); return nil }}
+	posted := make(chan struct{}, 21)
+	d := &uiDispatcher{current: func() uint32 { return 2 }, wake: func() error {
+		wakes.Add(1)
+		posted <- struct{}{}
+		return nil
+	}}
 	d.start(1)
+	defer d.stop()
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -187,11 +193,18 @@ func TestUIDispatcherCoalescesWakes(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if got := wakes.Load(); got != 1 {
-		t.Fatalf("20 queued calls posted %d wakes, want 1", got)
+	// A call enters the queue before its wake callback runs. Wait for the
+	// notification even when all callers enqueue before that goroutine resumes.
+	select {
+	case <-posted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued calls posted no wake")
 	}
 	d.drain()
 	wg.Wait()
+	if got := wakes.Load(); got != 1 {
+		t.Fatalf("20 queued calls posted %d wakes, want 1", got)
+	}
 	// After a drain, the next call must wake the owner again.
 	result := make(chan error, 1)
 	go func() { result <- d.run(func() error { return nil }) }()
