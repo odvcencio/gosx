@@ -70,23 +70,26 @@ function sceneReflectDispose(resources) {
 function sceneReflectOpaqueList(list, materials, camera, level) {
   // User shader uniforms have their own frame ownership. Visible custom
   // materials still reflect through SSR; the fallback draws built-in PBR.
-  // A sky body (a mesh more than 800 m away and more than 8 degrees above the
-  // sea, such as a moon built as geometry) is not mirrored: its mirror image
-  // lands in the near water as a hard-edged disc that no wave breaks up, and
-  // the sky already supplies the glint. Near and low geometry, and a mountain
-  // at a few degrees, still reflect.
+  // A sky body (a mesh whose centre is more than 800 m away and whose lowest
+  // point is more than 8 degrees above the sea, such as a moon built as
+  // geometry) is not mirrored: its mirror image lands in the near water as a
+  // hard-edged disc that no wave breaks up, and the sky already supplies the
+  // glint. Near geometry, and anything that touches the sea (a mountain, a
+  // coast, a tower), still reflects.
   return (list || []).filter(obj => {
     const mat = materials[sceneNumber(obj.materialIndex,0)];
     return !(mat && (mat.shaderBackend === "selena" || mat.customVertex || mat.customFragment)) && !sceneReflectSkyBody(obj, camera, level);
   });
 }
 function sceneReflectSkyBody(obj, camera, level) {
-  // The camera is the real one, not the mirrored one. A mesh with no valid
-  // bounds, or a call with no camera, is not judged and stays reflected.
-  const b = obj && obj.bounds;
+  // The camera is the real one, not the mirrored one. A skinned mesh (its bounds
+  // are not in world space), a mesh with no valid bounds and a call with no
+  // camera are not judged and stay reflected. The lowest point decides the
+  // height, so a mesh that touches the sea is never dropped, however large.
+  const b = obj && !obj.skin && obj.bounds;
   if (!b || !camera || !Number.isFinite(b.minX + b.maxX + b.minY + b.maxY + b.minZ + b.maxZ)) return false;
   const dx = (b.minX+b.maxX)/2-camera.x, dy = (b.minY+b.maxY)/2-camera.y, dz = (b.minZ+b.maxZ)/2-camera.z, horizontal = Math.hypot(dx, dz);
-  return Math.hypot(horizontal, dy) > 800 && (b.minY+b.maxY)/2-sceneNumber(level, 0) > horizontal*0.1405; // tan(8 degrees)
+  return Math.hypot(horizontal, dy) > 800 && b.minY-sceneNumber(level, 0) > horizontal*0.1405; // tan(8 degrees)
 }
 
 function sceneAtmosphereTier(state, deviceTier) {

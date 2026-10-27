@@ -52,10 +52,11 @@ test("WebGL planar fallback draws built-in PBR outside the walking camera cull",
  h.renderer.render(b,{width:320,height:180});assert.ok(gl.ops.some(op=>op[0]==="drawElements"));assert.equal(b.camera.y,1.7);h.renderer.dispose();assert.deepEqual(h.warnLog,[]);
 });
 
-// The sea's mirror and sky bodies. A sky body (a mesh more than 800 m away and
-// more than 8 degrees above the sea, such as a moon built as geometry) is not
-// mirrored: its image lands in the near water as a hard-edged disc, and the
-// sky already supplies the glint. Near and low geometry still reflects.
+// The sea's mirror and sky bodies. A sky body (a mesh whose bounds centre is more
+// than 800 m from the camera and whose lowest point is more than 8 degrees above
+// the sea, such as a moon built as geometry) is not mirrored: its image lands in
+// the near water as a hard-edged disc, and the sky already supplies the glint.
+// Near geometry, and anything that touches the sea, still reflects.
 test("the sea's mirror keeps near and low geometry and leaves out sky bodies: a mesh far away and high in the sky is not drawn into the planar reflection", async () => {
  const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
  const box = (x, y, z, r) => ({ minX: x - r, maxX: x + r, minY: y - r, maxY: y + r, minZ: z - r, maxZ: z + r });
@@ -70,16 +71,46 @@ test("the sea's mirror keeps near and low geometry and leaves out sky bodies: a 
  h.renderer.dispose();
 });
 
+// The lowest point of a mesh decides, not its centre: a large mesh that rises from the sea has its centre high above
+// the water, but it is not in the sky, and the water in front of it must still show it.
+test("a mesh that touches the sea is never a sky body, however tall or far, and the same mesh lifted clear of the water is", async () => {
+ const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
+ const at = (id, minX, maxX, minY, maxY, minZ, maxZ) => ({ id, bounds: { minX, maxX, minY, maxY, minZ, maxZ } });
+ const camera = { x: 0, y: 26, z: 95 }, ids = (list) => Array.from(list, (o) => o.id);
+ // Each of these has its base on the sea and a centre more than 8 degrees up, so a test on the centre drops it.
+ const rising = [
+  at("mountain", -600, 600, 0, 500, -2100, -900), // 500 m high, 1.5 km out: the centre is 8.9 degrees up, the base 0
+  at("coast", -3000, 3000, 0, 800, -4000, -200), // one terrain mesh, the shore 300 m ahead: the centre is 10.3 degrees up
+  at("tower", -30, 30, 0, 400, -1230, -1170), // a waterfront tower 1.2 km out: the centre is 8.8 degrees up
+ ];
+ assert.deepEqual(ids(a.sceneReflectOpaqueList(rising, [], camera, 0)), ["mountain", "coast", "tower"], "meshes that rise from the sea reflect");
+ // A mesh that stands in the water, below the sea level, reflects too, whatever its centre.
+ const wading = at("wading", -300, 300, -100, 700, -2100, -1500);
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([wading], [], camera, 0)), ["wading"], "a mesh that reaches below the sea reflects");
+ // Lift the same masses 400 m clear of the water and nothing touches the sea any more: they are sky.
+ const afloat = rising.map((m) => at(m.id + "-afloat", m.bounds.minX, m.bounds.maxX, m.bounds.minY + 400, m.bounds.maxY + 400, m.bounds.minZ, m.bounds.maxZ));
+ assert.deepEqual(ids(a.sceneReflectOpaqueList(afloat, [], camera, 0)), [], "the same meshes with their base 400 m up are sky bodies");
+ // The moon of the other tests, in the same list: its lowest point is 12.6 degrees up, so it is dropped beside them.
+ const moon = at("moon", 20, 140, 320, 440, -1390, -1270);
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([moon].concat(rising), [], camera, 0)), ["mountain", "coast", "tower"], "the moon leaves; the rising meshes stay");
+ // The sea level is the line: with the sea 300 m up, the mountain's base is at the water again.
+ const lifted = at("mountain-in-high-sea", -600, 600, 300, 800, -2100, -900);
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([lifted], [], camera, 0)), [], "judged from y = 0 the lifted mountain floats");
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([lifted], [], camera, 300)), ["mountain-in-high-sea"], "over a sea at 300 m it stands in the water");
+ h.renderer.dispose();
+});
+
 test("sky bodies are judged against the sea level, from valid bounds, and beside the custom-material rule", async () => {
  const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
  const at = (id, x, y, z, r = 10) => ({ id, bounds: { minX: x - r, maxX: x + r, minY: y - r, maxY: y + r, minZ: z - r, maxZ: z + r } });
  const ids = (list) => Array.from(list, (o) => o.id), camera = { x: 0, y: 26, z: 0 };
  const left = (list, materials = [], level = 0) => ids(a.sceneReflectOpaqueList(list, materials, camera, level));
- // 1,000 m out, the 8 degree line is 140.5 m up (tan 8 degrees = 0.1405): 141 m is a sky body, 140 m is not.
- assert.deepEqual(left([at("above-line", 0, 141, -1000), at("below-line", 0, 140, -1000)]), ["below-line"]);
+ // 1,000 m out, the 8 degree line is 140.5 m up (tan 8 degrees = 0.1405) and the lowest point decides: a mesh whose
+ // underside is at 141 m (centre 151 m, half-height 10 m) is a sky body, one whose underside is at 140 m is not.
+ assert.deepEqual(left([at("above-line", 0, 151, -1000), at("below-line", 0, 150, -1000)]), ["below-line"]);
  // Distance counts too: 500 m out and 300 m up (31 degrees, 570 m from the camera) is near geometry, not sky.
  assert.deepEqual(left([at("close", 0, 300, -500)]), ["close"], "a body under 800 m away stays, however high");
- // The sea level is the horizon: raise the sea to 400 m and the moon's centre (380 m) is below it.
+ // The sea level is the horizon: raise the sea to 400 m and the moon's underside (320 m) is below it.
  assert.deepEqual(left([at("moon", 80, 380, -1330, 60)], [], 0), []);
  assert.deepEqual(left([at("moon", 80, 380, -1330, 60)], [], 400), ["moon"], "the sea level is the horizon, not y = 0");
  assert.deepEqual(left([at("moon", 80, 380, -1330, 60)], [], NaN), [], "a level that is not a number reads as 0");
@@ -98,16 +129,36 @@ test("sky bodies are judged against the sea level, from valid bounds, and beside
  h.renderer.dispose();
 });
 
-// Both renderers mirror the same meshes. Spheres with different segment counts
-// have different vertex counts, so a recorded draw names the mesh that made it.
+// A skinned record carries the bind-pose box, the object's own box, or a -1..2 m placeholder (10-runtime-scene-core.ts),
+// never world positions, and the renderer does not cull by it either. Reading it as a position would be a guess.
+test("a skinned mesh is never judged as a sky body, because its bounds are not in world space", async () => {
+ const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
+ const ids = (list) => Array.from(list, (o) => o.id), placeholder = { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
+ // Read as world positions the placeholder sits 300 m above a sea at -300 m and 1.5 km from this camera: a sky body.
+ const camera = { x: 0, y: 26, z: 1500 }, level = -300;
+ const rig = { id: "rig", skin: { joints: [0, 1] }, bounds: placeholder }, still = { id: "still", skin: null, bounds: placeholder };
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([still], [], camera, level)), [], "a mesh with world bounds like these is judged, and is sky");
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([rig], [], camera, level)), ["rig"], "a skinned mesh with the same bounds is not judged and reflects");
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([rig, still], [], camera, level)), ["rig"], "in one list the skinned mesh stays and the other leaves");
+ // The placeholder is not the only way to be wrong: a rig authored high up has local bounds that read as a sky body too.
+ const authored = { id: "authored", skin: { joints: [0] }, bounds: { minX: -1, maxX: 1, minY: 900, maxY: 1000, minZ: -2001, maxZ: -1999 } };
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([authored], [], { x: 0, y: 26, z: 0 }, 0)), ["authored"], "so do the object's own local bounds");
+ h.renderer.dispose();
+});
+
+// Both renderers mirror the same meshes. The meshes differ in kind, size or segment count, so each has its own
+// vertex count and a recorded draw names the mesh that made it.
 const seaCamera = { x: 0, y: 26, z: 95, rotationX: -0.2, rotationY: 0, fov: 62, near: 0.5, far: 20000 };
 const seaMeshes = [
- { id: "moon", segments: 24, radius: 60, x: 80, y: 380, z: -1330 }, // 1.4 km away, 16 degrees up: a sky body
+ { id: "moon", segments: 24, radius: 60, x: 80, y: 380, z: -1330 }, // 1.4 km away, 15 degrees up, its underside 12.6 degrees up: a sky body
  { id: "buoy", segments: 12, radius: 4, x: 6, y: 5, z: -60 }, // near
- { id: "island", segments: 16, radius: 300, x: 900, y: 250, z: -2500 }, // far but 5 degrees up: stays
+ { id: "island", segments: 16, radius: 300, x: 900, y: 250, z: -2500 }, // far but its centre is 5 degrees up, and it stands in the water: stays
+ { id: "mountain", kind: "cone", radiusBottom: 600, radiusTop: 0, height: 500, segments: 20, x: 0, y: 250, z: -1500 }, // 500 m high, 1.5 km out, base on the sea, centre 8.9 degrees up: stays
+ { id: "coast", kind: "box", width: 6000, height: 800, depth: 3800, x: 0, y: 400, z: -2100 }, // one terrain mesh, the shore 300 m ahead, centre 10.3 degrees up: stays
 ];
+const seaKept = ["buoy", "island", "mountain", "coast"];
 function seaBundle(api, meshes, camera, level = 0) {
- const objects = api.sceneStateObjectsWithMaterials(api.createSceneState({ scene: { objects: meshes.map((m) => ({ id: m.id, kind: "sphere", radius: m.radius, segments: m.segments, x: m.x, y: m.y, z: m.z, material: { color: "#d8dce4", wireframe: false }, wireframe: false })) } }));
+ const objects = api.sceneStateObjectsWithMaterials(api.createSceneState({ scene: { objects: meshes.map((m) => Object.assign({ kind: "sphere", material: { color: "#d8dce4", wireframe: false }, wireframe: false }, m)) } }));
  const bundle = api.createSceneRenderBundle(320, 180, "#101820", camera, objects, [], [], [], [], {}, 0.4, [], [], [], [], [], 0, false, {});
  bundle.environment = { sky: { mode: "physical", sunDirection: { x: -0.35, y: 0.7, z: 0.62 }, turbidity: 3 }, ocean: { level, extent: 8000, reflections: { mode: "ssr+planar", resolution: 0.5, strength: 0.8 } } };
  bundle.lights = [];
@@ -152,11 +203,14 @@ function assertMirrors(got, kept, left) {
  assert.deepEqual(sortedNumbers(got.planar), sortedNumbers(want), `the mirror draws ${kept.join(", ")} and nothing else`);
  for (const id of left) assert.ok(got.elsewhere.includes(got.verts[id]), `the main view still draws ${id}`);
 }
-test("WebGPU leaves a distant high mesh out of the planar mirror and still draws it in the main view", async () => {
- assertMirrors(await webgpuSeaDraws(seaMeshes, seaCamera, 0), ["buoy", "island"], ["moon"]);
+// The mountain and the coast have their centres 8.9 and 10.3 degrees up and 1.6 and 2.2 km out, so a test on the centre
+// would call them sky. Their bases are on the water, so they are not, and the mirror draws them. The moon is drawn
+// in the main view only.
+test("WebGPU leaves a sky body out of the planar mirror, still draws it in the main view, and keeps a mountain and a coast that rise from the sea", async () => {
+ assertMirrors(await webgpuSeaDraws(seaMeshes, seaCamera, 0), seaKept, ["moon"]);
 });
-test("WebGL leaves a distant high mesh out of the planar mirror and still draws it in the main view", () => {
- assertMirrors(webglSeaDraws(seaMeshes, seaCamera, 0), ["buoy", "island"], ["moon"]);
+test("WebGL leaves a sky body out of the planar mirror, still draws it in the main view, and keeps a mountain and a coast that rise from the sea", () => {
+ assertMirrors(webglSeaDraws(seaMeshes, seaCamera, 0), seaKept, ["moon"]);
 });
 test("both renderers judge sky bodies from the real camera, not the mirrored one", async () => {
  // A viewer 400 m up. The tower is 743 m from the real camera, so it is near geometry and stays; it is 890 m from
@@ -167,9 +221,10 @@ test("both renderers judge sky bodies from the real camera, not the mirrored one
  assertMirrors(webglSeaDraws(meshes, high, 0), ["tower"], ["sun"]);
 });
 test("both renderers judge sky bodies from the sea level, not from y = 0", async () => {
- // The same scene with the sea and everything over it lifted 300 m. Judged from y = 0 the island (550 m up, 2.7 km out)
- // would count as a sky body; over a sea at 300 m it is 250 m up, 5 degrees, and stays, exactly as in the unlifted scene.
+ // The same scene with the sea and everything over it lifted 300 m. Judged from y = 0 the mountain (base at 300 m, 1.6 km out)
+ // would float 11 degrees up and count as a sky body; over a sea at 300 m its base is on the water, and it stays, exactly
+ // as in the unlifted scene. The moon is still 12.6 degrees above the water and still leaves.
  const lift = 300, camera = Object.assign({}, seaCamera, { y: seaCamera.y + lift }), meshes = seaMeshes.map((m) => Object.assign({}, m, { y: m.y + lift }));
- assertMirrors(await webgpuSeaDraws(meshes, camera, lift), ["buoy", "island"], ["moon"]);
- assertMirrors(webglSeaDraws(meshes, camera, lift), ["buoy", "island"], ["moon"]);
+ assertMirrors(await webgpuSeaDraws(meshes, camera, lift), seaKept, ["moon"]);
+ assertMirrors(webglSeaDraws(meshes, camera, lift), seaKept, ["moon"]);
 });
