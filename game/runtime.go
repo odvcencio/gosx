@@ -28,6 +28,11 @@ const (
 // while paused. RealDelta is the clamped delta before scaling. At scale 1 and
 // not paused the two are equal. Steps is the total number of fixed steps run
 // since the clock started.
+//
+// DroppedDuration is game time the frame did not run as fixed steps: what was
+// left after MaxSubsteps steps, and, once game time has reached the end of a
+// time.Duration, every step's worth that gathers (see Clock.Advance). A frame
+// whose scaled time is longer than a Duration reports the excess here too.
 type Frame struct {
 	Index           uint64        `json:"index"`
 	Delta           time.Duration `json:"delta"`
@@ -114,7 +119,42 @@ func NewClock(cfg LoopConfig) *Clock {
 	}
 }
 
+// maxDuration is the largest game time a time.Duration holds: about 292 years.
+const maxDuration = time.Duration(math.MaxInt64)
+
+// twoPow63 is the smallest float64 that is not a Duration. float64(maxDuration)
+// rounds up to it.
+const twoPow63 = float64(1 << 63)
+
+// addDuration returns a+b for a, b >= 0. When the sum would pass maxDuration it
+// returns maxDuration and the part of b that did not fit.
+func addDuration(a, b time.Duration) (sum, over time.Duration) {
+	if room := maxDuration - a; b > room {
+		return maxDuration, b - room
+	}
+	return a + b, 0
+}
+
+// floorDuration converts nanoseconds to a Duration, rounding toward zero. A value
+// beyond maxDuration gives maxDuration, and a negative value or NaN gives 0.
+func floorDuration(ns float64) time.Duration {
+	switch {
+	case ns >= twoPow63:
+		return maxDuration
+	case ns > 0:
+		return time.Duration(ns)
+	}
+	return 0
+}
+
 // Advance advances the clock and returns the frame plan.
+//
+// Game time is a time.Duration, so it ends at about 292 years (math.MaxInt64
+// nanoseconds), which is about 4.9 hours of play at a time scale of 525,600. The
+// clock does not wrap past that. A frame whose scaled time is longer than a
+// Duration counts as maxDuration, and the clock runs no fixed step that would
+// take Frame.Time past maxDuration: from then on Time stays where it is and each
+// frame reports the time it could not run in Frame.DroppedDuration.
 func (c *Clock) Advance(delta time.Duration) Frame {
 	if c == nil {
 		return Frame{}
@@ -126,24 +166,35 @@ func (c *Clock) Advance(delta time.Duration) Frame {
 		delta = c.maxDelta
 	}
 	realDelta := delta
-	var scaled time.Duration
+	var scaled, dropped time.Duration
 	if !c.paused {
 		exact := float64(delta)*c.scale + c.scaleFrac
-		whole := math.Floor(exact)
-		c.scaleFrac = exact - whole
-		scaled = time.Duration(whole)
+		switch {
+		case exact < twoPow63:
+			whole := math.Floor(exact)
+			c.scaleFrac = exact - whole
+			scaled = time.Duration(whole)
+		case exact >= twoPow63: // more than a Duration, or infinite
+			scaled, dropped = maxDuration, floorDuration(exact-twoPow63)
+			c.scaleFrac = 0
+		default: // NaN
+			c.scaleFrac = 0
+		}
 	}
-	c.accumulator += scaled
+	var over time.Duration
+	c.accumulator, over = addDuration(c.accumulator, scaled)
+	dropped, _ = addDuration(dropped, over)
 	steps := 0
-	for c.accumulator >= c.fixedStep && steps < c.maxSubsteps {
+	for c.accumulator >= c.fixedStep && steps < c.maxSubsteps && c.elapsed <= maxDuration-c.fixedStep {
 		c.accumulator -= c.fixedStep
 		c.elapsed += c.fixedStep
 		steps++
 	}
 	c.steps += uint64(steps)
-	var dropped time.Duration
-	if steps == c.maxSubsteps && c.accumulator >= c.fixedStep {
-		dropped = c.accumulator
+	if c.accumulator >= c.fixedStep {
+		// The frame used its MaxSubsteps, or game time has reached the end of a
+		// Duration: drop what is left, which the next frame could not run either.
+		dropped, _ = addDuration(dropped, c.accumulator)
 		c.accumulator = 0
 	}
 	c.frame++
@@ -614,11 +665,6 @@ func (f SnapshotCodecFuncs) State(r *Runtime) []byte {
 // Every and EveryInterval wrappers (Cadence).
 const RuntimeStateVersion = 2
 
-// maxGatheredNanos bounds the gathered time that Restore accepts. A wrapper adds
-// each step to its gathered time, so a value near the int64 limit would overflow
-// into a negative ctx.Delta on the next run.
-const maxGatheredNanos = math.MaxInt64 / 2
-
 // RuntimeState is the default snapshot/state payload.
 type RuntimeState struct {
 	// Version is the snapshot format. Snapshots written before it existed omit it
@@ -712,7 +758,9 @@ func (r *Runtime) RestoreSnapshot(snapshot []byte) error {
 }
 
 // decodeRuntimeState parses and checks a snapshot without touching the runtime,
-// so a restore applies all of it or none.
+// so a restore applies all of it or none. It accepts every state that the clock
+// and the Every and EveryInterval wrappers of a runtime can reach, so a runtime
+// can always load the snapshot it wrote.
 func (r *Runtime) decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
 	var state RuntimeState
 	if err := json.Unmarshal(snapshot, &state); err != nil {
@@ -742,9 +790,6 @@ func (r *Runtime) decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
 	for _, c := range state.Cadence {
 		if c.GatheredNanos < 0 {
 			return state, fmt.Errorf("game: snapshot cadence %q has negative gathered time %v", c.System, time.Duration(c.GatheredNanos))
-		}
-		if c.GatheredNanos > maxGatheredNanos {
-			return state, fmt.Errorf("game: snapshot cadence %q has gathered time %v above the limit %v", c.System, time.Duration(c.GatheredNanos), time.Duration(maxGatheredNanos))
 		}
 	}
 	return state, nil

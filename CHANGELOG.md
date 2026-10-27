@@ -14,6 +14,17 @@
   snapshots still load and behave as before. `State`, which `sim.Runner`
   broadcasts every tick, keeps its size.
 
+- Stop the `game` clock at the end of a `time.Duration` instead of wrapping.
+  Game time ends at about 292 years, which is about 4.9 hours of play at a time
+  scale of 525,600. A frame whose scaled time was longer than a `Duration` used
+  to wrap to a negative time on amd64 and saturate on js/wasm, so the clock
+  stalled, and a snapshot of it could not be loaded. Now such a frame counts as
+  the longest `Duration`, the clock runs no step that would pass the end,
+  `Every` and `EveryInterval` wrappers stop gathering at the longest `Duration`,
+  and `Frame.DroppedDuration` reports the time that did not run. Frames that did
+  not overflow are unchanged. The snapshot of a runtime in any of these states
+  loads again.
+
 - Add `game.Runtime.RestoreSnapshot`, which returns why a snapshot was refused
   (empty, malformed, newer than this build, or a time, clock or world that does
   not fit) and then changes nothing. `Runtime.Restore` keeps the

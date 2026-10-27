@@ -401,8 +401,10 @@ func TestRestoreSnapshotReportsBadSnapshots(t *testing.T) {
 		{"scale fraction of one", v2 + `"scaleFrac":1}`, "scale fraction"},
 		{"negative scale fraction", v2 + `"scaleFrac":-0.25}`, "scale fraction"},
 		{"negative gathered time", v2 + `"cadence":[{"system":"every","gatheredNanos":-5}]}`, "negative gathered time"},
-		// The next run would add a step to this and overflow into a negative Delta.
-		{"gathered time at the int64 limit", v2 + `"timeNanos":3600000000000,"cadence":[{"system":"every","gatheredNanos":9223372036854775807}]}`, "above the limit"},
+		// A clock that passed the end of a Duration on the code before the clock
+		// stopped there wrote a negative time. That code loaded it with a step count
+		// wrapped to about 1.8e19, which shifts every Every schedule and wraps to zero
+		// after a few million steps, so this refuses it.
 		{"negative time", `{"frame":1,"timeNanos":-1}`, "time -1ns is negative"},
 		{"negative time in a version 2 snapshot", v2 + `"timeNanos":-3600000000000}`, "is negative"},
 		{"negative time in seconds", `{"frame":1,"timeSeconds":-0.5}`, "timeSeconds"},
@@ -433,6 +435,22 @@ func TestRestoreSnapshotReportsBadSnapshots(t *testing.T) {
 		t.Fatal("a nil runtime accepted a snapshot")
 	}
 	nilRuntime.Restore(rt.Snapshot()) // must not panic
+}
+
+// Restore must accept all that the runtime writes, including the edge: a wrapper
+// that has gathered the largest Duration.
+func TestRestoreAcceptsGatheredTimeUpToTheEdge(t *testing.T) {
+	const v2 = `{"version":2,"fixedStepNanos":10000000,"frame":1,"cadence":`
+	for _, c := range []struct{ name, cadence string }{
+		{"every wrapper at the largest Duration", `[{"system":"e","kind":"every","param":4,"depth":0,"gatheredNanos":9223372036854775807}]`},
+		{"unknown kind", `[{"system":"x","kind":"future","param":0,"depth":0,"gatheredNanos":5}]`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if err := midRun(t).RestoreSnapshot([]byte(v2 + c.cadence + `}`)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 // A SaveCodec restore replaces the world, and nothing can undo that. It must

@@ -14,7 +14,7 @@ func (c *cadence) Name() string { return c.inner.Name() }
 func (c *cadence) Phase() Phase { return c.inner.Phase() }
 
 func (c *cadence) Update(ctx *Context) error {
-	c.accum += ctx.Delta
+	c.accum = gather(c.accum, ctx.Delta)
 	if c.every > 0 {
 		if ctx.Tick%c.every != 0 {
 			return nil
@@ -26,6 +26,16 @@ func (c *cadence) Update(ctx *Context) error {
 	ctx.Delta, c.accum = c.accum, 0
 	defer func() { ctx.Delta = saved }()
 	return c.inner.Update(ctx)
+}
+
+// gather adds d to the game time a wrapper holds. The sum stops at the largest
+// Duration (about 292 years) and does not wrap to a negative time, which Restore
+// would refuse.
+func gather(held, d time.Duration) time.Duration {
+	if d > 0 && held > maxDuration-d {
+		return maxDuration
+	}
+	return held + d
 }
 
 // Every runs s once every n ticks of its phase and skips the rest. For a

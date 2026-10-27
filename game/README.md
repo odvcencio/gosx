@@ -153,6 +153,16 @@ On a run, `ctx.Delta` holds the game time gathered since the last run.
 `MaxSubsteps` fixed steps; at extreme scales raise `MaxSubsteps` or the step
 size, or game time falls behind the scale.
 
+Game time is a `time.Duration` in nanoseconds, so it ends after about 292 years
+(`math.MaxInt64` ns). At the scale of 525,600 above, that is about 4.9 hours of
+play. The clock stops there instead of wrapping to a negative time: it runs no
+fixed step that would pass the end, `Frame.Time` stays put, and each frame
+reports the time it could not run in `Frame.DroppedDuration`. A single frame
+whose scaled time is longer than a `Duration` (a 5 hour real frame at scale
+525,600, say, after a long stall) counts as the longest `Duration`, runs its
+`MaxSubsteps` steps and drops the rest. `Snapshot` still loads in all of these
+cases.
+
 `Snapshot` saves the game time each `Every` and `EveryInterval` wrapper has
 gathered, and `Restore` gives it back to the wrapper that matches on system name,
 kind (`Every` or `EveryInterval`), `n` or interval, and nesting (an `Every`
