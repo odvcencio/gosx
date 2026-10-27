@@ -67,8 +67,13 @@ see one unless the reactor tells it. When `f` arrives depends on where the fault
   processor is not draining. `msg_fault()` returns 0 while the reactor is healthy
   and `0x10000` plus the fault's 16-bit argument once it has faulted; it must not
   touch the ring. The processor then posts `f` and stops playback at once, however
-  long the page holds the buffer. It drains only while playing, so messages still
-  in the ring are not delivered.
+  long the page holds the buffer. It goes on draining the faulted reactor at its
+  drain points, one batch each time the page returns the buffer, until the ring is
+  empty. Every message queued before the fault, and the fault's own record, reach
+  the page in order, so `msg_drain` must stay callable after a fault, and the page
+  sees the fault twice, as `f` and then in `m`. A `play` command or an image
+  replacement ends this draining: after `play` the usual draining takes over, and
+  a replacement discards what is left in the retired reactor.
 - Without `msg_fault`, a fault queued after the parked batch waits for the first
   drain after `b`. Playback goes on until then, and a page that never returns `b`
   never learns of the fault.

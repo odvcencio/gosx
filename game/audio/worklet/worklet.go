@@ -22,7 +22,9 @@ const ProcessorName = "gosx-wasm-audio"
 // ring; a reactor whose ring can fill should report that with its FaultOpcode record.
 // Optional msg_fault returns 0 while the reactor is healthy and 0x10000 plus the
 // fault's 16-bit argument after it faults. The processor polls it, without draining,
-// so a fault queued behind the parked message batch is still reported at once.
+// so a fault queued behind the parked message batch is still reported at once. It
+// then keeps draining the faulted reactor until the ring is empty, so msg_drain
+// must stay callable after a fault.
 type Backend struct {
 	ExportPrefix          string             `json:"prefix,omitempty"`
 	MaxFrames             int                `json:"maxFrames"`

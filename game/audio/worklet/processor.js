@@ -8,7 +8,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     this.t = this.b.transport;
     this.active = this.previous = this.pending = this.bankCopy = null;
     this.bank = null;
-    this.closed = this.playing = false;
+    this.closed = this.playing = this.stranded = false;
     this.deferredCount = this.engineSample = this.anchorSample = this.anchorTick = 0;
     this.nextBarTick = this.t?.ticksPerBar || 0;
     this.fadeTotal = Math.max(1, Math.floor(sampleRate / 200));
@@ -233,7 +233,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
         this.nextBarTick = (Math.floor(seekTick / this.t.ticksPerBar) + 1) * this.t.ticksPerBar;
         if (starts) { this.previous = null; this.fadeLeft = this.fadeTotal; }
       }
-      if (starts) { this.playing = true; this.post({t: 's', p: true}); }
+      if (starts) { this.playing = true; this.stranded = false; this.post({t: 's', p: true}); }
       if (stops) {
         this.playing = false;
         this.post({t: 's', p: false});
@@ -248,6 +248,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
   }
   promote(next) {
     this.pending = null;
+    this.stranded = false;
     this.previous = this.playing ? this.active : null;
     this.fadeLeft = this.previous ? this.fadeTotal : 0;
     this.active = next;
@@ -298,6 +299,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     if (!state) return false;
     this.faultMessage.a = state & 0xffff;
     this.post(this.faultMessage);
+    this.stranded = true; // playback stops, but the ring still holds what was queued before the fault
     return true;
   }
 
@@ -380,6 +382,11 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
             for (let c = 0; c < channels.length; c++) channels[c].fill(0);
           }
         }
+      } else if (this.stranded && this.messageReady && !(this.callbacks & 7)) {
+        // A polled fault stopped playback with messages still in the reactor's ring. Send them, one batch for each
+        // buffer the page returns; an empty ring ends it.
+        this.drain(this.active, true);
+        if (this.messageReady) this.stranded = false;
       }
     } catch (error) {
       if (channels) for (let c = 0; c < channels.length; c++) channels[c].fill(0);

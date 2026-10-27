@@ -10,6 +10,10 @@ const source = readFileSync(new URL('../../game/audio/worklet/processor.js', imp
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const backend = {prefix: 'test_', maxFrames: 64, channels: 1, commandBytes: 16,
   messageBytes: 4, messageCapacity: 8, supportedCapabilities: 3, faultOpcode: 7, faultArgumentOffset: 2};
+// One tick is one beat is one bar, so at 120000 milli-BPM and 1 kHz a bar is 500 samples.
+const transport = {play: 1, stop: 2, seek: 3, target: 255, ticksPerBeat: 1, ticksPerBar: 1,
+  seekBarOffset: 4, seekTickOffset: 8, boundaryTickOffset: 8, quantizedOpcodes: [9]};
+const command = op => { const bytes = new Uint8Array(16); bytes[0] = op; return bytes; };
 
 async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false, required = 0, failRender = false, poll = false} = {}) {
   const messages = [], reactors = [];
@@ -66,13 +70,20 @@ async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false
 
 // A scripted page for the message path. The engine emits [1, seq low, seq high, 0] and a fault is
 // [7, 0, code low, code high]; fault() queues that record and sets the state a msg_fault export reports.
+// With options.ring the engine's ring holds that many records: the first record that does not fit ends it
+// with an overflow fault (code 11), and a faulted engine emits nothing more.
 // page() decodes each batch into `seen` and gives the buffer back unless release is false, as a stalled
 // main thread would. drain() is one drain: eight callbacks. It returns the last block rendered.
 async function pager(options) {
   const f = await fixture(options), x = f.reactors[0].x, seen = [], held = [];
   let sent = 0, read = 0;
   return {f, x, seen,
-    emit(count) { for (let i = 0; i < count; i++, sent++) x.ring.push([1, sent & 255, sent >> 8, 0]); },
+    emit(count) {
+      for (let i = 0; i < count && !x.faulted; i++) {
+        if (options?.ring && x.ring.length >= options.ring) this.fault(11);
+        else x.ring.push([1, sent & 255, sent >> 8, 0]), sent++;
+      }
+    },
     fault(code) { x.ring.push([7, 0, code & 255, code >> 8]); x.faulted = 0x10000 | code; },
     drain() { let out; for (let i = 0; i < 8; i++) out = f.render(128).output; return out; },
     page(release = true) {
@@ -210,10 +221,89 @@ test('a reactor that exports msg_fault has a later fault reported at once even i
   for (let i = 0; i < 100; i++) assert.ok(p.drain().every(v => v === 0));
   assert.equal(p.f.messages.filter(m => m.t === 'f').length, 1, 'the fault is not repeated');
   assert.equal(p.x.polls, 51, 'polled until it reported the fault, then left alone');
-  assert.equal(p.x.drains, 2, 'polling drains nothing, so no message is lost');
-  assert.equal(p.x.ring.length, 101, '100 messages and the fault record are still queued');
+  assert.equal(p.x.drains, 2, 'polling drains nothing while the page holds the buffer');
+  assert.equal(p.x.ring.length, 101, '100 messages and the fault record are still queued in the reactor');
   p.page();
-  assert.deepEqual(p.seen, [0, 1], 'the parked batch still arrives once the page returns the buffer');
+  assert.deepEqual(p.seen, [0, 1], 'the parked batch arrives the moment the page returns the buffer');
+  // Playback has stopped, but the processor goes on draining the faulted reactor at its drain points (every
+  // eighth callback), one batch of 8 for each returned buffer: 13 batches carry the 101 queued records, and
+  // the 14th drain point finds the ring empty.
+  for (let i = 0; i < 7; i++) p.f.render(128);
+  assert.equal(p.x.drains, 2, 'draining waits for the next drain point');
+  p.f.render(128);
+  assert.equal(p.x.drains, 3);
+  p.page();
+  for (let i = 0; i < 12; i++) { p.drain(); p.page(); }
+  assert.deepEqual(p.seen, [...Array.from({length: 102}, (_, i) => i), 'fault 9'], 'every queued message and the fault record arrive, in order');
+  assert.equal(p.x.ring.length, 0);
+  assert.equal(p.x.drains, 15);
+  assert.ok(p.drain().every(v => v === 0));
+  assert.equal(p.x.drains, 16, 'the next drain point finds the ring empty');
+  for (let i = 0; i < 20; i++) { assert.ok(p.drain().every(v => v === 0)); p.page(); }
+  assert.equal(p.x.drains, 16, 'an empty ring ends the draining');
+  assert.equal(p.x.polls, 51, 'the reactor is no longer polled either');
+  assert.equal(p.f.messages.filter(m => m.t === 'f').length, 1, 'the fault is reported once as f');
+  assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e'));
+});
+
+for (const poll of [false, true]) {
+  test(`a ring that fills during a long stall delivers every message before its overflow fault${poll ? ' when the reactor exports msg_fault' : ''}`, async () => {
+    const p = await pager({poll, ring: 20});
+    p.emit(2); p.drain(); p.page(false);
+    p.emit(2); p.drain();
+    // The page stalls for 30 drains while the engine emits 3 messages in each. After 20 queued records the
+    // ring is full, so the next record ends it with the overflow fault and the engine says nothing more.
+    for (let i = 0; i < 30; i++) { p.emit(3); p.drain(); }
+    assert.equal(p.x.ring.length, 21, '20 messages and the overflow fault are queued');
+    assert.equal(p.x.drains, 2);
+    assert.deepEqual(p.seen, [0, 1]);
+    assert.deepEqual(p.f.messages.filter(m => m.t === 'f'), poll ? [{t: 'f', a: 11}] : [], poll ? 'the fault is reported while the page stalls' : 'the fault waits in the ring');
+    assert.ok(p.f.render(128).output.some(v => v !== 0) !== poll, poll ? 'playback has stopped' : 'playback goes on, as the processor cannot see the fault');
+    p.page();
+    for (let i = 0; i < 6; i++) { p.drain(); p.page(); }
+    assert.deepEqual(p.seen, [...Array.from({length: 24}, (_, i) => i), 'fault 11']);
+    assert.equal(p.x.ring.length, 0);
+    assert.ok(p.drain().every(v => v === 0), 'the fault stops playback');
+    assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e'));
+  });
+}
+
+test('a play command after a fault found by msg_fault hands the rest of the ring back to normal draining', async () => {
+  const p = await pager({b: {...backend, transport}, poll: true});
+  p.f.send({t: 'c', bytes: command(1)});
+  p.emit(1); p.drain(); p.page(false);
+  p.emit(1); p.drain();
+  p.emit(4); p.fault(9); p.drain();
+  assert.deepEqual(p.f.messages.filter(m => m.t === 'f'), [{t: 'f', a: 9}]);
+  p.page();
+  assert.deepEqual(p.seen, [0, 1]);
+  assert.equal(p.x.drains, 2);
+  p.f.send({t: 'c', bytes: command(1)});
+  p.drain(); p.page();
+  assert.deepEqual(p.seen, [0, 1, 2, 3, 4, 5, 'fault 9'], 'restarted playback drains what was left, once and in order');
+  assert.equal(p.x.drains, 3);
+  for (let i = 0; i < 10; i++) { p.drain(); p.page(); }
+  assert.equal(p.x.drains, 3, 'the fault record in a drained batch stops playback and the draining, as before');
+  assert.equal(p.f.messages.filter(m => m.t === 'f').length, 1, 'the delivered fault is not reported again');
+  assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e'));
+});
+
+test('an image replacement after a fault found by msg_fault leaves the faulted reactor and its queue behind', async () => {
+  const p = await pager({b: {...backend, transport}, poll: true});
+  p.f.send({t: 'c', bytes: command(1)});
+  p.emit(1); p.drain(); p.page(false);
+  p.emit(1); p.drain();
+  p.emit(4); p.fault(9); p.drain();
+  p.f.send({t: 'i', i: new Uint8Array([75]).buffer, info: {tempoMilli: 120000, requiredCapabilities: 0}, r: 'next'});
+  for (let i = 0; i < 10 && !p.f.messages.some(m => m.t === 't'); i++) await tick();
+  assert.ok(p.f.messages.some(m => m.t === 't'), 'the replacement is installed at once because playback has stopped');
+  p.page();
+  for (let i = 0; i < 10; i++) { p.drain(); p.page(); }
+  assert.deepEqual(p.seen, [0, 1], 'the parked batch was already drained; the five records still queued in the retired reactor are discarded');
+  assert.equal(p.x.ring.length, 5);
+  assert.equal(p.x.drains, 2);
+  assert.equal(p.f.reactors[1].x.drains, 0, 'the new reactor is not drained on the old one\'s behalf');
+  assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e'));
 });
 
 test('msg_fault must be a function and report 0 or 0x10000 plus a 16-bit argument', async () => {
@@ -243,17 +333,13 @@ test('a render fault silences the complete block and stops the reactor once', as
 });
 
 test('image replacement waits for a musical boundary and crossfades without a gap', async () => {
-  const b = {...backend, transport: {play: 1, stop: 2, seek: 3, target: 255, ticksPerBeat: 1,
-    ticksPerBar: 1, seekBarOffset: 4, seekTickOffset: 8, boundaryTickOffset: 8, quantizedOpcodes: [9]}};
-  const f = await fixture({b});
-  const play = new Uint8Array(16); play[0] = 1;
-  f.send({t: 'c', bytes: play});
+  const f = await fixture({b: {...backend, transport}});
+  f.send({t: 'c', bytes: command(1)});
   const image = new Uint8Array([75]);
   f.send({t: 'i', i: image.buffer, info: {tempoMilli: 120000, requiredCapabilities: 0}, r: 'next'});
   for (let i = 0; i < 10 && !f.messages.some(m => m.t === 't'); i++) await tick();
   assert.ok(f.messages.some(m => m.t === 't'));
-  const launch = new Uint8Array(16); launch[0] = 9;
-  f.send({t: 'c', bytes: launch});
+  f.send({t: 'c', bytes: command(9)});
   const result = f.render(512).output;
   assert.ok(result.slice(0, 500).every(v => v === .25));
   assert.ok(result[500] > .25 && result[500] < .75);
