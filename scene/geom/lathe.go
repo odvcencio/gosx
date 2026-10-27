@@ -98,7 +98,7 @@ func Lathe(profile []float64, segments int, phiStart, phiLength float64, want At
 			c := row + i + 1
 			d := next + i + 1
 			b.index(a, d, bIdx)
-			b.index(bIdx, c, d)
+			b.index(a, c, d)
 		}
 	}
 	return b.build()

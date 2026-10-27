@@ -1,0 +1,134 @@
+{
+  "sourceURL": "https://www.easa.europa.eu/en/downloads/131424/en",
+  "sourcePage": "https://www.easa.europa.eu/en/domains/environment/icao-aircraft-engine-emissions-databank",
+  "edition": "03/2026",
+  "workbookSHA256": "57a9ff572458ad3a3141afc1aea932b5faa5796d279f0ac74600b27869302530",
+  "sheet": "Gaseous Emissions and Smoke",
+  "row": 555,
+  "cells": {
+    "A555": {
+      "column": "UID No",
+      "value": "1PW026"
+    },
+    "C555": {
+      "column": "Manufacturer",
+      "value": "Pratt & Whitney"
+    },
+    "D555": {
+      "column": "Engine Identification",
+      "value": "JT9D-7R4D, -7R4D1"
+    },
+    "F555": {
+      "column": "Eng Type",
+      "value": "TF"
+    },
+    "G555": {
+      "column": "B/P Ratio",
+      "value": 5.0
+    },
+    "H555": {
+      "column": "Pressure Ratio",
+      "value": 23.4
+    },
+    "I555": {
+      "column": "Rated Thrust (kN)",
+      "value": 213.5
+    },
+    "J555": {
+      "column": "Data Status",
+      "value": "C"
+    },
+    "N555": {
+      "column": "Data corr as Annex 16",
+      "value": "Yes"
+    },
+    "M555": {
+      "column": "Test Engine Status",
+      "value": "DTEPS"
+    },
+    "O555": {
+      "column": "Current Engine Status",
+      "value": "Out of production"
+    },
+    "BZ555": {
+      "column": "Fuel Flow T/O (kg/sec)",
+      "value": 2.055
+    },
+    "CA555": {
+      "column": "Fuel Flow C/O (kg/sec)",
+      "value": 1.678
+    },
+    "CB555": {
+      "column": "Fuel Flow App (kg/sec)",
+      "value": 0.6593
+    },
+    "CC555": {
+      "column": "Fuel Flow Idle (kg/sec)",
+      "value": 0.2054
+    },
+    "CE555": {
+      "column": "Loads Power Extraction (kW)",
+      "value": 0.0
+    },
+    "CG555": {
+      "column": "Loads Stage Bleed CF (%)",
+      "value": 0.0
+    },
+    "CK555": {
+      "column": "Ambient Temp Min (K)",
+      "value": 276.0
+    },
+    "CL555": {
+      "column": "Ambient Temp Max (K)",
+      "value": 304.0
+    },
+    "CO555": {
+      "column": "Test Organisation",
+      "value": "P&WA"
+    },
+    "CP555": {
+      "column": "Test Location",
+      "value": "East Hartford, CT"
+    },
+    "CQ555": {
+      "column": "Initial Test Date",
+      "value": 29286.0
+    },
+    "CR555": {
+      "column": "Final Test Date",
+      "value": 29893.0
+    }
+  },
+  "engine": "JT9D-7R4D / -7R4D1",
+  "uid": "1PW026",
+  "ratedThrustN": 213500.0,
+  "pressureRatio": 23.4,
+  "bypassRatio": 5.0,
+  "points": [
+    {
+      "mode": "takeoff",
+      "thrustFraction": 1,
+      "fuelFlowKGS": 2.055,
+      "role": "calibration"
+    },
+    {
+      "mode": "climbout",
+      "thrustFraction": 0.85,
+      "fuelFlowKGS": 1.678,
+      "role": "unfitted check"
+    },
+    {
+      "mode": "approach",
+      "thrustFraction": 0.3,
+      "fuelFlowKGS": 0.6593,
+      "role": "calibration"
+    },
+    {
+      "mode": "idle",
+      "thrustFraction": 0.07,
+      "fuelFlowKGS": 0.2054,
+      "role": "calibration"
+    }
+  ],
+  "attribution": "ICAO Aircraft Engine Emissions Databank, hosted by EASA; manufacturer supplied data. Reproduced with source acknowledgement."
+}

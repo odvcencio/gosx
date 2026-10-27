@@ -1,0 +1,6 @@
+/dist/
+/build/
+/modules/
+/evidence/
+!/cycle/data/
+!/cycle/data/**

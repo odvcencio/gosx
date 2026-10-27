@@ -1,0 +1,818 @@
+{
+  "checks": [
+    {
+      "mode": "takeoff",
+      "observedFuelKGS": 2.055,
+      "predictedThrustN": 213499.99999998728,
+      "referenceThrustN": 213500,
+      "relativeThrustError": -5.96189764223709e-14,
+      "result": {
+        "cycle": {
+          "inputs": {
+            "altitudeM": 0,
+            "mach": 0,
+            "turbineInletK": 1512.2523206979474,
+            "overallPressureRatio": 23.4,
+            "fanPressureRatio": 1.71845,
+            "bypassRatio": 5
+          },
+          "ambient": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 0
+          },
+          "inlet": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 650.8949056026111
+          },
+          "fan": {
+            "temperatureK": 342.52704523246064,
+            "pressurePa": 174121.94625,
+            "massFlowKGS": 650.8949056026111
+          },
+          "compressor": {
+            "temperatureK": 772.028796725745,
+            "pressurePa": 2371005,
+            "massFlowKGS": 108.48248426710184
+          },
+          "burner": {
+            "temperatureK": 1512.2523206979474,
+            "pressurePa": 2240599.725,
+            "massFlowKGS": 100.77406068306269
+          },
+          "highTurbine": {
+            "temperatureK": 1165.1874289724456,
+            "pressurePa": 809991.3823012547,
+            "massFlowKGS": 110.53748426710185
+          },
+          "lowTurbine": {
+            "temperatureK": 783.3849298752332,
+            "pressurePa": 144454.70828031615,
+            "massFlowKGS": 110.53748426710185
+          },
+          "coreNozzle": {
+            "exit": {
+              "temperatureK": 713.2540593726131,
+              "pressurePa": 101325,
+              "massFlowKGS": 110.53748426713375
+            },
+            "mach": 0.7385510840149211,
+            "velocityMPS": 390.2066373932971,
+            "areaM2": 0.5724006451876029,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "bypassNozzle": {
+            "exit": {
+              "temperatureK": 293.48345778503307,
+              "pressurePa": 101325,
+              "massFlowKGS": 542.4124213355092
+            },
+            "mach": 0.9144955229810883,
+            "velocityMPS": 314.09225389553933,
+            "areaM2": 1.435809975729176,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "flightSpeedMPS": 0,
+          "coreFlowKGS": 108.48248426710184,
+          "bypassFlowKGS": 542.4124213355092,
+          "fuelFlowKGS": 2.055,
+          "fuelAirRatio": 0.020816648636858216,
+          "coreThrustN": 43132.460041780294,
+          "bypassThrustN": 170367.539958207,
+          "netThrustN": 213499.99999998728,
+          "tsfcKgPerNS": 9.625292740047413e-06,
+          "compressorPowerW": 36857799.388842985,
+          "fanPowerW": 47367427.41457218,
+          "burnerResidualW": 2.9802322387695312e-08,
+          "highShaftResidualW": 5.3122639656066895e-06,
+          "lowShaftResidualW": 4.786252975463867e-05,
+          "energyResidualW": -5.367398262023926e-05,
+          "massResidualKGS": 3.189581931906105e-11,
+          "maxRelativeResidual": 6.074122403693686e-13
+        },
+        "command": {
+          "altitudeM": 0,
+          "mach": 0,
+          "fuelFlowKGS": 2.055
+        },
+        "lowCompressor": {
+          "temperatureK": 449.6054825168033,
+          "pressurePa": 406392.8358140638,
+          "massFlowKGS": 108.48248426710184
+        },
+        "turbineInlet": {
+          "temperatureK": 1472.5331059138089,
+          "pressurePa": 2240599.725,
+          "massFlowKGS": 106.74059731775328
+        },
+        "n1RPM": 3943.959,
+        "n2RPM": 7940.895519089425,
+        "mapPoints": [
+          {
+            "name": "Fan",
+            "correctedSpeed": 1,
+            "coordinate": 2,
+            "correctedFlowKGS": 650.8949056026111,
+            "pressureRatio": 1.71845,
+            "efficiency": 0.8856989550000001,
+            "extended": false
+          },
+          {
+            "name": "LPC",
+            "correctedSpeed": 1,
+            "coordinate": 2,
+            "correctedFlowKGS": 68.82731753454064,
+            "pressureRatio": 2.3339552800000005,
+            "efficiency": 0.868032,
+            "extended": false
+          },
+          {
+            "name": "HPC",
+            "correctedSpeed": 1,
+            "coordinate": 2,
+            "correctedFlowKGS": 33.78599227495414,
+            "pressureRatio": 5.834268695338915,
+            "efficiency": 0.8636724,
+            "extended": false
+          },
+          {
+            "name": "HPT",
+            "correctedSpeed": 100.00000000000001,
+            "coordinate": 5,
+            "correctedFlowKGS": 10.912020787516212,
+            "pressureRatio": 2.7662019299937057,
+            "efficiency": 0.9144238399999999,
+            "extended": false
+          },
+          {
+            "name": "LPT",
+            "correctedSpeed": 100.00000000000179,
+            "coordinate": 6.4,
+            "correctedFlowKGS": 27.805734622744744,
+            "pressureRatio": 5.607234211635777,
+            "efficiency": 0.9250154230800026,
+            "extended": false
+          }
+        ],
+        "matchResidual": 1.010452379770031e-12,
+        "iterations": 0
+      },
+      "role": "calibration",
+      "status": "converged"
+    },
+    {
+      "mode": "climbout",
+      "observedFuelKGS": 1.678,
+      "predictedThrustN": 180484.11774590798,
+      "referenceThrustN": 181475,
+      "relativeThrustError": -0.005460158446573993,
+      "result": {
+        "cycle": {
+          "inputs": {
+            "altitudeM": 0,
+            "mach": 0,
+            "turbineInletK": 1435.1019205188059,
+            "overallPressureRatio": 19.92157637127081,
+            "fanPressureRatio": 1.6078284844329391,
+            "bypassRatio": 5.335400098683862
+          },
+          "ambient": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 0
+          },
+          "inlet": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 601.2990062243616
+          },
+          "fan": {
+            "temperatureK": 334.95701353946845,
+            "pressurePa": 162913.22118516755,
+            "massFlowKGS": 601.2990062243616
+          },
+          "compressor": {
+            "temperatureK": 737.4679209569417,
+            "pressurePa": 2018553.7258190147,
+            "massFlowKGS": 94.9109759223064
+          },
+          "burner": {
+            "temperatureK": 1435.1019205188059,
+            "pressurePa": 1907533.270898969,
+            "massFlowKGS": 88.04698808929884
+          },
+          "highTurbine": {
+            "temperatureK": 1101.9804425142752,
+            "pressurePa": 683085.2930970559,
+            "massFlowKGS": 96.5889759223064
+          },
+          "lowTurbine": {
+            "temperatureK": 756.1958914971857,
+            "pressurePa": 132761.1241824438,
+            "massFlowKGS": 96.5889759223064
+          },
+          "coreNozzle": {
+            "exit": {
+              "temperatureK": 703.8355038126005,
+              "pressurePa": 101325,
+              "massFlowKGS": 96.5889759223028
+            },
+            "mach": 0.6408295368749124,
+            "velocityMPS": 336.46473782145284,
+            "areaM2": 0.5724006451876029,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "bypassNozzle": {
+            "exit": {
+              "temperatureK": 292.4878562967042,
+              "pressurePa": 101325,
+              "massFlowKGS": 506.38803030203695
+            },
+            "mach": 0.852301102729965,
+            "velocityMPS": 292.23702858358405,
+            "areaM2": 1.435809975729176,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "flightSpeedMPS": 0,
+          "coreFlowKGS": 94.9109759223064,
+          "bypassFlowKGS": 506.3880303020552,
+          "fuelFlowKGS": 1.678,
+          "fuelAirRatio": 0.019428269765822404,
+          "coreThrustN": 32498.784460141444,
+          "bypassThrustN": 147985.33328576654,
+          "netThrustN": 180484.11774590798,
+          "tsfcKgPerNS": 9.297216957130536e-06,
+          "compressorPowerW": 30794007.408031967,
+          "fanPowerW": 37207594.15974113,
+          "burnerResidualW": 1.4901161193847656e-08,
+          "highShaftResidualW": -1.6987323760986328e-06,
+          "lowShaftResidualW": -3.732740879058838e-06,
+          "energyResidualW": 5.856156349182129e-06,
+          "massResidualKGS": -2.1830537377809378e-11,
+          "maxRelativeResidual": 8.11619085453631e-14
+        },
+        "command": {
+          "altitudeM": 0,
+          "mach": 0,
+          "fuelFlowKGS": 1.678
+        },
+        "lowCompressor": {
+          "temperatureK": 427.76086029369895,
+          "pressurePa": 345878.9049020543,
+          "massFlowKGS": 94.9109759223064
+        },
+        "turbineInlet": {
+          "temperatureK": 1397.63460705635,
+          "pressurePa": 1907533.270898969,
+          "massFlowKGS": 93.26709176502568
+        },
+        "n1RPM": 3610.574914345734,
+        "n2RPM": 7762.001845401753,
+        "mapPoints": [
+          {
+            "name": "Fan",
+            "correctedSpeed": 0.9154696877796484,
+            "coordinate": 1.823767823547908,
+            "correctedFlowKGS": 601.2990062243616,
+            "pressureRatio": 1.6078284844329391,
+            "efficiency": 0.8940024303450593,
+            "extended": false
+          },
+          {
+            "name": "LPC",
+            "correctedSpeed": 0.9257567026764396,
+            "coordinate": 1.9699989123932304,
+            "correctedFlowKGS": 63.6446564563672,
+            "pressureRatio": 2.1230867721222424,
+            "efficiency": 0.8596079903117274,
+            "extended": false
+          },
+          {
+            "name": "HPC",
+            "correctedSpeed": 1.0021195545613948,
+            "coordinate": 2.0233106296505805,
+            "correctedFlowKGS": 33.87662888477547,
+            "pressureRatio": 5.836012827641591,
+            "efficiency": 0.8617488402287489,
+            "extended": false
+          },
+          {
+            "name": "HPT",
+            "correctedSpeed": 100.33211577694787,
+            "coordinate": 5.059616786191209,
+            "correctedFlowKGS": 10.910896513174883,
+            "pressureRatio": 2.7925257507014396,
+            "efficiency": 0.9145290862101124,
+            "extended": false
+          },
+          {
+            "name": "LPT",
+            "correctedSpeed": 94.13582230881707,
+            "coordinate": 5.858488001615737,
+            "correctedFlowKGS": 28.018628336082468,
+            "pressureRatio": 5.145220766271475,
+            "efficiency": 0.9174988025670812,
+            "extended": false
+          }
+        ],
+        "matchResidual": 7.880396050199028e-14,
+        "iterations": 19
+      },
+      "role": "unfitted check",
+      "status": "converged"
+    },
+    {
+      "mode": "approach",
+      "observedFuelKGS": 0.6593,
+      "predictedThrustN": 64050.00000000215,
+      "referenceThrustN": 64050,
+      "relativeThrustError": 3.352873534367973e-14,
+      "result": {
+        "cycle": {
+          "inputs": {
+            "altitudeM": 0,
+            "mach": 0,
+            "turbineInletK": 1149.7186641056069,
+            "overallPressureRatio": 9.408241513627813,
+            "fanPressureRatio": 1.2035961036200964,
+            "bypassRatio": 6.146531232451295
+          },
+          "ambient": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 0
+          },
+          "inlet": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 359.2583630111038
+          },
+          "fan": {
+            "temperatureK": 309.933449813548,
+            "pressurePa": 121954.37519930626,
+            "massFlowKGS": 359.2583630111038
+          },
+          "compressor": {
+            "temperatureK": 610.7147618322441,
+            "pressurePa": 953290.0713683381,
+            "massFlowKGS": 50.27031315273164
+          },
+          "burner": {
+            "temperatureK": 1149.7186641056069,
+            "pressurePa": 900859.1174430795,
+            "massFlowKGS": 46.4052849689858
+          },
+          "highTurbine": {
+            "temperatureK": 873.1610929829632,
+            "pressurePa": 315239.3145096461,
+            "massFlowKGS": 50.92961315273164
+          },
+          "lowTurbine": {
+            "temperatureK": 689.4467604344294,
+            "pressurePa": 109113.87133275591,
+            "massFlowKGS": 50.92961315273164
+          },
+          "coreNozzle": {
+            "exit": {
+              "temperatureK": 675.8773805185144,
+              "pressurePa": 101325,
+              "massFlowKGS": 50.929613152730845
+            },
+            "mach": 0.3307345127836623,
+            "velocityMPS": 170.36450424616743,
+            "areaM2": 0.5724006451876029,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "bypassNozzle": {
+            "exit": {
+              "temperatureK": 293.9502709379738,
+              "pressurePa": 101325,
+              "massFlowKGS": 308.98804985837177
+            },
+            "mach": 0.5213637911259107,
+            "velocityMPS": 179.20887791346266,
+            "areaM2": 1.435809975729176,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "flightSpeedMPS": 0,
+          "coreFlowKGS": 50.27031315273164,
+          "bypassFlowKGS": 308.98804985837216,
+          "fuelFlowKGS": 0.6593,
+          "fuelAirRatio": 0.01441219377934441,
+          "coreThrustN": 8676.598296214213,
+          "bypassThrustN": 55373.40170378793,
+          "netThrustN": 64050.00000000215,
+          "tsfcKgPerNS": 1.0293520686962965e-05,
+          "compressorPowerW": 13226455.905950697,
+          "fanPowerW": 10129144.017824797,
+          "burnerResidualW": 0,
+          "highShaftResidualW": -4.71062958240509e-06,
+          "lowShaftResidualW": -2.954155206680298e-06,
+          "energyResidualW": 7.748603820800781e-06,
+          "massResidualKGS": -1.220357148667972e-12,
+          "maxRelativeResidual": 2.7332032285125455e-13
+        },
+        "command": {
+          "altitudeM": 0,
+          "mach": 0,
+          "fuelFlowKGS": 0.6593
+        },
+        "lowCompressor": {
+          "temperatureK": 354.7408249892887,
+          "pressurePa": 169160.3296575062,
+          "massFlowKGS": 50.27031315273164
+        },
+        "turbineInlet": {
+          "temperatureK": 1120.6658695796066,
+          "pressurePa": 900859.1174430795,
+          "massFlowKGS": 49.170152192386034
+        },
+        "n1RPM": 2265.826529749597,
+        "n2RPM": 7030.375301702908,
+        "mapPoints": [
+          {
+            "name": "Fan",
+            "correctedSpeed": 0.5745055995129759,
+            "coordinate": 1.6584849037657667,
+            "correctedFlowKGS": 359.2583630111038,
+            "pressureRatio": 1.2035961036200964,
+            "efficiency": 0.7193724472081352,
+            "extended": false
+          },
+          {
+            "name": "LPC",
+            "correctedSpeed": 0.6039590243647788,
+            "coordinate": 2.0919434998668844,
+            "correctedFlowKGS": 43.31673664258661,
+            "pressureRatio": 1.3870788102604168,
+            "efficiency": 0.676329940299277,
+            "extended": false
+          },
+          {
+            "name": "HPC",
+            "correctedSpeed": 0.9967109763411801,
+            "coordinate": 2.096279693856197,
+            "correctedFlowKGS": 33.40995987820812,
+            "pressureRatio": 5.635423348360905,
+            "efficiency": 0.8624798286380094,
+            "extended": false
+          },
+          {
+            "name": "HPT",
+            "correctedSpeed": 101.48538149748659,
+            "coordinate": 5.207218001036123,
+            "correctedFlowKGS": 10.90661661859057,
+            "pressureRatio": 2.8576991383335653,
+            "efficiency": 0.9149486261040207,
+            "extended": false
+          },
+          {
+            "name": "LPT",
+            "correctedSpeed": 66.365897701953,
+            "coordinate": 3.2141401490489354,
+            "correctedFlowKGS": 28.496038659919925,
+            "pressureRatio": 2.8890856007508505,
+            "efficiency": 0.8651074611876735,
+            "extended": false
+          }
+        ],
+        "matchResidual": 1.278055027840598e-13,
+        "iterations": 61
+      },
+      "role": "calibration",
+      "status": "converged"
+    },
+    {
+      "mode": "idle",
+      "observedFuelKGS": 0.2054,
+      "predictedThrustN": 14945.000000004451,
+      "referenceThrustN": 14945.000000000002,
+      "relativeThrustError": 2.97761815204467e-13,
+      "result": {
+        "cycle": {
+          "inputs": {
+            "altitudeM": 0,
+            "mach": 0,
+            "turbineInletK": 831.0701029601144,
+            "overallPressureRatio": 3.819280386309169,
+            "fanPressureRatio": 1.0461626133663546,
+            "bypassRatio": 6.305048963351588
+          },
+          "ambient": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 0
+          },
+          "inlet": {
+            "temperatureK": 288.15,
+            "pressurePa": 101325,
+            "massFlowKGS": 175.69003408871583
+          },
+          "fan": {
+            "temperatureK": 295.07707654977145,
+            "pressurePa": 106002.42679934588,
+            "massFlowKGS": 175.69003408871583
+          },
+          "compressor": {
+            "temperatureK": 459.8104760388061,
+            "pressurePa": 386988.58514277654,
+            "massFlowKGS": 24.05049370238697
+          },
+          "burner": {
+            "temperatureK": 831.0701029601144,
+            "pressurePa": 365704.21295992384,
+            "massFlowKGS": 22.091349269172145
+          },
+          "highTurbine": {
+            "temperatureK": 657.0179682171292,
+            "pressurePa": 158700.53425827547,
+            "massFlowKGS": 24.25589370238697
+          },
+          "lowTurbine": {
+            "temperatureK": 596.1744400084185,
+            "pressurePa": 102843.4504788481,
+            "massFlowKGS": 24.25589370238697
+          },
+          "coreNozzle": {
+            "exit": {
+              "temperatureK": 593.7526959274732,
+              "pressurePa": 101325,
+              "massFlowKGS": 24.255893706498952
+            },
+            "mach": 0.14714158874449695,
+            "velocityMPS": 71.27934488551995,
+            "areaM2": 0.5724006451876029,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "bypassNozzle": {
+            "exit": {
+              "temperatureK": 291.2949609812106,
+              "pressurePa": 101325,
+              "massFlowKGS": 151.63954038678347
+            },
+            "mach": 0.2547002701555715,
+            "velocityMPS": 87.1544173347877,
+            "areaM2": 1.435809975729176,
+            "pressureThrustN": 0,
+            "choked": false
+          },
+          "flightSpeedMPS": 0,
+          "coreFlowKGS": 24.05049370238697,
+          "bypassFlowKGS": 151.63954038632886,
+          "fuelFlowKGS": 0.20540000000000003,
+          "fuelAirRatio": 0.00938501672803016,
+          "coreThrustN": 1728.9442127189523,
+          "bypassThrustN": 13216.055787285499,
+          "netThrustN": 14945.000000004451,
+          "tsfcKgPerNS": 1.3743726998992228e-05,
+          "compressorPowerW": 3688004.6981623657,
+          "fanPowerW": 1543171.4842839693,
+          "burnerResidualW": -3.725290298461914e-09,
+          "highShaftResidualW": -0.0058917091228067875,
+          "lowShaftResidualW": -0.0034054159186780453,
+          "energyResidualW": 0.009391026571393013,
+          "massResidualKGS": 4.5665702330666136e-09,
+          "maxRelativeResidual": 1.063271503293971e-09
+        },
+        "command": {
+          "altitudeM": 0,
+          "mach": 0,
+          "fuelFlowKGS": 0.20540000000000003
+        },
+        "lowCompressor": {
+          "temperatureK": 308.36852461594276,
+          "pressurePa": 112534.71420225575,
+          "massFlowKGS": 24.05049370238697
+        },
+        "turbineInlet": {
+          "temperatureK": 810.8842974352585,
+          "pressurePa": 365704.21295992384,
+          "massFlowKGS": 23.414126422803427
+        },
+        "n1RPM": 1100.7045365974952,
+        "n2RPM": 6006.0320412622195,
+        "mapPoints": [
+          {
+            "name": "Fan",
+            "correctedSpeed": 0.2790862016054161,
+            "coordinate": 1.6894582503250501,
+            "correctedFlowKGS": 175.69003408871583,
+            "pressureRatio": 1.0461626133663546,
+            "efficiency": 0.5401385838415422,
+            "extended": true
+          },
+          {
+            "name": "LPC",
+            "correctedSpeed": 0.3006893615699421,
+            "coordinate": 2.311614608889799,
+            "correctedFlowKGS": 23.263937603053602,
+            "pressureRatio": 1.0616239420185631,
+            "efficiency": 0.3825756733684108,
+            "extended": false
+          },
+          {
+            "name": "HPC",
+            "correctedSpeed": 0.9132694718824578,
+            "coordinate": 2.128138134640334,
+            "correctedFlowKGS": 22.40163957692887,
+            "pressureRatio": 3.4388374101812875,
+            "efficiency": 0.854364488082929,
+            "extended": false
+          },
+          {
+            "name": "HPT",
+            "correctedSpeed": 101.92277779029965,
+            "coordinate": 3.9540599929236273,
+            "correctedFlowKGS": 10.88265198820329,
+            "pressureRatio": 2.3043666152047257,
+            "efficiency": 0.9123400161786133,
+            "extended": false
+          },
+          {
+            "name": "LPT",
+            "correctedSpeed": 37.166155251421905,
+            "coordinate": 1.6365830758037065,
+            "correctedFlowKGS": 23.384862236161158,
+            "pressureRatio": 1.5431272824798459,
+            "efficiency": 0.8326175520765332,
+            "extended": true
+          }
+        ],
+        "matchResidual": 1.598497257161325e-10,
+        "iterations": 101
+      },
+      "role": "calibration",
+      "status": "converged"
+    }
+  ],
+  "model": {
+    "lowSpeedLoss": 1.0665884689267835,
+    "idleRecovery": 1.8115930073145137,
+    "scales": {
+      "Fan": {
+        "Speed": 3943.959,
+        "Flow": 0.20340468978279874,
+        "Pressure": 1.4369,
+        "Efficiency": 0.967977
+      },
+      "HPC": {
+        "Speed": 6357.157841872056,
+        "Flow": 0.16400967123764146,
+        "Pressure": 0.2197404849721551,
+        "Efficiency": 1.0137
+      },
+      "HPT": {
+        "Speed": 35.12742054457843,
+        "Flow": 0.36198443481559833,
+        "Pressure": 0.44155048249842643,
+        "Efficiency": 0.9803
+      },
+      "LPC": {
+        "Speed": 3617.3811351827367,
+        "Flow": 0.3372823360397043,
+        "Pressure": 3.263100000000001,
+        "Efficiency": 0.96
+      },
+      "LPT": {
+        "Speed": 19.612990061232555,
+        "Flow": 0.18549646510480297,
+        "Pressure": 0.8531915206732921,
+        "Efficiency": 1.001294
+      }
+    },
+    "coreAreaM2": 0.5724006451876029,
+    "bypassAreaM2": 1.435809975729176,
+    "referenceN1RPM": 3943.959,
+    "referenceN2RPM": 7940.895519089425,
+    "ratedFlowKGS": 650.8949056026111,
+    "rated": {
+      "inputs": {
+        "altitudeM": 0,
+        "mach": 0,
+        "turbineInletK": 1512.2523206979474,
+        "overallPressureRatio": 23.4,
+        "fanPressureRatio": 1.71845,
+        "bypassRatio": 5
+      },
+      "ambient": {
+        "temperatureK": 288.15,
+        "pressurePa": 101325,
+        "massFlowKGS": 0
+      },
+      "inlet": {
+        "temperatureK": 288.15,
+        "pressurePa": 101325,
+        "massFlowKGS": 650.8949056026111
+      },
+      "fan": {
+        "temperatureK": 342.52704523246064,
+        "pressurePa": 174121.94625,
+        "massFlowKGS": 650.8949056026111
+      },
+      "compressor": {
+        "temperatureK": 772.028796725745,
+        "pressurePa": 2371005,
+        "massFlowKGS": 108.48248426710184
+      },
+      "burner": {
+        "temperatureK": 1512.2523206979474,
+        "pressurePa": 2240599.725,
+        "massFlowKGS": 100.77406068306269
+      },
+      "highTurbine": {
+        "temperatureK": 1165.1874289724872,
+        "pressurePa": 809991.3823012547,
+        "massFlowKGS": 110.53748426710185
+      },
+      "lowTurbine": {
+        "temperatureK": 783.384929875677,
+        "pressurePa": 144454.70828031615,
+        "massFlowKGS": 110.53748426710185
+      },
+      "coreNozzle": {
+        "exit": {
+          "temperatureK": 713.2540593730236,
+          "pressurePa": 101325,
+          "massFlowKGS": 110.53748426710185
+        },
+        "mach": 0.738551084014933,
+        "velocityMPS": 390.206637393409,
+        "areaM2": 0.5724006451876029,
+        "pressureThrustN": 0,
+        "choked": false
+      },
+      "bypassNozzle": {
+        "exit": {
+          "temperatureK": 293.48345778503307,
+          "pressurePa": 101325,
+          "massFlowKGS": 542.4124213355092
+        },
+        "mach": 0.9144955229810883,
+        "velocityMPS": 314.09225389553933,
+        "areaM2": 1.435809975729176,
+        "pressureThrustN": 0,
+        "choked": false
+      },
+      "flightSpeedMPS": 0,
+      "coreFlowKGS": 108.48248426710184,
+      "bypassFlowKGS": 542.4124213355092,
+      "fuelFlowKGS": 2.055,
+      "fuelAirRatio": 0.020816648636858216,
+      "coreThrustN": 43132.46004179266,
+      "bypassThrustN": 170367.539958207,
+      "netThrustN": 213499.99999999965,
+      "tsfcKgPerNS": 9.625292740046856e-06,
+      "compressorPowerW": 36857799.388842985,
+      "fanPowerW": 47367427.41457218,
+      "burnerResidualW": 2.9802322387695312e-08,
+      "highShaftResidualW": 0,
+      "lowShaftResidualW": -7.450580596923828e-09,
+      "energyResidualW": 0,
+      "massResidualKGS": -5.0182080713057076e-14,
+      "maxRelativeResidual": 3.3726387582974384e-16
+    },
+    "fanPressurePrior": 1.71845,
+    "boosterPressurePrior": 2.3339552800000005
+  },
+  "profile": "JT9D-7R4D / -7R4D1",
+  "protocol": "Rated thrust/fuel and published OPR/BPR anchor map scaling; approach fits a shared low-speed efficiency correction, and idle fits an additional correction below Nc=0.5. Bounded modeled extensions cover the missing low-speed map region. Climbout is excluded from parameter fitting. Public points were inspected during development; this is an unfitted check, not blind validation.",
+  "uid": "1PW026",
+  "sources": {
+    "mapsCommit": "ad6e4d5d0d76c229db4eb72ca40ef58d5ddc4014",
+    "thermodynamicSourceCommit": "6853993ed60ffb212671aa7a1d6b79714f07c2db",
+    "thermodynamicSourceFile": "data/nasa_gas.yaml",
+    "workbookSHA256": "57a9ff572458ad3a3141afc1aea932b5faa5796d279f0ac74600b27869302530",
+    "uid": "1PW026",
+    "idleMapCoverageReport": "https://ntrs.nasa.gov/citations/20180002976",
+    "idleMapCoveragePDFPage": 62,
+    "mapExtensionStudy": "https://ntrs.nasa.gov/api/citations/20160010065/downloads/20160010065.pdf"
+  },
+  "sourceSHA256": {
+    "cycle/gas.go": "05e3aa64a4f0b296b261643362047a4aa310723be1d29d3cd4df659d5304cc55",
+    "cycle/low_speed.go": "af5bb09b0d582304655e7ead1e695456c9c8a748dbc1a34759949beb79ef09d0",
+    "cycle/mapped_view.go": "b5018feecba4306d437301f8e4ab1701dbfc11a00986196ec103ede3991eabe5",
+    "cycle/maps.go": "c564b24e87c98ac9c8094a5945c3c413d2472536cb1416ae108c0b154a32db09",
+    "cycle/matched.go": "82cc1165487b3472825525e22fde10814e5fc221803d7209ef73214b2728267a",
+    "cycle/matched_test.go": "f1c5f9f4ad3db9cceec6622e8f48b99cbf07678666e3868f8f0930a92645d3db",
+    "cycle/matcher.go": "8e17e1b5ded31fbc2ab1244978dd0dce976cf5904a5adb1c6b647d01290a09ef",
+    "cycle/model.go": "d856ea076a35b81a1869653e2e9a4f77bfe926c0b7c643069084224b02c2b047",
+    "cycle/model_test.go": "41524525bbb1fa4f01a5adb8d103b27ddb9e4450548c431354879a682164d214",
+    "cycle/view.go": "9d593c8a6dcbabd0fba3673318162013f4a028e4b575c2a6dd9e77f23dee776a",
+    "cycle/visual.go": "a7aae0b06469f3798606043d0169f6edec5ecfa9a31a00642ff09a5a03938e9c"
+  },
+  "dataSHA256": {
+    "cycle/data/air.json": "116bb9f0302ea37b70b2e23d12b1ab2597895f98cec6bc174831d122637bc53a",
+    "cycle/data/jt9d_icao.json": "8f3d731f0448af5c4981a6c05ac0a14332a3b7d0debc4d7f3df331c49a17b86b",
+    "cycle/data/maps.json": "48f12c903ef5441372189c176fedbd6f07564a7bef6ee3998b1a391879ba1261",
+    "cycle/data/profile.json": "3a30d6acefa4353c5366e27f9e4e3b1cf01e84be7c4ea7e165c1fd2536595da9"
+  },
+  "accuracyScope": "Three fitted ground points including idle; one unfitted climbout check. Bounded modeled low-speed maps. No independent map, flight, RPM, station-data or transient validation."
+}

@@ -1,0 +1,7 @@
+{
+  "build": {
+    "goWASM": {
+      "cycle": "./browser"
+    }
+  }
+}
