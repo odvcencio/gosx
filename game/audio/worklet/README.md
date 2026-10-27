@@ -23,11 +23,14 @@ supports other export names. It requires an exported `memory`, `_initialize`,
 `init(rate, maxFrames, channels)`, `render(frames)`, `out_ptr`, `cmd_ptr`,
 `cmd_cap`, `cmd_commit(count)`, `msg_ptr`, and `msg_drain`. Output is planar
 float32 with `MaxFrames` samples per channel. Record sizes and message capacity
-come from the backend descriptor. `project_alloc` is required when supplying an
-image. Optional `capabilities` is checked before uploads; optional `msg_fault`
-reports a fault without draining the ring (see the fault rules below); optional
-shared-bank exports amortize expensive synthesis-bank initialization across
-replacements.
+come from the backend descriptor. `msg_drain` must never return more than
+`MessageCapacity` records, or the processor stops with `audio: invalid message
+count`. A ring that filled while the page stalled holds a full batch when
+draining resumes, so `MessageCapacity` must equal the reactor's own per-call
+drain limit. `project_alloc` is required when supplying an image. Optional
+`capabilities` is checked before uploads; optional `msg_fault` reports a fault
+without draining the ring (see the fault rules below); optional shared-bank
+exports amortize expensive synthesis-bank initialization across replacements.
 
 The processor splits browser render quanta into `MaxFrames` blocks and reuses
 its typed views. If reactor memory grows, it refreshes detached views. Kernels
