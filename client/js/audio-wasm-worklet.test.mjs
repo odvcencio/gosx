@@ -63,14 +63,16 @@ async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false
 }
 
 // A scripted page for the message path. The engine emits [1, seq low, seq high, 0] and a fault is
-// [7, 0, code low, code high]. page() decodes each batch into `seen` and gives the buffer back
-// unless release is false, as a stalled main thread would. drain() is one drain: eight callbacks.
+// [7, 0, code low, code high]; fault() queues that record. page() decodes each batch into `seen` and
+// gives the buffer back unless release is false, as a stalled main thread would. drain() is one drain:
+// eight callbacks. It returns the last block rendered.
 async function pager() {
   const f = await fixture(), x = f.reactors[0].x, seen = [], held = [];
   let sent = 0, read = 0;
   return {f, x, seen,
     emit(count) { for (let i = 0; i < count; i++, sent++) x.ring.push([1, sent & 255, sent >> 8, 0]); },
-    drain() { for (let i = 0; i < 8; i++) f.render(128); },
+    fault(code) { x.ring.push([7, 0, code & 255, code >> 8]); },
+    drain() { let out; for (let i = 0; i < 8; i++) out = f.render(128).output; return out; },
     page(release = true) {
       for (;;) {
         for (; read < f.messages.length; read++) {
@@ -173,6 +175,21 @@ test('later drains leave messages in the engine ring while the page holds the bu
   for (let i = 0; i < 3; i++) { p.drain(); p.page(); }
   assert.deepEqual(p.seen, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 'fault 11']);
   assert.ok(p.f.render(128).output.every(v => v === 0), 'the fault stops playback');
+});
+
+test('a fault queued after the parked batch is found at the first drain after the buffer returns', async () => {
+  const p = await pager();
+  p.emit(1); p.drain(); p.page(false);
+  p.emit(1); p.drain();
+  p.fault(9);
+  // The processor has stopped draining and cannot see the record, so it reports nothing and keeps playing.
+  for (let i = 0; i < 20; i++) assert.ok(p.drain().some(v => v !== 0), 'playback goes on while the fault is unseen');
+  assert.ok(!p.f.messages.some(m => m.t === 'f'));
+  p.page();
+  assert.deepEqual(p.seen, [0, 1]);
+  assert.ok(p.drain().every(v => v === 0), 'the first drain after b finds the fault and stops playback');
+  p.page();
+  assert.deepEqual(p.seen, [0, 1, 'fault 9']);
 });
 
 test('a render fault silences the complete block and stops the reactor once', async () => {

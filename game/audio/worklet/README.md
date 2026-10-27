@@ -43,20 +43,33 @@ Messages retain a small transferable protocol: `c` submits a `Uint8Array` of
 commands; `i` supplies a new image and `info`; `r` acknowledges initialization;
 `m` transfers engine messages (`n` valid bytes); `b` returns that buffer. `e`
 reports a fatal host error, `x` rejects a request, and `f` reports a configured
-backend fault even while the message buffer is outstanding. `q` reports timing
+backend fault, usually without waiting for `b` (see below). `q` reports timing
 histograms, memory and underruns; `p` resets the histogram. Closing the typed
 node sends `close`, releases the reactor, disconnects the node and closes ports.
 
 The processor drains the active reactor's message ring every eighth render
-quantum and drops nothing while the page holds the `m` buffer. It parks one batch
-and sends it as soon as `b` returns the buffer. Past that it stops draining, so
-later messages wait in the reactor's ring, in order, until the page catches up.
-A fault found while the buffer is out is reported at once with `f`, and its
-record still arrives in order in `m`. A fault raised after draining has stopped
-is reported at the first drain after `b`. Because the ring then holds what a
-page stall produces, size `MessageCapacity` for that and have the reactor
-report a full ring with its fault record; the processor cannot see a reactor
-that drops messages silently.
+quantum. It loses no message while the page holds the `m` buffer: it parks the
+first batch drained in that time, sends it as soon as `b` returns the buffer, and
+stops draining until then. Later messages wait in the reactor's ring, in order,
+and reach the page in later `m` batches. An image replacement retires the old
+reactor without delivering the messages still queued in it; the processor drains
+that reactor for faults only, and only while the 5 ms crossfade lasts.
+
+A fault is a record in the ring, so a processor that has stopped draining cannot
+see one. When `f` arrives depends on where the fault is:
+
+- A fault in the parked batch is reported at once with `f` and playback stops.
+  Its record also arrives in order in `m`, so a page that handles both should
+  ignore the second.
+- A fault queued after the parked batch waits for the first drain after `b`.
+  Playback goes on until then, and a page that never returns `b` never learns of
+  the fault.
+
+Size the reactor's own ring for the longest page stall it must survive;
+`MessageCapacity` sizes one batch, not the ring. A reactor that faults when its
+ring fills now stops playback when a stall outlasts the ring, where the music
+used to go on and the messages were lost. The processor cannot see a reactor that
+drops messages without a fault.
 
 Validation runs in Go and the processor. Native asset tests enforce 24 KiB raw
 and 6 KiB gzip limits. The Node suite exercises a separate mono backend with
