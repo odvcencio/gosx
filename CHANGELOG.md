@@ -11,6 +11,63 @@
   and takes its fallbacks without delay. Crowds no longer need their first
   motion frames resent.
 
+- Save the `game` clock remainder and the `Every` and `EveryInterval`
+  accumulators in `Runtime.Snapshot`. A runtime restored from a save, a rollback
+  or a replay baseline now takes its next steps and runs cadence systems on the
+  same ticks, with the same `ctx.Delta`, as one that never stopped. Before,
+  `Restore` zeroed the clock remainder and left the wrappers' gathered time as
+  it was. Snapshots carry `"version": 2` (`game.RuntimeStateVersion`) and the
+  fixed step that wrote them; a runtime with another fixed step still loads them
+  and starts the clock remainder from zero. A wrapper takes the saved time of the
+  wrapper that matches its system name, phase, kind, parameter and nesting.
+  Version 1 snapshots still load, but they carry no wrapper times, so a restore
+  from one now starts every wrapper from zero. It used to leave the wrappers as
+  they were, which made the result depend on what the runtime had done before.
+  `State`, which `sim.Runner` broadcasts every tick, keeps its size.
+
+- Stop the `game` clock at the end of a `time.Duration` instead of wrapping.
+  Game time ends at about 292 years, which is about 4.9 hours of play at a time
+  scale of 525,600. A frame whose scaled time was longer than a `Duration` used
+  to wrap to a negative time on amd64 and saturate on js/wasm, so the clock
+  stalled, and a snapshot of it could not be loaded. Now such a frame counts as
+  the longest `Duration`, the clock runs no step that would pass the end,
+  `Every` and `EveryInterval` wrappers stop gathering at the longest `Duration`,
+  and `Frame.DroppedDuration` reports the time that did not run. Frames that did
+  not overflow are unchanged. The snapshot of a runtime in any of these states
+  loads again.
+
+- Add `game.Runtime.RestoreSnapshot`, which returns why a snapshot was refused
+  (empty, malformed, newer than this build, or a time, clock or world that does
+  not fit) and then changes nothing. `Runtime.Restore` keeps the
+  `sim.Simulation` signature and still cannot report an error. `SaveCodec`
+  snapshots now check the clock before they replace the world. Custom codecs can
+  report errors through the new optional `game.SnapshotRestorer` interface or
+  `SnapshotCodecFuncs.RestoreSnapshotFunc`.
+
+- Add `sim.Runner.RestoreSnapshot` and the optional `sim.CheckedRestorer`
+  interface, which `game.Runtime` implements. It loads a save into a running
+  runner under the tick lock and returns the simulation's refusal. When the
+  simulation refuses a snapshot, `Runner.Restore` and `RestoreSnapshot` now keep
+  the runner frame and replay log; `Restore` used to move both to the refused
+  snapshot.
+
+- Keep WASM audio worklet messages when the page is slow to return the message
+  buffer. The processor drained the reactor's ring every eighth render quantum
+  and discarded the batch while the buffer was out, so a main-thread stall of
+  about 21 ms at 48 kHz lost messages. It now parks one batch and then stops
+  draining, so later messages wait in the reactor's ring and reach the page once,
+  in order, after `b` returns the buffer. A fault in the parked batch is still
+  reported at once with `f`, and its record also arrives in `m`, so pages that
+  handle both should deduplicate. A fault queued after the parked batch waits for
+  the first drain after `b` unless the reactor exports the new optional
+  `msg_fault`; the processor polls it while it is not draining, posts `f` and
+  stops playback at once, then keeps draining the ring until it is empty. The
+  ring can now be full when draining resumes, so `MessageCapacity` must equal the
+  reactor's per-call drain limit. A reactor that faults when its ring fills now
+  stops playback when a stall outlasts the ring; before, the music went on and
+  the messages were lost. Messages still queued in a reactor that an image
+  replacement retires are discarded.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered
