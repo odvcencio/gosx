@@ -52,6 +52,97 @@ The stored profile is checked against recomputation. An **81-point idle-to-takeo
 
 The [calibration report](calibration/report.json) retains predicted states, map-region flags and residuals. Browser checks compare native/WASM outputs, idle CSV, control synchronization, actual rendered spool motion, temperature tint, retained pose/camera/canvas and reduced-motion behavior.
 
+## Engineering inspector
+
+The live inspector exposes station thermodynamics, component loading, map coordinates,
+nozzle discharge, fuel and shaft-work ledgers, thrust decomposition and all seven matching
+residuals. It derives quantities from the current solved point. These are model estimates,
+with SI units and conventional shaft speeds in rpm. Public observations remain separate in
+the calibration comparison.
+
+- Station enthalpy uses the solver's gas model relative to 288.15 K. Specific entropy is
+  `s(T) − s(288.15 K) − R ln(P/101325 Pa)`. Static nozzle exit states are identified;
+  corrected total flow is omitted there. Station 45a identifies the modeled HPT outlet
+  before the second cooling mix; 45 is the mixed LPT inlet.
+- Signed component gas power is `ṁ [h_out − h_in]`: positive for compression, negative for
+  expansion. HP/LP load torque is shaft power divided by `2π N/60`; its accuracy depends
+  on the unvalidated model-estimated RPM. Shaft work is internal transfer, not an additional
+  energy output to add to exhaust energy.
+- Whole-engine energy closure uses inlet and exhaust **total** enthalpy, heat delivered
+  by combustion and shaft loss. Exhaust static enthalpy plus jet kinetic power reproduces
+  exhaust total enthalpy within the matching residual. The kinetic-power readout is not
+  a claimed thermal efficiency. Thrust power `F_net V_flight` is zero at static conditions.
+- Stream thrust is `ṁ_exit V_exit − ṁ_air V_flight + (P_exit−P_ambient) A`. Fuel mass is
+  included in core exit momentum. Nozzle diagnostics report NPR, sonic critical NPR,
+  their ratio, Mach, velocity, density, sound speed and mass flux. Variable gas properties
+  determine the sonic threshold in mapped mode.
+- The temperature–entropy graphic follows an open, air-equivalent stream with fuel and
+  cooling addition; it is not a closed-cycle area/efficiency construction. The pressure
+  diagram uses a logarithmic pressure/ambient axis and schematic station spacing.
+- The ground operating line contains **81 actual fixed-geometry model solves**. Thrust,
+  N1/N2 reference-speed fractions, OPR and TSFC curves are predictions, not an engine test
+  sweep. Local sensitivities are secants between neighboring stored model points. The
+  displayed fuel bracket identifies their sampling interval; no exact derivative or
+  independent accuracy is claimed.
+- Numerical closure is shown separately from measured-data agreement. Small residuals
+  establish that the equations balance, rather than that the component maps are identified.
+
+The engineering CSV retains unrounded derived values, units and map-region labels. The
+separate operating-line CSV retains all 81 points and modeled-extension flags. Plot pixel
+coordinates are excluded from exported engineering quantities. The initial diagrams and
+station tables are server-rendered; subsequent controls update the same mounted document.
+
+## Public RPM and station audit
+
+`calibration --validate-public` uses the frozen fitted model and the separate
+`cycle/data/public_validation.json` references. It emits all twenty-two comparisons
+and exits 1 when a reported speed bound is exceeded. `--fit` is rejected in the
+same invocation. A test confirms that the audit does not change model parameters.
+
+FAA TCDS E3NE revision 16 (2019), Note 1, gives the standard -7R4D limits
+N1 <= 3770 and N2 <= 8000 rpm, and -7R4D1 limits N1 <= 3810 and N2 <= 8000 rpm.
+The grouped ICAO entry does not identify a converted (DM)/(EM) engine, whose
+separate limits are stated in the source. Rated model N1 = 3943.959 rpm exceeds
+both standard-variant N1 limits. N2 = 7940.896 rpm lies below those maxima, which
+does not validate its actual operating speed. Limits are inequalities, not RPM
+measurements to fit as equalities. Note 2 gives takeoff (5-minute) total exhaust Tt7 <= 625 C / 898.15 K for both variants. It maps to model total station 5, 783.385 K at rated fuel: within the maximum, without validating actual temperature. The inspector also shows cockpit percentage
+normalization (3600 and 7807 rpm), separately from rated-model normalization.
+
+The Osaka Metropolitan University exhibit for a JAL-donated -7R4D publishes
+combustor-outlet 1271.1 C and turbine-inlet 1185.0 C at 33.3 C ambient and
+213.5 kN uninstalled thrust. These convert to 1544.25 K and 1458.15 K. The source
+does not supply measurement uncertainty or probe/cooling locations. The
+provisional mappings are solver station 4 and station 41 after the first cooling
+mix; they do not assert identical instrumentation definitions.
+
+An optional `MappedInputs.AmbientTemperatureK` overrides ISA temperature at
+unchanged ISA pressure; zero retains the previous ISA behavior. The ambient
+command must be 200–330 K. Continuation ramps temperature along with other
+commands, and tests verify inlet stagnation enthalpy/entropy and cycle closure.
+The UI and public `Solve` fuel interval remain 0.2054–2.055 kg/s.
+
+The separate hot-reference audit brackets fuel within 0.90–1.15 times the
+original rated fuel, using the same seven-equation matcher and strict component
+map boundaries. It conditions fuel on the published thrust instead of using
+thrust as an output to validate. It finds 2.130823 kg/s, beyond the UI interval,
+with station 4 = 1599.858 K and station 41 = 1557.844 K: +3.60% and +6.84%.
+The point also exceeds reported speed maxima, which is explicitly recorded.
+No new map, efficiency, cooling, RPM or gas parameters are fitted. These
+differences are model discrepancies, not accuracy certifications or tolerances.
+
+The nominal ground-idle N2 reference of 4370 rpm is displayed beside the ICAO
+idle model's 6006.03 rpm without assigning a validation error: ambient, fuel,
+bleed and loads are missing. The 5465 rpm flight-idle reference has no modeled
+comparison. NASA Table V-3 gives standard-day -7A fuel/thrust and combustor-inlet
+conditions; the twelve corresponding thrust/T/P comparisons are explicitly
+earlier-variant context. Source Tt4 means this model's HPC exit, station 3.
+The table's takeoff SI/psia columns disagree; the audit retains 21.68e5 Pa from
+the SI column and flags the 323 psia discrepancy instead of silently resolving it.
+
+No fully matched measured RPM/station dataset was identified. The current model
+fails speed compatibility and remains unvalidated for station accuracy.
+See [source provenance and exclusions](cycle/data/SOURCES.md).
+
 ## Generic cycle design
 
 This mode keeps prescribed pressure/bypass ratios and corrected airflow.
@@ -172,3 +263,12 @@ not a port of NASA EngineSim or T-MATS.
 - [NASA thrust equation](https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/thrust-force/) and [turbofan thrust](https://www.grc.nasa.gov/www/k-12/BGP/turbfan.html): momentum and pressure forces, separate flow streams.
 - [NASA-hosted atmosphere derivation](https://ntrs.nasa.gov/api/citations/19950007312/downloads/19950007312.pdf): tropospheric lapse rate, sea-level conditions and hydrostatic pressure relation.
 - [NASA T-MATS](https://github.com/nasa/T-MATS): a reference for the map-based matching and transient models that lie beyond this example.
+
+## Surface rendering
+
+The default materials have fixed authored finishes under studio lighting. The optional
+gas-temperature tint is a display diagnostic; enabling it changes the liner color,
+not the cycle inputs, computed temperatures, RPM or rotor clock. No metal-temperature,
+emissivity or thermal-inertia model is implied. Reflection and surface maps are
+generated by `materials/main.go`; the environment is LDR and the finishes are
+illustrative. Geometry and solver parameters are unchanged by the material pass.

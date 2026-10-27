@@ -1,0 +1,14 @@
+{
+  "defaultProfile": "turbofan-engineering",
+  "profiles": {
+    "turbofan-engineering": {
+      "description": "Turbofan numerical workbench, public-reference audit and studio materials with three generated PNG maps (3908 authored bytes), under software rasterization. Cold-client/warm-server captures: public references 1632.40 KiB; studio materials 1637.75 KiB. Retain the existing 1640 KiB example allowance and load/blocking-time limits. Shared documentation budgets remain unchanged; the 1615 KiB documentation network target is exceeded by 22.75 KiB.",
+      "assertions": [
+        "js_total_kb <= 1650",
+        "network_kb <= 1640",
+        "lcp <= 18000",
+        "tbt <= 15000"
+      ]
+    }
+  }
+}

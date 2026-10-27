@@ -18,32 +18,24 @@ type Options struct {
 	Visual   *cycle.RenderState
 }
 
-var (
-	titanium = scene.StandardMaterial{Color: "#b9c8d1", Metalness: .68, Roughness: .34}
-	steel    = scene.StandardMaterial{Color: "#637c8c", Metalness: .62, Roughness: .4}
-	shell    = scene.StandardMaterial{Color: "#536979", Metalness: .58, Roughness: .38}
-	ceramic  = scene.StandardMaterial{Color: "#ce9870", Metalness: .4, Roughness: .47}
-	copper   = scene.StandardMaterial{Color: "#ec9156", Metalness: .48, Roughness: .32}
-)
-
 // Turbofan builds all geometry in Go. X is the shaft axis, with intake at -X.
 // Only the two complete rotor assemblies spin; no per-blade spin is copied.
 func Turbofan(options Options) scene.Props {
 	lowSpeed, highSpeed := .48, .82
-	liner := ceramic
+	liner := hotAlloy
 	if options.Visual != nil {
 		lowSpeed, highSpeed = options.Visual.LowSpin, options.Visual.HighSpin
 		liner.Color = options.Visual.Color
 	}
 	low := []scene.Node{
-		lathe("spinner", []scene.LathePoint{{Radius: .02, Y: -5.1}, {Radius: .22, Y: -4.95}, {Radius: .44, Y: -4.55}, {Radius: .56, Y: -4.12}, {Radius: .54, Y: -3.85}}, titanium, false),
+		lathe("spinner", []scene.LathePoint{{Radius: .02, Y: -5.1}, {Radius: .22, Y: -4.95}, {Radius: .44, Y: -4.55}, {Radius: .56, Y: -4.12}, {Radius: .54, Y: -3.85}}, polished, false),
 		shaft("low-shaft", -3.9, 4.15, .16, steel),
 	}
 	low = append(low, bladeRow("fan", -3.95, .55, 2.14, .66, 24, .0, titanium)...)
 	low = append(low, shaft("fan-disc", -4.03, -3.83, .66, steel))
 	for i := range 3 {
 		x := 2.55 + float64(i)*.48
-		low = append(low, bladeRow(fmt.Sprintf("lp-turbine-%d", i), x, .36, .86+float64(i)*.035, .2, 26, .18, ceramic)...)
+		low = append(low, bladeRow(fmt.Sprintf("lp-turbine-%d", i), x, .36, .86+float64(i)*.035, .2, 26, .18, hotAlloy)...)
 		low = append(low, shaft(fmt.Sprintf("lp-disc-%d", i), x-.07, x+.07, .43, steel))
 	}
 
@@ -54,13 +46,14 @@ func Turbofan(options Options) scene.Props {
 		high = append(high, bladeRow(fmt.Sprintf("compressor-%d", i), x, .37+float64(i)*.037, tip, .21, 30, float64(i)*.06, titanium)...)
 		high = append(high, shaft(fmt.Sprintf("compressor-disc-%d", i), x-.07, x+.07, .43+float64(i)*.032, steel))
 	}
-	high = append(high, bladeRow("hp-turbine", 1.91, .35, .82, .23, 30, 0, copper)...)
+	high = append(high, bladeRow("hp-turbine", 1.91, .35, .82, .23, 30, 0, ceramic)...)
 	high = append(high, shaft("hp-disc", 1.8, 2.02, .43, steel))
 
 	nodes := []scene.Node{
-		scene.DirectionalLight{ID: "key", Color: "#fff2df", Intensity: 1.4, Direction: scene.Vec3(.25, -1, -.7)},
-		scene.DirectionalLight{ID: "rim", Color: "#b2d6ff", Intensity: .8, Direction: scene.Vec3(-.35, .3, 1)},
-		scene.HemisphereLight{ID: "studio", SkyColor: "#d9e9fa", GroundColor: "#3b3633", Intensity: .4},
+		scene.DirectionalLight{ID: "key", Color: "#fff7eb", Intensity: 1.55, Direction: scene.Vec3(.25, -1, -.7)},
+		scene.DirectionalLight{ID: "rim", Color: "#f0f3f5", Intensity: .9, Direction: scene.Vec3(-.35, .3, 1)},
+		scene.DirectionalLight{ID: "fill", Color: "#edf0ed", Intensity: .45, Direction: scene.Vec3(-.6, -.2, -.9)},
+		scene.HemisphereLight{ID: "studio", SkyColor: "#d9dcda", GroundColor: "#333531", Intensity: .18},
 		scene.Group{ID: "low-spool", Spin: scene.Rotate(lowSpeed, 0, 0), Children: low},
 		scene.Group{ID: "high-spool", Spin: scene.Rotate(highSpeed, 0, 0), Children: high},
 	}
@@ -87,18 +80,18 @@ func Turbofan(options Options) scene.Props {
 	}
 	for i := range 12 {
 		angle := float64(i) * 2 * math.Pi / 12
-		nodes = append(nodes, scene.Mesh{ID: fmt.Sprintf("injector-%d", i), Geometry: scene.CylinderGeometry{RadiusTop: .055, RadiusBottom: .075, Height: .36, Segments: 8}, Material: copper, Position: scene.Vec3(.69, .59*math.Cos(angle), .59*math.Sin(angle)), Rotation: scene.Rotate(0, 0, -math.Pi/2)})
+		nodes = append(nodes, scene.Mesh{ID: fmt.Sprintf("injector-%d", i), Geometry: scene.CylinderGeometry{RadiusTop: .055, RadiusBottom: .075, Height: .36, Segments: 8}, Material: hotAlloy, Position: scene.Vec3(.69, .59*math.Cos(angle), .59*math.Sin(angle)), Rotation: scene.Rotate(0, 0, -math.Pi/2)})
 	}
 	// Circumferential joints and section edges clarify the silhouette.
 	for i, x := range []float64{-4.27, -3.65, -2.85, -.6, 1.17} {
 		r := []float64{2.38, 2.46, 2.43, 2.16, 1.85}[i]
-		nodes = append(nodes, collar(fmt.Sprintf("nacelle-joint-%d", i), x, r, .025, titanium, cut))
+		nodes = append(nodes, collar(fmt.Sprintf("nacelle-joint-%d", i), x, r, .025, polished, cut))
 	}
 	if cut {
 		for i, edge := range []struct{ x, y, radius float64 }{{-4.4, -2.6, 2.35}, {-2.6, -.7, 2.13}, {-.7, 1.2, 1.88}, {-2.9, .4, 1.0}, {.4, 2.2, .98}, {2.2, 3.65, 1.1}} {
 			// Thin orange rails mark the two cut faces without obscuring the machinery.
 			for _, sign := range []float64{-1, 1} {
-				nodes = append(nodes, scene.Mesh{ID: fmt.Sprintf("section-edge-%d-%g", i, sign), Geometry: scene.BoxGeometry{Width: edge.y - edge.x, Height: .025, Depth: .025}, Material: copper, Position: scene.Vec3((edge.x+edge.y)/2, sign*edge.radius, 0), Visible: scene.Bool(!options.Exterior)})
+				nodes = append(nodes, scene.Mesh{ID: fmt.Sprintf("section-edge-%d-%g", i, sign), Geometry: scene.BoxGeometry{Width: edge.y - edge.x, Height: .025, Depth: .025}, Material: sectionPaint, Position: scene.Vec3((edge.x+edge.y)/2, sign*edge.radius, 0), Visible: scene.Bool(!options.Exterior)})
 			}
 		}
 	}
@@ -156,9 +149,9 @@ func Turbofan(options Options) scene.Props {
 		Controls: "orbit", ControlTarget: scene.Vec3(-.1, 0, 0), AutoRotate: scene.Bool(false), ControlZoom: scene.Bool(true), ControlMinDistance: 6, ControlMaxDistance: 25,
 		Camera:       viewCamera(options.View),
 		Presentation: presentation,
-		Environment:  scene.Environment{AmbientColor: "#dce8f2", AmbientIntensity: .25, ToneMapping: "aces", Exposure: .95},
+		Environment:  studioEnvironment(),
 		MaxFPS:       30, MaxDevicePixelRatio: 1.5, MaxPixels: 1280 * 720,
-		PreferWebGPU: scene.Bool(options.Backend == "webgpu"), ForceWebGL: scene.Bool(options.Backend == "webgl"),
+		PreferWebGPU: scene.Bool(options.Backend == "webgpu"), PreferWebGL: scene.Bool(options.Backend != "webgpu"), ForceWebGL: scene.Bool(options.Backend == "webgl"),
 		UnsupportedMessage: "3D rendering is unavailable in this browser. The component descriptions below explain the engine cycle.",
 		Graph:              scene.NewGraph(nodes...),
 	}

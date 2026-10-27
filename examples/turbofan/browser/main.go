@@ -34,18 +34,22 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 	}
 	initial := struct {
 		cycle.Inputs
-		Model  string            `json:"model"`
-		Visual cycle.RenderState `json:"visual"`
+		Model  string             `json:"model"`
+		Visual cycle.RenderState  `json:"visual"`
+		Sweep  []cycle.SweepPoint `json:"sweep"`
 	}{Inputs: cycle.DefaultInputs(), Model: "generic"}
 	if err := ctx.DecodeProps(&initial); err != nil {
 		return nil, err
 	}
 	renderer := newRenderLink(ctx, initial.Visual)
+	thermalTint := initial.Visual.ThermalTint
 	mode := "generic"
 	var matched cycle.MappedResult
 	var result cycle.Result
 	var solveErr error
 	var downloadURL string
+	var engineering cycle.EngineeringRecord
+	engineeringUI := bindEngineering(root)
 	setInputs := func(in cycle.Inputs) {
 		for name, value := range map[string]float64{"altitudeM": in.AltitudeM, "mach": in.Mach, "turbineInletK": in.TurbineInletK,
 			"overallPressureRatio": in.OverallPressureRatio, "fanPressureRatio": in.FanPressureRatio, "bypassRatio": in.BypassRatio} {
@@ -79,6 +83,17 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 			view = cycle.FormatMapped(matched, solveErr)
 			query("[data-lp-label]").Set("textContent", "Fan + booster / LP shaft")
 		}
+		var point *cycle.MappedResult
+		if mode == "mapped" {
+			point = &matched
+		}
+		engineering = cycle.Analyze(result, point, mappedModel, solveErr)
+		if mode == "mapped" && solveErr == nil {
+			engineering.SampleSensitivity(initial.Sweep, fuel)
+		}
+		engineeringUI.update(engineering, point, mappedModel, solveErr == nil)
+		query("[data-engineering-export]").Set("disabled", solveErr != nil)
+		query("[data-engineering-sweep-export]").Set("disabled", len(initial.Sweep) == 0)
 		dots := root.Call("querySelectorAll", "[data-map-dot]")
 		for i := 0; i < dots.Length(); i++ {
 			dots.Index(i).Call("setAttribute", "visibility", "hidden")
@@ -126,7 +141,7 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 		if data, err := json.Marshal(state); err == nil {
 			root.Call("setAttribute", "data-cycle-state", string(data))
 		}
-		renderer.update(cycle.Visualize(mode, result, matched, solveErr), fuel)
+		renderer.update(cycle.Visualize(mode, result, matched, solveErr).WithThermalTint(thermalTint), fuel)
 	}
 	if initial.Model == "mapped" {
 		mode = "mapped"
@@ -143,6 +158,18 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 			return nil
 		}
 		target := args[0].Get("target")
+		if target.Call("closest", "[data-engineering-expand],[data-engineering-collapse]").Truthy() {
+			open := target.Call("closest", "[data-engineering-expand]").Truthy()
+			details := root.Call("querySelectorAll", ".engineering-tables details")
+			for i := 0; i < details.Length(); i++ {
+				details.Index(i).Set("open", open)
+			}
+		}
+		if target.Call("closest", "[data-thermal-toggle]").Truthy() {
+			thermalTint = !thermalTint
+			update()
+			return nil
+		}
 		model := target.Call("closest", "[data-cycle-model]")
 		if model.Truthy() {
 			mode = model.Call("getAttribute", "data-cycle-model").String()
@@ -178,7 +205,9 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 			setInputs(in)
 			update()
 		}
-		if target.Call("closest", "[data-cycle-export]").Truthy() && solveErr == nil {
+		pointExport := target.Call("closest", "[data-cycle-export],[data-engineering-export]").Truthy()
+		sweepExport := target.Call("closest", "[data-engineering-sweep-export]").Truthy()
+		if pointExport && solveErr == nil || sweepExport && len(initial.Sweep) > 0 {
 			url := js.Global().Get("URL")
 			if downloadURL != "" {
 				url.Call("revokeObjectURL", downloadURL)
@@ -187,11 +216,20 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 			if mode == "mapped" {
 				csv = mappedModel.CSV(matched)
 			}
+			filename := "turbofan-design-point.csv"
+			if target.Call("closest", "[data-engineering-export]").Truthy() {
+				csv += engineering.CSV()
+				filename = "turbofan-engineering-point.csv"
+			}
+			if sweepExport {
+				csv = cycle.SweepCSV(initial.Sweep)
+				filename = "jt9d-model-operating-line.csv"
+			}
 			blob := js.Global().Get("Blob").New([]any{csv}, map[string]any{"type": "text/csv;charset=utf-8"})
 			downloadURL = url.Call("createObjectURL", blob).String()
 			a := js.Global().Get("document").Call("createElement", "a")
 			a.Set("href", downloadURL)
-			a.Set("download", "turbofan-design-point.csv")
+			a.Set("download", filename)
 			root.Call("appendChild", a)
 			a.Call("click")
 			a.Call("remove")
@@ -211,6 +249,9 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 	renderer.controls.Call("addEventListener", "click", click)
 	update()
 	query("fieldset").Set("disabled", false)
+	for _, selector := range []string{"[data-engineering-expand]", "[data-engineering-collapse]"} {
+		query(selector).Set("disabled", false)
+	}
 	root.Call("setAttribute", "data-cycle-ready", "true")
 	return wasm.HandleFunc(func() {
 		renderer.cancel()

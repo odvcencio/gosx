@@ -145,6 +145,7 @@ func gasNozzle(in Station, ambientPa, area float64) (Nozzle, error) {
 	}
 	te := (lo + hi) / 2
 	pe := in.PressurePa * math.Exp((gasS(te)-gasS(t))/R)
+	criticalNPR := in.PressurePa / pe
 	choked := pe >= ambientPa
 	if !choked {
 		pe = ambientPa
@@ -156,5 +157,5 @@ func gasNozzle(in Station, ambientPa, area float64) (Nozzle, error) {
 	}
 	v := math.Sqrt(2 * (gasH(t) - gasH(te)))
 	flow := pe / (R * te) * v * area
-	return Nozzle{Exit: Station{te, pe, flow}, Mach: v / math.Sqrt(gasCP(te)/(gasCP(te)-R)*R*te), VelocityMPS: v, AreaM2: area, PressureThrustN: (pe - ambientPa) * area, Choked: choked}, nil
+	return Nozzle{Exit: Station{te, pe, flow}, Mach: v / math.Sqrt(gasCP(te)/(gasCP(te)-R)*R*te), VelocityMPS: v, AreaM2: area, PressureThrustN: (pe - ambientPa) * area, Choked: choked, CriticalNPR: criticalNPR}, nil
 }

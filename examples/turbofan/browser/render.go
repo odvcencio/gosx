@@ -90,6 +90,9 @@ func (l *renderLink) update(v cycle.RenderState, fuel float64) {
 	for key, value := range map[string]string{"n1": v.LowLabel, "n2": v.HighLabel, "temperature": v.TemperatureLabel, "caption": v.Caption} {
 		l.viewer.Call("querySelector", "[data-render-output="+key+"]").Set("textContent", value)
 	}
+	toggle := l.controls.Call("querySelector", "[data-thermal-toggle]")
+	toggle.Set("disabled", false)
+	toggle.Call("setAttribute", "aria-pressed", strconv.FormatBool(v.ThermalTint))
 	l.controls.Call("querySelector", "input").Set("value", strconv.FormatFloat(fuel, 'g', -1, 64))
 	l.controls.Call("querySelector", "input").Set("disabled", false)
 	l.controls.Call("querySelector", "[data-render-fuel-label]").Set("textContent", strconv.FormatFloat(fuel, 'f', 4, 64)+" kg/s")

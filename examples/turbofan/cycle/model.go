@@ -1,6 +1,5 @@
-// Package cycle models an unmixed two-spool turbofan at a steady design point.
-// It uses a calorically perfect gas and prescribed component efficiencies.
-// No component maps, fixed-area matching, cooling or transient RPM are implied.
+// Package cycle provides generic design-point and mapped fixed-geometry
+// turbofan models. Both are steady component-cycle calculations.
 package cycle
 
 import (
@@ -66,6 +65,7 @@ type Nozzle struct {
 	AreaM2          float64 `json:"areaM2"`
 	PressureThrustN float64 `json:"pressureThrustN"`
 	Choked          bool    `json:"choked"`
+	CriticalNPR     float64 `json:"criticalNPR"`
 }
 
 type Result struct {
@@ -228,5 +228,5 @@ func nozzle(in Station, ambientPa float64) (Nozzle, error) {
 	area := in.MassFlowKGS * R * tExit / (pExit * vExit)
 	return Nozzle{Exit: Station{tExit, pExit, in.MassFlowKGS}, Mach: vExit / math.Sqrt(Gamma*R*tExit),
 		VelocityMPS: vExit, AreaM2: area, PressureThrustN: (pExit - ambientPa) * area,
-		Choked: ambientPa <= in.PressurePa*criticalRatio}, nil
+		Choked: ambientPa <= in.PressurePa*criticalRatio, CriticalNPR: 1 / criticalRatio}, nil
 }
