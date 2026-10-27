@@ -10,6 +10,9 @@ type MappedInputs struct {
 	AltitudeM   float64 `json:"altitudeM"`
 	Mach        float64 `json:"mach"`
 	FuelFlowKGS float64 `json:"fuelFlowKGS"`
+	// AmbientTemperatureK overrides ISA temperature at the same ISA pressure.
+	// Zero retains ISA. This permits a stated test temperature without fitting it.
+	AmbientTemperatureK float64 `json:"ambientTemperatureK,omitempty"`
 }
 
 type MappedResult struct {
@@ -324,6 +327,9 @@ func (m *MappedModel) evaluate(x [7]float64, in MappedInputs) ([7]float64, Mappe
 	fail := func(err error) ([7]float64, MappedResult, error) { return [7]float64{}, MappedResult{}, err }
 	ta := TRef - .0065*in.AltitudeM
 	pa := PRef * math.Pow(ta/TRef, 9.80665/(R*.0065))
+	if in.AmbientTemperatureK != 0 {
+		ta = in.AmbientTemperatureK
+	}
 	v := in.Mach * math.Sqrt(gasCP(ta)/(gasCP(ta)-R)*R*ta)
 	t2, err := gasInvert(gasH(ta)+v*v/2, false)
 	if err != nil {
@@ -437,9 +443,22 @@ func (m *MappedModel) Solve(in MappedInputs) (MappedResult, error) {
 	if !finite(in.AltitudeM) || in.AltitudeM < 0 || in.AltitudeM > 11000 || !finite(in.Mach) || in.Mach < 0 || in.Mach > .85 || !finite(in.FuelFlowKGS) || in.FuelFlowKGS < .2054 || in.FuelFlowKGS > reference.Points[0].FuelFlowKGS {
 		return MappedResult{}, fmt.Errorf("command outside altitude 0–11 km, Mach 0–0.85 or fuel 0.2054–2.055 kg/s")
 	}
+	if !finite(in.AmbientTemperatureK) || in.AmbientTemperatureK != 0 && (in.AmbientTemperatureK < 200 || in.AmbientTemperatureK > 330) {
+		return MappedResult{}, fmt.Errorf("ambient temperature must be zero for ISA or 200–330 K")
+	}
+	return m.solve(in)
+}
+
+// solve retains strict component-map boundaries. The public Solve also limits
+// interactive commands to the calibrated fuel interval; the public-data audit
+// can condition a separate hot-day point on its reported thrust instead.
+func (m *MappedModel) solve(in MappedInputs) (MappedResult, error) {
 	x := [7]float64{1, 1, 2, 2, 2, 5, 6.4}
 	ratedFuel := reference.Points[0].FuelFlowKGS
 	steps := int(math.Ceil(math.Max(math.Abs(in.FuelFlowKGS-ratedFuel)/.075, math.Max(in.AltitudeM/1500, in.Mach/.1))))
+	if in.AmbientTemperatureK != 0 {
+		steps = max(steps, int(math.Ceil(math.Abs(in.AmbientTemperatureK-TRef)/5)))
+	}
 	if steps < 1 {
 		steps = 1
 	}
@@ -447,7 +466,10 @@ func (m *MappedModel) Solve(in MappedInputs) (MappedResult, error) {
 	totalIterations := 0
 	for i := 1; i <= steps; i++ {
 		f := float64(i) / float64(steps)
-		command := MappedInputs{in.AltitudeM * f, in.Mach * f, ratedFuel + (in.FuelFlowKGS-ratedFuel)*f}
+		command := MappedInputs{AltitudeM: in.AltitudeM * f, Mach: in.Mach * f, FuelFlowKGS: ratedFuel + (in.FuelFlowKGS-ratedFuel)*f}
+		if in.AmbientTemperatureK != 0 {
+			command.AmbientTemperatureK = TRef + (in.AmbientTemperatureK-TRef)*f
+		}
 		var err error
 		var iterations int
 		x, result, iterations, err = m.match(x, command)

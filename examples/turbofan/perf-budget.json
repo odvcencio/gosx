@@ -2,7 +2,7 @@
   "defaultProfile": "turbofan-engineering",
   "profiles": {
     "turbofan-engineering": {
-      "description": "Turbofan with the numerical Go/WASM engine, eight engineering tables and six plots under software rasterization. The prior cycle-only build transferred 1609.63 KiB; the engineering build measured 1624.76 KiB with a fresh client and warm server. Allow 1640 KiB for this example. Shared documentation budgets are unchanged; their 1615 KiB network target is exceeded by 9.76 KiB. Load and blocking-time limits retain the documentation software-renderer allowances.",
+      "description": "Turbofan with its numerical Go/WASM engine, engineering inspector and public-reference checks under software rasterization. Cold-client/warm-server captures: cycle-only 1609.63 KiB; engineering inspector 1624.76 KiB; public-reference audit 1632.40 KiB. Retain the existing 1640 KiB example allowance and load/blocking-time limits. Shared documentation budgets remain unchanged; the 1615 KiB documentation network target is exceeded by 17.40 KiB.",
       "assertions": [
         "js_total_kb <= 1650",
         "network_kb <= 1640",

@@ -863,18 +863,21 @@
   },
   "accuracyScope": "Three fitted ground points including idle; one unfitted climbout check. Bounded modeled low-speed maps. No independent map, flight, RPM, station-data or transient validation.",
   "sourceSHA256": {
-    "cycle/engineering.go": "eb3d2851058f138621639f7f581237a352d5b85094268913752be19287fa23bc",
+    "cycle/engineering.go": "d14c6e1f58992233ad582dac774188fc149f66b34a302dd84afea6a040cdcf3a",
     "cycle/engineering_test.go": "fa853666873e35f0163099e904bdf6758e865c1dae80380e25e9a0b0b05cc8da",
     "cycle/engineering_view.go": "18254daef53c6fa94ff07eba05d90e93cc2b7cd86ad075356f74d579fbd8d8cc",
     "cycle/gas.go": "242997fb4c7b488ffb496dc1689c904bf134542b49231fb2dc93c3f9cc22f83c",
     "cycle/low_speed.go": "af5bb09b0d582304655e7ead1e695456c9c8a748dbc1a34759949beb79ef09d0",
     "cycle/mapped_view.go": "b5018feecba4306d437301f8e4ab1701dbfc11a00986196ec103ede3991eabe5",
     "cycle/maps.go": "c564b24e87c98ac9c8094a5945c3c413d2472536cb1416ae108c0b154a32db09",
-    "cycle/matched.go": "b11206b634579e0f0bc1893f1a23c2af920d1513d26b8d265a89d75c9087f077",
+    "cycle/matched.go": "7a57a548da6a0f5c7829325c666870ac9e83c29a3260f8f7396213fd5c7a52f5",
     "cycle/matched_test.go": "f1c5f9f4ad3db9cceec6622e8f48b99cbf07678666e3868f8f0930a92645d3db",
     "cycle/matcher.go": "8e17e1b5ded31fbc2ab1244978dd0dce976cf5904a5adb1c6b647d01290a09ef",
     "cycle/model.go": "c5f423392cdc6e452d4171aedd4f10c298412ac6c34e26682c64f426ad492f14",
     "cycle/model_test.go": "41524525bbb1fa4f01a5adb8d103b27ddb9e4450548c431354879a682164d214",
+    "cycle/public_validation.go": "ed330e048d8c6886f2f9c1350bb3f14cf035117aab46b9499dc0596a18967404",
+    "cycle/public_validation_test.go": "2da78f11b43b637f020aded921fef6d4a7930ddeb7249f19d888eae7db0362b4",
+    "cycle/public_validation_view.go": "1f61eb4e6be0a2b1d1421181c465b47e100e8778b45af557790d6253ae086f21",
     "cycle/sweep.go": "2c37990d10226deff08dd48a58dce36acc74e9cdeab41482c026d2fb89bb28e1",
     "cycle/view.go": "9d593c8a6dcbabd0fba3673318162013f4a028e4b575c2a6dd9e77f23dee776a",
     "cycle/visual.go": "a7aae0b06469f3798606043d0169f6edec5ecfa9a31a00642ff09a5a03938e9c"
@@ -883,6 +886,7 @@
     "cycle/data/air.json": "116bb9f0302ea37b70b2e23d12b1ab2597895f98cec6bc174831d122637bc53a",
     "cycle/data/jt9d_icao.json": "8f3d731f0448af5c4981a6c05ac0a14332a3b7d0debc4d7f3df331c49a17b86b",
     "cycle/data/maps.json": "48f12c903ef5441372189c176fedbd6f07564a7bef6ee3998b1a391879ba1261",
-    "cycle/data/profile.json": "3a30d6acefa4353c5366e27f9e4e3b1cf01e84be7c4ea7e165c1fd2536595da9"
+    "cycle/data/profile.json": "3a30d6acefa4353c5366e27f9e4e3b1cf01e84be7c4ea7e165c1fd2536595da9",
+    "cycle/data/public_validation.json": "24adbd390fe56b91a81352366d7acbc640e23eec4b7c8373a5334942b8a6bbed"
   }
 }

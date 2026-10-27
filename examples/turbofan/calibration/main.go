@@ -12,7 +12,12 @@ import (
 
 func main() {
 	fit := flag.Bool("fit", false, "recompute the approach and idle corrections")
+	validatePublic := flag.Bool("validate-public", false, "compare the frozen profile with public speed limits and station references")
 	flag.Parse()
+	if *fit && *validatePublic {
+		fmt.Fprintln(os.Stderr, "--validate-public freezes the existing calibration; run --fit separately")
+		os.Exit(2)
+	}
 	m, err := cycle.CalibrateJT9D()
 	if err != nil {
 		panic(err)
@@ -33,6 +38,22 @@ func main() {
 		}
 	}
 	ref := cycle.Reference()
+	if *validatePublic {
+		report := m.ValidatePublicData()
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for _, check := range report.Comparisons {
+			if check.Status == "limit-exceeded" || check.Status == "speed-incompatible" {
+				fmt.Fprintln(os.Stderr, "public reference audit: model speed is incompatible with a reported maximum; see JSON findings")
+				os.Exit(1)
+			}
+		}
+		return
+	}
 	checks := []map[string]any{}
 	for _, p := range ref.Points {
 		r, err := m.Solve(cycle.MappedInputs{FuelFlowKGS: p.FuelFlowKGS})

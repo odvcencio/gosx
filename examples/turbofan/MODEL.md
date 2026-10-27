@@ -92,6 +92,57 @@ separate operating-line CSV retains all 81 points and modeled-extension flags. P
 coordinates are excluded from exported engineering quantities. The initial diagrams and
 station tables are server-rendered; subsequent controls update the same mounted document.
 
+## Public RPM and station audit
+
+`calibration --validate-public` uses the frozen fitted model and the separate
+`cycle/data/public_validation.json` references. It emits all twenty-two comparisons
+and exits 1 when a reported speed bound is exceeded. `--fit` is rejected in the
+same invocation. A test confirms that the audit does not change model parameters.
+
+FAA TCDS E3NE revision 16 (2019), Note 1, gives the standard -7R4D limits
+N1 <= 3770 and N2 <= 8000 rpm, and -7R4D1 limits N1 <= 3810 and N2 <= 8000 rpm.
+The grouped ICAO entry does not identify a converted (DM)/(EM) engine, whose
+separate limits are stated in the source. Rated model N1 = 3943.959 rpm exceeds
+both standard-variant N1 limits. N2 = 7940.896 rpm lies below those maxima, which
+does not validate its actual operating speed. Limits are inequalities, not RPM
+measurements to fit as equalities. Note 2 gives takeoff (5-minute) total exhaust Tt7 <= 625 C / 898.15 K for both variants. It maps to model total station 5, 783.385 K at rated fuel: within the maximum, without validating actual temperature. The inspector also shows cockpit percentage
+normalization (3600 and 7807 rpm), separately from rated-model normalization.
+
+The Osaka Metropolitan University exhibit for a JAL-donated -7R4D publishes
+combustor-outlet 1271.1 C and turbine-inlet 1185.0 C at 33.3 C ambient and
+213.5 kN uninstalled thrust. These convert to 1544.25 K and 1458.15 K. The source
+does not supply measurement uncertainty or probe/cooling locations. The
+provisional mappings are solver station 4 and station 41 after the first cooling
+mix; they do not assert identical instrumentation definitions.
+
+An optional `MappedInputs.AmbientTemperatureK` overrides ISA temperature at
+unchanged ISA pressure; zero retains the previous ISA behavior. The ambient
+command must be 200–330 K. Continuation ramps temperature along with other
+commands, and tests verify inlet stagnation enthalpy/entropy and cycle closure.
+The UI and public `Solve` fuel interval remain 0.2054–2.055 kg/s.
+
+The separate hot-reference audit brackets fuel within 0.90–1.15 times the
+original rated fuel, using the same seven-equation matcher and strict component
+map boundaries. It conditions fuel on the published thrust instead of using
+thrust as an output to validate. It finds 2.130823 kg/s, beyond the UI interval,
+with station 4 = 1599.858 K and station 41 = 1557.844 K: +3.60% and +6.84%.
+The point also exceeds reported speed maxima, which is explicitly recorded.
+No new map, efficiency, cooling, RPM or gas parameters are fitted. These
+differences are model discrepancies, not accuracy certifications or tolerances.
+
+The nominal ground-idle N2 reference of 4370 rpm is displayed beside the ICAO
+idle model's 6006.03 rpm without assigning a validation error: ambient, fuel,
+bleed and loads are missing. The 5465 rpm flight-idle reference has no modeled
+comparison. NASA Table V-3 gives standard-day -7A fuel/thrust and combustor-inlet
+conditions; the twelve corresponding thrust/T/P comparisons are explicitly
+earlier-variant context. Source Tt4 means this model's HPC exit, station 3.
+The table's takeoff SI/psia columns disagree; the audit retains 21.68e5 Pa from
+the SI column and flags the 323 psia discrepancy instead of silently resolving it.
+
+No fully matched measured RPM/station dataset was identified. The current model
+fails speed compatibility and remains unvalidated for station accuracy.
+See [source provenance and exclusions](cycle/data/SOURCES.md).
+
 ## Generic cycle design
 
 This mode keeps prescribed pressure/bypass ratios and corrected airflow.

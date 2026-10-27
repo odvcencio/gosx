@@ -1,0 +1,148 @@
+{
+  "protocol": "Frozen model comparison. No RPM, temperature, cooling or map parameters are refitted. Limits test compatibility; nominal/exhibit and earlier-variant references are qualified comparisons, not matched empirical validation. Thrust is an input for the hot-temperature comparison, not a validation output.",
+  "sources": [
+    {
+      "id": "faa-e3ne-r16",
+      "title": "FAA TCDS E3NE, revision 16, 25 July 2019",
+      "url": "https://web.archive.org/web/20200326073836id_/https://rgl.faa.gov/Regulatory_and_Guidance_Library/rgMakeModel.nsf/0/1f744c3819e0622a86258443003da885/$FILE/E3NE_Rev16.pdf",
+      "originalURL": "https://rgl.faa.gov/Regulatory_and_Guidance_Library/rgMakeModel.nsf/0/1f744c3819e0622a86258443003da885/$FILE/E3NE_Rev16.pdf",
+      "locator": "Notes 1 and 2, PDF p.5",
+      "kind": "certified maximum speeds and total exhaust-gas temperature, historical revision; not measured operating points",
+      "notes": "Standard -7R4D and -7R4D1 variants. The note separately identifies converted (DM)/(EM) engines with 3810/8080 rpm limits; the grouped ICAO entry does not identify a conversion.",
+      "pdfSHA256": "a6be6b7fa9ba7b0c155e8d28d6e2760e0dfe7c1bcb26d4c5109e50ad1263e87c"
+    },
+    {
+      "id": "omu-jt9d-7r4d",
+      "title": "Osaka Metropolitan University Archives Newsletter No.14, JT9D-7R4D exhibit",
+      "url": "https://omu.repo.nii.ac.jp/record/2001582/files/2024000887.pdf",
+      "locator": "PDF p.3, Figure 2, exhibit specification panel",
+      "kind": "published exhibit specifications for JAL-donated -7R4D; not an instrumented test dataset",
+      "notes": "Panel concerns engine P717001. Hot temperatures specify 48000 lbf / 213.5 kN at 92 F (33.3 C). Use printed SI temperature 33.3 C. Installed 208.0 kN includes a stated 2.3% nacelle loss and is not substituted for uninstalled thrust. Idle RPM lacks fuel, ambient, bleed and uncertainty metadata.",
+      "pdfSHA256": "5b3a8fc5bff8f77e57eb64f1151869c744243f0d00ef259b3e01f0d1d11daad5"
+    },
+    {
+      "id": "nasa-eccp-1977",
+      "title": "NASA/Pratt & Whitney Experimental Clean Combustor Program: Engine Test Results",
+      "url": "https://ntrs.nasa.gov/api/citations/19780003125/downloads/19780003125.pdf",
+      "locator": "Table V-3, printed p.111 / PDF p.21; standard-day JT9D-7A generator reference conditions",
+      "kind": "earlier-variant reference cycle; not a matched -7R4D test dataset",
+      "notes": "Source calls combustor inlet Tt4; maps to this solver station 3, not station 4. Fuel is transcribed from kg/h and divided by 3600. Pressure is transcribed from the SI column (all rows x1e5 Pa). The takeoff psia entry (323) is inconsistent with the SI column (21.68e5 Pa); retain that discrepancy. Source precision and measurement uncertainty are not supplied.",
+      "pdfSHA256": "3360032c12f69d1fff04a075c097d911828c7bd6b847db83ba738eef72c1de71"
+    }
+  ],
+  "limits": [
+    {
+      "id": "d-n1",
+      "variant": "JT9D-7R4D",
+      "quantity": "n1",
+      "maximumRPM": 3770,
+      "source": "faa-e3ne-r16"
+    },
+    {
+      "id": "d1-n1",
+      "variant": "JT9D-7R4D1",
+      "quantity": "n1",
+      "maximumRPM": 3810,
+      "source": "faa-e3ne-r16"
+    },
+    {
+      "id": "d-n2",
+      "variant": "JT9D-7R4D",
+      "quantity": "n2",
+      "maximumRPM": 8000,
+      "source": "faa-e3ne-r16"
+    },
+    {
+      "id": "d1-n2",
+      "variant": "JT9D-7R4D1",
+      "quantity": "n2",
+      "maximumRPM": 8000,
+      "source": "faa-e3ne-r16"
+    }
+  ],
+  "rpmReferences": {
+    "source": "omu-jt9d-7r4d",
+    "n1Gauge100RPM": 3600,
+    "n2Gauge100RPM": 7807,
+    "groundIdleN2RPM": 4370,
+    "flightIdleN2RPM": 5465,
+    "notes": "100% gauge RPM is a normalization reference, not a takeoff measurement or maximum. Ground/flight idle are nominal settings without a complete operating condition."
+  },
+  "hotCase": {
+    "source": "omu-jt9d-7r4d",
+    "variant": "JT9D-7R4D",
+    "ambientTemperatureC": 33.3,
+    "ambientPressurePa": 101325,
+    "mach": 0,
+    "uninstalledThrustN": 213500,
+    "combustorOutletC": 1271.1,
+    "turbineInletC": 1185.0,
+    "stationMapping": "Provisional: combustor outlet -> solver 4; turbine inlet -> solver 41 after first cooling mix. Probe location, traverse averaging and cooling definition are not supplied."
+  },
+  "nasaReferenceCases": [
+    {
+      "mode": "idle",
+      "fuelKGPerHour": 780,
+      "thrustN": 14234,
+      "compressorOutletK": 447,
+      "compressorOutletPa": 369000,
+      "printedPSIA": 53
+    },
+    {
+      "mode": "approach",
+      "fuelKGPerHour": 2108,
+      "thrustN": 61585,
+      "compressorOutletK": 588,
+      "compressorOutletPa": 891000,
+      "printedPSIA": 129
+    },
+    {
+      "mode": "climb",
+      "fuelKGPerHour": 6010,
+      "thrustN": 174494,
+      "compressorOutletK": 736,
+      "compressorOutletPa": 1938000,
+      "printedPSIA": 281
+    },
+    {
+      "mode": "takeoff",
+      "fuelKGPerHour": 7303,
+      "thrustN": 205284,
+      "compressorOutletK": 764,
+      "compressorOutletPa": 2168000,
+      "printedPSIA": 323
+    }
+  ],
+  "nasaReferenceSource": "nasa-eccp-1977",
+  "excludedCandidates": [
+    {
+      "title": "Stanford AA283 JT9D-7 teaching station diagram",
+      "url": "https://web.stanford.edu/~cantwell/AA283_Course_Material/AA283_Lectures/AA283_Course_Introduction_Lecture_Brian_J_Cantwell_2024.pdf",
+      "reason": "Earlier-variant teaching diagram; no coupled instrumented test provenance was established here."
+    },
+    {
+      "title": "NASA T-MATS JT9D example",
+      "url": "https://github.com/nasa/T-MATS/tree/ad6e4d5d0d76c229db4eb72ca40ef58d5ddc4014/Trunk/TMATS_Examples/Example_JT9D",
+      "reason": "Already supplies the model map shapes and speed priors; comparison would be circular."
+    },
+    {
+      "title": "NASA CR-165572 flight-loads/ground-test addendum",
+      "url": "https://ntrs.nasa.gov/api/citations/19820019433/downloads/19820019433.pdf",
+      "reason": "Clearance/case-metal measurements and relative performance changes were identified; no matched gas total-temperature/pressure snapshot for the present model was established here."
+    }
+  ],
+  "exhaustLimits": [
+    {
+      "id": "d-egt",
+      "variant": "JT9D-7R4D",
+      "maximumC": 625,
+      "source": "faa-e3ne-r16"
+    },
+    {
+      "id": "d1-egt",
+      "variant": "JT9D-7R4D1",
+      "maximumC": 625,
+      "source": "faa-e3ne-r16"
+    }
+  ]
+}

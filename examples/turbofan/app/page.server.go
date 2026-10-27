@@ -16,6 +16,8 @@ var sweepOnce sync.Once
 var sweepPoints []cycle.SweepPoint
 var sweepCharts []cycle.SweepChart
 var sweepError string
+var publicValidationOnce sync.Once
+var publicValidation cycle.PublicValidationReport
 
 func init() {
 	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
@@ -88,6 +90,7 @@ func pageData(query url.Values) map[string]any {
 		diagnostics.SampleSensitivity(sweepPoints, result.FuelFlowKGS)
 	}
 	options.Visual = &visual
+	publicValidationOnce.Do(func() { publicValidation = mapped.ValidatePublicData() })
 	charts := append([]cycle.SweepChart(nil), sweepCharts...)
 	current := cycle.SweepPoint{Fuel: 2.055, Thrust: mapped.Rated.NetThrustN, N1: mapped.ReferenceN1RPM, N2: mapped.ReferenceN2RPM, OPR: 23.4, TSFC: mapped.Rated.TSFC}
 	if mode == "mapped" {
@@ -112,6 +115,7 @@ func pageData(query url.Values) map[string]any {
 		"mapPlots": mapped.Plots(), "mapChecks": mapped.Checks(),
 		"diagnosticTables": cycle.DiagnosticTables(diagnostics),
 		"sweepCharts":      charts, "sweepError": sweepError, "engineering": diagnostics,
+		"publicLimits": cycle.PublicLimitViews(diagnostics), "publicGroups": cycle.PublicComparisonGroups(publicValidation), "publicSources": publicValidation.Sources,
 		"engineeringAxes": map[string]string{"smin": fmt.Sprintf("%.2f", diagnostics.Numbers["plot/s-min.J_kgK"]/1000), "smax": fmt.Sprintf("%.2f", diagnostics.Numbers["plot/s-max.J_kgK"]/1000), "pmax": fmt.Sprintf("%.0f", diagnostics.Numbers["plot/p-max.1"])},
 	}
 }

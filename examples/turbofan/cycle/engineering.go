@@ -187,6 +187,9 @@ func Analyze(r Result, mapped *MappedResult, model *MappedModel, solveErr error)
 			}
 		}
 	}
+	if mapped != nil {
+		d.recordPublicLimits(*mapped)
+	}
 	engineeringPaths(&d, stations, r.Ambient.PressurePa)
 	return d
 }

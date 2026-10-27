@@ -48,6 +48,32 @@ current point. An 81-point model operating line shows thrust, spool-speed fracti
 OPR and TSFC, with sampled fuel sensitivities. Export the point's unrounded engineering
 quantities or the complete model sweep to CSV. Tables can be expanded or collapsed.
 
+The **Public RPM & station checks** section compares the frozen model with
+FAA E3NE revision 16 speed limits, a university's -7R4D exhibit specifications,
+and NASA's earlier -7A combustor-inlet references. It currently exposes a speed
+scaling discrepancy: rated N1 is 3943.96 rpm, above the standard -7R4D limit
+of 3770 rpm and -7R4D1 limit of 3810 rpm. Staying below an RPM maximum does
+not establish measured-speed accuracy. The live limit rows follow fuel changes.
+
+At the exhibit's stated 33.3 C and 213.5 kN uninstalled thrust, a separate
+matched point overpredicts combustor-outlet temperature by 3.60% and turbine-inlet
+temperature by 6.84%, and exceeds reported speed bounds. No parameters are
+refitted. This is a qualified specification comparison with an assumed station
+mapping, not instrumented validation. Nominal idle RPM has no complete
+fuel/ambient/bleed condition; NASA -7A references are marked as a variant
+mismatch. Source PDF hashes, locations, unit conversions and gaps are retained in
+[the source record](cycle/data/public_validation.json) and
+[the generated audit](calibration/public-validation.json).
+
+```sh
+GOWORK=off go run ./examples/turbofan/calibration --validate-public
+```
+
+This emits the comparisons as JSON and currently exits 1 because the public
+speed checks fail. It cannot be combined with `--fit`. No matched measured
+RPM/station points with complete operating conditions were identified; the
+new audit does not make the model validated for these quantities.
+
 NASA map shapes are scaled to the ICAO JT9D-7R4D / -7R4D1 entry, UID 1PW026.
 They are not proprietary manufacturer maps. Temperature-dependent frozen-air
 properties, cooling and other priors remain approximations. Calibration is
@@ -144,10 +170,11 @@ GOWORK=off go run ./cmd/gosx perf --coverage --budget examples/turbofan/perf-bud
   --budget-profile turbofan-engineering 'http://127.0.0.1:8080/?model=jt9d&backend=webgl'
 ```
 
-The engineering build measured 1624.76 KiB transferred with a fresh client and
-warm server, about 15.13 KiB above the previous 1609.63 KiB cycle-only capture.
-Its local allowance is 1640 KiB. The shared documentation profile remains
-unchanged; its 1615 KiB network allowance is exceeded by 9.76 KiB. Browser load
+The public-reference build measured 1632.40 KiB transferred with a fresh client
+and warm server: 7.63 KiB above the 1624.76 KiB engineering-inspector capture,
+and 22.77 KiB above the earlier 1609.63 KiB cycle-only capture. Its existing
+local allowance remains 1640 KiB. The shared documentation profile remains
+unchanged; its 1615 KiB network allowance is exceeded by 17.40 KiB. Browser load
 and blocking time are checked separately, and software rendering does not
 establish hardware GPU performance. See [the engineering inspector](engineering-preview.png).
 

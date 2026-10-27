@@ -24,7 +24,7 @@ const browser = await chromium.launch({
 });
 const report = { browser: browser.version(), environment: 'Linux headless Chromium / software rendering', sourceSHA256: {}, checks: [], errors: [] };
 report.frameworkRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/low_speed.go', 'cycle/visual.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', 'browser/render.go', 'browser/engineering.go', 'cycle/engineering.go', 'cycle/engineering_view.go', 'cycle/engineering_test.go', 'cycle/sweep.go', '../../scene/geom/lathe.go']) {
+for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/low_speed.go', 'cycle/visual.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', 'browser/render.go', 'browser/engineering.go', 'cycle/engineering.go', 'cycle/engineering_view.go', 'cycle/engineering_test.go', 'cycle/sweep.go', 'cycle/public_validation.go', 'cycle/public_validation_view.go', 'cycle/public_validation_test.go', 'cycle/data/public_validation.json', 'calibration/public-validation.json', '../../scene/geom/lathe.go']) {
   report.sourceSHA256[file] = createHash('sha256').update(await readFile(path.join(root, file))).digest('hex');
 }
 const manifestBytes = await readFile(path.join(root, 'dist/build.json'));
@@ -354,6 +354,41 @@ try {
   assert.deepEqual(requests,[]);
   report.checks.push({name:'live engineering inspector and raw exports',observed:{point:engineeringPoint.matched,tables:8,tsPath,torqueNm:torqueCSV,sweepRows:81,requests:0,captures:['engineering-preview.png','engineering-components-preview.png']}});
 
+  const publicReport = JSON.parse(await readFile(path.join(root,'calibration/public-validation.json'),'utf8'));
+  assert.equal(publicReport.MatchedMeasuredPoints,0);
+  assert.equal(await page.locator('[data-public-limit]').count(),4);
+  assert.equal(await page.locator('[data-public-comparison]').count(),18);
+  await page.locator('[data-render-lto=takeoff]').click();
+  await rendered();
+  const publicTakeoff = await cycleState();
+  assert.match(await eng('public/status').textContent(),/2 reported speed bounds exceeded/);
+  assert.match(await eng('public/d-n1/status').textContent(),/EXCEEDS/);
+  assert.match(await eng('public/d1-n1/status').textContent(),/EXCEEDS/);
+  assert(Math.abs(Number(await eng('public/d-n1/speed.rpm').textContent())-publicTakeoff.matched.n1RPM)<.051);
+  assert(Math.abs(Number(await eng('public/n1-gauge.1').textContent())-publicTakeoff.matched.n1RPM/3600*100)<.0051);
+  for (const id of ['hot-combustor-outlet','hot-turbine-inlet']) {
+    const ref=publicReport.Comparisons.find(q=>q.ID===id);
+    const row=page.locator(`[data-public-comparison="${id}"]`);
+    assert.equal(await row.getAttribute('data-public-status'),ref.Status);
+    assert.equal(ref.Status,'speed-incompatible');
+    assert((await row.innerText()).includes(ref.Prediction.toFixed(2)+' K'));
+    assert((await row.innerText()).includes('33.3 C'));
+    assert((await row.innerText()).includes(ref.Command.fuelFlowKGS.toFixed(5)+' kg/s'));
+  }
+  const nominalIdle=page.locator('[data-public-comparison=nominal-ground-idle-n2]');
+  assert.equal(await nominalIdle.getAttribute('data-public-status'),'conditions-missing');
+  assert.equal(await nominalIdle.locator('td').nth(2).textContent(),'—');
+  assert.equal(await page.locator('[data-public-status=variant-mismatch]').count(),12);
+  await page.locator('.public-validation').screenshot({path:path.join(root,'public-validation-preview.png')});
+  await page.locator('[data-render-lto=idle]').click();
+  await rendered();
+  const publicIdle=await cycleState();
+  assert.match(await eng('public/status').textContent(),/Within reported speed bounds/);
+  assert(Math.abs(Number(await eng('public/d-n2/speed.rpm').textContent())-publicIdle.matched.n2RPM)<.051);
+  assert(await canvas.evaluate(element=>element===document.querySelector('canvas')));
+  assert.deepEqual(requests,[]);
+  report.checks.push({name:'public speed bounds and qualified station comparisons',observed:{takeoff:{n1RPM:publicTakeoff.matched.n1RPM,failedBounds:['d-n1','d1-n1']},idle:{n2RPM:publicIdle.matched.n2RPM,withinBounds:true},referenceComparisons:18,matchedMeasuredPoints:0,hotComparisons:publicReport.Comparisons.filter(q=>q.ID.startsWith('hot-')),referenceDataSHA256:publicReport.ReferenceDataSHA256,requests:0,capture:'public-validation-preview.png'}});
+
   await click('Cycle design');
   assert.deepEqual((await cycleState()).result, baselineCycle.result);
   await click('Pause rotation');
@@ -464,6 +499,11 @@ try {
   assert(await mobileStationTable.evaluate(e=>e.scrollLeft>0));
   assert(Math.abs(Number(await phone.locator('[data-eng-key="fuel/heat-to-gas.W"]').textContent())-.2054*43*.99) < .0006);
   await phone.locator('#engineering-overview').screenshot({path:path.join(root,'engineering-mobile-preview.png')});
+  const phonePublic=phone.getByRole('region',{name:'Live public RPM limit checks',exact:true});
+  await phonePublic.evaluate(e=>{e.scrollLeft=e.scrollWidth;});
+  assert(await phonePublic.evaluate(e=>e.scrollLeft>0));
+  assert.match(await phone.locator('[data-eng-key=\"public/status\"]').first().textContent(),/Within reported speed bounds/);
+  await phone.locator('.public-validation').screenshot({path:path.join(root,'public-validation-mobile-preview.png')});
   report.checks.push({name:'mobile engineering tables and plots',observed:{width:390,allStationColumnsReachable:true,liveIdleHeatMW:.2054*43*.99,capture:'engineering-mobile-preview.png'}});
 
   report.checks.push({name:'mobile idle render with reduced motion',observed:{point:mobileIdle.matched,clock:reducedClock,pixelsStableAcross700ms:true,viewerFuelSynchronized:true}});
@@ -482,6 +522,8 @@ try {
   assert.equal(await staticPage.locator('[data-cycle-station]').count(), 8);
   await staticPage.goto(`${base}/?model=jt9d`, { waitUntil: 'load' });
   assert.equal(await staticPage.locator('[data-cycle-output=net-thrust]').textContent(), '213.5');
+  assert.match(await staticPage.locator('[data-eng-key=\"public/d-n1/status\"]').textContent(),/EXCEEDS/);
+  assert.equal(await staticPage.locator('[data-public-comparison]').count(),18);
   report.checks.push({ name: 'server calculated fallback', observed: 'initial thrust and eight stations render without JavaScript; interactive controls remain disabled' });
   await noScript.close();
 
