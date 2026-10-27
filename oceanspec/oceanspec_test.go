@@ -49,6 +49,30 @@ func TestBinsStayInBandAndOffNyquist(t *testing.T) {
 	}
 }
 
+// A 2 pi metre tile has dk = 1, so the bins on an axis sit at an integer k with
+// no rounding. The band [KMin, KMax) keeps a bin that is exactly on KMin and
+// drops one that is exactly on KMax.
+func TestBandIncludesItsLowerEdgeAndExcludesItsUpperEdge(t *testing.T) {
+	p, _ := defaults()
+	bins := Bins(p, Cascade{Size: twoPi, KMin: 1, KMax: 2}, 0)
+	var onLower, between int
+	for _, w := range bins {
+		switch {
+		case w.K == 1:
+			onLower++
+		case w.K > 1 && w.K < 2:
+			between++
+		default:
+			t.Errorf("bin (%d,%d) k=%g is outside the band [1, 2)", w.IX, w.IZ, w.K)
+		}
+	}
+	// (+-1, 0) and (0, +-1) sit on KMin; (+-1, +-1) are between; (+-2, 0) and
+	// (0, +-2) sit on KMax and are out.
+	if onLower != 4 || between != 4 || len(bins) != 8 {
+		t.Fatalf("%d bins on KMin and %d between, %d in all; want 4, 4 and 8", onLower, between, len(bins))
+	}
+}
+
 func TestStrongestIsPrefixStable(t *testing.T) {
 	p, cs := defaults()
 	a := Strongest(p, cs, 24)
