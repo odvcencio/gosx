@@ -272,7 +272,7 @@ func TestSnapshotWritesVersion2AndStateStaysLean(t *testing.T) {
 	// base is the version 1 shape of State, and the start of every snapshot.
 	const base = `"frame":1,"timeSeconds":0.01,"timeNanos":10000000,"timeScale":0.5,"paused":false`
 	const restoreOnly = `"fixedStepNanos":10000000,"accumulatorNanos":6500000,"scaleFrac":0.5,` +
-		`"cadence":[{"system":"every","kind":"every","param":4,"depth":0,"gatheredNanos":10000000}]`
+		`"cadence":[{"system":"every","phase":"fixed-update","kind":"every","param":4,"depth":0,"gatheredNanos":10000000}]`
 	const world = `"world":{"version":1,"next":0}`
 
 	includeWorld := NewSaveCodec()
@@ -313,9 +313,9 @@ func TestSnapshotWritesVersion2AndStateStaysLean(t *testing.T) {
 }
 
 // A snapshot written before version 2 existed (taken from the code that wrote
-// it: three frames at scale 0.5) still loads. It carries no remainder, so the
-// clock restarts its remainder from zero as it always did, and it leaves the
-// wrappers' gathered time alone.
+// it: three frames at scale 0.5) still loads. It carries no remainder and no
+// wrapper times, so the clock remainder and every wrapper restart from zero,
+// whatever the runtime held before.
 func TestRestoreReadsVersion1Snapshot(t *testing.T) {
 	const version1 = `{"frame":3,"timeSeconds":0.04,"timeNanos":40000000,"timeScale":0.5,"paused":false}`
 	var log cadenceLog
@@ -337,8 +337,64 @@ func TestRestoreReadsVersion1Snapshot(t *testing.T) {
 	if rt.clock.accumulator != 0 || rt.clock.scaleFrac != 0 {
 		t.Fatalf("clock remainder %v %v, want zero", rt.clock.accumulator, rt.clock.scaleFrac)
 	}
-	if got := rt.cadenceStates(); !slices.Equal(got, gathered) {
-		t.Fatalf("version 1 restore changed the wrappers: %+v, was %+v", got, gathered)
+	for _, s := range rt.cadenceStates() {
+		if s.GatheredNanos != 0 {
+			t.Fatalf("a version 1 restore left %q with %v gathered, want zero", s.System, time.Duration(s.GatheredNanos))
+		}
+	}
+}
+
+// A restore from a snapshot that has no wrapper times (version 1, or a State
+// payload) must give a runtime that depends on the snapshot alone. Otherwise a
+// replay from ReplayLog.Initial matches the live run only in a fresh runtime.
+func TestRestoreWithoutWrapperTimesIgnoresHistory(t *testing.T) {
+	const version1 = `{"frame":3,"timeSeconds":0.04,"timeNanos":40000000,"timeScale":1,"paused":false}`
+	state := midRun(t).State()
+	if strings.Contains(string(state), `"cadence"`) {
+		t.Fatalf("State carries wrapper times: %s", state)
+	}
+	for _, c := range []struct{ name, snapshot string }{
+		{"version 1 snapshot", version1},
+		{"State payload", string(state)},
+		// Nothing checks the wrapper times of a version 1 snapshot, so Restore must
+		// not read them.
+		{"version 1 snapshot with wrapper times", `{"frame":3,"timeSeconds":0.04,"timeNanos":40000000,"timeScale":1,"paused":false,` +
+			`"cadence":[{"system":"every","phase":"fixed-update","kind":"every","param":4,"depth":0,"gatheredNanos":-9}]}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// runs ticks a new runtime `before` times, restores the snapshot, and
+			// returns what the next 20 frames did.
+			runs := func(before int) (every, interval []firing, frames []Frame) {
+				var log cadenceLog
+				rt := newCadenceRuntime(&log, 10*time.Millisecond, nil)
+				for i := 0; i < before; i++ {
+					rt.Tick(nil)
+				}
+				if err := rt.RestoreSnapshot([]byte(c.snapshot)); err != nil {
+					t.Fatal(err)
+				}
+				for _, s := range rt.cadenceStates() {
+					if s.GatheredNanos != 0 {
+						t.Fatalf("the restore left %q with %v gathered, want zero", s.System, time.Duration(s.GatheredNanos))
+					}
+				}
+				log = cadenceLog{}
+				frames = play(t, rt, 20, 10*time.Millisecond)
+				return log.every, log.interval, frames
+			}
+			wantEvery, wantInterval, wantFrames := runs(0)
+			if len(wantEvery) == 0 || len(wantInterval) == 0 {
+				t.Fatalf("a fresh runtime must run both cadences: %v %v", wantEvery, wantInterval)
+			}
+			for _, before := range []int{1, 7, 13} {
+				every, interval, frames := runs(before)
+				if !slices.Equal(every, wantEvery) || !slices.Equal(interval, wantInterval) {
+					t.Errorf("after %d ticks of history the restore ran differently\n fresh   every %v interval %v\n history every %v interval %v",
+						before, wantEvery, wantInterval, every, interval)
+				}
+				requireSameFrames(t, wantFrames, frames)
+			}
+		})
 	}
 }
 
@@ -401,6 +457,12 @@ func TestRestoreSnapshotReportsBadSnapshots(t *testing.T) {
 		{"scale fraction of one", v2 + `"scaleFrac":1}`, "scale fraction"},
 		{"negative scale fraction", v2 + `"scaleFrac":-0.25}`, "scale fraction"},
 		{"negative gathered time", v2 + `"cadence":[{"system":"every","gatheredNanos":-5}]}`, "negative gathered time"},
+		// An interval wrapper runs as soon as it has gathered its interval, so it
+		// never holds that much between runs.
+		{"interval wrapper at its interval", v2 + `"cadence":[{"system":"i","kind":"interval","param":9000000000000,"depth":0,"gatheredNanos":9000000000000}]}`, "runs before that much gathers"},
+		{"interval wrapper far above its interval", v2 + `"cadence":[{"system":"i","kind":"interval","param":9000000000000,"depth":0,"gatheredNanos":3153600000000000000}]}`, "runs before that much gathers"},
+		{"interval of zero with gathered time", v2 + `"cadence":[{"system":"i","kind":"interval","param":0,"depth":0,"gatheredNanos":1}]}`, "runs before that much gathers"},
+		{"negative interval with gathered time", v2 + `"cadence":[{"system":"i","kind":"interval","param":-5,"depth":0,"gatheredNanos":1}]}`, "runs before that much gathers"},
 		// A clock that passed the end of a Duration on the code before the clock
 		// stopped there wrote a negative time. That code loaded it with a step count
 		// wrapped to about 1.8e19, which shifts every Every schedule and wraps to zero
@@ -437,12 +499,16 @@ func TestRestoreSnapshotReportsBadSnapshots(t *testing.T) {
 	nilRuntime.Restore(rt.Snapshot()) // must not panic
 }
 
-// Restore must accept all that the runtime writes, including the edge: a wrapper
-// that has gathered the largest Duration.
+// Restore must accept all that the runtime writes, including the edges: a
+// wrapper that has gathered the largest Duration, and an interval wrapper one
+// nanosecond short of its interval.
 func TestRestoreAcceptsGatheredTimeUpToTheEdge(t *testing.T) {
 	const v2 = `{"version":2,"fixedStepNanos":10000000,"frame":1,"cadence":`
 	for _, c := range []struct{ name, cadence string }{
 		{"every wrapper at the largest Duration", `[{"system":"e","kind":"every","param":4,"depth":0,"gatheredNanos":9223372036854775807}]`},
+		{"interval wrapper just under its interval", `[{"system":"i","kind":"interval","param":25000000,"depth":0,"gatheredNanos":24999999}]`},
+		{"interval wrapper of the largest Duration", `[{"system":"i","kind":"interval","param":9223372036854775807,"depth":0,"gatheredNanos":9223372036854775806}]`},
+		{"interval of zero with nothing gathered", `[{"system":"i","kind":"interval","param":0,"depth":0,"gatheredNanos":0}]`},
 		{"unknown kind", `[{"system":"x","kind":"future","param":0,"depth":0,"gatheredNanos":5}]`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -531,8 +597,8 @@ func TestSaveCodecRestoreSnapshotRefusesWithoutChanges(t *testing.T) {
 }
 
 // Restore gives each wrapper the time gathered by the wrapper that agrees with
-// it on system name, kind, parameter and nesting, so a system added, removed,
-// moved or changed since the snapshot does not shift the rest.
+// it on system name, phase, kind, parameter and nesting, so a system added,
+// removed, moved or changed since the snapshot does not shift the rest.
 func TestRestoreMatchesCadenceByIdentity(t *testing.T) {
 	const step = time.Hour
 	noop := func(*Context) error { return nil }
@@ -540,12 +606,16 @@ func TestRestoreMatchesCadenceByIdentity(t *testing.T) {
 		return EveryInterval(interval, Func(name, PhaseFixedUpdate, noop))
 	}
 	hours := func(n int64) int64 { return int64(time.Duration(n) * time.Hour) }
-	// interval and every describe a wrapper that has gathered n hours.
+	// interval and every describe a fixed-update wrapper that has gathered n hours.
 	interval := func(name string, d time.Duration, depth int, n int64) CadenceState {
-		return CadenceState{System: name, Kind: "interval", Param: int64(d), Depth: depth, GatheredNanos: hours(n)}
+		return CadenceState{System: name, Phase: PhaseFixedUpdate, Kind: "interval", Param: int64(d), Depth: depth, GatheredNanos: hours(n)}
 	}
 	every := func(name string, ticks int64, depth int, n int64) CadenceState {
-		return CadenceState{System: name, Kind: "every", Param: ticks, Depth: depth, GatheredNanos: hours(n)}
+		return CadenceState{System: name, Phase: PhaseFixedUpdate, Kind: "every", Param: ticks, Depth: depth, GatheredNanos: hours(n)}
+	}
+	inPhase := func(s CadenceState, phase Phase) CadenceState {
+		s.Phase = phase
+		return s
 	}
 	run := func(steps int, systems ...System) []byte {
 		rt := New(Config{FixedStep: step, Systems: systems})
@@ -624,6 +694,24 @@ func TestRestoreMatchesCadenceByIdentity(t *testing.T) {
 			EveryInterval(2, Func("k", PhaseFixedUpdate, noop)))
 	})
 
+	t.Run("moved phase", func(t *testing.T) {
+		// Every(4) counts frames in the update phase and fixed steps in the
+		// fixed-update phase, and an interval gathers the delta of its phase. A
+		// system that keeps its name and moves from one to the other gathered time
+		// in other units, so it starts from zero. After 11 ticks the update-phase
+		// wrapper holds the 3 h since frame 8.
+		snapshot := run(11, Every(4, Func("p", PhaseUpdate, noop)))
+		check(t, "same phase", snapshot,
+			[]CadenceState{inPhase(every("p", 4, 0, 3), PhaseUpdate)},
+			Every(4, Func("p", PhaseUpdate, noop)))
+		check(t, "to fixed update", snapshot,
+			[]CadenceState{every("p", 4, 0, 0)},
+			Every(4, Func("p", PhaseFixedUpdate, noop)))
+		check(t, "to late update", snapshot,
+			[]CadenceState{inPhase(every("p", 4, 0, 0), PhaseLateUpdate)},
+			Every(4, Func("p", PhaseLateUpdate, noop)))
+	})
+
 	t.Run("same identity", func(t *testing.T) {
 		// The two inner wrappers agree on every field, but Every(2) runs its inner
 		// one on even steps and Every(3) on multiples of 3, so after 11 steps they
@@ -638,9 +726,10 @@ func TestRestoreMatchesCadenceByIdentity(t *testing.T) {
 	})
 }
 
-// Restore matches a wrapper by its system name, kind, parameter and nesting. By
-// name alone, a build that reorders or unwraps same-named wrappers would hand
-// one wrapper another's time, and the system would see a wrong ctx.Delta.
+// Restore matches a wrapper by its system name, phase, kind, parameter and
+// nesting. By name alone, a build that reorders or unwraps same-named wrappers
+// would hand one wrapper another's time, and the system would see a wrong
+// ctx.Delta.
 func TestRestoreKeepsSameNamedWrappersApart(t *testing.T) {
 	const step = time.Hour
 
@@ -742,6 +831,42 @@ func TestRestoreSnapshotUsesCodecs(t *testing.T) {
 	both.Restore(rtBoth, []byte("saved"))
 	if plainCalls != 0 || checkedCalls != 3 {
 		t.Fatalf("both set: RestoreFunc ran %d times and RestoreSnapshotFunc %d, want 0 and 3", plainCalls, checkedCalls)
+	}
+}
+
+// Code written before RestoreSnapshotFunc existed may take the SnapshotCodecFuncs
+// that SaveCodec.SnapshotCodec returns and copy SnapshotFunc, StateFunc and
+// RestoreFunc into a codec of its own. That restore must still load the world.
+func TestSaveCodecSnapshotCodecKeepsRestoreFunc(t *testing.T) {
+	funcs, ok := newTestCodec(t).SnapshotCodec().(SnapshotCodecFuncs)
+	if !ok {
+		t.Fatal("SaveCodec.SnapshotCodec no longer returns SnapshotCodecFuncs")
+	}
+	if funcs.RestoreFunc == nil {
+		t.Fatal("SaveCodec.SnapshotCodec leaves RestoreFunc nil, so a codec built from its functions restores nothing")
+	}
+	old := SnapshotCodecFuncs{SnapshotFunc: funcs.SnapshotFunc, StateFunc: funcs.StateFunc, RestoreFunc: funcs.RestoreFunc}
+
+	w, _, tower := buildWorld()
+	saved := New(Config{World: w, FixedStep: time.Hour, Snapshot: old})
+	saved.Tick(nil)
+	snapshot := saved.Snapshot()
+
+	other, _, otherTower := buildWorld()
+	SetComponent(other, otherTower, health{HP: 1})
+	rt := New(Config{World: other, FixedStep: time.Hour, Snapshot: old})
+	rt.Restore(snapshot)
+	if got, _ := GetComponent[health](rt.World(), otherTower); got.HP != 100 || otherTower != tower {
+		t.Fatalf("the copied RestoreFunc did not restore the world: tower HP %d", got.HP)
+	}
+	if rt.Frame().Index != 1 {
+		t.Fatalf("the copied RestoreFunc did not restore the clock: frame %d", rt.Frame().Index)
+	}
+	// A refused snapshot still changes nothing through the old form.
+	before := rt.Snapshot()
+	rt.Restore([]byte(`{"version":3}`))
+	if after := rt.Snapshot(); !bytes.Equal(after, before) {
+		t.Fatalf("a refused snapshot changed the runtime\n before %s\n after  %s", before, after)
 	}
 }
 

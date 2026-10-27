@@ -165,13 +165,13 @@ cases.
 
 `Snapshot` saves the game time each `Every` and `EveryInterval` wrapper has
 gathered, and `Restore` gives it back to the wrapper that matches on system name,
-kind (`Every` or `EveryInterval`), `n` or interval, and nesting (an `Every`
-around an `EveryInterval`). A restored run then fires on the same ticks with the
-same `ctx.Delta` as a run that never stopped. A wrapper with no match, such as a
-system added or an interval changed since the snapshot, starts from zero.
-Wrappers that match on all four take their saved time in order, so give them
-distinct names if their order can change. A wrapper hidden inside your own
-`System` type is not found, so its time is not saved.
+phase, kind (`Every` or `EveryInterval`), `n` or interval, and nesting (an
+`Every` around an `EveryInterval`). A restored run then fires on the same ticks
+with the same `ctx.Delta` as a run that never stopped. A wrapper with no match,
+such as a system added, moved to another phase or given another interval since
+the snapshot, starts from zero. Wrappers that match on all five take their saved
+time in order, so give them distinct names if their order can change. A wrapper
+hidden inside your own `System` type is not found, so its time is not saved.
 
 ## Saving the world
 
@@ -212,9 +212,11 @@ It refuses an empty or malformed snapshot, a `version` newer than
 changes nothing when it does. Snapshots now carry `"version": 2`, which adds the
 fixed step, the clock remainder and the cadence times above. Version 1 snapshots,
 written before the field existed, still load: they start the clock remainder
-from zero and leave `Every` and `EveryInterval` wrappers as they are. `State`,
-which `sim.Runner` broadcasts every tick, keeps the version 1 shape and stays
-small (it adds the world only with `IncludeWorldInState`).
+and every `Every` and `EveryInterval` wrapper from zero, so the restored runtime
+depends on the snapshot alone and not on what it did before. `State`, which
+`sim.Runner` broadcasts every tick, keeps the version 1 shape and stays small (it
+adds the world only with `IncludeWorldInState`), so restoring a `State` payload
+also starts the clock remainder and the wrappers from zero.
 
 While a `sim.Runner` drives the runtime, load a save through the runner:
 

@@ -333,24 +333,29 @@ func (c *SaveCodec) ImportWorld(w *World, save WorldSave) error {
 // them. Runtime.RestoreSnapshot returns the errors of a restore, and a failed
 // restore changes neither the world nor the clock.
 func (c *SaveCodec) SnapshotCodec() SnapshotCodec {
+	restore := func(r *Runtime, data []byte) error {
+		// Check the clock before the import: ImportWorld replaces the world, and
+		// nothing can undo that if the clock then fails.
+		state, err := decodeRuntimeState(data)
+		if err != nil {
+			return err
+		}
+		if state.World != nil {
+			if err := c.ImportWorld(r.world, *state.World); err != nil {
+				return err
+			}
+		}
+		r.applyRuntimeState(state)
+		return nil
+	}
 	return SnapshotCodecFuncs{
 		SnapshotFunc: func(r *Runtime) []byte { return c.encode(r, true, true) },
 		StateFunc:    func(r *Runtime) []byte { return c.encode(r, c.IncludeWorldInState, false) },
-		RestoreSnapshotFunc: func(r *Runtime, data []byte) error {
-			// Check the clock before the import: ImportWorld replaces the world, and
-			// nothing can undo that if the clock then fails.
-			state, err := r.decodeRuntimeState(data)
-			if err != nil {
-				return err
-			}
-			if state.World != nil {
-				if err := c.ImportWorld(r.world, *state.World); err != nil {
-					return err
-				}
-			}
-			r.applyRuntimeState(state)
-			return nil
-		},
+		// RestoreFunc is for code that predates RestoreSnapshotFunc and builds a
+		// codec of its own from these functions. Where both are set, every restore
+		// runs RestoreSnapshotFunc.
+		RestoreFunc:         func(r *Runtime, data []byte) { _ = restore(r, data) },
+		RestoreSnapshotFunc: restore,
 	}
 }
 

@@ -96,8 +96,9 @@ change state, or replays diverge.
   still read older `timeSeconds` snapshots. Since `"version": 2` they also store
   the clock remainder and the `game.Every` and `game.EveryInterval`
   accumulators, so a replay from `ReplayLog.Initial` runs cadence systems on the
-  same ticks. Load a save with `runner.RestoreSnapshot` to learn if the runtime
-  refused it.
+  same ticks. A version 1 snapshot has none of these, so a restore from one
+  starts them from zero and a replay from it matches in any runtime. Load a save
+  with `runner.RestoreSnapshot` to learn if the runtime refused it.
 
 ## Runner options
 

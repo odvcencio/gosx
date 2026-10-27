@@ -10,9 +10,11 @@
   it was. Snapshots carry `"version": 2` (`game.RuntimeStateVersion`) and the
   fixed step that wrote them; a runtime with another fixed step still loads them
   and starts the clock remainder from zero. A wrapper takes the saved time of the
-  wrapper that matches its system name, kind, parameter and nesting. Version 1
-  snapshots still load and behave as before. `State`, which `sim.Runner`
-  broadcasts every tick, keeps its size.
+  wrapper that matches its system name, phase, kind, parameter and nesting.
+  Version 1 snapshots still load, but they carry no wrapper times, so a restore
+  from one now starts every wrapper from zero. It used to leave the wrappers as
+  they were, which made the result depend on what the runtime had done before.
+  `State`, which `sim.Runner` broadcasts every tick, keeps its size.
 
 - Stop the `game` clock at the end of a `time.Duration` instead of wrapping.
   Game time ends at about 292 years, which is about 4.9 hours of play at a time

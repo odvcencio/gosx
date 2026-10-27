@@ -691,8 +691,10 @@ type RuntimeState struct {
 	// writes them. Restore sets all of them exactly in a runtime with the same
 	// fixed step. A runtime with another step starts the clock remainder from
 	// zero, because it was gathered in steps of another size, and still sets
-	// Cadence. From an older snapshot or from State, Restore starts the clock
-	// remainder from zero and leaves the wrappers alone.
+	// Cadence. From an older snapshot or from State, which carry none of these,
+	// Restore starts the clock remainder and every wrapper from zero, so the
+	// restored runtime depends on the snapshot alone and not on what it did
+	// before.
 	FixedStepNanos   int64          `json:"fixedStepNanos,omitempty"`
 	AccumulatorNanos int64          `json:"accumulatorNanos,omitempty"`
 	ScaleFrac        float64        `json:"scaleFrac,omitempty"`
@@ -749,7 +751,7 @@ func (r *Runtime) RestoreSnapshot(snapshot []byte) error {
 		r.snapshot.Restore(r, snapshot)
 		return nil
 	}
-	state, err := r.decodeRuntimeState(snapshot)
+	state, err := decodeRuntimeState(snapshot)
 	if err != nil {
 		return err
 	}
@@ -761,7 +763,7 @@ func (r *Runtime) RestoreSnapshot(snapshot []byte) error {
 // so a restore applies all of it or none. It accepts every state that the clock
 // and the Every and EveryInterval wrappers of a runtime can reach, so a runtime
 // can always load the snapshot it wrote.
-func (r *Runtime) decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
+func decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
 	var state RuntimeState
 	if err := json.Unmarshal(snapshot, &state); err != nil {
 		return state, fmt.Errorf("game: decode snapshot: %w", err)
@@ -790,6 +792,13 @@ func (r *Runtime) decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
 	for _, c := range state.Cadence {
 		if c.GatheredNanos < 0 {
 			return state, fmt.Errorf("game: snapshot cadence %q has negative gathered time %v", c.System, time.Duration(c.GatheredNanos))
+		}
+		// An interval wrapper runs as soon as it has gathered its interval (every
+		// tick if that is not positive), so between runs it holds less. A wrapper
+		// that gathered more would hand its system a Delta that no run produces.
+		if c.Kind == cadenceKindInterval && c.GatheredNanos >= max(c.Param, 1) {
+			return state, fmt.Errorf("game: snapshot cadence %q has gathered time %v, but an interval of %v runs before that much gathers",
+				c.System, time.Duration(c.GatheredNanos), time.Duration(c.Param))
 		}
 	}
 	return state, nil
@@ -834,9 +843,13 @@ func (r *Runtime) applyRuntimeState(state RuntimeState) {
 			r.clock.SetPaused(*state.Paused)
 		}
 	}
+	// A version 1 snapshot or a State payload has no wrapper times. Every wrapper
+	// then starts from zero, as the clock remainder does.
+	var gathered []CadenceState
 	if state.Version >= 2 {
-		r.restoreCadences(state.Cadence)
+		gathered = state.Cadence
 	}
+	r.restoreCadences(gathered)
 	if r.physics != nil && state.Physics != nil {
 		r.physics.ApplyState(*state.Physics)
 	}

@@ -78,15 +78,19 @@ const (
 // first, in system order.
 //
 // Restore gives a wrapper the entry that agrees with it on System (the name of
-// the system), Kind ("every" or "interval"), Param (n, or the interval in
+// the system), Phase, Kind ("every" or "interval"), Param (n, or the interval in
 // nanoseconds) and Depth (0 for a wrapper the runtime holds directly, 1 for the
-// wrapper inside it, and so on). A wrapper with no such entry, such as a system
-// added or changed since the snapshot, starts from zero, and an entry with no
-// wrapper is dropped. Wrappers that agree on all four take their entries in
-// order, so give them distinct names if their order can change. A wrapper hidden
-// inside another System type is not found, so its time is not saved.
+// wrapper inside it, and so on). The phase is part of the match because it sets
+// what a tick is and what Delta holds: a system that moves between a frame phase
+// and PhaseFixedUpdate has gathered time of another kind. A wrapper with no such
+// entry, such as a system added or changed since the snapshot, starts from zero,
+// and an entry with no wrapper is dropped. Wrappers that agree on all five take
+// their entries in order, so give them distinct names if their order can change.
+// A wrapper hidden inside another System type is not found, so its time is not
+// saved.
 type CadenceState struct {
 	System        string `json:"system"`
+	Phase         Phase  `json:"phase"`
 	Kind          string `json:"kind"`
 	Param         int64  `json:"param"`
 	Depth         int    `json:"depth"`
@@ -101,7 +105,7 @@ func (s CadenceState) key() CadenceState {
 
 // state describes c at nesting depth depth.
 func (c *cadence) state(depth int) CadenceState {
-	s := CadenceState{System: c.Name(), Depth: depth, GatheredNanos: int64(c.accum)}
+	s := CadenceState{System: c.Name(), Phase: c.Phase(), Depth: depth, GatheredNanos: int64(c.accum)}
 	if c.every > 0 {
 		s.Kind, s.Param = cadenceKindEvery, int64(c.every)
 	} else {
