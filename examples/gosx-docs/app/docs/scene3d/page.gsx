@@ -347,7 +347,7 @@ func Page() Node {
 				replaces it for computer-aided design (CAD), editor, and flat views. Set
 				<span class="inline-code">TransitionMS</span>
 				above zero on a camera you update later and the page eases to the new pose over that many milliseconds instead of cutting.
-				A newer camera replaces a move in progress, starting from the pose on screen, and the viewer's drag or wheel ends it. Viewers who ask for reduced motion get a cut,
+				A newer camera replaces a move in progress, starting from the pose on screen, and the viewer's drag, wheel, key, pinch or pan ends it. Viewers who ask for reduced motion get a cut,
 				and so does a change between perspective and orthographic. Set it to zero on a camera you send every frame.
 			</p>
 			{CodeBlock("go", data.sample007)}

@@ -2407,6 +2407,8 @@
 	    let lastPublishedCamera = null;
     // A camera with TransitionMS eases to its pose; any other camera cuts (sceneCameraMover, mount-controls.ts).
     const cameraMover = sceneCameraMover({ state: sceneState, current: currentMountedSceneCamera, cut: setMountedSceneCamera, reduced: () => motion.reducedMotion, alive: () => !disposed });
+    // ControlZoom handles its wheel, zoom keys, pinch and pan before the controls do and stops those events, so each announces itself with this event; any of them ends a move.
+    if (mount && typeof mount.addEventListener === "function") mount.addEventListener("gosx:scene3d:navigation", cameraMover.stop);
     let lastAppliedSelectionID = null;
     let applyingSignalSelection = false;
     let lastAppliedGizmoMode = null;
@@ -3718,6 +3720,7 @@
       if (mount && typeof mount.removeEventListener === "function") {
         mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
         mount.removeEventListener("gosx:scene3d:frame-cancel", cancelSceneFrameRequest);
+        mount.removeEventListener("gosx:scene3d:navigation", cameraMover.stop);
       }
       if (handle) handle.__gosxScene3DCommandReady = false;
       if (ownsMount) {

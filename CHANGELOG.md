@@ -57,23 +57,25 @@
 ### Behavior changes to note when upgrading
 
 - **A Scene3D camera that carries `TransitionMS` now eases in the page.** From
-  `Scene3D.SetCamera`, a camera command or a Props update, it used to cut to the
-  pose, because the page read the field and dropped it. Now the page eases over
-  that many milliseconds with the curve and fields of
+  `Scene3D.SetCamera`, a camera command, a Props update or a Presentation view,
+  it used to cut to the pose, because the page read the field and dropped it.
+  Now the page eases over that many milliseconds with the curve and fields of
   `scene.CameraTransition.Sample`, and the call returns at once. One field
   differs: Go mixes `PortraitFOV` linearly, and the page eases it only between
   two nonzero values and otherwise jumps to the new one. A newer camera replaces
   the move from the pose on screen. These end a move: a camera without
-  `TransitionMS`, a Live camera event, and the player's drag, wheel or key under
-  orbit or fly controls. Reduced motion and a change of camera kind cut.
-  `SetOrbit` changes the orbit and leaves a move running, and a camera for the
-  pose a move is heading to keeps the move and still applies its orbit. A move
-  that `CameraInputSignal` starts does not publish `CameraOutputSignal`; a move
-  that a call starts does publish its steps, so bind the two signals to
-  different names, or the echo has no `TransitionMS` and ends the move after
-  its first step. **If you send a camera every frame with `TransitionMS` above
-  zero, each frame now starts a new move and the view trails the camera you
-  send. Set `TransitionMS` to zero on streamed cameras before you upgrade.**
+  `TransitionMS`, a Live camera event, the player's drag, wheel or key under
+  orbit or fly controls, and, with `ControlZoom`, its wheel, `+` and `-` keys,
+  pinch and pan (each sends the `gosx:scene3d:navigation` event). Reduced motion
+  and a change of camera kind cut. `SetOrbit` changes the orbit and leaves a
+  move running, and a camera for the pose a move is heading to keeps the move
+  and still applies its orbit. A move that `CameraInputSignal` starts does not
+  publish `CameraOutputSignal`; a move that a call starts does publish its
+  steps, so bind the two signals to different names, or the echo has no
+  `TransitionMS` and ends the move after its first step. **If you send a camera
+  every frame with `TransitionMS` above zero, each frame now starts a new move
+  and the view trails the camera you send. Set `TransitionMS` to zero on
+  streamed cameras before you upgrade.**
 
 ## v0.57.24
 

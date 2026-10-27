@@ -6,9 +6,11 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const { flushAsyncWork, runScript, bootstrapFeatureScene3DCommandSource } = require("./runtime-test-harness.js");
-const { SET_CAMERA, mountScene, drag } = require("./runtime-camera-test-helpers.js");
+const { SET_CAMERA, mountScene, drag, browserEvents } = require("./runtime-camera-test-helpers.js");
 
 const START = { kind: "perspective", x: 0, y: 0.2, z: 6, rotationX: -0.1, rotationY: 0, rotationZ: 0, fov: 72, near: 0.05, far: 512, zoom: 1 };
 const END = { kind: "perspective", x: 30, y: 12, z: 40, rotationX: -0.4, rotationY: 0.8, rotationZ: 0.2, fov: 50, near: 0.5, far: 400, zoom: 1 };
@@ -26,10 +28,10 @@ const GO_SAMPLES = {
 
 // mountEased mounts a scene on a manual clock. at(ms) moves the clock to ms
 // after the mount and lets the page run its animation frames.
-async function mountEased(props, envOptions) {
+async function mountEased(props, envOptions, prepare) {
   const clock = { now: 5000 };
   const origin = clock.now;
-  const scene = await mountScene(Object.assign({ camera: START }, props), Object.assign({ performanceNow: () => clock.now }, envOptions));
+  const scene = await mountScene(Object.assign({ camera: START }, props), Object.assign({ performanceNow: () => clock.now }, envOptions), prepare);
   const at = async (ms) => { clock.now = origin + ms; await flushAsyncWork(); };
   const camera = () => scene.mounted.handle.getCamera();
   return Object.assign(scene, { clock, at, camera });
@@ -287,6 +289,108 @@ test("a player's arrow key takes the camera from a move in progress", async () =
   assert.ok(Math.hypot(camera().x - move.x, camera().y - move.y, camera().z - move.z) > 1, "the move no longer pulls the camera: " + JSON.stringify(camera()));
   await at(2000);
   assert.ok(Math.hypot(camera().x - END.x, camera().y - END.y, camera().z - END.z) > 1, "the camera does not finish the move: " + JSON.stringify(camera()));
+});
+
+// A Presentation view is applied with handle.setCamera, so a view whose camera
+// carries TransitionMS eases to it when the page asks for the view.
+const experienceSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-experience.js"), "utf8");
+
+test("a Presentation view whose camera carries TransitionMS eases to it", async () => {
+  const presentation = {
+    inputSignal: "$view", outputSignal: "$viewstate", initialView: "start",
+    views: [{ id: "start", label: "Start", camera: START }, { id: "far", label: "Far", camera: { ...END, transitionMS: 1000 } }],
+  };
+  const { env, at, camera } = await mountEased({ presentation }, {}, (page) => runScript(experienceSource, page.context, "bootstrap-feature-scene3d-experience.js"));
+  await at(0);
+  env.context.__gosx_notify_shared_signal("$view", JSON.stringify({ Revision: 1, View: "far" }));
+  await at(0);
+  assertPose(camera(), START, "the view request does not cut");
+  await at(500);
+  assertPose(camera(), GO_SAMPLES[500], "500 ms into the move");
+  await at(1000);
+  assertPose(camera(), END, "the move ends exactly on the view's pose", 1e-9);
+});
+
+// ControlZoom puts its own handlers ahead of the controls'. Its wheel and key
+// handlers run in the capture phase and stop the event, so the controls never see
+// it, and its pinch and pan do the same. Each announces itself with a
+// "gosx:scene3d:navigation" event, and the mount ends a move on that event. The
+// harness dispatches to a target's listeners in registration order and ignores
+// stopImmediatePropagation, so these tests ask for the order a browser uses.
+const zoomSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-zoom.js"), "utf8");
+const TARGET = { x: 0, y: 0.2, z: 0 };
+const between = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+async function mountZoomed(props) {
+  const scene = await mountEased(Object.assign({ controlZoom: true }, props), {}, (env) => runScript(zoomSource, env.context, "bootstrap-feature-scene3d-zoom.js"));
+  return Object.assign(scene, { restore: browserEvents(scene.env) });
+}
+
+const wheelStep = (canvas, deltaY) => canvas.dispatchEvent({ type: "wheel", deltaY, deltaMode: 0, clientX: 320, clientY: 180, preventDefault() {}, stopPropagation() {} });
+
+// After the player navigates, the move neither pulls the camera nor finishes
+// it: the camera stops where the player left it.
+async function assertMoveEnded({ at, camera }, label) {
+  await at(1000);
+  const left = camera();
+  await at(2500);
+  assert.ok(between(camera(), left) < 1e-6, `${label}: the camera is still moving: ${JSON.stringify(camera())}`);
+  assert.ok(between(camera(), END) > 5, `${label}: the camera finished the move: ${JSON.stringify(camera())}`);
+}
+
+test("a wheel step under orbit controls with ControlZoom takes the camera from a move, and zooms", async (t) => {
+  const scene = await mountZoomed({ controls: "orbit", controlTarget: TARGET });
+  t.after(scene.restore);
+  scene.mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await scene.at(450);
+  const radius = between(scene.camera(), TARGET);
+  wheelStep(scene.canvas, -400);
+  await assertMoveEnded(scene, "wheel");
+  assert.ok(between(scene.camera(), TARGET) < radius * 0.8, "the wheel zoomed in from the pose the move had reached: " + radius + " to " + between(scene.camera(), TARGET));
+});
+
+test("a zoom key under orbit controls with ControlZoom takes the camera from a move, and zooms", async (t) => {
+  const scene = await mountZoomed({ controls: "orbit", controlTarget: TARGET });
+  t.after(scene.restore);
+  scene.mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await scene.at(450);
+  const radius = between(scene.camera(), TARGET);
+  scene.canvas.focus();
+  scene.canvas.dispatchEvent({ type: "keydown", key: "+", preventDefault() {}, stopPropagation() {} });
+  await assertMoveEnded(scene, "+ key");
+  assert.ok(between(scene.camera(), TARGET) < radius * 0.95, "the key zoomed in from the pose the move had reached: " + radius + " to " + between(scene.camera(), TARGET));
+});
+
+test("a wheel step takes a fixed camera with ControlZoom from a move, and zooms", async (t) => {
+  const scene = await mountZoomed({});
+  t.after(scene.restore);
+  scene.mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await scene.at(450);
+  const fov = scene.camera().fov;
+  wheelStep(scene.canvas, -400);
+  await assertMoveEnded(scene, "wheel");
+  assert.ok(scene.camera().fov < fov - 5, "the wheel narrowed the lens from where the move had it: " + fov + " to " + scene.camera().fov);
+});
+
+test("a pinch takes a fixed camera with ControlZoom from a move", async (t) => {
+  const scene = await mountZoomed({});
+  t.after(scene.restore);
+  scene.mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await scene.at(450);
+  const fov = scene.camera().fov;
+  const touch = (type, pointerId, clientX) => scene.canvas.dispatchEvent({ type, pointerType: "touch", pointerId, clientX, clientY: 180, button: 0, preventDefault() {}, stopPropagation() {} });
+  touch("pointerdown", 1, 300);
+  touch("pointerdown", 2, 340);
+  touch("pointermove", 2, 380);
+  await assertMoveEnded(scene, "pinch");
+  assert.ok(scene.camera().fov < fov - 5, "the pinch narrowed the lens from where the move had it: " + fov + " to " + scene.camera().fov);
+});
+
+test("the mount stops listening for navigation when it is disposed", async () => {
+  const { mount, mounted } = await mountEased();
+  assert.equal(mount.listenerCount("gosx:scene3d:navigation"), 1);
+  mounted.handle.dispose();
+  assert.equal(mount.listenerCount("gosx:scene3d:navigation"), 0);
 });
 
 test("a move started from CameraInputSignal eases and leaves CameraOutputSignal alone", async () => {
