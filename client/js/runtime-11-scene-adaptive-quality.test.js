@@ -45,6 +45,75 @@ for (const enabled of [false, true]) {
   });
 }
 
+// Suppression is the controller's last shed step, taken at the survival tier
+// after sustained misses. It sheds every post effect except tone mapping: a
+// frame drawn with a post chain is linear light that only the tone-mapping
+// pass maps to the display, so without that pass an HDR sky clips to white.
+function installRealPostFXPublisher(context) {
+  const source = readSceneMountSrc();
+  const start = source.indexOf("function applyScenePostFXState(");
+  assert.notEqual(start, -1);
+  // Use the real publisher rather than the controller harness's stub.
+  vm.runInNewContext(source.slice(start, source.indexOf("\n  }", start) + 4), context);
+}
+
+test("Scene3D adaptive post-FX suppression keeps tone mapping and sheds every other effect", () => {
+  const { api, context } = loadSceneAdaptiveQualityAPI();
+  installRealPostFXPublisher(context);
+  const state = api.createSceneAdaptiveQualityState({ adaptiveQuality: true, qualityTier: "survival" }, {}, { tier: "full" });
+  state.postFXSuppressed = true;
+  const mount = new FakeElement("div", null);
+  const tone = { kind: "toneMapping", mode: "aces" };
+  const effects = [{ kind: "ssao" }, { kind: "bloom" }, tone, { kind: "fxaa" }];
+  const sceneState = { postEffects: effects, _adaptiveSourcePostEffects: effects };
+  api.scenePrimeAdaptiveQuality(state, {}, mount, sceneState);
+  assert.deepEqual(sceneState.postEffects.map((e) => e.kind), ["toneMapping"], "suppression sheds every effect but tone mapping");
+  assert.equal(sceneState.postEffects[0], tone, "the authored effect is kept as written, not copied");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled", "the tone-mapping pass still runs");
+  assert.deepEqual(effects.map((e) => e.kind), ["ssao", "bloom", "toneMapping", "fxaa"], "the authored list that recovery restores from stays whole");
+});
+
+test("Scene3D adaptive post-FX suppression sheds the whole chain when no tone mapping is authored", () => {
+  const { api, context } = loadSceneAdaptiveQualityAPI();
+  installRealPostFXPublisher(context);
+  const state = api.createSceneAdaptiveQualityState({ adaptiveQuality: true, qualityTier: "survival" }, {}, { tier: "full" });
+  state.postFXSuppressed = true;
+  const mount = new FakeElement("div", null);
+  const effects = [{ kind: "ssao" }, { kind: "bloom" }, { kind: "fxaa" }];
+  const sceneState = { postEffects: effects, _adaptiveSourcePostEffects: effects };
+  api.scenePrimeAdaptiveQuality(state, {}, mount, sceneState);
+  assert.equal(sceneState.postEffects.length, 0, "with no tone mapping to keep, suppression leaves no post chain");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "none");
+});
+
+test("Scene3D adaptive controller keeps tone mapping while it suppresses postFX and restores the chain on recovery", () => {
+  const h = createAdaptiveQualityHarness({ qualityTier: "survival" });
+  installRealPostFXPublisher(h.context);
+  const bloom = { kind: "bloom" }, tone = { kind: "toneMapping", mode: "aces" }, fxaa = { kind: "fxaa" };
+  const effects = [{ kind: "ssao" }, bloom, tone, fxaa];
+  h.sceneState._adaptiveSourcePostEffects = effects;
+  h.sceneState.postEffects = effects;
+  h.api.scenePrimeAdaptiveQuality(h.state, {}, h.mount, h.sceneState);
+  assert.deepEqual(h.sceneState.postEffects, [bloom, tone, fxaa], "the survival tier alone drops only SSAO");
+
+  for (let i = 0; i < 19; i++) h.sample(20);
+  assert.equal(h.state.postFXSuppressed, false, "nineteen missed frames are not yet sustained");
+  h.sample(20);
+  assert.equal(h.state.postFXSuppressed, true);
+  assert.equal(h.state.transitionReason, "postfx");
+  assert.deepEqual(h.sceneState.postEffects, [tone], "suppression keeps tone mapping and sheds bloom and FXAA");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
+
+  for (let i = 0; i < 300; i++) h.sample(5);
+  assert.equal(h.state.postFXSuppressed, true, "the cooldown holds the shed chain");
+  assert.deepEqual(h.sceneState.postEffects, [tone]);
+  h.sample(5, 5001);
+  assert.equal(h.state.postFXSuppressed, false);
+  assert.equal(h.state.transitionReason, "postfx-restore");
+  assert.deepEqual(h.sceneState.postEffects, [bloom, tone, fxaa], "recovery restores the survival-tier chain");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
+});
+
 test("Scene3D declarative status bindings expose backend fallback and quality without CSS :has()", () => {
   const { api } = loadSceneAdaptiveQualityAPI();
   const scope = new FakeElement("section", null);

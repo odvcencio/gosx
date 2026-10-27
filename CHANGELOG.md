@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Keep Scene3D tone mapping when adaptive quality suppresses post effects.
+  Under sustained load the controller sheds every post effect as its last
+  step. It now keeps the tone-mapping effect, so a physical or other HDR sky is
+  still mapped to the display instead of clipping to white. A scene with no
+  tone-mapping effect still sheds its whole post chain, and
+  `data-gosx-scene3d-postfx` reads `enabled` while a tone-mapping effect remains.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered
