@@ -254,7 +254,9 @@ type Props struct {
 	MaxPixels int `json:"maxPixels,omitempty"`
 	// MinDevicePixelRatio overrides the default pixel budget. An explicit
 	// positive MaxPixels still takes precedence over this minimum.
-	MinDevicePixelRatio   float64 `json:"minDevicePixelRatio,omitempty"`
+	MinDevicePixelRatio float64 `json:"minDevicePixelRatio,omitempty"`
+	// AdaptiveQuality defaults to true and may reduce effects and resolution.
+	// Set Bool(false) to keep quality fixed.
 	AdaptiveQuality       *bool   `json:"adaptiveQuality,omitempty"`
 	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
 	AdaptiveWarmupFrames  int     `json:"adaptiveWarmupFrames,omitempty"`

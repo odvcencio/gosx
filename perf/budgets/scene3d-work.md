@@ -17,3 +17,5 @@ GOWORK=off PERF_BUDGET_BASE_REF=origin/main go test -count=1 ./perf/budgets
 A count above its limit fails. A count below its limit also fails until the limit is lowered. The base comparison reuses `wire.Ratchet` without a raise map; it rejects increases, dropped metrics and removed cases. Missing or unreadable base revisions fail. Only a verified base tree without the file permits its introduction.
 
 After changing runtime source, run `GOWORK=off make build-bootstrap` and `GOWORK=off go generate ./island`. After changing the docs hero, refresh its fixture with `GOWORK=off go generate ./perf/budgets`. To record exact counts, run `UPDATE_SCENE3D_WORK_BUDGET=1 node --test client/js/runtime-97-scene3d-work-budget.test.js`, inspect the JSON diff, then rerun without the update variable. The base ratchet still rejects any increase.
+
+Steady work uses 60 Hz sampling after the default governor warms up. The adaptive-default regression test separately checks demotion under a slow clock and recovery at 60 Hz. The down-only ratchet remains unchanged.

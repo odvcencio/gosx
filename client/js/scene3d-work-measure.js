@@ -289,10 +289,14 @@ async function measureAll() {
     for (const [name, props] of Object.entries(scenes)) {
       const h = await mountScene(props, profile, backend);
       try {
+        // Settle the default governor after the shader warmup, then measure
+        // work at the normal 60 Hz cadence. A forced 30 Hz cadence measures
+        // demotion and target reallocation rather than steady frame work.
+        for (let warm = 0; warm < 32; warm++) await h.step(1000 / 60, true);
         const steady = counters(), steadyTotal = counters(), beforeRenders = h.renders();
         for (let frame = 0; frame < 120; frame++) {
           const before = { ...h.work };
-          await h.step(1000 / 30, true);
+          await h.step(1000 / 60, true);
           const counts = delta(before, h.work);
           for (const metric of metricNames) {
             steady[metric] = Math.max(steady[metric], counts[metric]);
