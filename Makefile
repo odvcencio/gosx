@@ -455,8 +455,9 @@ build-det-parity-darwin-arm64:
 
 # lint-deterministic runs the deterministic-code analyzer over the packages that
 # opt in with a //gosx:deterministic comment. Add a package to DET_LINT_PKGS when
-# it opts in. The analyzer type-checks each package, so list packages instead of
-# using ./... .
+# it opts in, and to the paths and the go test line of
+# .github/workflows/determinism-arm64.yml, which runs the goldens on arm64. The
+# analyzer type-checks each package, so list packages instead of using ./... .
 DET_LINT_PKGS ?= ./det/... ./oceanspec ./physics ./vessel ./motion ./scene/geom ./scene/harness ./scene/imagediff ./scene/preview ./internal/sceneaffine ./render/gpu/headless ./scene
 lint-deterministic:
 	$(GO) run ./cmd/gosx-detlint $(DET_LINT_PKGS)
@@ -658,7 +659,7 @@ release-gate:
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 
-ci: fmt-check verify-danmuji test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+ci: fmt-check verify-danmuji lint-deterministic test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
 
 .PHONY: test-assetmeasure
 test-assetmeasure:
