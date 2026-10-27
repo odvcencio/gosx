@@ -2408,7 +2408,6 @@
     // A camera with TransitionMS eases to its pose; any other camera cuts (sceneCameraMover, mount-controls.ts).
     const cameraMover = sceneCameraMover({ state: sceneState, current: currentMountedSceneCamera, cut: setMountedSceneCamera, reduced: () => motion.reducedMotion, alive: () => !disposed });
     let lastAppliedSelectionID = null;
-    let applyingSignalCamera = false;
     let applyingSignalSelection = false;
     let lastAppliedGizmoMode = null;
     let applyingSignalGizmoMode = false;
@@ -2548,7 +2547,8 @@
         camera: nextCamera,
         reason: reason || "render",
       });
-      if (typeof props.cameraOutputSignal === "string" && props.cameraOutputSignal && !applyingSignalCamera) {
+      // The input signal's cut and each step of its move share one reason, and the output stays quiet for it.
+      if (typeof props.cameraOutputSignal === "string" && props.cameraOutputSignal && reason !== "signal-camera") {
         queueInputSignal(props.cameraOutputSignal, nextCamera);
       }
     }
@@ -2745,9 +2745,7 @@
       unsubCameraSignal = gosxSubscribeSharedSignal(props.cameraInputSignal, function(value) {
         if (disposed) return;
         const cam = (sceneIsPlainObject(value) && sceneIsPlainObject(value.camera)) ? value.camera : value;
-        applyingSignalCamera = true;
         applyMountedSceneCamera(cam, "signal-camera");
-        applyingSignalCamera = false;
       }, { immediate: false });
     }
     let unsubSelectionSignal = null;
@@ -3591,7 +3589,8 @@
       setCamera(camera) {
         return applyMountedSceneCamera(camera, "handle-camera");
       },
-      setOrbit(orbit: any) { return applyMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit"); },
+      // The orbit is not a camera move: a running ease carries on around the new target.
+      setOrbit(orbit: any) { return setMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit"); },
       async applyTextureProfile(requests: any[], profile: string, signal: AbortSignal, module: any) {
         return sceneApplyMountedTextureProfile(sceneState, mount, requests, profile, signal, module, {
           disposed: () => disposed,

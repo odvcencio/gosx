@@ -42,6 +42,15 @@ function assertPose(got, want, label, tolerance = 1e-5) {
   }
 }
 
+// Under orbit controls the camera always faces the orbit target, so a test that
+// moves the target compares where the camera is, not where it looks.
+function assertPosition(got, want, label, tolerance) {
+  for (const field of ["x", "y", "z"]) {
+    assert.ok(Math.abs(got[field] - want[field]) <= tolerance,
+      `${label}: ${field} is ${got[field]}, want ${want[field]} (camera ${JSON.stringify(got)})`);
+  }
+}
+
 test("handle.setCamera with TransitionMS eases to the pose instead of cutting", async () => {
   const { mounted, at, camera } = await mountEased();
   assert.equal(mounted.handle.setCamera({ ...END, transitionMS: 1000 }), true);
@@ -69,11 +78,13 @@ test("a dispatched SetCamera command with TransitionMS eases the same way", asyn
 });
 
 test("a camera command in a batch with other commands still eases, and the rest applies at once", async () => {
-  const { mounted, at, camera } = await mountEased();
+  const { mount, mounted, at, camera } = await mountEased();
   await mounted.handle.applyCommands([
     { kind: SET_CAMERA, data: { ...END, transitionMS: 1000 } },
     { kind: 0, objectId: "marker", data: { kind: "mesh", props: { geometry: "box", x: 1 } } },
   ]);
+  assert.ok(mount.__gosxScene3DState.objects.has("marker"), "the rest of the batch applies before the move has run");
+  assertPose(camera(), START, "the camera command did not cut");
   await at(500);
   assertPose(camera(), GO_SAMPLES[500], "500 ms into the move");
 });
@@ -194,4 +205,135 @@ test("the public setCamera a Go engine calls returns at once and the move runs i
   assertPose(camera(), GO_SAMPLES[500], "500 ms into the move");
   await at(1000);
   assertPose(camera(), END, "the move ends exactly on the pose", 1e-9);
+});
+
+// The orbit target the controls are using now, as a plain object of this realm
+// (the page runs in its own vm context, so deepEqual would see another prototype).
+const orbitTarget = (mounted) => {
+  const { x, y, z } = mounted.handle.getTelemetry().orbit.target;
+  return { x, y, z };
+};
+
+test("setOrbit during a move changes the orbit and lets the move finish", async () => {
+  const { mounted, at, camera } = await mountEased({ controls: "orbit", controlTarget: { x: 0, y: 0.2, z: 0 } });
+  mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await at(300);
+  const midway = camera();
+  assert.equal(mounted.handle.setOrbit({ target: { x: 2, y: 3, z: 4 } }), true);
+  assert.deepEqual(orbitTarget(mounted), { x: 2, y: 3, z: 4 }, "the orbit target moved at once");
+  assertPosition(camera(), midway, "setOrbit keeps the camera where it is", 1e-3);
+  await at(1000);
+  assertPosition(camera(), END, "the move still ends on its pose", 1e-6);
+  assert.deepEqual(orbitTarget(mounted), { x: 2, y: 3, z: 4 }, "the move does not undo the new target");
+});
+
+test("setOrbit without orbit controls leaves a move running", async () => {
+  const { mounted, at, camera } = await mountEased();
+  mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await at(300);
+  mounted.handle.setOrbit({ maxDistance: 500 });
+  await at(500);
+  assertPose(camera(), GO_SAMPLES[500], "500 ms into the move");
+  await at(1000);
+  assertPose(camera(), END, "the move ends on its pose", 1e-9);
+});
+
+test("asking again for the pose a move is heading to still applies the new orbit", async () => {
+  const { mounted, at, camera } = await mountEased({ controls: "orbit", controlTarget: { x: 0, y: 0.2, z: 0 } });
+  mounted.handle.setCamera({ ...END, transitionMS: 1000, orbit: { target: { x: 0, y: 0, z: 0 } } });
+  await at(200);
+  assert.deepEqual(orbitTarget(mounted), { x: 0, y: 0, z: 0 });
+  assert.equal(mounted.handle.setCamera({ ...END, transitionMS: 1000, orbit: { target: { x: 5, y: 5, z: 5 } } }), true, "the orbit changed");
+  assert.deepEqual(orbitTarget(mounted), { x: 5, y: 5, z: 5 }, "the orbit target is the second call's");
+  await at(1000);
+  assertPosition(camera(), END, "the move keeps its first start time", 1e-6);
+});
+
+test("a player's drag takes the camera from a move in progress", async () => {
+  const { mounted, canvas, at, camera } = await mountEased({ controls: "orbit", controlTarget: { x: 0, y: 0.2, z: 0 } });
+  mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await at(450);
+  const before = camera();
+  drag(canvas, [320, 180], [380, 150]);
+  const dragged = camera();
+  assert.ok(Math.hypot(dragged.x - before.x, dragged.y - before.y, dragged.z - before.z) > 1, "the drag moves the camera: " + JSON.stringify(dragged));
+  await at(750);
+  const move = GO_SAMPLES[750];
+  assert.ok(Math.hypot(camera().x - move.x, camera().y - move.y, camera().z - move.z) > 1, "the move no longer pulls the camera: " + JSON.stringify(camera()));
+  await at(2000);
+  assert.ok(Math.hypot(camera().x - END.x, camera().y - END.y, camera().z - END.z) > 1, "the camera does not finish the move: " + JSON.stringify(camera()));
+});
+
+test("a player's wheel zoom takes the camera from a move in progress", async () => {
+  const { mounted, canvas, at, camera } = await mountEased({ controls: "orbit", controlTarget: { x: 0, y: 0.2, z: 0 } });
+  mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await at(450);
+  canvas.dispatchEvent({ type: "wheel", deltaY: -400, preventDefault() {}, stopPropagation() {} });
+  await at(750);
+  const move = GO_SAMPLES[750];
+  assert.ok(Math.hypot(camera().x - move.x, camera().y - move.y, camera().z - move.z) > 1, "the move no longer pulls the camera: " + JSON.stringify(camera()));
+  await at(2000);
+  assert.ok(Math.hypot(camera().x - END.x, camera().y - END.y, camera().z - END.z) > 1, "the camera does not finish the move: " + JSON.stringify(camera()));
+});
+
+test("a player's arrow key takes the camera from a move in progress", async () => {
+  const { env, mounted, canvas, at, camera } = await mountEased({ controls: "orbit", controlTarget: { x: 0, y: 0.2, z: 0 } });
+  mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await at(450);
+  canvas.focus();
+  env.document.dispatchEvent({ type: "keydown", code: "ArrowLeft", preventDefault() {} });
+  await at(750);
+  const move = GO_SAMPLES[750];
+  assert.ok(Math.hypot(camera().x - move.x, camera().y - move.y, camera().z - move.z) > 1, "the move no longer pulls the camera: " + JSON.stringify(camera()));
+  await at(2000);
+  assert.ok(Math.hypot(camera().x - END.x, camera().y - END.y, camera().z - END.z) > 1, "the camera does not finish the move: " + JSON.stringify(camera()));
+});
+
+test("a move started from CameraInputSignal eases and leaves CameraOutputSignal alone", async () => {
+  const { env, at, camera } = await mountEased({ cameraInputSignal: "$camin", cameraOutputSignal: "$camout" });
+  const published = [];
+  env.context.__gosx_subscribe_shared_signal("$camout", (value) => published.push(value), { immediate: false });
+  await at(0);
+  published.length = 0; // the mount's own first publish is not under test
+  env.context.__gosx_notify_shared_signal("$camin", JSON.stringify({ camera: { ...END, transitionMS: 1000 } }));
+  await at(0);
+  assertPose(camera(), START, "the signal starts a move and does not cut");
+  await at(500);
+  assertPose(camera(), GO_SAMPLES[500], "500 ms into the move");
+  await at(1000);
+  assertPose(camera(), END, "the move ends exactly on the pose", 1e-9);
+  await at(2000);
+  assert.deepEqual(published, [], "the output signal is suppressed while the input signal drives the camera, move steps included");
+});
+
+test("one signal bound as input and output does not cancel a move its own input started", async () => {
+  const { env, at, camera } = await mountEased({ cameraInputSignal: "$cam", cameraOutputSignal: "$cam" });
+  await at(0);
+  env.context.__gosx_notify_shared_signal("$cam", JSON.stringify({ camera: { ...END, transitionMS: 1000 } }));
+  await at(500);
+  assertPose(camera(), GO_SAMPLES[500], "500 ms into the move");
+  await at(1000);
+  assertPose(camera(), END, "the move ends exactly on the pose", 1e-9);
+});
+
+test("a move started by handle.setCamera publishes the camera as it moves", async () => {
+  const { env, mounted, at } = await mountEased({ cameraOutputSignal: "$camout" });
+  const published = [];
+  env.context.__gosx_subscribe_shared_signal("$camout", (value) => published.push(value), { immediate: false });
+  await at(0);
+  published.length = 0;
+  mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  for (const ms of [100, 300, 500, 700, 1000]) await at(ms);
+  assert.ok(published.length >= 3, "the output signal follows a move the page started, as it follows a drag: " + published.length);
+  assertPose(published.at(-1), END, "the last published camera is the pose the move ended on", 1e-9);
+});
+
+test("reduced motion turned on during a move completes it at once", async () => {
+  const { env, mounted, at, camera } = await mountEased();
+  mounted.handle.setCamera({ ...END, transitionMS: 1000 });
+  await at(300);
+  assert.ok(Math.abs(camera().x - END.x) > 5, "the move is still running");
+  env.context.matchMedia("(prefers-reduced-motion: reduce)").dispatch(true);
+  await at(300);
+  assertPose(camera(), END, "a viewer who asks for less motion gets the pose now", 1e-9);
 });

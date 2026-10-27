@@ -153,7 +153,8 @@ type Props struct {
 	// PickSignalNamespace + ".selectedID").
 	SelectionInputSignal string `json:"selectionInputSignal,omitempty"`
 	// CameraOutputSignal: when set, the engine publishes the camera into this shared
-	// signal on change. Suppressed while CameraInputSignal is active.
+	// signal on change. Suppressed while CameraInputSignal is active, including
+	// each step of a move that a camera with TransitionMS from that signal starts.
 	CameraOutputSignal string `json:"cameraOutputSignal,omitempty"`
 	// CursorOutputSignal: when set, the engine publishes the normalized pointer
 	// {x,y} in [0,1] over the canvas into this shared signal.

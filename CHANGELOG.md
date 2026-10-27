@@ -6,16 +6,10 @@
   hydrating, then apply it when they commit, instead of rejecting it with
   `renderer-not-ready`. The wait ends at the call's `timeoutMS` (10 s by
   default), and the frame's fallbacks then apply; aborting its `signal` cancels
-  the frame. A frame sent when nothing is loading and nothing has committed
-  still fails at once. Crowds no longer need their first motion frames resent.
-
-- Honor `TransitionMS` on a Scene3D camera. A camera that carries it, from
-  `Scene3D.SetCamera`, a camera command or a Props update, now eases in the page
-  over that many milliseconds, with the curve and fields of
-  `scene.CameraTransition.Sample`, and the call returns at once. A newer camera
-  replaces the move from the pose on screen. Reduced motion, a change of camera
-  kind and a camera without `TransitionMS` cut. Set `TransitionMS` to zero on a
-  camera you send every frame; otherwise each frame starts a new move.
+  the frame. A frame sent when no hydration is in flight, because nothing is
+  declared or the load failed, still fails at once with `renderer-not-ready`
+  and takes its fallbacks without delay. Crowds no longer need their first
+  motion frames resent.
 
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
@@ -59,6 +53,25 @@
   during SceneIR updates, avoiding repeated reflection over texture slots.
   Nested schema and named-scalar checks retain the JSON fallback when a proof
   is stale or a comparison is ambiguous.
+
+### Behavior changes to note when upgrading
+
+- **A Scene3D camera that carries `TransitionMS` now eases in the page.** From
+  `Scene3D.SetCamera`, a camera command or a Props update, it used to cut to the
+  pose, because the page read the field and dropped it. Now the page eases over
+  that many milliseconds with the curve and fields of
+  `scene.CameraTransition.Sample`, and the call returns at once. One field
+  differs: Go mixes `PortraitFOV` linearly, and the page eases it only between
+  two nonzero values and otherwise jumps to the new one. A newer camera replaces
+  the move from the pose on screen. These end a move: a camera without
+  `TransitionMS`, a Live camera event, and the player's drag, wheel or key under
+  orbit or fly controls. Reduced motion and a change of camera kind cut.
+  `SetOrbit` changes the orbit and leaves a move running, and a camera for the
+  pose a move is heading to keeps the move and still applies its orbit. A move
+  that `CameraInputSignal` starts does not publish `CameraOutputSignal`. **If
+  you send a camera every frame with `TransitionMS` above zero, each frame now
+  starts a new move and the view trails the camera you send. Set `TransitionMS`
+  to zero on streamed cameras before you upgrade.**
 
 ## v0.57.24
 

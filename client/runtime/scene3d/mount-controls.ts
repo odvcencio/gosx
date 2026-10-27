@@ -296,38 +296,48 @@
     return camera;
   }
 
+  // sceneCameraMoveStop ends the move in progress on a scene state, if any. A
+  // player's drag, wheel or key calls it so the controls take the camera back.
+  // @ts-ignore TS7006 -- plain JavaScript fixture
+  function sceneCameraMoveStop(state) {
+    if (state) state._cameraMove = null;
+  }
+
   // sceneCameraMover eases a mounted scene's camera. A camera with TransitionMS
   // above zero moves over that many milliseconds, stepped on the page's frames,
   // so a Go caller makes one call per move and not one per frame. A later
   // camera replaces the move, starting from the pose on screen; one without
-  // TransitionMS cuts and ends it. Reduced motion and a change of camera kind
-  // cut. The host supplies the mount's seams: state is the scene state, which
-  // holds the move, current(null) is the pose on screen, cut(camera, reason)
-  // sets a camera at once, and reduced() and alive() read the motion preference
-  // and the mount.
+  // TransitionMS cuts and ends it. A call for the pose the move is already
+  // heading to keeps the move, but its orbit target and limits still apply.
+  // Reduced motion and a change of camera kind cut. Each step is reported with
+  // the reason of the call that began the move, so a move the input signal
+  // started stays quiet on the output signal as its cut would. The host
+  // supplies the mount's seams: state is the scene state, which holds the move,
+  // current(null) is the pose on screen, cut(camera, reason) sets a camera at
+  // once, and reduced() and alive() read the motion preference and the mount.
   // @ts-ignore TS7006 -- plain JavaScript fixture
   function sceneCameraMover(host) {
     const state = host.state;
     return {
-      stop() { state._cameraMove = null; },
+      stop() { sceneCameraMoveStop(state); },
       // @ts-ignore TS7006 -- plain JavaScript fixture
       apply(camera, reason) {
         if (!(sceneNumber(camera.transitionMS, 0) > 0)) { state._cameraMove = null; return host.cut(camera, reason); }
         const from = host.current(null), to = normalizeSceneCamera(camera, from);
         if (host.reduced() || from.kind !== to.kind) { state._cameraMove = null; return host.cut(camera, reason); }
-        if (state._cameraMove && sceneCameraEquivalent(state._cameraMove.to, to)) return false; // already heading there
-        state._cameraMove = null;
+        const heading = state._cameraMove && sceneCameraEquivalent(state._cameraMove.to, to);
+        if (!heading) state._cameraMove = null;
         // The orbit target and limits change first, as for a cut; the pose stays put.
         from.portraitFOV = sceneNumber(state.camera.portraitFOV, 0);
         const settled = host.cut(Object.assign({}, from, { orbit: camera.orbit }), reason);
-        if (sceneCameraEquivalent(from, to)) return settled;
+        if (heading || sceneCameraEquivalent(from, to)) return settled;
         const move = state._cameraMove = { start: sceneNowMilliseconds(), to };
         const step = () => {
           if (state._cameraMove !== move || !host.alive()) return;
           const progress = (sceneNowMilliseconds() - move.start) / to.transitionMS;
           const done = !(progress < 1) || host.reduced();
           if (done) state._cameraMove = null; else sceneMotionRequestFrame.call(null, step);
-          host.cut(done ? Object.assign({}, to, { transitionMS: 0 }) : sceneCameraBetween(from, to, progress), "camera-transition");
+          host.cut(done ? Object.assign({}, to, { transitionMS: 0 }) : sceneCameraBetween(from, to, progress), reason);
         };
         sceneMotionRequestFrame.call(null, step);
         return true;
@@ -1380,6 +1390,9 @@
         cancelOrbitInertia();
         sceneOrbitStartDrag(controls, canvas, props, readViewport, readSourceCamera, attachDocumentListeners, event);
       }
+      // A drag takes the camera from a move in progress; a move's next step
+      // would otherwise end the drag (applySceneControlsCamera clears active).
+      if (controls.active) sceneCameraMoveStop(sceneState);
     }
 
     function onPointerMove(event) {
@@ -1400,6 +1413,7 @@
 
     function onWheel(event) {
       if (!flyMode) {
+        sceneCameraMoveStop(sceneState);
         sceneOrbitApplyWheel(controls, readSourceCamera, scheduleRender, event);
       }
     }
@@ -1434,6 +1448,7 @@
           return;
         }
         cancelOrbitInertia();
+        sceneCameraMoveStop(sceneState);
         scheduleRender(orbitKey === "reset" ? "controls-reset" : "controls-keyboard");
         if (typeof event.preventDefault === "function") {
           event.preventDefault();
@@ -1448,6 +1463,7 @@
         return;
       }
       controls.keys.add(key);
+      sceneCameraMoveStop(sceneState);
       sceneFlyApplyMovement(controls, readSourceCamera, 1 / 60);
       scheduleFlyMovement();
       scheduleRender("controls");
