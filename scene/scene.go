@@ -51,7 +51,7 @@ type PerspectiveCamera struct {
 	PortraitFOV  float64 // optional vertical field of view for portrait viewports
 	Near         float64
 	Far          float64
-	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
+	TransitionMS float64 // if > 0, the page eases to this camera over this many milliseconds instead of cutting
 	// Orbit, when set, also moves the orbit controls' target and limits, so the
 	// player's mouse orbit continues around the new target. Nil leaves them as
 	// they are. With orbit controls the mounted camera always faces the orbit
@@ -74,7 +74,7 @@ type OrthographicCamera struct {
 	Zoom         float64
 	Near         float64
 	Far          float64
-	TransitionMS float64
+	TransitionMS float64 // if > 0, the page eases to this camera over this many milliseconds instead of cutting
 }
 
 // Environment describes scene-wide ambient, hemisphere, and image-based lighting.
@@ -153,7 +153,10 @@ type Props struct {
 	// PickSignalNamespace + ".selectedID").
 	SelectionInputSignal string `json:"selectionInputSignal,omitempty"`
 	// CameraOutputSignal: when set, the engine publishes the camera into this shared
-	// signal on change. Suppressed while CameraInputSignal is active.
+	// signal on change. Suppressed while CameraInputSignal is active, including
+	// each step of a move that a camera with TransitionMS from that signal starts.
+	// Bind it to a different signal than CameraInputSignal: a move that a call
+	// starts publishes its steps, and an echo into the input would end that move.
 	CameraOutputSignal string `json:"cameraOutputSignal,omitempty"`
 	// CursorOutputSignal: when set, the engine publishes the normalized pointer
 	// {x,y} in [0,1] over the canvas into this shared signal.

@@ -16,7 +16,7 @@ type Presentation struct {
 type PresentationView struct {
 	ID     string   `json:"id"`
 	Label  string   `json:"label"`
-	Camera IRCamera `json:"camera"`
+	Camera IRCamera `json:"camera"`           // with TransitionMS above zero the page eases to it, as for SetCamera
 	Vessel bool     `json:"vessel,omitempty"` // return to a sailing helm without teleporting
 }
 
