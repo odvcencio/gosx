@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Keep distant sky bodies out of the ocean's planar reflection. A mesh whose
+  bounds centre is more than 800 m from the camera and more than 8 degrees
+  above the sea (a moon built as geometry) is no longer mirrored: its image
+  landed in the near water as a hard-edged disc that no wave broke up, and the
+  sky already supplies the glint. Near and low geometry still reflects, and a
+  mesh without valid bounds is always reflected. WebGL2 and WebGPU judge the
+  same meshes from the real camera and the ocean level.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered

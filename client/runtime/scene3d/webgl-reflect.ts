@@ -148,9 +148,9 @@ function sceneReflectWebGLBind(gl, program, record) {
 function sceneReflectWebGLDrawOpaque(gl, ctx, view, proj) {
   const cull = gl.isEnabled(gl.CULL_FACE), level = ctx.bundle.environment.ocean.level || 0;
   const originalView = new Float32Array(ctx.view), originalProj = new Float32Array(ctx.proj), cameraY = ctx.camera.y;
-  // Frame uploads in skinned/rigid programs read these retained arrays. Use
-  // the mirrored camera for every program, then restore before the ocean.
-  const maps = [ctx.visibility,ctx.batches].filter(Boolean), entries = maps.map(m => Array.from(m.entries()));
+  // Frame uploads in skinned/rigid programs read these retained arrays. Use the mirrored camera for every program,
+  // then restore before the ocean. Sky bodies are judged from the real camera, so the list is built before it moves.
+  const maps = [ctx.visibility,ctx.batches].filter(Boolean), entries = maps.map(m => Array.from(m.entries())), opaque = sceneReflectOpaqueList(ctx.list.opaque,ctx.materials,ctx.camera,level);
   maps.forEach(m => m.clear());
   ctx.view.set(view); ctx.proj.set(proj); ctx.camera.y = 2*level-cameraY;
   try {
@@ -159,7 +159,7 @@ function sceneReflectWebGLDrawOpaque(gl, ctx, view, proj) {
     gl.uniformMatrix4fv(ctx.uniforms.viewMatrix,false,ctx.view);
     gl.uniformMatrix4fv(ctx.uniforms.projectionMatrix,false,ctx.proj);
     gl.uniform3f(ctx.uniforms.cameraPosition,ctx.camera.x,ctx.camera.y,ctx.camera.z);
-    ctx.draw(sceneReflectOpaqueList(ctx.list.opaque,ctx.materials));
+    ctx.draw(opaque);
   } finally {
     ctx.view.set(originalView); ctx.proj.set(originalProj); ctx.camera.y = cameraY;
     maps.forEach((m,i) => entries[i].forEach(([key,value]) => m.set(key,value)));
