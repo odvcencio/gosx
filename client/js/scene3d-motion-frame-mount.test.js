@@ -65,10 +65,13 @@ const CROWD = { id: "heroes", src: "/models/hero.glb", instances: [{ id: "hero" 
 
 // mountScene mounts a scene with the given props and loads the command bridge
 // the way a page does on its first Go call. The page's script context has no
-// TextDecoder of its own, which the frame decoder needs.
-async function mountScene(props, fetchRoutes, prepare) {
+// TextDecoder of its own, which the frame decoder needs. prepare(env) runs once
+// the runtime is loaded and prepareMount(mount) before the page exists, for a
+// test that changes how the mount behaves before the scene starts.
+async function mountScene(props, fetchRoutes, prepare, prepareMount) {
   const mount = new FakeElement("div", null);
   mount.id = "scene-motion-frame-mount";
+  if (prepareMount) prepareMount(mount);
   const env = createContext({
     elements: [mount],
     enableWebGL: true,
@@ -211,4 +214,57 @@ test("a later hydration that succeeds lets motion frames wait and apply again", 
   crowd.resolve({ bytes: buildMinimalGLBBytes() });
   await command;
   assertReachedCommittedCrowd(await sent, mounted);
+});
+
+// throwOnHydrationStatus makes the mount refuse the hydration's status write, an
+// unexpected failure of the kind the mount's own guard around the first
+// hydration anticipates (a producer or listener that throws), not one of the
+// structured failures a load or a stage reports.
+function throwOnHydrationStatus(status) {
+  return (mount) => {
+    const setAttribute = mount.setAttribute.bind(mount);
+    mount.setAttribute = (name, value) => {
+      if (name === "data-gosx-scene3d-model-hydration-status" && value === status) throw new Error("unexpected-hydration-failure");
+      return setAttribute(name, value);
+    };
+  };
+}
+
+test("a motion frame sent after a hydration threw unexpectedly fails at once", async () => {
+  const route = deferred();
+  const { env, mount, bridge, state } = await mountScene(
+    { renderBeforeModels: true, scene: { objects: [], instancedGLBMeshes: [CROWD] } },
+    { "/models/hero.glb": () => route.promise }, null, throwOnHydrationStatus("loading"));
+  assert.ok(env.consoleLogs.warn.some((line) => /model hydration failed.*unexpected-hydration-failure/.test(line)), "the mount reported the exception: " + JSON.stringify(env.consoleLogs.warn));
+  assert.equal(state()._hydratedModelRecords, undefined, "nothing committed");
+  assert.equal(state()._modelHydrationUncommitted, true);
+  assert.equal(state()._modelHydrationFailed, true, "an exception ends the generation as a failed load does");
+
+  const frame = await outcome(bridge.dispatchMotionFrame(mount, motionFrame(), { timeoutMS: 5000 }));
+  assert.equal(frame.ok, false);
+  assert.match(frame.error, /renderer-not-ready/, "not a wait that ends in 'still hydrating'");
+  assert.ok(frame.ms < 1000, "nothing is loading, so the frame must not wait for its timeout: " + frame.ms + " ms");
+});
+
+test("a hydration that throws while it commits ends the wait of a held motion frame", async () => {
+  const route = deferred();
+  const { env, mount, bridge, state } = await mountScene(
+    { renderBeforeModels: true, scene: { objects: [], instancedGLBMeshes: [CROWD] } },
+    { "/models/hero.glb": () => route.promise });
+  const sent = outcome(bridge.dispatchMotionFrame(mount, motionFrame(), { timeoutMS: 5000 }));
+  assert.equal(await settled(sent, 100), false, "the frame is held while the model loads");
+  // The commit writes the crowd's objects into the scene; refuse that write.
+  const objects = state().objects;
+  const set = objects.set.bind(objects);
+  objects.set = (id, object) => {
+    if (!/authored/.test(String(id))) throw new Error("unexpected-commit-failure");
+    return set(id, object);
+  };
+  route.resolve({ bytes: buildMinimalGLBBytes() });
+  const frame = await sent;
+  assert.ok(env.consoleLogs.warn.some((line) => /model hydration failed.*unexpected-commit-failure/.test(line)), "the mount reported the exception: " + JSON.stringify(env.consoleLogs.warn));
+  assert.equal(state()._hydratedModelRecords == null, true, "nothing committed");
+  assert.equal(frame.ok, false);
+  assert.match(frame.error, /renderer-not-ready/);
+  assert.ok(frame.ms < 1000, "the frame must not wait for its timeout after the commit failed: " + frame.ms + " ms");
 });

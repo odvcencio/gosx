@@ -4324,6 +4324,11 @@
     // A failed replacement leaves these declarations uncommitted. Compatible binary poses may still
     // advance the last committed generation afterward. _modelHydrationFailed ends a motion frame's wait for it.
     state._modelHydrationUncommitted = true; state._modelHydrationFailed = false;
+    // An exception that escapes before the commit will not commit the generation either, so it ends that wait too, unless a newer generation has begun.
+    try { return await sceneHydrateModelGeneration(state, props, generation); } catch (error) { if (state._modelHydrationUncommitted && sceneModelHydrationIsCurrent({ state, generation })) state._modelHydrationFailed = true; throw error; }
+  }
+
+  async function sceneHydrateModelGeneration(state: any, props: any, generation: number) {
     let models;
     try {
       // Commands can replace the declaration arrays while their assets are in
