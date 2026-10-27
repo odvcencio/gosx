@@ -2,6 +2,8 @@ package game
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"time"
 
@@ -541,18 +543,29 @@ func NewRunner(h *hub.Hub, runtime *Runtime, opts sim.Options) *sim.Runner {
 	return sim.New(h, runtime, opts)
 }
 
-// SnapshotCodec customizes runtime snapshot/state serialization.
+// SnapshotCodec customizes runtime snapshot/state serialization. A codec whose
+// restore can fail should also implement SnapshotRestorer.
 type SnapshotCodec interface {
 	Snapshot(*Runtime) []byte
 	Restore(*Runtime, []byte)
 	State(*Runtime) []byte
 }
 
-// SnapshotCodecFuncs adapts functions into a SnapshotCodec.
+// SnapshotRestorer is the optional part of a SnapshotCodec that reports a
+// snapshot it cannot apply. Runtime.RestoreSnapshot calls it in place of
+// Restore and returns its error.
+type SnapshotRestorer interface {
+	RestoreSnapshot(*Runtime, []byte) error
+}
+
+// SnapshotCodecFuncs adapts functions into a SnapshotCodec. RestoreSnapshotFunc
+// is the restore that can fail; Restore falls back to it, without the error,
+// when RestoreFunc is nil.
 type SnapshotCodecFuncs struct {
-	SnapshotFunc func(*Runtime) []byte
-	RestoreFunc  func(*Runtime, []byte)
-	StateFunc    func(*Runtime) []byte
+	SnapshotFunc        func(*Runtime) []byte
+	RestoreFunc         func(*Runtime, []byte)
+	RestoreSnapshotFunc func(*Runtime, []byte) error
+	StateFunc           func(*Runtime) []byte
 }
 
 func (f SnapshotCodecFuncs) Snapshot(r *Runtime) []byte {
@@ -563,9 +576,23 @@ func (f SnapshotCodecFuncs) Snapshot(r *Runtime) []byte {
 }
 
 func (f SnapshotCodecFuncs) Restore(r *Runtime, data []byte) {
-	if f.RestoreFunc != nil {
+	switch {
+	case f.RestoreFunc != nil:
 		f.RestoreFunc(r, data)
+	case f.RestoreSnapshotFunc != nil:
+		_ = f.RestoreSnapshotFunc(r, data)
 	}
+}
+
+// RestoreSnapshot implements SnapshotRestorer. It reports the error of
+// RestoreSnapshotFunc, and runs RestoreFunc, which cannot fail, when that is
+// nil.
+func (f SnapshotCodecFuncs) RestoreSnapshot(r *Runtime, data []byte) error {
+	if f.RestoreSnapshotFunc != nil {
+		return f.RestoreSnapshotFunc(r, data)
+	}
+	f.Restore(r, data)
+	return nil
 }
 
 func (f SnapshotCodecFuncs) State(r *Runtime) []byte {
@@ -578,9 +605,19 @@ func (f SnapshotCodecFuncs) State(r *Runtime) []byte {
 	return nil
 }
 
+// RuntimeStateVersion is the snapshot format Runtime.Snapshot writes. Version 1
+// is the format before the field existed: the clock, time control and physics.
+// Version 2 adds the clock remainder (AccumulatorNanos and ScaleFrac) and the
+// gathered time of Every and EveryInterval wrappers (Cadence).
+const RuntimeStateVersion = 2
+
 // RuntimeState is the default snapshot/state payload.
 type RuntimeState struct {
-	Frame uint64 `json:"frame"`
+	// Version is the snapshot format. Snapshots written before it existed omit it
+	// and count as version 1. Restore refuses a version above RuntimeStateVersion.
+	// State carries no version 2 fields and so no version.
+	Version int    `json:"version,omitempty"`
+	Frame   uint64 `json:"frame"`
 	// TimeSeconds is a human-readable copy of the time. It loses nanoseconds
 	// after about 104 game days; Restore prefers TimeNanos when present.
 	TimeSeconds float64 `json:"timeSeconds"`
@@ -592,12 +629,24 @@ type RuntimeState struct {
 	TimeScale *float64            `json:"timeScale,omitempty"`
 	Paused    *bool               `json:"paused,omitempty"`
 	Physics   *physics.WorldState `json:"physics,omitempty"`
+	// AccumulatorNanos and ScaleFrac are the clock remainder: game time gathered
+	// toward the next fixed step, always less than one step, and the
+	// sub-nanosecond part of scaled deltas, in [0, 1). Cadence is the time each
+	// Every and EveryInterval wrapper has gathered. Only a version 2 snapshot
+	// writes them, and then Restore sets all three exactly. From an older
+	// snapshot or from State it starts the clock remainder from zero and leaves
+	// the wrappers alone.
+	AccumulatorNanos int64          `json:"accumulatorNanos,omitempty"`
+	ScaleFrac        float64        `json:"scaleFrac,omitempty"`
+	Cadence          []CadenceState `json:"cadence,omitempty"`
 	// World holds registered world content. Only a SaveCodec snapshot writes
 	// it; the default snapshot leaves it out.
 	World *WorldSave `json:"world,omitempty"`
 }
 
-// Snapshot returns a restorable runtime checkpoint for sim.Runner.
+// Snapshot returns a restorable runtime checkpoint for sim.Runner. Unlike State
+// it holds the clock remainder and the Every and EveryInterval accumulators,
+// which a restored runtime needs to run as if it had never stopped.
 func (r *Runtime) Snapshot() []byte {
 	if r == nil {
 		return nil
@@ -605,26 +654,74 @@ func (r *Runtime) Snapshot() []byte {
 	if r.snapshot != nil {
 		return r.snapshot.Snapshot(r)
 	}
-	return r.defaultState()
+	return r.defaultState(true)
 }
 
-// Restore applies a previously captured checkpoint.
+// Restore applies a previously captured checkpoint. It is the sim.Simulation
+// method, which has no result, so it drops a snapshot that is empty, does not
+// decode or does not fit this runtime, and says nothing. Call RestoreSnapshot to
+// learn why.
 func (r *Runtime) Restore(snapshot []byte) {
-	if r == nil || len(snapshot) == 0 {
-		return
+	_ = r.RestoreSnapshot(snapshot)
+}
+
+// RestoreSnapshot applies a checkpoint like Restore and returns the reason when
+// it cannot: the snapshot is empty, is not valid JSON, is newer than
+// RuntimeStateVersion, or holds a clock remainder or gathered time that is out
+// of range. The default codec and SaveCodec leave the runtime unchanged after an
+// error. A custom SnapshotCodec reports errors only if it implements
+// SnapshotRestorer.
+func (r *Runtime) RestoreSnapshot(snapshot []byte) error {
+	if r == nil {
+		return errors.New("game: nil Runtime")
+	}
+	if len(snapshot) == 0 {
+		return errors.New("game: empty snapshot")
 	}
 	if r.snapshot != nil {
+		if codec, ok := r.snapshot.(SnapshotRestorer); ok {
+			return codec.RestoreSnapshot(r, snapshot)
+		}
 		r.snapshot.Restore(r, snapshot)
-		return
+		return nil
 	}
-	var state RuntimeState
-	if err := json.Unmarshal(snapshot, &state); err != nil {
-		return
+	state, err := r.decodeRuntimeState(snapshot)
+	if err != nil {
+		return err
 	}
 	r.applyRuntimeState(state)
+	return nil
 }
 
-// applyRuntimeState restores the clock, time control settings and physics.
+// decodeRuntimeState parses and checks a snapshot without touching the runtime,
+// so a restore applies all of it or none.
+func (r *Runtime) decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
+	var state RuntimeState
+	if err := json.Unmarshal(snapshot, &state); err != nil {
+		return state, fmt.Errorf("game: decode snapshot: %w", err)
+	}
+	if state.Version < 0 || state.Version > RuntimeStateVersion {
+		return state, fmt.Errorf("game: snapshot version %d is not supported (newest is %d)", state.Version, RuntimeStateVersion)
+	}
+	if state.Version < 2 {
+		return state, nil
+	}
+	if acc, step := time.Duration(state.AccumulatorNanos), r.FixedStep(); acc < 0 || acc >= step {
+		return state, fmt.Errorf("game: snapshot clock accumulator %v is not within one fixed step (%v)", acc, step)
+	}
+	if state.ScaleFrac < 0 || state.ScaleFrac >= 1 {
+		return state, fmt.Errorf("game: snapshot scale fraction %v is not in [0, 1)", state.ScaleFrac)
+	}
+	for _, c := range state.Cadence {
+		if c.GatheredNanos < 0 {
+			return state, fmt.Errorf("game: snapshot cadence %q has negative gathered time %v", c.System, time.Duration(c.GatheredNanos))
+		}
+	}
+	return state, nil
+}
+
+// applyRuntimeState restores the clock, time control settings, cadence and
+// physics. It cannot fail: decodeRuntimeState has checked state.
 func (r *Runtime) applyRuntimeState(state RuntimeState) {
 	if r.clock != nil {
 		elapsed := time.Duration(state.TimeSeconds * float64(time.Second))
@@ -632,6 +729,10 @@ func (r *Runtime) applyRuntimeState(state RuntimeState) {
 			elapsed = time.Duration(*state.TimeNanos)
 		}
 		r.clock.restore(state.Frame, elapsed)
+		if state.Version >= 2 {
+			r.clock.accumulator = time.Duration(state.AccumulatorNanos)
+			r.clock.scaleFrac = state.ScaleFrac
+		}
 		r.frame.Index = state.Frame
 		r.frame.Time = elapsed
 		r.frame.FixedStep = r.FixedStep()
@@ -643,12 +744,17 @@ func (r *Runtime) applyRuntimeState(state RuntimeState) {
 			r.clock.SetPaused(*state.Paused)
 		}
 	}
+	if state.Version >= 2 {
+		r.restoreCadences(state.Cadence)
+	}
 	if r.physics != nil && state.Physics != nil {
 		r.physics.ApplyState(*state.Physics)
 	}
 }
 
-// State returns the current authoritative state for sim.Runner broadcasts.
+// State returns the current authoritative state for sim.Runner broadcasts. It
+// leaves out what only a restore needs, so a broadcast stays small; see
+// Snapshot.
 func (r *Runtime) State() []byte {
 	if r == nil {
 		return nil
@@ -656,19 +762,20 @@ func (r *Runtime) State() []byte {
 	if r.snapshot != nil {
 		return r.snapshot.State(r)
 	}
-	return r.defaultState()
+	return r.defaultState(false)
 }
 
-func (r *Runtime) defaultState() []byte {
-	data, err := json.Marshal(r.runtimeState())
+func (r *Runtime) defaultState(full bool) []byte {
+	data, err := json.Marshal(r.runtimeState(full))
 	if err != nil {
 		return nil
 	}
 	return data
 }
 
-// runtimeState captures the clock, time control settings and physics.
-func (r *Runtime) runtimeState() RuntimeState {
+// runtimeState captures the clock, time control settings and physics. A full
+// state adds the clock remainder and the cadence accumulators.
+func (r *Runtime) runtimeState(full bool) RuntimeState {
 	nanos := int64(r.frame.Time)
 	state := RuntimeState{
 		Frame:       r.frame.Index,
@@ -678,6 +785,14 @@ func (r *Runtime) runtimeState() RuntimeState {
 	if r.clock != nil {
 		scale, paused := r.clock.TimeScale(), r.clock.Paused()
 		state.TimeScale, state.Paused = &scale, &paused
+	}
+	if full {
+		state.Version = RuntimeStateVersion
+		if r.clock != nil {
+			state.AccumulatorNanos = int64(r.clock.accumulator)
+			state.ScaleFrac = r.clock.scaleFrac
+		}
+		state.Cadence = r.cadenceStates()
 	}
 	if r.physics != nil {
 		physicsState := r.physics.StateSnapshot()

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Save the `game` clock remainder and the `Every` and `EveryInterval`
+  accumulators in `Runtime.Snapshot`. A runtime restored from a save, a rollback
+  or a replay baseline now takes its next steps and runs cadence systems on the
+  same ticks, with the same `ctx.Delta`, as one that never stopped. Before,
+  `Restore` zeroed the clock remainder and left the wrappers' gathered time as
+  it was. Snapshots carry `"version": 2` (`game.RuntimeStateVersion`). Version 1
+  snapshots still load and behave as before. `State`, which `sim.Runner`
+  broadcasts every tick, keeps its size.
+
+- Add `game.Runtime.RestoreSnapshot`, which returns why a snapshot was refused
+  (empty, malformed, newer than this build, or a clock or world that does not
+  fit) and then changes nothing. `Runtime.Restore` keeps the `sim.Simulation`
+  signature and still cannot report an error. `SaveCodec` snapshots now check
+  the clock before they replace the world. Custom codecs can report errors
+  through the new optional `game.SnapshotRestorer` interface or
+  `SnapshotCodecFuncs.RestoreSnapshotFunc`.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered

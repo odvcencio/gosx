@@ -85,7 +85,12 @@ change state, or replays diverge.
 - `Options.ReplayMaxFrames` stops recording after N frames and sets
   `ReplayLog.Truncated`. The kept frames still replay exactly. Zero is unbounded.
 - `game.Runtime` snapshots store time as integer nanoseconds (`timeNanos`) and
-  still read older `timeSeconds` snapshots.
+  still read older `timeSeconds` snapshots. Since `"version": 2` they also store
+  the clock remainder and the `game.Every` and `game.EveryInterval`
+  accumulators, so a replay from `ReplayLog.Initial` runs cadence systems on the
+  same ticks. `runner.Restore` cannot report a snapshot that `game.Runtime`
+  refuses, because `Simulation.Restore` has no result; call
+  `Runtime.RestoreSnapshot` first to get the error.
 
 ## Runner options
 
