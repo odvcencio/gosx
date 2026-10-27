@@ -906,10 +906,10 @@ const budgets = [
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     // Portable U8 KTX2 upload grows the combined bootstrap by 557 measured
     // raw bytes; keep the existing 65,536-byte allowance fixed.
-    // Keeping sky bodies out of the sea's planar mirror adds 335 raw, 74 gzip and 449 Brotli bytes
+    // Keeping sky bodies out of the sea's planar mirror adds 333 raw, 100 gzip and 228 Brotli bytes
     // to the monolith; only the exhausted minimums move, and the allowances remain unchanged.
-    file: "bootstrap.js", raw: 1989107, gzip: 556999,
-    brotli: 454979 },
+    file: "bootstrap.js", raw: 1989105, gzip: 557025,
+    brotli: 454758 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1445,14 +1445,14 @@ const budgets = [
     // Pending-pose and CPU playback retention adds 564 more Brotli bytes
     // (152948 -> 153512); the smallest clearing target step is 500 bytes.
     // Integrated baked shadow bounds measure 645370 raw bytes; keep the 5% allowance.
-    // Keeping sky bodies out of the sea's planar mirror adds 293 raw, 194 gzip and 337 Brotli bytes
+    // Keeping sky bodies out of the sea's planar mirror adds 291 raw, 76 gzip and 324 Brotli bytes
     // to the shared Scene3D chunk; only the exhausted minimums move, and the allowances remain unchanged.
-    file: "bootstrap-feature-scene3d.js", raw: 640750, gzip: 182938,
+    file: "bootstrap-feature-scene3d.js", raw: 640748, gzip: 182825,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
     // target by 32 B, retaining the governed 5% allowance.
-    brotli: 155740 },
+    brotli: 155727 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -2183,14 +2183,14 @@ const routeBudgets = [
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     // The same two-backend retry adds 74 gzip bytes to this route after the
     // cache-hit lookup reduction; retain the 16,384 B cap.
-    // Keeping sky bodies out of the sea's planar mirror adds 324 raw, 201 gzip and 360 Brotli bytes
+    // Keeping sky bodies out of the sea's planar mirror adds 322 raw, 83 gzip and 347 Brotli bytes
     // to this route; only the exhausted minimums move, and the allowances remain unchanged.
-    raw: 1448902,
-    gzip: 403409,
+    raw: 1448900,
+    gzip: 403291,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    brotli: 345623,
+    brotli: 345610,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2388,15 +2388,15 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
-    // Keeping sky bodies out of the sea's planar mirror adds 308 raw, 213 gzip and 358 Brotli bytes
+    // Keeping sky bodies out of the sea's planar mirror adds 306 raw, 95 gzip and 345 Brotli bytes
     // to this route; only the exhausted minimums move, and the allowances remain unchanged.
-    raw: 1254400,
-    gzip: 360645,
+    raw: 1254398,
+    gzip: 360527,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 312145,
+    brotli: 312133,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2589,14 +2589,14 @@ const routeBudgets = [
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
     // WebGPU detail lifecycle adds 1,086 raw, 314 gzip and 280 Brotli bytes.
     // Raise only breached targets; keep shared governed allowances fixed.
-    // Keeping sky bodies out of the sea's planar mirror adds 339 raw, 220 gzip and 381 Brotli bytes
+    // Keeping sky bodies out of the sea's planar mirror adds 337 raw, 102 gzip and 368 Brotli bytes
     // to this route; only the exhausted minimums move, and the allowances remain unchanged.
-    raw: 1742396,
-    gzip: 490489,
+    raw: 1742394,
+    gzip: 490371,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 421417,
+    brotli: 421404,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2764,13 +2764,13 @@ const routeBudgets = [
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // The same WebGPU chunk adds 74 gzip bytes to this route; retain its
     // other targets and the governed allowance.
-    // Keeping sky bodies out of the sea's planar mirror adds 324 raw, 201 gzip and 360 Brotli bytes
+    // Keeping sky bodies out of the sea's planar mirror adds 322 raw, 83 gzip and 347 Brotli bytes
     // to this route; only the exhausted minimums move, and the allowances remain unchanged.
-    raw: 1292907,
-    gzip: 359709,
+    raw: 1292905,
+    gzip: 359591,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
-    brotli: 306821,
+    brotli: 306808,
   },
 
 ];
