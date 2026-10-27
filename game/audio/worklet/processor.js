@@ -25,6 +25,9 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     this.message = {t: 'm', bytes: this.messageBuffer, n: 0};
     this.transfer = [this.messageBuffer];
     this.messageReady = true;
+    // While the page holds the buffer one drained batch waits here, so a fault is still seen at once.
+    this.parked = new Uint8Array(this.messageBuffer.byteLength);
+    this.parkedBytes = 0;
     this.faultMessage = {t: 'f', a: 0};
     this.quantized = new Uint8Array(256);
     this.required = new Uint32Array(256);
@@ -157,6 +160,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
         this.messageView = new Uint8Array(data.bytes);
         this.message.bytes = this.transfer[0] = data.bytes;
         this.messageReady = true;
+        if (this.parkedBytes) { this.deliver(this.parked, this.parkedBytes); this.parkedBytes = 0; }
         break;
       case 'c': this.commit(this.active, data.bytes); break;
       case 'i': {
@@ -278,8 +282,17 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     this.deferredCount = 0;
   }
 
+  deliver(from, length) {
+    for (let i = 0; i < length; i++) this.messageView[i] = from[i];
+    this.message.n = length;
+    this.messageReady = false;
+    this.post(this.message, this.transfer);
+  }
+
   drain(target, active) {
     if (!target) return false;
+    // The page holds the buffer and a batch is parked. Later messages stay in the reactor's ring; draining them now would lose them.
+    if (active && !this.messageReady && this.parkedBytes) return false;
     this.refresh(target);
     const count = target.x.msg_drain(), size = this.b.messageBytes;
     if (!Number.isInteger(count) || count < 0 || count > this.b.messageCapacity) throw new Error('audio: invalid message count');
@@ -291,13 +304,12 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
         argument = target.messages[at] | target.messages[at + 1] << 8;
       }
     }
-    if (active && this.messageReady && count) {
-      const length = count * size;
-      for (let i = 0; i < length; i++) this.messageView[i] = target.messages[i];
-      this.message.n = length;
-      this.messageReady = false;
-      this.post(this.message, this.transfer);
-    } else if (fault) {
+    if (active && count && !this.messageReady) {
+      const length = this.parkedBytes = count * size;
+      for (let i = 0; i < length; i++) this.parked[i] = target.messages[i];
+    }
+    if (active && this.messageReady && count) this.deliver(target.messages, count * size);
+    else if (fault) {
       this.faultMessage.a = argument;
       this.post(this.faultMessage);
     }

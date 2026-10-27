@@ -18,6 +18,8 @@ const ProcessorName = "gosx-wasm-audio"
 // Optional capabilities returns a bit mask. SharedBank additionally requires
 // bank_alloc, bank_install, bank_image_ptr, and bank_image_len; image upload uses
 // project_alloc. No memory growth or allocation is needed in steady rendering.
+// While the page holds the message buffer, later messages wait in the reactor's
+// ring; a reactor whose ring can fill should report that with its FaultOpcode record.
 type Backend struct {
 	ExportPrefix          string             `json:"prefix,omitempty"`
 	MaxFrames             int                `json:"maxFrames"`

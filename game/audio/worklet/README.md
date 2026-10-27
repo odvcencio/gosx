@@ -47,6 +47,17 @@ backend fault even while the message buffer is outstanding. `q` reports timing
 histograms, memory and underruns; `p` resets the histogram. Closing the typed
 node sends `close`, releases the reactor, disconnects the node and closes ports.
 
+The processor drains the active reactor's message ring every eighth render
+quantum and drops nothing while the page holds the `m` buffer. It parks one batch
+and sends it as soon as `b` returns the buffer. Past that it stops draining, so
+later messages wait in the reactor's ring, in order, until the page catches up.
+A fault found while the buffer is out is reported at once with `f`, and its
+record still arrives in order in `m`. A fault raised after draining has stopped
+is reported at the first drain after `b`. Because the ring then holds what a
+page stall produces, size `MessageCapacity` for that and have the reactor
+report a full ring with its fault record; the processor cannot see a reactor
+that drops messages silently.
+
 Validation runs in Go and the processor. Native asset tests enforce 24 KiB raw
 and 6 KiB gzip limits. The Node suite exercises a separate mono backend with
 different record sizes and export names. Applications should additionally test

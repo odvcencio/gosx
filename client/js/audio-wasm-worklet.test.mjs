@@ -1,5 +1,6 @@
 // Exercise the reusable reactor host with a non-Cicada mono backend, unusual
-// buffer sizes, memory growth, musical replacement, and real buffer transfers.
+// buffer sizes, memory growth, musical replacement, real buffer transfers, and
+// a page that is slow to return the message buffer.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -26,7 +27,16 @@ async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false
       test_init(r, frames, channels) { assert.equal(frames, b.maxFrames); assert.equal(channels, 1); return 0; },
       test_project_alloc() { return 2048; },
       test_out_ptr() { return 4096; }, test_cmd_ptr() { return 1024; }, test_cmd_cap() { return 8; },
-      test_msg_ptr() { return 3072; }, test_msg_drain() { const n = x.messages || 0; x.messages = 0; return n; },
+      test_msg_ptr() { return 3072; },
+      // `ring` queues records as an engine does: one call moves at most messageCapacity of them into the
+      // region and the rest wait. Tests that fill the region by hand set `messages` instead.
+      test_msg_drain() {
+        x.drains++;
+        if (!x.ring.length) { const n = x.messages || 0; x.messages = 0; return n; }
+        const n = Math.min(x.ring.length, b.messageCapacity);
+        for (let i = 0; i < n; i++) new Uint8Array(memory.buffer, 3072 + i * b.messageBytes, b.messageBytes).set(x.ring.shift());
+        return n;
+      },
       test_cmd_commit(n) { calls.push(new Uint8Array(memory.buffer, 1024, n * b.commandBytes).slice()); return 0; },
       test_render(n) {
         if (failRender) throw new Error('render failed');
@@ -35,7 +45,7 @@ async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false
         if (imageLevel) level = imageLevel / 100;
         new Float32Array(memory.buffer, 4096, b.maxFrames).fill(level, 0, n);
         x.frames.push(n);
-      }, frames: [],
+      }, frames: [], ring: [], drains: 0,
     };
     reactors.push({x, calls});
     return {exports: x};
@@ -50,6 +60,34 @@ async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false
   const send = data => port.onmessage?.({data});
   const render = frames => {const output = new Float32Array(frames); const alive = p.process([], [[output]]); return {output, alive};};
   return {p, port, messages, reactors, send, render, isClosed: () => closed};
+}
+
+// A scripted page for the message path. The engine emits [1, seq low, seq high, 0] and a fault is
+// [7, 0, code low, code high]. page() decodes each batch into `seen` and gives the buffer back
+// unless release is false, as a stalled main thread would. drain() is one drain: eight callbacks.
+async function pager() {
+  const f = await fixture(), x = f.reactors[0].x, seen = [], held = [];
+  let sent = 0, read = 0;
+  return {f, x, seen,
+    emit(count) { for (let i = 0; i < count; i++, sent++) x.ring.push([1, sent & 255, sent >> 8, 0]); },
+    drain() { for (let i = 0; i < 8; i++) f.render(128); },
+    page(release = true) {
+      for (;;) {
+        for (; read < f.messages.length; read++) {
+          const m = f.messages[read];
+          if (m.t !== 'm') continue;
+          const bytes = new Uint8Array(m.bytes, 0, m.n);
+          for (let at = 0; at < m.n; at += 4) {
+            const fault = bytes[at] === 7;
+            seen.push(fault ? 'fault ' + (bytes[at + 2] | bytes[at + 3] << 8) : bytes[at + 1] | bytes[at + 2] << 8);
+          }
+          held.push(m.bytes);
+        }
+        if (!release || !held.length) return;
+        f.send({t: 'b', bytes: held.shift()});
+      }
+    },
+  };
 }
 
 test('a mono backend renders variable quanta and refreshes grown memory', async () => {
@@ -95,6 +133,46 @@ test('messages transfer and return while faults remain observable under backpres
   f.send({t: 'b', bytes: message.bytes});
   assert.ok(!f.messages.some(m => m.t === 'x'));
   assert.ok(f.render(128).output.every(v => v === 0));
+});
+
+test('a page that holds the message buffer through several drains still gets every message once, in order', async () => {
+  const p = await pager();
+  p.emit(3); p.drain(); p.page(false);
+  assert.deepEqual(p.seen, [0, 1, 2]);
+  // The page keeps the buffer through five more drains while the engine keeps emitting.
+  for (let i = 0; i < 5; i++) { p.emit(3); p.drain(); p.page(false); }
+  assert.deepEqual(p.seen, [0, 1, 2], 'nothing can be delivered while the buffer is out');
+  // Returning the buffer sends the parked batch at once. The 12 messages still queued in the engine then
+  // follow in two more batches, because one drain moves at most 8 records.
+  p.page();
+  for (let i = 0; i < 5; i++) { p.drain(); p.page(); }
+  assert.deepEqual(p.seen, Array.from({length: 18}, (_, i) => i));
+  assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e' || m.t === 'f'));
+});
+
+test('a fault is reported at once while the page holds the buffer and the messages around it are kept', async () => {
+  const p = await pager();
+  p.emit(1); p.drain(); p.page(false);
+  p.emit(1); p.x.ring.push([7, 0, 9, 0]); p.emit(1); p.drain();
+  assert.ok(p.f.messages.some(m => m.t === 'f' && m.a === 9), 'a fault must not wait for the page to return the buffer');
+  assert.ok(p.f.render(128).output.every(v => v === 0));
+  p.page();
+  assert.deepEqual(p.seen, [0, 1, 'fault 9', 2]);
+});
+
+test('later drains leave messages in the engine ring while the page holds the buffer, and its overflow fault arrives last', async () => {
+  const p = await pager();
+  p.emit(2); p.drain(); p.page(false);
+  for (let i = 0; i < 4; i++) { p.emit(2); p.drain(); }
+  // One drain went to the page and one batch is parked; the other six messages are still queued.
+  assert.equal(p.x.drains, 2);
+  assert.equal(p.x.ring.length, 6);
+  // An engine that fills its ring ends it with a fault record, which must not be lost either.
+  p.x.ring.push([7, 0, 11, 0]);
+  p.page();
+  for (let i = 0; i < 3; i++) { p.drain(); p.page(); }
+  assert.deepEqual(p.seen, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 'fault 11']);
+  assert.ok(p.f.render(128).output.every(v => v === 0), 'the fault stops playback');
 });
 
 test('a render fault silences the complete block and stops the reactor once', async () => {

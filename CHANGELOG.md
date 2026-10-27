@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Keep WASM audio worklet messages when the page is slow to return the message
+  buffer. The processor drained the reactor's ring every eighth render quantum
+  and discarded the batch while the buffer was out, so a main-thread stall of
+  about 21 ms at 48 kHz lost messages. It now parks one batch (a fault is still
+  reported at once with `f`) and then stops draining, so later messages wait in
+  the reactor's ring and reach the page once, in order, after `b` returns the
+  buffer. A reactor whose ring can fill should report that with its fault record.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered
