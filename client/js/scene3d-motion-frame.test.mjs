@@ -472,6 +472,10 @@ const settled = promise => Promise.race([
 
 const timers = { clearTimeout, DOMException };
 
+// A frame that fails "at once" would otherwise wait 5 to 10 s (the call's timeout), so a bound of
+// one second tells the two apart and still leaves a loaded CI runner room.
+const FAST = 1000;
+
 test("a motion frame sent while the first models hydrate waits for them", async () => {
   const { bridge } = runtime(null, timers);
   const mount = hydratingMount(bridge);
@@ -531,6 +535,40 @@ test("aborting a held motion frame cancels it for good", async () => {
   assert.equal(mount.retained.length, 0, "an aborted frame must not apply after the commit");
 });
 
+// minimalPoseFrame is the smallest valid GSP2 frame: one batch ("heroes") with one instance ("hero").
+function minimalPoseFrame() {
+  const bytes = [];
+  const encoder = new TextEncoder();
+  const id = value => { const chars = encoder.encode(value); bytes.push(chars.length, 0, ...chars); };
+  const u16 = value => bytes.push(value & 255, value >> 8);
+  const f32 = value => { const data = new DataView(new ArrayBuffer(4)); data.setFloat32(0, value, true); bytes.push(...new Uint8Array(data.buffer)); };
+  bytes.push(71, 83, 80, 50); u16(0); u16(1); id("heroes"); u16(1); id("hero");
+  for (const v of [1, 0, 0, 0, 0, 0, 1, 1, 1, 0]) f32(v);
+  u16(0); bytes.push(0);
+  return Uint8Array.from(bytes);
+}
+
+test("aborting a held motion frame takes none of its fallbacks", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  const applied = [];
+  mount.handle.applyCommands = () => { applied.push("commands"); return { applied: true }; };
+  mount.handle.applyPoseFrame = () => { applied.push("pose frame"); return { applied: true, binary: true }; };
+  const abort = new AbortController();
+  const sent = bridge.dispatchMotionFrame(mount.handle, frame(), {
+    signal: abort.signal,
+    fallbackPoseFrame: minimalPoseFrame(),
+    fallbackCommands: [{ kind: 11, data: { instancedGLBMeshes: [] } }],
+  });
+  assert.equal(await settled(sent), false, "the frame is held while the models hydrate");
+  abort.abort();
+  await assert.rejects(sent, { name: "AbortError" });
+  mount.commit();
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.deepEqual(applied, [], "a canceled frame must not fall back to the pose frame or to the commands");
+  assert.equal(mount.retained.length, 0, "nor apply after the commit");
+});
+
 test("frames queued behind a held frame keep only the latest", async () => {
   const { bridge } = runtime(null, timers);
   const mount = hydratingMount(bridge);
@@ -550,7 +588,7 @@ test("a motion frame still fails at once when no hydration can make the renderer
   mount.state._modelHydrationUncommitted = false; // nothing in flight and nothing committed
   const started = Date.now();
   await assert.rejects(bridge.dispatchMotionFrame(mount.handle, frame()), /renderer-not-ready/);
-  assert.ok(Date.now() - started < 60, "an unready renderer with no hydration must not wait");
+  assert.ok(Date.now() - started < FAST, "an unready renderer with no hydration must not wait");
   assert.equal(mount.handle.__gosxMotionFrameStats.rejected["renderer-not-ready"], 1);
 });
 
@@ -561,7 +599,7 @@ test("a motion frame fails at once when the hydration that was loading has faile
   mount.state._modelHydrationFailed = true;
   const started = Date.now();
   await assert.rejects(bridge.dispatchMotionFrame(mount.handle, frame(), { timeoutMS: 5000 }), /renderer-not-ready/);
-  assert.ok(Date.now() - started < 60, "a failed hydration must not hold the frame for its timeout");
+  assert.ok(Date.now() - started < FAST, "a failed hydration must not hold the frame for its timeout");
   assert.equal(mount.handle.__gosxMotionFrameStats.rejected["renderer-not-ready"], 1);
 });
 
@@ -573,6 +611,6 @@ test("a hydration that fails while a frame is held ends the wait", async () => {
   const started = Date.now();
   mount.state._modelHydrationFailed = true;
   await assert.rejects(sent, /renderer-not-ready/);
-  assert.ok(Date.now() - started < 200, "the held frame fails on the next poll, not at its timeout");
+  assert.ok(Date.now() - started < FAST, "the held frame fails on the next poll, not at its timeout");
   assert.equal(mount.retained.length, 0);
 });

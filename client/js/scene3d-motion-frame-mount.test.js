@@ -120,7 +120,7 @@ test("a motion frame sent after the first model hydration failed fails at once",
   const frame = await outcome(bridge.dispatchMotionFrame(mount, motionFrame(), { timeoutMS: 5000 }));
   assert.equal(frame.ok, false);
   assert.match(frame.error, /renderer-not-ready/, "not a wait that ends in 'still hydrating'");
-  assert.ok(frame.ms < 500, "a hydration that failed will not finish, so the frame must not wait for it: " + frame.ms + " ms");
+  assert.ok(frame.ms < 1000, "a hydration that failed will not finish, so the frame must not wait for it: " + frame.ms + " ms");
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -135,7 +135,7 @@ test("a failed model hydration lets a motion frame take its fallback at once", a
   assert.equal(frame.ok, true, JSON.stringify(frame));
   assert.equal(frame.value.binary, false);
   assert.match(frame.value.fallbackReason, /renderer-not-ready/);
-  assert.ok(frame.ms < 500, "the fallback is not delayed by the call's timeout: " + frame.ms + " ms");
+  assert.ok(frame.ms < 1000, "the fallback is not delayed by the call's timeout: " + frame.ms + " ms");
   assert.ok(mount.__gosxScene3DState.objects.has("fallback-marker"), "the fallback commands applied");
 });
 
