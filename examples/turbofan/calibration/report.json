@@ -880,7 +880,8 @@
     "cycle/public_validation_view.go": "1f61eb4e6be0a2b1d1421181c465b47e100e8778b45af557790d6253ae086f21",
     "cycle/sweep.go": "2c37990d10226deff08dd48a58dce36acc74e9cdeab41482c026d2fb89bb28e1",
     "cycle/view.go": "9d593c8a6dcbabd0fba3673318162013f4a028e4b575c2a6dd9e77f23dee776a",
-    "cycle/visual.go": "a7aae0b06469f3798606043d0169f6edec5ecfa9a31a00642ff09a5a03938e9c"
+    "cycle/visual.go": "88eddada06757a9738272a94562f1f6beac63eb8f26e19264dd4c23981981eff",
+    "cycle/visual_test.go": "847cf1d0862720b31a1b42924c63318c7bfe381e31c6ebcd89879b6eba0215ce"
   },
   "dataSHA256": {
     "cycle/data/air.json": "116bb9f0302ea37b70b2e23d12b1ab2597895f98cec6bc174831d122637bc53a",

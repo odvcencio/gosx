@@ -24,7 +24,7 @@ const browser = await chromium.launch({
 });
 const report = { browser: browser.version(), environment: 'Linux headless Chromium / software rendering', sourceSHA256: {}, checks: [], errors: [] };
 report.frameworkRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/low_speed.go', 'cycle/visual.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', 'browser/render.go', 'browser/engineering.go', 'cycle/engineering.go', 'cycle/engineering_view.go', 'cycle/engineering_test.go', 'cycle/sweep.go', 'cycle/public_validation.go', 'cycle/public_validation_view.go', 'cycle/public_validation_test.go', 'cycle/data/public_validation.json', 'calibration/public-validation.json', '../../scene/geom/lathe.go']) {
+for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/materials.go', 'materials/main.go', 'public/materials/studio-v1.png', 'public/materials/brushed-normal-v1.png', 'public/materials/brushed-roughness-v1.png', 'cycle/visual.go', 'cycle/visual_test.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/low_speed.go', 'cycle/visual.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', 'browser/render.go', 'browser/engineering.go', 'cycle/engineering.go', 'cycle/engineering_view.go', 'cycle/engineering_test.go', 'cycle/sweep.go', 'cycle/public_validation.go', 'cycle/public_validation_view.go', 'cycle/public_validation_test.go', 'cycle/data/public_validation.json', 'calibration/public-validation.json', '../../scene/geom/lathe.go']) {
   report.sourceSHA256[file] = createHash('sha256').update(await readFile(path.join(root, file))).digest('hex');
 }
 const manifestBytes = await readFile(path.join(root, 'dist/build.json'));
@@ -62,7 +62,7 @@ async function rendered(target = page) {
     const viewer = document.querySelector('.viewer');
     const point = JSON.parse(document.querySelector('#cycle-workbench')?.getAttribute('data-cycle-state') || 'null');
     const visual = JSON.parse(viewer?.getAttribute('data-render-applied') || 'null');
-    return !viewer?.hasAttribute('data-render-error') && visual && point && visual.mode === point.mode && visual.valid === point.valid && (!point.valid || Math.abs(visual.temperatureK - point.result.burner.temperatureK) < 1e-6);
+    return !viewer?.hasAttribute('data-render-error') && visual && point && visual.thermalTint === (document.querySelector('[data-thermal-toggle]')?.getAttribute('aria-pressed') === 'true') && visual.color === document.querySelector('[data-gosx-scene3d]')?.__gosxScene3DState?.objects.get('combustor-liner')?.color && visual.mode === point.mode && visual.valid === point.valid && (!point.valid || Math.abs(visual.temperatureK - point.result.burner.temperatureK) < 1e-6);
   });
 }
 async function visit(query = '', target = page) {
@@ -277,6 +277,8 @@ try {
 
   await rendered();
   await click('Pause rotation');
+  await page.locator('[data-thermal-toggle]').click();
+  await rendered();
   const renderedTakeoff = await sceneSummary();
   const takeoffCanvas = await page.locator('canvas').screenshot();
   await page.locator('.viewer').screenshot({ path: path.join(root, 'takeoff-render-preview.png') });
@@ -300,6 +302,9 @@ try {
   const idleCanvas = await page.locator('canvas').screenshot();
   assert(!takeoffCanvas.equals(idleCanvas), 'gas-temperature change must alter visible pixels while rotors are paused');
   await page.locator('.viewer').screenshot({ path: path.join(root, 'idle-render-preview.png') });
+  await page.locator('[data-thermal-toggle]').click();
+  await rendered();
+  assert.equal((await sceneSummary()).combustorColor,'#8b8172');
   await click('Resume rotation');
   const spinningIdleA = await sceneSummary();
   await page.waitForTimeout(600);
@@ -526,6 +531,48 @@ try {
   assert.equal(await staticPage.locator('[data-public-comparison]').count(),18);
   report.checks.push({ name: 'server calculated fallback', observed: 'initial thrust and eight stations render without JavaScript; interactive controls remain disabled' });
   await noScript.close();
+
+  const materialContext=await browser.newContext({viewport:{width:1440,height:1080},deviceScaleFactor:1,reducedMotion:'reduce'});
+  const materialPage=await materialContext.newPage();
+  await materialPage.goto(`${base}/?model=jt9d&backend=webgl`,{waitUntil:'networkidle'});
+  await ready(materialPage);
+  const materialSnapshot=()=>materialPage.locator(mount).evaluate(e=>({clock:e.__gosxScene3DHandle.getAnimationClock(),materials:Object.fromEntries([...e.__gosxScene3DState.objects].filter(([id])=>['fan','spinner','nacelle','hp-turbine','lp-turbine-0','combustor-liner'].includes(id)).map(([id,o])=>[id,{color:o.color,metalness:o.metalness,roughness:o.roughness,normalMap:o.normalMap,roughnessMap:o.roughnessMap}])),requests:performance.getEntriesByType('resource').filter(r=>r.name.includes('/materials/')).map(r=>({url:r.name,bytes:r.transferSize}))}));
+  const studio=await materialSnapshot();
+  assert.equal(studio.materials.fan.metalness,1);
+  assert.equal(studio.materials['hp-turbine'].metalness,0);
+  assert.equal(studio.materials.nacelle.metalness,0);
+  assert.equal(studio.materials['lp-turbine-0'].metalness,1);
+  assert.equal(studio.materials['combustor-liner'].color,'#8b8172');
+  assert.equal(studio.clock.timeSeconds,0);
+  const assets=[];
+  for(const name of ['studio-v1.png','brushed-normal-v1.png','brushed-roughness-v1.png']){
+    const bytes=await readFile(path.join(root,'public/materials',name));
+    const response=await materialPage.request.get(`${base}/materials/${name}`);
+    assert.equal(response.status(),200);assert.match(response.headers()['content-type'],/image\/png/);
+    assert((await response.body()).equals(bytes));assets.push({name,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});
+  }
+  assert(studio.requests.length>=3);
+  await materialPage.locator('canvas').screenshot({path:path.join(root,'materials-after.png')});
+  const materialState=await materialPage.locator('#cycle-workbench').getAttribute('data-cycle-state');
+  await materialPage.locator('[data-thermal-toggle]').click();await rendered(materialPage);
+  const diagnostic=await materialSnapshot();
+  assert.notEqual(diagnostic.materials['combustor-liner'].color,studio.materials['combustor-liner'].color);
+  assert.equal(diagnostic.materials['combustor-liner'].normalMap,studio.materials['combustor-liner'].normalMap);
+  assert.equal(diagnostic.materials['combustor-liner'].roughness,studio.materials['combustor-liner'].roughness);
+  assert.equal(await materialPage.locator('#cycle-workbench').getAttribute('data-cycle-state'),materialState);
+  assert.equal(diagnostic.clock.timeSeconds,studio.clock.timeSeconds);
+  await materialPage.locator('[data-thermal-toggle]').click();await rendered(materialPage);
+  assert.deepEqual((await materialSnapshot()).materials,studio.materials);
+  await materialPage.getByRole('button',{name:'Exterior',exact:true}).click();
+  await materialPage.waitForFunction(()=>document.querySelector('[data-gosx-scene3d]').__gosxScene3DState.objects.get('nacelle-cover').visible===true);
+  await materialPage.locator('canvas').screenshot({path:path.join(root,'materials-exterior-preview.png')});
+  await materialPage.getByRole('button',{name:'Cutaway',exact:true}).click();
+  await materialPage.setViewportSize({width:390,height:844});
+  await ready(materialPage);
+  assert(await materialPage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await materialPage.locator('.viewer').screenshot({path:path.join(root,'materials-mobile-preview.png')});
+  report.checks.push({name:'studio palette, shared surface maps and independent thermal diagnostic',observed:{studio,diagnostic,assets,authoredTextureBytes:assets.reduce((n,a)=>n+a.bytes,0),geometryUnchanged:true,operatingPointUnchangedOnTintToggle:true,captures:['materials-after.png','materials-exterior-preview.png','materials-mobile-preview.png'],environment:'Generated LDR studio reflection, not a measured or prefiltered HDR probe'}});
+  await materialContext.close();
 
   await visit('?backend=webgpu');
   // A created device is not a submitted image. Wait for multiple WebGPU

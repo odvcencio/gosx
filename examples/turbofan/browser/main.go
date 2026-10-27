@@ -42,6 +42,7 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 		return nil, err
 	}
 	renderer := newRenderLink(ctx, initial.Visual)
+	thermalTint := initial.Visual.ThermalTint
 	mode := "generic"
 	var matched cycle.MappedResult
 	var result cycle.Result
@@ -140,7 +141,7 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 		if data, err := json.Marshal(state); err == nil {
 			root.Call("setAttribute", "data-cycle-state", string(data))
 		}
-		renderer.update(cycle.Visualize(mode, result, matched, solveErr), fuel)
+		renderer.update(cycle.Visualize(mode, result, matched, solveErr).WithThermalTint(thermalTint), fuel)
 	}
 	if initial.Model == "mapped" {
 		mode = "mapped"
@@ -163,6 +164,11 @@ func mount(ctx wasm.Context) (wasm.Handle, error) {
 			for i := 0; i < details.Length(); i++ {
 				details.Index(i).Set("open", open)
 			}
+		}
+		if target.Call("closest", "[data-thermal-toggle]").Truthy() {
+			thermalTint = !thermalTint
+			update()
+			return nil
 		}
 		model := target.Call("closest", "[data-cycle-model]")
 		if model.Truthy() {

@@ -5,18 +5,24 @@
     "main.go": "43fff7bb0af339fa7767af6340fedf12a4995924dec26a0fe131d7846d6096bd",
     "main_test.go": "af583bd68c3d27c6d64de9964074766ae6861714d948f51f71ebb856857d10ec",
     "gosx.config.json": "f892b2e5717648be34a1079cd327ef3b1578077f578b617cc2d51c2913ebbe27",
-    "verify.mjs": "d078101ff834a61a312956af4070b8b44333f5ffea8f19a89f9014312dbe9c7b",
-    "app/program.go": "b4298e1be420652eb3d19a43c94e65dc9235f008694795156093ae1b8e93bf0a",
-    "app/page.server.go": "7b419a5adb0e4419ec4ede20685e4381813277ea8aa09721c534233bfae36fc5",
-    "app/page.gsx": "2d621ebcaf2db142c6fbac8abbc5abac2897b58881e0c7c9d5db6ab5d7d62547",
-    "public/turbofan.css": "71b46c7e33b8bcb870528c88cdfb19c4acdab2c8d67b9575db1cb8c4737b804f",
+    "verify.mjs": "6e0ee6260d0a9676fe6b59898b87966f58712fdd6bcda0c4daec3b3abe7a691c",
+    "app/program.go": "c8cfd39799481d75f30a735a00937464d5923d3cace81f4ac63abb5a0f78ec6e",
+    "app/materials.go": "635a8035c9707478c94fdb24588964e934478d5315745cb03d57617800873b5d",
+    "materials/main.go": "f6166b1743880e9c65e69ddd04f0487b08633d1d161daf58dfd03914a1f83712",
+    "public/materials/studio-v1.png": "572fbe54c5915a8e4f4569481bdcd35b06145340eff3da03d28abedb2c18edf4",
+    "public/materials/brushed-normal-v1.png": "4af388b65ed2e06256333997ab934244011a0d5d16cf32f337e7deb96f59e0ae",
+    "public/materials/brushed-roughness-v1.png": "d4de8ab3ad84cc7bb957c8db3e05c799bd91aa2a56f98867465b33c8b207bafe",
+    "cycle/visual.go": "88eddada06757a9738272a94562f1f6beac63eb8f26e19264dd4c23981981eff",
+    "cycle/visual_test.go": "847cf1d0862720b31a1b42924c63318c7bfe381e31c6ebcd89879b6eba0215ce",
+    "app/page.server.go": "e9034536a8be42dc7bdaadac2402d106b6563b181134d21731310e41733fe4c8",
+    "app/page.gsx": "76edd5b0fe826b4e785010b2d36c26c73aba6073accb0ff27fbca7b914e03250",
+    "public/turbofan.css": "90cb137f744975ded5e051aa51d29050353bcbb5d77f4cea94bd636200073669",
     "cycle/model.go": "c5f423392cdc6e452d4171aedd4f10c298412ac6c34e26682c64f426ad492f14",
     "cycle/model_test.go": "41524525bbb1fa4f01a5adb8d103b27ddb9e4450548c431354879a682164d214",
     "cycle/view.go": "9d593c8a6dcbabd0fba3673318162013f4a028e4b575c2a6dd9e77f23dee776a",
     "cycle/gas.go": "242997fb4c7b488ffb496dc1689c904bf134542b49231fb2dc93c3f9cc22f83c",
     "cycle/maps.go": "c564b24e87c98ac9c8094a5945c3c413d2472536cb1416ae108c0b154a32db09",
     "cycle/low_speed.go": "af5bb09b0d582304655e7ead1e695456c9c8a748dbc1a34759949beb79ef09d0",
-    "cycle/visual.go": "a7aae0b06469f3798606043d0169f6edec5ecfa9a31a00642ff09a5a03938e9c",
     "cycle/matched.go": "7a57a548da6a0f5c7829325c666870ac9e83c29a3260f8f7396213fd5c7a52f5",
     "cycle/matcher.go": "8e17e1b5ded31fbc2ab1244978dd0dce976cf5904a5adb1c6b647d01290a09ef",
     "cycle/mapped_view.go": "b5018feecba4306d437301f8e4ab1701dbfc11a00986196ec103ede3991eabe5",
@@ -28,9 +34,9 @@
     "cycle/data/profile.json": "3a30d6acefa4353c5366e27f9e4e3b1cf01e84be7c4ea7e165c1fd2536595da9",
     "calibration/main.go": "7d07905ca344c1dba35eccb010594bbd847fc75fedabc33b70afb97799281f96",
     "calibration/import_sources.py": "41c62791023e7734624eac83404c21d6cfc4bdc51260828093c68793eee00a8c",
-    "calibration/report.json": "b8e164f511027784b7a335b8b8cf1f75c2b026e3422ff2abbaf7d5e57eee31b9",
-    "browser/main.go": "09341cfee60429a0642bdb86c7b55e6e6a09898043e358d3d7f6d21f7b73775f",
-    "browser/render.go": "165b4034be5909409580af7497c5b7d5e6f120de22ed1d4c370987d168a9ace3",
+    "calibration/report.json": "507b7bdb1e5b6065715b3fb68491c8fd2ebbc7356b20fd8447f8a55d1fb5024a",
+    "browser/main.go": "2882231d739e70e52c4e6346ba8fd5f3e3fcaffad1d20800a1baf4918fcedde2",
+    "browser/render.go": "10a9797a4eee70da99ad99883baf3ae7495bff59deaf4cb346b88f6c3d99d05c",
     "browser/engineering.go": "4699dbcf5c787abd8e66e2d10b0f18e42b6a62c5e7a8ea59b04e2010cde2fc0d",
     "cycle/engineering.go": "d14c6e1f58992233ad582dac774188fc149f66b34a302dd84afea6a040cdcf3a",
     "cycle/engineering_view.go": "18254daef53c6fa94ff07eba05d90e93cc2b7cd86ad075356f74d579fbd8d8cc",
@@ -47,10 +53,10 @@
     {
       "name": "compressed Go/WASM delivery",
       "observed": {
-        "bytes": 5437040,
-        "sha256": "6c7fd5d359b6ce344cb80a3c26fd7939bd00402edbacd8228670f4d6d903cb1c",
-        "brotliBytes": 1091357,
-        "gzipBytes": 1486304,
+        "bytes": 5439985,
+        "sha256": "4dc7d7c5ef1c54e8b60af077428e21f595487c21a1a87554468709cf4d71c663",
+        "brotliBytes": 1092388,
+        "gzipBytes": 1487696,
         "response": {
           "status": 200,
           "encoding": "br",
@@ -107,7 +113,7 @@
       "name": "visible rotor animation",
       "observed": {
         "backend": "webgl",
-        "clock": 0.467,
+        "clock": 0.617,
         "reducedMotion": "false",
         "camera": {
           "kind": "perspective",
@@ -129,7 +135,7 @@
         "objects": 88,
         "visibleObjects": 78,
         "animation": {
-          "timeSeconds": 0.4667,
+          "timeSeconds": 0.6166999999999998,
           "paused": false,
           "pending": false
         },
@@ -144,12 +150,12 @@
               0,
               0,
               0,
-              0.9750131717687696,
-              0.2221470568731529,
+              0.9565062568517747,
+              0.2917118108740318,
               0,
               0,
-              -0.2221470568731529,
-              0.9750131717687696,
+              -0.2917118108740318,
+              0.9565062568517747,
               0,
               0,
               0,
@@ -167,12 +173,12 @@
               0,
               0,
               0,
-              0.9276620070877144,
-              0.37342094291294553,
+              0.8748385013318111,
+              0.4844146948509209,
               0,
               0,
-              -0.37342094291294553,
-              0.9276620070877144,
+              -0.4844146948509209,
+              0.8748385013318111,
               0,
               0,
               0,
@@ -181,7 +187,7 @@
             ]
           }
         ],
-        "combustorColor": "#ed653d",
+        "combustorColor": "#8b8172",
         "fanVertices": 1296,
         "triangles": 52840,
         "renderTruth": {
@@ -207,7 +213,7 @@
           },
           "events": [
             {
-              "at": 596,
+              "at": 1678,
               "kind": "backend",
               "detail": "webgl"
             }
@@ -483,9 +489,9 @@
           "maxRelativeResidual": 1.4353237431080245e-16
         },
         "inputHandlerMs": [
-          3,
-          2.400000035762787,
-          2.700000047683716
+          2.699999988079071,
+          2.199999988079071,
+          3.699999988079071
         ],
         "csv": "cycle-cruise.csv; assumptions and station results present",
         "invalidPoint": "cleared results, empty plot and disabled export; reset restores the exact default",
@@ -1180,7 +1186,7 @@
           0.5724006451876029,
           1.435809975729176
         ],
-        "mappedSliderHandlerMs": 9.5,
+        "mappedSliderHandlerMs": 13.399999976158142,
         "nativeWASMAgreement": "within 0.01 N at the unfitted climbout point",
         "csv": "mapped-climbout.csv; model identity, fixed areas and current numerical results present",
         "requests": 0
@@ -1191,7 +1197,7 @@
       "observed": {
         "takeoff": {
           "backend": "webgl",
-          "clock": 4.116,
+          "clock": 5.133,
           "reducedMotion": "false",
           "camera": {
             "kind": "perspective",
@@ -1213,27 +1219,27 @@
           "objects": 88,
           "visibleObjects": 78,
           "animation": {
-            "timeSeconds": 4.1164,
+            "timeSeconds": 5.133399999999999,
             "paused": true,
-            "pending": true
+            "pending": false
           },
           "groups": [
             {
               "id": "low-spool",
               "spinX": 0.5162630258524729,
-              "rotationX": -0.1492586144087782,
+              "rotationX": -0.18613811170074324,
               "matrix": [
                 1,
                 0,
                 0,
                 0,
                 0,
-                -0.39410164196636654,
-                0.91906686144122,
+                -0.7791133409511832,
+                0.6268830847549529,
                 0,
                 0,
-                -0.91906686144122,
-                -0.39410164196636654,
+                -0.6268830847549529,
+                -0.7791133409511832,
                 0,
                 0,
                 0,
@@ -1244,19 +1250,19 @@
             {
               "id": "high-spool",
               "spinX": 1.0394607927373103,
-              "rotationX": -0.9033006229067693,
+              "rotationX": -1.1264922491206142,
               "matrix": [
                 1,
                 0,
                 0,
                 0,
                 0,
-                -0.972759882747668,
-                -0.2318150351395324,
+                -0.48198007068471327,
+                -0.8761821793798131,
                 0,
                 0,
-                0.2318150351395324,
-                -0.972759882747668,
+                0.8761821793798131,
+                -0.48198007068471327,
                 0,
                 0,
                 0,
@@ -1291,7 +1297,7 @@
             },
             "events": [
               {
-                "at": 596,
+                "at": 1678,
                 "kind": "backend",
                 "detail": "webgl"
               }
@@ -1300,7 +1306,7 @@
         },
         "idle": {
           "backend": "webgl",
-          "clock": 4.116,
+          "clock": 5.133,
           "reducedMotion": "false",
           "camera": {
             "kind": "perspective",
@@ -1322,7 +1328,7 @@
           "objects": 88,
           "visibleObjects": 78,
           "animation": {
-            "timeSeconds": 4.1164,
+            "timeSeconds": 5.133399999999999,
             "paused": true,
             "pending": false
           },
@@ -1330,19 +1336,19 @@
             {
               "id": "low-spool",
               "spinX": 0.14408188691448753,
-              "rotationX": 1.3826389534599692,
+              "rotationX": 1.7242676744679355,
               "matrix": [
                 1,
                 0,
                 0,
                 0,
                 0,
-                -0.3939648138591325,
-                0.9191255221355458,
+                -0.7790200066935942,
+                0.6269990663239555,
                 0,
                 0,
-                -0.9191255221355458,
-                -0.3939648138591325,
+                -0.6269990663239555,
+                -0.7790200066935942,
                 0,
                 0,
                 0,
@@ -1353,19 +1359,19 @@
             {
               "id": "high-spool",
               "spinX": 0.7861877557522612,
-              "rotationX": 0.13917119732369265,
+              "rotationX": 0.17355824972364298,
               "matrix": [
                 1,
                 0,
                 0,
                 0,
                 0,
-                -0.9727833627548272,
-                -0.2317164844101732,
+                -0.4820688335397554,
+                -0.8761333458610161,
                 0,
                 0,
-                0.2317164844101732,
-                -0.9727833627548272,
+                0.8761333458610161,
+                -0.4820688335397554,
                 0,
                 0,
                 0,
@@ -1400,7 +1406,7 @@
             },
             "events": [
               {
-                "at": 596,
+                "at": 1678,
                 "kind": "backend",
                 "detail": "webgl"
               }
@@ -1410,7 +1416,7 @@
         "idleMotion": {
           "before": {
             "backend": "webgl",
-            "clock": 4.116,
+            "clock": 5.15,
             "reducedMotion": "false",
             "camera": {
               "kind": "perspective",
@@ -1432,27 +1438,27 @@
             "objects": 88,
             "visibleObjects": 78,
             "animation": {
-              "timeSeconds": 4.1164,
+              "timeSeconds": 5.149933999999999,
               "paused": false,
-              "pending": true
+              "pending": false
             },
             "groups": [
               {
                 "id": "low-spool",
                 "spinX": 0.14408188691448753,
-                "rotationX": 1.3826389534599692,
+                "rotationX": 1.7242676744679355,
                 "matrix": [
                   1,
                   0,
                   0,
                   0,
                   0,
-                  -0.3939648138591325,
-                  0.9191255221355458,
+                  -0.7805114632424044,
+                  0.6251414685870718,
                   0,
                   0,
-                  -0.9191255221355458,
-                  -0.3939648138591325,
+                  -0.6251414685870718,
+                  -0.7805114632424044,
                   0,
                   0,
                   0,
@@ -1463,19 +1469,19 @@
               {
                 "id": "high-spool",
                 "spinX": 0.7861877557522612,
-                "rotationX": 0.13917119732369265,
+                "rotationX": 0.17355824972364298,
                 "matrix": [
                   1,
                   0,
                   0,
                   0,
                   0,
-                  -0.9727833627548272,
-                  -0.2317164844101732,
+                  -0.4706397203827113,
+                  -0.8823254805331661,
                   0,
                   0,
-                  0.2317164844101732,
-                  -0.9727833627548272,
+                  0.8823254805331661,
+                  -0.4706397203827113,
                   0,
                   0,
                   0,
@@ -1484,7 +1490,7 @@
                 ]
               }
             ],
-            "combustorColor": "#608bac",
+            "combustorColor": "#8b8172",
             "fanVertices": 1296,
             "triangles": 52840,
             "renderTruth": {
@@ -1510,7 +1516,7 @@
               },
               "events": [
                 {
-                  "at": 596,
+                  "at": 1678,
                   "kind": "backend",
                   "detail": "webgl"
                 }
@@ -1519,7 +1525,7 @@
           },
           "after": {
             "backend": "webgl",
-            "clock": 4.7,
+            "clock": 5.4,
             "reducedMotion": "false",
             "camera": {
               "kind": "perspective",
@@ -1541,7 +1547,7 @@
             "objects": 88,
             "visibleObjects": 78,
             "animation": {
-              "timeSeconds": 4.699734,
+              "timeSeconds": 5.399933999999999,
               "paused": false,
               "pending": false
             },
@@ -1549,19 +1555,19 @@
               {
                 "id": "low-spool",
                 "spinX": 0.14408188691448753,
-                "rotationX": 1.3826389534599692,
+                "rotationX": 1.7242676744679355,
                 "matrix": [
                   1,
                   0,
                   0,
                   0,
                   0,
-                  -0.4697337588159307,
-                  0.8828081308124981,
+                  -0.8025181926867051,
+                  0.5966276480409411,
                   0,
                   0,
-                  -0.8828081308124981,
-                  -0.4697337588159307,
+                  -0.5966276480409411,
+                  -0.8025181926867051,
                   0,
                   0,
                   0,
@@ -1572,19 +1578,19 @@
               {
                 "id": "high-spool",
                 "spinX": 0.7861877557522612,
-                "rotationX": 0.13917119732369265,
+                "rotationX": 0.17355824972364298,
                 "matrix": [
                   1,
                   0,
                   0,
                   0,
                   0,
-                  -0.7696829920148887,
-                  -0.6384262618368778,
+                  -0.28927439506725916,
+                  -0.9572462192970371,
                   0,
                   0,
-                  0.6384262618368778,
-                  -0.7696829920148887,
+                  0.9572462192970371,
+                  -0.28927439506725916,
                   0,
                   0,
                   0,
@@ -1593,7 +1599,7 @@
                 ]
               }
             ],
-            "combustorColor": "#608bac",
+            "combustorColor": "#8b8172",
             "fanVertices": 1296,
             "triangles": 52840,
             "renderTruth": {
@@ -1619,14 +1625,14 @@
               },
               "events": [
                 {
-                  "at": 596,
+                  "at": 1678,
                   "kind": "backend",
                   "detail": "webgl"
                 }
               ]
             }
           },
-          "elapsedSeconds": 0.5833340000000007
+          "elapsedSeconds": 0.25
         },
         "intermediate": {
           "cycle": {
@@ -2066,7 +2072,7 @@
     {
       "name": "pause at current pose",
       "observed": {
-        "clock": 6.366,
+        "clock": 7.433,
         "pixelResult": "identical canvas pixels across 700 ms"
       }
     },
@@ -2372,10 +2378,171 @@
       "observed": "initial thrust and eight stations render without JavaScript; interactive controls remain disabled"
     },
     {
+      "name": "studio palette, shared surface maps and independent thermal diagnostic",
+      "observed": {
+        "studio": {
+          "clock": {
+            "timeSeconds": 0,
+            "paused": false,
+            "pending": false
+          },
+          "materials": {
+            "spinner": {
+              "color": "#c6c8c6",
+              "metalness": 1,
+              "roughness": 0.22,
+              "normalMap": "/materials/brushed-normal-v1.png",
+              "roughnessMap": "/materials/brushed-roughness-v1.png"
+            },
+            "fan": {
+              "color": "#b8bcbd",
+              "metalness": 1,
+              "roughness": 0.4,
+              "normalMap": "/materials/brushed-normal-v1.png",
+              "roughnessMap": "/materials/brushed-roughness-v1.png"
+            },
+            "lp-turbine-0": {
+              "color": "#8b8172",
+              "metalness": 1,
+              "roughness": 0.56,
+              "normalMap": "/materials/brushed-normal-v1.png",
+              "roughnessMap": "/materials/brushed-roughness-v1.png"
+            },
+            "hp-turbine": {
+              "color": "#c8c0ac",
+              "metalness": 0,
+              "roughness": 0.72,
+              "normalMap": "",
+              "roughnessMap": ""
+            },
+            "nacelle": {
+              "color": "#454e4b",
+              "metalness": 0,
+              "roughness": 0.43,
+              "normalMap": "",
+              "roughnessMap": ""
+            },
+            "combustor-liner": {
+              "color": "#8b8172",
+              "metalness": 1,
+              "roughness": 0.56,
+              "normalMap": "/materials/brushed-normal-v1.png",
+              "roughnessMap": "/materials/brushed-roughness-v1.png"
+            }
+          },
+          "requests": [
+            {
+              "url": "http://127.0.0.1:8096/materials/brushed-normal-v1.png",
+              "bytes": 1538
+            },
+            {
+              "url": "http://127.0.0.1:8096/materials/brushed-roughness-v1.png",
+              "bytes": 1155
+            },
+            {
+              "url": "http://127.0.0.1:8096/materials/studio-v1.png",
+              "bytes": 2115
+            }
+          ]
+        },
+        "diagnostic": {
+          "clock": {
+            "timeSeconds": 0,
+            "paused": false,
+            "pending": false
+          },
+          "materials": {
+            "spinner": {
+              "color": "#c6c8c6",
+              "metalness": 1,
+              "roughness": 0.22,
+              "normalMap": "/materials/brushed-normal-v1.png",
+              "roughnessMap": "/materials/brushed-roughness-v1.png"
+            },
+            "fan": {
+              "color": "#b8bcbd",
+              "metalness": 1,
+              "roughness": 0.4,
+              "normalMap": "/materials/brushed-normal-v1.png",
+              "roughnessMap": "/materials/brushed-roughness-v1.png"
+            },
+            "lp-turbine-0": {
+              "color": "#8b8172",
+              "metalness": 1,
+              "roughness": 0.56,
+              "normalMap": "/materials/brushed-normal-v1.png",
+              "roughnessMap": "/materials/brushed-roughness-v1.png"
+            },
+            "hp-turbine": {
+              "color": "#c8c0ac",
+              "metalness": 0,
+              "roughness": 0.72,
+              "normalMap": "",
+              "roughnessMap": ""
+            },
+            "nacelle": {
+              "color": "#454e4b",
+              "metalness": 0,
+              "roughness": 0.43,
+              "normalMap": "",
+              "roughnessMap": ""
+            },
+            "combustor-liner": {
+              "color": "#dd6949",
+              "metalness": 1,
+              "roughness": 0.56,
+              "normalMap": "/materials/brushed-normal-v1.png",
+              "roughnessMap": "/materials/brushed-roughness-v1.png"
+            }
+          },
+          "requests": [
+            {
+              "url": "http://127.0.0.1:8096/materials/brushed-normal-v1.png",
+              "bytes": 1538
+            },
+            {
+              "url": "http://127.0.0.1:8096/materials/brushed-roughness-v1.png",
+              "bytes": 1155
+            },
+            {
+              "url": "http://127.0.0.1:8096/materials/studio-v1.png",
+              "bytes": 2115
+            }
+          ]
+        },
+        "assets": [
+          {
+            "name": "studio-v1.png",
+            "bytes": 1815,
+            "sha256": "572fbe54c5915a8e4f4569481bdcd35b06145340eff3da03d28abedb2c18edf4"
+          },
+          {
+            "name": "brushed-normal-v1.png",
+            "bytes": 1238,
+            "sha256": "4af388b65ed2e06256333997ab934244011a0d5d16cf32f337e7deb96f59e0ae"
+          },
+          {
+            "name": "brushed-roughness-v1.png",
+            "bytes": 855,
+            "sha256": "d4de8ab3ad84cc7bb957c8db3e05c799bd91aa2a56f98867465b33c8b207bafe"
+          }
+        ],
+        "authoredTextureBytes": 3908,
+        "geometryUnchanged": true,
+        "operatingPointUnchangedOnTintToggle": true,
+        "captures": [
+          "materials-after.png",
+          "materials-exterior-preview.png",
+          "materials-mobile-preview.png"
+        ],
+        "environment": "Generated LDR studio reflection, not a measured or prefiltered HDR probe"
+      }
+    },
+    {
       "name": "WebGPU preference",
       "observed": {
         "backend": "webgl",
-        "clock": 4.116,
+        "clock": 3.283,
         "reducedMotion": "false",
         "camera": {
           "kind": "perspective",
@@ -2397,7 +2564,7 @@
         "objects": 88,
         "visibleObjects": 78,
         "animation": {
-          "timeSeconds": 4.1164999999999985,
+          "timeSeconds": 3.2833,
           "paused": false,
           "pending": false
         },
@@ -2412,12 +2579,12 @@
               0,
               0,
               0,
-              -0.3941324256964951,
-              0.9190536605740693,
+              -0.005187649936731598,
+              0.9999865440535358,
               0,
               0,
-              -0.9190536605740693,
-              -0.3941324256964951,
+              -0.9999865440535358,
+              -0.005187649936731598,
               0,
               0,
               0,
@@ -2435,12 +2602,12 @@
               0,
               0,
               0,
-              -0.9727612236230663,
-              -0.23180940838403444,
+              -0.9007571543265409,
+              0.43432309278871184,
               0,
               0,
-              0.23180940838403444,
-              -0.9727612236230663,
+              -0.43432309278871184,
+              -0.9007571543265409,
               0,
               0,
               0,
@@ -2449,7 +2616,7 @@
             ]
           }
         ],
-        "combustorColor": "#ed653d",
+        "combustorColor": "#8b8172",
         "fanVertices": 1296,
         "triangles": 52840,
         "renderTruth": {
@@ -2475,22 +2642,22 @@
           },
           "events": [
             {
-              "at": 759,
+              "at": 1170,
               "kind": "webgpu-device-ready",
               "detail": "webkit-webgpu"
             },
             {
-              "at": 760,
+              "at": 1172,
               "kind": "backend",
               "detail": "webgpu"
             },
             {
-              "at": 921,
+              "at": 1387,
               "kind": "device-lost",
-              "detail": "destroyed Device was destroyed."
+              "detail": "unknown A valid external Instance reference no longer exists."
             },
             {
-              "at": 2779,
+              "at": 1442,
               "kind": "backend",
               "detail": "webgl fallback=webgpu-device-lost"
             }
@@ -2501,12 +2668,12 @@
   ],
   "errors": [],
   "frameworkRevision": "debad8e6730ae3d0f423ef322be5f6c129c71c65",
-  "buildManifestSHA256": "ad175d6e8dd3b37d64f9fbfaff58e5efd5a5869d0a62c3e510d0adaee6caad56",
+  "buildManifestSHA256": "108bed44c902f3eb66621e6f6df2bd60bd4193376fdb4fdfe9c19017cdb223a5",
   "cycleEngine": {
-    "bytes": 5437040,
-    "sha256": "6c7fd5d359b6ce344cb80a3c26fd7939bd00402edbacd8228670f4d6d903cb1c",
-    "brotliBytes": 1091357,
-    "gzipBytes": 1486304,
+    "bytes": 5439985,
+    "sha256": "4dc7d7c5ef1c54e8b60af077428e21f595487c21a1a87554468709cf4d71c663",
+    "brotliBytes": 1092388,
+    "gzipBytes": 1487696,
     "response": {
       "status": 200,
       "encoding": "br",
@@ -2517,7 +2684,7 @@
     {
       "url": "http://127.0.0.1:8096/_gosx/client-events",
       "method": "POST",
-      "bytes": 356
+      "bytes": 358
     },
     {
       "url": "http://127.0.0.1:8096/_gosx/client-events",
@@ -2527,28 +2694,28 @@
     {
       "url": "http://127.0.0.1:8096/_gosx/client-events",
       "method": "POST",
-      "bytes": 361
+      "bytes": 360
     }
   ],
   "result": "pass",
   "nativeTests": {
     "command": "GOWORK=off go test -json ./examples/turbofan/cycle ./examples/turbofan ./examples/turbofan/app",
-    "passed": 23,
+    "passed": 24,
     "packages": [
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
         "status": "pass",
-        "elapsedSeconds": 1.068
+        "elapsedSeconds": 2.152
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan",
         "status": "pass",
-        "elapsedSeconds": 1.04
+        "elapsedSeconds": 1.791
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/app",
         "status": "pass",
-        "elapsedSeconds": 0.418
+        "elapsedSeconds": 0.737
       }
     ],
     "tests": [
@@ -2561,10 +2728,10 @@
           "    engineering_test.go:52: climbout: net 180484.118 N, fuel heat 71.432460 MW, LP torque 98.407140 kN m, 7 residuals max 7.88e-14",
           "    engineering_test.go:52: approach: net 64050.000 N, fuel heat 28.066401 MW, LP torque 42.689146 kN m, 7 residuals max 1.28e-13",
           "    engineering_test.go:52: idle: net 14945.000 N, fuel heat 8.743878 MW, LP torque 13.387973 kN m, 7 residuals max 1.6e-10",
-          "--- PASS: TestEngineeringLedgersAndCoolingStates (0.01s)"
+          "--- PASS: TestEngineeringLedgersAndCoolingStates (0.03s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.01
+        "elapsedSeconds": 0.03
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
@@ -2581,10 +2748,10 @@
         "test": "TestEngineeringSweepAndSampledSensitivity",
         "output": [
           "=== RUN   TestEngineeringSweepAndSampledSensitivity",
-          "--- PASS: TestEngineeringSweepAndSampledSensitivity (0.23s)"
+          "--- PASS: TestEngineeringSweepAndSampledSensitivity (0.45s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.23
+        "elapsedSeconds": 0.45
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
@@ -2615,41 +2782,52 @@
           "    matched_test.go:84: climbout (unfitted check): target 181475.000 N, predicted 180484.118 N, error -0.5460%, N1 3610.6, N2 7762.0, match 7.88e-14, 19 iterations",
           "    matched_test.go:84: approach (calibration): target 64050.000 N, predicted 64050.000 N, error 0.0000%, N1 2265.8, N2 7030.4, match 1.28e-13, 61 iterations",
           "    matched_test.go:84: idle (calibration): target 14945.000 N, predicted 14945.000 N, error 0.0000%, N1 1100.7, N2 6006.0, match 1.6e-10, 101 iterations",
-          "--- PASS: TestJT9DRatedCalibrationAndUnfittedObservations (0.01s)"
+          "--- PASS: TestJT9DRatedCalibrationAndUnfittedObservations (0.03s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.01
+        "elapsedSeconds": 0.03
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
         "test": "TestApproachFitReproducesStoredProfile",
         "output": [
           "=== RUN   TestApproachFitReproducesStoredProfile",
-          "--- PASS: TestApproachFitReproducesStoredProfile (0.49s)"
+          "--- PASS: TestApproachFitReproducesStoredProfile (0.99s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.49
+        "elapsedSeconds": 0.99
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan",
         "test": "TestTurbofanPageIncludesRuntime",
         "output": [
           "=== RUN   TestTurbofanPageIncludesRuntime",
-          "2026/10/26 20:45:35 gosx islands: TurbofanControls's source file changed since gosx build (app/page.gsx); run gosx build",
-          "--- PASS: TestTurbofanPageIncludesRuntime (0.81s)"
+          "2026/10/26 21:35:02 gosx islands: TurbofanControls's source file changed since gosx build (app/page.gsx); run gosx build",
+          "--- PASS: TestTurbofanPageIncludesRuntime (1.41s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.81
+        "elapsedSeconds": 1.41
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
         "test": "TestMappedOperatingLineConservesAndStaysInMaps",
         "output": [
           "=== RUN   TestMappedOperatingLineConservesAndStaysInMaps",
-          "--- PASS: TestMappedOperatingLineConservesAndStaysInMaps (0.22s)"
+          "--- PASS: TestMappedOperatingLineConservesAndStaysInMaps (0.46s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.22
+        "elapsedSeconds": 0.46
+      },
+      {
+        "package": "m31labs.dev/gosx/examples/turbofan",
+        "test": "TestMappedProfileServerFallback",
+        "output": [
+          "=== RUN   TestMappedProfileServerFallback",
+          "2026/10/26 21:35:03 gosx islands: TurbofanControls's source file changed since gosx build (app/page.gsx); run gosx build",
+          "--- PASS: TestMappedProfileServerFallback (0.38s)"
+        ],
+        "status": "pass",
+        "elapsedSeconds": 0.38
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
@@ -2667,10 +2845,10 @@
         "output": [
           "=== RUN   TestMappedGeometryPerturbationRematches",
           "    matched_test.go:224: same fuel 0.4000 kg/s: baseline 33524.765 N / 1647.385 rpm; +2% bypass area 33820.804 N / 1647.803 rpm",
-          "--- PASS: TestMappedGeometryPerturbationRematches (0.01s)"
+          "--- PASS: TestMappedGeometryPerturbationRematches (0.02s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.01
+        "elapsedSeconds": 0.02
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
@@ -2729,10 +2907,10 @@
         "test": "TestMappedAmbientConditionPreservesPressureAndBalances",
         "output": [
           "=== RUN   TestMappedAmbientConditionPreservesPressureAndBalances",
-          "--- PASS: TestMappedAmbientConditionPreservesPressureAndBalances (0.00s)"
+          "--- PASS: TestMappedAmbientConditionPreservesPressureAndBalances (0.01s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0
+        "elapsedSeconds": 0.01
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
@@ -2760,10 +2938,10 @@
           "    public_validation_test.go:73: nasa-takeoff-thrust: reference 205284.000000, model 211351.807568 N, status variant-mismatch",
           "    public_validation_test.go:73: nasa-takeoff-temperature: reference 764.000000, model 769.604221 K, status variant-mismatch",
           "    public_validation_test.go:73: nasa-takeoff-pressure: reference 2168000.000000, model 2346031.078065 Pa, status variant-mismatch",
-          "--- PASS: TestPublicReferenceAuditDoesNotRefitOrOverstateEvidence (0.08s)"
+          "--- PASS: TestPublicReferenceAuditDoesNotRefitOrOverstateEvidence (0.16s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.08
+        "elapsedSeconds": 0.16
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
@@ -2776,50 +2954,49 @@
         "elapsedSeconds": 0
       },
       {
-        "package": "m31labs.dev/gosx/examples/turbofan",
-        "test": "TestMappedProfileServerFallback",
+        "package": "m31labs.dev/gosx/examples/turbofan/cycle",
+        "test": "TestThermalTintIsAnIndependentDiagnostic",
         "output": [
-          "=== RUN   TestMappedProfileServerFallback",
-          "2026/10/26 20:45:35 gosx islands: TurbofanControls's source file changed since gosx build (app/page.gsx); run gosx build",
-          "--- PASS: TestMappedProfileServerFallback (0.22s)"
+          "=== RUN   TestThermalTintIsAnIndependentDiagnostic",
+          "--- PASS: TestThermalTintIsAnIndependentDiagnostic (0.01s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.22
+        "elapsedSeconds": 0.01
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/app",
         "test": "TestTurbofanSceneContract",
         "output": [
           "=== RUN   TestTurbofanSceneContract",
-          "    program_test.go:64: exterior=false: 88 objects, 18 indexed blade rows / 498 blades, 3005905 SceneIR bytes",
-          "    program_test.go:64: exterior=true: 88 objects, 18 indexed blade rows / 498 blades, 3005907 SceneIR bytes",
-          "--- PASS: TestTurbofanSceneContract (0.06s)"
+          "    program_test.go:64: exterior=false: 88 objects, 18 indexed blade rows / 498 blades, 3035377 SceneIR bytes",
+          "    program_test.go:64: exterior=true: 88 objects, 18 indexed blade rows / 498 blades, 3035379 SceneIR bytes",
+          "--- PASS: TestTurbofanSceneContract (0.09s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.06
+        "elapsedSeconds": 0.09
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/app",
         "test": "TestTurbofanSharedPivot",
         "output": [
           "=== RUN   TestTurbofanSharedPivot",
-          "--- PASS: TestTurbofanSharedPivot (0.00s)"
+          "--- PASS: TestTurbofanSharedPivot (0.01s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0
+        "elapsedSeconds": 0.01
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/app",
         "test": "TestPresentationChangesOnlyVisibility",
         "output": [
           "=== RUN   TestPresentationChangesOnlyVisibility",
-          "--- PASS: TestPresentationChangesOnlyVisibility (0.35s)"
+          "--- PASS: TestPresentationChangesOnlyVisibility (0.63s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.35
+        "elapsedSeconds": 0.63
       }
     ],
-    "rawSHA256": "c748728b2f5bd0459ddc2d8fa5b47a8fe14e32f7f5a02ba5d968ee7f07eed44f",
+    "rawSHA256": "ffdb4d82fb021c777b973b367d1be2b9ef89c74c835859f35cc04c6e9f596d08",
     "operatingLine": {
       "points": 81,
       "fuelRangeKGS": [
@@ -2836,9 +3013,9 @@
   "checksAlsoPassed": [
     "Native vet: ./examples/turbofan/...",
     "GOOS=js GOARCH=wasm vet: ./examples/turbofan/browser",
-    "GoSX check: Page, CycleWorkbench, EngineeringInspector, TurbofanControls",
-    "Production GoSX build including local prerender and size inspection",
-    "Frozen calibrated model parameters exactly equal the prior engineering revision; all four predicted thrusts unchanged to 1e-7 N"
+    "GoSX check and complete production build/prerender",
+    "Asset planning for public/ and production size inspection",
+    "Model parameter set equals the prior public-reference revision; no recalibration"
   ],
   "calibrationScope": {
     "profile": "JT9D-7R4D / -7R4D1",
@@ -3011,24 +3188,65 @@
     "recalibration": false,
     "originalThrustAndParameterSetUnchanged": true
   },
+  "materialPass": {
+    "finishScope": "Illustrative titanium, steel, warm alloy, painted shell and matte ceramic; not measured JT9D optical properties.",
+    "environment": "Generated grayscale LDR studio reflection; not measured or prefiltered HDR IBL.",
+    "assetGenerator": "GOWORK=off go run ./examples/turbofan/materials",
+    "authoredTextureBytes": 3908,
+    "assets": [
+      {
+        "name": "studio-v1.png",
+        "bytes": 1815,
+        "sha256": "572fbe54c5915a8e4f4569481bdcd35b06145340eff3da03d28abedb2c18edf4"
+      },
+      {
+        "name": "brushed-normal-v1.png",
+        "bytes": 1238,
+        "sha256": "4af388b65ed2e06256333997ab934244011a0d5d16cf32f337e7deb96f59e0ae"
+      },
+      {
+        "name": "brushed-roughness-v1.png",
+        "bytes": 855,
+        "sha256": "d4de8ab3ad84cc7bb957c8db3e05c799bd91aa2a56f98867465b33c8b207bafe"
+      }
+    ],
+    "geometry": "Original 88 meshes, 498 blades in 18 indexed rows; no geometry added.",
+    "thermalDiagnostic": "Studio finish is the default; optional gas-temperature tint and thermal=gas URL preserve numerical inputs, shaft speeds and pose. No metal-temperature model.",
+    "baseline": {
+      "revision": "ab2e60a03251db72ab03c14137a6683b1427aa16",
+      "capture": "materials-before.png",
+      "fixture": "1440x1080, DPR 1, reduced motion, mapped takeoff, WebGL, clock zero",
+      "probeSHA256": "d9c4cb1e228e3c5625fc5c5aed2a3959f82f27431393e8ee3ca65885987455d2"
+    },
+    "captures": [
+      "materials-after.png",
+      "materials-exterior-preview.png",
+      "materials-mobile-preview.png"
+    ],
+    "concurrentPRMerge": {
+      "preservedParent": "ea281a58e434d1aeeee97a8c7805788eed7da160",
+      "turbofanFilesChangedByMerge": false,
+      "localSDKDifference": "The checked target/local renderer source differs only by a JSDoc annotation in mount-webgl.ts; the authored application files in the merge are unchanged."
+    }
+  },
   "performance": {
     "budget": "examples/turbofan/perf-budget.json",
     "profile": "turbofan-engineering",
     "passed": true,
     "budgetAssertionsUnchanged": true,
-    "environment": "Fresh Linux Chromium profile on dedicated CDP port 9338, warm server, ANGLE SwiftShader, forced WebGL; single cold-client run",
-    "javascriptSourceKiB": 1340.7490234375,
+    "environment": "Fresh Linux Chromium profile, CDP port 9339, warm server, ANGLE SwiftShader, forced WebGL; single cold-client run",
+    "javascriptSourceKiB": 1054.1484375,
     "javascriptSourceLimitKiB": 1650,
-    "resourceWaterfallKiB": 1632.396484375,
+    "resourceWaterfallKiB": 1637.75390625,
     "networkLimitKiB": 1640,
-    "lcpMs": 388,
+    "lcpMs": 624,
     "lcpLimitMs": 18000,
-    "totalBlockingTimeMs": 18,
+    "totalBlockingTimeMs": 229,
     "totalBlockingTimeLimitMs": 15000,
     "networkExcludesMainHTML": true,
     "networkIncludesNumericalWASM": true,
-    "previousEngineeringNetworkKiB": 1624.763671875,
-    "addedPublicReferenceNetworkKiB": 7.6328125,
+    "previousPublicReferenceNetworkKiB": 1632.396484375,
+    "addedMaterialsCaptureKiB": 5.357421875,
     "previousCycleOnlyNetworkKiB": 1609.62890625,
     "sharedDocumentationBudget": {
       "path": "perf/budgets/default.json",
@@ -3036,12 +3254,12 @@
       "unchanged": true,
       "networkLimitKiB": 1615,
       "passed": false,
-      "excessKiB": 17.396484375,
-      "evaluation": "Same cold-client capture evaluated against the shared network allowance; no global budget edits."
+      "excessKiB": 22.75390625,
+      "evaluation": "Same capture evaluated against the shared network allowance; no global budget edits."
     },
-    "rawReportSHA256": "f2387adc8dff1b266d0fd2027114f47c09b6ea4eea00d83e6f8afec6cdc5d2b7",
-    "sizeReportSHA256": "8e1362bda27db1ff9bcd7b2c563beba6dd2d8ee6e26d6764b9d1545525be6272",
-    "reproduce": "CHROME_WS_URL=http://127.0.0.1:9338 GOWORK=off go run ./cmd/gosx perf --json --coverage --frames 45 --timeout 60s --budget examples/turbofan/perf-budget.json --budget-profile turbofan-engineering 'http://127.0.0.1:8096/?model=jt9d&backend=webgl'"
+    "rawReportSHA256": "5cd6fd1f588ffb22a39cb0a1fef8016d344a21621aa46a117eb39a14d40c08ae",
+    "sizeReportSHA256": "d5a68a43e5b93f9954331d70ba5e6ddb0d2d31db99993e27b9f5bcf3e9bc507d",
+    "reproduce": "CHROME_WS_URL=http://127.0.0.1:9339 GOWORK=off go run ./cmd/gosx perf --json --coverage --frames 45 --timeout 60s --budget examples/turbofan/perf-budget.json --budget-profile turbofan-engineering 'http://127.0.0.1:8096/?model=jt9d&backend=webgl'"
   },
   "limitations": [
     "Three fitted ground points; one unfitted public comparison, not blind validation.",
@@ -3057,32 +3275,37 @@
     "Application data requests are absent during control checks; ordinary framework telemetry POSTs are recorded separately.",
     "External public-reference audit fails the standard-variant rated N1 limits; implementation test success does not mean engine accuracy validation.",
     "Hot-day temperature comparisons use exhibit specifications with provisional station mapping, missing sensor uncertainty, fuel beyond the interactive interval and incompatible model RPM.",
-    "No complete matched measured RPM/station dataset was identified; nominal idle and earlier-variant references do not fill that gap."
+    "No complete matched measured RPM/station dataset was identified; nominal idle and earlier-variant references do not fill that gap.",
+    "Material finishes and studio reflection are illustrative; the LDR environment does not establish prefiltered HDR IBL or measured material fidelity."
   ],
   "artifactsSHA256": {
     "cycle-preview.png": "d27c4dd924d4e866e7e7a7a4bf42feac6287939eaa07d8ad915ffb1c772a401c",
     "engineering-components-preview.png": "d9de7adcd328488bb1b5c3835ae039086d377523f2bb923fdbc4d7b3e69b3363",
-    "engineering-mobile-preview.png": "ac9cddf31d3bbc7a9185bb49b9fa8b7373da9759fd391234be6264a7b2ad4c80",
-    "engineering-preview.png": "0be466f8e050fb7a04095023ea2b393780b3e4f471fcac1aa2ebebc776a814c5",
-    "idle-mobile-preview.png": "e61e929a64d8c4f7093c5782ae285a81aaf82203dae410a3472c7d64135c0487",
-    "idle-render-preview.png": "ce703e244bd118b5335f8320d9f64445b9094cd13ea11d08bdfb163fa468fc09",
-    "mapped-mobile-preview.png": "543b99ab2b736362a3f35d008761163f80804cc31b2989ce566c80cb12ee4c99",
-    "mapped-preview.png": "26e92d31077d748f023912adfd3ebd3cd6951234ae1e4adbcdcec4bc161de1b3",
-    "mobile-preview.png": "9fbbf93e67a41ec4b9065149ca5e427d3f197441c07814b689af068c96bec50e",
-    "preview.png": "263e66888f5538e414876dac32cf1772f50a0adea95c09f78777590eddfa2ebf",
-    "public-validation-mobile-preview.png": "9a11155f7369292a3e7d8b18b7a12e6fd054f091c4d39af81eed5820abb7bd7b",
+    "engineering-mobile-preview.png": "7310f427610345f11ed6464e2accede52a91b8fbb7f994201d8e02cf122df26a",
+    "engineering-preview.png": "a056497c16c7e6e15bb4b03f10c867f6672102ceaa6e10dca15ce6b126eb700c",
+    "idle-mobile-preview.png": "3f9e8273da73620d5124a46ba34171805559b8e7f21b93f76b3ca8e7519fe1a0",
+    "idle-render-preview.png": "7d0a52b42744da652c03ce70f816ad12dcbd5a30f34f801a987ad352daef118b",
+    "mapped-mobile-preview.png": "c177b0497b77be1a5271c8af7b73a8cad26ea276d42c3e2e9b45a9846a00b393",
+    "mapped-preview.png": "18776421be3ce30b41986615e261bceae765222ab7a1dc205a408826428c480b",
+    "materials-after.png": "3635a9be3043425617fc83cfdf7b0a1faa58a363bb130c257cc4536a76097131",
+    "materials-before.png": "47a08a1d8bf5b9b679be5f822cc9d0d29b88d4c680417c695613e29c415a4f66",
+    "materials-exterior-preview.png": "1ad134d917c52a06174f97912e09b50d287e2895170644fd34c77508e772191d",
+    "materials-mobile-preview.png": "497cdbfe61b2e4105f47ea3eabcdcfb27e1a679880467930603f7bfd5961688c",
+    "mobile-preview.png": "21d5457a002358ff4d1d9027e92af9549edcd2599176610e5d7c8c621a791683",
+    "preview.png": "fa07d9dc44f59cf872ae879b21315206f6fe40f0e3f333faf7ff7195e9eaea6c",
+    "public-validation-mobile-preview.png": "35cf70dde4d647ef5e5460b4ffefb3bf5803b54bdd9632777fb3899a566eb709",
     "public-validation-preview.png": "1ef688ff41ebfee2b9c50ce0162f406f4ea3e568377741f631bfe5058449bfcd",
-    "takeoff-render-preview.png": "087ca80d95831fb0ab6d53438d3cf39457972bbdfd8d54f6cc79dfbe364e5003"
+    "takeoff-render-preview.png": "08e6798a3acee4f5dea0f2b3fcce84e48f36af41f6e449b6b279c0b6eba54b4f"
   },
   "supportingSHA256": {
-    "README.md": "25b5c8b8e0d3103d88167cc76bd74a6f5dd212f3e95c6142f4f26fedce4d0486",
-    "MODEL.md": "64b87854cbd709a434fcc1820cb4783cc2ef91a005fa025097baaeae773f9d6c",
-    "perf-budget.json": "50edf360e044ae22ef6d8008f4bac441c88e65e08a199491a51644bcddd5b297",
+    "README.md": "d87d6e256ed71326e03cb9147450c01bae96e3e8a558428bab683e0b889c39a5",
+    "MODEL.md": "65be20580dba4548c73802df88d0b6dbdf81d487800616e578c84b2a595065ba",
+    "perf-budget.json": "642f1a179e7aabe49f283e0a58ea88540f96107518ed927ddb0eb291f0202037",
     "cycle/data/SOURCES.md": "383027ad1654b0290807e2c95844465e8c69106e78eaa6858c42de8da25efc00"
   },
   "buildArtifactsSHA256": {
-    "manifest": "ad175d6e8dd3b37d64f9fbfaff58e5efd5a5869d0a62c3e510d0adaee6caad56",
-    "server": "52caa3a13eec29c0dc224fe762f4e8204fdfc5c8fc6e8c8fa366c24f44144b95"
+    "manifest": "108bed44c902f3eb66621e6f6df2bd60bd4193376fdb4fdfe9c19017cdb223a5",
+    "server": "bd148d13c7d4c2a48de0ed291d127db9f82e430a75649f08bb586931ad6967fb"
   },
-  "verifiedAtUTC": "2026-10-27T03:53:57.929173+00:00"
+  "verifiedAtUTC": "2026-10-27T04:45:44.318422+00:00"
 }

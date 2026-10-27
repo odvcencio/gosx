@@ -43,7 +43,7 @@ func Page() Node {
 					disabled
 				 />
 				<nav aria-label="Rendered ground point"><button type="button" data-render-lto="idle" disabled>Idle</button><button type="button" data-render-lto="approach" disabled>Approach</button><button type="button" data-render-lto="climbout" disabled>Climbout</button><button type="button" data-render-lto="takeoff" disabled>Takeoff</button></nav>
-			</div>
+			<button type="button" class="thermal-toggle" data-thermal-toggle aria-pressed={data.visual.ThermalTint} disabled>Gas temperature tint</button></div>
 			<div class="viewer-controls">
 				<TurbofanControls View={data.view} Period={data.period} />
 				<button type="button" class="motion-control" data-gosx-scene3d-animation-toggle aria-pressed="false"><span class="playing-label">Pause rotation</span><span class="paused-label">Resume rotation</span><span class="reduced-label">Reduced motion</span><span aria-hidden="true"> ↗</span></button>

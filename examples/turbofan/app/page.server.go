@@ -71,7 +71,7 @@ func pageData(query url.Values) map[string]any {
 		display = cycle.FormatMapped(r, e)
 		matched, result, err = r, r.Cycle, e
 	}
-	visual := cycle.Visualize(mode, result, matched, err)
+	visual := cycle.Visualize(mode, result, matched, err).WithThermalTint(query.Get("thermal") == "gas")
 	var mappedPoint *cycle.MappedResult
 	if mode == "mapped" {
 		mappedPoint = &matched
