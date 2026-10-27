@@ -17,11 +17,13 @@ type MappedResult struct {
 	Command       MappedInputs `json:"command"`
 	LowCompressor Station      `json:"lowCompressor"`
 	TurbineInlet  Station      `json:"turbineInlet"`
+	HPTOutlet     Station      `json:"hptOutlet"`
 	N1RPM         float64      `json:"n1RPM"`
 	N2RPM         float64      `json:"n2RPM"`
 	MapPoints     []MapPoint   `json:"mapPoints"`
 	MatchResidual float64      `json:"matchResidual"`
 	Iterations    int          `json:"iterations"`
+	Residuals     [7]float64   `json:"residuals"`
 }
 
 // MappedModel scales NASA map shapes at one reconstructed rated point. Its
@@ -428,7 +430,7 @@ func (m *MappedModel) evaluate(x [7]float64, in MappedInputs) ([7]float64, Mappe
 		}
 		res = math.Max(res, math.Abs(e))
 	}
-	return errvec, MappedResult{Cycle: r, Command: in, LowCompressor: booster, TurbineInlet: hptIn, N1RPM: n1, N2RPM: n2, MapPoints: points, MatchResidual: res}, nil
+	return errvec, MappedResult{Cycle: r, Command: in, LowCompressor: booster, TurbineInlet: hptIn, HPTOutlet: hptOut, N1RPM: n1, N2RPM: n2, MapPoints: points, MatchResidual: res, Residuals: errvec}, nil
 }
 
 func (m *MappedModel) Solve(in MappedInputs) (MappedResult, error) {

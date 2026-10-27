@@ -24,7 +24,7 @@ const browser = await chromium.launch({
 });
 const report = { browser: browser.version(), environment: 'Linux headless Chromium / software rendering', sourceSHA256: {}, checks: [], errors: [] };
 report.frameworkRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/low_speed.go', 'cycle/visual.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', 'browser/render.go', '../../scene/geom/lathe.go']) {
+for (const file of ['main.go', 'main_test.go', 'gosx.config.json', 'verify.mjs', 'app/program.go', 'app/page.server.go', 'app/page.gsx', 'public/turbofan.css', 'cycle/model.go', 'cycle/model_test.go', 'cycle/view.go', 'cycle/gas.go', 'cycle/maps.go', 'cycle/low_speed.go', 'cycle/visual.go', 'cycle/matched.go', 'cycle/matcher.go', 'cycle/mapped_view.go', 'cycle/matched_test.go', 'cycle/data/maps.json', 'cycle/data/air.json', 'cycle/data/air-species.yaml', 'cycle/data/jt9d_icao.json', 'cycle/data/profile.json', 'calibration/main.go', 'calibration/import_sources.py', 'calibration/report.json', 'browser/main.go', 'browser/render.go', 'browser/engineering.go', 'cycle/engineering.go', 'cycle/engineering_view.go', 'cycle/engineering_test.go', 'cycle/sweep.go', '../../scene/geom/lathe.go']) {
   report.sourceSHA256[file] = createHash('sha256').update(await readFile(path.join(root, file))).digest('hex');
 }
 const manifestBytes = await readFile(path.join(root, 'dist/build.json'));
@@ -129,7 +129,16 @@ try {
   const canvas = await page.locator('canvas').elementHandle();
   const document = await page.evaluateHandle(() => window.document);
   const requests = [];
-  const collect = r => { if (['document', 'fetch', 'xhr'].includes(r.resourceType())) requests.push(r.url()); };
+  const collect = r => {
+    if (!['document','fetch','xhr'].includes(r.resourceType())) return;
+    const u = new URL(r.url());
+    // Keep framework observability visible without classifying it as a
+    // numerical application-data request.
+    if (u.origin === new URL(base).origin && u.pathname === '/_gosx/client-events' && r.method() === 'POST') {
+      report.frameworkTelemetryRequests ??= [];
+      report.frameworkTelemetryRequests.push({url:r.url(),method:'POST',bytes:Buffer.byteLength(r.postData() || '')});
+    } else requests.push(r.url());
+  };
   page.on('request', collect);
   const cycleState = () => page.locator('#cycle-workbench').evaluate(e => JSON.parse(e.getAttribute('data-cycle-state')));
   const baselineCycle = await cycleState();
@@ -306,6 +315,45 @@ try {
   assert.deepEqual(requests, [], 'render coupling must not request data or replace the document');
   report.checks.push({ name:'solver-driven rendered spools and gas-temperature tint', observed:{takeoff:renderedTakeoff,idle:renderedIdle,idleMotion:{before:spinningIdleA,after:spinningIdleB,elapsedSeconds:dt},intermediate:intermediateMap.matched,displaySpeedReduction:800,pausedPoseToleranceRadians:.002,requests:0,geometryBuffersRetained:true,captures:['takeoff-render-preview.png','idle-render-preview.png']} });
 
+  const eng = key => page.locator(`[data-eng-key="${key}"]`).first();
+  const engineeringPoint = await cycleState();
+  assert.equal(await page.locator('.engineering-tables details').count(), 8);
+  assert(Math.abs(Number(await eng('fuel/heat-to-gas.W').textContent()) - engineeringPoint.result.fuelFlowKGS*43*.99) < .0006);
+  assert(Math.abs(Number(await eng('power/lp-torque.Nm').textContent()) - engineeringPoint.result.fanPowerW/(engineeringPoint.matched.n1RPM*2*Math.PI/60)/1000) < .0006);
+  assert(Math.abs(Number(await eng('station/45a/temperature.K').textContent()) - engineeringPoint.matched.hptOutlet.temperatureK) < .006);
+  assert(Math.abs(Number(await eng('nozzle/core/density.kg_m3').textContent()) - engineeringPoint.result.coreNozzle.exit.pressurePa/(287.05*engineeringPoint.result.coreNozzle.exit.temperatureK)) < .00006);
+  assert(Math.abs(Number(await eng('nozzle/core/critical-npr.1').textContent()) - engineeringPoint.result.coreNozzle.criticalNPR) < .00006);
+  assert.equal(await eng('component/Fan/region').textContent(), 'modeled extension');
+  assert.match(await eng('sensitivity/bracket').textContent(), /Model secant/);
+  const tsPath = await eng('plot/ts-path').getAttribute('d');
+  assert(tsPath.startsWith('M') && !tsPath.includes('NaN'));
+  const sweepX = Number(await page.locator('[data-sweep-marker=thrust]').getAttribute('cx'));
+  assert(Math.abs(sweepX-(48+400*(engineeringPoint.result.fuelFlowKGS-.2054)/(2.055-.2054))) < .006);
+  await page.locator('[data-engineering-collapse]').click();
+  assert.equal(await page.locator('.engineering-tables details[open]').count(), 0);
+  await page.locator('[data-engineering-expand]').click();
+  assert.equal(await page.locator('.engineering-tables details[open]').count(), 8);
+  const [engineeringDownload] = await Promise.all([page.waitForEvent('download'),page.locator('[data-engineering-export]').click()]);
+  const engineeringCSV = await readFile(await engineeringDownload.path(),'utf8');
+  const torqueCSV = Number(engineeringCSV.split('\n').find(line=>line.startsWith('power/lp-torque,')).split(',')[1]);
+  assert(Math.abs(torqueCSV-engineeringPoint.result.fanPowerW/(engineeringPoint.matched.n1RPM*2*Math.PI/60)) < 1e-7);
+  assert(engineeringCSV.includes('station/45a/temperature'));
+  assert(engineeringCSV.includes('residual/2/absolute'));
+  assert(!engineeringCSV.includes('plot/'));
+  await engineeringDownload.saveAs(path.join(output,'engineering-point.csv'));
+  const [sweepDownload] = await Promise.all([page.waitForEvent('download'),page.locator('[data-engineering-sweep-export]').click()]);
+  const sweepCSV = await readFile(await sweepDownload.path(),'utf8');
+  const sweepRows = sweepCSV.trim().split('\n');
+  assert.equal(sweepRows.length,83);
+  assert(Math.abs(Number(sweepRows.at(-1).split(',')[1])-213500) < .01);
+  assert(sweepCSV.includes('not test observations'));
+  await sweepDownload.saveAs(path.join(output,'engineering-sweep.csv'));
+  await page.locator('#engineering-overview').screenshot({path:path.join(root,'engineering-preview.png')});
+  await page.locator('#component-diagnostics').screenshot({path:path.join(root,'engineering-components-preview.png')});
+  assert(await canvas.evaluate(element=>element===document.querySelector('canvas')));
+  assert.deepEqual(requests,[]);
+  report.checks.push({name:'live engineering inspector and raw exports',observed:{point:engineeringPoint.matched,tables:8,tsPath,torqueNm:torqueCSV,sweepRows:81,requests:0,captures:['engineering-preview.png','engineering-components-preview.png']}});
+
   await click('Cycle design');
   assert.deepEqual((await cycleState()).result, baselineCycle.result);
   await click('Pause rotation');
@@ -411,6 +459,13 @@ try {
   const reducedIdle2 = await phone.locator('canvas').screenshot();
   assert(reducedIdle1.equals(reducedIdle2));
   await phone.locator('.viewer').screenshot({path:path.join(root,'idle-mobile-preview.png')});
+  const mobileStationTable = phone.getByRole('region',{name:'Full station thermodynamics',exact:true});
+  await mobileStationTable.evaluate(e=>{e.scrollLeft=e.scrollWidth;});
+  assert(await mobileStationTable.evaluate(e=>e.scrollLeft>0));
+  assert(Math.abs(Number(await phone.locator('[data-eng-key="fuel/heat-to-gas.W"]').textContent())-.2054*43*.99) < .0006);
+  await phone.locator('#engineering-overview').screenshot({path:path.join(root,'engineering-mobile-preview.png')});
+  report.checks.push({name:'mobile engineering tables and plots',observed:{width:390,allStationColumnsReachable:true,liveIdleHeatMW:.2054*43*.99,capture:'engineering-mobile-preview.png'}});
+
   report.checks.push({name:'mobile idle render with reduced motion',observed:{point:mobileIdle.matched,clock:reducedClock,pixelsStableAcross700ms:true,viewerFuelSynchronized:true}});
   report.checks.push({ name: 'mobile reduced motion', observed: '390 × 844 touch viewport; identical canvas pixels across 700 ms' });
   report.checks.push({ name: 'mobile cycle controls', observed: 'touch cruise preset updates the local solver; station flow column reachable by scrolling' });
@@ -420,6 +475,9 @@ try {
   const staticPage = await noScript.newPage();
   await staticPage.goto(base, { waitUntil: 'load' });
   assert.equal(await staticPage.locator('[data-cycle-output=net-thrust]').textContent(), '99.5');
+  assert(Number(await staticPage.locator('[data-eng-key="fuel/chemical-power.W"]').textContent())>0);
+  assert((await staticPage.locator('[data-eng-key="plot/ts-path"]').getAttribute('d')).startsWith('M'));
+
   assert(await staticPage.locator('[name=altitudeM]').isDisabled());
   assert.equal(await staticPage.locator('[data-cycle-station]').count(), 8);
   await staticPage.goto(`${base}/?model=jt9d`, { waitUntil: 'load' });

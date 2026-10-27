@@ -52,6 +52,46 @@ The stored profile is checked against recomputation. An **81-point idle-to-takeo
 
 The [calibration report](calibration/report.json) retains predicted states, map-region flags and residuals. Browser checks compare native/WASM outputs, idle CSV, control synchronization, actual rendered spool motion, temperature tint, retained pose/camera/canvas and reduced-motion behavior.
 
+## Engineering inspector
+
+The live inspector exposes station thermodynamics, component loading, map coordinates,
+nozzle discharge, fuel and shaft-work ledgers, thrust decomposition and all seven matching
+residuals. It derives quantities from the current solved point. These are model estimates,
+with SI units and conventional shaft speeds in rpm. Public observations remain separate in
+the calibration comparison.
+
+- Station enthalpy uses the solver's gas model relative to 288.15 K. Specific entropy is
+  `s(T) − s(288.15 K) − R ln(P/101325 Pa)`. Static nozzle exit states are identified;
+  corrected total flow is omitted there. Station 45a identifies the modeled HPT outlet
+  before the second cooling mix; 45 is the mixed LPT inlet.
+- Signed component gas power is `ṁ [h_out − h_in]`: positive for compression, negative for
+  expansion. HP/LP load torque is shaft power divided by `2π N/60`; its accuracy depends
+  on the unvalidated model-estimated RPM. Shaft work is internal transfer, not an additional
+  energy output to add to exhaust energy.
+- Whole-engine energy closure uses inlet and exhaust **total** enthalpy, heat delivered
+  by combustion and shaft loss. Exhaust static enthalpy plus jet kinetic power reproduces
+  exhaust total enthalpy within the matching residual. The kinetic-power readout is not
+  a claimed thermal efficiency. Thrust power `F_net V_flight` is zero at static conditions.
+- Stream thrust is `ṁ_exit V_exit − ṁ_air V_flight + (P_exit−P_ambient) A`. Fuel mass is
+  included in core exit momentum. Nozzle diagnostics report NPR, sonic critical NPR,
+  their ratio, Mach, velocity, density, sound speed and mass flux. Variable gas properties
+  determine the sonic threshold in mapped mode.
+- The temperature–entropy graphic follows an open, air-equivalent stream with fuel and
+  cooling addition; it is not a closed-cycle area/efficiency construction. The pressure
+  diagram uses a logarithmic pressure/ambient axis and schematic station spacing.
+- The ground operating line contains **81 actual fixed-geometry model solves**. Thrust,
+  N1/N2 reference-speed fractions, OPR and TSFC curves are predictions, not an engine test
+  sweep. Local sensitivities are secants between neighboring stored model points. The
+  displayed fuel bracket identifies their sampling interval; no exact derivative or
+  independent accuracy is claimed.
+- Numerical closure is shown separately from measured-data agreement. Small residuals
+  establish that the equations balance, rather than that the component maps are identified.
+
+The engineering CSV retains unrounded derived values, units and map-region labels. The
+separate operating-line CSV retains all 81 points and modeled-extension flags. Plot pixel
+coordinates are excluded from exported engineering quantities. The initial diagrams and
+station tables are server-rendered; subsequent controls update the same mounted document.
+
 ## Generic cycle design
 
 This mode keeps prescribed pressure/bypass ratios and corrected airflow.

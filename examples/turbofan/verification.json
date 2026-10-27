@@ -5,19 +5,19 @@
     "main.go": "43fff7bb0af339fa7767af6340fedf12a4995924dec26a0fe131d7846d6096bd",
     "main_test.go": "dd63dcfcb6ba73821d7361bf2c59faf067071bcbef4b5f759c6fa88df5524239",
     "gosx.config.json": "f892b2e5717648be34a1079cd327ef3b1578077f578b617cc2d51c2913ebbe27",
-    "verify.mjs": "c373776b0a360d07fbe32f74f713aaa2d98d6fc85ef113cf63269b731d628da6",
-    "app/program.go": "ee274e2f49492906b00596f9a74839ac32abe5b09c784511d54f9f9124d50704",
-    "app/page.server.go": "ca4b018cab822e11b92387ed55b170a07f29df108f36b6ce2efd3df855891ff0",
-    "app/page.gsx": "84116d39b9d834eac6a9cabed2945aa5e3992d252c4da756552e46e5f457e447",
-    "public/turbofan.css": "380c810832e29697661294e322aa8663679c68344a8fbe7720a67f6721a7e96d",
-    "cycle/model.go": "d856ea076a35b81a1869653e2e9a4f77bfe926c0b7c643069084224b02c2b047",
+    "verify.mjs": "71cf8f2008b988dd88edd52422678ba294db1f79fefe35628fb43c1cf91558d5",
+    "app/program.go": "b4298e1be420652eb3d19a43c94e65dc9235f008694795156093ae1b8e93bf0a",
+    "app/page.server.go": "6fda1ecf25fe8b0868e5b875e927f631051d5b9e87943d2e78d58ce3d017d38f",
+    "app/page.gsx": "a4befa02f9b000fece511989c598ca7edbd2d73c68a62a5d3840954c994cf5a7",
+    "public/turbofan.css": "0d047bd868dcd2beb79a59b34a29acbd6beb2adfdbbb6986c1595c68c65b0e23",
+    "cycle/model.go": "c5f423392cdc6e452d4171aedd4f10c298412ac6c34e26682c64f426ad492f14",
     "cycle/model_test.go": "41524525bbb1fa4f01a5adb8d103b27ddb9e4450548c431354879a682164d214",
     "cycle/view.go": "9d593c8a6dcbabd0fba3673318162013f4a028e4b575c2a6dd9e77f23dee776a",
-    "cycle/gas.go": "05e3aa64a4f0b296b261643362047a4aa310723be1d29d3cd4df659d5304cc55",
+    "cycle/gas.go": "242997fb4c7b488ffb496dc1689c904bf134542b49231fb2dc93c3f9cc22f83c",
     "cycle/maps.go": "c564b24e87c98ac9c8094a5945c3c413d2472536cb1416ae108c0b154a32db09",
     "cycle/low_speed.go": "af5bb09b0d582304655e7ead1e695456c9c8a748dbc1a34759949beb79ef09d0",
     "cycle/visual.go": "a7aae0b06469f3798606043d0169f6edec5ecfa9a31a00642ff09a5a03938e9c",
-    "cycle/matched.go": "82cc1165487b3472825525e22fde10814e5fc221803d7209ef73214b2728267a",
+    "cycle/matched.go": "b11206b634579e0f0bc1893f1a23c2af920d1513d26b8d265a89d75c9087f077",
     "cycle/matcher.go": "8e17e1b5ded31fbc2ab1244978dd0dce976cf5904a5adb1c6b647d01290a09ef",
     "cycle/mapped_view.go": "b5018feecba4306d437301f8e4ab1701dbfc11a00986196ec103ede3991eabe5",
     "cycle/matched_test.go": "f1c5f9f4ad3db9cceec6622e8f48b99cbf07678666e3868f8f0930a92645d3db",
@@ -28,19 +28,24 @@
     "cycle/data/profile.json": "3a30d6acefa4353c5366e27f9e4e3b1cf01e84be7c4ea7e165c1fd2536595da9",
     "calibration/main.go": "9ef68f2416ef25c5076f55e704410599f2ac93ac08535872e7eb259529817dd5",
     "calibration/import_sources.py": "41c62791023e7734624eac83404c21d6cfc4bdc51260828093c68793eee00a8c",
-    "calibration/report.json": "67a9991f821da14821a4d7da1d2b0a4721da9addc519f4b3def59651614ca3a7",
-    "browser/main.go": "0a75542a09eea37ce22c4d3e91bc9d6007f7bf6a61d5e659916f19b3aa574d7f",
+    "calibration/report.json": "a47d98bdacb938452c4aed8fbbd48ced5cb921a6786e9cafd7ebd611d3a2f71e",
+    "browser/main.go": "09341cfee60429a0642bdb86c7b55e6e6a09898043e358d3d7f6d21f7b73775f",
     "browser/render.go": "165b4034be5909409580af7497c5b7d5e6f120de22ed1d4c370987d168a9ace3",
+    "browser/engineering.go": "4699dbcf5c787abd8e66e2d10b0f18e42b6a62c5e7a8ea59b04e2010cde2fc0d",
+    "cycle/engineering.go": "eb3d2851058f138621639f7f581237a352d5b85094268913752be19287fa23bc",
+    "cycle/engineering_view.go": "18254daef53c6fa94ff07eba05d90e93cc2b7cd86ad075356f74d579fbd8d8cc",
+    "cycle/engineering_test.go": "fa853666873e35f0163099e904bdf6758e865c1dae80380e25e9a0b0b05cc8da",
+    "cycle/sweep.go": "2c37990d10226deff08dd48a58dce36acc74e9cdeab41482c026d2fb89bb28e1",
     "../../scene/geom/lathe.go": "1da64e8012ec06246a60f581a303eeb5c01ef95e64b31e9e7e315c973e276bd6"
   },
   "checks": [
     {
       "name": "compressed Go/WASM delivery",
       "observed": {
-        "bytes": 5302851,
-        "sha256": "3dfd7e01b5bbc26e7482067ce6281df29a40af0606f081be912a2800e7b118f7",
-        "brotliBytes": 1069497,
-        "gzipBytes": 1451720,
+        "bytes": 5401497,
+        "sha256": "b6682c446e2884be9371856834194f5fc20026db056f0f1a5c1a9b389fbf8c5c",
+        "brotliBytes": 1083786,
+        "gzipBytes": 1477768,
         "response": {
           "status": 200,
           "encoding": "br",
@@ -82,7 +87,7 @@
             "name": "workbench",
             "x": 56,
             "width": 1328,
-            "height": 1300.25
+            "height": 4452.15625
           },
           {
             "name": "workbench-grid",
@@ -97,7 +102,7 @@
       "name": "visible rotor animation",
       "observed": {
         "backend": "webgl",
-        "clock": 0.65,
+        "clock": 0.467,
         "reducedMotion": "false",
         "camera": {
           "kind": "perspective",
@@ -119,7 +124,7 @@
         "objects": 88,
         "visibleObjects": 78,
         "animation": {
-          "timeSeconds": 0.6499999999999999,
+          "timeSeconds": 0.46660000000000007,
           "paused": false,
           "pending": false
         },
@@ -134,12 +139,12 @@
               0,
               0,
               0,
-              0.9517215483530664,
-              0.3069626921963675,
+              0.9750238337042803,
+              0.22210025598501257,
               0,
               0,
-              -0.3069626921963675,
-              0.9517215483530664,
+              -0.22210025598501257,
+              0.9750238337042803,
               0,
               0,
               0,
@@ -157,12 +162,12 @@
               0,
               0,
               0,
-              0.8612865901371402,
-              0.5081194836354318,
+              0.9276926244861993,
+              0.3733448733730083,
               0,
               0,
-              -0.5081194836354318,
-              0.8612865901371402,
+              -0.3733448733730083,
+              0.9276926244861993,
               0,
               0,
               0,
@@ -197,7 +202,7 @@
           },
           "events": [
             {
-              "at": 793,
+              "at": 609,
               "kind": "backend",
               "detail": "webgl"
             }
@@ -262,7 +267,8 @@
             "velocityMPS": 383.87295428576425,
             "areaM2": 0.20140885732040553,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.8929291587378536
           },
           "bypassNozzle": {
             "exit": {
@@ -274,7 +280,8 @@
             "velocityMPS": 265.1295168156886,
             "areaM2": 0.9901032042160046,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.8929291587378536
           },
           "flightSpeedMPS": 0,
           "coreFlowKGS": 39.6,
@@ -348,7 +355,8 @@
             "velocityMPS": 565.2100619416947,
             "areaM2": 0.13019530753444905,
             "pressureThrustN": 3177.098698204208,
-            "choked": true
+            "choked": true,
+            "criticalNPR": 1.8929291587378536
           },
           "bypassNozzle": {
             "exit": {
@@ -360,7 +368,8 @@
             "velocityMPS": 265.1295168156886,
             "areaM2": 0.9901032042160046,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.8929291587378536
           },
           "flightSpeedMPS": 0,
           "coreFlowKGS": 39.6,
@@ -434,7 +443,8 @@
             "velocityMPS": 603.8161925301342,
             "areaM2": 0.0898487784438166,
             "pressureThrustN": 4343.581404980996,
-            "choked": true
+            "choked": true,
+            "criticalNPR": 1.8929291587378536
           },
           "bypassNozzle": {
             "exit": {
@@ -446,7 +456,8 @@
             "velocityMPS": 304.1201955948058,
             "areaM2": 0.9427340005685724,
             "pressureThrustN": 3681.593726088271,
-            "choked": true
+            "choked": true,
+            "criticalNPR": 1.8929291587378536
           },
           "flightSpeedMPS": 230.15305437512663,
           "coreFlowKGS": 14.395695862085065,
@@ -467,9 +478,9 @@
           "maxRelativeResidual": 1.4353237431080245e-16
         },
         "inputHandlerMs": [
-          2.199999988079071,
-          2.199999988079071,
-          3.200000047683716
+          2.599999964237213,
+          3,
+          2.800000011920929
         ],
         "csv": "cycle-cruise.csv; assumptions and station results present",
         "invalidPoint": "cleared results, empty plot and disabled export; reset restores the exact default",
@@ -535,7 +546,8 @@
               "velocityMPS": 390.2066373932971,
               "areaM2": 0.5724006451876029,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8751253557738359
             },
             "bypassNozzle": {
               "exit": {
@@ -547,7 +559,8 @@
               "velocityMPS": 314.09225389553933,
               "areaM2": 1.435809975729176,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8933286251047836
             },
             "flightSpeedMPS": 0,
             "coreFlowKGS": 108.48248426710184,
@@ -580,6 +593,11 @@
           "turbineInlet": {
             "temperatureK": 1472.5331059138089,
             "pressurePa": 2240599.725,
+            "massFlowKGS": 106.74059731775328
+          },
+          "hptOutlet": {
+            "temperatureK": 1178.760329514939,
+            "pressurePa": 809991.3823012547,
             "massFlowKGS": 106.74059731775328
           },
           "n1RPM": 3943.959,
@@ -632,7 +650,16 @@
             }
           ],
           "matchResidual": 1.010452379770031e-12,
-          "iterations": 0
+          "iterations": 0,
+          "residuals": [
+            -1.3099676700076785e-16,
+            0,
+            1.4412862552002317e-13,
+            1.3756070753811825e-14,
+            1.010452379770031e-12,
+            2.886203630122201e-13,
+            0
+          ]
         },
         "climbout": {
           "cycle": {
@@ -689,7 +716,8 @@
               "velocityMPS": 336.46473782145284,
               "areaM2": 0.5724006451876029,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.876727837712998
             },
             "bypassNozzle": {
               "exit": {
@@ -701,7 +729,8 @@
               "velocityMPS": 292.23702858358405,
               "areaM2": 1.435809975729176,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.893409333364872
             },
             "flightSpeedMPS": 0,
             "coreFlowKGS": 94.9109759223064,
@@ -734,6 +763,11 @@
           "turbineInlet": {
             "temperatureK": 1397.63460705635,
             "pressurePa": 1907533.270898969,
+            "massFlowKGS": 93.26709176502568
+          },
+          "hptOutlet": {
+            "temperatureK": 1114.5792584399567,
+            "pressurePa": 683085.2930970559,
             "massFlowKGS": 93.26709176502568
           },
           "n1RPM": 3610.574914345734,
@@ -786,7 +820,16 @@
             }
           ],
           "matchResidual": 7.880396050199028e-14,
-          "iterations": 19
+          "iterations": 19,
+          "residuals": [
+            -5.881754838334477e-14,
+            3.2351680453072924e-14,
+            -4.6088817136837707e-14,
+            2.1598316697573705e-14,
+            -7.880396050199028e-14,
+            -3.265459786418882e-14,
+            -3.363996976579718e-14
+          ]
         },
         "approach": {
           "cycle": {
@@ -843,7 +886,8 @@
               "velocityMPS": 170.36450424616743,
               "areaM2": 0.5724006451876029,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8805452466029131
             },
             "bypassNozzle": {
               "exit": {
@@ -855,7 +899,8 @@
               "velocityMPS": 179.20887791346266,
               "areaM2": 1.435809975729176,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8936023235936512
             },
             "flightSpeedMPS": 0,
             "coreFlowKGS": 50.27031315273164,
@@ -888,6 +933,11 @@
           "turbineInlet": {
             "temperatureK": 1120.6658695796066,
             "pressurePa": 900859.1174430795,
+            "massFlowKGS": 49.170152192386034
+          },
+          "hptOutlet": {
+            "temperatureK": 882.2796446500439,
+            "pressurePa": 315239.3145096461,
             "massFlowKGS": 49.170152192386034
           },
           "n1RPM": 2265.826529749597,
@@ -940,7 +990,16 @@
             }
           ],
           "matchResidual": 1.278055027840598e-13,
-          "iterations": 61
+          "iterations": 61,
+          "residuals": [
+            4.597986521726952e-14,
+            3.028809589742424e-14,
+            -1.278055027840598e-13,
+            -1.1249123279986305e-14,
+            -6.23668070639504e-14,
+            -7.199438899191235e-15,
+            -7.335818952043e-16
+          ]
         },
         "idle": {
           "cycle": {
@@ -997,7 +1056,8 @@
               "velocityMPS": 71.2793448854783,
               "areaM2": 0.5724006451876029,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8853954668665311
             },
             "bypassNozzle": {
               "exit": {
@@ -1009,7 +1069,8 @@
               "velocityMPS": 87.15441733479331,
               "areaM2": 1.435809975729176,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8936624969466205
             },
             "flightSpeedMPS": 0,
             "coreFlowKGS": 24.05049370238708,
@@ -1042,6 +1103,11 @@
           "turbineInlet": {
             "temperatureK": 810.884297435255,
             "pressurePa": 365704.21295992145,
+            "massFlowKGS": 23.414126422803534
+          },
+          "hptOutlet": {
+            "temperatureK": 663.9584048181255,
+            "pressurePa": 158700.53425827395,
             "massFlowKGS": 23.414126422803534
           },
           "n1RPM": 1100.7045365975116,
@@ -1094,13 +1160,22 @@
             }
           ],
           "matchResidual": 1.5984812119864995e-10,
-          "iterations": 101
+          "iterations": 101,
+          "residuals": [
+            2.7394305908734574e-11,
+            4.939326096794774e-11,
+            -1.5984812119864995e-10,
+            -3.6093744114050685e-11,
+            -7.18967776346574e-11,
+            3.70710679446159e-11,
+            8.407372506109281e-13
+          ]
         },
         "fixedAreasM2": [
           0.5724006451876029,
           1.435809975729176
         ],
-        "mappedSliderHandlerMs": 8.399999976158142,
+        "mappedSliderHandlerMs": 12.100000023841858,
         "nativeWASMAgreement": "within 0.01 N at the unfitted climbout point",
         "csv": "mapped-climbout.csv; model identity, fixed areas and current numerical results present",
         "requests": 0
@@ -1133,9 +1208,9 @@
           "objects": 88,
           "visibleObjects": 78,
           "animation": {
-            "timeSeconds": 3.9333000000000014,
+            "timeSeconds": 3.933099999999999,
             "paused": true,
-            "pending": false
+            "pending": true
           },
           "groups": [
             {
@@ -1148,12 +1223,12 @@
                 0,
                 0,
                 0,
-                -0.3119060961623381,
-                0.9501129339066859,
+                -0.3118079928642479,
+                0.9501451339590016,
                 0,
                 0,
-                -0.9501129339066859,
-                -0.3119060961623381,
+                -0.9501451339590016,
+                -0.3118079928642479,
                 0,
                 0,
                 0,
@@ -1171,12 +1246,12 @@
                 0,
                 0,
                 0,
-                -0.9964925763664847,
-                -0.08368121202806603,
+                -0.9965099515003768,
+                -0.08347404722856358,
                 0,
                 0,
-                0.08368121202806603,
-                -0.9964925763664847,
+                0.08347404722856358,
+                -0.9965099515003768,
                 0,
                 0,
                 0,
@@ -1211,7 +1286,7 @@
             },
             "events": [
               {
-                "at": 793,
+                "at": 609,
                 "kind": "backend",
                 "detail": "webgl"
               }
@@ -1242,7 +1317,7 @@
           "objects": 88,
           "visibleObjects": 78,
           "animation": {
-            "timeSeconds": 3.9333000000000014,
+            "timeSeconds": 3.933099999999999,
             "paused": true,
             "pending": false
           },
@@ -1257,12 +1332,12 @@
                 0,
                 0,
                 0,
-                -0.31180000998418067,
-                0.9501477536540646,
+                -0.31177263003848843,
+                0.9501567382063256,
                 0,
                 0,
-                -0.9501477536540646,
-                -0.31180000998418067,
+                -0.9501567382063256,
+                -0.31177263003848843,
                 0,
                 0,
                 0,
@@ -1280,12 +1355,12 @@
                 0,
                 0,
                 0,
-                -0.9964989317483903,
-                -0.08360549637623745,
+                -0.9965120653533055,
+                -0.08344880829161275,
                 0,
                 0,
-                0.08360549637623745,
-                -0.9964989317483903,
+                0.08344880829161275,
+                -0.9965120653533055,
                 0,
                 0,
                 0,
@@ -1320,7 +1395,7 @@
             },
             "events": [
               {
-                "at": 793,
+                "at": 609,
                 "kind": "backend",
                 "detail": "webgl"
               }
@@ -1352,9 +1427,9 @@
             "objects": 88,
             "visibleObjects": 78,
             "animation": {
-              "timeSeconds": 3.9333000000000014,
+              "timeSeconds": 3.933099999999999,
               "paused": false,
-              "pending": true
+              "pending": false
             },
             "groups": [
               {
@@ -1367,12 +1442,12 @@
                   0,
                   0,
                   0,
-                  -0.31180000998418067,
-                  0.9501477536540646,
+                  -0.31177263003848843,
+                  0.9501567382063256,
                   0,
                   0,
-                  -0.9501477536540646,
-                  -0.31180000998418067,
+                  -0.9501567382063256,
+                  -0.31177263003848843,
                   0,
                   0,
                   0,
@@ -1390,12 +1465,12 @@
                   0,
                   0,
                   0,
-                  -0.9964989317483903,
-                  -0.08360549637623745,
+                  -0.9965120653533055,
+                  -0.08344880829161275,
                   0,
                   0,
-                  0.08360549637623745,
-                  -0.9964989317483903,
+                  0.08344880829161275,
+                  -0.9965120653533055,
                   0,
                   0,
                   0,
@@ -1430,7 +1505,7 @@
               },
               "events": [
                 {
-                  "at": 793,
+                  "at": 609,
                   "kind": "backend",
                   "detail": "webgl"
                 }
@@ -1439,7 +1514,7 @@
           },
           "after": {
             "backend": "webgl",
-            "clock": 4.533,
+            "clock": 4.516,
             "reducedMotion": "false",
             "camera": {
               "kind": "perspective",
@@ -1461,7 +1536,7 @@
             "objects": 88,
             "visibleObjects": 78,
             "animation": {
-              "timeSeconds": 4.533300000000002,
+              "timeSeconds": 4.5164,
               "paused": false,
               "pending": false
             },
@@ -1476,12 +1551,12 @@
                   0,
                   0,
                   0,
-                  -0.39267280020929984,
-                  0.9196782437221109,
+                  -0.39043223660915083,
+                  0.9206316682671613,
                   0,
                   0,
-                  -0.9196782437221109,
-                  -0.39267280020929984,
+                  -0.9206316682671613,
+                  -0.39043223660915083,
                   0,
                   0,
                   0,
@@ -1499,12 +1574,12 @@
                   0,
                   0,
                   0,
-                  -0.8496812341545323,
-                  -0.5272966909868019,
+                  -0.8566119967456061,
+                  -0.5159611293804064,
                   0,
                   0,
-                  0.5272966909868019,
-                  -0.8496812341545323,
+                  0.5159611293804064,
+                  -0.8566119967456061,
                   0,
                   0,
                   0,
@@ -1539,14 +1614,14 @@
               },
               "events": [
                 {
-                  "at": 793,
+                  "at": 609,
                   "kind": "backend",
                   "detail": "webgl"
                 }
               ]
             }
           },
-          "elapsedSeconds": 0.600000000000001
+          "elapsedSeconds": 0.5833000000000008
         },
         "intermediate": {
           "cycle": {
@@ -1603,7 +1678,8 @@
               "velocityMPS": 117.44882811159009,
               "areaM2": 0.5724006451876029,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8824535978192825
             },
             "bypassNozzle": {
               "exit": {
@@ -1615,7 +1691,8 @@
               "velocityMPS": 130.09907509238914,
               "areaM2": 1.435809975729176,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8936396289656359
             },
             "flightSpeedMPS": 0,
             "coreFlowKGS": 36.23153762557652,
@@ -1648,6 +1725,11 @@
           "turbineInlet": {
             "temperatureK": 984.3727845601516,
             "pressurePa": 607384.2634853793,
+            "massFlowKGS": 35.36343380868134
+          },
+          "hptOutlet": {
+            "temperatureK": 780.7637913476573,
+            "pressurePa": 224153.3100894641,
             "massFlowKGS": 35.36343380868134
           },
           "n1RPM": 1647.3846754468675,
@@ -1700,7 +1782,16 @@
             }
           ],
           "matchResidual": 2.66337268109012e-12,
-          "iterations": 78
+          "iterations": 78,
+          "residuals": [
+            9.63546719674148e-13,
+            9.326070846657441e-13,
+            -2.66337268109012e-12,
+            -9.96029515562216e-13,
+            -1.0071492197489896e-12,
+            1.369179004935476e-14,
+            5.1979517145904685e-14
+          ]
         },
         "displaySpeedReduction": 800,
         "pausedPoseToleranceRadians": 0.002,
@@ -1713,9 +1804,193 @@
       }
     },
     {
+      "name": "live engineering inspector and raw exports",
+      "observed": {
+        "point": {
+          "cycle": {
+            "inputs": {
+              "altitudeM": 0,
+              "mach": 0,
+              "turbineInletK": 1009.4471503713222,
+              "overallPressureRatio": 6.343298004982963,
+              "fanPressureRatio": 1.1040859065668753,
+              "bypassRatio": 6.199482138107791
+            },
+            "ambient": {
+              "temperatureK": 288.15,
+              "pressurePa": 101325,
+              "massFlowKGS": 0
+            },
+            "inlet": {
+              "temperatureK": 288.15,
+              "pressurePa": 101325,
+              "massFlowKGS": 260.8483079715185
+            },
+            "fan": {
+              "temperatureK": 301.9795761244521,
+              "pressurePa": 111871.50448288865,
+              "massFlowKGS": 260.8483079715185
+            },
+            "compressor": {
+              "temperatureK": 544.9552879011833,
+              "pressurePa": 642734.6703548988,
+              "massFlowKGS": 36.23153762557652
+            },
+            "burner": {
+              "temperatureK": 1009.4471503713222,
+              "pressurePa": 607384.2634853793,
+              "massFlowKGS": 33.370699239274636
+            },
+            "highTurbine": {
+              "temperatureK": 772.805620810572,
+              "pressurePa": 224153.3100894641,
+              "massFlowKGS": 36.63153762557652
+            },
+            "lowTurbine": {
+              "temperatureK": 654.312661756185,
+              "pressurePa": 105134.28636961094,
+              "massFlowKGS": 36.63153762557652
+            },
+            "coreNozzle": {
+              "exit": {
+                "temperatureK": 647.8175583181302,
+                "pressurePa": 101325,
+                "massFlowKGS": 36.631537625578034
+              },
+              "mach": 0.23262257867227806,
+              "velocityMPS": 117.44882811159009,
+              "areaM2": 0.5724006451876029,
+              "pressureThrustN": 0,
+              "choked": false,
+              "criticalNPR": 1.8824535978192825
+            },
+            "bypassNozzle": {
+              "exit": {
+                "temperatureK": 293.5540376673135,
+                "pressurePa": 101325,
+                "massFlowKGS": 224.6167703459702
+              },
+              "mach": 0.37874479121629795,
+              "velocityMPS": 130.09907509238914,
+              "areaM2": 1.435809975729176,
+              "pressureThrustN": 0,
+              "choked": false,
+              "criticalNPR": 1.8936396289656359
+            },
+            "flightSpeedMPS": 0,
+            "coreFlowKGS": 36.23153762557652,
+            "bypassFlowKGS": 224.616770345942,
+            "fuelFlowKGS": 0.3999999999999999,
+            "fuelAirRatio": 0.012131984132247964,
+            "coreThrustN": 4302.331166049582,
+            "bypassThrustN": 29222.434072246637,
+            "netThrustN": 33524.76523829622,
+            "tsfcKgPerNS": 1.1931478032933977e-05,
+            "compressorPowerW": 7961109.595364864,
+            "fanPowerW": 4628237.553935678,
+            "burnerResidualW": 3.725290298461914e-09,
+            "highShaftResidualW": -9.816605597734451e-05,
+            "lowShaftResidualW": -4.770606756210327e-05,
+            "energyResidualW": 0.00014735013246536255,
+            "massResidualKGS": 2.970645951450024e-11,
+            "maxRelativeResidual": 8.566868166590848e-12
+          },
+          "command": {
+            "altitudeM": 0,
+            "mach": 0,
+            "fuelFlowKGS": 0.3999999999999999
+          },
+          "lowCompressor": {
+            "temperatureK": 329.573487626091,
+            "pressurePa": 130231.46047315259,
+            "massFlowKGS": 36.23153762557652
+          },
+          "turbineInlet": {
+            "temperatureK": 984.3727845601516,
+            "pressurePa": 607384.2634853793,
+            "massFlowKGS": 35.36343380868134
+          },
+          "hptOutlet": {
+            "temperatureK": 780.7637913476573,
+            "pressurePa": 224153.3100894641,
+            "massFlowKGS": 35.36343380868134
+          },
+          "n1RPM": 1647.3846754468675,
+          "n2RPM": 6597.039565605652,
+          "mapPoints": [
+            {
+              "name": "Fan",
+              "correctedSpeed": 0.41769822542447005,
+              "coordinate": 1.666803861202674,
+              "correctedFlowKGS": 260.8483079715185,
+              "pressureRatio": 1.1040859065668753,
+              "efficiency": 0.5981123639967421,
+              "extended": true
+            },
+            {
+              "name": "LPC",
+              "correctedSpeed": 0.44485787060551457,
+              "coordinate": 2.263053536721962,
+              "correctedFlowKGS": 33.59412801275882,
+              "pressureRatio": 1.1641164662541228,
+              "efficiency": 0.48518176573926525,
+              "extended": false
+            },
+            {
+              "name": "HPC",
+              "correctedSpeed": 0.9703295829390668,
+              "coordinate": 2.0481868525227918,
+              "correctedFlowKGS": 30.147707209342055,
+              "pressureRatio": 4.9353256733798165,
+              "efficiency": 0.8691713565235175,
+              "extended": false
+            },
+            {
+              "name": "HPT",
+              "correctedSpeed": 101.60903845688858,
+              "coordinate": 4.871997421430214,
+              "correctedFlowKGS": 10.903802897038563,
+              "pressureRatio": 2.709682329665174,
+              "efficiency": 0.9146135582397976,
+              "extended": false
+            },
+            {
+              "name": "LPT",
+              "correctedSpeed": 51.28913673059867,
+              "coordinate": 2.326861160639898,
+              "correctedFlowKGS": 27.117673581509976,
+              "pressureRatio": 2.1320666913686837,
+              "efficiency": 0.8389309431330891,
+              "extended": true
+            }
+          ],
+          "matchResidual": 2.66337268109012e-12,
+          "iterations": 78,
+          "residuals": [
+            9.63546719674148e-13,
+            9.326070846657441e-13,
+            -2.66337268109012e-12,
+            -9.96029515562216e-13,
+            -1.0071492197489896e-12,
+            1.369179004935476e-14,
+            5.1979517145904685e-14
+          ]
+        },
+        "tables": 8,
+        "tsPath": "M88.00 172.65 L95.46 171.50 L113.18 169.20 L134.84 151.25 L409.20 112.55 L397.73 114.64 L408.75 131.60 L404.27 132.27 L419.52 142.14 L419.52 142.68 ",
+        "torqueNm": 26828.22884628065,
+        "sweepRows": 81,
+        "requests": 0,
+        "captures": [
+          "engineering-preview.png",
+          "engineering-components-preview.png"
+        ]
+      }
+    },
+    {
       "name": "pause at current pose",
       "observed": {
-        "clock": 5.167,
+        "clock": 5.4,
         "pixelResult": "identical canvas pixels across 700 ms"
       }
     },
@@ -1765,7 +2040,7 @@
             "name": "workbench",
             "x": 18,
             "width": 354,
-            "height": 1743.1875
+            "height": 5531.78125
           },
           {
             "name": "workbench-grid",
@@ -1810,15 +2085,24 @@
             "name": "workbench",
             "x": 18,
             "width": 354,
-            "height": 3639.890625
+            "height": 9568.484375
           },
           {
             "name": "workbench-grid",
             "x": 37,
             "width": 316,
-            "height": 945.6875
+            "height": 927
           }
         ]
+      }
+    },
+    {
+      "name": "mobile engineering tables and plots",
+      "observed": {
+        "width": 390,
+        "allStationColumnsReachable": true,
+        "liveIdleHeatMW": 8.743878,
+        "capture": "engineering-mobile-preview.png"
       }
     },
     {
@@ -1879,7 +2163,8 @@
               "velocityMPS": 71.2793448854783,
               "areaM2": 0.5724006451876029,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8853954668665311
             },
             "bypassNozzle": {
               "exit": {
@@ -1891,7 +2176,8 @@
               "velocityMPS": 87.15441733479331,
               "areaM2": 1.435809975729176,
               "pressureThrustN": 0,
-              "choked": false
+              "choked": false,
+              "criticalNPR": 1.8936624969466205
             },
             "flightSpeedMPS": 0,
             "coreFlowKGS": 24.05049370238708,
@@ -1924,6 +2210,11 @@
           "turbineInlet": {
             "temperatureK": 810.884297435255,
             "pressurePa": 365704.21295992145,
+            "massFlowKGS": 23.414126422803534
+          },
+          "hptOutlet": {
+            "temperatureK": 663.9584048181255,
+            "pressurePa": 158700.53425827395,
             "massFlowKGS": 23.414126422803534
           },
           "n1RPM": 1100.7045365975116,
@@ -1976,7 +2267,16 @@
             }
           ],
           "matchResidual": 1.5984812119864995e-10,
-          "iterations": 101
+          "iterations": 101,
+          "residuals": [
+            2.7394305908734574e-11,
+            4.939326096794774e-11,
+            -1.5984812119864995e-10,
+            -3.6093744114050685e-11,
+            -7.18967776346574e-11,
+            3.70710679446159e-11,
+            8.407372506109281e-13
+          ]
         },
         "clock": 0,
         "pixelsStableAcross700ms": true,
@@ -1985,7 +2285,7 @@
     },
     {
       "name": "mobile reduced motion",
-      "observed": "390 \u00d7 844 touch viewport; identical canvas pixels across 700 ms"
+      "observed": "390 × 844 touch viewport; identical canvas pixels across 700 ms"
     },
     {
       "name": "mobile cycle controls",
@@ -1999,7 +2299,7 @@
       "name": "WebGPU preference",
       "observed": {
         "backend": "webgl",
-        "clock": 4.083,
+        "clock": 4.567,
         "reducedMotion": "false",
         "camera": {
           "kind": "perspective",
@@ -2021,7 +2321,7 @@
         "objects": 88,
         "visibleObjects": 78,
         "animation": {
-          "timeSeconds": 4.0832,
+          "timeSeconds": 4.5665999999999976,
           "paused": false,
           "pending": false
         },
@@ -2036,12 +2336,12 @@
               0,
               0,
               0,
-              -0.37939255047374654,
-              0.9252358038062646,
+              -0.5819883610712533,
+              0.8131971148360012,
               0,
               0,
-              -0.9252358038062646,
-              -0.37939255047374654,
+              -0.8131971148360012,
+              -0.5819883610712533,
               0,
               0,
               0,
@@ -2059,12 +2359,12 @@
               0,
               0,
               0,
-              -0.978727593328397,
-              -0.20516407594314043,
+              -0.823627004211241,
+              -0.5671318699685434,
               0,
               0,
-              0.20516407594314043,
-              -0.978727593328397,
+              0.5671318699685434,
+              -0.823627004211241,
               0,
               0,
               0,
@@ -2099,22 +2399,22 @@
           },
           "events": [
             {
-              "at": 890,
+              "at": 939,
               "kind": "webgpu-device-ready",
               "detail": "webkit-webgpu"
             },
             {
-              "at": 891,
+              "at": 940,
               "kind": "backend",
               "detail": "webgpu"
             },
             {
-              "at": 1041,
+              "at": 1112,
               "kind": "device-lost",
               "detail": "destroyed Device was destroyed."
             },
             {
-              "at": 2910,
+              "at": 2958,
               "kind": "backend",
               "detail": "webgl fallback=webgpu-device-lost"
             }
@@ -2124,41 +2424,92 @@
     }
   ],
   "errors": [],
-  "frameworkRevision": "5c123416ea9e7f4db43a8a53289e3d2347474ffb",
-  "buildManifestSHA256": "f773582e8ff15f4ae6b27bf90bb0ee7bc78bc77ddc8fa9b414d7de1985156c82",
+  "frameworkRevision": "debad8e6730ae3d0f423ef322be5f6c129c71c65",
+  "buildManifestSHA256": "87a2d14cf7020318dbc840e7ee2754e9eeca48e05eb028c812187a334e4125ca",
   "cycleEngine": {
-    "bytes": 5302851,
-    "sha256": "3dfd7e01b5bbc26e7482067ce6281df29a40af0606f081be912a2800e7b118f7",
-    "brotliBytes": 1069497,
-    "gzipBytes": 1451720,
+    "bytes": 5401497,
+    "sha256": "b6682c446e2884be9371856834194f5fc20026db056f0f1a5c1a9b389fbf8c5c",
+    "brotliBytes": 1083786,
+    "gzipBytes": 1477768,
     "response": {
       "status": 200,
       "encoding": "br",
       "contentType": "application/wasm"
     }
   },
+  "frameworkTelemetryRequests": [
+    {
+      "url": "http://127.0.0.1:8096/_gosx/client-events",
+      "method": "POST",
+      "bytes": 362
+    },
+    {
+      "url": "http://127.0.0.1:8096/_gosx/client-events",
+      "method": "POST",
+      "bytes": 362
+    },
+    {
+      "url": "http://127.0.0.1:8096/_gosx/client-events",
+      "method": "POST",
+      "bytes": 361
+    }
+  ],
   "result": "pass",
   "nativeTests": {
     "command": "GOWORK=off go test -json ./examples/turbofan/cycle ./examples/turbofan ./examples/turbofan/app",
-    "passed": 17,
+    "passed": 20,
     "packages": [
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
         "status": "pass",
-        "elapsedSeconds": 0
-      },
-      {
-        "package": "m31labs.dev/gosx/examples/turbofan/app",
-        "status": "pass",
-        "elapsedSeconds": 0
+        "elapsedSeconds": 1.4060000000000001
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan",
         "status": "pass",
-        "elapsedSeconds": 1.026
+        "elapsedSeconds": 1.315
+      },
+      {
+        "package": "m31labs.dev/gosx/examples/turbofan/app",
+        "status": "pass",
+        "elapsedSeconds": 0.485
       }
     ],
     "tests": [
+      {
+        "package": "m31labs.dev/gosx/examples/turbofan/cycle",
+        "test": "TestEngineeringLedgersAndCoolingStates",
+        "output": [
+          "=== RUN   TestEngineeringLedgersAndCoolingStates",
+          "    engineering_test.go:52: takeoff: net 213500.000 N, fuel heat 87.481350 MW, LP torque 114.688214 kN m, 7 residuals max 1.01e-12",
+          "    engineering_test.go:52: climbout: net 180484.118 N, fuel heat 71.432460 MW, LP torque 98.407140 kN m, 7 residuals max 7.88e-14",
+          "    engineering_test.go:52: approach: net 64050.000 N, fuel heat 28.066401 MW, LP torque 42.689146 kN m, 7 residuals max 1.28e-13",
+          "    engineering_test.go:52: idle: net 14945.000 N, fuel heat 8.743878 MW, LP torque 13.387973 kN m, 7 residuals max 1.6e-10",
+          "--- PASS: TestEngineeringLedgersAndCoolingStates (0.02s)"
+        ],
+        "status": "pass",
+        "elapsedSeconds": 0.02
+      },
+      {
+        "package": "m31labs.dev/gosx/examples/turbofan/cycle",
+        "test": "TestEngineeringGenericAndInvalidPoint",
+        "output": [
+          "=== RUN   TestEngineeringGenericAndInvalidPoint",
+          "--- PASS: TestEngineeringGenericAndInvalidPoint (0.00s)"
+        ],
+        "status": "pass",
+        "elapsedSeconds": 0
+      },
+      {
+        "package": "m31labs.dev/gosx/examples/turbofan/cycle",
+        "test": "TestEngineeringSweepAndSampledSensitivity",
+        "output": [
+          "=== RUN   TestEngineeringSweepAndSampledSensitivity",
+          "--- PASS: TestEngineeringSweepAndSampledSensitivity (0.32s)"
+        ],
+        "status": "pass",
+        "elapsedSeconds": 0.32
+      },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
         "test": "TestMapInterpolationAndCoverage",
@@ -2188,30 +2539,41 @@
           "    matched_test.go:84: climbout (unfitted check): target 181475.000 N, predicted 180484.118 N, error -0.5460%, N1 3610.6, N2 7762.0, match 7.88e-14, 19 iterations",
           "    matched_test.go:84: approach (calibration): target 64050.000 N, predicted 64050.000 N, error 0.0000%, N1 2265.8, N2 7030.4, match 1.28e-13, 61 iterations",
           "    matched_test.go:84: idle (calibration): target 14945.000 N, predicted 14945.000 N, error 0.0000%, N1 1100.7, N2 6006.0, match 1.6e-10, 101 iterations",
-          "--- PASS: TestJT9DRatedCalibrationAndUnfittedObservations (0.01s)"
+          "--- PASS: TestJT9DRatedCalibrationAndUnfittedObservations (0.02s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.01
+        "elapsedSeconds": 0.02
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
         "test": "TestApproachFitReproducesStoredProfile",
         "output": [
           "=== RUN   TestApproachFitReproducesStoredProfile",
-          "--- PASS: TestApproachFitReproducesStoredProfile (0.44s)"
+          "--- PASS: TestApproachFitReproducesStoredProfile (0.70s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.44
+        "elapsedSeconds": 0.7
+      },
+      {
+        "package": "m31labs.dev/gosx/examples/turbofan",
+        "test": "TestTurbofanPageIncludesRuntime",
+        "output": [
+          "=== RUN   TestTurbofanPageIncludesRuntime",
+          "2026/10/26 18:14:02 gosx islands: TurbofanControls's source file changed since gosx build (app/page.gsx); run gosx build",
+          "--- PASS: TestTurbofanPageIncludesRuntime (1.02s)"
+        ],
+        "status": "pass",
+        "elapsedSeconds": 1.02
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
         "test": "TestMappedOperatingLineConservesAndStaysInMaps",
         "output": [
           "=== RUN   TestMappedOperatingLineConservesAndStaysInMaps",
-          "--- PASS: TestMappedOperatingLineConservesAndStaysInMaps (0.20s)"
+          "--- PASS: TestMappedOperatingLineConservesAndStaysInMaps (0.32s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.2
+        "elapsedSeconds": 0.32
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/cycle",
@@ -2293,10 +2655,21 @@
           "=== RUN   TestTurbofanSceneContract",
           "    program_test.go:64: exterior=false: 88 objects, 18 indexed blade rows / 498 blades, 3005905 SceneIR bytes",
           "    program_test.go:64: exterior=true: 88 objects, 18 indexed blade rows / 498 blades, 3005907 SceneIR bytes",
-          "--- PASS: TestTurbofanSceneContract (0.06s)"
+          "--- PASS: TestTurbofanSceneContract (0.09s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.06
+        "elapsedSeconds": 0.09
+      },
+      {
+        "package": "m31labs.dev/gosx/examples/turbofan",
+        "test": "TestMappedProfileServerFallback",
+        "output": [
+          "=== RUN   TestMappedProfileServerFallback",
+          "2026/10/26 18:14:03 gosx islands: TurbofanControls's source file changed since gosx build (app/page.gsx); run gosx build",
+          "--- PASS: TestMappedProfileServerFallback (0.29s)"
+        ],
+        "status": "pass",
+        "elapsedSeconds": 0.29
       },
       {
         "package": "m31labs.dev/gosx/examples/turbofan/app",
@@ -2313,32 +2686,13 @@
         "test": "TestPresentationChangesOnlyVisibility",
         "output": [
           "=== RUN   TestPresentationChangesOnlyVisibility",
-          "--- PASS: TestPresentationChangesOnlyVisibility (0.03s)"
+          "--- PASS: TestPresentationChangesOnlyVisibility (0.39s)"
         ],
         "status": "pass",
-        "elapsedSeconds": 0.03
-      },
-      {
-        "package": "m31labs.dev/gosx/examples/turbofan",
-        "test": "TestTurbofanPageIncludesRuntime",
-        "output": [
-          "=== RUN   TestTurbofanPageIncludesRuntime",
-          "--- PASS: TestTurbofanPageIncludesRuntime (0.70s)"
-        ],
-        "status": "pass",
-        "elapsedSeconds": 0.7
-      },
-      {
-        "package": "m31labs.dev/gosx/examples/turbofan",
-        "test": "TestMappedProfileServerFallback",
-        "output": [
-          "=== RUN   TestMappedProfileServerFallback",
-          "--- PASS: TestMappedProfileServerFallback (0.31s)"
-        ],
-        "status": "pass",
-        "elapsedSeconds": 0.31
+        "elapsedSeconds": 0.39
       }
     ],
+    "rawSHA256": "ce7ef9150ae6f56b2483944afe3027257a8b12a4045f7de233e6ed859620d066",
     "operatingLine": {
       "points": 81,
       "fuelRangeKGS": [
@@ -2355,9 +2709,9 @@
   "checksAlsoPassed": [
     "Native vet: ./examples/turbofan/...",
     "GOOS=js GOARCH=wasm vet: ./examples/turbofan/browser",
-    "GoSX check: Page, CycleWorkbench, TurbofanControls",
+    "GoSX check: Page, CycleWorkbench, EngineeringInspector, TurbofanControls",
     "Production GoSX build and size inspection",
-    "Pinned source importer regenerates map, gas and ICAO snapshots"
+    "Calibration CLI --fit regenerated the report; all four predicted thrusts are unchanged to 1e-7 N"
   ],
   "calibrationScope": {
     "profile": "JT9D-7R4D / -7R4D1",
@@ -2379,27 +2733,60 @@
       "LPT": "modeled extension"
     },
     "independentValidation": false,
-    "supportedUI": "sea-level static fuel commands 0.2054\u20132.055 kg/s"
+    "supportedUI": "sea-level static fuel commands 0.2054–2.055 kg/s"
+  },
+  "engineeringScope": {
+    "tables": 8,
+    "plots": 6,
+    "stationStates": 11,
+    "operatingLinePoints": 81,
+    "quantities": [
+      "enthalpy, relative entropy, cp and gamma",
+      "cooling split and pre-mixing HPT outlet",
+      "chemical fuel, gas heat, shaft and exhaust energy ledgers",
+      "signed gas power, shaft work and estimated torque",
+      "momentum, ram and pressure thrust by stream",
+      "nozzle density, velocity, Mach and critical NPR",
+      "native map coordinates, corrected speeds and table-coverage flags",
+      "seven signed matching residuals in normalized and SI units",
+      "sampled fuel sensitivity with the actual bracketing interval"
+    ],
+    "exports": [
+      "Unrounded current engineering point CSV",
+      "Full 81-point model sweep CSV"
+    ],
+    "scope": "Derived model quantities, not measured engine data. Operating lines are actual component matches, not an engine test sweep. Static thrust power is zero; jet kinetic power is not thermal efficiency. No modeled surge margin."
   },
   "performance": {
-    "budget": "perf/budgets/default.json",
-    "profile": "docs-scene3d-ci",
+    "budget": "examples/turbofan/perf-budget.json",
+    "profile": "turbofan-engineering",
     "passed": true,
-    "environment": "Fresh Linux Chromium profile, ANGLE SwiftShader, forced WebGL; single cold run",
-    "javascriptSourceKiB": 1340.38,
+    "environment": "Fresh Linux Chromium profile on dedicated CDP port 9337, warm server, ANGLE SwiftShader, forced WebGL; single cold-client run",
+    "javascriptSourceKiB": 1340.7490234375,
     "javascriptSourceLimitKiB": 1650,
-    "resourceWaterfallKiB": 1609.62890625,
-    "networkLimitKiB": 1615,
-    "lcpMs": 492,
+    "resourceWaterfallKiB": 1624.763671875,
+    "networkLimitKiB": 1640,
+    "lcpMs": 356,
     "lcpLimitMs": 18000,
-    "totalBlockingTimeMs": 81,
+    "totalBlockingTimeMs": 17,
     "totalBlockingTimeLimitMs": 15000,
     "networkExcludesMainHTML": true,
     "networkIncludesNumericalWASM": true,
-    "previousNetworkKiB": 1619.396484375,
-    "optimization": "Reuse the SSR-authored initial operating point. Load the command bridge when a visual state change first needs it.",
-    "rawReportSHA256": "d06afd53bbfa1ed91e2ca3d80d4cd953c834ef8bb08ea87fdcf8492e961b7a24",
-    "reproduce": "CHROME_WS_URL=http://127.0.0.1:9336 GOWORK=off go run ./cmd/gosx perf --json --coverage --frames 45 --timeout 60s --budget perf/budgets/default.json --budget-profile docs-scene3d-ci 'http://127.0.0.1:8096/?model=jt9d&backend=webgl'"
+    "previousCycleOnlyNetworkKiB": 1609.62890625,
+    "addedNetworkKiB": 15.134765625,
+    "sharedDocumentationBudget": {
+      "path": "perf/budgets/default.json",
+      "profile": "docs-scene3d-ci",
+      "unchanged": true,
+      "networkLimitKiB": 1615,
+      "passed": false,
+      "excessKiB": 9.763671875,
+      "initialComparisonKiB": 1624.6376953125,
+      "rawReportSHA256": "4259dae791b5ecea7d54347d549dae5055e89ac1abb1096f51c341ba3a55df13"
+    },
+    "rawReportSHA256": "56cbd7d684a9d2ede5b20f35c69367f51fb68be7410455fdcfbb7a045e8af8e5",
+    "sizeReportSHA256": "9ba3ab3dbd53fc106194ccb88f09397368f25e0978ced226809099259efa4c62",
+    "reproduce": "CHROME_WS_URL=http://127.0.0.1:9337 GOWORK=off go run ./cmd/gosx perf --json --coverage --frames 45 --timeout 60s --budget examples/turbofan/perf-budget.json --budget-profile turbofan-engineering 'http://127.0.0.1:8096/?model=jt9d&backend=webgl'"
   },
   "limitations": [
     "Three fitted ground points; one unfitted public comparison, not blind validation.",
@@ -2409,21 +2796,33 @@
     "Geometry is schematic and does not determine the numerical component maps or nozzle areas.",
     "Software WebGPU device loss recovered through WebGL2; native WebGPU parity remains unverified.",
     "Optional wasm-opt was unavailable.",
-    "Canonical shared checkout; consumed build artifacts and example sources are identified by hashes, with framework HEAD recorded at capture."
+    "Canonical shared checkout; consumed build artifacts and example sources are identified by hashes, with framework HEAD recorded at capture.",
+    "Station h/s/cp/gamma and temperature–entropy paths use frozen air-equivalent gas; no reacting-mixture or chemical-equilibrium model.",
+    "The operating-line sensitivities are secants between neighboring model samples, not measured or exact analytical derivatives.",
+    "Application data requests are absent during control checks; ordinary framework telemetry POSTs are recorded separately."
   ],
   "artifactsSHA256": {
-    "cycle-preview.png": "f4c053a625a6e88f6588eea401810b35f850db9a6c35d77cb006f013a397380c",
-    "idle-mobile-preview.png": "48fbf876e3af2f19a17d5f5a0cd0c08dab968eb095e430ab799704d630a7d499",
-    "idle-render-preview.png": "72d56aad718d1763331e9e819e4514ba6d2a552c52d395d72ee284a62a581794",
-    "mapped-mobile-preview.png": "121047bad326d4a2dce8a43cb189f2bbab3e9463b6d031457f008d7181b2fd29",
-    "mapped-preview.png": "e2696816d0e108f0db21cdb344fc8e2245df7b2de548b0d271c63ff68e7d61a2",
-    "mobile-preview.png": "ce7503814b83ef30b695437a306b37cd71908957500fd19b7f4c5e5d4225ebd0",
-    "preview.png": "32f14a1058e721a4e94df3f42b412e212ee84b919b9217f3ad65fde0ae3f1ff9",
-    "takeoff-render-preview.png": "5362c3c0baea3952d31bbb7ab808812974153cd4ebf650f4e8bf33e7b0c3bed9"
+    "cycle-preview.png": "ad73b2300a352f8f51aca2741a163f0bbd163185051498cd8c3f517a83a58bc9",
+    "engineering-components-preview.png": "22c080ec90dc14c52da9eaf09c920afb2b409c479d7f107a27c83288f4b55d2c",
+    "engineering-mobile-preview.png": "d39d9731814910bf700735d3a5f8caeb91d20b943d757f1d29d2f98a8637c660",
+    "engineering-preview.png": "41d16368a73eb6ff9e42efd074c072f9e2b3b6946921f852b5aa005210962c75",
+    "idle-mobile-preview.png": "e61e929a64d8c4f7093c5782ae285a81aaf82203dae410a3472c7d64135c0487",
+    "idle-render-preview.png": "d6386f41eb868bd9bcc748a482267f2d92ed7058a411df30922e35e7c2871aa1",
+    "mapped-mobile-preview.png": "d1dbdb92da1d36f126db079f93e356e85b9d0fbb015fccd966d6d2cd809687ce",
+    "mapped-preview.png": "68486b726123216a3626d9cfa117148029cb67435e4dcc8dbf12c2804386a102",
+    "mobile-preview.png": "82f1ee93f428630be0d0294ddf0d23d3efce7ab5b05775d2aa7ee5933044edcc",
+    "preview.png": "39a835c8347a4a684aa2f8b80b5c77e3700f18d4bbc0c130d4fa7a794364d6a2",
+    "takeoff-render-preview.png": "8f5d000b6c60ed33e967a7e842f0d7def5abda0333345f06b806d89984db7004"
+  },
+  "supportingSHA256": {
+    "README.md": "39440b4b7b632839b1c9a0b4359446d3f0a0909545558e1c8f07ce9841c17702",
+    "MODEL.md": "51f814f016d10481d9031663abb7c0238bbfb8a406b4fc2afc7c45511fef643c",
+    "perf-budget.json": "3c2cb6cd025142f6374ebf0a4c5b9163144911153094f6da36c2497771d0f3b7",
+    "cycle/data/SOURCES.md": "005ebdd4d6ba12882c5bec3ae0341bafa929e4e38106feca61485a98a290a57c"
   },
   "buildArtifactsSHA256": {
-    "manifest": "f773582e8ff15f4ae6b27bf90bb0ee7bc78bc77ddc8fa9b414d7de1985156c82",
-    "server": "d5a320805ca7462263057ba33d9b861107bfdef1a25577e1a5b3396f59152cb0"
+    "manifest": "87a2d14cf7020318dbc840e7ee2754e9eeca48e05eb028c812187a334e4125ca",
+    "server": "87c2f28b22845b58b58096359a954b64e1b8526b14a4e0e5deba1f188b1cb964"
   },
-  "verifiedAtUTC": "2026-10-26T21:06:46.070547+00:00"
+  "verifiedAtUTC": "2026-10-27T01:28:13.571064+00:00"
 }

@@ -41,6 +41,13 @@ model remains steady; it does not calculate shaft acceleration, metal temperatur
 or three-dimensional flow. CSV exports include low-speed assumptions and map
 region flags.
 
+The engineering inspector adds full station h/s/cp/γ, cooling states, signed component
+power, estimated torque, thrust and energy ledgers, sonic nozzle thresholds and seven
+individual matching residuals. Temperature–entropy and pressure diagrams follow the
+current point. An 81-point model operating line shows thrust, spool-speed fractions,
+OPR and TSFC, with sampled fuel sensitivities. Export the point's unrounded engineering
+quantities or the complete model sweep to CSV. Tables can be expanded or collapsed.
+
 NASA map shapes are scaled to the ICAO JT9D-7R4D / -7R4D1 entry, UID 1PW026.
 They are not proprietary manufacturer maps. Temperature-dependent frozen-air
 properties, cooling and other priors remain approximations. Calibration is
@@ -113,9 +120,12 @@ node examples/turbofan/verify.mjs http://127.0.0.1:8080
 The harness checks native/WASM numerical agreement, keyboard/slider/touch
 input, CSV contents, infeasible-state recovery, a server-calculated fallback,
 visible motion, pause/resume at the current pose, casing and camera controls
-without navigation or data fetches, document/canvas identity, Back/Forward,
+without navigation or application data fetches, document/canvas identity, Back/Forward,
 pointer orbit, wheel zoom, query fallbacks, mobile fit, reduced motion, and
-WebGPU selection or an explicit WebGL fallback. It writes the documentation
+WebGPU selection or an explicit WebGL fallback. Engineering checks compare
+shaft torque, heat input, nozzle discharge and the pre-mixing HPT outlet against
+native results, exercise all tables and plots, and inspect both raw CSV exports.
+Framework telemetry POSTs are reported separately. It writes the documentation
 previews and local `evidence/` captures with a source-hashed JSON receipt.
 It is test tooling and is never served as application code.
 
@@ -124,14 +134,22 @@ by SHA-256; [mobile capture](mobile-preview.png). On this Linux software GPU,
 WebGPU lost its device and recovered visibly through WebGL2. Native WebGPU
 visual parity and hardware GPU frame rates remain unverified. The TinyGo
 production build succeeded without the optional `wasm-opt` optimization.
+The viewer prefers WebGL by default; `?backend=webgpu` opts into WebGPU.
 
-For a software-rendered browser, the existing documentation Scene3D budget
-provides delivery and load checks:
+For a software-rendered browser, the example's engineering budget provides
+delivery and load checks:
 
 ```sh
-GOWORK=off go run ./cmd/gosx perf --coverage --budget perf/budgets/default.json \
-  --budget-profile docs-scene3d-ci http://127.0.0.1:8080
+GOWORK=off go run ./cmd/gosx perf --coverage --budget examples/turbofan/perf-budget.json \
+  --budget-profile turbofan-engineering 'http://127.0.0.1:8080/?model=jt9d&backend=webgl'
 ```
+
+The engineering build measured 1624.76 KiB transferred with a fresh client and
+warm server, about 15.13 KiB above the previous 1609.63 KiB cycle-only capture.
+Its local allowance is 1640 KiB. The shared documentation profile remains
+unchanged; its 1615 KiB network allowance is exceeded by 9.76 KiB. Browser load
+and blocking time are checked separately, and software rendering does not
+establish hardware GPU performance. See [the engineering inspector](engineering-preview.png).
 
 The lathe generator regression test also covers the surface gap found while
 building this example: each sampled quad must contain two non-overlapping

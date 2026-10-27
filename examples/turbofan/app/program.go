@@ -158,7 +158,7 @@ func Turbofan(options Options) scene.Props {
 		Presentation: presentation,
 		Environment:  scene.Environment{AmbientColor: "#dce8f2", AmbientIntensity: .25, ToneMapping: "aces", Exposure: .95},
 		MaxFPS:       30, MaxDevicePixelRatio: 1.5, MaxPixels: 1280 * 720,
-		PreferWebGPU: scene.Bool(options.Backend == "webgpu"), ForceWebGL: scene.Bool(options.Backend == "webgl"),
+		PreferWebGPU: scene.Bool(options.Backend == "webgpu"), PreferWebGL: scene.Bool(options.Backend != "webgpu"), ForceWebGL: scene.Bool(options.Backend == "webgl"),
 		UnsupportedMessage: "3D rendering is unavailable in this browser. The component descriptions below explain the engine cycle.",
 		Graph:              scene.NewGraph(nodes...),
 	}

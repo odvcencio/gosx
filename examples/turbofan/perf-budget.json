@@ -1,0 +1,14 @@
+{
+  "defaultProfile": "turbofan-engineering",
+  "profiles": {
+    "turbofan-engineering": {
+      "description": "Turbofan with the numerical Go/WASM engine, eight engineering tables and six plots under software rasterization. The prior cycle-only build transferred 1609.63 KiB; the engineering build measured 1624.76 KiB with a fresh client and warm server. Allow 1640 KiB for this example. Shared documentation budgets are unchanged; their 1615 KiB network target is exceeded by 9.76 KiB. Load and blocking-time limits retain the documentation software-renderer allowances.",
+      "assertions": [
+        "js_total_kb <= 1650",
+        "network_kb <= 1640",
+        "lcp <= 18000",
+        "tbt <= 15000"
+      ]
+    }
+  }
+}

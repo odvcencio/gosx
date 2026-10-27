@@ -61,7 +61,8 @@
             "velocityMPS": 390.2066373932971,
             "areaM2": 0.5724006451876029,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.8751253557738359
           },
           "bypassNozzle": {
             "exit": {
@@ -73,7 +74,8 @@
             "velocityMPS": 314.09225389553933,
             "areaM2": 1.435809975729176,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.8933286251047836
           },
           "flightSpeedMPS": 0,
           "coreFlowKGS": 108.48248426710184,
@@ -106,6 +108,11 @@
         "turbineInlet": {
           "temperatureK": 1472.5331059138089,
           "pressurePa": 2240599.725,
+          "massFlowKGS": 106.74059731775328
+        },
+        "hptOutlet": {
+          "temperatureK": 1178.760329514939,
+          "pressurePa": 809991.3823012547,
           "massFlowKGS": 106.74059731775328
         },
         "n1RPM": 3943.959,
@@ -158,7 +165,16 @@
           }
         ],
         "matchResidual": 1.010452379770031e-12,
-        "iterations": 0
+        "iterations": 0,
+        "residuals": [
+          -1.3099676700076785e-16,
+          0,
+          1.4412862552002317e-13,
+          1.3756070753811825e-14,
+          1.010452379770031e-12,
+          2.886203630122201e-13,
+          0
+        ]
       },
       "role": "calibration",
       "status": "converged"
@@ -224,7 +240,8 @@
             "velocityMPS": 336.46473782145284,
             "areaM2": 0.5724006451876029,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.876727837712998
           },
           "bypassNozzle": {
             "exit": {
@@ -236,7 +253,8 @@
             "velocityMPS": 292.23702858358405,
             "areaM2": 1.435809975729176,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.893409333364872
           },
           "flightSpeedMPS": 0,
           "coreFlowKGS": 94.9109759223064,
@@ -269,6 +287,11 @@
         "turbineInlet": {
           "temperatureK": 1397.63460705635,
           "pressurePa": 1907533.270898969,
+          "massFlowKGS": 93.26709176502568
+        },
+        "hptOutlet": {
+          "temperatureK": 1114.5792584399567,
+          "pressurePa": 683085.2930970559,
           "massFlowKGS": 93.26709176502568
         },
         "n1RPM": 3610.574914345734,
@@ -321,7 +344,16 @@
           }
         ],
         "matchResidual": 7.880396050199028e-14,
-        "iterations": 19
+        "iterations": 19,
+        "residuals": [
+          -5.881754838334477e-14,
+          3.2351680453072924e-14,
+          -4.6088817136837707e-14,
+          2.1598316697573705e-14,
+          -7.880396050199028e-14,
+          -3.265459786418882e-14,
+          -3.363996976579718e-14
+        ]
       },
       "role": "unfitted check",
       "status": "converged"
@@ -387,7 +419,8 @@
             "velocityMPS": 170.36450424616743,
             "areaM2": 0.5724006451876029,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.8805452466029131
           },
           "bypassNozzle": {
             "exit": {
@@ -399,7 +432,8 @@
             "velocityMPS": 179.20887791346266,
             "areaM2": 1.435809975729176,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.8936023235936512
           },
           "flightSpeedMPS": 0,
           "coreFlowKGS": 50.27031315273164,
@@ -432,6 +466,11 @@
         "turbineInlet": {
           "temperatureK": 1120.6658695796066,
           "pressurePa": 900859.1174430795,
+          "massFlowKGS": 49.170152192386034
+        },
+        "hptOutlet": {
+          "temperatureK": 882.2796446500439,
+          "pressurePa": 315239.3145096461,
           "massFlowKGS": 49.170152192386034
         },
         "n1RPM": 2265.826529749597,
@@ -484,7 +523,16 @@
           }
         ],
         "matchResidual": 1.278055027840598e-13,
-        "iterations": 61
+        "iterations": 61,
+        "residuals": [
+          4.597986521726952e-14,
+          3.028809589742424e-14,
+          -1.278055027840598e-13,
+          -1.1249123279986305e-14,
+          -6.23668070639504e-14,
+          -7.199438899191235e-15,
+          -7.335818952043e-16
+        ]
       },
       "role": "calibration",
       "status": "converged"
@@ -550,7 +598,8 @@
             "velocityMPS": 71.27934488551995,
             "areaM2": 0.5724006451876029,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.885395466866531
           },
           "bypassNozzle": {
             "exit": {
@@ -562,7 +611,8 @@
             "velocityMPS": 87.1544173347877,
             "areaM2": 1.435809975729176,
             "pressureThrustN": 0,
-            "choked": false
+            "choked": false,
+            "criticalNPR": 1.893662496946602
           },
           "flightSpeedMPS": 0,
           "coreFlowKGS": 24.05049370238697,
@@ -595,6 +645,11 @@
         "turbineInlet": {
           "temperatureK": 810.8842974352585,
           "pressurePa": 365704.21295992384,
+          "massFlowKGS": 23.414126422803427
+        },
+        "hptOutlet": {
+          "temperatureK": 663.9584048181291,
+          "pressurePa": 158700.53425827547,
           "massFlowKGS": 23.414126422803427
         },
         "n1RPM": 1100.7045365974952,
@@ -647,7 +702,16 @@
           }
         ],
         "matchResidual": 1.598497257161325e-10,
-        "iterations": 101
+        "iterations": 101,
+        "residuals": [
+          2.739692584407459e-11,
+          4.9395191418015924e-11,
+          -1.598497257161325e-10,
+          -3.609191211397366e-11,
+          -7.18936219371373e-11,
+          3.7199886476347857e-11,
+          8.381173152709127e-13
+        ]
       },
       "role": "calibration",
       "status": "converged"
@@ -747,7 +811,8 @@
         "velocityMPS": 390.206637393409,
         "areaM2": 0.5724006451876029,
         "pressureThrustN": 0,
-        "choked": false
+        "choked": false,
+        "criticalNPR": 1.8751253557738539
       },
       "bypassNozzle": {
         "exit": {
@@ -759,7 +824,8 @@
         "velocityMPS": 314.09225389553933,
         "areaM2": 1.435809975729176,
         "pressureThrustN": 0,
-        "choked": false
+        "choked": false,
+        "criticalNPR": 1.8933286251047836
       },
       "flightSpeedMPS": 0,
       "coreFlowKGS": 108.48248426710184,
@@ -795,16 +861,21 @@
     "idleMapCoveragePDFPage": 62,
     "mapExtensionStudy": "https://ntrs.nasa.gov/api/citations/20160010065/downloads/20160010065.pdf"
   },
+  "accuracyScope": "Three fitted ground points including idle; one unfitted climbout check. Bounded modeled low-speed maps. No independent map, flight, RPM, station-data or transient validation.",
   "sourceSHA256": {
-    "cycle/gas.go": "05e3aa64a4f0b296b261643362047a4aa310723be1d29d3cd4df659d5304cc55",
+    "cycle/engineering.go": "eb3d2851058f138621639f7f581237a352d5b85094268913752be19287fa23bc",
+    "cycle/engineering_test.go": "fa853666873e35f0163099e904bdf6758e865c1dae80380e25e9a0b0b05cc8da",
+    "cycle/engineering_view.go": "18254daef53c6fa94ff07eba05d90e93cc2b7cd86ad075356f74d579fbd8d8cc",
+    "cycle/gas.go": "242997fb4c7b488ffb496dc1689c904bf134542b49231fb2dc93c3f9cc22f83c",
     "cycle/low_speed.go": "af5bb09b0d582304655e7ead1e695456c9c8a748dbc1a34759949beb79ef09d0",
     "cycle/mapped_view.go": "b5018feecba4306d437301f8e4ab1701dbfc11a00986196ec103ede3991eabe5",
     "cycle/maps.go": "c564b24e87c98ac9c8094a5945c3c413d2472536cb1416ae108c0b154a32db09",
-    "cycle/matched.go": "82cc1165487b3472825525e22fde10814e5fc221803d7209ef73214b2728267a",
+    "cycle/matched.go": "b11206b634579e0f0bc1893f1a23c2af920d1513d26b8d265a89d75c9087f077",
     "cycle/matched_test.go": "f1c5f9f4ad3db9cceec6622e8f48b99cbf07678666e3868f8f0930a92645d3db",
     "cycle/matcher.go": "8e17e1b5ded31fbc2ab1244978dd0dce976cf5904a5adb1c6b647d01290a09ef",
-    "cycle/model.go": "d856ea076a35b81a1869653e2e9a4f77bfe926c0b7c643069084224b02c2b047",
+    "cycle/model.go": "c5f423392cdc6e452d4171aedd4f10c298412ac6c34e26682c64f426ad492f14",
     "cycle/model_test.go": "41524525bbb1fa4f01a5adb8d103b27ddb9e4450548c431354879a682164d214",
+    "cycle/sweep.go": "2c37990d10226deff08dd48a58dce36acc74e9cdeab41482c026d2fb89bb28e1",
     "cycle/view.go": "9d593c8a6dcbabd0fba3673318162013f4a028e4b575c2a6dd9e77f23dee776a",
     "cycle/visual.go": "a7aae0b06469f3798606043d0169f6edec5ecfa9a31a00642ff09a5a03938e9c"
   },
@@ -813,6 +884,5 @@
     "cycle/data/jt9d_icao.json": "8f3d731f0448af5c4981a6c05ac0a14332a3b7d0debc4d7f3df331c49a17b86b",
     "cycle/data/maps.json": "48f12c903ef5441372189c176fedbd6f07564a7bef6ee3998b1a391879ba1261",
     "cycle/data/profile.json": "3a30d6acefa4353c5366e27f9e4e3b1cf01e84be7c4ea7e165c1fd2536595da9"
-  },
-  "accuracyScope": "Three fitted ground points including idle; one unfitted climbout check. Bounded modeled low-speed maps. No independent map, flight, RPM, station-data or transient validation."
+  }
 }
