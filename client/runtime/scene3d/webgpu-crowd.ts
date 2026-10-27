@@ -34,7 +34,7 @@
 const SCENE_WEBGPU_CROWD_RECORD_FLOATS = 24;
 const SCENE_WEBGPU_CROWD_MAX_CLIPS = 32;
 const SCENE_WEBGPU_CROWD_EXTRAPOLATION_SECONDS = 0.25;
-const SCENE_WEBGPU_CROWD_PARAMS_BYTES = 624;
+const SCENE_WEBGPU_CROWD_PARAMS_BYTES = 656;
 const SCENE_WEBGPU_CROWD_VIEW_BYTES = 448;
 const SCENE_WEBGPU_CROWD_VIEW_STRIDE = 512;
 const SCENE_WEBGPU_CROWD_ARGS_BYTES = 128;
@@ -51,6 +51,7 @@ const SCENE_WEBGPU_CROWD_STRUCTS = [
   "    sphere: vec4f,",
   "    counts: vec4u,",
   "    clips: array<vec4f, " + SCENE_WEBGPU_CROWD_MAX_CLIPS + ">,",
+  "    cut: array<vec4f, 2>,",
   "};",
 ].join("\n");
 
@@ -168,7 +169,7 @@ function sceneWebGPUCrowdModelFn(motion: boolean): string {
 
 function sceneWebGPUCrowdBlock(group: number, motion: boolean, tints: boolean = false): string {
   return [SCENE_WEBGPU_CROWD_STRUCTS, sceneWebGPUCrowdDecls(group, tints), SCENE_WEBGPU_CROWD_MODEL_WGSL,
-    SCENE_WEBGPU_CROWD_SKIN_WGSL, sceneWebGPUCrowdModelFn(motion)].join("\n");
+    SCENE_WEBGPU_CROWD_SKIN_WGSL, sceneWebGPUCrowdModelFn(motion), SCENE_WEBGPU_CUTAWAY_CROWD_WGSL].join("\n");
 }
 
 // The color shader is the instanced PBR vertex shader with the instance matrix
@@ -203,6 +204,7 @@ function sceneWebGPUCrowdColorVertexWGSL(motion: boolean): string {
     "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    var out: VertexOutput;",
     "    let agentModel = crowdModel(in.crowdSlot, in.joints, in.weights);",
+    "    if (crowdCulled(agentModel)) { out.clipPos = vec4f(2.0, 2.0, 2.0, 1.0); return out; }",
     "    let world = agentModel * vec4f(in.position, 1.0);",
     "    out.worldPos = world.xyz;",
     "    let an = gosxAffineNormal(agentModel, in.normal);",
@@ -247,6 +249,7 @@ function sceneWebGPUCrowdShadowVertexWGSL(motion: boolean): string {
     "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    let model = crowdModel(in.crowdSlot, in.joints, in.weights);",
     "    var out: VertexOutput;",
+    "    if (crowdCulled(model)) { out.clipPos = vec4f(2.0, 2.0, 2.0, 1.0); out.orientation = 1.0; return out; }",
     "    out.clipPos = shadowFrame.lightViewProjection * model * vec4f(in.position, 1.0);",
     "    out.orientation = gosxAffineNormal(model, vec3f(0.0, 0.0, 1.0)).w;",
     "    return out;",
@@ -789,6 +792,7 @@ function createSceneWebGPUCrowd(device: any, hooks: any): any {
     u[24] = record.instanceCount; u[25] = state.motion ? 1 : 0; u[26] = record.castShadow ? 1 : 0; u[27] = state.argsIndex * (SCENE_WEBGPU_CROWD_ARGS_BYTES / 4);
     const table = record.crowdClipTable;
     for (let k = 0; k < SCENE_WEBGPU_CROWD_MAX_CLIPS * 4; k++) f[28 + k] = table && table.data && k < table.data.length ? table.data[k] : 0;
+    webGPUCutawayCrowdParams(f, 28 + SCENE_WEBGPU_CROWD_MAX_CLIPS * 4, record.crowdCut);
     device.queue.writeBuffer(state.params, 0, paramsStaging, 0, SCENE_WEBGPU_CROWD_PARAMS_BYTES);
   }
 
