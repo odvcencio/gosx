@@ -15,7 +15,7 @@ const transport = {play: 1, stop: 2, seek: 3, target: 255, ticksPerBeat: 1, tick
   seekBarOffset: 4, seekTickOffset: 8, boundaryTickOffset: 8, quantizedOpcodes: [9]};
 const command = op => { const bytes = new Uint8Array(16); bytes[0] = op; return bytes; };
 
-async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false, required = 0, failRender = false, poll = false} = {}) {
+async function fixture({b = backend, rate = 1000, tempo = 120000, capabilities = 0, grow = false, required = 0, failRender = false, poll = false} = {}) {
   const messages = [], reactors = [];
   let Processor, closed = false;
   const port = {
@@ -61,7 +61,7 @@ async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false
     AudioWorkletProcessor: class {constructor() {this.port = port;}},
     registerProcessor(name, cls) {assert.equal(name, 'gosx-wasm-audio'); Processor = cls;}};
   vm.runInNewContext(source, context);
-  const p = new Processor({processorOptions: {m: {}, backend: b, info: {tempoMilli: 120000, requiredCapabilities: required}}});
+  const p = new Processor({processorOptions: {m: {}, backend: b, info: {tempoMilli: tempo, requiredCapabilities: required}}});
   for (let i = 0; i < 10 && !messages.some(m => m.t === 'r' || m.t === 'e'); i++) await tick();
   const send = data => port.onmessage?.({data});
   const render = frames => {const output = new Float32Array(frames); const alive = p.process([], [[output]]); return {output, alive};};
@@ -348,3 +348,27 @@ test('image replacement waits for a musical boundary and crossfades without a ga
   assert.equal(f.reactors[1].calls[0][16], 1);
   assert.equal(new DataView(f.reactors[1].calls[1].buffer).getBigUint64(8, true), 2n);
 });
+
+// Known limit, pinned until a follow-up drains a retired reactor: an image replacement retires the old reactor
+// at a bar boundary, and what it still has queued never reaches the page. The processor drains the retired
+// reactor only at a drain point inside the 5 ms crossfade, and then for faults only. At 1 kHz a bar of
+// 120000 milli-BPM is 500 samples, so the swap falls in the fourth callback and the crossfade ends before
+// the eighth callback's drain point; 58823 milli-BPM makes the bar 1021 samples, so the swap is 3 samples
+// before the end of the eighth callback and that drain point falls inside the crossfade.
+for (const [name, tempo, drains] of [['no drain point falls inside the crossfade', 120000, 0], ['a drain point falls inside the crossfade', 58823, 1]]) {
+  test(`an image replacement discards what its retired reactor still has queued: ${name}`, async () => {
+    const p = await pager({b: {...backend, transport}, tempo});
+    p.f.send({t: 'c', bytes: command(1)});
+    p.emit(2); p.fault(9);
+    p.f.send({t: 'i', i: new Uint8Array([75]).buffer, info: {tempoMilli: tempo, requiredCapabilities: 0}, r: 'next'});
+    for (let i = 0; i < 10 && !p.f.messages.some(m => m.t === 't'); i++) await tick();
+    assert.ok(p.f.messages.some(m => m.t === 't'));
+    p.f.reactors[1].x.ring.push([1, 100, 0, 0], [1, 101, 0, 0]);
+    for (let i = 0; i < 6; i++) { p.drain(); p.page(); }
+    assert.deepEqual(p.seen, [100, 101], 'only the new reactor\'s messages reach the page');
+    assert.equal(p.x.drains, drains);
+    assert.equal(p.x.ring.length, drains ? 0 : 3, drains ? 'the retired ring was drained and its messages thrown away' : 'the retired ring was never drained');
+    assert.deepEqual(p.f.messages.filter(m => m.t === 'f'), drains ? [{t: 'f', a: 9}] : [], 'a drain of the retired reactor reports its fault only');
+    assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e'));
+  });
+}
