@@ -10,9 +10,10 @@ type WaveField interface {
 }
 
 // WaveFunc adapts a function to a [WaveField]. It lets a game wrap another
-// ocean query, for example the vertical component of scene.OceanQuery, though
-// that query uses the platform math library and is not bit-identical across
-// platforms.
+// ocean query, for example the vertical component of scene.OceanQuery. A wrapper
+// is only as pinned across platforms as the function it wraps: this package's
+// traces pin the bits of [Sea], while the scene.OceanQuery fixtures compare to
+// 1e-7 m.
 type WaveFunc func(x, z, t float64) float64
 
 // Height implements [WaveField].
@@ -45,9 +46,16 @@ type SeaConfig struct {
 
 	// Swell, when it is not empty, replaces the six-wave table: the sea is the
 	// sum of these plane waves (the swell waves of scene.Ocean.Spectrum, from
-	// scene.OceanSwellWaves or the normalized Ocean.SwellWaves). WaveHeight,
-	// WaveLength, WindDirection, Speed and Components are then ignored, as they
-	// are for a spectral Ocean, and time runs at 1x.
+	// scene.OceanSwellWaves or the normalized Ocean.SwellWaves, which are the same
+	// waves bit for bit). WaveHeight, WaveLength, WindDirection, Speed and
+	// Components are then ignored, as they are for a spectral Ocean, and time runs
+	// at 1x. NewSea copies the slice.
+	//
+	// The waves belong to the water frame. When the scene's Presentation sets a
+	// drift or a TimeScale, the rendered water is this field at the world position
+	// minus the integrated drift and at presentation time times the scale; Sea
+	// applies neither, so pass Height the water-frame position and wave time if
+	// the ship should ride the rendered waves.
 	Swell []SwellWave
 }
 

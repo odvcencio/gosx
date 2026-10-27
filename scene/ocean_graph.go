@@ -3,16 +3,16 @@ package scene
 import "math"
 
 // The Elio ocean pass graph (`elio emit ts --set ocean --backend webgpu`, kernel
-// set "ocean") takes its settings as named value parameters. The generic graph
-// runner fills those parameters from the normalized ocean, and it knows nothing
-// about oceans: this file computes the values, so Go is the one place that
+// set "ocean", built with the hull node "hull"; Elio PR #11, head 4200beb) takes
+// its settings as named parameters. The generic graph runner fills the
+// app-owned value parameters from the normalized ocean, and it knows nothing
+// about oceans: this file computes those values, so Go is the one place that
 // decides what a spectrum, a choppiness, a presentation or a foam setting means
 // for the graph. Normalization ships the result as Ocean.GraphParams and
 // Ocean.GraphTween whenever Spectrum is set; both are computed and read-only,
 // like SwellWaves.
 //
-// GraphParams holds exactly the graph's value-source parameters (frame, expr,
-// accumulate and delta parameters are the graph's own):
+// GraphParams holds the 22 value parameters that Go owns:
 //
 //	windSpeed, fetch, gamma, spread, swell  the spectrum, with defaults applied
 //	                                        (gamma is PeakEnhancement; fetch is km)
@@ -29,9 +29,24 @@ import "math"
 //	wakeEnabled                             1 when Wake has a NodeID and is Enabled, else 0
 //	hullLength, hullBeam                    Wake.Length and Wake.Beam in metres (defaults 200 and 30)
 //
-// The hull's position, heading and speed are not parameters: the graph reads them
-// from a scene node (a "node" parameter source named OceanGraphHullNode), and
-// Ocean.GraphNodes maps that name to Wake.NodeID for the runner.
+// That is not the graph's whole parameter list. The WebGPU graph declares 33
+// scalar value parameters, one vec4 array and four node parameters; a WebGL2
+// graph has no probeOriginX, probeOriginZ or probePoints. The rest belongs to
+// the graph or to the runtime, not to Go:
+//
+//	wakeCell, wakeDepth, wakeGravity,       the 11 wake tuning constants, left at
+//	wakeAlpha, wakeMinLambdaCells,          the graph's defaults
+//	wakeFoamGain, wakeFoamTau, wakeDiffuse,
+//	wakeJitter, wakeBowGain, wakeBowFoam
+//	hullX, hullZ, hullHeading, hullSpeed    the hull pose: node parameters that the
+//	                                        runner reads each frame from the scene
+//	                                        node bound to OceanGraphHullNode
+//	                                        (Ocean.GraphNodes maps that name to
+//	                                        Wake.NodeID); a graph built without a hull
+//	                                        node takes them as plain value parameters
+//	probePoints                             a vec4 array, the vessel's, filled at run time
+//	dt, cameraX, cameraZ, and every expr,   the graph's own
+//	accumulate and delta parameter
 //
 // The graph declares a build-time tween (20 s) on the parameters a spectrum
 // change moves (windSpeed, fetch, gamma, spread, swell, windDirDeg, swellDirDeg,
@@ -39,9 +54,8 @@ import "math"
 // Ocean.GraphTween (default 20) and the runner applies it to every tweened
 // parameter: the runner stays generic and the app's setting wins.
 //
-// What the graph cannot take from here: the four default cascades are fixed in
-// the graph, so Spectrum.Cascades is honoured by the Go swell waves but not by
-// the graph; and probePoints (a vec4 array) is the vessel's, filled at run time.
+// The four default cascades are fixed in the graph, so Spectrum.Cascades is
+// honoured by the Go swell waves but not by the graph.
 
 // OceanFoam holds the foam constants, the single source for every renderer.
 //

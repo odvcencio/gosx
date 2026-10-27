@@ -98,16 +98,25 @@ power (`StabilizerPower`).
 `vessel.Sea` builds waves from the same six-component table as the Scene3D
 ocean. It keeps only the vertical term, and it stays within 35% (rms) of
 `scene.OceanQuery`. Any type with `Height(x, z, t float64) float64` works as a
-`WaveField`; `vessel.WaveFunc` adapts a function. `scene.OceanQuery` uses the
-platform `math` library, so wrapping it gives up bit-identical results.
+`WaveField`; `vessel.WaveFunc` adapts a function. The traces in
+`vessel/testdata` pin the bits of `Sea`, while the `scene.OceanQuery` fixtures
+compare to 1e-7 m, so a `WaveFunc` that wraps the query is not pinned bit for
+bit.
 
 Set `SeaConfig.Swell` to replace the table with the swell waves of a spectral
 ocean: `scene.OceanSwellWaves`, or `scene.Ocean.SwellWaves` after
-normalization, converted with `vessel.SwellWave(w)`. `Sea` then sums the
-plane waves, time runs at 1x, and in deep water it matches the height of
-`scene.OceanQuery.Evaluate` for the same ocean to 1e-9 m.
-`vessel/testdata/parity-swell.json` holds the SHA-256 trace that checks the
-bits on every platform.
+normalization, converted with `vessel.SwellWave(w)`. The two give the same
+waves bit for bit, because `OceanSwellWaves` clamps and wraps its inputs the
+way ocean normalization does. `Sea` then sums the plane waves, time runs at 1x,
+and in deep water it matches the height of `scene.OceanQuery.Evaluate` for the
+same ocean to 1e-9 m. `vessel/testdata/parity-swell.json` holds the SHA-256
+trace that checks the bits on every platform.
+
+The waves belong to the water frame. If the scene's `Presentation` sets a
+drift or a `TimeScale`, the rendered water is the field at the world position
+minus the integrated drift and at presentation time times the scale. `Sea`
+applies neither, so pass `Height` the water-frame position and the wave time
+when the ship should ride the rendered waves.
 
 ### Saving and replaying
 

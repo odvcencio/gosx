@@ -9,16 +9,21 @@ import (
 	"testing"
 )
 
-// graphValueParams are the value-source parameters of the Elio ocean graph
-// (elio emit ts --set ocean --backend webgpu, Elio 7d88e46), excluding the
-// vec4 array probePoints that the vessel fills at run time.
+// graphValueParams are the 22 value parameters that Go owns and fills in
+// Ocean.GraphParams. They are a hand-written list of names from the Elio ocean
+// graph (elio emit ts --set ocean --backend webgpu, Elio PR #11 at 4200beb),
+// which declares 33 scalar value parameters; the other 11 are wake tuning
+// constants that stay at the graph's defaults. The graph is not in this
+// repository, so a test against this list cannot notice a rename in Elio. When
+// the runtime that loads the graph lands, compare these names with the emitted
+// graph's parameter list instead.
 var graphValueParams = []string{
 	"windSpeed", "fetch", "gamma", "spread", "swell", "windDirDeg", "swellDirDeg", "seed", "loopPeriod", "lambda",
 	"timeScale", "driftX", "driftZ", "foamTau", "foamThreshold", "foamGain", "probeCount", "probeOriginX", "probeOriginZ",
 	"wakeEnabled", "hullLength", "hullBeam",
 }
 
-func TestOceanGraphParamsNameExactlyTheGraphsValueParameters(t *testing.T) {
+func TestOceanGraphParamsNameTheValueParametersGoOwns(t *testing.T) {
 	ocean := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{}})
 	var got []string
 	for name := range ocean.GraphParams {
