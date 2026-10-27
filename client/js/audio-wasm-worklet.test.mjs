@@ -372,3 +372,13 @@ for (const [name, tempo, drains] of [['no drain point falls inside the crossfade
     assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e'));
   });
 }
+
+test('a reactor that drains more records than MessageCapacity stops the node', async () => {
+  // A ring that filled while the page stalled holds a full batch when draining resumes, so the reactor's
+  // per-call limit and MessageCapacity must agree.
+  const f = await fixture();
+  f.reactors[0].x.messages = backend.messageCapacity + 1;
+  for (let i = 0; i < 8; i++) f.render(128);
+  assert.ok(f.messages.some(m => m.t === 'e' && /invalid message count/.test(m.e)));
+  assert.equal(f.render(128).alive, false);
+});
