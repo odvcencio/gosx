@@ -2,7 +2,7 @@
 // optionally slice the hull with a plane. The renderer does the clipping; this
 // module only keeps two world-space planes up to date as the ship moves.
 //
-// Contract with a renderer (WebGL implements it; this is the WebGPU seam):
+// Contract with a renderer (WebGL and WebGPU implement it):
 //  - object.cutaway is a Float32Array(12): three vec4. [0..3] decks-above plane,
 //    [4..7] hull-section plane, [8] fade (0 hides, else the share of pixels kept).
 //    A point p is cut when dot(plane.xyz, p) + plane.w > 0. All zeros cuts nothing.
@@ -10,7 +10,7 @@
 //    this vessel culls any agent whose origin is on the cut side of either plane.
 //  - Add the backend name to BACKENDS once its shaders honor both.
 (function() {
-  const BACKENDS = ['webgl'], controllers = new Map();
+  const BACKENDS = ['webgl', 'webgpu'], controllers = new Map();
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   const finite = v => typeof v === 'number' && Number.isFinite(v);
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.

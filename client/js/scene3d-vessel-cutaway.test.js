@@ -70,10 +70,10 @@ test('fade keeps a share of pixels and parts stop casting shadows only while the
  assert.equal(part.castShadow,true,'the original is restored');assert.equal(other.castShadow,false);assert.equal(part.cutaway,null);assert.equal(part.cutawayCrowd,null);
 });
 test('a backend that cannot clip leaves the ship whole and says so',()=>{
- const r=rig(level,{enabled:true,deck:4},'webgpu'),part={id:'ship/hull',castShadow:true};
+ const r=rig(level,{enabled:true,deck:4},'canvas2d'),part={id:'ship/hull',castShadow:true};
  r.cw.touch(part);assert.equal(part.cutaway,undefined);assert.equal(part.castShadow,true);
  assert.ok(r.cw.cut.every(v=>v===0));assert.equal(r.mount.attrs['data-gosx-scene3d-cutaway'],'unsupported');
- assert.deepEqual([...api.BACKENDS],['webgl']);
+ assert.deepEqual([...api.BACKENDS],['webgl','webgpu']);
 });
 test('dispatch finds the vessel by mount and node and parses Go JSON',()=>{
  const r=rig(level,undefined);api.register('m','liner',r.cw);

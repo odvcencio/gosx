@@ -5410,6 +5410,7 @@
   // Frame caps quantize rAF intervals on displays such as 90 and 144 Hz.
   // Judge sustained cadence from the existing timing window so isolated long
   // intervals do not strand either governor below its requested quality.
+  /** @param {{ewmaFrameMS:number,p95FrameMS:number}} state @param {number} target */
   function sceneAdaptiveHealthyRAFCadence(state, target) {
     return state.ewmaFrameMS <= target * 1.06 && state.p95FrameMS <= target * 1.35;
   }
