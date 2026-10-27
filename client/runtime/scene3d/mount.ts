@@ -2406,8 +2406,11 @@
 	    }
 
 	    let lastPublishedCamera = null;
+    // A camera with TransitionMS eases to its pose; any other camera cuts (sceneCameraMover, mount-controls.ts).
+    const cameraMover = sceneCameraMover({ state: sceneState, current: currentMountedSceneCamera, cut: setMountedSceneCamera, reduced: () => motion.reducedMotion, alive: () => !disposed });
+    // ControlZoom handles its wheel, zoom keys, pinch and pan before the controls do and stops those events, so each announces itself with this event; any of them ends a move.
+    if (mount && typeof mount.addEventListener === "function") mount.addEventListener("gosx:scene3d:navigation", cameraMover.stop);
     let lastAppliedSelectionID = null;
-    let applyingSignalCamera = false;
     let applyingSignalSelection = false;
     let lastAppliedGizmoMode = null;
     let applyingSignalGizmoMode = false;
@@ -2547,12 +2550,15 @@
         camera: nextCamera,
         reason: reason || "render",
       });
-      if (typeof props.cameraOutputSignal === "string" && props.cameraOutputSignal && !applyingSignalCamera) {
+      // The input signal's cut and each step of its move share one reason, and the output stays quiet for it.
+      if (typeof props.cameraOutputSignal === "string" && props.cameraOutputSignal && reason !== "signal-camera") {
         queueInputSignal(props.cameraOutputSignal, nextCamera);
       }
     }
 
-    function applyMountedSceneCamera(camera, reason) {
+    function applyMountedSceneCamera(camera: any, reason?: string) { return sceneIsPlainObject(camera) && cameraMover.apply(camera, reason); }
+
+    function setMountedSceneCamera(camera, reason) {
       if (!sceneIsPlainObject(camera)) {
         return false;
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
@@ -2641,6 +2647,7 @@
     function applySceneHubEvent(eventName, data, reason) {
       const cameraChanged = sceneApplyCameraLiveEvent(sceneState, data);
       if (cameraChanged) {
+        cameraMover.stop();
         applySceneControlsCamera(sceneControlHandle.controller, sceneState.camera);
       }
       const modelChanged = sceneApplyModelLiveEvent(sceneState, eventName, data);
@@ -2741,9 +2748,7 @@
       unsubCameraSignal = gosxSubscribeSharedSignal(props.cameraInputSignal, function(value) {
         if (disposed) return;
         const cam = (sceneIsPlainObject(value) && sceneIsPlainObject(value.camera)) ? value.camera : value;
-        applyingSignalCamera = true;
         applyMountedSceneCamera(cam, "signal-camera");
-        applyingSignalCamera = false;
       }, { immediate: false });
     }
     let unsubSelectionSignal = null;
@@ -3486,9 +3491,13 @@
       if (setModelsCommands) {
         cancelSceneProgressiveModelLifecycle(sceneState);
       }
+      // A camera command that carries TransitionMS eases; the rest of the batch applies as usual.
+      const eased = sceneSplitEasedCamera(commands);
+      if (eased) commands = eased.rest;
       const postSource = sceneState._adaptiveSourcePostEffects;
       const result = applySceneCommands(sceneState, commands);
-      if (sceneControlsFollowCameraCommands(mountedSceneController(), sceneState, commands)) publishMountedSceneCamera(sceneState.camera, reason || "commands");
+      if (sceneControlsFollowCameraCommands(mountedSceneController(), sceneState, commands)) { cameraMover.stop(); publishMountedSceneCamera(sceneState.camera, reason || "commands"); }
+      if (eased) applyMountedSceneCamera(eased.camera, reason || "commands");
       if (postSource !== sceneState._adaptiveSourcePostEffects) sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
@@ -3583,7 +3592,8 @@
       setCamera(camera) {
         return applyMountedSceneCamera(camera, "handle-camera");
       },
-      setOrbit(orbit: any) { return applyMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit"); },
+      // The orbit is not a camera move: a running ease carries on around the new target.
+      setOrbit(orbit: any) { return setMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit"); },
       async applyTextureProfile(requests: any[], profile: string, signal: AbortSignal, module: any) {
         return sceneApplyMountedTextureProfile(sceneState, mount, requests, profile, signal, module, {
           disposed: () => disposed,
@@ -3711,6 +3721,7 @@
       if (mount && typeof mount.removeEventListener === "function") {
         mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
         mount.removeEventListener("gosx:scene3d:frame-cancel", cancelSceneFrameRequest);
+        mount.removeEventListener("gosx:scene3d:navigation", cameraMover.stop);
       }
       if (handle) handle.__gosxScene3DCommandReady = false;
       if (ownsMount) {
