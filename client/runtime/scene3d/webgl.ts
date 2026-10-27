@@ -9056,7 +9056,7 @@
       var hasTransmission = sceneTransmissionPresent(bundle);
       var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
       transmissionSettings.screen = transmissionSettings.screen && hasTransmission;
-      if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
+      postEffects = scenePBRSuppressedEdgeEffects(gl, frameMeta, transmissionSettings.screen ? sceneTransmissionEffects(postEffects, bundle.environment) : postEffects);
       const canvasFXAAFallback = scenePBRPostCanvasAntialiasFallback.has(gl) && postEffects.length === 0;
       if (canvasFXAAFallback) {
         postEffects = scenePBRCanvasFXAAEffects;
@@ -11193,6 +11193,7 @@
   // --- Integration ---
 
   var scenePBRPostCanvasAntialiasFallback = new WeakSet();
+  var scenePBRMultisampleCanvas = new WeakSet();
   const scenePBRCanvasFXAAEffects = [{ kind: "fxaa" }];
   function scenePBRCanvasAntialias(props, capability, ignorePost = false) {
     const caps = capability || {};
@@ -11204,6 +11205,13 @@
     const effects = scene.postEffects || scene.postFX || props && (props.postEffects || props.postFX);
     if (!ignorePost && Array.isArray(effects) && effects.length && !sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false))) return false;
     return sceneBool(props && props.antialias, tierDefault);
+  }
+
+  // Adaptive suppression leaves a chain of tone mapping, which draws into the single-sample post target.
+  // A canvas that would be antialiased without post effects (its own MSAA, or the private FXAA fallback) gets FXAA appended.
+  function scenePBRSuppressedEdgeEffects(gl: WebGL2RenderingContext, frameMeta: any, effects: any[]): any[] {
+    if (!effects.length || !frameMeta?.postFXSuppressed || !(scenePBRPostCanvasAntialiasFallback.has(gl) || scenePBRMultisampleCanvas.has(gl))) return effects;
+    return effects.some(function(effect) { return effect.kind === "fxaa"; }) ? effects : effects.concat(scenePBRCanvasFXAAEffects);
   }
 
   function createScenePBRContext(canvas, props, capability, canvasAlpha = null, ignorePost = false) {
@@ -11219,7 +11227,7 @@
         depth: true,
         powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
       });
-      if (gl && !antialias && scenePBRCanvasAntialias(props, caps, true)) scenePBRPostCanvasAntialiasFallback.add(gl);
+      if (gl && scenePBRCanvasAntialias(props, caps, true)) (antialias ? scenePBRMultisampleCanvas : scenePBRPostCanvasAntialiasFallback).add(gl);
       return gl;
     } catch (_error) {
       return null;

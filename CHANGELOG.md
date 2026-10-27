@@ -2,12 +2,25 @@
 
 ## Unreleased
 
-- Keep Scene3D tone mapping when adaptive quality suppresses post effects.
-  Under sustained load the controller sheds every post effect as its last
-  step. It now keeps the tone-mapping effect, so a physical or other HDR sky is
-  still mapped to the display instead of clipping to white. A scene with no
-  tone-mapping effect still sheds its whole post chain, and
-  `data-gosx-scene3d-postfx` reads `enabled` while a tone-mapping effect remains.
+- Keep Scene3D tone mapping and antialiasing when adaptive quality suppresses
+  post effects. Under sustained load the controller sheds every post effect as
+  its last step. It now keeps the tone-mapping effect, so a physical or other
+  HDR sky is still mapped to the display instead of clipping to white, and it
+  keeps FXAA (a denied TAA becomes FXAA). A chain draws into a single-sample
+  target, so on WebGL2 a canvas that was antialiased without post effects,
+  through its own MSAA or the private FXAA fallback, gets an FXAA pass after the
+  tone mapping. A scene with no tone-mapping effect still sheds its whole post
+  chain. A chain that holds only tone mapping and FXAA, or whose other effects
+  the survival tier already dropped, no longer enters the suppressed state:
+  suppression would shed nothing, so it spends no quality revision, starts no
+  cooldown and emits no transition event. `data-gosx-scene3d-postfx` reads
+  `enabled` while a tone-mapping effect remains. The suppressed frame now keeps
+  an HDR render target, a full-screen tone-mapping pass and, where antialiasing
+  is kept, an FXAA pass, which the old suppressed frame did not run. In a test
+  scene (physical sky and 40 meshes) at 1920 by 1080 on an RTX 5070 Ti, a frame
+  with tone mapping and FXAA takes about 0.24 ms of GPU time. The old suppressed
+  frame took 0.18 ms on a canvas without antialiasing and 0.22 ms on the private
+  FXAA fallback; the survival-tier chain with bloom takes 0.28 ms.
 
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.

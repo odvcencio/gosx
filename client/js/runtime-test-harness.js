@@ -3353,7 +3353,8 @@ function loadSceneAdaptiveQualityAPI() {
   );
   const clock = { now: 0 };
   const context = { __clock: clock };
-  vm.runInNewContext(`
+  // The mount sources carry TypeScript annotations; run only their JavaScript.
+  vm.runInNewContext(runtimeTypescript.transpileModule(`
     function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
     function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
     function setAttrValue(mount, name, value) { const next = String(value == null ? "" : value); if (mount.getAttribute(name) !== next) mount.setAttribute(name, next); }
@@ -3369,7 +3370,7 @@ function loadSceneAdaptiveQualityAPI() {
       scenePrimeAdaptiveQuality,
       sceneSyncStatusBindings,
     };
-  `, context, { filename: "scene-adaptive-quality.js" });
+  `, { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText, context, { filename: "scene-adaptive-quality.js" });
   return { api: context.adaptiveAPI, clock, context };
 }
 

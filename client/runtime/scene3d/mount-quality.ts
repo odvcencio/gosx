@@ -242,6 +242,36 @@
     return false;
   }
 
+  // sceneAdaptivePostFXKept lists what adaptive suppression leaves of the
+  // author's post chain: tone mapping and FXAA. A frame drawn with a post
+  // chain is linear light that only the tone-mapping pass maps to the display,
+  // so an HDR sky clips to white without it. The chain draws into a
+  // single-sample target, so FXAA keeps the edges the canvas would have had.
+  // With no tone mapping nothing needs the chain, and it empties: FXAA alone
+  // would leave the frame in linear light. A denied TAA becomes FXAA, like the
+  // survival tier.
+  function sceneAdaptivePostFXKept(source: any[]): any[] {
+    const kept: any[] = [];
+    let tone = false, fxaa = false, taa = false;
+    for (let i = 0; i < source.length; i += 1) {
+      const kind = String(source[i] && source[i].kind || "").toLowerCase();
+      if (kind === "tonemapping") tone = true;
+      else if (kind === "fxaa") fxaa = true;
+      else if (kind === "taa") taa = true;
+      if (kind === "tonemapping" || kind === "fxaa") kept.push(source[i]);
+    }
+    if (tone && taa && !fxaa) kept.push({ kind: "fxaa" });
+    return tone ? kept : [];
+  }
+
+  // sceneAdaptivePostFXSheds is true when suppression would remove an effect
+  // that is running: the applied chain is longer than what suppression keeps.
+  // A chain of tone mapping and FXAA sheds nothing, so it never suppresses.
+  function sceneAdaptivePostFXSheds(sceneState: any): boolean {
+    const current = sceneState && Array.isArray(sceneState.postEffects) ? sceneState.postEffects : [];
+    return current.length > sceneAdaptivePostFXKept(sceneAdaptivePostFXSource(sceneState)).length;
+  }
+
   // sceneQualityLadderAdmittedGroups reads the CURRENT rung's LayerGroups
   // straight off the governor state — no cached/applied step needed (unlike
   // postEffects, layer-group visibility has no sceneState.* field to mutate;

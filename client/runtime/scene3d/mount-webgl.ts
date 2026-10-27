@@ -5331,8 +5331,8 @@
     }
     const suppress = adaptiveQuality.adaptivePostFX && adaptiveQuality.postFXSuppressed && source.length > 0;
     const limited = adaptiveQuality.postFXMobile || adaptiveQuality.activeTier !== "full";
-    // Suppression keeps tone mapping: with a post chain the frame is linear light, so without that pass an HDR sky clips to white. Keep the existing spatial edge pass; denied TAA never enters history.
-    const next = suppress ? source.filter(function(effect) { return String(effect && effect.kind || "").toLowerCase() === "tonemapping"; }) : limited ? source.filter(function(effect) { return effect.kind !== "ssao" && effect.kind !== "contactShadows" && effect.kind !== "taa"; }) : source;
+    // Suppression keeps tone mapping and FXAA, so the sky does not clip to white and edges stay smooth. A denied TAA never enters history. See sceneAdaptivePostFXKept.
+    const next = suppress ? sceneAdaptivePostFXKept(source) : limited ? source.filter(function(effect) { return effect.kind !== "ssao" && effect.kind !== "contactShadows" && effect.kind !== "taa"; }) : source;
     if (limited && !suppress && source.some(function(effect) { return effect.kind === "taa"; }) && !next.some(function(effect) { return effect.kind === "fxaa"; })) next.push({ kind: "fxaa" });
     const current = Array.isArray(sceneState.postEffects) ? sceneState.postEffects : [];
     if (current.length === next.length && current.every(function(effect, index) { return effect === next[index]; })) {
@@ -5495,7 +5495,7 @@
     if (now >= state.cooldownUntilMS && (state.badFrames >= 20 || state.severeFrames >= 3)) {
       if (activeIndex < order.length - 1) {
         changed = sceneAdaptiveSetTier(state, order[activeIndex + 1], state.severeFrames >= 3 ? "severe" : "sustained", now);
-      } else if (state.adaptivePostFX && !state.postFXSuppressed && sceneAdaptivePostFXSource(sceneState).length > 0) {
+      } else if (state.adaptivePostFX && !state.postFXSuppressed && sceneAdaptivePostFXSheds(sceneState)) {
         state.postFXSuppressed = true;
         state.qualityRevision += 1;
         state.transitionReason = "postfx";

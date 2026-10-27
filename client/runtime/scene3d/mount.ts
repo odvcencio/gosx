@@ -583,6 +583,7 @@
         qualityEnabled: qualityEnabled,
         qualityTier: adaptiveQuality.tier || "fixed",
         qualityRevision: Math.max(0, Math.floor(sceneNumber(adaptiveQuality.qualityRevision, 0))),
+        postFXSuppressed: Boolean(adaptiveQuality.postFXSuppressed),
         qualityProfile: qualityProfile,
         detailEnabled: sceneDetailQualityEnabled(adaptiveQuality),
         atmosphereTier: sceneAtmosphereTier(adaptiveQuality, capability.tier),
