@@ -68,10 +68,12 @@
   orbit or fly controls. Reduced motion and a change of camera kind cut.
   `SetOrbit` changes the orbit and leaves a move running, and a camera for the
   pose a move is heading to keeps the move and still applies its orbit. A move
-  that `CameraInputSignal` starts does not publish `CameraOutputSignal`. **If
-  you send a camera every frame with `TransitionMS` above zero, each frame now
-  starts a new move and the view trails the camera you send. Set `TransitionMS`
-  to zero on streamed cameras before you upgrade.**
+  that `CameraInputSignal` starts does not publish `CameraOutputSignal`; a move
+  that a call starts does publish its steps, so bind the two signals to
+  different names, or the echo has no `TransitionMS` and ends the move after
+  its first step. **If you send a camera every frame with `TransitionMS` above
+  zero, each frame now starts a new move and the view trails the camera you
+  send. Set `TransitionMS` to zero on streamed cameras before you upgrade.**
 
 ## v0.57.24
 
