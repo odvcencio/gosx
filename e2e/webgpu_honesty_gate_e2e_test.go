@@ -40,7 +40,12 @@ type backendCaps struct {
 func TestWebGPUHonestyGate(t *testing.T) {
 	chrome := e2eChromePath(t)
 	app := startDocsApp(t, honestyGateBaseURL())
-	page := newBrowserPage(t, chrome, nil, 1280, 800, "", 90*time.Second)
+	// This fallback contract needs a usable WebGL renderer on GPU-less runners.
+	// Opt into software WebGL just as the other Scene3D browser tests do.
+	page := newBrowserPage(t, chrome, map[string]any{
+		"use-gl": "angle", "use-angle": "swiftshader",
+		"enable-unsafe-swiftshader": true, "enable-webgl": true,
+	}, 1280, 800, "", 90*time.Second)
 
 	fixturePath := "/test/webgpu-honesty-gate"
 	if status := page.navigate(t, app.baseURL+fixturePath); status < 200 || status > 299 {

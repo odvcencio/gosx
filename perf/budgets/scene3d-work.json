@@ -1,6 +1,6 @@
 {
   "schema": "gosx.scene3d-work/v1",
-  "note": "Exact maxima and totals over 120 rendered frames after eight warmup frames. Targets count live attachment pixels times samples; fake GL default MSAA is four samples. Pacing uses 120 RAF pulses at 60 Hz after settling. Lower every improved count; raises are forbidden by the base-branch ratchet.",
+  "note": "Exact maxima and totals over 120 rendered frames at 60 Hz after eight shader warmup frames and 32 governor warmup frames. Targets count live attachment pixels times samples; fake GL default MSAA is four samples. Pacing uses 120 RAF pulses at 60 Hz after settling. Lower every improved count; raises are forbidden by the base-branch ratchet.",
   "cases": {
     "hero/desktop-full/webgl": {
       "mount": {
@@ -30,7 +30,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 6
+        "domAttributeWrites": 5
       },
       "steadyTotal": {
         "draws": 1320,
@@ -45,7 +45,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 601
+        "domAttributeWrites": 600
       }
     },
     "post/desktop-full/webgl": {
@@ -178,7 +178,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 9
+        "domAttributeWrites": 5
       },
       "steadyTotal": {
         "draws": 1320,
@@ -193,7 +193,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 290
+        "domAttributeWrites": 264
       }
     },
     "post/desktop-full/webgpu": {
@@ -237,7 +237,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 765
+        "domAttributeWrites": 744
       }
     },
     "dense/desktop-full/webgpu": {
@@ -281,7 +281,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 765
+        "domAttributeWrites": 744
       }
     },
     "static/desktop-full/webgpu": {
@@ -324,7 +324,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 6
+        "domAttributeWrites": 5
       },
       "steadyTotal": {
         "draws": 1200,
@@ -339,7 +339,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 601
+        "domAttributeWrites": 600
       }
     },
     "post/phone-balanced/webgl": {
@@ -472,7 +472,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 9
+        "domAttributeWrites": 5
       },
       "steadyTotal": {
         "draws": 1320,
@@ -487,7 +487,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 290
+        "domAttributeWrites": 264
       }
     },
     "post/phone-balanced/webgpu": {
@@ -531,7 +531,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 765
+        "domAttributeWrites": 744
       }
     },
     "dense/phone-balanced/webgpu": {
@@ -575,7 +575,7 @@
         "getParameter": 0,
         "getError": 0,
         "readPixels": 0,
-        "domAttributeWrites": 765
+        "domAttributeWrites": 744
       }
     },
     "static/phone-balanced/webgpu": {

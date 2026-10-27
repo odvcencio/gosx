@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Enable Scene3D adaptive quality by default, including effects and resolution
+  reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
+  The full tier starts at the capability DPR cap, telemetry reports rendered
+  DPR, and rAF-only timing can recover quality after sustained clean cadence.
+
 - Build the TinyGo runtime with 256 KB goroutine stacks (`-stack-size=256KB`).
   TinyGo's 64 KiB default cannot grow, and resolving deeply nested island
   trees during a JS event overran it, corrupting the WASM heap ("memory access

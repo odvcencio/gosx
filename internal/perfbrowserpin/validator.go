@@ -138,6 +138,7 @@ var draftFastNeeds = []string{
 	"go-tests",
 	"js-tests",
 	"js-tests-b",
+	"js-tests-scene3d",
 }
 
 var baseAggregateNeeds = []string{
@@ -150,6 +151,7 @@ var baseAggregateNeeds = []string{
 	"go-cli-tests-c",
 	"js-tests",
 	"js-tests-b",
+	"js-tests-scene3d",
 	"wire-gates",
 	"wasm-tests",
 	"browser-tests",
@@ -163,14 +165,15 @@ var baseAggregateNeeds = []string{
 var cliShardJobs = []string{"go-cli-tests", "go-cli-tests-b", "go-cli-tests-c"}
 
 // jsShardJobs are the Node suite lanes. js-tests runs the runtime-NN suites
-// after its other checks and js-tests-b every other file (NODE_TEST_GROUP in
-// the Makefile). Each runs exactly one group, so a lane that is missing,
+// after its other checks, js-tests-scene3d runs renderer contracts, and
+// js-tests-b runs the remaining files (NODE_TEST_GROUP in the Makefile). Each runs exactly one group, so a lane that is missing,
 // renamed, or pointed at another group silently drops JavaScript tests from
-// CI. Both run on draft pull requests too: they are part of the draft fast
+// CI. All run on draft pull requests too: they are part of the draft fast
 // check.
 var jsShardJobs = []struct{ name, step, run string }{
 	{"js-tests", "JavaScript runtime contract tests", "make test-js NODE_TEST_GROUP=runtime"},
 	{"js-tests-b", "JavaScript runtime contract tests (other suites)", "make test-js-node NODE_TEST_GROUP=other"},
+	{"js-tests-scene3d", "Scene3D renderer contract tests", "make test-js-node NODE_TEST_GROUP=scene3d"},
 }
 
 // browserShardJobs are the e2e browser lanes in citest shard order. The first
