@@ -3226,7 +3226,7 @@
     "concurrentPRMerge": {
       "preservedParent": "ea281a58e434d1aeeee97a8c7805788eed7da160",
       "turbofanFilesChangedByMerge": false,
-      "localSDKDifference": "The checked target/local renderer source differs only by a JSDoc annotation in mount-webgl.ts; the authored application files in the merge are unchanged."
+      "localSDKDifference": "The checked target/local renderer source differs only by a JSDoc annotation; the authored application files in the merge are unchanged."
     }
   },
   "performance": {
