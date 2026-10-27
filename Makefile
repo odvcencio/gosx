@@ -306,12 +306,14 @@ test-js:
 #
 # NODE_TEST_GROUP splits the suite by file name, so a test's CI job never
 # moves when files are added: `runtime` is the client/js/runtime-NN-*.test.js
-# suites (js-tests runs it after the checks above) and `other` is every other
-# file (js-tests-b). Unset, it runs the whole suite. The file set matches the
-# original shell globs, where `**` matched one directory level.
+# suites (js-tests runs it after the checks above), `scene3d` is the
+# scene3d-*.test.js/mjs renderer contracts, and `other` is every remaining
+# file. The latter two run in separate required CI jobs. Unset, run all tests.
+# The file set matches the original shell globs, where `**` matched one level.
 JS_NODE_TESTS := $(wildcard client/js/*.test.js) $(wildcard client/js/*.test.mjs) $(wildcard client/runtime/*/*.test.js) $(wildcard scripts/*.test.mjs)
 JS_NODE_RUNTIME_TESTS := $(wildcard client/js/runtime-[0-9]*.test.js)
-JS_NODE_OTHER_TESTS := $(filter-out $(JS_NODE_RUNTIME_TESTS),$(JS_NODE_TESTS))
+JS_NODE_SCENE3D_TESTS := $(wildcard client/js/scene3d-*.test.js) $(wildcard client/js/scene3d-*.test.mjs)
+JS_NODE_OTHER_TESTS := $(filter-out $(JS_NODE_RUNTIME_TESTS) $(JS_NODE_SCENE3D_TESTS),$(JS_NODE_TESTS))
 NODE_TEST_GROUP ?=
 #
 # JS_TEST_NODE_OPTIONS caps the heap of the test runner and of every test file
@@ -328,10 +330,12 @@ ifeq ($(NODE_TEST_GROUP),)
 	$(JS_TEST_NODE) --test $(JS_NODE_TESTS)
 else ifeq ($(NODE_TEST_GROUP),runtime)
 	$(JS_TEST_NODE) --test $(JS_NODE_RUNTIME_TESTS)
+else ifeq ($(NODE_TEST_GROUP),scene3d)
+	$(JS_TEST_NODE) --test $(JS_NODE_SCENE3D_TESTS)
 else ifeq ($(NODE_TEST_GROUP),other)
 	$(JS_TEST_NODE) --test $(JS_NODE_OTHER_TESTS)
 else
-	$(error NODE_TEST_GROUP must be empty, runtime or other; got $(NODE_TEST_GROUP))
+	$(error NODE_TEST_GROUP must be empty, runtime, scene3d or other; got $(NODE_TEST_GROUP))
 endif
 
 # test-editor builds, vets and tests the nested editor module.
