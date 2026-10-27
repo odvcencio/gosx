@@ -920,7 +920,8 @@
       if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
       // A mount whose models are still hydrating reports pending. A motion
       // frame is sent once per change, so it is held (up to the call's timeout
-      // and signal) and applied when they commit, not dropped as a pose frame is.
+      // and signal) and applied when they commit. A pose frame is staged
+      // instead: it advances the identities already declared and does not wait.
       return Promise.resolve().then(function() { return rec.handle.applyMotionFrame(batches); })
         .then(function(result) { return result && result.pending === true ? retry("models are still hydrating") : resolve(result); }, reject);
     }).catch(fallback);
@@ -948,8 +949,9 @@
     if (!Array.isArray(batches)) reject("invalid-frame");
     if (state._modelHydrationPromise || !state._hydratedModelRecords) {
       // The crowd's models are loading or about to be replaced; the motion
-      // records need the committed objects. dispatchMotionFrame tries again.
-      if (state._modelHydrationPromise || state._modelHydrationUncommitted) return MOTION_FRAME_PENDING;
+      // records need the committed objects. dispatchMotionFrame tries again. A
+      // hydration that failed will not commit, so a frame does not wait for it.
+      if (state._modelHydrationPromise || (state._modelHydrationUncommitted && !state._modelHydrationFailed)) return MOTION_FRAME_PENDING;
       reject("renderer-not-ready");
     }
     var mounted = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];

@@ -4321,9 +4321,9 @@
     }
     const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
     state._modelHydrationGeneration = generation;
-    // A failed replacement leaves these declarations uncommitted. Compatible
-    // binary poses may still advance the last committed generation afterward.
-    state._modelHydrationUncommitted = true;
+    // A failed replacement leaves these declarations uncommitted. Compatible binary poses may still
+    // advance the last committed generation afterward. _modelHydrationFailed ends a motion frame's wait for it.
+    state._modelHydrationUncommitted = true; state._modelHydrationFailed = false;
     let models;
     try {
       // Commands can replace the declaration arrays while their assets are in
@@ -4331,7 +4331,7 @@
       // immutable, deterministic declaration order.
       models = sceneHydrationModels(state, props).map(sceneCloneHydrationModel);
     } catch (error) {
-      const counts = sceneModelHydrationCounts(0);
+      const counts = sceneModelHydrationCounts(0); state._modelHydrationFailed = true;
       publishSceneModelHydrationStatus(state._modelStatusMount, "failed", {
         generation,
         currentGeneration: state._modelHydrationGeneration,
@@ -4412,7 +4412,7 @@
 
     const failure = results.find(function(result) { return !result || result.ok !== true; });
     if (failure) {
-      sceneDestroyStagedModelHydrations(results);
+      sceneDestroyStagedModelHydrations(results); state._modelHydrationFailed = true;
       const failedStage = failure && failure.stage ? failure.stage : "unknown";
       const failedError = failure && failure.error;
       const failedStaged = failure && failure.staged;

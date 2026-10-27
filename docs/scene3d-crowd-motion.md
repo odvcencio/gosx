@@ -33,9 +33,11 @@ the GPU keeps interpolating it. Rules:
   its declared pose until it gets one.
 - A frame sent while the scene's models are still loading waits for them and
   then applies, so you do not have to resend it. The wait ends at the call's
-  `timeoutMS` (10 s by default), and the frame's fallbacks then apply; aborting
-  its `signal` cancels the frame instead. When no models are loading and none
-  have committed, the frame fails at once with `renderer-not-ready`.
+  `timeoutMS` (10 s by default), and the frame's fallbacks then apply, or the
+  call fails with a "did not become ready" error if it has none; aborting its
+  `signal` cancels the frame instead. When no models are loading, because none
+  are declared or the load failed, the frame fails at once with
+  `renderer-not-ready` and takes its fallbacks without delay.
 - `Size` must equal the batch's mounted instance count. The client rejects a
   frame built before a membership change with `membership-changed`. Send a full
   frame after you add, remove or reorder agents.

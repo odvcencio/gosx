@@ -553,3 +553,26 @@ test("a motion frame still fails at once when no hydration can make the renderer
   assert.ok(Date.now() - started < 60, "an unready renderer with no hydration must not wait");
   assert.equal(mount.handle.__gosxMotionFrameStats.rejected["renderer-not-ready"], 1);
 });
+
+test("a motion frame fails at once when the hydration that was loading has failed", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  // A failed generation leaves its declarations uncommitted, but nothing will commit them.
+  mount.state._modelHydrationFailed = true;
+  const started = Date.now();
+  await assert.rejects(bridge.dispatchMotionFrame(mount.handle, frame(), { timeoutMS: 5000 }), /renderer-not-ready/);
+  assert.ok(Date.now() - started < 60, "a failed hydration must not hold the frame for its timeout");
+  assert.equal(mount.handle.__gosxMotionFrameStats.rejected["renderer-not-ready"], 1);
+});
+
+test("a hydration that fails while a frame is held ends the wait", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  const sent = bridge.dispatchMotionFrame(mount.handle, frame(), { timeoutMS: 5000 });
+  assert.equal(await settled(sent), false, "the frame is held while the hydration is in flight");
+  const started = Date.now();
+  mount.state._modelHydrationFailed = true;
+  await assert.rejects(sent, /renderer-not-ready/);
+  assert.ok(Date.now() - started < 200, "the held frame fails on the next poll, not at its timeout");
+  assert.equal(mount.retained.length, 0);
+});
