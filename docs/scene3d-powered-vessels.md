@@ -101,6 +101,14 @@ ocean. It keeps only the vertical term, and it stays within 35% (rms) of
 `WaveField`; `vessel.WaveFunc` adapts a function. `scene.OceanQuery` uses the
 platform `math` library, so wrapping it gives up bit-identical results.
 
+Set `SeaConfig.Swell` to replace the table with the swell waves of a spectral
+ocean: `scene.OceanSwellWaves`, or `scene.Ocean.SwellWaves` after
+normalization, converted with `vessel.SwellWave(w)`. `Sea` then sums the
+plane waves, time runs at 1x, and in deep water it matches the height of
+`scene.OceanQuery.Evaluate` for the same ocean to 1e-9 m.
+`vessel/testdata/parity-swell.json` holds the SHA-256 trace that checks the
+bits on every platform.
+
 ### Saving and replaying
 
 `ship.AppendState(dst)` writes the whole state as 128 bytes of float bits;

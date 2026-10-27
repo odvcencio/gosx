@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add the Go contract for a spectral ocean. `scene.Ocean` gains `Spectrum` (a
+  JONSWAP wind sea with an optional swell; `scene.OceanPreset` returns the sea
+  states "calm", "moderate", "rough" and "storm"), `Presentation`, `Masks` and
+  `Wake` (`scene.OceanWake`). Normalization computes the read-only
+  `SwellWaves`, `GraphParams`, `GraphTween` and `GraphNodes`.
+  `scene.OceanSwellWaves` returns the strongest bins as plane waves, and
+  `scene.OceanQuery` and the new `vessel.SwellWave` input of `vessel.Sea`
+  follow them. The new `oceanspec` package computes the spectrum with package
+  `det`, so every platform gets the same bits. An ocean without a `Spectrum`
+  serializes and evaluates as before. Nothing in the browser runtime reads
+  these fields yet, so a scene that sets them still draws the six-wave sea.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered
