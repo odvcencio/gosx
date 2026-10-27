@@ -176,8 +176,10 @@
     return operation;
   }
 
-  // Commands, frames and presentation share readiness and cancellation.
-  function waitForCommandMount(target: any, opts: any, format: string, apply: (rec: any, resolve: (value: any) => void, reject: (error: unknown) => void) => unknown) {
+  // Commands, frames and presentation share readiness and cancellation. A mount
+  // can exist and still be unable to take the operation (its models are
+  // hydrating): apply calls retry(why) to try again, until the call's deadline.
+  function waitForCommandMount(target: any, opts: any, format: string, apply: (rec: any, resolve: (value: any) => void, reject: (error: unknown) => void, retry: (why: string) => void) => unknown) {
     var id = key(target, opts);
     var deadline = opts.timeoutMS === 0 ? Infinity : Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
     return new Promise<any>(function(resolve, reject) {
@@ -190,6 +192,11 @@
         handler(value);
       };
       const cancel = () => finish(reject, new DOMException("Scene3D operation canceled", "AbortError"));
+      const retry = (why: string) => {
+        if (settled) return;
+        if (Date.now() >= deadline) return finish(reject, new Error("Scene3D " + format + " target did not become ready" + (id ? ": " + id : "") + " (" + why + ")"));
+        timer = setTimeout(poll, 16);
+      };
       opts.signal?.addEventListener("abort", cancel, { once: true });
       function poll() {
         if (opts.signal?.aborted) return cancel();
@@ -199,7 +206,7 @@
           return finish(reject, new Error("Scene3D renderer is unavailable"));
         }
         if (rec) {
-          try { return apply(rec, value => finish(resolve, value), error => finish(reject, error)); }
+          try { return apply(rec, value => finish(resolve, value), error => finish(reject, error), retry); }
           catch (error) { return finish(reject, error); }
         }
         if (!id) return finish(reject, new Error("Scene3D " + format + " target is not ready and has no stable id"));
@@ -761,6 +768,7 @@
 
   // GPU-driven crowd motion retains its own queues and mount validation.
   var motionQueues = new Map();
+  var MOTION_FRAME_PENDING = { applied: false, binary: true, pending: true };
 
   function decodeMotionFrame(input) { return decodeInstanceFrame(input, true); }
 
@@ -907,10 +915,14 @@
     // @ts-ignore TS7034 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
     var batches;
     try { batches = decoded || decodeMotionFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
-    return waitForCommandMount(target, opts, "motion frame", function(rec, resolve, reject) {
+    return waitForCommandMount(target, opts, "motion frame", function(rec, resolve, reject, retry) {
       motionStats(target, opts);
       if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
-      return Promise.resolve().then(function() { return rec.handle.applyMotionFrame(batches); }).then(resolve, reject);
+      // A mount whose models are still hydrating reports pending. A motion
+      // frame is sent once per change, so it is held (up to the call's timeout
+      // and signal) and applied when they commit, not dropped as a pose frame is.
+      return Promise.resolve().then(function() { return rec.handle.applyMotionFrame(batches); })
+        .then(function(result) { return result && result.pending === true ? retry("models are still hydrating") : resolve(result); }, reject);
     }).catch(fallback);
   }
 
@@ -934,7 +946,12 @@
       throw new Error("Scene3D motion frame rejected: " + reason);
     }
     if (!Array.isArray(batches)) reject("invalid-frame");
-    if (state._modelHydrationPromise || !state._hydratedModelRecords) reject("renderer-not-ready");
+    if (state._modelHydrationPromise || !state._hydratedModelRecords) {
+      // The crowd's models are loading or about to be replaced; the motion
+      // records need the committed objects. dispatchMotionFrame tries again.
+      if (state._modelHydrationPromise || state._modelHydrationUncommitted) return MOTION_FRAME_PENDING;
+      reject("renderer-not-ready");
+    }
     var mounted = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];
     for (var batch of batches) {
       // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.

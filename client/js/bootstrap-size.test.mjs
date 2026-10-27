@@ -1487,7 +1487,9 @@ const budgets = [
   // copy of the same shape. Measured: 13_839 / 3_606 / 3_158; all three caps
   // raised with narrow rounding headroom. The merged build measures
   // 13_888 / 3_631 / 3_181.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 22_270, gzip: 6_799, brotli: 6_160 },
+  // Holding a motion frame until the models hydrate (the retry in waitForCommandMount and
+  // the pending result) adds 326 raw / 87 gzip / 42 Brotli bytes; only exhausted minimums move.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 22_596, gzip: 6_886, brotli: 6_202 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes

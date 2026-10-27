@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Hold a Scene3D motion frame that arrives while the scene's models are still
+  hydrating, then apply it when they commit, instead of rejecting it with
+  `renderer-not-ready`. The wait ends at the call's `timeoutMS` (10 s by
+  default), and the frame's fallbacks then apply; aborting its `signal` cancels
+  the frame. A frame sent when nothing is loading and nothing has committed
+  still fails at once. Crowds no longer need their first motion frames resent.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered

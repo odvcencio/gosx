@@ -13,12 +13,14 @@ import (
 
 // DispatchMotionFrame encodes and applies a motion frame to a mounted
 // Scene3D engine identified by its stable mount/engine ID. It returns after
-// enqueueing without blocking the browser event loop. When GPU-motion
-// application is unavailable, optional fallbackCommands use the JSON command
-// path, and optional fallbackPoseFrame falls back to the existing per-frame
-// PoseFrame (GSP2) channel instead -- useful while migrating one crowd at a
-// time, or on a backend that has not implemented the GPU-motion path yet.
-// Async failures appear in motionFrames telemetry and
+// enqueueing without blocking the browser event loop. A frame that arrives
+// while the scene's models are still loading waits for them, up to ten
+// seconds, and then applies; the browser does not reject it as not ready.
+// When GPU-motion application is unavailable, optional fallbackCommands use
+// the JSON command path, and optional fallbackPoseFrame falls back to the
+// existing per-frame PoseFrame (GSP2) channel instead -- useful while migrating
+// one crowd at a time, or on a backend that has not implemented the GPU-motion
+// path yet. Async failures appear in motionFrames telemetry and
 // gosx:scene3d:motion-frame-error.
 func DispatchMotionFrame(target string, frame MotionFrame, fallbackCommands []Command) error {
 	return DispatchMotionFrameAfterCommands(target, nil, frame, fallbackCommands, nil)
