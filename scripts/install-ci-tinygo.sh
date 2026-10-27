@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-tinygo_version="${TINYGO_VERSION:-0.41.1}"
-compat_go_version="${TINYGO_GO_VERSION:-1.25.5}"
+tinygo_version="${TINYGO_VERSION:-0.43.0}"
+compat_go_version="${TINYGO_GO_VERSION:-1.25.9}"
 
-if [[ "${tinygo_version}" != "0.41.1" || "${compat_go_version}" != "1.25.5" ]]; then
+if [[ "${tinygo_version}" != "0.43.0" || "${compat_go_version}" != "1.25.9" ]]; then
 	echo "install-ci-tinygo: unsupported toolchain TinyGo ${tinygo_version} / Go ${compat_go_version}" >&2
 	exit 1
 fi
 
-tinygo_sha256="901fbccffc61adb111656d1f907dfc21b6c499ca841b115866a0d6de2d835fbe"
-compat_go_sha256="9e9b755d63b36acf30c12a9a3fc379243714c1c6d3dd72861da637f336ebb35b"
+tinygo_sha256="1c78087d6eed75d7fd33655daf760604a060fd7c54343b6041011a7d489f4992"
+compat_go_sha256="00859d7bd6defe8bf84d9db9e57b9a4467b2887c18cd93ae7460e713db774bc1"
 work_dir="$(mktemp -d)"
 cleanup() {
 	rm -rf -- "${work_dir}"

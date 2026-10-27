@@ -1054,18 +1054,20 @@ Production builds and static exports also write route capability metadata into `
 
 ### WASM size-budget gate
 
-`make wasm-size-budget` (script: `scripts/check-wasm-size.sh`) builds both
-flavors of `client/wasm` and asserts the resulting WebAssembly artifacts stay
-within budget. CI runs the gate on every PR. Measured 2026-09-23 (TinyGo
-0.41.1, wasm-opt -Oz):
+`make wasm-size-budget` (script: `scripts/check-wasm-size.sh`) builds the
+production TinyGo runtimes and asserts they stay within budget. CI runs the
+gate on every PR. Measured 2026-10-26 (TinyGo 0.43.0, wasm-opt --asyncify -Oz):
 
-| Flavor | Build tags                    | Measured | Budget |
-|--------|-------------------------------|----------|--------|
-| full   | _(none)_                      | 2,191 KB | 2,450 KB |
-| tiny   | `gosx_tiny_islands_only`      | 817 KB   | 920 KB |
+| Runtime     | Measured  | Budget    |
+|-------------|-----------|-----------|
+| full        | 2,328 KiB | 2,500 KiB |
+| tiny        | 746 KiB   | 800 KiB   |
+| core        | 746 KiB   | 800 KiB   |
+| core brotli | 232 KiB   | 250 KiB   |
 
-Override the budget for a planned-growth slice by exporting
-`WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. The gate fires on
+Override a budget for a planned-growth slice by exporting
+`WASM_FULL_BUDGET_KB`, `WASM_TINY_BUDGET_KB`, `WASM_CORE_BUDGET_KB` or
+`WASM_CORE_BROTLI_BUDGET_KB`. The gate fires on
 incidental regressions so they get caught at the PR boundary instead of
 slipping into a release.
 

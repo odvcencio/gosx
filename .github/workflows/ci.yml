@@ -234,7 +234,7 @@ jobs:
       - name: Install TinyGo
         if: github.event_name == 'push'
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       - name: Focused shared-state race tests
@@ -272,7 +272,7 @@ jobs:
 
       - name: Install TinyGo
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       - name: CLI production-build integration tests
@@ -307,7 +307,7 @@ jobs:
 
       - name: Install TinyGo
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       - name: CLI production-build integration tests
@@ -330,7 +330,7 @@ jobs:
 
       - name: Install TinyGo
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       - name: CLI production-build integration tests
@@ -493,7 +493,7 @@ jobs:
 
       - name: Install TinyGo
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       # Guards the zero-CGo portability claim: README states every package
@@ -564,7 +564,7 @@ jobs:
 
       - name: Install TinyGo
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       - name: Install production WASM optimizer
@@ -784,7 +784,7 @@ jobs:
       # (`go run ./cmd/gosx build --prod`), which requires TinyGo on PATH.
       - name: Install TinyGo
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       - name: Browser docs E2E gate
@@ -992,7 +992,7 @@ jobs:
 
       - name: Install TinyGo
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       - name: Browser docs E2E gate
@@ -1031,7 +1031,7 @@ jobs:
 
       - name: Install TinyGo
         env:
-          TINYGO_VERSION: 0.41.1
+          TINYGO_VERSION: 0.43.0
         run: scripts/install-ci-tinygo.sh
 
       - name: Browser docs E2E gate

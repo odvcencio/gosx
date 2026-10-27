@@ -1164,7 +1164,7 @@ func TestShardLaneMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name:   "browser-tests-b drops the TinyGo step",
-			mutate: replaceJobOnce("browser-tests-b", "      - name: Install TinyGo\n        env:\n          TINYGO_VERSION: 0.41.1\n        run: scripts/install-ci-tinygo.sh\n\n", ""),
+			mutate: replaceJobOnce("browser-tests-b", "      - name: Install TinyGo\n        env:\n          TINYGO_VERSION: 0.43.0\n        run: scripts/install-ci-tinygo.sh\n\n", ""),
 			want:   "browser-tests-b job.steps: got 5 steps",
 		},
 		{

@@ -628,7 +628,7 @@ func validateTinyGo(node *yaml.Node) error {
 		return err
 	}
 	return exactStringMap(step["env"], label+".env", map[string]string{
-		"TINYGO_VERSION": "0.41.1",
+		"TINYGO_VERSION": "0.43.0",
 	})
 }
 

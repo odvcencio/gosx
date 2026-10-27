@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Build and test the TinyGo runtime with TinyGo 0.43.0 (compatibility Go
+  1.25.9) in CI and release workflows, replacing 0.41.1. The runtime grows:
+  core 638 → 746 KiB raw and 211 → 232 KiB brotli, full 2,174 → 2,328 KiB,
+  because 0.43 frees goroutine stacks when goroutines exit and ships a new
+  hashmap. Size budgets move to 800 KiB (core, tiny), 250 KiB (core brotli)
+  and 2,500 KiB (full).
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered

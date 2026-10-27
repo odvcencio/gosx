@@ -18,12 +18,14 @@
 # WASM_CORE_BUDGET_KB, or WASM_CORE_BROTLI_BUDGET_KB.
 set -euo pipefail
 
-# TinyGo 0.41.1 without wasm-opt, measured on 2026-09-29: core 654 KiB
-# raw and 215 KiB brotli; full 2199 KiB raw. Keep about 7% headroom for build variance.
-FULL_BUDGET_KB="${WASM_FULL_BUDGET_KB:-2350}"
-TINY_BUDGET_KB="${WASM_TINY_BUDGET_KB:-700}"
-CORE_BUDGET_KB="${WASM_CORE_BUDGET_KB:-700}"
-CORE_BROTLI_BUDGET_KB="${WASM_CORE_BROTLI_BUDGET_KB:-230}"
+# TinyGo 0.43.0 (wasm-opt --asyncify -Oz), measured on 2026-10-26: core and
+# tiny 746 KiB raw, core 232 KiB brotli, full 2328 KiB raw. TinyGo 0.41.1
+# measured 638, 211 and 2174 KiB; 0.43 adds manual goroutine stack freeing and
+# a new hashmap. Keep about 7% headroom for build variance.
+FULL_BUDGET_KB="${WASM_FULL_BUDGET_KB:-2500}"
+TINY_BUDGET_KB="${WASM_TINY_BUDGET_KB:-800}"
+CORE_BUDGET_KB="${WASM_CORE_BUDGET_KB:-800}"
+CORE_BROTLI_BUDGET_KB="${WASM_CORE_BROTLI_BUDGET_KB:-250}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${TMPDIR:-/tmp}/gosx-wasm-size"
