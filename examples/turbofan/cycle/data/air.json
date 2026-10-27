@@ -1,0 +1,52 @@
+{
+  "sourceURL": "https://github.com/Cantera/cantera/blob/6853993ed60ffb212671aa7a1d6b79714f07c2db/data/nasa_gas.yaml",
+  "speciesSnapshotSHA256": "9a0e07cb89bcbd672d9ed4f781c2baa09758ba3d98d77cf94dafb7ad954784a8",
+  "mixtureMoleFractions": {
+    "N2": 0.78,
+    "O2": 0.21,
+    "Ar": 0.01
+  },
+  "speciesRangesK": {
+    "N2": [
+      200.0,
+      1000.0,
+      6000.0
+    ],
+    "O2": [
+      200.0,
+      1000.0,
+      6000.0
+    ],
+    "Ar": [
+      200.0,
+      6000.0
+    ]
+  },
+  "temperatureRangeK": [
+    200,
+    1000,
+    3500
+  ],
+  "coefficients": [
+    [
+      3.573499954,
+      -0.0007257697413599999,
+      1.6755938591399999e-06,
+      -1.335331931999999e-10,
+      -4.176906774000002e-13,
+      -1047.523396,
+      3.1265389028
+    ],
+    [
+      3.0968112570999997,
+      0.00122741920443,
+      -4.1389411083000006e-07,
+      6.5630559444e-11,
+      -3.8667093246e-15,
+      -983.4889156,
+      5.3410989011000005
+    ]
+  ],
+  "gasConstantJPerKGK": 287.05,
+  "note": "Frozen air composition; air-equivalent combustion products. Not chemical equilibrium."
+}

@@ -7,6 +7,41 @@ import (
 
 var cylinderProfile = []float64{1, 0, 1, 2}
 
+// A sampled quad must have each boundary edge once and one shared diagonal.
+// Overlapping triangles can have the correct count, bounds and total area
+// while leaving visible holes, so those checks alone do not establish coverage.
+func TestLatheQuadCoverage(t *testing.T) {
+	const segments = 7
+	profile := []float64{.7, 0, 1, .8, .9, 2}
+	mesh := Lathe(profile, segments, .2, 1.7, AttrNormals|AttrUVs)
+	points := len(profile) / 2
+	type edge [2]int
+	key := func(a, b int) edge {
+		if a > b {
+			a, b = b, a
+		}
+		return edge{a, b}
+	}
+	for segment := range segments {
+		for point := 0; point < points-1; point++ {
+			counts := map[edge]int{}
+			offset := (segment*(points-1) + point) * 6
+			for triangle := 0; triangle < 2; triangle++ {
+				indices := mesh.Indices[offset+triangle*3 : offset+triangle*3+3]
+				for i := range 3 {
+					counts[key(indices[i], indices[(i+1)%3])]++
+				}
+			}
+			a, b := segment*points+point, (segment+1)*points+point
+			for _, boundary := range []edge{key(a, a+1), key(a, b), key(b, b+1), key(a+1, b+1)} {
+				if counts[boundary] != 1 {
+					t.Fatalf("quad (%d,%d) boundary %v appears %d times; triangles overlap or leave a hole", segment, point, boundary, counts[boundary])
+				}
+			}
+		}
+	}
+}
+
 func TestLatheVertexCount(t *testing.T) {
 	tests := []struct {
 		name          string

@@ -1,0 +1,16 @@
+{
+  "profile": "JT9D-7R4D / -7R4D1",
+  "uid": "1PW026",
+  "lowSpeedLoss": 1.0665884689267835,
+  "calibrationModes": [
+    "takeoff",
+    "approach",
+    "idle"
+  ],
+  "unfittedModes": [
+    "climbout"
+  ],
+  "groundThrustCheckTolerance": 0.05,
+  "protocol": "Rated thrust/fuel and published OPR/BPR anchor map scaling; approach fits a shared low-speed efficiency correction, and idle fits an additional correction below Nc=0.5. Bounded modeled extensions cover the missing low-speed map region. Climbout is excluded from parameter fitting. Public points were inspected during development; this is an unfitted check, not blind validation.",
+  "idleRecovery": 1.8115930073145137
+}
