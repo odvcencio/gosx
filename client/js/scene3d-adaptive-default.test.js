@@ -49,3 +49,37 @@ test("rAF-only timing demotes under load and recovers on sustained 60 Hz cadence
   assert.equal(s.canvas.width, 1600);
   assert.equal(s.env.consoleLogs.error.length, 0);
 });
+
+for (const [refreshHz, maxFrameRate] of [[90, 60], [120, 60], [144, 60], [120, 30], [144, 30]]) {
+  test(`rAF recovery respects a ${maxFrameRate} FPS scene on a ${refreshHz} Hz display`, async () => {
+    const s = await mountQuality({ maxFrameRate });
+    for (let i = 0; i < 40; i++) s.tick(60);
+    assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "balanced");
+    // A 30 FPS cap needs time for both cooldowns and two recovery steps.
+    for (let i = 0; i < refreshHz * (maxFrameRate === 30 ? 28 : 16); i++) s.tick(1000 / refreshHz);
+    const q = s.mount.__gosxScene3DQualityState;
+    assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "full", JSON.stringify({refreshHz, maxFrameRate, quality:q, pacing:s.mount.getAttribute("data-gosx-scene3d-frame-pacing-k")}));
+    assert.equal(s.canvas.width, 1600);
+    assert.equal(s.env.consoleLogs.error.length, 0);
+  });
+}
+
+test("the authored quality ladder also recovers through capped high-refresh cadence", async () => {
+  const s = await mountQuality({ maxFrameRate: 60, qualityLadder: H.THREE_RUNG_LADDER });
+  assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-rung"), "0");
+  for (let i = 0; i < 90 * 16; i++) s.tick(1000 / 90);
+  assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-rung"), "2");
+  assert.equal(s.canvas.width, 1600, "the ladder must preserve authored resolution");
+  assert.equal(s.env.consoleLogs.error.length, 0);
+});
+
+for (const [name, limits, width, dpr] of [
+  ["authored DPR", {maxDevicePixelRatio: 1.5}, 1200, "1.500"],
+  ["backing-pixel budget", {maxPixels: 480000}, 800, "1.000"],
+]) {
+  test(`adaptive defaults preserve the ${name} limit and report the rendered DPR`, async () => {
+    const s = await mountQuality(limits);
+    assert.equal(s.canvas.width, width);
+    assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-dpr-cap"), dpr);
+  });
+}

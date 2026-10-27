@@ -112,13 +112,13 @@
     //     every real session (no GPU timing) stuck at the boot rung forever
     //     (observed in production: webgpuPostEffects stayed 0 after 13k+
     //     frames at a locked 60fps). Promote instead on sustained
-    //     vsync-CLEAN cadence: frameMS not exceeding target by more than a
+    //     vsync-CLEAN cadence: window EWMA not exceeding target by more than a
     //     small (6%) margin, for rungPromoteFrames consecutive frames — "not
     //     missing cadence" rather than "has spare headroom", since rAF alone
     //     cannot observe spare headroom past the display's refresh floor.
     //     Demotion (below) is unchanged for either source.
     const promoteEligible = isRAFMeasured
-      ? frameMS <= target * 1.06
+      ? sceneAdaptiveHealthyRAFCadence(state, target)
       : frameMS < target * state.rungPromoteThreshold;
     if (missesBudget) {
       state.badFrames += 1;

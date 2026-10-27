@@ -5407,6 +5407,13 @@
     return true;
   }
 
+  // Frame caps quantize rAF intervals on displays such as 90 and 144 Hz.
+  // Judge sustained cadence from the existing timing window so isolated long
+  // intervals do not strand either governor below its requested quality.
+  function sceneAdaptiveHealthyRAFCadence(state, target) {
+    return state.ewmaFrameMS <= target * 1.06 && state.p95FrameMS <= target * 1.35;
+  }
+
   function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
     if (state && viewport && viewport.devicePixelRatio > 0 && state.renderDevicePixelRatio !== viewport.devicePixelRatio) {
       state.renderDevicePixelRatio = viewport.devicePixelRatio;
@@ -5471,7 +5478,7 @@
       state.goodFrames = 0;
     // rAF timing has a display-cadence floor, so it cannot show GPU headroom.
     // Match the ladder governor: recover after sustained clean cadence.
-    } else if (isRAFMeasured ? frameMS <= target * 1.06 : frameMS < target * 0.72) {
+    } else if (isRAFMeasured ? sceneAdaptiveHealthyRAFCadence(state, target) : frameMS < target * 0.72) {
       state.goodFrames += 1;
       state.badFrames = 0;
     } else {
