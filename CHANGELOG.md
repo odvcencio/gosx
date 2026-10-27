@@ -17,10 +17,13 @@
   `enabled` while a tone-mapping effect remains. The suppressed frame now keeps
   an HDR render target, a full-screen tone-mapping pass and, where antialiasing
   is kept, an FXAA pass, which the old suppressed frame did not run. In a test
-  scene (physical sky and 40 meshes) at 1920 by 1080 on an RTX 5070 Ti, a frame
-  with tone mapping and FXAA takes about 0.24 ms of GPU time. The old suppressed
-  frame took 0.18 ms on a canvas without antialiasing and 0.22 ms on the private
-  FXAA fallback; the survival-tier chain with bloom takes 0.28 ms.
+  scene (physical sky and 40 meshes), measured with the renderer's GPU timer on
+  an RTX 5070 Ti at 1920 by 1080 and on an Intel integrated GPU at 1280 by 720,
+  the frame with tone mapping and FXAA took 9 to 16 percent more GPU time than
+  the old frame on the private FXAA fallback and 31 to 34 percent more than the
+  old direct frame on a canvas without antialiasing. It took 6 to 16 percent
+  less than the survival-tier chain with bloom. On the integrated GPU that is
+  11.8 ms against 10.8 ms, and 8.1 ms against 6.2 ms.
 
 - Hold a Scene3D motion frame that arrives while the scene's models are still
   hydrating, then apply it when they commit, instead of rejecting it with
