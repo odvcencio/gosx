@@ -21,13 +21,27 @@ var oceanWaveTable = func() (t struct {
 }()
 
 // OceanQuery mirrors the GPU ocean vertex pass. Quality is "low" (four waves)
-// or "high" (six). When the Ocean has a Spectrum, the surface is its swell waves
-// (Ocean.SwellWaves, computed from the spectrum when absent), Quality is
-// ignored, WaveHeight, WaveLength and Speed are ignored, and time runs at 1x.
-// The waves are the strongest bins of the spectrum, not the full surface; see
-// OceanSwellWaves. Floor must sample the ocean bathymetry texture in world
-// coordinates, including its encoding; nil means deep water. Zero-valued Ocean
-// properties use the public defaults, as they do after scene normalization.
+// or "high" (six). When the Ocean has a Spectrum, the surface is its swell waves,
+// Quality is ignored, WaveHeight, WaveLength and Speed are ignored, and time
+// runs at 1x. The waves are the strongest bins of the spectrum, not the full
+// surface; see OceanSwellWaves. Floor must sample the ocean bathymetry texture
+// in world coordinates, including its encoding; nil means deep water.
+// Zero-valued Ocean properties use the public defaults, as they do after scene
+// normalization.
+//
+// The swell waves are Ocean.SwellWaves when it is not empty, and are computed
+// from Spectrum and WindDirection by OceanSwellWaves when it is empty. A
+// non-empty SwellWaves is used as it is, so after changing Spectrum or
+// WindDirection of an Ocean taken from a SceneIR, clear SwellWaves or take a
+// fresh Ocean from a new SceneIR. On the spectral path an Ocean that was never
+// normalized (SwellWaves empty) gives the samples of its normalized form: the
+// computed waves, Choppiness and Surf are clamped as normalization clamps them.
+//
+// Presentation is not applied. When it sets a drift or a TimeScale, the GPU
+// surface samples the water at the position minus the integrated drift offset
+// and evolves it at presentation time times TimeScale, so x and z are
+// water-frame coordinates and seconds is wave time: apply the offset and the
+// scale before the call if the query should follow the rendered water.
 type OceanQuery struct {
 	data  [84]float64
 	floor func(x, z float64) float64
@@ -67,8 +81,10 @@ func NewOceanQuery(o Ocean, quality string, floor func(x, z float64) float64) *O
 		if len(q.swell) == 0 {
 			q.swell = OceanSwellWaves(*o.Spectrum, o.WindDirection, DefaultOceanSwellCount)
 		}
-		q.chop = defaulted(o.Choppiness, .6)
-		q.data[0], q.data[3], q.data[19] = f32(o.Level), 1, f32(defaulted(o.Surf, .5))
+		// Clamp as normalization does, so a raw Ocean and its normalized form give
+		// the same samples.
+		q.chop = defaulted(clampOceanParam(o.Choppiness, 0, 1), .6)
+		q.data[0], q.data[3], q.data[19] = f32(o.Level), 1, f32(defaulted(clampOceanParam(o.Surf, 0, 1), .5))
 		return q
 	}
 	q.data[0], q.data[3], q.data[19], q.data[27] = f32(o.Level), f32(defaulted(o.Speed, 1)), f32(defaulted(o.Surf, .5)), float64(count)

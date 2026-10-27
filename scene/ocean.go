@@ -57,7 +57,12 @@ type Ocean struct {
 	// SwellWaves is computed during normalization from Spectrum and
 	// WindDirection and is read-only: whatever an author sets is replaced. It
 	// holds the DefaultOceanSwellCount strongest bins of the first two cascades
-	// as plane waves, for ship motion and the browser's first frames.
+	// as plane waves, for ship motion and the browser's first frames. It is
+	// exactly what OceanSwellWaves returns for the same Spectrum and
+	// WindDirection with k = DefaultOceanSwellCount. NewOceanQuery uses a
+	// non-empty SwellWaves as it is, so after changing Spectrum or WindDirection
+	// of an Ocean taken from a SceneIR, clear SwellWaves or take a fresh Ocean
+	// from a new SceneIR.
 	SwellWaves []OceanWave `json:"swellWaves,omitempty"`
 	// GraphParams and GraphTween are computed during normalization when Spectrum
 	// is set and are read-only: whatever an author sets is replaced. They are the
@@ -101,9 +106,10 @@ type OceanWake struct {
 // OceanPresentation is how the sea is presented over time, apart from what it
 // looks like. It exists so a host that fast-forwards a voyage never speeds up
 // the waves: wave animation keeps natural time and only the water's apparent
-// motion past the hull follows the host (R9), and a change of sea state
-// arrives gradually (R10). All fields are presentation only; nothing here feeds
-// back into a simulation.
+// motion past the hull follows the host, and a change of sea state arrives
+// gradually. All fields are presentation only; nothing here feeds back into a
+// simulation. The CPU queries (OceanQuery, vessel.Sea) do not apply it; see
+// OceanQuery for the coordinate frame and the time base they use.
 //
 // Each field is the value of a named parameter of the Elio ocean pass graph
 // (`elio emit ts --set ocean --backend webgpu`, kernel set "ocean"), which the
@@ -141,8 +147,9 @@ type OceanPresentation struct {
 }
 
 // OceanSpectrum describes a wind sea by its JONSWAP spectrum. Zero fields mean
-// the documented default, as elsewhere in Ocean. Fetch is in kilometres, as
-// oceanographic tables give it; the other inputs are SI.
+// the documented default, as elsewhere in Ocean. A NaN or infinite scalar counts
+// as zero, so it means the default too. Fetch is in kilometres, as oceanographic
+// tables give it; the other inputs are SI.
 type OceanSpectrum struct {
 	// WindSpeed is m/s at 10 m, 0.5-40. Default: 9.
 	WindSpeed float64 `json:"windSpeed,omitempty"`
@@ -159,7 +166,11 @@ type OceanSpectrum struct {
 	SwellDirection float64 `json:"swellDirection,omitempty"`
 	// Cascades are the tiles. Empty means the four defaults: tile sizes 1600, 250,
 	// 37 and 5.3 m with bands [2pi/1600, 0.12), [0.12, 0.80), [0.80, 5.4) and
-	// [5.4, 37) rad/m. At most four.
+	// [5.4, 37) rad/m. At most four. Only the Go swell waves (ship motion and the
+	// first frames) honour this list: the Elio ocean graph fixes the four default
+	// cascades, so a custom list makes the CPU waves differ from the rendered sea.
+	// Normalization does not check that bands are disjoint: where bands overlap,
+	// each cascade draws the shared wavenumbers on its own and their energies add.
 	Cascades []OceanCascade `json:"cascades,omitempty"`
 	// Seed picks the realization. Any value, including 0, is a seed.
 	Seed uint32 `json:"seed"`
@@ -178,13 +189,14 @@ type OceanCascade struct {
 // "storm" (case-insensitive; any other name gives "moderate"). The presets
 // follow the Beaufort scale in wind speed over a fetch that keeps the
 // significant wave height Hs = 4 sqrt(m0) in the usual range. The Hs below is
-// measured on the realized four-cascade spectrum with seed 1 and the default
-// cascades (TestOceanSwellTruncationError):
+// measured on the realized four-cascade spectrum with seed 1, wind direction 0
+// and the default cascades, to within 0.05 m (TestOceanSwellTruncationError
+// asserts each value):
 //
 //	calm      Beaufort 2-3,  3 m/s over  30 km:             Hs 0.4 m, a short choppy sea
 //	moderate  Beaufort 4,    7 m/s over 100 km:             Hs 1.7 m
-//	rough     Beaufort 6,   11 m/s over 200 km:             Hs 3.7 m
-//	storm     Beaufort 9,   20 m/s over 250 km, gamma 2:    Hs 7.4 m, a less peaked sea
+//	rough     Beaufort 6,   11 m/s over 200 km:             Hs 3.6 m
+//	storm     Beaufort 9,   20 m/s over 250 km, gamma 2:    Hs 6.4 m, a less peaked sea
 //
 // Swell shares grow with the sea state and travel toward +Z (SwellDirection 0);
 // set SwellDirection to turn them. The seed is 1; change it for another sea of
@@ -249,7 +261,7 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Wake = normalizeOceanWake(ocean.Wake)
 	out.SwellWaves, out.GraphParams, out.GraphTween, out.GraphNodes = nil, nil, 0, nil
 	if out.Spectrum != nil {
-		out.SwellWaves = OceanSwellWaves(*out.Spectrum, out.WindDirection, DefaultOceanSwellCount)
+		out.SwellWaves = oceanSwellWaves(*out.Spectrum, out.WindDirection, DefaultOceanSwellCount)
 		out.GraphParams = oceanGraphParams(&out)
 		out.GraphTween = oceanGraphTween(&out)
 		out.GraphNodes = oceanGraphNodes(&out)
@@ -277,18 +289,21 @@ func oceanWakeSize(v, lo, hi float64) float64 {
 }
 
 // normalizeOceanSpectrum clamps authored nonzero parameters and keeps zero as
-// the default marker. A cascade list that is empty, longer than four or invalid
-// becomes nil, the four defaults.
+// the default marker. A NaN or infinite scalar counts as zero, as in
+// normalizeOceanPresentation: a NaN would otherwise reach every swell wave and
+// graph parameter, and json.Marshal of the SceneIR would fail. A cascade list
+// that is empty, longer than four or invalid becomes nil, the four defaults.
+// Normalizing a normalized spectrum changes nothing.
 func normalizeOceanSpectrum(spectrum *OceanSpectrum) *OceanSpectrum {
 	if spectrum == nil {
 		return nil
 	}
 	out := *spectrum
-	out.WindSpeed = clampOceanParam(spectrum.WindSpeed, 0.5, 40)
-	out.Fetch = clampOceanParam(spectrum.Fetch, 1, 2000)
-	out.PeakEnhancement = clampOceanParam(spectrum.PeakEnhancement, 1, 7)
-	out.Spread = clampOceanParam(spectrum.Spread, 1, 32)
-	out.Swell = clampOceanParam(spectrum.Swell, 0, 1)
+	out.WindSpeed = clampOceanParam(finiteOceanParam(spectrum.WindSpeed), 0.5, 40)
+	out.Fetch = clampOceanParam(finiteOceanParam(spectrum.Fetch), 1, 2000)
+	out.PeakEnhancement = clampOceanParam(finiteOceanParam(spectrum.PeakEnhancement), 1, 7)
+	out.Spread = clampOceanParam(finiteOceanParam(spectrum.Spread), 1, 32)
+	out.Swell = clampOceanParam(finiteOceanParam(spectrum.Swell), 0, 1)
 	out.SwellDirection = normalizeOceanWindDirection(spectrum.SwellDirection)
 	out.Cascades = normalizeOceanCascades(spectrum.Cascades)
 	return &out
@@ -384,6 +399,10 @@ func clampOceanParam(value, minimum, maximum float64) float64 {
 	return value
 }
 
+// normalizeOceanWindDirection wraps degrees into [0, 360); a NaN or infinite
+// value becomes 0. A value a hair below zero adds 360 and rounds to exactly 360,
+// which is outside the range and would wrap to 0 on the next pass, so it wraps to
+// 0 at once: the function is idempotent.
 func normalizeOceanWindDirection(value float64) float64 {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0
@@ -394,6 +413,9 @@ func normalizeOceanWindDirection(value float64) float64 {
 	}
 	if value < 0 {
 		value += 360
+		if value >= 360 {
+			return 0
+		}
 	}
 	return value
 }

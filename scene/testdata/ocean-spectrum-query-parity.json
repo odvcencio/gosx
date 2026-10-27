@@ -206,7 +206,32 @@
      "amplitude": 0.009419717183363319,
      "phase": -1.277269327737196
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 30,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.3,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 16,
+    "swell": 0.1,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 10,
+    "windSpeed": 3
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -436,7 +461,32 @@
      "amplitude": 0.009419717183363319,
      "phase": -1.277269327737196
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 30,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.3,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 16,
+    "swell": 0.1,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 10,
+    "windSpeed": 3
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -666,7 +716,32 @@
      "amplitude": 0.009419717183363319,
      "phase": -1.277269327737196
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 30,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.3,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 16,
+    "swell": 0.1,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 10,
+    "windSpeed": 3
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -896,7 +971,32 @@
      "amplitude": 0.009419717183363319,
      "phase": -1.277269327737196
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 30,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.3,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 16,
+    "swell": 0.1,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 10,
+    "windSpeed": 3
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -1126,7 +1226,32 @@
      "amplitude": 0.009419717183363319,
      "phase": -1.277269327737196
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 30,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.3,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 16,
+    "swell": 0.1,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 10,
+    "windSpeed": 3
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -1356,7 +1481,32 @@
      "amplitude": 0.009419717183363319,
      "phase": -1.277269327737196
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 30,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.3,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 16,
+    "swell": 0.1,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 10,
+    "windSpeed": 3
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -1586,7 +1736,32 @@
      "amplitude": 0.009419717183363319,
      "phase": -1.277269327737196
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 30,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.3,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 16,
+    "swell": 0.1,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 10,
+    "windSpeed": 3
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -1816,7 +1991,32 @@
      "amplitude": 0.009419717183363319,
      "phase": -1.277269327737196
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 30,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.3,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 16,
+    "swell": 0.1,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 10,
+    "windSpeed": 3
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -2045,7 +2245,32 @@
      "amplitude": 0.04696620776271547,
      "phase": -0.49057686804996975
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 100,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.66,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.5,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 8,
+    "swell": 0.15,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 80,
+    "windSpeed": 7
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -2274,7 +2499,32 @@
      "amplitude": 0.04696620776271547,
      "phase": -0.49057686804996975
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 100,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.66,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.5,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 8,
+    "swell": 0.15,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 80,
+    "windSpeed": 7
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -2503,7 +2753,32 @@
      "amplitude": 0.04696620776271547,
      "phase": -0.49057686804996975
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 100,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.66,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.5,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 8,
+    "swell": 0.15,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 80,
+    "windSpeed": 7
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -2732,7 +3007,32 @@
      "amplitude": 0.04696620776271547,
      "phase": -0.49057686804996975
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 100,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.66,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.5,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 8,
+    "swell": 0.15,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 80,
+    "windSpeed": 7
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -2961,7 +3261,32 @@
      "amplitude": 0.04696620776271547,
      "phase": -0.49057686804996975
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 100,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.66,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.5,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 8,
+    "swell": 0.15,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 80,
+    "windSpeed": 7
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -3190,7 +3515,32 @@
      "amplitude": 0.04696620776271547,
      "phase": -0.49057686804996975
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 100,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.66,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.5,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 8,
+    "swell": 0.15,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 80,
+    "windSpeed": 7
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -3419,7 +3769,32 @@
      "amplitude": 0.04696620776271547,
      "phase": -0.49057686804996975
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 100,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.66,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.5,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 8,
+    "swell": 0.15,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 80,
+    "windSpeed": 7
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -3648,7 +4023,32 @@
      "amplitude": 0.04696620776271547,
      "phase": -0.49057686804996975
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 100,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.66,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.5,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 8,
+    "swell": 0.15,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 80,
+    "windSpeed": 7
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -3878,7 +4278,32 @@
      "amplitude": 0.08451969259759622,
      "phase": -1.6941319774083736
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 200,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.748,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.7,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 6,
+    "swell": 0.25,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 150,
+    "windSpeed": 11
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -4108,7 +4533,32 @@
      "amplitude": 0.08451969259759622,
      "phase": -1.6941319774083736
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 200,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.748,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.7,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 6,
+    "swell": 0.25,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 150,
+    "windSpeed": 11
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -4338,7 +4788,32 @@
      "amplitude": 0.08451969259759622,
      "phase": -1.6941319774083736
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 200,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.748,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.7,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 6,
+    "swell": 0.25,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 150,
+    "windSpeed": 11
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -4568,7 +5043,32 @@
      "amplitude": 0.08451969259759622,
      "phase": -1.6941319774083736
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 200,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.748,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.7,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 6,
+    "swell": 0.25,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 150,
+    "windSpeed": 11
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -4798,7 +5298,32 @@
      "amplitude": 0.08451969259759622,
      "phase": -1.6941319774083736
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 200,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.748,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.7,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 6,
+    "swell": 0.25,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 150,
+    "windSpeed": 11
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -5028,7 +5553,32 @@
      "amplitude": 0.08451969259759622,
      "phase": -1.6941319774083736
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 200,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.748,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.7,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 6,
+    "swell": 0.25,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 150,
+    "windSpeed": 11
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -5258,7 +5808,32 @@
      "amplitude": 0.08451969259759622,
      "phase": -1.6941319774083736
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 200,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.748,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.7,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 6,
+    "swell": 0.25,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 150,
+    "windSpeed": 11
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -5488,7 +6063,32 @@
      "amplitude": 0.08451969259759622,
      "phase": -1.6941319774083736
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 200,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.748,
+    "gamma": 3.3,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.7,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 6,
+    "swell": 0.25,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 150,
+    "windSpeed": 11
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -5718,7 +6318,32 @@
      "amplitude": 0.14882648650682131,
      "phase": 1.7729795636239691
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 250,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.6759999999999999,
+    "gamma": 2,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.9000000000000001,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 4,
+    "swell": 0.35,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 220,
+    "windSpeed": 20
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -5948,7 +6573,32 @@
      "amplitude": 0.14882648650682131,
      "phase": 1.7729795636239691
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 250,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.6759999999999999,
+    "gamma": 2,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.9000000000000001,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 4,
+    "swell": 0.35,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 220,
+    "windSpeed": 20
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -6178,7 +6828,32 @@
      "amplitude": 0.14882648650682131,
      "phase": 1.7729795636239691
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 250,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.6759999999999999,
+    "gamma": 2,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.9000000000000001,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 4,
+    "swell": 0.35,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 220,
+    "windSpeed": 20
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -6408,7 +7083,32 @@
      "amplitude": 0.14882648650682131,
      "phase": 1.7729795636239691
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 250,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.6759999999999999,
+    "gamma": 2,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.9000000000000001,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 4,
+    "swell": 0.35,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 220,
+    "windSpeed": 20
+   },
+   "graphTween": 20
   },
   "floorOffset": 10000,
   "floorSlope": 0,
@@ -6638,7 +7338,32 @@
      "amplitude": 0.14882648650682131,
      "phase": 1.7729795636239691
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 250,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.6759999999999999,
+    "gamma": 2,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.9000000000000001,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 4,
+    "swell": 0.35,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 220,
+    "windSpeed": 20
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -6868,7 +7593,32 @@
      "amplitude": 0.14882648650682131,
      "phase": 1.7729795636239691
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 250,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.6759999999999999,
+    "gamma": 2,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.9000000000000001,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 4,
+    "swell": 0.35,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 220,
+    "windSpeed": 20
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -7098,7 +7848,32 @@
      "amplitude": 0.14882648650682131,
      "phase": 1.7729795636239691
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 250,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.6759999999999999,
+    "gamma": 2,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.9000000000000001,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 4,
+    "swell": 0.35,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 220,
+    "windSpeed": 20
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,
@@ -7328,7 +8103,32 @@
      "amplitude": 0.14882648650682131,
      "phase": 1.7729795636239691
     }
-   ]
+   ],
+   "graphParams": {
+    "driftX": 0,
+    "driftZ": 0,
+    "fetch": 250,
+    "foamGain": 0.9,
+    "foamTau": 6,
+    "foamThreshold": 0.6759999999999999,
+    "gamma": 2,
+    "hullBeam": 30,
+    "hullLength": 200,
+    "lambda": 0.9000000000000001,
+    "loopPeriod": 1000,
+    "probeCount": 0,
+    "probeOriginX": 0,
+    "probeOriginZ": 0,
+    "seed": 1,
+    "spread": 4,
+    "swell": 0.35,
+    "swellDirDeg": 0,
+    "timeScale": 1,
+    "wakeEnabled": 0,
+    "windDirDeg": 220,
+    "windSpeed": 20
+   },
+   "graphTween": 20
   },
   "floorOffset": 3,
   "floorSlope": 0.01,

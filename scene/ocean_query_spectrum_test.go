@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"os"
@@ -100,11 +101,61 @@ func TestOceanQuerySpectrumComputesWavesWhenNotNormalized(t *testing.T) {
 	}
 }
 
-// TestOceanQuerySpectrumParityGolden pins OceanQuery's spectral results. The
-// file holds normalized spectral oceans (with their swell waves, as the SceneIR
-// carries them) and Sample results, so a browser implementation of the query can
-// be checked against the same samples. UPDATE_GOLDEN=1 rewrites
-// testdata/ocean-spectrum-query-parity.json.
+// TestOceanQuerySpectrumOfARawOceanEqualsItsNormalizedForm holds the contract
+// that a spectral Ocean gives the same samples whether or not it went through
+// normalization first: the swell waves, and the choppiness and shore run-up that
+// shape each sample, are clamped the way normalization clamps them. The
+// out-of-range values below would otherwise make ship motion and the rendered
+// sea disagree.
+func TestOceanQuerySpectrumOfARawOceanEqualsItsNormalizedForm(t *testing.T) {
+	settings := []struct{ choppiness, surf float64 }{{0.5, 0.3}, {3, 7}, {-1, -2}, {0, 0}}
+	shallow := func(x, z float64) float64 { return -0.5 + 0.01*x }
+	for _, c := range rawSpectralOceans() {
+		for _, st := range settings {
+			spectrum := c.spectrum
+			raw := Ocean{Level: 1.5, WindDirection: c.direction, Choppiness: st.choppiness, Surf: st.surf, Spectrum: &spectrum}
+			normalized := normalizeOcean(&raw)
+			fromRaw, fromNormalized := NewOceanQuery(raw, "high", shallow), NewOceanQuery(*normalized, "high", shallow)
+			for i := 0; i < 5; i++ {
+				x, z, tm := float64(i)*57.3-120, float64(i)*-31.9+60, float64(i)*13.1
+				if got, want := fromRaw.Evaluate(x, z, tm), fromNormalized.Evaluate(x, z, tm); got != want {
+					t.Fatalf("%s choppiness %v surf %v: Evaluate(%g, %g, %g)\n got %+v\nwant %+v", c.name, st.choppiness, st.surf, x, z, tm, got, want)
+				}
+			}
+			if got, want := fromRaw.Sample(30, -20, 77), fromNormalized.Sample(30, -20, 77); got != want {
+				t.Fatalf("%s choppiness %v surf %v: Sample\n got %+v\nwant %+v", c.name, st.choppiness, st.surf, got, want)
+			}
+		}
+	}
+}
+
+// TestOceanQuerySpectrumKeepsAuthoredSwellWaves pins the other half of the
+// SwellWaves contract: a non-empty SwellWaves is used as it is, so a caller that
+// changes the Spectrum of an Ocean taken from a SceneIR must clear SwellWaves
+// (or take a fresh Ocean from a new SceneIR).
+func TestOceanQuerySpectrumKeepsAuthoredSwellWaves(t *testing.T) {
+	calm, storm := OceanPreset("calm"), OceanPreset("storm")
+	o := *normalizeOcean(&Ocean{Spectrum: &calm})
+	o.Spectrum = &storm
+	stale := NewOceanQuery(o, "high", nil).Evaluate(3, 4, 5)
+	if want := NewOceanQuery(*normalizeOcean(&Ocean{Spectrum: &calm}), "high", nil).Evaluate(3, 4, 5); stale != want {
+		t.Fatal("a non-empty SwellWaves must be used as it is")
+	}
+	o.SwellWaves = nil
+	if fresh := NewOceanQuery(o, "high", nil).Evaluate(3, 4, 5); fresh == stale {
+		t.Fatal("clearing SwellWaves must compute the waves of the new Spectrum")
+	}
+	if fresh, want := NewOceanQuery(o, "high", nil).Evaluate(3, 4, 5), NewOceanQuery(*normalizeOcean(&Ocean{Spectrum: &storm}), "high", nil).Evaluate(3, 4, 5); fresh != want {
+		t.Fatal("clearing SwellWaves must equal normalizing the new Spectrum")
+	}
+}
+
+// TestOceanQuerySpectrumParityGolden pins OceanQuery's spectral results and its
+// inputs. The file holds normalized spectral oceans (with their swell waves and
+// graph parameters, as the SceneIR carries them) and Sample results, so a
+// browser implementation of the query can be checked against the same samples.
+// The oceans must match the file exactly; the samples match to 1e-7.
+// UPDATE_GOLDEN=1 rewrites testdata/ocean-spectrum-query-parity.json.
 func TestOceanQuerySpectrumParityGolden(t *testing.T) {
 	type record struct {
 		Ocean       Ocean   `json:"ocean"`
@@ -120,7 +171,9 @@ func TestOceanQuerySpectrumParityGolden(t *testing.T) {
 	var records []record
 	for i, name := range []string{"calm", "moderate", "rough", "storm"} {
 		s := OceanPreset(name)
-		ocean := *normalizeOcean(&Ocean{Level: float64(i) - 1, WindDirection: float64(70*i + 10), Choppiness: 0.3 + 0.2*float64(i), Surf: 0.4, Spectrum: &s})
+		// float64(...) rounds the product, so a fused multiply-add (arm64, or amd64
+		// with GOAMD64=v3) cannot change the bits of an input that the fixture holds.
+		ocean := *normalizeOcean(&Ocean{Level: float64(i) - 1, WindDirection: float64(70*i + 10), Choppiness: 0.3 + float64(0.2*float64(i)), Surf: 0.4, Spectrum: &s})
 		for _, f := range [][2]float64{{1e4, 0}, {3, 0.01}} {
 			f := f
 			q := NewOceanQuery(ocean, "high", func(x, z float64) float64 { return ocean.Level - f[0] - f[1]*x })
@@ -154,6 +207,17 @@ func TestOceanQuerySpectrumParityGolden(t *testing.T) {
 	}
 	for i, w := range want {
 		g := records[i]
+		gotOcean, err := json.Marshal(g.Ocean)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantOcean, err := json.Marshal(w.Ocean)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(gotOcean, wantOcean) {
+			t.Fatalf("record %d: the ocean differs from the golden's; run with UPDATE_GOLDEN=1 after reviewing the change\n got %s\nwant %s", i, gotOcean, wantOcean)
+		}
 		for _, d := range []float64{g.Position.X - w.Position.X, g.Position.Y - w.Position.Y, g.Position.Z - w.Position.Z,
 			g.Normal.X - w.Normal.X, g.Normal.Y - w.Normal.Y, g.Normal.Z - w.Normal.Z,
 			g.Velocity.X - w.Velocity.X, g.Velocity.Y - w.Velocity.Y, g.Velocity.Z - w.Velocity.Z} {

@@ -81,13 +81,33 @@ func oceanWaves(waves []oceanspec.Wave) []OceanWave {
 // by signed wavenumber index. windDirection is in degrees, as
 // Ocean.WindDirection.
 //
+// The inputs are normalized first, exactly as Ocean normalization normalizes
+// them: scalars are clamped to their documented ranges, a NaN or infinite
+// scalar counts as zero (the default), directions wrap into [0, 360) and an
+// invalid cascade list becomes the four defaults. With k = DefaultOceanSwellCount
+// the result is therefore bit for bit the SwellWaves of an Ocean with that
+// Spectrum and WindDirection after normalization, as the SceneIR ships them,
+// whether or not the caller normalized; any smaller k gives a prefix of it. A
+// ship (vessel.SeaConfig.Swell) can use either source.
+//
 // The arithmetic is the CPU port of Elio's ocean_spectrum kernel in package
 // oceanspec, which is deterministic on amd64, js/wasm and arm64.
 // testdata/ocean-swell-bins.json, written by Elio's interpreter, holds the two
 // within 1e-9. The waves are what scene normalization ships in the SceneIR,
 // what OceanQuery and vessel.Sea evaluate, and what the browser uses before
 // the GPU surface exists.
+//
+// Each call computes the spectrum again, which takes milliseconds for the four
+// default cascades; keep the result instead of calling it every frame.
 func OceanSwellWaves(s OceanSpectrum, windDirection float64, k int) []OceanWave {
+	n := normalizeOceanSpectrum(&s)
+	return oceanSwellWaves(*n, normalizeOceanWindDirection(windDirection), k)
+}
+
+// oceanSwellWaves is OceanSwellWaves for a spectrum and a direction that are
+// already normalized. normalizeOcean calls it so that it does not rely on
+// normalization being idempotent for its own output.
+func oceanSwellWaves(s OceanSpectrum, windDirection float64, k int) []OceanWave {
 	if k <= 0 {
 		k = DefaultOceanSwellCount
 	}

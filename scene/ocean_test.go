@@ -2,6 +2,7 @@ package scene
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -140,6 +141,97 @@ func TestOceanSpectrumCascadesAreValidated(t *testing.T) {
 	}
 	if c := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{Cascades: make([]OceanCascade, 5)}}).Spectrum.Cascades; c != nil {
 		t.Fatalf("more than four cascades must fall back to the defaults, got %#v", c)
+	}
+	// A band may not start below zero: -0.5 is invalid, not only -1 and below.
+	negative := []OceanCascade{{Size: 250, KMin: -0.5, KMax: 0.5}}
+	if c := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{Cascades: negative}}).Spectrum.Cascades; c != nil {
+		t.Fatalf("a band that starts below zero must fall back to the defaults, got %#v", c)
+	}
+	// A band that starts above the Nyquist limit of its tile (0.804 rad/m for a
+	// 250 m tile) is empty after the clamp, so the list is invalid.
+	collapsed := []OceanCascade{{Size: 250, KMin: 1, KMax: 2}}
+	if c := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{Cascades: collapsed}}).Spectrum.Cascades; c != nil {
+		t.Fatalf("a band that collapses after the Nyquist clamp must fall back to the defaults, got %#v", c)
+	}
+}
+
+// TestOceanSpectrumNonFiniteScalarsCountAsDefaults holds the rule that a NaN or
+// infinite spectrum scalar becomes zero, the default marker. Left alone, a NaN
+// spread into all 24 swell waves and the graph parameters; json.Marshal of the
+// SceneIR then failed, and the server-rendered props silently lost the whole
+// scene, hull mesh included.
+func TestOceanSpectrumNonFiniteScalarsCountAsDefaults(t *testing.T) {
+	fields := []struct {
+		name string
+		set  func(*OceanSpectrum, float64)
+		get  func(*OceanSpectrum) float64
+	}{
+		{"WindSpeed", func(s *OceanSpectrum, v float64) { s.WindSpeed = v }, func(s *OceanSpectrum) float64 { return s.WindSpeed }},
+		{"Fetch", func(s *OceanSpectrum, v float64) { s.Fetch = v }, func(s *OceanSpectrum) float64 { return s.Fetch }},
+		{"PeakEnhancement", func(s *OceanSpectrum, v float64) { s.PeakEnhancement = v }, func(s *OceanSpectrum) float64 { return s.PeakEnhancement }},
+		{"Spread", func(s *OceanSpectrum, v float64) { s.Spread = v }, func(s *OceanSpectrum) float64 { return s.Spread }},
+		{"Swell", func(s *OceanSpectrum, v float64) { s.Swell = v }, func(s *OceanSpectrum) float64 { return s.Swell }},
+		{"SwellDirection", func(s *OceanSpectrum, v float64) { s.SwellDirection = v }, func(s *OceanSpectrum) float64 { return s.SwellDirection }},
+	}
+	for _, f := range fields {
+		for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+			t.Run(fmt.Sprintf("%s %v", f.name, bad), func(t *testing.T) {
+				spectrum := OceanPreset("rough")
+				f.set(&spectrum, bad)
+				props := Props{Environment: Environment{Ocean: &Ocean{
+					WindDirection: 30, Spectrum: &spectrum, Wake: &OceanWake{NodeID: "ship", Enabled: true},
+				}}}
+				ocean := props.SceneIR().Environment.Ocean
+				if got := f.get(ocean.Spectrum); got != 0 {
+					t.Fatalf("%s = %v after normalization, want 0 (the default)", f.name, got)
+				}
+				if len(ocean.SwellWaves) != DefaultOceanSwellCount || !finiteWaves(ocean.SwellWaves) {
+					t.Fatalf("swell waves: %d, finite %v", len(ocean.SwellWaves), finiteWaves(ocean.SwellWaves))
+				}
+				for name, v := range ocean.GraphParams {
+					if math.IsNaN(v) || math.IsInf(v, 0) {
+						t.Fatalf("graph parameter %s = %v", name, v)
+					}
+				}
+				// The server-rendered props must keep the scene.
+				data, err := json.Marshal(props)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded struct {
+					Scene struct {
+						Environment struct {
+							Ocean *Ocean `json:"ocean"`
+						} `json:"environment"`
+					} `json:"scene"`
+				}
+				if err := json.Unmarshal(data, &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if got := decoded.Scene.Environment.Ocean; got == nil || got.Spectrum == nil || len(got.SwellWaves) != DefaultOceanSwellCount {
+					t.Fatalf("the scene was dropped from the server-rendered props: %s", data)
+				}
+			})
+		}
+	}
+}
+
+// TestOceanWindDirectionStaysBelow360AndIsIdempotent covers the edge of the
+// wrap: a direction a hair below zero adds 360 and rounds to exactly 360, which
+// is outside [0, 360) and normalizes to 0 on the next pass. The SceneIR
+// normalizes an ocean twice, so the second pass must not move the value.
+func TestOceanWindDirectionStaysBelow360AndIsIdempotent(t *testing.T) {
+	for _, v := range []float64{
+		-1e-300, -1e-20, -5e-15, -2e-14, 0, 1e-300, 359.99999999999994, 360, 720, -360, -725, 372, 1e17, -1e17,
+		math.NaN(), math.Inf(1), math.Inf(-1),
+	} {
+		got := normalizeOceanWindDirection(v)
+		if !(got >= 0 && got < 360) {
+			t.Errorf("normalizeOceanWindDirection(%v) = %v, want a value in [0, 360)", v, got)
+		}
+		if again := normalizeOceanWindDirection(got); again != got {
+			t.Errorf("normalizeOceanWindDirection(%v) = %v but a second pass gives %v", v, got, again)
+		}
 	}
 }
 
