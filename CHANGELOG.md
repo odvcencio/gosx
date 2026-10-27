@@ -42,6 +42,23 @@
   the runner frame and replay log; `Restore` used to move both to the refused
   snapshot.
 
+- Keep WASM audio worklet messages when the page is slow to return the message
+  buffer. The processor drained the reactor's ring every eighth render quantum
+  and discarded the batch while the buffer was out, so a main-thread stall of
+  about 21 ms at 48 kHz lost messages. It now parks one batch and then stops
+  draining, so later messages wait in the reactor's ring and reach the page once,
+  in order, after `b` returns the buffer. A fault in the parked batch is still
+  reported at once with `f`, and its record also arrives in `m`, so pages that
+  handle both should deduplicate. A fault queued after the parked batch waits for
+  the first drain after `b` unless the reactor exports the new optional
+  `msg_fault`; the processor polls it while it is not draining, posts `f` and
+  stops playback at once, then keeps draining the ring until it is empty. The
+  ring can now be full when draining resumes, so `MessageCapacity` must equal the
+  reactor's per-call drain limit. A reactor that faults when its ring fills now
+  stops playback when a stall outlasts the ring; before, the music went on and
+  the messages were lost. Messages still queued in a reactor that an image
+  replacement retires are discarded.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered
