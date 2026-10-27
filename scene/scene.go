@@ -51,7 +51,7 @@ type PerspectiveCamera struct {
 	PortraitFOV  float64 // optional vertical field of view for portrait viewports
 	Near         float64
 	Far          float64
-	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
+	TransitionMS float64 // if > 0, the page eases to this camera over this many milliseconds instead of cutting
 	// Orbit, when set, also moves the orbit controls' target and limits, so the
 	// player's mouse orbit continues around the new target. Nil leaves them as
 	// they are. With orbit controls the mounted camera always faces the orbit
@@ -74,7 +74,7 @@ type OrthographicCamera struct {
 	Zoom         float64
 	Near         float64
 	Far          float64
-	TransitionMS float64
+	TransitionMS float64 // if > 0, the page eases to this camera over this many milliseconds instead of cutting
 }
 
 // Environment describes scene-wide ambient, hemisphere, and image-based lighting.

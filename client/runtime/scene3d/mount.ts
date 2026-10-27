@@ -2405,6 +2405,8 @@
 	    }
 
 	    let lastPublishedCamera = null;
+    // A camera with TransitionMS eases to its pose; any other camera cuts (sceneCameraMover, mount-controls.ts).
+    const cameraMover = sceneCameraMover({ state: sceneState, current: currentMountedSceneCamera, cut: setMountedSceneCamera, reduced: () => motion.reducedMotion, alive: () => !disposed });
     let lastAppliedSelectionID = null;
     let applyingSignalCamera = false;
     let applyingSignalSelection = false;
@@ -2551,7 +2553,9 @@
       }
     }
 
-    function applyMountedSceneCamera(camera, reason) {
+    function applyMountedSceneCamera(camera: any, reason?: string) { return sceneIsPlainObject(camera) && cameraMover.apply(camera, reason); }
+
+    function setMountedSceneCamera(camera, reason) {
       if (!sceneIsPlainObject(camera)) {
         return false;
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
@@ -2640,6 +2644,7 @@
     function applySceneHubEvent(eventName, data, reason) {
       const cameraChanged = sceneApplyCameraLiveEvent(sceneState, data);
       if (cameraChanged) {
+        cameraMover.stop();
         applySceneControlsCamera(sceneControlHandle.controller, sceneState.camera);
       }
       const modelChanged = sceneApplyModelLiveEvent(sceneState, eventName, data);
@@ -3485,9 +3490,13 @@
       if (setModelsCommands) {
         cancelSceneProgressiveModelLifecycle(sceneState);
       }
+      // A camera command that carries TransitionMS eases; the rest of the batch applies as usual.
+      const eased = sceneSplitEasedCamera(commands);
+      if (eased) commands = eased.rest;
       const postSource = sceneState._adaptiveSourcePostEffects;
       const result = applySceneCommands(sceneState, commands);
-      if (sceneControlsFollowCameraCommands(mountedSceneController(), sceneState, commands)) publishMountedSceneCamera(sceneState.camera, reason || "commands");
+      if (sceneControlsFollowCameraCommands(mountedSceneController(), sceneState, commands)) { cameraMover.stop(); publishMountedSceneCamera(sceneState.camera, reason || "commands"); }
+      if (eased) applyMountedSceneCamera(eased.camera, reason || "commands");
       if (postSource !== sceneState._adaptiveSourcePostEffects) sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {

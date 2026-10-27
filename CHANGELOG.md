@@ -9,6 +9,14 @@
   the frame. A frame sent when nothing is loading and nothing has committed
   still fails at once. Crowds no longer need their first motion frames resent.
 
+- Honor `TransitionMS` on a Scene3D camera. A camera that carries it, from
+  `Scene3D.SetCamera`, a camera command or a Props update, now eases in the page
+  over that many milliseconds, with the curve and fields of
+  `scene.CameraTransition.Sample`, and the call returns at once. A newer camera
+  replaces the move from the pose on screen. Reduced motion, a change of camera
+  kind and a camera without `TransitionMS` cut. Set `TransitionMS` to zero on a
+  camera you send every frame; otherwise each frame starts a new move.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered

@@ -346,7 +346,9 @@ func Page() Node {
 				<span class="inline-code">Props.OrthographicCamera</span>
 				replaces it for computer-aided design (CAD), editor, and flat views. Set
 				<span class="inline-code">TransitionMS</span>
-				above zero and the client interpolates to the new pose instead of cutting.
+				above zero on a camera you update later and the page eases to the new pose over that many milliseconds instead of cutting.
+				A newer camera replaces a move in progress, starting from the pose on screen. Viewers who ask for reduced motion get a cut,
+				and so does a change between perspective and orthographic.
 			</p>
 			{CodeBlock("go", data.sample007)}
 			<p>

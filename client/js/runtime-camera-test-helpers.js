@@ -13,13 +13,16 @@ const {
 
 const SET_CAMERA = 5;
 
-async function mountScene(extraProps) {
+// envOptions reach createContext, for a test that owns the clock
+// (performanceNow) or the reduced-motion preference (prefersReducedMotion).
+async function mountScene(extraProps, envOptions) {
   const mount = new FakeElement("div", null);
   mount.id = "scene-camera-commands";
   const env = createContext({
     elements: [mount],
     enableWebGL: true,
     disableCanvas2D: true,
+    ...envOptions,
     manifest: { engines: [{
       id: "gosx-engine-camera-commands",
       component: "GoSXScene3D",
