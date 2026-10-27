@@ -10,10 +10,11 @@
   in order, after `b` returns the buffer. A fault in the parked batch is still
   reported at once with `f`, and its record also arrives in `m`, so pages that
   handle both should deduplicate. A fault queued after the parked batch waits for
-  the first drain after `b`. Messages still queued in a reactor that an image
-  replacement retires are discarded. A reactor that faults when its ring fills now
-  stops playback when a stall outlasts the ring; before, the music went on and the
-  messages were lost.
+  the first drain after `b` unless the reactor exports the new optional
+  `msg_fault`, which the processor polls while it is not draining. Messages still
+  queued in a reactor that an image replacement retires are discarded. A reactor
+  that faults when its ring fills now stops playback when a stall outlasts the
+  ring; before, the music went on and the messages were lost.
 
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.

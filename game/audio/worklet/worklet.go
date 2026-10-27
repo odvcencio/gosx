@@ -20,6 +20,9 @@ const ProcessorName = "gosx-wasm-audio"
 // project_alloc. No memory growth or allocation is needed in steady rendering.
 // While the page holds the message buffer, later messages wait in the reactor's
 // ring; a reactor whose ring can fill should report that with its FaultOpcode record.
+// Optional msg_fault returns 0 while the reactor is healthy and 0x10000 plus the
+// fault's 16-bit argument after it faults. The processor polls it, without draining,
+// so a fault queued behind the parked message batch is still reported at once.
 type Backend struct {
 	ExportPrefix          string             `json:"prefix,omitempty"`
 	MaxFrames             int                `json:"maxFrames"`

@@ -85,7 +85,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     exports._initialize();
     const prefix = b.prefix || 'gosx_audio_';
     x.memory = exports.memory;
-    for (const name of ['init', 'render', 'out_ptr', 'cmd_ptr', 'cmd_cap', 'cmd_commit', 'msg_ptr', 'msg_drain',
+    for (const name of ['init', 'render', 'out_ptr', 'cmd_ptr', 'cmd_cap', 'cmd_commit', 'msg_ptr', 'msg_drain', 'msg_fault',
       'capabilities', 'project_alloc', 'bank_alloc', 'bank_install', 'bank_image_ptr', 'bank_image_len']) {
       x[name] = exports[prefix + name];
     }
@@ -94,6 +94,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     }
     if (!(x.memory instanceof WebAssembly.Memory)) throw new Error('audio: reactor memory missing');
     if (x.capabilities !== undefined && typeof x.capabilities !== 'function') throw new Error('audio: invalid capabilities export');
+    if (x.msg_fault !== undefined && typeof x.msg_fault !== 'function') throw new Error('audio: invalid msg_fault export');
     const capabilities = x.capabilities ? x.capabilities() : 0;
     if (!Number.isInteger(capabilities) || capabilities < 0 || capabilities > 0xffffffff ||
         (capabilities & ~b.supportedCapabilities) || ((capabilities & info.requiredCapabilities) >>> 0) !== info.requiredCapabilities) {
@@ -289,10 +290,21 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     this.post(this.message, this.transfer);
   }
 
+  // The optional msg_fault export reports a fault without draining: 0 while the reactor is healthy, else 0x10000 | argument.
+  poll(target) {
+    if (!target.x.msg_fault) return false;
+    const state = target.x.msg_fault();
+    if (!Number.isInteger(state) || state && (state < 0x10000 || state > 0x1ffff)) throw new Error('audio: invalid fault state');
+    if (!state) return false;
+    this.faultMessage.a = state & 0xffff;
+    this.post(this.faultMessage);
+    return true;
+  }
+
   drain(target, active) {
     if (!target) return false;
     // The page holds the buffer and a batch is parked. Later messages stay in the reactor's ring; draining them now would lose them.
-    if (active && !this.messageReady && this.parkedBytes) return false;
+    if (active && !this.messageReady && this.parkedBytes) return this.poll(target);
     this.refresh(target);
     const count = target.x.msg_drain(), size = this.b.messageBytes;
     if (!Number.isInteger(count) || count < 0 || count > this.b.messageCapacity) throw new Error('audio: invalid message count');

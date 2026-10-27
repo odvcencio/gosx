@@ -11,7 +11,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const backend = {prefix: 'test_', maxFrames: 64, channels: 1, commandBytes: 16,
   messageBytes: 4, messageCapacity: 8, supportedCapabilities: 3, faultOpcode: 7, faultArgumentOffset: 2};
 
-async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false, required = 0, failRender = false} = {}) {
+async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false, required = 0, failRender = false, poll = false} = {}) {
   const messages = [], reactors = [];
   let Processor, closed = false;
   const port = {
@@ -45,8 +45,10 @@ async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false
         if (imageLevel) level = imageLevel / 100;
         new Float32Array(memory.buffer, 4096, b.maxFrames).fill(level, 0, n);
         x.frames.push(n);
-      }, frames: [], ring: [], drains: 0,
+      }, frames: [], ring: [], drains: 0, faulted: 0, polls: 0,
     };
+    // The optional msg_fault export: true reports `faulted`, a function replaces it, anything else is passed as given.
+    if (poll) x.test_msg_fault = poll === true ? () => { x.polls++; return x.faulted; } : poll;
     reactors.push({x, calls});
     return {exports: x};
   }};
@@ -63,15 +65,15 @@ async function fixture({b = backend, rate = 1000, capabilities = 0, grow = false
 }
 
 // A scripted page for the message path. The engine emits [1, seq low, seq high, 0] and a fault is
-// [7, 0, code low, code high]; fault() queues that record. page() decodes each batch into `seen` and
-// gives the buffer back unless release is false, as a stalled main thread would. drain() is one drain:
-// eight callbacks. It returns the last block rendered.
-async function pager() {
-  const f = await fixture(), x = f.reactors[0].x, seen = [], held = [];
+// [7, 0, code low, code high]; fault() queues that record and sets the state a msg_fault export reports.
+// page() decodes each batch into `seen` and gives the buffer back unless release is false, as a stalled
+// main thread would. drain() is one drain: eight callbacks. It returns the last block rendered.
+async function pager(options) {
+  const f = await fixture(options), x = f.reactors[0].x, seen = [], held = [];
   let sent = 0, read = 0;
   return {f, x, seen,
     emit(count) { for (let i = 0; i < count; i++, sent++) x.ring.push([1, sent & 255, sent >> 8, 0]); },
-    fault(code) { x.ring.push([7, 0, code & 255, code >> 8]); },
+    fault(code) { x.ring.push([7, 0, code & 255, code >> 8]); x.faulted = 0x10000 | code; },
     drain() { let out; for (let i = 0; i < 8; i++) out = f.render(128).output; return out; },
     page(release = true) {
       for (;;) {
@@ -137,20 +139,23 @@ test('messages transfer and return while faults remain observable under backpres
   assert.ok(f.render(128).output.every(v => v === 0));
 });
 
-test('a page that holds the message buffer through several drains still gets every message once, in order', async () => {
-  const p = await pager();
-  p.emit(3); p.drain(); p.page(false);
-  assert.deepEqual(p.seen, [0, 1, 2]);
-  // The page keeps the buffer through five more drains while the engine keeps emitting.
-  for (let i = 0; i < 5; i++) { p.emit(3); p.drain(); p.page(false); }
-  assert.deepEqual(p.seen, [0, 1, 2], 'nothing can be delivered while the buffer is out');
-  // Returning the buffer sends the parked batch at once. The 12 messages still queued in the engine then
-  // follow in two more batches, because one drain moves at most 8 records.
-  p.page();
-  for (let i = 0; i < 5; i++) { p.drain(); p.page(); }
-  assert.deepEqual(p.seen, Array.from({length: 18}, (_, i) => i));
-  assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e' || m.t === 'f'));
-});
+for (const poll of [false, true]) {
+  test(`a page that holds the message buffer through several drains still gets every message once, in order${poll ? ' when the reactor exports msg_fault' : ''}`, async () => {
+    const p = await pager({poll});
+    p.emit(3); p.drain(); p.page(false);
+    assert.deepEqual(p.seen, [0, 1, 2]);
+    // The page keeps the buffer through five more drains while the engine keeps emitting.
+    for (let i = 0; i < 5; i++) { p.emit(3); p.drain(); p.page(false); }
+    assert.deepEqual(p.seen, [0, 1, 2], 'nothing can be delivered while the buffer is out');
+    if (poll) assert.ok(p.x.polls > 0, 'a healthy reactor is polled while draining is paused');
+    // Returning the buffer sends the parked batch at once. The 12 messages still queued in the engine then
+    // follow in two more batches, because one drain moves at most 8 records.
+    p.page();
+    for (let i = 0; i < 5; i++) { p.drain(); p.page(); }
+    assert.deepEqual(p.seen, Array.from({length: 18}, (_, i) => i));
+    assert.ok(!p.f.messages.some(m => m.t === 'x' || m.t === 'e' || m.t === 'f'));
+  });
+}
 
 test('a fault is reported at once while the page holds the buffer and the messages around it are kept', async () => {
   const p = await pager();
@@ -177,7 +182,7 @@ test('later drains leave messages in the engine ring while the page holds the bu
   assert.ok(p.f.render(128).output.every(v => v === 0), 'the fault stops playback');
 });
 
-test('a fault queued after the parked batch is found at the first drain after the buffer returns', async () => {
+test('without msg_fault, a fault queued after the parked batch is found at the first drain after the buffer returns', async () => {
   const p = await pager();
   p.emit(1); p.drain(); p.page(false);
   p.emit(1); p.drain();
@@ -190,6 +195,42 @@ test('a fault queued after the parked batch is found at the first drain after th
   assert.ok(p.drain().every(v => v === 0), 'the first drain after b finds the fault and stops playback');
   p.page();
   assert.deepEqual(p.seen, [0, 1, 'fault 9']);
+});
+
+test('a reactor that exports msg_fault has a later fault reported at once even if the page never returns the buffer', async () => {
+  const p = await pager({poll: true});
+  p.emit(1); p.drain(); p.page(false);
+  p.emit(1); p.drain();
+  // The page never returns the buffer. A healthy reactor is polled at every drain point and keeps playing.
+  for (let i = 0; i < 50; i++) { p.emit(2); assert.ok(p.drain().some(v => v !== 0), 'a healthy reactor keeps playing'); }
+  assert.ok(!p.f.messages.some(m => m.t === 'f'));
+  p.fault(9);
+  assert.ok(p.drain().every(v => v === 0), 'playback stops at the first drain after the fault');
+  assert.deepEqual(p.f.messages.filter(m => m.t === 'f'), [{t: 'f', a: 9}]);
+  for (let i = 0; i < 100; i++) assert.ok(p.drain().every(v => v === 0));
+  assert.equal(p.f.messages.filter(m => m.t === 'f').length, 1, 'the fault is not repeated');
+  assert.equal(p.x.polls, 51, 'polled until it reported the fault, then left alone');
+  assert.equal(p.x.drains, 2, 'polling drains nothing, so no message is lost');
+  assert.equal(p.x.ring.length, 101, '100 messages and the fault record are still queued');
+  p.page();
+  assert.deepEqual(p.seen, [0, 1], 'the parked batch still arrives once the page returns the buffer');
+});
+
+test('msg_fault must be a function and report 0 or 0x10000 plus a 16-bit argument', async () => {
+  const bad = await fixture({poll: 1});
+  assert.ok(bad.messages.some(m => m.t === 'e' && /invalid msg_fault export/.test(m.e)));
+  for (const state of [-1, 9, 0xffff, 0x20000, 1.5, '65545']) {
+    const p = await pager({poll: () => state});
+    p.emit(1); p.drain(); p.page(false);
+    p.emit(1); p.drain();
+    p.drain();
+    assert.ok(p.f.messages.some(m => m.t === 'e' && /invalid fault state/.test(m.e)), String(state));
+    assert.ok(!p.f.messages.some(m => m.t === 'f'));
+  }
+  const ok = await pager({poll: () => 0x10000});
+  ok.emit(1); ok.drain(); ok.page(false);
+  ok.emit(1); ok.drain(); ok.drain();
+  assert.deepEqual(ok.f.messages.filter(m => m.t === 'f'), [{t: 'f', a: 0}], 'a fault argument of 0 is still a fault');
 });
 
 test('a render fault silences the complete block and stops the reactor once', async () => {

@@ -24,8 +24,10 @@ supports other export names. It requires an exported `memory`, `_initialize`,
 `cmd_cap`, `cmd_commit(count)`, `msg_ptr`, and `msg_drain`. Output is planar
 float32 with `MaxFrames` samples per channel. Record sizes and message capacity
 come from the backend descriptor. `project_alloc` is required when supplying an
-image. Optional `capabilities` is checked before uploads; optional shared-bank
-exports amortize expensive synthesis-bank initialization across replacements.
+image. Optional `capabilities` is checked before uploads; optional `msg_fault`
+reports a fault without draining the ring (see the fault rules below); optional
+shared-bank exports amortize expensive synthesis-bank initialization across
+replacements.
 
 The processor splits browser render quanta into `MaxFrames` blocks and reuses
 its typed views. If reactor memory grows, it refreshes detached views. Kernels
@@ -56,14 +58,20 @@ reactor without delivering the messages still queued in it; the processor drains
 that reactor for faults only, and only while the 5 ms crossfade lasts.
 
 A fault is a record in the ring, so a processor that has stopped draining cannot
-see one. When `f` arrives depends on where the fault is:
+see one unless the reactor tells it. When `f` arrives depends on where the fault is:
 
 - A fault in the parked batch is reported at once with `f` and playback stops.
   Its record also arrives in order in `m`, so a page that handles both should
   ignore the second.
-- A fault queued after the parked batch waits for the first drain after `b`.
-  Playback goes on until then, and a page that never returns `b` never learns of
-  the fault.
+- A reactor that exports `msg_fault` is polled at each drain point while the
+  processor is not draining. `msg_fault()` returns 0 while the reactor is healthy
+  and `0x10000` plus the fault's 16-bit argument once it has faulted; it must not
+  touch the ring. The processor then posts `f` and stops playback at once, however
+  long the page holds the buffer. It drains only while playing, so messages still
+  in the ring are not delivered.
+- Without `msg_fault`, a fault queued after the parked batch waits for the first
+  drain after `b`. Playback goes on until then, and a page that never returns `b`
+  never learns of the fault.
 
 Size the reactor's own ring for the longest page stall it must survive;
 `MessageCapacity` sizes one batch, not the ring. A reactor that faults when its
