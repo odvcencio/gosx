@@ -7,17 +7,27 @@
   or a replay baseline now takes its next steps and runs cadence systems on the
   same ticks, with the same `ctx.Delta`, as one that never stopped. Before,
   `Restore` zeroed the clock remainder and left the wrappers' gathered time as
-  it was. Snapshots carry `"version": 2` (`game.RuntimeStateVersion`). Version 1
+  it was. Snapshots carry `"version": 2` (`game.RuntimeStateVersion`) and the
+  fixed step that wrote them; a runtime with another fixed step still loads them
+  and starts the clock remainder from zero. A wrapper takes the saved time of the
+  wrapper that matches its system name, kind, parameter and nesting. Version 1
   snapshots still load and behave as before. `State`, which `sim.Runner`
   broadcasts every tick, keeps its size.
 
 - Add `game.Runtime.RestoreSnapshot`, which returns why a snapshot was refused
-  (empty, malformed, newer than this build, or a clock or world that does not
-  fit) and then changes nothing. `Runtime.Restore` keeps the `sim.Simulation`
-  signature and still cannot report an error. `SaveCodec` snapshots now check
-  the clock before they replace the world. Custom codecs can report errors
-  through the new optional `game.SnapshotRestorer` interface or
+  (empty, malformed, newer than this build, or a time, clock or world that does
+  not fit) and then changes nothing. `Runtime.Restore` keeps the
+  `sim.Simulation` signature and still cannot report an error. `SaveCodec`
+  snapshots now check the clock before they replace the world. Custom codecs can
+  report errors through the new optional `game.SnapshotRestorer` interface or
   `SnapshotCodecFuncs.RestoreSnapshotFunc`.
+
+- Add `sim.Runner.RestoreSnapshot` and the optional `sim.CheckedRestorer`
+  interface, which `game.Runtime` implements. It loads a save into a running
+  runner under the tick lock and returns the simulation's refusal. When the
+  simulation refuses a snapshot, `Runner.Restore` and `RestoreSnapshot` now keep
+  the runner frame and replay log; `Restore` used to move both to the refused
+  snapshot.
 
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.

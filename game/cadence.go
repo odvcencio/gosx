@@ -57,52 +57,85 @@ func EveryInterval(d time.Duration, s System) System {
 	return &cadence{inner: s, interval: d}
 }
 
+// Kinds of CadenceState.
+const (
+	cadenceKindEvery    = "every"
+	cadenceKindInterval = "interval"
+)
+
 // CadenceState is the game time one Every or EveryInterval wrapper has gathered
 // since it last ran. Runtime.Snapshot writes one per wrapper, outer wrapper
-// first, in system order. Restore gives each wrapper the entry with its
-// system's name, taking entries of one name in order. A wrapper with no entry
-// (a system added since the snapshot) starts from zero, and an entry with no
-// wrapper is dropped. A wrapper hidden inside another System type is not found,
-// so its time is not saved.
+// first, in system order.
+//
+// Restore gives a wrapper the entry that agrees with it on System (the name of
+// the system), Kind ("every" or "interval"), Param (n, or the interval in
+// nanoseconds) and Depth (0 for a wrapper the runtime holds directly, 1 for the
+// wrapper inside it, and so on). A wrapper with no such entry, such as a system
+// added or changed since the snapshot, starts from zero, and an entry with no
+// wrapper is dropped. Wrappers that agree on all four take their entries in
+// order, so give them distinct names if their order can change. A wrapper hidden
+// inside another System type is not found, so its time is not saved.
 type CadenceState struct {
 	System        string `json:"system"`
+	Kind          string `json:"kind"`
+	Param         int64  `json:"param"`
+	Depth         int    `json:"depth"`
 	GatheredNanos int64  `json:"gatheredNanos"`
 }
 
+// key is s without its gathered time: what Restore matches on.
+func (s CadenceState) key() CadenceState {
+	s.GatheredNanos = 0
+	return s
+}
+
+// state describes c at nesting depth depth.
+func (c *cadence) state(depth int) CadenceState {
+	s := CadenceState{System: c.Name(), Depth: depth, GatheredNanos: int64(c.accum)}
+	if c.every > 0 {
+		s.Kind, s.Param = cadenceKindEvery, int64(c.every)
+	} else {
+		s.Kind, s.Param = cadenceKindInterval, int64(c.interval)
+	}
+	return s
+}
+
 // cadences lists the Every and EveryInterval wrappers of r in system order,
-// each before the wrapper it wraps.
-func (r *Runtime) cadences() []*cadence {
-	var out []*cadence
+// each before the wrapper it wraps, with the state of each.
+func (r *Runtime) cadences() ([]*cadence, []CadenceState) {
+	var wrappers []*cadence
+	var states []CadenceState
 	for _, s := range r.systems {
+		depth := 0
 		for c, ok := s.(*cadence); ok; c, ok = c.inner.(*cadence) {
-			out = append(out, c)
+			wrappers = append(wrappers, c)
+			states = append(states, c.state(depth))
+			depth++
 		}
 	}
-	return out
+	return wrappers, states
 }
 
 func (r *Runtime) cadenceStates() []CadenceState {
-	var out []CadenceState
-	for _, c := range r.cadences() {
-		out = append(out, CadenceState{System: c.Name(), GatheredNanos: int64(c.accum)})
-	}
-	return out
+	_, states := r.cadences()
+	return states
 }
 
 func (r *Runtime) restoreCadences(saved []CadenceState) {
-	wrappers := r.cadences()
+	wrappers, states := r.cadences()
 	if len(wrappers) == 0 {
 		return
 	}
-	byName := make(map[string][]time.Duration, len(saved))
+	byKey := make(map[CadenceState][]time.Duration, len(saved))
 	for _, s := range saved {
-		byName[s.System] = append(byName[s.System], time.Duration(s.GatheredNanos))
+		key := s.key()
+		byKey[key] = append(byKey[key], time.Duration(s.GatheredNanos))
 	}
-	for _, c := range wrappers {
-		name := c.Name()
+	for i, c := range wrappers {
+		key := states[i].key()
 		c.accum = 0
-		if queue := byName[name]; len(queue) > 0 {
-			c.accum, byName[name] = queue[0], queue[1:]
+		if queue := byKey[key]; len(queue) > 0 {
+			c.accum, byKey[key] = queue[0], queue[1:]
 		}
 	}
 }

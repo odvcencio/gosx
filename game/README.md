@@ -125,9 +125,10 @@ paused); `Frame.RealDelta` is the unscaled value; `Frame.Steps` counts fixed
 steps since the clock started. Sub-nanosecond remainders of scaled deltas are
 carried, so a scale of 0.3 does not drift. `Snapshot` saves the pause flag and
 scale; older snapshots leave them alone. It also saves what the clock holds
-between frames (the part of a step and the sub-nanosecond fraction not yet used),
-so a restored runtime takes its next step on the same frame as one that never
-stopped.
+between frames (the part of a step and the sub-nanosecond fraction not yet used)
+and the `FixedStep` that wrote it, so a restored runtime with the same step takes
+its next step on the same frame as one that never stopped. With another
+`FixedStep` the snapshot still loads and the remainder starts from zero.
 
 For a simulation that runs fast, use coarse steps and multi-rate systems, not
 more substeps. One game year per real minute is a scale of 525,600. With
@@ -153,10 +154,14 @@ On a run, `ctx.Delta` holds the game time gathered since the last run.
 size, or game time falls behind the scale.
 
 `Snapshot` saves the game time each `Every` and `EveryInterval` wrapper has
-gathered, and `Restore` gives it back to the wrapper with the same system name,
-so a restored run fires on the same ticks with the same `ctx.Delta` as a run that
-never stopped. A system added since the snapshot starts from zero. A wrapper
-hidden inside your own `System` type is not found, so its time is not saved.
+gathered, and `Restore` gives it back to the wrapper that matches on system name,
+kind (`Every` or `EveryInterval`), `n` or interval, and nesting (an `Every`
+around an `EveryInterval`). A restored run then fires on the same ticks with the
+same `ctx.Delta` as a run that never stopped. A wrapper with no match, such as a
+system added or an interval changed since the snapshot, starts from zero.
+Wrappers that match on all four take their saved time in order, so give them
+distinct names if their order can change. A wrapper hidden inside your own
+`System` type is not found, so its time is not saved.
 
 ## Saving the world
 
@@ -180,8 +185,8 @@ Only registered types are saved; entity IDs, names and the ID counter are kept.
 Saves are byte-identical for the same world. `SkipUnknown` loads saves from a
 newer build, and `IncludeWorldInState` adds the world to the per-tick `State`
 (off by default because the world can be large). With `SnapshotCodec`,
-`Runtime.Snapshot` and `Runtime.Restore` (and so `sim.Runner.Restore` and
-spectator joins) carry the world.
+`Runtime.Snapshot` and `Runtime.Restore` (and so `sim.Runner.Restore`,
+`Runner.RestoreSnapshot` and spectator joins) carry the world.
 
 `Restore` is the `sim.Simulation` method and has no result, so it ignores a
 snapshot it cannot read without a word. Call `RestoreSnapshot` to get the error:
@@ -193,9 +198,25 @@ if err := rt.RestoreSnapshot(saved); err != nil {
 ```
 
 It refuses an empty or malformed snapshot, a `version` newer than
-`game.RuntimeStateVersion`, and a clock or world that does not fit, and it
+`game.RuntimeStateVersion`, and a time, clock or world that does not fit, and it
 changes nothing when it does. Snapshots now carry `"version": 2`, which adds the
-clock remainder and the cadence times above. Version 1 snapshots, written before
-the field existed, still load: they start the clock remainder from zero and leave
-`Every` and `EveryInterval` wrappers as they are. `State`, which `sim.Runner`
-broadcasts every tick, keeps the version 1 shape and stays small.
+fixed step, the clock remainder and the cadence times above. Version 1 snapshots,
+written before the field existed, still load: they start the clock remainder
+from zero and leave `Every` and `EveryInterval` wrappers as they are. `State`,
+which `sim.Runner` broadcasts every tick, keeps the version 1 shape and stays
+small (it adds the world only with `IncludeWorldInState`).
+
+While a `sim.Runner` drives the runtime, load a save through the runner:
+
+```go
+runner := game.NewRunner(matchHub, rt, sim.Options{})
+runner.Start()
+// later, from any goroutine:
+if err := runner.RestoreSnapshot(frame, saved); err != nil {
+    return fmt.Errorf("load save: %w", err) // runner, rt and replay log are unchanged
+}
+```
+
+`Runner.RestoreSnapshot` takes the lock that a tick holds. Calling
+`rt.RestoreSnapshot` beside a running runner is a data race. `runner.Restore`
+also leaves the runner alone when the runtime refuses, but it cannot say why.

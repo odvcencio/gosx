@@ -77,6 +77,14 @@ change state, or replays diverge.
 - `runner.Restore(frame, snapshot)` loads a save: it restores the simulation,
   sets the runner frame counter (the next tick is `frame+1`) and restarts the
   replay log from that snapshot.
+- `runner.RestoreSnapshot(frame, snapshot)` does the same and returns an error
+  when the simulation refuses the snapshot. `Simulation.Restore` has no result,
+  so a simulation says no by implementing `sim.CheckedRestorer`
+  (`RestoreSnapshot([]byte) error`, which must leave the simulation unchanged
+  when it fails); `game.Runtime` does. On a refusal the runner frame and the
+  replay log stay as they were. `Restore` drops the error but also leaves them
+  alone. Both take the lock a tick holds, so they are safe while the runner runs;
+  calling the simulation's own restore beside a running runner is a data race.
 - `runner.Replay()` returns a `ReplayLog` with `Initial` (the snapshot before
   `Frames[0]`), `InitialFrame`, `Seed` (from `Options.Seed`) and the per-frame
   inputs. To replay: `Restore(log.Initial)`, seed your RNG from `log.Seed`, then
@@ -88,9 +96,8 @@ change state, or replays diverge.
   still read older `timeSeconds` snapshots. Since `"version": 2` they also store
   the clock remainder and the `game.Every` and `game.EveryInterval`
   accumulators, so a replay from `ReplayLog.Initial` runs cadence systems on the
-  same ticks. `runner.Restore` cannot report a snapshot that `game.Runtime`
-  refuses, because `Simulation.Restore` has no result; call
-  `Runtime.RestoreSnapshot` first to get the error.
+  same ticks. Load a save with `runner.RestoreSnapshot` to learn if the runtime
+  refused it.
 
 ## Runner options
 

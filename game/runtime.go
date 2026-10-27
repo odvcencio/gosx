@@ -289,6 +289,10 @@ type Runtime struct {
 	latestScene   latestScene
 }
 
+// Runtime implements sim.CheckedRestorer, so Runner.RestoreSnapshot sees why it
+// refuses a snapshot.
+var _ sim.CheckedRestorer = (*Runtime)(nil)
+
 // New creates a runtime from cfg.
 func New(cfg Config) *Runtime {
 	profile := normalizeProfile(cfg.Profile)
@@ -559,13 +563,14 @@ type SnapshotRestorer interface {
 }
 
 // SnapshotCodecFuncs adapts functions into a SnapshotCodec. RestoreSnapshotFunc
-// is the restore that can fail; Restore falls back to it, without the error,
-// when RestoreFunc is nil.
+// is the restore that can fail. When both it and RestoreFunc are set, every
+// restore runs RestoreSnapshotFunc and RestoreFunc is ignored; Restore drops the
+// error.
 type SnapshotCodecFuncs struct {
 	SnapshotFunc        func(*Runtime) []byte
 	RestoreFunc         func(*Runtime, []byte)
-	RestoreSnapshotFunc func(*Runtime, []byte) error
 	StateFunc           func(*Runtime) []byte
+	RestoreSnapshotFunc func(*Runtime, []byte) error
 }
 
 func (f SnapshotCodecFuncs) Snapshot(r *Runtime) []byte {
@@ -576,22 +581,19 @@ func (f SnapshotCodecFuncs) Snapshot(r *Runtime) []byte {
 }
 
 func (f SnapshotCodecFuncs) Restore(r *Runtime, data []byte) {
-	switch {
-	case f.RestoreFunc != nil:
-		f.RestoreFunc(r, data)
-	case f.RestoreSnapshotFunc != nil:
-		_ = f.RestoreSnapshotFunc(r, data)
-	}
+	_ = f.RestoreSnapshot(r, data)
 }
 
 // RestoreSnapshot implements SnapshotRestorer. It reports the error of
 // RestoreSnapshotFunc, and runs RestoreFunc, which cannot fail, when that is
 // nil.
 func (f SnapshotCodecFuncs) RestoreSnapshot(r *Runtime, data []byte) error {
-	if f.RestoreSnapshotFunc != nil {
+	switch {
+	case f.RestoreSnapshotFunc != nil:
 		return f.RestoreSnapshotFunc(r, data)
+	case f.RestoreFunc != nil:
+		f.RestoreFunc(r, data)
 	}
-	f.Restore(r, data)
 	return nil
 }
 
@@ -607,9 +609,15 @@ func (f SnapshotCodecFuncs) State(r *Runtime) []byte {
 
 // RuntimeStateVersion is the snapshot format Runtime.Snapshot writes. Version 1
 // is the format before the field existed: the clock, time control and physics.
-// Version 2 adds the clock remainder (AccumulatorNanos and ScaleFrac) and the
-// gathered time of Every and EveryInterval wrappers (Cadence).
+// Version 2 adds the fixed step that wrote the snapshot (FixedStepNanos), the
+// clock remainder (AccumulatorNanos and ScaleFrac) and the gathered time of
+// Every and EveryInterval wrappers (Cadence).
 const RuntimeStateVersion = 2
+
+// maxGatheredNanos bounds the gathered time that Restore accepts. A wrapper adds
+// each step to its gathered time, so a value near the int64 limit would overflow
+// into a negative ctx.Delta on the next run.
+const maxGatheredNanos = math.MaxInt64 / 2
 
 // RuntimeState is the default snapshot/state payload.
 type RuntimeState struct {
@@ -629,13 +637,17 @@ type RuntimeState struct {
 	TimeScale *float64            `json:"timeScale,omitempty"`
 	Paused    *bool               `json:"paused,omitempty"`
 	Physics   *physics.WorldState `json:"physics,omitempty"`
+	// FixedStepNanos is the fixed step of the runtime that wrote the snapshot.
 	// AccumulatorNanos and ScaleFrac are the clock remainder: game time gathered
-	// toward the next fixed step, always less than one step, and the
+	// toward the next fixed step, always less than one FixedStepNanos, and the
 	// sub-nanosecond part of scaled deltas, in [0, 1). Cadence is the time each
 	// Every and EveryInterval wrapper has gathered. Only a version 2 snapshot
-	// writes them, and then Restore sets all three exactly. From an older
-	// snapshot or from State it starts the clock remainder from zero and leaves
-	// the wrappers alone.
+	// writes them. Restore sets all of them exactly in a runtime with the same
+	// fixed step. A runtime with another step starts the clock remainder from
+	// zero, because it was gathered in steps of another size, and still sets
+	// Cadence. From an older snapshot or from State, Restore starts the clock
+	// remainder from zero and leaves the wrappers alone.
+	FixedStepNanos   int64          `json:"fixedStepNanos,omitempty"`
 	AccumulatorNanos int64          `json:"accumulatorNanos,omitempty"`
 	ScaleFrac        float64        `json:"scaleFrac,omitempty"`
 	Cadence          []CadenceState `json:"cadence,omitempty"`
@@ -660,17 +672,23 @@ func (r *Runtime) Snapshot() []byte {
 // Restore applies a previously captured checkpoint. It is the sim.Simulation
 // method, which has no result, so it drops a snapshot that is empty, does not
 // decode or does not fit this runtime, and says nothing. Call RestoreSnapshot to
-// learn why.
+// learn why. To load a save into a sim.Runner, call Runner.RestoreSnapshot, which
+// returns the same error and keeps the runner's frame and replay log when the
+// runtime refuses.
 func (r *Runtime) Restore(snapshot []byte) {
 	_ = r.RestoreSnapshot(snapshot)
 }
 
 // RestoreSnapshot applies a checkpoint like Restore and returns the reason when
 // it cannot: the snapshot is empty, is not valid JSON, is newer than
-// RuntimeStateVersion, or holds a clock remainder or gathered time that is out
-// of range. The default codec and SaveCodec leave the runtime unchanged after an
-// error. A custom SnapshotCodec reports errors only if it implements
-// SnapshotRestorer.
+// RuntimeStateVersion, or holds a time, clock remainder or gathered time that is
+// out of range. The default codec and SaveCodec leave the runtime unchanged after
+// an error. A custom SnapshotCodec reports errors only if it implements
+// SnapshotRestorer. A version 2 snapshot written with another fixed step still
+// loads; its clock remainder starts from zero.
+//
+// Do not call it while a sim.Runner drives the runtime: it races with the tick.
+// Use Runner.RestoreSnapshot, which takes the runner's lock.
 func (r *Runtime) RestoreSnapshot(snapshot []byte) error {
 	if r == nil {
 		return errors.New("game: nil Runtime")
@@ -703,10 +721,19 @@ func (r *Runtime) decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
 	if state.Version < 0 || state.Version > RuntimeStateVersion {
 		return state, fmt.Errorf("game: snapshot version %d is not supported (newest is %d)", state.Version, RuntimeStateVersion)
 	}
+	if _, err := state.elapsed(); err != nil {
+		return state, err
+	}
 	if state.Version < 2 {
 		return state, nil
 	}
-	if acc, step := time.Duration(state.AccumulatorNanos), r.FixedStep(); acc < 0 || acc >= step {
+	// The remainder is checked against the step that wrote it, not against this
+	// runtime's step, which may have changed since.
+	step := time.Duration(state.FixedStepNanos)
+	if step <= 0 {
+		return state, fmt.Errorf("game: snapshot fixed step %v is not positive", step)
+	}
+	if acc := time.Duration(state.AccumulatorNanos); acc < 0 || acc >= step {
 		return state, fmt.Errorf("game: snapshot clock accumulator %v is not within one fixed step (%v)", acc, step)
 	}
 	if state.ScaleFrac < 0 || state.ScaleFrac >= 1 {
@@ -716,20 +743,38 @@ func (r *Runtime) decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
 		if c.GatheredNanos < 0 {
 			return state, fmt.Errorf("game: snapshot cadence %q has negative gathered time %v", c.System, time.Duration(c.GatheredNanos))
 		}
+		if c.GatheredNanos > maxGatheredNanos {
+			return state, fmt.Errorf("game: snapshot cadence %q has gathered time %v above the limit %v", c.System, time.Duration(c.GatheredNanos), time.Duration(maxGatheredNanos))
+		}
 	}
 	return state, nil
+}
+
+// elapsed returns the game time of the snapshot: TimeNanos, or TimeSeconds in a
+// snapshot that predates it. It refuses a time below zero or beyond what a
+// time.Duration holds.
+func (s RuntimeState) elapsed() (time.Duration, error) {
+	if s.TimeNanos != nil {
+		if *s.TimeNanos < 0 {
+			return 0, fmt.Errorf("game: snapshot time %v is negative", time.Duration(*s.TimeNanos))
+		}
+		return time.Duration(*s.TimeNanos), nil
+	}
+	if nanos := s.TimeSeconds * float64(time.Second); nanos >= 0 && nanos < 1<<63 {
+		return time.Duration(nanos), nil
+	}
+	return 0, fmt.Errorf("game: snapshot timeSeconds %v is outside the range of a duration", s.TimeSeconds)
 }
 
 // applyRuntimeState restores the clock, time control settings, cadence and
 // physics. It cannot fail: decodeRuntimeState has checked state.
 func (r *Runtime) applyRuntimeState(state RuntimeState) {
 	if r.clock != nil {
-		elapsed := time.Duration(state.TimeSeconds * float64(time.Second))
-		if state.TimeNanos != nil {
-			elapsed = time.Duration(*state.TimeNanos)
-		}
+		elapsed, _ := state.elapsed() // decodeRuntimeState has checked it
 		r.clock.restore(state.Frame, elapsed)
-		if state.Version >= 2 {
+		// The remainder fits the step that wrote it. With another step it starts
+		// from zero, as it does for a version 1 snapshot.
+		if state.Version >= 2 && time.Duration(state.FixedStepNanos) == r.clock.fixedStep {
 			r.clock.accumulator = time.Duration(state.AccumulatorNanos)
 			r.clock.scaleFrac = state.ScaleFrac
 		}
@@ -765,17 +810,18 @@ func (r *Runtime) State() []byte {
 	return r.defaultState(false)
 }
 
-func (r *Runtime) defaultState(full bool) []byte {
-	data, err := json.Marshal(r.runtimeState(full))
+func (r *Runtime) defaultState(restorable bool) []byte {
+	data, err := json.Marshal(r.runtimeState(restorable))
 	if err != nil {
 		return nil
 	}
 	return data
 }
 
-// runtimeState captures the clock, time control settings and physics. A full
-// state adds the clock remainder and the cadence accumulators.
-func (r *Runtime) runtimeState(full bool) RuntimeState {
+// runtimeState captures the clock, time control settings and physics. A
+// restorable state adds the version, the fixed step, the clock remainder and the
+// cadence accumulators.
+func (r *Runtime) runtimeState(restorable bool) RuntimeState {
 	nanos := int64(r.frame.Time)
 	state := RuntimeState{
 		Frame:       r.frame.Index,
@@ -786,8 +832,9 @@ func (r *Runtime) runtimeState(full bool) RuntimeState {
 		scale, paused := r.clock.TimeScale(), r.clock.Paused()
 		state.TimeScale, state.Paused = &scale, &paused
 	}
-	if full {
+	if restorable {
 		state.Version = RuntimeStateVersion
+		state.FixedStepNanos = int64(r.FixedStep())
 		if r.clock != nil {
 			state.AccumulatorNanos = int64(r.clock.accumulator)
 			state.ScaleFrac = r.clock.scaleFrac

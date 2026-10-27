@@ -84,7 +84,8 @@ type resourceCodec struct {
 type SaveCodec struct {
 	// IncludeWorldInState adds the world to the State payload that sim.Runner
 	// broadcasts every tick. Leave it false for large worlds; Snapshot always
-	// carries the world.
+	// carries the world. State never carries the fields that only a restore
+	// needs (see Runtime.State).
 	IncludeWorldInState bool
 	// SkipUnknown makes ImportWorld ignore columns and resources whose names
 	// are not registered, instead of returning an error. Use it to load saves
@@ -333,8 +334,8 @@ func (c *SaveCodec) ImportWorld(w *World, save WorldSave) error {
 // restore changes neither the world nor the clock.
 func (c *SaveCodec) SnapshotCodec() SnapshotCodec {
 	return SnapshotCodecFuncs{
-		SnapshotFunc: func(r *Runtime) []byte { return c.encode(r, true) },
-		StateFunc:    func(r *Runtime) []byte { return c.encode(r, c.IncludeWorldInState) },
+		SnapshotFunc: func(r *Runtime) []byte { return c.encode(r, true, true) },
+		StateFunc:    func(r *Runtime) []byte { return c.encode(r, c.IncludeWorldInState, false) },
 		RestoreSnapshotFunc: func(r *Runtime, data []byte) error {
 			// Check the clock before the import: ImportWorld replaces the world, and
 			// nothing can undo that if the clock then fails.
@@ -353,14 +354,14 @@ func (c *SaveCodec) SnapshotCodec() SnapshotCodec {
 	}
 }
 
-// encode returns the state JSON. full adds the world and what only a restore
-// needs.
-func (c *SaveCodec) encode(r *Runtime, full bool) []byte {
+// encode returns the state JSON. withWorld adds the world. restorable adds what
+// only a restore needs, which State leaves out so a broadcast stays small.
+func (c *SaveCodec) encode(r *Runtime, withWorld, restorable bool) []byte {
 	if r == nil {
 		return nil
 	}
-	state := r.runtimeState(full)
-	if full {
+	state := r.runtimeState(restorable)
+	if withWorld {
 		save, err := c.ExportWorld(r.world)
 		if err != nil {
 			return nil
