@@ -811,6 +811,24 @@ test("a model's planar-mirror participation reaches every mesh object it makes, 
   assert.deepEqual(Array.from(api.sceneReflectOpaqueList(bundle.meshObjects, bundle.materials), (record) => record.id), ["sky-0", "sky-1"], "the mirror leaves out the dome that opts out");
 });
 
+test("a SetModels change of planarReflection reaches the mesh objects of a hydrated model, and a record without the key restores the default", async () => {
+  const env = importedMeshRuntime({ fetchRoutes: { "/prepared.glb": { bytes: buildMinimalGLBBytes() } } });
+  runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "gltf.js");
+  const api = env.context.__gosx_scene3d_api, state = api.createSceneState({ scene: { models: [] } });
+  const flags = () => Array.from([...state.objects.values()].filter((object) => object.id.startsWith("dome/")), (object) => object.planarReflection);
+  const setModels = (extra) => api.applySceneCommands(state, [{ kind: 10, data: { models: [Object.assign({ id: "dome", src: "/prepared.glb", x: 7 }, extra)] } }]);
+  state.models = [env.context.__meshTest.normalize({ id: "dome", src: "/prepared.glb", x: 7 }, 0)];
+  await env.context.__meshTest.hydrate(state, null);
+  assert.deepEqual(flags(), [true], "a model that says nothing participates");
+  await setModels({ planarReflection: false });
+  assert.deepEqual(flags(), [false], "a diff that opts the model out reaches its meshes");
+  await setModels({ planarReflection: true });
+  assert.deepEqual(flags(), [true]);
+  await setModels({ planarReflection: false });
+  await setModels({});
+  assert.deepEqual(flags(), [true], "a record that drops the key restores the default");
+});
+
 for (const fresh of [true, false]) {
   test(`${fresh ? "source" : "generated"} early rigid imported cohorts keep meshes with different planar-mirror participation apart`, () => {
     // Two of four otherwise identical meshes opt out of the sea's planar mirror. One record cannot say both, so they form two cohorts.
