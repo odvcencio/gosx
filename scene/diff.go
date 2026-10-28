@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
+	"sync"
 )
 
 // CommandKind mirrors the Scene3D client command protocol. The numeric values
@@ -937,10 +939,20 @@ func sceneRecordMarshalEqual(a, b any) bool {
 //   - An interface must hold the same dynamic type on both sides. Two different
 //     types can hold equal fields and still write different keys.
 //   - An unexported field is compared too. The encoder ignores it, so comparing
-//     it can only make this function stricter, never wrong. The walk never calls
-//     Interface(), which is what an unexported field would reject.
+//     it can only make this function stricter, never wrong. The walk calls
+//     Interface() only where CanInterface allows it, because an unexported field
+//     would reject the call, and it reads such a field through reflection.
 //   - A kind this walk does not model, a channel or a function for example,
 //     returns false.
+//   - Two slices, or two maps, that are the same memory hold the same elements.
+//     The walk skips such a pair only when the element type cannot fail the
+//     comparison of a value with itself: booleans, integers, strings, and
+//     containers built from them. The same slice of floats still fails on a NaN
+//     or an infinity. A slice or map of interfaces or pointers can hold one of
+//     those, or a kind this walk does not model (a complex number, a channel, a
+//     function), so the walk reads it each time too. The encoder rejects every
+//     one of these values. provenSelfEqualType decides from the type, so the
+//     shortcut never turns a false into a true.
 //
 // The walk assumes one thing: a MarshalJSON method is a pure function of the
 // value it receives. Every marshaler in this package builds its output from its
@@ -949,6 +961,16 @@ func provenJSONEqual(a, b reflect.Value) bool {
 	if a.Kind() != b.Kind() || a.Type() != b.Type() {
 		return false
 	}
+	return provenSameTypeEqual(a, b)
+}
+
+// provenSameTypeEqual is provenJSONEqual for two values that already have one
+// type. Each step below keeps that true: the fields of one struct type, the
+// elements of one slice or array type, the values of one map type and the target
+// of one pointer type each have one type, and an interface compares its two
+// dynamic types before it descends. Checking the type again at every node was a
+// measurable share of the walk.
+func provenSameTypeEqual(a, b reflect.Value) bool {
 	switch a.Kind() {
 	case reflect.Bool:
 		return a.Bool() == b.Bool()
@@ -957,16 +979,12 @@ func provenJSONEqual(a, b reflect.Value) bool {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return a.Uint() == b.Uint()
 	case reflect.Float32, reflect.Float64:
-		left, right := a.Float(), b.Float()
-		if math.IsNaN(left) || math.IsNaN(right) || math.IsInf(left, 0) || math.IsInf(right, 0) {
-			return false
-		}
-		return math.Float64bits(left) == math.Float64bits(right)
+		return provenFloatEqual(a.Float(), b.Float())
 	case reflect.String:
 		return a.String() == b.String()
 	case reflect.Struct:
 		for index := range a.NumField() {
-			if !provenJSONEqual(a.Field(index), b.Field(index)) {
+			if !provenSameTypeEqual(a.Field(index), b.Field(index)) {
 				return false
 			}
 		}
@@ -981,18 +999,21 @@ func provenJSONEqual(a, b reflect.Value) bool {
 		if a.Len() == 0 {
 			return true
 		}
+		if provenSharedEqual(a, b) {
+			return true
+		}
 		if equal, decided := provenNumericSliceEqual(a, b); decided {
 			return equal
 		}
 		for index := range a.Len() {
-			if !provenJSONEqual(a.Index(index), b.Index(index)) {
+			if !provenSameTypeEqual(a.Index(index), b.Index(index)) {
 				return false
 			}
 		}
 		return true
 	case reflect.Array:
 		for index := range a.Len() {
-			if !provenJSONEqual(a.Index(index), b.Index(index)) {
+			if !provenSameTypeEqual(a.Index(index), b.Index(index)) {
 				return false
 			}
 		}
@@ -1004,13 +1025,19 @@ func provenJSONEqual(a, b reflect.Value) bool {
 		if a.Len() != b.Len() {
 			return false
 		}
+		if provenSharedEqual(a, b) {
+			return true
+		}
+		if a.Type() == anyMapType && a.CanInterface() && b.CanInterface() {
+			return provenAnyMapEqual(a.Interface().(map[string]any), b.Interface().(map[string]any))
+		}
 		entries := a.MapRange()
 		for entries.Next() {
 			other := b.MapIndex(entries.Key())
 			if !other.IsValid() {
 				return false
 			}
-			if !provenJSONEqual(entries.Value(), other) {
+			if !provenSameTypeEqual(entries.Value(), other) {
 				return false
 			}
 		}
@@ -1019,7 +1046,7 @@ func provenJSONEqual(a, b reflect.Value) bool {
 		if a.IsNil() || b.IsNil() {
 			return a.IsNil() && b.IsNil()
 		}
-		return provenJSONEqual(a.Elem(), b.Elem())
+		return provenSameTypeEqual(a.Elem(), b.Elem())
 	case reflect.Interface:
 		if a.IsNil() || b.IsNil() {
 			return a.IsNil() && b.IsNil()
@@ -1027,26 +1054,115 @@ func provenJSONEqual(a, b reflect.Value) bool {
 		if a.Elem().Type() != b.Elem().Type() {
 			return false
 		}
-		return provenJSONEqual(a.Elem(), b.Elem())
+		return provenSameTypeEqual(a.Elem(), b.Elem())
 	default:
 		return false
 	}
 }
 
-// provenNumericSliceEqual compares the dense numeric slices a lowered scene
-// carries in bulk: point positions, instance transforms, and packed quantized
-// bytes. One typed loop replaces one reflect call per element, which matters
-// when a single points layer holds a hundred thousand floats.
+// provenSharedEqual reports whether a and b are one slice, or one map, and the
+// walk can stop there. The caller has checked that both have the same type, the
+// same nil-ness and the same length. Two slices of one type and one length that
+// start at the same element are the same elements, and a shared map is the same
+// map, so the walk would compare every value with itself. That comparison cannot
+// fail when the type is self-equal.
+func provenSharedEqual(a, b reflect.Value) bool {
+	return a.Pointer() == b.Pointer() && provenSelfEqualType(a.Type())
+}
+
+// selfEqualTypes caches provenSelfEqualType. The answer depends only on the type.
+var selfEqualTypes sync.Map // reflect.Type -> bool
+
+// provenSelfEqualType reports whether provenJSONEqual(v, v) is true for every
+// value v of type t. Where it says true, two values that are the same memory need
+// no walk. Where it says false, the walk still runs and decides, so a false here
+// never changes an answer, only the work.
+//
+// It is conservative on purpose. It answers true for bool, integer and string
+// kinds, and for arrays, slices, structs and maps built from them. It answers
+// false for floats, because the walk rejects a NaN and an infinity even when they
+// compare with themselves; for complex numbers, channels, functions and every
+// other kind the walk does not model, which it rejects whatever their value; for
+// interfaces, whose dynamic value could be any of those; for pointers, which it
+// does not follow; and for a map whose key type might hold a NaN, since a lookup
+// of that key fails.
+func provenSelfEqualType(t reflect.Type) bool {
+	if cached, ok := selfEqualTypes.Load(t); ok {
+		return cached.(bool)
+	}
+	result := selfEqualTypeWithin(t, selfEqualTypeDepth)
+	selfEqualTypes.Store(t, result)
+	return result
+}
+
+// selfEqualTypeDepth bounds the type walk, which would not end for a type that
+// holds a slice or a map of itself. Past the bound the answer is false, so the
+// walk runs.
+const selfEqualTypeDepth = 8
+
+// selfEqualTypeWithin is provenSelfEqualType for a type reached depth levels
+// from the bound. It checks one kind per case against the case in
+// provenJSONEqual that walks it.
+func selfEqualTypeWithin(t reflect.Type, depth int) bool {
+	if depth == 0 {
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return true
+	case reflect.Array, reflect.Slice:
+		return selfEqualTypeWithin(t.Elem(), depth-1)
+	case reflect.Map:
+		switch t.Key().Kind() {
+		case reflect.Bool, reflect.String,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+			return selfEqualTypeWithin(t.Elem(), depth-1)
+		}
+		return false
+	case reflect.Struct:
+		for index := range t.NumField() {
+			if !selfEqualTypeWithin(t.Field(index).Type, depth-1) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// indexPairType is the element type of an object's line segments.
+var indexPairType = reflect.TypeFor[[2]int]()
+
+// provenNumericSliceEqual compares the dense slices a lowered scene carries in
+// bulk: point positions and vertex streams, index lists, instance transforms,
+// per-point colors, and packed quantized bytes. One typed loop replaces one
+// reflect call per element, which matters when a single mesh holds tens of
+// thousands of indices or a points layer holds a hundred thousand floats.
+//
+// It answers exactly what the element walk in provenJSONEqual answers, for the
+// types it handles: integers of every width, strings and index pairs compare by
+// value, and floats follow provenFloatEqual.
 //
 // The second result says whether this function decided. It declines for any
-// other element type, and for a slice it cannot read as a plain Go value, and
-// the caller then walks the elements.
+// other element type, for a named slice type or a named element type, and for a
+// slice it cannot read as a plain Go value, and the caller then walks the
+// elements.
 func provenNumericSliceEqual(a, b reflect.Value) (equal, decided bool) {
-	// Check the element kind before reading the slice as a Go value. Reading it
+	// Check the element type before reading the slice as a Go value. Reading it
 	// boxes the slice header into an interface, which allocates, and most slice
 	// fields on a lowered record hold structs this function would decline anyway.
-	switch a.Type().Elem().Kind() {
-	case reflect.Uint8, reflect.Float32, reflect.Float64:
+	switch elem := a.Type().Elem(); elem.Kind() {
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint,
+		reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int,
+		reflect.Float32, reflect.Float64, reflect.String:
+	case reflect.Array:
+		if elem != indexPairType {
+			return false, false
+		}
 	default:
 		return false, false
 	}
@@ -1055,33 +1171,168 @@ func provenNumericSliceEqual(a, b reflect.Value) (equal, decided bool) {
 	}
 	switch left := a.Interface().(type) {
 	case []byte:
-		return bytes.Equal(left, b.Interface().([]byte)), true
+		right, ok := b.Interface().([]byte)
+		return ok && bytes.Equal(left, right), ok
+	case []uint16:
+		return provenComparableSliceEqual(left, b)
+	case []uint32:
+		return provenComparableSliceEqual(left, b)
+	case []uint64:
+		return provenComparableSliceEqual(left, b)
+	case []uint:
+		return provenComparableSliceEqual(left, b)
+	case []int8:
+		return provenComparableSliceEqual(left, b)
+	case []int16:
+		return provenComparableSliceEqual(left, b)
+	case []int32:
+		return provenComparableSliceEqual(left, b)
+	case []int64:
+		return provenComparableSliceEqual(left, b)
+	case []int:
+		return provenComparableSliceEqual(left, b)
+	case []string:
+		return provenComparableSliceEqual(left, b)
+	case [][2]int:
+		return provenComparableSliceEqual(left, b)
 	case []float64:
-		right := b.Interface().([]float64)
-		for index, value := range left {
-			if !provenFloatEqual(value, right[index]) {
-				return false, true
-			}
-		}
-		return true, true
+		right, ok := b.Interface().([]float64)
+		return ok && provenFloat64sEqual(left, right), ok
 	case []float32:
-		right := b.Interface().([]float32)
-		for index, value := range left {
-			if !provenFloatEqual(float64(value), float64(right[index])) {
-				return false, true
-			}
-		}
-		return true, true
+		right, ok := b.Interface().([]float32)
+		return ok && provenFloat32sEqual(left, right), ok
 	default:
 		return false, false
 	}
 }
 
-// provenFloatEqual reports bit equality for two finite floats. See
-// provenJSONEqual for why a NaN, an infinity, and a signed zero each need care.
-func provenFloatEqual(left, right float64) bool {
-	if math.IsNaN(left) || math.IsNaN(right) || math.IsInf(left, 0) || math.IsInf(right, 0) {
+// provenComparableSliceEqual compares two slices of a type whose == is the
+// comparison the element walk makes: an integer, a string, or an array of
+// integers. It declines when b does not hold the same slice type as left.
+func provenComparableSliceEqual[E comparable](left []E, b reflect.Value) (equal, decided bool) {
+	right, ok := b.Interface().([]E)
+	if !ok {
+		return false, false
+	}
+	return slices.Equal(left, right), true
+}
+
+// Exponent fields of a float64 and a float32. An exponent of all ones marks a NaN
+// or an infinity.
+const (
+	float64ExponentMask uint64 = 0x7ff0_0000_0000_0000
+	float32ExponentMask uint32 = 0x7f80_0000
+)
+
+// provenFloat64sEqual reports whether two slices hold the same finite floats, bit
+// for bit. It is provenFloatEqual applied to each pair.
+func provenFloat64sEqual(left, right []float64) bool {
+	if len(left) != len(right) {
 		return false
 	}
-	return math.Float64bits(left) == math.Float64bits(right)
+	for index, value := range left {
+		if !provenFloatEqual(value, right[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// provenFloat32sEqual is provenFloat64sEqual for float32. Widening a float32 to a
+// float64 keeps every finite value and every distinct bit pattern, so comparing
+// the float32 bits, with the float32 exponent mask, agrees with provenFloatEqual
+// on the widened floats.
+func provenFloat32sEqual(left, right []float32) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index, value := range left {
+		bits := math.Float32bits(value)
+		if bits != math.Float32bits(right[index]) || bits&float32ExponentMask == float32ExponentMask {
+			return false
+		}
+	}
+	return true
+}
+
+// provenFloatEqual reports bit equality for two finite floats. See
+// provenJSONEqual for why a NaN, an infinity, and a signed zero each need care.
+//
+// Floats with the same bits are one value, so one test on the exponent field of
+// one side tells whether both are NaN or infinite. That is one comparison where
+// checking each side for NaN and for both infinities takes six.
+func provenFloatEqual(left, right float64) bool {
+	bits := math.Float64bits(left)
+	return bits == math.Float64bits(right) && bits&float64ExponentMask != float64ExponentMask
+}
+
+// anyMapType is the type encoding/json decodes an object into, and the type a
+// shader layout, a uniform table and a state map are.
+var anyMapType = reflect.TypeFor[map[string]any]()
+
+// provenAnyMapEqual is provenJSONEqual for two map[string]any values, without
+// reflection. Reflection copies every key, value and lookup result into a new
+// heap value: comparing one shader layout of 140 nodes takes 372 allocations that
+// way, and none here. A table scene holds about a hundred such layouts.
+func provenAnyMapEqual(a, b map[string]any) bool {
+	if (a == nil) != (b == nil) || len(a) != len(b) {
+		return false
+	}
+	for key, left := range a {
+		right, ok := b[key]
+		if !ok || !provenAnyEqual(left, right) {
+			return false
+		}
+	}
+	return true
+}
+
+// provenAnySliceEqual is provenJSONEqual for two []any values.
+func provenAnySliceEqual(a, b []any) bool {
+	if (a == nil) != (b == nil) || len(a) != len(b) {
+		return false
+	}
+	for index, left := range a {
+		if !provenAnyEqual(left, b[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// provenAnyEqual is provenJSONEqual for two interface values. It reads the
+// dynamic types a decoded JSON tree and a uniform table hold without reflection,
+// and it hands every other dynamic type to provenJSONEqual, so it answers what
+// the reflection walk answers: both nil, or the same dynamic type with equal
+// contents.
+func provenAnyEqual(a, b any) bool {
+	switch left := a.(type) {
+	case nil:
+		return b == nil
+	case string:
+		right, ok := b.(string)
+		return ok && left == right
+	case bool:
+		right, ok := b.(bool)
+		return ok && left == right
+	case float64:
+		right, ok := b.(float64)
+		return ok && provenFloatEqual(left, right)
+	case int:
+		right, ok := b.(int)
+		return ok && left == right
+	case []float64:
+		right, ok := b.([]float64)
+		return ok && (left == nil) == (right == nil) && provenFloat64sEqual(left, right)
+	case map[string]any:
+		right, ok := b.(map[string]any)
+		return ok && provenAnyMapEqual(left, right)
+	case []any:
+		right, ok := b.([]any)
+		return ok && provenAnySliceEqual(left, right)
+	}
+	if b == nil {
+		return false
+	}
+	return provenJSONEqual(reflect.ValueOf(a), reflect.ValueOf(b))
 }
