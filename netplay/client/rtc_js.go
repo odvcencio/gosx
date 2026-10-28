@@ -8,6 +8,7 @@ import (
 	"sync"
 	"syscall/js"
 
+	"m31labs.dev/gosx/client/jsutil"
 	"m31labs.dev/gosx/netplay"
 )
 
@@ -20,8 +21,11 @@ type jsLink struct {
 	in    js.Value // Uint8Array scratch for Recv
 	gobuf [netplay.MaxPacketSize]byte
 
-	onSignal, onState js.Func
-	haveFuncs         bool
+	// The binding calls onState from inside open (when the connection cannot
+	// start) and inside signal (when the relay reports a failure). They are
+	// deferred callbacks, so Go runs them after that call into the binding has
+	// returned and before Open or Signal returns.
+	onSignal, onState *jsutil.Callback
 }
 
 // newBrowserLink returns a link over the page's netplay binding. It fails with
@@ -63,22 +67,22 @@ func (l *jsLink) Open(cfg rtcConfig, onSignal func(string, []byte), onState func
 		return err
 	}
 	obj := js.Global().Get("JSON").Call("parse", string(raw))
-	l.onSignal = js.FuncOf(func(_ js.Value, args []js.Value) any {
+	l.onSignal = jsutil.NewCallback(func(_ js.Value, args []js.Value) {
 		if len(args) == 2 {
 			onSignal(args[0].String(), []byte(args[1].String()))
 		}
-		return nil
 	})
-	l.onState = js.FuncOf(func(_ js.Value, args []js.Value) any {
+	l.onState = jsutil.NewCallback(func(_ js.Value, args []js.Value) {
 		if len(args) == 1 {
 			onState(args[0].String())
 		}
-		return nil
 	})
-	l.haveFuncs = true
-	obj.Set("onSignal", l.onSignal)
-	obj.Set("onState", l.onState)
-	id := l.api.Call("open", obj).Int()
+	obj.Set("onSignal", l.onSignal.Value())
+	obj.Set("onState", l.onState.Value())
+	// A refused connection reports "failed" inside open. The state callback runs
+	// before Call returns, so it is delivered before the callbacks are released
+	// below, and before Open reports the error.
+	id := jsutil.Call(l.api, "open", obj).Int()
 	if id <= 0 {
 		l.release()
 		return errors.New("netplay/client: the browser refused the WebRTC connection")
@@ -97,7 +101,7 @@ func (l *jsLink) conn() int {
 
 func (l *jsLink) Signal(event string, data []byte) {
 	if id := l.conn(); id > 0 {
-		l.api.Call("signal", id, event, string(data))
+		jsutil.Call(l.api, "signal", id, event, string(data))
 	}
 }
 
@@ -135,9 +139,6 @@ func (l *jsLink) Close() {
 }
 
 func (l *jsLink) release() {
-	if l.haveFuncs {
-		l.onSignal.Release()
-		l.onState.Release()
-		l.haveFuncs = false
-	}
+	l.onSignal.Release()
+	l.onState.Release()
 }
