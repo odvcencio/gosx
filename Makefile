@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity test-det-parity test-det-parity-arm64-remote build-det-parity-darwin-arm64 lint-deterministic release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget wasm-heap-gate test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity test-det-parity test-det-parity-arm64-remote build-det-parity-darwin-arm64 lint-deterministic release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -470,6 +470,14 @@ lint-deterministic:
 wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
+# wasm-heap-gate sends batches of signals through the page's code to every
+# published production TinyGo runtime and fails if the WASM memory keeps growing
+# or the runtime lacks the direct batch entry. It reuses the runtimes that
+# wasm-size-budget leaves in ${TMPDIR:-/tmp}/gosx-wasm-size, and builds them
+# when they are not there. See scripts/check-wasm-heap.sh.
+wasm-heap-gate:
+	./scripts/check-wasm-heap.sh
+
 test-e2e:
 ifdef E2E_SHARD
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest browser $(E2E_SHARD)
@@ -661,7 +669,7 @@ release-gate:
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 
-ci: fmt-check verify-danmuji lint-deterministic test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+ci: fmt-check verify-danmuji lint-deterministic test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget wasm-heap-gate test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
 
 .PHONY: test-assetmeasure
 test-assetmeasure:
