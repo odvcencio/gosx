@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"syscall/js"
 	"testing"
 
@@ -252,8 +253,8 @@ func TestServeCallsTrimsAMailboxOnTheMainThreadOnly(t *testing.T) {
 // nested-callbacks work counts them: it wraps the Go runtime's _resume. Go keeps
 // the entries in progress on one stack and assumes that entries from different
 // goroutines never interleave, so a goroutine that makes a call into JavaScript
-// which runs a Go callback before it returns (a write that notifies this
-// engine's own subscriptions) must not be one of several.
+// which runs a Go callback before it returns (a write that notifies a Go
+// subscriber) must not be one of several.
 func installEntryProbe() {
 	js.Global().Call("eval", `(() => {
   const Go = globalThis.Go;
@@ -289,16 +290,43 @@ const driveCalls = `(function(ctx, signal, calls, mailbox) {
   setTimeout(tick, 0);
 })`
 
-// The page store tells the engine's own subscriptions inside every write, so a
-// goroutine that writes a result enters Go again before the write returns. The
-// handler of ServeCallsAsync answers from a goroutine, and with several channels
-// several goroutines do, so none of them may start a nested entry: the engine
-// has the browser write from the event loop, where no call from Go is pending.
+// subscribeDirect subscribes a Go function made with js.FuncOf to a signal of the
+// page store, with nothing in between. The browser calls such a function itself,
+// so it runs inside the call that writes the signal, whichever way Context
+// delivers to the handlers of SubscribeSignal. It returns a function that
+// detaches the subscriber.
+func subscribeDirect(v js.Value, name string, onChange func()) (detach func()) {
+	callback := js.FuncOf(func(js.Value, []js.Value) any { onChange(); return nil })
+	unsubscribe := v.Call("subscribeSignalJSON", name, callback)
+	return func() { unsubscribe.Invoke(); callback.Release() }
+}
+
+// writeDirect writes shared signals with a plain call into JavaScript. It stands
+// for any write that a goroutine makes inside a call from Go into JavaScript,
+// whatever Context.SetSignals does with the subscribers it finds.
+func writeDirect(c Context, values map[string]any) error {
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	c.value.Call("setSignalsJSON", string(encoded), false)
+	return nil
+}
+
+// The page store tells every subscriber inside a write. Here a Go function made
+// with js.FuncOf, which the browser calls directly, listens to the results, so a
+// goroutine that wrote a result inside a call into JavaScript would enter Go
+// again before the write returned. The handler of ServeCallsAsync answers from a
+// goroutine, and with several channels several goroutines do, so none of them may
+// start a nested entry: the engine has the browser write from the event loop,
+// where no call from Go is pending.
 func TestServeCallsAsyncMakesNoNestedEntriesIntoGo(t *testing.T) {
 	installEntryProbe()
 	for _, mailbox := range []bool{false, true} {
 		v := pageStore("")
 		ctx := Context{value: v}
+		var heard atomic.Int32
+		detach := subscribeDirect(v, "$bv.cmd.result", func() { heard.Add(1) })
 		off, err := ServeCallsAsync(ctx, "bv.cmd", CallOptions{}, adder)
 		if err != nil {
 			t.Fatal(err)
@@ -306,6 +334,9 @@ func TestServeCallsAsyncMakesNoNestedEntriesIntoGo(t *testing.T) {
 		before := nestedEntries()
 		js.Global().Call("eval", driveCalls).Invoke(v, "$bv.cmd", 10, mailbox)
 		waitFor(t, "ten results", func() bool { return v.Get("batches").Int() >= 10 })
+		// The listener is told inside each write, so it hears every result. If it
+		// did not, a nested entry could not show.
+		waitFor(t, "the Go function that listens to the results to hear them", func() bool { return heard.Load() >= 10 })
 		if got := nestedEntries() - before; got != 0 {
 			t.Errorf("mailbox=%v: %d nested entries into Go while the async server answered 10 calls, want 0", mailbox, got)
 		}
@@ -319,14 +350,20 @@ func TestServeCallsAsyncMakesNoNestedEntriesIntoGo(t *testing.T) {
 		if mailbox {
 			waitFor(t, "an empty mailbox", func() bool { return stringifyJS(v.Get("store").Call("get", "$bv.cmd")) == "[]" })
 		}
+		detach()
 		off.Dispose()
 	}
 }
 
-// A handler of ServeCallsAsync that publishes state writes a signal that the
-// engine itself subscribes to. On the main thread SetSignals runs that Go
-// subscription inside the call, a nested entry from each handler's goroutine.
-// SetSignalsFromEventLoop has the browser make the write from the event loop.
+// A handler of ServeCallsAsync that publishes state writes a signal that Go code
+// subscribes to. A subscriber that is a Go function the browser calls directly
+// (one made with js.FuncOf) runs inside the call that writes the signal, so a
+// write that a handler's goroutine makes through a plain call into JavaScript is
+// a nested entry from each handler. The test subscribes such a function itself,
+// so it does not depend on how Context.SetSignals delivers to the handlers of
+// SubscribeSignal. The first case is the control: it must nest, or the test would
+// prove nothing. SetSignalsFromEventLoop has the browser make the write from the
+// event loop, where no call from Go is pending.
 func TestAHandlerPublishesStateWithoutNestedEntriesIntoGo(t *testing.T) {
 	installEntryProbe()
 	for _, tc := range []struct {
@@ -334,17 +371,13 @@ func TestAHandlerPublishesStateWithoutNestedEntriesIntoGo(t *testing.T) {
 		write  func(Context, map[string]any) error
 		nested bool
 	}{
-		{"SetSignals", Context.SetSignals, true},
+		{"a plain call into JavaScript", writeDirect, true},
 		{"SetSignalsFromEventLoop", Context.SetSignalsFromEventLoop, false},
 	} {
 		v := pageStore("")
 		ctx := Context{value: v}
-		var heard sync.WaitGroup
-		heard.Add(10)
-		sub, err := ctx.SubscribeSignal("$bv.state", func(json.RawMessage) { heard.Done() })
-		if err != nil {
-			t.Fatal(err)
-		}
+		var heard atomic.Int32
+		detach := subscribeDirect(v, "$bv.state", func() { heard.Add(1) })
 		off, err := ServeCallsAsync(ctx, "bv.cmd", CallOptions{}, func(name string, a addArgs) (sum, error) {
 			if err := tc.write(ctx, map[string]any{"$bv.state": a.A}); err != nil {
 				return sum{}, err
@@ -356,8 +389,10 @@ func TestAHandlerPublishesStateWithoutNestedEntriesIntoGo(t *testing.T) {
 		}
 		before := nestedEntries()
 		js.Global().Call("eval", driveCalls).Invoke(v, "$bv.cmd", 10, false)
-		waitFor(t, tc.name+": ten results", func() bool { return v.Get("batches").Int() >= 10 })
-		heard.Wait() // every write reached the engine's own subscription, nested or not
+		waitFor(t, tc.name+": ten state writes", func() bool { return heard.Load() >= 10 })
+		// Each call also writes its result, so ten state writes and ten results make
+		// twenty batches.
+		waitFor(t, tc.name+": ten results", func() bool { return v.Get("batches").Int() >= 20 })
 		got := nestedEntries() - before
 		if tc.nested && got == 0 {
 			t.Errorf("%s made no nested entry; this test would prove nothing", tc.name)
@@ -365,7 +400,7 @@ func TestAHandlerPublishesStateWithoutNestedEntriesIntoGo(t *testing.T) {
 		if !tc.nested && got != 0 {
 			t.Errorf("%s: %d nested entries into Go while ten handlers published state, want 0", tc.name, got)
 		}
-		sub.Dispose()
+		detach()
 		off.Dispose()
 	}
 }
