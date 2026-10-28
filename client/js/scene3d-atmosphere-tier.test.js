@@ -6,6 +6,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ts = require("../runtime/node_modules/typescript");
 
 const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16d-scene-atmosphere.ts"), "utf8");
 const context = { sceneNumber: (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d), sceneIsPlainObject: (v) => Boolean(v) && typeof v === "object" };
@@ -34,7 +35,9 @@ test("a constrained device runs survival", () => {
 
 
 test("ladder demotion only sheds atmosphere work and promotion restores it", () => {
-  vm.runInContext(fs.readFileSync(path.join(__dirname,"../runtime/scene3d/mount-quality.ts"),"utf8"), context);
+  // The governor source carries TypeScript annotations; run only its JavaScript.
+  const governor = fs.readFileSync(path.join(__dirname,"../runtime/scene3d/mount-quality.ts"),"utf8");
+  vm.runInContext(ts.transpileModule(governor, {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText, context);
   const state = {...ladder(3), rungRevision:0, cooldownMS:0};
   const work = () => context.sceneAtmosphereQuality({atmosphereTier:tier(state,"full")});
   const measure = q => [q.reflections,q.planar,q.reflectionSteps,q.clouds,q.cloudOctaves,q.godRays,q.raySamples,q.haze,q.grain].map(Number);
