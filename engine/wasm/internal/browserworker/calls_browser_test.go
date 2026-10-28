@@ -114,6 +114,27 @@ func Panel(props struct{}) Node {
 		}
 		box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 5, B: 5}}))
 	}
+	// bv.late is a mailbox whose calls reply late: the page times out the first two
+	// after 300 ms, and the engine answers them after 900 ms and 1300 ms. When the
+	// first reply comes the result's ID is 1 again, and call 2 is still running.
+	// The island numbers the call it writes then from Seen, not from that ID.
+	late := signal.NewShared("bv.late", []Cmd{})
+	lateres := signal.NewShared("bv.late.result", BoxReply{})
+	latepair := func() {
+		if len(late.Get()) == 0 {
+			late.Set(append(late.Get(), Cmd{ID: lateres.Get().Seen + 1, Name: "wait", Args: Args{A: 900, B: 1}}))
+		} else {
+			late.Set(append(late.Get(), Cmd{ID: late.Get()[len(late.Get())-1].ID + 1, Name: "wait", Args: Args{A: 900, B: 1}}))
+		}
+		late.Set(append(late.Get(), Cmd{ID: late.Get()[len(late.Get())-1].ID + 1, Name: "wait", Args: Args{A: 400, B: 2}}))
+	}
+	latenext := func() {
+		if len(late.Get()) == 0 {
+			late.Set(append(late.Get(), Cmd{ID: lateres.Get().Seen + 1, Name: "add", Args: Args{A: 7, B: 8}}))
+		} else {
+			late.Set(append(late.Get(), Cmd{ID: late.Get()[len(late.Get())-1].ID + 1, Name: "add", Args: Args{A: 7, B: 8}}))
+		}
+	}
 	return <section>
 		<p id="state">{status.Get().State}/{status.Get().Thread}/{status.Get().Reason}</p>
 		<p id="tick">{view.Get().Tick}</p>
@@ -130,6 +151,9 @@ func Panel(props struct{}) Node {
 		<button id="pair" onClick={pair} disabled={status.Get().State != "running"}>pair</button>
 		<button id="wait" onClick={wait} disabled={status.Get().State != "running"}>wait</button>
 		<button id="ordered" onClick={ordered} disabled={status.Get().State != "running"}>ordered</button>
+		<p id="late">{lateres.Get().ID}:{lateres.Get().Value.Total}:{lateres.Get().Error}:{lateres.Get().Seen}</p>
+		<button id="latepair" onClick={latepair} disabled={status.Get().State != "running"}>latepair</button>
+		<button id="latenext" onClick={latenext} disabled={status.Get().State != "running"}>latenext</button>
 	</section>
 }
 `
@@ -320,6 +344,7 @@ func TestIslandCallsAWorkerAndSeesItsView(t *testing.T) {
 		t.Errorf("island rendered the view %d times in 1 s, want about 10 (engine ticks every 10 ms)", pace.Renders)
 	}
 	checkMailbox(t, o, "worker")
+	checkLateReplies(t, o)
 	var crash struct {
 		State       string `json:"state"`
 		Result      string `json:"result"`
@@ -382,6 +407,52 @@ func checkMailbox(t *testing.T, o callsObservation, thread string) {
 	}
 	if ordered.Recent != "2=30/;3=121/;4=250/;5=10/;" || ordered.Pending != "0" {
 		t.Errorf("ordered: %+v", ordered)
+	}
+}
+
+// checkLateReplies checks the bv.late steps of scripts/calls.mjs. The page timed
+// out calls 1 and 2, which wait 900 ms and 400 ms. Call 1's late reply put the
+// result's ID back to 1 while call 2 ran. The island then wrote a call, and
+// counted its number from Seen: it got 3. Counted from the result's ID it would
+// have been 2, which the engine and the page had already seen, and it would
+// never have run. The engine ran call 3, and Seen never went down on the way.
+func checkLateReplies(t *testing.T, o callsObservation) {
+	t.Helper()
+	var late struct {
+		Final string `json:"final"`
+		Seen  [][4]any
+	}
+	if err := json.Unmarshal(o.step("late"), &late); err != nil {
+		t.Fatalf("step late: %v (%s)", err, o.step("late"))
+	}
+	if late.Final != "3:15::3" {
+		t.Errorf("the island's last reply on bv.late is %q, want 3:15::3 (call 3 ran)", late.Final)
+	}
+	var ids []float64
+	highest := 0.0
+	for _, r := range late.Seen { // ID, Value.Total, Error, Seen
+		id, _ := r[0].(float64)
+		seen, _ := r[3].(float64)
+		ids = append(ids, id)
+		if seen < highest {
+			t.Errorf("Seen went down from %v to %v in %v", highest, seen, late.Seen)
+		}
+		highest = seen
+	}
+	// The page times out calls 1 and 2 and reports the highest ID it watched, 2,
+	// in both. The engine, busy in call 1, then answers all three calls late.
+	if len(late.Seen) < 5 || late.Seen[0][0] != 1.0 || late.Seen[0][2] != "timeout" || late.Seen[0][3] != 2.0 ||
+		late.Seen[1][0] != 2.0 || late.Seen[1][2] != "timeout" || late.Seen[1][3] != 2.0 {
+		t.Errorf("results on bv.late = %v, want the timeouts of calls 1 and 2 first, both with Seen 2", late.Seen)
+	}
+	var replied []float64
+	for _, r := range late.Seen {
+		if r[2] == "" {
+			replied = append(replied, r[0].(float64))
+		}
+	}
+	if fmt.Sprint(replied) != "[1 2 3]" {
+		t.Errorf("replies on bv.late came for calls %v (all results %v), want [1 2 3] in order", replied, ids)
 	}
 }
 

@@ -258,6 +258,8 @@ type callReply struct {
 // timeout, and "crash" ends the Go program. Channel bv.cmd holds one call at a
 // time and is served on the event loop; channel bv.box holds a mailbox of calls
 // and is served on goroutines, with a "wait" call that waits for a promise.
+// Channel bv.late is a mailbox too, with a page timeout of 300 ms and a "wait"
+// call that answers late.
 func startCalls(ctx wasm.Context) (stop func()) {
 	off, err := wasm.ServeCalls(ctx, "bv.cmd", wasm.CallOptions{Timeout: 400 * time.Millisecond, Recent: 4},
 		func(name string, args callArgs) (callReply, error) {
@@ -306,6 +308,27 @@ func startCalls(ctx wasm.Context) (stop func()) {
 		report(ctx, "calls-error", map[string]any{"error": err.Error()})
 		return nil
 	}
+	// The late channel: the page times a call out after 300 ms, and the handler of
+	// "wait" answers after args.A milliseconds, so its reply comes late.
+	late, err := wasm.ServeCallsAsync(ctx, "bv.late", wasm.CallOptions{Timeout: 300 * time.Millisecond, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			switch name {
+			case "wait":
+				if _, err := jsutil.AwaitPromise(settleAfter(args.A)); err != nil {
+					return callReply{}, err
+				}
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			case "add":
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			}
+			return callReply{}, errors.New("unknown call " + name)
+		})
+	if err != nil {
+		box.Dispose()
+		off.Dispose()
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
 	view := wasm.NewView(ctx, wasm.ViewOptions{MinInterval: 100 * time.Millisecond})
 	done := make(chan struct{})
 	ticks := 0
@@ -326,6 +349,7 @@ func startCalls(ctx wasm.Context) (stop func()) {
 	return func() {
 		close(done)
 		view.Dispose()
+		late.Dispose()
 		box.Dispose()
 		off.Dispose()
 	}

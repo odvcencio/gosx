@@ -5,7 +5,7 @@
 // Query flags: crash=1 also presses the crash button at the end.
 export async function init(page) {
   await page.addInitScript(() => {
-    window.__calls = { states: [], results: [], renders: 0, steps: [], box: [] };
+    window.__calls = { states: [], results: [], renders: 0, steps: [], box: [], late: [] };
     // Every value the page's store holds for the mailbox channel's result signal,
     // as a subscriber sees it. An island renders only the newest, so this is how
     // the test knows each reply reached the page.
@@ -13,6 +13,7 @@ export async function init(page) {
       const subscribe = window.__gosx_subscribe_shared_signal;
       if (typeof subscribe !== "function") { setTimeout(record, 20); return; }
       subscribe("$bv.box.result", value => window.__calls.box.push(JSON.parse(JSON.stringify(value))), { immediate: false });
+      subscribe("$bv.late.result", value => window.__calls.late.push(JSON.parse(JSON.stringify(value))), { immediate: false });
     };
     document.addEventListener("DOMContentLoaded", record);
     const watch = () => {
@@ -76,6 +77,20 @@ export async function run(page) {
   await waitText(page, "box", /^5:10::(worker|main)$/);
   await step(page, "ordered", { box: await text(page, "box"), recent: await text(page, "recent"), pending: await text(page, "pending"), seen: await seen() });
   if (mode !== "worker") return;
+
+  // The page times out two slow calls. Call 1's late reply puts the result's ID
+  // back to 1 while call 2 still runs. The island writes a call then and numbers it
+  // from Seen: 2 was watched by the page and accepted by the engine, so the new
+  // call must be 3. A call that reused 2 would never run, and no reply would ever
+  // carry its answer.
+  await page.click("#latepair");
+  await waitText(page, "late", /^2:0:timeout:2$/);
+  await step(page, "late-timeouts", await text(page, "late"));
+  await waitText(page, "late", /^1:901::\d+$/, 15000);
+  await step(page, "late-reply", await text(page, "late"));
+  await page.click("#latenext");
+  await waitText(page, "late", /^3:15::3$/, 15000);
+  await step(page, "late", { final: await text(page, "late"), seen: await page.evaluate(() => window.__calls.late.map(r => [r.ID, r.Value && r.Value.Total, r.Error, r.Seen])) });
 
   await page.click("#slow");
   await waitText(page, "result", /^3:0:timeout:/);
