@@ -19,6 +19,17 @@ import (
 // live context; previously canceled operations stay canceled. GoSX enhanced
 // navigation does not cancel this document scope: parent must carry the engine
 // or page lifetime. The core GoSX bootstrap must be installed before use.
+//
+// The browser aborts the document signal inside the call that starts a
+// navigation: location.assign, location.replace, a form submission or a link
+// click, which can be a call from Go. A Go listener on the signal would then run
+// inside that call (see the package documentation). DocumentContext therefore
+// listens with the native resolve function of a promise (see
+// NewPromiseWithResolvers) and cancels the context from a goroutine that waits
+// on the promise. The context is canceled a few microtasks after the abort, as
+// soon as the program next returns to JavaScript, and not inside the call that
+// starts the navigation. A call that starts after the abort sees the aborted
+// signal and returns a context that is already canceled.
 func DocumentContext(parent context.Context) (context.Context, context.CancelFunc, error) {
 	if parent == nil {
 		return nil, nil, errors.New("jsutil: document parent context is required")
@@ -39,16 +50,26 @@ func DocumentContext(parent context.Context) (context.Context, context.CancelFun
 		cancel()
 		return ctx, cancel, nil
 	}
-	listener := js.FuncOf(func(js.Value, []js.Value) any { cancel(); return nil })
-	signal.Call("addEventListener", "abort", listener)
+	aborted, onAbort, _ := NewPromiseWithResolvers()
+	if onAbort.Type() != js.TypeFunction {
+		cancel()
+		return nil, nil, errors.New("jsutil: Promise did not run its executor synchronously")
+	}
+	// onAbort is a native function: the abort event settles the promise, and no
+	// Go code runs while the browser dispatches the event.
+	signal.Call("addEventListener", "abort", onAbort)
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
 			cancel()
-			signal.Call("removeEventListener", "abort", listener)
-			listener.Release()
+			signal.Call("removeEventListener", "abort", onAbort)
 		})
 	}
-	go func() { <-ctx.Done(); cleanup() }()
+	go func() {
+		// The wait ends when the signal aborts or when ctx ends, whichever is
+		// first. Either way the context is canceled and the listener removed.
+		_, _ = AwaitPromiseContext(ctx, aborted)
+		cleanup()
+	}()
 	return ctx, cleanup, nil
 }

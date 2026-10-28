@@ -74,6 +74,13 @@ goroutine can wait this way. Page code that these calls start can still
 dispatch events that reach Go listeners. `jsutil.NewPromiseWithResolvers` gives
 your own code a pending Promise without a Go executor.
 
+`jsutil.DocumentContext` does not nest either. The browser aborts the document
+signal inside the call that starts a navigation, and Go starts one with
+`Context.Navigate` or with a `location.assign` call through `syscall/js`. The
+context listens with a native function and cancels from a goroutine. It ends a
+few microtasks after the abort, once the call that started the navigation has
+returned, and not inside that call.
+
 ## Retained instance streaming
 
 Mount geometry and materials with ordinary typed scene commands. A

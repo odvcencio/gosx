@@ -21,7 +21,7 @@
 // call returns. The program stops with "fatal error: traceback did not unwind
 // completely", or runs the end of a function on the wrong stack.
 //
-// The helpers here follow two rules, and code that calls into JavaScript from
+// The helpers here follow three rules, and code that calls into JavaScript from
 // several goroutines should follow them too:
 //
 //   - A Go callback only signals a channel, and JavaScript runs it later, as a
@@ -29,6 +29,9 @@
 //     AwaitPromiseContext).
 //   - A pending Promise comes from NewPromiseWithResolvers, which hands the
 //     constructor a native function, not from new Promise(js.FuncOf(...)).
+//   - A listener that the browser can run inside a call that Go makes, such as
+//     the abort listener of the document signal, is the native resolve function
+//     of such a promise, and a goroutine waits on the promise (DocumentContext).
 //
 // Calls that are documented to run listeners at once, such as dispatchEvent,
 // still nest when Go listeners exist. Keep such calls on one goroutine, or call
