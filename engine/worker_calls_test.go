@@ -36,7 +36,7 @@ func TestWorkerWireKeysAreGoFieldNames(t *testing.T) {
 	}{
 		{"WorkerStatus", WorkerStatus{}, []string{"Reason", "State", "Thread"}},
 		{"Call", Call[struct{ X int }]{}, []string{"Args", "ID", "Name"}},
-		{"Result", Result[struct{ X int }]{}, []string{"Error", "ID", "Name", "Recent", "Value"}},
+		{"Result", Result[struct{ X int }]{}, []string{"Error", "ID", "Name", "Recent", "Seen", "Value"}},
 		{"ResultRef", ResultRef{}, []string{"Error", "ID"}},
 		{"ResultRef with a value", ResultRef{Value: json.RawMessage(`1`)}, []string{"Error", "ID", "Value"}},
 	}

@@ -484,7 +484,7 @@
       var zero = parseObject(msg.zero) || {};
       var known = rec.calls.get(msg.channel);
       if (known) { known.timeout = timeout; known.recent = recent; known.zero = zero; return; }
-      var st = { channel: msg.channel, resultSignal: msg.channel + ".result", timeout: timeout, recent: recent, zero: zero, pending: new Map(), maxCall: 0, last: null, offs: [] };
+      var st = { channel: msg.channel, resultSignal: msg.channel + ".result", timeout: timeout, recent: recent, zero: zero, pending: new Map(), maxCall: 0, seen: 0, last: null, offs: [] };
       rec.calls.set(msg.channel, st);
       // Shared signals outlive an engine, so a remounted engine finds the last
       // call and its result. The result's current value (delivered once, at
@@ -496,10 +496,12 @@
         st.last = result;
         var id = Number(result.ID) || 0;
         if (seeding && id > st.maxCall) st.maxCall = id;
+        st.seen = Math.max(st.seen, id, Number(result.Seen) || 0);
         for (var entry of Array.from(st.pending)) {
           if (entry[0] <= id) { clearTimeout(entry[1].timer); st.pending.delete(entry[0]); }
         }
         trimMailbox(rec, st, id);
+        raiseSeen(rec, st, result);
       }, { immediate: true }));
       seeding = false;
       // The first delivery is the call signal's current value: a call written
@@ -538,8 +540,31 @@
       if (kept.length !== list.length) writeSignal(st.channel, kept);
     }
 
+    // Result.Seen is the highest call ID that the page watched or the engine
+    // accepted. A writer numbers its next call above it, because both ignore an
+    // ID at or below the highest they have seen. It never goes down.
+    function highSeen(st) { return Math.max(st.maxCall, st.seen); }
+
+    // The worker counts the calls it has read, and it may trail the page: it can
+    // be busy in one call while the page has watched, and timed out, newer ones.
+    // A reply it writes then carries a lower Seen than the timeout the page
+    // wrote before it. Write that result again with the page's Seen. This waits
+    // for a microtask because the store is still telling its other subscribers
+    // about the first write, and they must see the second one last. A result
+    // with no Seen comes from an engine that does not count; it is left alone.
+    function raiseSeen(rec, st, result) {
+      if (typeof result.Seen !== "number" || result.Seen >= highSeen(st)) return;
+      Promise.resolve().then(function() {
+        if (rec.calls.get(st.channel) !== st) return;
+        var latest = st.last;
+        if (!latest || typeof latest.Seen !== "number" || latest.Seen >= highSeen(st)) return;
+        writeSignal(st.resultSignal, Object.assign({}, latest, { Seen: highSeen(st) }));
+      });
+    }
+
     function failCall(st, id, name, code) {
-      var result = Object.assign({}, st.zero, { ID: id, Name: name, Error: code });
+      var result = Object.assign({}, st.zero, { ID: id, Name: name, Error: code, Seen: Math.max(id, highSeen(st)) });
+      st.seen = Math.max(st.seen, result.Seen);
       var recent = st.last && Array.isArray(st.last.Recent) ? st.last.Recent.slice() : [];
       recent.push({ ID: id, Error: code });
       result.Recent = recent.slice(-st.recent);

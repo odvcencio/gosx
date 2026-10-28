@@ -237,6 +237,43 @@ func TestCallerNumbersCallsAfterTheGivenID(t *testing.T) {
 	}
 }
 
+// Result.Seen is the highest call ID that the engine or the page has seen. A
+// client that meets a result with a higher Seen than its own count (another
+// writer used the channel, or the engine ran before the client) numbers its
+// next call above it, because the engine ignores any ID at or below the highest
+// it has seen.
+func TestCallerNumbersAboveTheSeenOfAResult(t *testing.T) {
+	c, log := newTestCaller()
+	// No call is written yet, so the result answers nothing, but it still tells
+	// the client where the numbering stands.
+	if reps := c.Result([]byte(`{"ID":3,"Name":"x","Error":"","Value":null,"Recent":[],"Seen":7}`)); len(reps) != 0 {
+		t.Fatalf("a result with no written call answered %+v", reps)
+	}
+	c.Call("x", 1, "a")
+	if len(*log) != 1 || (*log)[0].call.ID != 8 {
+		t.Fatalf("the first call is numbered %+v, want 8", *log)
+	}
+	// A result for the written call that reports a higher Seen moves the next call too.
+	c.Call("x", 1, "b")
+	if reps := c.Result([]byte(`{"ID":8,"Name":"x","Error":"","Value":1,"Recent":[],"Seen":20}`)); len(reps) != 1 || reps[0].Tag != "a" {
+		t.Fatalf("reply = %+v", reps)
+	}
+	if len(*log) != 2 || (*log)[1].call.ID != 21 {
+		t.Fatalf("the second call is numbered %+v, want 21", *log)
+	}
+}
+
+// A result that reports a lower Seen than the client's count changes nothing.
+func TestCallerKeepsItsCountWhenAResultReportsALowerSeen(t *testing.T) {
+	c, log := newTestCaller()
+	c.Call("x", 1, "a")
+	c.Result([]byte(`{"ID":1,"Name":"x","Error":"","Value":1,"Recent":[],"Seen":0}`))
+	c.Call("x", 1, "b")
+	if len(*log) != 2 || (*log)[1].call.ID != 2 {
+		t.Fatalf("calls = %+v, want IDs 1 and 2", *log)
+	}
+}
+
 // A window larger than one writes the unanswered calls as a mailbox, so they
 // reach the engine together and it need not wait for each reply.
 func TestCallerWithAWindowWritesAMailboxOfEveryUnansweredCall(t *testing.T) {

@@ -88,9 +88,11 @@ func callSignals(channel string) (call, result string, err error) {
 //
 // Result.Recent lists the last CallOptions.Recent replies (ID, error and,
 // within CallOptions.RecentBytes, value), so an island that sent several calls
-// before the first reply still finds each one. On a worker engine the page also
-// fails a call with "timeout" when no reply arrives in CallOptions.Timeout, and
-// with "worker-crashed" if the worker dies.
+// before the first reply still finds each one. Result.Seen is the highest call
+// ID the engine has accepted or seen in a result, the number a writer counts its
+// next call from. On a worker engine the page also fails a call with "timeout"
+// when no reply arrives in CallOptions.Timeout, and with "worker-crashed" if the
+// worker dies.
 //
 // handle runs on the engine's event loop, one call at a time, and must not
 // wait for a browser promise or any callback that only the event loop can run:
@@ -186,7 +188,7 @@ func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, ha
 	// call subscription so that on a worker, where both current values arrive
 	// as messages, the result is seen first.
 	offResult, err := tr.Subscribe(resultSignal, func(data json.RawMessage) {
-		var answered struct{ ID uint64 }
+		var answered struct{ ID, Seen uint64 }
 		if json.Unmarshal(data, &answered) != nil {
 			return
 		}
@@ -194,6 +196,9 @@ func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, ha
 		if answered.ID > s.last {
 			s.last = answered.ID
 		}
+		// The page writes results too (a timeout), and a result may come from an
+		// engine that ran before this one. Seen never goes below what they saw.
+		s.seen = max(s.seen, s.last, answered.Seen)
 		s.mu.Unlock()
 	})
 	if err != nil {
@@ -243,6 +248,7 @@ type callServer[A, R any] struct {
 
 	mu       sync.Mutex
 	last     uint64      // the highest ID accepted or reported as answered
+	seen     uint64      // the highest ID accepted, answered or seen by the page: Result.Seen
 	queue    []callEntry // accepted calls that have not started, in ID order
 	busy     bool        // a stack or goroutine is draining the queue
 	mailbox  bool        // the call signal has held a mailbox
@@ -264,6 +270,7 @@ func (s *callServer[A, R]) deliver(data json.RawMessage) {
 	for _, entry := range entries {
 		if entry.id > s.last {
 			s.last = entry.id
+			s.seen = max(s.seen, entry.id)
 			s.queue = append(s.queue, entry)
 		}
 	}
@@ -319,6 +326,7 @@ func (s *callServer[A, R]) drain() {
 		result := engine.Result[json.RawMessage]{
 			ID: reply.id, Name: reply.name, Error: reply.err, Value: reply.value,
 			Recent: s.log.add(reply.id, reply.err, reply.kept),
+			Seen:   s.seen,
 		}
 		trim := s.mailbox && s.trimmer != nil
 		s.mu.Unlock()
@@ -369,7 +377,7 @@ func (s *callServer[A, R]) write(result engine.Result[json.RawMessage]) {
 		// A result the page cannot take is answered with an error result.
 		fallback := engine.Result[json.RawMessage]{
 			ID: result.ID, Name: result.Name, Error: "reply-failed: " + err.Error(),
-			Value: s.zero, Recent: result.Recent,
+			Value: s.zero, Recent: result.Recent, Seen: result.Seen,
 		}
 		_ = s.tr.Write(s.resultSignal, fallback)
 	}

@@ -103,8 +103,8 @@ type WorkerStatus struct{ State, Thread, Reason string }
 // Thread: "worker", "native" (an engine in the desktop host) or "main" (after a fallback). Reason: a code such as worker-forced-fallback.
 
 type Call[A any] struct { ID uint64; Name string; Args A }
-type Result[R any] struct { ID uint64; Name, Error string; Value R; Recent []ResultRef }
-type ResultRef struct { ID uint64; Error string; Value R /* JSON; left out when it is empty */ }
+type Result[R any] struct { ID uint64; Name, Error string; Value R; Recent []ResultRef; Seen uint64 }
+type ResultRef struct { ID uint64; Error string; Value json.RawMessage /* left out when it is empty */ }
 ```
 
 The status signal is named `$gosx.engine.<id>`. The engine ID is
@@ -142,8 +142,11 @@ add := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "add", Args: Args{A: 2, 
 
 The rules:
 
-1. Number calls from 1, increasing by one. The engine ignores any ID at or below
-   the last one it handled, because a batch flush can deliver the same value twice.
+1. Number calls from 1, increasing. The engine ignores any ID at or below the
+   highest it has seen, because a batch flush can deliver the same value twice, and
+   the page ignores one too. With a single call signal, take the next number from
+   the signal's own ID, as above. With a mailbox, count from `Seen` (rule 3a): the
+   result's `ID` is not safe, because a late reply puts it back to an earlier call.
 2. A signal keeps its newest value only. If one handler writes two single calls,
    the engine sees the second, and the first never runs. To send several calls
    together, write a mailbox (see below) or use `wasm.Caller`.
@@ -153,6 +156,15 @@ The rules:
    entry has the ID and the error, and has the `Value` while the values of the
    newest entries fit in `CallOptions.RecentBytes` (default 8 KiB). A reply that
    has no error and no value there is lost; treat it as failed.
+
+   3a. `Seen` is the highest call ID that the engine accepted or the page
+   watched. The engine writes it with every result, and the page writes it with
+   the `timeout` and `worker-crashed` results. It never goes down. Number your
+   next call above `Seen` and above every ID in your mailbox. Do not use the
+   result's `ID` for this: when the page times out calls 1 and 2 and call 1's
+   late reply then arrives, `ID` is 1 again while both IDs are taken. A call that
+   reuses an ID that is taken never runs and never times out, and the next reply
+   with that ID looks like its answer.
 4. A call whose arguments do not decode gets `Error: "bad-args: ..."`. A handler
    that returns an error or panics gets that message in `Error`.
 5. A call whose ID decodes but whose other fields do not (for example a number
@@ -187,22 +199,31 @@ the engine and the page host. Treat all three as untrusted input.
 
 The call signal can hold an array of calls, a mailbox, instead of one call. The
 mailbox lists every call that has no reply yet. To send a call, append it to the
-list and write the whole list; the new call needs an ID above every ID in the
-list and above the last reply. The engine runs each call whose ID is above the
-last one it handled, in ID order, and writes one result for each, so two calls
-written by one handler both run.
+list and write the whole list. The new call needs an ID above every ID in the
+list or, when the list is empty, above `Seen`. The engine runs each call whose ID
+is above the highest it has seen, in ID order, and writes one result for each, so
+two calls written by one handler both run.
 
 ```go
-// Island (.gsx)
+// Island (.gsx). An island handler cannot call a function that returns a value,
+// so the number is written out where the call is appended.
 box := signal.NewShared("bv.box", []Cmd{})            // calls with no reply yet
-boxres := signal.NewShared("bv.box.result", Reply{})  // Recent has Ref{ID, Error, Value}
-next := func() int { return boxres.Get().ID + len(box.Get()) + 1 }
+boxres := signal.NewShared("bv.box.result", Reply{})  // Reply has Seen; Recent has Ref{ID, Error, Value}
 pair := func() {
-    box.Set(append(box.Get(), Cmd{ID: next(), Name: "add", Args: Args{A: 1, B: 2}}))
-    box.Set(append(box.Get(), Cmd{ID: next(), Name: "add", Args: Args{A: 10, B: 20}}))
+    if len(box.Get()) == 0 {
+        box.Set(append(box.Get(), Cmd{ID: boxres.Get().Seen + 1, Name: "add", Args: Args{A: 1, B: 2}}))
+    } else {
+        box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 1, B: 2}}))
+    }
+    // The list has a call now, so the next one counts from its last entry.
+    box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 10, B: 20}}))
 }
 // <p>{boxres.Get().Value.Total}</p> shows the newest reply; each Recent entry holds an earlier one.
 ```
+
+A page can also keep its own counter in a shared signal, `n.Set(n.Get() + 1)`, and
+use `n.Get()` as the ID. Any rule works if every ID is above all that came before
+it.
 
 A handler only appends. Once a reply covers a call (its ID is at or below the
 result's ID), the page removes the call from the list: the page host does it for
@@ -237,8 +258,10 @@ which works with every engine. `wasm.NewCallerWith(..., wasm.CallerOptions{Windo
 keeps up to four calls written at once as a mailbox, so queued calls do not wait
 for each round trip. `Fail("worker-crashed")` answers everything still pending.
 The client numbers calls from 1: if the engine can outlive the client (a page
-that remounts only the client's engine), set `CallerOptions.After` to the `ID`
+that remounts only the client's engine), set `CallerOptions.After` to the `Seen`
 in the current value of the result signal so the engine does not ignore its calls.
+Not the result's `ID`, which a late reply can put back. The client also raises its
+count to the `Seen` of every result it is given.
 
 ### Handlers that block: `wasm.ServeCallsAsync`
 

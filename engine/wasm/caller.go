@@ -51,12 +51,15 @@ type CallerOptions struct {
 	// engine must be built with a GoSX that serves mailboxes (host.ServeCalls
 	// from this version or later); an older engine ignores an array.
 	Window int
-	// After is the ID of the last call the engine has handled. The client
+	// After is the highest call ID the engine or the page has seen. The client
 	// numbers its calls from After+1, because the engine ignores any ID at or
-	// below the last one it handled. Zero starts at 1, which is right when the
+	// below the highest it has seen. Zero starts at 1, which is right when the
 	// client and the engine start together. When the engine can outlive the
-	// client (the client's own engine remounts), pass the ID in the current
-	// value of the result signal.
+	// client (the client's own engine remounts), pass the Seen in the current
+	// value of the result signal, not its ID: a late reply puts ID back to an
+	// earlier call. A client also raises its count to the Seen of every result
+	// it is given, so feeding it the current value of the result signal before
+	// the first call does the same.
 	After uint64
 }
 
@@ -223,13 +226,18 @@ func (c *Caller) dropLocked(id uint64) bool {
 // completes, in call order, and writes the next queued calls. A malformed
 // value is ignored, and so is a result older than every written call. A result
 // for a newer call than one written call completes that call from
-// Result.Recent, or counts it as lost when the reply is no longer there.
+// Result.Recent, or counts it as lost when the reply is no longer there. The
+// client counts its next call from the result's Seen when that is higher than
+// its own count.
 func (c *Caller) Result(raw []byte) []Reply {
 	var r wireResult
 	if json.Unmarshal(raw, &r) != nil {
 		return nil
 	}
 	c.mu.Lock()
+	if r.Seen > c.next {
+		c.next = r.Seen
+	}
 	if len(c.flight) == 0 || r.ID < c.flight[0].call.ID {
 		c.mu.Unlock()
 		return nil

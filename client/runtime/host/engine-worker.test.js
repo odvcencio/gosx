@@ -1167,7 +1167,7 @@ function storeCtx() {
   return ctx;
 }
 
-const ZERO = JSON.stringify({ ID: 0, Name: "", Error: "", Value: { Total: 0 }, Recent: null });
+const ZERO = JSON.stringify({ ID: 0, Name: "", Error: "", Value: { Total: 0 }, Recent: null, Seen: 0 });
 
 async function servingPage(opts = {}) {
   const page = bootPage();
@@ -1252,7 +1252,7 @@ test("page: a call nobody answers fails with timeout and the result keeps its sh
   ctx.write("$bv.cmd", { ID: 1, Name: "apply", Args: {} });
   assert.deepEqual(resultWrites(page), []);
   await new Promise(r => setTimeout(r, 40));
-  assert.deepEqual(resultWrites(page), [{ ID: 1, Name: "apply", Error: "timeout", Value: { Total: 0 }, Recent: [{ ID: 1, Error: "timeout" }] }]);
+  assert.deepEqual(resultWrites(page), [{ ID: 1, Name: "apply", Error: "timeout", Value: { Total: 0 }, Recent: [{ ID: 1, Error: "timeout" }], Seen: 1 }]);
 });
 
 test("page: a reply cancels the watchdog, and an older call is cleared by a newer reply", async () => {
@@ -1333,6 +1333,57 @@ test("page: a timeout also drops the call from the mailbox", async () => {
   // subscriber, which is what trims. Deliver it as the store would.
   ctx.write("$bv.cmd.result", resultWrites(page)[0]);
   assert.deepEqual(page.signalWrites.filter(w => w[0] === "$bv.cmd").map(w => w[1]), [[]]);
+});
+
+// Result.Seen is the number a writer counts its next call from: the highest
+// call ID the page watched or the engine accepted. Result.ID is not, because a
+// late reply puts it back to an earlier call.
+test("page: a timeout reports the highest ID the page watched in Seen", async () => {
+  const { page, ctx } = await servingPage({ timeout: 20 });
+  ctx.write("$bv.cmd", [{ ID: 1, Name: "a" }, { ID: 2, Name: "b" }, { ID: 3, Name: "c" }]);
+  await new Promise(r => setTimeout(r, 60));
+  assert.deepEqual(resultWrites(page).map(w => [w.ID, w.Seen]), [[1, 3], [2, 3], [3, 3]], "every timeout carries the highest ID watched, not the ID of its own call");
+});
+
+test("page: a crash reports the highest ID the page watched in Seen", async () => {
+  const { page, worker, ctx } = await servingPage({ timeout: 1000 });
+  ctx.write("$bv.cmd", [{ ID: 1, Name: "a" }, { ID: 2, Name: "b" }]);
+  worker.onerror({ message: "boom", preventDefault() {} });
+  ctx.write("$bv.cmd", [{ ID: 3, Name: "c" }]);
+  assert.deepEqual(resultWrites(page).map(w => [w.ID, w.Seen]), [[1, 2], [2, 2], [3, 3]]);
+});
+
+test("page: a timeout keeps the Seen of an earlier result when that is higher", async () => {
+  const { page, ctx } = await servingPage({ timeout: 20 });
+  // The engine accepted calls up to 10 (another writer used the channel).
+  ctx.write("$bv.cmd.result", { ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [], Seen: 10 });
+  ctx.write("$bv.cmd", { ID: 2, Name: "b" });
+  await new Promise(r => setTimeout(r, 40));
+  assert.deepEqual(resultWrites(page).map(w => [w.ID, w.Seen]), [[2, 10]], "Seen does not go down to the page's own count");
+});
+
+test("page: a late reply that reports a lower Seen is written again with the page's", async () => {
+  const { page, ctx } = await servingPage({ timeout: 1000 });
+  // The page watched calls 1 to 3; the worker, busy in call 1, has read none of the others.
+  ctx.write("$bv.cmd", [{ ID: 1, Name: "a" }, { ID: 2, Name: "b" }, { ID: 3, Name: "c" }]);
+  ctx.write("$bv.cmd.result", { ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [{ ID: 1, Error: "", Value: { Total: 1 } }], Seen: 1 });
+  assert.deepEqual(resultWrites(page), [], "the store is still telling its subscribers about the reply");
+  await tick();
+  assert.deepEqual(resultWrites(page), [{ ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [{ ID: 1, Error: "", Value: { Total: 1 } }], Seen: 3 }]);
+  // The write reaches the result subscriber like any other; it needs no further correction.
+  ctx.write("$bv.cmd.result", resultWrites(page)[0]);
+  await tick();
+  assert.equal(resultWrites(page).length, 1);
+});
+
+test("page: a reply whose Seen is not lower, or that has none, is left alone", async () => {
+  const { page, ctx } = await servingPage({ timeout: 1000 });
+  ctx.write("$bv.cmd", [{ ID: 1, Name: "a" }, { ID: 2, Name: "b" }]);
+  ctx.write("$bv.cmd.result", { ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [], Seen: 2 });
+  // An engine built before Seen existed writes no Seen.
+  ctx.write("$bv.cmd.result", { ID: 2, Name: "b", Error: "", Value: { Total: 2 }, Recent: [] });
+  await tick();
+  assert.deepEqual(resultWrites(page), []);
 });
 
 test("page: a signal that holds one call is never rewritten", async () => {

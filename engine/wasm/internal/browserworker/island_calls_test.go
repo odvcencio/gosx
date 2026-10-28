@@ -120,6 +120,7 @@ func (p *pageIsland) text(id string) string {
 type engineSide struct {
 	mu      sync.Mutex
 	handler func(json.RawMessage)
+	onReply func(json.RawMessage) // the engine's subscription to the result signal
 	results []json.RawMessage
 }
 
@@ -130,8 +131,14 @@ func (e *engineSide) deliver(values []string) {
 	}
 }
 
+// deliverResult hands the engine a value of the result signal, as the page does
+// when the page host or the engine itself wrote it.
+func (e *engineSide) deliverResult(value string) { e.onReply(json.RawMessage(value)) }
+
 func (e *engineSide) Subscribe(signal string, h func(json.RawMessage)) (host.HandleFunc, error) {
-	if !strings.HasSuffix(signal, ".result") {
+	if strings.HasSuffix(signal, ".result") {
+		e.onReply = h
+	} else {
 		e.handler = h
 	}
 	return func() {}, nil
@@ -312,5 +319,100 @@ func TestIslandHandlerThatWritesTwoSingleCallsSendsOnlyTheSecond(t *testing.T) {
 	e.deliver(sent)
 	if fmt.Sprint(ran) != "[second]" {
 		t.Fatalf("the engine ran %v; a signal that holds one call delivers only the newest", ran)
+	}
+}
+
+// The page times out the calls of a slow handler and writes a result of its
+// own. The handler's real reply for call 1 comes later and puts the result's ID
+// back to 1. The island must not number its next call from that ID: the engine
+// and the page both ignore an ID at or below the highest they have seen, so a
+// call that reuses 2 would never run and never time out, and the next reply
+// with ID 2 would look like its answer. The island counts from Seen.
+func TestIslandDoesNotReuseAnIDAfterATimeoutAndALateReply(t *testing.T) {
+	p := hydrate(t, panelSource, "Panel")
+	e := &engineSide{}
+	started := make(chan string, 8)
+	release := make(chan struct{}, 8)
+	var mu sync.Mutex
+	var ran []string
+	if _, err := host.ServeCallsAsyncOn(e, "bv.box", host.CallOptions{Recent: 4}, func(name string, a callArgs) (callSum, error) {
+		mu.Lock()
+		ran = append(ran, name)
+		mu.Unlock()
+		started <- name
+		<-release
+		return callSum{Total: a.A + a.B, Thread: "test"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// One handler writes calls 1 and 2. The engine accepts both and starts call 1.
+	e.deliver(p.click("pair", "$bv.box"))
+	<-started
+
+	// The page's watchdog times out both calls and drops them from the mailbox.
+	// It reports the highest ID it watched in Seen.
+	timeout := `{"ID":2,"Name":"add","Error":"timeout","Value":{"Total":0,"Thread":""},` +
+		`"Recent":[{"ID":1,"Error":"timeout"},{"ID":2,"Error":"timeout"}],"Seen":2}`
+	if err := p.b.SetSharedSignalJSON("$bv.box.result", timeout); err != nil {
+		t.Fatal(err)
+	}
+	e.deliverResult(timeout)
+	if err := p.b.SetSharedSignalJSON("$bv.box", `[]`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Call 1 finishes late. Its real reply replaces the timeout, so the result's
+	// ID goes back to 1; the engine starts call 2 at once.
+	release <- struct{}{}
+	<-started
+	late := e.written()[0]
+	if err := p.b.SetSharedSignalJSON("$bv.box.result", string(late)); err != nil {
+		t.Fatal(err)
+	}
+	e.deliverResult(string(late))
+	if got := p.text("box"); !strings.HasPrefix(got, "1:3::") {
+		t.Fatalf("the island shows %q after the late reply, want the reply to call 1", got)
+	}
+
+	// The island writes a new call. It must be numbered above 2, which both the
+	// engine and the page already saw.
+	next := p.click("wait", "$bv.box")
+	if len(next) == 0 {
+		t.Fatal("the island wrote no call")
+	}
+	var calls []struct {
+		ID   uint64
+		Name string
+	}
+	if err := json.Unmarshal([]byte(next[len(next)-1]), &calls); err != nil || len(calls) != 1 {
+		t.Fatalf("the island wrote %s (%v)", next, err)
+	}
+	if calls[0].Name != "wait" || calls[0].ID != 3 {
+		t.Fatalf("the new call is %+v, want ID 3: ID 2 was already seen", calls[0])
+	}
+
+	// The engine runs it after call 2.
+	e.deliver(next)
+	release <- struct{}{} // call 2
+	<-started             // call 3 starts
+	release <- struct{}{}
+	within(t, "three replies", func() bool { return len(e.written()) == 3 })
+	mu.Lock()
+	defer mu.Unlock()
+	if fmt.Sprint(ran) != "[add add wait]" {
+		t.Fatalf("handlers ran %v, want [add add wait]", ran)
+	}
+}
+
+// within fails the test unless cond becomes true soon.
+func within(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

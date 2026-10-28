@@ -65,6 +65,7 @@ type BoxReply struct {
 	Error  string
 	Value  Sum
 	Recent []BoxRef
+	Seen   uint64
 }
 type View struct {
 	Tick   int
@@ -83,18 +84,34 @@ func Panel(props struct{}) Node {
 	crash := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "crash"}) }
 	box := signal.NewShared("bv.box", []Cmd{})
 	boxres := signal.NewShared("bv.box.result", BoxReply{})
-	// bv.box is a mailbox: each call is appended, with an ID above every call
-	// in it and above the last reply, so one handler can write several.
+	// bv.box is a mailbox: each call is appended, so one handler can write
+	// several. A call is numbered above every call in the mailbox, or, when the
+	// mailbox is empty, above Seen: the highest ID the engine or the page has
+	// seen. Not above the result's ID, which goes back after a late reply. An
+	// island handler cannot call a function that returns a value, so the number
+	// is written out where a call is appended.
 	pair := func() {
-		box.Set(append(box.Get(), Cmd{ID: boxres.Get().ID + len(box.Get()) + 1, Name: "add", Args: Args{A: 1, B: 2}}))
-		box.Set(append(box.Get(), Cmd{ID: boxres.Get().ID + len(box.Get()) + 1, Name: "add", Args: Args{A: 10, B: 20}}))
+		if len(box.Get()) == 0 {
+			box.Set(append(box.Get(), Cmd{ID: boxres.Get().Seen + 1, Name: "add", Args: Args{A: 1, B: 2}}))
+		} else {
+			box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 1, B: 2}}))
+		}
+		box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 10, B: 20}}))
 	}
 	wait := func() {
-		box.Set(append(box.Get(), Cmd{ID: boxres.Get().ID + len(box.Get()) + 1, Name: "wait", Args: Args{A: 120, B: 1}}))
+		if len(box.Get()) == 0 {
+			box.Set(append(box.Get(), Cmd{ID: boxres.Get().Seen + 1, Name: "wait", Args: Args{A: 120, B: 1}}))
+		} else {
+			box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "wait", Args: Args{A: 120, B: 1}}))
+		}
 	}
 	ordered := func() {
-		box.Set(append(box.Get(), Cmd{ID: boxres.Get().ID + len(box.Get()) + 1, Name: "wait", Args: Args{A: 150, B: 100}}))
-		box.Set(append(box.Get(), Cmd{ID: boxres.Get().ID + len(box.Get()) + 1, Name: "add", Args: Args{A: 5, B: 5}}))
+		if len(box.Get()) == 0 {
+			box.Set(append(box.Get(), Cmd{ID: boxres.Get().Seen + 1, Name: "wait", Args: Args{A: 150, B: 100}}))
+		} else {
+			box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "wait", Args: Args{A: 150, B: 100}}))
+		}
+		box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 5, B: 5}}))
 	}
 	return <section>
 		<p id="state">{status.Get().State}/{status.Get().Thread}/{status.Get().Reason}</p>
@@ -107,6 +124,7 @@ func Panel(props struct{}) Node {
 		<p id="box">{boxres.Get().ID}:{boxres.Get().Value.Total}:{boxres.Get().Error}:{boxres.Get().Value.Thread}</p>
 		<p id="recent"><Each of={boxres.Get().Recent} as="r"><span>{r.ID}={r.Value.Total}/{r.Error};</span></Each></p>
 		<p id="pending">{len(box.Get())}</p>
+		<p id="seen">{boxres.Get().Seen}</p>
 		<button id="pair" onClick={pair} disabled={status.Get().State != "running"}>pair</button>
 		<button id="wait" onClick={wait} disabled={status.Get().State != "running"}>wait</button>
 		<button id="ordered" onClick={ordered} disabled={status.Get().State != "running"}>ordered</button>

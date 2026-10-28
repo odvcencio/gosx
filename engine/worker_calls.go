@@ -94,12 +94,22 @@ type Call[A any] struct {
 // IDs are equal, Value and Error are its reply; if the result is newer, look
 // the call up in Recent, which holds its error and, when it fits the engine's
 // byte budget (CallOptions.RecentBytes), its value.
+//
+// ID is not a number to count from. A reply that comes late, after the page
+// wrote "timeout" for a newer call, puts ID back to an earlier call. Seen is the
+// number to count from: the highest call ID that the engine has accepted or the
+// page has watched, written by both of them and never lower than a Seen the
+// channel has already published. Number the next call above Seen and above every
+// ID in your mailbox. The engine and the page both ignore an ID at or below the
+// highest they have seen, so a call that reuses one never runs and never times
+// out.
 type Result[R any] struct {
 	ID     uint64
 	Name   string
 	Error  string
 	Value  R
 	Recent []ResultRef
+	Seen   uint64
 }
 
 // ResultRef is one earlier reply, kept in Result.Recent: its ID, its error and,
