@@ -326,17 +326,22 @@ off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * 
   `CallOptions.Timeout` (the bridge dropped the message), the engine answers the
   call with `Error: "not-started: ..."` and runs no handler: the call is safe to
   send again, and the next call goes on. A transport must deliver a write to the
-  writer's own subscription, as the page does for any other subscriber.
+  writer's own subscription, as the page does for any other subscriber. Each call
+  waits for one round trip to the page before its handler starts (on the main
+  thread the page's report arrives while the write is made). Measured in headless
+  Chromium 156 on a busy host, 300 queued `add` calls took about 0.96 s with the
+  wait and 0.87 s without it (median of six rounds), so about 0.3 ms per call.
 - An engine that mounts again on the same signals (the page replaced the engine,
   or a desktop host attached again) finds a call that has no result and whose ID
   is at or below the mark. It answers that call with `Error: "interrupted"` and
-  does not run it, because the handler started and its side effect may be done: a
-  save or an order would otherwise happen twice, and the first run may still be
-  going. This includes a call whose handler finished after the page began to
-  dispose the engine, because its reply was dropped. Calls queued behind it that
-  never started run as usual. Treat `interrupted` as an unknown outcome and check
-  before you send the call again. Any script on the page can write
-  `$<channel>.started`; treat it as untrusted, like the call and result signals.
+  does not run it. The earlier engine marked the call, so its handler started or
+  was about to start, and its side effect may be done: a save or an order would
+  otherwise happen twice, and the first run may still be going. This includes a
+  call whose handler finished after the page began to dispose the engine, because
+  its reply was dropped. Calls queued behind it that never started run as usual.
+  Treat `interrupted` as an unknown outcome and check before you send the call
+  again. Any script on the page can write `$<channel>.started`; treat it as
+  untrusted, like the call and result signals.
 - `ServeCalls` writes no mark and waits for no one: its handler runs inside the
   callback that delivers the call. A call that reached the engine just before the
   page began to dispose it can run during the gap above. The page then drops the

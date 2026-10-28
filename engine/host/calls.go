@@ -181,9 +181,10 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 //
 // A server that mounts later on the same signals answers a call with no result
 // whose ID is at or below the mark with the error "interrupted" and does not run
-// it again: its handler started, and may have done its work. This includes a call
-// whose handler finished after the page began to dispose the engine, because its
-// reply was dropped. Calls that never started still run, once.
+// it again: the earlier server marked it, so its handler started or was about to
+// start, and may have done its work. This includes a call whose handler finished
+// after the page began to dispose the engine, because its reply was dropped.
+// Calls that never started still run, once.
 func ServeCallsAsync[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
 	return ServeCallsAsyncOn(ctx.CallTransport(), channel, opts, handle)
 }
