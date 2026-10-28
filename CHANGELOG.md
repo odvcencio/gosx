@@ -34,6 +34,10 @@
   returned an empty string), and `<unprintable value>` when the conversion
   fails, where it panicked.
 
+  Runtime size: the production full runtime (`gosx-runtime.wasm`) grows by 603
+  bytes raw and 1,061 bytes with Brotli, and the engine runtime by 603 raw and
+  722 with Brotli. The core, islands and collab runtimes do not change.
+
 - Add the Go contract for a spectral ocean. `scene.Ocean` gains `Spectrum` (a
   JONSWAP wind sea with an optional swell; `scene.OceanPreset` returns the sea
   states "calm", "moderate", "rough" and "storm"), `Presentation`, `Masks` and
