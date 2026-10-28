@@ -256,10 +256,11 @@ func withCancel(t testing.TB) context.Context {
 	return ctx
 }
 
-// Many requests at once, with cancellation and a busy collector. Go's js/wasm
-// runtime keeps the calls from JavaScript into Go that are in progress on one
-// stack, and two goroutines that nest at the same time can corrupt it. The test
-// requires that no request nests at all.
+// Many requests at once, with cancellation and a busy collector. A nested entry
+// into Go can stop Go's js/wasm runtime when another entry from JavaScript is
+// paused in its allocation (see package m31labs.dev/gosx/client/jsutil), and
+// the busy collector makes that pause likely. The test requires that no request
+// nests at all.
 func TestFetchRequestsNeverNestUnderConcurrencyAndGCPressure(t *testing.T) {
 	stats := nativeFetch(t)
 	previous := debug.SetGCPercent(5)
@@ -312,7 +313,11 @@ func TestFetchRequestsNeverNestUnderConcurrencyAndGCPressure(t *testing.T) {
 	if probe.MaxDepth() != 1 {
 		t.Fatalf("calls into Go nested to depth %d", probe.MaxDepth())
 	}
-	if stats.Get("calls").Int() != goroutines*rounds {
-		t.Fatalf("expected %d requests, saw %d", goroutines*rounds, stats.Get("calls").Int())
+	// The plain and failing requests always reach fetch. A cancelled request or
+	// one with a short deadline can end before it starts, on a busy host, and
+	// then it never reaches fetch.
+	calls := stats.Get("calls").Int()
+	if calls < goroutines*rounds/2 || calls > goroutines*rounds {
+		t.Fatalf("expected between %d and %d requests, saw %d", goroutines*rounds/2, goroutines*rounds, calls)
 	}
 }
