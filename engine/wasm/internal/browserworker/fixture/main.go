@@ -63,6 +63,8 @@ func main() {
 			stop = startCalls(ctx)
 		case "remount":
 			stop = startRemount(ctx)
+		case "stall":
+			stop = startStall(ctx)
 		}
 		return wasm.HandleFunc(func() {
 			if stop != nil {
@@ -403,6 +405,28 @@ func startRemount(ctx wasm.Context) (stop func()) {
 	}
 	report(ctx, "remount-ready", nil)
 	return save.Dispose
+}
+
+// startStall serves channel bv.stall for the test that keeps the page's main
+// thread busy for longer than the channel's timeout. Each handler does its work
+// against the test server (a request to /effect), so that the server counts how
+// often each call ran. The timeout is short, 300 ms, so a stall of 800 ms is well
+// past it: the page's watchdog fires when the page is free again, and the
+// engine's wait for the page to report a call's mark must outlast it.
+func startStall(ctx wasm.Context) (stop func()) {
+	serve, err := wasm.ServeCallsAsync(ctx, "bv.stall", wasm.CallOptions{Timeout: 300 * time.Millisecond, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			if err := syncGet("/effect?name=" + name); err != nil {
+				return callReply{}, err
+			}
+			return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+		})
+	if err != nil {
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
+	report(ctx, "stall-ready", nil)
+	return serve.Dispose
 }
 
 // syncGet makes a synchronous request. It blocks the whole worker until the
