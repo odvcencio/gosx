@@ -122,7 +122,9 @@ func Vibrate(milliseconds int) (accepted bool) {
 }
 
 // DispatchError reports a synthetic browser error through the normal window
-// error event path. It is intended for integration diagnostics.
+// error event path. It is intended for integration diagnostics. The browser runs
+// every error listener before it returns, so each Go listener runs nested inside
+// this call.
 func DispatchError(message, filename string) (err error) {
 	defer func() {
 		if value := recover(); value != nil {

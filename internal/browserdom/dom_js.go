@@ -19,6 +19,9 @@ type Dataset struct{ value js.Value }
 type Event struct{ value js.Value }
 
 // Listener owns one callback and removes it before releasing its Go function.
+// The browser runs the callback inside the call that dispatches the event, so
+// when Go itself dispatches (Dispatch, Focus, Blur, Click) the callback runs
+// nested inside that call.
 type Listener struct {
 	target   js.Value
 	event    string
@@ -416,11 +419,17 @@ func (e Element) SetOpen(value bool) {
 		e.value.Set("open", value)
 	}
 }
+
+// Focus focuses the element. The browser runs focus and focusin listeners before
+// Focus returns, so a Go listener runs nested inside this call.
 func (e Element) Focus() {
 	if e.Valid() {
 		e.value.Call("focus")
 	}
 }
+
+// Click clicks the element. The browser runs click listeners before Click
+// returns, so a Go listener runs nested inside this call.
 func (e Element) Click() {
 	if e.Valid() {
 		e.value.Call("click")
@@ -431,6 +440,9 @@ func (e Element) Remove() {
 		e.value.Call("remove")
 	}
 }
+
+// Blur removes focus from the element. The browser runs blur and focusout
+// listeners before Blur returns, so a Go listener runs nested inside this call.
 func (e Element) Blur() {
 	if e.Valid() {
 		e.value.Call("blur")
@@ -629,6 +641,10 @@ func (e Element) StepUp(steps int) {
 		e.value.Call("stepUp", steps)
 	}
 }
+
+// Dispatch dispatches a new event with the given name. The browser runs every
+// listener before Dispatch returns, so each Go listener runs nested inside this
+// call.
 func (e Element) Dispatch(name string, bubbles bool) {
 	if e.Valid() {
 		event := js.Global().Get("Event").New(name, map[string]any{"bubbles": bubbles})

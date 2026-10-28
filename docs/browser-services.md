@@ -52,6 +52,28 @@ fetch it. Its hot forwarding path stays in JavaScript and preserves native
 arguments and receivers. Dispose the guard to remove only its own policy.
 Telemetry opt-out drops queued events and prevents unload beacons.
 
+## Calls that run Go listeners inside the call
+
+A few browser calls run listeners before they return. `Element.Dispatch`,
+`Focus`, `Blur` and `Click`, `DispatchResize` and `DispatchError` do. On the
+main thread, a write to the shared signal store (`Context.SetSignal` and
+`SetSignals`) calls every subscriber before it returns, including Go
+subscribers from `SubscribeSignal`. A Go listener then runs inside the call
+that caused it.
+
+One goroutine can do this safely. Go's js/wasm runtime keeps these nested
+entries on one stack, and a program can stop with `fatal error: traceback did
+not unwind completely` when two goroutines are inside such calls at once. Make
+these calls from one goroutine, or call the Go consumers directly and dispatch
+the DOM event only for page scripts.
+
+The waits in `Fetch`, `Context.Navigate`, the `Scene3D` calls and the context
+variants of clipboard and fullscreen do not nest. Their Go handlers only signal
+a channel, and the browser runs them after the call has returned, so any
+goroutine can wait this way. Page code that these calls start can still
+dispatch events that reach Go listeners. `jsutil.NewPromiseWithResolvers` gives
+your own code a pending Promise without a Go executor.
+
 ## Retained instance streaming
 
 Mount geometry and materials with ordinary typed scene commands. A

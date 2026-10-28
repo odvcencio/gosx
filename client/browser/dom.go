@@ -4,6 +4,17 @@
 // Document.InstantiateTemplate to obtain a detached element without parsing
 // markup in the engine. Retain its child handles for subsequent text and
 // attribute updates, and append the element when a new item is inserted.
+//
+// # Listeners run inside the call that dispatches the event
+//
+// Element.Dispatch, Focus, Blur and Click, and the package functions
+// DispatchResize and DispatchError, make the browser run event listeners before
+// they return. A Go listener added with On runs inside that call, nested in it.
+// One goroutine can do this safely. Go's js/wasm runtime can fail when two
+// goroutines are inside such calls at once (see package
+// m31labs.dev/gosx/client/jsutil), so make these calls from one goroutine, or
+// call the Go consumers directly and dispatch the DOM event only for page
+// scripts.
 package browser
 
 import "m31labs.dev/gosx/internal/browserdom"

@@ -25,7 +25,10 @@ func Viewport() Size {
 	g := js.Global()
 	return Size{Width: platformNumber(g.Get("innerWidth")), Height: platformNumber(g.Get("innerHeight"))}
 }
-func PixelRatio() float64     { return platformNumber(js.Global().Get("devicePixelRatio")) }
+func PixelRatio() float64 { return platformNumber(js.Global().Get("devicePixelRatio")) }
+
+// DispatchResize dispatches a resize event on the window. The browser runs every
+// listener before it returns, so each Go listener runs nested inside this call.
 func DispatchResize()         { js.Global().Call("dispatchEvent", js.Global().Get("Event").New("resize")) }
 func LogError(message string) { js.Global().Get("console").Call("error", message) }
 

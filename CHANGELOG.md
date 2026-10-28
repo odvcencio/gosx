@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Stop `jsutil.AwaitPromise`, `jsutil.AwaitPromiseContext` and `browser.Fetch`
+  from running Go code inside a call from Go into JavaScript. A wait with a
+  cancellable context built its cancellation promise with a Go executor, which
+  JavaScript runs inside `new Promise`, so every such wait (`browser.Fetch`,
+  `Context.Navigate`, `Scene3D` calls, audio waits) nested one entry into Go.
+  Go's js/wasm runtime keeps those entries on one shared stack, and a program
+  whose goroutines nest at the same time can lose an entry and stop with
+  `fatal error: traceback did not unwind completely`. The waits now use a
+  native cancellation promise (the new `jsutil.NewPromiseWithResolvers`) and Go
+  handlers that only signal a channel from a microtask, and cancellation still
+  aborts the request. `AwaitPromise` also accepts a thenable that calls its
+  handlers inside `then`, which used to panic or nest. `jsutil.Describe` no
+  longer panics on a rejection that is not an `Error` (a number, a Symbol, a
+  BigInt, a revoked Proxy, or an object whose `message` getter throws); the
+  Scene3D frame rejection handlers called it inside a Go callback, where a panic
+  stopped the program. `__gosx_pick_engine` builds its Promise the same way,
+  which also stops it from keeping one `js.Func` per call. Calls that dispatch
+  DOM events (`Element.Dispatch`, `Focus`, `Blur` and `Click`,
+  `DispatchResize`, `DispatchError`) still run Go listeners inside the call;
+  the `client/browser` and `client/jsutil` documentation now says so.
+
 - Hold a Scene3D motion frame that arrives while the scene's models are still
   hydrating, then apply it when they commit, instead of rejecting it with
   `renderer-not-ready`. The wait ends at the call's `timeoutMS` (10 s by

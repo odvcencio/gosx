@@ -5,6 +5,8 @@ package browserdom
 import (
 	"syscall/js"
 	"testing"
+
+	"m31labs.dev/gosx/internal/jsreentry"
 )
 
 func domObject() js.Value { return js.Global().Get("Object").New() }
@@ -182,5 +184,23 @@ func TestMessageDataAcceptsOnlyStrings(t *testing.T) {
 	event.Set("data", "native focus lost")
 	if e.DataString() != "native focus lost" {
 		t.Fatal("string message lost")
+	}
+}
+
+// The documentation of Dispatch, Focus, Blur and Click promises that a Go
+// listener runs inside the call. Callers rely on that to decide which goroutine
+// may dispatch, so this test holds the promise.
+func TestDispatchRunsGoListenersNestedInsideTheCall(t *testing.T) {
+	probe := jsreentry.Install(t)
+	element := FromJS(js.Global().Get("Function").New("return new EventTarget()").Invoke())
+	hits := 0
+	listener := element.On("ping", func(Event) { hits++ })
+	defer listener.Dispose()
+	element.Dispatch("ping", false)
+	if hits != 1 {
+		t.Fatalf("the listener did not run before Dispatch returned: %d", hits)
+	}
+	if probe.Count() != 1 || probe.MaxDepth() != 2 {
+		t.Fatalf("a Go listener must run nested inside Dispatch: count=%d depth=%d", probe.Count(), probe.MaxDepth())
 	}
 }
