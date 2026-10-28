@@ -427,9 +427,15 @@ A TinyGo runtime also exports `gosx_batch_reserve`, `gosx_batch_apply`,
 exports on `__gosx_set_input_batch.exports`, and the engine context then writes the
 batch text into the runtime's memory and applies it with one export call. A call
 through `__gosx_set_input_batch` makes TinyGo start a goroutine for each batch,
-with a stack that is a block of the runtime's heap; the exports run on the stack
-the call already has. A loader that does not publish the exports, an older
-runtime, and the standard Go runtime all use the function, with the same result.
+with a stack that is a block of the runtime's heap; the exports run on the system
+stack, the one the call already has. The build links that stack at 256 KiB, the
+size of a goroutine stack: `gosx build` and `gosx build-runtime` pass
+`-ldflags=-extldflags=-zstack-size=262144` to TinyGo. The linker's default is
+64 KiB, and a batch that re-renders an island about 30 levels deep, or carries a
+JSON value about 105 levels deep, overflows that and ends the runtime until the
+page is reloaded, so a runtime you link yourself needs the same flag. A loader that does
+not publish the exports, an older runtime, and the standard Go runtime all use
+the function, with the same result.
 
 What this changes for page code:
 
@@ -443,7 +449,9 @@ What this changes for page code:
   the store holds.
 - A legacy name such as `$scene.event.selectedID` is announced under the sender's
   spelling as well as under its canonical name `$surface.event.selectedID`, so a
-  page that read the legacy name keeps a current copy.
+  page that read the legacy name keeps a current copy. A changed-only batch that
+  repeats the value announces the legacy spelling again only when the page's copy
+  may be out of date, so subscribers of the legacy name do not wake on every frame.
 - A malformed batch is refused by the runtime, not by `JSON.parse`. The error
   is an `Error` with the runtime's text (`error: decode shared signal batch:
   unexpected EOF`) where it used to be a `SyntaxError`, and a worker that relays

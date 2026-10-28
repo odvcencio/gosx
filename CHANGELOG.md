@@ -22,13 +22,14 @@
   writes the batch into the runtime's memory and applies it with one export
   call. A call through `__gosx_set_input_batch` makes TinyGo start a goroutine
   for the batch, with a stack that is a block of the garbage-collected heap; the
-  exports run on the stack the call already has. Before this change the heap of
-  the shipping runtimes doubled while batches arrived, to 144 MiB and more, and
-  a collection of such a heap froze the page for 0.1 to 16 seconds. Measured in
-  Node 26 on a shared x86 host, with batches recorded from Bon Voyage's live
-  ship, 2,000 batches after 200 warm-up batches, the median of three interleaved
-  runs of `client/js/signal-batch.bench.mjs --soak --compare`, origin/main then
-  this change:
+  exports run on the system stack, the one the call already has. Before this
+  change the heap of the shipping runtimes doubled while batches arrived, to
+  144 MiB and more, and a collection of such a heap froze the page for 0.1 to
+  16 seconds. Measured in Node 26 on a shared x86 host, with batches recorded
+  from Bon Voyage's live ship, 2,000 batches after 200 warm-up batches, the
+  median of three interleaved runs of
+  `client/js/signal-batch.bench.mjs --soak --compare`, origin/main then this
+  change:
 
   | runtime | batch | mean ms | p99 ms | max ms | WASM memory MiB |
   |---|---|---|---|---|---|
@@ -47,7 +48,10 @@
   subscriber the batch wakes writes another signal of the same batch, or sends a
   batch of its own, subscribers end on the stored value, where they could end on
   the batch's older text. A sender that spells a signal `$scene.event.x` is told
-  the value under that spelling as well as under `$surface.event.x`. A
+  the value under that spelling as well as under `$surface.event.x`; a
+  changed-only batch that repeats the value says it only when the page's copy
+  under the legacy spelling may be out of date, so the subscribers of that
+  spelling do not wake at the rate of the stream. A
   changed-only batch no longer repairs a value that only the page holds (one set
   with `__gosx_notify_shared_signal`): the runtime decides what changed, so send
   a different value, or write through the runtime, to replace it. A malformed
@@ -65,6 +69,25 @@
   (651 KiB after wasm-opt, inside its 700 KiB budget) and the monolith bootstrap
   by 2.8 KB; the JavaScript size budgets move by the measured amounts.
 
+  The exports apply the whole batch on the system stack, the decoding of its
+  JSON and the render of every island it wakes, so the build now sizes that
+  stack like a goroutine stack. `gosx build` and `gosx build-runtime` link
+  TinyGo runtimes with `-ldflags=-extldflags=-zstack-size=262144` (256 KiB).
+  `-stack-size` sizes goroutine stacks only, and the linker's default for the
+  system stack is 64 KiB. At 64 KiB, a batch that re-rendered an island about
+  30 levels deep, or carried a JSON value about 105 levels deep, overflowed the
+  stack, and every later call into the runtime failed with "memory access out of
+  bounds" until the page was reloaded; the call through
+  `__gosx_set_input_batch`, on a goroutine stack, took both. At 256 KiB the
+  exports take an island 128 levels deep and a JSON value 410 levels deep in
+  every published runtime, within one level of what the call takes. The
+  runtime's initial memory grows by 192 KiB (three pages to six). A runtime
+  that has the direct batch entry but was linked with the default system stack
+  fails on such a batch; build with `gosx build-runtime`, or pass the flag.
+  `make wasm-heap-gate` sends each published runtime batches that re-render an
+  island 32 and 100 levels deep and batches that carry a JSON value 128 and 256
+  levels deep (`client/js/signal-batch-depth.mjs`).
+
 - Clear the part of a goroutine's stack that a call from JavaScript used, when
   the call ends, in the TinyGo runtimes. TinyGo's collector scans memory
   conservatively, and words in the runtime's static data that read as heap
@@ -78,8 +101,9 @@
   768 and 1,152 MiB to 144 and 360 MiB. Every function the runtime hands to
   JavaScript now comes from `funcOf`, and `TestRuntimeFunctionsComeFromFuncOf`
   fails if one does not. The stack size stays 256 KiB: resolving a nested island
-  uses about 2.1 KiB of stack per level in the TinyGo runtime, so 256 KiB holds
-  about 120 levels and a smaller stack would hold fewer.
+  uses about 2 KiB of stack per level in the TinyGo runtime, so 256 KiB holds
+  about 130 levels and a smaller stack would hold fewer. The system stack that
+  the direct batch entry runs on is linked at 256 KiB too (see above).
 
 - Add `client/js/signal-batch.bench.mjs` and `make wasm-heap-gate`. The bench
   sends signal batches through the page's signal code to a real GoSX runtime in
@@ -89,7 +113,8 @@
   growing; `--soak --gate` fails a run whose memory grows in its second half.
   The gate runs three synthetic payloads (2, 8 and 30 KB) against every
   published production runtime in CI after the size budgets, and fails if a
-  runtime stops exporting the direct batch entry.
+  runtime stops exporting the direct batch entry or cannot take a batch that
+  re-renders a deep island or carries deeply nested JSON.
 
 - Add the Go contract for a spectral ocean. `scene.Ocean` gains `Spectrum` (a
   JONSWAP wind sea with an optional swell; `scene.OceanPreset` returns the sea
