@@ -24,8 +24,10 @@ func pageStore(thread string) js.Value {
   },
   setSignal(name, value) { this.store.set(name, value); this.notify(name); return ""; },
   setSignalsJSON(json) {
-    this.batches++;
     const values = JSON.parse(json);
+    // batches counts the writes of results. An async server also writes the mark
+    // of each call whose handler starts, to a ".started" signal.
+    if (Object.keys(values).some(name => !name.endsWith(".started"))) this.batches++;
     for (const [name, value] of Object.entries(values)) { this.store.set(name, value); this.notify(name); }
     return "";
   },

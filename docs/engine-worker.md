@@ -178,7 +178,9 @@ The rules:
    current value, unless the result signal shows it was already answered.
    Shared signals outlive an engine, so an engine that remounts does not run an
    old call again. The replay runs before `ServeCalls` returns on the main
-   thread, and a little later, as a message, in a worker.
+   thread, and a little later, as a message, in a worker. `ServeCallsAsync` also
+   skips a call whose handler an earlier engine started, and answers it
+   `interrupted` (see below).
 
 On a worker engine the page also watches each call. If no reply reaches the
 result signal within `CallOptions.Timeout` (default 10 s), the page writes
@@ -292,7 +294,20 @@ off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * 
   replaces the timeout when it comes. A client that keeps one call written at a
   time never queues calls in the engine.
 - Disposing the handle drops the queued calls and the reply of the running call.
-  It does not stop a running handler.
+  It does not stop a running handler. The browser revokes the engine's context
+  before it calls `Dispose`, so the engine cannot write a result then. It marks
+  each call before its handler runs, by writing the call's ID to
+  `$<channel>.started`. An engine that mounts again on the same signals (the page
+  replaced the engine, or a desktop host attached again) finds a call that has no
+  result and whose ID is at or below the mark. It answers that call with
+  `Error: "interrupted"` and does not run it, because the handler started and its
+  side effect may be done: a save or an order would otherwise happen twice, and
+  the first run may still be going. Calls queued behind it that never started run
+  as usual. Treat `interrupted` as an unknown outcome and check before you send
+  the call again. `ServeCalls` writes no mark: on the main thread and in a
+  worker, its handler runs inside the delivery callback, so it cannot be running
+  when the engine is disposed. Any script on the page can write
+  `$<channel>.started`; treat it as untrusted, like the call and result signals.
 - The handler runs on its own goroutine, never inside a call from JavaScript into
   Go. The engine's own writes are made so that they do not enter Go either. A
   write to a shared signal runs the engine's own subscriptions, which are Go

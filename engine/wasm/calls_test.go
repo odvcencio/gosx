@@ -16,6 +16,7 @@ type fakeCalls struct {
 	handler func(json.RawMessage)
 	results func(json.RawMessage)
 	writes  []json.RawMessage
+	marks   []json.RawMessage // writes to the started signal
 	signals []string
 	initial json.RawMessage
 	// resultInitial is the result signal's value when the engine subscribes.
@@ -49,9 +50,14 @@ func (f *fakeCalls) write(signal string, v any) error {
 		return err
 	}
 	f.mu.Lock()
+	defer f.mu.Unlock()
+	if strings.HasSuffix(signal, ".started") {
+		// The mark of a call whose handler is starting (ServeCallsAsync); not a result.
+		f.marks = append(f.marks, data)
+		return nil
+	}
 	f.writes = append(f.writes, data)
 	f.signals = append(f.signals, signal)
-	f.mu.Unlock()
 	return nil
 }
 

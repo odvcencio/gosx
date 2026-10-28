@@ -12,6 +12,10 @@ import (
 type callEntry struct {
 	id  uint64
 	raw json.RawMessage
+	// interrupted is set when the call was accepted: its handler started in an
+	// engine that is gone, so this engine answers it with an error and does not
+	// run it. See callServer.markStarted.
+	interrupted bool
 }
 
 // decodeCalls reads the value of a call signal. The value is one call (an

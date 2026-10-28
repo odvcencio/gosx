@@ -145,6 +145,9 @@ func (e *engineSide) Subscribe(signal string, h func(json.RawMessage)) (host.Han
 }
 
 func (e *engineSide) Write(signal string, v any) error {
+	if strings.HasSuffix(signal, ".started") {
+		return nil // the mark of a call whose handler starts (ServeCallsAsync); not a result
+	}
 	data, err := json.Marshal(v)
 	if err != nil {
 		return err

@@ -140,7 +140,13 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 // jsutil.AwaitPromise follows it.
 //
 // Disposing the returned HandleFunc drops the queued calls and the reply of the
-// call that is running; it does not stop a running handler.
+// call that is running; it does not stop a running handler. A transport that
+// revokes the engine's context before it calls Dispose (the browser does) cannot
+// take a write then, so the server writes the ID of each call to
+// "<channel>.started" before it runs the handler. A server that mounts later on
+// the same signals answers a call with no result whose ID is at or below that
+// mark with the error "interrupted" and does not run it again: its handler
+// started, and may have done its work. Calls that never started still run.
 func ServeCallsAsync[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
 	return ServeCallsAsyncOn(ctx.CallTransport(), channel, opts, handle)
 }
@@ -173,7 +179,7 @@ func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, ha
 
 	s := &callServer[A, R]{
 		tr: tr, handle: handle, async: async,
-		callSignal: callSignal, resultSignal: resultSignal,
+		callSignal: callSignal, resultSignal: resultSignal, startedSignal: callSignal + ".started",
 		log: replyLog{keep: opts.Recent, budget: opts.RecentBytes},
 	}
 	s.trimmer, _ = tr.(CallTrimmer)
@@ -209,8 +215,27 @@ func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, ha
 	if err != nil {
 		return nil, fmt.Errorf("serve calls on %s: %w", resultSignal, err)
 	}
+	// The mark comes between the two, so that a replay sees the result, then the
+	// mark, then the call.
+	offStarted := HandleFunc(func() {})
+	if async {
+		offStarted, err = tr.Subscribe(s.startedSignal, func(data json.RawMessage) {
+			var n uint64
+			if json.Unmarshal(data, &n) != nil {
+				return
+			}
+			s.mu.Lock()
+			s.started = max(s.started, n)
+			s.mu.Unlock()
+		})
+		if err != nil {
+			offResult.Dispose()
+			return nil, fmt.Errorf("serve calls on %s: %w", s.startedSignal, err)
+		}
+	}
 	off, err := tr.Subscribe(callSignal, s.deliver)
 	if err != nil {
+		offStarted.Dispose()
 		offResult.Dispose()
 		return nil, fmt.Errorf("serve calls on %s: %w", callSignal, err)
 	}
@@ -221,6 +246,7 @@ func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, ha
 		s.queue = nil
 		s.mu.Unlock()
 		off.Dispose()
+		offStarted.Dispose()
 		offResult.Dispose()
 	}, nil
 }
@@ -243,17 +269,19 @@ type callReply struct {
 // it returns (a write to a shared signal notifies this engine's own
 // subscriptions in the same call stack).
 type callServer[A, R any] struct {
-	tr           CallTransport
-	trimmer      CallTrimmer
-	handle       func(name string, args A) (R, error)
-	async        bool
-	callSignal   string
-	resultSignal string
-	zero         json.RawMessage
+	tr            CallTransport
+	trimmer       CallTrimmer
+	handle        func(name string, args A) (R, error)
+	async         bool
+	callSignal    string
+	resultSignal  string
+	startedSignal string // the mark of the call whose handler started last (async only)
+	zero          json.RawMessage
 
 	mu       sync.Mutex
 	last     uint64      // the highest ID accepted or reported as answered
 	seen     uint64      // the highest ID accepted, answered or seen by the page: Result.Seen
+	started  uint64      // the highest ID whose handler started, here or in an engine before this one
 	queue    []callEntry // accepted calls that have not started, in ID order
 	busy     bool        // a stack or goroutine is draining the queue
 	mailbox  bool        // the call signal has held a mailbox
@@ -276,6 +304,10 @@ func (s *callServer[A, R]) deliver(data json.RawMessage) {
 		if entry.id > s.last {
 			s.last = entry.id
 			s.seen = max(s.seen, entry.id)
+			// A call at or below the mark has no result, and its handler started: an
+			// engine before this one began it and went away. This engine ran no call
+			// above the mark yet, so no call it accepts now can be its own.
+			entry.interrupted = entry.id <= s.started
 			s.queue = append(s.queue, entry)
 		}
 	}
@@ -319,6 +351,13 @@ func (s *callServer[A, R]) drain() {
 		s.queue = s.queue[1:]
 		s.mu.Unlock()
 
+		if s.async && !entry.interrupted && !s.markStarted(entry.id) {
+			s.mu.Lock()
+			s.busy = false
+			s.mu.Unlock()
+			finished = true
+			return
+		}
 		reply := s.run(entry)
 
 		s.mu.Lock()
@@ -343,9 +382,37 @@ func (s *callServer[A, R]) drain() {
 	}
 }
 
+// markStarted writes the ID of a call whose handler is about to run, to the
+// started signal, and reports whether the handler may run: it may not once the
+// server is disposed.
+//
+// The browser revokes an engine's context before it calls Dispose, so a server
+// cannot write anything when it is disposed, and a handler that is still running
+// loses its reply. An engine that mounts on the same shared signals then finds
+// the call with no result. The mark is what it can tell by: it answers such a
+// call "interrupted" instead of running it again. A write that fails is not
+// retried, and the call runs unmarked.
+func (s *callServer[A, R]) markStarted(id uint64) (run bool) {
+	s.mu.Lock()
+	s.started = max(s.started, id)
+	s.mu.Unlock()
+	_ = s.tr.Write(s.startedSignal, id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.disposed
+}
+
 // run decodes one call, runs the handler and encodes the reply.
 func (s *callServer[A, R]) run(entry callEntry) callReply {
 	reply := callReply{id: entry.id}
+	if entry.interrupted {
+		// No handler runs: it started in an engine that is gone, and may have
+		// finished. The result still names the call, when its name decodes.
+		var head struct{ Name string }
+		_ = safeDecode(entry.raw, &head)
+		reply.name, reply.err, reply.value = head.Name, "interrupted", s.zero
+		return reply
+	}
 	var args A
 	var call engine.Call[json.RawMessage]
 	if err := safeDecode(entry.raw, &call); err != nil {
