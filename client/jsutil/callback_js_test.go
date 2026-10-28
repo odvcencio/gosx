@@ -302,9 +302,51 @@ func TestCallFromManyGoroutinesRunsEveryCallbackOnceWithoutNesting(t *testing.T)
 		t.Fatalf("calls into Go nested to depth %d", probe.MaxDepth())
 	}
 	theGate.mu.Lock()
-	active := theGate.active
+	active := len(theGate.frames)
 	theGate.mu.Unlock()
 	if active != 0 {
 		t.Fatalf("the gate was left with %d active calls", active)
+	}
+}
+
+// Calls from different goroutines can overlap: one goroutine's JavaScript call
+// has returned and it has not yet finished its Call when another goroutine starts
+// its own. The test makes that order by hand. Each Call runs only the calls
+// recorded during its own JavaScript call, whichever ends first, and the gate
+// forwards again once both have ended.
+func TestOverlappingCallsEachRunOnlyTheirOwnRecordedCalls(t *testing.T) {
+	var order []string
+	a := NewCallback(func(js.Value, []js.Value) { order = append(order, "a") })
+	b := NewCallback(func(js.Value, []js.Value) { order = append(order, "b") })
+	defer a.Release()
+	defer b.Release()
+	g := &theGate
+
+	first := g.begin()
+	a.Value().Invoke() // the JavaScript call of the first Call records a
+	second := g.begin()
+	b.Value().Invoke() // the JavaScript call of the second Call records b
+	g.end(first)       // the first Call ends first, though the second began later
+	if got := strings.Join(order, " "); got != "a" {
+		t.Fatalf("the first Call ran %q, want only a", got)
+	}
+	b.Value().Invoke() // the second Call's trap is still in place: recorded again
+	if got := strings.Join(order, " "); got != "a" {
+		t.Fatalf("after the first Call ended the second Call's trap was gone: b ran at once: %q", got)
+	}
+	g.end(second)
+	if got := strings.Join(order, " "); got != "a b b" {
+		t.Fatalf("after both ended: %q, want a b b", got)
+	}
+
+	// Both Calls have ended: a call from JavaScript enters Go at once.
+	entered := make(chan struct{}, 1)
+	c := NewCallback(func(js.Value, []js.Value) { entered <- struct{}{} })
+	defer c.Release()
+	js.Global().Call("setTimeout", c.Value(), 0)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the gate still recorded after both Calls ended")
 	}
 }

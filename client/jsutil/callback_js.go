@@ -48,23 +48,35 @@ type Callback struct {
 // The Proxy of each Callback shares one handler, and JavaScript reads the
 // handler's apply trap at every call. While Go is not inside a Call the trap is
 // Reflect.apply, which runs the Go function. While Go is inside a Call the trap
-// is queue.push, which stores (function, this, arguments) for Call to run
-// later. Both are native functions, so the gate needs no eval, and no Go runs
-// when the trap is queue.push.
+// is the push function of that Call's frame, which stores (function, this,
+// arguments) in the frame's queue for Call to run later. Both are native
+// functions, so the gate needs no eval, and no Go runs when the trap is a push
+// function.
+//
+// Each Call owns one frame. The JavaScript calls of different Calls form a stack
+// (a call made inside another call is on top of it), so the trap points to the
+// innermost frame, and a frame holds only the calls recorded during its own
+// JavaScript call.
 type gate struct {
 	once  sync.Once
 	ready bool // Proxy and Reflect.apply exist
 
 	proxy   js.Value // the Proxy constructor
-	handler js.Value // shared by every Proxy; its apply trap is forward or push
+	handler js.Value // shared by every Proxy; its apply trap is forward or a frame's push
 	forward js.Value // Reflect.apply
-	push    js.Value // queue.push, bound to queue
-	queue   js.Value // (function, this, arguments) triples of the deferred calls
+	array   js.Value // the Array constructor, for new frames
 
 	mu     sync.Mutex
-	active int // Calls whose JavaScript call has started and whose trap restore has not run
+	frames []*frame // the Calls in progress, innermost last
+	free   []*frame // empty frames, kept for the next Call
 	nextID uint32
 	byID   map[uint32]*Callback
+}
+
+// frame is the record of one Call.
+type frame struct {
+	queue js.Value // (function, this, arguments) triples of the deferred calls
+	push  js.Value // queue.push, bound to queue
 }
 
 var theGate gate
@@ -80,8 +92,7 @@ func (g *gate) setup() {
 		g.forward = reflect.Get("apply")
 		g.handler = global.Get("Object").New()
 		g.handler.Set("apply", g.forward)
-		g.queue = global.Get("Array").New()
-		g.push = g.queue.Get("push").Call("bind", g.queue)
+		g.array = global.Get("Array")
 		g.ready = true
 	})
 }
@@ -153,50 +164,75 @@ func (c *Callback) Release() {
 // Go's js/wasm runtime can stop the program (see the package documentation).
 //
 // A recorded callback may call Call itself. The calls that inner Call records
-// run before the inner Call returns. Callbacks made with js.FuncOf are not
-// deferred and still enter Go inside the call.
+// run before the inner Call returns. Each Call runs only the calls recorded
+// during its own JavaScript call, also when Calls from different goroutines
+// overlap. Callbacks made with js.FuncOf are not deferred and still enter Go
+// inside the call.
 func Call(target js.Value, method string, args ...any) js.Value {
 	g := &theGate
-	start, ok := g.begin()
-	if !ok {
+	f := g.begin()
+	if f == nil {
 		return target.Call(method, args...)
 	}
-	defer g.end(start)
+	defer g.end(f)
 	return target.Call(method, args...)
 }
 
-// begin switches the apply trap to queue.push, unless no Callback is live. It
-// returns the queue length at which this Call's recorded calls start. Calls
-// that overlap or nest, which happens only when a function made with js.FuncOf
-// enters Go inside a Call, record after the calls of the Call they are inside,
-// so each Call runs only the calls from its own start on.
-func (g *gate) begin() (start int, ok bool) {
+// begin gives the Call a frame and points the apply trap at it. It returns nil
+// when no Callback is live, and the Call is then a plain call.
+func (g *gate) begin() *frame {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if len(g.byID) == 0 {
-		return 0, false
+		return nil
 	}
-	g.active++
-	if g.active == 1 {
-		g.handler.Set("apply", g.push)
+	var f *frame
+	if n := len(g.free); n > 0 {
+		f, g.free = g.free[n-1], g.free[:n-1]
 	} else {
-		start = g.queue.Length()
+		queue := g.array.New()
+		f = &frame{queue: queue, push: queue.Get("push").Call("bind", queue)}
 	}
-	return start, true
+	g.frames = append(g.frames, f)
+	g.handler.Set("apply", f.push)
+	return f
 }
 
-// end restores the trap when the last Call ends, then runs this Call's recorded
-// calls. It runs when the JavaScript call panics too, so a failed call cannot
-// leave the trap on queue.push, where every later call from JavaScript would be
-// lost.
-func (g *gate) end(start int) {
+// end takes the Call's frame off the stack, points the apply trap at the frame
+// below it (or at Reflect.apply when there is none), and runs the calls the
+// frame recorded. It runs when the JavaScript call panics too, so a failed call
+// cannot leave the trap on a push function, where every later call from
+// JavaScript would be lost.
+func (g *gate) end(f *frame) {
 	g.mu.Lock()
-	g.active--
-	if g.active == 0 {
+	for i := len(g.frames) - 1; i >= 0; i-- {
+		if g.frames[i] == f {
+			g.frames = append(g.frames[:i], g.frames[i+1:]...)
+			break
+		}
+	}
+	if n := len(g.frames); n > 0 {
+		g.handler.Set("apply", g.frames[n-1].push)
+	} else {
 		g.handler.Set("apply", g.forward)
 	}
 	g.mu.Unlock()
-	g.drain(start)
+
+	// The frame is empty and unused once take returns, so it can serve the next
+	// Call before the callbacks below run.
+	calls := g.take(f)
+	g.mu.Lock()
+	g.free = append(g.free, f)
+	g.mu.Unlock()
+
+	for _, call := range calls {
+		g.mu.Lock()
+		c := g.byID[call.id]
+		g.mu.Unlock()
+		if c != nil {
+			c.fn(call.this, call.args)
+		}
+	}
 }
 
 type deferredCall struct {
@@ -205,42 +241,26 @@ type deferredCall struct {
 	args []js.Value
 }
 
-// drain runs the calls recorded from start on, until none is left. A callback
-// that makes another Call has that Call's calls run first, and calls that arrive
-// while a batch runs form the next batch.
-func (g *gate) drain(start int) {
-	for {
-		n := g.queue.Length()
-		if n-start < 3 {
-			return
-		}
-		for _, call := range g.take(start, n) {
-			g.mu.Lock()
-			c := g.byID[call.id]
-			g.mu.Unlock()
-			if c != nil {
-				c.fn(call.this, call.args)
-			}
-		}
+// take moves the calls out of the frame's queue and empties the queue.
+func (g *gate) take(f *frame) []deferredCall {
+	n := f.queue.Length()
+	if n < 3 {
+		return nil
 	}
-}
-
-// take moves the recorded values from start up to n out of the queue.
-func (g *gate) take(start, n int) []deferredCall {
-	calls := make([]deferredCall, 0, (n-start)/3)
-	for i := start; i+2 < n; i += 3 {
-		function := g.queue.Index(i)
-		arguments := g.queue.Index(i + 2)
+	calls := make([]deferredCall, 0, n/3)
+	for i := 0; i+2 < n; i += 3 {
+		function := f.queue.Index(i)
+		arguments := f.queue.Index(i + 2)
 		args := make([]js.Value, arguments.Length())
 		for j := range args {
 			args[j] = arguments.Index(j)
 		}
 		calls = append(calls, deferredCall{
 			id:   uint32(function.Get(callbackKey).Int()),
-			this: g.queue.Index(i + 1),
+			this: f.queue.Index(i + 1),
 			args: args,
 		})
 	}
-	g.queue.Set("length", start)
+	f.queue.Set("length", 0)
 	return calls
 }
