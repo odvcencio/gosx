@@ -223,7 +223,7 @@ type nativeRecordingDialer struct {
 	dialed  atomic.Bool
 }
 
-func (d *nativeRecordingDialer) Dial(ctx context.Context, rawURL string, header http.Header) (conn, error) {
+func (d *nativeRecordingDialer) Dial(ctx context.Context, rawURL string, header map[string][]string) (conn, error) {
 	if !d.dialed.CompareAndSwap(false, true) {
 		<-ctx.Done()
 		return nil, ctx.Err()

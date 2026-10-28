@@ -5,17 +5,19 @@ package hubclient
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"m31labs.dev/gosx/hub/socket"
 )
 
 // Browser handshakes cannot set request headers or compression options.
+//
+// Nothing in the js/wasm build of this package may import net/http.
+// browser_deps_test.go fails if it does.
 func newDefaultDialer(bool) dialer { return browserDialer{} }
 
 type browserDialer struct{}
 
-func (browserDialer) Dial(ctx context.Context, rawURL string, _ http.Header) (conn, error) {
+func (browserDialer) Dial(ctx context.Context, rawURL string, _ map[string][]string) (conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

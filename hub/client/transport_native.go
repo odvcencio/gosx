@@ -32,7 +32,7 @@ type nativeDialer struct {
 	enableCompression bool
 }
 
-func (d nativeDialer) Dial(ctx context.Context, rawURL string, header http.Header) (conn, error) {
+func (d nativeDialer) Dial(ctx context.Context, rawURL string, header map[string][]string) (conn, error) {
 	dialer := *websocket.DefaultDialer
 	dialer.EnableCompression = d.enableCompression
 	// Gorilla observes cancellation while dialing TCP/TLS, but proxy CONNECT
@@ -68,7 +68,9 @@ func (d nativeDialer) Dial(ctx context.Context, rawURL string, header http.Heade
 			stopCancel()
 		}
 	}()
-	ws, _, err := dialer.DialContext(ctx, rawURL, header)
+	// gorilla takes an http.Header. The conversion shares header's map and
+	// copies nothing, so gorilla receives the map that Options.Header holds.
+	ws, _, err := dialer.DialContext(ctx, rawURL, http.Header(header))
 	if err != nil {
 		return nil, err
 	}

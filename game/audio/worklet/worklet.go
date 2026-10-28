@@ -1,6 +1,10 @@
 // Package worklet supplies GoSX's browser processor for WASM audio reactors.
 // A backend supplies opaque project images and a declarative command layout;
 // synthesis and image-format validation remain backend responsibilities.
+//
+// Path, Source, ProcessorName and the Backend types build everywhere. Handler,
+// which serves the processor from a server, builds only outside js/wasm, so
+// importing this package does not add net/http to a browser module.
 package worklet
 
 import (
@@ -9,9 +13,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"path"
-	"time"
 )
 
 const ProcessorName = "gosx-wasm-audio"
@@ -27,26 +28,6 @@ var digest = fmt.Sprintf("%x", sha256.Sum256(source))
 func Path() string { return "worklet/wasm-processor." + digest[:16] + ".js" }
 
 func Source() []byte { return bytes.Clone(source) }
-
-// Handler serves only the versioned processor, including HEAD and ETags.
-func Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if path.Clean("/"+r.URL.Path) != "/"+Path() {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		w.Header().Set("ETag", `"`+digest+`"`)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		http.ServeContent(w, r, Path(), time.Time{}, bytes.NewReader(source))
-	})
-}
 
 // Backend describes the gosx_audio reactor ABI without teaching the processor
 // an engine's project format. ExportPrefix defaults to "gosx_audio_". Reactors

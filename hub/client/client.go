@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"runtime"
 	"strconv"
@@ -31,7 +30,13 @@ type Options struct {
 	// Header carries additional request headers for the native (gorilla)
 	// transport. The browser transport ignores it — the WebSocket API does
 	// not allow custom request headers.
-	Header http.Header
+	//
+	// Header is a plain map, not http.Header, so the js/wasm build of this
+	// package does not link net/http (and with it crypto/tls and crypto/x509).
+	// An http.Header value still assigns to it, because both types have the
+	// same underlying type. The field has none of http.Header's methods: to use
+	// Set or Add, fill an http.Header first and assign that.
+	Header map[string][]string
 	// Backoff controls reconnect timing. The zero value is DefaultBackoff.
 	Backoff Backoff
 	// ResumeParam is the URL query parameter that carries a non-empty resume

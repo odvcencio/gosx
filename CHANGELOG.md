@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Make `DiffScene` and `DiffCommands` cheaper on a scene that did not change.
+  In `BenchmarkDiffSceneUnchangedMeshes` (120 meshes, 164,082 indices) an
+  unchanged diff drops from about 6 ms to 2 ms natively and from 22 ms to 5 ms
+  under `GOOS=js GOARCH=wasm`. The comparison reads integer, string and
+  index-pair slices and `map[string]any` shader layouts without reflection, and
+  skips a slice or map that both scenes share when it holds only booleans,
+  integers or strings. Answers do not change. A shared float slice or
+  interface map is still read, because a NaN, an infinity, or any other value
+  `encoding/json` rejects never compares equal, even to itself.
+
 - Build the TinyGo runtime with 256 KB goroutine stacks (`-stack-size=256KB`).
   TinyGo's 64 KiB default cannot grow, and resolving deeply nested island
   trees during a JS event overran it, corrupting the WASM heap ("memory access

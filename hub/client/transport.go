@@ -2,7 +2,6 @@ package hubclient
 
 import (
 	"context"
-	"net/http"
 	"sync"
 )
 
@@ -65,11 +64,12 @@ type conn interface {
 // dialer starts a connection to rawURL. Header carries additional request
 // headers for transports that support them; the browser WebSocket transport
 // ignores it, because the browser WebSocket API does not allow custom
-// request headers.
+// request headers. Header is a plain map rather than http.Header so that this
+// file, which every build compiles, does not import net/http.
 //
 // Dial observes ctx cancellation. Native Dial waits for the handshake and may
 // return an error; browser Dial returns a pending socket and reports handshake
 // failures asynchronously through its Events channel.
 type dialer interface {
-	Dial(ctx context.Context, rawURL string, header http.Header) (conn, error)
+	Dial(ctx context.Context, rawURL string, header map[string][]string) (conn, error)
 }

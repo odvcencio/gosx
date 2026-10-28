@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -287,7 +286,9 @@ func awaitLifecycle(t *testing.T, done <-chan struct{}, what string) {
 
 type lifecycleDialer func() (conn, error)
 
-func (d lifecycleDialer) Dial(context.Context, string, http.Header) (conn, error) { return d() }
+func (d lifecycleDialer) Dial(context.Context, string, map[string][]string) (conn, error) {
+	return d()
+}
 
 type pendingConn struct {
 	events  chan frameEvent

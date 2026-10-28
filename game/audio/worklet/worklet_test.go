@@ -3,11 +3,14 @@ package worklet
 import (
 	"bytes"
 	"compress/gzip"
-	"net/http"
-	"net/http/httptest"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 )
 
+// The HTTP half of the processor asset checks lives in handler_test.go, which
+// builds only where Handler does. This half runs in every build, including
+// js/wasm, where Source and Path are the whole asset API.
 func TestProcessorAsset(t *testing.T) {
 	data := Source()
 	if len(data) > 24*1024 {
@@ -24,27 +27,13 @@ func TestProcessorAsset(t *testing.T) {
 	if bytes.Equal(data, Source()) {
 		t.Fatal("caller can mutate the shared processor")
 	}
-	h := Handler()
-	r := httptest.NewRecorder()
-	h.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/"+Path(), nil))
-	if r.Code != http.StatusOK || !bytes.Equal(r.Body.Bytes(), Source()) || r.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
-		t.Fatalf("asset response %d %v", r.Code, r.Header())
-	}
-	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		req := httptest.NewRequest(method, "/"+Path(), nil)
-		req.Header.Set("If-None-Match", r.Header().Get("ETag"))
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
-			t.Fatalf("%s conditional response %d", method, rec.Code)
-		}
-	}
-	for _, name := range []string{"processor.js", "worklet/wasm-processor.stale.js", "../worklet.go"} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/"+name, nil))
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("unexpected asset %s: %d", name, rec.Code)
-		}
+}
+
+func TestPathIsContentAddressed(t *testing.T) {
+	sum := sha256.Sum256(Source())
+	want := "worklet/wasm-processor." + hex.EncodeToString(sum[:])[:16] + ".js"
+	if got := Path(); got != want {
+		t.Fatalf("Path() = %q, want %q", got, want)
 	}
 }
 
