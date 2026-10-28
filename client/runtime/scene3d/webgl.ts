@@ -7634,7 +7634,7 @@
   }
 
   function createScenePBRRenderer(gl, canvas) {
-    let selectiveBloom = false;
+    let selectiveBloom = false, lastPostEffects: any[] | null = null;
 
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -9050,7 +9050,7 @@
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       postEffects = sceneSpecularBloomEffects(bundle, postEffects, "webgl", hasLineData || hasPointsData || !!(bundle.waterSystems && bundle.waterSystems.length) || !!(bundle.environment && (bundle.environment.ocean || bundle.environment.clouds)) || !gl.getExtension("EXT_color_buffer_float"), canvas.parentNode);
-      selectiveBloom = sceneSpecularBloomRequested(postEffects);
+      lastPostEffects = postEffects; selectiveBloom = sceneSpecularBloomRequested(postEffects);
       var authoredPostEffects = postEffects.length > 0;
       var postFXMaxPixels = typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
       var hasTransmission = sceneTransmissionPresent(bundle);
@@ -11173,6 +11173,9 @@
       pollPerformanceSample: frameTimer.sample,
       getPerformanceTimingStatus: frameTimer.timingStatus,
       suppressedPostFXAddsFXAA: function(kept: boolean) { return scenePBRSuppressedFXAA(gl, kept === true); },
+      // The chain the last frame drew from the author's effects, after the atmosphere tier and the draw path dropped what they cannot run.
+      // The mount weighs it, not its own chain, to decide whether suppression takes work off the frame. Null before the first frame.
+      drawnPostEffects: function() { return lastPostEffects; },
       renderSurfaces: renderSurfaces,
       dispose: function() { frameTimer.dispose(); dispose(); },
       diagnostics: diagnostics,

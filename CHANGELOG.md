@@ -11,18 +11,28 @@
   through its own MSAA or the private FXAA fallback, gets an FXAA pass after the
   tone mapping. A scene with no tone-mapping effect still sheds its whole post
   chain. The controller suppresses only when that takes work off the frame. It
-  adds up what the frame will draw, including the FXAA pass the renderer appends
-  (`suppressedPostFXAddsFXAA` reports it; WebGPU appends none). That pass reads
-  nine texels per pixel where a vignette, a color grade or film grain reads one,
-  so a chain whose only extra effects are single-pass color effects keeps them
-  on a canvas that gets the FXAA pass, instead of trading them for a costlier
-  pass. A chain that holds only tone mapping and FXAA, or whose other effects
-  the survival tier already dropped, does not suppress either. In these cases
-  suppression spends no quality revision, starts no cooldown and emits no
-  transition event. `data-gosx-scene3d-postfx` reads `enabled` while a
-  tone-mapping effect remains. A canvas with its own MSAA now compiles the FXAA
-  program at startup, with the other post programs, instead of on the first
-  suppressed frame.
+  compares the post chain the WebGL2 renderer drew last (`drawnPostEffects`)
+  with the chain suppression leaves plus the FXAA pass the renderer appends
+  (`suppressedPostFXAddsFXAA` reports it; WebGPU appends none). The drawn chain
+  leaves out what the renderer drops: god rays and film grain at the survival
+  tier, god rays with no physical sky, and a specular bloom the scene cannot
+  draw. A post effect kind that no renderer knows is never drawn and weighs
+  nothing. The FXAA pass reads nine texels per pixel where a vignette, a color
+  grade or film grain reads one, so a chain whose only extra effects are
+  single-pass color effects keeps them on a canvas that gets the FXAA pass,
+  instead of trading them for a costlier pass. A bloom drawn below the default
+  scale of 0.5 costs about what the FXAA pass costs, so it stays too. A chain
+  that holds only tone mapping and FXAA, or whose other effects the survival
+  tier removes or the renderer does not draw, does not suppress either. In these
+  cases suppression spends no quality revision, starts no cooldown and emits no
+  transition event. WebGPU reports no chain, so there the controller weighs the
+  effects the scene holds (but not kinds no renderer knows). A scene whose only
+  heavy effects are god rays, film grain or an unsupported specular bloom can
+  still take the last step there, which costs no GPU time because WebGPU appends
+  no FXAA. `data-gosx-scene3d-postfx` reads `enabled` while a tone-mapping
+  effect remains. A canvas with its own MSAA now compiles the FXAA program at
+  startup, with the other post programs, instead of on the first suppressed
+  frame.
 
   The suppressed frame keeps an HDR render target, a full-screen tone-mapping
   pass and, where antialiasing is kept, an FXAA pass, which the old suppressed
@@ -35,10 +45,18 @@
   antialiasing the suppressed frame is tone mapping alone, which took 12 percent
   (integrated GPU) to 18 percent (RTX) more than the old direct frame. On the
   fallback canvas, tone mapping with FXAA took 7 to 15 percent less than the
-  survival chain of bloom, tone mapping and FXAA, and 1 to 7 percent less than
-  bloom and tone mapping with no authored FXAA. It took 3 to 8 percent more than
-  a vignette with tone mapping or a color grade with tone mapping, which is why
-  the controller leaves those chains alone. MSAA canvases, WebGPU rendering of a
+  survival chain of bloom, tone mapping and FXAA, and 1 to 12 percent less than
+  bloom at its default scale with tone mapping and no authored FXAA. It took 3
+  to 8 percent more than a vignette with tone mapping or a color grade with tone
+  mapping, which is why the controller leaves those chains alone. The bloom
+  scale matters. On the integrated GPU, swapping bloom and tone mapping for tone
+  mapping and FXAA took 1 to 3 percent less GPU time at the default scale of 0.5,
+  but between 0.4 percent less and 2 percent more at scale 0.35, and 1 to 4
+  percent more at 0.25. On the RTX the swap took 11 to 12 percent less at both
+  0.5 and 0.35. The controller follows the integrated GPU, which is where it
+  runs, so a bloom below the default scale weighs what FXAA weighs. Mip bloom
+  ignores the scale: the swap took 4 to 5 percent less on the integrated GPU
+  and 21 to 23 percent less on the RTX. MSAA canvases, WebGPU rendering of a
   suppressed scene, film grain, and Bon Voyage were not measured.
 
 - Add the Go contract for a spectral ocean. `scene.Ocean` gains `Spectrum` (a

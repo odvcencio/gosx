@@ -210,9 +210,9 @@
         return;
       }
       Object.assign(waterRenderer, {
-        pollPerformanceSample: worldRenderer.pollPerformanceSample,
-        getPerformanceTimingStatus: worldRenderer.getPerformanceTimingStatus,
+        pollPerformanceSample: worldRenderer.pollPerformanceSample, getPerformanceTimingStatus: worldRenderer.getPerformanceTimingStatus,
         getFrameTiming: worldRenderer.getFrameTiming, suppressedPostFXAddsFXAA: worldRenderer.suppressedPostFXAddsFXAA,
+        drawnPostEffects: worldRenderer.drawnPostEffects,
       });
     }
     if (Array.isArray(sceneDoc?.models) && sceneDoc.models.length || environment && (environment.sky || environment.ocean)) ensureWorld();
