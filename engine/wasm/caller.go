@@ -16,9 +16,22 @@ type Reply struct {
 	// Value is the JSON of the handler's result. It is nil when Err is set.
 	Value []byte
 	// Err is empty on success. Otherwise it is the handler's error text or one
-	// of the codes the page and the client write: "timeout", "worker-crashed",
-	// "reply-lost" (the reply fell out of Result.Recent before the client read
-	// it), "no-writer", "bad-call:..." and "bad-args:...".
+	// of the codes the page, the engine and the client write:
+	//
+	//   - "timeout" and "worker-crashed" come from the page.
+	//   - "bad-call:..." and "bad-args:..." mean the engine could not decode the
+	//     call. No handler ran.
+	//   - "overwritten" and "not-started: ..." mean that no handler ran for the
+	//     call. It is safe to send again.
+	//   - "interrupted" means that the call's handler started in an engine that
+	//     went away, so it may have done its work. Check before sending the call
+	//     again.
+	//   - "reply-lost" means that the client cannot tell how the call ended: its
+	//     entry left Result.Recent before the client read it, or the entry says
+	//     that the call finished without an error but its value did not fit
+	//     CallOptions.RecentBytes. The handler may have run. Do not send a call
+	//     again that is not safe to repeat.
+	//   - "no-writer" means the client has no way to write a call.
 	Err string
 }
 

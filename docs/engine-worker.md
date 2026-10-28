@@ -162,11 +162,19 @@ The rules:
    your ID in `Recent` (the last `CallOptions.Recent` replies, default 8). Each
    entry has the ID and the error, and has the `Value` while the values of the
    newest entries fit in `CallOptions.RecentBytes` (default 8 KiB). `Kept` is
-   true when the entry has its `Value`. A reply with no error and `Kept` false is
-   lost; treat it as failed. An island cannot tell it from a reply whose value is
-   zero by looking at `Value`, because a key that is missing decodes as the zero
-   value, so test `Kept`. The page writes `Recent` entries for its own errors
-   without `Kept`; they have an `Error`.
+   true when the entry has its `Value`. A reply with no error and `Kept` false
+   finished without an error, but its value is gone: it did not fit
+   `CallOptions.RecentBytes`, or `RecentBytes` is negative. The call ran, so do not
+   send it again if it is not safe to repeat. Raise `RecentBytes`, or keep one
+   call in flight so that the call's own result carries the value, if you need it.
+   An island cannot tell such an entry from a reply whose value is zero by looking
+   at `Value`, because a key that is missing decodes as the zero value, so test
+   `Kept`. The page writes `Recent` entries for its own errors without `Kept`; they
+   have an `Error`. Three more errors mean that no result of the handler exists.
+   `overwritten` and `not-started: ...` say that no handler ran (see rule 2 and
+   `ServeCallsAsync` below): the call is safe to send again. `interrupted` says that
+   a handler started in an engine that went away and may have done its work: check
+   before you send the call again.
 
    3a. `Seen` is the highest call ID that the engine accepted or the page
    watched. The engine writes it with every result, and the page writes it with
