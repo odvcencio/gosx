@@ -39,6 +39,11 @@ const (
 
 // CallTransport is what ServeCalls needs from the page. Each transport
 // supplies one: the js/wasm engine context, or the desktop IPC bridge.
+//
+// A transport carries any signal name. Besides the call and result signals,
+// ServeCallsAsync subscribes to and writes "<call signal>.started" (see
+// ServeCallsAsync), so a transport that passes only the first two names breaks
+// the guard against running a call twice after a remount.
 type CallTransport interface {
 	// Subscribe also delivers the signal's current value once, so a call
 	// written before the subscription is not lost.
