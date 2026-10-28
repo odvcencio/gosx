@@ -106,6 +106,15 @@ jobs:
       - name: Format check
         run: make fmt-check
 
+      # The deterministic linter finds unrounded float products and other
+      # cross-platform hazards in every package marked //gosx:deterministic
+      # (DET_LINT_PKGS in the Makefile). It does not depend on the architecture,
+      # so it gates every pull request here, drafts included. determinism-arm64
+      # runs it again, but only when a path it lists changes, and its result is
+      # not part of the `test` aggregate.
+      - name: Deterministic linter
+        run: make lint-deterministic
+
       - name: Danmuji generated spec check
         run: make verify-danmuji
 
