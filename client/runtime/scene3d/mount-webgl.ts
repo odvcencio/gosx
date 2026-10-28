@@ -1073,11 +1073,8 @@
   function sceneApplyModelRenderFlags(instanced, model) {
     if (!instanced || !model) return;
     if (model.parentNode) instanced.parentNode = model.parentNode;
-    if (typeof model.castShadow === "boolean") {
-      instanced.castShadow = model.castShadow;
-    }
-    if (typeof model.receiveShadow === "boolean") {
-      instanced.receiveShadow = model.receiveShadow;
+    for (const key of ["castShadow", "receiveShadow", "planarReflection"]) {
+      if (typeof model[key] === "boolean") instanced[key] = model[key];
     }
   }
 

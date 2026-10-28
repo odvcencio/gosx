@@ -793,6 +793,39 @@ test("early rigid imported cohorts fail closed for unsafe and backend-fallback r
   h.renderer.dispose();
 });
 
+test("a model's planar-mirror participation reaches every mesh object it makes, and a model that says nothing participates", () => {
+  const env = importedMeshRuntime();
+  const raw = () => vm.runInContext(`({
+    id: "dome", kind: "gltf-mesh", wireframe: false, material: { kind: "standard", color: "#5b7580" },
+    vertices: { count: 3, positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      uvs: new Float32Array([0, 0, 1, 0, 0, 1]), tangents: new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]) } })`, env.context);
+  const hooks = env.context.__meshTest, api = env.context.__gosx_scene3d_api;
+  const modelWith = (extra) => hooks.normalize(vm.runInContext(`(${JSON.stringify(Object.assign({ id: "sky", scaleX: 1, scaleY: 1, scaleZ: 1 }, extra))})`, env.context), 0);
+  // The model record keeps what its author wrote; absent stays absent so that it overrides nothing.
+  assert.deepEqual([modelWith({}).planarReflection, modelWith({ planarReflection: true }).planarReflection, modelWith({ planarReflection: false }).planarReflection], [undefined, true, false]);
+  const objects = [undefined, true, false].map((value) => hooks.instantiate(raw(), modelWith(value === undefined ? {} : { planarReflection: value }), "sky", 0, []));
+  assert.deepEqual(objects.map((object) => object.planarReflection), [true, true, false], "the mesh object takes the model's value; no value means participates");
+  const bundle = api.createSceneRenderBundle(320, 180, "#000000", { x: 0, y: 0, z: 6, fov: 72, near: .05, far: 128 },
+    objects.map((object, index) => Object.assign(object, { id: "sky-" + index })), [], [], [], [], {}, 0, [], [], [], [], [], 0, false, { retainedGeometry: true });
+  assert.deepEqual(Array.from(bundle.meshObjects, (record) => record.planarReflection), [true, true, false]);
+  assert.deepEqual(Array.from(api.sceneReflectOpaqueList(bundle.meshObjects, bundle.materials), (record) => record.id), ["sky-0", "sky-1"], "the mirror leaves out the dome that opts out");
+});
+
+for (const fresh of [true, false]) {
+  test(`${fresh ? "source" : "generated"} early rigid imported cohorts keep meshes with different planar-mirror participation apart`, () => {
+    // Two of four otherwise identical meshes opt out of the sea's planar mirror. One record cannot say both, so they form two cohorts.
+    const h = earlyRigidFixture(fresh, [1,2,3,4], {0:{planarReflection:false}, 1:{planarReflection:false}});
+    const split = h.build().meshObjects.filter(object=>object._rigidImportedBatch===true);
+    assert.deepEqual(Array.from(split,record=>[record.planarReflection,record.instanceCount]).sort(), [[false,2],[true,2]]);
+    assert.deepEqual(Array.from(h.api.sceneReflectOpaqueList(split,[]),record=>record.planarReflection), [true],
+      "the mirror draws the participating cohort only");
+    // Without the key every mesh participates and the four share one cohort again.
+    const plain = earlyRigidFixture(fresh, [1,2,3,4]).build().meshObjects.filter(object=>object._rigidImportedBatch===true);
+    assert.deepEqual(Array.from(plain,record=>[record.planarReflection,record.instanceCount]), [[true,4]]);
+    h.renderer.dispose();
+  });
+}
+
 test("early rigid imported cohorts require an explicit shared-appearance contract", () => {
   const h=earlyRigidFixture(true,[0,1],{0:{_rigidSharedAppearance:false},1:{_rigidSharedAppearance:false}});
   const ordinary=h.build();

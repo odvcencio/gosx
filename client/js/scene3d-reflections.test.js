@@ -52,179 +52,208 @@ test("WebGL planar fallback draws built-in PBR outside the walking camera cull",
  h.renderer.render(b,{width:320,height:180});assert.ok(gl.ops.some(op=>op[0]==="drawElements"));assert.equal(b.camera.y,1.7);h.renderer.dispose();assert.deepEqual(h.warnLog,[]);
 });
 
-// The sea's mirror and sky bodies. A sky body (a mesh whose bounds centre is more
-// than 800 m from the camera and whose lowest point is more than 8 degrees above
-// the sea, such as a moon built as geometry) is not mirrored: its image lands in
-// the near water as a hard-edged disc, and the sky already supplies the glint.
-// Near geometry, and anything that touches the sea, still reflects.
-test("the sea's mirror keeps near and low geometry and leaves out sky bodies: a mesh far away and high in the sky is not drawn into the planar reflection", async () => {
- const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
- const box = (x, y, z, r) => ({ minX: x - r, maxX: x + r, minY: y - r, maxY: y + r, minZ: z - r, maxZ: z + r });
- const ship = { id: "ship", bounds: box(0, 20, -120, 40) }, moon = { id: "moon", bounds: box(80, 380, -1330, 60) };
- const mountain = { id: "mountain", bounds: box(900, 250, -2500, 300) }, noBounds = { id: "plain" }, kite = { id: "kite", bounds: box(0, 90, -400, 5) };
- const camera = { x: 0, y: 26, z: 95 };
- const ids = (list) => Array.from(list, (o) => o.id);
- const all = [ship, moon, mountain, noBounds, kite];
- assert.deepEqual(ids(a.sceneReflectOpaqueList(all, [], camera, 0)), ["ship", "mountain", "plain", "kite"],
-  "the moon (1.4 km away, 16 degrees up) leaves; the ship, a mountain at 5 degrees, a mesh without bounds and a near kite stay");
- assert.deepEqual(ids(a.sceneReflectOpaqueList(all, [])), ids(all), "without a camera nothing is judged");
- h.renderer.dispose();
-});
-
-// The lowest point of a mesh decides, not its centre: a large mesh that rises from the sea has its centre high above
-// the water, but it is not in the sky, and the water in front of it must still show it.
-test("a mesh that touches the sea is never a sky body, however tall or far, and the same mesh lifted clear of the water is", async () => {
- const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
- const at = (id, minX, maxX, minY, maxY, minZ, maxZ) => ({ id, bounds: { minX, maxX, minY, maxY, minZ, maxZ } });
- const camera = { x: 0, y: 26, z: 95 }, ids = (list) => Array.from(list, (o) => o.id);
- // Each of these has its base on the sea and a centre more than 8 degrees up, so a test on the centre drops it.
- const rising = [
-  at("mountain", -600, 600, 0, 500, -2100, -900), // 500 m high, 1.5 km out: the centre is 8.9 degrees up, the base 0
-  at("coast", -3000, 3000, 0, 800, -4000, -200), // one terrain mesh, the shore 300 m ahead: the centre is 10.3 degrees up
-  at("tower", -30, 30, 0, 400, -1230, -1170), // a waterfront tower 1.2 km out: the centre is 8.8 degrees up
- ];
- assert.deepEqual(ids(a.sceneReflectOpaqueList(rising, [], camera, 0)), ["mountain", "coast", "tower"], "meshes that rise from the sea reflect");
- // A mesh that stands in the water, below the sea level, reflects too, whatever its centre.
- const wading = at("wading", -300, 300, -100, 700, -2100, -1500);
- assert.deepEqual(ids(a.sceneReflectOpaqueList([wading], [], camera, 0)), ["wading"], "a mesh that reaches below the sea reflects");
- // Lift the same masses 400 m clear of the water and nothing touches the sea any more: they are sky.
- const afloat = rising.map((m) => at(m.id + "-afloat", m.bounds.minX, m.bounds.maxX, m.bounds.minY + 400, m.bounds.maxY + 400, m.bounds.minZ, m.bounds.maxZ));
- assert.deepEqual(ids(a.sceneReflectOpaqueList(afloat, [], camera, 0)), [], "the same meshes with their base 400 m up are sky bodies");
- // The moon of the other tests, in the same list: its lowest point is 12.6 degrees up, so it is dropped beside them.
- const moon = at("moon", 20, 140, 320, 440, -1390, -1270);
- assert.deepEqual(ids(a.sceneReflectOpaqueList([moon].concat(rising), [], camera, 0)), ["mountain", "coast", "tower"], "the moon leaves; the rising meshes stay");
- // The sea level is the line: with the sea 300 m up, the mountain's base is at the water again.
- const lifted = at("mountain-in-high-sea", -600, 600, 300, 800, -2100, -900);
- assert.deepEqual(ids(a.sceneReflectOpaqueList([lifted], [], camera, 0)), [], "judged from y = 0 the lifted mountain floats");
- assert.deepEqual(ids(a.sceneReflectOpaqueList([lifted], [], camera, 300)), ["mountain-in-high-sea"], "over a sea at 300 m it stands in the water");
- h.renderer.dispose();
-});
-
-test("sky bodies are judged against the sea level, from valid bounds, and beside the custom-material rule", async () => {
- const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
- const at = (id, x, y, z, r = 10) => ({ id, bounds: { minX: x - r, maxX: x + r, minY: y - r, maxY: y + r, minZ: z - r, maxZ: z + r } });
- const ids = (list) => Array.from(list, (o) => o.id), camera = { x: 0, y: 26, z: 0 };
- const left = (list, materials = [], level = 0) => ids(a.sceneReflectOpaqueList(list, materials, camera, level));
- // 1,000 m out, the 8 degree line is 140.5 m up (tan 8 degrees = 0.1405) and the lowest point decides: a mesh whose
- // underside is at 141 m (centre 151 m, half-height 10 m) is a sky body, one whose underside is at 140 m is not.
- assert.deepEqual(left([at("above-line", 0, 151, -1000), at("below-line", 0, 150, -1000)]), ["below-line"]);
- // Distance counts too: 500 m out and 300 m up (31 degrees, 570 m from the camera) is near geometry, not sky.
- assert.deepEqual(left([at("close", 0, 300, -500)]), ["close"], "a body under 800 m away stays, however high");
- // The sea level is the horizon: raise the sea to 400 m and the moon's underside (320 m) is below it.
- assert.deepEqual(left([at("moon", 80, 380, -1330, 60)], [], 0), []);
- assert.deepEqual(left([at("moon", 80, 380, -1330, 60)], [], 400), ["moon"], "the sea level is the horizon, not y = 0");
- assert.deepEqual(left([at("moon", 80, 380, -1330, 60)], [], NaN), [], "a level that is not a number reads as 0");
- assert.deepEqual(left([at("moon", 80, 380, -1330, 60)], [], "deep"), [], "so does text");
- // Bounds that are not finite, or incomplete, are not judged.
- const bad = [{ id: "nan", bounds: { minX: NaN, maxX: 0, minY: 900, maxY: 1000, minZ: -2000, maxZ: -1900 } },
-  { id: "partial", bounds: { minX: 0, maxX: 0, minY: 900, maxY: 1000 } }, { id: "inf", bounds: { minX: -Infinity, maxX: Infinity, minY: 900, maxY: 1000, minZ: -2000, maxZ: -1900 } },
-  { id: "unbounded-up", bounds: { minX: -10, maxX: 10, minY: 900, maxY: Infinity, minZ: -2010, maxZ: -1990 } },
-  { id: "text", bounds: { minX: "-10", maxX: "10", minY: "900", maxY: "1000", minZ: "-2010", maxZ: "-1990" } }];
- assert.deepEqual(left(bad), ["nan", "partial", "inf", "unbounded-up", "text"], "geometry without valid bounds stays reflected");
- assert.deepEqual(left([at("same-but-valid", 0, 1000, -2000)]), [], "the same place with valid bounds is a sky body");
- // The rule that was already there still applies to the same list.
- const sky = at("sky", 0, 900, -2000), shipFar = at("ship", 0, 10, -900), custom = Object.assign(at("custom", 0, 5, -50), { materialIndex: 1 });
- const materials = [{ baseColor: "#ffffff" }, { customFragment: "void main() {}" }];
- assert.deepEqual(left([sky, shipFar, custom], materials), ["ship"], "custom shaders stay out of the fallback and sky bodies join them");
- h.renderer.dispose();
-});
-
-// A skinned record carries the bind-pose box, the object's own box, or a -1..2 m placeholder (10-runtime-scene-core.ts),
-// never world positions, and the renderer does not cull by it either. Reading it as a position would be a guess.
-test("a skinned mesh is never judged as a sky body, because its bounds are not in world space", async () => {
- const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
- const ids = (list) => Array.from(list, (o) => o.id), placeholder = { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 2, maxZ: 1 };
- // Read as world positions the placeholder sits 300 m above a sea at -300 m and 1.5 km from this camera: a sky body.
- const camera = { x: 0, y: 26, z: 1500 }, level = -300;
- const rig = { id: "rig", skin: { joints: [0, 1] }, bounds: placeholder }, still = { id: "still", skin: null, bounds: placeholder };
- assert.deepEqual(ids(a.sceneReflectOpaqueList([still], [], camera, level)), [], "a mesh with world bounds like these is judged, and is sky");
- assert.deepEqual(ids(a.sceneReflectOpaqueList([rig], [], camera, level)), ["rig"], "a skinned mesh with the same bounds is not judged and reflects");
- assert.deepEqual(ids(a.sceneReflectOpaqueList([rig, still], [], camera, level)), ["rig"], "in one list the skinned mesh stays and the other leaves");
- // The placeholder is not the only way to be wrong: a rig authored high up has local bounds that read as a sky body too.
- const authored = { id: "authored", skin: { joints: [0] }, bounds: { minX: -1, maxX: 1, minY: 900, maxY: 1000, minZ: -2001, maxZ: -1999 } };
- assert.deepEqual(ids(a.sceneReflectOpaqueList([authored], [], { x: 0, y: 26, z: 0 }, 0)), ["authored"], "so do the object's own local bounds");
- h.renderer.dispose();
-});
-
-// Both renderers mirror the same meshes. The meshes differ in kind, size or segment count, so each has its own
-// vertex count and a recorded draw names the mesh that made it.
-const seaCamera = { x: 0, y: 26, z: 95, rotationX: -0.2, rotationY: 0, fov: 62, near: 0.5, far: 20000 };
-const seaMeshes = [
- { id: "moon", segments: 24, radius: 60, x: 80, y: 380, z: -1330 }, // 1.4 km away, 15 degrees up, its underside 12.6 degrees up: a sky body
- { id: "buoy", segments: 12, radius: 4, x: 6, y: 5, z: -60 }, // near
- { id: "island", segments: 16, radius: 300, x: 900, y: 250, z: -2500 }, // far but its centre is 5 degrees up, and it stands in the water: stays
- { id: "mountain", kind: "cone", radiusBottom: 600, radiusTop: 0, height: 500, segments: 20, x: 0, y: 250, z: -1500 }, // 500 m high, 1.5 km out, base on the sea, centre 8.9 degrees up: stays
- { id: "coast", kind: "box", width: 6000, height: 800, depth: 3800, x: 0, y: 400, z: -2100 }, // one terrain mesh, the shore 300 m ahead, centre 10.3 degrees up: stays
+// Which meshes the sea's planar mirror draws. The mirror draws every opaque mesh a second time, upside down under the
+// water. A mesh is drawn unless its author opted out with planarReflection: false (scene.Mesh.PlanarReflection). Where
+// the mesh stands never decides this: a bridge deck 200 m up and 950 m out belongs to the bridge, and a moon built as
+// a mesh leaves the mirror because its author said so. Review 5678771838 on PR 769 reported the geometry test that
+// this replaces; its bridge is the first case below.
+const ids = (list) => Array.from(list, (o) => o.id);
+const solid = { color: "#d8dce4", wireframe: false };
+const mirrorCamera = { x: 0, y: 2, z: 0, rotationX: -0.05, rotationY: 0, fov: 62, near: 0.5, far: 20000 };
+// A pier from the sea to 200 m, and the deck above it, 200 to 230 m up and 950 m out (the review's probe.cjs numbers).
+const bridge = [
+ { id: "pier", kind: "cylinder", radiusTop: 10, radiusBottom: 10, height: 200, segments: 12, x: 0, y: 100, z: -950 },
+ { id: "bridge-deck", kind: "box", width: 400, height: 30, depth: 100, x: 0, y: 215, z: -950 },
 ];
-const seaKept = ["buoy", "island", "mountain", "coast"];
-function seaBundle(api, meshes, camera, level = 0) {
- const objects = api.sceneStateObjectsWithMaterials(api.createSceneState({ scene: { objects: meshes.map((m) => Object.assign({ kind: "sphere", material: { color: "#d8dce4", wireframe: false }, wireframe: false }, m)) } }));
- const bundle = api.createSceneRenderBundle(320, 180, "#101820", camera, objects, [], [], [], [], {}, 0.4, [], [], [], [], [], 0, false, {});
+// The rest of the scene. Each mesh has its own vertex count, so a recorded draw names the mesh that made it.
+const harbour = [
+ { id: "buoy", segments: 12, radius: 4, x: -6, y: 4, z: -50 }, // near and ordinary
+ { id: "tower", kind: "cone", radiusBottom: 30, radiusTop: 0, height: 300, segments: 10, x: -300, y: 550, z: -1200 }, // ordinary, clear of the sea and 1.3 km out
+ { id: "moon", segments: 24, radius: 60, x: 80, y: 380, z: -1330, planarReflection: false }, // a moon built as a mesh: opts out
+ { id: "lamp", segments: 16, radius: 3, x: 6, y: 5, z: -60, planarReflection: false }, // near, and opts out all the same
+];
+const seaScene = bridge.concat(harbour), mirrored = ["pier", "bridge-deck", "buoy", "tower"], opted = ["moon", "lamp"];
+function seaState(api, objects) {
+ // The objects cross JSON on their way from the server.
+ const wire = JSON.parse(JSON.stringify(objects));
+ return api.createSceneState({ scene: { objects: wire.map((m) => Object.assign({ kind: "sphere", material: solid, wireframe: false }, m)) } });
+}
+function seaBundle(api, state, camera, level = 0, capabilities = {}) {
+ const objects = api.sceneStateObjectsWithMaterials(state);
+ const bundle = api.createSceneRenderBundle(320, 180, "#101820", camera, objects, [], [], [], [], {}, 0.4, [], [], [], [], [], 0, false, capabilities);
  bundle.environment = { sky: { mode: "physical", sunDirection: { x: -0.35, y: 0.7, z: 0.62 }, turbidity: 3 }, ocean: { level, extent: 8000, reflections: { mode: "ssr+planar", resolution: 0.5, strength: 0.8 } } };
  bundle.lights = [];
  const verts = Object.fromEntries(bundle.meshObjects.map((o) => [o.id, o.vertexCount]));
- assert.equal(Object.keys(verts).length, meshes.length, "every mesh reaches the bundle");
- assert.equal(new Set(Object.values(verts)).size, meshes.length, "each mesh has its own vertex count");
+ assert.equal(Object.keys(verts).length, state.objects.size, "every mesh reaches the bundle");
+ assert.equal(new Set(Object.values(verts)).size, state.objects.size, "each mesh has its own vertex count");
  return { bundle, verts };
 }
 const sortedNumbers = (list) => Array.from(list).sort((x, y) => x - y);
-// The vertex counts drawn into the planar mirror, and those drawn everywhere else.
-function webgpuSeaDraws(meshes, camera, level) {
- return createBoardWebGPUHarness({ fresh: true }).then((h) => {
-  const create = h.fake.device.createRenderPipeline.bind(h.fake.device);
-  h.fake.device.createRenderPipeline = (d) => Object.assign(create(d), { getBindGroupLayout: () => h.fake.device.createBindGroupLayout({ entries: [] }) });
-  const { bundle, verts } = seaBundle(h.env.context.__gosx_scene3d_api, meshes, camera, level);
-  h.canvas.width = 320; h.canvas.height = 180;
-  h.renderer.render(bundle, { width: 320, height: 180 });
-  const passes = h.fake.state.renderPasses, planar = passes.filter((p) => p.descriptor?.label === "gosx-planar-reflection");
-  assert.equal(planar.length, 1, "the planar mirror is drawn once");
-  const drawn = (list) => list.flatMap((p) => p.draws.map((d) => d.vertexCount));
-  const out = { verts, planar: drawn(planar), elsewhere: drawn(passes.filter((p) => !planar.includes(p))) };
-  h.renderer.dispose();
-  return out;
- });
+// One renderer, any number of frames. Each frame builds a fresh bundle from the state, as the mount loop does, and reports
+// the vertex counts drawn into the planar mirror and those drawn everywhere else.
+async function webgpuSea() {
+ const h = await createBoardWebGPUHarness({ fresh: true });
+ const create = h.fake.device.createRenderPipeline.bind(h.fake.device);
+ h.fake.device.createRenderPipeline = (d) => Object.assign(create(d), { getBindGroupLayout: () => h.fake.device.createBindGroupLayout({ entries: [] }) });
+ h.canvas.width = 320; h.canvas.height = 180;
+ const api = h.env.context.__gosx_scene3d_api;
+ return {
+  api,
+  frame(state, camera = mirrorCamera, level = 0) {
+   const { bundle, verts } = seaBundle(api, state, camera, level);
+   const before = h.fake.state.renderPasses.length;
+   h.renderer.render(bundle, { width: 320, height: 180 });
+   const passes = h.fake.state.renderPasses.slice(before), planar = passes.filter((p) => p.descriptor?.label === "gosx-planar-reflection");
+   assert.equal(planar.length, 1, "the planar mirror is drawn once per frame");
+   const drawn = (list) => list.flatMap((p) => p.draws.map((d) => d.vertexCount));
+   return { verts, planar: drawn(planar), elsewhere: drawn(passes.filter((p) => !planar.includes(p))) };
+  },
+  dispose() { h.renderer.dispose(); },
+ };
 }
-function webglSeaDraws(meshes, camera, level) {
+function webglSea() {
  const h = createWebGLRendererForPost({ fresh: true }), gl = h.canvas.getContext("webgl2"); glSupport(gl);
- const { bundle, verts } = seaBundle(h.env.context.__gosx_scene3d_api, meshes, camera, level);
- h.renderer.render(bundle, { width: 320, height: 180 });
- // The mirror renders into a half-resolution target (160 x 90 here); the main view and the ocean use 320 x 180.
- const planar = [], elsewhere = []; let into = elsewhere;
- for (const op of gl.ops) {
-  if (op[0] === "viewport") into = op[3] === 160 ? planar : elsewhere;
-  else if (op[0] === "drawArrays") into.push(op[3]);
-  else if (op[0] === "drawElements") into.push(op[2]);
- }
- h.renderer.dispose(); assert.deepEqual(h.warnLog, []);
- return { verts, planar, elsewhere };
+ const api = h.env.context.__gosx_scene3d_api;
+ return {
+  api,
+  frame(state, camera = mirrorCamera, level = 0) {
+   const { bundle, verts } = seaBundle(api, state, camera, level);
+   const first = gl.ops.length;
+   h.renderer.render(bundle, { width: 320, height: 180 });
+   // The mirror renders into a half-resolution target (160 x 90 here); the main view and the ocean use 320 x 180.
+   const planar = [], elsewhere = []; let into = elsewhere;
+   for (const op of gl.ops.slice(first)) {
+    if (op[0] === "viewport") into = op[3] === 160 ? planar : elsewhere;
+    else if (op[0] === "drawArrays") into.push(op[3]);
+    else if (op[0] === "drawElements") into.push(op[2]);
+   }
+   return { verts, planar, elsewhere };
+  },
+  dispose() { h.renderer.dispose(); assert.deepEqual(h.warnLog, []); },
+ };
 }
 function assertMirrors(got, kept, left) {
  const want = kept.map((id) => got.verts[id]);
  assert.deepEqual(sortedNumbers(got.planar), sortedNumbers(want), `the mirror draws ${kept.join(", ")} and nothing else`);
  for (const id of left) assert.ok(got.elsewhere.includes(got.verts[id]), `the main view still draws ${id}`);
 }
-// The mountain and the coast have their centres 8.9 and 10.3 degrees up and 1.6 and 2.2 km out, so a test on the centre
-// would call them sky. Their bases are on the water, so they are not, and the mirror draws them. The moon is drawn
-// in the main view only.
-test("WebGPU leaves a sky body out of the planar mirror, still draws it in the main view, and keeps a mountain and a coast that rise from the sea", async () => {
- assertMirrors(await webgpuSeaDraws(seaMeshes, seaCamera, 0), seaKept, ["moon"]);
+
+test("the mirror list keeps every ordinary mesh wherever it stands and drops only a mesh that opts out", async () => {
+ const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
+ // The review's probe: camera (0, 2, 0), sea level 0. The deck's lowest point is 200 m up and 950 m out, which a test on
+ // position took for sky; the list is [pier] there and must be [pier, bridge-deck].
+ const pier = { id: "pier", bounds: { minX: -10, maxX: 10, minY: 0, maxY: 200, minZ: -960, maxZ: -940 } };
+ const deck = { id: "bridge-deck", bounds: { minX: -200, maxX: 200, minY: 200, maxY: 230, minZ: -1000, maxZ: -900 } };
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([pier, deck], [], { x: 0, y: 2, z: 0 }, 0)), ["pier", "bridge-deck"], "called as the probe calls it");
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([pier, deck], [])), ["pier", "bridge-deck"], "called with the list and the materials only");
+ // The same high, far box stays unless its own record says planarReflection: false.
+ const box = (x, y, z, r) => ({ minX: x - r, maxX: x + r, minY: y - r, maxY: y + r, minZ: z - r, maxZ: z + r });
+ const skyLike = box(80, 380, -1330, 60);
+ const records = [pier, deck, { id: "ordinary-moon-sized", bounds: skyLike }, { id: "moon", planarReflection: false, bounds: skyLike },
+  { id: "lamp", planarReflection: false, bounds: box(6, 5, -60, 3) }, { id: "no-bounds" }, { id: "explicit-true", planarReflection: true, bounds: skyLike }];
+ assert.deepEqual(ids(a.sceneReflectOpaqueList(records, [])), ["pier", "bridge-deck", "ordinary-moon-sized", "no-bounds", "explicit-true"],
+  "only the two records that say false leave, in either place; the order of the rest is kept");
+ // Only the boolean false opts out. Nothing else a record can hold (absent, null, true) does.
+ for (const value of [undefined, null, true]) assert.deepEqual(ids(a.sceneReflectOpaqueList([{ id: "x", planarReflection: value }], [])), ["x"], `planarReflection: ${value} reflects`);
+ // The rule that was already there still applies in the same list: a custom shader stays out of the built-in fallback.
+ const custom = { id: "custom", materialIndex: 1, bounds: skyLike }, flaggedCustom = { id: "flagged-custom", materialIndex: 1, planarReflection: false };
+ const materials = [{ baseColor: "#ffffff" }, { customFragment: "void main() {}" }];
+ assert.deepEqual(ids(a.sceneReflectOpaqueList([pier, custom, flaggedCustom, { id: "moon", planarReflection: false }], materials)), ["pier"]);
+ h.renderer.dispose();
 });
-test("WebGL leaves a sky body out of the planar mirror, still draws it in the main view, and keeps a mountain and a coast that rise from the sea", () => {
- assertMirrors(webglSeaDraws(seaMeshes, seaCamera, 0), seaKept, ["moon"]);
+
+test("the bridge built from scene state reaches the mirror list whole, pier and deck", async () => {
+ const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
+ const { bundle } = seaBundle(a, seaState(a, bridge), mirrorCamera, 0);
+ const near = (got, want) => Object.keys(want).every((k) => Math.abs(got[k] - want[k]) < 1e-3);
+ const record = (id) => bundle.meshObjects.find((o) => o.id === id);
+ assert.ok(near(record("bridge-deck").bounds, { minX: -200, maxX: 200, minY: 200, maxY: 230, minZ: -1000, maxZ: -900 }), "the deck has the review's bounds");
+ assert.ok(near(record("pier").bounds, { minX: -10, maxX: 10, minY: 0, maxY: 200, minZ: -960, maxZ: -940 }), "so does the pier");
+ assert.deepEqual(ids(a.sceneReflectOpaqueList(bundle.meshObjects, bundle.materials, mirrorCamera, 0)), ["pier", "bridge-deck"]);
+ h.renderer.dispose();
 });
-test("both renderers judge sky bodies from the real camera, not the mirrored one", async () => {
- // A viewer 400 m up. The tower is 743 m from the real camera, so it is near geometry and stays; it is 890 m from
- // the camera's mirror image below the sea, which would wrongly drop it. The sun disc is 1.6 km away and high.
- const high = { x: 0, y: 400, z: 0, rotationX: -0.05, rotationY: 0, fov: 62, near: 0.5, far: 20000 };
- const meshes = [{ id: "tower", segments: 12, radius: 20, x: 0, y: 150, z: -700 }, { id: "sun", segments: 24, radius: 50, x: 0, y: 900, z: -1500 }];
- assertMirrors(await webgpuSeaDraws(meshes, high, 0), ["tower"], ["sun"]);
- assertMirrors(webglSeaDraws(meshes, high, 0), ["tower"], ["sun"]);
+
+// Participation is part of the object, not of a frame: it starts as true, it is set by the author, a live patch changes it and
+// a reset restores it, and a mount that builds the object again gets it back. The patch below is what scene.DiffScene with
+// PatchObjectState sends (scene/planar_reflection_test.go pins the same text), and the create payload is the whole record.
+const statePatch = (participates) => JSON.parse('{"x":80,"y":380,"z":-1330,"rotationX":0,"rotationY":0,"rotationZ":0,"scaleX":1,"scaleY":1,"scaleZ":1,"parentMatrix":null,' +
+ '"interactive":false,"label":"","interactiveOrder":0,"visible":true,"selected":false,"planarReflection":' + participates + '}');
+test("an object's participation starts true, is set by the author, and survives a patch, a reset, a create and a remount", async () => {
+ const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
+ const state = seaState(a, [{ id: "plain" }, { id: "moon", planarReflection: false, radius: 60, x: 80, y: 380, z: -1330 }, { id: "said-true", planarReflection: true }]);
+ const flag = (id, s = state) => s.objects.get(id).planarReflection;
+ assert.deepEqual([flag("plain"), flag("moon"), flag("said-true")], [true, false, true], "absent is true; the author's value is kept");
+ // A transform-only patch has no such key and leaves the value alone, both ways.
+ a.applySceneCommands(state, [{ kind: 2, objectId: "moon", data: { x: 90 } }, { kind: 2, objectId: "plain", data: { x: 3 } }]);
+ assert.deepEqual([flag("plain"), flag("moon")], [true, false]);
+ const radius = state.objects.get("moon").radius, vertices = state.objects.get("moon").vertices;
+ // The state patch that DiffScene sends (all the state keys, geometry untouched) turns participation off, then the reset turns it on.
+ a.applySceneCommands(state, [{ kind: 2, objectId: "plain", data: statePatch(false) }]);
+ assert.equal(flag("plain"), false, "a live patch opts a mesh out");
+ const plain = state.objects.get("plain");
+ assert.deepEqual([plain.visible, plain.selected, plain.x, plain.y], [true, false, 80, 380], "and carries the rest of the state with it");
+ a.applySceneCommands(state, [{ kind: 2, objectId: "plain", data: statePatch(true) }]);
+ assert.equal(flag("plain"), true, "an explicit true restores participation");
+ a.applySceneCommands(state, [{ kind: 2, objectId: "moon", data: statePatch(true) }]);
+ assert.equal(flag("moon"), true);
+ assert.equal(state.objects.get("moon").radius, radius, "geometry is untouched by the patch");
+ assert.equal(state.objects.get("moon").vertices, vertices, "and so are the vertex buffers, which the patch must not rebuild");
+ // The replace path: remove then create, with the whole record as the create payload, as DiffScene sends it.
+ a.applySceneCommands(state, [{ kind: 1, objectId: "moon" }, { kind: 0, objectId: "moon", data: { geometry: "sphere", props: JSON.parse(JSON.stringify({ id: "moon", kind: "sphere", radius: 60, planarReflection: false })) } }]);
+ assert.equal(flag("moon"), false, "a created object keeps the key of its record");
+ a.applySceneCommands(state, [{ kind: 1, objectId: "moon" }, { kind: 0, objectId: "moon", data: { geometry: "sphere", props: { id: "moon", kind: "sphere", radius: 60 } } }]);
+ assert.equal(flag("moon"), true, "a record without the key creates an object that participates");
+ // A mount that builds the same scene again from the same JSON gets the same values.
+ const again = seaState(a, [{ id: "plain" }, { id: "moon", planarReflection: false }]);
+ assert.deepEqual([flag("plain", again), flag("moon", again)], [true, false]);
+ h.renderer.dispose();
 });
-test("both renderers judge sky bodies from the sea level, not from y = 0", async () => {
- // The same scene with the sea and everything over it lifted 300 m. Judged from y = 0 the mountain (base at 300 m, 1.6 km out)
- // would float 11 degrees up and count as a sky body; over a sea at 300 m its base is on the water, and it stays, exactly
- // as in the unlifted scene. The moon is still 12.6 degrees above the water and still leaves.
- const lift = 300, camera = Object.assign({}, seaCamera, { y: seaCamera.y + lift }), meshes = seaMeshes.map((m) => Object.assign({}, m, { y: m.y + lift }));
- assertMirrors(await webgpuSeaDraws(meshes, camera, lift), seaKept, ["moon"]);
- assertMirrors(webglSeaDraws(meshes, camera, lift), seaKept, ["moon"]);
+
+test("every mesh record the bundle emits carries the object's participation", async () => {
+ const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
+ // The retained-geometry capability selects the other record builder for the same objects.
+ for (const capabilities of [{}, { retainedGeometry: true }]) {
+  const { bundle } = seaBundle(a, seaState(a, seaScene), mirrorCamera, 0, capabilities);
+  const flags = Object.fromEntries(bundle.meshObjects.map((o) => [o.id, o.planarReflection]));
+  const kind = capabilities.retainedGeometry ? "retained" : "baked";
+  assert.equal(bundle.meshObjects.every((o) => Boolean(o.retainedGeometry) === Boolean(capabilities.retainedGeometry)), true, `the ${kind} builder made every record`);
+  assert.deepEqual(flags, { pier: true, "bridge-deck": true, buoy: true, tower: true, moon: false, lamp: false }, `${kind} records carry true or false for every mesh`);
+  assert.deepEqual(ids(a.sceneReflectOpaqueList(bundle.meshObjects, bundle.materials)), mirrored, `${kind} records: the list is the ordinary meshes`);
+ }
+ h.renderer.dispose();
 });
+
+test("WebGPU mirrors the bridge, the tower and the buoy and leaves out the moon and the lamp that opt out, which the main view still draws", async () => {
+ const sea = await webgpuSea(), state = seaState(sea.api, seaScene);
+ assertMirrors(sea.frame(state), mirrored, opted);
+ sea.dispose();
+});
+test("WebGL mirrors the bridge, the tower and the buoy and leaves out the moon and the lamp that opt out, which the main view still draws", () => {
+ const sea = webglSea(), state = seaState(sea.api, seaScene);
+ assertMirrors(sea.frame(state), mirrored, opted);
+ sea.dispose();
+});
+test("both renderers mirror the same meshes whatever the camera height or the sea level, because position decides nothing", async () => {
+ // The viewer on a mast 400 m up, and the sea raised to 300 m: the mirror is the same list in every case. (From the mast the
+ // buoy and the lamp are outside the view, so only the mirror is compared.)
+ for (const [camera, level] of [[mirrorCamera, 0], [Object.assign({}, mirrorCamera, { y: 402 }), 0], [Object.assign({}, mirrorCamera, { y: 302 }), 300]]) {
+  const gpu = await webgpuSea(), gl = webglSea();
+  assertMirrors(gpu.frame(seaState(gpu.api, seaScene), camera, level), mirrored, []);
+  assertMirrors(gl.frame(seaState(gl.api, seaScene), camera, level), mirrored, []);
+  gpu.dispose(); gl.dispose();
+ }
+});
+
+// A live patch reaches the next frame on a renderer that stays mounted: the scene does not change shape, so nothing but the
+// patch can tell the planner and the draw lists that the mirror changed.
+async function assertLiveParticipation(sea) {
+ const state = seaState(sea.api, seaScene);
+ assertMirrors(sea.frame(state), mirrored, opted);
+ sea.api.applySceneCommands(state, [{ kind: 2, objectId: "moon", data: statePatch(true) }, { kind: 2, objectId: "buoy", data: Object.assign(statePatch(false), { x: -6, y: 4, z: -50 }) }]);
+ assertMirrors(sea.frame(state), ["pier", "bridge-deck", "tower", "moon"], ["lamp", "buoy"]);
+ sea.api.applySceneCommands(state, [{ kind: 2, objectId: "moon", data: statePatch(false) }, { kind: 2, objectId: "buoy", data: Object.assign(statePatch(true), { x: -6, y: 4, z: -50 }) }]);
+ assertMirrors(sea.frame(state), mirrored, opted);
+ sea.dispose();
+}
+test("WebGPU follows a live participation change on the next frame, both ways", async () => { await assertLiveParticipation(await webgpuSea()); });
+test("WebGL follows a live participation change on the next frame, both ways", () => assertLiveParticipation(webglSea()));

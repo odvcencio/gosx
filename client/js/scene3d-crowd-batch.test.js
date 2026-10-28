@@ -558,3 +558,21 @@ test("a selected agent leaves its batch, unless the batch rides a parent", async
   assert.equal(batchRecords(bundle).length, 1);
   assert.equal(batchRecords(bundle)[0].instanceCount, 6, "a record outside the ship would sit in world space");
 });
+
+test("crowd agents with different planar-mirror participation never share a batch record", async () => {
+  const api = await makeSceneApiEnv();
+  const objects = makeCrowd(api, 4);
+  objects[0].planarReflection = false;
+  objects[1].planarReflection = false;
+  const split = build(api, objects), records = batchRecords(split);
+  assert.equal(records.length, 2, "two cohorts: the agents that opt out and the agents that do not");
+  assert.deepEqual(Array.from(records, record => [record.planarReflection, record.instanceCount]).sort(), [[false, 2], [true, 2]]);
+  assert.deepEqual(Array.from(api.sceneReflectOpaqueList(split.meshObjects, split.materials), record => record.planarReflection), [true],
+    "the mirror draws the participating cohort only");
+  // The agents rejoin one record when they agree again, and a crowd that never said anything participates.
+  objects[0].planarReflection = true;
+  objects[1].planarReflection = true;
+  const joined = batchRecords(build(api, objects));
+  assert.deepEqual(Array.from(joined, record => [record.planarReflection, record.instanceCount]), [[true, 4]]);
+  assert.deepEqual(Array.from(batchRecords(build(api, makeCrowd(api, 3))), record => [record.planarReflection, record.instanceCount]), [[true, 3]]);
+});
