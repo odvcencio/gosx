@@ -2,7 +2,9 @@ package scene
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
+	"reflect"
 	"testing"
 
 	"m31labs.dev/gosx/scene/capability"
@@ -98,5 +100,167 @@ func TestOceanBathymetryEncodingNormalizes(t *testing.T) {
 		if got := normalizeOcean(&Ocean{Bathymetry: &b}).Bathymetry.Encoding; got != want {
 			t.Fatalf("encoding %q normalized to %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestOceanSpectrumNormalizesAndClamps(t *testing.T) {
+	got := normalizeOcean(&Ocean{
+		Masks: []string{" hull ", "", "dock", "hull"},
+		Spectrum: &OceanSpectrum{
+			WindSpeed: 90, Fetch: 0.1, PeakEnhancement: 9, Spread: 0.2, Swell: 3, SwellDirection: -90, Seed: 0,
+		},
+	})
+	s := got.Spectrum
+	if s == nil {
+		t.Fatal("Spectrum was dropped")
+	}
+	if s.WindSpeed != 40 || s.Fetch != 1 || s.PeakEnhancement != 7 || s.Spread != 1 || s.Swell != 1 || s.SwellDirection != 270 {
+		t.Fatalf("spectrum was not clamped: %#v", s)
+	}
+	if want := []string{"hull", "dock"}; len(got.Masks) != 2 || got.Masks[0] != want[0] || got.Masks[1] != want[1] {
+		t.Fatalf("masks = %q, want %q", got.Masks, want)
+	}
+	zero := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{}}).Spectrum
+	if zero.WindSpeed != 0 || zero.Fetch != 0 || zero.Cascades != nil {
+		t.Fatalf("zero must stay the default marker: %#v", zero)
+	}
+	if normalizeOcean(&Ocean{}).Spectrum != nil {
+		t.Fatal("an ocean without a spectrum must not gain one")
+	}
+}
+
+func TestOceanSpectrumCascadesAreValidated(t *testing.T) {
+	good := []OceanCascade{{Size: 1600, KMin: 0.0039, KMax: 0.12}, {Size: 250, KMin: 0.12, KMax: 9}}
+	got := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{Cascades: good}}).Spectrum.Cascades
+	if len(got) != 2 || got[1].KMax >= math.Pi*64/250 {
+		t.Fatalf("KMax must sit below pi*64/Size: %#v", got)
+	}
+	bad := []OceanCascade{{Size: 0, KMin: 0, KMax: 1}}
+	if c := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{Cascades: bad}}).Spectrum.Cascades; c != nil {
+		t.Fatalf("an invalid cascade list must fall back to the defaults, got %#v", c)
+	}
+	if c := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{Cascades: make([]OceanCascade, 5)}}).Spectrum.Cascades; c != nil {
+		t.Fatalf("more than four cascades must fall back to the defaults, got %#v", c)
+	}
+	// A band may not start below zero: -0.5 is invalid, not only -1 and below.
+	negative := []OceanCascade{{Size: 250, KMin: -0.5, KMax: 0.5}}
+	if c := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{Cascades: negative}}).Spectrum.Cascades; c != nil {
+		t.Fatalf("a band that starts below zero must fall back to the defaults, got %#v", c)
+	}
+	// A band that starts above the Nyquist limit of its tile (0.804 rad/m for a
+	// 250 m tile) is empty after the clamp, so the list is invalid.
+	collapsed := []OceanCascade{{Size: 250, KMin: 1, KMax: 2}}
+	if c := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{Cascades: collapsed}}).Spectrum.Cascades; c != nil {
+		t.Fatalf("a band that collapses after the Nyquist clamp must fall back to the defaults, got %#v", c)
+	}
+}
+
+// TestOceanSpectrumNonFiniteScalarsCountAsDefaults holds the rule that a NaN or
+// infinite spectrum scalar becomes zero, the default marker. Left alone, a NaN
+// spread into all 24 swell waves and the graph parameters; json.Marshal of the
+// SceneIR then failed, and the server-rendered props silently lost the whole
+// scene, hull mesh included.
+func TestOceanSpectrumNonFiniteScalarsCountAsDefaults(t *testing.T) {
+	fields := []struct {
+		name string
+		set  func(*OceanSpectrum, float64)
+		get  func(*OceanSpectrum) float64
+	}{
+		{"WindSpeed", func(s *OceanSpectrum, v float64) { s.WindSpeed = v }, func(s *OceanSpectrum) float64 { return s.WindSpeed }},
+		{"Fetch", func(s *OceanSpectrum, v float64) { s.Fetch = v }, func(s *OceanSpectrum) float64 { return s.Fetch }},
+		{"PeakEnhancement", func(s *OceanSpectrum, v float64) { s.PeakEnhancement = v }, func(s *OceanSpectrum) float64 { return s.PeakEnhancement }},
+		{"Spread", func(s *OceanSpectrum, v float64) { s.Spread = v }, func(s *OceanSpectrum) float64 { return s.Spread }},
+		{"Swell", func(s *OceanSpectrum, v float64) { s.Swell = v }, func(s *OceanSpectrum) float64 { return s.Swell }},
+		{"SwellDirection", func(s *OceanSpectrum, v float64) { s.SwellDirection = v }, func(s *OceanSpectrum) float64 { return s.SwellDirection }},
+	}
+	for _, f := range fields {
+		for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+			t.Run(fmt.Sprintf("%s %v", f.name, bad), func(t *testing.T) {
+				spectrum := OceanPreset("rough")
+				f.set(&spectrum, bad)
+				props := Props{Environment: Environment{Ocean: &Ocean{
+					WindDirection: 30, Spectrum: &spectrum, Wake: &OceanWake{NodeID: "ship", Enabled: true},
+				}}}
+				ocean := props.SceneIR().Environment.Ocean
+				if got := f.get(ocean.Spectrum); got != 0 {
+					t.Fatalf("%s = %v after normalization, want 0 (the default)", f.name, got)
+				}
+				if len(ocean.SwellWaves) != DefaultOceanSwellCount || !finiteWaves(ocean.SwellWaves) {
+					t.Fatalf("swell waves: %d, finite %v", len(ocean.SwellWaves), finiteWaves(ocean.SwellWaves))
+				}
+				for name, v := range ocean.GraphParams {
+					if math.IsNaN(v) || math.IsInf(v, 0) {
+						t.Fatalf("graph parameter %s = %v", name, v)
+					}
+				}
+				// The server-rendered props must keep the scene.
+				data, err := json.Marshal(props)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded struct {
+					Scene struct {
+						Environment struct {
+							Ocean *Ocean `json:"ocean"`
+						} `json:"environment"`
+					} `json:"scene"`
+				}
+				if err := json.Unmarshal(data, &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if got := decoded.Scene.Environment.Ocean; got == nil || got.Spectrum == nil || len(got.SwellWaves) != DefaultOceanSwellCount {
+					t.Fatalf("the scene was dropped from the server-rendered props: %s", data)
+				}
+			})
+		}
+	}
+}
+
+// TestOceanWindDirectionStaysBelow360AndIsIdempotent covers the edge of the
+// wrap: a direction a hair below zero adds 360 and rounds to exactly 360, which
+// is outside [0, 360) and normalizes to 0 on the next pass. The SceneIR
+// normalizes an ocean twice, so the second pass must not move the value.
+func TestOceanWindDirectionStaysBelow360AndIsIdempotent(t *testing.T) {
+	for _, v := range []float64{
+		-1e-300, -1e-20, -5e-15, -2e-14, 0, 1e-300, 359.99999999999994, 360, 720, -360, -725, 372, 1e17, -1e17,
+		math.NaN(), math.Inf(1), math.Inf(-1),
+	} {
+		got := normalizeOceanWindDirection(v)
+		if !(got >= 0 && got < 360) {
+			t.Errorf("normalizeOceanWindDirection(%v) = %v, want a value in [0, 360)", v, got)
+		}
+		if again := normalizeOceanWindDirection(got); again != got {
+			t.Errorf("normalizeOceanWindDirection(%v) = %v but a second pass gives %v", v, got, again)
+		}
+	}
+}
+
+func TestOceanPresets(t *testing.T) {
+	var last float64
+	for _, name := range []string{"calm", "moderate", "rough", "storm"} {
+		p := OceanPreset(name)
+		if p.WindSpeed <= last || p.Fetch <= 0 || p.PeakEnhancement < 1 || p.Spread < 1 {
+			t.Fatalf("preset %q: %#v", name, p)
+		}
+		last = p.WindSpeed
+		if n := normalizeOcean(&Ocean{Spectrum: &p}).Spectrum; !reflect.DeepEqual(*n, p) {
+			t.Fatalf("preset %q changes under normalization: %#v vs %#v", name, *n, p)
+		}
+	}
+	if !reflect.DeepEqual(OceanPreset("Moderate"), OceanPreset("moderate")) || !reflect.DeepEqual(OceanPreset("nope"), OceanPreset("moderate")) {
+		t.Fatal("names are case-insensitive and unknown names give moderate")
+	}
+}
+
+func TestOceanSpectrumWire(t *testing.T) {
+	spectrum := OceanPreset("calm")
+	spectrum.Seed = 0
+	wire, err := json.Marshal(Ocean{Spectrum: &spectrum, Masks: []string{"hull"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"spectrum":{"windSpeed":3,"fetch":30,"peakEnhancement":3.3,"spread":16,"swell":0.1,"seed":0},"masks":["hull"]}`
+	if string(wire) != want {
+		t.Fatalf("wire = %s\nwant   %s", wire, want)
 	}
 }

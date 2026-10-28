@@ -73,5 +73,7 @@
 // and cut the wave and turn forcing on roll.
 //
 // [Sea] is a deterministic wave field built from the same six-component table
-// as the Scene3D ocean. Any other type with a Height method works too.
+// as the Scene3D ocean or, when [SeaConfig].Swell is set, from the swell waves
+// of a spectral ocean (scene.OceanSwellWaves). Any other type with a Height
+// method works too.
 package vessel
