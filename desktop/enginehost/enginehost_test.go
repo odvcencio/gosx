@@ -3,6 +3,7 @@ package enginehost
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -419,6 +420,65 @@ func TestACallRunsOffTheDispatchGoroutine(t *testing.T) {
 	close(release)
 	if r := p.results(1)[0]; r.Value.Total != 1 {
 		t.Fatalf("result = %+v", r)
+	}
+}
+
+// A mailbox in the call signal delivers every call, and ServeCallsAsync runs
+// the handlers off the session goroutine, one at a time in ID order, writing
+// each result before the next call starts.
+func TestServeCallsAsyncAnswersAMailboxOverTheBridgeInOrder(t *testing.T) {
+	p := newFakePage(t)
+	h := newHost(t, p)
+	gate := make(chan struct{})
+	entered := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	var started []string
+	var resultsWhenSecondStarted int
+	_ = h.Register("Sim", func(in *Instance) (host.Handle, error) {
+		return host.ServeCallsAsync(in, "sim.cmd", host.CallOptions{}, func(name string, a addArgs) (sum, error) {
+			mu.Lock()
+			started = append(started, name)
+			if name == "add" {
+				resultsWhenSecondStarted = p.count("e1", "signals")
+			}
+			mu.Unlock()
+			if name == "slow" {
+				once.Do(func() { close(entered) })
+				<-gate
+			}
+			return sum{a.A + a.B}, nil
+		})
+	})
+	p.attach("e1", "Sim", false)
+	mountEngine(t, p, "e1")
+	subs := p.waitMsg("e1", "subscribe", 2)
+	call := uint64(subs[1].num("sid"))
+	p.post("e1", map[string]any{"t": "signal", "sid": call, "name": "$sim.cmd",
+		"json": `[{"ID":2,"Name":"add","Args":{"A":2,"B":3}},{"ID":1,"Name":"slow","Args":{"A":1,"B":1}}]`})
+	<-entered
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	if len(started) != 1 {
+		mu.Unlock()
+		t.Fatalf("handlers started %v while call 1 still ran; want only slow", started)
+	}
+	mu.Unlock()
+	if got := p.count("e1", "signals"); got != 0 {
+		t.Fatalf("call 2 was answered while call 1 still ran: %d result batches", got)
+	}
+	close(gate)
+	rs := p.results(2)
+	if rs[0].ID != 1 || rs[0].Value.Total != 2 || rs[1].ID != 2 || rs[1].Value.Total != 5 {
+		t.Fatalf("results = %+v", rs)
+	}
+	if len(rs[1].Recent) != 2 || rs[1].Recent[0].ID != 1 || rs[1].Recent[1].ID != 2 {
+		t.Fatalf("Recent = %+v", rs[1].Recent)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(started, []string{"slow", "add"}) || resultsWhenSecondStarted != 1 {
+		t.Fatalf("started %v; results written when call 2 started: %d, want [slow add] and 1", started, resultsWhenSecondStarted)
 	}
 }
 

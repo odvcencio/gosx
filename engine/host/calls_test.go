@@ -20,7 +20,10 @@ type fakeCalls struct {
 	initial json.RawMessage
 	// resultInitial is the result signal's value when the engine subscribes.
 	resultInitial json.RawMessage
-	declared      struct {
+	// onWrite runs after each write, outside the lock, as a store's
+	// notification of a subscriber would.
+	onWrite  func()
+	declared struct {
 		channel string
 		timeout time.Duration
 		recent  int
@@ -52,6 +55,9 @@ func (f *fakeCalls) Write(signal string, v any) error {
 	f.writes = append(f.writes, data)
 	f.signals = append(f.signals, signal)
 	f.mu.Unlock()
+	if f.onWrite != nil {
+		f.onWrite()
+	}
 	return nil
 }
 

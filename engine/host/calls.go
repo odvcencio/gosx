@@ -11,7 +11,7 @@ import (
 	"m31labs.dev/gosx/engine"
 )
 
-// CallOptions tunes ServeCalls.
+// CallOptions tunes ServeCalls and ServeCallsAsync.
 type CallOptions struct {
 	// Timeout is how long the page waits for a reply before it writes the
 	// error "timeout" to the result signal. Zero means DefaultCallTimeout.
@@ -20,6 +20,11 @@ type CallOptions struct {
 	// Recent is how many past replies Result.Recent keeps. Zero means
 	// DefaultCallRecent.
 	Recent int
+	// RecentBytes is how many bytes of reply values Result.Recent may carry
+	// besides the newest reply's own Value. The newest entries keep their value
+	// while they fit; an older entry that no longer fits keeps its ID and error
+	// only. Zero means DefaultCallRecentBytes; a negative number keeps no values.
+	RecentBytes int
 }
 
 const (
@@ -27,6 +32,9 @@ const (
 	DefaultCallTimeout = 10 * time.Second
 	// DefaultCallRecent is the default length of Result.Recent.
 	DefaultCallRecent = 8
+	// DefaultCallRecentBytes is the default byte budget for the values in
+	// Result.Recent.
+	DefaultCallRecentBytes = 8 << 10
 )
 
 // CallTransport is what ServeCalls needs from the page. Each transport
@@ -43,6 +51,17 @@ type CallTransport interface {
 	Declare(channel string, timeout time.Duration, recent int, zeroResult string)
 }
 
+// CallTrimmer is an optional capability of a CallTransport that reads and
+// writes the page's own signal store at once (an engine on the main thread). A
+// mailbox in the call signal lists the calls that have no reply yet; after the
+// engine answers call n, ServeCalls asks such a transport to drop the calls at
+// or below n from it. It asks only on a channel that has held a mailbox. A
+// transport whose view of the page is a delayed copy (a worker, a native host)
+// does not implement it: the page host drops them itself.
+type CallTrimmer interface {
+	TrimCalls(callSignal string, through uint64) error
+}
+
 // callSignals returns the wire names of the call and result signals. A leading
 // "$" on channel is optional.
 func callSignals(channel string) (call, result string, err error) {
@@ -56,27 +75,75 @@ func callSignals(channel string) (call, result string, err error) {
 // ServeCalls answers typed requests from islands and other page code.
 //
 // The page writes an engine.Call[A] to the shared signal "$channel" and the
-// engine replies with an engine.Result[R] on "$channel.result". For each call
-// with an ID higher than any it has handled, ServeCalls decodes the arguments,
-// runs handle, and writes one result. A call whose arguments do not decode gets
-// an error result instead of silence. A call that arrives before ServeCalls
-// subscribes is handled from the signal's current value, unless the result
-// signal shows it was already answered (an engine that remounts does not run an
-// old call again). Repeated deliveries of
-// the same value, which a batch flush can produce, are ignored.
+// engine replies with an engine.Result[R] on "$channel.result". The signal may
+// also hold a mailbox, an array of calls, so that several calls written
+// together (for example by one island handler) all arrive. ServeCalls runs
+// every call whose ID is higher than any it has handled, in ID order, and
+// writes one result for each. It decodes the arguments, runs handle and writes
+// the result. A call whose arguments do not decode gets an error result instead
+// of silence. A call that arrives before ServeCalls subscribes is handled from
+// the signal's current value, unless the result signal shows it was already
+// answered (an engine that remounts does not run an old call again). Repeated
+// deliveries of the same value, which a batch flush can produce, are ignored.
 //
-// Result.Recent lists the last CallOptions.Recent replies (ID and error), so an
-// island that sent two calls before the first reply still finds both. On a
-// worker engine the page also fails a call with "timeout" when no reply arrives
-// in CallOptions.Timeout, and with "worker-crashed" if the worker dies.
+// Result.Recent lists the last CallOptions.Recent replies (ID, error and,
+// within CallOptions.RecentBytes, value), so an island that sent several calls
+// before the first reply still finds each one. On a worker engine the page also
+// fails a call with "timeout" when no reply arrives in CallOptions.Timeout, and
+// with "worker-crashed" if the worker dies.
 //
-// handle runs on the engine's event loop, one call at a time.
+// handle runs on the engine's event loop, one call at a time, and must not
+// wait for a browser promise or any callback that only the event loop can run:
+// the engine would deadlock. Use ServeCallsAsync for a handler that blocks.
 func ServeCalls[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
 	return ServeCallsOn(ctx.CallTransport(), channel, opts, handle)
 }
 
 // ServeCallsOn is ServeCalls over an explicit transport.
 func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
+	return serveCalls(tr, channel, opts, handle, false)
+}
+
+// ServeCallsAsync is ServeCalls for a handler that may block, for example on a
+// browser promise (jsutil.AwaitPromise), storage or the network.
+//
+// ServeCalls runs the handler inside the JavaScript callback that delivers the
+// call. Go cannot run any other callback until that one returns, so a handler
+// that waits for one deadlocks the engine. ServeCallsAsync only queues the call
+// in that callback and returns at once. The handler runs on a goroutine of its
+// own, so the event loop stays free for the promise it waits for.
+//
+// Calls run one at a time, in ID order, and each result is written before the
+// next call starts. The result of call n therefore tells a client that every
+// call up to n has finished. A handler that never returns holds back every
+// later call on the channel; use one channel for each kind of work that must
+// not wait for the other.
+//
+// The page's watchdog counts from when the page saw a call, not from when its
+// handler starts, so a call that waits in the queue behind a slow one can time
+// out. Its real reply replaces the timeout when it comes. A client that keeps
+// one call in flight (wasm.Caller does by default) never queues calls here.
+//
+// A handler runs on its own goroutine, not inside a call from Go into
+// JavaScript, and the engine writes each result from that goroutine. On the
+// main thread that write can run the engine's own subscriptions before it
+// returns; they only queue work and never block. A handler that calls into
+// JavaScript should avoid functions that run a Go callback before they return
+// (new Promise with a Go executor, dispatchEvent to a Go listener):
+// jsutil.AwaitPromise follows that rule.
+//
+// Disposing the returned HandleFunc drops the queued calls and the reply of the
+// call that is running; it does not stop a running handler.
+func ServeCallsAsync[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
+	return ServeCallsAsyncOn(ctx.CallTransport(), channel, opts, handle)
+}
+
+// ServeCallsAsyncOn is ServeCallsAsync over an explicit transport.
+func ServeCallsAsyncOn[A, R any](tr CallTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
+	return serveCalls(tr, channel, opts, handle, true)
+}
+
+func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error), async bool) (HandleFunc, error) {
 	if handle == nil {
 		return nil, errors.New("call handler is required")
 	}
@@ -90,72 +157,29 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 	if opts.Recent <= 0 {
 		opts.Recent = DefaultCallRecent
 	}
-
-	var (
-		mu       sync.Mutex
-		last     uint64
-		recent   []engine.ResultRef
-		disposed bool
-	)
-	process := func(data json.RawMessage) {
-		// The ID decodes on its own, so a call with a wrongly typed Name or
-		// Args still gets an answer.
-		var head struct{ ID uint64 }
-		if json.Unmarshal(data, &head) != nil {
-			return // no ID to answer
-		}
-		mu.Lock()
-		if disposed || head.ID == 0 || head.ID <= last {
-			mu.Unlock()
-			return
-		}
-		last = head.ID
-		mu.Unlock()
-
-		result := engine.Result[R]{ID: head.ID}
-		var args A
-		var call engine.Call[json.RawMessage]
-		if err := safeDecode(data, &call); err != nil {
-			result.Error = "bad-call: " + err.Error()
-		} else {
-			result.Name = call.Name
-			if len(call.Args) > 0 && string(call.Args) != "null" {
-				if err := safeDecode(call.Args, &args); err != nil {
-					result.Error = "bad-args: " + err.Error()
-				}
-			}
-		}
-		if result.Error == "" {
-			value, err := safeHandle(handle, call.Name, args)
-			if err != nil {
-				result.Error = err.Error()
-			} else {
-				result.Value = value
-			}
-		}
-
-		mu.Lock()
-		recent = append(recent, engine.ResultRef{ID: result.ID, Error: result.Error})
-		if len(recent) > opts.Recent {
-			recent = append([]engine.ResultRef(nil), recent[len(recent)-opts.Recent:]...)
-		}
-		result.Recent = append([]engine.ResultRef(nil), recent...)
-		gone := disposed
-		mu.Unlock()
-		if gone {
-			return
-		}
-		// A result value that cannot be encoded is reported as an error result.
-		if err := tr.Write(resultSignal, result); err != nil {
-			fallback := engine.Result[R]{ID: result.ID, Name: result.Name, Error: "reply-failed: " + err.Error(), Recent: result.Recent}
-			_ = tr.Write(resultSignal, fallback)
-		}
+	if opts.RecentBytes == 0 {
+		opts.RecentBytes = DefaultCallRecentBytes
+	}
+	if opts.RecentBytes < 0 {
+		opts.RecentBytes = 0
 	}
 
+	s := &callServer[A, R]{
+		tr: tr, handle: handle, async: async,
+		callSignal: callSignal, resultSignal: resultSignal,
+		log: replyLog{keep: opts.Recent, budget: opts.RecentBytes},
+	}
+	s.trimmer, _ = tr.(CallTrimmer)
 	var zero string
 	if encoded, err := json.Marshal(engine.Result[R]{}); err == nil {
 		zero = string(encoded)
 	}
+	if encoded, err := json.Marshal(*new(R)); err == nil {
+		s.zero = encoded
+	} else {
+		s.zero = json.RawMessage("null")
+	}
+
 	// Shared signals outlive an engine instance, so a remounted engine finds
 	// the previous call and its result. Read the result first and treat every
 	// call up to its ID as answered. The result subscription comes before the
@@ -166,28 +190,189 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 		if json.Unmarshal(data, &answered) != nil {
 			return
 		}
-		mu.Lock()
-		if answered.ID > last {
-			last = answered.ID
+		s.mu.Lock()
+		if answered.ID > s.last {
+			s.last = answered.ID
 		}
-		mu.Unlock()
+		s.mu.Unlock()
 	})
 	if err != nil {
 		return nil, fmt.Errorf("serve calls on %s: %w", resultSignal, err)
 	}
-	off, err := tr.Subscribe(callSignal, process)
+	off, err := tr.Subscribe(callSignal, s.deliver)
 	if err != nil {
 		offResult.Dispose()
 		return nil, fmt.Errorf("serve calls on %s: %w", callSignal, err)
 	}
 	tr.Declare(callSignal, opts.Timeout, opts.Recent, zero)
 	return func() {
-		mu.Lock()
-		disposed = true
-		mu.Unlock()
+		s.mu.Lock()
+		s.disposed = true
+		s.queue = nil
+		s.mu.Unlock()
 		off.Dispose()
 		offResult.Dispose()
 	}, nil
+}
+
+// callReply is the outcome of one call.
+type callReply struct {
+	id    uint64
+	name  string
+	err   string
+	value json.RawMessage // the encoded Value to publish; the encoded zero value for an error
+	kept  json.RawMessage // the value for Result.Recent; nil for an error
+}
+
+// callServer is the engine side of one call channel. It keeps the accepted
+// calls in a queue and drains it one call at a time: ServeCalls on the stack
+// of the callback that delivered the call, ServeCallsAsync on a goroutine.
+//
+// mu guards the fields below it. It is never held across a call into the
+// handler or the transport, because the transport may call back into Go before
+// it returns (a write to a shared signal notifies this engine's own
+// subscriptions in the same call stack).
+type callServer[A, R any] struct {
+	tr           CallTransport
+	trimmer      CallTrimmer
+	handle       func(name string, args A) (R, error)
+	async        bool
+	callSignal   string
+	resultSignal string
+	zero         json.RawMessage
+
+	mu       sync.Mutex
+	last     uint64      // the highest ID accepted or reported as answered
+	queue    []callEntry // accepted calls that have not started, in ID order
+	busy     bool        // a stack or goroutine is draining the queue
+	mailbox  bool        // the call signal has held a mailbox
+	disposed bool
+	log      replyLog
+}
+
+// deliver takes the value of the call signal.
+func (s *callServer[A, R]) deliver(data json.RawMessage) {
+	entries, mailbox := decodeCalls(data)
+	s.mu.Lock()
+	if s.disposed {
+		s.mu.Unlock()
+		return
+	}
+	if mailbox {
+		s.mailbox = true
+	}
+	for _, entry := range entries {
+		if entry.id > s.last {
+			s.last = entry.id
+			s.queue = append(s.queue, entry)
+		}
+	}
+	start := len(s.queue) > 0 && !s.busy
+	if start {
+		s.busy = true
+	}
+	s.mu.Unlock()
+	switch {
+	case !start:
+	case s.async:
+		go s.drain()
+	default:
+		s.drain()
+	}
+}
+
+// drain runs the queued calls, oldest first, and writes each result before it
+// starts the next call. A call that arrives while drain runs (a handler or a
+// result write that reaches this engine's own subscription) joins the queue and
+// runs after the calls before it, so results stay in ID order.
+func (s *callServer[A, R]) drain() {
+	finished := false
+	defer func() {
+		if !finished { // a panic is leaving: let the next delivery drain again
+			s.mu.Lock()
+			s.busy = false
+			s.mu.Unlock()
+		}
+	}()
+	for {
+		s.mu.Lock()
+		if s.disposed || len(s.queue) == 0 {
+			s.busy = false
+			s.mu.Unlock()
+			finished = true
+			return
+		}
+		entry := s.queue[0]
+		s.queue[0] = callEntry{}
+		s.queue = s.queue[1:]
+		s.mu.Unlock()
+
+		reply := s.run(entry)
+
+		s.mu.Lock()
+		if s.disposed {
+			s.busy = false
+			s.mu.Unlock()
+			finished = true
+			return
+		}
+		result := engine.Result[json.RawMessage]{
+			ID: reply.id, Name: reply.name, Error: reply.err, Value: reply.value,
+			Recent: s.log.add(reply.id, reply.err, reply.kept),
+		}
+		trim := s.mailbox && s.trimmer != nil
+		s.mu.Unlock()
+
+		s.write(result)
+		if trim {
+			_ = s.trimmer.TrimCalls(s.callSignal, reply.id)
+		}
+	}
+}
+
+// run decodes one call, runs the handler and encodes the reply.
+func (s *callServer[A, R]) run(entry callEntry) callReply {
+	reply := callReply{id: entry.id}
+	var args A
+	var call engine.Call[json.RawMessage]
+	if err := safeDecode(entry.raw, &call); err != nil {
+		reply.err = "bad-call: " + err.Error()
+	} else {
+		reply.name = call.Name
+		if len(call.Args) > 0 && string(call.Args) != "null" {
+			if err := safeDecode(call.Args, &args); err != nil {
+				reply.err = "bad-args: " + err.Error()
+			}
+		}
+	}
+	if reply.err == "" {
+		value, err := safeHandle(s.handle, call.Name, args)
+		if err != nil {
+			reply.err = err.Error()
+		} else if encoded, err := safeEncode(value); err != nil {
+			// A result value that cannot be encoded is reported as an error result.
+			reply.err = "reply-failed: " + err.Error()
+		} else {
+			reply.value, reply.kept = encoded, encoded
+		}
+	}
+	if reply.value == nil {
+		reply.value = s.zero
+	}
+	return reply
+}
+
+// write publishes one result. A result the page cannot take is replaced by an
+// error result for the same call.
+func (s *callServer[A, R]) write(result engine.Result[json.RawMessage]) {
+	if err := s.tr.Write(s.resultSignal, result); err != nil {
+		// A result the page cannot take is answered with an error result.
+		fallback := engine.Result[json.RawMessage]{
+			ID: result.ID, Name: result.Name, Error: "reply-failed: " + err.Error(),
+			Value: s.zero, Recent: result.Recent,
+		}
+		_ = s.tr.Write(s.resultSignal, fallback)
+	}
 }
 
 // safeDecode unmarshals data into v, turning a panic in a custom UnmarshalJSON
@@ -199,6 +384,16 @@ func safeDecode(data []byte, v any) (err error) {
 		}
 	}()
 	return json.Unmarshal(data, v)
+}
+
+// safeEncode marshals v, turning a panic in a custom MarshalJSON into an error.
+func safeEncode(v any) (data []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			data, err = nil, fmt.Errorf("encoder panic: %v", r)
+		}
+	}()
+	return json.Marshal(v)
 }
 
 func safeHandle[A, R any](handle func(string, A) (R, error), name string, args A) (value R, err error) {

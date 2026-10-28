@@ -38,6 +38,7 @@ func TestWorkerWireKeysAreGoFieldNames(t *testing.T) {
 		{"Call", Call[struct{ X int }]{}, []string{"Args", "ID", "Name"}},
 		{"Result", Result[struct{ X int }]{}, []string{"Error", "ID", "Name", "Recent", "Value"}},
 		{"ResultRef", ResultRef{}, []string{"Error", "ID"}},
+		{"ResultRef with a value", ResultRef{Value: json.RawMessage(`1`)}, []string{"Error", "ID", "Value"}},
 	}
 	for _, c := range cases {
 		if got := jsonKeys(t, c.v); !reflect.DeepEqual(got, c.want) {
