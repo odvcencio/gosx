@@ -104,7 +104,7 @@ type WorkerStatus struct{ State, Thread, Reason string }
 
 type Call[A any] struct { ID uint64; Name string; Args A }
 type Result[R any] struct { ID uint64; Name, Error string; Value R; Recent []ResultRef }
-type ResultRef struct { ID uint64; Error string }
+type ResultRef struct { ID uint64; Error string; Value R /* JSON; left out when it is empty */ }
 ```
 
 The status signal is named `$gosx.engine.<id>`. The engine ID is
@@ -144,12 +144,15 @@ The rules:
 
 1. Number calls from 1, increasing by one. The engine ignores any ID at or below
    the last one it handled, because a batch flush can deliver the same value twice.
-2. Write the call signal **once per handler**. The runtime batches the writes of
-   one handler, so two writes send only the last.
+2. A signal keeps its newest value only. If one handler writes two single calls,
+   the engine sees the second, and the first never runs. To send several calls
+   together, write a mailbox (see below) or use `wasm.Caller`.
 3. A result with `ID >=` your call's ID means your call is finished. If the IDs
    are equal, `Value` and `Error` are its reply. If the result is newer, find
-   your ID in `Recent` (the last `CallOptions.Recent` replies, default 8; it holds
-   the ID and error, not the value).
+   your ID in `Recent` (the last `CallOptions.Recent` replies, default 8). Each
+   entry has the ID and the error, and has the `Value` while the values of the
+   newest entries fit in `CallOptions.RecentBytes` (default 8 KiB). A reply that
+   has no error and no value there is lost; treat it as failed.
 4. A call whose arguments do not decode gets `Error: "bad-args: ..."`. A handler
    that returns an error or panics gets that message in `Error`.
 5. A call whose ID decodes but whose other fields do not (for example a number
@@ -171,14 +174,106 @@ the worker is stuck in a long loop. If the worker finishes the call late, its re
 reply replaces the timeout. On the main thread there is no watchdog; a handler
 that blocks blocks the page.
 
-A handler must not block on an asynchronous JavaScript result, for example
-`http.Get` or a channel that only a JavaScript callback fills. The handler runs
-inside a JavaScript callback, and Go cannot run other callbacks until it
-returns, so the engine deadlocks. Start a goroutine for slow work and answer
-with a later call, or have the island poll a signal.
+A handler given to `wasm.ServeCalls` must not block on an asynchronous
+JavaScript result, for example `http.Get`, a storage request, or a channel that
+only a JavaScript callback fills. It runs inside a JavaScript callback, and Go
+cannot run other callbacks until it returns, so the engine deadlocks. Serve the
+channel with `wasm.ServeCallsAsync` instead (see below).
 
 Any script on the page can write the call, result and status signals, not only
 the engine and the page host. Treat all three as untrusted input.
+
+### Several calls at once: the mailbox
+
+The call signal can hold an array of calls, a mailbox, instead of one call. The
+mailbox lists every call that has no reply yet. To send a call, append it to the
+list and write the whole list; the new call needs an ID above every ID in the
+list and above the last reply. The engine runs each call whose ID is above the
+last one it handled, in ID order, and writes one result for each, so two calls
+written by one handler both run.
+
+```go
+// Island (.gsx)
+box := signal.NewShared("bv.box", []Cmd{})            // calls with no reply yet
+boxres := signal.NewShared("bv.box.result", Reply{})  // Recent has Ref{ID, Error, Value}
+next := func() int { return boxres.Get().ID + len(box.Get()) + 1 }
+pair := func() {
+    box.Set(append(box.Get(), Cmd{ID: next(), Name: "add", Args: Args{A: 1, B: 2}}))
+    box.Set(append(box.Get(), Cmd{ID: next(), Name: "add", Args: Args{A: 10, B: 20}}))
+}
+// <p>{boxres.Get().Value.Total}</p> shows the newest reply; each Recent entry holds an earlier one.
+```
+
+A handler only appends. Once a reply covers a call (its ID is at or below the
+result's ID), the page removes the call from the list: the page host does it for
+a worker or native engine, and the engine itself does it on the main thread. An
+engine that does not know mailboxes ignores the array, so a mailbox needs an
+engine built with this version. A page that writes single calls is not affected.
+
+The results of calls that run one after the other can reach the page together,
+and a signal keeps only its newest value, so read the older replies from
+`Recent`. Keep `CallOptions.Recent` at least as large as the number of calls you
+leave unanswered at once, and raise `CallOptions.RecentBytes` if replies are big.
+
+### A client in Go: `wasm.Caller`
+
+Code in another Go engine can make calls with `wasm.Caller`. It numbers the
+calls, writes them, reads the replies and returns each one with the tag of its
+call. It does no I/O of its own, so you choose the signal calls:
+
+```go
+caller := wasm.NewCaller("bv.cmd", ctx.SetSignal)
+off, _ := ctx.SubscribeSignal(caller.ResultSignal(), func(raw json.RawMessage) {
+    for _, r := range caller.Result(raw) { // r.Tag, r.Value (JSON), r.Err
+        sum, err := wasm.DecodeReply[Sum](r)
+        // ...
+    }
+})
+replies, err := caller.Call("add", Add{A: 2, B: 3}, "my-tag") // queued; answered through Result
+```
+
+By default it writes one call and waits for the reply before it writes the next,
+which works with every engine. `wasm.NewCallerWith(..., wasm.CallerOptions{Window: 4})`
+keeps up to four calls written at once as a mailbox, so queued calls do not wait
+for each round trip. `Fail("worker-crashed")` answers everything still pending.
+The client numbers calls from 1: if the engine can outlive the client (a page
+that remounts only the client's engine), set `CallerOptions.After` to the `ID`
+in the current value of the result signal so the engine does not ignore its calls.
+
+### Handlers that block: `wasm.ServeCallsAsync`
+
+`ServeCallsAsync` takes the same arguments as `ServeCalls`. It only queues the
+call inside the JavaScript callback and runs the handler on a goroutine, so the
+handler can wait for a browser promise (`jsutil.AwaitPromise`), OPFS or the
+network without stopping the engine's event loop:
+
+```go
+off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * time.Second},
+    func(name string, args SaveArgs) (SaveReply, error) {
+        _, err := jsutil.AwaitPromise(writeToOPFS(args)) // waits on this goroutine only
+        return SaveReply{OK: err == nil}, err
+    })
+```
+
+- Calls run one at a time, in ID order, and each result is written before the
+  next call starts. The result of call `n` therefore tells a client that every
+  call up to `n` has finished.
+- A handler that never returns holds back every later call on its channel. Use a
+  separate channel for work that must not wait for other work.
+- The page's watchdog counts from when the page saw the call, not from when the
+  handler starts, so a call queued behind a slow one can time out. Its real reply
+  replaces the timeout when it comes. A client that keeps one call written at a
+  time never queues calls in the engine.
+- Disposing the handle drops the queued calls and the reply of the running call.
+  It does not stop a running handler.
+- The handler runs on its own goroutine, and the engine writes each result from
+  that goroutine. Do not call a JavaScript function from the handler that runs a
+  Go callback before it returns, such as `new Promise` with a Go executor or
+  `dispatchEvent` to a Go listener. Go's WebAssembly runtime keeps such nested
+  calls from JavaScript into Go on one shared stack (`runtime/lock_js.go`,
+  `handleEvent`) and expects them to end in reverse order, so two goroutines that
+  nest at once can stop the program. `jsutil.AwaitPromise` and
+  `Promise.withResolvers` with `setTimeout` do not nest.
 
 ### Views
 
@@ -215,6 +310,7 @@ transport-neutral half of `wasm.NewView` and `wasm.ServeCalls`:
 |---|---|---|
 | Publish state at the page's pace | `host.NewView(ctx, opts)`; `*host.View` is a `host.Publisher` (`Set(map[string]any) error`) | `wasm.NewView` (an alias of the same type) |
 | Serve calls | `host.ServeCalls(ctx, channel, opts, handle)` | `wasm.ServeCalls` (same rules) |
+| Serve calls with a blocking handler | `host.ServeCallsAsync(ctx, channel, opts, handle)` | `wasm.ServeCallsAsync` (same rules) |
 
 `wasm.View`, `wasm.ViewOptions` and `wasm.CallOptions` are aliases of the `host`
 types, so the pacing, acknowledgement, timeout and crash-error rules are
@@ -296,7 +392,9 @@ The worker protocol and lifecycle remain the same:
 
 What differs: the engine runs next to the window, so a call handler may block the
 engine goroutine but never the window thread (each instance runs its messages one
-at a time on its own goroutine). One instance exists per attach: a page reload
+at a time on its own goroutine). `host.ServeCallsAsync` runs the handlers on their
+own goroutines, as on the web, so a slow call does not hold back the instance's
+other messages. One instance exists per attach: a page reload
 attaches again, and the host disposes the old instance before it mounts the new
 one. Input forwarding, application messages and netplay are not carried over the
 native channel. The wire protocol is the worker message protocol below, carried
@@ -511,7 +609,7 @@ Worker to page:
 | `fatal` | `code, message` | Boot or mount failure, or a crash. |
 | `log` | `level, text` | Console output. |
 | `signals` | `changedOnly, buf, seq?` | A signal batch as UTF-8 JSON bytes. With `seq` (a view batch) the page answers `ack`. |
-| `calls` | `channel, timeout, recent, zero` | The engine serves calls on `channel`; the page starts its watchdog. |
+| `calls` | `channel, timeout, recent, zero` | The engine serves calls on `channel`; the page starts a watchdog for each call it sees there, including each call listed in a mailbox. |
 | `vessel.cutaway` | `target, nodeID, json` | `scene.DispatchVesselCutaway`. Vessel poses travel as `frame` with `kind: "vessel-pose"`. |
 | `signal.set`, `subscribe`, `unsubscribe` | | Single write and subscription control. |
 | `scene3d`, `navigate` | `rid, ...` | Requests that answer with `reply`. |
@@ -532,7 +630,7 @@ Application messages: in Go, `port.Post(name, v)`, `port.PostBytes(name, b)` and
 |---|---|
 | `node --test client/runtime/host/engine-worker.test.js` | The page and worker halves against a fake `Worker` and a fake netplay binding. |
 | `make test-engine-worker-wasm` | The Go port, frame source, `Surface`, `StreamWriter` and input on js/wasm. |
-| `make test-engine-worker-browser` | A real worker in headless Chromium: boot, fallback, 60 Hz under a busy page, Scene3D driven by frames, input, and a real island that calls the worker, sees its paced view, gets a timeout and a crash error, and runs the same code under a forced fallback. |
+| `make test-engine-worker-browser` | A real worker in headless Chromium: boot, fallback, 60 Hz under a busy page, Scene3D driven by frames, input, and a real island that calls the worker, sees its paced view, gets a timeout and a crash error, writes two calls in one handler (a mailbox) and gets both replies, calls a handler that waits for a browser promise, and runs the same code under a forced fallback. |
 | `make test-engine-worker-hidden` | Worker clocks in a really hidden tab (headed Chrome). |
 | `make test-netplay-browser` | Real matches against a native peer, including the four worker routes. |
 

@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+- Deliver every call on an engine call channel. A shared signal keeps only its
+  newest value, so two calls that one island handler wrote reached the engine as
+  the second call alone, and the first never ran. The call signal can now hold a
+  mailbox, an array of the calls that have no reply yet. `ServeCalls` runs each
+  call whose ID is above the last one it handled, in ID order, and writes one
+  result for each. The page host removes answered calls from the list for a
+  worker or native engine, and the engine does it on the main thread; a handler
+  only appends. A page watchdog now starts for each listed call. A signal that
+  holds one call works as before, and an engine from an older GoSX ignores an
+  array, so a page that writes mailboxes needs an engine built with this
+  version. `bootstrap-feature-engine-worker.js` grows from 36,541 to 36,983
+  bytes.
+
+- Keep the value of recent replies. Several results written one after another
+  can reach the page as the newest one alone, so `Result.Recent` entries now carry
+  the reply's `Value` (`ResultRef.Value`) as well as its ID and error. The newest
+  entries keep their value while they fit `CallOptions.RecentBytes`, 8 KiB by
+  default; a negative number keeps none. `Recent` carries the error of a reply
+  that failed, as before. An island that declares `Recent` entries with only
+  `ID` and `Error` still decodes them.
+
+- Add `wasm.ServeCallsAsync` and `host.ServeCallsAsync` for call handlers that
+  block. `ServeCalls` runs the handler inside the JavaScript callback that
+  delivers the call, so a handler that waits for a browser promise, OPFS or the
+  network deadlocks the engine. `ServeCallsAsync` only queues the call there and
+  runs the handler on a goroutine. Calls run one at a time in ID order, each
+  result is written before the next call starts, and the page's `timeout` and
+  `worker-crashed` rules apply as before. The same engine runs in a worker, on
+  the main thread after a fallback, and in a desktop host
+  (`desktop/enginehost`).
+
+- Add `wasm.Caller`, a Go client for a call channel, modelled on the one Bon
+  Voyage wrote. It numbers calls, writes them to `$channel`, reads
+  `$channel.result`, and returns each reply with the tag of its call, in order. By
+  default it keeps one call written at a time, which works with every engine.
+  `CallerOptions{Window: n}` keeps `n` calls written at once as a mailbox, and
+  `CallerOptions{After: id}` starts numbering above an ID the engine has already
+  handled. Bon Voyage's own tests for its client pass against it, through type
+  aliases for `Caller`, `Reply` and the written call.
+
 - Hold a Scene3D motion frame that arrives while the scene's models are still
   hydrating, then apply it when they commit, instead of rejecting it with
   `renderer-not-ready`. The wait ends at the call's `timeoutMS` (10 s by
