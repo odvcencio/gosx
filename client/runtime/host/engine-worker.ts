@@ -545,20 +545,24 @@
     // ID at or below the highest they have seen. It never goes down.
     function highSeen(st) { return Math.max(st.maxCall, st.seen); }
 
-    // The worker counts the calls it has read, and it may trail the page: it can
-    // be busy in one call while the page has watched, and timed out, newer ones.
-    // A reply it writes then carries a lower Seen than the timeout the page
-    // wrote before it. Write that result again with the page's Seen. This waits
-    // for a microtask because the store is still telling its other subscribers
-    // about the first write, and they must see the second one last. A result
-    // with no Seen comes from an engine that does not count; it is left alone.
+    // st.seen is the highest Seen, or ID, that a result on the channel has
+    // carried. The worker counts the calls it has read, and it may trail the
+    // page: it can be busy in one call while the page watches, and times out,
+    // newer ones. A reply it writes then carries a lower Seen than the timeout
+    // the page wrote before it. Write that result again with the highest Seen
+    // published. A call the page still watches is in the mailbox, and a writer
+    // counts from there, so a reply that trails only such a call is left alone.
+    // The write waits for a microtask because the store is still telling its
+    // other subscribers about the first write, and they must see the second one
+    // last. A result with no Seen comes from an engine that does not count; it is
+    // left alone too.
     function raiseSeen(rec, st, result) {
-      if (typeof result.Seen !== "number" || result.Seen >= highSeen(st)) return;
+      if (typeof result.Seen !== "number" || result.Seen >= st.seen) return;
       Promise.resolve().then(function() {
         if (rec.calls.get(st.channel) !== st) return;
         var latest = st.last;
-        if (!latest || typeof latest.Seen !== "number" || latest.Seen >= highSeen(st)) return;
-        writeSignal(st.resultSignal, Object.assign({}, latest, { Seen: highSeen(st) }));
+        if (!latest || typeof latest.Seen !== "number" || latest.Seen >= st.seen) return;
+        writeSignal(st.resultSignal, Object.assign({}, latest, { Seen: st.seen }));
       });
     }
 

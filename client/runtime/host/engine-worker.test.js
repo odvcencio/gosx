@@ -1363,17 +1363,23 @@ test("page: a timeout keeps the Seen of an earlier result when that is higher", 
 });
 
 test("page: a late reply that reports a lower Seen is written again with the page's", async () => {
-  const { page, ctx } = await servingPage({ timeout: 1000 });
-  // The page watched calls 1 to 3; the worker, busy in call 1, has read none of the others.
+  const { page, ctx } = await servingPage({ timeout: 20 });
+  // The page watched calls 1 to 3, and the worker, busy in call 1, has read none
+  // of the others. The page times them out and tells the store, as it does in a page.
   ctx.write("$bv.cmd", [{ ID: 1, Name: "a" }, { ID: 2, Name: "b" }, { ID: 3, Name: "c" }]);
+  await new Promise(r => setTimeout(r, 60));
+  for (const timeout of resultWrites(page)) ctx.write("$bv.cmd.result", timeout);
+  const timeouts = resultWrites(page).length;
+  assert.deepEqual(resultWrites(page).map(w => w.Seen), [3, 3, 3]);
+  // Call 1 finishes late. The worker has read only call 1, so it reports Seen 1.
   ctx.write("$bv.cmd.result", { ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [{ ID: 1, Error: "", Value: { Total: 1 } }], Seen: 1 });
-  assert.deepEqual(resultWrites(page), [], "the store is still telling its subscribers about the reply");
+  assert.equal(resultWrites(page).length, timeouts, "the store is still telling its subscribers about the reply");
   await tick();
-  assert.deepEqual(resultWrites(page), [{ ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [{ ID: 1, Error: "", Value: { Total: 1 } }], Seen: 3 }]);
+  assert.deepEqual(resultWrites(page).slice(timeouts), [{ ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [{ ID: 1, Error: "", Value: { Total: 1 } }], Seen: 3 }]);
   // The write reaches the result subscriber like any other; it needs no further correction.
-  ctx.write("$bv.cmd.result", resultWrites(page)[0]);
+  ctx.write("$bv.cmd.result", resultWrites(page).at(-1));
   await tick();
-  assert.equal(resultWrites(page).length, 1);
+  assert.equal(resultWrites(page).length, timeouts + 1);
 });
 
 test("page: a reply whose Seen is not lower, or that has none, is left alone", async () => {
@@ -1382,6 +1388,16 @@ test("page: a reply whose Seen is not lower, or that has none, is left alone", a
   ctx.write("$bv.cmd.result", { ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [], Seen: 2 });
   // An engine built before Seen existed writes no Seen.
   ctx.write("$bv.cmd.result", { ID: 2, Name: "b", Error: "", Value: { Total: 2 }, Recent: [] });
+  await tick();
+  assert.deepEqual(resultWrites(page), []);
+});
+
+// The page watched call 2 and has not timed it out: it is still in the mailbox,
+// so a writer counts from there. A reply that trails it needs no correction.
+test("page: a reply that trails a call the page still watches is left alone", async () => {
+  const { page, ctx } = await servingPage({ timeout: 1000 });
+  ctx.write("$bv.cmd", [{ ID: 1, Name: "a" }, { ID: 2, Name: "b" }]);
+  ctx.write("$bv.cmd.result", { ID: 1, Name: "a", Error: "", Value: { Total: 1 }, Recent: [], Seen: 1 });
   await tick();
   assert.deepEqual(resultWrites(page), []);
 });
