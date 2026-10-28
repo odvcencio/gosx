@@ -15,6 +15,9 @@ const (
 	DefaultCallTimeout = host.DefaultCallTimeout
 	// DefaultCallRecent is the default length of Result.Recent.
 	DefaultCallRecent = host.DefaultCallRecent
+	// DefaultCallRecentBytes is the default byte budget for the values in
+	// Result.Recent.
+	DefaultCallRecentBytes = host.DefaultCallRecentBytes
 )
 
 // callTransport is what ServeCalls needs from the browser. Context implements
@@ -33,17 +36,32 @@ type callTransport interface {
 //
 // The page writes an engine.Call[A] to the shared signal "$channel" and the
 // engine replies with an engine.Result[R] on "$channel.result". The request,
-// reply, timeout and crash-error rules are those of host.ServeCalls, which
-// this wraps for the engine context. On a worker engine the page also fails a
-// call with "timeout" when no reply arrives in CallOptions.Timeout, and with
-// "worker-crashed" if the worker dies. handle runs on the engine's event loop,
-// one call at a time.
+// mailbox, reply, timeout and crash-error rules are those of host.ServeCalls,
+// which this wraps for the engine context. On a worker engine the page also
+// fails a call with "timeout" when no reply arrives in CallOptions.Timeout, and
+// with "worker-crashed" if the worker dies. handle runs on the engine's event
+// loop, one call at a time, and must not wait for a browser promise: use
+// ServeCallsAsync for a handler that blocks.
 func ServeCalls[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
 	return serveCalls(contextTransport{ctx}, channel, opts, handle)
 }
 
+// ServeCallsAsync is ServeCalls for a handler that may block, for example on a
+// browser promise (jsutil.AwaitPromise), storage or the network. The handler
+// runs on a goroutine, not inside the JavaScript callback that delivers the
+// call, so the event loop stays free for what it waits on. Calls run one at a
+// time and their results are written in ID order. See host.ServeCallsAsync for
+// the timeout, disposal and JavaScript re-entry rules.
+func ServeCallsAsync[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
+	return serveCallsAsync(contextTransport{ctx}, channel, opts, handle)
+}
+
 func serveCalls[A, R any](tr callTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
 	return host.ServeCallsOn(callAdapter{tr}, channel, opts, handle)
+}
+
+func serveCallsAsync[A, R any](tr callTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
+	return host.ServeCallsAsyncOn(callAdapter{tr}, channel, opts, handle)
 }
 
 // callAdapter presents a callTransport as a host.CallTransport.
@@ -55,4 +73,17 @@ func (a callAdapter) Subscribe(signal string, handler func(json.RawMessage)) (Ha
 func (a callAdapter) Write(signal string, value any) error { return a.t.write(signal, value) }
 func (a callAdapter) Declare(channel string, timeout time.Duration, recent int, zero string) {
 	a.t.declare(channel, timeout, recent, zero)
+}
+
+// TrimCalls implements host.CallTrimmer for a transport that can trim.
+func (a callAdapter) TrimCalls(signal string, through uint64) error {
+	if t, ok := a.t.(callTrimmer); ok {
+		return t.trimCalls(signal, through)
+	}
+	return nil
+}
+
+// callTrimmer is the optional trim half of a callTransport.
+type callTrimmer interface {
+	trimCalls(signal string, through uint64) error
 }
