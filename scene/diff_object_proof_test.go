@@ -64,6 +64,12 @@ func referenceObjectPatch(previous, next ObjectIR, state bool) (Command, bool) {
 	if state && next.Pickable == nil && !next.Interactive && (previous.Pickable != nil || previous.Interactive) {
 		return Command{}, false
 	}
+	// A state patch names the planar-mirror participation only when it changed, and then as an explicit value.
+	var reflection *bool
+	if state && (previous.PlanarReflection == nil || *previous.PlanarReflection) != (next.PlanarReflection == nil || *next.PlanarReflection) {
+		value := next.PlanarReflection == nil || *next.PlanarReflection
+		reflection = &value
+	}
 	previous.X, previous.Y, previous.Z = next.X, next.Y, next.Z
 	previous.RotationX, previous.RotationY, previous.RotationZ = next.RotationX, next.RotationY, next.RotationZ
 	previous.ScaleX, previous.ScaleY, previous.ScaleZ = next.ScaleX, next.ScaleY, next.ScaleZ
@@ -71,6 +77,7 @@ func referenceObjectPatch(previous, next ObjectIR, state bool) (Command, bool) {
 	if state {
 		previous.Interactive, previous.Label, previous.InteractiveOrder = next.Interactive, next.Label, next.InteractiveOrder
 		previous.Pickable, previous.Visible, previous.Selected = next.Pickable, next.Visible, next.Selected
+		previous.PlanarReflection = next.PlanarReflection
 	}
 	if !referenceMarshalEqual(previous, next) {
 		return Command{}, false
@@ -83,7 +90,7 @@ func referenceObjectPatch(previous, next ObjectIR, state bool) (Command, bool) {
 	if !state {
 		return SetTransformCommand(next.ID, patch), true
 	}
-	return Command{Kind: CommandSetTransform, ObjectID: next.ID, Data: ObjectStatePatch{TransformPatch: patch, Interactive: next.Interactive, Label: next.Label, InteractiveOrder: next.InteractiveOrder, Pickable: next.Pickable, Visible: next.Visible == nil || *next.Visible, Selected: next.Selected}}, true
+	return Command{Kind: CommandSetTransform, ObjectID: next.ID, Data: ObjectStatePatch{TransformPatch: patch, Interactive: next.Interactive, Label: next.Label, InteractiveOrder: next.InteractiveOrder, Pickable: next.Pickable, Visible: next.Visible == nil || *next.Visible, Selected: next.Selected, PlanarReflection: reflection}}, true
 }
 
 func assertObjectPatchMatchesReference(t *testing.T, previous, next ObjectIR) {
