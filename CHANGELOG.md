@@ -26,6 +26,25 @@
   `batch` method. The core runtime grows by 10.0 KB and the monolith bootstrap
   by 1.7 KB; the size budgets move by those amounts.
 
+- Add the Go contract for a spectral ocean. `scene.Ocean` gains `Spectrum` (a
+  JONSWAP wind sea with an optional swell; `scene.OceanPreset` returns the sea
+  states "calm", "moderate", "rough" and "storm"), `Presentation`, `Masks` and
+  `Wake` (`scene.OceanWake`). Normalization computes the read-only
+  `SwellWaves`, `GraphParams`, `GraphTween` and `GraphNodes`, and it counts a
+  NaN or infinite spectrum scalar as zero, the default.
+  `scene.OceanSwellWaves` returns the strongest bins as plane waves. It
+  normalizes its inputs as the SceneIR does, so it matches `Ocean.SwellWaves`
+  bit for bit. `scene.OceanQuery` and the new `vessel.SwellWave` input of
+  `vessel.Sea` follow those waves. The new `oceanspec` package computes the
+  spectrum with package `det`, so every platform gets the same bits. An ocean
+  without a `Spectrum` serializes and evaluates as before. Nothing in the
+  browser runtime reads these fields yet, so a scene that sets them still draws
+  the six-wave sea.
+
+  Source compatibility: `scene.Ocean`, `vessel.SeaConfig` and `vessel.Sea` now
+  hold slices or maps, so values of these types can no longer be compared with
+  `==` or used as map keys. Compare their fields, or use `reflect.DeepEqual`.
+
 - Hold a Scene3D motion frame that arrives while the scene's models are still
   hydrating, then apply it when they commit, instead of rejecting it with
   `renderer-not-ready`. The wait ends at the call's `timeoutMS` (10 s by

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx/det/parity"
+	"m31labs.dev/gosx/oceanspec"
 )
 
 var updateParity = flag.Bool("update-parity", false, "rewrite testdata/parity-<class>.json from this platform's run")
@@ -137,6 +138,78 @@ func TestParityLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	if d := parity.Compare(want, layoutTrace()); d != nil {
+		t.Error(d)
+	}
+}
+
+// swellTrace hashes the swell waves of the four sea states, as the spectrum
+// function selects them, and a liner under way in the rough one. The waves'
+// bits cover the hash, Box-Muller, JONSWAP and the ranking; the ship covers
+// Sea.Height with Swell set.
+func swellTrace() parity.Trace {
+	states := []oceanspec.Params{
+		{WindSpeed: 3, FetchKm: 30, Gamma: 3.3, Spread: 16, Swell: 0.1, Seed: 1},
+		{WindSpeed: 7, FetchKm: 100, Gamma: 3.3, Spread: 8, Swell: 0.15, Seed: 1},
+		{WindSpeed: 11, FetchKm: 200, Gamma: 3.3, Spread: 6, Swell: 0.25, Seed: 1},
+		{WindSpeed: 20, FetchKm: 250, Gamma: 2, Spread: 4, Swell: 0.35, Seed: 1},
+	}
+	cascades := []oceanspec.Cascade{{Size: 1600, KMin: 2 * pi / 1600, KMax: 0.12}, {Size: 250, KMin: 0.12, KMax: 0.80}}
+	var swell [][]SwellWave
+	for i, p := range states {
+		p.WindDir, p.SwellDir = oceanspec.Direction(float64(40*i)), oceanspec.Direction(0)
+		var waves []SwellWave
+		for _, w := range oceanspec.Strongest(p, cascades, 24) {
+			waves = append(waves, SwellWave{DirX: w.DirX, DirZ: w.DirZ, K: w.K, Omega: w.Omega, Amplitude: w.Amplitude, Phase: w.Phase})
+		}
+		swell = append(swell, waves)
+	}
+	step := 0
+	ship := NewShip(Presets()[0], 120, -340, 0.3, NewSea(SeaConfig{Swell: swell[2]}))
+	out := parity.NewRecorder("swell", func(dst []byte) []byte {
+		if step < len(swell) {
+			for _, w := range swell[step] {
+				for _, v := range []float64{w.DirX, w.DirZ, w.K, w.Omega, w.Amplitude, w.Phase} {
+					dst = parity.AppendFloat64(dst, v)
+				}
+			}
+			return dst
+		}
+		return ship.AppendState(dst)
+	})
+	for ; step < len(swell); step++ {
+		out.Step()
+	}
+	const dt = 1.0 / 30
+	for i := 0; i < 30*600; i++ {
+		ship.Step(Input{Power: 0.8, Heading: 0.5}, dt)
+		if i%100 == 0 {
+			out.Step()
+		}
+	}
+	return out.Trace()
+}
+
+func TestParitySwellSea(t *testing.T) {
+	path := filepath.Join("testdata", "parity-swell.json")
+	if *updateParity {
+		data, err := swellTrace().Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%v (run with -update-parity to record)", err)
+	}
+	want, err := parity.Unmarshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := parity.Compare(want, swellTrace()); d != nil {
 		t.Error(d)
 	}
 }
