@@ -4467,8 +4467,31 @@
       const notify = window.__gosx_notify_shared_signal;
       return typeof batch === "function" && batch.batchDelivery === true && typeof notify === "function" && typeof notify.batch === "function";
     }
+    const batchEncoder = typeof TextEncoder === "function" ? new TextEncoder() : null;
+    const batchDecoder = typeof TextDecoder === "function" ? new TextDecoder() : null;
+    // Hands the batch text to the runtime. When the loader has published the runtime's exports on
+    // __gosx_set_input_batch, the text goes straight into the runtime's memory and one export
+    // applies it. A call through the function makes TinyGo start a goroutine for every batch, with
+    // a stack that is a block of the runtime's heap, and the exports run on the stack the call
+    // already has. The exports report a refusal as the message the function would return after
+    // "error: ".
     function sendSignalBatch(encoded, changedOnly) {
-      const error = window.__gosx_set_input_batch(encoded, changedOnly);
+      const batch = window.__gosx_set_input_batch;
+      const wasm = batch.exports;
+      if (batchEncoder && batchDecoder && wasm && typeof wasm.gosx_batch_apply === "function" && typeof wasm.gosx_batch_reserve === "function") {
+        const room = encoded.length * 3;
+        // A pointer comes back as a signed 32-bit number; >>> 0 reads it as an address above 2 GiB too.
+        const at = wasm.gosx_batch_reserve(room) >>> 0;
+        // The memory may have grown to make room, so the view is made after the call.
+        const written = batchEncoder.encodeInto(encoded, new Uint8Array(wasm.memory.buffer, at, room)).written;
+        if (wasm.gosx_batch_apply(written, changedOnly ? 1 : 0) !== 0) {
+          const length = wasm.gosx_batch_error_length();
+          const message = length > 0 ? batchDecoder.decode(new Uint8Array(wasm.memory.buffer, wasm.gosx_batch_error() >>> 0, length)) : "";
+          throw new Error("error: " + message);
+        }
+        return null;
+      }
+      const error = batch(encoded, changedOnly);
       if (error) throw new Error(String(error));
       return null;
     }

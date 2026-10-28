@@ -623,6 +623,10 @@
       // go.run is intentionally not awaited — it resolves when the Go main()
       // exits, but the runtime stays alive via syscall/js callbacks.
       go.run(result.instance);
+      // The engine context takes signal batches through the runtime's exports when they are here
+      // (see publishBatchExports in client/runtime/wasm/loader.ts).
+      const batch = window.__gosx_set_input_batch;
+      if (typeof batch === "function" && result.instance && result.instance.exports) batch.exports = result.instance.exports;
     } catch (e) {
       console.error("[gosx] failed to load WASM runtime:", e);
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {

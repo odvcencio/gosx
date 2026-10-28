@@ -422,6 +422,38 @@ text and parses that text only when page code reads the value (`getSignal` or
 islands read costs the page no `JSON.parse`. `ctx.SubscribeSignal` gets the
 text without any parse.
 
+A TinyGo runtime also exports `gosx_batch_reserve`, `gosx_batch_apply`,
+`gosx_batch_error` and `gosx_batch_error_length`. The loaders hang a runtime's
+exports on `__gosx_set_input_batch.exports`, and the engine context then writes the
+batch text into the runtime's memory and applies it with one export call. A call
+through `__gosx_set_input_batch` makes TinyGo start a goroutine for each batch,
+with a stack that is a block of the runtime's heap; the exports run on the stack
+the call already has. A loader that does not publish the exports, an older
+runtime, and the standard Go runtime all use the function, with the same result.
+
+What this changes for page code:
+
+- The runtime decides what a changed-only batch changes. A value that only the
+  page holds (one set with `__gosx_notify_shared_signal`, for example) is not
+  repaired by a snapshot that equals the runtime's value; send a different value,
+  or write the signal through the runtime, to replace it.
+- A subscriber that a batch wakes may write another signal of the same batch, or
+  send a batch of its own. That write reaches the page first, so the batch's
+  older text for the signal is dropped, and every subscriber ends on the value
+  the store holds.
+- A legacy name such as `$scene.event.selectedID` is announced under the sender's
+  spelling as well as under its canonical name `$surface.event.selectedID`, so a
+  page that read the legacy name keeps a current copy.
+- A malformed batch is refused by the runtime, not by `JSON.parse`. The error
+  is an `Error` with the runtime's text (`error: decode shared signal batch:
+  unexpected EOF`) where it used to be a `SyntaxError`, and a worker that relays
+  `error.message` sends that text. The page and the runtime refuse the same blank
+  names: those that `String.prototype.trim` empties.
+
+Measure the cost of a batch with `client/js/signal-batch.bench.mjs`; its header
+says how to build the runtimes, play recorded batches, and run the soak that
+checks the WASM memory stays bounded.
+
 In a worker, Go code cannot use `window` or `document`: `ctx.Mount()` is null.
 
 Proof it works: a worker engine streams GSXI frames for one instanced box. The

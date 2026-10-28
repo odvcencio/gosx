@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"syscall/js"
@@ -194,4 +195,143 @@ func throws(target js.Value, method string, args ...any) (raised bool) {
 	}()
 	target.Call(method, args...)
 	return false
+}
+
+// runtimeText is what the runtime itself holds for a signal, as JSON text.
+func runtimeText(name string) string {
+	return js.Global().Call("__gosx_get_shared_signal", name).String()
+}
+
+// heardLog subscribes a raw subscriber that keeps every text it is given.
+func heardLog(t *testing.T, ctx js.Value, name string, log map[string][]string) {
+	t.Helper()
+
+	handler := js.FuncOf(func(this js.Value, args []js.Value) any {
+		log[name] = append(log[name], args[0].String())
+		return nil
+	})
+	t.Cleanup(handler.Release)
+	options := js.Global().Get("Object").New()
+	options.Set("immediate", false)
+	ctx.Call("subscribeSignalJSON", name, handler, options)
+}
+
+func TestSubscribersEndOnTheStoredValueWhenASubscriberWritesASignalOfTheBatch(t *testing.T) {
+	// The first signal of the batch to be announced has a subscriber that writes the
+	// other one. The runtime tells the page about that write at once, so the batch's
+	// own text for the other signal is out of date when its turn comes. Which signal
+	// is announced first depends on the runtime's map order, so the trials repeat.
+	for trial := 0; trial < 30; trial++ {
+		t.Run(fmt.Sprint(trial), func(t *testing.T) {
+			ctx, _ := pageWithRuntime(t)
+			heard := map[string][]string{}
+			for _, name := range []string{"$a", "$b"} {
+				heardLog(t, ctx, name, heard)
+			}
+			wrote := false
+			for name, other := range map[string]string{"$a": "$b", "$b": "$a"} {
+				name, other := name, other
+				writer := js.FuncOf(func(this js.Value, args []js.Value) any {
+					if !wrote {
+						wrote = true
+						ctx.Call("setSignal", other, "written from "+name)
+					}
+					return nil
+				})
+				t.Cleanup(writer.Release)
+				options := js.Global().Get("Object").New()
+				options.Set("immediate", false)
+				ctx.Call("subscribeSignal", name, writer, options)
+			}
+
+			if result := ctx.Call("setSignalsJSON", `{"$a":1,"$b":"batch"}`, false); !result.IsNull() {
+				t.Fatalf("setSignalsJSON = %v", result)
+			}
+			if !wrote {
+				t.Fatal("no subscriber ran")
+			}
+			for _, name := range []string{"$a", "$b"} {
+				last := heard[name][len(heard[name])-1]
+				stored := js.Global().Get("JSON").Call("stringify", ctx.Call("getSignal", name)).String()
+				if last != stored || last != runtimeText(name) {
+					t.Errorf("%s: the subscriber ended on %s, the page holds %s, the runtime holds %s (heard %v)",
+						name, last, stored, runtimeText(name), heard[name])
+				}
+			}
+		})
+	}
+}
+
+func TestSubscriberBatchSupersedesTheOlderBatchThatWokeIt(t *testing.T) {
+	ctx, _ := pageWithRuntime(t)
+	heard := map[string][]string{}
+	heardLog(t, ctx, "$b", heard)
+	var once bool
+	sender := js.FuncOf(func(this js.Value, args []js.Value) any {
+		if !once {
+			once = true
+			ctx.Call("setSignalsJSON", `{"$b":"inner"}`, false)
+		}
+		return nil
+	})
+	t.Cleanup(sender.Release)
+	options := js.Global().Get("Object").New()
+	options.Set("immediate", false)
+	ctx.Call("subscribeSignal", "$a", sender, options)
+
+	// $a is sent last as well as first, so the order of the runtime's map does not matter:
+	// whichever of them is announced first, $b ends on the inner batch.
+	ctx.Call("setSignalsJSON", `{"$a":1,"$b":"outer"}`, false)
+	if last := heard["$b"][len(heard["$b"])-1]; last != `"inner"` || runtimeText("$b") != `"inner"` {
+		t.Fatalf("$b: subscriber ended on %s, runtime holds %s (heard %v)", last, runtimeText("$b"), heard["$b"])
+	}
+}
+
+func TestPageKeepsALegacyNameCurrentWhenTheSenderSpellsIt(t *testing.T) {
+	ctx, _ := pageWithRuntime(t)
+
+	// Reading the legacy name caches it in the page. The runtime announces changes
+	// of $scene.event.selectedID as $surface.event.selectedID, so the page must be
+	// told the legacy spelling as well or its copy goes stale.
+	if first := ctx.Call("getSignal", "$scene.event.selectedID"); !first.IsNull() && !first.IsUndefined() {
+		t.Fatalf("before any batch: %v", first)
+	}
+	for _, value := range []string{"n1", "n2", "n3"} {
+		ctx.Call("setSignalsJSON", `{"$scene.event.selectedID":"`+value+`"}`, true)
+		if got := ctx.Call("getSignal", "$scene.event.selectedID"); got.String() != value {
+			t.Errorf("legacy spelling after %s: %v", value, got)
+		}
+		if got := ctx.Call("getSignal", "$surface.event.selectedID"); got.String() != value {
+			t.Errorf("canonical spelling after %s: %v", value, got)
+		}
+	}
+	// And the canonical spelling moves the cached legacy copy only through the sender's own words.
+	ctx.Call("setSignalsJSON", `{"$surface.event.selectedID":"n4"}`, true)
+	if got := ctx.Call("getSignal", "$surface.event.selectedID"); got.String() != "n4" {
+		t.Errorf("canonical spelling: %v", got)
+	}
+}
+
+func TestChangedOnlyBatchDoesNotRepairAValueOnlyThePageHolds(t *testing.T) {
+	ctx, _ := pageWithRuntime(t)
+
+	// A signal the page was told about by hand, and the runtime never heard of
+	// that value. The page used to parse every batch and store what the sender
+	// said, so any snapshot repaired such a value. The runtime now decides what
+	// changed, and a snapshot that equals what the runtime holds changes nothing,
+	// so the page keeps its own value until the runtime announces something else.
+	ctx.Call("setSignalsJSON", `{"$x":0}`, true)
+	js.Global().Call("__gosx_notify_shared_signal", "$x", "5")
+	if got := ctx.Call("getSignal", "$x"); got.Int() != 5 {
+		t.Fatalf("$x = %v after the manual notification", got)
+	}
+	ctx.Call("setSignalsJSON", `{"$x":0}`, true)
+	if got := ctx.Call("getSignal", "$x"); got.Int() != 5 || runtimeText("$x") != "0" {
+		t.Fatalf("changed-only snapshot: page %v, runtime %s; the documented behavior is that the page keeps 5", got, runtimeText("$x"))
+	}
+	// A snapshot with a different value announces it and settles both.
+	ctx.Call("setSignalsJSON", `{"$x":1}`, true)
+	if got := ctx.Call("getSignal", "$x"); got.Int() != 1 || runtimeText("$x") != "1" {
+		t.Fatalf("after a real change: page %v, runtime %s", got, runtimeText("$x"))
+	}
 }

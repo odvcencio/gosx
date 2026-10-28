@@ -58,9 +58,18 @@
     constructor() {
       super();
       this.encoded = new Map();
+      this.written = new Map();
+      this.serial = 0;
     }
     stage(name, text) {
       this.encoded.set(name, text);
+      this.written.set(name, ++this.serial);
+    }
+    // A mark changes whenever the signal is written, staged again or removed. The
+    // batch delivery takes one for each change and announces the change only while
+    // the mark has not moved, because a write in between is newer than the batch.
+    mark(name) {
+      return this.written.get(name) || 0;
     }
     settle(name) {
       if (!this.encoded.has(name)) return;
@@ -80,14 +89,17 @@
     }
     set(name, value) {
       this.encoded.delete(name);
+      this.written.set(name, ++this.serial);
       return super.set(name, value);
     }
     delete(name) {
       const staged = this.encoded.delete(name);
+      this.written.delete(name);
       return super.delete(name) || staged;
     }
     clear() {
       this.encoded.clear();
+      this.written.clear();
       super.clear();
     }
     get size() {
@@ -210,6 +222,12 @@
   // value is in the store before the first subscriber runs, so a subscriber that
   // reads another signal of the batch sees the new state. Nothing is decoded
   // here; a value is decoded when a subscriber or a reader needs it.
+  //
+  // A subscriber may write a signal that is later in the same batch, or send a
+  // batch of its own. The runtime tells the page about such a write at once, so
+  // the subscribers of that signal have already heard a value newer than this
+  // batch's text. The text is then out of date, and it is not announced: every
+  // subscriber ends on the value the store holds.
   function gosxNotifySharedSignals() {
     const store = gosxSharedSignalStore();
     const staged = store.values instanceof SharedSignalValues;
@@ -227,7 +245,17 @@
       }
       changes.push(signalName, valueJSON);
     }
+    // Writes made from here on supersede these changes. A store that is a plain
+    // Map has no write marks, so a replaced value stands in: the decoded object.
+    const marks = [];
     for (let i = 0; i < changes.length; i += 2) {
+      marks.push(staged ? store.values.mark(changes[i]) : store.values.get(changes[i]));
+    }
+    for (let i = 0; i < changes.length; i += 2) {
+      const current = staged ? store.values.mark(changes[i]) : store.values.get(changes[i]);
+      if (current !== marks[i / 2]) {
+        continue;
+      }
       notifySharedListeners(store, changes[i], changes[i + 1], undefined, false);
     }
     return null;

@@ -50,6 +50,7 @@ function runtime(window, { announce = true } = {}) {
 // page loads the bootstrap pieces into a fresh sandbox and returns an engine context.
 function page(options = {}) {
   const sandbox = { console: { error() {}, warn() {}, log() {} }, document: {}, parses: 0 };
+  if (options.codecs) { sandbox.TextEncoder = TextEncoder; sandbox.TextDecoder = TextDecoder; }
   sandbox.window = sandbox;
   sandbox.JSON = { parse(...args) { sandbox.parses++; return realParse(...args); }, stringify: realStringify };
   sandbox.pendingEngineOwned = () => true;
@@ -299,4 +300,226 @@ test("a value the runtime has but the page never heard of is read from the runti
   assert.deepEqual(ctx.getSignal("$known"), { z: 1 });
   assert.equal(parses(), 1);
   assert.equal(ctx.getSignal("$unknown"), null);
+});
+
+// A page whose runtime tells it about a write at once, as the Go runtime does:
+// __gosx_set_shared_signal stores the value and calls back into the page before it returns.
+function writesReachThePageAtOnce({ window, state }) {
+  window.__gosx_set_shared_signal = (name, text) => {
+    state.values.set(name, text);
+    window.__gosx_notify_shared_signal(name, text);
+    return "";
+  };
+}
+
+test("a subscriber that writes a later signal of the batch leaves every subscriber on the stored value", () => {
+  const p = page();
+  const { ctx, state } = p;
+  writesReachThePageAtOnce(p);
+  const heard = { "$a": [], "$b": [] };
+  for (const name of ["$a", "$b"]) ctx.subscribeSignalJSON(name, text => heard[name].push(text), { immediate: false });
+  ctx.subscribeSignal("$a", () => ctx.setSignal("$b", "fromA"), { immediate: false });
+  ctx.setSignalsJSON('{"$a":1,"$b":"batch"}', false);
+  assert.deepEqual(heard["$a"], ["1"]);
+  assert.deepEqual(heard["$b"], ['"fromA"'], "the batch's older text must not follow the newer write");
+  assert.equal(ctx.getSignal("$b"), "fromA");
+  assert.equal(state.values.get("$b"), '"fromA"');
+});
+
+test("a value subscriber is not woken a second time for a change that a later write replaced", () => {
+  const p = page();
+  const { ctx } = p;
+  writesReachThePageAtOnce(p);
+  const seen = [];
+  ctx.subscribeSignal("$a", () => ctx.setSignal("$b", "fromA"), { immediate: false });
+  ctx.subscribeSignal("$b", value => seen.push(value), { immediate: false });
+  ctx.setSignalsJSON('{"$a":1,"$b":"batch"}', false);
+  assert.deepEqual(seen, ["fromA"], "one announcement, with the newer value");
+});
+
+test("a batch sent from a subscriber supersedes the older batch that woke it", () => {
+  const p = page();
+  const { ctx } = p;
+  const heard = [];
+  ctx.subscribeSignalJSON("$b", text => heard.push(text), { immediate: false });
+  let sent = false;
+  ctx.subscribeSignal("$a", () => {
+    if (sent) return;
+    sent = true;
+    ctx.setSignalsJSON('{"$b":"inner"}', false);
+  }, { immediate: false });
+  ctx.setSignalsJSON('{"$a":1,"$b":"outer"}', false);
+  assert.deepEqual(heard, ['"inner"']);
+  assert.equal(ctx.getSignal("$b"), "inner");
+});
+
+test("a write to a signal outside the batch does not hold back the batch", () => {
+  const p = page();
+  const { ctx } = p;
+  writesReachThePageAtOnce(p);
+  const heard = [];
+  ctx.subscribeSignalJSON("$b", text => heard.push(text), { immediate: false });
+  ctx.subscribeSignalJSON("$reply", text => heard.push("reply " + text), { immediate: false });
+  ctx.subscribeSignal("$a", () => ctx.setSignal("$reply", "seen"), { immediate: false });
+  ctx.setSignalsJSON('{"$a":1,"$b":2}', false);
+  assert.deepEqual(heard, ['reply "seen"', "2"]);
+});
+
+test("a write that is replaced by the batch's own later duplicate still announces both", () => {
+  const { window, ctx } = page();
+  const raw = [];
+  ctx.subscribeSignalJSON("$a", text => raw.push(text), { immediate: false });
+  window.__gosx_notify_shared_signal.batch("$a", "1", "$a", "2");
+  assert.deepEqual(raw, ["1", "2"], "two changes of one batch are not superseded by each other");
+});
+
+test("a store that is a plain Map also drops a change that a later write replaced", () => {
+  const p = page();
+  const { window, ctx, state } = p;
+  writesReachThePageAtOnce(p);
+  window.__gosx.sharedSignals = vm.runInContext("({ values: new Map(), subscribers: new Map(), nextID: 0 })", window);
+  const heard = [];
+  ctx.subscribeSignalJSON("$b", text => heard.push(text), { immediate: false });
+  ctx.subscribeSignal("$a", () => ctx.setSignal("$b", "fromA"), { immediate: false });
+  ctx.setSignalsJSON('{"$a":1,"$b":"batch"}', false);
+  assert.deepEqual(heard, ['"fromA"']);
+  assert.equal(state.values.get("$b"), '"fromA"');
+});
+
+test("deleting a staged signal while its batch is delivered drops the change", () => {
+  const { window, ctx, store } = page();
+  const heard = [];
+  ctx.subscribeSignalJSON("$b", text => heard.push(text), { immediate: false });
+  ctx.subscribeSignal("$a", () => store().values.delete("$b"), { immediate: false });
+  window.__gosx_notify_shared_signal.batch("$a", "1", "$b", "2");
+  assert.deepEqual(heard, []);
+  assert.equal(store().values.has("$b"), false);
+});
+
+test("a changed-only batch leaves a value that only the page holds, and a different value replaces it", () => {
+  const { window, ctx, state } = page();
+  ctx.setSignalsJSON('{"$x":0}', true);
+  window.__gosx_notify_shared_signal("$x", "5");
+  ctx.setSignalsJSON('{"$x":0}', true);
+  assert.equal(ctx.getSignal("$x"), 5, "the runtime decides what changed; 0 is not a change for it");
+  assert.equal(state.values.get("$x"), "0");
+  ctx.setSignalsJSON('{"$x":1}', true);
+  assert.equal(ctx.getSignal("$x"), 1);
+});
+
+// The direct entry: the loader hangs the runtime's exports on the batch function, and the page writes
+// the batch text into the runtime's memory instead of calling the function. This stand-in has the
+// exports of client/wasm/batch_direct_tinygo.go over a real WebAssembly.Memory, and the same
+// runtime behind them, so that any difference between the two paths shows.
+function directEntry({ grow = false, exportsOverride = {} } = {}) {
+  const p = page({ codecs: true });
+  const { window, state } = p;
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 64 });
+  const staging = 4096;
+  const failureAt = 60000;
+  const direct = { reserved: [], applied: [], failure: "" };
+  const fn = window.__gosx_set_input_batch;
+  const exports = {
+    memory,
+    gosx_batch_reserve(room) {
+      direct.reserved.push(room);
+      if (grow) memory.grow(1); // the old buffer is detached; a view made before this call is dead
+      return staging;
+    },
+    gosx_batch_apply(length, changedOnly) {
+      const text = new TextDecoder().decode(new Uint8Array(memory.buffer, staging, length));
+      direct.applied.push({ text, length, changedOnly });
+      // Past this point the runtime behaves as it does behind the function.
+      const before = state.calls.length;
+      const error = fn(text, changedOnly === 1);
+      state.calls.splice(before); // the function was not called by the page
+      if (!error) return 0;
+      const message = new TextEncoder().encode(String(error).replace(/^error: /, ""));
+      new Uint8Array(memory.buffer, failureAt, message.length).set(message);
+      direct.failure = { length: message.length };
+      return 1;
+    },
+    gosx_batch_error() { return failureAt; },
+    gosx_batch_error_length() { return direct.failure ? direct.failure.length : 0; },
+    ...exportsOverride,
+  };
+  fn.exports = exports;
+  return { ...p, direct, exports, memory };
+}
+
+test("a batch goes through the runtime's exports and the page reads the text as UTF-8", () => {
+  const { ctx, state, direct, parses } = directEntry();
+  const raw = [];
+  ctx.subscribeSignalJSON("$t", text => raw.push(text), { immediate: false });
+  const text = '{"$t":"h\u00e9llo \u2603 \ud834\udd1e","$n":1}';
+  ctx.setSignalsJSON(text, false);
+  assert.equal(direct.applied.length, 1);
+  assert.equal(direct.applied[0].text, text, "the runtime must get the sender's text as it is");
+  assert.equal(direct.applied[0].length, new TextEncoder().encode(text).length);
+  assert.equal(direct.applied[0].changedOnly, 0);
+  assert.equal(direct.reserved[0], text.length * 3, "room for the worst case of UTF-8");
+  assert.equal(state.calls.length, 0, "no call through the function that starts a goroutine");
+  assert.deepEqual(raw, ['"h\u00e9llo \u2603 \ud834\udd1e"']);
+  assert.equal(parses(), 0);
+  ctx.setSignalsJSON('{"$n":2}', true);
+  assert.equal(direct.applied[1].changedOnly, 1);
+});
+
+test("the page makes its view of the runtime's memory after the runtime had room made", () => {
+  const { ctx, memory, direct } = directEntry({ grow: true });
+  const before = memory.buffer.byteLength;
+  ctx.setSignalsJSON('{"$a":1}', false);
+  assert.ok(memory.buffer.byteLength > before, "the stand-in grew the memory");
+  assert.equal(direct.applied[0].text, '{"$a":1}');
+});
+
+test("a batch the runtime refuses through its exports throws the message the function would have returned", () => {
+  const { ctx, state, direct } = directEntry();
+  ctx.setSignalsJSON(batch(1, 2, 3), false);
+  state.failure = "shared signal name required";
+  assert.throws(() => ctx.setSignalsJSON(batch(7, 8, 9), false), (error) => error.name === "Error" && error.message === "error: shared signal name required");
+  assert.equal(ctx.getSignal("$a"), 1);
+  state.failure = "";
+  assert.throws(() => ctx.setSignalsJSON('{"$a":', false), /^Error: error: decode shared signal batch/);
+  assert.equal(direct.applied.length, 3);
+  assert.equal(ctx.getSignal("$b"), 2);
+});
+
+test("exports that do not take a batch, or a page that cannot encode text, use the function", () => {
+  for (const make of [
+    () => directEntry({ exportsOverride: { gosx_batch_apply: undefined } }),
+    () => directEntry({ exportsOverride: { gosx_batch_reserve: undefined } }),
+    () => { const p = directEntry(); delete p.window.__gosx_set_input_batch.exports; return p; },
+  ]) {
+    const { ctx, state, direct } = make();
+    ctx.setSignalsJSON('{"$a":1}', false);
+    assert.equal(state.calls.length, 1, "the function took the batch");
+    assert.equal(direct.applied.length, 0);
+  }
+  // The sandbox of the other tests has no TextEncoder, and cannot use the exports either.
+  const { ctx, state, window } = page();
+  window.__gosx_set_input_batch.exports = { memory: new WebAssembly.Memory({ initial: 1 }), gosx_batch_reserve() { throw new Error("used"); }, gosx_batch_apply() { throw new Error("used"); } };
+  ctx.setSignalsJSON('{"$a":1}', false);
+  assert.equal(state.calls.length, 1);
+});
+
+test("a runtime that does not announce batch delivery is not given the batch through its exports", () => {
+  const p = directEntry();
+  p.window.__gosx_set_input_batch.batchDelivery = false;
+  p.ctx.setSignalsJSON('{"$a":1}', false);
+  assert.equal(p.direct.applied.length, 0, "the page decodes such a batch itself");
+  assert.equal(p.state.calls.length, 1);
+});
+
+test("a batch sent from a subscriber while one is being applied reaches the runtime through the exports too", () => {
+  const { ctx, direct } = directEntry();
+  let sent = false;
+  ctx.subscribeSignal("$a", () => {
+    if (sent) return;
+    sent = true;
+    ctx.setSignalsJSON('{"$b":"inner"}', false);
+  }, { immediate: false });
+  ctx.setSignalsJSON('{"$a":1,"$b":"outer"}', false);
+  assert.deepEqual(direct.applied.map(a => a.text), ['{"$a":1,"$b":"outer"}', '{"$b":"inner"}']);
+  assert.equal(ctx.getSignal("$b"), "inner");
 });
