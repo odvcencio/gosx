@@ -4458,11 +4458,26 @@
       const record = window.__gosx && window.__gosx.engines && window.__gosx.engines.get(entry.id);
       return !!(pending && pending.generation === goWASMEnginePageGeneration && record && !record.disposed && record.context === context);
     };
+    // A runtime that decodes and validates a batch itself, and hands the page
+    // every change as JSON text, needs nothing decoded here: the page would
+    // only decode what the runtime decodes again.
+    const batchObjectStart = /^[ \t\n\r]*\{/;
+    function runtimeDecodesBatches() {
+      const batch = window.__gosx_set_input_batch;
+      const notify = window.__gosx_notify_shared_signal;
+      return typeof batch === "function" && batch.batchDelivery === true && typeof notify === "function" && typeof notify.batch === "function";
+    }
+    function sendSignalBatch(encoded, changedOnly) {
+      const error = window.__gosx_set_input_batch(encoded, changedOnly);
+      if (error) throw new Error(String(error));
+      return null;
+    }
     function applySignalBatch(values, encoded, changedOnly) {
       if (!values || typeof values !== "object" || Array.isArray(values)) throw new TypeError("signal batch must be an object");
       let names = Object.keys(values);
       if (names.some(name => !name.trim())) throw new TypeError("signal name is required");
       if (!names.length) return null;
+      if (runtimeDecodesBatches()) return sendSignalBatch(encoded, changedOnly);
       gosxReadSharedSignal(names[0], undefined);
       const store = window.__gosx.sharedSignals;
       const batch = window.__gosx_set_input_batch;
@@ -4517,6 +4532,10 @@
       setSignalsJSON(encoded, changedOnly) {
         if (!isCurrent()) throw new Error("engine context is disposed");
         if (typeof encoded !== "string") throw new TypeError("signal batch must be JSON");
+        if (runtimeDecodesBatches()) {
+          if (!batchObjectStart.test(encoded)) throw new TypeError("signal batch must be an object");
+          return sendSignalBatch(encoded, changedOnly === true);
+        }
         return applySignalBatch(JSON.parse(encoded), encoded, changedOnly === true);
       },
       subscribeSignal(name, handler, options) {
@@ -4527,9 +4546,12 @@
       },
       subscribeSignalJSON(name, handler, options) {
         if (!isCurrent()) throw new Error("engine context is disposed");
-        return gosxSubscribeSharedSignal(name, function(value, signalName, encoded) {
+        const listener = function(value, signalName, encoded) {
           if (isCurrent()) handler(typeof encoded === "string" ? encoded : JSON.stringify(value), signalName);
-        }, options);
+        };
+        // The handler takes the JSON text, so the store need not decode the value for it.
+        listener.json = true;
+        return gosxSubscribeSharedSignal(name, listener, options);
       },
       navigate(target, options) {
         if (!isCurrent()) return Promise.reject(new Error("engine context is disposed"));

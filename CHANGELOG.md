@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Decode a signal batch once on the WASM runtime path. The page used to parse
+  every batch from a worker or native engine with `JSON.parse` and hand the same
+  text to the runtime, which decoded it again, encoded each changed signal with
+  `json.Marshal`, and sent that text back for the page to parse a third time.
+  When the runtime announces `__gosx_set_input_batch.batchDelivery` and the
+  page's `__gosx_notify_shared_signal` has a `batch` method, the page now sends
+  the batch text to the runtime as it is. The runtime decodes it in one pass,
+  writes each changed signal with an encoder that produces the bytes
+  `json.Marshal` produced, and tells the page about the whole batch in one call.
+  The page keeps each signal as that text and parses it only when page code
+  reads the value, so readers of `subscribeSignalJSON`, such as Go engines, cost
+  the page no `JSON.parse`. A 3-signal batch that cost the page four or five
+  parses costs none, and the text those readers receive is unchanged. In Node
+  26, with batches recorded from Bon Voyage's live ship (2.2, 7.3 and 32.8 KB),
+  the median time of `ctx.setSignalsJSON` falls from 0.43, 0.66 and 4.9 ms to
+  0.27, 0.36 and 1.5 ms on the shipping TinyGo runtime, and from 0.37, 0.68 and
+  6.4 ms to 0.13, 0.21 and 1.4 ms on the standard Go runtime. The runtime now
+  refuses a batch with a blank signal name, as the page refused it before.
+  `vm.AppendJSON` and `vm.AppendJSONString` are new. A page and a runtime from
+  different builds still work together, because the page decodes the batch
+  itself unless the runtime announces batch delivery and the page has the
+  `batch` method. The core runtime grows by 10.0 KB and the monolith bootstrap
+  by 1.7 KB; the size budgets move by those amounts.
+
 - Hold a Scene3D motion frame that arrives while the scene's models are still
   hydrating, then apply it when they commit, instead of rejecting it with
   `renderer-not-ready`. The wait ends at the call's `timeoutMS` (10 s by

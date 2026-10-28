@@ -49,6 +49,73 @@
     };
   });
 
+  // The page's shared signal values. A runtime that has already decoded a
+  // batch hands each signal over as JSON text (__gosx_notify_shared_signal.batch).
+  // The text waits here and is decoded the first time anything reads the
+  // signal, so a batch that nothing in the browser reads costs no JSON.parse.
+  // Every Map method answers as if the values were all decoded already.
+  class SharedSignalValues extends Map {
+    constructor() {
+      super();
+      this.encoded = new Map();
+    }
+    stage(name, text) {
+      this.encoded.set(name, text);
+    }
+    settle(name) {
+      if (!this.encoded.has(name)) return;
+      const text = this.encoded.get(name);
+      this.encoded.delete(name);
+      super.set(name, parseSharedSignalJSON(text, null));
+    }
+    settleAll() {
+      for (const name of Array.from(this.encoded.keys())) this.settle(name);
+    }
+    get(name) {
+      this.settle(name);
+      return super.get(name);
+    }
+    has(name) {
+      return this.encoded.has(name) || super.has(name);
+    }
+    set(name, value) {
+      this.encoded.delete(name);
+      return super.set(name, value);
+    }
+    delete(name) {
+      const staged = this.encoded.delete(name);
+      return super.delete(name) || staged;
+    }
+    clear() {
+      this.encoded.clear();
+      super.clear();
+    }
+    get size() {
+      this.settleAll();
+      return super.size;
+    }
+    forEach(callback, thisArg) {
+      this.settleAll();
+      super.forEach(callback, thisArg);
+    }
+    entries() {
+      this.settleAll();
+      return super.entries();
+    }
+    keys() {
+      this.settleAll();
+      return super.keys();
+    }
+    values() {
+      this.settleAll();
+      return super.values();
+    }
+    [Symbol.iterator]() {
+      this.settleAll();
+      return super[Symbol.iterator]();
+    }
+  }
+
   const gosxNamespace = window.__gosx || {};
   window.__gosx = gosxNamespace;
   if (!gosxNamespace.navigation && window.__gosx_page_nav) {
@@ -63,7 +130,7 @@
     controllers: new Map(), // controllerID -> { config, listeners, timers }
     textLayouts: new Map(), // textLayoutID -> { element, result, config }
     sharedSignals: {
-      values: new Map(),
+      values: new SharedSignalValues(),
       subscribers: new Map(),
       nextID: 0,
     },
@@ -81,7 +148,7 @@
       return current;
     }
     const store = {
-      values: new Map(),
+      values: new SharedSignalValues(),
       subscribers: new Map(),
       nextID: 0,
     };
@@ -135,18 +202,55 @@
     const store = gosxSharedSignalStore();
     const value = parseSharedSignalJSON(valueJSON, null);
     store.values.set(signalName, value);
+    notifySharedListeners(store, signalName, valueJSON, value, true);
+    return null;
+  }
+
+  // Delivers the changes of one batch: a name and its JSON text, repeated. Every
+  // value is in the store before the first subscriber runs, so a subscriber that
+  // reads another signal of the batch sees the new state. Nothing is decoded
+  // here; a value is decoded when a subscriber or a reader needs it.
+  function gosxNotifySharedSignals() {
+    const store = gosxSharedSignalStore();
+    const staged = store.values instanceof SharedSignalValues;
+    const changes = [];
+    for (let i = 0; i + 1 < arguments.length; i += 2) {
+      const signalName = String(arguments[i] || "").trim();
+      if (!signalName) {
+        continue;
+      }
+      const valueJSON = arguments[i + 1];
+      if (staged) {
+        store.values.stage(signalName, valueJSON);
+      } else {
+        store.values.set(signalName, parseSharedSignalJSON(valueJSON, null));
+      }
+      changes.push(signalName, valueJSON);
+    }
+    for (let i = 0; i < changes.length; i += 2) {
+      notifySharedListeners(store, changes[i], changes[i + 1], undefined, false);
+    }
+    return null;
+  }
+
+  // Calls each subscriber with (value, name, JSON text). A subscriber marked
+  // json reads only the text, so the value is decoded for the others alone.
+  function notifySharedListeners(store, signalName, valueJSON, value, decoded) {
     const listeners = store.subscribers.get(signalName);
     if (!listeners) {
-      return null;
+      return;
     }
     for (const entry of Array.from(listeners.values())) {
       try {
+        if (!decoded && entry.json !== true) {
+          value = store.values.get(signalName);
+          decoded = true;
+        }
         entry(value, signalName, valueJSON);
       } catch (error) {
         console.error("[gosx] shared signal subscriber failed:", error);
       }
     }
-    return null;
   }
 
   function gosxSubscribeSharedSignal(name, listener, options) {
@@ -207,6 +311,9 @@
   }
 
   window.__gosx_notify_shared_signal = gosxNotifySharedSignal;
+  // The runtime hands the changes of one batch to .batch(name, json, name, json, ...)
+  // when it finds the function there. It adds no new global name.
+  gosxNotifySharedSignal.batch = gosxNotifySharedSignals;
   // Public reader, symmetric to __gosx_set_shared_signal: subscribe(name, fn, opts)
   // → unsubscribe fn. Lets declarative modules (data-gosx-region) and apps observe
   // shared signals without poking the store internals.

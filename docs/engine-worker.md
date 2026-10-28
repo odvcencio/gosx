@@ -415,6 +415,13 @@ a transferred buffer, and the page applies it exactly as on the main thread.
 current value. A worker can read a signal with `ctx.SignalJSON` only after it
 subscribes to it.
 
+When the page has the GoSX WASM runtime, the runtime decodes a batch once and the
+page does not parse it. The page keeps each changed signal as the runtime's JSON
+text and parses that text only when page code reads the value (`getSignal` or
+`subscribeSignal` on an engine context), so a batch that only Go engines and
+islands read costs the page no `JSON.parse`. `ctx.SubscribeSignal` gets the
+text without any parse.
+
 In a worker, Go code cannot use `window` or `document`: `ctx.Mount()` is null.
 
 Proof it works: a worker engine streams GSXI frames for one instanced box. The
