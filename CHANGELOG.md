@@ -2,6 +2,91 @@
 
 ## Unreleased
 
+- Add the Go contract for a spectral ocean. `scene.Ocean` gains `Spectrum` (a
+  JONSWAP wind sea with an optional swell; `scene.OceanPreset` returns the sea
+  states "calm", "moderate", "rough" and "storm"), `Presentation`, `Masks` and
+  `Wake` (`scene.OceanWake`). Normalization computes the read-only
+  `SwellWaves`, `GraphParams`, `GraphTween` and `GraphNodes`, and it counts a
+  NaN or infinite spectrum scalar as zero, the default.
+  `scene.OceanSwellWaves` returns the strongest bins as plane waves. It
+  normalizes its inputs as the SceneIR does, so it matches `Ocean.SwellWaves`
+  bit for bit. `scene.OceanQuery` and the new `vessel.SwellWave` input of
+  `vessel.Sea` follow those waves. The new `oceanspec` package computes the
+  spectrum with package `det`, so every platform gets the same bits. An ocean
+  without a `Spectrum` serializes and evaluates as before. Nothing in the
+  browser runtime reads these fields yet, so a scene that sets them still draws
+  the six-wave sea.
+
+  Source compatibility: `scene.Ocean`, `vessel.SeaConfig` and `vessel.Sea` now
+  hold slices or maps, so values of these types can no longer be compared with
+  `==` or used as map keys. Compare their fields, or use `reflect.DeepEqual`.
+
+- Hold a Scene3D motion frame that arrives while the scene's models are still
+  hydrating, then apply it when they commit, instead of rejecting it with
+  `renderer-not-ready`. The wait ends at the call's `timeoutMS` (10 s by
+  default), and the frame's fallbacks then apply; aborting its `signal` cancels
+  the frame. A frame sent when no hydration is in flight, because nothing is
+  declared or the load failed, still fails at once with `renderer-not-ready`
+  and takes its fallbacks without delay. Crowds no longer need their first
+  motion frames resent.
+
+- Save the `game` clock remainder and the `Every` and `EveryInterval`
+  accumulators in `Runtime.Snapshot`. A runtime restored from a save, a rollback
+  or a replay baseline now takes its next steps and runs cadence systems on the
+  same ticks, with the same `ctx.Delta`, as one that never stopped. Before,
+  `Restore` zeroed the clock remainder and left the wrappers' gathered time as
+  it was. Snapshots carry `"version": 2` (`game.RuntimeStateVersion`) and the
+  fixed step that wrote them; a runtime with another fixed step still loads them
+  and starts the clock remainder from zero. A wrapper takes the saved time of the
+  wrapper that matches its system name, phase, kind, parameter and nesting.
+  Version 1 snapshots still load, but they carry no wrapper times, so a restore
+  from one now starts every wrapper from zero. It used to leave the wrappers as
+  they were, which made the result depend on what the runtime had done before.
+  `State`, which `sim.Runner` broadcasts every tick, keeps its size.
+
+- Stop the `game` clock at the end of a `time.Duration` instead of wrapping.
+  Game time ends at about 292 years, which is about 4.9 hours of play at a time
+  scale of 525,600. A frame whose scaled time was longer than a `Duration` used
+  to wrap to a negative time on amd64 and saturate on js/wasm, so the clock
+  stalled, and a snapshot of it could not be loaded. Now such a frame counts as
+  the longest `Duration`, the clock runs no step that would pass the end,
+  `Every` and `EveryInterval` wrappers stop gathering at the longest `Duration`,
+  and `Frame.DroppedDuration` reports the time that did not run. Frames that did
+  not overflow are unchanged. The snapshot of a runtime in any of these states
+  loads again.
+
+- Add `game.Runtime.RestoreSnapshot`, which returns why a snapshot was refused
+  (empty, malformed, newer than this build, or a time, clock or world that does
+  not fit) and then changes nothing. `Runtime.Restore` keeps the
+  `sim.Simulation` signature and still cannot report an error. `SaveCodec`
+  snapshots now check the clock before they replace the world. Custom codecs can
+  report errors through the new optional `game.SnapshotRestorer` interface or
+  `SnapshotCodecFuncs.RestoreSnapshotFunc`.
+
+- Add `sim.Runner.RestoreSnapshot` and the optional `sim.CheckedRestorer`
+  interface, which `game.Runtime` implements. It loads a save into a running
+  runner under the tick lock and returns the simulation's refusal. When the
+  simulation refuses a snapshot, `Runner.Restore` and `RestoreSnapshot` now keep
+  the runner frame and replay log; `Restore` used to move both to the refused
+  snapshot.
+
+- Keep WASM audio worklet messages when the page is slow to return the message
+  buffer. The processor drained the reactor's ring every eighth render quantum
+  and discarded the batch while the buffer was out, so a main-thread stall of
+  about 21 ms at 48 kHz lost messages. It now parks one batch and then stops
+  draining, so later messages wait in the reactor's ring and reach the page once,
+  in order, after `b` returns the buffer. A fault in the parked batch is still
+  reported at once with `f`, and its record also arrives in `m`, so pages that
+  handle both should deduplicate. A fault queued after the parked batch waits for
+  the first drain after `b` unless the reactor exports the new optional
+  `msg_fault`; the processor polls it while it is not draining, posts `f` and
+  stops playback at once, then keeps draining the ring until it is empty. The
+  ring can now be full when draining resumes, so `MessageCapacity` must equal the
+  reactor's per-call drain limit. A reactor that faults when its ring fills now
+  stops playback when a stall outlasts the ring; before, the music went on and
+  the messages were lost. Messages still queued in a reactor that an image
+  replacement retires are discarded.
+
 - Enable Scene3D adaptive quality by default, including effects and resolution
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered
@@ -53,6 +138,29 @@
   during SceneIR updates, avoiding repeated reflection over texture slots.
   Nested schema and named-scalar checks retain the JSON fallback when a proof
   is stale or a comparison is ambiguous.
+
+### Behavior changes to note when upgrading
+
+- **A Scene3D camera that carries `TransitionMS` now eases in the page.** From
+  `Scene3D.SetCamera`, a camera command, a Props update or a Presentation view,
+  it used to cut to the pose, because the page read the field and dropped it.
+  Now the page eases over that many milliseconds with the curve and fields of
+  `scene.CameraTransition.Sample`, and the call returns at once. One field
+  differs: Go mixes `PortraitFOV` linearly, and the page eases it only between
+  two nonzero values and otherwise jumps to the new one. A newer camera replaces
+  the move from the pose on screen. These end a move: a camera without
+  `TransitionMS`, a Live camera event, the player's drag, wheel or key under
+  orbit or fly controls, and, with `ControlZoom`, its wheel, `+` and `-` keys,
+  pinch and pan (each sends the `gosx:scene3d:navigation` event). Reduced motion
+  and a change of camera kind cut. `SetOrbit` changes the orbit and leaves a
+  move running, and a camera for the pose a move is heading to keeps the move
+  and still applies its orbit. A move that `CameraInputSignal` starts does not
+  publish `CameraOutputSignal`; a move that a call starts does publish its
+  steps, so bind the two signals to different names, or the echo has no
+  `TransitionMS` and ends the move after its first step. **If you send a camera
+  every frame with `TransitionMS` above zero, each frame now starts a new move
+  and the view trails the camera you send. Set `TransitionMS` to zero on
+  streamed cameras before you upgrade.**
 
 ## v0.57.24
 
