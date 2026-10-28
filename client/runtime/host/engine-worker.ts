@@ -457,9 +457,24 @@
     // "$<channel>.result" within the timeout, writes the error result itself, so
     // an island is never left waiting on a worker that hung or died. Keys are
     // Go field names: ID, Name, Error, Value, Recent.
+    //
+    // The call signal holds one call or a mailbox, an array of calls. A single
+    // call is the newest write, so two writes in one island handler deliver only
+    // the second. A mailbox keeps every call the writer lists, and the page
+    // watches each of them.
 
     function parseObject(encoded) {
       try { var v = JSON.parse(encoded); return v && typeof v === "object" ? v : null; } catch (_) { return null; }
+    }
+
+    // The calls in the value of a call signal, lowest ID first. An entry without
+    // a usable ID cannot be answered and is left out.
+    function parseCalls(encoded) {
+      var value;
+      try { value = JSON.parse(encoded); } catch (_) { return []; }
+      var list = Array.isArray(value) ? value : [value];
+      return list.filter(function(call) { return call && typeof call === "object" && (Number(call.ID) || 0) > 0; })
+        .sort(function(a, b) { return Number(a.ID) - Number(b.ID); });
     }
 
     function declareCalls(rec, msg) {
@@ -484,24 +499,43 @@
         for (var entry of Array.from(st.pending)) {
           if (entry[0] <= id) { clearTimeout(entry[1].timer); st.pending.delete(entry[0]); }
         }
+        trimMailbox(rec, st, id);
       }, { immediate: true }));
       seeding = false;
       // The first delivery is the call signal's current value: a call written
       // before the worker declared the channel starts its clock now.
       st.offs.push(rec.ctx.subscribeSignalJSON(st.channel, function(encoded) {
-        var call = parseObject(encoded);
-        var id = call ? Number(call.ID) || 0 : 0;
-        if (id <= st.maxCall) return;
-        st.maxCall = id;
-        var name = typeof call.Name === "string" ? call.Name : "";
-        if (rec.crashedStatus) { failCall(st, id, name, "worker-crashed"); return; }
-        var timer = setTimeout(function() {
-          if (rec.calls.get(st.channel) !== st) return;
-          st.pending.delete(id);
-          failCall(st, id, name, "timeout");
-        }, st.timeout);
-        st.pending.set(id, { name: name, timer: timer });
+        for (var call of parseCalls(encoded)) {
+          var id = Number(call.ID);
+          if (id <= st.maxCall) continue;
+          st.maxCall = id;
+          watchCall(rec, st, id, typeof call.Name === "string" ? call.Name : "");
+        }
       }));
+    }
+
+    function watchCall(rec, st, id, name) {
+      if (rec.crashedStatus) { failCall(st, id, name, "worker-crashed"); return; }
+      var timer = setTimeout(function() {
+        if (rec.calls.get(st.channel) !== st) return;
+        st.pending.delete(id);
+        failCall(st, id, name, "timeout");
+      }, st.timeout);
+      st.pending.set(id, { name: name, timer: timer });
+    }
+
+    // A mailbox lists the calls that have no reply. Once a result covers a call
+    // (its ID is at or below the result's), drop the call from the list. An entry
+    // with no usable ID can never be answered, so it goes too. The page store is
+    // the one place that reads and rewrites the signal in a single step, so no
+    // island write can slip in between. A signal that holds one call is not a
+    // mailbox and is left alone.
+    function trimMailbox(rec, st, through) {
+      var list;
+      try { list = rec.ctx.getSignal(st.channel); } catch (_) { return; }
+      if (!Array.isArray(list)) return;
+      var kept = list.filter(function(call) { return call && (Number(call.ID) || 0) > through; });
+      if (kept.length !== list.length) writeSignal(st.channel, kept);
     }
 
     function failCall(st, id, name, code) {

@@ -134,8 +134,10 @@ const budgets = [
   // cleanup, vessel results). Native sessions, discovery and cancellation now
   // measure 36541 raw / 11776 gzip / 11000 Brotli. Only the exhausted
   // raw target moves to its passing minimum; compressed targets and allowances
-  // stay at current main.
-  { file: "bootstrap-feature-engine-worker.js", raw: 34493, gzip: 10840, brotli: 10130 },
+  // stay at current main. Call mailboxes (a watchdog per listed call, and the
+  // trim of answered calls) measure 36983 raw / 11927 gzip / 11143 Brotli. Only
+  // the exhausted raw and gzip targets move to their passing minima.
+  { file: "bootstrap-feature-engine-worker.js", raw: 34935, gzip: 10903, brotli: 10130 },
   // The arcade synth for a page with no hub chunk; loads only for RequireFeature("arcade-audio").
   // Measured 8330 / 2748 / 2519.
   { file: "bootstrap-feature-arcade-audio.js", raw: 8400, gzip: 2800, brotli: 2570 },

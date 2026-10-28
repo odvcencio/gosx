@@ -374,6 +374,21 @@ for (const make of [workerTransport, nativeTransport]) {
     assert.equal(tr.page.signalWrites.filter(w => w[0] === "$bv.cmd.result").length, 0, "no timeout written");
   });
 
+  test(`${label}: a mailbox gets a watchdog for each call and loses the calls a reply covers`, async () => {
+    const tr = make();
+    const { ctx } = await mountOn(tr);
+    tr.say({ t: "calls", channel: "$bv.cmd", timeout: 30, recent: 4, zero: "{}" });
+    const mailbox = [{ ID: 1, Name: "a" }, { ID: 2, Name: "b" }, { ID: 3, Name: "c" }];
+    ctx.values = { "$bv.cmd": mailbox };
+    ctx.subs.find(s => s.name === "$bv.cmd").cb(JSON.stringify(mailbox));
+    ctx.subs.find(s => s.name === "$bv.cmd.result").cb('{"ID":2,"Value":{"Total":5}}');
+    const mailboxWrites = () => tr.page.signalWrites.filter(w => w[0] === "$bv.cmd").map(w => w[1]);
+    assert.deepEqual(mailboxWrites(), [[{ ID: 3, Name: "c" }]], "calls 1 and 2 have a reply; call 3 stays listed");
+    await sleep(70);
+    const timeouts = tr.page.signalWrites.filter(w => w[0] === "$bv.cmd.result").map(w => [w[1].ID, w[1].Error]);
+    assert.deepEqual(timeouts, [[3, "timeout"]], "only the call without a reply times out");
+  });
+
   test(`${label}: a crash fails pending and later calls with worker-crashed and sets the status`, async () => {
     const tr = make();
     const { ctx } = await mountOn(tr);
