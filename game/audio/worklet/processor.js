@@ -8,7 +8,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     this.t = this.b.transport;
     this.active = this.previous = this.pending = this.bankCopy = null;
     this.bank = null;
-    this.closed = this.playing = false;
+    this.closed = this.playing = this.stranded = false;
     this.deferredCount = this.engineSample = this.anchorSample = this.anchorTick = 0;
     this.nextBarTick = this.t?.ticksPerBar || 0;
     this.fadeTotal = Math.max(1, Math.floor(sampleRate / 200));
@@ -25,6 +25,9 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     this.message = {t: 'm', bytes: this.messageBuffer, n: 0};
     this.transfer = [this.messageBuffer];
     this.messageReady = true;
+    // While the page holds the buffer one drained batch waits here, so a fault is still seen at once.
+    this.parked = new Uint8Array(this.messageBuffer.byteLength);
+    this.parkedBytes = 0;
     this.faultMessage = {t: 'f', a: 0};
     this.quantized = new Uint8Array(256);
     this.required = new Uint32Array(256);
@@ -82,7 +85,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     exports._initialize();
     const prefix = b.prefix || 'gosx_audio_';
     x.memory = exports.memory;
-    for (const name of ['init', 'render', 'out_ptr', 'cmd_ptr', 'cmd_cap', 'cmd_commit', 'msg_ptr', 'msg_drain',
+    for (const name of ['init', 'render', 'out_ptr', 'cmd_ptr', 'cmd_cap', 'cmd_commit', 'msg_ptr', 'msg_drain', 'msg_fault',
       'capabilities', 'project_alloc', 'bank_alloc', 'bank_install', 'bank_image_ptr', 'bank_image_len']) {
       x[name] = exports[prefix + name];
     }
@@ -91,6 +94,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     }
     if (!(x.memory instanceof WebAssembly.Memory)) throw new Error('audio: reactor memory missing');
     if (x.capabilities !== undefined && typeof x.capabilities !== 'function') throw new Error('audio: invalid capabilities export');
+    if (x.msg_fault !== undefined && typeof x.msg_fault !== 'function') throw new Error('audio: invalid msg_fault export');
     const capabilities = x.capabilities ? x.capabilities() : 0;
     if (!Number.isInteger(capabilities) || capabilities < 0 || capabilities > 0xffffffff ||
         (capabilities & ~b.supportedCapabilities) || ((capabilities & info.requiredCapabilities) >>> 0) !== info.requiredCapabilities) {
@@ -157,6 +161,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
         this.messageView = new Uint8Array(data.bytes);
         this.message.bytes = this.transfer[0] = data.bytes;
         this.messageReady = true;
+        if (this.parkedBytes) { this.deliver(this.parked, this.parkedBytes); this.parkedBytes = 0; }
         break;
       case 'c': this.commit(this.active, data.bytes); break;
       case 'i': {
@@ -228,7 +233,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
         this.nextBarTick = (Math.floor(seekTick / this.t.ticksPerBar) + 1) * this.t.ticksPerBar;
         if (starts) { this.previous = null; this.fadeLeft = this.fadeTotal; }
       }
-      if (starts) { this.playing = true; this.post({t: 's', p: true}); }
+      if (starts) { this.playing = true; this.stranded = false; this.post({t: 's', p: true}); }
       if (stops) {
         this.playing = false;
         this.post({t: 's', p: false});
@@ -243,6 +248,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
   }
   promote(next) {
     this.pending = null;
+    this.stranded = false;
     this.previous = this.playing ? this.active : null;
     this.fadeLeft = this.previous ? this.fadeTotal : 0;
     this.active = next;
@@ -278,8 +284,29 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     this.deferredCount = 0;
   }
 
+  deliver(from, length) {
+    for (let i = 0; i < length; i++) this.messageView[i] = from[i];
+    this.message.n = length;
+    this.messageReady = false;
+    this.post(this.message, this.transfer);
+  }
+
+  // The optional msg_fault export reports a fault without draining: 0 while the reactor is healthy, else 0x10000 | argument.
+  poll(target) {
+    if (!target.x.msg_fault) return false;
+    const state = target.x.msg_fault();
+    if (!Number.isInteger(state) || state && (state < 0x10000 || state > 0x1ffff)) throw new Error('audio: invalid fault state');
+    if (!state) return false;
+    this.faultMessage.a = state & 0xffff;
+    this.post(this.faultMessage);
+    this.stranded = true; // playback stops, but the ring still holds what was queued before the fault
+    return true;
+  }
+
   drain(target, active) {
     if (!target) return false;
+    // The page holds the buffer and a batch is parked. Later messages stay in the reactor's ring; draining them now would lose them.
+    if (active && !this.messageReady && this.parkedBytes) return this.poll(target);
     this.refresh(target);
     const count = target.x.msg_drain(), size = this.b.messageBytes;
     if (!Number.isInteger(count) || count < 0 || count > this.b.messageCapacity) throw new Error('audio: invalid message count');
@@ -291,13 +318,12 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
         argument = target.messages[at] | target.messages[at + 1] << 8;
       }
     }
-    if (active && this.messageReady && count) {
-      const length = count * size;
-      for (let i = 0; i < length; i++) this.messageView[i] = target.messages[i];
-      this.message.n = length;
-      this.messageReady = false;
-      this.post(this.message, this.transfer);
-    } else if (fault) {
+    if (active && count && !this.messageReady) {
+      const length = this.parkedBytes = count * size;
+      for (let i = 0; i < length; i++) this.parked[i] = target.messages[i];
+    }
+    if (active && this.messageReady && count) this.deliver(target.messages, count * size);
+    else if (fault) {
       this.faultMessage.a = argument;
       this.post(this.faultMessage);
     }
@@ -356,6 +382,11 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
             for (let c = 0; c < channels.length; c++) channels[c].fill(0);
           }
         }
+      } else if (this.stranded && this.messageReady && !(this.callbacks & 7)) {
+        // A polled fault stopped playback with messages still in the reactor's ring. Send them, one batch for each
+        // buffer the page returns; an empty ring ends it.
+        this.drain(this.active, true);
+        if (this.messageReady) this.stranded = false;
       }
     } catch (error) {
       if (channels) for (let c = 0; c < channels.length; c++) channels[c].fill(0);

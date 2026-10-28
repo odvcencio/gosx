@@ -276,7 +276,7 @@ declare function sceneOceanReflectWGSL(): string;
 declare function sceneReflectWebGLBegin(resources: any, gl: any, opts: any): any;
 declare function sceneReflectWebGLEnd(resources: any, width: number, height: number): void;
 declare function sceneReflectWebGLDrawOpaque(gl: any, ctx: any, view: any, proj: any): void;
-declare function sceneReflectOpaqueList(list: any, materials: any, camera?: any, level?: any): any;
+declare function sceneReflectOpaqueList(list: any, materials: any): any;
 
 declare function sceneReflectWebGLBind(gl: any, program: any, record: any): void;
 

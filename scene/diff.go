@@ -756,6 +756,7 @@ type ObjectStatePatch struct {
 	Pickable         *bool  `json:"pickable,omitempty"`
 	Visible          bool   `json:"visible"`
 	Selected         bool   `json:"selected"`
+	PlanarReflection *bool  `json:"planarReflection,omitempty"`
 }
 
 func objectStatePatch(previous, next *ObjectIR) (Command, bool) {
@@ -773,10 +774,14 @@ func objectStatePatch(previous, next *ObjectIR) (Command, bool) {
 		return Command{}, false
 	}
 	visible := next.Visible == nil || *next.Visible
+	var reflection *bool
+	if (previous.PlanarReflection == nil || *previous.PlanarReflection) != (next.PlanarReflection == nil || *next.PlanarReflection) {
+		reflection = Bool(next.PlanarReflection == nil || *next.PlanarReflection)
+	}
 	return Command{Kind: CommandSetTransform, ObjectID: next.ID, Data: ObjectStatePatch{
 		TransformPatch: transform,
 		Interactive:    next.Interactive, Label: next.Label, InteractiveOrder: next.InteractiveOrder,
-		Pickable: next.Pickable, Visible: visible, Selected: next.Selected,
+		Pickable: next.Pickable, Visible: visible, Selected: next.Selected, PlanarReflection: reflection,
 	}}, true
 }
 

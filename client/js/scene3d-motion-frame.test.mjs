@@ -435,3 +435,182 @@ test("a full frame does not supersede a queued partial frame", async () => {
   await Promise.all([first, partial, full]);
   assert.deepEqual(applied, ["full", "partial", "full"]);
 });
+
+// ---- frames that arrive while the crowd's models hydrate ----
+
+// hydratingMount is a fake mount whose model hydration is pending. Its
+// applyMotionFrame is the real bridge function over a fake renderer state, so
+// the frame meets exactly what a mounted scene reports. commit() ends the
+// hydration the way the renderer does: records published, flags cleared.
+function hydratingMount(bridge, { records = false } = {}) {
+  const state = {
+    instancedGLBMeshes: [{ id: "heroes", instances: [{ id: "hero" }] }],
+    _hydratedModelRecords: records ? {} : null,
+    _modelHydrationUncommitted: true,
+    _modelHydrationPromise: null,
+  };
+  const retained = [];
+  const handle = {
+    __gosxScene3DCommandReady: true,
+    applyCommands() {},
+    applyMotionFrame(batches) {
+      return bridge.applyMountedMotionFrame(state, batches, (_state, applied) => { retained.push(applied); return true; }, () => {}, handle);
+    },
+  };
+  return { state, handle, retained, commit() {
+    state._hydratedModelRecords = {};
+    state._modelHydrationUncommitted = false;
+    state._modelHydrationPromise = null;
+  } };
+}
+
+// settled reports whether a promise finished (either way) within a short wait.
+const settled = promise => Promise.race([
+  promise.then(() => true, () => true),
+  new Promise(resolve => setTimeout(() => resolve(false), 80)),
+]);
+
+const timers = { clearTimeout, DOMException };
+
+// A frame that fails "at once" would otherwise wait 5 to 10 s (the call's timeout), so a bound of
+// one second tells the two apart and still leaves a loaded CI runner room.
+const FAST = 1000;
+
+test("a motion frame sent while the first models hydrate waits for them", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  const sent = bridge.dispatchMotionFrame(mount.handle, frame());
+  assert.equal(await settled(sent), false, "the frame was rejected instead of held");
+  assert.equal(mount.retained.length, 0, "nothing may reach the crowd before the models commit");
+  mount.commit();
+  const result = await sent;
+  assert.equal(result.applied, true);
+  assert.equal(mount.retained.length, 1);
+  assert.equal(mount.retained[0][0].instances[0].id, "hero");
+  assert.equal(mount.handle.__gosxMotionFrameStats.accepted, 1);
+  assert.equal(mount.handle.__gosxMotionFrameStats.errors, 0);
+  assert.equal(mount.handle.__gosxMotionFrameStats.rejected["renderer-not-ready"], undefined);
+});
+
+test("a motion frame sent during a membership rehydration waits for the commit", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge, { records: true });
+  // The previous generation's records still exist, but the pending commit may
+  // replace the objects a motion record would be written to.
+  let finish;
+  mount.state._modelHydrationPromise = new Promise(resolve => { finish = resolve; });
+  const sent = bridge.dispatchMotionFrame(mount.handle, frame());
+  assert.equal(await settled(sent), false, "the frame was rejected instead of held");
+  assert.equal(mount.retained.length, 0);
+  mount.commit();
+  finish();
+  assert.equal((await sent).applied, true);
+  assert.equal(mount.retained.length, 1, "the held frame applies exactly once");
+});
+
+test("a held motion frame gives up at the call's timeout and then takes its fallback", async () => {
+  const commands = [{ kind: 11, data: { instancedGLBMeshes: [] } }];
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  const applied = [];
+  mount.handle.applyCommands = value => { applied.push(value); return { applied: true }; };
+  await assert.rejects(bridge.dispatchMotionFrame(mount.handle, frame(), { timeoutMS: 40 }), /did not become ready.*hydrating/);
+  assert.equal(mount.retained.length, 0);
+  const result = await bridge.dispatchMotionFrame(mount.handle, frame(), { timeoutMS: 40, fallbackCommands: commands });
+  assert.equal(result.binary, false);
+  assert.match(result.fallbackReason, /hydrating/);
+  assert.deepEqual(applied, [commands]);
+});
+
+test("aborting a held motion frame cancels it for good", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  const abort = new AbortController();
+  const sent = bridge.dispatchMotionFrame(mount.handle, frame(), { signal: abort.signal });
+  assert.equal(await settled(sent), false);
+  abort.abort();
+  await assert.rejects(sent, { name: "AbortError" });
+  mount.commit();
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(mount.retained.length, 0, "an aborted frame must not apply after the commit");
+});
+
+// minimalPoseFrame is the smallest valid GSP2 frame: one batch ("heroes") with one instance ("hero").
+function minimalPoseFrame() {
+  const bytes = [];
+  const encoder = new TextEncoder();
+  const id = value => { const chars = encoder.encode(value); bytes.push(chars.length, 0, ...chars); };
+  const u16 = value => bytes.push(value & 255, value >> 8);
+  const f32 = value => { const data = new DataView(new ArrayBuffer(4)); data.setFloat32(0, value, true); bytes.push(...new Uint8Array(data.buffer)); };
+  bytes.push(71, 83, 80, 50); u16(0); u16(1); id("heroes"); u16(1); id("hero");
+  for (const v of [1, 0, 0, 0, 0, 0, 1, 1, 1, 0]) f32(v);
+  u16(0); bytes.push(0);
+  return Uint8Array.from(bytes);
+}
+
+test("aborting a held motion frame takes none of its fallbacks", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  const applied = [];
+  mount.handle.applyCommands = () => { applied.push("commands"); return { applied: true }; };
+  mount.handle.applyPoseFrame = () => { applied.push("pose frame"); return { applied: true, binary: true }; };
+  const abort = new AbortController();
+  const sent = bridge.dispatchMotionFrame(mount.handle, frame(), {
+    signal: abort.signal,
+    fallbackPoseFrame: minimalPoseFrame(),
+    fallbackCommands: [{ kind: 11, data: { instancedGLBMeshes: [] } }],
+  });
+  assert.equal(await settled(sent), false, "the frame is held while the models hydrate");
+  abort.abort();
+  await assert.rejects(sent, { name: "AbortError" });
+  mount.commit();
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.deepEqual(applied, [], "a canceled frame must not fall back to the pose frame or to the commands");
+  assert.equal(mount.retained.length, 0, "nor apply after the commit");
+});
+
+test("frames queued behind a held frame keep only the latest", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  const first = bridge.dispatchMotionFrame(mount.handle, frame(1, { prev: [1, 0, 0, 0, 0, 0, 1, 1, 1] }));
+  const stale = bridge.dispatchMotionFrame(mount.handle, frame(1, { prev: [2, 0, 0, 0, 0, 0, 1, 1, 1] }));
+  const latest = bridge.dispatchMotionFrame(mount.handle, frame(1, { prev: [3, 0, 0, 0, 0, 0, 1, 1, 1] }));
+  assert.equal((await stale).superseded, true);
+  assert.equal(await settled(first), false);
+  mount.commit();
+  await Promise.all([first, latest]);
+  assert.deepEqual(mount.retained.map(batches => batches[0].instances[0].prevX), [1, 3]);
+});
+
+test("a motion frame still fails at once when no hydration can make the renderer ready", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  mount.state._modelHydrationUncommitted = false; // nothing in flight and nothing committed
+  const started = Date.now();
+  await assert.rejects(bridge.dispatchMotionFrame(mount.handle, frame()), /renderer-not-ready/);
+  assert.ok(Date.now() - started < FAST, "an unready renderer with no hydration must not wait");
+  assert.equal(mount.handle.__gosxMotionFrameStats.rejected["renderer-not-ready"], 1);
+});
+
+test("a motion frame fails at once when the hydration that was loading has failed", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  // A failed generation leaves its declarations uncommitted, but nothing will commit them.
+  mount.state._modelHydrationFailed = true;
+  const started = Date.now();
+  await assert.rejects(bridge.dispatchMotionFrame(mount.handle, frame(), { timeoutMS: 5000 }), /renderer-not-ready/);
+  assert.ok(Date.now() - started < FAST, "a failed hydration must not hold the frame for its timeout");
+  assert.equal(mount.handle.__gosxMotionFrameStats.rejected["renderer-not-ready"], 1);
+});
+
+test("a hydration that fails while a frame is held ends the wait", async () => {
+  const { bridge } = runtime(null, timers);
+  const mount = hydratingMount(bridge);
+  const sent = bridge.dispatchMotionFrame(mount.handle, frame(), { timeoutMS: 5000 });
+  assert.equal(await settled(sent), false, "the frame is held while the hydration is in flight");
+  const started = Date.now();
+  mount.state._modelHydrationFailed = true;
+  await assert.rejects(sent, /renderer-not-ready/);
+  assert.ok(Date.now() - started < FAST, "the held frame fails on the next poll, not at its timeout");
+  assert.equal(mount.retained.length, 0);
+});

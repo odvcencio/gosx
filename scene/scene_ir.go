@@ -274,6 +274,7 @@ type ObjectIR struct {
 	OutlineWidth        float64              `json:"outlineWidth,omitempty"`
 	CastShadow          bool                 `json:"castShadow,omitempty"`
 	ReceiveShadow       bool                 `json:"receiveShadow,omitempty"`
+	PlanarReflection    *bool                `json:"planarReflection,omitempty"`
 	DepthWrite          *bool                `json:"depthWrite,omitempty"`
 	Roughness           float64              `json:"roughness,omitempty"`
 	Metalness           float64              `json:"metalness,omitempty"`
@@ -2165,6 +2166,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setString(record, "qualityGroup", item.QualityGroup)
 	setString(record, "outlineColor", item.OutlineColor)
 	setNumeric(record, "outlineWidth", item.OutlineWidth)
+	if item.PlanarReflection != nil {
+		record["planarReflection"] = *item.PlanarReflection
+	}
 	if item.CastShadow {
 		record["castShadow"] = true
 	}

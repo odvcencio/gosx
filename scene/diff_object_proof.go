@@ -58,6 +58,7 @@ func objectPatchFieldsJSONEqual(previous, next *ObjectIR, omitted objectProofOmi
 	if omitted&objectProofOmitState != 0 {
 		probe.Interactive, probe.Label, probe.InteractiveOrder = next.Interactive, next.Label, next.InteractiveOrder
 		probe.Pickable, probe.Visible, probe.Selected = next.Pickable, next.Visible, next.Selected
+		probe.PlanarReflection = next.PlanarReflection
 	}
 	return sceneRecordPointerJSONEqual(&probe, next)
 }

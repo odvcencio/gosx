@@ -105,6 +105,13 @@ func (s Scene3D) Camera() (camera scene.IRCamera, err error) {
 }
 
 // SetCamera updates both renderer and interactive camera controls coherently.
+// A camera with TransitionMS above zero eases to its pose in the page over that
+// many milliseconds, and SetCamera returns at once. A later camera replaces the
+// move from the pose on screen; one without TransitionMS cuts and ends it, and
+// so does the player's drag, wheel or key under orbit or fly controls, or the
+// wheel, zoom keys, pinch or pan of ControlZoom. Reduced motion and a change of
+// camera kind cut. Set TransitionMS to zero on a camera you send every frame;
+// otherwise each frame starts a new move.
 func (s Scene3D) SetCamera(ctx context.Context, camera any) error {
 	value, err := encodeEventDetail(scene.SetCameraCommand(camera).Data)
 	if err != nil {
@@ -117,7 +124,8 @@ func (s Scene3D) SetCamera(ctx context.Context, camera any) error {
 // keeps its position and turns to face the new target, and the player's mouse
 // orbit continues around it. It needs Props.Controls = scene.ControlOrbit.
 // Moving the camera and the target together is one SetCamera call with
-// PerspectiveCamera.Orbit set.
+// PerspectiveCamera.Orbit set. A move that TransitionMS started carries on
+// around the new target.
 func (s Scene3D) SetOrbit(ctx context.Context, orbit scene.Orbit) error {
 	value, err := encodeEventDetail(orbit)
 	if err != nil {

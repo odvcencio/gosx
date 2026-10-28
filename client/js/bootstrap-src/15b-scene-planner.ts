@@ -1691,6 +1691,7 @@
     hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.castShadow ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
+    hash = scenePlannerHashNumber(hash, object && object.planarReflection === false ? 0 : 1);
     // Pass routing and derived provenance participate in the signature so a
     // raw/derived override toggle on an unchanged material cannot reuse a
     // stale prepared bucket — before the retained fast-path return.

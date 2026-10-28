@@ -193,8 +193,10 @@ remain 30 and 90 degrees. `ControlPan: scene.Bool(true)` adds two-finger pan.
 `ControlPanHandle: "#pan"` binds an existing button to captured pointer drag and
 arrow-key pan. The framework disposes these listeners with the scene. Single
 pointer interactions remain available for picking and object dragging.
-A `gosx:scene3d:navigation` event bubbles from the canvas at the start of navigation,
-so an engine can cancel an in-progress object gesture or camera transition.
+A `gosx:scene3d:navigation` event bubbles from the canvas at the start of navigation
+(the wheel, the `+` and `-` keys, a pinch and a pan), so an engine can cancel an
+in-progress object gesture or camera transition. The runtime ends a camera move
+that `TransitionMS` started on it.
 
 For changing turns or selection, `DiffOptions{PatchObjectState: true}` patches
 object transforms, interaction, visibility and selection while preserving mesh

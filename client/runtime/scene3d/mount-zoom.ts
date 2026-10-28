@@ -145,7 +145,7 @@ function szSetupLens(canvas: any, props: any, helpers: any, listen: any): any {
     listen(canvas, 'keydown', (event: KeyboardEvent) => {
       if (!props.controlZoom || document.activeElement !== canvas) return;
       if (!['+', '=', '-', '_'].includes(event.key)) return;
-      event.preventDefault(); event.stopImmediatePropagation(); zoom(event.key === '+' || event.key === '=' ? -0.12 : 0.12);
+      event.preventDefault(); event.stopImmediatePropagation(); szNotify(canvas); zoom(event.key === '+' || event.key === '=' ? -0.12 : 0.12);
     }, { capture: true });
     function touch(event: PointerEvent): void {
       if (!props.controlZoom || event.pointerType !== 'touch') return;

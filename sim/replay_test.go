@@ -1,8 +1,11 @@
 package sim
 
 import (
+	"errors"
 	"fmt"
+	"reflect"
 	"testing"
+	"time"
 
 	"m31labs.dev/gosx/hub"
 )
@@ -137,5 +140,83 @@ func TestRunnerRestoreSetsFrameAndRestartsReplay(t *testing.T) {
 	log := r.Replay()
 	if string(log.Initial) != "42" || log.InitialFrame != 500 || len(log.Frames) != 1 || log.Frames[0].Frame != 501 {
 		t.Fatalf("log=%+v", log)
+	}
+}
+
+var errBadSnapshot = errors.New("bad snapshot")
+
+// checkedSim is a Simulation that can refuse a snapshot, as game.Runtime can. It
+// takes a number and refuses anything else.
+type checkedSim struct{ sumSim }
+
+func (s *checkedSim) RestoreSnapshot(b []byte) error {
+	var n int
+	if _, err := fmt.Sscan(string(b), &n); err != nil {
+		return fmt.Errorf("%w: %q", errBadSnapshot, b)
+	}
+	s.sum = n
+	return nil
+}
+
+// When the simulation refuses a snapshot, the runner must keep its frame and
+// its replay log. Both would otherwise describe a state that the simulation
+// never reached, and a replay from that log would start from the refused bytes.
+func TestRunnerRestoreSnapshotKeepsStateWhenRefused(t *testing.T) {
+	s := &checkedSim{sumSim{sum: 7}}
+	r := New(hub.New("refused"), s, Options{})
+	for i := 0; i < 3; i++ {
+		r.ReceiveInput("p1", Input{Data: []byte{byte('a' + i)}})
+		r.tickOnce()
+	}
+	frame, sum, log := r.Frame(), s.sum, r.Replay()
+
+	if err := r.RestoreSnapshot(500, []byte("junk")); !errors.Is(err, errBadSnapshot) {
+		t.Fatalf("RestoreSnapshot returned %v, want %v", err, errBadSnapshot)
+	}
+	r.Restore(600, []byte("junk")) // the void form drops the error but must not move anything either
+	if r.Frame() != frame || s.sum != sum || !reflect.DeepEqual(r.Replay(), log) {
+		t.Fatalf("a refused snapshot changed the runner\n frame %d, was %d\n sum %d, was %d\n log %+v\n was %+v", r.Frame(), frame, s.sum, sum, r.Replay(), log)
+	}
+
+	// A snapshot that the simulation takes sets the frame and restarts the log.
+	if err := r.RestoreSnapshot(500, []byte("42")); err != nil {
+		t.Fatal(err)
+	}
+	r.tickOnce()
+	got := r.Replay()
+	if r.Frame() != 501 || s.sum != 43 || string(got.Initial) != "42" || got.InitialFrame != 500 || len(got.Frames) != 1 || got.Frames[0].Frame != 501 {
+		t.Fatalf("frame=%d sum=%d log=%+v", r.Frame(), s.sum, got)
+	}
+}
+
+// A simulation without CheckedRestorer cannot refuse a snapshot, so
+// RestoreSnapshot restores it as Restore does and reports no error.
+func TestRunnerRestoreSnapshotWithoutCheckedRestorer(t *testing.T) {
+	s := &sumSim{}
+	r := New(hub.New("plain-restore"), s, Options{})
+	if err := r.RestoreSnapshot(500, []byte("42")); err != nil {
+		t.Fatal(err)
+	}
+	log := r.Replay()
+	if r.Frame() != 500 || s.sum != 42 || string(log.Initial) != "42" || log.InitialFrame != 500 {
+		t.Fatalf("frame=%d sum=%d log=%+v", r.Frame(), s.sum, log)
+	}
+}
+
+// racyCheckedSim writes the field that Tick writes, with no lock of its own, so
+// a restore that does not hold the runner's lock is a data race under -race.
+type racyCheckedSim struct{ racySim }
+
+func (s *racyCheckedSim) RestoreSnapshot([]byte) error { s.n = 0; return nil }
+
+func TestRestoreSnapshotDoesNotRaceWithTick(t *testing.T) {
+	r := New(hub.New("restore-race"), &racyCheckedSim{}, Options{TickRate: 1000})
+	r.Start()
+	defer r.Stop()
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if err := r.RestoreSnapshot(1, []byte("0")); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

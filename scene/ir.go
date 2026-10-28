@@ -301,6 +301,7 @@ type IRMeshNode struct {
 	TubularSegments    int         `json:"tubularSegments,omitempty"`
 	CastShadow         bool        `json:"castShadow,omitempty"`
 	ReceiveShadow      bool        `json:"receiveShadow,omitempty"`
+	PlanarReflection   *bool       `json:"planarReflection,omitempty"`
 	Pickable           *bool       `json:"pickable,omitempty"`
 	Visible            *bool       `json:"visible,omitempty"`
 	LODGroup           string      `json:"lodGroup,omitempty"`
@@ -1223,29 +1224,30 @@ func objectToIRNode(object ObjectIR, materialIndex int) IRNode {
 		MaterialIndex: materialIndex,
 		Transform:     transformFromObjectIR(object),
 		Mesh: &IRMeshNode{
-			Kind:            object.Kind,
-			Size:            object.Size,
-			Width:           object.Width,
-			Height:          object.Height,
-			Depth:           object.Depth,
-			Radius:          object.Radius,
-			Segments:        object.Segments,
-			Points:          vector3ListToIR(object.Points),
-			LineSegments:    object.LineSegments,
-			LineWidth:       object.LineWidth,
-			RadiusTop:       object.RadiusTop,
-			RadiusBottom:    object.RadiusBottom,
-			Tube:            object.Tube,
-			RadialSegments:  object.RadialSegments,
-			TubularSegments: object.TubularSegments,
-			CastShadow:      object.CastShadow,
-			ReceiveShadow:   object.ReceiveShadow,
-			Pickable:        object.Pickable,
-			Visible:         object.Visible,
-			LODGroup:        object.LODGroup,
-			LODLevel:        object.LODLevel,
-			LODMinDistance:  object.LODMinDistance,
-			LODMaxDistance:  object.LODMaxDistance,
+			Kind:             object.Kind,
+			Size:             object.Size,
+			Width:            object.Width,
+			Height:           object.Height,
+			Depth:            object.Depth,
+			Radius:           object.Radius,
+			Segments:         object.Segments,
+			Points:           vector3ListToIR(object.Points),
+			LineSegments:     object.LineSegments,
+			LineWidth:        object.LineWidth,
+			RadiusTop:        object.RadiusTop,
+			RadiusBottom:     object.RadiusBottom,
+			Tube:             object.Tube,
+			RadialSegments:   object.RadialSegments,
+			TubularSegments:  object.TubularSegments,
+			CastShadow:       object.CastShadow,
+			ReceiveShadow:    object.ReceiveShadow,
+			PlanarReflection: object.PlanarReflection,
+			Pickable:         object.Pickable,
+			Visible:          object.Visible,
+			LODGroup:         object.LODGroup,
+			LODLevel:         object.LODLevel,
+			LODMinDistance:   object.LODMinDistance,
+			LODMaxDistance:   object.LODMaxDistance,
 		},
 	}
 }

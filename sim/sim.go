@@ -37,6 +37,15 @@ type Simulation interface {
 	State() []byte
 }
 
+// CheckedRestorer is the optional part of a Simulation that reports a snapshot
+// it cannot apply and, when it does, leaves the simulation unchanged. Restore
+// has no result, so a Runner that is told to load a save cannot see a refusal
+// unless the simulation implements this. Runner.RestoreSnapshot calls it in place
+// of Restore. game.Runtime implements it.
+type CheckedRestorer interface {
+	RestoreSnapshot(snapshot []byte) error
+}
+
 // StateEncoding controls how Runner places Simulation state bytes into hub
 // payloads.
 type StateEncoding string
@@ -214,14 +223,35 @@ func (r *Runner) RegisterHandlers() {
 // restarts from this snapshot. Call it from the owner while the runner is
 // stopped or between ticks; it is safe against a running tick but the tick
 // loop keeps going.
+//
+// Restore drops the reason when the simulation refuses the snapshot. Then the
+// frame and the replay log stay as they were. Call RestoreSnapshot to get the
+// reason.
 func (r *Runner) Restore(frame uint64, snapshot []byte) {
+	_ = r.RestoreSnapshot(frame, snapshot)
+}
+
+// RestoreSnapshot is Restore for a simulation that can refuse a snapshot. When
+// the simulation implements CheckedRestorer and returns an error, RestoreSnapshot
+// returns that error and changes nothing: the runner frame and the replay log
+// stay as they were. Any other simulation is restored as in Restore, and the
+// result is nil. It takes the lock that a tick holds, so it is safe while the
+// runner runs; calling the simulation's own restore directly is not.
+func (r *Runner) RestoreSnapshot(frame uint64, snapshot []byte) error {
 	r.simMu.Lock()
 	defer r.simMu.Unlock()
-	r.sim.Restore(snapshot)
+	if checked, ok := r.sim.(CheckedRestorer); ok {
+		if err := checked.RestoreSnapshot(snapshot); err != nil {
+			return err
+		}
+	} else {
+		r.sim.Restore(snapshot)
+	}
 	r.frame.Store(frame)
 	if r.recorder != nil {
 		r.recorder.begin(frame, snapshot)
 	}
+	return nil
 }
 
 // SnapshotAt returns the ring snapshot stored for frame, if it is still held.
