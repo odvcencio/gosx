@@ -143,10 +143,11 @@ add := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "add", Args: Args{A: 2, 
 The rules:
 
 1. Number calls from 1, increasing. The engine ignores any ID at or below the
-   highest it has seen, because a batch flush can deliver the same value twice, and
-   the page ignores one too. With a single call signal, take the next number from
-   the signal's own ID, as above. With a mailbox, count from `Seen` (rule 3a): the
-   result's `ID` is not safe, because a late reply puts it back to an earlier call.
+   highest it has accepted or seen answered, because a batch flush can deliver the
+   same value twice. The page ignores any ID at or below the highest it has
+   watched. With a single call signal, take the next number from the signal's own
+   ID, as above. With a mailbox, count from `Seen` (rule 3a): the result's `ID` is
+   not safe, because a late reply puts it back to an earlier call.
 2. A signal keeps its newest value only. If one handler writes two single calls,
    the engine sees the second, and the first never runs. The engine does not stay
    silent about it: the result of the second call lists the first in `Recent` with

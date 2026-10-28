@@ -25,22 +25,38 @@
   newest value, so two calls that one island handler wrote reached the engine as
   the second call alone, and the first never ran. The call signal can now hold a
   mailbox, an array of the calls that have no reply yet. `ServeCalls` runs each
-  call whose ID is above the last one it handled, in ID order, and writes one
+  call whose ID is above the highest it has seen, in ID order, and writes one
   result for each. The page host removes answered calls from the list for a
-  worker or native engine, and the engine does it on the main thread; a handler
-  only appends. A page watchdog now starts for each listed call. A signal that
-  holds one call works as before, and an engine from an older GoSX ignores an
-  array, so a page that writes mailboxes needs an engine built with this
-  version. `bootstrap-feature-engine-worker.js` grows from 36,541 to 36,983
-  bytes.
+  worker or native engine, and the engine does it on the main thread, through the
+  new `trimCalls` method of the page's engine context; a handler only appends. A
+  page watchdog now starts for each listed call. A signal that holds one call
+  works as before, with one addition: when a writer sets two single calls in one
+  batch, the result of the second lists the first in `Recent` with
+  `Error: "overwritten"`, for up to `CallOptions.Recent` skipped IDs in a row. An
+  engine from an older GoSX ignores an array, so a page that writes mailboxes
+  needs an engine built with this version. `bootstrap-feature-engine-worker.js`
+  grows from 36,541 to 37,395 bytes.
+
+- Count the next call from `Result.Seen`, not from `Result.ID`. When the page
+  times out calls 1 and 2 and call 1's real reply then arrives, `ID` goes back to
+  1 while both IDs are taken, and a call numbered from it is ignored: it never
+  runs and never times out. `Result` has a new field `Seen`, the highest call ID
+  that the engine accepted or the page watched. The engine writes it with every
+  result. The page writes it with `timeout` and `worker-crashed`, and writes a
+  result again with the highest `Seen` published if a late reply carries a lower
+  one, so `Seen` never goes down. Number a call above `Seen` and above every ID in your
+  mailbox. An engine or a page from an older GoSX writes no `Seen`, and the field
+  is then 0.
 
 - Keep the value of recent replies. Several results written one after another
   can reach the page as the newest one alone, so `Result.Recent` entries now carry
   the reply's `Value` (`ResultRef.Value`) as well as its ID and error. The newest
   entries keep their value while they fit `CallOptions.RecentBytes`, 8 KiB by
-  default; a negative number keeps none. `Recent` carries the error of a reply
-  that failed, as before. An island that declares `Recent` entries with only
-  `ID` and `Error` still decodes them.
+  default; a negative number keeps none. `ResultRef.Kept` is true when the entry
+  has its `Value`. An island decodes a key that is missing as the zero value, so
+  only `Kept` tells a reply that was lost from one whose value is zero. `Recent`
+  carries the error of a reply that failed, as before. An island that declares
+  `Recent` entries with only `ID` and `Error` still decodes them.
 
 - Add `wasm.ServeCallsAsync` and `host.ServeCallsAsync` for call handlers that
   block. `ServeCalls` runs the handler inside the JavaScript callback that
@@ -50,16 +66,27 @@
   result is written before the next call starts, and the page's `timeout` and
   `worker-crashed` rules apply as before. The same engine runs in a worker, on
   the main thread after a fallback, and in a desktop host
-  (`desktop/enginehost`).
+  (`desktop/enginehost`). On the main thread the engine has the browser write
+  each result, and drop the answered calls from a mailbox, from the event loop,
+  and waits for it. A write made from the goroutine would run the engine's own
+  subscriptions, which are Go functions, before it returned: a nested call from
+  JavaScript into Go, and Go's WebAssembly runtime can stop the program when two
+  goroutines are in such calls at once. Before each handler runs, the engine
+  writes the call's ID to `$channel.started`. The browser revokes an engine's
+  context before it calls `Dispose`, so the engine cannot write anything then. An
+  engine that mounts again on the same signals answers a call that started and
+  has no result with `Error: "interrupted"` and does not run it again, so a save
+  or an order does not happen twice. Calls that never started still run.
 
 - Add `wasm.Caller`, a Go client for a call channel, modelled on the one Bon
   Voyage wrote. It numbers calls, writes them to `$channel`, reads
   `$channel.result`, and returns each reply with the tag of its call, in order. By
   default it keeps one call written at a time, which works with every engine.
   `CallerOptions{Window: n}` keeps `n` calls written at once as a mailbox, and
-  `CallerOptions{After: id}` starts numbering above an ID the engine has already
-  handled. Bon Voyage's own tests for its client pass against it, through type
-  aliases for `Caller`, `Reply` and the written call.
+  `CallerOptions{After: seen}` starts numbering above a `Seen` the engine has
+  already published. The client also raises its count to the `Seen` of every
+  result it is given. Bon Voyage's own tests for its client pass against it,
+  through type aliases for `Caller`, `Reply` and the written call.
 
 - Hold a Scene3D motion frame that arrives while the scene's models are still
   hydrating, then apply it when they commit, instead of rejecting it with

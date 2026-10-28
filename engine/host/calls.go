@@ -91,11 +91,10 @@ func callSignals(channel string) (call, result string, err error) {
 // before the first reply still finds each one. It also lists, with the error
 // "overwritten", each call that a writer of single calls skipped just before the
 // call that arrived: the signal keeps its newest value only, so the engine never
-// received it. Result.Seen is the highest call
-// ID the engine has accepted or seen in a result, the number a writer counts its
-// next call from. On a worker engine the page also fails a call with "timeout"
-// when no reply arrives in CallOptions.Timeout, and with "worker-crashed" if the
-// worker dies.
+// received it. Result.Seen is the highest call ID the engine has accepted or seen
+// in a result, the number a writer counts its next call from. On a worker engine
+// the page also fails a call with "timeout" when no reply arrives in
+// CallOptions.Timeout, and with "worker-crashed" if the worker dies.
 //
 // handle runs on the engine's event loop, one call at a time, and must not
 // wait for a browser promise or any callback that only the event loop can run:
