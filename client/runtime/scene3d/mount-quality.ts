@@ -242,6 +242,107 @@
     return false;
   }
 
+  // sceneAdaptivePostFXKept lists what adaptive suppression leaves of the
+  // author's post chain: tone mapping and FXAA. A frame drawn with a post
+  // chain is linear light that only the tone-mapping pass maps to the display,
+  // so an HDR sky clips to white without it. The chain draws into a
+  // single-sample target, so FXAA keeps the edges the canvas would have had.
+  // With no tone mapping nothing needs the chain, and it empties: FXAA alone
+  // would leave the frame in linear light. A denied TAA becomes FXAA, like the
+  // survival tier. The kinds compared here are the ones normalizeScenePostEffect
+  // writes and both renderers dispatch on with ===.
+  function sceneAdaptivePostFXKept(source: any[]): any[] {
+    const kept: any[] = [];
+    let tone = false, fxaa = false, taa = false;
+    for (let i = 0; i < source.length; i += 1) {
+      const kind = source[i] && source[i].kind;
+      if (kind === "toneMapping") tone = true;
+      else if (kind === "fxaa") fxaa = true;
+      else if (kind === "taa") taa = true;
+      if (kind === "toneMapping" || kind === "fxaa") kept.push(source[i]);
+    }
+    if (tone && taa && !fxaa) kept.push({ kind: "fxaa" });
+    return tone ? kept : [];
+  }
+
+  // sceneAdaptivePostFXCost weighs one post effect, for deciding whether
+  // suppression takes work off the frame. The unit is a full-screen pass that
+  // reads one texel per pixel: tone mapping, vignette, color grade and film
+  // grain. FXAA is one pass that reads nine texels; on an integrated GPU it
+  // measured about twice a vignette or a color grade, so it weighs two. Bloom
+  // runs four draws: three at the square of its scale of the post resolution and
+  // the composite at full size. At the default scale of 0.5 it measured about 1.2
+  // times the FXAA pass, so it weighs three. Below that the small passes shrink:
+  // at 0.35 it measured about 0.9 times the FXAA pass, so it weighs two, and
+  // swapping it for FXAA saves nothing. Mip bloom ignores the scale and weighs
+  // three. SSAO, depth of field and contact shadows take many samples, god rays
+  // march a ray, and a custom pass is unknown, so each weighs three.
+  // A kind the renderers do not dispatch on is never drawn, so it weighs nothing.
+  // The WebGL2 renderer fuses haze, god rays, grain and AgX tone mapping into one
+  // "atmosphere" effect. Haze comes from the environment and stays under
+  // suppression, so only the rest of that effect weighs.
+  function sceneAdaptivePostFXCost(effect: any): number {
+    const kind = effect && effect.kind;
+    if (kind === "toneMapping" || kind === "vignette" || kind === "colorGrade" || kind === "grain") return 1;
+    if (kind === "fxaa") return 2;
+    if (kind === "bloom") return effect.mode !== "mip" && effect.scale > 0 && effect.scale < 0.5 ? 2 : 3;
+    if (kind === "atmosphere") return (effect.rays ? 3 : 0) + (effect.grain > 0 ? 1 : 0) + (effect.agx ? 1 : 0);
+    return kind === "ssao" || kind === "contactShadows" || kind === "dof" || kind === "godRays" || kind === "taa" || kind === "customPost" ? 3 : 0;
+  }
+
+  const sceneAdaptiveFXAAEffect = { kind: "fxaa" };
+
+  // sceneAdaptivePostFXSheds is true when suppression would take work off the
+  // frame: the effects it removes cost more than the passes it adds.
+  //
+  // The cost of the running frame is that of the chain the renderer drew last
+  // (renderer.drawnPostEffects), because the renderer drops effects the mount's
+  // chain still holds: god rays and film grain at the survival tier, god rays
+  // with no physical sky, specular bloom a scene cannot draw, and any kind it
+  // does not know. Weighing the mount's chain would count passes that are not
+  // drawn, so the controller would spend its last step to trade the author's
+  // vignette for an FXAA pass. A renderer without the method (WebGPU) leaves the
+  // mount's chain, where only the unknown kinds weigh nothing.
+  //
+  // On a canvas that was antialiased without post effects (its own MSAA, or the
+  // private FXAA fallback) the WebGL2 renderer draws an FXAA pass after the kept
+  // chain, and renderer.suppressedPostFXAddsFXAA says so. Counting effects alone
+  // would trade a vignette for that pass, spend the last quality step and leave
+  // the frame costlier. An FXAA pass the kept chain already holds is not added,
+  // and a chain of only tone mapping and FXAA sheds nothing.
+  //
+  // This runs on every frame a scene keeps missing its budget at the last tier,
+  // so it adds up costs in loops and builds no array or string.
+  function sceneAdaptivePostFXSheds(sceneState: any, renderer?: any): boolean {
+    const drawn = !!renderer && typeof renderer.drawnPostEffects === "function" ? renderer.drawnPostEffects() : null;
+    const running = Array.isArray(drawn) ? drawn : sceneState && sceneState.postEffects;
+    const count = Array.isArray(running) ? running.length : 0;
+    let before = 0, haze = false;
+    for (let i = 0; i < count; i += 1) {
+      before += sceneAdaptivePostFXCost(running[i]);
+      if (running[i] && running[i].kind === "atmosphere" && running[i].haze) haze = true;
+    }
+    const source = sceneAdaptivePostFXSource(sceneState);
+    let tone = false, fxaa = false, taa = false, after = 0;
+    for (let i = 0; i < source.length; i += 1) {
+      const kind = source[i] && source[i].kind;
+      if (kind === "toneMapping") tone = true;
+      else if (kind === "fxaa") fxaa = true;
+      else if (kind === "taa") taa = true;
+      if (kind === "toneMapping" || kind === "fxaa") after += sceneAdaptivePostFXCost(source[i]);
+    }
+    // What the frame draws after suppression: the kept chain (see
+    // sceneAdaptivePostFXKept), plus an FXAA pass if the renderer appends one.
+    if (!tone) after = 0;
+    else if (taa && !fxaa) after += sceneAdaptivePostFXCost(sceneAdaptiveFXAAEffect);
+    const keptFXAA = tone && (fxaa || taa);
+    // The haze pass stays under suppression, so the renderer's chain is not empty even when the kept chain is.
+    if (!keptFXAA && !!renderer && typeof renderer.suppressedPostFXAddsFXAA === "function" && renderer.suppressedPostFXAddsFXAA(tone || haze) === true) {
+      after += sceneAdaptivePostFXCost(sceneAdaptiveFXAAEffect);
+    }
+    return after < before;
+  }
+
   // sceneQualityLadderAdmittedGroups reads the CURRENT rung's LayerGroups
   // straight off the governor state — no cached/applied step needed (unlike
   // postEffects, layer-group visibility has no sceneState.* field to mutate;
