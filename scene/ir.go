@@ -301,6 +301,7 @@ type IRMeshNode struct {
 	TubularSegments    int         `json:"tubularSegments,omitempty"`
 	CastShadow         bool        `json:"castShadow,omitempty"`
 	ReceiveShadow      bool        `json:"receiveShadow,omitempty"`
+	PlanarReflection   *bool       `json:"planarReflection,omitempty"`
 	Pickable           *bool       `json:"pickable,omitempty"`
 	Visible            *bool       `json:"visible,omitempty"`
 	LODGroup           string      `json:"lodGroup,omitempty"`
@@ -1246,6 +1247,8 @@ func objectToIRNode(object ObjectIR, materialIndex int) IRNode {
 			LODLevel:        object.LODLevel,
 			LODMinDistance:  object.LODMinDistance,
 			LODMaxDistance:  object.LODMaxDistance,
+			// Nil is the default participation and stays off the wire.
+			PlanarReflection: object.PlanarReflection,
 		},
 	}
 }

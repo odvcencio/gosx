@@ -1018,6 +1018,8 @@
       viewCulled: sceneBool(Object.prototype.hasOwnProperty.call(item, "viewCulled") ? item.viewCulled : current.viewCulled, false),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
+      // planarReflection: false keeps this mesh out of the ocean's planar mirror (scene.Mesh.PlanarReflection). Every other mesh reflects.
+      planarReflection: sceneBool(Object.prototype.hasOwnProperty.call(item, "planarReflection") ? item.planarReflection : current.planarReflection, true),
       doubleSided: sceneBool(Object.prototype.hasOwnProperty.call(item, "doubleSided") ? item.doubleSided : current.doubleSided, false),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
       lodGroup: typeof item.lodGroup === "string" && item.lodGroup ? item.lodGroup : (typeof current.lodGroup === "string" ? current.lodGroup : ""),
@@ -1463,6 +1465,7 @@
     const hasVisible = Object.prototype.hasOwnProperty.call(current, "visible");
     const hasCastShadow = Object.prototype.hasOwnProperty.call(current, "castShadow");
     const hasReceiveShadow = Object.prototype.hasOwnProperty.call(current, "receiveShadow");
+    const hasPlanarReflection = Object.prototype.hasOwnProperty.call(current, "planarReflection");
     const hasAnimationSpeed = Object.prototype.hasOwnProperty.call(current, "animationSpeed");
     const hasAnimationWeight = Object.prototype.hasOwnProperty.call(current, "animationWeight");
     const hasAnimationFadeInMS = Object.prototype.hasOwnProperty.call(current, "animationFadeInMS");
@@ -1588,6 +1591,7 @@
       static: hasStatic ? sceneBool(current.static, false) : null,
       castShadow: hasCastShadow ? sceneBool(current.castShadow, false) : undefined,
       receiveShadow: hasReceiveShadow ? sceneBool(current.receiveShadow, false) : undefined,
+      planarReflection: hasPlanarReflection ? sceneBool(current.planarReflection, true) : undefined,
       lodGroup: typeof current.lodGroup === "string" && current.lodGroup ? current.lodGroup : "",
       lodLevel: Math.max(0, Math.floor(sceneNumber(current.lodLevel, 0))),
       lodMinDistance: Math.max(0, sceneNumber(current.lodMinDistance, 0)),
@@ -5653,7 +5657,7 @@
       const revision = currentRevision;
       const key = [sourceMaterial.key || sceneMaterialProfileKey(sourceMaterial), revision,
         object.receiveShadow === true, object.depthWrite,
-        object.doubleSided === true].join(":");
+        object.doubleSided === true, object.planarReflection !== false].join(":");
       descriptor = { vertices, sourceMaterial, revision, key,
         registryVersion: sceneMaterialProfileRegistryVersion };
       sceneRigidImportedBatchDescriptors.set(object, descriptor);
@@ -5752,12 +5756,13 @@
     return group.vertices === vertices && group.batchID === skin.batchID && group.mode === mode &&
       group.parentNode === (skin.parent || "") &&
       group.cast === (object.castShadow === true) && group.recv === (object.receiveShadow === true) &&
+      group.plan === (object.planarReflection !== false) &&
       group.dbl === (object.doubleSided === true) && group.depthWrite === object.depthWrite;
   }
 
   function sceneCrowdBatchGroup(object, skin, vertices, mode) {
-    const cast = object.castShadow === true, recv = object.receiveShadow === true, dbl = object.doubleSided === true;
-    const key = skin.batchID + "|" + mode + (cast ? "c" : "-") + (recv ? "r" : "-") + (dbl ? "d" : "-") +
+    const cast = object.castShadow === true, recv = object.receiveShadow === true, dbl = object.doubleSided === true, plan = object.planarReflection !== false;
+    const key = skin.batchID + "|" + mode + (cast ? "c" : "-") + (recv ? "r" : "-") + (dbl ? "d" : "-") + (plan ? "p" : "-") +
       ":" + String(object.depthWrite) + "@" + (skin.parent || "");
     let list = sceneCrowdBatchGroups.get(key);
     if (!list) {
@@ -5769,7 +5774,7 @@
     }
     const group = {
       key, id: "crowd-batch-" + (++sceneCrowdBatchSequence), alive: true,
-      batchID: skin.batchID, vertices, mode, cast, recv, dbl, depthWrite: object.depthWrite,
+      batchID: skin.batchID, vertices, mode, cast, recv, dbl, plan, depthWrite: object.depthWrite,
       parentNode: skin.parent || "", parentMatrix: null, parentSeen: false, time: 0,
       localBounds: { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 },
       epoch: 0, n: 0, count: 0, revision: 0, shape: 0, changed: false, reshaped: false,
@@ -6232,6 +6237,7 @@
       record.pickable = typeof first.pickable === "boolean" ? first.pickable : undefined;
       record.castShadow = group.cast;
       record.receiveShadow = group.recv;
+      record.planarReflection = group.plan;
       record.doubleSided = group.dbl;
       record.depthWrite = group.depthWrite;
       record.depthNear = depth.near;
@@ -6321,6 +6327,7 @@
           static: false,
           castShadow: false,
           receiveShadow: object.receiveShadow === true,
+          planarReflection: object.planarReflection !== false,
           depthWrite: object.depthWrite,
           bounds: group.bounds,
           depthNear: depth.near,
@@ -7327,6 +7334,7 @@
       const depth = sceneBoundsDepthMetrics(bounds, camera, object);
       const meshRecord = { id: object.id, kind: object.kind, materialIndex, renderPass: objectPassString,
         static: false, castShadow: Boolean(object.castShadow), receiveShadow: Boolean(object.receiveShadow),
+        planarReflection: object.planarReflection !== false,
         depthWrite: object.depthWrite, bounds, depthNear: depth.near, depthFar: depth.far, depthCenter: depth.center,
         viewCulled: false, doubleSided: Boolean(object.doubleSided), skin: null, _crowdSkin: object._crowdSkin,
         _crowdMotion: motion || null,
@@ -7360,6 +7368,7 @@
         static: false,
         castShadow: false,
         receiveShadow: Boolean(object.receiveShadow),
+        planarReflection: object.planarReflection !== false,
         depthWrite: object.depthWrite,
         bounds: bounds,
         depthNear: 0,
@@ -7405,6 +7414,7 @@
           cut: object.cutaway || null,
           castShadow: Boolean(object.castShadow),
           receiveShadow: Boolean(object.receiveShadow),
+          planarReflection: object.planarReflection !== false,
           depthWrite: object.depthWrite,
           bounds,
           depthNear: depth.near,
@@ -7624,6 +7634,7 @@
       cut: object.cutaway || null,
       castShadow: Boolean(object.castShadow),
       receiveShadow: Boolean(object.receiveShadow),
+      planarReflection: object.planarReflection !== false,
       depthWrite: object.depthWrite,
       bounds: bounds,
       // These bounds cover the emitted world-space triangle soup. Consumers

@@ -498,6 +498,15 @@ type Mesh struct {
 	// gates meshes that opt in. Toggling is instant (no transition) — the
 	// app choreographs any visual blending itself.
 	QualityGroup string
+	// PlanarReflection controls whether the ocean's planar mirror draws this
+	// mesh. Nil and true draw it, like every other mesh. False leaves it out of
+	// the mirror and nothing else: the main view, shadows and screen-space
+	// reflections still see it. Position and distance never decide this. Set
+	// false on geometry that stands in for the sky, such as a moon, a sun disc,
+	// a star shell or a dome. The sky already supplies its glint, and its
+	// mirror image would land in the near water as a hard-edged shape that no
+	// wave breaks up.
+	PlanarReflection *bool
 }
 
 // MaterialUniformAnim is a flat keyframe spec for one animated material uniform,
@@ -1247,6 +1256,9 @@ type Model struct {
 	AnimationFadeInMS  *int
 	AnimationFadeOutMS *int
 	Loop               *bool
+	// PlanarReflection applies to every mesh of the model. See
+	// Mesh.PlanarReflection.
+	PlanarReflection *bool
 	// ClipSampled opts this model into sampled animation. The model needs an
 	// ID. A sampled model has no client animation clock: it holds its bind
 	// pose until a ClipFrame poses it, and the Animation, Loop and speed
@@ -3097,6 +3109,7 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	record.OutlineWidth = mesh.OutlineWidth
 	record.CastShadow = mesh.CastShadow
 	record.ReceiveShadow = mesh.ReceiveShadow
+	record.PlanarReflection = mesh.PlanarReflection
 	record.DepthWrite = mesh.DepthWrite
 	record.ShiftX = mesh.Drift.X
 	record.ShiftY = mesh.Drift.Y
@@ -3761,6 +3774,7 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	}
 	record.CastShadow = model.CastShadow
 	record.ReceiveShadow = model.ReceiveShadow
+	record.PlanarReflection = model.PlanarReflection
 	record.Static = model.Static
 	record.Pickable = model.Pickable
 	if model.Interactive {
