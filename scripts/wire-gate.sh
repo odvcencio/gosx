@@ -20,6 +20,19 @@
 #                                a reason in each raise map.
 #   WIRE_GATE_REUSE_DOCS=1       reuse an existing examples/gosx-docs/dist.
 #   WIRE_GATE_OUT=DIR            report directory (default build/wire-gate).
+#
+# To price a change to the WASM runtime before a hosted run, without this gate:
+# a docs route that loads the full runtime counts the Brotli size of that
+# runtime after Binaryen version_108 as its wasmWireBytes (frameworkJsWireBytes
+# and totalWireBytes contain it). Build the runtime before and after the change
+# with the flags of tinyGoBuildArgs in cmd/gosx and -tags "tinygo
+# gosx_runtime_full", run
+#   wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+#     --strip-debug --strip-producers full.wasm -o full.opt.wasm
+# and compress full.opt.wasm at Brotli quality 11. For PR 772 at e248a8bd77 that
+# gave 669,217 B against 669,226 B hosted, so the difference between the two
+# sizes is the growth to add to a hosted figure. The core runtime works the same
+# way with -tags "tinygo gosx_tiny_runtime gosx_runtime_core".
 set -eu
 
 mode="${WIRE_GATE_MODE:-check}"
