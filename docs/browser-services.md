@@ -52,34 +52,97 @@ fetch it. Its hot forwarding path stays in JavaScript and preserves native
 arguments and receivers. Dispose the guard to remove only its own policy.
 Telemetry opt-out drops queued events and prevents unload beacons.
 
-## Calls that run Go listeners inside the call
+## Go callbacks and calls into JavaScript
 
-A few browser calls run listeners before they return. `Element.Dispatch`,
-`Focus`, `Blur` and `Click`, `DispatchResize` and `DispatchError` do. On the
-main thread, a write to the shared signal store (`Context.SetSignal` and
-`SetSignals`) calls every subscriber before it returns, including Go
-subscribers from `SubscribeSignal`. A Go listener then runs inside the call
-that caused it.
+Some browser calls run callbacks before they return. `dispatchEvent`, `focus`,
+`click` and `AbortController.abort` run listeners, `new Promise(executor)` runs
+its executor, and a write to the shared signal store runs every subscriber.
+When the callback is a Go function made with `js.FuncOf`, the Go runtime enters
+Go while the call from Go into JavaScript is still on the stack. This is a
+nested entry.
 
-One goroutine can do this safely. Go's js/wasm runtime keeps these nested
-entries on one stack, and a program can stop with `fatal error: traceback did
-not unwind completely` when two goroutines are inside such calls at once. Make
-these calls from one goroutine, or call the Go consumers directly and dispatch
-the DOM event only for page scripts.
+A nested entry can stop the program, however many goroutines make them. Go's
+js/wasm runtime keeps the entries that are in progress on one stack, and each
+entry allocates its record before it pushes it. If that allocation pauses the
+entry, because it starts the first garbage collection of the process, another
+goroutine can run first. A nested entry then goes onto the stack first and the
+paused entry on top of it, against the order of the calls on the JavaScript
+stack. The runtime resumes the wrong goroutine, and the program stops, usually
+with `fatal error: traceback did not unwind completely`. The paused entry can be
+any timer, event or promise callback. A program in which a single goroutine made
+every nested entry stopped in 19 of 256 runs (`new Promise` with a Go executor)
+and 46 of 256 runs (`dispatchEvent` with a Go listener) on go1.26.0, and in 14
+and 31 of 256 runs on go1.26.10; the same programs with a native executor or
+listener stopped in none. Keeping such calls on one goroutine does not prevent
+it. The failure depends on the build and on timing, so a program can pass its
+tests and still fail for a user.
 
-The waits in `Fetch`, `Context.Navigate`, the `Scene3D` calls and the context
-variants of clipboard and fullscreen do not nest. Their Go handlers only signal
-a channel, and the browser runs them after the call has returned, so any
-goroutine can wait this way. Page code that these calls start can still
-dispatch events that reach Go listeners. `jsutil.NewPromiseWithResolvers` gives
-your own code a pending Promise without a Go executor.
+GoSX keeps Go out of these calls:
+
+- The waits in `Fetch`, `Context.Navigate`, the `Scene3D` calls and the context
+  variants of clipboard and fullscreen do not nest. Their Go handlers only
+  signal a channel, and the browser runs them after the call has returned.
+  `jsutil.NewPromiseWithResolvers` gives your own code a pending Promise without
+  a Go executor.
+- Go listeners added with `On`, Go subscribers added with `SubscribeSignal`
+  (and so `ServeCalls`), and the netplay link's callbacks are
+  `jsutil.Callback`s. When Go itself starts a call that makes the browser run
+  them, they only record the call, and Go runs them after the JavaScript call
+  has returned and before the Go function returns. These are the calls:
+  `Element.Dispatch`, `Focus`, `Blur` and `Click`, `DispatchResize`,
+  `DispatchError`, `Context.Emit`, `Context.SetSignal`, `SetSignals`,
+  `SetChangedSignals`, the main-thread batches of a `View`, the replay of the
+  current value that `ServeCalls` asks for when it subscribes, and the netplay
+  link's `Open` and `Signal`.
+
+What this changes for your code:
+
+- A Go listener of a dispatch that Go starts runs after the browser has
+  delivered the event to every listener, page scripts included, in the order the
+  browser called them. `PreventDefault`, `StopPropagation` and
+  `StopImmediatePropagation` come too late to change that dispatch: a Go
+  listener cannot cancel the click that `Click` performs. `Event.CurrentTarget`
+  still names the element the listener is attached to. An event that the page
+  raises, such as a user's click, still reaches a Go listener inside the
+  browser's own dispatch, and the listener can cancel it.
+- A Go subscriber of a shared signal that Go writes runs after the page's other
+  subscribers of that write, and sees the whole batch. A subscriber that writes
+  another signal has that write's subscribers finish before its own write
+  returns, as before.
+- A Go listener that an earlier Go listener disposes during the same dispatch
+  does not run, as in the browser. Go listeners that dispatch another event see
+  that event's listeners finish before they continue.
+
+Use `jsutil.NewCallback` where you would use `js.FuncOf` for a listener,
+subscriber or notification that JavaScript may call while Go is inside a call,
+and make that call with `jsutil.Call` instead of `js.Value.Call`. A function made
+with `js.FuncOf`, and a `dispatchEvent`, `focus` or `click` made with
+`js.Value.Call`, still nest when Go listeners are attached. Where you can, call
+the Go consumers directly and dispatch the DOM event only for page scripts.
 
 `jsutil.DocumentContext` does not nest either. The browser aborts the document
 signal inside the call that starts a navigation, and Go starts one with
 `Context.Navigate` or with a `location.assign` call through `syscall/js`. The
 context listens with a native function and cancels from a goroutine. It ends a
 few microtasks after the abort, once the call that started the navigation has
-returned, and not inside that call.
+returned, and not inside that call. So after Go starts a navigation, a request
+that Go starts before the program next returns to JavaScript passes the
+`Fetch` check of the context and goes out; the browser aborts it a moment later.
+To refuse such a request, call `DocumentContext` again right before it: it reads
+the signal at once, so a call made after the abort returns a context that is
+already canceled.
+
+Go's standard library nests in a browser too. A write to `os.Stdout` or
+`os.Stderr`, which includes `fmt.Println` and the `log` package, makes
+`wasm_exec.js` call a Go callback before its `fs.write` returns. In Chrome for
+Testing 156 with the `wasm_exec.js` of go1.26.0, each write was one nested entry;
+Node's host calls the callback later and shows none. GoSX cannot change that.
+`browser.LogError` calls `console.error` without a Go callback.
+
+Not covered: the island runtime built with TinyGo has its own scheduler. The
+evidence above is for the standard Go toolchain, and the focus and click host
+operations of the TinyGo runtime were not tested. The `examples/*-spike`
+programs keep their own Go Promise executors.
 
 ## Retained instance streaming
 

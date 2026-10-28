@@ -27,9 +27,8 @@ type settlement struct {
 // The two Go handlers only signal a channel, and the browser runs them as
 // microtasks, after the call into JavaScript that attached them has returned.
 // AwaitPromise therefore never runs Go code inside a call from Go into
-// JavaScript. That matters because Go's js/wasm runtime keeps every such nested
-// call on one shared stack, and two goroutines that nest at the same time can
-// corrupt it (see the package documentation).
+// JavaScript. That matters because a nested entry into Go can stop the program
+// (see the package documentation).
 func AwaitPromise(p js.Value) (js.Value, error) {
 	if p.IsNull() || p.IsUndefined() {
 		return js.Undefined(), errors.New("jsutil: awaitPromise on null value")

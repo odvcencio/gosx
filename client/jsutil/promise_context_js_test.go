@@ -141,9 +141,10 @@ func TestPromiseWithResolversCancellationLeavesNoGoCallbackBehind(t *testing.T) 
 
 // A stress run with many goroutines that wait with cancellation while the
 // collector is busy. Before the waits stopped nesting, every one of these calls
-// ran a Go executor inside Promise construction, and goroutines nested at the
-// same time. Go's js/wasm runtime can stop the program when that happens, which
-// is why this test also counts the depth of the nesting.
+// ran a Go executor inside Promise construction. A nested entry can stop Go's
+// js/wasm runtime when another entry from JavaScript is paused in its
+// allocation, so the test requires that no wait nests at all, and it counts the
+// depth of the nesting to show that too.
 func TestAwaitPromiseContextWaitsNeverNestUnderConcurrencyAndGCPressure(t *testing.T) {
 	previous := debug.SetGCPercent(5)
 	defer debug.SetGCPercent(previous)
