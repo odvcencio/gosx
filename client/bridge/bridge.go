@@ -37,6 +37,10 @@ type Bridge struct {
 	patchMailboxFn func(islandID string, mailbox []byte) // direct binary patch callback
 	patchRequestID uint32                                // monotonically increasing id for direct mailbox frames
 	signalFn       func(name, valueJSON string)          // callback to notify JS of shared signal changes
+	signalBatchFn  func(updates []SignalUpdate)          // callback that hands JS every change of one batch together
+	collecting     bool                                  // batch notifications wait in collected for one handoff
+	collected      []SignalUpdate                        // changes from the batch being applied, in notification order
+	jsonScratch    []byte                                // buffer the notifications are encoded into
 	dispatching    map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
 	unsubs         map[string][]func()                   // per-island unsubscribe handles for shared signals
 	pendingReaders []*sharedIslandReader                 // shared readers awaiting the outermost store update
@@ -107,6 +111,9 @@ type Store struct {
 	onChange    func(name string, value vm.Value)
 	updating    bool
 	afterUpdate func()
+	// afterNotify runs when SetBatch has sent every notification and the
+	// update has not settled yet, so readers are still held back.
+	afterNotify func()
 }
 
 // NewStore creates an empty shared store.
@@ -172,6 +179,9 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 			}
 		}
 	})
+	if s.afterNotify != nil {
+		s.afterNotify()
+	}
 }
 
 // endUpdate keeps readers behind the complete notification pass for both
@@ -236,6 +246,7 @@ func New() *Bridge {
 	}
 	b.store.SetObserver(b.notifySharedSignal)
 	b.store.afterUpdate = b.flushSharedIslands
+	b.store.afterNotify = b.deliverCollected
 	return b
 }
 
@@ -247,6 +258,23 @@ func (b *Bridge) GetStore() *Store {
 // SetSharedSignalCallback registers the function called when any shared signal changes.
 func (b *Bridge) SetSharedSignalCallback(fn func(name, valueJSON string)) {
 	b.signalFn = fn
+}
+
+// SignalUpdate is one shared signal change handed to a browser callback: the
+// signal name and the JSON text of its new value.
+type SignalUpdate struct {
+	Name string
+	JSON string
+}
+
+// SetSharedSignalBatchCallback registers the function that receives all the
+// changes of one shared signal batch in a single call, in notification order.
+// Until the batch has applied, nothing reaches the callback, so a subscriber it
+// triggers reads the complete new state. The callback also replaces the
+// per-signal callback for those changes; any other change still goes to the
+// per-signal callback at once.
+func (b *Bridge) SetSharedSignalBatchCallback(fn func(updates []SignalUpdate)) {
+	b.signalBatchFn = fn
 }
 
 // Surface kinds accepted by HydrateReconciler. Treat these strings as the
@@ -435,7 +463,9 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 
 	values := payload.Map()
 	for name, value := range values {
-		if name == "" {
+		// A blank name is refused as a single write refuses it, and as the
+		// page refused it before it sent a batch here.
+		if strings.TrimSpace(name) == "" {
 			return errors.New("shared signal name required")
 		}
 		if changedOnly {
@@ -444,9 +474,43 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 			}
 		}
 	}
+	if len(values) == 0 {
+		return nil
+	}
 
+	defer b.beginBatchNotify()()
 	b.store.SetBatch(values)
 	return nil
+}
+
+// beginBatchNotify prepares the notifications of one batch and returns the
+// function that ends it. While the batch applies, the browser hears nothing;
+// every change waits and then leaves together through the batch callback. The
+// returned function sends whatever is still waiting, so an observer panic
+// cannot leave the browser behind the store.
+func (b *Bridge) beginBatchNotify() func() {
+	collecting, collected := b.collecting, b.collected
+	b.collecting = b.signalBatchFn != nil
+	b.collected = nil
+	return func() {
+		b.deliverCollected()
+		b.collecting, b.collected = collecting, collected
+	}
+}
+
+// deliverCollected hands the waiting batch changes to the batch callback. The
+// callback may write signals; those changes go out one by one, not into the
+// batch being delivered.
+func (b *Bridge) deliverCollected() {
+	if len(b.collected) == 0 {
+		return
+	}
+	updates := b.collected
+	b.collected = nil
+	collecting := b.collecting
+	b.collecting = false
+	defer func() { b.collecting = collecting }()
+	b.signalBatchFn(updates)
 }
 
 // GetSharedSignalJSON serializes the current shared signal value as JSON.
@@ -459,7 +523,7 @@ func (b *Bridge) GetSharedSignalJSON(name string) (string, error) {
 	if !ok {
 		return "null", nil
 	}
-	return marshalSharedSignalValue(value)
+	return b.marshalValue(value)
 }
 
 // TickEngine reconciles a live engine runtime and returns pending commands.
@@ -694,11 +758,13 @@ func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
 	if b == nil || strings.TrimSpace(name) == "" {
 		return
 	}
-	valueJSON, err := marshalSharedSignalValue(value)
+	valueJSON, err := b.marshalValue(value)
 	if err != nil {
 		return
 	}
-	if b.signalFn != nil {
+	if b.collecting {
+		b.collected = append(b.collected, SignalUpdate{Name: name, JSON: valueJSON})
+	} else if b.signalFn != nil {
 		b.signalFn(name, valueJSON)
 	}
 	// Outbound cross-frame relay fans out for matching prefixes only.
@@ -707,13 +773,26 @@ func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
 	b.relaySharedSignal(name, valueJSON)
 }
 
-func marshalSharedSignalValue(value vm.Value) (string, error) {
-	data, err := json.Marshal(value.ToAny())
+// marshalValue returns the JSON text of a stored value: what json.Marshal gives
+// for value.ToAny(), written without the tree of plain Go values that call
+// builds. The bridge keeps one buffer for it, so a notification costs the text
+// itself and nothing else.
+func (b *Bridge) marshalValue(value vm.Value) (string, error) {
+	data, err := vm.AppendJSON(b.jsonScratch[:0], value)
 	if err != nil {
 		return "", err
 	}
+	// Keep the buffer for the next value unless one outsized value grew it.
+	if cap(data) <= maxJSONScratch {
+		b.jsonScratch = data
+	} else {
+		b.jsonScratch = nil
+	}
 	return string(data), nil
 }
+
+// maxJSONScratch is the largest buffer the bridge keeps between notifications.
+const maxJSONScratch = 1 << 20
 
 // DecodeEngineProgram decodes a runtime engine program.
 func DecodeEngineProgram(data []byte, format string) (*rootengine.Program, error) {
