@@ -143,7 +143,7 @@
   save or an order does not happen twice. A call that the old engine finished
   after the page began to dispose it comes back `interrupted` too, because the
   page dropped its reply. A write of the mark that fails, or a page that does
-  not report it within the new `CallOptions.MarkTimeout` (30 s by default,
+  not report it within `CallOptions.MarkTimeout` (30 s by default,
   `DefaultCallMarkTimeout`), answers the call with `Error: "not-started: ..."`,
   runs no handler, and lets the next call go on. That wait is not
   `CallOptions.Timeout`, the page's deadline for the client: a page whose main

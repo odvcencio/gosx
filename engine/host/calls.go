@@ -20,7 +20,8 @@ type CallOptions struct {
 	// MarkTimeout is how long ServeCallsAsync waits for the page to report the
 	// mark of a call before it gives up on that call: the call is answered with
 	// the error "not-started: ..." and no handler runs (see ServeCallsAsync).
-	// Zero, or a negative number, means DefaultCallMarkTimeout.
+	// Zero, or a negative number, means DefaultCallMarkTimeout. ServeCalls writes
+	// no mark and ignores it.
 	//
 	// It does not depend on Timeout. A page whose main thread is busy for longer
 	// than Timeout still reports the mark when it is free again, and the call then
