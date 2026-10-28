@@ -12,11 +12,11 @@ type contextTransport struct {
 	ctx Context
 	// async is set for ServeCallsAsync, which answers from a goroutine. On the
 	// main thread that goroutine must not write the result, or trim the mailbox,
-	// from inside a call into JavaScript, because the write runs this engine's
-	// own subscriptions before it returns: the browser makes the write from the
-	// event loop instead (see Context.fromEventLoop). ServeCalls answers inside
-	// the callback that delivered the call, on the stack of one entry, and writes
-	// at once.
+	// from inside a call into JavaScript, because a write to a shared signal can
+	// run a Go subscriber inside the call, and this engine subscribes to the
+	// signals it writes: the browser makes the write from the event loop instead
+	// (see Context.fromEventLoop). ServeCalls answers inside the callback that
+	// delivered the call, on the stack of one entry, and writes at once.
 	async bool
 }
 

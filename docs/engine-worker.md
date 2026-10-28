@@ -356,20 +356,21 @@ off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * 
   not happen twice with `ServeCallsAsync`.
 - The handler runs on its own goroutine, never inside a call from JavaScript into
   Go. The engine's own writes are made so that they do not enter Go either. A
-  write to a shared signal runs the engine's own subscriptions, which are Go
-  functions, before it returns. Made from a goroutine on the main thread, that
-  is a nested call from JavaScript into Go. Go's WebAssembly runtime keeps those
-  on one shared stack (`runtime/lock_js.go`, `handleEvent`) and expects them to
-  end in reverse order, so two goroutines that nest at once can stop the
-  program. On the main thread the engine therefore has the browser write each
-  result and each mark, and drop the answered calls from a mailbox (the page's
-  `ctx.trimCalls`), from the event loop, and waits for it. Your handler should
-  follow the same rule. Its own writes count: `ctx.SetSignal`, `ctx.SetSignals`
-  and `ctx.SetChangedSignals` run the engine's Go subscriptions
-  (`ctx.SubscribeSignal`) inside the call on the main thread. To publish state
-  from a handler, use `ctx.SetSignalsFromEventLoop`, which has the browser make
-  the write from the event loop and waits for it (in a worker it is
-  `ctx.SetSignals`). Also do not call a JavaScript function that runs a Go
+  write to a shared signal makes the page tell every subscriber before it
+  returns, and the engine subscribes to the signals it writes. A write made
+  inside a call from Go into JavaScript can run a Go subscriber inside that call,
+  as the browser does for a function made with `js.FuncOf`. That is a nested call
+  from JavaScript into Go. Go's WebAssembly runtime keeps those on one shared
+  stack (`runtime/lock_js.go`, `handleEvent`) and expects them to end in reverse
+  order, so two goroutines that nest at once can stop the program. On the main
+  thread the engine therefore has the browser write each result and each mark,
+  and drop the answered calls from a mailbox (the page's `ctx.trimCalls`), from
+  the event loop, and waits for it. Your handler should follow the same rule when
+  it publishes state. `ctx.SetSignal`, `ctx.SetSignals` and
+  `ctx.SetChangedSignals` make the write inside a call into JavaScript. Use
+  `ctx.SetSignalsFromEventLoop`, which has the browser make the write from the
+  event loop, where no call from Go is pending, and waits for it (in a worker it
+  is `ctx.SetSignals`). Also do not call a JavaScript function that runs a Go
   callback before it returns, such as `new Promise` with a Go executor or
   `dispatchEvent` to a Go listener. `jsutil.AwaitPromise` and
   `Promise.withResolvers` with `setTimeout` do not nest. A page whose bootstrap

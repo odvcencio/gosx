@@ -7,13 +7,14 @@ import "m31labs.dev/gosx/engine"
 // publishes state.
 //
 // On the main thread a write to a shared signal tells every subscriber before it
-// returns, and the engine's own subscriptions (SubscribeSignal) are Go
-// functions. When a goroutine makes the write, Go is entered again while the
-// call into JavaScript is still on the stack. That is a nested entry. Go's
-// WebAssembly runtime keeps the entries in progress on one stack and assumes
-// that entries from different goroutines never interleave, so two goroutines
-// that nest at once can stop the program. SetSignal, SetSignals and
-// SetChangedSignals nest this way when a subscriber is a Go function.
+// returns. A write made inside a call from Go into JavaScript can run a Go
+// subscriber inside that call, as the browser does for a function made with
+// js.FuncOf. Go is then entered again while the call into JavaScript is still
+// on the stack. That is a nested entry. Go's WebAssembly runtime keeps the
+// entries in progress on one stack and assumes that entries from different
+// goroutines never interleave, so two goroutines that nest at once can stop the
+// program. SetSignal, SetSignals and SetChangedSignals make their write inside
+// such a call.
 //
 // Here the browser makes the write from the event loop, where no call from Go is
 // pending, and the goroutine waits until it is done. The subscribers are told

@@ -168,17 +168,19 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 // A handler runs on its own goroutine, never inside a call from JavaScript into
 // Go. The engine's own writes to the page, a result, a mark and the trim of a
 // mailbox, are made so that they do not enter Go again either. A write to a
-// shared signal runs the engine's own subscriptions, which are Go functions,
-// before it returns; made from a goroutine on the main thread, that is a nested
-// entry from JavaScript into Go, and two goroutines in nested entries at once
-// can stop the program. So the main-thread transport (wasm.ServeCallsAsync) has
-// the browser make the write from the event loop, where no call from Go is
-// pending, and waits for it. A handler should follow the same rule. Its own
-// writes to a shared signal count: wasm.Context.SetSignal and SetSignals nest on
-// the main thread, and wasm.Context.SetSignalsFromEventLoop does not. A handler
-// that calls into JavaScript should also avoid functions that run a Go callback
-// before they return (new Promise with a Go executor, dispatchEvent to a Go
-// listener): jsutil.AwaitPromise follows the rule.
+// shared signal makes the page tell every subscriber before the write returns,
+// and the engine subscribes to the signals it writes. A write made inside a call
+// from Go into JavaScript can run a Go subscriber inside that call, as the
+// browser does for a function made with js.FuncOf. That is a nested entry from
+// JavaScript into Go, and two goroutines in nested entries at once can stop the
+// program. So the main-thread transport (wasm.ServeCallsAsync) has the browser
+// make its writes from the event loop, where no call from Go is pending, and
+// waits for them. A handler that publishes state should do the same with
+// wasm.Context.SetSignalsFromEventLoop; SetSignal and SetSignals make the write
+// inside a call into JavaScript. A handler that calls into JavaScript should also
+// avoid functions that run a Go callback before they return (new Promise with a
+// Go executor, dispatchEvent to a Go listener): jsutil.AwaitPromise follows the
+// rule.
 //
 // Disposing the returned HandleFunc drops the queued calls and the reply of the
 // call that is running; it does not stop a running handler. The page stops

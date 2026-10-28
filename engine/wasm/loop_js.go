@@ -13,13 +13,14 @@ import (
 // fromEventLoop calls the context method name with args from a microtask, and
 // waits for the call to finish. It returns what the method returned.
 //
-// A write to a shared signal tells every subscriber before it returns, and this
-// engine's own subscriptions are Go functions. When Go makes the write, Go is
-// entered again while the call into JavaScript is still on the stack. That is a
-// nested entry. Go's WebAssembly runtime keeps the entries in progress on one
-// stack and assumes that entries from different goroutines never interleave, so
-// a goroutine that nests while another one does can stop the program (see
-// client/jsutil). A server that answers from several goroutines must not nest.
+// A write to a shared signal tells every subscriber before it returns. When Go
+// makes the write, a subscriber that is a Go function the browser calls directly
+// (one made with js.FuncOf) is entered while the call into JavaScript is still on
+// the stack. That is a nested entry. Go's WebAssembly runtime keeps the entries
+// in progress on one stack and assumes that entries from different goroutines
+// never interleave, so a goroutine that nests while another one does can stop
+// the program (see client/jsutil). A server that answers from several
+// goroutines must not nest.
 //
 // Here the browser makes the call. Promise.resolve().then(bound) queues a native
 // function that runs once the stack is empty, and the goroutine waits on the

@@ -125,10 +125,11 @@
   the main thread after a fallback, and in a desktop host
   (`desktop/enginehost`). On the main thread the engine has the browser write
   each result, and drop the answered calls from a mailbox, from the event loop,
-  and waits for it. A write made from the goroutine would run the engine's own
-  subscriptions, which are Go functions, before it returned: a nested call from
-  JavaScript into Go, and Go's WebAssembly runtime can stop the program when two
-  goroutines are in such calls at once. Before each handler runs, the engine
+  and waits for it. A write made from the goroutine, inside a call from Go into
+  JavaScript, can run a Go subscriber inside that call, as the browser does for a
+  function made with `js.FuncOf`: a nested call from JavaScript into Go, and Go's
+  WebAssembly runtime can stop the program when two goroutines are in such calls
+  at once. Before each handler runs, the engine
   writes the call's ID to `$channel.started` and waits until the page reports
   that value back on the engine's own subscription, which the page does only if
   it applied the write. The page stops taking an engine's writes before the
@@ -159,10 +160,13 @@
 
 - Add `wasm.Context.SetSignalsFromEventLoop`, a `SetSignals` for code that runs
   on a goroutine of its own, such as a `ServeCallsAsync` handler that publishes
-  state. On the main thread `SetSignal`, `SetSignals` and `SetChangedSignals`
-  run the engine's Go subscriptions before they return, a nested call from
-  JavaScript into Go; this method has the browser make the write from the event
-  loop and waits for it. In a worker it is `SetSignals`.
+  state. On the main thread a write to a shared signal tells every subscriber
+  before it returns, so a Go subscriber that the browser calls directly (a
+  function made with `js.FuncOf`) runs inside the call from Go into JavaScript
+  that makes the write: a nested call from JavaScript into Go. `SetSignal`,
+  `SetSignals` and `SetChangedSignals` make their write inside such a call; this
+  method has the browser make the write from the event loop, where no call from
+  Go is pending, and waits for it. In a worker it is `SetSignals`.
 
 - Add `wasm.Caller`, a Go client for a call channel, modelled on the one Bon
   Voyage wrote. It numbers calls, writes them to `$channel`, reads
