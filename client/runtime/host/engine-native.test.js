@@ -434,6 +434,40 @@ for (const make of [workerTransport, nativeTransport]) {
     assert.deepEqual(seen.map(m => m.hidden), [true, false]);
     assert.equal(typeof seen[0].at, "number");
   });
+
+  // wasm.ServeCallsAsync runs a handler only after the page has reported the mark
+  // of the call (the ID it wrote to "<call signal>.started") on the engine's own
+  // subscription to that signal. The page reports a change only if it applied the
+  // write. These two facts of the page host are what that rule stands on: a
+  // current engine hears about its own write, and an engine that the page began to
+  // dispose hears nothing, because the page drops what it writes from then on.
+  test(`${label}: the page reports an engine's own write to the engine, until it begins to dispose the engine`, async () => {
+    const tr = make();
+    const { ctx, handle } = await mountOn(tr);
+    // The page's store tells every subscriber of a signal about a write to it.
+    ctx.setSignalsJSON = (text, changedOnly) => {
+      ctx.calls.push(["setSignalsJSON", text, changedOnly]);
+      for (const [name, value] of Object.entries(JSON.parse(text))) {
+        for (const sub of ctx.subs.filter(s => s.name === name)) sub.cb(JSON.stringify(value), name);
+      }
+    };
+    tr.say({ t: "subscribe", sid: 1, name: "$bv.save.started" });
+    const reports = () => tr.sentOf("signal").filter(m => m.name === "$bv.save.started").map(m => m.json);
+
+    tr.batch('{"$bv.save.started":1}');
+    assert.deepEqual(reports(), ["1"], "the page applied the write and told the engine");
+
+    // The runtime revokes the engine's context, then calls the handle's dispose.
+    ctx.gone = true;
+    handle.dispose();
+    await tick();
+    assert.equal(tr.sentOf("dispose").length, 1, "the page asked the engine to dispose");
+    // The engine has not handled the request yet: it writes the mark of the next call.
+    tr.batch('{"$bv.save.started":2}');
+    assert.deepEqual(reports(), ["1"], "the page told the engine nothing about a write it dropped");
+    assert.equal(ctx.calls.filter(c => c[0] === "setSignalsJSON").length, 1, "the page applied only the first write");
+    tr.say({ t: "disposed" });
+  });
 }
 
 // ---------------------------------------------------------------------------

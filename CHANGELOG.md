@@ -129,13 +129,26 @@
   subscriptions, which are Go functions, before it returned: a nested call from
   JavaScript into Go, and Go's WebAssembly runtime can stop the program when two
   goroutines are in such calls at once. Before each handler runs, the engine
-  writes the call's ID to `$channel.started`. The browser revokes an engine's
-  context before it calls `Dispose`, so the engine cannot write anything then. An
-  engine that mounts again on the same signals answers a call that started and
-  has no result with `Error: "interrupted"` and does not run it again, so a save
-  or an order does not happen twice. Calls that never started still run.
-  A call that a writer of single calls skipped, and whose handler had already
-  started, is listed in `Recent` as `interrupted`, not `overwritten`.
+  writes the call's ID to `$channel.started` and waits until the page reports
+  that value back on the engine's own subscription, which the page does only if
+  it applied the write. The page stops taking an engine's writes before the
+  engine hears that it is disposed: the browser revokes an engine's context
+  before it calls `Dispose`, and the page host of a worker or native engine
+  drops what the engine writes between asking it to dispose and the moment it
+  handles the request. A call whose mark the page did not take therefore never
+  starts in the old engine. An engine that mounts again on the same signals
+  answers a call that started and has no result with `Error: "interrupted"` and
+  does not run it again, and it runs each call that never started once, so a
+  save or an order does not happen twice. A call that the old engine finished
+  after the page began to dispose it comes back `interrupted` too, because the
+  page dropped its reply. A write of the mark that fails, or a page that does
+  not report it within `CallOptions.Timeout`, answers the call with
+  `Error: "not-started: ..."`, runs no handler, and lets the next call go on.
+  `ServeCalls` has no such guard, and the documentation now says so. A transport
+  must deliver a write to the writer's own subscription, as the page does for
+  any other subscriber. A call that a writer of single calls skipped, and whose
+  handler had already started, is listed in `Recent` as `interrupted`, not
+  `overwritten`.
 
 - Add `wasm.Caller`, a Go client for a call channel, modelled on the one Bon
   Voyage wrote. It numbers calls, writes them to `$channel`, reads

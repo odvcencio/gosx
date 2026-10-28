@@ -15,6 +15,9 @@ type fakeCalls struct {
 	mu      sync.Mutex
 	handler func(json.RawMessage)
 	results func(json.RawMessage)
+	// started is the engine's subscription to the started signal. A write to the
+	// signal reaches it, as a write to a shared signal reaches its subscribers.
+	started func(json.RawMessage)
 	writes  []json.RawMessage
 	marks   []json.RawMessage // writes to the started signal
 	signals []string
@@ -37,6 +40,12 @@ func (f *fakeCalls) subscribe(signal string, h func(json.RawMessage)) (HandleFun
 		}
 		return func() { f.results = nil }, nil
 	}
+	if strings.HasSuffix(signal, ".started") {
+		f.mu.Lock()
+		f.started = h
+		f.mu.Unlock()
+		return func() { f.mu.Lock(); f.started = nil; f.mu.Unlock() }, nil
+	}
 	f.handler = h
 	if f.initial != nil {
 		h(f.initial)
@@ -50,12 +59,19 @@ func (f *fakeCalls) write(signal string, v any) error {
 		return err
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if strings.HasSuffix(signal, ".started") {
-		// The mark of a call whose handler is starting (ServeCallsAsync); not a result.
+		// The mark of a call whose handler is starting (ServeCallsAsync); not a
+		// result. The page tells the engine's subscription about it before write
+		// returns.
 		f.marks = append(f.marks, data)
+		started := f.started
+		f.mu.Unlock()
+		if started != nil {
+			started(data)
+		}
 		return nil
 	}
+	defer f.mu.Unlock()
 	f.writes = append(f.writes, data)
 	f.signals = append(f.signals, signal)
 	return nil

@@ -301,20 +301,39 @@ off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * 
   replaces the timeout when it comes. A client that keeps one call written at a
   time never queues calls in the engine.
 - Disposing the handle drops the queued calls and the reply of the running call.
-  It does not stop a running handler. The browser revokes the engine's context
-  before it calls `Dispose`, so the engine cannot write a result then. It marks
-  each call before its handler runs, by writing the call's ID to
-  `$<channel>.started`. An engine that mounts again on the same signals (the page
-  replaced the engine, or a desktop host attached again) finds a call that has no
-  result and whose ID is at or below the mark. It answers that call with
-  `Error: "interrupted"` and does not run it, because the handler started and its
-  side effect may be done: a save or an order would otherwise happen twice, and
-  the first run may still be going. Calls queued behind it that never started run
-  as usual. Treat `interrupted` as an unknown outcome and check before you send
-  the call again. `ServeCalls` writes no mark: on the main thread and in a
-  worker, its handler runs inside the delivery callback, so it cannot be running
-  when the engine is disposed. Any script on the page can write
+  It does not stop a running handler. The page stops taking the engine's writes
+  before the engine hears that it is disposed. The browser revokes the engine's
+  context before it calls `Dispose`, and the page host of a worker or native
+  engine drops what the engine writes from the moment it asks the engine to
+  dispose until the engine handles the request, which takes longer while the
+  engine is busy. A reply written then is lost.
+- A call does not run twice. Before it runs a handler, the engine writes the
+  call's ID to `$<channel>.started` (the mark) and waits until the page reports
+  that value on the engine's own subscription to the signal. The page reports a
+  change only if it applied the write, so the report shows that the mark is in the
+  page's store. A page that has begun to dispose the engine applies no write from
+  it and reports nothing (a desktop host that attached another instance fails the
+  write), so the handler does not start. The engine that mounts next runs the call,
+  once. If the write fails, or the page reports nothing within
+  `CallOptions.Timeout` (the bridge dropped the message), the engine answers the
+  call with `Error: "not-started: ..."` and runs no handler: the call is safe to
+  send again, and the next call goes on. A transport must deliver a write to the
+  writer's own subscription, as the page does for any other subscriber.
+- An engine that mounts again on the same signals (the page replaced the engine,
+  or a desktop host attached again) finds a call that has no result and whose ID
+  is at or below the mark. It answers that call with `Error: "interrupted"` and
+  does not run it, because the handler started and its side effect may be done: a
+  save or an order would otherwise happen twice, and the first run may still be
+  going. This includes a call whose handler finished after the page began to
+  dispose the engine, because its reply was dropped. Calls queued behind it that
+  never started run as usual. Treat `interrupted` as an unknown outcome and check
+  before you send the call again. Any script on the page can write
   `$<channel>.started`; treat it as untrusted, like the call and result signals.
+- `ServeCalls` writes no mark and waits for no one: its handler runs inside the
+  callback that delivers the call. A call that reached the engine just before the
+  page began to dispose it can run during the gap above. The page then drops the
+  reply, and the engine that mounts next runs the call again. Serve work that must
+  not happen twice with `ServeCallsAsync`.
 - The handler runs on its own goroutine, never inside a call from JavaScript into
   Go. The engine's own writes are made so that they do not enter Go either. A
   write to a shared signal runs the engine's own subscriptions, which are Go
@@ -323,7 +342,7 @@ off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * 
   on one shared stack (`runtime/lock_js.go`, `handleEvent`) and expects them to
   end in reverse order, so two goroutines that nest at once can stop the
   program. On the main thread the engine therefore has the browser write each
-  result, and drop the answered calls from a mailbox (the page's
+  result and each mark, and drop the answered calls from a mailbox (the page's
   `ctx.trimCalls`), from the event loop, and waits for it. Your handler should
   follow the same rule: do not call a JavaScript function that runs a Go
   callback before it returns, such as `new Promise` with a Go executor or

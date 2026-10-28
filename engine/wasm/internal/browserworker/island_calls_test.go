@@ -121,6 +121,7 @@ type engineSide struct {
 	mu      sync.Mutex
 	handler func(json.RawMessage)
 	onReply func(json.RawMessage) // the engine's subscription to the result signal
+	onMark  func(json.RawMessage) // the engine's subscription to the started signal
 	results []json.RawMessage
 }
 
@@ -136,9 +137,12 @@ func (e *engineSide) deliver(values []string) {
 func (e *engineSide) deliverResult(value string) { e.onReply(json.RawMessage(value)) }
 
 func (e *engineSide) Subscribe(signal string, h func(json.RawMessage)) (host.HandleFunc, error) {
-	if strings.HasSuffix(signal, ".result") {
+	switch {
+	case strings.HasSuffix(signal, ".result"):
 		e.onReply = h
-	} else {
+	case strings.HasSuffix(signal, ".started"):
+		e.onMark = h
+	default:
 		e.handler = h
 	}
 	return func() {}, nil
@@ -146,7 +150,17 @@ func (e *engineSide) Subscribe(signal string, h func(json.RawMessage)) (host.Han
 
 func (e *engineSide) Write(signal string, v any) error {
 	if strings.HasSuffix(signal, ".started") {
-		return nil // the mark of a call whose handler starts (ServeCallsAsync); not a result
+		// The mark of a call whose handler starts (ServeCallsAsync); not a result. The
+		// page's store tells the engine's subscription about it, which is how the
+		// engine learns that the page took it.
+		data, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		if e.onMark != nil {
+			e.onMark(data)
+		}
+		return nil
 	}
 	data, err := json.Marshal(v)
 	if err != nil {

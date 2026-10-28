@@ -12,10 +12,11 @@ import (
 type callEntry struct {
 	id  uint64
 	raw json.RawMessage
-	// interrupted is set when the call was accepted: its handler started in an
-	// engine that is gone, so this engine answers it with an error and does not
-	// run it. See callServer.markStarted.
-	interrupted bool
+	// skip is the error to answer the call with when no handler may run for it:
+	// "interrupted" when its handler started in an engine that is gone, and
+	// "not-started: ..." when the page took no mark for it. See
+	// callServer.markStarted.
+	skip string
 	// lost lists the calls just below this one that a writer of single calls
 	// skipped, because a signal that holds one call keeps only its newest value.
 	lost []lostCall

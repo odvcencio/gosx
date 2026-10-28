@@ -218,8 +218,9 @@ func TestServeCallsAsyncRemountAfterAnAnsweredCallIsQuiet(t *testing.T) {
 	}
 }
 
-// ServeCalls runs its handler inside the delivery callback, where nothing can
-// dispose the engine under it, so it writes no mark.
+// ServeCalls runs its handler inside the delivery callback and cannot wait for
+// the page, so it writes no mark. It does not guard a remount (see
+// ServeCalls), and the docs say so.
 func TestServeCallsWritesNoStartedMark(t *testing.T) {
 	page := newPageStore()
 	_, _ = ServeCallsOn(page, "bv.save", CallOptions{}, adder)

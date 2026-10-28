@@ -26,6 +26,10 @@ type callTransport interface {
 	// subscribe also delivers the signal's current value once, so a call
 	// written before the subscription is not lost.
 	subscribe(signal string, handler func(json.RawMessage)) (HandleFunc, error)
+	// write sets a shared signal. It reaches the writer's own subscriptions to
+	// the signal, as it reaches any other subscriber's: ServeCallsAsync starts a
+	// handler only after the page has told it so about the mark of the call. An
+	// error means the page took no part of the write.
 	write(signal string, value any) error
 	// declare tells the page half about the channel so its watchdog can fail a
 	// call that the worker never answers. It is a no-op on the main thread.
@@ -51,8 +55,9 @@ func ServeCalls[A, R any](ctx Context, channel string, opts CallOptions, handle 
 // runs on a goroutine, not inside the JavaScript callback that delivers the
 // call, so the event loop stays free for what it waits on. Calls run one at a
 // time and their results are written in ID order. On the main thread the engine
-// has the browser write each result, and trim the mailbox, from the event loop,
-// so that the goroutine never starts a nested entry from JavaScript into Go.
+// has the browser write each result and each mark, and trim the mailbox, from the
+// event loop, so that the goroutine never starts a nested entry from JavaScript
+// into Go.
 // See host.ServeCallsAsync for the timeout, disposal and re-entry rules.
 func ServeCallsAsync[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
 	return serveCallsAsync(contextTransport{ctx: ctx, async: true}, channel, opts, handle)

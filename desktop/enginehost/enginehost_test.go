@@ -480,6 +480,7 @@ func TestServeCallsAsyncAnswersAMailboxOverTheBridgeInOrder(t *testing.T) {
 		t.Fatalf("subscriptions = %v, %v, %v", subs[0], subs[1], subs[2])
 	}
 	call := uint64(subs[2].num("sid"))
+	p.reportMarks("e1", uint64(subs[1].num("sid"))) // the page reports each mark; a handler starts after it
 	p.post("e1", map[string]any{"t": "signal", "sid": call, "name": "$sim.cmd",
 		"json": `[{"ID":2,"Name":"add","Args":{"A":2,"B":3}},{"ID":1,"Name":"slow","Args":{"A":1,"B":1}}]`})
 	<-entered

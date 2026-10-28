@@ -599,6 +599,9 @@ func (c callTransport) Subscribe(signal string, handler func(json.RawMessage)) (
 	}, nil
 }
 
+// Write fails once the page has attached another instance of the engine, or the
+// host is closing: the instance can write nothing more. host.ServeCallsAsync
+// starts no handler then, because the mark of its call cannot reach the page.
 func (c callTransport) Write(signal string, value any) error {
 	data, err := json.Marshal(map[string]any{signal: value})
 	if err != nil {

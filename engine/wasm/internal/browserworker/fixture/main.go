@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"syscall/js"
 	"time"
 
@@ -60,6 +61,8 @@ func main() {
 			stop = startInput(ctx)
 		case "calls":
 			stop = startCalls(ctx)
+		case "remount":
+			stop = startRemount(ctx)
 		}
 		return wasm.HandleFunc(func() {
 			if stop != nil {
@@ -369,4 +372,47 @@ func threadName(ctx wasm.Context) string {
 		return "worker"
 	}
 	return "main"
+}
+
+// startRemount serves channel bv.save for the test that remounts the engine
+// while a call runs. Each handler does its work against the test server (a
+// request to /effect), so that the server counts how often each call ran, in
+// whichever engine ran it: the page cannot count it once a worker is gone.
+//
+// "save" does its work and then waits for the test to open a gate on the server
+// with a synchronous request. That blocks the whole worker, so the page can
+// ask the engine to dispose while the worker cannot yet handle the request.
+// When the gate opens, the handler returns, and the server goes on to the next
+// call inside that gap. "order" does its work.
+func startRemount(ctx wasm.Context) (stop func()) {
+	save, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 10 * time.Second, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			if err := syncGet("/effect?name=" + name); err != nil {
+				return callReply{}, err
+			}
+			if name == "save" {
+				if err := syncGet("/gate"); err != nil {
+					return callReply{}, err
+				}
+			}
+			return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+		})
+	if err != nil {
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
+	report(ctx, "remount-ready", nil)
+	return save.Dispose
+}
+
+// syncGet makes a synchronous request. It blocks the whole worker until the
+// server answers; the remount test relies on that.
+func syncGet(path string) error {
+	xhr := js.Global().Get("XMLHttpRequest").New()
+	xhr.Call("open", "GET", path, false)
+	xhr.Call("send")
+	if status := xhr.Get("status").Int(); status != 200 {
+		return fmt.Errorf("%s: status %d", path, status)
+	}
+	return nil
 }

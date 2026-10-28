@@ -237,10 +237,15 @@ func islandRuntime(t *testing.T, dir string) (int64, string) {
 // "worker" (default), "fallback" (ForceWorkerFallback) or "required"
 // (WorkerRequired with ForceWorkerFallback).
 func callsPage(t *testing.T, dir, mode string) string {
+	return callsPageFor(t, dir, mode, `{"scenario":"calls"}`)
+}
+
+// callsPageFor is callsPage for the fixture scenario in props.
+func callsPageFor(t *testing.T, dir, mode, props string) string {
 	t.Helper()
 	cfg := engine.Config{
 		Name: "WorkerFixture", Kind: engine.KindWorker, Runtime: engine.RuntimeGoWASM, Thread: engine.ThreadWorker,
-		MountID: "bv", WASMPath: "/engines/fixture.wasm", Props: json.RawMessage(`{"scenario":"calls"}`),
+		MountID: "bv", WASMPath: "/engines/fixture.wasm", Props: json.RawMessage(props),
 	}
 	switch mode {
 	case "fallback":
