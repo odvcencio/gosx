@@ -379,13 +379,14 @@ func (r *refusingStarted) Write(signal string, value any) error {
 
 // A page that never reports a mark (the bridge dropped the message, or the
 // transport does not tell a writer about its own writes) must not hold up the
-// channel for good. The wait ends at the call timeout, the call is answered as
-// not started, and the next call runs.
+// channel for good. The wait ends at the mark timeout, the call is answered as
+// not started, and the next call runs. The call timeout is left at its default,
+// ten seconds: it is not what ends the wait.
 func TestServeCallsAsyncAMarkThePageNeverReportsFailsOnlyThatCall(t *testing.T) {
 	page := newPageStore()
 	entered := make(chan string, 8)
 	v := newPostedView(t, page, false)
-	off, _ := ServeCallsAsyncOn(v, "bv.save", CallOptions{Timeout: 60 * time.Millisecond}, func(name string, a addArgs) (sum, error) {
+	off, _ := ServeCallsAsyncOn(v, "bv.save", CallOptions{MarkTimeout: 60 * time.Millisecond}, func(name string, a addArgs) (sum, error) {
 		entered <- name
 		return sum{Total: a.A + a.B}, nil
 	})
@@ -410,5 +411,60 @@ func TestServeCallsAsyncAMarkThePageNeverReportsFailsOnlyThatCall(t *testing.T) 
 	page.mu.Unlock()
 	if err := json.Unmarshal(raw, &first); err != nil || first.ID != 1 || first.Name != "a" || !strings.HasPrefix(first.Error, "not-started: the page did not report the mark") {
 		t.Fatalf("first result = %s (%v), want call 1 not started", raw, err)
+	}
+}
+
+// A page that is only slow is not a page that is silent. Its main thread is busy
+// for longer than CallOptions.Timeout, the deadline the page keeps for the
+// client, and only then takes the mark and reports it. The engine must wait for
+// that report, run the call late, and let the real reply replace the page's
+// "timeout". Before the engine waited for the page the call ran at once and its
+// reply came late; a wait that ended at CallOptions.Timeout would cancel it.
+func TestServeCallsAsyncAPageSlowerThanTheCallTimeoutStillRunsTheCall(t *testing.T) {
+	page := newPageStore()
+	entered := make(chan string, 8)
+	var mu sync.Mutex
+	runs := 0
+	v := newPostedView(t, page, false)
+	off, err := ServeCallsAsyncOn(v, "bv.save", CallOptions{Timeout: 40 * time.Millisecond}, func(name string, a addArgs) (sum, error) {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		entered <- name
+		return sum{Total: a.A + a.B}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer off.Dispose()
+
+	v.holdBack(".started") // the page is busy: it reports the mark later
+	_ = page.Write("$bv.save", map[string]any{"ID": 1, "Name": "order", "Args": map[string]int{"A": 20, "B": 22}})
+	within(t, "the mark of call 1", func() bool { return page.wrote("$bv.save.started") >= 1 })
+	// Three times the page's deadline for the client passes, and the page still
+	// has not reported the mark. The engine goes on waiting.
+	notStarted(t, entered, 120*time.Millisecond, "the page has not reported the mark yet")
+	if r := page.result(t); r.ID != 0 {
+		t.Fatalf("the engine answered call 1 (%+v) while the page was only slow; the wait must not end at CallOptions.Timeout", r)
+	}
+
+	v.flush() // the page is free again and reports the mark
+	select {
+	case got := <-entered:
+		if got != "order" {
+			t.Fatalf("handler = %q, want order", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler never ran after the page reported the mark")
+	}
+	within(t, "the reply to call 1", func() bool { return page.result(t).ID == 1 })
+	time.Sleep(30 * time.Millisecond) // a second run, if any, would show by now
+	if r := page.result(t); r.Error != "" || r.Value.Total != 42 || r.Name != "order" {
+		t.Fatalf("result = %+v, want the real reply of call 1 (42)", r)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 1 {
+		t.Fatalf("the handler ran %d times, want once", runs)
 	}
 }

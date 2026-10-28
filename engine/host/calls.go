@@ -16,9 +16,18 @@ type CallOptions struct {
 	// Timeout is how long the page waits for a reply before it writes the
 	// error "timeout" to the result signal. Zero means DefaultCallTimeout.
 	// The page enforces it, so it still fires if the handler never returns.
-	// ServeCallsAsync also waits at most this long for the page to report the
-	// mark of a call before it starts the handler (see ServeCallsAsync).
 	Timeout time.Duration
+	// MarkTimeout is how long ServeCallsAsync waits for the page to report the
+	// mark of a call before it gives up on that call: the call is answered with
+	// the error "not-started: ..." and no handler runs (see ServeCallsAsync).
+	// Zero, or a negative number, means DefaultCallMarkTimeout.
+	//
+	// It does not depend on Timeout. A page whose main thread is busy for longer
+	// than Timeout still reports the mark when it is free again, and the call then
+	// runs late, as it would without the wait; its real reply replaces the page's
+	// "timeout". Only a page that stays silent for the whole MarkTimeout fails the
+	// call, and until then the calls behind it wait.
+	MarkTimeout time.Duration
 	// Recent is how many past replies Result.Recent keeps. Zero means
 	// DefaultCallRecent.
 	Recent int
@@ -32,6 +41,11 @@ type CallOptions struct {
 const (
 	// DefaultCallTimeout is the page-side deadline for one call.
 	DefaultCallTimeout = 10 * time.Second
+	// DefaultCallMarkTimeout is how long ServeCallsAsync waits for the page to
+	// report the mark of a call when CallOptions.MarkTimeout is zero. A page that
+	// is only slow reports the mark well before it, and a page that has reported
+	// nothing by then is not going to.
+	DefaultCallMarkTimeout = 30 * time.Second
 	// DefaultCallRecent is the default length of Result.Recent.
 	DefaultCallRecent = 8
 	// DefaultCallRecentBytes is the default byte budget for the values in
@@ -177,9 +191,12 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 // reports that value on the server's own subscription to the signal. A page that
 // has begun to dispose the engine does not report it (or the write fails), so the
 // handler does not start, and the engine that mounts next runs the call. A write
-// that fails, or a page that reports nothing within CallOptions.Timeout, answers
-// the call with the error "not-started: ..." and runs nothing; the next call goes
-// on.
+// that fails, or a page that reports nothing within CallOptions.MarkTimeout
+// (DefaultCallMarkTimeout unless you set it), answers the call with the error
+// "not-started: ..." and runs nothing; the next call goes on. That wait does not
+// end at CallOptions.Timeout: a page that is only slow reports the mark late, the
+// call runs late, and its real reply replaces the page's "timeout". The calls
+// behind a call whose mark is not yet reported wait for it.
 //
 // A server that mounts later on the same signals answers a call with no result
 // whose ID is at or below the mark with the error "interrupted" and does not run
@@ -207,6 +224,9 @@ func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, ha
 	if opts.Timeout <= 0 {
 		opts.Timeout = DefaultCallTimeout
 	}
+	if opts.MarkTimeout <= 0 {
+		opts.MarkTimeout = DefaultCallMarkTimeout
+	}
 	if opts.Recent <= 0 {
 		opts.Recent = DefaultCallRecent
 	}
@@ -218,7 +238,7 @@ func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, ha
 	}
 
 	s := &callServer[A, R]{
-		tr: tr, handle: handle, async: async, timeout: opts.Timeout,
+		tr: tr, handle: handle, async: async, markTimeout: opts.MarkTimeout,
 		callSignal: callSignal, resultSignal: resultSignal, startedSignal: callSignal + ".started",
 		log: replyLog{keep: opts.Recent, budget: opts.RecentBytes},
 	}
@@ -322,7 +342,7 @@ type callServer[A, R any] struct {
 	callSignal    string
 	resultSignal  string
 	startedSignal string // the mark of the call whose handler started last (async only)
-	timeout       time.Duration
+	markTimeout   time.Duration
 	zero          json.RawMessage
 
 	mu       sync.Mutex
@@ -462,8 +482,11 @@ func (s *callServer[A, R]) drain() {
 // store. Once it is, the engine that mounts next answers the call "interrupted"
 // and does not run it. If the page never applies the write, the handler does not
 // start, and the next engine runs the call. The wait ends with an error at
-// CallOptions.Timeout, so that one report the page never makes does not hold up
-// the channel.
+// CallOptions.MarkTimeout, so that one report the page never makes does not hold
+// up the channel. That deadline is separate from the page's deadline for the
+// client (CallOptions.Timeout), and longer by default: a page that is only slow,
+// for example one whose main thread is busy for a while, still reports the mark,
+// and the call runs late, as it would have without the wait.
 func (s *callServer[A, R]) markStarted(id uint64) (run bool, err error) {
 	s.mu.Lock()
 	s.started = max(s.started, id)
@@ -478,11 +501,12 @@ func (s *callServer[A, R]) markStarted(id uint64) (run bool, err error) {
 	// this server's subscription inside the call), or much later, as a message from
 	// the page. A page that never reports it, because the bridge dropped the message
 	// or the transport does not tell a writer about its own writes, would hold up
-	// every later call, so the wait ends when the page's own deadline for the call
-	// has passed.
+	// every later call, so the wait ends at the mark deadline. It is not the page's
+	// deadline for the call (CallOptions.Timeout): a page that is busy for longer
+	// than that is late, not silent.
 	if s.marked < id && !s.disposed {
 		expired := false
-		timer := time.AfterFunc(s.timeout, func() {
+		timer := time.AfterFunc(s.markTimeout, func() {
 			s.mu.Lock()
 			expired = true
 			s.mu.Unlock()
@@ -493,7 +517,7 @@ func (s *callServer[A, R]) markStarted(id uint64) (run bool, err error) {
 			s.wake.Wait() // releases mu while it waits
 		}
 		if s.marked < id && expired && !s.disposed {
-			return true, fmt.Errorf("the page did not report the mark within %v", s.timeout)
+			return true, fmt.Errorf("the page did not report the mark within %v", s.markTimeout)
 		}
 	}
 	return !s.disposed, nil

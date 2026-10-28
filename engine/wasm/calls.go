@@ -13,6 +13,9 @@ type CallOptions = host.CallOptions
 const (
 	// DefaultCallTimeout is the page-side deadline for one call.
 	DefaultCallTimeout = host.DefaultCallTimeout
+	// DefaultCallMarkTimeout is how long ServeCallsAsync waits for the page to
+	// report the mark of a call when CallOptions.MarkTimeout is zero.
+	DefaultCallMarkTimeout = host.DefaultCallMarkTimeout
 	// DefaultCallRecent is the default length of Result.Recent.
 	DefaultCallRecent = host.DefaultCallRecent
 	// DefaultCallRecentBytes is the default byte budget for the values in
