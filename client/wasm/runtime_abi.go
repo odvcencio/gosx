@@ -17,10 +17,10 @@ import (
 // feature route without growing the ambient global namespace.
 func registerRuntimeABI(b *bridge.Bridge) {
 	handshake := runtimewasm.NewHandshake(runtimeVariant())
-	handshakeFn := js.FuncOf(func(this js.Value, args []js.Value) any {
+	handshakeFn := funcOf(func(this js.Value, args []js.Value) any {
 		return handshakeJSValue(handshake)
 	})
-	mailboxFn := js.FuncOf(runtimeMailboxFunc)
+	mailboxFn := funcOf(runtimeMailboxFunc)
 	api := js.Global().Get("Object").New()
 	api.Set("abiVersion", int(runtimewasm.ABIVersion))
 	api.Set("featureMask", int(handshake.FeatureMask))
@@ -28,7 +28,7 @@ func registerRuntimeABI(b *bridge.Bridge) {
 	api.Set("mailboxVersion", int(runtimewasm.MailboxVersion))
 	api.Set("handshake", handshakeFn)
 	api.Set("mailbox", mailboxFn)
-	api.Set("validate", js.FuncOf(func(this js.Value, args []js.Value) any {
+	api.Set("validate", funcOf(func(this js.Value, args []js.Value) any {
 		required := runtimewasm.FeatureMask(0)
 		if len(args) > 0 && args[0].Type() == js.TypeNumber {
 			required = runtimewasm.FeatureMask(args[0].Int())

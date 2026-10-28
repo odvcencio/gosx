@@ -65,7 +65,7 @@ func registerCanvasBoardRuntime(b *bridge.Bridge) {
 //
 // Returns null on success, an error string on failure (including unknown id).
 func canvasSetBackendFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return jsErrorf("need 2 args (id, backend)")
 		}
@@ -82,7 +82,7 @@ func canvasSetBackendFunc(b *bridge.Bridge) js.Func {
 //
 // Call shape: __gosx_canvas_update_html(id, htmlID, markup)
 func canvasUpdateHTMLFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (id, htmlID, markup)")
 		}
@@ -111,7 +111,7 @@ func canvasUpdateHTMLFunc(b *bridge.Bridge) js.Func {
 // reserved (pass ""). Returns null on success, an error string on failure
 // (including unknown id) — cheap to call from a high-frequency pointermove.
 func canvasEventFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3+ args (id, kind, floats, [payloadStr])")
 		}
@@ -137,7 +137,7 @@ func canvasEventFunc(b *bridge.Bridge) js.Func {
 //
 // Call shape: __gosx_tick_canvas(id)
 func tickCanvasFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (id)")
 		}
@@ -153,7 +153,7 @@ func tickCanvasFunc(b *bridge.Bridge) js.Func {
 //
 // Call shape: __gosx_render_canvas(id, width, height, timeSeconds)
 func renderCanvasFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 4 {
 			return jsErrorf("need 4 args (id, width, height, timeSeconds)")
 		}
@@ -179,7 +179,7 @@ func renderCanvasFunc(b *bridge.Bridge) js.Func {
 //
 // Call shape: __gosx_dispose_canvas(id)
 func disposeCanvasFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}

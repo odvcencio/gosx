@@ -66,7 +66,7 @@ func registerRenderToCanvasRuntime(b *bridge.Bridge) {
 //
 // Returns js.Null on success, a js.Value error string on failure.
 func renderEngineToCanvasRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 5 {
 			return jsErrorf("need 5 args (engineID, canvasID, timeSeconds, width, height)")
 		}
@@ -96,7 +96,7 @@ func renderEngineToCanvasRuntimeFunc(b *bridge.Bridge) js.Func {
 // The JS host owns fetch/decode/rasterization; Go owns mip generation and GPU
 // upload through bundle.Renderer.RegisterRGBATexture.
 func registerEngineRGBATextureRuntimeFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 5 {
 			return jsErrorf("need 5 args (engineID, key, width, height, rgbaBytes)")
 		}
@@ -140,7 +140,7 @@ func registerEngineRGBATextureRuntimeFunc() js.Func {
 // a .gsx component subscribed to those signals rerenders automatically.
 // Unknown or empty eventType returns the ID without touching signals.
 func pickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3+ args (engineID, x, y, [eventType])")
 		}
@@ -160,7 +160,7 @@ func pickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 		}
 
 		promiseCtor := js.Global().Get("Promise")
-		return promiseCtor.New(js.FuncOf(func(_ js.Value, pargs []js.Value) any {
+		return promiseCtor.New(funcOf(func(_ js.Value, pargs []js.Value) any {
 			resolve := pargs[0]
 			er.renderer.QueuePickResult(x, y, func(result bundle.PickResult) {
 				// Push the pick result into SceneEventSignals via the shared
@@ -289,7 +289,7 @@ func nextClickCount(engineID string) uint64 {
 // tearing down the renderer attached to an engine. Safe to call on an unknown
 // engine ID (no-op).
 func disposeEngineRendererRuntimeFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}

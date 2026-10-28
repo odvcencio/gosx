@@ -100,11 +100,12 @@ func TestBatchRepeatedAndAliasedNamesNotifyTheStoredValue(t *testing.T) {
 		t.Fatalf("repeated name: %v", *sent)
 	}
 	*sent = nil
-	// $scene.event.* is a read-only alias of $surface.event.*.
+	// $scene.event.* is a read-only alias of $surface.event.*. The store keeps
+	// the canonical signal, and the sender's spelling is told as well.
 	if err := b.SetSharedSignalBatchJSON(`{"$scene.event.targetID" : "a" }`); err != nil {
 		t.Fatal(err)
 	}
-	if len(*sent) != 1 || (*sent)[0] != `$surface.event.targetID="a"` {
+	if len(*sent) != 2 || (*sent)[0] != `$surface.event.targetID="a"` || (*sent)[1] != `$scene.event.targetID="a"` {
 		t.Fatalf("one aliased name: %v", *sent)
 	}
 	*sent = nil
@@ -118,9 +119,72 @@ func TestBatchRepeatedAndAliasedNamesNotifyTheStoredValue(t *testing.T) {
 		t.Fatal("no notification")
 	}
 	for _, entry := range *sent {
-		if entry != "$surface.event.type="+string(want) {
+		if entry != "$surface.event.type="+string(want) && entry != "$scene.event.type="+string(want) {
 			t.Errorf("notification %q does not carry the stored %s", entry, want)
 		}
+	}
+}
+
+func TestBatchTellsTheBrowserTheLegacySpellingTheSenderUsed(t *testing.T) {
+	// The page keeps one copy of a signal for each name it has read. A page that
+	// read $scene.event.selectedID holds a copy under that spelling, and the
+	// runtime announces changes under $surface.event.selectedID only. A sender that
+	// spelled the legacy name is therefore told the value under that spelling too,
+	// as the page's own priming of the sender's names did before batches went to the runtime.
+	for _, changedOnly := range []bool{false, true} {
+		t.Run(fmt.Sprint("changedOnly=", changedOnly), func(t *testing.T) {
+			b := New()
+			var handoffs [][]SignalUpdate
+			b.SetSharedSignalBatchCallback(func(updates []SignalUpdate) {
+				handoffs = append(handoffs, append([]SignalUpdate(nil), updates...))
+			})
+			text := func(i int) string {
+				var out []string
+				for _, update := range handoffs[i] {
+					out = append(out, update.Name+"="+update.JSON)
+				}
+				return strings.Join(out, " ")
+			}
+
+			if err := b.setSharedSignalBatchJSON(`{"$scene.event.selectedID":"n1","$a":1}`, changedOnly); err != nil {
+				t.Fatal(err)
+			}
+			if got := text(0); got != `$surface.event.selectedID="n1" $a=1 $scene.event.selectedID="n1"` &&
+				got != `$a=1 $surface.event.selectedID="n1" $scene.event.selectedID="n1"` {
+				t.Fatalf("first batch: %s", got)
+			}
+
+			// The value did not change, and a changed-only snapshot says nothing about
+			// $surface.event.selectedID, but the sender still spelled the legacy name.
+			if err := b.setSharedSignalBatchJSON(`{"$scene.event.selectedID":"n1"}`, changedOnly); err != nil {
+				t.Fatal(err)
+			}
+			if changedOnly {
+				if len(handoffs) != 2 || text(1) != `$scene.event.selectedID="n1"` {
+					t.Fatalf("an unchanged legacy name: %d handoffs, last %q", len(handoffs), text(len(handoffs)-1))
+				}
+			}
+
+			// The canonical spelling gets no extra announcement.
+			n := len(handoffs)
+			if err := b.setSharedSignalBatchJSON(`{"$surface.event.selectedID":"n2"}`, changedOnly); err != nil {
+				t.Fatal(err)
+			}
+			if len(handoffs) != n+1 || text(n) != `$surface.event.selectedID="n2"` {
+				t.Fatalf("canonical spelling: %q", text(len(handoffs)-1))
+			}
+		})
+	}
+}
+
+func TestBatchLegacySpellingWithoutABatchCallbackGoesOutOneByOne(t *testing.T) {
+	b := New()
+	sent := recordNotifications(b)
+	if err := b.SetChangedSharedSignalBatchJSON(`{"$scene.event.selectedID":"n1"}`); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(*sent, " ") != `$surface.event.selectedID="n1" $scene.event.selectedID="n1"` {
+		t.Fatalf("per-signal = %v", *sent)
 	}
 }
 
@@ -228,6 +292,42 @@ func TestBatchCallbackWritesLeaveOneByOne(t *testing.T) {
 	}
 }
 
+func TestBatchCallbackWriteToABatchSignalReachesTheBrowserBeforeTheBatchDoes(t *testing.T) {
+	// A subscriber the batch wakes may write a signal that is in the same batch.
+	// That write leaves at once, so it reaches the browser while the batch is
+	// still being delivered, and the batch's own text for that signal is then out
+	// of date. The runtime does not rewrite the batch; this pins the order so the
+	// page can tell which copy is newer (see gosxNotifySharedSignals).
+	b := New()
+	var order []string
+	b.SetSharedSignalCallback(func(name, valueJSON string) { order = append(order, "single "+name+"="+valueJSON) })
+	var handed []SignalUpdate
+	b.SetSharedSignalBatchCallback(func(updates []SignalUpdate) {
+		order = append(order, "batch begins")
+		handed = append([]SignalUpdate(nil), updates...)
+		if err := b.SetSharedSignalJSON("$b", `"fromA"`); err != nil {
+			t.Error(err)
+		}
+		order = append(order, "batch ends")
+	})
+	if err := b.SetSharedSignalBatchJSON(`{"$a":1,"$b":"batch"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(order, "; "); got != `batch begins; single $b="fromA"; batch ends` {
+		t.Fatalf("order = %s", got)
+	}
+	texts := map[string]string{}
+	for _, update := range handed {
+		texts[update.Name] = update.JSON
+	}
+	if texts["$b"] != `"batch"` || len(handed) != 2 {
+		t.Fatalf("the batch handed over %+v, want its own text for $b", handed)
+	}
+	if stored, _ := b.GetStore().Get("$b"); stored.String() != "fromA" {
+		t.Fatalf("the store holds %q, want the later write", stored.String())
+	}
+}
+
 func TestBatchNestedInsideTheBatchCallbackHasItsOwnHandoff(t *testing.T) {
 	b := New()
 	var order []string
@@ -308,6 +408,55 @@ func TestBatchRefusesBlankNamesWithoutApplyingAnything(t *testing.T) {
 				t.Errorf("%q changedOnly=%v: the batch was partly applied: %v", batch, changedOnly, *sent)
 			}
 		}
+	}
+}
+
+// jsTrimmed lists every code point that JavaScript's String.prototype.trim
+// removes (Node 26: for each code point c, String.fromCodePoint(c).trim() === "").
+var jsTrimmed = []rune{
+	0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680,
+	0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A,
+	0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF,
+}
+
+func TestBlankSignalNameUsesTheWhiteSpaceJavaScriptTrims(t *testing.T) {
+	trimmed := map[rune]bool{}
+	for _, r := range jsTrimmed {
+		trimmed[r] = true
+	}
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		if r >= 0xD800 && r <= 0xDFFF {
+			continue
+		}
+		if got := isJSSpace(r); got != trimmed[r] {
+			t.Fatalf("isJSSpace(U+%04X) = %v, JavaScript trims it: %v", r, got, trimmed[r])
+		}
+	}
+	// U+0085 is white space to Go and not to JavaScript, and U+FEFF is the reverse.
+	for name, blank := range map[string]bool{
+		"": true, " ": true, "\t\n": true, "\u00a0\u3000": true, "\ufeff": true, "\u2028x": false,
+		"\u0085": false, "\u200b": false, "\u180e": false, "$a": false, " $a ": false,
+	} {
+		if got := blankSignalName(name); got != blank {
+			t.Errorf("blankSignalName(%q) = %v, want %v", name, got, blank)
+		}
+	}
+}
+
+func TestBatchRefusesTheNamesThePageRefuses(t *testing.T) {
+	for _, batch := range []string{`{"\ufeff":1,"$a":2}`, `{"\u2003":1,"$a":2}`} {
+		err := New().setSharedSignalBatchJSON(batch, false)
+		if err == nil || !strings.Contains(err.Error(), "name required") {
+			t.Errorf("%q: err = %v", batch, err)
+		}
+	}
+	// A name the page accepts is stored.
+	b := New()
+	if err := b.SetSharedSignalBatchJSON(`{"\u0085":1}`); err != nil {
+		t.Fatalf("U+0085 is not blank in JavaScript: %v", err)
+	}
+	if _, ok := b.GetStore().Get("\u0085"); !ok {
+		t.Error("a name of U+0085 was not stored")
 	}
 }
 

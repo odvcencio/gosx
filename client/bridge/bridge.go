@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/videosync"
@@ -40,6 +39,7 @@ type Bridge struct {
 	signalBatchFn  func(updates []SignalUpdate)          // callback that hands JS every change of one batch together
 	collecting     bool                                  // batch notifications wait in collected for one handoff
 	collected      []SignalUpdate                        // changes from the batch being applied, in notification order
+	senderNames    []string                              // names the batch sender spelled as aliases, to tell the page under that spelling
 	jsonScratch    []byte                                // buffer the notifications are encoded into
 	dispatching    map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
 	unsubs         map[string][]func()                   // per-island unsubscribe handles for shared signals
@@ -272,7 +272,13 @@ type SignalUpdate struct {
 // Until the batch has applied, nothing reaches the callback, so a subscriber it
 // triggers reads the complete new state. The callback also replaces the
 // per-signal callback for those changes; any other change still goes to the
-// per-signal callback at once.
+// per-signal callback at once, including a write the callback itself makes. A
+// signal written that way and also in the batch reaches the browser before the
+// batch's own, older, text for it does.
+//
+// A sender that spelled a signal with a legacy alias ($scene.event.x for
+// $surface.event.x) is also told the value under that spelling, after the
+// batch's own changes.
 func (b *Bridge) SetSharedSignalBatchCallback(fn func(updates []SignalUpdate)) {
 	b.signalBatchFn = fn
 }
@@ -462,11 +468,15 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 	}
 
 	values := payload.Map()
+	var senderNames []string
 	for name, value := range values {
-		// A blank name is refused as a single write refuses it, and as the
-		// page refused it before it sent a batch here.
-		if strings.TrimSpace(name) == "" {
+		// A blank name is refused, as the page refused it before it sent a
+		// batch here.
+		if blankSignalName(name) {
 			return errors.New("shared signal name required")
+		}
+		if signal.ResolveAlias(name) != name {
+			senderNames = append(senderNames, name)
 		}
 		if changedOnly {
 			if current, ok := b.store.Get(name); ok && vm.EqualJSON(current, value) {
@@ -474,13 +484,54 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 			}
 		}
 	}
-	if len(values) == 0 {
+	if len(values) == 0 && len(senderNames) == 0 {
 		return nil
+	}
+	// The store keeps one signal under the canonical name, and the page keeps
+	// one value for each name it has read. A sender that spelled a name as a
+	// legacy alias ($scene.event.x for $surface.event.x) is told the value under
+	// that spelling as well, so the page's copy of it does not go stale.
+	for i := 1; i < len(senderNames); i++ {
+		for j := i; j > 0 && senderNames[j] < senderNames[j-1]; j-- {
+			senderNames[j], senderNames[j-1] = senderNames[j-1], senderNames[j]
+		}
 	}
 
 	defer b.beginBatchNotify()()
-	b.store.SetBatch(values)
+	b.senderNames = senderNames
+	if len(values) > 0 {
+		b.store.SetBatch(values)
+	} else {
+		b.deliverCollected()
+	}
 	return nil
+}
+
+// blankSignalName reports whether name is empty once the white space that
+// JavaScript's String.prototype.trim removes is gone. The page trims signal
+// names with trim, so the two sides must refuse the same names.
+func blankSignalName(name string) bool {
+	for _, r := range name {
+		if !isJSSpace(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// isJSSpace is ECMAScript's WhiteSpace and LineTerminator set: tab, line feed,
+// vertical tab, form feed, carriage return, space, no-break space, the byte
+// order mark, the line and paragraph separators, and the other code points in
+// the Unicode category Zs (U+1680, U+2000 to U+200A, U+202F, U+205F, U+3000). It
+// differs from unicode.IsSpace, which trims U+0085 and does not trim U+FEFF.
+// TestBlankSignalNameUsesTheWhiteSpaceJavaScriptTrims checks the set against
+// the 25 code points that String.prototype.trim removes.
+func isJSSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', '\u00a0', '\u1680', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff':
+		return true
+	}
+	return r >= '\u2000' && r <= '\u200a'
 }
 
 // beginBatchNotify prepares the notifications of one batch and returns the
@@ -489,19 +540,23 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 // returned function sends whatever is still waiting, so an observer panic
 // cannot leave the browser behind the store.
 func (b *Bridge) beginBatchNotify() func() {
-	collecting, collected := b.collecting, b.collected
+	collecting, collected, senderNames := b.collecting, b.collected, b.senderNames
 	b.collecting = b.signalBatchFn != nil
 	b.collected = nil
+	b.senderNames = nil
 	return func() {
 		b.deliverCollected()
-		b.collecting, b.collected = collecting, collected
+		b.collecting, b.collected, b.senderNames = collecting, collected, senderNames
 	}
 }
 
 // deliverCollected hands the waiting batch changes to the batch callback. The
 // callback may write signals; those changes go out one by one, not into the
-// batch being delivered.
+// batch being delivered. A signal the callback writes that is also in the batch
+// reaches the browser before the batch does, so the browser must treat the
+// batch's copy of it as out of date (the page's gosxNotifySharedSignals does).
 func (b *Bridge) deliverCollected() {
+	b.collectSenderNames()
 	if len(b.collected) == 0 {
 		return
 	}
@@ -513,10 +568,33 @@ func (b *Bridge) deliverCollected() {
 	b.signalBatchFn(updates)
 }
 
+// collectSenderNames adds the legacy spellings the batch sender used to the
+// changes that are waiting, each with the current value of its signal. Without a
+// batch callback they go to the per-signal callback at once.
+func (b *Bridge) collectSenderNames() {
+	names := b.senderNames
+	b.senderNames = nil
+	for _, name := range names {
+		value, ok := b.store.Get(name)
+		if !ok {
+			continue
+		}
+		text, err := b.marshalValue(value)
+		if err != nil {
+			continue
+		}
+		if b.collecting {
+			b.collected = append(b.collected, SignalUpdate{Name: name, JSON: text})
+		} else if b.signalFn != nil {
+			b.signalFn(name, text)
+		}
+	}
+}
+
 // GetSharedSignalJSON serializes the current shared signal value as JSON.
 // Missing signals return JSON null.
 func (b *Bridge) GetSharedSignalJSON(name string) (string, error) {
-	if strings.TrimSpace(name) == "" {
+	if blankSignalName(name) {
 		return "", errors.New("shared signal name required")
 	}
 	value, ok := b.store.Get(name)
@@ -755,7 +833,7 @@ func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
 }
 
 func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
-	if b == nil || strings.TrimSpace(name) == "" {
+	if b == nil || blankSignalName(name) {
 		return
 	}
 	valueJSON, err := b.marshalValue(value)

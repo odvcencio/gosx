@@ -16,7 +16,7 @@ func registerTextLayoutRuntime() {
 }
 
 func textLayoutRuntimeFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (text, font, maxWidth)")
 		}
@@ -56,7 +56,7 @@ func textLayoutRuntimeFunc() js.Func {
 }
 
 func textLayoutMetricsRuntimeFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (text, font, maxWidth)")
 		}
@@ -96,7 +96,7 @@ func textLayoutMetricsRuntimeFunc() js.Func {
 }
 
 func textLayoutRangesRuntimeFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (text, font, maxWidth)")
 		}

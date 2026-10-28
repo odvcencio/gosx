@@ -14,6 +14,7 @@ import (
 )
 
 func registerRuntime(b *bridge.Bridge) {
+	registerDirectBatch(b)
 	b.RegisterIslandHostFactory("browser", func(islandID string) vm.HostReceiver {
 		return newBrowserHostReceiver(islandID)
 	})
@@ -98,7 +99,7 @@ func notifySharedSignalBatch(updates []bridge.SignalUpdate) {
 // Bridge.HydrateReconciler — "dom" delegates to the island path, "scene3d"
 // to the engine path, "canvas2d" returns a Phase 2 stub error.
 func hydrateRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		surfaceKind, hydrateArgs, err := parseUnifiedHydrateArgs(args)
 		if err != nil {
 			return jsError(err)
@@ -173,7 +174,7 @@ func parseUnifiedHydrateArgs(args []js.Value) (string, []js.Value, error) {
 // The Phase 1d dispatcher accepts both shapes; this alias just removes the
 // boilerplate for the canvas2d case.
 func hydrateCanvasRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		call, err := parseHydrateCall(args)
 		if err != nil {
 			return jsError(err)
@@ -186,7 +187,7 @@ func hydrateCanvasRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func hydrateComputeRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		call, err := parseHydrateCall(args)
 		if err != nil {
 			return jsError(err)
@@ -199,7 +200,7 @@ func hydrateComputeRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func actionRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return js.Null()
 		}
@@ -223,7 +224,7 @@ func actionRuntimeFunc(b *bridge.Bridge) js.Func {
 // via the same decodeProgramData path the hydrate calls use. An unknown
 // islandID or a decode failure comes back as a string error from the bridge.
 func reloadProgramRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (islandID, programData, format)")
 		}
@@ -240,7 +241,7 @@ func reloadProgramRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func disposeRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}
@@ -250,7 +251,7 @@ func disposeRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func sharedSignalRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return jsErrorf("need 2 args (signalName, valueJSON)")
 		}
@@ -262,7 +263,7 @@ func sharedSignalRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func sharedSignalGetRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (signalName)")
 		}
@@ -275,7 +276,7 @@ func sharedSignalGetRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func inputBatchRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (batchJSON)")
 		}

@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -79,6 +82,30 @@ func TestTinyGoBuildArgsSizeGoroutineStacksForDeepIslandTrees(t *testing.T) {
 		if !stringSliceContains(args, "-stack-size=256KB") {
 			t.Fatalf("expected 256KB goroutine stacks in args: %v", args)
 		}
+	}
+}
+
+// The runtime clears scrubStackBytes of each goroutine stack when a call from
+// JavaScript ends (client/wasm/stack_scrub_tinygo.go). That region must lie inside
+// the stack, so it may take at most half of TinyGo's 64 KiB default and of the
+// size this builder asks for.
+func TestTinyGoStackScrubFitsInsideTheGoroutineStack(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "client", "wasm", "stack_scrub_tinygo.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`(?m)^const scrubStackBytes = (\d+) << 10$`).FindStringSubmatch(string(source))
+	if match == nil {
+		t.Fatal("client/wasm/stack_scrub_tinygo.go no longer declares `const scrubStackBytes = N << 10`")
+	}
+	scrubKiB, _ := strconv.Atoi(match[1])
+	stackKiB, err := strconv.Atoi(strings.TrimSuffix(tinyGoGoroutineStackSize, "KB"))
+	if err != nil {
+		t.Fatalf("tinyGoGoroutineStackSize %q: %v", tinyGoGoroutineStackSize, err)
+	}
+	const tinyGoDefaultStackKiB = 64
+	if scrubKiB*2 > tinyGoDefaultStackKiB || scrubKiB*2 > stackKiB {
+		t.Fatalf("stack scrub of %d KiB is more than half of the %d KiB default or the %d KiB goroutine stack", scrubKiB, tinyGoDefaultStackKiB, stackKiB)
 	}
 }
 

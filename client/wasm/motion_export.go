@@ -40,7 +40,7 @@ func registerMotionExports() {
 // program handle (>=1) on success, or -1 on any error (missing arg, decode
 // failure).
 func motionLoadFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		return motionLoad(args)
 	})
 }
@@ -74,7 +74,7 @@ func motionLoad(args []js.Value) int {
 // out's capacity, only the values that fit are written and the caller must grow
 // `out` and re-tick. Returns 0 on error (unknown handle, missing args).
 func motionTickFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		return motionTick(args)
 	})
 }
@@ -143,7 +143,7 @@ func motionTick(args []js.Value) int {
 // array index maps a numeric id to its string ref (target object-id or property
 // name). Returns js.Null() when the handle is unknown.
 func motionRefsFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		return motionRefs(args)
 	})
 }
@@ -186,7 +186,7 @@ func motionRefs(args []js.Value) js.Value {
 // Frees the handle from the runtime. Safe on unknown handle (no panic).
 // Returns js.Undefined().
 func motionUnloadFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		motionUnload(args)
 		return js.Undefined()
 	})
