@@ -30,3 +30,27 @@ func TestSeaTracksSceneOceanQuery(t *testing.T) {
 		t.Errorf("Sea differs from scene.OceanQuery by %.3f m rms, wave rms %.3f m", err, ref)
 	}
 }
+
+// With Swell set, Sea is the vertical part of the swell sum, which is exactly
+// what scene.OceanQuery evaluates at the undisplaced point in deep water.
+func TestSeaSwellMatchesSceneOceanQuery(t *testing.T) {
+	spectrum := scene.OceanPreset("rough")
+	o := scene.Ocean{Level: 1.5, WindDirection: 70, Spectrum: &spectrum}
+	waves := scene.OceanSwellWaves(spectrum, o.WindDirection, scene.DefaultOceanSwellCount)
+	o.SwellWaves = waves
+	swell := make([]vessel.SwellWave, len(waves))
+	for i, w := range waves {
+		swell[i] = vessel.SwellWave(w)
+	}
+	sea := vessel.NewSea(vessel.SeaConfig{Level: o.Level, Swell: swell, WaveHeight: 9, Speed: 4})
+	q := scene.NewOceanQuery(o, "high", nil)
+	var worst float64
+	for i := 0; i < 400; i++ {
+		x, z, tm := float64(i)*7.3-1500, float64(i)*-4.1+800, float64(i)*0.37
+		worst = math.Max(worst, math.Abs(q.Evaluate(x, z, tm).Position.Y-sea.Height(x, z, tm)))
+	}
+	t.Logf("worst difference between Sea and OceanQuery heights: %.3g m", worst)
+	if worst > 1e-9 {
+		t.Errorf("Sea differs from OceanQuery by %g m", worst)
+	}
+}

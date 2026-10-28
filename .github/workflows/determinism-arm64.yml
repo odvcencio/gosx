@@ -1,6 +1,7 @@
 name: determinism-arm64
 
-# The deterministic scene, motion and harness code on real Apple Silicon.
+# The deterministic scene, motion, ocean-spectrum and harness code on real Apple
+# Silicon.
 #
 # The arm64 Go compiler fuses x*y + z into one fused multiply-add (FMA)
 # instruction. The amd64 default does not, and the golden files were generated
@@ -10,7 +11,13 @@ name: determinism-arm64
 #
 # It runs only when a path it covers changes, on any branch push and on pull
 # requests, and cancels a superseded run. It is separate from ci.yml so the
-# macOS queue never blocks the required `test` aggregate.
+# macOS queue never blocks the required `test` aggregate, and for the same reason
+# its result is not part of that aggregate. A change that touches none of the
+# paths below skips it, so it cannot be the only guard: ci.yml's go-tests job
+# runs the same linter on every pull request, and its unit partition runs the
+# tests of every deterministic package on amd64. A package marked
+# //gosx:deterministic belongs in the paths below, in the test command at the end
+# and in DET_LINT_PKGS in the Makefile.
 
 on:
   pull_request:
@@ -18,6 +25,7 @@ on:
       - 'cmd/gosx-detlint/**'
       - 'det/**'
       - 'motion/**'
+      - 'oceanspec/**'
       - 'scene/**'
       - 'render/**'
       - 'internal/sceneaffine/**'
@@ -32,6 +40,7 @@ on:
       - 'cmd/gosx-detlint/**'
       - 'det/**'
       - 'motion/**'
+      - 'oceanspec/**'
       - 'scene/**'
       - 'render/**'
       - 'internal/sceneaffine/**'
@@ -78,4 +87,4 @@ jobs:
         run: make lint-deterministic
 
       - name: Deterministic goldens on arm64
-        run: go test -count=1 -p 4 ./det/... ./motion/... ./scene/... ./render/gpu/headless ./render/bundle ./internal/sceneaffine ./physics ./vessel
+        run: go test -count=1 -p 4 ./det/... ./motion/... ./oceanspec ./scene/... ./render/gpu/headless ./render/bundle ./internal/sceneaffine ./physics ./vessel
