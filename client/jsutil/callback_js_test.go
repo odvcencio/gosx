@@ -350,3 +350,64 @@ func TestOverlappingCallsEachRunOnlyTheirOwnRecordedCalls(t *testing.T) {
 		t.Fatal("the gate still recorded after both Calls ended")
 	}
 }
+
+// A recorded callback that panics: the panic reaches the caller of Call, and the
+// gate forwards again. Call puts the trap back before it runs the recorded
+// calls. If it ran them first, a panic there would leave the trap on a push
+// function for good, and every later call from JavaScript to a Callback would be
+// recorded and never run.
+func TestPanicInADeferredCallbackRestoresTheGate(t *testing.T) {
+	target := native(`({ fire(callback) { callback(); } })`)
+	failing := NewCallback(func(js.Value, []js.Value) { panic("listener failed") })
+	defer failing.Release()
+	func() {
+		defer func() {
+			if failure := recover(); fmt.Sprint(failure) != "listener failed" {
+				t.Fatalf("Call raised %v, want the panic of the callback", failure)
+			}
+		}()
+		Call(target, "fire", failing.Value())
+	}()
+	theGate.mu.Lock()
+	frames := len(theGate.frames)
+	theGate.mu.Unlock()
+	if frames != 0 {
+		t.Fatalf("%d frames left after a panic", frames)
+	}
+
+	entered := make(chan struct{}, 1)
+	timer := NewCallback(func(js.Value, []js.Value) { entered <- struct{}{} })
+	defer timer.Release()
+	js.Global().Call("setTimeout", timer.Value(), 0)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("after a deferred callback panicked, a callback no longer enters Go: the gate stayed in recording mode")
+	}
+}
+
+// A recorded callback may block until JavaScript runs again, for example a
+// listener that waits for a timer. While it blocks, the trap forwards, so the
+// callback that JavaScript then calls enters Go at once. If the trap still
+// pointed at the frame of the finished Call, that call would be recorded and
+// nothing would run it.
+func TestBlockingDeferredCallbackLetsJavaScriptReachGo(t *testing.T) {
+	target := native(`({ fire(callback) { callback(); } })`)
+	timerRan := make(chan struct{})
+	timer := NewCallback(func(js.Value, []js.Value) { close(timerRan) })
+	defer timer.Release()
+	waited := false
+	blocking := NewCallback(func(js.Value, []js.Value) {
+		js.Global().Call("setTimeout", timer.Value(), 0)
+		select {
+		case <-timerRan:
+			waited = true
+		case <-time.After(5 * time.Second):
+		}
+	})
+	defer blocking.Release()
+	Call(target, "fire", blocking.Value())
+	if !waited {
+		t.Fatal("a deferred callback that waits for a JavaScript timer never saw it: the gate kept recording while the callback ran")
+	}
+}
