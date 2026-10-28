@@ -150,6 +150,13 @@
   handler had already started, is listed in `Recent` as `interrupted`, not
   `overwritten`.
 
+- Add `wasm.Context.SetSignalsFromEventLoop`, a `SetSignals` for code that runs
+  on a goroutine of its own, such as a `ServeCallsAsync` handler that publishes
+  state. On the main thread `SetSignal`, `SetSignals` and `SetChangedSignals`
+  run the engine's Go subscriptions before they return, a nested call from
+  JavaScript into Go; this method has the browser make the write from the event
+  loop and waits for it. In a worker it is `SetSignals`.
+
 - Add `wasm.Caller`, a Go client for a call channel, modelled on the one Bon
   Voyage wrote. It numbers calls, writes them to `$channel`, reads
   `$channel.result`, and returns each reply with the tag of its call, in order. By

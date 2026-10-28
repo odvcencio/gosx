@@ -57,7 +57,8 @@ func ServeCalls[A, R any](ctx Context, channel string, opts CallOptions, handle 
 // time and their results are written in ID order. On the main thread the engine
 // has the browser write each result and each mark, and trim the mailbox, from the
 // event loop, so that the goroutine never starts a nested entry from JavaScript
-// into Go.
+// into Go. A handler that publishes state should write it with
+// Context.SetSignalsFromEventLoop, for the same reason.
 // See host.ServeCallsAsync for the timeout, disposal and re-entry rules.
 func ServeCallsAsync[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
 	return serveCallsAsync(contextTransport{ctx: ctx, async: true}, channel, opts, handle)

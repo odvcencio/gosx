@@ -344,7 +344,12 @@ off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * 
   program. On the main thread the engine therefore has the browser write each
   result and each mark, and drop the answered calls from a mailbox (the page's
   `ctx.trimCalls`), from the event loop, and waits for it. Your handler should
-  follow the same rule: do not call a JavaScript function that runs a Go
+  follow the same rule. Its own writes count: `ctx.SetSignal`, `ctx.SetSignals`
+  and `ctx.SetChangedSignals` run the engine's Go subscriptions
+  (`ctx.SubscribeSignal`) inside the call on the main thread. To publish state
+  from a handler, use `ctx.SetSignalsFromEventLoop`, which has the browser make
+  the write from the event loop and waits for it (in a worker it is
+  `ctx.SetSignals`). Also do not call a JavaScript function that runs a Go
   callback before it returns, such as `new Promise` with a Go executor or
   `dispatchEvent` to a Go listener. `jsutil.AwaitPromise` and
   `Promise.withResolvers` with `setTimeout` do not nest. A page whose bootstrap

@@ -157,10 +157,12 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 // entry from JavaScript into Go, and two goroutines in nested entries at once
 // can stop the program. So the main-thread transport (wasm.ServeCallsAsync) has
 // the browser make the write from the event loop, where no call from Go is
-// pending, and waits for it. A handler that calls into JavaScript should follow
-// the same rule and avoid functions that run a Go callback before they return
-// (new Promise with a Go executor, dispatchEvent to a Go listener):
-// jsutil.AwaitPromise follows it.
+// pending, and waits for it. A handler should follow the same rule. Its own
+// writes to a shared signal count: wasm.Context.SetSignal and SetSignals nest on
+// the main thread, and wasm.Context.SetSignalsFromEventLoop does not. A handler
+// that calls into JavaScript should also avoid functions that run a Go callback
+// before they return (new Promise with a Go executor, dispatchEvent to a Go
+// listener): jsutil.AwaitPromise follows the rule.
 //
 // Disposing the returned HandleFunc drops the queued calls and the reply of the
 // call that is running; it does not stop a running handler. The page stops

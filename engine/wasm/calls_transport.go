@@ -26,8 +26,8 @@ func (t contextTransport) subscribe(signal string, handler func(json.RawMessage)
 
 func (t contextTransport) write(signal string, value any) error {
 	values := map[string]any{signal: value}
-	if t.async && t.ctx.Thread() != engine.ThreadWorker {
-		return t.ctx.setSignalsFromEventLoop(values)
+	if t.async {
+		return t.ctx.SetSignalsFromEventLoop(values)
 	}
 	return t.ctx.SetSignals(values)
 }

@@ -322,3 +322,63 @@ func TestServeCallsAsyncMakesNoNestedEntriesIntoGo(t *testing.T) {
 		off.Dispose()
 	}
 }
+
+// A handler of ServeCallsAsync that publishes state writes a signal that the
+// engine itself subscribes to. On the main thread SetSignals runs that Go
+// subscription inside the call, a nested entry from each handler's goroutine.
+// SetSignalsFromEventLoop has the browser make the write from the event loop.
+func TestAHandlerPublishesStateWithoutNestedEntriesIntoGo(t *testing.T) {
+	installEntryProbe()
+	for _, tc := range []struct {
+		name   string
+		write  func(Context, map[string]any) error
+		nested bool
+	}{
+		{"SetSignals", Context.SetSignals, true},
+		{"SetSignalsFromEventLoop", Context.SetSignalsFromEventLoop, false},
+	} {
+		v := pageStore("")
+		ctx := Context{value: v}
+		var heard sync.WaitGroup
+		heard.Add(10)
+		sub, err := ctx.SubscribeSignal("$bv.state", func(json.RawMessage) { heard.Done() })
+		if err != nil {
+			t.Fatal(err)
+		}
+		off, err := ServeCallsAsync(ctx, "bv.cmd", CallOptions{}, func(name string, a addArgs) (sum, error) {
+			if err := tc.write(ctx, map[string]any{"$bv.state": a.A}); err != nil {
+				return sum{}, err
+			}
+			return sum{Total: a.A}, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := nestedEntries()
+		js.Global().Call("eval", driveCalls).Invoke(v, "$bv.cmd", 10, false)
+		waitFor(t, tc.name+": ten results", func() bool { return v.Get("batches").Int() >= 10 })
+		heard.Wait() // every write reached the engine's own subscription, nested or not
+		got := nestedEntries() - before
+		if tc.nested && got == 0 {
+			t.Errorf("%s made no nested entry; this test would prove nothing", tc.name)
+		}
+		if !tc.nested && got != 0 {
+			t.Errorf("%s: %d nested entries into Go while ten handlers published state, want 0", tc.name, got)
+		}
+		sub.Dispose()
+		off.Dispose()
+	}
+}
+
+// In a worker a write only posts a message, which tells no Go function, so
+// SetSignalsFromEventLoop is SetSignals there.
+func TestSetSignalsFromEventLoopInAWorkerWritesAtOnce(t *testing.T) {
+	v := pageStore("worker")
+	ctx := Context{value: v}
+	if err := ctx.SetSignalsFromEventLoop(map[string]any{"$bv.state": 7}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stringifyJS(v.Get("store").Call("get", "$bv.state")); got != "7" {
+		t.Fatalf("the store holds %s, want 7", got)
+	}
+}
