@@ -51,20 +51,29 @@ const chain = scene => Array.from(scene.mount.__gosxScene3DState.postEffects, ef
 // Draws per built-in post program in one rendered frame. The marker names a
 // line of that program's GLSL, so the lookup does not depend on creation order.
 const POST_MARKERS = {tone: "vec3 filmic(vec3 x)", fxaa: "float greenLuma(vec3 c)"};
+// Every post program a chain can hold here, for the ordered list of passes in a frame.
+const PASS_MARKERS = {tone: ["vec3 filmic(vec3 x)"], fxaa: ["float greenLuma(vec3 c)"], vignette: ["float vignette = 1.0 - smoothstep"],
+  colorGrade: ["uniform float u_saturation"], bloom: ["brightness > u_threshold", "uniform vec2 u_direction", "uniform sampler2D u_bloomTexture"]};
 async function renderOneFrame(scene) {
   const first = scene.gl.ops.length;
   await frames(scene, 1, 100);
   const ops = scene.gl.ops.slice(first);
   const ids = Object.fromEntries(Object.entries(POST_MARKERS).map(([name, marker]) => [name, (scene.gl.programMatching(marker) || {}).id]));
+  const passByProgram = new Map();
+  for (const [name, markers] of Object.entries(PASS_MARKERS)) for (const marker of markers) {
+    const program = scene.gl.programMatching(marker);
+    if (program) passByProgram.set(program.id, name);
+  }
   const draws = {tone: 0, fxaa: 0};
-  const order = [];
+  const order = [], post = [];
   for (const op of ops) {
     if (op[0] !== "drawArrays") continue;
     for (const name of Object.keys(draws)) if (ids[name] !== undefined && op[4] === ids[name]) { draws[name]++; order.push(name); }
+    if (passByProgram.has(op[4])) post.push(passByProgram.get(op[4]));
   }
   // The renderer uploads this uniform when its value changes, so read the latest value in the whole log.
   const linear = scene.gl.ops.filter(op => op[0] === "uniform1i" && op[1] === "u_outputLinear");
-  return {draws, order, outputLinear: linear.length ? linear.at(-1)[2] : null};
+  return {draws, order, post, links: ops.filter(op => op[0] === "linkProgram").length, outputLinear: linear.length ? linear.at(-1)[2] : null};
 }
 
 test("suppression keeps FXAA after tone mapping on the canvas the private fallback antialiases", async () => {
@@ -159,4 +168,100 @@ test("recovery clears the suppressed state, so the unsuppressed chain draws no a
   assert.equal(attr(s, "antialiasing"), "none", "the unsuppressed chain has no edge pass, as before");
   assert.deepEqual(frame.draws, {tone: 1, fxaa: 0});
   assert.equal(s.env.consoleLogs.error.length, 0);
+});
+
+// The FXAA pass that suppression appends is a cost too. It reads nine texels per
+// pixel where a vignette or a color grade reads one, so a suppression that sheds
+// only those and then draws FXAA does the frame no good. It spends the last
+// quality step (a revision, the 5 s cooldown and a transition event), removes
+// the author's effect, and draws no fewer passes than before. The controller
+// asks the renderer whether it will add the pass, and does not suppress unless
+// something heavier than a single-pass color effect leaves.
+const tone = {kind: "toneMapping", mode: "aces"};
+const CANVASES = {"private fallback": {}, "own MSAA": {msaaSamples: 4}, "no antialiasing": {antialias: false}};
+
+test("suppression does not trade a vignette or color grade for the FXAA pass the fallback adds", async () => {
+  for (const effects of [[{kind: "vignette"}, tone], [{kind: "colorGrade"}, tone], [{kind: "vignette"}, {kind: "colorGrade"}, tone]]) {
+    for (const [name, extra] of Object.entries(CANVASES).filter(([, extra]) => extra.antialias !== false)) {
+      const label = `${effects.map(effect => effect.kind)} on the ${name} canvas`;
+      const s = await mountScene(effects, extra);
+      const survival = await renderOneFrame(s);
+      const revision = attr(s, "quality-revision");
+      await missFrames(s, 60);
+      assert.equal(attr(s, "quality-postfx-suppressed"), "false", `${label}: suppression would swap the effect for FXAA`);
+      assert.equal(attr(s, "quality-reason"), "initial", `${label}: no postfx transition is recorded`);
+      assert.equal(attr(s, "quality-revision"), revision, `${label}: no quality revision is spent`);
+      const after = await renderOneFrame(s);
+      assert.deepEqual(after.post, survival.post, `${label}: the frame draws the survival chain`);
+      assert.deepEqual(survival.post.slice(-1), ["tone"]);
+      assert.equal(s.env.consoleLogs.error.length, 0);
+    }
+  }
+});
+
+test("suppression sheds a single-pass color effect on a canvas that gets no FXAA", async () => {
+  const s = await mountScene([{kind: "vignette"}, tone], {antialias: false});
+  const survival = await renderOneFrame(s);
+  assert.deepEqual(survival.post, ["vignette", "tone"]);
+  await missFrames(s);
+  assert.equal(attr(s, "quality-postfx-suppressed"), "true", "nothing is added, so the vignette is a pass saved");
+  assert.equal(chain(s), "toneMapping");
+  const after = await renderOneFrame(s);
+  assert.deepEqual(after.post, ["tone"]);
+  assert.equal(s.env.consoleLogs.error.length, 0);
+});
+
+test("suppression draws fewer post passes than the survival frame whenever it takes the step", async () => {
+  const bloom = {kind: "bloom"}, vignette = {kind: "vignette"}, grade = {kind: "colorGrade"}, fxaa = {kind: "fxaa"};
+  const chains = [
+    [bloom, tone], [bloom, vignette, tone], [bloom, tone, fxaa], [vignette, tone, fxaa], [grade, tone, fxaa],
+    [bloom], [bloom, fxaa], [vignette], [vignette, fxaa], [grade], [fxaa],
+    [vignette, tone], [grade, tone], [vignette, grade, tone], [tone], [tone, fxaa],
+  ];
+  const outcomes = new Set();
+  for (const [name, extra] of Object.entries(CANVASES)) {
+    for (const effects of chains) {
+      const label = `${effects.map(effect => effect.kind)} on the ${name} canvas`;
+      const s = await mountScene(effects, extra);
+      const survival = await renderOneFrame(s);
+      await missFrames(s, 60);
+      const suppressed = attr(s, "quality-postfx-suppressed") === "true";
+      const after = await renderOneFrame(s);
+      outcomes.add(suppressed);
+      if (suppressed) assert.ok(after.post.length < survival.post.length, `${label}: suppressed to ${after.post}, from ${survival.post}`);
+      else assert.deepEqual(after.post, survival.post, `${label}: not suppressed, so the frame is unchanged`);
+      assert.equal(s.env.consoleLogs.error.length, 0, label);
+    }
+  }
+  assert.deepEqual([...outcomes].sort(), [false, true], "the sweep reaches both outcomes");
+});
+
+test("suppression with no tone mapping does not replace a vignette with the fallback's FXAA", async () => {
+  const fallback = await mountScene([{kind: "vignette"}]);
+  const survival = await renderOneFrame(fallback);
+  assert.deepEqual(survival.post, ["vignette"]);
+  await missFrames(fallback, 60);
+  assert.equal(attr(fallback, "quality-postfx-suppressed"), "false", "FXAA alone would read nine texels where the vignette reads one");
+  assert.deepEqual((await renderOneFrame(fallback)).post, ["vignette"]);
+  // Where the empty chain draws straight to the canvas, shedding the vignette is a pass saved.
+  for (const extra of [{antialias: false}, {msaaSamples: 4}]) {
+    const s = await mountScene([{kind: "vignette"}], extra);
+    await missFrames(s, 60);
+    assert.equal(attr(s, "quality-postfx-suppressed"), "true", JSON.stringify(extra));
+    assert.deepEqual((await renderOneFrame(s)).post, [], JSON.stringify(extra));
+  }
+});
+
+test("a canvas with its own MSAA compiles the FXAA program before suppression needs it", async () => {
+  const fxaaMarker = POST_MARKERS.fxaa;
+  const s = await mountScene([{kind: "bloom"}, tone], {msaaSamples: 4});
+  assert.ok(s.gl.programMatching(fxaaMarker), "the suppressed chain will draw FXAA, so the program exists from startup");
+  await missFrames(s);
+  assert.equal(attr(s, "quality-postfx-suppressed"), "true");
+  const frame = await renderOneFrame(s);
+  assert.deepEqual(frame.post, ["tone", "fxaa"]);
+  assert.equal(frame.links, 0, "the first suppressed frame links no program on a device that is already over budget");
+  // A canvas that adds no FXAA does not pay for the program.
+  const plain = await mountScene([{kind: "bloom"}, tone], {antialias: false});
+  assert.equal(plain.gl.programMatching(fxaaMarker), null);
 });

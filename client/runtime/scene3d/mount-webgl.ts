@@ -212,7 +212,7 @@
       Object.assign(waterRenderer, {
         pollPerformanceSample: worldRenderer.pollPerformanceSample,
         getPerformanceTimingStatus: worldRenderer.getPerformanceTimingStatus,
-        getFrameTiming: worldRenderer.getFrameTiming,
+        getFrameTiming: worldRenderer.getFrameTiming, suppressedPostFXAddsFXAA: worldRenderer.suppressedPostFXAddsFXAA,
       });
     }
     if (Array.isArray(sceneDoc?.models) && sceneDoc.models.length || environment && (environment.sky || environment.ocean)) ensureWorld();
@@ -5500,7 +5500,7 @@
     if (now >= state.cooldownUntilMS && (state.badFrames >= 20 || state.severeFrames >= 3)) {
       if (activeIndex < order.length - 1) {
         changed = sceneAdaptiveSetTier(state, order[activeIndex + 1], state.severeFrames >= 3 ? "severe" : "sustained", now);
-      } else if (state.adaptivePostFX && !state.postFXSuppressed && sceneAdaptivePostFXSheds(sceneState)) {
+      } else if (state.adaptivePostFX && !state.postFXSuppressed && sceneAdaptivePostFXSheds(sceneState, renderer)) {
         state.postFXSuppressed = true;
         state.qualityRevision += 1;
         state.transitionReason = "postfx";

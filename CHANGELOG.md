@@ -10,20 +10,36 @@
   target, so on WebGL2 a canvas that was antialiased without post effects,
   through its own MSAA or the private FXAA fallback, gets an FXAA pass after the
   tone mapping. A scene with no tone-mapping effect still sheds its whole post
-  chain. A chain that holds only tone mapping and FXAA, or whose other effects
-  the survival tier already dropped, no longer enters the suppressed state:
-  suppression would shed nothing, so it spends no quality revision, starts no
-  cooldown and emits no transition event. `data-gosx-scene3d-postfx` reads
-  `enabled` while a tone-mapping effect remains. The suppressed frame now keeps
-  an HDR render target, a full-screen tone-mapping pass and, where antialiasing
-  is kept, an FXAA pass, which the old suppressed frame did not run. In a test
-  scene (physical sky and 40 meshes), measured with the renderer's GPU timer on
-  an RTX 5070 Ti at 1920 by 1080 and on an Intel integrated GPU at 1280 by 720,
-  the frame with tone mapping and FXAA took 9 to 16 percent more GPU time than
-  the old frame on the private FXAA fallback and 31 to 34 percent more than the
-  old direct frame on a canvas without antialiasing. It took 6 to 16 percent
-  less than the survival-tier chain with bloom. On the integrated GPU that is
-  11.8 ms against 10.8 ms, and 8.1 ms against 6.2 ms.
+  chain. The controller suppresses only when that takes work off the frame. It
+  adds up what the frame will draw, including the FXAA pass the renderer appends
+  (`suppressedPostFXAddsFXAA` reports it; WebGPU appends none). That pass reads
+  nine texels per pixel where a vignette, a color grade or film grain reads one,
+  so a chain whose only extra effects are single-pass color effects keeps them
+  on a canvas that gets the FXAA pass, instead of trading them for a costlier
+  pass. A chain that holds only tone mapping and FXAA, or whose other effects
+  the survival tier already dropped, does not suppress either. In these cases
+  suppression spends no quality revision, starts no cooldown and emits no
+  transition event. `data-gosx-scene3d-postfx` reads `enabled` while a
+  tone-mapping effect remains. A canvas with its own MSAA now compiles the FXAA
+  program at startup, with the other post programs, instead of on the first
+  suppressed frame.
+
+  The suppressed frame keeps an HDR render target, a full-screen tone-mapping
+  pass and, where antialiasing is kept, an FXAA pass, which the old suppressed
+  frame did not run. These figures come from the renderer's GPU timer in a test
+  scene (physical sky and 40 meshes) on an Intel integrated GPU at 1280 by 720
+  and an RTX 5070 Ti at 1920 by 1080. Each compares two chains within one page
+  load, because absolute times differ between loads and sessions; none are
+  given. On the private FXAA fallback, tone mapping with FXAA took 8 to 9
+  percent more GPU time than the old FXAA-only frame. On a canvas without
+  antialiasing the suppressed frame is tone mapping alone, which took 12 percent
+  (integrated GPU) to 18 percent (RTX) more than the old direct frame. On the
+  fallback canvas, tone mapping with FXAA took 7 to 15 percent less than the
+  survival chain of bloom, tone mapping and FXAA, and 1 to 7 percent less than
+  bloom and tone mapping with no authored FXAA. It took 3 to 8 percent more than
+  a vignette with tone mapping or a color grade with tone mapping, which is why
+  the controller leaves those chains alone. MSAA canvases, WebGPU rendering of a
+  suppressed scene, film grain, and Bon Voyage were not measured.
 
 - Hold a Scene3D motion frame that arrives while the scene's models are still
   hydrating, then apply it when they commit, instead of rejecting it with

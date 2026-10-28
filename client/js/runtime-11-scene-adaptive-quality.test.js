@@ -170,6 +170,178 @@ test("Scene3D adaptive controller still suppresses a chain that has no tone mapp
   assert.equal(h.mount.getAttribute("data-gosx-scene3d-postfx"), "none");
 });
 
+// FXAA is not free. On a canvas that was antialiased without post effects the
+// WebGL2 renderer draws an FXAA pass after the suppressed chain (through the
+// private fallback, or over the canvas's own MSAA). That pass reads nine texels
+// per pixel where a vignette or a color grade reads one, and it measured about
+// twice either on an integrated GPU. The controller asks the renderer whether
+// it adds the pass and suppresses only when the effects it sheds cost more than
+// the pass it adds. A renderer without the method (WebGPU, which resolves its
+// MSAA into the post target) or one that answers no (a canvas that never had
+// antialiasing) adds nothing, so shedding an effect is always a pass saved.
+const rendererAdds = () => true;
+const rendererAddsNothing = () => false;
+
+function overBudget(effects, suppressedPostFXAddsFXAA) {
+  const h = suppressionHarness(effects);
+  if (suppressedPostFXAddsFXAA) h.renderer.suppressedPostFXAddsFXAA = suppressedPostFXAddsFXAA;
+  const chain = kinds(h.sceneState.postEffects);
+  const revision = h.state.qualityRevision;
+  for (let i = 0; i < 80; i++) h.sample(20);
+  return { ...h, chain, revision };
+}
+
+test("Scene3D adaptive controller does not trade single-pass color effects for the FXAA pass the renderer adds", () => {
+  const cases = {
+    "vignette and tone mapping": [{ kind: "vignette" }, { kind: "toneMapping" }],
+    "color grade and tone mapping": [{ kind: "colorGrade" }, { kind: "toneMapping" }],
+    "film grain and tone mapping": [{ kind: "grain" }, { kind: "toneMapping" }],
+    "vignette, color grade and tone mapping": [{ kind: "vignette" }, { kind: "colorGrade" }, { kind: "toneMapping" }],
+    "a vignette with no tone mapping, where the fallback would draw FXAA alone": [{ kind: "vignette" }],
+    "FXAA alone, which the fallback would redraw": [{ kind: "fxaa" }],
+  };
+  for (const [name, effects] of Object.entries(cases)) {
+    const run = overBudget(effects, rendererAdds);
+    assert.equal(run.state.badFrames >= 20, true, `${name}: the frames keep missing the budget`);
+    assert.equal(run.state.postFXSuppressed, false, `${name}: suppression would swap them for a pass that costs as much or more`);
+    assert.equal(run.state.qualityRevision, run.revision, `${name}: no quality revision is spent`);
+    assert.equal(run.state.cooldownUntilMS, 0, `${name}: no cooldown starts`);
+    assert.notEqual(run.state.transitionReason, "postfx", `${name}: no postfx transition`);
+    assert.deepEqual(run.events, [], `${name}: no adaptive-quality-transition event`);
+    assert.deepEqual(kinds(run.sceneState.postEffects), run.chain, `${name}: the chain is unchanged`);
+  }
+});
+
+test("Scene3D adaptive controller still sheds single-pass color effects when the renderer adds no FXAA", () => {
+  const cases = {
+    "vignette and tone mapping": [[{ kind: "vignette" }, { kind: "toneMapping" }], ["toneMapping"]],
+    "color grade and tone mapping": [[{ kind: "colorGrade" }, { kind: "toneMapping" }], ["toneMapping"]],
+    "film grain and tone mapping": [[{ kind: "grain" }, { kind: "toneMapping" }], ["toneMapping"]],
+    "a vignette with no tone mapping": [[{ kind: "vignette" }], []],
+    "FXAA alone, which an unantialiased canvas draws without it": [[{ kind: "fxaa" }], []],
+  };
+  for (const [name, [effects, left]] of Object.entries(cases)) {
+    for (const renderer of [undefined, rendererAddsNothing]) {
+      const run = overBudget(effects, renderer);
+      assert.equal(run.state.postFXSuppressed, true, `${name}: suppression takes a pass off the frame and adds none`);
+      assert.deepEqual(kinds(run.sceneState.postEffects), left, name);
+    }
+  }
+});
+
+test("Scene3D adaptive controller still suppresses when the shed effect costs more than the FXAA pass the renderer adds", () => {
+  const cases = {
+    "bloom and tone mapping": [[{ kind: "bloom" }, { kind: "toneMapping" }], ["toneMapping"]],
+    "bloom, vignette and tone mapping": [[{ kind: "bloom" }, { kind: "vignette" }, { kind: "toneMapping" }], ["toneMapping"]],
+    "depth of field and tone mapping": [[{ kind: "dof" }, { kind: "toneMapping" }], ["toneMapping"]],
+    "bloom with no tone mapping": [[{ kind: "bloom" }], []],
+  };
+  for (const [name, [effects, left]] of Object.entries(cases)) {
+    const run = overBudget(effects, rendererAdds);
+    assert.equal(run.state.postFXSuppressed, true, name);
+    assert.equal(run.state.transitionReason, "postfx", name);
+    assert.equal(run.state.qualityRevision, run.revision + 1, `${name}: one revision`);
+    assert.deepEqual(kinds(run.sceneState.postEffects), left, name);
+  }
+});
+
+test("Scene3D adaptive controller does not count an FXAA pass the chain already runs", () => {
+  const cases = {
+    "an authored FXAA": [{ kind: "vignette" }, { kind: "toneMapping" }, { kind: "fxaa" }],
+    "a denied TAA that the survival tier turned into FXAA": [{ kind: "taa" }, { kind: "vignette" }, { kind: "toneMapping" }],
+  };
+  for (const [name, effects] of Object.entries(cases)) {
+    const run = overBudget(effects, rendererAdds);
+    assert.equal(run.state.postFXSuppressed, true, `${name}: the renderer appends nothing, so the vignette is a pass saved`);
+    assert.deepEqual(kinds(run.sceneState.postEffects), ["toneMapping", "fxaa"], name);
+  }
+  // With no tone mapping the chain empties and a fallback canvas redraws the FXAA the author had, so only the other effects are shed.
+  const bloom = overBudget([{ kind: "bloom" }, { kind: "fxaa" }], rendererAdds);
+  assert.equal(bloom.state.postFXSuppressed, true, "bloom is shed even though the fallback keeps an FXAA pass");
+  const vignette = overBudget([{ kind: "vignette" }, { kind: "fxaa" }], rendererAdds);
+  assert.equal(vignette.state.postFXSuppressed, true, "the vignette is shed and FXAA runs either way");
+  assert.equal(vignette.sceneState.postEffects.length, 0);
+});
+
+test("Scene3D adaptive controller tells the renderer whether the chain it keeps is empty", () => {
+  const asked = [];
+  const ask = (kept) => { asked.push(kept); return false; };
+  const run = (effects) => {
+    asked.length = 0;
+    const h = suppressionHarness(effects);
+    h.renderer.suppressedPostFXAddsFXAA = ask;
+    for (let i = 0; i < 80; i++) h.sample(20);
+    return asked.slice();
+  };
+  assert.deepEqual(run([{ kind: "bloom" }, { kind: "toneMapping" }]), [true], "tone mapping is kept, so the chain is not empty");
+  assert.deepEqual(run([{ kind: "bloom" }]), [false], "with no tone mapping the kept chain is empty");
+  assert.deepEqual(run([{ kind: "bloom" }, { kind: "toneMapping" }, { kind: "fxaa" }]), [], "the kept chain has its own FXAA, so there is nothing to ask");
+});
+
+// The gate runs on every frame that misses the budget at the last tier, so it
+// must not build the kept chain or normalize strings. A context whose array and
+// string builders throw proves that it does neither.
+test("Scene3D post-FX shed gate builds no array and normalizes no string", () => {
+  const { api, context } = loadSceneAdaptiveQualityAPI();
+  const effects = (...names) => names.map((kind) => ({ kind }));
+  const sceneState = { _adaptiveSourcePostEffects: effects("taa", "bloom", "vignette", "toneMapping"), postEffects: effects("bloom", "vignette", "toneMapping", "fxaa") };
+  const renderer = { suppressedPostFXAddsFXAA: () => true };
+  const expected = api.sceneAdaptivePostFXSheds(sceneState, renderer);
+  vm.runInContext(`
+    for (const name of ["push", "concat", "slice", "filter", "map"]) Array.prototype[name] = function() { throw new Error("gate called Array.prototype." + name); };
+    for (const name of ["toLowerCase", "trim", "concat"]) String.prototype[name] = function() { throw new Error("gate called String.prototype." + name); };
+  `, context);
+  for (let i = 0; i < 100; i++) assert.equal(api.sceneAdaptivePostFXSheds(sceneState, renderer), expected);
+  assert.equal(api.sceneAdaptivePostFXSheds({ _adaptiveSourcePostEffects: [], postEffects: [] }, renderer), false);
+});
+
+// Over every short chain, the gate must agree with what the frame draws. The
+// kept chain comes from the real sceneAdaptivePostFXKept. Each renderer adds its
+// FXAA the way the WebGL2 renderer does: a canvas on the private fallback adds
+// one to any chain (alone, if the chain is empty); a canvas with its own MSAA
+// adds one after a chain that is not empty; any other canvas adds none. Costs
+// follow the contract in sceneAdaptivePostFXCost: tone mapping, vignette, color
+// grade and grain weigh 1, FXAA 2 and every other effect 3. The gate must shed
+// exactly when the drawn frame weighs less than the running one.
+test("Scene3D post-FX shed gate sheds exactly when the frame it draws weighs less", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const names = ["toneMapping", "fxaa", "taa", "bloom", "vignette", "colorGrade", "grain", "ssao"];
+  let chains = [[]];
+  for (let length = 1; length <= 4; length++) {
+    chains = chains.concat(chains.filter((chain) => chain.length === length - 1).flatMap((prefix) => names.map((name) => [...prefix, name])));
+  }
+  assert.equal(chains.length, 1 + 8 + 64 + 512 + 4096);
+  const weight = { toneMapping: 1, vignette: 1, colorGrade: 1, grain: 1, fxaa: 2 };
+  const cost = (chain) => chain.reduce((sum, kind) => sum + (weight[kind] || 3), 0);
+  const effects = (chain) => chain.map((kind) => ({ kind }));
+  // What the survival tier leaves running: no SSAO or TAA, and an FXAA for a denied TAA.
+  const survival = (chain) => {
+    const next = chain.filter((kind) => kind !== "ssao" && kind !== "taa");
+    return chain.includes("taa") && !next.includes("fxaa") ? [...next, "fxaa"] : next;
+  };
+  const renderers = {
+    fallback: () => true,
+    msaa: (kept) => kept,
+    plain: () => false,
+    "no method": null,
+  };
+  // What the renderer draws for a kept chain: an FXAA after it, unless it has one.
+  const drawn = (kept, adds) => (adds && adds(kept.length > 0) && !kept.includes("fxaa") ? [...kept, "fxaa"] : kept);
+  let sheds = 0, holds = 0;
+  for (const source of chains) {
+    const kept = Array.from(api.sceneAdaptivePostFXKept(effects(source)), (effect) => effect.kind);
+    const running = survival(source);
+    for (const [name, adds] of Object.entries(renderers)) {
+      const sceneState = { _adaptiveSourcePostEffects: effects(source), postEffects: effects(running) };
+      const gate = api.sceneAdaptivePostFXSheds(sceneState, adds ? { suppressedPostFXAddsFXAA: adds } : null);
+      const after = drawn(kept, adds);
+      assert.equal(gate, cost(after) < cost(running), `${name}: ${source} runs ${running} and would draw ${after}`);
+      if (gate) sheds += 1; else holds += 1;
+    }
+  }
+  assert.ok(sheds > 1000 && holds > 1000, `the sweep reaches both outcomes (${sheds} sheds, ${holds} holds)`);
+});
+
 test("Scene3D declarative status bindings expose backend fallback and quality without CSS :has()", () => {
   const { api } = loadSceneAdaptiveQualityAPI();
   const scope = new FakeElement("section", null);

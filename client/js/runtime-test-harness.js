@@ -3369,6 +3369,7 @@ function loadSceneAdaptiveQualityAPI() {
       sceneQualityLadderPointBudgetScale, sceneApplyPointBudgetScale,
       scenePrimeAdaptiveQuality,
       sceneSyncStatusBindings,
+      sceneAdaptivePostFXKept, sceneAdaptivePostFXSheds,
     };
   `, { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText, context, { filename: "scene-adaptive-quality.js" });
   return { api: context.adaptiveAPI, clock, context };

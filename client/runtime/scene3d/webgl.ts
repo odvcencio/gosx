@@ -6683,11 +6683,11 @@
     if (bundle.environment && bundle.environment.sky && !hooks.skyResources.renderer) {
       hooks.skyResources.renderer = createSceneSkyWebGLRenderer(gl, hooks.textureCache, hooks.placeholder);
     }
-    const canvasFallback = scenePBRPostCanvasAntialiasFallback.has(gl);
-    if (bundle.postEffects?.length || canvasFallback) {
+    if (bundle.postEffects?.length || scenePBRPostCanvasAntialiasFallback.has(gl)) {
       if (!hooks.postProcessor) {
         hooks.postProcessor = createScenePostProcessor(gl, hooks.resolveUniform);
-        if (canvasFallback) hooks.postProcessor.preparePrograms(scenePBRCanvasFXAAEffects);
+        // A suppressed frame may draw FXAA, and the first one comes when the device is already over budget.
+        if (scenePBRSuppressedFXAA(gl, true)) hooks.postProcessor.preparePrograms(scenePBRCanvasFXAAEffects);
       }
       if (bundle.postEffects?.length) hooks.postProcessor.preparePrograms(bundle.postEffects);
     }
@@ -11172,6 +11172,7 @@
       getFrameTiming: frameTimer.snapshot,
       pollPerformanceSample: frameTimer.sample,
       getPerformanceTimingStatus: frameTimer.timingStatus,
+      suppressedPostFXAddsFXAA: function(kept: boolean) { return scenePBRSuppressedFXAA(gl, kept === true); },
       renderSurfaces: renderSurfaces,
       dispose: function() { frameTimer.dispose(); dispose(); },
       diagnostics: diagnostics,
@@ -11207,10 +11208,17 @@
     return sceneBool(props && props.antialias, tierDefault);
   }
 
-  // Adaptive suppression leaves a chain of tone mapping, which draws into the single-sample post target.
-  // A canvas that would be antialiased without post effects (its own MSAA, or the private FXAA fallback) gets FXAA appended.
+  // Adaptive suppression can leave a chain of tone mapping, which draws into the single-sample post target.
+  // A canvas that would be antialiased without post effects (its own MSAA, or the private FXAA fallback) then gets FXAA appended.
+  // The fallback also draws FXAA alone for an empty chain; a canvas with its own MSAA draws an empty chain directly.
+  // `kept` says the chain suppression leaves is not empty. The mount asks through suppressedPostFXAddsFXAA before it
+  // suppresses, so it never trades an effect for an FXAA pass that costs more.
+  function scenePBRSuppressedFXAA(gl: WebGL2RenderingContext, kept: boolean): boolean {
+    return scenePBRPostCanvasAntialiasFallback.has(gl) || (kept && scenePBRMultisampleCanvas.has(gl));
+  }
+
   function scenePBRSuppressedEdgeEffects(gl: WebGL2RenderingContext, frameMeta: any, effects: any[]): any[] {
-    if (!effects.length || !frameMeta?.postFXSuppressed || !(scenePBRPostCanvasAntialiasFallback.has(gl) || scenePBRMultisampleCanvas.has(gl))) return effects;
+    if (!effects.length || !frameMeta?.postFXSuppressed || !scenePBRSuppressedFXAA(gl, true)) return effects;
     return effects.some(function(effect) { return effect.kind === "fxaa"; }) ? effects : effects.concat(scenePBRCanvasFXAAEffects);
   }
 
