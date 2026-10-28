@@ -95,6 +95,35 @@ test("water wrapper follows live world state and timing methods", () => {
   result.renderer.dispose();
 });
 
+test("water wrapper answers the suppression question with the world renderer's canvas and chain", () => {
+  // Adaptive quality asks the renderer it holds whether suppression will add an FXAA pass, and which post chain
+  // the last frame drew. With a world pass the canvas and the chain are the world renderer's, so the wrapper must
+  // pass both on; a water-only renderer adds nothing and has no chain.
+  const asked = [];
+  const worldAnswer = (kept) => { asked.push(kept); return true; };
+  const worldChain = () => [{kind:"vignette"}, {kind:"toneMapping"}];
+  const context = {
+    sceneNumber: (value, fallback) => Number(value) || fallback,
+    sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
+    window: { __gosx_scene3d_api: {}, __gosx_scene3d_webgl_api: {
+      createSceneWaterRendererWebGL: () => ({kind:"webgl", render() {}, dispose() {}}),
+      createScenePBRRendererOrFallback: () => ({suppressedPostFXAddsFXAA:worldAnswer, drawnPostEffects:worldChain, render() {}, renderSurfaces() {}, dispose() {}}),
+    } },
+  };
+  vm.createContext(context);
+  vm.runInContext(ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText, context);
+  const result = context.createSceneWaterWebGLResult({getContext:()=>({})}, {scene:{waterSystems:[{id:"cove"}]}}, {tier:"full"}, "");
+  assert.equal(typeof result.renderer.suppressedPostFXAddsFXAA, "undefined", "a water-only renderer has no post chain to add FXAA to");
+  assert.equal(typeof result.renderer.drawnPostEffects, "undefined", "a water-only renderer has no post chain to report");
+  result.renderer.render({environment:{ocean:{}}}, {}, {});
+  assert.equal(result.renderer.isWaterWorldComposite, true);
+  assert.equal(result.renderer.suppressedPostFXAddsFXAA, worldAnswer);
+  assert.equal(result.renderer.suppressedPostFXAddsFXAA(true), true);
+  assert.deepEqual(asked, [true]);
+  assert.equal(result.renderer.drawnPostEffects, worldChain);
+  result.renderer.dispose();
+});
+
 function rendererHarness() {
   const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
   env.context.WebGL2RenderingContext = FakeWebGLContext;

@@ -6683,11 +6683,11 @@
     if (bundle.environment && bundle.environment.sky && !hooks.skyResources.renderer) {
       hooks.skyResources.renderer = createSceneSkyWebGLRenderer(gl, hooks.textureCache, hooks.placeholder);
     }
-    const canvasFallback = scenePBRPostCanvasAntialiasFallback.has(gl);
-    if (bundle.postEffects?.length || canvasFallback) {
+    if (bundle.postEffects?.length || scenePBRPostCanvasAntialiasFallback.has(gl)) {
       if (!hooks.postProcessor) {
         hooks.postProcessor = createScenePostProcessor(gl, hooks.resolveUniform);
-        if (canvasFallback) hooks.postProcessor.preparePrograms(scenePBRCanvasFXAAEffects);
+        // A suppressed frame may draw FXAA, and the first one comes when the device is already over budget.
+        if (scenePBRSuppressedFXAA(gl, true)) hooks.postProcessor.preparePrograms(scenePBRCanvasFXAAEffects);
       }
       if (bundle.postEffects?.length) hooks.postProcessor.preparePrograms(bundle.postEffects);
     }
@@ -7634,7 +7634,7 @@
   }
 
   function createScenePBRRenderer(gl, canvas) {
-    let selectiveBloom = false;
+    let selectiveBloom = false, lastPostEffects: any[] | null = null;
 
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -9050,13 +9050,13 @@
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
       postEffects = sceneSpecularBloomEffects(bundle, postEffects, "webgl", hasLineData || hasPointsData || !!(bundle.waterSystems && bundle.waterSystems.length) || !!(bundle.environment && (bundle.environment.ocean || bundle.environment.clouds)) || !gl.getExtension("EXT_color_buffer_float"), canvas.parentNode);
-      selectiveBloom = sceneSpecularBloomRequested(postEffects);
+      lastPostEffects = postEffects; selectiveBloom = sceneSpecularBloomRequested(postEffects);
       var authoredPostEffects = postEffects.length > 0;
       var postFXMaxPixels = typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
       var hasTransmission = sceneTransmissionPresent(bundle);
       var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
       transmissionSettings.screen = transmissionSettings.screen && hasTransmission;
-      if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
+      postEffects = scenePBRSuppressedEdgeEffects(gl, frameMeta, transmissionSettings.screen ? sceneTransmissionEffects(postEffects, bundle.environment) : postEffects);
       const canvasFXAAFallback = scenePBRPostCanvasAntialiasFallback.has(gl) && postEffects.length === 0;
       if (canvasFXAAFallback) {
         postEffects = scenePBRCanvasFXAAEffects;
@@ -11172,6 +11172,10 @@
       getFrameTiming: frameTimer.snapshot,
       pollPerformanceSample: frameTimer.sample,
       getPerformanceTimingStatus: frameTimer.timingStatus,
+      suppressedPostFXAddsFXAA: function(kept: boolean) { return scenePBRSuppressedFXAA(gl, kept === true); },
+      // The chain the last frame drew from the author's effects, after the atmosphere tier and the draw path dropped what they cannot run.
+      // The mount weighs it, not its own chain, to decide whether suppression takes work off the frame. Null before the first frame.
+      drawnPostEffects: function() { return lastPostEffects; },
       renderSurfaces: renderSurfaces,
       dispose: function() { frameTimer.dispose(); dispose(); },
       diagnostics: diagnostics,
@@ -11193,6 +11197,7 @@
   // --- Integration ---
 
   var scenePBRPostCanvasAntialiasFallback = new WeakSet();
+  var scenePBRMultisampleCanvas = new WeakSet();
   const scenePBRCanvasFXAAEffects = [{ kind: "fxaa" }];
   function scenePBRCanvasAntialias(props, capability, ignorePost = false) {
     const caps = capability || {};
@@ -11204,6 +11209,20 @@
     const effects = scene.postEffects || scene.postFX || props && (props.postEffects || props.postFX);
     if (!ignorePost && Array.isArray(effects) && effects.length && !sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false))) return false;
     return sceneBool(props && props.antialias, tierDefault);
+  }
+
+  // Adaptive suppression can leave a chain of tone mapping, which draws into the single-sample post target.
+  // A canvas that would be antialiased without post effects (its own MSAA, or the private FXAA fallback) then gets FXAA appended.
+  // The fallback also draws FXAA alone for an empty chain; a canvas with its own MSAA draws an empty chain directly.
+  // `kept` says the chain suppression leaves is not empty. The mount asks through suppressedPostFXAddsFXAA before it
+  // suppresses, so it never trades an effect for an FXAA pass that costs more.
+  function scenePBRSuppressedFXAA(gl: WebGL2RenderingContext, kept: boolean): boolean {
+    return scenePBRPostCanvasAntialiasFallback.has(gl) || (kept && scenePBRMultisampleCanvas.has(gl));
+  }
+
+  function scenePBRSuppressedEdgeEffects(gl: WebGL2RenderingContext, frameMeta: any, effects: any[]): any[] {
+    if (!effects.length || !frameMeta?.postFXSuppressed || !scenePBRSuppressedFXAA(gl, true)) return effects;
+    return effects.some(function(effect) { return effect.kind === "fxaa"; }) ? effects : effects.concat(scenePBRCanvasFXAAEffects);
   }
 
   function createScenePBRContext(canvas, props, capability, canvasAlpha = null, ignorePost = false) {
@@ -11219,7 +11238,7 @@
         depth: true,
         powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
       });
-      if (gl && !antialias && scenePBRCanvasAntialias(props, caps, true)) scenePBRPostCanvasAntialiasFallback.add(gl);
+      if (gl && scenePBRCanvasAntialias(props, caps, true)) (antialias ? scenePBRMultisampleCanvas : scenePBRPostCanvasAntialiasFallback).add(gl);
       return gl;
     } catch (_error) {
       return null;
