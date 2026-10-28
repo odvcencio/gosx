@@ -90,10 +90,12 @@ GoSX keeps Go out of these calls:
   them, they only record the call, and Go runs them after the JavaScript call
   has returned and before the Go function returns. These are the calls:
   `Element.Dispatch`, `Focus`, `Blur` and `Click`, `DispatchResize`,
-  `DispatchError`, `Context.Emit`, `Context.SetSignal`, `SetSignals`,
-  `SetChangedSignals`, the main-thread batches of a `View`, the replay of the
-  current value that `ServeCalls` asks for when it subscribes, and the netplay
-  link's `Open` and `Signal`.
+  `DispatchError`, `Context.Emit`, `Context.Navigate` (the page's `navigate`
+  dispatches `gosx:navigation:state` before it first waits, and a same-document
+  navigation also dispatches `gosx:navigate`), `Context.SetSignal`,
+  `SetSignals`, `SetChangedSignals`, the main-thread batches of a `View`, the
+  replay of the current value that `ServeCalls` asks for when it subscribes, and
+  the netplay link's `Open` and `Signal`.
 
 What this changes for your code:
 
@@ -105,10 +107,30 @@ What this changes for your code:
   still names the element the listener is attached to. An event that the page
   raises, such as a user's click, still reaches a Go listener inside the
   browser's own dispatch, and the listener can cancel it.
-- A Go subscriber of a shared signal that Go writes runs after the page's other
-  subscribers of that write, and sees the whole batch. A subscriber that writes
-  another signal has that write's subscribers finish before its own write
-  returns, as before.
+- The same holds for every event that the browser or page code raises while Go
+  is inside one of these calls, not only for the event that Go dispatches. A Go
+  listener cannot cancel the default action of such an event. `Click` on a
+  submit button submits its form, whatever a Go `submit` listener does, and so
+  does a `requestSubmit` that a page script makes in reaction to `SetSignal` or
+  `Emit`. In Chrome for Testing 156, a form whose Go `submit` listener called
+  `PreventDefault` loaded its target frame once after `Click()` on its submit
+  button and once after a `requestSubmit` made during `SetSignal`; the same
+  `requestSubmit` started by a page timer loaded it zero times, because the Go
+  listener cancelled it. To let Go code decide whether a form submits, call that
+  code directly instead of calling `Click`.
+- When the target is inside a shadow tree, `Event.Target` and
+  `Event.RelatedTarget` do not name what they named during the dispatch. After
+  the dispatch the browser leaves them as seen from outside the shadow tree,
+  which is the outermost shadow host for a composed event (a click or a focus
+  change), and clears them for an event that is not composed, such as every
+  event that `Element.Dispatch` creates. A cleared one is an invalid `Element`.
+  `Event.CurrentTarget` still names the element the listener is attached to.
+- On the main thread, a Go subscriber of a shared signal that Go writes runs
+  after the page's other subscribers of that write, and sees the whole batch. A
+  subscriber that writes another signal has that write's subscribers finish
+  before its own write returns, as before. In a worker, a write goes to the page
+  as a message, and Go subscribers run later, when the page sends the value
+  back.
 - A Go listener that an earlier Go listener disposes during the same dispatch
   does not run, as in the browser. Go listeners that dispatch another event see
   that event's listeners finish before they continue.

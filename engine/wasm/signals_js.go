@@ -14,9 +14,11 @@ import (
 // SetSignal writes a JSON value into the page's shared GoSX signal runtime.
 // Unlike signal.NewShared's native value, this crosses the engine/VM boundary.
 //
-// The page notifies its subscribers before the write returns. Go subscribers
-// (SubscribeSignal) run after the page has notified the others, and before
-// SetSignal returns; they do not run inside the call into JavaScript.
+// On the main thread the page notifies its subscribers before the write
+// returns. Go subscribers (SubscribeSignal) run after the page has notified the
+// others, and before SetSignal returns; they do not run inside the call into
+// JavaScript. In a worker, SetSignal posts the write to the page and returns,
+// and Go subscribers run later, when the page sends the value back.
 func (c Context) SetSignal(name string, value any) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -41,10 +43,11 @@ func (c Context) SetSignal(name string, value any) (err error) {
 // SubscribeSignal receives JSON from subsequent writes to a page shared signal.
 // Dispose the returned HandleFunc to detach and release the Go callback.
 //
-// When Go itself writes the signal (SetSignal, SetSignals), the handler runs
-// after the page has notified its other subscribers and before the write
-// returns. A write from page code reaches the handler inside the page's own
-// notification, as before.
+// On the main thread, when Go itself writes the signal (SetSignal, SetSignals),
+// the handler runs after the page has notified its other subscribers and before
+// the write returns. A write from page code reaches the handler inside the
+// page's own notification, as before. In a worker the handler runs later, when
+// the page sends the value back, for a write from Go and for one from page code.
 func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (dispose HandleFunc, err error) {
 	return c.subscribeSignal(name, handler, false)
 }

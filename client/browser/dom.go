@@ -19,6 +19,24 @@
 // dispatch, so a Go listener cannot cancel the click that Click performs.
 // Event.CurrentTarget still names the element the listener is attached to.
 //
+// This holds for every event that the browser or page code raises while Go is
+// inside one of these calls, not only for the event that Go dispatches. Two
+// results follow:
+//
+//   - A Go listener cannot cancel the default action of such an event. Click on
+//     a submit button submits its form, whatever a Go submit listener does, and
+//     so does a requestSubmit that a page script makes in reaction to
+//     Context.SetSignal or Context.Emit of package m31labs.dev/gosx/engine/wasm.
+//     To let Go code decide whether a form submits, call that code directly
+//     instead of calling Click.
+//   - When the target is inside a shadow tree, Event.Target and
+//     Event.RelatedTarget do not name what they named during the dispatch. After
+//     the dispatch the browser leaves them as seen from outside the shadow tree,
+//     which is the outermost shadow host for a composed event (a click or a
+//     focus change), and clears them for an event that is not composed, such as
+//     every event that Dispatch creates. A cleared one is an invalid Element.
+//     Event.CurrentTarget is not affected.
+//
 // An event that the page raises, such as a user's click, still reaches a Go
 // listener inside the browser's own dispatch, and the listener can cancel it.
 //

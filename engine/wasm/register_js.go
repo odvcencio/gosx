@@ -106,9 +106,11 @@ func (c Context) DecodeProps(dst any) error {
 }
 
 // Emit dispatches a gosx:engine:<name> CustomEvent through the framework
-// context. The browser runs every listener before Emit returns. Go listeners,
-// such as one added with browser.Document().On, run after the browser has
-// delivered the event to all its listeners, and before Emit returns.
+// context. On the main thread the browser runs every listener before Emit
+// returns. Go listeners, such as one added with browser.Document().On, run after
+// the browser has delivered the event to all its listeners, and before Emit
+// returns. In a worker, Emit posts the event to the page and returns, and the
+// page dispatches it later.
 func (c Context) Emit(name string, detail any) error {
 	return emitContextEvent(c.value, name, detail)
 }

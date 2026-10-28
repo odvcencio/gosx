@@ -36,6 +36,17 @@ type Event struct{ value, current js.Value }
 // after the browser has delivered the event to all its listeners, and before
 // the Go call returns. PreventDefault, StopPropagation and
 // StopImmediatePropagation are too late to change that dispatch.
+//
+// This holds for every event that the browser or page code raises while Go is
+// inside such a call, not only for the event that Go dispatches. The Go listener
+// cannot cancel the default action of such an event: Click on a submit button
+// submits its form, whatever a Go submit listener does. And when the target is
+// inside a shadow tree, Event.Target and Event.RelatedTarget do not name what
+// they named during the dispatch. After the dispatch the browser leaves them as
+// seen from outside the shadow tree, which is the outermost shadow host for a
+// composed event (a click or a focus change), and clears them for an event that
+// is not composed, such as every event that Dispatch creates. A cleared one is
+// an invalid Element. Event.CurrentTarget is not affected.
 type Listener struct {
 	target   js.Value
 	event    string

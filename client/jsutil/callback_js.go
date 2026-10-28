@@ -203,6 +203,12 @@ func (g *gate) begin() *frame {
 // frame recorded. It runs when the JavaScript call panics too, so a failed call
 // cannot leave the trap on a push function, where every later call from
 // JavaScript would be lost.
+//
+// The trap goes back before the recorded calls run, not after. A recorded call
+// that panics, or that waits for JavaScript (a listener that waits for a timer),
+// would otherwise leave the trap on a push function while it runs or for good,
+// and every call from JavaScript to a Callback in that time would be recorded
+// and never run.
 func (g *gate) end(f *frame) {
 	g.mu.Lock()
 	for i := len(g.frames) - 1; i >= 0; i-- {

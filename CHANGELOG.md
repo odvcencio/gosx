@@ -46,26 +46,39 @@
 
   Go listeners and subscribers no longer run inside the calls that start them.
   `Element.Dispatch`, `Focus`, `Blur` and `Click`, `browser.DispatchResize`,
-  `browser.DispatchError`, `Context.Emit`, `Context.SetSignal`, `SetSignals` and
-  `SetChangedSignals`, the main-thread batches of a `View`, the replay in
-  `SubscribeSignal` (and so `ServeCalls`), and the netplay link's `Open` and
-  `Signal` made the browser run Go listeners, signal subscribers or state
-  callbacks inside the call from Go into JavaScript. Those Go functions are now
-  `jsutil.Callback`s, and these calls go through the new `jsutil.Call`: while
-  the JavaScript call runs, a callback only records the call, and Go runs the
-  recorded calls in order after the JavaScript call has returned and before the
-  Go function returns. Your own listener or subscriber can use
-  `jsutil.NewCallback` and `jsutil.Call` the same way. A function made with
-  `js.FuncOf` is not deferred and still nests.
+  `browser.DispatchError`, `Context.Emit`, `Context.Navigate` (the page's
+  `navigate` dispatches `gosx:navigation:state` before it first waits),
+  `Context.SetSignal`, `SetSignals` and `SetChangedSignals`, the main-thread
+  batches of a `View`, the replay in `SubscribeSignal` (and so `ServeCalls`), and
+  the netplay link's `Open` and `Signal` made the browser run Go listeners,
+  signal subscribers or state callbacks inside the call from Go into JavaScript.
+  Those Go functions are now `jsutil.Callback`s, and these calls go through the
+  new `jsutil.Call`: while the JavaScript call runs, a callback only records the
+  call, and Go runs the recorded calls in order after the JavaScript call has
+  returned and before the Go function returns. Your own listener or subscriber
+  can use `jsutil.NewCallback` and `jsutil.Call` the same way. A function made
+  with `js.FuncOf` is not deferred and still nests.
 
   Behavior change: a Go listener of a dispatch that Go starts runs after the
   browser has delivered the event to every listener, so `PreventDefault`,
   `StopPropagation` and `StopImmediatePropagation` no longer change that
   dispatch, and a Go listener cannot cancel the click that `Click` performs.
-  `Event.CurrentTarget` still names the listener's element, and an event that
-  the page raises still reaches a Go listener inside the browser's own dispatch.
-  A Go subscriber of a shared signal that Go writes runs after the page's other
-  subscribers of that write, and sees the whole batch.
+  The same holds for every event that the browser or page code raises while Go
+  is inside one of these calls, so a Go listener cannot cancel its default
+  action: `Click` on a submit button submits its form, whatever a Go `submit`
+  listener does, and so does a `requestSubmit` that a page script makes in
+  reaction to `SetSignal` or `Emit`. To let Go code decide whether a form
+  submits, call that code directly instead of calling `Click`.
+  `Event.CurrentTarget` still names the listener's element. When the target is
+  inside a shadow tree, `Event.Target` and `Event.RelatedTarget` read what the
+  browser leaves after the dispatch: the outermost shadow host for a composed
+  event (a click or a focus change), and an invalid `Element` for an event that
+  is not composed, such as every event that `Element.Dispatch` creates. An event
+  that the page raises still reaches a Go listener inside the browser's own
+  dispatch. On the main thread, a Go subscriber of a shared signal that Go
+  writes runs after the page's other subscribers of that write, and sees the
+  whole batch; in a worker, a write goes to the page as a message, and Go
+  subscribers run later, when the page sends the value back.
 
   Two results change. `AwaitPromise` on a value that is not a thenable now
   returns that value, where it used to panic. `jsutil.Describe` returns
