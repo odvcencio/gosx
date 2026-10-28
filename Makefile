@@ -240,6 +240,8 @@ test-fuzz-smoke: test-telemetry-fuzz
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./route -run '^$$' -fuzz FuzzDanmujiRouterHandlesArbitraryEscapedPaths -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzVMEvalNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzIslandReuseMatchesFullEval -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzValueFromJSONFastMatchesReference -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzAppendJSONMatchesMarshal -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 
 # build-bootstrap regenerates the client bootstrap bundles (pure Go — no npm, no
 # node_modules; see cmd/buildbootstrap).

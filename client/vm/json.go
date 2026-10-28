@@ -15,7 +15,21 @@ func ValueFromAny(value any) Value {
 }
 
 // ValueFromJSON decodes arbitrary JSON into a VM value.
+//
+// Text that a single pass can decode without doubt goes straight to a Value.
+// Anything else, including every malformed document, goes through the
+// encoding/json decoder, which gives the same value as before and the error
+// that callers have always seen.
 func ValueFromJSON(raw string) (Value, error) {
+	if value, ok := decodeJSONFast(raw); ok {
+		return value, nil
+	}
+	return valueFromJSONReference(raw)
+}
+
+// valueFromJSONReference decodes with encoding/json. It defines what
+// ValueFromJSON means; decodeJSONFast must agree with it on every text it takes.
+func valueFromJSONReference(raw string) (Value, error) {
 	var value any
 	if err := decodeJSON(raw, &value); err != nil {
 		return Value{}, err

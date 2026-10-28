@@ -575,11 +575,8 @@ func parseAnyValue(value any) Value {
 	case bool:
 		return BoolVal(v)
 	case json.Number:
-		if n, err := v.Int64(); err == nil {
-			return Int64Val(n)
-		}
-		f, _ := v.Float64()
-		return parseAnyValue(f)
+		number, _ := numberValueFromToken(string(v))
+		return number
 	case int:
 		return IntVal(v)
 	case int8:
