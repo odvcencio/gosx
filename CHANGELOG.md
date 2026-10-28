@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Let authors choose which meshes the ocean's planar reflection draws. Add
+  `Mesh.PlanarReflection` and `Model.PlanarReflection` (a `*bool`): every mesh
+  is drawn unless its author sets the field to `scene.Bool(false)`. Where a mesh
+  stands never decides, so an elevated bridge deck reflects beside its pier.
+  Set false on geometry that stands in for the sky, such as a moon, a sun disc
+  or a dome: its mirror image lands in the near water as a hard-edged shape that
+  no wave breaks up, and the sky already supplies the glint. The mesh stays in
+  the main view, in shadows and in screen-space reflections. WebGL2 and WebGPU
+  read the same flag, and imported and crowd batches keep meshes with different
+  values apart. A scene that never sets the field serializes as before.
+  `DiffScene` with `PatchObjectState` changes the flag as a compact state patch
+  that does not resend geometry, and a reset to the default is an explicit true.
+
 - Keep Scene3D tone mapping and antialiasing when adaptive quality suppresses
   post effects. Under sustained load the controller sheds every post effect as
   its last step. It now keeps the tone-mapping effect, so a physical or other
@@ -148,15 +161,6 @@
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered
   DPR, and rAF-only timing can recover quality after sustained clean cadence.
-
-- Keep distant sky bodies out of the ocean's planar reflection. A mesh whose
-  bounds centre is more than 800 m from the camera and whose lowest point is
-  more than 8 degrees above the sea (a moon built as geometry) is no longer
-  mirrored: its image landed in the near water as a hard-edged disc that no
-  wave broke up, and the sky already supplies the glint. Near geometry and any
-  mesh that touches the sea (a mountain, a coast, a tower) still reflects, and
-  so does a skinned mesh or a mesh without valid bounds. WebGL2 and WebGPU
-  judge the same meshes from the real camera and the ocean level.
 
 - Build the TinyGo runtime with 256 KB goroutine stacks (`-stack-size=256KB`).
   TinyGo's 64 KiB default cannot grow, and resolving deeply nested island
