@@ -106,9 +106,15 @@ func TestLowerMeshElementCarriesPlanarReflection(t *testing.T) {
 
 func TestModelPlanarReflectionLowersToModelRecord(t *testing.T) {
 	for _, policy := range []*bool{nil, Bool(true), Bool(false)} {
-		models := Props{Graph: NewGraph(Model{ID: "dome", Src: "/dome.glb", PlanarReflection: policy})}.SceneIR().Models
+		props := Props{Graph: NewGraph(Model{ID: "dome", Src: "/dome.glb", PlanarReflection: policy})}
+		models := props.SceneIR().Models
 		if len(models) != 1 {
 			t.Fatalf("lowered %d models, want 1", len(models))
+		}
+		// The legacy map form carries the same value.
+		legacy := props.LegacyProps()["scene"].(map[string]any)["models"].([]map[string]any)
+		if value, has := legacy[0]["planarReflection"]; has != (policy != nil) || (has && value != *policy) {
+			t.Fatalf("legacy model record planarReflection = %v (present %v), policy %v", value, has, policy)
 		}
 		got := models[0].PlanarReflection
 		if (got == nil) != (policy == nil) || (got != nil && *got != *policy) {

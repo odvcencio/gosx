@@ -2344,6 +2344,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	if item.Visible != nil {
 		record["visible"] = *item.Visible
 	}
+	if item.PlanarReflection != nil {
+		record["planarReflection"] = *item.PlanarReflection
+	}
 	setString(record, "animation", item.Animation)
 	setString(record, "animationSeq", item.AnimationSeq)
 	setNumericPtr(record, "animationSpeed", nonNegativeFloatPtr(item.AnimationSpeed))
