@@ -56,6 +56,7 @@ func TestAwaitPromiseNeverRunsGoInsideAJavaScriptCall(t *testing.T) {
 		failure    string
 	}{
 		{"resolved", `Promise.resolve("done")`, "done", ""},
+		{"value that is not a thenable", `"plain value"`, "plain value", ""},
 		{"rejected", `Promise.reject(new Error("refused"))`, "", "refused"},
 		{"settles later", `new Promise(function (resolve) { setTimeout(resolve, 2, "late"); })`, "late", ""},
 		{"thenable that resolves at once", `({ then(resolve) { resolve("thenable"); } })`, "thenable", ""},
