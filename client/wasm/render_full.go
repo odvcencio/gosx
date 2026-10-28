@@ -8,6 +8,7 @@ import (
 	"syscall/js"
 
 	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/client/jsutil"
 	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/render/bundle"
 	"m31labs.dev/gosx/render/gpu"
@@ -159,17 +160,20 @@ func pickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 			return jsErrorf(fmt.Sprintf("no renderer for engine %q", engineID))
 		}
 
-		promiseCtor := js.Global().Get("Promise")
-		return promiseCtor.New(js.FuncOf(func(_ js.Value, pargs []js.Value) any {
-			resolve := pargs[0]
-			er.renderer.QueuePickResult(x, y, func(result bundle.PickResult) {
-				// Push the pick result into SceneEventSignals via the shared
-				// store, if the caller tagged the event with a known kind.
-				pushPickToSignals(b, engineID, eventType, x, y, result)
-				resolve.Invoke(float64(result.ID))
-			})
-			return nil
-		}))
+		// A Promise built with a Go executor would run that executor inside
+		// the constructor, nested in this call, and the executor's js.Func
+		// would never be released. A native executor avoids both.
+		promise, resolve, _ := jsutil.NewPromiseWithResolvers()
+		if resolve.Type() != js.TypeFunction {
+			return jsErrorf("Promise did not run its executor synchronously")
+		}
+		er.renderer.QueuePickResult(x, y, func(result bundle.PickResult) {
+			// Push the pick result into SceneEventSignals via the shared
+			// store, if the caller tagged the event with a known kind.
+			pushPickToSignals(b, engineID, eventType, x, y, result)
+			resolve.Invoke(float64(result.ID))
+		})
+		return promise
 	})
 }
 

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"syscall/js"
+
+	"m31labs.dev/gosx/client/jsutil"
 )
 
 func CurrentLocation() Location {
@@ -25,8 +27,15 @@ func Viewport() Size {
 	g := js.Global()
 	return Size{Width: platformNumber(g.Get("innerWidth")), Height: platformNumber(g.Get("innerHeight"))}
 }
-func PixelRatio() float64     { return platformNumber(js.Global().Get("devicePixelRatio")) }
-func DispatchResize()         { js.Global().Call("dispatchEvent", js.Global().Get("Event").New("resize")) }
+func PixelRatio() float64 { return platformNumber(js.Global().Get("devicePixelRatio")) }
+
+// DispatchResize dispatches a resize event on the window. The browser runs every
+// listener before it returns. Go listeners run after the browser has delivered
+// the event to all its listeners, and before DispatchResize returns (see
+// Listener).
+func DispatchResize() {
+	jsutil.Call(js.Global(), "dispatchEvent", js.Global().Get("Event").New("resize"))
+}
 func LogError(message string) { js.Global().Get("console").Call("error", message) }
 
 func platformNumber(v js.Value) float64 {
