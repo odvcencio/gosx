@@ -30,6 +30,13 @@ import (
 // soon as the program next returns to JavaScript, and not inside the call that
 // starts the navigation. A call that starts after the abort sees the aborted
 // signal and returns a context that is already canceled.
+//
+// That also means a navigation that Go starts does not cancel the context at
+// once. A request that Go starts before the program next returns to JavaScript
+// passes the context check that Fetch makes first and goes out; the browser
+// aborts it a moment later. To refuse such a request, call DocumentContext again
+// right before it: the call reads the signal at once, so it returns a context
+// that is already canceled after the abort.
 func DocumentContext(parent context.Context) (context.Context, context.CancelFunc, error) {
 	if parent == nil {
 		return nil, nil, errors.New("jsutil: document parent context is required")
@@ -64,6 +71,13 @@ func DocumentContext(parent context.Context) (context.Context, context.CancelFun
 			cancel()
 			signal.Call("removeEventListener", "abort", onAbort)
 		})
+	}
+	// An abort that happened after the check above and before the listener was
+	// added sends no event to the listener. A goroutine switch while the
+	// promise was made is enough to cause that, so read the signal again.
+	if signal.Get("aborted").Bool() {
+		cleanup()
+		return ctx, cancel, nil
 	}
 	go func() {
 		// The wait ends when the signal aborts or when ctx ends, whichever is

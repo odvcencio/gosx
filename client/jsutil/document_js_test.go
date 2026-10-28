@@ -126,8 +126,8 @@ func TestDocumentContextRequiresRuntime(t *testing.T) {
 
 // The browser aborts the document signal inside the call that starts a
 // navigation (location.assign, a form submission, a link click). Go must not run
-// there: Go's js/wasm runtime can fail when two goroutines are inside nested
-// entries. controller.abort() stands for that call.
+// there: a nested entry into Go can stop Go's js/wasm runtime (see the package
+// documentation). controller.abort() stands for that call.
 func TestDocumentContextNeverRunsGoInsideTheAbortCall(t *testing.T) {
 	probe := jsreentry.Install(t)
 	state := documentLifecycle(t)
@@ -199,5 +199,37 @@ func TestDocumentContextRemovesItsListenerOnEveryExit(t *testing.T) {
 	release()
 	if live() != 0 {
 		t.Fatalf("release left %d listeners", live())
+	}
+}
+
+// An abort that happens after DocumentContext reads signal.aborted and before it
+// adds its listener sends no event to that listener. A goroutine switch in
+// between is enough to cause it: another goroutine starts a navigation. The
+// signal below flips to aborted at the moment its listener is added, which is
+// that case. DocumentContext must read the signal again after it has added the
+// listener, and return a context that is already canceled.
+func TestDocumentContextSeesAnAbortThatLandsWhileItAddsItsListener(t *testing.T) {
+	previous := js.Global().Get("__gosx")
+	t.Cleanup(func() { js.Global().Set("__gosx", previous) })
+	state := native(`(function () {
+		const state = { removed: 0 };
+		const signal = {
+			aborted: false,
+			addEventListener(type) { if (type === "abort") signal.aborted = true; },
+			removeEventListener(type) { if (type === "abort") state.removed++; },
+		};
+		globalThis.__gosx = { host: { lifecycle: { documentSignal() { return signal; } } } };
+		return state;
+	})()`)
+	ctx, cancel, err := DocumentContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatalf("an abort that landed while the listener was added was missed: ctx.Err() = %v", ctx.Err())
+	}
+	if state.Get("removed").Int() != 1 {
+		t.Fatalf("the listener of a context that was never live must be removed: removed %d", state.Get("removed").Int())
 	}
 }
