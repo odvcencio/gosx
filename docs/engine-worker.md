@@ -323,14 +323,21 @@ off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * 
   it and reports nothing (a desktop host that attached another instance fails the
   write), so the handler does not start. The engine that mounts next runs the call,
   once. If the write fails, or the page reports nothing within
-  `CallOptions.Timeout` (the bridge dropped the message), the engine answers the
-  call with `Error: "not-started: ..."` and runs no handler: the call is safe to
-  send again, and the next call goes on. A transport must deliver a write to the
-  writer's own subscription, as the page does for any other subscriber. Each call
-  waits for one round trip to the page before its handler starts (on the main
-  thread the page's report arrives while the write is made). Measured in headless
-  Chromium 156 on a busy host, 300 queued `add` calls took about 0.96 s with the
-  wait and 0.87 s without it (median of six rounds), so about 0.3 ms per call.
+  `CallOptions.MarkTimeout` (30 s unless you set it; the bridge dropped the
+  message, or the page stayed busy for that long), the engine answers the call
+  with `Error: "not-started: ..."` and runs no handler: the call is safe to send
+  again, and the next call goes on. The wait is not `CallOptions.Timeout`, the
+  page's deadline for the client. A page whose main thread is busy for longer than
+  `Timeout` is slow, not silent: it reports the mark when it is free again, the
+  call runs late, and its real reply replaces the page's `timeout`. A stall longer
+  than `MarkTimeout` makes the calls that are queued come back `not-started`
+  without running, one `MarkTimeout` at a time, until the page reports a mark. A
+  transport must deliver a write to the writer's own subscription, as the page
+  does for any other subscriber. Each call waits for one round trip to the page
+  before its handler starts (on the main thread the page's report arrives while
+  the write is made). Measured in headless Chromium 156 on a busy host, 300
+  queued `add` calls took about 0.96 s with the wait and 0.87 s without it
+  (median of six rounds), so about 0.3 ms per call.
 - An engine that mounts again on the same signals (the page replaced the engine,
   or a desktop host attached again) finds a call that has no result and whose ID
   is at or below the mark. It answers that call with `Error: "interrupted"` and

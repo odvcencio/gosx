@@ -142,8 +142,14 @@
   save or an order does not happen twice. A call that the old engine finished
   after the page began to dispose it comes back `interrupted` too, because the
   page dropped its reply. A write of the mark that fails, or a page that does
-  not report it within `CallOptions.Timeout`, answers the call with
-  `Error: "not-started: ..."`, runs no handler, and lets the next call go on.
+  not report it within the new `CallOptions.MarkTimeout` (30 s by default,
+  `DefaultCallMarkTimeout`), answers the call with `Error: "not-started: ..."`,
+  runs no handler, and lets the next call go on. That wait is not
+  `CallOptions.Timeout`, the page's deadline for the client: a page whose main
+  thread is busy for longer than `Timeout` reports the mark when it is free
+  again, and the call runs late, as it did before the wait, with its real reply
+  replacing the page's `timeout`. A stall longer than `MarkTimeout` makes the
+  queued calls come back `not-started` without running.
   `ServeCalls` has no such guard, and the documentation now says so. A transport
   must deliver a write to the writer's own subscription, as the page does for
   any other subscriber. Each call waits for one round trip to the page before
