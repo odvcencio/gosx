@@ -51,6 +51,8 @@ func TestProbeCountsAGoListenerRunByDispatchEvent(t *testing.T) {
 
 func TestProbeIgnoresCallbacksThatRunAfterTheCallReturns(t *testing.T) {
 	probe := Install(t)
+	// Install itself waits for one timer entry; count only the three below.
+	probe.Reset()
 	done := make(chan struct{}, 3)
 	signal := js.FuncOf(func(js.Value, []js.Value) any { done <- struct{}{}; return nil })
 	defer signal.Release()
@@ -90,6 +92,29 @@ func TestProbeReportsNestingDepth(t *testing.T) {
 	probe.Reset()
 	if probe.Count() != 0 || probe.Entries() != 0 {
 		t.Fatal("Reset kept earlier entries")
+	}
+}
+
+// Install must leave the calling goroutine inside an entry that the probe
+// counts, however busy the program is. It once paused with time.Sleep(1ms). A
+// goroutine that kept the scheduler busy for longer let that timer expire before
+// the program went back to JavaScript, so Go woke the sleeper itself, the sleeper
+// stayed inside the entry that began before Install, and the probe recorded a
+// Go executor run inside new Promise at depth 1 and counted no nested entry.
+func TestInstallCountsNestedEntriesWhileTheSchedulerIsBusy(t *testing.T) {
+	go func() {
+		for start := time.Now(); time.Since(start) < 5*time.Millisecond; {
+		}
+	}()
+	probe := Install(t)
+	if depth := probe.state.Get("depth").Int(); depth < 1 {
+		t.Fatalf("Install returned outside every counted entry: depth %d", depth)
+	}
+	executor := js.FuncOf(func(js.Value, []js.Value) any { return nil })
+	defer executor.Release()
+	js.Global().Get("Promise").New(executor)
+	if probe.Count() != 1 || probe.MaxDepth() != 2 {
+		t.Fatalf("a Go executor must count as one nested entry at depth 2: count=%d depth=%d", probe.Count(), probe.MaxDepth())
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"sync"
 	"syscall/js"
 	"testing"
-	"time"
 )
 
 // probeSource builds the JavaScript half. It wraps Go.prototype._resume, which
@@ -60,10 +59,17 @@ type Probe struct {
 // Install starts counting and stops when the test ends. Only one probe can be
 // installed at a time.
 //
-// Install pauses the calling goroutine for a moment. The run that starts the
-// program is not a call the probe can see, and code that is still inside it
-// would hide every call nested in it. After the pause the goroutine runs inside
-// a timer entry, which the probe counts as the outermost one.
+// Install does not return until the program has gone back to JavaScript and
+// come back through an entry the probe counts. The run that starts the program
+// is not a call the probe can see, and a goroutine that is still inside it, or
+// inside any entry that began before Install, would hide every call nested in
+// it. Install therefore schedules a JavaScript timer and waits for its
+// callback. A JavaScript timer can fire only after Go has returned to
+// JavaScript, so the goroutine then continues inside the timer's entry, which
+// the probe counts as the outermost one. A time.Sleep does not guarantee this:
+// when its timer expires before the scheduler goes idle, which a busy host or a
+// busy goroutine causes, Go wakes the sleeper itself and never returns to
+// JavaScript.
 func Install(t testing.TB) *Probe {
 	t.Helper()
 	mu.Lock()
@@ -80,8 +86,26 @@ func Install(t testing.TB) *Probe {
 	active = p
 	mu.Unlock()
 	t.Cleanup(p.uninstall)
-	time.Sleep(time.Millisecond)
+	reenter(t, p)
 	return p
+}
+
+// reenter waits for a JavaScript timer callback, so that the caller continues
+// inside an entry the probe counts, and checks that it does.
+func reenter(t testing.TB, p *Probe) {
+	t.Helper()
+	resumed := make(chan struct{})
+	tick := js.FuncOf(func(js.Value, []js.Value) any {
+		close(resumed)
+		return nil
+	})
+	js.Global().Call("setTimeout", tick, 0)
+	<-resumed
+	// The callback has returned, so Go will not call it again.
+	tick.Release()
+	if depth := p.state.Get("depth").Int(); depth < 1 {
+		t.Fatalf("jsreentry: the test goroutine runs outside any entry the probe counts (depth %d), so nested calls would go unseen", depth)
+	}
 }
 
 func compile() (state js.Value, err error) {
