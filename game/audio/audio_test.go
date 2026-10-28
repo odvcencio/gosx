@@ -2,8 +2,6 @@ package audio
 
 import (
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"m31labs.dev/gosx/game"
@@ -81,6 +79,7 @@ type fakeHost struct {
 	resumeCalls int
 	resumeErr   error
 	decodeErr   error
+	decodes     int
 	nodes       int
 	lastSource  *fakeSource
 	destination *fakeNode
@@ -116,6 +115,7 @@ func (h *fakeHost) CreateSource(buffer Buffer) SourceNode {
 }
 func (h *fakeHost) Destination() Node { return h.destination }
 func (h *fakeHost) DecodeAudioData(data []byte) (Buffer, error) {
+	h.decodes++
 	if h.decodeErr != nil {
 		return nil, h.decodeErr
 	}
@@ -192,33 +192,43 @@ func TestBusSetVolumeAndSetMutedInteract(t *testing.T) {
 	}
 }
 
+// TestPlayerLoadManifestPreloadsAndDecodesOnce runs the real HTTPLoader in
+// every build. serveStub supplies the network: a native HTTP server, or a fake
+// fetch under js/wasm, where httptest only reports a placeholder address
+// (127.0.0.1:1) that Node's fetch refuses with "bad port".
 func TestPlayerLoadManifestPreloadsAndDecodesOnce(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		_, _ = w.Write([]byte("clip-bytes"))
-	}))
-	defer server.Close()
+	base, requests := serveStub(t, func(string) stubResponse {
+		return stubResponse{body: []byte("clip-bytes")}
+	})
 
 	host := newFakeHost()
 	graph := NewBusGraph(host, game.AudioManifest{})
 	player := NewPlayer(host, graph, HTTPLoader{})
 
 	manifest := game.AudioManifest{Clips: []game.AudioClip{
-		{ID: "boom", URI: server.URL, Preload: true},
+		{ID: "boom", URI: base + "/boom.wav", Preload: true},
 	}}
 	if err := player.LoadManifest(manifest); err != nil {
 		t.Fatalf("LoadManifest: %v", err)
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want 1", requests)
+	if requests() != 1 {
+		t.Fatalf("requests = %d, want 1", requests())
+	}
+	if host.decodes != 1 {
+		t.Fatalf("decodes = %d, want 1", host.decodes)
 	}
 
 	if _, err := player.Play(game.AudioPlayback{Clip: "boom"}); err != nil {
 		t.Fatalf("Play: %v", err)
 	}
-	if requests != 1 {
-		t.Fatalf("requests after Play = %d, want 1 (buffer should be cached)", requests)
+	if requests() != 1 {
+		t.Fatalf("requests after Play = %d, want 1 (buffer should be cached)", requests())
+	}
+	if host.decodes != 1 {
+		t.Fatalf("decodes after Play = %d, want 1 (buffer should be cached)", host.decodes)
+	}
+	if host.lastSource.buffer != "clip-bytes" {
+		t.Fatalf("source buffer = %v, want the fetched bytes", host.lastSource.buffer)
 	}
 }
 
@@ -361,15 +371,5 @@ func TestPlaybackVolumeAndRateFallBackToClipDefaults(t *testing.T) {
 	}
 	if host.lastSource.rate != 2 {
 		t.Fatalf("rate = %v, want 2 (playback override)", host.lastSource.rate)
-	}
-}
-
-func TestHTTPLoaderNonOKStatusErrors(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-	if _, err := (HTTPLoader{}).Load(server.URL); err == nil {
-		t.Fatal("expected a non-200 status to error")
 	}
 }

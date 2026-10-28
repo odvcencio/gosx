@@ -3,63 +3,43 @@ package audio
 import (
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"sync"
 
-	"m31labs.dev/gosx/game"
+	"m31labs.dev/gosx/game/gametypes"
 )
 
 // ErrNoLoader is returned when a clip needs decoding but the Player has no
 // ClipLoader configured.
 var ErrNoLoader = errors.New("audio: no ClipLoader configured")
 
-// ClipLoader fetches a clip's raw encoded bytes by URI.
+// ClipLoader fetches a clip's raw encoded bytes by URI. HTTPLoader is the
+// implementation for http and https URIs.
 type ClipLoader interface {
 	Load(uri string) ([]byte, error)
 }
 
-// HTTPLoader loads clip bytes with net/http.Get. It works unmodified under
-// GOOS=js/GOARCH=wasm, where the standard library's RoundTripper for that
-// platform is implemented on top of the browser's fetch API.
-type HTTPLoader struct {
-	// Client selects the HTTP client. A nil Client uses http.DefaultClient.
-	Client *http.Client
-}
-
-// Load implements ClipLoader.
-func (l HTTPLoader) Load(uri string) ([]byte, error) {
-	client := l.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("audio: GET %s: status %d", uri, resp.StatusCode)
-	}
-	return io.ReadAll(resp.Body)
-}
+// HTTPLoader is declared per build (loader_native.go and loader_js.go), so this
+// file never imports net/http. Both declarations must satisfy ClipLoader.
+var _ ClipLoader = HTTPLoader{}
 
 type activeVoice struct {
 	source SourceNode
 	gain   GainNode
 }
 
-// Player registers a game.AudioManifest's clips and buses, decodes clip
+// Player registers a gametypes.AudioManifest's clips and buses, decodes clip
 // bytes on demand (or eagerly for Preload clips via LoadManifest), and plays
-// them through a BusGraph.
+// them through a BusGraph. Package game declares its audio types as aliases of
+// the gametypes ones, so a game.AudioManifest works wherever this package
+// takes a gametypes.AudioManifest.
 type Player struct {
 	host   Host
 	graph  *BusGraph
 	loader ClipLoader
 
 	mu         sync.Mutex
-	clips      map[game.AssetID]game.AudioClip
-	buffers    map[game.AssetID]Buffer
+	clips      map[gametypes.AssetID]gametypes.AudioClip
+	buffers    map[gametypes.AssetID]Buffer
 	playing    map[string]activeVoice
 	nextHandle uint64
 }
@@ -72,8 +52,8 @@ func NewPlayer(host Host, graph *BusGraph, loader ClipLoader) *Player {
 		host:    host,
 		graph:   graph,
 		loader:  loader,
-		clips:   make(map[game.AssetID]game.AudioClip),
-		buffers: make(map[game.AssetID]Buffer),
+		clips:   make(map[gametypes.AssetID]gametypes.AudioClip),
+		buffers: make(map[gametypes.AssetID]Buffer),
 		playing: make(map[string]activeVoice),
 	}
 }
@@ -81,7 +61,7 @@ func NewPlayer(host Host, graph *BusGraph, loader ClipLoader) *Player {
 // LoadManifest registers every clip in manifest and decodes every clip
 // marked Preload before returning. Call it from a goroutine if the caller
 // does not want to block on decoding.
-func (p *Player) LoadManifest(manifest game.AudioManifest) error {
+func (p *Player) LoadManifest(manifest gametypes.AudioManifest) error {
 	var firstErr error
 	for _, clip := range manifest.Clips {
 		p.mu.Lock()
@@ -99,14 +79,14 @@ func (p *Player) LoadManifest(manifest game.AudioManifest) error {
 // RegisterBuffer registers an already-decoded buffer for clip directly,
 // skipping ClipLoader/DecodeAudioData. Useful for procedurally generated
 // clips or tests.
-func (p *Player) RegisterBuffer(clip game.AudioClip, buffer Buffer) {
+func (p *Player) RegisterBuffer(clip gametypes.AudioClip, buffer Buffer) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.clips[clip.ID] = clip
 	p.buffers[clip.ID] = buffer
 }
 
-func (p *Player) ensureBuffer(clip game.AudioClip) (Buffer, error) {
+func (p *Player) ensureBuffer(clip gametypes.AudioClip) (Buffer, error) {
 	p.mu.Lock()
 	if buffer, ok := p.buffers[clip.ID]; ok {
 		p.mu.Unlock()
@@ -132,14 +112,14 @@ func (p *Player) ensureBuffer(clip game.AudioClip) (Buffer, error) {
 
 // Play starts playback immediately (at the host's current audio-clock time)
 // and returns a handle Stop can use.
-func (p *Player) Play(playback game.AudioPlayback) (string, error) {
+func (p *Player) Play(playback gametypes.AudioPlayback) (string, error) {
 	return p.ScheduleAt(playback, p.host.CurrentTime())
 }
 
 // ScheduleAt starts playback at host audio-clock time at, in the same units
 // as Host.CurrentTime — useful for sample-accurate scheduling of the next
 // note or beat ahead of when it needs to be audible.
-func (p *Player) ScheduleAt(playback game.AudioPlayback, at float64) (string, error) {
+func (p *Player) ScheduleAt(playback gametypes.AudioPlayback, at float64) (string, error) {
 	p.mu.Lock()
 	clip, ok := p.clips[playback.Clip]
 	p.mu.Unlock()

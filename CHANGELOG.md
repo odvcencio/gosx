@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- Remove `net/http`, `crypto/tls` and `crypto/x509` from the js/wasm build of
+  `game/audio`, so importing it no longer adds the HTTP stack to a browser
+  module: `GOOS=js GOARCH=wasm go list -deps ./game/audio` drops from 258
+  packages to 102 and lists none of the three. `HTTPLoader` now loads clips
+  with the browser's `fetch`, through `client/browser.Fetch`, in js/wasm
+  builds. Its name and `Load(uri string) ([]byte, error)` method are
+  unchanged, `HTTPLoader{}` works in every build, and any status other than
+  200 returns the same `audio: GET <uri>: status N` error. The
+  `Client *http.Client` field exists only in native builds, so code that sets
+  it does not compile for `GOOS=js GOARCH=wasm`. In js/wasm builds a transport
+  failure wraps `client/browser`'s error (`errors.Is` matches
+  `browser.ErrFetchUnavailable`) instead of returning a `*url.Error`. A native
+  test fails if the js/wasm build links one of the three packages again, and
+  `make test-wasm` now runs the tests of `game/audio`, `game/audio/worklet`
+  and `game/gametypes`.
+
+- Add `game/gametypes`, a package with no imports that declares `AssetID`,
+  `Vec3`, `AudioBus`, `AudioClip`, `AudioManifest` and `AudioPlayback`, the
+  types `game/audio` needs from `game`. Package `game` declares each one as an
+  alias (`type AudioManifest = gametypes.AudioManifest`), so existing code
+  compiles unchanged, values need no conversion, and the JSON field names are
+  the same. `game/audio` now imports `gametypes` instead of `game`, which
+  imports `hub`, `sim` and the root `gosx` package, and through them
+  `net/http`. A browser module can name these types as
+  `gametypes.AudioManifest` without linking the game runtime. Because the
+  types now live in `gametypes`, `%T`, `reflect.Type.String` and
+  `reflect.Type.PkgPath` report `gametypes` instead of `game` for them.
+
+- Remove `net/http`, `crypto/tls` and `crypto/x509` from the js/wasm builds of
+  `hub/client` and `game/audio/worklet`. `hub/client` `Options.Header` is now
+  `map[string][]string` instead of `http.Header`; the native transport converts
+  it to `http.Header` for `gorilla/websocket` and sends the same headers as
+  before. Code that assigns an `http.Header` to the field, passes it where an
+  `http.Header` is expected, or ranges over or indexes it compiles unchanged;
+  code that calls an `http.Header` method on the field (`opts.Header.Set`) must
+  fill an `http.Header` first and assign it. `worklet.Handler` is now built
+  only for non-js targets.
+
 - Make `DiffScene` and `DiffCommands` cheaper on a scene that did not change.
   In `BenchmarkDiffSceneUnchangedMeshes` (120 meshes, 164,082 indices) an
   unchanged diff drops from about 6 ms to 2 ms natively and from 22 ms to 5 ms

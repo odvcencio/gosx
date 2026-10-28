@@ -4,7 +4,8 @@
 // Package game already describes the data a game wants to play — see
 // game.AudioManifest, game.AudioBus, game.AudioClip, game.AudioPlayback —
 // but nothing in gosx consumed that manifest and actually drove WebAudio.
-// This package is that consumer.
+// This package is that consumer. It takes those types from game/gametypes,
+// which package game aliases, and does not import package game.
 //
 // Host abstracts the WebAudio graph nodes this package needs: gain buses, a
 // compressor, and buffer sources. HostJS, built only under
@@ -35,4 +36,16 @@
 // (game.AudioPlayback's Position, Velocity, and rolloff fields) is not
 // implemented here; a game that needs it can read those fields itself from
 // whatever consumes game.Runtime.Events.
+//
+// Player loads clip bytes through a ClipLoader. HTTPLoader is the stock one: it
+// uses net/http in native builds and the browser's fetch API under
+// GOOS=js/GOARCH=wasm. The Client field of HTTPLoader exists only in native
+// builds.
+//
+// A js/wasm build of this package links none of net/http, crypto/tls and
+// crypto/x509. It loads clips with the browser's fetch instead of net/http,
+// and it does not import package game, which imports hub, sim and the root
+// gosx package. A browser client can name the manifest types as
+// gametypes.AudioManifest and so on without linking the game runtime. A test
+// in this package fails if one of the three packages comes back.
 package audio

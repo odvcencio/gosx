@@ -3,6 +3,8 @@ package game
 import (
 	"strconv"
 	"strings"
+
+	"m31labs.dev/gosx/game/gametypes"
 )
 
 const (
@@ -13,50 +15,26 @@ const (
 	EventAudioStop = "audio:stop"
 )
 
+// The audio manifest types are declared in game/gametypes, which has no
+// imports, so browser packages such as game/audio can use them without linking
+// this package. These aliases keep the names and the type identity: a
+// game.AudioManifest is a gametypes.AudioManifest.
+
 // AudioBus is a named mixer bus for music, SFX, voice, UI, or game-specific
-// stems.
-type AudioBus struct {
-	ID     string  `json:"id"`
-	Parent string  `json:"parent,omitempty"`
-	Volume float64 `json:"volume,omitempty"`
-	Muted  bool    `json:"muted,omitempty"`
-}
+// stems. It is an alias of gametypes.AudioBus.
+type AudioBus = gametypes.AudioBus
 
-// AudioClip is the runtime-facing audio asset contract.
-type AudioClip struct {
-	ID          AssetID           `json:"id"`
-	URI         string            `json:"uri"`
-	ContentType string            `json:"contentType,omitempty"`
-	Bus         string            `json:"bus,omitempty"`
-	Preload     bool              `json:"preload,omitempty"`
-	Loop        bool              `json:"loop,omitempty"`
-	Volume      float64           `json:"volume,omitempty"`
-	Rate        float64           `json:"rate,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-}
+// AudioClip is the runtime-facing audio asset contract. It is an alias of
+// gametypes.AudioClip.
+type AudioClip = gametypes.AudioClip
 
-// AudioManifest describes the clips and buses a client should register.
-type AudioManifest struct {
-	MasterVolume float64     `json:"masterVolume,omitempty"`
-	Buses        []AudioBus  `json:"buses,omitempty"`
-	Clips        []AudioClip `json:"clips,omitempty"`
-}
+// AudioManifest describes the clips and buses a client should register. It is
+// an alias of gametypes.AudioManifest.
+type AudioManifest = gametypes.AudioManifest
 
-// AudioPlayback configures one play request.
-type AudioPlayback struct {
-	Clip          AssetID `json:"clip"`
-	Bus           string  `json:"bus,omitempty"`
-	Handle        string  `json:"handle,omitempty"`
-	Volume        float64 `json:"volume,omitempty"`
-	Rate          float64 `json:"rate,omitempty"`
-	Pan           float64 `json:"pan,omitempty"`
-	Loop          bool    `json:"loop,omitempty"`
-	Position      *Vec3   `json:"position,omitempty"`
-	Velocity      *Vec3   `json:"velocity,omitempty"`
-	RefDistance   float64 `json:"refDistance,omitempty"`
-	MaxDistance   float64 `json:"maxDistance,omitempty"`
-	RolloffFactor float64 `json:"rolloffFactor,omitempty"`
-}
+// AudioPlayback configures one play request. It is an alias of
+// gametypes.AudioPlayback.
+type AudioPlayback = gametypes.AudioPlayback
 
 // AudioAt returns playback configured for positional WebAudio output.
 func AudioAt(position Vec3, playback AudioPlayback) AudioPlayback {

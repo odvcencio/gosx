@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"m31labs.dev/gosx/game/gametypes"
 )
 
 // AssetKind identifies the broad pipeline bucket for an asset.
@@ -19,8 +21,8 @@ const (
 	AssetFont    AssetKind = "font"
 )
 
-// AssetID is a stable asset handle.
-type AssetID string
+// AssetID is a stable asset handle. It is an alias of gametypes.AssetID.
+type AssetID = gametypes.AssetID
 
 // AssetRef is a serializable handle in the runtime asset manifest.
 type AssetRef struct {

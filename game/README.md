@@ -101,6 +101,14 @@ ctx.PlayAudio("thud", game.AudioAt(game.Vec3{X: 2, Y: 1, Z: -4}, game.AudioPlayb
 }))
 ```
 
+A browser client plays that manifest with `game/audio`. The manifest types
+(`AssetID`, `Vec3`, `AudioBus`, `AudioClip`, `AudioManifest` and
+`AudioPlayback`) are declared in `game/gametypes`, a package with no imports,
+and `game` declares each one as an alias, so `game.AudioManifest` and
+`gametypes.AudioManifest` are the same type. `game/audio` imports `gametypes`
+instead of `game`, so a js/wasm module that uses it does not link the server
+runtime, `net/http`, `crypto/tls` or `crypto/x509`.
+
 For 60Hz/120Hz loops, prefer reusable query buffers in hot systems:
 
 ```go

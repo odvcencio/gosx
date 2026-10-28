@@ -1,6 +1,6 @@
 package audio
 
-import "m31labs.dev/gosx/game"
+import "m31labs.dev/gosx/game/gametypes"
 
 // Bus is one named mixer bus: a gain node plus the volume/mute state that
 // produced its current gain value, so SetVolume and SetMuted can be called
@@ -50,8 +50,8 @@ func (b *Bus) apply() {
 
 // BusGraph is a game's WebAudio bus tree: one master bus feeding a
 // compressor feeding the host's destination, with named child buses from a
-// game.AudioManifest connected either to master or to another named bus, per
-// game.AudioBus.Parent.
+// gametypes.AudioManifest (also spelled game.AudioManifest) connected either to
+// master or to another named bus, per gametypes.AudioBus.Parent.
 type BusGraph struct {
 	host       Host
 	master     GainNode
@@ -60,7 +60,7 @@ type BusGraph struct {
 }
 
 // NewBusGraph builds the graph described by manifest against host.
-func NewBusGraph(host Host, manifest game.AudioManifest) *BusGraph {
+func NewBusGraph(host Host, manifest gametypes.AudioManifest) *BusGraph {
 	g := &BusGraph{host: host, buses: make(map[string]*Bus, len(manifest.Buses))}
 
 	g.master = host.CreateGain()

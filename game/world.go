@@ -3,6 +3,8 @@ package game
 import (
 	"reflect"
 	"strings"
+
+	"m31labs.dev/gosx/game/gametypes"
 )
 
 // EntityID is a stable runtime entity handle. The zero value is invalid.
@@ -10,12 +12,9 @@ type EntityID uint64
 
 const InvalidEntity EntityID = 0
 
-// Vec3 is a small vector component for common simulation state.
-type Vec3 struct {
-	X float64 `json:"x,omitempty"`
-	Y float64 `json:"y,omitempty"`
-	Z float64 `json:"z,omitempty"`
-}
+// Vec3 is a small vector component for common simulation state. It is an alias
+// of gametypes.Vec3.
+type Vec3 = gametypes.Vec3
 
 // Transform is the default spatial component for entity-driven simulations.
 type Transform struct {
