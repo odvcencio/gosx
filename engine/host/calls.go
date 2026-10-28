@@ -16,6 +16,8 @@ type CallOptions struct {
 	// Timeout is how long the page waits for a reply before it writes the
 	// error "timeout" to the result signal. Zero means DefaultCallTimeout.
 	// The page enforces it, so it still fires if the handler never returns.
+	// ServeCallsAsync also waits at most this long for the page to report the
+	// mark of a call before it starts the handler (see ServeCallsAsync).
 	Timeout time.Duration
 	// Recent is how many past replies Result.Recent keeps. Zero means
 	// DefaultCallRecent.
