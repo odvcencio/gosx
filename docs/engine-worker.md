@@ -293,14 +293,22 @@ off, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 30 * 
   time never queues calls in the engine.
 - Disposing the handle drops the queued calls and the reply of the running call.
   It does not stop a running handler.
-- The handler runs on its own goroutine, and the engine writes each result from
-  that goroutine. Do not call a JavaScript function from the handler that runs a
-  Go callback before it returns, such as `new Promise` with a Go executor or
-  `dispatchEvent` to a Go listener. Go's WebAssembly runtime keeps such nested
-  calls from JavaScript into Go on one shared stack (`runtime/lock_js.go`,
-  `handleEvent`) and expects them to end in reverse order, so two goroutines that
-  nest at once can stop the program. `jsutil.AwaitPromise` and
-  `Promise.withResolvers` with `setTimeout` do not nest.
+- The handler runs on its own goroutine, never inside a call from JavaScript into
+  Go. The engine's own writes are made so that they do not enter Go either. A
+  write to a shared signal runs the engine's own subscriptions, which are Go
+  functions, before it returns. Made from a goroutine on the main thread, that
+  is a nested call from JavaScript into Go. Go's WebAssembly runtime keeps those
+  on one shared stack (`runtime/lock_js.go`, `handleEvent`) and expects them to
+  end in reverse order, so two goroutines that nest at once can stop the
+  program. On the main thread the engine therefore has the browser write each
+  result, and drop the answered calls from a mailbox (the page's
+  `ctx.trimCalls`), from the event loop, and waits for it. Your handler should
+  follow the same rule: do not call a JavaScript function that runs a Go
+  callback before it returns, such as `new Promise` with a Go executor or
+  `dispatchEvent` to a Go listener. `jsutil.AwaitPromise` and
+  `Promise.withResolvers` with `setTimeout` do not nest. A page whose bootstrap
+  has no `ctx.trimCalls` leaves the mailbox as the writer left it, and the writer
+  drops the answered calls itself.
 
 ### Views
 

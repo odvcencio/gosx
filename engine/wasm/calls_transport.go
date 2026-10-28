@@ -8,14 +8,28 @@ import (
 )
 
 // contextTransport adapts Context to callTransport.
-type contextTransport struct{ ctx Context }
+type contextTransport struct {
+	ctx Context
+	// async is set for ServeCallsAsync, which answers from a goroutine. On the
+	// main thread that goroutine must not write the result, or trim the mailbox,
+	// from inside a call into JavaScript, because the write runs this engine's
+	// own subscriptions before it returns: the browser makes the write from the
+	// event loop instead (see Context.fromEventLoop). ServeCalls answers inside
+	// the callback that delivered the call, on the stack of one entry, and writes
+	// at once.
+	async bool
+}
 
 func (t contextTransport) subscribe(signal string, handler func(json.RawMessage)) (HandleFunc, error) {
 	return t.ctx.subscribeSignalReplay(signal, handler)
 }
 
 func (t contextTransport) write(signal string, value any) error {
-	return t.ctx.SetSignals(map[string]any{signal: value})
+	values := map[string]any{signal: value}
+	if t.async && t.ctx.Thread() != engine.ThreadWorker {
+		return t.ctx.setSignalsFromEventLoop(values)
+	}
+	return t.ctx.SetSignals(values)
 }
 
 func (t contextTransport) declare(channel string, timeout time.Duration, recent int, zero string) {
@@ -29,6 +43,9 @@ func (t contextTransport) declare(channel string, timeout time.Duration, recent 
 func (t contextTransport) trimCalls(signal string, through uint64) error {
 	if t.ctx.Thread() == engine.ThreadWorker {
 		return nil
+	}
+	if t.async {
+		return t.ctx.trimCallsFromEventLoop(signal, through)
 	}
 	raw, err := t.ctx.SignalJSON(signal)
 	if err != nil {

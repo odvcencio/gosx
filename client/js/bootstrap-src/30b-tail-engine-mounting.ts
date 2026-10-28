@@ -4519,6 +4519,23 @@
         if (typeof encoded !== "string") throw new TypeError("signal batch must be JSON");
         return applySignalBatch(JSON.parse(encoded), encoded, changedOnly === true);
       },
+      // Drop the calls at or below `through` from the mailbox in a call signal.
+      // An entry with no usable ID can never be answered, so it goes too. The
+      // read and the write happen in one step, so a call that an island appends
+      // cannot slip in between. A signal that holds one call is not a mailbox
+      // and is left alone. The Go engine asks for this from the event loop when
+      // it answers calls from a goroutine (wasm.ServeCallsAsync); a worker's
+      // page host does the same for its engine. Returns whether it wrote.
+      trimCalls(name, through) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        const list = gosxReadSharedSignal(name, undefined);
+        if (!Array.isArray(list)) return false;
+        const limit = Number(through) || 0;
+        const kept = list.filter(call => call && (Number(call.ID) || 0) > limit);
+        if (kept.length === list.length) return false;
+        setSharedSignalValue(name, kept);
+        return true;
+      },
       subscribeSignal(name, handler, options) {
         if (!isCurrent()) throw new Error("engine context is disposed");
         return gosxSubscribeSharedSignal(name, function(value, signalName) {

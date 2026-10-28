@@ -126,13 +126,18 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 // out. Its real reply replaces the timeout when it comes. A client that keeps
 // one call in flight (wasm.Caller does by default) never queues calls here.
 //
-// A handler runs on its own goroutine, not inside a call from Go into
-// JavaScript, and the engine writes each result from that goroutine. On the
-// main thread that write can run the engine's own subscriptions before it
-// returns; they only queue work and never block. A handler that calls into
-// JavaScript should avoid functions that run a Go callback before they return
-// (new Promise with a Go executor, dispatchEvent to a Go listener):
-// jsutil.AwaitPromise follows that rule.
+// A handler runs on its own goroutine, never inside a call from JavaScript into
+// Go. The engine's own writes to the page, a result and the trim of a mailbox,
+// are made so that they do not enter Go again either. A write to a shared signal
+// runs the engine's own subscriptions, which are Go functions, before it
+// returns; made from a goroutine on the main thread, that is a nested entry
+// from JavaScript into Go, and two goroutines in nested entries at once can stop
+// the program. So the main-thread transport (wasm.ServeCallsAsync) has the
+// browser make the write from the event loop, where no call from Go is pending,
+// and waits for it. A handler that calls into JavaScript should follow the same
+// rule and avoid functions that run a Go callback before they return (new
+// Promise with a Go executor, dispatchEvent to a Go listener):
+// jsutil.AwaitPromise follows it.
 //
 // Disposing the returned HandleFunc drops the queued calls and the reply of the
 // call that is running; it does not stop a running handler.

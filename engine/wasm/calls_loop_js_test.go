@@ -29,6 +29,15 @@ func pageStore(thread string) js.Value {
     for (const [name, value] of Object.entries(values)) { this.store.set(name, value); this.notify(name); }
     return "";
   },
+  // The bootstrap's context drops the answered calls of a mailbox in one step.
+  trimCalls(name, through) {
+    const list = this.store.get(name);
+    if (!Array.isArray(list)) return false;
+    const kept = list.filter(call => call && (Number(call.ID) || 0) > through);
+    if (kept.length === list.length) return false;
+    this.setSignal(name, kept);
+    return true;
+  },
   subscribeSignalJSON(name, cb, options) {
     const list = this.subs.get(name) || [];
     this.subs.set(name, list);
@@ -167,10 +176,10 @@ func TestCallerAndServeCallsRoundTripThroughThePageStore(t *testing.T) {
 			}
 			mu.Unlock()
 			// The engine, on the main thread, dropped the answered calls from the mailbox.
+			// The async server does it from the event loop right after the result, so it
+			// may be a few microtasks behind the reply the client has just read.
 			if window > 1 {
-				if left := stringifyJS(v.Get("store").Call("get", "$bv.cmd")); left != "[]" {
-					t.Errorf("%s window %d: mailbox after all replies = %s, want []", mode, window, left)
-				}
+				waitFor(t, mode+" mailbox to empty", func() bool { return stringifyJS(v.Get("store").Call("get", "$bv.cmd")) == "[]" })
 			}
 			sub.Dispose()
 			off.Dispose()
@@ -205,7 +214,7 @@ func TestServeCallsTrimsAMailboxOnTheMainThreadOnly(t *testing.T) {
 		v := pageStore(thread)
 		store := v.Get("store")
 		store.Call("set", "$bv.cmd", parseJS(`[{"ID":1,"Name":"add"},{"ID":2,"Name":"add"},{"ID":3,"Name":"add"}]`))
-		tr := contextTransport{Context{value: v}}
+		tr := contextTransport{ctx: Context{value: v}}
 		if err := tr.trimCalls("$bv.cmd", 2); err != nil {
 			t.Fatal(err)
 		}
@@ -233,5 +242,81 @@ func TestServeCallsTrimsAMailboxOnTheMainThreadOnly(t *testing.T) {
 		if err := tr.trimCalls("$bv.cmd", 5); err != nil || stringifyJS(store.Call("get", "$bv.cmd")) != `{"ID":1,"Name":"add"}` {
 			t.Errorf("thread %q: a single call was changed", thread)
 		}
+	}
+}
+
+// installEntryProbe counts the entries from JavaScript into Go that start while
+// another entry is still on the stack (a nested entry), the way the
+// nested-callbacks work counts them: it wraps the Go runtime's _resume. Go keeps
+// the entries in progress on one stack and assumes that entries from different
+// goroutines never interleave, so a goroutine that makes a call into JavaScript
+// which runs a Go callback before it returns (a write that notifies this
+// engine's own subscriptions) must not be one of several.
+func installEntryProbe() {
+	js.Global().Call("eval", `(() => {
+  const Go = globalThis.Go;
+  if (Go.prototype.__entryProbe) return;
+  Go.prototype.__entryProbe = true;
+  const original = Go.prototype._resume;
+  globalThis.__entries = { depth: 0, entries: 0, nested: 0 };
+  Go.prototype._resume = function () {
+    const p = globalThis.__entries;
+    p.depth++; p.entries++; if (p.depth > 1) p.nested++;
+    try { return original.apply(this, arguments); } finally { p.depth--; }
+  };
+})()`)
+}
+
+func nestedEntries() int { return js.Global().Get("__entries").Get("nested").Int() }
+
+// An island writes its calls from the event loop, one every few milliseconds.
+const driveCalls = `(function(ctx, signal, calls, mailbox) {
+  let id = 0;
+  const tick = () => {
+    id++;
+    const call = { ID: id, Name: "add", Args: { A: id, B: 1 } };
+    if (mailbox) {
+      const list = Array.isArray(ctx.getSignal(signal)) ? ctx.getSignal(signal).slice() : [];
+      list.push(call);
+      ctx.setSignal(signal, list);
+    } else {
+      ctx.setSignal(signal, call);
+    }
+    if (id < calls) setTimeout(tick, 3);
+  };
+  setTimeout(tick, 0);
+})`
+
+// The page store tells the engine's own subscriptions inside every write, so a
+// goroutine that writes a result enters Go again before the write returns. The
+// handler of ServeCallsAsync answers from a goroutine, and with several channels
+// several goroutines do, so none of them may start a nested entry: the engine
+// has the browser write from the event loop, where no call from Go is pending.
+func TestServeCallsAsyncMakesNoNestedEntriesIntoGo(t *testing.T) {
+	installEntryProbe()
+	for _, mailbox := range []bool{false, true} {
+		v := pageStore("")
+		ctx := Context{value: v}
+		off, err := ServeCallsAsync(ctx, "bv.cmd", CallOptions{}, adder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := nestedEntries()
+		js.Global().Call("eval", driveCalls).Invoke(v, "$bv.cmd", 10, mailbox)
+		waitFor(t, "ten results", func() bool { return v.Get("batches").Int() >= 10 })
+		if got := nestedEntries() - before; got != 0 {
+			t.Errorf("mailbox=%v: %d nested entries into Go while the async server answered 10 calls, want 0", mailbox, got)
+		}
+		var r struct {
+			ID    uint64
+			Value sum
+		}
+		if err := json.Unmarshal([]byte(stringifyJS(v.Get("store").Call("get", "$bv.cmd.result"))), &r); err != nil || r.ID != 10 || r.Value.Total != 11 {
+			t.Errorf("mailbox=%v: last result = %+v (%v)", mailbox, r, err)
+		}
+		if mailbox {
+			waitFor(t, "an empty mailbox", func() bool { return stringifyJS(v.Get("store").Call("get", "$bv.cmd")) == "[]" })
+		}
+		off.Dispose()
 	}
 }

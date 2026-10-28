@@ -43,17 +43,19 @@ type callTransport interface {
 // loop, one call at a time, and must not wait for a browser promise: use
 // ServeCallsAsync for a handler that blocks.
 func ServeCalls[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
-	return serveCalls(contextTransport{ctx}, channel, opts, handle)
+	return serveCalls(contextTransport{ctx: ctx}, channel, opts, handle)
 }
 
 // ServeCallsAsync is ServeCalls for a handler that may block, for example on a
 // browser promise (jsutil.AwaitPromise), storage or the network. The handler
 // runs on a goroutine, not inside the JavaScript callback that delivers the
 // call, so the event loop stays free for what it waits on. Calls run one at a
-// time and their results are written in ID order. See host.ServeCallsAsync for
-// the timeout, disposal and JavaScript re-entry rules.
+// time and their results are written in ID order. On the main thread the engine
+// has the browser write each result, and trim the mailbox, from the event loop,
+// so that the goroutine never starts a nested entry from JavaScript into Go.
+// See host.ServeCallsAsync for the timeout, disposal and re-entry rules.
 func ServeCallsAsync[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
-	return serveCallsAsync(contextTransport{ctx}, channel, opts, handle)
+	return serveCallsAsync(contextTransport{ctx: ctx, async: true}, channel, opts, handle)
 }
 
 func serveCalls[A, R any](tr callTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
