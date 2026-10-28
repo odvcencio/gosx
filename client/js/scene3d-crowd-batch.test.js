@@ -558,3 +558,13 @@ test("a selected agent leaves its batch, unless the batch rides a parent", async
   assert.equal(batchRecords(bundle).length, 1);
   assert.equal(batchRecords(bundle)[0].instanceCount, 6, "a record outside the ship would sit in world space");
 });
+
+test("crowd batching keeps independently authored planar-reflection policies separate",async()=>{
+ const api=await makeSceneApiEnv(),objects=makeCrowd(api,4);
+ objects[0].planarReflection=false;objects[1].planarReflection=false;
+ const first=build(api,objects),records=batchRecords(first);
+ assert.equal(records.length,2);assert.deepEqual(records.map(r=>r.planarReflection).sort(),[false,true]);
+ assert.ok(records.every(r=>r.instanceCount===2));
+ objects[0].planarReflection=true;objects[1].planarReflection=true;
+ const restored=batchRecords(build(api,objects));assert.equal(restored.length,1);assert.equal(restored[0].planarReflection,true);assert.equal(restored[0].instanceCount,4);
+});
