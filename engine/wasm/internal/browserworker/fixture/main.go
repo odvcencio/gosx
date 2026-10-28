@@ -12,6 +12,7 @@ import (
 	"syscall/js"
 	"time"
 
+	"m31labs.dev/gosx/client/jsutil"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/engine/wasm"
 	"m31labs.dev/gosx/game"
@@ -254,7 +255,9 @@ type callReply struct {
 // startCalls serves typed calls from an island and streams a paced view. The
 // call names pick the behavior the browser test needs: "add" answers, "fail"
 // returns an error, "slow" keeps the worker busy longer than the page's call
-// timeout, and "crash" ends the Go program.
+// timeout, and "crash" ends the Go program. Channel bv.cmd holds one call at a
+// time and is served on the event loop; channel bv.box holds a mailbox of calls
+// and is served on goroutines, with a "wait" call that waits for a promise.
 func startCalls(ctx wasm.Context) (stop func()) {
 	off, err := wasm.ServeCalls(ctx, "bv.cmd", wasm.CallOptions{Timeout: 400 * time.Millisecond, Recent: 4},
 		func(name string, args callArgs) (callReply, error) {
@@ -274,6 +277,32 @@ func startCalls(ctx wasm.Context) (stop func()) {
 			return callReply{}, errors.New("unknown call " + name)
 		})
 	if err != nil {
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
+	// The mailbox channel: an island writes several calls in one handler, and
+	// the handlers may wait for the browser, so it is served asynchronously.
+	// The calls run one at a time, in call order.
+	box, err := wasm.ServeCallsAsync(ctx, "bv.box", wasm.CallOptions{Timeout: 5 * time.Second, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			switch name {
+			case "add":
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			case "wait":
+				// A is how long the browser takes to settle the promise, in
+				// milliseconds. Only the event loop can settle it, so a handler
+				// that ran inside the delivery callback would hang here.
+				if _, err := jsutil.AwaitPromise(settleAfter(args.A)); err != nil {
+					return callReply{}, err
+				}
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			case "fail":
+				return callReply{}, errors.New("refused")
+			}
+			return callReply{}, errors.New("unknown call " + name)
+		})
+	if err != nil {
+		off.Dispose()
 		report(ctx, "calls-error", map[string]any{"error": err.Error()})
 		return nil
 	}
@@ -297,8 +326,18 @@ func startCalls(ctx wasm.Context) (stop func()) {
 	return func() {
 		close(done)
 		view.Dispose()
+		box.Dispose()
 		off.Dispose()
 	}
+}
+
+// settleAfter returns a promise that the browser settles after ms milliseconds.
+// It uses Promise.withResolvers and setTimeout, both native, so no Go function
+// runs inside the call into JavaScript (new Promise with a Go executor would).
+func settleAfter(ms int) js.Value {
+	pr := js.Global().Get("Promise").Call("withResolvers")
+	js.Global().Call("setTimeout", pr.Get("resolve"), ms)
+	return pr.Get("promise")
 }
 
 func threadName(ctx wasm.Context) string {
