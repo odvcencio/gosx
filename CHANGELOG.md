@@ -2,29 +2,94 @@
 
 ## Unreleased
 
-- Decode a signal batch once on the WASM runtime path. The page used to parse
-  every batch from a worker or native engine with `JSON.parse` and hand the same
-  text to the runtime, which decoded it again, encoded each changed signal with
-  `json.Marshal`, and sent that text back for the page to parse a third time.
-  When the runtime announces `__gosx_set_input_batch.batchDelivery` and the
-  page's `__gosx_notify_shared_signal` has a `batch` method, the page now sends
-  the batch text to the runtime as it is. The runtime decodes it in one pass,
-  writes each changed signal with an encoder that produces the bytes
-  `json.Marshal` produced, and tells the page about the whole batch in one call.
-  The page keeps each signal as that text and parses it only when page code
-  reads the value, so readers of `subscribeSignalJSON`, such as Go engines, cost
-  the page no `JSON.parse`. A 3-signal batch that cost the page four or five
-  parses costs none, and the text those readers receive is unchanged. In Node
-  26, with batches recorded from Bon Voyage's live ship (2.2, 7.3 and 32.8 KB),
-  the median time of `ctx.setSignalsJSON` falls from 0.43, 0.66 and 4.9 ms to
-  0.27, 0.36 and 1.5 ms on the shipping TinyGo runtime, and from 0.37, 0.68 and
-  6.4 ms to 0.13, 0.21 and 1.4 ms on the standard Go runtime. The runtime now
-  refuses a batch with a blank signal name, as the page refused it before.
-  `vm.AppendJSON` and `vm.AppendJSONString` are new. A page and a runtime from
-  different builds still work together, because the page decodes the batch
-  itself unless the runtime announces batch delivery and the page has the
-  `batch` method. The core runtime grows by 10.0 KB and the monolith bootstrap
-  by 1.7 KB; the size budgets move by those amounts.
+- Hand a signal batch from a worker or native engine to the WASM runtime once,
+  and without a goroutine on TinyGo. The page used to parse every batch with
+  `JSON.parse` and hand the same text to the runtime, which decoded it again,
+  encoded each changed signal with `json.Marshal`, and sent that text back for
+  the page to parse a third time. Now, when the runtime announces
+  `__gosx_set_input_batch.batchDelivery` and the page's
+  `__gosx_notify_shared_signal` has a `batch` method, the page sends the text to
+  the runtime as it is. The runtime decodes it in one pass, writes each changed
+  signal with an encoder that produces the bytes `json.Marshal` produced, and
+  tells the page about the whole batch in one call. The page keeps each signal
+  as that text and parses it only when page code reads the value, so a
+  `subscribeSignalJSON` reader, such as a Go engine, costs the page no
+  `JSON.parse`.
+
+  TinyGo runtimes also export `gosx_batch_reserve`, `gosx_batch_apply`,
+  `gosx_batch_error` and `gosx_batch_error_length`. The loaders hang a runtime's
+  exports on `__gosx_set_input_batch.exports`, and the engine context then
+  writes the batch into the runtime's memory and applies it with one export
+  call. A call through `__gosx_set_input_batch` makes TinyGo start a goroutine
+  for the batch, with a stack that is a block of the garbage-collected heap; the
+  exports run on the stack the call already has. Before this change the heap of
+  the shipping runtimes doubled while batches arrived, to 144 MiB and more, and
+  a collection of such a heap froze the page for 0.1 to 16 seconds. Measured in
+  Node 26 on a shared x86 host, with batches recorded from Bon Voyage's live
+  ship, 2,000 batches after 200 warm-up batches, the median of three interleaved
+  runs of `client/js/signal-batch.bench.mjs --soak --compare`, origin/main then
+  this change:
+
+  | runtime | batch | mean ms | p99 ms | max ms | WASM memory MiB |
+  |---|---|---|---|---|---|
+  | core | 2.2 KB | 0.76 -> 0.09 | 0.6 -> 0.5 | 484 -> 0.6 | 768 -> 2 |
+  | core | 7.3 KB | 1.32 -> 0.15 | 0.8 -> 0.5 | 872 -> 0.7 | 1536 -> 2 |
+  | core | 32.8 KB | 46.55 -> 0.98 | 150.0 -> 2.2 | 404 -> 2.6 | 192 -> 6 |
+  | engine | 2.2 KB | 0.73 -> 0.10 | 0.5 -> 0.7 | 468 -> 0.8 | 768 -> 2 |
+  | engine | 7.3 KB | 1.21 -> 0.20 | 0.7 -> 0.7 | 786 -> 0.9 | 1536 -> 2 |
+  | engine | 32.8 KB | 27.93 -> 1.02 | 117.6 -> 6.1 | 182 -> 8.2 | 192 -> 24 |
+  | full | 2.2 KB | 0.94 -> 0.07 | 0.5 -> 0.7 | 684 -> 0.8 | 1152 -> 2 |
+  | full | 7.3 KB | 0.97 -> 0.16 | 0.7 -> 0.8 | 578 -> 0.9 | 1152 -> 2 |
+  | full | 32.8 KB | 21.93 -> 1.10 | 96.9 -> 8.6 | 103 -> 9.5 | 144 -> 36 |
+
+  The text a `subscribeSignalJSON` reader receives is unchanged, with these
+  exceptions. A change that a later write replaced is not announced: when a
+  subscriber the batch wakes writes another signal of the same batch, or sends a
+  batch of its own, subscribers end on the stored value, where they could end on
+  the batch's older text. A sender that spells a signal `$scene.event.x` is told
+  the value under that spelling as well as under `$surface.event.x`. A
+  changed-only batch no longer repairs a value that only the page holds (one set
+  with `__gosx_notify_shared_signal`): the runtime decides what changed, so send
+  a different value, or write through the runtime, to replace it. A malformed
+  batch is refused by the runtime, so `ctx.setSignalsJSON` throws an `Error`
+  with the runtime's text (`error: decode shared signal batch: unexpected EOF`)
+  where it threw a `SyntaxError`, and a worker that relays `error.message` sends
+  that text. The runtime refuses a blank signal name in a batch, as the page
+  did, and both sides call a name blank when `String.prototype.trim` empties it.
+  `vm.AppendJSON` and `vm.AppendJSONString` are new.
+
+  A page and a runtime from different builds still work together: the page
+  decodes the batch itself unless the runtime announces batch delivery and the
+  page has the `batch` method, and it calls the function unless the loader
+  published exports with `gosx_batch_apply`. The core runtime grows by 14.4 KB
+  (651 KiB after wasm-opt, inside its 700 KiB budget) and the monolith bootstrap
+  by 2.8 KB; the JavaScript size budgets move by the measured amounts.
+
+- Clear the part of a goroutine's stack that a call from JavaScript used, when
+  the call ends, in the TinyGo runtimes. TinyGo's collector scans memory
+  conservatively, and words in the runtime's static data that read as heap
+  addresses keep dead 256 KiB goroutine stacks alive; the frames those stacks
+  left behind kept everything the call had touched, so the heap grew with every
+  call. A stack that is cleared holds only itself. In a soak of 2,000 32.8 KB
+  batches through `__gosx_set_input_batch`, the worst stall fell from 9 to 13
+  seconds to 0.2 second, and the memory from 2.3 or 3 GiB to 144 MiB, in the
+  full and engine runtimes; with 7.3 KB batches the worst stall fell from 1.1
+  seconds (engine) and 1.5 seconds (full) to 68 and 110 ms, and the memory from
+  768 and 1,152 MiB to 144 and 360 MiB. Every function the runtime hands to
+  JavaScript now comes from `funcOf`, and `TestRuntimeFunctionsComeFromFuncOf`
+  fails if one does not. The stack size stays 256 KiB: resolving a nested island
+  uses about 2.1 KiB of stack per level in the TinyGo runtime, so 256 KiB holds
+  about 120 levels and a smaller stack would hold fewer.
+
+- Add `client/js/signal-batch.bench.mjs` and `make wasm-heap-gate`. The bench
+  sends signal batches through the page's signal code to a real GoSX runtime in
+  Node, and reports mean, p50, p95, p99, max and the WASM memory at the start,
+  middle and end of a run. `--compare` runs two builds in interleaved processes
+  and fails when the new build's mean or max is worse, or its memory keeps
+  growing; `--soak --gate` fails a run whose memory grows in its second half.
+  The gate runs three synthetic payloads (2, 8 and 30 KB) against every
+  published production runtime in CI after the size budgets, and fails if a
+  runtime stops exporting the direct batch entry.
 
 - Add the Go contract for a spectral ocean. `scene.Ocean` gains `Spectrum` (a
   JONSWAP wind sea with an optional swell; `scene.OceanPreset` returns the sea
