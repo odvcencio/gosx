@@ -19,8 +19,10 @@ type settlement struct {
 // WebGPU (adapter/device/pipeline-async) and any other Promise-based browser
 // API the client touches.
 //
-// The passed js.Value must be a thenable. Nil/undefined returns an error
-// immediately. The goroutine blocks until the Promise settles.
+// Null and undefined return an error immediately. A value that is not a
+// thenable counts as a promise already fulfilled with that value, so
+// AwaitPromise returns it unchanged. The goroutine blocks until the Promise
+// settles.
 //
 // The two Go handlers only signal a channel, and the browser runs them as
 // microtasks, after the call into JavaScript that attached them has returned.
