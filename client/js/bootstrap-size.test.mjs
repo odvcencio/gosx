@@ -916,11 +916,12 @@ const budgets = [
     // change the monolith by +312 raw / +163 gzip / +79 Brotli bytes; only exhausted minimums move;
     // allowances remain unchanged.
     // A runtime that decodes a signal batch itself needs no page-side decode: the store keeps each
-    // signal as JSON text until something reads it, and the notify function gains a batch method.
-    // The monolith grows by 1,680 raw / 509 gzip / 362 Brotli bytes; only exhausted minimums move;
-    // allowances remain unchanged.
-    file: "bootstrap.js", raw: 1992445, gzip: 558180,
-    brotli: 455716 },
+    // signal as JSON text until something reads it, a change that a later write replaced is not
+    // announced, the notify function gains a batch method, and the engine context can hand a batch
+    // to the runtime's exports. The monolith grows by 2,774 raw / 880 gzip / 776 Brotli bytes; only
+    // exhausted minimums move; allowances remain unchanged.
+    file: "bootstrap.js", raw: 1993539, gzip: 558533,
+    brotli: 456065 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1006,9 +1007,10 @@ const budgets = [
   // breached targets to their minimum passing values; the size policy stays fixed.
   // Waiting for action bodies changes only code order: raw bytes are unchanged.
   // Move four exhausted Brotli targets by their measured four-byte excess.
-  // The lazily decoded signal store and the batch notify method add 1,229 raw / 382 gzip / 275
-  // Brotli bytes to the runtime core; only the exhausted raw and Brotli minimums move.
-  { file: "bootstrap-runtime.js", raw: 185887, gzip: 52300, brotli: 46535 },
+  // The lazily decoded signal store, the batch notify method and the loader's publication of the
+  // runtime's exports add 1,789 raw / 506 gzip / 330 Brotli bytes to the runtime core; only the
+  // exhausted raw and Brotli minimums move.
+  { file: "bootstrap-runtime.js", raw: 186421, gzip: 52300, brotli: 46587 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -1067,9 +1069,9 @@ const budgets = [
   // The complete motion fix measures 147,576 / 41,324 / 36,551. Reviewed
   // hard-limit headroom is 1,944 / 1,096 / 1,039 bytes.
   // The lite core carries the same document liveness guard: +961 raw / +294 Brotli.
-  // The same store and batch method add 1,229 raw / 349 gzip / 287 Brotli bytes to the lite core;
-  // only the exhausted raw and Brotli minimums move.
-  { file: "bootstrap-lite.js", raw: 144950, gzip: 40400, brotli: 36346 },
+  // The same store, batch method and export publication add 1,555 raw / 425 gzip / 363 Brotli bytes
+  // to the lite core; only the exhausted raw and Brotli minimums move.
+  { file: "bootstrap-lite.js", raw: 145261, gzip: 40400, brotli: 36419 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1831,9 +1833,10 @@ const budgets = [
   // Bumped raw 96_000 -> 105_000, gzip 29_500 -> 32_000, and brotli 26_000 ->
   // 28_500 for the video parity additions carried by the engines feature
   // chunk. Measured: 103_662 / 31_450 / 27_897.
-  // Sending a signal batch to a runtime that decodes it adds 459 raw / 138 gzip / 122 Brotli bytes
-  // to the engines chunk; only the exhausted Brotli minimum moves.
-  { file: "bootstrap-feature-engines.js", raw: 109773, gzip: 32481, brotli: 28852 },
+  // Sending a signal batch to a runtime that decodes it, through the runtime's exports when it has
+  // them, adds 990 raw / 323 gzip / 249 Brotli bytes to the engines chunk; only the exhausted
+  // minimums move.
+  { file: "bootstrap-feature-engines.js", raw: 109861, gzip: 32481, brotli: 29071 },
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
   // Wave 1 M2: exact chords and anyModifiers. Measured: 14481 / 4002 / 3663;
   // delta +199 / +86 / +100. Existing hard limits cover the change.
@@ -2018,11 +2021,12 @@ const routeBudgets = [
     // passing value; compressed targets and the governed allowance stay fixed.
     // The engine worker thread hook adds 246 raw bytes to the engines chunk
     // (measured 308,317 raw, 78,760 Brotli); only the exhausted raw and Brotli minimums move.
-    // The lazily decoded signal store and batch method add 1,688 raw / 520 gzip / 397 Brotli bytes
-    // to this route; only exhausted minimums move.
-    raw: 295242,
-    gzip: 83653,
-    brotli: 75387,
+    // The signal batch changes add 2,779 raw / 829 gzip / 579 Brotli bytes to this route (the lazily
+    // decoded store, the batch method, the export publication and the direct batch send); only
+    // exhausted minimums move.
+    raw: 296281,
+    gzip: 83947,
+    brotli: 75659,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -2211,14 +2215,15 @@ const routeBudgets = [
     // to this route; only exhausted minimums move.
     // Ending a camera move on ControlZoom navigation and marking a hydration that threw as failed
     // change this route by +310 raw / +75 gzip / +142 Brotli bytes; only exhausted minimums move.
-    // The lazily decoded signal store and batch method add 1,688 raw / 520 gzip / 397 Brotli bytes
-    // to this route; only exhausted minimums move.
-    raw: 1452237,
-    gzip: 404381,
+    // The signal batch changes add 2,779 raw / 829 gzip / 579 Brotli bytes to this route (the lazily
+    // decoded store, the batch method, the export publication and the direct batch send); only
+    // exhausted minimums move.
+    raw: 1453328,
+    gzip: 404690,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    brotli: 346323,
+    brotli: 346608,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2421,15 +2426,16 @@ const routeBudgets = [
     // to this route; only exhausted minimums move.
     // Ending a camera move on ControlZoom navigation and marking a hydration that threw as failed
     // change this route by +310 raw / +75 gzip / +142 Brotli bytes; only exhausted minimums move.
-    // The lazily decoded signal store and batch method add 1,688 raw / 520 gzip / 397 Brotli bytes
-    // to this route; only exhausted minimums move.
-    raw: 1257591,
-    gzip: 361605,
+    // The signal batch changes add 2,779 raw / 829 gzip / 579 Brotli bytes to this route (the lazily
+    // decoded store, the batch method, the export publication and the direct batch send); only
+    // exhausted minimums move.
+    raw: 1258630,
+    gzip: 361914,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 312814,
+    brotli: 313085,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2627,14 +2633,15 @@ const routeBudgets = [
     // to this route; only exhausted minimums move.
     // Ending a camera move on ControlZoom navigation and marking a hydration that threw as failed
     // change this route by +310 raw / +75 gzip / +142 Brotli bytes; only exhausted minimums move.
-    // The lazily decoded signal store and batch method add 1,688 raw / 520 gzip / 397 Brotli bytes
-    // to this route; only exhausted minimums move.
-    raw: 1745716,
-    gzip: 491442,
+    // The signal batch changes add 2,779 raw / 829 gzip / 579 Brotli bytes to this route (the lazily
+    // decoded store, the batch method, the export publication and the direct batch send); only
+    // exhausted minimums move.
+    raw: 1746807,
+    gzip: 491751,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 422096,
+    brotli: 422381,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2807,13 +2814,13 @@ const routeBudgets = [
     // to this route; only exhausted minimums move.
     // Ending a camera move on ControlZoom navigation and marking a hydration that threw as failed
     // change this route by +310 raw / +75 gzip / +142 Brotli bytes; only exhausted minimums move.
-    // The lazily decoded signal store and batch method add 1,229 raw / 382 gzip / 275 Brotli bytes
-    // to this route; only exhausted minimums move.
-    raw: 1295646,
-    gzip: 360543,
+    // The signal batch changes add 1,789 raw / 506 gzip / 330 Brotli bytes to this route (the
+    // lazily decoded store, the batch method and the export publication); only exhausted minimums move.
+    raw: 1296180,
+    gzip: 360667,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
-    brotli: 307371,
+    brotli: 307423,
   },
 
 ];
