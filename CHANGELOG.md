@@ -21,6 +21,55 @@
   hold slices or maps, so values of these types can no longer be compared with
   `==` or used as map keys. Compare their fields, or use `reflect.DeepEqual`.
 
+- Hold a Scene3D motion frame that arrives while the scene's models are still
+  hydrating, then apply it when they commit, instead of rejecting it with
+  `renderer-not-ready`. The wait ends at the call's `timeoutMS` (10 s by
+  default), and the frame's fallbacks then apply; aborting its `signal` cancels
+  the frame. A frame sent when no hydration is in flight, because nothing is
+  declared or the load failed, still fails at once with `renderer-not-ready`
+  and takes its fallbacks without delay. Crowds no longer need their first
+  motion frames resent.
+
+- Save the `game` clock remainder and the `Every` and `EveryInterval`
+  accumulators in `Runtime.Snapshot`. A runtime restored from a save, a rollback
+  or a replay baseline now takes its next steps and runs cadence systems on the
+  same ticks, with the same `ctx.Delta`, as one that never stopped. Before,
+  `Restore` zeroed the clock remainder and left the wrappers' gathered time as
+  it was. Snapshots carry `"version": 2` (`game.RuntimeStateVersion`) and the
+  fixed step that wrote them; a runtime with another fixed step still loads them
+  and starts the clock remainder from zero. A wrapper takes the saved time of the
+  wrapper that matches its system name, phase, kind, parameter and nesting.
+  Version 1 snapshots still load, but they carry no wrapper times, so a restore
+  from one now starts every wrapper from zero. It used to leave the wrappers as
+  they were, which made the result depend on what the runtime had done before.
+  `State`, which `sim.Runner` broadcasts every tick, keeps its size.
+
+- Stop the `game` clock at the end of a `time.Duration` instead of wrapping.
+  Game time ends at about 292 years, which is about 4.9 hours of play at a time
+  scale of 525,600. A frame whose scaled time was longer than a `Duration` used
+  to wrap to a negative time on amd64 and saturate on js/wasm, so the clock
+  stalled, and a snapshot of it could not be loaded. Now such a frame counts as
+  the longest `Duration`, the clock runs no step that would pass the end,
+  `Every` and `EveryInterval` wrappers stop gathering at the longest `Duration`,
+  and `Frame.DroppedDuration` reports the time that did not run. Frames that did
+  not overflow are unchanged. The snapshot of a runtime in any of these states
+  loads again.
+
+- Add `game.Runtime.RestoreSnapshot`, which returns why a snapshot was refused
+  (empty, malformed, newer than this build, or a time, clock or world that does
+  not fit) and then changes nothing. `Runtime.Restore` keeps the
+  `sim.Simulation` signature and still cannot report an error. `SaveCodec`
+  snapshots now check the clock before they replace the world. Custom codecs can
+  report errors through the new optional `game.SnapshotRestorer` interface or
+  `SnapshotCodecFuncs.RestoreSnapshotFunc`.
+
+- Add `sim.Runner.RestoreSnapshot` and the optional `sim.CheckedRestorer`
+  interface, which `game.Runtime` implements. It loads a save into a running
+  runner under the tick lock and returns the simulation's refusal. When the
+  simulation refuses a snapshot, `Runner.Restore` and `RestoreSnapshot` now keep
+  the runner frame and replay log; `Restore` used to move both to the refused
+  snapshot.
+
 - Keep WASM audio worklet messages when the page is slow to return the message
   buffer. The processor drained the reactor's ring every eighth render quantum
   and discarded the batch while the buffer was out, so a main-thread stall of
@@ -80,6 +129,29 @@
   during SceneIR updates, avoiding repeated reflection over texture slots.
   Nested schema and named-scalar checks retain the JSON fallback when a proof
   is stale or a comparison is ambiguous.
+
+### Behavior changes to note when upgrading
+
+- **A Scene3D camera that carries `TransitionMS` now eases in the page.** From
+  `Scene3D.SetCamera`, a camera command, a Props update or a Presentation view,
+  it used to cut to the pose, because the page read the field and dropped it.
+  Now the page eases over that many milliseconds with the curve and fields of
+  `scene.CameraTransition.Sample`, and the call returns at once. One field
+  differs: Go mixes `PortraitFOV` linearly, and the page eases it only between
+  two nonzero values and otherwise jumps to the new one. A newer camera replaces
+  the move from the pose on screen. These end a move: a camera without
+  `TransitionMS`, a Live camera event, the player's drag, wheel or key under
+  orbit or fly controls, and, with `ControlZoom`, its wheel, `+` and `-` keys,
+  pinch and pan (each sends the `gosx:scene3d:navigation` event). Reduced motion
+  and a change of camera kind cut. `SetOrbit` changes the orbit and leaves a
+  move running, and a camera for the pose a move is heading to keeps the move
+  and still applies its orbit. A move that `CameraInputSignal` starts does not
+  publish `CameraOutputSignal`; a move that a call starts does publish its
+  steps, so bind the two signals to different names, or the echo has no
+  `TransitionMS` and ends the move after its first step. **If you send a camera
+  every frame with `TransitionMS` above zero, each frame now starts a new move
+  and the view trails the camera you send. Set `TransitionMS` to zero on
+  streamed cameras before you upgrade.**
 
 ## v0.57.24
 

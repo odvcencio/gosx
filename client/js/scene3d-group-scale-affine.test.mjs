@@ -769,3 +769,94 @@ test("hydration clones retain instance membership, parent and tint metadata toge
  })()`);
  assert.equal(result.separate,true);assert.equal(result.parent,"rotor");assert.equal(result.batch,"agents");assert.equal(result.template,true);assert.equal(result.tint,true);assert.equal(result.localParent,"rotor");
 });
+
+// ---- a model hydration that throws ----
+// An exception that escapes hydrateSceneStateModels will not commit its
+// generation, so the marker a motion frame reads (_modelHydrationFailed) must
+// say so, but only for the generation that threw. The real-mount cases are in
+// scene3d-motion-frame-mount.test.js.
+
+// ONE_TRIANGLE is what the stubbed model loader returns for every model.
+const ONE_TRIANGLE = `({objects:[{id:'mesh',kind:'mesh',vertices:{count:3,immutable:true,revision:0,
+  positions:new Float32Array([0,0,0, 1,0,0, 0,1,0])}}],
+  skins:[],nodes:[],animations:[],points:[],labels:[],sprites:[],html:[],lights:[]})`;
+
+async function hydrationRun(body) {
+  const result = await vm.runInContext(`(async () => {
+    gosxSceneEmit = function() {};
+    ${body}
+  })()`, createCoreContext({ mount: true }));
+  return JSON.parse(JSON.stringify(result));
+}
+
+test("a hydration that commits leaves the failure marker clear", async () => {
+  const result = await hydrationRun(`
+    loadSceneModelAsset = async function() { return ${ONE_TRIANGLE}; };
+    const state = createSceneState({models:[{id:'model',src:'mesh.glb'}]}, null);
+    const outcome = await hydrateSceneStateModels(state, null);
+    return {committed:outcome.committed, failed:state._modelHydrationFailed, uncommitted:state._modelHydrationUncommitted};`);
+  assert.deepEqual(result, { committed: true, failed: false, uncommitted: false });
+});
+
+test("an exception that escapes a hydration marks it failed and still rejects", async () => {
+  const result = await hydrationRun(`
+    loadSceneModelAsset = async function() { return ${ONE_TRIANGLE}; };
+    publishSceneModelHydrationStatus = function(mount, status) { if (status === 'loading') throw new Error('unexpected status failure'); };
+    const state = createSceneState({models:[{id:'model',src:'mesh.glb'}]}, null);
+    let error = '';
+    try { await hydrateSceneStateModels(state, null); } catch (e) { error = e.message; }
+    return {error, failed:state._modelHydrationFailed, uncommitted:state._modelHydrationUncommitted};`);
+  assert.equal(result.error, "unexpected status failure", "the caller still sees the exception");
+  assert.equal(result.failed, true);
+  assert.equal(result.uncommitted, true, "the declarations stay uncommitted, as after a structured failure");
+});
+
+test("an exception after the models loaded marks the generation failed", async () => {
+  const result = await hydrationRun(`
+    loadSceneModelAsset = async function() { return ${ONE_TRIANGLE}; };
+    const state = createSceneState({models:[{id:'model',src:'mesh.glb'}]}, null);
+    state.objects.set = function() { throw new Error('unexpected commit failure'); };
+    let error = '';
+    try { await hydrateSceneStateModels(state, null); } catch (e) { error = e.message; }
+    return {error, failed:state._modelHydrationFailed, records:!!state._hydratedModelRecords};`);
+  assert.equal(result.error, "unexpected commit failure");
+  assert.equal(result.failed, true);
+  assert.equal(result.records, false);
+});
+
+test("an exception after the models committed leaves the committed generation unmarked", async () => {
+  const result = await hydrationRun(`
+    loadSceneModelAsset = async function() { return ${ONE_TRIANGLE}; };
+    publishSceneModelHydrationStatus = function(mount, status) { if (status === 'committed') throw new Error('unexpected status failure'); };
+    const state = createSceneState({models:[{id:'model',src:'mesh.glb'}]}, null);
+    let error = '';
+    try { await hydrateSceneStateModels(state, null); } catch (e) { error = e.message; }
+    return {error, failed:state._modelHydrationFailed, uncommitted:state._modelHydrationUncommitted, records:!!state._hydratedModelRecords};`);
+  assert.equal(result.error, "unexpected status failure");
+  assert.deepEqual({ failed: result.failed, uncommitted: result.uncommitted, records: result.records }, { failed: false, uncommitted: false, records: true });
+});
+
+test("an exception from a superseded generation leaves the newer generation's marker alone", async () => {
+  const result = await hydrationRun(`
+    const gates = [], releases = [];
+    for (let i = 0; i < 2; i++) gates.push(new Promise(resolve => { releases.push(resolve); }));
+    let loads = 0;
+    loadSceneModelAsset = async function() { await gates[loads++]; return ${ONE_TRIANGLE}; };
+    const state = createSceneState({models:[{id:'model',src:'mesh.glb'}]}, null);
+    const first = hydrateSceneStateModels(state, null);
+    const second = hydrateSceneStateModels(state, null);
+    // The first generation is superseded; clearing its staged models throws.
+    const destroy = sceneDestroyStagedModelHydrations;
+    sceneDestroyStagedModelHydrations = function() { throw new Error('unexpected cleanup failure'); };
+    releases[0]();
+    let error = '';
+    try { await first; } catch (e) { error = e.message; }
+    sceneDestroyStagedModelHydrations = destroy;
+    const during = {failed:state._modelHydrationFailed, uncommitted:state._modelHydrationUncommitted};
+    releases[1]();
+    const outcome = await second;
+    return {error, during, committed:outcome.committed, failed:state._modelHydrationFailed, uncommitted:state._modelHydrationUncommitted};`);
+  assert.equal(result.error, "unexpected cleanup failure", "the superseded generation threw");
+  assert.deepEqual(result.during, { failed: false, uncommitted: true }, "the newer generation is still loading and has not failed");
+  assert.deepEqual({ committed: result.committed, failed: result.failed, uncommitted: result.uncommitted }, { committed: true, failed: false, uncommitted: false });
+});

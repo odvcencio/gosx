@@ -84,7 +84,8 @@ type resourceCodec struct {
 type SaveCodec struct {
 	// IncludeWorldInState adds the world to the State payload that sim.Runner
 	// broadcasts every tick. Leave it false for large worlds; Snapshot always
-	// carries the world.
+	// carries the world. State never carries the fields that only a restore
+	// needs (see Runtime.State).
 	IncludeWorldInState bool
 	// SkipUnknown makes ImportWorld ignore columns and resources whose names
 	// are not registered, instead of returning an error. Use it to load saves
@@ -329,31 +330,42 @@ func (c *SaveCodec) ImportWorld(w *World, save WorldSave) error {
 // and Runtime.Restore (and sim.Runner joins, saves and replays) round trip the
 // world. It reads and writes the RuntimeState JSON with an added "world" key.
 // Errors while encoding return a nil snapshot; call ExportWorld directly to see
-// them.
+// them. Runtime.RestoreSnapshot returns the errors of a restore, and a failed
+// restore changes neither the world nor the clock.
 func (c *SaveCodec) SnapshotCodec() SnapshotCodec {
+	restore := func(r *Runtime, data []byte) error {
+		// Check the clock before the import: ImportWorld replaces the world, and
+		// nothing can undo that if the clock then fails.
+		state, err := decodeRuntimeState(data)
+		if err != nil {
+			return err
+		}
+		if state.World != nil {
+			if err := c.ImportWorld(r.world, *state.World); err != nil {
+				return err
+			}
+		}
+		r.applyRuntimeState(state)
+		return nil
+	}
 	return SnapshotCodecFuncs{
-		SnapshotFunc: func(r *Runtime) []byte { return c.encode(r, true) },
-		StateFunc:    func(r *Runtime) []byte { return c.encode(r, c.IncludeWorldInState) },
-		RestoreFunc: func(r *Runtime, data []byte) {
-			var state RuntimeState
-			if err := json.Unmarshal(data, &state); err != nil {
-				return
-			}
-			if state.World != nil {
-				if err := c.ImportWorld(r.world, *state.World); err != nil {
-					return
-				}
-			}
-			r.applyRuntimeState(state)
-		},
+		SnapshotFunc: func(r *Runtime) []byte { return c.encode(r, true, true) },
+		StateFunc:    func(r *Runtime) []byte { return c.encode(r, c.IncludeWorldInState, false) },
+		// RestoreFunc is for code that predates RestoreSnapshotFunc and builds a
+		// codec of its own from these functions. Where both are set, every restore
+		// runs RestoreSnapshotFunc.
+		RestoreFunc:         func(r *Runtime, data []byte) { _ = restore(r, data) },
+		RestoreSnapshotFunc: restore,
 	}
 }
 
-func (c *SaveCodec) encode(r *Runtime, withWorld bool) []byte {
+// encode returns the state JSON. withWorld adds the world. restorable adds what
+// only a restore needs, which State leaves out so a broadcast stays small.
+func (c *SaveCodec) encode(r *Runtime, withWorld, restorable bool) []byte {
 	if r == nil {
 		return nil
 	}
-	state := r.runtimeState()
+	state := r.runtimeState(restorable)
 	if withWorld {
 		save, err := c.ExportWorld(r.world)
 		if err != nil {
