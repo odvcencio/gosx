@@ -154,15 +154,18 @@ func TestBatchTellsTheBrowserTheLegacySpellingTheSenderUsed(t *testing.T) {
 				t.Fatalf("first batch: %s", got)
 			}
 
-			// The value did not change, and a changed-only snapshot says nothing about
-			// $surface.event.selectedID, but the sender still spelled the legacy name.
+			// The value did not change. A changed-only snapshot has nothing to say about
+			// it under either spelling, because the page holds it under the legacy
+			// spelling already. An event batch means its write and says it again.
 			if err := b.setSharedSignalBatchJSON(`{"$scene.event.selectedID":"n1"}`, changedOnly); err != nil {
 				t.Fatal(err)
 			}
 			if changedOnly {
-				if len(handoffs) != 2 || text(1) != `$scene.event.selectedID="n1"` {
-					t.Fatalf("an unchanged legacy name: %d handoffs, last %q", len(handoffs), text(len(handoffs)-1))
+				if len(handoffs) != 1 {
+					t.Fatalf("an unchanged legacy name in a changed-only batch: %d handoffs, last %q", len(handoffs), text(len(handoffs)-1))
 				}
+			} else if len(handoffs) != 2 || !strings.HasSuffix(text(1), `$scene.event.selectedID="n1"`) {
+				t.Fatalf("a repeated legacy name in an event batch: %d handoffs, last %q", len(handoffs), text(len(handoffs)-1))
 			}
 
 			// The canonical spelling gets no extra announcement.
@@ -185,6 +188,107 @@ func TestBatchLegacySpellingWithoutABatchCallbackGoesOutOneByOne(t *testing.T) {
 	}
 	if strings.Join(*sent, " ") != `$surface.event.selectedID="n1" $scene.event.selectedID="n1"` {
 		t.Fatalf("per-signal = %v", *sent)
+	}
+}
+
+// recordHandoffs returns the batch handoffs of a bridge, in order, and a function
+// that writes the changes of handoff i as name=text.
+func recordHandoffs(b *Bridge) (*[][]SignalUpdate, func(i int) string) {
+	var handoffs [][]SignalUpdate
+	b.SetSharedSignalBatchCallback(func(updates []SignalUpdate) {
+		handoffs = append(handoffs, append([]SignalUpdate(nil), updates...))
+	})
+	return &handoffs, func(i int) string {
+		var out []string
+		for _, update := range handoffs[i] {
+			out = append(out, update.Name+"="+update.JSON)
+		}
+		return strings.Join(out, " ")
+	}
+}
+
+func TestChangedOnlyBatchTellsALegacySpellingOnceWhileItsValueStays(t *testing.T) {
+	// Every page subscriber of a name wakes when the runtime announces the name, with
+	// the value it already holds or not. A changed-only snapshot that repeats a value
+	// must not wake the subscribers of the legacy spelling it was sent under.
+	b := New()
+	handoffs, text := recordHandoffs(b)
+
+	const snapshot = `{"$scene.event.pointerX":5,"$other":1}`
+	for i := 0; i < 3; i++ {
+		if err := b.SetChangedSharedSignalBatchJSON(snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(*handoffs) != 1 {
+		t.Fatalf("three identical changed-only batches made %d handoffs; the last was %q", len(*handoffs), text(len(*handoffs)-1))
+	}
+	if got := text(0); got != `$surface.event.pointerX=5 $other=1 $scene.event.pointerX=5` &&
+		got != `$other=1 $surface.event.pointerX=5 $scene.event.pointerX=5` {
+		t.Fatalf("first batch: %s", got)
+	}
+
+	// A different value is a change under both spellings.
+	if err := b.SetChangedSharedSignalBatchJSON(`{"$scene.event.pointerX":6}`); err != nil {
+		t.Fatal(err)
+	}
+	if len(*handoffs) != 2 || text(1) != `$surface.event.pointerX=6 $scene.event.pointerX=6` {
+		t.Fatalf("a changed value: %d handoffs, the last %q", len(*handoffs), text(len(*handoffs)-1))
+	}
+	// And the new value is then held back like the old one.
+	if err := b.SetChangedSharedSignalBatchJSON(`{"$scene.event.pointerX":6}`); err != nil {
+		t.Fatal(err)
+	}
+	if len(*handoffs) != 2 {
+		t.Fatalf("the repeated new value made a handoff: %q", text(len(*handoffs)-1))
+	}
+}
+
+func TestChangedOnlyBatchRepairsALegacyCopyThatAWriteLeftStale(t *testing.T) {
+	// A write under the canonical name tells the page the new value under that name
+	// only, so its copy under the legacy spelling is out of date. The next changed-only
+	// snapshot that names the legacy spelling repairs the copy, once.
+	b := New()
+	handoffs, text := recordHandoffs(b)
+
+	if err := b.SetChangedSharedSignalBatchJSON(`{"$scene.event.selectedID":"n1"}`); err != nil {
+		t.Fatal(err)
+	}
+	if len(*handoffs) != 1 {
+		t.Fatalf("first batch: %d handoffs", len(*handoffs))
+	}
+	if err := b.SetSharedSignalJSON("$surface.event.selectedID", `"n2"`); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := b.SetChangedSharedSignalBatchJSON(`{"$scene.event.selectedID":"n2"}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(*handoffs) != 2 || text(1) != `$scene.event.selectedID="n2"` {
+		t.Fatalf("after a canonical write: %d handoffs, the last %q", len(*handoffs), text(len(*handoffs)-1))
+	}
+}
+
+func TestEventBatchTellsALegacySpellingEveryTime(t *testing.T) {
+	// An event batch is not a snapshot: its sender means every write, and subscribers
+	// hear the repeat, as they do under the canonical name.
+	b := New()
+	handoffs, text := recordHandoffs(b)
+
+	for i := 0; i < 3; i++ {
+		if err := b.SetSharedSignalBatchJSON(`{"$scene.event.clickCount":2}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(*handoffs) != 3 {
+		t.Fatalf("three identical event batches made %d handoffs", len(*handoffs))
+	}
+	for i := range *handoffs {
+		if !strings.HasSuffix(text(i), `$scene.event.clickCount=2`) {
+			t.Fatalf("event batch %d: %q", i+1, text(i))
+		}
 	}
 }
 

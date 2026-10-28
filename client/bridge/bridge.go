@@ -39,7 +39,8 @@ type Bridge struct {
 	signalBatchFn  func(updates []SignalUpdate)          // callback that hands JS every change of one batch together
 	collecting     bool                                  // batch notifications wait in collected for one handoff
 	collected      []SignalUpdate                        // changes from the batch being applied, in notification order
-	senderNames    []string                              // names the batch sender spelled as aliases, to tell the page under that spelling
+	senderNames    []legacySender                        // legacy spellings the batch sender used, to tell the page under that spelling
+	legacyTold     map[string]string                     // the text last told to the page under each legacy spelling
 	jsonScratch    []byte                                // buffer the notifications are encoded into
 	dispatching    map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
 	unsubs         map[string][]func()                   // per-island unsubscribe handles for shared signals
@@ -278,7 +279,8 @@ type SignalUpdate struct {
 //
 // A sender that spelled a signal with a legacy alias ($scene.event.x for
 // $surface.event.x) is also told the value under that spelling, after the
-// batch's own changes.
+// batch's own changes. A changed-only batch leaves it out when the value did not
+// change and the page already has it.
 func (b *Bridge) SetSharedSignalBatchCallback(fn func(updates []SignalUpdate)) {
 	b.signalBatchFn = fn
 }
@@ -468,20 +470,22 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 	}
 
 	values := payload.Map()
-	var senderNames []string
+	var senderNames []legacySender
 	for name, value := range values {
 		// A blank name is refused, as the page refused it before it sent a
 		// batch here.
 		if blankSignalName(name) {
 			return errors.New("shared signal name required")
 		}
-		if signal.ResolveAlias(name) != name {
-			senderNames = append(senderNames, name)
-		}
+		unchanged := false
 		if changedOnly {
 			if current, ok := b.store.Get(name); ok && vm.EqualJSON(current, value) {
 				delete(values, name)
+				unchanged = true
 			}
+		}
+		if signal.ResolveAlias(name) != name {
+			senderNames = append(senderNames, legacySender{name: name, unchanged: unchanged})
 		}
 	}
 	if len(values) == 0 && len(senderNames) == 0 {
@@ -490,9 +494,10 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 	// The store keeps one signal under the canonical name, and the page keeps
 	// one value for each name it has read. A sender that spelled a name as a
 	// legacy alias ($scene.event.x for $surface.event.x) is told the value under
-	// that spelling as well, so the page's copy of it does not go stale.
+	// that spelling as well, so the page's copy of it does not go stale
+	// (collectSenderNames says when a changed-only batch leaves that out).
 	for i := 1; i < len(senderNames); i++ {
-		for j := i; j > 0 && senderNames[j] < senderNames[j-1]; j-- {
+		for j := i; j > 0 && senderNames[j].name < senderNames[j-1].name; j-- {
 			senderNames[j], senderNames[j-1] = senderNames[j-1], senderNames[j]
 		}
 	}
@@ -568,14 +573,31 @@ func (b *Bridge) deliverCollected() {
 	b.signalBatchFn(updates)
 }
 
+// legacySender is a legacy spelling ($scene.event.x for $surface.event.x) that a
+// batch sender used. unchanged says that a changed-only batch found the value
+// equal to the one in the store, so the batch changes nothing under that name.
+type legacySender struct {
+	name      string
+	unchanged bool
+}
+
 // collectSenderNames adds the legacy spellings the batch sender used to the
 // changes that are waiting, each with the current value of its signal. Without a
 // batch callback they go to the per-signal callback at once.
+//
+// Every page subscriber of a name wakes when the name is announced, whether or
+// not the value moved. A changed-only batch that repeats a value is therefore
+// silent about its legacy spelling, as it is about every other name, unless the
+// page's copy may be out of date: the text last announced under the spelling is
+// not the text the store holds now, because a write under the canonical name
+// moved it. The bridge keeps that last text for each spelling it has announced,
+// at most as many as the alias table has names. A batch that is not changed-only
+// announces every spelling it carries, as it notifies every name.
 func (b *Bridge) collectSenderNames() {
 	names := b.senderNames
 	b.senderNames = nil
-	for _, name := range names {
-		value, ok := b.store.Get(name)
+	for _, sender := range names {
+		value, ok := b.store.Get(sender.name)
 		if !ok {
 			continue
 		}
@@ -583,11 +605,20 @@ func (b *Bridge) collectSenderNames() {
 		if err != nil {
 			continue
 		}
-		if b.collecting {
-			b.collected = append(b.collected, SignalUpdate{Name: name, JSON: text})
-		} else if b.signalFn != nil {
-			b.signalFn(name, text)
+		if told, known := b.legacyTold[sender.name]; sender.unchanged && known && told == text {
+			continue
 		}
+		if b.collecting {
+			b.collected = append(b.collected, SignalUpdate{Name: sender.name, JSON: text})
+		} else if b.signalFn != nil {
+			b.signalFn(sender.name, text)
+		} else {
+			continue
+		}
+		if b.legacyTold == nil {
+			b.legacyTold = map[string]string{}
+		}
+		b.legacyTold[sender.name] = text
 	}
 }
 

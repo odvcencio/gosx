@@ -312,6 +312,34 @@ func TestPageKeepsALegacyNameCurrentWhenTheSenderSpellsIt(t *testing.T) {
 	}
 }
 
+func TestRepeatedSnapshotDoesNotWakeTheSubscribersOfALegacyName(t *testing.T) {
+	ctx, _ := pageWithRuntime(t)
+
+	// A subscriber wakes whenever the runtime announces its name, with the value it
+	// holds or not. A snapshot that repeats every frame must not make the runtime
+	// announce a legacy spelling whose value stays.
+	wakes := 0
+	handler := js.FuncOf(func(this js.Value, args []js.Value) any {
+		wakes++
+		return nil
+	})
+	t.Cleanup(handler.Release)
+	options := js.Global().Get("Object").New()
+	options.Set("immediate", false)
+	ctx.Call("subscribeSignalJSON", "$scene.event.pointerX", handler, options)
+
+	for i := 0; i < 3; i++ {
+		ctx.Call("setSignalsJSON", `{"$scene.event.pointerX":5,"$other":1}`, true)
+	}
+	if wakes != 1 {
+		t.Fatalf("a subscriber of the legacy spelling woke %d times for three identical snapshots, want 1", wakes)
+	}
+	ctx.Call("setSignalsJSON", `{"$scene.event.pointerX":6,"$other":1}`, true)
+	if wakes != 2 {
+		t.Fatalf("after the value moved the subscriber has woken %d times, want 2", wakes)
+	}
+}
+
 func TestChangedOnlyBatchDoesNotRepairAValueOnlyThePageHolds(t *testing.T) {
 	ctx, _ := pageWithRuntime(t)
 
