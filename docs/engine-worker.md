@@ -148,8 +148,12 @@ The rules:
    the signal's own ID, as above. With a mailbox, count from `Seen` (rule 3a): the
    result's `ID` is not safe, because a late reply puts it back to an earlier call.
 2. A signal keeps its newest value only. If one handler writes two single calls,
-   the engine sees the second, and the first never runs. To send several calls
-   together, write a mailbox (see below) or use `wasm.Caller`.
+   the engine sees the second, and the first never runs. The engine does not stay
+   silent about it: the result of the second call lists the first in `Recent` with
+   `Error: "overwritten"`, for up to `CallOptions.Recent` skipped IDs in a row. A
+   bigger jump is taken for a writer that numbers differently and is not
+   reported. To send several calls together, write a mailbox (see below) or use
+   `wasm.Caller`.
 3. A result with `ID >=` your call's ID means your call is finished. If the IDs
    are equal, `Value` and `Error` are its reply. If the result is newer, find
    your ID in `Recent` (the last `CallOptions.Recent` replies, default 8). Each

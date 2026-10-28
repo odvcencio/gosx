@@ -16,6 +16,9 @@ type callEntry struct {
 	// engine that is gone, so this engine answers it with an error and does not
 	// run it. See callServer.markStarted.
 	interrupted bool
+	// lost lists the IDs just below this call that a writer of single calls
+	// skipped, because a signal that holds one call keeps only its newest value.
+	lost []uint64
 }
 
 // decodeCalls reads the value of a call signal. The value is one call (an
@@ -85,8 +88,32 @@ type replyLog struct {
 	items  []recentReply
 }
 
-// add records a reply and returns the Recent list to publish with it.
-func (l *replyLog) add(id uint64, errText string, value json.RawMessage) []engine.ResultRef {
+// overwritten is the error of a call that the engine never received: its writer
+// set a newer call before the page told the engine about this one.
+const overwritten = "overwritten"
+
+// lostBefore lists the IDs between the highest one the engine has seen and the
+// ID of a single call that has just arrived. A writer that sets calls n and n+1
+// in one batch delivers n+1 alone, and the engine then knows that n is lost. A
+// jump of more than keep places is a writer that numbers differently (a clock, a
+// counter it kept) and is not reported.
+func lostBefore(seen, id uint64, keep int) []uint64 {
+	if id <= seen+1 || id-seen-1 > uint64(keep) {
+		return nil
+	}
+	ids := make([]uint64, 0, id-seen-1)
+	for lost := seen + 1; lost < id; lost++ {
+		ids = append(ids, lost)
+	}
+	return ids
+}
+
+// add records a reply, after the calls that were lost before it, and returns the
+// Recent list to publish with it.
+func (l *replyLog) add(id uint64, errText string, value json.RawMessage, lost []uint64) []engine.ResultRef {
+	for _, id := range lost {
+		l.items = append(l.items, recentReply{id: id, err: overwritten})
+	}
 	entry := recentReply{id: id, err: errText}
 	if errText == "" && l.budget > 0 && len(value) > 0 {
 		entry.value = value

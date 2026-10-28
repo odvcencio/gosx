@@ -74,7 +74,8 @@ type WorkerStatus struct {
 // The call signal holds either one Call (the newest call) or a JSON array of
 // Calls, a mailbox of the calls still waiting for a reply. A signal that holds a
 // single Call keeps only the latest value, so two writes in one island handler
-// (a batch) deliver the second call alone. A mailbox keeps both: append each
+// (a batch) deliver the second call alone; the engine then lists the first in
+// Result.Recent with the error "overwritten". A mailbox keeps both: append each
 // call to the list, with an ID above every ID in it, and the engine runs every
 // call whose ID is above the last one it handled, in ID order. Calls that have
 // a reply leave the list: the page host removes them for a worker or native

@@ -88,7 +88,10 @@ func callSignals(channel string) (call, result string, err error) {
 //
 // Result.Recent lists the last CallOptions.Recent replies (ID, error and,
 // within CallOptions.RecentBytes, value), so an island that sent several calls
-// before the first reply still finds each one. Result.Seen is the highest call
+// before the first reply still finds each one. It also lists, with the error
+// "overwritten", each call that a writer of single calls skipped just before the
+// call that arrived: the signal keeps its newest value only, so the engine never
+// received it. Result.Seen is the highest call
 // ID the engine has accepted or seen in a result, the number a writer counts its
 // next call from. On a worker engine the page also fails a call with "timeout"
 // when no reply arrives in CallOptions.Timeout, and with "worker-crashed" if the
@@ -256,6 +259,7 @@ type callReply struct {
 	id    uint64
 	name  string
 	err   string
+	lost  []uint64        // IDs a writer of single calls skipped just below id
 	value json.RawMessage // the encoded Value to publish; the encoded zero value for an error
 	kept  json.RawMessage // the value for Result.Recent; nil for an error
 }
@@ -302,6 +306,10 @@ func (s *callServer[A, R]) deliver(data json.RawMessage) {
 	}
 	for _, entry := range entries {
 		if entry.id > s.last {
+			if !mailbox {
+				// A mailbox lists every call it has, so a gap in it is no loss.
+				entry.lost = lostBefore(s.seen, entry.id, s.log.keep)
+			}
 			s.last = entry.id
 			s.seen = max(s.seen, entry.id)
 			// A call at or below the mark has no result, and its handler started: an
@@ -369,7 +377,7 @@ func (s *callServer[A, R]) drain() {
 		}
 		result := engine.Result[json.RawMessage]{
 			ID: reply.id, Name: reply.name, Error: reply.err, Value: reply.value,
-			Recent: s.log.add(reply.id, reply.err, reply.kept),
+			Recent: s.log.add(reply.id, reply.err, reply.kept, reply.lost),
 			Seen:   s.seen,
 		}
 		trim := s.mailbox && s.trimmer != nil
@@ -404,7 +412,7 @@ func (s *callServer[A, R]) markStarted(id uint64) (run bool) {
 
 // run decodes one call, runs the handler and encodes the reply.
 func (s *callServer[A, R]) run(entry callEntry) callReply {
-	reply := callReply{id: entry.id}
+	reply := callReply{id: entry.id, lost: entry.lost}
 	if entry.interrupted {
 		// No handler runs: it started in an engine that is gone, and may have
 		// finished. The result still names the call, when its name decodes.

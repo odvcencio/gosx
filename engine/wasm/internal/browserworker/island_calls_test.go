@@ -284,15 +284,27 @@ type Cmd struct {
 	ID   uint64
 	Name string
 }
+type Ref struct {
+	ID    uint64
+	Error string
+}
+type Reply struct {
+	ID     uint64
+	Recent []Ref
+}
 
 //gosx:island
 func Twice(props struct{}) Node {
 	cmd := signal.NewShared("bv.one", Cmd{})
+	res := signal.NewShared("bv.one.result", Reply{})
 	both := func() {
 		cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "first"})
 		cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "second"})
 	}
-	return <button id="both" onClick={both}>both</button>
+	return <section>
+		<button id="both" onClick={both}>both</button>
+		<p id="recent"><Each of={res.Get().Recent} as="r"><span>{r.ID}={r.Error};</span></Each></p>
+	</section>
 }
 `
 
@@ -300,6 +312,8 @@ func Twice(props struct{}) Node {
 // a handler ends. Two single calls written by one handler therefore reach the
 // engine as the second call alone. This is the reason a handler that sends
 // several calls writes a mailbox (see the test above and docs/engine-worker.md).
+// The engine cannot run the first call, but it says that it was lost, in the
+// result of the second, so the island does not wait for a reply that never comes.
 func TestIslandHandlerThatWritesTwoSingleCallsSendsOnlyTheSecond(t *testing.T) {
 	p := hydrate(t, twiceSource, "Twice")
 	sent := p.click("both", "$bv.one")
@@ -322,6 +336,16 @@ func TestIslandHandlerThatWritesTwoSingleCallsSendsOnlyTheSecond(t *testing.T) {
 	e.deliver(sent)
 	if fmt.Sprint(ran) != "[second]" {
 		t.Fatalf("the engine ran %v; a signal that holds one call delivers only the newest", ran)
+	}
+	results := e.written()
+	if len(results) != 1 {
+		t.Fatalf("the engine wrote %d results: %s", len(results), results)
+	}
+	if err := p.b.SetSharedSignalJSON("$bv.one.result", string(results[0])); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.text("recent"); got != "1=overwritten;2=;" {
+		t.Errorf("the island reads %q from Recent, want 1=overwritten;2=;", got)
 	}
 }
 
