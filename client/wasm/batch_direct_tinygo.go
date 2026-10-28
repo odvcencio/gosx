@@ -13,6 +13,11 @@ import "unsafe"
 // A status other than zero means the batch was refused, and gosx_batch_error
 // and gosx_batch_error_length give the message (without the "error: " prefix
 // that __gosx_set_input_batch puts on it).
+//
+// gosx_batch_apply runs on the system stack, so the runtime must be linked with
+// a system stack as large as a goroutine stack (see directBatch in
+// batch_direct.go). With the linker's default of 64 KiB, a deep island or deep
+// JSON overflows it, and the runtime traps for good.
 
 //export gosx_batch_reserve
 func gosxBatchReserve(room int32) unsafe.Pointer {

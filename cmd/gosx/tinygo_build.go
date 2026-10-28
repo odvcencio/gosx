@@ -118,6 +118,24 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraT
 // task.Pause (the stack canary).
 const tinyGoGoroutineStackSize = "256KB"
 
+// tinyGoSystemStackBytes sizes the system stack of the TinyGo runtime: the stack
+// a call from JavaScript into an export already runs on. TinyGo's -stack-size
+// sizes goroutine stacks only, and the linker gives the system stack its default
+// of 64 KiB. The direct batch entry (client/wasm/batch_direct_tinygo.go) applies
+// a whole batch on that stack, including the island renders the batch wakes and
+// the decoding of the JSON it carries. At 64 KiB, a batch that re-rendered an
+// island about 30 levels deep, or carried a JSON value about 105 levels deep,
+// overflowed the stack, where the call through __gosx_set_input_batch, on a
+// goroutine stack, took an island 128 levels deep and a JSON value 410 levels
+// deep. The linker places the system stack at the start of memory
+// (--stack-first), so the overflow is a trap, "memory access out of bounds", and
+// every later call into the runtime fails the same way. This size must stay
+// equal to the goroutine stack size above.
+const tinyGoSystemStackBytes = 256 << 10
+
+// tinyGoSystemStackFlag hands the system stack size to wasm-ld.
+var tinyGoSystemStackFlag = "-ldflags=-extldflags=-zstack-size=" + strconv.Itoa(tinyGoSystemStackBytes)
+
 func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 	args := []string{
 		"build",
@@ -129,6 +147,7 @@ func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 	}
 	args = append(args,
 		"-stack-size="+tinyGoGoroutineStackSize,
+		tinyGoSystemStackFlag,
 		"-no-debug",
 		"-panic=trap",
 		"-o", outputPath,

@@ -15,9 +15,18 @@ import (
 // A call from JavaScript through js.FuncOf makes TinyGo start a goroutine with
 // a heap-allocated stack (stack_scrub_tinygo.go says what that costs). A batch
 // arrives about twenty times a second and is the hottest call, so the page can
-// hand it over through exports instead, which run on the stack the call already
-// has: no goroutine, no stack block. The page falls back to
+// hand it over through exports instead, which run on the system stack the call
+// already has: no goroutine, no stack block. The page falls back to
 // __gosx_set_input_batch when the exports are not there.
+//
+// The whole batch applies on that stack: the decoding of its JSON and the render
+// of every island it wakes, which uses about 2 KiB of stack for each level of
+// nesting. TinyGo's -stack-size sizes goroutine stacks only, and the linker's own
+// default for the system stack is 64 KiB, which a batch that re-renders an island
+// about 30 levels deep overflows. cmd/gosx tinyGoBuildArgs therefore links the system
+// stack at the size of a goroutine stack, and client/js/signal-batch-depth.mjs
+// sends a deep batch to every published runtime. Do not build a runtime that has
+// these exports without that flag.
 type directBatch struct {
 	bridge  *bridge.Bridge
 	staging []byte

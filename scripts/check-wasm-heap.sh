@@ -16,6 +16,14 @@
 # It also fails if a runtime does not export the direct batch entry, because
 # then the page would fall back to the call that starts a goroutine.
 #
+# The direct batch entry applies a batch on the runtime's system stack, which the
+# linker sizes at 64 KiB unless cmd/gosx tinyGoBuildArgs says otherwise. The gate
+# therefore also sends each runtime batches that re-render an island 32 and 100
+# levels deep and batches with a JSON value 128 and 256 levels deep
+# (client/js/signal-batch-depth.mjs). With a 64 KiB system stack the core runtime
+# fails the first from 29 levels and the second from about 105, and every later
+# call into it fails too.
+#
 # Override with HEAP_GATE_ITERS (batches per payload, default 1000),
 # HEAP_GATE_MAX_MIB (default 256) and HEAP_GATE_GROWTH_MIB (default 64). The
 # runtimes come from GOSX_WASM_DIR when it holds a build (make wasm-size-budget
@@ -42,6 +50,9 @@ for runtime in gosx-runtime-core gosx-runtime-engine gosx-runtime-collab gosx-ru
   node "${REPO_ROOT}/client/js/signal-batch.bench.mjs" --soak --gate --direct \
     --iters "${ITERS}" --scenario hud,ui,full \
     --max-memory-mib "${MAX_MIB}" --allow-growth-mib "${GROWTH_MIB}" \
+    --label "${runtime#gosx-}" \
+    --wasm "${OUT_DIR}/${runtime}.wasm" --wasm-exec "${OUT_DIR}/wasm_exec.js" || failed=1
+  node "${REPO_ROOT}/client/js/signal-batch-depth.mjs" --direct \
     --label "${runtime#gosx-}" \
     --wasm "${OUT_DIR}/${runtime}.wasm" --wasm-exec "${OUT_DIR}/wasm_exec.js" || failed=1
 done

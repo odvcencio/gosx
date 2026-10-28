@@ -43,8 +43,13 @@
 // from the root of the checkout, and add -buildvcs=false in a worktree):
 //
 //   tinygo build -target wasm -tags "tinygo gosx_tiny_runtime gosx_runtime_core" \
-//        -stack-size=256KB -no-debug -panic=trap -o core.wasm m31labs.dev/gosx/client/wasm
+//        -stack-size=256KB -ldflags=-extldflags=-zstack-size=262144 \
+//        -no-debug -panic=trap -o core.wasm m31labs.dev/gosx/client/wasm
 //   (engine: gosx_runtime_engine; full: -tags "tinygo gosx_runtime_full")
+//
+// -stack-size sizes goroutine stacks only. The direct batch entry runs on the system
+// stack, which the linker sizes at 64 KiB unless -zstack-size says otherwise, and a
+// batch that re-renders an island about 30 levels deep overflows that.
 //
 // or let the bench build one: --build core|engine|full. TinyGo's wasm_exec.js is
 // $(tinygo env TINYGOROOT)/targets/wasm_exec.js. The standard Go runtime works
@@ -68,10 +73,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import vm from "node:vm";
 import { spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
+import { bootPage } from "./signal-batch-page.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
@@ -206,48 +211,11 @@ function payloadSets() {
 
 async function measure(set) {
   const list = set.load();
-  const noop = () => {};
-  const fakeElement = () => ({ style: {}, dataset: {}, setAttribute: noop, getAttribute: () => null, appendChild: noop, addEventListener: noop, removeEventListener: noop, querySelector: () => null, querySelectorAll: () => [], classList: { add: noop, remove: noop, contains: () => false } });
-  globalThis.window = globalThis;
-  globalThis.document = {
-    addEventListener: noop, removeEventListener: noop, createElement: fakeElement, getElementById: () => null, querySelector: () => null,
-    querySelectorAll: () => [], body: fakeElement(), head: fakeElement(), documentElement: fakeElement(), readyState: "complete", hidden: false, dispatchEvent: noop,
-  };
-  globalThis.CustomEvent = class CustomEvent { constructor(type, init) { this.type = type; this.detail = init && init.detail; } };
-  globalThis.__gosx_runtime_ready = noop;
-  vm.runInThisContext(fs.readFileSync(settings.wasmExec, "utf8"), { filename: settings.wasmExec });
-
-  // The page's own code, cut out of the sources in the tree under test.
-  const layout = fs.readFileSync(path.join(settings.tree, "client/js/bootstrap-src/00-textlayout.ts"), "utf8");
-  const classStart = layout.indexOf("  // The page's shared signal values.");
-  const storeStart = classStart >= 0 ? classStart : layout.indexOf("  const gosxNamespace = window.__gosx || {};");
-  const storeEndMarker = "  window.__gosx_subscribe_shared_signal = gosxSubscribeSharedSignal;\n";
-  const storeEnd = layout.indexOf(storeEndMarker);
-  if (storeStart < 0 || storeEnd < 0) throw new Error("shared signal store not found in " + settings.tree);
-  const storeApi = new Function("window", "document", "console",
-    "const GOSX_VERSION='bench';\n" + layout.slice(storeStart, storeEnd + storeEndMarker.length) +
-    "\nreturn {gosxReadSharedSignal, gosxNotifySharedSignal, gosxSubscribeSharedSignal, setSharedSignalValue};")(globalThis, globalThis.document, console);
-  const mounting = fs.readFileSync(path.join(settings.tree, "client/js/bootstrap-src/30b-tail-engine-mounting.ts"), "utf8");
-  const contextSource = mounting.slice(mounting.indexOf("function createEngineContext("), mounting.indexOf("async function mountEngine("));
-  const makeContext = new Function("window", "document", "CustomEvent", "console", "gosxReadSharedSignal", "gosxNotifySharedSignal", "gosxSubscribeSharedSignal", "setSharedSignalValue", "pendingEngineOwned", "goWASMEnginePageGeneration",
-    contextSource + "\nreturn createEngineContext;")(globalThis, globalThis.document, globalThis.CustomEvent, console,
-    storeApi.gosxReadSharedSignal, storeApi.gosxNotifySharedSignal, storeApi.gosxSubscribeSharedSignal, storeApi.setSharedSignalValue, () => true, 1);
-
-  const go = new globalThis.Go();
-  const { instance } = await WebAssembly.instantiate(fs.readFileSync(settings.wasm), go.importObject);
-  let crashed = "";
-  go.run(instance).catch((error) => { crashed = String(error && error.message || error); });
-  for (let waited = 0; waited < 300 && typeof globalThis.__gosx_set_input_batch !== "function"; waited++) await new Promise((r) => setTimeout(r, 10));
-  if (typeof globalThis.__gosx_set_input_batch !== "function") throw new Error("the runtime did not register __gosx_set_input_batch");
   // --direct publishes the instance's exports on the batch function, as the loaders do, and
   // insists that they take a batch: the page would otherwise fall back to the function without a word.
-  if (has("direct")) {
-    if (typeof instance.exports.gosx_batch_apply !== "function") throw new Error("--direct: the runtime does not export gosx_batch_apply");
-    globalThis.__gosx_set_input_batch.exports = instance.exports;
-  }
-
-  const ctx = makeContext({ id: "bench", component: "Bench" }, {}, {}, { required: [] }, { generation: 1, closed: false });
-  globalThis.__gosx.engines.set("bench", { context: ctx, disposed: false });
+  const page = await bootPage({ wasm: settings.wasm, wasmExec: settings.wasmExec, tree: settings.tree, direct: has("direct"), id: "bench" });
+  const { ctx, instance } = page;
+  const crashed = () => page.crashed();
 
   const names = [...new Set(list.flatMap((text) => Object.keys(JSON.parse(text))))];
   let heard = 0;
@@ -258,7 +226,7 @@ async function measure(set) {
     }
   }
 
-  const memoryMiB = () => Math.round(instance.exports.memory.buffer.byteLength / 1048576);
+  const memoryMiB = () => page.memoryMiB();
   const samples = new Float64Array(settings.iters);
   const memory = [];
   let bytes = 0;
@@ -301,7 +269,7 @@ async function measure(set) {
     over2ms: taken.filter((v) => v > 2).length, over20ms: taken.filter((v) => v > 20).length,
     stallMS: round(taken.filter((v) => v > 20).reduce((a, b) => a + b, 0)),
     memoryMiB: { start: memory[0] ? memory[0][1] : 0, half, end: peak, growthSecondHalf: peak - half },
-    heard, failed: failure || crashed,
+    heard, failed: failure || crashed(),
   };
 }
 const round = (v) => Math.round(v * 1000) / 1000;
@@ -339,7 +307,7 @@ async function main() {
     if (!tags) throw new Error("--build takes core, engine or full");
     const out = fs.mkdtempSync(path.join(os.tmpdir(), "gosx-signal-bench-"));
     const target = path.join(out, "gosx-runtime.wasm");
-    const build = spawnSync("tinygo", ["build", "-target", "wasm", "-tags=" + tags, "-stack-size=256KB", "-no-debug", "-panic=trap", "-o", target, "m31labs.dev/gosx/client/wasm"],
+    const build = spawnSync("tinygo", ["build", "-target", "wasm", "-tags=" + tags, "-stack-size=256KB", "-ldflags=-extldflags=-zstack-size=262144", "-no-debug", "-panic=trap", "-o", target, "m31labs.dev/gosx/client/wasm"],
       { cwd: settings.tree, stdio: "inherit", env: { ...process.env, GOFLAGS: "-buildvcs=false", GOWORK: "off" } });
     if (build.status !== 0) process.exit(build.status || 1);
     settings.wasm = target;

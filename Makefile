@@ -471,10 +471,11 @@ wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
 # wasm-heap-gate sends batches of signals through the page's code to every
-# published production TinyGo runtime and fails if the WASM memory keeps growing
-# or the runtime lacks the direct batch entry. It reuses the runtimes that
-# wasm-size-budget leaves in ${TMPDIR:-/tmp}/gosx-wasm-size, and builds them
-# when they are not there. See scripts/check-wasm-heap.sh.
+# published production TinyGo runtime and fails if the WASM memory keeps growing,
+# the runtime lacks the direct batch entry, or a batch that re-renders a deep
+# island or carries deeply nested JSON overflows the system stack. It reuses the
+# runtimes that wasm-size-budget leaves in ${TMPDIR:-/tmp}/gosx-wasm-size, and
+# builds them when they are not there. See scripts/check-wasm-heap.sh.
 wasm-heap-gate:
 	./scripts/check-wasm-heap.sh
 
