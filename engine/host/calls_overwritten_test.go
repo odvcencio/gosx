@@ -103,3 +103,64 @@ func TestServeCallsDoesNotReportAJumpLongerThanRecent(t *testing.T) {
 		t.Fatalf("Recent after the jump holds calls %v, want [4 5 100]", after)
 	}
 }
+
+// A call whose handler started in an engine that went away is not one the
+// engine never received. If the writer set its next single call before the new
+// engine mounted, the signal holds only that call, and the new engine learns of
+// the first from the mark alone. It must say "interrupted", the code for a call
+// that may have done its work, not "overwritten", the code for a call that
+// never ran: a client that sends overwritten calls again would repeat the side
+// effect that the mark exists to prevent.
+func TestServeCallsReportsAStartedCallThatTheNextWriteOverwroteAsInterrupted(t *testing.T) {
+	page := newPageStore()
+	entered := make(chan string, 4)
+	release := make(chan struct{})
+	handler := func(name string, a addArgs) (sum, error) {
+		entered <- name
+		if name == "save" {
+			<-release
+		}
+		return sum{Total: a.A + a.B}, nil
+	}
+	first, _ := ServeCallsAsyncOn(page, "bv.save", CallOptions{}, handler)
+	_ = page.Write("$bv.save", map[string]any{"ID": 1, "Name": "save"})
+	<-entered // call 1 runs: its mark is in the store
+	first.Dispose()
+	// No engine is mounted. The island writes its next single call, numbered from
+	// the signal's own ID as the docs say.
+	_ = page.Write("$bv.save", map[string]any{"ID": 2, "Name": "order", "Args": map[string]int{"A": 20, "B": 22}})
+
+	second, _ := ServeCallsAsyncOn(page, "bv.save", CallOptions{}, handler)
+	defer second.Dispose()
+	within(t, "the answer to call 2", func() bool { return page.result(t).ID == 2 })
+	got := recentOf(t, json.RawMessage(page.value("$bv.save.result")))
+	want := []recentEntry{{ID: 1, Error: "interrupted"}, {ID: 2, Kept: true}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Recent = %+v, want %+v", got, want)
+	}
+	close(release)
+}
+
+// Calls below the mark are interrupted; the ones between the mark and the call
+// that arrived never ran, and are overwritten.
+func TestLostBeforeSplitsTheSkippedCallsAtTheMark(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		seen, started, id uint64
+		keep              int
+		want              []lostCall
+	}{
+		{"no mark", 1, 0, 4, 8, []lostCall{{2, "overwritten"}, {3, "overwritten"}}},
+		{"mark below the gap", 1, 1, 4, 8, []lostCall{{2, "overwritten"}, {3, "overwritten"}}},
+		{"mark inside the gap", 0, 2, 4, 8, []lostCall{{1, "interrupted"}, {2, "interrupted"}, {3, "overwritten"}}},
+		{"mark covers the gap", 0, 9, 4, 8, []lostCall{{1, "interrupted"}, {2, "interrupted"}, {3, "interrupted"}}},
+		{"no gap", 3, 3, 4, 8, nil},
+		{"a jump longer than keep", 0, 3, 100, 8, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lostBefore(tc.seen, tc.started, tc.id, tc.keep); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("lostBefore(%d, %d, %d, %d) = %+v, want %+v", tc.seen, tc.started, tc.id, tc.keep, got, tc.want)
+			}
+		})
+	}
+}

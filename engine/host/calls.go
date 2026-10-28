@@ -263,7 +263,7 @@ type callReply struct {
 	id    uint64
 	name  string
 	err   string
-	lost  []uint64        // IDs a writer of single calls skipped just below id
+	lost  []lostCall      // calls a writer of single calls skipped just below id
 	value json.RawMessage // the encoded Value to publish; the encoded zero value for an error
 	kept  json.RawMessage // the value for Result.Recent; nil for an error
 }
@@ -312,7 +312,7 @@ func (s *callServer[A, R]) deliver(data json.RawMessage) {
 		if entry.id > s.last {
 			if !mailbox {
 				// A mailbox lists every call it has, so a gap in it is no loss.
-				entry.lost = lostBefore(s.seen, entry.id, s.log.keep)
+				entry.lost = lostBefore(s.seen, s.started, entry.id, s.log.keep)
 			}
 			s.last = entry.id
 			s.seen = max(s.seen, entry.id)

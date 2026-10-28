@@ -16,9 +16,15 @@ type callEntry struct {
 	// engine that is gone, so this engine answers it with an error and does not
 	// run it. See callServer.markStarted.
 	interrupted bool
-	// lost lists the IDs just below this call that a writer of single calls
+	// lost lists the calls just below this one that a writer of single calls
 	// skipped, because a signal that holds one call keeps only its newest value.
-	lost []uint64
+	lost []lostCall
+}
+
+// lostCall is a call that the engine never received, with what became of it.
+type lostCall struct {
+	id  uint64
+	err string // errOverwritten, or errInterrupted when a handler started for it
 }
 
 // decodeCalls reads the value of a call signal. The value is one call (an
@@ -88,31 +94,48 @@ type replyLog struct {
 	items  []recentReply
 }
 
-// overwritten is the error of a call that the engine never received: its writer
-// set a newer call before the page told the engine about this one.
-const overwritten = "overwritten"
+const (
+	// errOverwritten is the error of a call that the engine never received: its
+	// writer set a newer call before the page told the engine about this one. No
+	// handler ran for it, so it is safe to send again.
+	errOverwritten = "overwritten"
+	// errInterrupted is the error of a call whose handler started in an engine
+	// that went away, so that its reply may be lost. The handler may have done its
+	// work: check before sending the call again.
+	errInterrupted = "interrupted"
+)
 
-// lostBefore lists the IDs between the highest one the engine has seen and the
+// lostBefore lists the calls between the highest ID the engine has seen and the
 // ID of a single call that has just arrived. A writer that sets calls n and n+1
 // in one batch delivers n+1 alone, and the engine then knows that n is lost. A
 // jump of more than keep places is a writer that numbers differently (a clock, a
 // counter it kept) and is not reported.
-func lostBefore(seen, id uint64, keep int) []uint64 {
+//
+// started is the highest mark in the page's store. A skipped call at or below it
+// is not lost: an engine before this one started its handler and went away
+// before the writer set the next call, so it is reported as interrupted, not as
+// overwritten. Reporting it as overwritten would invite a client to send a call
+// again that may have done its work.
+func lostBefore(seen, started, id uint64, keep int) []lostCall {
 	if id <= seen+1 || id-seen-1 > uint64(keep) {
 		return nil
 	}
-	ids := make([]uint64, 0, id-seen-1)
+	calls := make([]lostCall, 0, id-seen-1)
 	for lost := seen + 1; lost < id; lost++ {
-		ids = append(ids, lost)
+		err := errOverwritten
+		if lost <= started {
+			err = errInterrupted
+		}
+		calls = append(calls, lostCall{id: lost, err: err})
 	}
-	return ids
+	return calls
 }
 
 // add records a reply, after the calls that were lost before it, and returns the
 // Recent list to publish with it.
-func (l *replyLog) add(id uint64, errText string, value json.RawMessage, lost []uint64) []engine.ResultRef {
-	for _, id := range lost {
-		l.items = append(l.items, recentReply{id: id, err: overwritten})
+func (l *replyLog) add(id uint64, errText string, value json.RawMessage, lost []lostCall) []engine.ResultRef {
+	for _, call := range lost {
+		l.items = append(l.items, recentReply{id: call.id, err: call.err})
 	}
 	entry := recentReply{id: id, err: errText}
 	if errText == "" && l.budget > 0 && len(value) > 0 {

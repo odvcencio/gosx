@@ -134,6 +134,8 @@
   engine that mounts again on the same signals answers a call that started and
   has no result with `Error: "interrupted"` and does not run it again, so a save
   or an order does not happen twice. Calls that never started still run.
+  A call that a writer of single calls skipped, and whose handler had already
+  started, is listed in `Recent` as `interrupted`, not `overwritten`.
 
 - Add `wasm.Caller`, a Go client for a call channel, modelled on the one Bon
   Voyage wrote. It numbers calls, writes them to `$channel`, reads

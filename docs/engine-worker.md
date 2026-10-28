@@ -153,8 +153,10 @@ The rules:
    silent about it: the result of the second call lists the first in `Recent` with
    `Error: "overwritten"`, for up to `CallOptions.Recent` skipped IDs in a row. A
    bigger jump is taken for a writer that numbers differently and is not
-   reported. To send several calls together, write a mailbox (see below) or use
-   `wasm.Caller`.
+   reported. A skipped call whose handler had already started in an engine that
+   went away (see `ServeCallsAsync` below) is listed as `interrupted` instead: it
+   was not overwritten, it may have done its work. To send several calls together,
+   write a mailbox (see below) or use `wasm.Caller`.
 3. A result with `ID >=` your call's ID means your call is finished. If the IDs
    are equal, `Value` and `Error` are its reply. If the result is newer, find
    your ID in `Recent` (the last `CallOptions.Recent` replies, default 8). Each
