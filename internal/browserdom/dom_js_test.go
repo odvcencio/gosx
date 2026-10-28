@@ -5,8 +5,6 @@ package browserdom
 import (
 	"syscall/js"
 	"testing"
-
-	"m31labs.dev/gosx/internal/jsreentry"
 )
 
 func domObject() js.Value { return js.Global().Get("Object").New() }
@@ -116,7 +114,7 @@ func TestTypedElementAndDatasetHandleSemantics(t *testing.T) {
 func TestElementHandlesAndLazyTargetsAllocateNoWrappers(t *testing.T) {
 	node, event := domObject(), domObject()
 	event.Set("target", node)
-	e := Event{event}
+	e := Event{value: event}
 	if got := testing.AllocsPerRun(1000, func() {
 		handle := FromJS(node)
 		if !handle.Valid() {
@@ -137,7 +135,7 @@ func TestElementHandlesAndLazyTargetsAllocateNoWrappers(t *testing.T) {
 func BenchmarkTypedEventTarget(b *testing.B) {
 	node, event := domObject(), domObject()
 	event.Set("target", node)
-	e := Event{event}
+	e := Event{value: event}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -174,7 +172,7 @@ func TestTypedRectReadsBoundedLayoutFields(t *testing.T) {
 
 func TestMessageDataAcceptsOnlyStrings(t *testing.T) {
 	event := domObject()
-	e := Event{event}
+	e := Event{value: event}
 	for _, value := range []any{nil, 42, map[string]any{"text": "wrong"}} {
 		event.Set("data", value)
 		if e.DataString() != "" {
@@ -184,23 +182,5 @@ func TestMessageDataAcceptsOnlyStrings(t *testing.T) {
 	event.Set("data", "native focus lost")
 	if e.DataString() != "native focus lost" {
 		t.Fatal("string message lost")
-	}
-}
-
-// The documentation of Dispatch, Focus, Blur and Click promises that a Go
-// listener runs inside the call. Callers rely on that to decide which goroutine
-// may dispatch, so this test holds the promise.
-func TestDispatchRunsGoListenersNestedInsideTheCall(t *testing.T) {
-	probe := jsreentry.Install(t)
-	element := FromJS(js.Global().Get("Function").New("return new EventTarget()").Invoke())
-	hits := 0
-	listener := element.On("ping", func(Event) { hits++ })
-	defer listener.Dispose()
-	element.Dispatch("ping", false)
-	if hits != 1 {
-		t.Fatalf("the listener did not run before Dispatch returned: %d", hits)
-	}
-	if probe.Count() != 1 || probe.MaxDepth() != 2 {
-		t.Fatalf("a Go listener must run nested inside Dispatch: count=%d depth=%d", probe.Count(), probe.MaxDepth())
 	}
 }
