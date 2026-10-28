@@ -218,6 +218,24 @@ func TestSeaMatchesOceanTable(t *testing.T) {
 	}
 }
 
+// NewSea copies SeaConfig.Swell, so a caller that reuses or edits its slice
+// afterwards does not change a sea that is already in use by a ship.
+func TestNewSeaCopiesItsSwell(t *testing.T) {
+	waves := []SwellWave{
+		{DirX: 1, K: 0.05, Omega: 0.7, Amplitude: 1.5, Phase: 0.3},
+		{DirZ: 1, K: 0.08, Omega: 0.9, Amplitude: 0.7, Phase: 1.1},
+	}
+	sea := NewSea(SeaConfig{Level: 2, Swell: waves})
+	before := sea.Height(30, -40, 12)
+	if before == 2 {
+		t.Fatal("the swell waves add no height; the test would prove nothing")
+	}
+	waves[0].Amplitude, waves[1].K = 99, 99
+	if after := sea.Height(30, -40, 12); after != before {
+		t.Fatalf("editing the caller's slice moved the sea from %v to %v", before, after)
+	}
+}
+
 func TestStateCodecRoundTrip(t *testing.T) {
 	sea := NewSea(SeaConfig{WaveHeight: 2, WaveLength: 50})
 	run := func(n int, s *Ship) {
