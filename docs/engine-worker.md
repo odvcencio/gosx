@@ -104,7 +104,7 @@ type WorkerStatus struct{ State, Thread, Reason string }
 
 type Call[A any] struct { ID uint64; Name string; Args A }
 type Result[R any] struct { ID uint64; Name, Error string; Value R; Recent []ResultRef; Seen uint64 }
-type ResultRef struct { ID uint64; Error string; Value json.RawMessage /* left out when it is empty */ }
+type ResultRef struct { ID uint64; Error string; Kept bool; Value json.RawMessage /* left out when it is empty */ }
 ```
 
 The status signal is named `$gosx.engine.<id>`. The engine ID is
@@ -154,8 +154,12 @@ The rules:
    are equal, `Value` and `Error` are its reply. If the result is newer, find
    your ID in `Recent` (the last `CallOptions.Recent` replies, default 8). Each
    entry has the ID and the error, and has the `Value` while the values of the
-   newest entries fit in `CallOptions.RecentBytes` (default 8 KiB). A reply that
-   has no error and no value there is lost; treat it as failed.
+   newest entries fit in `CallOptions.RecentBytes` (default 8 KiB). `Kept` is
+   true when the entry has its `Value`. A reply with no error and `Kept` false is
+   lost; treat it as failed. An island cannot tell it from a reply whose value is
+   zero by looking at `Value`, because a key that is missing decodes as the zero
+   value, so test `Kept`. The page writes `Recent` entries for its own errors
+   without `Kept`; they have an `Error`.
 
    3a. `Seen` is the highest call ID that the engine accepted or the page
    watched. The engine writes it with every result, and the page writes it with
@@ -208,7 +212,7 @@ two calls written by one handler both run.
 // Island (.gsx). An island handler cannot call a function that returns a value,
 // so the number is written out where the call is appended.
 box := signal.NewShared("bv.box", []Cmd{})            // calls with no reply yet
-boxres := signal.NewShared("bv.box.result", Reply{})  // Reply has Seen; Recent has Ref{ID, Error, Value}
+boxres := signal.NewShared("bv.box.result", Reply{})  // Reply has Seen; Recent has Ref{ID, Error, Kept, Value}
 pair := func() {
     if len(box.Get()) == 0 {
         box.Set(append(box.Get(), Cmd{ID: boxres.Get().Seen + 1, Name: "add", Args: Args{A: 1, B: 2}}))

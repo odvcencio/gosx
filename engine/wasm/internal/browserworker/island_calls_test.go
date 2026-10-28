@@ -416,3 +416,37 @@ func within(t *testing.T, what string, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// An island decodes Recent into typed records, and a missing Value key decodes
+// as the zero value. The entry of a reply whose value did not fit the engine's
+// byte budget therefore renders exactly like a successful reply whose value is
+// zero. Kept is the key that tells them apart.
+func TestIslandTellsALostReplyFromAReplyWhoseValueIsZero(t *testing.T) {
+	p := hydrate(t, panelSource, "Panel")
+	e := &engineSide{}
+	// Each value, {"Total":N,"Thread":"test"}, is 28 bytes, so the budget holds two.
+	if _, err := host.ServeCallsOn(e, "bv.box", host.CallOptions{Recent: 5, RecentBytes: 60}, func(name string, a callArgs) (callSum, error) {
+		if name == "zero" {
+			return callSum{}, nil
+		}
+		return callSum{Total: a.A + a.B, Thread: "test"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.handler(json.RawMessage(`[{"ID":1,"Name":"add","Args":{"A":1,"B":1}},{"ID":2,"Name":"add","Args":{"A":2,"B":2}},{"ID":3,"Name":"add","Args":{"A":3,"B":3}},{"ID":4,"Name":"zero"}]`))
+	results := e.written()
+	if len(results) != 4 {
+		t.Fatalf("the engine wrote %d results for 4 calls", len(results))
+	}
+	if err := p.b.SetSharedSignalJSON("$bv.box.result", string(results[3])); err != nil {
+		t.Fatal(err)
+	}
+	// Calls 1 and 2 lost their values (rendered as zero, like call 4's reply)...
+	if got := p.text("recent"); got != "1=0/;2=0/;3=6/;4=0/;" {
+		t.Errorf("replies in Recent = %q, want 1=0/;2=0/;3=6/;4=0/;", got)
+	}
+	// ...and Kept says which of them arrived.
+	if got := p.text("kept"); got != "1:false;2:false;3:true;4:true;" {
+		t.Errorf("Kept in Recent = %q, want 1:false;2:false;3:true;4:true;", got)
+	}
+}

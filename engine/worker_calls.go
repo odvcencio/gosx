@@ -117,8 +117,17 @@ type Result[R any] struct {
 // value did not fit has no Value key; a client treats such a reply as lost,
 // unless it has an Error. The wire key stays the field name; omitempty only
 // leaves the key out.
+//
+// Kept is true when Value is there. An island decodes Recent into typed records,
+// where a key that is missing decodes as the zero value, so a lost reply and a
+// successful reply whose value is zero look the same in Value. Kept tells them
+// apart: Error is empty and Kept is false for a lost reply, and Kept is true for
+// a reply that arrived. The engine writes Kept in every entry. The page, which
+// writes entries for the errors it makes ("timeout", "worker-crashed"), leaves
+// it out; those entries have an Error, so none of them is lost.
 type ResultRef struct {
 	ID    uint64
 	Error string
+	Kept  bool
 	Value json.RawMessage `json:",omitempty"`
 }

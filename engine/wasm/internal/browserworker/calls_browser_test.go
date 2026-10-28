@@ -57,6 +57,7 @@ type Reply struct {
 type BoxRef struct {
 	ID    uint64
 	Error string
+	Kept  bool
 	Value Sum
 }
 type BoxReply struct {
@@ -123,6 +124,7 @@ func Panel(props struct{}) Node {
 		<button id="crash" onClick={crash} disabled={status.Get().State != "running"}>crash</button>
 		<p id="box">{boxres.Get().ID}:{boxres.Get().Value.Total}:{boxres.Get().Error}:{boxres.Get().Value.Thread}</p>
 		<p id="recent"><Each of={boxres.Get().Recent} as="r"><span>{r.ID}={r.Value.Total}/{r.Error};</span></Each></p>
+		<p id="kept"><Each of={boxres.Get().Recent} as="r"><span>{r.ID}:{r.Kept};</span></Each></p>
 		<p id="pending">{len(box.Get())}</p>
 		<p id="seen">{boxres.Get().Seen}</p>
 		<button id="pair" onClick={pair} disabled={status.Get().State != "running"}>pair</button>

@@ -106,7 +106,7 @@ func (l *replyLog) add(id uint64, errText string, value json.RawMessage) []engin
 	}
 	refs := make([]engine.ResultRef, len(l.items))
 	for i, item := range l.items {
-		refs[i] = engine.ResultRef{ID: item.id, Error: item.err, Value: item.value}
+		refs[i] = engine.ResultRef{ID: item.id, Error: item.err, Kept: item.value != nil, Value: item.value}
 	}
 	return refs
 }
