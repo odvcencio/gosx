@@ -18,7 +18,10 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Brotli bytes to the engines chunk, 211 raw / 47 Brotli bytes to the video
 // route and 223 raw / 71 gzip / 54 Brotli bytes to each Scene3D route that
 // carries the engines chunk. Only the breached targets move to their passing
-// minima; allowances and every other target stay fixed.
+// minima; allowances and every other target stay fixed. The same 54 Brotli bytes
+// reach the wire on the docs routes that load the engines chunk (/, /demos/scene3d/
+// and /demos/water), so their jsWireBytes caps in perf/budgets/wire.json rise by
+// 54 each, with the reason recorded in each route's raise map.
 // Scene defaults review moves exhausted targets to measured minima: vessel
 // raw +1, monolith raw +619, labeled WebGL Brotli +148 and device-loss-route
 // Brotli +155. Allowances and other targets stay fixed.
