@@ -20,7 +20,17 @@ func CurrentLocation() Location {
 		Path: v.Get("pathname").String(), Search: v.Get("search").String(), Hash: v.Get("hash").String()}
 }
 
-func Navigate(url string)       { js.Global().Get("location").Call("assign", url) }
+// Navigate assigns url to location, so the browser navigates to it. A URL that
+// differs from the current one only in its fragment makes the browser fire
+// popstate before Navigate returns, and on a GoSX page the page's popstate
+// handler then dispatches gosx:popstate, gosx:navigation:state and
+// gosx:navigate in the same call. Go listeners of these events do not run
+// inside that call. They run after the browser has delivered the events to all
+// its listeners, and before Navigate returns (see Listener). They are too late
+// to change what the page does, so a Go gosx:popstate listener cannot cancel the
+// soft navigation that the page starts.
+func Navigate(url string) { jsutil.Call(js.Global().Get("location"), "assign", url) }
+
 func ReplaceHistory(url string) { js.Global().Get("history").Call("replaceState", js.Null(), "", url) }
 func Reload()                   { js.Global().Get("location").Call("reload") }
 func Viewport() Size {
