@@ -24,8 +24,8 @@ type CallOptions struct {
 	// no mark and ignores it.
 	//
 	// It does not depend on Timeout. A page whose main thread is busy for longer
-	// than Timeout still reports the mark when it is free again, and the call then
-	// runs late, as it would without the wait; its real reply replaces the page's
+	// than Timeout still reports the mark when it is free again. The handler
+	// starts then and the call finishes late; its real reply replaces the page's
 	// "timeout". Only a page that stays silent for the whole MarkTimeout fails the
 	// call, and until then the calls behind it wait.
 	MarkTimeout time.Duration
@@ -45,7 +45,8 @@ const (
 	// DefaultCallMarkTimeout is how long ServeCallsAsync waits for the page to
 	// report the mark of a call when CallOptions.MarkTimeout is zero. A page that
 	// is only slow reports the mark well before it, and a page that has reported
-	// nothing by then is not going to.
+	// nothing by then is treated as silent: the call has already come back
+	// not-started, and a report that arrives later is ignored.
 	DefaultCallMarkTimeout = 30 * time.Second
 	// DefaultCallRecent is the default length of Result.Recent.
 	DefaultCallRecent = 8
@@ -488,8 +489,9 @@ func (s *callServer[A, R]) drain() {
 // CallOptions.MarkTimeout, so that one report the page never makes does not hold
 // up the channel. That deadline is separate from the page's deadline for the
 // client (CallOptions.Timeout), and longer by default: a page that is only slow,
-// for example one whose main thread is busy for a while, still reports the mark,
-// and the call runs late, as it would have without the wait.
+// for example one whose main thread is busy for a while, still reports the mark.
+// The handler starts once the page is free again and the call finishes late, with
+// its real reply replacing the page's "timeout".
 func (s *callServer[A, R]) markStarted(id uint64) (run bool, err error) {
 	s.mu.Lock()
 	s.started = max(s.started, id)

@@ -148,8 +148,8 @@
   runs no handler, and lets the next call go on. That wait is not
   `CallOptions.Timeout`, the page's deadline for the client: a page whose main
   thread is busy for longer than `Timeout` reports the mark when it is free
-  again, and the call runs late, as it did before the wait, with its real reply
-  replacing the page's `timeout`. A stall longer than `MarkTimeout` makes the
+  again; the handler starts then, the call finishes late, and its real reply
+  replaces the page's `timeout`. A stall longer than `MarkTimeout` makes the
   queued calls come back `not-started` without running.
   `ServeCalls` has no such guard, and the documentation now says so. A transport
   must deliver a write to the writer's own subscription, as the page does for
