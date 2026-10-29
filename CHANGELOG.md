@@ -45,13 +45,17 @@
   call.
 
   Go listeners and subscribers no longer run inside the calls that start them.
-  `Element.Dispatch`, `Focus`, `Blur` and `Click`, `browser.DispatchResize`,
-  `browser.DispatchError`, `Context.Emit`, `Context.Navigate` (the page's
-  `navigate` dispatches `gosx:navigation:state` before it first waits),
-  `Context.SetSignal`, `SetSignals` and `SetChangedSignals`, the main-thread
-  batches of a `View`, the replay in `SubscribeSignal` (and so `ServeCalls`), and
-  the netplay link's `Open` and `Signal` made the browser run Go listeners,
-  signal subscribers or state callbacks inside the call from Go into JavaScript.
+  `Element.Dispatch`, `Focus`, `Blur` and `Click`, `Element.CheckValidity` and
+  `ReportValidity` (they fire `invalid`), `Element.Remove`, `SetText` and
+  `ReplaceMarkup` (they fire `blur` and `focusout` when they remove the node
+  that has focus), `browser.DispatchResize`, `browser.DispatchError`,
+  `browser.Navigate` (to a fragment of the current page it fires `popstate`),
+  `Context.Emit`, `Context.Navigate` (the page's `navigate` dispatches
+  `gosx:navigation:state` before it first waits), `Context.SetSignal`,
+  `SetSignals` and `SetChangedSignals`, the main-thread batches of a `View`, the
+  replay in `SubscribeSignal` (and so `ServeCalls`), and the netplay link's
+  `Open` and `Signal` made the browser run Go listeners, signal subscribers or
+  state callbacks inside the call from Go into JavaScript.
   Those Go functions are now `jsutil.Callback`s, and these calls go through the
   new `jsutil.Call`: while the JavaScript call runs, a callback only records the
   call, and Go runs the recorded calls in order after the JavaScript call has
@@ -67,24 +71,37 @@
   is inside one of these calls, so a Go listener cannot cancel its default
   action: `Click` on a submit button submits its form, whatever a Go `submit`
   listener does, and so does a `requestSubmit` that a page script makes in
-  reaction to `SetSignal` or `Emit`. To let Go code decide whether a form
-  submits, call that code directly instead of calling `Click`.
-  `Event.CurrentTarget` still names the listener's element. When the target is
-  inside a shadow tree, `Event.Target` and `Event.RelatedTarget` read what the
-  browser leaves after the dispatch: the outermost shadow host for a composed
-  event (a click or a focus change), and an invalid `Element` for an event that
-  is not composed, such as every event that `Element.Dispatch` creates. An event
-  that the page raises still reaches a Go listener inside the browser's own
-  dispatch. On the main thread, a Go subscriber of a shared signal that Go
-  writes runs after the page's other subscribers of that write, and sees the
-  whole batch; in a worker, a write goes to the page as a message, and Go
-  subscribers run later, when the page sends the value back.
+  reaction to `SetSignal` or `Emit`. `ReportValidity` reports the problem to the
+  user whatever a Go `invalid` listener does, and a GoSX page starts the soft
+  navigation that `browser.Navigate` to a fragment triggers whatever a Go
+  `gosx:popstate` listener does. To let Go code decide whether a form submits,
+  whether the report appears or whether the page navigates, call that code
+  directly instead of making the call. `Event.CurrentTarget` still names the
+  listener's element. When the target is inside a shadow tree, `Event.Target` and
+  `Event.RelatedTarget` may not name what they named during the dispatch. The
+  browser clears both when the event never left the shadow tree, which is the
+  case for an event that is not composed (every event that `Element.Dispatch`
+  creates) and for a focus change between two elements of the same shadow tree,
+  and a cleared one is an invalid `Element`. Otherwise it leaves them as seen
+  from the document: `Target` names the outermost shadow host, and
+  `RelatedTarget` names the related element, or its outermost shadow host if it
+  is inside a shadow tree. A Go `blur` or `focusout` listener that a removal
+  triggers runs after the removal, so it sees an element that is out of the
+  document, with its state intact. An event that the page raises still reaches
+  a Go listener inside the browser's own dispatch. On the main thread, a Go
+  subscriber of a shared signal that Go writes runs after the page's other
+  subscribers of that write, and sees the whole batch; in a worker, a write goes
+  to the page as a message, and Go subscribers run later, when the page sends the
+  value back.
 
-  Two results change. `AwaitPromise` on a value that is not a thenable now
+  Three results change. `AwaitPromise` on a value that is not a thenable now
   returns that value, where it used to panic. `jsutil.Describe` returns
   `String(v)` for an `Error` with an empty message (`TypeError`, where it
   returned an empty string), and `<unprintable value>` when the conversion
-  fails, where it panicked.
+  fails, where it panicked. `Element.SetText` and `ReplaceMarkup` panic with the
+  JavaScript error when the browser refuses the write (for example `innerHTML`
+  under a Trusted Types policy), where the exception used to escape through the
+  Go runtime and end the program.
 
   Runtime size: the production full runtime (`gosx-runtime.wasm`) grows by 603
   bytes raw and 1,061 bytes with Brotli, and the engine runtime by 603 raw and

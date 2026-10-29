@@ -89,13 +89,21 @@ GoSX keeps Go out of these calls:
   `jsutil.Callback`s. When Go itself starts a call that makes the browser run
   them, they only record the call, and Go runs them after the JavaScript call
   has returned and before the Go function returns. These are the calls:
-  `Element.Dispatch`, `Focus`, `Blur` and `Click`, `DispatchResize`,
-  `DispatchError`, `Context.Emit`, `Context.Navigate` (the page's `navigate`
-  dispatches `gosx:navigation:state` before it first waits, and a same-document
-  navigation also dispatches `gosx:navigate`), `Context.SetSignal`,
-  `SetSignals`, `SetChangedSignals`, the main-thread batches of a `View`, the
-  replay of the current value that `ServeCalls` asks for when it subscribes, and
-  the netplay link's `Open` and `Signal`.
+  `Element.Dispatch`, `Focus`, `Blur` and `Click`; `Element.CheckValidity` and
+  `ReportValidity`, which fire `invalid` on each invalid control (and
+  `ReportValidity` then focuses the first one); `Element.Remove`, `SetText` and
+  `ReplaceMarkup`, which remove the element's children (in Chrome for Testing
+  156, removing the node that has focus fires `blur` and `focusout` before the
+  call returns); `DispatchResize`, `DispatchError` and `browser.Navigate` (a
+  navigation to a fragment of the current page fires `popstate` before it
+  returns, and on a GoSX page the page's handler then dispatches
+  `gosx:popstate`, `gosx:navigation:state` and `gosx:navigate` in the same
+  call); `Context.Emit`, `Context.Navigate` (the page's `navigate` dispatches
+  `gosx:navigation:state` before it first waits, and a same-document navigation
+  also dispatches `gosx:navigate`), `Context.SetSignal`, `SetSignals`,
+  `SetChangedSignals`, the main-thread batches of a `View`, the replay of the
+  current value that `ServeCalls` asks for when it subscribes, and the netplay
+  link's `Open` and `Signal`.
 
 What this changes for your code:
 
@@ -116,15 +124,34 @@ What this changes for your code:
   `PreventDefault` loaded its target frame once after `Click()` on its submit
   button and once after a `requestSubmit` made during `SetSignal`; the same
   `requestSubmit` started by a page timer loaded it zero times, because the Go
-  listener cancelled it. To let Go code decide whether a form submits, call that
-  code directly instead of calling `Click`.
+  listener cancelled it. `ReportValidity` reports the problem to the user (and
+  focuses the first invalid control), whatever a Go `invalid` listener does,
+  because the browser decides when it has delivered the events. A GoSX page
+  starts its soft navigation when `browser.Navigate` to a fragment fires
+  `popstate`, whatever a Go `gosx:popstate` listener does; that event is
+  cancelable so that an application can claim a history entry, and a Go listener
+  still claims the entries that the user's Back and Forward buttons make. To let
+  Go code decide whether a form submits, whether the report appears or whether
+  the page navigates, call that code directly instead of making the call.
 - When the target is inside a shadow tree, `Event.Target` and
-  `Event.RelatedTarget` do not name what they named during the dispatch. After
-  the dispatch the browser leaves them as seen from outside the shadow tree,
-  which is the outermost shadow host for a composed event (a click or a focus
-  change), and clears them for an event that is not composed, such as every
-  event that `Element.Dispatch` creates. A cleared one is an invalid `Element`.
-  `Event.CurrentTarget` still names the element the listener is attached to.
+  `Event.RelatedTarget` may not name what they named during the dispatch. If the
+  event never left the shadow tree, the browser clears both after the dispatch,
+  and a cleared one is an invalid `Element`. That is the case for an event that
+  is not composed, such as every event that `Element.Dispatch` creates, and for a
+  focus change between two elements of the same shadow tree (also between a
+  shadow tree and one nested in it). Otherwise the browser leaves them as seen
+  from the document: `Target` names the outermost shadow host, and
+  `RelatedTarget` names the related element, or its outermost shadow host if it
+  is inside a shadow tree. `Event.CurrentTarget` still names the element the
+  listener is attached to. Chrome for Testing 156 behaves this way; Firefox and
+  Safari were not tested.
+- A Go `blur` or `focusout` listener that a removal triggers runs after the
+  removal. In Chrome for Testing 156, a page listener of the same event ran
+  before it and saw the element in the document; the Go listener sees an element
+  that is out of the document (`Connected` reports false and `Parent` is
+  invalid), with its state intact, such as the value of a text field. A Go
+  listener that saves an inline edit when the field loses focus still reads the
+  value.
 - On the main thread, a Go subscriber of a shared signal that Go writes runs
   after the page's other subscribers of that write, and sees the whole batch. A
   subscriber that writes another signal has that write's subscribers finish
@@ -141,6 +168,16 @@ and make that call with `jsutil.Call` instead of `js.Value.Call`. A function mad
 with `js.FuncOf`, and a `dispatchEvent`, `focus` or `click` made with
 `js.Value.Call`, still nest when Go listeners are attached. Where you can, call
 the Go consumers directly and dispatch the DOM event only for page scripts.
+
+Other `browser` calls can also make the browser run listeners before they
+return, and they are not covered. In Chrome for Testing 156, `Element.Append`
+and `InsertBefore` do so when they move the focused element (`blur` and
+`focusout`) or insert an iframe (`load`), `AppendMarkup` does so for an iframe
+(`load`), and `SetHidden` does so for the focused element (`blur` and
+`focusout`). A Go listener of such an event runs inside the call. Call `Blur` on
+the focused element before you move or hide it: `Blur` is covered, and nothing
+is left to blur later. The other methods of the package were not checked against
+this list.
 
 `jsutil.DocumentContext` does not nest either. The browser aborts the document
 signal inside the call that starts a navigation, and Go starts one with

@@ -7,11 +7,23 @@
 //
 // # Listeners and the calls that run them
 //
-// Element.Dispatch, Focus, Blur and Click, and the package functions
-// DispatchResize and DispatchError, make the browser run event listeners before
-// they return. A Go listener added with On does not run inside that call:
-// Go's js/wasm runtime can stop the program when JavaScript enters Go inside a
-// call that Go made, even when one goroutine makes the call (see package
+// These calls make the browser run event listeners before they return:
+//
+//   - Element.Dispatch, Focus, Blur and Click.
+//   - Element.CheckValidity and ReportValidity. Each fires invalid on every
+//     invalid control, and ReportValidity then focuses the first one, which
+//     fires its focus and focusin listeners.
+//   - Element.Remove, and Element.SetText and ReplaceMarkup, which remove the
+//     element's children. In Chrome for Testing 156, removing the node that has
+//     focus fires blur and focusout before the call returns.
+//   - The package functions DispatchResize, DispatchError and Navigate. A
+//     Navigate to a fragment of the current page fires popstate before it
+//     returns, and on a GoSX page the page's popstate handler then dispatches
+//     gosx:popstate, gosx:navigation:state and gosx:navigate in the same call.
+//
+// A Go listener added with On does not run inside such a call: Go's js/wasm
+// runtime can stop the program when JavaScript enters Go inside a call that Go
+// made, even when one goroutine makes the call (see package
 // m31labs.dev/gosx/client/jsutil). The Go listener runs after the browser has
 // delivered the event to all its listeners, in the order the browser called
 // them, and before the method returns. At that point PreventDefault,
@@ -20,29 +32,47 @@
 // Event.CurrentTarget still names the element the listener is attached to.
 //
 // This holds for every event that the browser or page code raises while Go is
-// inside one of these calls, not only for the event that Go dispatches. Two
+// inside one of these calls, not only for the event that Go dispatches. Three
 // results follow:
 //
 //   - A Go listener cannot cancel the default action of such an event. Click on
 //     a submit button submits its form, whatever a Go submit listener does, and
 //     so does a requestSubmit that a page script makes in reaction to
 //     Context.SetSignal or Context.Emit of package m31labs.dev/gosx/engine/wasm.
-//     To let Go code decide whether a form submits, call that code directly
-//     instead of calling Click.
+//     ReportValidity reports the problem to the user, whatever a Go invalid
+//     listener does. A GoSX page starts its soft navigation when Navigate fires
+//     popstate, whatever a Go gosx:popstate listener does. To let Go code
+//     decide whether a form submits, whether the report appears or whether the
+//     page navigates, call that code directly instead of making the call.
 //   - When the target is inside a shadow tree, Event.Target and
-//     Event.RelatedTarget do not name what they named during the dispatch. After
-//     the dispatch the browser leaves them as seen from outside the shadow tree,
-//     which is the outermost shadow host for a composed event (a click or a
-//     focus change), and clears them for an event that is not composed, such as
-//     every event that Dispatch creates. A cleared one is an invalid Element.
+//     Event.RelatedTarget may not name what they named during the dispatch. If
+//     the event never left the shadow tree, the browser clears both after the
+//     dispatch, and a cleared one is an invalid Element. That is the case for an
+//     event that is not composed, such as every event that Dispatch creates, and
+//     for a focus change between two elements of the same shadow tree.
+//     Otherwise the browser leaves them as seen from the document: Target names
+//     the outermost shadow host, and RelatedTarget names the related element,
+//     or its outermost shadow host if it is inside a shadow tree.
 //     Event.CurrentTarget is not affected.
+//   - A blur or focusout listener that a removal triggers runs after the
+//     removal. In Chrome for Testing 156, a page listener of the same event ran
+//     before it and saw the element in the document; the Go listener sees an
+//     element that is out of the document (Connected reports false and Parent
+//     is invalid), with its state intact, such as the value of a text field.
 //
 // An event that the page raises, such as a user's click, still reaches a Go
 // listener inside the browser's own dispatch, and the listener can cancel it.
 //
-// A call made with js.Value.Call, such as Call("dispatchEvent", event), is not
-// covered. Make it with jsutil.Call, and write the Go listener with
-// jsutil.NewCallback, when Go listeners are attached.
+// Other calls can also make the browser run listeners before they return, and
+// they are not covered. In Chrome for Testing 156, Append and InsertBefore do so
+// when they move the focused element (blur and focusout) or insert an iframe
+// (load), AppendMarkup does so for an iframe (load), and SetHidden does so for
+// the focused element (blur and focusout). A Go listener of such an event runs
+// inside the call. Call Blur on the focused element before you move or hide it:
+// Blur is covered, and nothing is left to blur later. A call made with
+// js.Value.Call, such as Call("dispatchEvent", event), is not covered either.
+// Make it with jsutil.Call, and write the Go listener with jsutil.NewCallback,
+// when Go listeners are attached.
 package browser
 
 import "m31labs.dev/gosx/internal/browserdom"
