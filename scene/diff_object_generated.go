@@ -98,6 +98,7 @@ func objectProofSchemaMatchesType(t reflect.Type) bool {
 		{"OutlineWidth", reflect.TypeFor[float64](), "json:\"outlineWidth,omitempty\""},
 		{"CastShadow", reflect.TypeFor[bool](), "json:\"castShadow,omitempty\""},
 		{"ReceiveShadow", reflect.TypeFor[bool](), "json:\"receiveShadow,omitempty\""},
+		{"PlanarReflection", reflect.TypeFor[*bool](), "json:\"planarReflection,omitempty\""},
 		{"DepthWrite", reflect.TypeFor[*bool](), "json:\"depthWrite,omitempty\""},
 		{"Roughness", reflect.TypeFor[float64](), "json:\"roughness,omitempty\""},
 		{"Metalness", reflect.TypeFor[float64](), "json:\"metalness,omitempty\""},
@@ -252,6 +253,11 @@ func provenObjectFieldsEqual(a, b *ObjectIR, omitted objectProofOmissions) bool 
 		}
 		if a.Selected != b.Selected {
 			return false
+		}
+		if a.PlanarReflection != nil || b.PlanarReflection != nil {
+			if a.PlanarReflection == nil || b.PlanarReflection == nil || *a.PlanarReflection != *b.PlanarReflection {
+				return false
+			}
 		}
 	}
 	if omitted&objectProofOmitTransform == 0 {

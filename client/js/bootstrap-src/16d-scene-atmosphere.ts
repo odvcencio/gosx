@@ -70,9 +70,11 @@ function sceneReflectDispose(resources) {
 function sceneReflectOpaqueList(list, materials) {
   // User shader uniforms have their own frame ownership. Visible custom
   // materials still reflect through SSR; the fallback draws built-in PBR.
+  // A mesh stays out of the mirror only when its author set planarReflection
+  // to false; where it stands decides nothing.
   return (list || []).filter(obj => {
     const mat = materials[sceneNumber(obj.materialIndex,0)];
-    return !(mat && (mat.shaderBackend === "selena" || mat.customVertex || mat.customFragment));
+    return obj.planarReflection !== false && !(mat && (mat.shaderBackend === "selena" || mat.customVertex || mat.customFragment));
   });
 }
 

@@ -116,6 +116,20 @@
   published production runtime in CI after the size budgets, and fails if a
   runtime stops exporting the direct batch entry or cannot take a batch that
   re-renders a deep island or carries deeply nested JSON.
+
+- Let authors choose which meshes the ocean's planar reflection draws. Add
+  `Mesh.PlanarReflection` and `Model.PlanarReflection` (a `*bool`): every mesh
+  is drawn unless its author sets the field to `scene.Bool(false)`. Where a mesh
+  stands never decides, so an elevated bridge deck reflects beside its pier.
+  Set false on geometry that stands in for the sky, such as a moon, a sun disc
+  or a dome: its mirror image lands in the near water as a hard-edged shape that
+  no wave breaks up, and the sky already supplies the glint. The mesh stays in
+  the main view, in shadows and in screen-space reflections. WebGL2 and WebGPU
+  read the same flag, and imported and crowd batches keep meshes with different
+  values apart. A scene that never sets the field serializes as before.
+  `DiffScene` with `PatchObjectState` changes the flag as a compact state patch
+  that does not resend geometry, and a reset to the default is an explicit true.
+
 - Keep Scene3D tone mapping and antialiasing when adaptive quality suppresses
   post effects. Under sustained load the controller sheds every post effect as
   its last step. It now keeps the tone-mapping effect, so a physical or other
