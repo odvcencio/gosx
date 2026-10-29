@@ -66,9 +66,9 @@
   decodes the batch itself unless the runtime announces batch delivery and the
   page has the `batch` method, and it calls the function unless the loader
   published exports with `gosx_batch_apply`. The core runtime grows by 14.9 KB
-  as TinyGo builds it and by 14.0 KB after wasm-opt, which leaves it at 652 KiB,
-  inside its 700 KiB budget. The monolith bootstrap grows by 2.8 KB; the
-  JavaScript size budgets move by the measured amounts.
+  as TinyGo builds it, to 690 KiB, inside the 700 KiB budget that CI checks on
+  that build, and by 14.0 KB after wasm-opt, to 652 KiB. The monolith bootstrap
+  grows by 2.8 KB; the JavaScript size budgets move by the measured amounts.
 
   The exports apply the whole batch on the system stack, the decoding of its
   JSON and the render of every island it wakes, so the build now sizes that
