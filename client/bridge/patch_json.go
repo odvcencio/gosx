@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"strconv"
-	"unicode/utf8"
 
 	"m31labs.dev/gosx/client/vm"
 )
@@ -19,16 +18,8 @@ import (
 //
 // The output stays byte-identical to encoding/json's, so patch.js, the runtime
 // tests and every recorded fixture keep working. patch_json_test.go pins that
-// equality against a randomized corpus.
-
-const lowerHex = "0123456789abcdef"
-
-// lineSeparator and paragraphSeparator are valid inside a JSON string but
-// break a JavaScript source literal, so encoding/json escapes both.
-const (
-	lineSeparator      = '\u2028'
-	paragraphSeparator = '\u2029'
-)
+// equality against a randomized corpus. The string encoder is vm.AppendJSONString,
+// which also writes signal values.
 
 // appendPatchesJSON writes the JSON array form of patches into out.
 //
@@ -81,18 +72,18 @@ func appendPatchOpJSON(out []byte, op *vm.PatchOp) []byte {
 	out = append(out, `{"kind":`...)
 	out = strconv.AppendUint(out, uint64(op.Kind), 10)
 	out = append(out, `,"path":`...)
-	out = appendJSONString(out, op.Path)
+	out = vm.AppendJSONString(out, op.Path)
 	if op.Tag != "" {
 		out = append(out, `,"tag":`...)
-		out = appendJSONString(out, op.Tag)
+		out = vm.AppendJSONString(out, op.Tag)
 	}
 	if op.Text != "" {
 		out = append(out, `,"text":`...)
-		out = appendJSONString(out, op.Text)
+		out = vm.AppendJSONString(out, op.Text)
 	}
 	if op.AttrName != "" {
 		out = append(out, `,"attrName":`...)
-		out = appendJSONString(out, op.AttrName)
+		out = vm.AppendJSONString(out, op.AttrName)
 	}
 	if len(op.Children) > 0 {
 		out = append(out, `,"children":[`...)
@@ -105,82 +96,4 @@ func appendPatchOpJSON(out []byte, op *vm.PatchOp) []byte {
 		out = append(out, ']')
 	}
 	return append(out, '}')
-}
-
-// jsonSafeByte reports whether a byte below 0x80 can go into a JSON string
-// unescaped.
-//
-// The set matches encoding/json's htmlSafeSet: printable ASCII minus the quote
-// and the backslash, minus '<', '>' and '&'. encoding/json escapes those three
-// by default so a patch payload cannot break out of a <script> block, and the
-// output must match byte for byte.
-func jsonSafeByte(b byte) bool {
-	if b < 0x20 {
-		return false
-	}
-	switch b {
-	case '"', '\\', '<', '>', '&':
-		return false
-	}
-	return true
-}
-
-// appendJSONString writes s as a quoted JSON string, matching
-// encoding/json.Marshal with HTML escaping left on.
-func appendJSONString(out []byte, s string) []byte {
-	out = append(out, '"')
-	start := 0
-	for i := 0; i < len(s); {
-		b := s[i]
-		if b < utf8.RuneSelf {
-			if jsonSafeByte(b) {
-				i++
-				continue
-			}
-			out = append(out, s[start:i]...)
-			switch b {
-			case '\\', '"':
-				out = append(out, '\\', b)
-			case '\b':
-				out = append(out, '\\', 'b')
-			case '\f':
-				out = append(out, '\\', 'f')
-			case '\n':
-				out = append(out, '\\', 'n')
-			case '\r':
-				out = append(out, '\\', 'r')
-			case '\t':
-				out = append(out, '\\', 't')
-			default:
-				// Control bytes other than \b, \f, \n, \r and \t, plus
-				// <, > and &.
-				out = append(out, '\\', 'u', '0', '0', lowerHex[b>>4], lowerHex[b&0xF])
-			}
-			i++
-			start = i
-			continue
-		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError && size == 1 {
-			// Invalid UTF-8 becomes an escaped replacement character, as
-			// encoding/json does.
-			out = append(out, s[start:i]...)
-			out = append(out, `\ufffd`...)
-			i += size
-			start = i
-			continue
-		}
-		if r == lineSeparator || r == paragraphSeparator {
-			// Line and paragraph separators are valid JSON but break a
-			// JavaScript source literal, so encoding/json escapes them.
-			out = append(out, s[start:i]...)
-			out = append(out, '\\', 'u', '2', '0', '2', lowerHex[r&0xF])
-			i += size
-			start = i
-			continue
-		}
-		i += size
-	}
-	out = append(out, s[start:]...)
-	return append(out, '"')
 }

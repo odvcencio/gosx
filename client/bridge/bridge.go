@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/videosync"
@@ -37,6 +36,12 @@ type Bridge struct {
 	patchMailboxFn func(islandID string, mailbox []byte) // direct binary patch callback
 	patchRequestID uint32                                // monotonically increasing id for direct mailbox frames
 	signalFn       func(name, valueJSON string)          // callback to notify JS of shared signal changes
+	signalBatchFn  func(updates []SignalUpdate)          // callback that hands JS every change of one batch together
+	collecting     bool                                  // batch notifications wait in collected for one handoff
+	collected      []SignalUpdate                        // changes from the batch being applied, in notification order
+	senderNames    []legacySender                        // legacy spellings the batch sender used, to tell the page under that spelling
+	legacyTold     map[string]string                     // the text last told to the page under each legacy spelling
+	jsonScratch    []byte                                // buffer the notifications are encoded into
 	dispatching    map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
 	unsubs         map[string][]func()                   // per-island unsubscribe handles for shared signals
 	pendingReaders []*sharedIslandReader                 // shared readers awaiting the outermost store update
@@ -107,6 +112,9 @@ type Store struct {
 	onChange    func(name string, value vm.Value)
 	updating    bool
 	afterUpdate func()
+	// afterNotify runs when SetBatch has sent every notification and the
+	// update has not settled yet, so readers are still held back.
+	afterNotify func()
 }
 
 // NewStore creates an empty shared store.
@@ -172,6 +180,9 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 			}
 		}
 	})
+	if s.afterNotify != nil {
+		s.afterNotify()
+	}
 }
 
 // endUpdate keeps readers behind the complete notification pass for both
@@ -236,6 +247,7 @@ func New() *Bridge {
 	}
 	b.store.SetObserver(b.notifySharedSignal)
 	b.store.afterUpdate = b.flushSharedIslands
+	b.store.afterNotify = b.deliverCollected
 	return b
 }
 
@@ -247,6 +259,30 @@ func (b *Bridge) GetStore() *Store {
 // SetSharedSignalCallback registers the function called when any shared signal changes.
 func (b *Bridge) SetSharedSignalCallback(fn func(name, valueJSON string)) {
 	b.signalFn = fn
+}
+
+// SignalUpdate is one shared signal change handed to a browser callback: the
+// signal name and the JSON text of its new value.
+type SignalUpdate struct {
+	Name string
+	JSON string
+}
+
+// SetSharedSignalBatchCallback registers the function that receives all the
+// changes of one shared signal batch in a single call, in notification order.
+// Until the batch has applied, nothing reaches the callback, so a subscriber it
+// triggers reads the complete new state. The callback also replaces the
+// per-signal callback for those changes; any other change still goes to the
+// per-signal callback at once, including a write the callback itself makes. A
+// signal written that way and also in the batch reaches the browser before the
+// batch's own, older, text for it does.
+//
+// A sender that spelled a signal with a legacy alias ($scene.event.x for
+// $surface.event.x) is also told the value under that spelling, after the
+// batch's own changes. A changed-only batch leaves it out when the value did not
+// change and the page already has it.
+func (b *Bridge) SetSharedSignalBatchCallback(fn func(updates []SignalUpdate)) {
+	b.signalBatchFn = fn
 }
 
 // Surface kinds accepted by HydrateReconciler. Treat these strings as the
@@ -434,32 +470,169 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 	}
 
 	values := payload.Map()
+	var senderNames []legacySender
 	for name, value := range values {
-		if name == "" {
+		// A blank name is refused, as the page refused it before it sent a
+		// batch here.
+		if blankSignalName(name) {
 			return errors.New("shared signal name required")
 		}
+		unchanged := false
 		if changedOnly {
 			if current, ok := b.store.Get(name); ok && vm.EqualJSON(current, value) {
 				delete(values, name)
+				unchanged = true
 			}
+		}
+		if signal.ResolveAlias(name) != name {
+			senderNames = append(senderNames, legacySender{name: name, unchanged: unchanged})
+		}
+	}
+	if len(values) == 0 && len(senderNames) == 0 {
+		return nil
+	}
+	// The store keeps one signal under the canonical name, and the page keeps
+	// one value for each name it has read. A sender that spelled a name as a
+	// legacy alias ($scene.event.x for $surface.event.x) is told the value under
+	// that spelling as well, so the page's copy of it does not go stale
+	// (collectSenderNames says when a changed-only batch leaves that out).
+	for i := 1; i < len(senderNames); i++ {
+		for j := i; j > 0 && senderNames[j].name < senderNames[j-1].name; j-- {
+			senderNames[j], senderNames[j-1] = senderNames[j-1], senderNames[j]
 		}
 	}
 
-	b.store.SetBatch(values)
+	defer b.beginBatchNotify()()
+	b.senderNames = senderNames
+	if len(values) > 0 {
+		b.store.SetBatch(values)
+	} else {
+		b.deliverCollected()
+	}
 	return nil
+}
+
+// blankSignalName reports whether name is empty once the white space that
+// JavaScript's String.prototype.trim removes is gone. The page trims signal
+// names with trim, so the two sides must refuse the same names.
+func blankSignalName(name string) bool {
+	for _, r := range name {
+		if !isJSSpace(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// isJSSpace is ECMAScript's WhiteSpace and LineTerminator set: tab, line feed,
+// vertical tab, form feed, carriage return, space, no-break space, the byte
+// order mark, the line and paragraph separators, and the other code points in
+// the Unicode category Zs (U+1680, U+2000 to U+200A, U+202F, U+205F, U+3000). It
+// differs from unicode.IsSpace, which trims U+0085 and does not trim U+FEFF.
+// TestBlankSignalNameUsesTheWhiteSpaceJavaScriptTrims checks the set against
+// the 25 code points that String.prototype.trim removes.
+func isJSSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', '\u00a0', '\u1680', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff':
+		return true
+	}
+	return r >= '\u2000' && r <= '\u200a'
+}
+
+// beginBatchNotify prepares the notifications of one batch and returns the
+// function that ends it. While the batch applies, the browser hears nothing;
+// every change waits and then leaves together through the batch callback. The
+// returned function sends whatever is still waiting, so an observer panic
+// cannot leave the browser behind the store.
+func (b *Bridge) beginBatchNotify() func() {
+	collecting, collected, senderNames := b.collecting, b.collected, b.senderNames
+	b.collecting = b.signalBatchFn != nil
+	b.collected = nil
+	b.senderNames = nil
+	return func() {
+		b.deliverCollected()
+		b.collecting, b.collected, b.senderNames = collecting, collected, senderNames
+	}
+}
+
+// deliverCollected hands the waiting batch changes to the batch callback. The
+// callback may write signals; those changes go out one by one, not into the
+// batch being delivered. A signal the callback writes that is also in the batch
+// reaches the browser before the batch does, so the browser must treat the
+// batch's copy of it as out of date (the page's gosxNotifySharedSignals does).
+func (b *Bridge) deliverCollected() {
+	b.collectSenderNames()
+	if len(b.collected) == 0 {
+		return
+	}
+	updates := b.collected
+	b.collected = nil
+	collecting := b.collecting
+	b.collecting = false
+	defer func() { b.collecting = collecting }()
+	b.signalBatchFn(updates)
+}
+
+// legacySender is a legacy spelling ($scene.event.x for $surface.event.x) that a
+// batch sender used. unchanged says that a changed-only batch found the value
+// equal to the one in the store, so the batch changes nothing under that name.
+type legacySender struct {
+	name      string
+	unchanged bool
+}
+
+// collectSenderNames adds the legacy spellings the batch sender used to the
+// changes that are waiting, each with the current value of its signal. Without a
+// batch callback they go to the per-signal callback at once.
+//
+// Every page subscriber of a name wakes when the name is announced, whether or
+// not the value moved. A changed-only batch that repeats a value is therefore
+// silent about its legacy spelling, as it is about every other name, unless the
+// page's copy may be out of date: the text last announced under the spelling is
+// not the text the store holds now, because a write under the canonical name
+// moved it. The bridge keeps that last text for each spelling it has announced,
+// at most as many as the alias table has names. A batch that is not changed-only
+// announces every spelling it carries, as it notifies every name.
+func (b *Bridge) collectSenderNames() {
+	names := b.senderNames
+	b.senderNames = nil
+	for _, sender := range names {
+		value, ok := b.store.Get(sender.name)
+		if !ok {
+			continue
+		}
+		text, err := b.marshalValue(value)
+		if err != nil {
+			continue
+		}
+		if told, known := b.legacyTold[sender.name]; sender.unchanged && known && told == text {
+			continue
+		}
+		if b.collecting {
+			b.collected = append(b.collected, SignalUpdate{Name: sender.name, JSON: text})
+		} else if b.signalFn != nil {
+			b.signalFn(sender.name, text)
+		} else {
+			continue
+		}
+		if b.legacyTold == nil {
+			b.legacyTold = map[string]string{}
+		}
+		b.legacyTold[sender.name] = text
+	}
 }
 
 // GetSharedSignalJSON serializes the current shared signal value as JSON.
 // Missing signals return JSON null.
 func (b *Bridge) GetSharedSignalJSON(name string) (string, error) {
-	if strings.TrimSpace(name) == "" {
+	if blankSignalName(name) {
 		return "", errors.New("shared signal name required")
 	}
 	value, ok := b.store.Get(name)
 	if !ok {
 		return "null", nil
 	}
-	return marshalSharedSignalValue(value)
+	return b.marshalValue(value)
 }
 
 // TickEngine reconciles a live engine runtime and returns pending commands.
@@ -691,14 +864,16 @@ func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
 }
 
 func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
-	if b == nil || strings.TrimSpace(name) == "" {
+	if b == nil || blankSignalName(name) {
 		return
 	}
-	valueJSON, err := marshalSharedSignalValue(value)
+	valueJSON, err := b.marshalValue(value)
 	if err != nil {
 		return
 	}
-	if b.signalFn != nil {
+	if b.collecting {
+		b.collected = append(b.collected, SignalUpdate{Name: name, JSON: valueJSON})
+	} else if b.signalFn != nil {
 		b.signalFn(name, valueJSON)
 	}
 	// Outbound cross-frame relay fans out for matching prefixes only.
@@ -707,13 +882,26 @@ func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
 	b.relaySharedSignal(name, valueJSON)
 }
 
-func marshalSharedSignalValue(value vm.Value) (string, error) {
-	data, err := json.Marshal(value.ToAny())
+// marshalValue returns the JSON text of a stored value: what json.Marshal gives
+// for value.ToAny(), written without the tree of plain Go values that call
+// builds. The bridge keeps one buffer for it, so a notification costs the text
+// itself and nothing else.
+func (b *Bridge) marshalValue(value vm.Value) (string, error) {
+	data, err := vm.AppendJSON(b.jsonScratch[:0], value)
 	if err != nil {
 		return "", err
 	}
+	// Keep the buffer for the next value unless one outsized value grew it.
+	if cap(data) <= maxJSONScratch {
+		b.jsonScratch = data
+	} else {
+		b.jsonScratch = nil
+	}
 	return string(data), nil
 }
+
+// maxJSONScratch is the largest buffer the bridge keeps between notifications.
+const maxJSONScratch = 1 << 20
 
 // DecodeEngineProgram decodes a runtime engine program.
 func DecodeEngineProgram(data []byte, format string) (*rootengine.Program, error) {

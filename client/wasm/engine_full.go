@@ -20,7 +20,7 @@ func registerEngineRuntime(b *bridge.Bridge) {
 }
 
 func hydrateEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		call, err := parseHydrateCall(args)
 		if err != nil {
 			return jsError(err)
@@ -34,7 +34,7 @@ func hydrateEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func tickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (engineID)")
 		}
@@ -47,7 +47,7 @@ func tickEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func renderEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 4 {
 			return jsErrorf("need 4 args (engineID, timeSeconds, width, height)")
 		}
@@ -69,7 +69,7 @@ func renderEngineRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func disposeEngineRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}

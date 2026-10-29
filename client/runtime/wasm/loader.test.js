@@ -31,6 +31,7 @@ function makeEnvironment(options) {
   function Go() { this.importObject = {}; }
   Go.prototype.run = function() {
     runCalls++;
+    if (options.batchFunction) window.__gosx_set_input_batch = options.batchFunction;
     if (options.runFailure) return Promise.reject(options.runFailure);
     if (options.skipReady) return new Promise(function() {});
     const contract = window.__gosx_runtime_contract;
@@ -50,8 +51,8 @@ function makeEnvironment(options) {
     Go: Go,
     fetch: async function() { return response; },
     WebAssembly: {
-      instantiateStreaming: async function() { return { instance: {} }; },
-      instantiate: async function() { return { instance: {} }; },
+      instantiateStreaming: async function() { return { instance: { exports: options.exports } }; },
+      instantiate: async function() { return { instance: { exports: options.exports } }; },
     },
     Uint8Array: Uint8Array,
     ArrayBuffer: ArrayBuffer,
@@ -134,4 +135,31 @@ test("loader rejects runtime exit and missing readiness", async () => {
   const stalled = makeEnvironment({ skipReady: true });
   await assert.rejects(stalled.runtime.loader.load(stalled.reference), /did not signal readiness/);
   assert.equal(stalled.hydrationReady(), 0);
+});
+
+test("loader hangs the runtime's exports on the batch function once the handshake holds", async () => {
+  const exports = { gosx_batch_apply: function() { return 0; } };
+  const batch = function() { return null; };
+  const env = makeEnvironment({ exports: exports, batchFunction: batch });
+  assert.equal(batch.exports, undefined);
+  await env.runtime.loader.load(env.reference);
+  assert.equal(env.window.__gosx_set_input_batch, batch);
+  assert.equal(batch.exports, exports, "the engine context sends signal batches through these");
+
+  // A runtime that fails the handshake is not used, so its exports are not published.
+  const refused = function() { return null; };
+  const bad = makeEnvironment({ exports: exports, batchFunction: refused, handshake: { manifestHash: "stale" } });
+  await assert.rejects(bad.runtime.loader.load(bad.reference), /manifest identity mismatch/);
+  assert.equal(refused.exports, undefined);
+});
+
+test("loader runs a runtime that has no batch function or no exports", async () => {
+  const noFunction = makeEnvironment({ exports: {} });
+  await noFunction.runtime.loader.load(noFunction.reference);
+  assert.equal(noFunction.window.__gosx_set_input_batch, undefined);
+
+  const batch = function() { return null; };
+  const noExports = makeEnvironment({ batchFunction: batch });
+  await noExports.runtime.loader.load(noExports.reference);
+  assert.equal(batch.exports, undefined);
 });

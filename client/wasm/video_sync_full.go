@@ -39,7 +39,7 @@ func registerVideoSyncRuntime(b *bridge.Bridge) {
 // configJSON may be "" or an empty string to use DefaultConfig.
 // Returns null on success, or an "error: …" string on failure.
 func videoSyncNewFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return js.Null()
 		}
@@ -56,7 +56,7 @@ func videoSyncNewFunc(b *bridge.Bridge) js.Func {
 //
 //	__gosx_video_sync_ingest(id, serverTimeMs, position, playing, recvPerfMs)
 func videoSyncIngestFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 5 {
 			return js.Null()
 		}
@@ -77,7 +77,7 @@ func videoSyncIngestFunc(b *bridge.Bridge) js.Func {
 //
 //	__gosx_video_sync_rtt(id, rttMs)
 func videoSyncRTTFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return js.Null()
 		}
@@ -97,7 +97,7 @@ func videoSyncRTTFunc(b *bridge.Bridge) js.Func {
 //
 //	__gosx_video_sync_tick(id, currentTime, perfNowMs, bufferedAhead, paused)
 func videoSyncTickFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 5 {
 			return js.Null()
 		}
@@ -127,7 +127,7 @@ func videoSyncTickFunc(b *bridge.Bridge) js.Func {
 //
 //	__gosx_video_sync_playback_start(id, perfNowMs)
 func videoSyncPlaybackStartFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return js.Null()
 		}
@@ -142,7 +142,7 @@ func videoSyncPlaybackStartFunc(b *bridge.Bridge) js.Func {
 //
 //	__gosx_video_sync_dispose(id)
 func videoSyncDisposeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}
@@ -160,7 +160,7 @@ func videoSyncDisposeFunc(b *bridge.Bridge) js.Func {
 //
 // perfNowMs defaults to 0 when omitted.
 func videoSyncStatsFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}
@@ -184,7 +184,7 @@ func videoSyncStatsFunc(b *bridge.Bridge) js.Func {
 //
 //	__gosx_video_sync_last_reason(id)
 func videoSyncLastReasonFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}

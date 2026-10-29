@@ -249,6 +249,144 @@ func TestRuntimeNotifiesSharedSignalChanges(t *testing.T) {
 	}
 }
 
+// withNotifyFunction installs the page's notify function for a test. When
+// batch is not nil it becomes the function's batch method, as the bootstrap
+// installs it.
+func withNotifyFunction(t *testing.T, one, batch func(args []js.Value) any) {
+	t.Helper()
+
+	notify := js.FuncOf(func(this js.Value, args []js.Value) any { return one(args) })
+	t.Cleanup(notify.Release)
+	if batch != nil {
+		method := js.FuncOf(func(this js.Value, args []js.Value) any { return batch(args) })
+		t.Cleanup(method.Release)
+		notify.Set("batch", method)
+	}
+	prev := js.Global().Get("__gosx_notify_shared_signal")
+	js.Global().Set("__gosx_notify_shared_signal", notify)
+	t.Cleanup(func() { js.Global().Set("__gosx_notify_shared_signal", prev) })
+}
+
+func pairsOf(args []js.Value) map[string]string {
+	pairs := map[string]string{}
+	for i := 0; i+1 < len(args); i += 2 {
+		pairs[args[i].String()] = args[i+1].String()
+	}
+	return pairs
+}
+
+func TestRuntimeInputBatchAnnouncesBatchDelivery(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+	registerRuntime(bridge.New())
+
+	// The page skips its own decoding of a batch only for a runtime that says it
+	// validates the batch and returns every change itself.
+	if !js.Global().Get("__gosx_set_input_batch").Get("batchDelivery").Truthy() {
+		t.Fatal("__gosx_set_input_batch does not announce batch delivery")
+	}
+}
+
+func TestRuntimeBatchChangesReachThePageInOneCall(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	var singles int
+	var batches []map[string]string
+	var callArgs []int
+	withNotifyFunction(t,
+		func([]js.Value) any { singles++; return nil },
+		func(args []js.Value) any {
+			callArgs = append(callArgs, len(args))
+			batches = append(batches, pairsOf(args))
+			return nil
+		})
+	registerRuntime(bridge.New())
+
+	// The page is told what the runtime stored, in the form it has always had.
+	batch := ` { "$view" : { "turn" : "west" , "n": 7.0 } , "$selected" : "tile-2" , "$count":3 } `
+	if ret := js.Global().Get("__gosx_set_input_batch").Invoke(batch); !ret.IsNull() {
+		t.Fatalf("batch result = %q", ret.String())
+	}
+	if singles != 0 || len(batches) != 1 || callArgs[0] != 6 {
+		t.Fatalf("single calls = %d, batch calls = %d with %v arguments, want one call with three name and text pairs", singles, len(batches), callArgs)
+	}
+	want := map[string]string{"$view": `{"n":7,"turn":"west"}`, "$selected": `"tile-2"`, "$count": `3`}
+	for name, text := range want {
+		if batches[0][name] != text {
+			t.Errorf("%s: page was told %q, want %q", name, batches[0][name], text)
+		}
+	}
+
+	// A changed-only batch tells the page about the changes alone, and a snapshot
+	// that changes nothing does not call it.
+	batches = nil
+	if ret := js.Global().Get("__gosx_set_input_batch").Invoke(`{"$view":{"turn":"west","n":7},"$selected":"tile-9","$count":3}`, true); !ret.IsNull() {
+		t.Fatalf("changed-only result = %q", ret.String())
+	}
+	if len(batches) != 1 || len(batches[0]) != 1 || batches[0]["$selected"] != `"tile-9"` {
+		t.Fatalf("changed-only batch told the page %v", batches)
+	}
+	batches = nil
+	js.Global().Get("__gosx_set_input_batch").Invoke(`{"$selected":"tile-9"}`, true)
+	if len(batches) != 0 || singles != 0 {
+		t.Fatalf("an unchanged snapshot called the page: %v, %d", batches, singles)
+	}
+}
+
+func TestRuntimeBatchChangesReachAPageWithoutBatchMethodOneByOne(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	singles := map[string]string{}
+	withNotifyFunction(t, func(args []js.Value) any { singles[args[0].String()] = args[1].String(); return nil }, nil)
+	registerRuntime(bridge.New())
+
+	if ret := js.Global().Get("__gosx_set_input_batch").Invoke(`{"$a": 1, "$b" : [1, 2]}`); !ret.IsNull() {
+		t.Fatalf("batch result = %q", ret.String())
+	}
+	if len(singles) != 2 || singles["$a"] != "1" || singles["$b"] != "[1,2]" {
+		t.Fatalf("page was told %v", singles)
+	}
+}
+
+func TestRuntimeSingleWriteStillReachesThePageOnItsOwn(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	var singles []string
+	var batches int
+	withNotifyFunction(t,
+		func(args []js.Value) any {
+			singles = append(singles, args[0].String()+"="+args[1].String())
+			return nil
+		},
+		func([]js.Value) any { batches++; return nil })
+	registerRuntime(bridge.New())
+
+	if ret := js.Global().Get("__gosx_set_shared_signal").Invoke("$video.playing", `true`); !ret.IsNull() {
+		t.Fatalf("result = %q", ret.String())
+	}
+	if batches != 0 || len(singles) != 1 || singles[0] != "$video.playing=true" {
+		t.Fatalf("single calls = %v, batch calls = %d", singles, batches)
+	}
+}
+
+func TestRuntimeBatchRefusalsLeaveThePageUntold(t *testing.T) {
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	var told int
+	withNotifyFunction(t,
+		func([]js.Value) any { told++; return nil },
+		func([]js.Value) any { told++; return nil })
+	registerRuntime(bridge.New())
+
+	for _, bad := range []string{`{`, `[1]`, `"x"`, `{"": 1}`, `{"  ": 1}`, `{"$a": 1, "$b": }`} {
+		if ret := js.Global().Get("__gosx_set_input_batch").Invoke(bad); ret.IsNull() {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+	if told != 0 {
+		t.Fatalf("a refused batch told the page %d times", told)
+	}
+}
+
 func TestRuntimeTextLayoutExport(t *testing.T) {
 	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
 	setGlobalFunc(t, "__gosx_measure_text_batch", func(this js.Value, args []js.Value) any {

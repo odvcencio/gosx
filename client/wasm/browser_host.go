@@ -573,11 +573,11 @@ func browserPromiseFallbackOnReject(request js.Value, fallback func()) {
 		fulfilled.Release()
 		rejected.Release()
 	}
-	fulfilled = js.FuncOf(func(js.Value, []js.Value) any {
+	fulfilled = funcOf(func(js.Value, []js.Value) any {
 		release()
 		return nil
 	})
-	rejected = js.FuncOf(func(js.Value, []js.Value) any {
+	rejected = funcOf(func(js.Value, []js.Value) any {
 		defer release()
 		fallback()
 		return nil
@@ -772,7 +772,7 @@ func browserDeferAfterEvent(fn func()) (queued bool) {
 
 func browserSchedule(fn func(), afterEvent bool) (queued bool) {
 	var callback js.Func
-	callback = js.FuncOf(func(this js.Value, args []js.Value) any {
+	callback = funcOf(func(this js.Value, args []js.Value) any {
 		defer callback.Release()
 		defer func() { recover() }()
 		fn()

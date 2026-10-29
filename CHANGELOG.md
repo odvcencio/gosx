@@ -2,6 +2,121 @@
 
 ## Unreleased
 
+- Hand a signal batch from a worker or native engine to the WASM runtime once,
+  and without a goroutine on TinyGo. The page used to parse every batch with
+  `JSON.parse` and hand the same text to the runtime, which decoded it again,
+  encoded each changed signal with `json.Marshal`, and sent that text back for
+  the page to parse a third time. Now, when the runtime announces
+  `__gosx_set_input_batch.batchDelivery` and the page's
+  `__gosx_notify_shared_signal` has a `batch` method, the page sends the text to
+  the runtime as it is. The runtime decodes it in one pass, writes each changed
+  signal with an encoder that produces the bytes `json.Marshal` produced, and
+  tells the page about the whole batch in one call. The page keeps each signal
+  as that text and parses it only when page code reads the value, so a
+  `subscribeSignalJSON` reader, such as a Go engine, costs the page no
+  `JSON.parse`.
+
+  TinyGo runtimes also export `gosx_batch_reserve`, `gosx_batch_apply`,
+  `gosx_batch_error` and `gosx_batch_error_length`. The loaders hang a runtime's
+  exports on `__gosx_set_input_batch.exports`, and the engine context then
+  writes the batch into the runtime's memory and applies it with one export
+  call. A call through `__gosx_set_input_batch` makes TinyGo start a goroutine
+  for the batch, with a stack that is a block of the garbage-collected heap; the
+  exports run on the system stack, the one the call already has. Before this
+  change the heap of the shipping runtimes doubled while batches arrived, to
+  144 MiB and more, and a collection of such a heap froze the page for 0.1 to
+  16 seconds. Measured in Node 26 on a shared x86 host, with batches recorded
+  from Bon Voyage's live ship, 2,000 batches after 200 warm-up batches, the
+  median of three interleaved runs of
+  `client/js/signal-batch.bench.mjs --soak --compare`, origin/main then this
+  change:
+
+  | runtime | batch | mean ms | p99 ms | max ms | WASM memory MiB |
+  |---|---|---|---|---|---|
+  | core | 2.2 KB | 0.76 -> 0.09 | 0.6 -> 0.5 | 484 -> 0.6 | 768 -> 2 |
+  | core | 7.3 KB | 1.32 -> 0.15 | 0.8 -> 0.5 | 872 -> 0.7 | 1536 -> 2 |
+  | core | 32.8 KB | 46.55 -> 0.98 | 150.0 -> 2.2 | 404 -> 2.6 | 192 -> 6 |
+  | engine | 2.2 KB | 0.73 -> 0.10 | 0.5 -> 0.7 | 468 -> 0.8 | 768 -> 2 |
+  | engine | 7.3 KB | 1.21 -> 0.20 | 0.7 -> 0.7 | 786 -> 0.9 | 1536 -> 2 |
+  | engine | 32.8 KB | 27.93 -> 1.02 | 117.6 -> 6.1 | 182 -> 8.2 | 192 -> 24 |
+  | full | 2.2 KB | 0.94 -> 0.07 | 0.5 -> 0.7 | 684 -> 0.8 | 1152 -> 2 |
+  | full | 7.3 KB | 0.97 -> 0.16 | 0.7 -> 0.8 | 578 -> 0.9 | 1152 -> 2 |
+  | full | 32.8 KB | 21.93 -> 1.10 | 96.9 -> 8.6 | 103 -> 9.5 | 144 -> 36 |
+
+  The text a `subscribeSignalJSON` reader receives is unchanged, with these
+  exceptions. A change that a later write replaced is not announced: when a
+  subscriber the batch wakes writes another signal of the same batch, or sends a
+  batch of its own, subscribers end on the stored value, where they could end on
+  the batch's older text. A sender that spells a signal `$scene.event.x` is told
+  the value under that spelling as well as under `$surface.event.x`; a
+  changed-only batch that repeats the value says it only when the page's copy
+  under the legacy spelling may be out of date, so the subscribers of that
+  spelling do not wake at the rate of the stream. A
+  changed-only batch no longer repairs a value that only the page holds (one set
+  with `__gosx_notify_shared_signal`): the runtime decides what changed, so send
+  a different value, or write through the runtime, to replace it. A malformed
+  batch is refused by the runtime, so `ctx.setSignalsJSON` throws an `Error`
+  with the runtime's text (`error: decode shared signal batch: unexpected EOF`)
+  where it threw a `SyntaxError`, and a worker that relays `error.message` sends
+  that text. The runtime refuses a blank signal name in a batch, as the page
+  did, and both sides call a name blank when `String.prototype.trim` empties it.
+  `vm.AppendJSON` and `vm.AppendJSONString` are new.
+
+  A page and a runtime from different builds still work together: the page
+  decodes the batch itself unless the runtime announces batch delivery and the
+  page has the `batch` method, and it calls the function unless the loader
+  published exports with `gosx_batch_apply`. The core runtime grows by 14.9 KB
+  as TinyGo builds it, to 690 KiB, inside the 700 KiB budget that CI checks on
+  that build, and by 14.0 KB after wasm-opt, to 652 KiB. The monolith bootstrap
+  grows by 2.8 KB; the JavaScript size budgets move by the measured amounts.
+
+  The exports apply the whole batch on the system stack, the decoding of its
+  JSON and the render of every island it wakes, so the build now sizes that
+  stack like a goroutine stack. `gosx build` and `gosx build-runtime` link
+  TinyGo runtimes with `-ldflags=-extldflags=-zstack-size=262144` (256 KiB).
+  `-stack-size` sizes goroutine stacks only, and the linker's default for the
+  system stack is 64 KiB. At 64 KiB, a batch that re-rendered an island about
+  30 levels deep, or carried a JSON value about 105 levels deep, overflowed the
+  stack, and every later call into the runtime failed with "memory access out of
+  bounds" until the page was reloaded; the call through
+  `__gosx_set_input_batch`, on a goroutine stack, took both. At 256 KiB the
+  exports take an island 128 levels deep and a JSON value 410 levels deep in
+  every published runtime, within one level of what the call takes. The
+  runtime's initial memory grows by 192 KiB (three pages to six). A runtime
+  that has the direct batch entry but was linked with the default system stack
+  fails on such a batch; build with `gosx build-runtime`, or pass the flag.
+  `make wasm-heap-gate` sends each published runtime batches that re-render an
+  island 32 and 100 levels deep and batches that carry a JSON value 128 and 256
+  levels deep (`client/js/signal-batch-depth.mjs`).
+
+- Clear the part of a goroutine's stack that a call from JavaScript used, when
+  the call ends, in the TinyGo runtimes. TinyGo's collector scans memory
+  conservatively, and words in the runtime's static data that read as heap
+  addresses keep dead 256 KiB goroutine stacks alive; the frames those stacks
+  left behind kept everything the call had touched, so the heap grew with every
+  call. A stack that is cleared holds only itself. In a soak of 2,000 32.8 KB
+  batches through `__gosx_set_input_batch`, the worst stall fell from 9 to 13
+  seconds to 0.2 second, and the memory from 2.3 or 3 GiB to 144 MiB, in the
+  full and engine runtimes; with 7.3 KB batches the worst stall fell from 1.1
+  seconds (engine) and 1.5 seconds (full) to 68 and 110 ms, and the memory from
+  768 and 1,152 MiB to 144 and 360 MiB. Every function the runtime hands to
+  JavaScript now comes from `funcOf`, and `TestRuntimeFunctionsComeFromFuncOf`
+  fails if one does not. The stack size stays 256 KiB: resolving a nested island
+  uses about 2 KiB of stack per level in the TinyGo runtime, so 256 KiB holds
+  about 130 levels and a smaller stack would hold fewer. The system stack that
+  the direct batch entry runs on is linked at 256 KiB too (see above).
+
+- Add `client/js/signal-batch.bench.mjs` and `make wasm-heap-gate`. The bench
+  sends signal batches through the page's signal code to a real GoSX runtime in
+  Node, and reports mean, p50, p95, p99, max and the WASM memory at the start,
+  middle and end of a run. `--compare` runs two builds in interleaved processes
+  and fails when the new build's mean or max is worse, or its memory keeps
+  growing; `--soak --gate` fails a run whose memory grows in its second half.
+  The gate runs three synthetic payloads (2, 8 and 30 KB) against every
+  published production runtime in CI after the size budgets, and fails if a
+  runtime stops exporting the direct batch entry or cannot take a batch that
+  re-renders a deep island or carries deeply nested JSON.
+
 - Let authors choose which meshes the ocean's planar reflection draws. Add
   `Mesh.PlanarReflection` and `Model.PlanarReflection` (a `*bool`): every mesh
   is drawn unless its author sets the field to `scene.Bool(false)`. Where a mesh

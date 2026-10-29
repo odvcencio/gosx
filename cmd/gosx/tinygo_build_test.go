@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -79,6 +82,87 @@ func TestTinyGoBuildArgsSizeGoroutineStacksForDeepIslandTrees(t *testing.T) {
 		if !stringSliceContains(args, "-stack-size=256KB") {
 			t.Fatalf("expected 256KB goroutine stacks in args: %v", args)
 		}
+	}
+}
+
+// The direct batch entry applies a batch on the system stack, not on a goroutine
+// stack (client/wasm/batch_direct_tinygo.go), and -stack-size sizes goroutine
+// stacks only. Without the linker flag the system stack stays at wasm-ld's 64 KiB,
+// and a batch that re-renders an island about 30 levels deep, or carries a JSON
+// value about 105 levels deep, traps the runtime for good.
+func TestTinyGoBuildArgsGiveTheSystemStackTheSizeOfAGoroutineStack(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
+
+	const want = "-ldflags=-extldflags=-zstack-size=262144"
+	for name, args := range map[string][]string{
+		"default":      tinyGoBuildArgs("runtime.wasm"),
+		"islands only": tinyGoBuildArgs("runtime.wasm", "gosx_tiny_islands_only"),
+		"core":         tinyGoBuildArgs("runtime.wasm", runtimeVariantBuildTags(runtimewasm.VariantCore)...),
+		"engine":       tinyGoBuildArgs("runtime.wasm", runtimeVariantBuildTags(runtimewasm.VariantEngine)...),
+		"collab":       tinyGoBuildArgs("runtime.wasm", runtimeVariantBuildTags(runtimewasm.VariantCollab)...),
+		"full":         tinyGoBuildArgs("runtime.wasm", runtimeVariantBuildTags(runtimewasm.VariantFull)...),
+	} {
+		if !stringSliceContains(args, want) {
+			t.Errorf("%s: expected %s in args: %v", name, want, args)
+		}
+	}
+
+	// The two sizes move together: a goroutine stack of 512 KiB asks for a
+	// system stack of 512 KiB.
+	goroutineKiB, err := strconv.Atoi(strings.TrimSuffix(tinyGoGoroutineStackSize, "KB"))
+	if err != nil {
+		t.Fatalf("tinyGoGoroutineStackSize %q: %v", tinyGoGoroutineStackSize, err)
+	}
+	if tinyGoSystemStackBytes != goroutineKiB<<10 {
+		t.Fatalf("system stack is %d bytes but goroutine stacks are %s", tinyGoSystemStackBytes, tinyGoGoroutineStackSize)
+	}
+}
+
+// client/js/signal-batch.bench.mjs --build runs tinygo itself. It has to link the
+// stacks the shipped runtimes are linked with, or the soak measures a runtime
+// that no page loads.
+func TestSignalBatchBenchBuildsRuntimesWithTheStackFlagsOfTheShippedBuild(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "client", "js", "signal-batch.bench.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var build string
+	for _, line := range strings.Split(string(source), "\n") {
+		if strings.Contains(line, `spawnSync("tinygo"`) {
+			build = line
+		}
+	}
+	if build == "" {
+		t.Fatal("client/js/signal-batch.bench.mjs no longer runs spawnSync(\"tinygo\", ...)")
+	}
+	for _, flag := range []string{"-stack-size=" + tinyGoGoroutineStackSize, tinyGoSystemStackFlag} {
+		if !strings.Contains(build, `"`+flag+`"`) {
+			t.Errorf("the bench's --build line lacks %s:\n%s", flag, build)
+		}
+	}
+}
+
+// The runtime clears scrubStackBytes of each goroutine stack when a call from
+// JavaScript ends (client/wasm/stack_scrub_tinygo.go). That region must lie inside
+// the stack, so it may take at most half of TinyGo's 64 KiB default and of the
+// size this builder asks for.
+func TestTinyGoStackScrubFitsInsideTheGoroutineStack(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "client", "wasm", "stack_scrub_tinygo.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`(?m)^const scrubStackBytes = (\d+) << 10$`).FindStringSubmatch(string(source))
+	if match == nil {
+		t.Fatal("client/wasm/stack_scrub_tinygo.go no longer declares `const scrubStackBytes = N << 10`")
+	}
+	scrubKiB, _ := strconv.Atoi(match[1])
+	stackKiB, err := strconv.Atoi(strings.TrimSuffix(tinyGoGoroutineStackSize, "KB"))
+	if err != nil {
+		t.Fatalf("tinyGoGoroutineStackSize %q: %v", tinyGoGoroutineStackSize, err)
+	}
+	const tinyGoDefaultStackKiB = 64
+	if scrubKiB*2 > tinyGoDefaultStackKiB || scrubKiB*2 > stackKiB {
+		t.Fatalf("stack scrub of %d KiB is more than half of the %d KiB default or the %d KiB goroutine stack", scrubKiB, tinyGoDefaultStackKiB, stackKiB)
 	}
 }
 
