@@ -200,3 +200,209 @@ func TestGoListenersNeverNestUnderConcurrencyAndGCPressure(t *testing.T) {
 		t.Fatalf("calls into Go nested to depth %d", probe.MaxDepth())
 	}
 }
+
+// validityTarget returns a JavaScript event target that checks its validity as a
+// form control does. While target.valid is false, checkValidity and
+// reportValidity fire a cancelable invalid event before they return.
+// reportValidity then logs "reported" if no listener canceled the event during
+// the dispatch, and "withheld" if one did: the browser decides that when the
+// dispatch ends. The listen method adds a native listener that appends a label
+// to target.log.
+func validityTarget() js.Value {
+	return nativeValue(`(function () {
+		const target = new EventTarget();
+		target.log = [];
+		target.valid = false;
+		function fire() {
+			return target.dispatchEvent(new Event("invalid", { cancelable: true }));
+		}
+		target.checkValidity = function () {
+			if (target.valid) return true;
+			fire();
+			return false;
+		};
+		target.reportValidity = function () {
+			if (target.valid) return true;
+			target.log.push(fire() ? "reported" : "withheld");
+			return false;
+		};
+		target.listen = function (name, label) {
+			target.addEventListener(name, function () { target.log.push(label); });
+		};
+		return target;
+	})()`)
+}
+
+// CheckValidity and ReportValidity make the browser fire invalid before they
+// return, and ReportValidity then reports the problem unless a listener canceled
+// the event. A Go listener must not run inside the call (see package
+// m31labs.dev/gosx/client/jsutil), so it runs after the browser has delivered the
+// event, and its PreventDefault comes too late to withhold the report.
+func TestValidityChecksNeverRunGoListenersInsideTheCall(t *testing.T) {
+	probe := jsreentry.Install(t)
+	calls := []struct {
+		name string
+		call func(Element) bool
+		want string
+	}{
+		{"CheckValidity", Element.CheckValidity, "js-before js-after go"},
+		{"ReportValidity", Element.ReportValidity, "js-before js-after reported go"},
+	}
+	for _, c := range calls {
+		t.Run(c.name, func(t *testing.T) {
+			probe.Reset()
+			target := validityTarget()
+			element := FromJS(target)
+			target.Call("listen", "invalid", "js-before")
+			listener := element.On("invalid", func(e Event) {
+				e.PreventDefault()
+				target.Get("log").Call("push", "go")
+			})
+			defer listener.Dispose()
+			target.Call("listen", "invalid", "js-after")
+			if c.call(element) {
+				t.Fatalf("%s returned true for an invalid control", c.name)
+			}
+			probe.AssertNone(t, "%s", c.name)
+			if got := logOf(target); got != c.want {
+				t.Fatalf("%s: the Go listener must run when the call returns, after the other listeners, and cannot withhold the report: got %q, want %q", c.name, got, c.want)
+			}
+
+			// A valid control fires nothing, and the result comes back unchanged.
+			probe.Reset()
+			target.Get("log").Set("length", 0)
+			target.Set("valid", true)
+			if !c.call(element) {
+				t.Fatalf("%s returned false for a valid control", c.name)
+			}
+			probe.AssertNone(t, "%s of a valid control", c.name)
+			if got := logOf(target); got != "" {
+				t.Fatalf("%s of a valid control ran listeners: %q", c.name, got)
+			}
+		})
+	}
+}
+
+// focusedChild returns a JavaScript parent and a child that has focus. Taking
+// the child out of the parent, with child.remove or a write to parent.textContent
+// or parent.innerHTML, makes the browser fire blur and focusout on the child
+// before the call returns, while the child is still connected, as Chrome for
+// Testing 156 does. The child is disconnected when the call returns. The listen
+// method adds a native listener to the child that appends a label, and whether
+// the child is connected then, to log.
+func focusedChild() js.Value {
+	return nativeValue(`(function () {
+		const log = [];
+		const parent = new EventTarget();
+		const child = new EventTarget();
+		child.isConnected = true;
+		function removeFocused() {
+			child.dispatchEvent(new Event("blur"));
+			child.dispatchEvent(new Event("focusout", { bubbles: true }));
+			child.isConnected = false;
+		}
+		child.remove = removeFocused;
+		for (const name of ["textContent", "innerHTML"]) {
+			Object.defineProperty(parent, name, {
+				configurable: true,
+				get() { return ""; },
+				set(value) { removeFocused(); },
+			});
+		}
+		return {
+			log, parent, child,
+			listen(name, label) {
+				child.addEventListener(name, function () {
+					log.push(label + ":" + name + (child.isConnected ? ":connected" : ":removed"));
+				});
+			},
+		};
+	})()`)
+}
+
+// Taking the focused element out of the document fires blur and focusout before
+// the call returns: Element.Remove on the element, and SetText and ReplaceMarkup
+// on an ancestor. A Go listener of those events must not run inside the call. It
+// runs when the call returns, after the other listeners and after the removal.
+func TestRemovingTheFocusedNodeNeverRunsGoListenersInsideTheCall(t *testing.T) {
+	probe := jsreentry.Install(t)
+	calls := []struct {
+		name string
+		call func(parent, child Element)
+	}{
+		{"Remove", func(_, child Element) { child.Remove() }},
+		{"SetText", func(parent, _ Element) { parent.SetText("replacement") }},
+		{"ReplaceMarkup", func(parent, _ Element) { parent.ReplaceMarkup(Markup("<b>replacement</b>")) }},
+	}
+	for _, c := range calls {
+		t.Run(c.name, func(t *testing.T) {
+			probe.Reset()
+			fixture := focusedChild()
+			parent, child := FromJS(fixture.Get("parent")), FromJS(fixture.Get("child"))
+			log := fixture.Get("log")
+			var listeners []*Listener
+			for _, name := range []string{"blur", "focusout"} {
+				fixture.Call("listen", name, "js-before")
+				listeners = append(listeners, child.On(name, func(e Event) {
+					if !e.CurrentTarget().Equal(child) {
+						t.Error("the event lost its current target")
+					}
+					state := "removed"
+					if child.Connected() {
+						state = "connected"
+					}
+					log.Call("push", "go:"+e.Type()+":"+state)
+				}))
+				fixture.Call("listen", name, "js-after")
+			}
+			defer func() {
+				for _, l := range listeners {
+					l.Dispose()
+				}
+			}()
+			c.call(parent, child)
+			probe.AssertNone(t, "%s", c.name)
+			want := "js-before:blur:connected js-after:blur:connected js-before:focusout:connected js-after:focusout:connected go:blur:removed go:focusout:removed"
+			if got := logOf(fixture); got != want {
+				t.Fatalf("%s: the Go listeners must run when the call returns, after the other listeners and after the removal:\n got %q\nwant %q", c.name, got, want)
+			}
+		})
+	}
+}
+
+// recovered runs f and returns what it panicked with, or nil.
+func recovered(f func()) (value any) {
+	defer func() { value = recover() }()
+	f()
+	return nil
+}
+
+// A write that the browser refuses throws in the setter, for example innerHTML
+// under a Trusted Types policy. js.Value.Set lets that exception out through the
+// Go runtime and ends the program. Through jsutil.Call it becomes a panic that
+// the caller can recover.
+func TestWritesThatTheBrowserRefusesPanicInsteadOfEndingTheProgram(t *testing.T) {
+	refusing := nativeValue(`(function () {
+		const target = {};
+		for (const name of ["textContent", "innerHTML"]) {
+			Object.defineProperty(target, name, { set(value) { throw new TypeError("blocked by policy"); } });
+		}
+		return target;
+	})()`)
+	writes := []struct {
+		name  string
+		write func(Element)
+	}{
+		{"SetText", func(e Element) { e.SetText("replacement") }},
+		{"ReplaceMarkup", func(e Element) { e.ReplaceMarkup(Markup("<b>replacement</b>")) }},
+	}
+	for _, w := range writes {
+		t.Run(w.name, func(t *testing.T) {
+			failure := recovered(func() { w.write(FromJS(refusing)) })
+			err, ok := failure.(js.Error)
+			if !ok || !strings.Contains(err.Error(), "blocked by policy") {
+				t.Fatalf("%s panicked with %v (%T), want the JavaScript error", w.name, failure, failure)
+			}
+		})
+	}
+}

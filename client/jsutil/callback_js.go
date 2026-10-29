@@ -162,6 +162,9 @@ func (c *Callback) Release() {
 // such as dispatchEvent, focus or click, or a function that notifies
 // subscribers. Without Call, a Go callback runs inside the JavaScript call, and
 // Go's js/wasm runtime can stop the program (see the package documentation).
+// A property write can run callbacks too: a write that removes the node that has
+// focus fires blur and focusout in Chrome. js.Value.Set is not a call, so make
+// the write as Call(js.Global().Get("Reflect"), "set", target, name, value).
 //
 // A recorded callback may call Call itself. The calls that inner Call records
 // run before the inner Call returns. Each Call runs only the calls recorded

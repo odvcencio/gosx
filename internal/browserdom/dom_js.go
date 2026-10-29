@@ -30,7 +30,8 @@ type Event struct{ value, current js.Value }
 // The callback is a jsutil.Callback. When the event comes from the page, the
 // browser runs it inside its own dispatch, so PreventDefault and
 // StopPropagation work. When Go starts the dispatch (Dispatch, Focus, Blur,
-// Click, and the package functions DispatchResize and DispatchError of
+// Click, CheckValidity, ReportValidity, Remove, SetText and ReplaceMarkup, and
+// the package functions DispatchResize, DispatchError and Navigate of
 // client/browser), the browser would run the callback inside that call from Go
 // into JavaScript, where Go's js/wasm runtime can fail. The callback then runs
 // after the browser has delivered the event to all its listeners, and before
@@ -40,13 +41,25 @@ type Event struct{ value, current js.Value }
 // This holds for every event that the browser or page code raises while Go is
 // inside such a call, not only for the event that Go dispatches. The Go listener
 // cannot cancel the default action of such an event: Click on a submit button
-// submits its form, whatever a Go submit listener does. And when the target is
-// inside a shadow tree, Event.Target and Event.RelatedTarget do not name what
-// they named during the dispatch. After the dispatch the browser leaves them as
-// seen from outside the shadow tree, which is the outermost shadow host for a
-// composed event (a click or a focus change), and clears them for an event that
-// is not composed, such as every event that Dispatch creates. A cleared one is
-// an invalid Element. Event.CurrentTarget is not affected.
+// submits its form, whatever a Go submit listener does, and ReportValidity
+// reports the problem to the user, whatever a Go invalid listener does. Two
+// more results follow:
+//
+//   - When the target is inside a shadow tree, Event.Target and
+//     Event.RelatedTarget may not name what they named during the dispatch. If
+//     the event never left the shadow tree, the browser clears both after the
+//     dispatch, and a cleared one is an invalid Element. That is the case for an
+//     event that is not composed, such as every event that Dispatch creates, and
+//     for a focus change between two elements of the same shadow tree.
+//     Otherwise the browser leaves them as seen from the document: Target names
+//     the outermost shadow host, and RelatedTarget names the related element,
+//     or its outermost shadow host if it is inside a shadow tree.
+//     Event.CurrentTarget is not affected.
+//   - A blur or focusout listener that a removal triggers runs after the
+//     removal. In Chrome for Testing 156, a page listener of the same event ran
+//     before it and saw the element in the document; the Go listener sees an
+//     element that is out of the document (Connected reports false and Parent
+//     is invalid), with its state intact, such as the value of a text field.
 type Listener struct {
 	target   js.Value
 	event    string
@@ -156,9 +169,33 @@ func (e Element) InsertBefore(child, before Element) {
 		e.value.Call("insertBefore", child.value, v)
 	}
 }
+
+// Reflect and the names of the two properties that SetText and ReplaceMarkup
+// write. They are made once. Looking up Reflect and converting the name on every
+// call made a write about three times slower than js.Value.Set in a Node
+// benchmark; with them made once it is 1.1 to 1.6 times slower.
+var (
+	reflectObject   = js.Global().Get("Reflect")
+	textContentName = js.ValueOf("textContent")
+	innerHTMLName   = js.ValueOf("innerHTML")
+)
+
+// setProperty writes target[name] = value through jsutil.Call. js.Value.Set does
+// the same Reflect.set, but jsutil.Call cannot wrap it, and a write can make the
+// browser run listeners before it returns: it fires blur and focusout when it
+// removes the node that has focus (measured in Chrome for Testing 156).
+func setProperty(target, name js.Value, value any) {
+	jsutil.Call(reflectObject, "set", target, name, value)
+}
+
+// ReplaceMarkup replaces the element's children with the parsed markup. It
+// removes the old children. When one of them has focus, Chrome for Testing 156
+// runs the blur and focusout listeners before ReplaceMarkup returns. Go
+// listeners run after the browser has delivered the events, and before
+// ReplaceMarkup returns (see Listener); they run after the removal.
 func (e Element) ReplaceMarkup(markup Markup) {
 	if e.Valid() {
-		e.value.Set("innerHTML", string(markup))
+		setProperty(e.value, innerHTMLName, string(markup))
 	}
 }
 func (e Element) AppendMarkup(markup Markup) {
@@ -411,9 +448,15 @@ func (e Element) ClassName() string {
 	}
 	return e.value.Get("className").String()
 }
+
+// SetText replaces the element's children with one text node. It removes the old
+// children. When one of them has focus, Chrome for Testing 156 runs the blur and
+// focusout listeners before SetText returns. Go listeners run after the browser
+// has delivered the events, and before SetText returns (see Listener); they run
+// after the removal.
 func (e Element) SetText(value string) {
 	if e.Valid() {
-		e.value.Set("textContent", value)
+		setProperty(e.value, textContentName, value)
 	}
 }
 func (e Element) SetValue(value string) {
@@ -470,9 +513,15 @@ func (e Element) Click() {
 		jsutil.Call(e.value, "click")
 	}
 }
+
+// Remove removes the element from its parent. When the element or one of its
+// descendants has focus, Chrome for Testing 156 runs the blur and focusout
+// listeners before Remove returns. Go listeners run after the browser has
+// delivered the events, and before Remove returns (see Listener); they run after
+// the removal.
 func (e Element) Remove() {
 	if e.Valid() {
-		e.value.Call("remove")
+		jsutil.Call(e.value, "remove")
 	}
 }
 
@@ -616,8 +665,24 @@ func Listen(target js.Value, event string, fn func(Event), opts ...ListenerOptio
 func (d Document) CreateText(text string) Element {
 	return FromJS(d.value.Call("createTextNode", text))
 }
-func (e Element) CheckValidity() bool  { return e.Valid() && e.value.Call("checkValidity").Bool() }
-func (e Element) ReportValidity() bool { return e.Valid() && e.value.Call("reportValidity").Bool() }
+
+// CheckValidity reports whether the element satisfies its constraints. The
+// browser fires invalid on each invalid control before CheckValidity returns. Go
+// listeners run after the browser has delivered the events, and before
+// CheckValidity returns (see Listener).
+func (e Element) CheckValidity() bool {
+	return e.Valid() && jsutil.Call(e.value, "checkValidity").Bool()
+}
+
+// ReportValidity is CheckValidity that also reports each problem to the user.
+// The browser fires invalid on each invalid control, and then focuses the first
+// one, before ReportValidity returns. Go listeners run after the browser has
+// delivered the events, and before ReportValidity returns (see Listener); they
+// cannot stop the report, because the browser decided it when it delivered the
+// invalid events.
+func (e Element) ReportValidity() bool {
+	return e.Valid() && jsutil.Call(e.value, "reportValidity").Bool()
+}
 func (e Element) ChildElementCount() int {
 	if !e.Valid() {
 		return 0
