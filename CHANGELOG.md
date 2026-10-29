@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Remove the Selena compiler from the js/wasm build of `scene`, so a browser
+  module that shows precompiled Selena materials no longer links the parser,
+  the tree-sitter runtime, the lowerer or the emitters. `scene` now imports the
+  result types from `m31labs.dev/selena/result` (Selena's new leaf package)
+  instead of the root `m31labs.dev/selena` package; `selena.Result` and
+  `result.Result` are the same type, so `MaterialFromSelena`,
+  `SelenaMaterialOptions.Targets` and `SelenaTargetRequirements` take the same
+  values as before. In js/wasm builds `CompileSelenaMaterial`,
+  `CompileSelenaBundle`, `CompileSelenaPoints`, `CompileSelenaParticleRender`
+  and `CompileSelenaPost` keep their signatures but return the new
+  `ErrSelenaCompileUnavailable` without compiling. Compile `.sel` source ahead
+  of time and pass the result to `MaterialFromSelena` in the browser; a module
+  that must compile at runtime can import `m31labs.dev/selena`, call
+  `selena.Compile` and pass its result to `MaterialFromSelena`. Native builds
+  are unchanged. A native test fails if the js/wasm build of `scene` links a
+  Selena compiler package again, and `make test-wasm` runs the js test of the
+  stubs. This needs Selena at `v0.5.3-0.20261029025844-d40ff3093cfc` or later.
+
 - Remove `net/http`, `crypto/tls` and `crypto/x509` from the js/wasm build of
   `game/audio`, so importing it no longer adds the HTTP stack to a browser
   module: `GOOS=js GOARCH=wasm go list -deps ./game/audio` drops from 258

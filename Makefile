@@ -336,7 +336,7 @@ test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/jsutil
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/host
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/gametypes ./game/audio ./game/audio/host ./game/audio/worklet ./client/browser ./internal/browserdom ./game/storage ./hub/socket ./engine/wasm
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|Surface)'
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|Surface|SelenaCompileUnavailable)'
 
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
