@@ -36,6 +36,7 @@ type MeshElementProps struct {
 	TubularSegments    int
 	CastShadow         bool
 	ReceiveShadow      bool
+	PlanarReflection   *bool
 	Pickable           *bool
 	Visible            *bool
 	Static             *bool
@@ -151,6 +152,7 @@ func LowerMesh(props MeshElementProps) IRNode {
 			TubularSegments:    props.TubularSegments,
 			CastShadow:         props.CastShadow,
 			ReceiveShadow:      props.ReceiveShadow,
+			PlanarReflection:   props.PlanarReflection,
 			Pickable:           props.Pickable,
 			Visible:            props.Visible,
 			Static:             props.Static,

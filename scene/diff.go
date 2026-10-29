@@ -748,6 +748,10 @@ func objectTransformPatchData(next *ObjectIR) (TransformPatch, bool) {
 // presentation state. Pickable remains optional because nil means an unauthored
 // picking policy, rather than false. DiffScene declines a patch that cannot
 // safely restore that policy through the existing shallow-merge bridge.
+//
+// PlanarReflection is set only when the object's participation in the ocean's
+// planar mirror changed, and then to the new value. Nil and true both mean the
+// object participates, so a reset to the default is an explicit true.
 type ObjectStatePatch struct {
 	TransformPatch
 	Interactive      bool   `json:"interactive"`
@@ -756,6 +760,7 @@ type ObjectStatePatch struct {
 	Pickable         *bool  `json:"pickable,omitempty"`
 	Visible          bool   `json:"visible"`
 	Selected         bool   `json:"selected"`
+	PlanarReflection *bool  `json:"planarReflection,omitempty"`
 }
 
 func objectStatePatch(previous, next *ObjectIR) (Command, bool) {
@@ -773,11 +778,21 @@ func objectStatePatch(previous, next *ObjectIR) (Command, bool) {
 		return Command{}, false
 	}
 	visible := next.Visible == nil || *next.Visible
+	var reflection *bool
+	if planarParticipates(previous.PlanarReflection) != planarParticipates(next.PlanarReflection) {
+		reflection = Bool(planarParticipates(next.PlanarReflection))
+	}
 	return Command{Kind: CommandSetTransform, ObjectID: next.ID, Data: ObjectStatePatch{
 		TransformPatch: transform,
 		Interactive:    next.Interactive, Label: next.Label, InteractiveOrder: next.InteractiveOrder,
-		Pickable: next.Pickable, Visible: visible, Selected: next.Selected,
+		Pickable: next.Pickable, Visible: visible, Selected: next.Selected, PlanarReflection: reflection,
 	}}, true
+}
+
+// planarParticipates reads a PlanarReflection field: nil is the default, which
+// participates.
+func planarParticipates(policy *bool) bool {
+	return policy == nil || *policy
 }
 
 func transformPatchParentMatrix(values []float64) (*[16]float64, bool) {
