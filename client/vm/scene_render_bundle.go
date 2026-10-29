@@ -2224,24 +2224,30 @@ func rotatePoint(point point3, rotationX, rotationY, rotationZ float64) point3 {
 // rotatePointTrig performs the same arithmetic as rotatePoint but with
 // precomputed trig. The product/sum ordering is identical to rotatePoint so the
 // float results are bit-for-bit equal.
+//
+// Each product is rounded by an explicit float64 conversion. Without it the
+// compiler may fuse x*y + z into one instruction with one rounding. amd64 with
+// GOAMD64=v3 and arm64 do; amd64 at the default level and js/wasm do not, and the
+// goldens in scene3d_bundle_golden_test.go were captured without fusion. Only a
+// conversion prevents fusion (Go spec, "Arithmetic operators").
 func rotatePointTrig(point point3, t rotTrig) point3 {
 	x := point.X
 	y := point.Y
 	z := point.Z
 
 	sinX, cosX := t.sinX, t.cosX
-	nextY := y*cosX - z*sinX
-	nextZ := y*sinX + z*cosX
+	nextY := float64(y*cosX) - float64(z*sinX)
+	nextZ := float64(y*sinX) + float64(z*cosX)
 	y, z = nextY, nextZ
 
 	sinY, cosY := t.sinY, t.cosY
-	nextX := x*cosY + z*sinY
-	nextZ = -x*sinY + z*cosY
+	nextX := float64(x*cosY) + float64(z*sinY)
+	nextZ = float64(-x*sinY) + float64(z*cosY)
 	x, z = nextX, nextZ
 
 	sinZ, cosZ := t.sinZ, t.cosZ
-	nextX = x*cosZ - y*sinZ
-	nextY = x*sinZ + y*cosZ
+	nextX = float64(x*cosZ) - float64(y*sinZ)
+	nextY = float64(x*sinZ) + float64(y*cosZ)
 
 	return point3{X: nextX, Y: nextY, Z: z}
 }
@@ -2496,24 +2502,27 @@ func inverseRotatePoint(point point3, rotationX, rotationY, rotationZ float64) p
 // with precomputed (already-negated) trig. The trig fields hold sin/cos of the
 // NEGATED angles, matching inverseRotatePoint's inline computation exactly, so
 // the float results are bit-for-bit equal.
+//
+// Each product is rounded by an explicit float64 conversion so no target fuses
+// it with the add or subtract that consumes it; see rotatePointTrig.
 func inverseRotatePointTrig(point point3, t rotTrig) point3 {
 	x := point.X
 	y := point.Y
 	z := point.Z
 
 	sinZ, cosZ := t.sinZ, t.cosZ
-	nextX := x*cosZ - y*sinZ
-	nextY := x*sinZ + y*cosZ
+	nextX := float64(x*cosZ) - float64(y*sinZ)
+	nextY := float64(x*sinZ) + float64(y*cosZ)
 	x, y = nextX, nextY
 
 	sinY, cosY := t.sinY, t.cosY
-	nextX = x*cosY + z*sinY
-	nextZ := -x*sinY + z*cosY
+	nextX = float64(x*cosY) + float64(z*sinY)
+	nextZ := float64(-x*sinY) + float64(z*cosY)
 	x, z = nextX, nextZ
 
 	sinX, cosX := t.sinX, t.cosX
-	nextY = y*cosX - z*sinX
-	nextZ = y*sinX + z*cosX
+	nextY = float64(y*cosX) - float64(z*sinX)
+	nextZ = float64(y*sinX) + float64(z*cosX)
 	return point3{X: x, Y: nextY, Z: nextZ}
 }
 
