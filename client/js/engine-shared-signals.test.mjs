@@ -142,3 +142,33 @@ test("shared store forwards the original encoded value to raw subscribers", () =
   const raw='{ "turn": "west" }'; scope.gosxNotifySharedSignal("$view",raw);
   assert.equal(got[0].turn,"west"); assert.equal(got[1],"$view"); assert.equal(got[2],raw);
 });
+
+// An engine that answers calls from a goroutine (wasm.ServeCallsAsync) asks the
+// page to drop the answered calls from a mailbox. The page reads and rewrites the
+// signal in one step, so a call that an island appends cannot slip in between.
+test("engine context drops the answered calls of a mailbox and leaves anything else alone", () => {
+  const {ctx, values} = mountedHarness();
+  values.set("$bv.cmd", [{ID: 1, Name: "a"}, {ID: 2, Name: "b"}, null, {ID: "x"}, 7, {ID: 3, Name: "c"}]);
+  const seen = [];
+  ctx.subscribeSignal("$bv.cmd", value => seen.push(value));
+  assert.equal(ctx.trimCalls("$bv.cmd", 2), true);
+  assert.deepEqual(values.get("$bv.cmd"), [{ID: 3, Name: "c"}], "calls 1 and 2 are answered, and an entry with no usable ID can never be");
+  assert.deepEqual(seen, [[{ID: 3, Name: "c"}]], "the subscribers are told once");
+  assert.equal(ctx.trimCalls("$bv.cmd", 2), false, "nothing left to drop");
+  assert.equal(seen.length, 1, "a trim that changes nothing writes nothing");
+  assert.equal(ctx.trimCalls("$bv.cmd", 3), true);
+  assert.deepEqual(values.get("$bv.cmd"), []);
+  // A signal that holds one call is not a mailbox, and an absent signal has nothing to drop.
+  values.set("$bv.one", {ID: 1, Name: "a"});
+  assert.equal(ctx.trimCalls("$bv.one", 9), false);
+  assert.deepEqual(values.get("$bv.one"), {ID: 1, Name: "a"});
+  assert.equal(ctx.trimCalls("$bv.nothing", 9), false);
+});
+
+test("a replaced context refuses to trim a mailbox", () => {
+  const {ctx, pending, engines, values} = mountedHarness();
+  values.set("$bv.cmd", [{ID: 1}]);
+  pending.closed = true; engines.set("test", {context: {}, disposed: false});
+  assert.throws(() => ctx.trimCalls("$bv.cmd", 1), /disposed/);
+  assert.deepEqual(values.get("$bv.cmd"), [{ID: 1}]);
+});
