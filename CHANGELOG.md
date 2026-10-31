@@ -71,6 +71,10 @@
   full runtime shrinks despite this code, by 100 KB after wasm-opt and 30.6 KB
   of Brotli, because of the change in the next entry. The monolith bootstrap
   grows by 2.8 KB; the JavaScript size budgets move by the measured amounts.
+  The wire budget (`perf/budgets/wire.json`) rises by at most 648 B per route,
+  all in JavaScript, to the values that hosted run 41230811494 measured: three
+  docs routes by 648 B, `/docs/islands/` by 71 B and the scaffold counter page
+  by 69 to 226 B. WebAssembly wire bytes do not rise.
 
 - Keep `regexp` out of the browser runtimes that never match a pattern. The
   validators in package `ir` and the server's text estimator compiled their
