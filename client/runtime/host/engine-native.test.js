@@ -374,6 +374,21 @@ for (const make of [workerTransport, nativeTransport]) {
     assert.equal(tr.page.signalWrites.filter(w => w[0] === "$bv.cmd.result").length, 0, "no timeout written");
   });
 
+  test(`${label}: a mailbox gets a watchdog for each call and loses the calls a reply covers`, async () => {
+    const tr = make();
+    const { ctx } = await mountOn(tr);
+    tr.say({ t: "calls", channel: "$bv.cmd", timeout: 30, recent: 4, zero: "{}" });
+    const mailbox = [{ ID: 1, Name: "a" }, { ID: 2, Name: "b" }, { ID: 3, Name: "c" }];
+    ctx.values = { "$bv.cmd": mailbox };
+    ctx.subs.find(s => s.name === "$bv.cmd").cb(JSON.stringify(mailbox));
+    ctx.subs.find(s => s.name === "$bv.cmd.result").cb('{"ID":2,"Value":{"Total":5}}');
+    const mailboxWrites = () => tr.page.signalWrites.filter(w => w[0] === "$bv.cmd").map(w => w[1]);
+    assert.deepEqual(mailboxWrites(), [[{ ID: 3, Name: "c" }]], "calls 1 and 2 have a reply; call 3 stays listed");
+    await sleep(70);
+    const timeouts = tr.page.signalWrites.filter(w => w[0] === "$bv.cmd.result").map(w => [w[1].ID, w[1].Error]);
+    assert.deepEqual(timeouts, [[3, "timeout"]], "only the call without a reply times out");
+  });
+
   test(`${label}: a crash fails pending and later calls with worker-crashed and sets the status`, async () => {
     const tr = make();
     const { ctx } = await mountOn(tr);
@@ -418,6 +433,40 @@ for (const make of [workerTransport, nativeTransport]) {
     const seen = tr.sentOf("visibility");
     assert.deepEqual(seen.map(m => m.hidden), [true, false]);
     assert.equal(typeof seen[0].at, "number");
+  });
+
+  // wasm.ServeCallsAsync runs a handler only after the page has reported the mark
+  // of the call (the ID it wrote to "<call signal>.started") on the engine's own
+  // subscription to that signal. The page reports a change only if it applied the
+  // write. These two facts of the page host are what that rule stands on: a
+  // current engine hears about its own write, and an engine that the page began to
+  // dispose hears nothing, because the page drops what it writes from then on.
+  test(`${label}: the page reports an engine's own write to the engine, until it begins to dispose the engine`, async () => {
+    const tr = make();
+    const { ctx, handle } = await mountOn(tr);
+    // The page's store tells every subscriber of a signal about a write to it.
+    ctx.setSignalsJSON = (text, changedOnly) => {
+      ctx.calls.push(["setSignalsJSON", text, changedOnly]);
+      for (const [name, value] of Object.entries(JSON.parse(text))) {
+        for (const sub of ctx.subs.filter(s => s.name === name)) sub.cb(JSON.stringify(value), name);
+      }
+    };
+    tr.say({ t: "subscribe", sid: 1, name: "$bv.save.started" });
+    const reports = () => tr.sentOf("signal").filter(m => m.name === "$bv.save.started").map(m => m.json);
+
+    tr.batch('{"$bv.save.started":1}');
+    assert.deepEqual(reports(), ["1"], "the page applied the write and told the engine");
+
+    // The runtime revokes the engine's context, then calls the handle's dispose.
+    ctx.gone = true;
+    handle.dispose();
+    await tick();
+    assert.equal(tr.sentOf("dispose").length, 1, "the page asked the engine to dispose");
+    // The engine has not handled the request yet: it writes the mark of the next call.
+    tr.batch('{"$bv.save.started":2}');
+    assert.deepEqual(reports(), ["1"], "the page told the engine nothing about a write it dropped");
+    assert.equal(ctx.calls.filter(c => c[0] === "setSignalsJSON").length, 1, "the page applied only the first write");
+    tr.say({ t: "disposed" });
   });
 }
 

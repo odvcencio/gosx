@@ -457,9 +457,24 @@
     // "$<channel>.result" within the timeout, writes the error result itself, so
     // an island is never left waiting on a worker that hung or died. Keys are
     // Go field names: ID, Name, Error, Value, Recent.
+    //
+    // The call signal holds one call or a mailbox, an array of calls. A single
+    // call is the newest write, so two writes in one island handler deliver only
+    // the second. A mailbox keeps every call the writer lists, and the page
+    // watches each of them.
 
     function parseObject(encoded) {
       try { var v = JSON.parse(encoded); return v && typeof v === "object" ? v : null; } catch (_) { return null; }
+    }
+
+    // The calls in the value of a call signal, lowest ID first. An entry without
+    // a usable ID cannot be answered and is left out.
+    function parseCalls(encoded) {
+      var value;
+      try { value = JSON.parse(encoded); } catch (_) { return []; }
+      var list = Array.isArray(value) ? value : [value];
+      return list.filter(function(call) { return call && typeof call === "object" && (Number(call.ID) || 0) > 0; })
+        .sort(function(a, b) { return Number(a.ID) - Number(b.ID); });
     }
 
     function declareCalls(rec, msg) {
@@ -469,7 +484,7 @@
       var zero = parseObject(msg.zero) || {};
       var known = rec.calls.get(msg.channel);
       if (known) { known.timeout = timeout; known.recent = recent; known.zero = zero; return; }
-      var st = { channel: msg.channel, resultSignal: msg.channel + ".result", timeout: timeout, recent: recent, zero: zero, pending: new Map(), maxCall: 0, last: null, offs: [] };
+      var st = { channel: msg.channel, resultSignal: msg.channel + ".result", timeout: timeout, recent: recent, zero: zero, pending: new Map(), maxCall: 0, seen: 0, last: null, offs: [] };
       rec.calls.set(msg.channel, st);
       // Shared signals outlive an engine, so a remounted engine finds the last
       // call and its result. The result's current value (delivered once, at
@@ -481,31 +496,79 @@
         st.last = result;
         var id = Number(result.ID) || 0;
         if (seeding && id > st.maxCall) st.maxCall = id;
+        st.seen = Math.max(st.seen, id, Number(result.Seen) || 0);
         for (var entry of Array.from(st.pending)) {
           if (entry[0] <= id) { clearTimeout(entry[1].timer); st.pending.delete(entry[0]); }
         }
+        trimMailbox(rec, st, id);
+        raiseSeen(rec, st, result);
       }, { immediate: true }));
       seeding = false;
       // The first delivery is the call signal's current value: a call written
       // before the worker declared the channel starts its clock now.
       st.offs.push(rec.ctx.subscribeSignalJSON(st.channel, function(encoded) {
-        var call = parseObject(encoded);
-        var id = call ? Number(call.ID) || 0 : 0;
-        if (id <= st.maxCall) return;
-        st.maxCall = id;
-        var name = typeof call.Name === "string" ? call.Name : "";
-        if (rec.crashedStatus) { failCall(st, id, name, "worker-crashed"); return; }
-        var timer = setTimeout(function() {
-          if (rec.calls.get(st.channel) !== st) return;
-          st.pending.delete(id);
-          failCall(st, id, name, "timeout");
-        }, st.timeout);
-        st.pending.set(id, { name: name, timer: timer });
+        for (var call of parseCalls(encoded)) {
+          var id = Number(call.ID);
+          if (id <= st.maxCall) continue;
+          st.maxCall = id;
+          watchCall(rec, st, id, typeof call.Name === "string" ? call.Name : "");
+        }
       }));
     }
 
+    function watchCall(rec, st, id, name) {
+      if (rec.crashedStatus) { failCall(st, id, name, "worker-crashed"); return; }
+      var timer = setTimeout(function() {
+        if (rec.calls.get(st.channel) !== st) return;
+        st.pending.delete(id);
+        failCall(st, id, name, "timeout");
+      }, st.timeout);
+      st.pending.set(id, { name: name, timer: timer });
+    }
+
+    // A mailbox lists the calls that have no reply. Once a result covers a call
+    // (its ID is at or below the result's), drop the call from the list. An entry
+    // with no usable ID can never be answered, so it goes too. The page store is
+    // the one place that reads and rewrites the signal in a single step, so no
+    // island write can slip in between. A signal that holds one call is not a
+    // mailbox and is left alone.
+    function trimMailbox(rec, st, through) {
+      var list;
+      try { list = rec.ctx.getSignal(st.channel); } catch (_) { return; }
+      if (!Array.isArray(list)) return;
+      var kept = list.filter(function(call) { return call && (Number(call.ID) || 0) > through; });
+      if (kept.length !== list.length) writeSignal(st.channel, kept);
+    }
+
+    // Result.Seen is the highest call ID that the page watched or the engine
+    // accepted. A writer numbers its next call above it, because both ignore an
+    // ID at or below the highest they have seen. It never goes down.
+    function highSeen(st) { return Math.max(st.maxCall, st.seen); }
+
+    // st.seen is the highest Seen, or ID, that a result on the channel has
+    // carried. The worker counts the calls it has read, and it may trail the
+    // page: it can be busy in one call while the page watches, and times out,
+    // newer ones. A reply it writes then carries a lower Seen than the timeout
+    // the page wrote before it. Write that result again with the highest Seen
+    // published. A call the page still watches is in the mailbox, and a writer
+    // counts from there, so a reply that trails only such a call is left alone.
+    // The write waits for a microtask because the store is still telling its
+    // other subscribers about the first write, and they must see the second one
+    // last. A result with no Seen comes from an engine that does not count; it is
+    // left alone too.
+    function raiseSeen(rec, st, result) {
+      if (typeof result.Seen !== "number" || result.Seen >= st.seen) return;
+      Promise.resolve().then(function() {
+        if (rec.calls.get(st.channel) !== st) return;
+        var latest = st.last;
+        if (!latest || typeof latest.Seen !== "number" || latest.Seen >= st.seen) return;
+        writeSignal(st.resultSignal, Object.assign({}, latest, { Seen: st.seen }));
+      });
+    }
+
     function failCall(st, id, name, code) {
-      var result = Object.assign({}, st.zero, { ID: id, Name: name, Error: code });
+      var result = Object.assign({}, st.zero, { ID: id, Name: name, Error: code, Seen: Math.max(id, highSeen(st)) });
+      st.seen = Math.max(st.seen, result.Seen);
       var recent = st.last && Array.isArray(st.last.Recent) ? st.last.Recent.slice() : [];
       recent.push({ ID: id, Error: code });
       result.Recent = recent.slice(-st.recent);

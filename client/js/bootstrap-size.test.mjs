@@ -12,6 +12,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
+// The page's engine context gains trimCalls, which an engine that answers calls
+// from a goroutine asks for, from the event loop, to drop the answered calls of
+// a mailbox in one step. It adds 223 raw / 57 gzip bytes to the monolith, 17
+// Brotli bytes to the engines chunk, 211 raw / 47 Brotli bytes to the video
+// route and 223 raw / 71 gzip / 54 Brotli bytes to each Scene3D route that
+// carries the engines chunk. Against main's targets (e023360230, with planar
+// mirror participation), the merged bundles exceed the monolith's three by 223
+// raw / 112 gzip / 243 Brotli and the three Scene3D route entries with labels by
+// 212 to 223 raw / 71 gzip and 52 to 54 Brotli bytes. Only those breached targets
+// move to their passing minima; allowances and every other target stay fixed.
+// The same 54 Brotli bytes reach the wire on the docs routes that load the engines
+// chunk (/, /demos/scene3d/ and /demos/water). Their jsWireBytes and
+// frameworkJsWireBytes caps in perf/budgets/wire.json rise by 54 each, and the
+// totalWireBytes caps of / and /demos/scene3d/ by 50 and 44, to the values that
+// hosted wire run 40817266098 measured at ce7b0e3524, with the reason recorded in
+// each route's raise map.
 // Keeping tone mapping and FXAA while adaptive quality suppresses post effects,
 // appending FXAA for a canvas that was antialiased, skipping a suppression that
 // sheds nothing, and weighing the chain the renderer drew and the FXAA pass that
@@ -144,8 +160,13 @@ const budgets = [
   // cleanup, vessel results). Native sessions, discovery and cancellation now
   // measure 36541 raw / 11776 gzip / 11000 Brotli. Only the exhausted
   // raw target moves to its passing minimum; compressed targets and allowances
-  // stay at current main.
-  { file: "bootstrap-feature-engine-worker.js", raw: 34493, gzip: 10840, brotli: 10130 },
+  // stay at current main. Call mailboxes (a watchdog per listed call, and the
+  // trim of answered calls) measure 36983 raw / 11927 gzip / 11143 Brotli. Only
+  // the exhausted raw and gzip targets move to their passing minima. The Seen
+  // high-water mark (written with each timeout, and raised on a late reply that
+  // reports less) measures 37395 raw / 12043 gzip / 11261 Brotli. Only the three
+  // exhausted targets move to their passing minima.
+  { file: "bootstrap-feature-engine-worker.js", raw: 35347, gzip: 11020, brotli: 10237 },
   // The arcade synth for a page with no hub chunk; loads only for RequireFeature("arcade-audio").
   // Measured 8330 / 2748 / 2519.
   { file: "bootstrap-feature-arcade-audio.js", raw: 8400, gzip: 2800, brotli: 2570 },
@@ -934,10 +955,12 @@ const budgets = [
     // the raw and Brotli minimums move, to the smallest values that clear them.
     // 2026-10-28: explicit planar-mirror participation (Mesh.PlanarReflection) changes the monolith by +674 raw / +134 gzip / +93 Brotli
     // bytes; only exhausted minimums move; allowances remain unchanged.
-    // The merge with main's planar-mirror change measures 2,061,411 raw and 575,460 gzip bytes on the monolith;
-    // only the raw and gzip minimums move, to the smallest values that clear them.
-    file: "bootstrap.js", raw: 1995875, gzip: 559076,
-    brotli: 456345 },
+    // The merge of main's planar-mirror change with the call mailboxes measures 2,058,855 raw, 574,702 gzip and 472,278 Brotli bytes on the monolith;
+    // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
+    // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 2,061,634 raw, 575,527 gzip and 472,822 Brotli bytes on the monolith;
+    // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
+    file: "bootstrap.js", raw: 1996098, gzip: 559143,
+    brotli: 456438 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1854,7 +1877,9 @@ const budgets = [
   // Sending a signal batch to a runtime that decodes it, through the runtime's exports when it has
   // them, adds 990 raw / 323 gzip / 249 Brotli bytes to the engines chunk; only the exhausted
   // minimums move.
-  { file: "bootstrap-feature-engines.js", raw: 109861, gzip: 32481, brotli: 29071 },
+    // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 115,579 raw and 30,545 Brotli bytes on the monolith;
+    // only the raw and Brotli minimums move, to the smallest values that clear them.
+  { file: "bootstrap-feature-engines.js", raw: 110075, gzip: 32481, brotli: 29090 },
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
   // Wave 1 M2: exact chords and anyModifiers. Measured: 14481 / 4002 / 3663;
   // delta +199 / +86 / +100. Existing hard limits cover the change.
@@ -2042,9 +2067,11 @@ const routeBudgets = [
     // The signal batch changes add 2,779 raw / 829 gzip / 579 Brotli bytes to this route (the lazily
     // decoded store, the batch method, the export publication and the direct batch send); only
     // exhausted minimums move.
-    raw: 296281,
-    gzip: 83947,
-    brotli: 75659,
+    // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 311,321 raw, 88,207 gzip and 79,462 Brotli bytes on this route;
+    // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
+    raw: 296496,
+    gzip: 84006,
+    brotli: 75678,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -2239,13 +2266,16 @@ const routeBudgets = [
     // 2026-10-28: explicit planar-mirror participation changes this route by +671 raw / +147 gzip / +194 Brotli bytes;
     // only exhausted minimums move.
     // The merge with main's planar-mirror change measures 1,520,852 raw, 421,691 gzip and 363,405 Brotli bytes on this route;
+    // The merge of main's planar-mirror change with the call mailboxes measures 1,518,296 raw, 420,933 gzip and 362,880 Brotli bytes on this route;
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
-    raw: 1455316,
-    gzip: 405307,
+    // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 1,521,077 raw, 421,753 gzip and 363,528 Brotli bytes on this route;
+    // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
+    raw: 1455541,
+    gzip: 405369,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    brotli: 347021,
+    brotli: 347144,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2454,14 +2484,17 @@ const routeBudgets = [
     // 2026-10-28: explicit planar-mirror participation changes this route by +671 raw / +147 gzip / +194 Brotli bytes;
     // only exhausted minimums move.
     // The merge with main's planar-mirror change measures 1,323,844 raw, 379,043 gzip and 329,342 Brotli bytes on this route;
+    // The merge of main's planar-mirror change with the call mailboxes measures 1,321,288 raw, 378,285 gzip and 328,817 Brotli bytes on this route;
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
-    raw: 1260803,
-    gzip: 362659,
+    // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 1,324,069 raw, 379,105 gzip and 329,465 Brotli bytes on this route;
+    // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
+    raw: 1261018,
+    gzip: 362721,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 313659,
+    brotli: 313776,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2665,13 +2698,16 @@ const routeBudgets = [
     // 2026-10-28: explicit planar-mirror participation changes this route by +671 raw / +147 gzip / +194 Brotli bytes;
     // only exhausted minimums move.
     // The merge with main's planar-mirror change measures 1,814,625 raw, 508,880 gzip and 439,367 Brotli bytes on this route;
+    // The merge of main's planar-mirror change with the call mailboxes measures 1,812,069 raw, 508,122 gzip and 438,842 Brotli bytes on this route;
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
-    raw: 1749089,
-    gzip: 492496,
+    // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 1,814,850 raw, 508,942 gzip and 439,490 Brotli bytes on this route;
+    // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
+    raw: 1749314,
+    gzip: 492558,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 422983,
+    brotli: 423106,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2848,8 +2884,6 @@ const routeBudgets = [
     // lazily decoded store, the batch method and the export publication); only exhausted minimums move.
     // 2026-10-28: explicit planar-mirror participation changes this route by +671 raw / +147 gzip / +194 Brotli bytes;
     // only exhausted minimums move.
-    // The merge with main's planar-mirror change measures 1,362,977 raw, 377,668 gzip and 323,311 Brotli bytes on this route;
-    // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
     raw: 1298073,
     gzip: 361284,
     // The same 564-byte shared runtime addition exceeds this route's cap.
