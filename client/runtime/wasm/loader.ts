@@ -126,11 +126,20 @@
         ? support.validationError(current, runtimeRef)
         : "generated runtime ABI support is missing";
       if (validationError) throw new Error(validationError);
+      publishBatchExports(instance);
     } finally {
       window.__gosx_runtime_ready = previousReady;
     }
 
     if (typeof previousReady === "function") previousReady();
+  }
+
+  // The runtime's exports, hung on the function that takes a signal batch. A TinyGo runtime that
+  // exports gosx_batch_apply takes a batch through them without the goroutine and stack that a call
+  // through that function costs; the engine context checks for the exports before it sends a batch.
+  function publishBatchExports(instance) {
+    const batch = window.__gosx_set_input_batch;
+    if (typeof batch === "function" && instance && instance.exports) batch.exports = instance.exports;
   }
 
   function handshake() {

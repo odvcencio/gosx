@@ -59,27 +59,27 @@ type clipJSONDoc struct {
 // registerMotionMixerExports installs the mixer lifecycle functions on the JS
 // global. Called from registerMotionExports alongside the load/tick exports.
 func registerMotionMixerExports() {
-	setRuntimeFunc("__gosx_motion_mixer_create", js.FuncOf(func(this js.Value, args []js.Value) any {
+	setRuntimeFunc("__gosx_motion_mixer_create", funcOf(func(this js.Value, args []js.Value) any {
 		return mixerCreate(args)
 	}))
-	setRuntimeFunc("__gosx_motion_mixer_add_clip", js.FuncOf(func(this js.Value, args []js.Value) any {
+	setRuntimeFunc("__gosx_motion_mixer_add_clip", funcOf(func(this js.Value, args []js.Value) any {
 		return mixerAddClip(args)
 	}))
-	setRuntimeFunc("__gosx_motion_mixer_play", js.FuncOf(func(this js.Value, args []js.Value) any {
+	setRuntimeFunc("__gosx_motion_mixer_play", funcOf(func(this js.Value, args []js.Value) any {
 		mixerPlay(args)
 		return js.Undefined()
 	}))
-	setRuntimeFunc("__gosx_motion_mixer_stop", js.FuncOf(func(this js.Value, args []js.Value) any {
+	setRuntimeFunc("__gosx_motion_mixer_stop", funcOf(func(this js.Value, args []js.Value) any {
 		mixerStop(args)
 		return js.Undefined()
 	}))
-	setRuntimeFunc("__gosx_motion_mixer_update", js.FuncOf(func(this js.Value, args []js.Value) any {
+	setRuntimeFunc("__gosx_motion_mixer_update", funcOf(func(this js.Value, args []js.Value) any {
 		return mixerUpdate(args)
 	}))
-	setRuntimeFunc("__gosx_motion_mixer_is_playing", js.FuncOf(func(this js.Value, args []js.Value) any {
+	setRuntimeFunc("__gosx_motion_mixer_is_playing", funcOf(func(this js.Value, args []js.Value) any {
 		return mixerIsPlaying(args)
 	}))
-	setRuntimeFunc("__gosx_motion_mixer_destroy", js.FuncOf(func(this js.Value, args []js.Value) any {
+	setRuntimeFunc("__gosx_motion_mixer_destroy", funcOf(func(this js.Value, args []js.Value) any {
 		mixerDestroy(args)
 		return js.Undefined()
 	}))

@@ -548,6 +548,14 @@ jobs:
       - name: WASM size-budget gate
         run: make wasm-size-budget
 
+      # The batches go through the page's own signal code to each production
+      # runtime that wasm-size-budget just built. A runtime that loses the
+      # direct batch entry, that overflows its system stack on a batch with a
+      # deep island or deep JSON, or a change that lets the heap grow without
+      # bound again, fails here. See scripts/check-wasm-heap.sh.
+      - name: WASM heap gate
+        run: make wasm-heap-gate
+
       - name: Production water bundle smoke test
         run: make test-water-prod
 

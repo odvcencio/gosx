@@ -61,7 +61,7 @@ func registerEngineSurfaceRuntime(b *bridge.Bridge) {
 // CanvasHostReceiver a real CanvasRenderingContext2D to draw against
 // (clearRect / fillRect / arc / stroke / fill / …).
 func hydrateEngineSurfaceFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 6 {
 			return jsErrorf("need 6 args (id, componentName, propsJSON, programData, format, canvasEl)")
 		}
@@ -96,7 +96,7 @@ func hydrateEngineSurfaceFunc(b *bridge.Bridge) js.Func {
 // has no float payload). payloadStr is the keyboard "key\tcode"
 // composite string, or "" for non-keyboard events.
 func dispatchEngineSurfaceEventFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 4 {
 			return jsErrorf("need 4 args (id, kind, payloadFloats, payloadStr)")
 		}
@@ -124,7 +124,7 @@ func dispatchEngineSurfaceEventFunc(b *bridge.Bridge) js.Func {
 //
 // n defaults to 1 when omitted.
 func tickEngineSurfaceFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (id, [n])")
 		}
@@ -150,7 +150,7 @@ func tickEngineSurfaceFunc(b *bridge.Bridge) js.Func {
 //
 //	__gosx_dispose_engine_surface(id)
 func disposeEngineSurfaceFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}

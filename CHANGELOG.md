@@ -2,6 +2,142 @@
 
 ## Unreleased
 
+- Hand a signal batch from a worker or native engine to the WASM runtime once,
+  and without a goroutine on TinyGo. The page used to parse every batch with
+  `JSON.parse` and hand the same text to the runtime, which decoded it again,
+  encoded each changed signal with `json.Marshal`, and sent that text back for
+  the page to parse a third time. Now, when the runtime announces
+  `__gosx_set_input_batch.batchDelivery` and the page's
+  `__gosx_notify_shared_signal` has a `batch` method, the page sends the text to
+  the runtime as it is. The runtime decodes it in one pass, writes each changed
+  signal with an encoder that produces the bytes `json.Marshal` produced, and
+  tells the page about the whole batch in one call. The page keeps each signal
+  as that text and parses it only when page code reads the value, so a
+  `subscribeSignalJSON` reader, such as a Go engine, costs the page no
+  `JSON.parse`.
+
+  TinyGo runtimes also export `gosx_batch_reserve`, `gosx_batch_apply`,
+  `gosx_batch_error` and `gosx_batch_error_length`. The loaders hang a runtime's
+  exports on `__gosx_set_input_batch.exports`, and the engine context then
+  writes the batch into the runtime's memory and applies it with one export
+  call. A call through `__gosx_set_input_batch` makes TinyGo start a goroutine
+  for the batch, with a stack that is a block of the garbage-collected heap; the
+  exports run on the system stack, the one the call already has. Before this
+  change the heap of the shipping runtimes doubled while batches arrived, to
+  144 MiB and more, and a collection of such a heap froze the page for 0.1 to
+  16 seconds. Measured in Node 26 on a shared x86 host, with batches recorded
+  from Bon Voyage's live ship, 2,000 batches after 200 warm-up batches, the
+  median of three interleaved runs of
+  `client/js/signal-batch.bench.mjs --soak --compare`, origin/main then this
+  change:
+
+  | runtime | batch | mean ms | p99 ms | max ms | WASM memory MiB |
+  |---|---|---|---|---|---|
+  | core | 2.2 KB | 0.76 -> 0.09 | 0.6 -> 0.5 | 484 -> 0.6 | 768 -> 2 |
+  | core | 7.3 KB | 1.32 -> 0.15 | 0.8 -> 0.5 | 872 -> 0.7 | 1536 -> 2 |
+  | core | 32.8 KB | 46.55 -> 0.98 | 150.0 -> 2.2 | 404 -> 2.6 | 192 -> 6 |
+  | engine | 2.2 KB | 0.73 -> 0.10 | 0.5 -> 0.7 | 468 -> 0.8 | 768 -> 2 |
+  | engine | 7.3 KB | 1.21 -> 0.20 | 0.7 -> 0.7 | 786 -> 0.9 | 1536 -> 2 |
+  | engine | 32.8 KB | 27.93 -> 1.02 | 117.6 -> 6.1 | 182 -> 8.2 | 192 -> 24 |
+  | full | 2.2 KB | 0.94 -> 0.07 | 0.5 -> 0.7 | 684 -> 0.8 | 1152 -> 2 |
+  | full | 7.3 KB | 0.97 -> 0.16 | 0.7 -> 0.8 | 578 -> 0.9 | 1152 -> 2 |
+  | full | 32.8 KB | 21.93 -> 1.10 | 96.9 -> 8.6 | 103 -> 9.5 | 144 -> 36 |
+
+  The text a `subscribeSignalJSON` reader receives is unchanged, with these
+  exceptions. A change that a later write replaced is not announced: when a
+  subscriber the batch wakes writes another signal of the same batch, or sends a
+  batch of its own, subscribers end on the stored value, where they could end on
+  the batch's older text. A sender that spells a signal `$scene.event.x` is told
+  the value under that spelling as well as under `$surface.event.x`; a
+  changed-only batch that repeats the value says it only when the page's copy
+  under the legacy spelling may be out of date, so the subscribers of that
+  spelling do not wake at the rate of the stream. A
+  changed-only batch no longer repairs a value that only the page holds (one set
+  with `__gosx_notify_shared_signal`): the runtime decides what changed, so send
+  a different value, or write through the runtime, to replace it. A malformed
+  batch is refused by the runtime, so `ctx.setSignalsJSON` throws an `Error`
+  with the runtime's text (`error: decode shared signal batch: unexpected EOF`)
+  where it threw a `SyntaxError`, and a worker that relays `error.message` sends
+  that text. The runtime refuses a blank signal name in a batch, as the page
+  did, and both sides call a name blank when `String.prototype.trim` empties it.
+  `vm.AppendJSON` and `vm.AppendJSONString` are new.
+
+  A page and a runtime from different builds still work together: the page
+  decodes the batch itself unless the runtime announces batch delivery and the
+  page has the `batch` method, and it calls the function unless the loader
+  published exports with `gosx_batch_apply`. The core runtime grows by 14.9 KB
+  as TinyGo builds it, to 690 KiB, inside the 700 KiB budget that CI checks on
+  that build, and by 14.0 KB after wasm-opt, to 652 KiB (4.6 KB of Brotli). The
+  full runtime shrinks despite this code, by 100 KB after wasm-opt and 30.6 KB
+  of Brotli, because of the change in the next entry. The monolith bootstrap
+  grows by 2.8 KB; the JavaScript size budgets move by the measured amounts.
+  The wire budget (`perf/budgets/wire.json`) rises by at most 648 B per route,
+  all in JavaScript, to the values that hosted run 41236852240 measured: three
+  docs routes by 648 B, `/docs/islands/` by 71 B and the scaffold counter page
+  by 69 to 226 B. WebAssembly wire bytes do not rise. The water route's CI
+  transfer limit (`network_kb` in `perf/budgets/default.json`) rises from 1860
+  to 1863 KiB, with the owner's approval: hosted run 41237471018 measured 1862.37
+  KiB, because the dev server loads the core runtime, which grows by 4.6 KB of
+  Brotli, while the production full runtime shrinks by 30 KB.
+
+- Keep `regexp` out of the browser runtimes that never match a pattern. The
+  validators in package `ir` and the server's text estimator compiled their
+  regular expressions with a package-level `regexp.MustCompile`. That call runs
+  at start-up, so the linker could not drop `regexp`, `regexp/syntax` and the
+  Unicode tables they reach, although no browser code matches those patterns.
+  They now use `internal/lazyre`, which compiles on first use and panics on a
+  malformed pattern, as `MustCompile` did. The full runtime shrinks by 30.6 KB
+  of Brotli (663,386 to 632,758 bytes, Go 1.26.10, TinyGo 0.41.1, Binaryen 108)
+  and the engine runtime by 33.8 KB. A test fails if a package that a runtime
+  links compiles a regexp at start-up.
+
+  The exports apply the whole batch on the system stack, the decoding of its
+  JSON and the render of every island it wakes, so the build now sizes that
+  stack like a goroutine stack. `gosx build` and `gosx build-runtime` link
+  TinyGo runtimes with `-ldflags=-extldflags=-zstack-size=262144` (256 KiB).
+  `-stack-size` sizes goroutine stacks only, and the linker's default for the
+  system stack is 64 KiB. At 64 KiB, a batch that re-rendered an island about
+  30 levels deep, or carried a JSON value about 105 levels deep, overflowed the
+  stack, and every later call into the runtime failed with "memory access out of
+  bounds" until the page was reloaded; the call through
+  `__gosx_set_input_batch`, on a goroutine stack, took both. At 256 KiB the
+  exports take an island 128 levels deep and a JSON value 410 levels deep in
+  every published runtime, within one level of what the call takes. The
+  runtime's initial memory grows by 192 KiB (three pages to six). A runtime
+  that has the direct batch entry but was linked with the default system stack
+  fails on such a batch; build with `gosx build-runtime`, or pass the flag.
+  `make wasm-heap-gate` sends each published runtime batches that re-render an
+  island 32 and 100 levels deep and batches that carry a JSON value 128 and 256
+  levels deep (`client/js/signal-batch-depth.mjs`).
+
+- Clear the part of a goroutine's stack that a call from JavaScript used, when
+  the call ends, in the TinyGo runtimes. TinyGo's collector scans memory
+  conservatively, and words in the runtime's static data that read as heap
+  addresses keep dead 256 KiB goroutine stacks alive; the frames those stacks
+  left behind kept everything the call had touched, so the heap grew with every
+  call. A stack that is cleared holds only itself. In a soak of 2,000 32.8 KB
+  batches through `__gosx_set_input_batch`, the worst stall fell from 9 to 13
+  seconds to 0.2 second, and the memory from 2.3 or 3 GiB to 144 MiB, in the
+  full and engine runtimes; with 7.3 KB batches the worst stall fell from 1.1
+  seconds (engine) and 1.5 seconds (full) to 68 and 110 ms, and the memory from
+  768 and 1,152 MiB to 144 and 360 MiB. Every function the runtime hands to
+  JavaScript now comes from `funcOf`, and `TestRuntimeFunctionsComeFromFuncOf`
+  fails if one does not. The stack size stays 256 KiB: resolving a nested island
+  uses about 2 KiB of stack per level in the TinyGo runtime, so 256 KiB holds
+  about 130 levels and a smaller stack would hold fewer. The system stack that
+  the direct batch entry runs on is linked at 256 KiB too (see above).
+
+- Add `client/js/signal-batch.bench.mjs` and `make wasm-heap-gate`. The bench
+  sends signal batches through the page's signal code to a real GoSX runtime in
+  Node, and reports mean, p50, p95, p99, max and the WASM memory at the start,
+  middle and end of a run. `--compare` runs two builds in interleaved processes
+  and fails when the new build's mean or max is worse, or its memory keeps
+  growing; `--soak --gate` fails a run whose memory grows in its second half.
+  The gate runs three synthetic payloads (2, 8 and 30 KB) against every
+  published production runtime in CI after the size budgets, and fails if a
+  runtime stops exporting the direct batch entry or cannot take a batch that
+  re-renders a deep island or carries deeply nested JSON.
+
 - Let authors choose which meshes the ocean's planar reflection draws. Add
   `Mesh.PlanarReflection` and `Model.PlanarReflection` (a `*bool`): every mesh
   is drawn unless its author sets the field to `scene.Bool(false)`. Where a mesh
@@ -14,6 +150,127 @@
   values apart. A scene that never sets the field serializes as before.
   `DiffScene` with `PatchObjectState` changes the flag as a compact state patch
   that does not resend geometry, and a reset to the default is an explicit true.
+
+- Stop `jsutil.AwaitPromise`, `jsutil.AwaitPromiseContext`,
+  `jsutil.DocumentContext` and `browser.Fetch` from running Go code inside a
+  call from Go into JavaScript. A wait with a cancellable context built its
+  cancellation promise with a Go executor, which JavaScript runs inside
+  `new Promise`, so every such wait (`browser.Fetch`, `Context.Navigate`,
+  `Scene3D` calls, audio waits) nested one entry into Go.
+
+  A nested entry can stop the program, whether one goroutine or many make it.
+  Go's js/wasm runtime keeps the calls from JavaScript into Go that are in
+  progress on one stack (`runtime/lock_js.go`), and each call allocates its
+  record before it pushes it. If the first garbage collection of the process
+  pauses a call in that allocation, a nested entry that a goroutine makes
+  meanwhile goes onto the stack first, and the paused call goes on top of it,
+  against the order of the calls on the JavaScript stack. The runtime then
+  resumes the wrong goroutine and the program stops, usually with
+  `fatal error: traceback did not unwind completely`. The paused call can be a
+  timer, an event or a promise callback, so keeping nested calls on one
+  goroutine does not prevent the failure. In test programs in which one
+  goroutine made every nested entry, 14 to 19 of 256 runs stopped with
+  `new Promise(js.FuncOf(...))` and 31 to 46 of 256 with `dispatchEvent` on a Go
+  listener (go1.26.0 and go1.26.10, Node 26, 20 µs sleeps between calls); the
+  same programs with a native executor or listener stopped in none.
+
+  The waits now use a native cancellation promise (the new
+  `jsutil.NewPromiseWithResolvers`) and Go handlers that only signal a channel
+  from a microtask, and cancellation still aborts the request. `AwaitPromise`
+  also accepts a thenable that calls its handlers inside `then`, which used to
+  panic or nest. `DocumentContext` listened for the document's navigation abort
+  with a Go function, which the browser runs inside the call that starts a
+  navigation (`location.assign`, a form submission); it now listens with a
+  native function and cancels its context from a goroutine, a few microtasks
+  after the abort instead of inside it. It also reads the signal once more after
+  it adds its listener, so an abort that lands in between cancels the context,
+  and its documentation says that a request Go starts right after Go starts a
+  navigation is not refused until the program next returns to JavaScript.
+  `jsutil.Describe` no longer panics on a rejection that is not an `Error` (a
+  number, a Symbol, a BigInt, a revoked Proxy, or an object whose `message`
+  getter throws); the Scene3D frame rejection handlers called it inside a Go
+  callback, where a panic stopped the program. `__gosx_pick_engine` builds its
+  Promise the same way, which also stops it from keeping one `js.Func` per
+  call.
+
+  Go listeners and subscribers no longer run inside the calls that start them.
+  `Element.Dispatch`, `Focus`, `Blur` and `Click`, `Element.CheckValidity` and
+  `ReportValidity` (they fire `invalid`), `Element.Remove`, `SetText` and
+  `ReplaceMarkup` (in Chrome, they fire `blur` and `focusout` when they remove
+  the node that has focus or an ancestor of it; Firefox and WebKit fire
+  neither), `browser.DispatchResize`, `browser.DispatchError`,
+  `browser.Navigate` (to a fragment of the current page it fires `popstate`; to
+  another document it fires `beforeunload` in Chrome and Firefox) and
+  `browser.Reload` (it fires `beforeunload` in Chrome and Firefox),
+  `Context.Emit`, `Context.Navigate` (the page's `navigate` dispatches
+  `gosx:navigation:state` before it first waits), `Context.SetSignal`,
+  `SetSignals` and `SetChangedSignals`, the main-thread batches of a `View`, the
+  replay in `SubscribeSignal` (and so `ServeCalls`), and the netplay link's
+  `Open` and `Signal` made the browser run Go listeners, signal subscribers or
+  state callbacks inside the call from Go into JavaScript.
+  Those Go functions are now `jsutil.Callback`s, and these calls go through the
+  new `jsutil.Call`: while the JavaScript call runs, a callback only records the
+  call, and Go runs the recorded calls in order after the JavaScript call has
+  returned and before the Go function returns. Your own listener or subscriber
+  can use `jsutil.NewCallback` and `jsutil.Call` the same way. A function made
+  with `js.FuncOf` is not deferred and still nests.
+
+  Behavior change: a Go listener of a dispatch that Go starts runs after the
+  browser has delivered the event to every listener, so `PreventDefault`,
+  `StopPropagation` and `StopImmediatePropagation` no longer change that
+  dispatch, and a Go listener cannot cancel the click that `Click` performs.
+  The same holds for every event that the browser or page code raises while Go
+  is inside one of these calls, so a Go listener cannot cancel its default
+  action: `Click` on a submit button submits its form, whatever a Go `submit`
+  listener does, and so does a `requestSubmit` that a page script makes in
+  reaction to `SetSignal` or `Emit`. `ReportValidity` reports the problem to the
+  user whatever a Go `invalid` listener does, and a GoSX page starts the soft
+  navigation that `browser.Navigate` to a fragment triggers whatever a Go
+  `gosx:popstate` listener does. For the same reason a Go `beforeunload`
+  listener cannot stop a navigation that `browser.Navigate` starts to another
+  document, or a `browser.Reload`, in Chrome and Firefox; it can still stop one
+  that the user starts. To let Go code decide whether a form submits, whether
+  the report appears or whether the page navigates, call that code directly
+  instead of making the call (run an unsaved-changes check before `Navigate` or
+  `Reload`). `Event.CurrentTarget` still names the
+  listener's element. When the target is inside a shadow tree, `Event.Target` and
+  `Event.RelatedTarget` may not name what they named during the dispatch. The
+  browser clears both when the event's path ended inside a shadow tree (it never
+  reached the document), which is the case for an event that is not composed
+  (every event that `Element.Dispatch` creates) and for a focus change between
+  two elements of the same shadow tree, also between a shadow tree and one
+  nested in it, and a cleared one is an invalid `Element`. Otherwise it leaves them as seen
+  from the document: `Target` names the outermost shadow host, and
+  `RelatedTarget` names the related element, or its outermost shadow host if it
+  is inside a shadow tree. A Go `blur` or `focusout` listener that a removal
+  triggers runs after the removal, so it sees an element that is out of the
+  document, with its state intact (only Chrome fires these events on a
+  removal). `Element.Append`, `InsertBefore`, `AppendMarkup`, `SetHidden` and
+  `SetAttr` with the name `hidden` can still run a Go listener inside the call when
+  they move or hide the focused element or insert an iframe; call `Blur` on the
+  focused element first. An event that the page raises still reaches
+  a Go listener inside the browser's own dispatch. On the main thread, a Go
+  subscriber of a shared signal that Go writes runs after the page's other
+  subscribers of that write, and sees the whole batch; in a worker, a write goes
+  to the page as a message, and Go subscribers run later, when the page sends the
+  value back.
+
+  Three results change. `AwaitPromise` on a value that is not a thenable now
+  returns that value, where it used to panic. `jsutil.Describe` returns
+  `String(v)` for an `Error` with an empty message (`TypeError`, where it
+  returned an empty string), and `<unprintable value>` when the conversion
+  fails, where it panicked. `Element.SetText` and `ReplaceMarkup` panic with the
+  JavaScript error when the browser refuses the write (for example `innerHTML`
+  under a Trusted Types policy), where the exception used to escape through the
+  Go runtime and end the program.
+
+  Runtime size: the production full runtime (`gosx-runtime.wasm`) grows by 603
+  bytes raw and 1,061 bytes with Brotli, and the engine runtime by 603 raw and
+  722 with Brotli. The core, islands and collab runtimes do not change. The docs
+  wire budgets for `/`, `/demos/scene3d/` and `/demos/water` rise to the hosted
+  measurement (eight limits, 1,039 to 1,061 B each); the owner accepted the raise
+  on 31 October 2026. The `/demos/water` CI network limit rises from 1858 to 1860
+  KiB for the same growth (hosted measurement 1859.66 KiB).
 
 - Keep Scene3D tone mapping and antialiasing when adaptive quality suppresses
   post effects. Under sustained load the controller sheds every post effect as
@@ -90,6 +347,106 @@
   Source compatibility: `scene.Ocean`, `vessel.SeaConfig` and `vessel.Sea` now
   hold slices or maps, so values of these types can no longer be compared with
   `==` or used as map keys. Compare their fields, or use `reflect.DeepEqual`.
+
+- Deliver every call on an engine call channel. A shared signal keeps only its
+  newest value, so two calls that one island handler wrote reached the engine as
+  the second call alone, and the first never ran. The call signal can now hold a
+  mailbox, an array of the calls that have no reply yet. `ServeCalls` runs each
+  call whose ID is above the highest it has seen, in ID order, and writes one
+  result for each. The page host removes answered calls from the list for a
+  worker or native engine, and the engine does it on the main thread, through the
+  new `trimCalls` method of the page's engine context; a handler only appends. A
+  page watchdog now starts for each listed call. A signal that holds one call
+  works as before, with one addition: when a writer sets two single calls in one
+  batch, the result of the second lists the first in `Recent` with
+  `Error: "overwritten"`, for up to `CallOptions.Recent` skipped IDs in a row. An
+  engine from an older GoSX ignores an array, so a page that writes mailboxes
+  needs an engine built with this version. `bootstrap-feature-engine-worker.js`
+  grows from 36,541 to 37,395 bytes.
+
+- Count the next call from `Result.Seen`, not from `Result.ID`. When the page
+  times out calls 1 and 2 and call 1's real reply then arrives, `ID` goes back to
+  1 while both IDs are taken, and a call numbered from it is ignored: it never
+  runs and never times out. `Result` has a new field `Seen`, the highest call ID
+  that the engine accepted or the page watched. The engine writes it with every
+  result. The page writes it with `timeout` and `worker-crashed`, and writes a
+  result again with the highest `Seen` published if a late reply carries a lower
+  one, so `Seen` never goes down. Number a call above `Seen` and above every ID in your
+  mailbox. An engine or a page from an older GoSX writes no `Seen`, and the field
+  is then 0.
+
+- Keep the value of recent replies. Several results written one after another
+  can reach the page as the newest one alone, so `Result.Recent` entries now carry
+  the reply's `Value` (`ResultRef.Value`) as well as its ID and error. The newest
+  entries keep their value while they fit `CallOptions.RecentBytes`, 8 KiB by
+  default; a negative number keeps none. `ResultRef.Kept` is true when the entry
+  has its `Value`. An island decodes a key that is missing as the zero value, so
+  only `Kept` tells a reply that was lost from one whose value is zero. `Recent`
+  carries the error of a reply that failed, as before. An island that declares
+  `Recent` entries with only `ID` and `Error` still decodes them.
+
+- Add `wasm.ServeCallsAsync` and `host.ServeCallsAsync` for call handlers that
+  block. `ServeCalls` runs the handler inside the JavaScript callback that
+  delivers the call, so a handler that waits for a browser promise, OPFS or the
+  network deadlocks the engine. `ServeCallsAsync` only queues the call there and
+  runs the handler on a goroutine. Calls run one at a time in ID order, each
+  result is written before the next call starts, and the page's `timeout` and
+  `worker-crashed` rules apply as before. The same engine runs in a worker, on
+  the main thread after a fallback, and in a desktop host
+  (`desktop/enginehost`). On the main thread the engine has the browser write
+  each result, and drop the answered calls from a mailbox, from the event loop,
+  and waits for it. A write made from the goroutine, inside a call from Go into
+  JavaScript, can run a Go subscriber inside that call, as the browser does for a
+  function made with `js.FuncOf`: a nested call from JavaScript into Go, and Go's
+  WebAssembly runtime can stop the program when two goroutines are in such calls
+  at once. Before each handler runs, the engine
+  writes the call's ID to `$channel.started` and waits until the page reports
+  that value back on the engine's own subscription, which the page does only if
+  it applied the write. The page stops taking an engine's writes before the
+  engine hears that it is disposed: the browser revokes an engine's context
+  before it calls `Dispose`, and the page host of a worker or native engine
+  drops what the engine writes between asking it to dispose and the moment it
+  handles the request. A call whose mark the page did not take therefore never
+  starts in the old engine. An engine that mounts again on the same signals
+  answers a call that started and has no result with `Error: "interrupted"` and
+  does not run it again, and it runs each call that never started once, so a
+  save or an order does not happen twice. A call that the old engine finished
+  after the page began to dispose it comes back `interrupted` too, because the
+  page dropped its reply. A write of the mark that fails, or a page that does
+  not report it within `CallOptions.MarkTimeout` (30 s by default,
+  `DefaultCallMarkTimeout`), answers the call with `Error: "not-started: ..."`,
+  runs no handler, and lets the next call go on. That wait is not
+  `CallOptions.Timeout`, the page's deadline for the client: a page whose main
+  thread is busy for longer than `Timeout` reports the mark when it is free
+  again; the handler starts then, the call finishes late, and its real reply
+  replaces the page's `timeout`. A stall longer than `MarkTimeout` makes the
+  queued calls come back `not-started` without running.
+  `ServeCalls` has no such guard, and the documentation now says so. A transport
+  must deliver a write to the writer's own subscription, as the page does for
+  any other subscriber. Each call waits for one round trip to the page before
+  its handler starts: about 0.3 ms per call in headless Chromium 156 on a busy
+  host. A call that a writer of single calls skipped, and whose handler had
+  already started, is listed in `Recent` as `interrupted`, not `overwritten`.
+
+- Add `wasm.Context.SetSignalsFromEventLoop`, a `SetSignals` for code that runs
+  on a goroutine of its own, such as a `ServeCallsAsync` handler that publishes
+  state. On the main thread a write to a shared signal tells every subscriber
+  before it returns, so a Go subscriber that the browser calls directly (a
+  function made with `js.FuncOf`) runs inside the call from Go into JavaScript
+  that makes the write: a nested call from JavaScript into Go. `SetSignal`,
+  `SetSignals` and `SetChangedSignals` make their write inside such a call; this
+  method has the browser make the write from the event loop, where no call from
+  Go is pending, and waits for it. In a worker it is `SetSignals`.
+
+- Add `wasm.Caller`, a Go client for a call channel, modelled on the one Bon
+  Voyage wrote. It numbers calls, writes them to `$channel`, reads
+  `$channel.result`, and returns each reply with the tag of its call, in order. By
+  default it keeps one call written at a time, which works with every engine.
+  `CallerOptions{Window: n}` keeps `n` calls written at once as a mailbox, and
+  `CallerOptions{After: seen}` starts numbering above a `Seen` the engine has
+  already published. The client also raises its count to the `Seen` of every
+  result it is given. Bon Voyage's own tests for its client pass against it,
+  through type aliases for `Caller`, `Reply` and the written call.
 
 - Hold a Scene3D motion frame that arrives while the scene's models are still
   hydrating, then apply it when they commit, instead of rejecting it with

@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
-	"regexp"
 	"strings"
 	"time"
+
+	"m31labs.dev/gosx/internal/lazyre"
 )
 
 // Severity distinguishes a diagnostic that must block compilation from one
@@ -380,14 +381,14 @@ const (
 // data-gosx-countdown-cue (gosx#213): both attributes use this as the
 // threshold half of a "threshold:token" pair.
 var (
-	countdownThresholdIntegerPattern  = regexp.MustCompile(`^[0-9]+$`)
-	countdownThresholdDurationPattern = regexp.MustCompile(`^(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+)s)?$`)
+	countdownThresholdIntegerPattern  = lazyre.New(`^[0-9]+$`)
+	countdownThresholdDurationPattern = lazyre.New(`^(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+)s)?$`)
 	// countdownWarnClassTokenPattern rejects only what could never work as
 	// one class in a space-joined class attribute: embedded whitespace.
 	// This is deliberately not a full CSS identifier grammar — see
 	// isValidCountdownWarnClassToken in navigation.ts for the identical
 	// rule applied client-side.
-	countdownWarnClassTokenPattern = regexp.MustCompile(`^\S+$`)
+	countdownWarnClassTokenPattern = lazyre.New(`^\S+$`)
 	// pollIntervalValuePattern mirrors parseRevalidateInterval's own small
 	// declarative subset in navigation.ts exactly: a whole number of seconds
 	// or minutes only ("4s", "90s", "2m"), not the wider hour/minute/second
@@ -396,17 +397,17 @@ var (
 	// itself (see the const block's own comment above), but
 	// data-gosx-live-interval and data-gosx-region-interval share its exact
 	// grammar, so they share this pattern.
-	pollIntervalValuePattern = regexp.MustCompile(`^[0-9]+(?:s|m)$`)
+	pollIntervalValuePattern = lazyre.New(`^[0-9]+(?:s|m)$`)
 	// liveBindKeyPattern matches liveBindAttr's own shape check in
 	// navigation.ts: one or more non-empty, whitespace-free segments joined
 	// by ".".
-	liveBindKeyPattern = regexp.MustCompile(`^[^\s.]+(?:\.[^\s.]+)*$`)
+	liveBindKeyPattern = lazyre.New(`^[^\s.]+(?:\.[^\s.]+)*$`)
 	// liveBindAttrTargetNamePattern rejects a data-gosx-live-bind-attr
 	// target that could never work as an HTML attribute name at all —
 	// embedded whitespace, a colon, or any other character outside this
 	// shape — mirroring the identical guard LIVE_BIND_ATTR_NAME_PATTERN
 	// applies in liveBindAttrTargetAllowed (client/runtime/host/navigation.ts).
-	liveBindAttrTargetNamePattern = regexp.MustCompile(`^[A-Za-z_][-A-Za-z0-9_.]*$`)
+	liveBindAttrTargetNamePattern = lazyre.New(`^[A-Za-z_][-A-Za-z0-9_.]*$`)
 )
 
 // isValidCountdownThresholdValue reports whether value parses under the
@@ -485,7 +486,7 @@ func isValidWatchConditionValue(value string) bool {
 // single out a "cue:<name>" token to also check its name against
 // countdownCueNames — the two other shapes accept any non-empty value for
 // their own free-form parts (a class name, a selector).
-var watchEffectTokenPattern = regexp.MustCompile(`^(?:title|class:[^\s@]+(?:@\S+)?|cue:(?P<cue>\S+))$`)
+var watchEffectTokenPattern = lazyre.New(`^(?:title|class:[^\s@]+(?:@\S+)?|cue:(?P<cue>\S+))$`)
 
 // isValidWatchEffectValue reports whether every comma-separated token in
 // value matches watchEffectTokenPattern above, with a cue token's name

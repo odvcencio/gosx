@@ -54,6 +54,20 @@ type Reply struct {
 	Value  Sum
 	Recent []Ref
 }
+type BoxRef struct {
+	ID    uint64
+	Error string
+	Kept  bool
+	Value Sum
+}
+type BoxReply struct {
+	ID     uint64
+	Name   string
+	Error  string
+	Value  Sum
+	Recent []BoxRef
+	Seen   uint64
+}
 type View struct {
 	Tick   int
 	Thread string
@@ -69,6 +83,58 @@ func Panel(props struct{}) Node {
 	fail := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "fail"}) }
 	slow := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "slow"}) }
 	crash := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "crash"}) }
+	box := signal.NewShared("bv.box", []Cmd{})
+	boxres := signal.NewShared("bv.box.result", BoxReply{})
+	// bv.box is a mailbox: each call is appended, so one handler can write
+	// several. A call is numbered above every call in the mailbox, or, when the
+	// mailbox is empty, above Seen: the highest ID the engine or the page has
+	// seen. Not above the result's ID, which goes back after a late reply. An
+	// island handler cannot call a function that returns a value, so the number
+	// is written out where a call is appended.
+	pair := func() {
+		if len(box.Get()) == 0 {
+			box.Set(append(box.Get(), Cmd{ID: boxres.Get().Seen + 1, Name: "add", Args: Args{A: 1, B: 2}}))
+		} else {
+			box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 1, B: 2}}))
+		}
+		box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 10, B: 20}}))
+	}
+	wait := func() {
+		if len(box.Get()) == 0 {
+			box.Set(append(box.Get(), Cmd{ID: boxres.Get().Seen + 1, Name: "wait", Args: Args{A: 120, B: 1}}))
+		} else {
+			box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "wait", Args: Args{A: 120, B: 1}}))
+		}
+	}
+	ordered := func() {
+		if len(box.Get()) == 0 {
+			box.Set(append(box.Get(), Cmd{ID: boxres.Get().Seen + 1, Name: "wait", Args: Args{A: 150, B: 100}}))
+		} else {
+			box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "wait", Args: Args{A: 150, B: 100}}))
+		}
+		box.Set(append(box.Get(), Cmd{ID: box.Get()[len(box.Get())-1].ID + 1, Name: "add", Args: Args{A: 5, B: 5}}))
+	}
+	// bv.late is a mailbox whose calls reply late: the page times out the first two
+	// after 300 ms, and the engine answers them after 900 ms and 1300 ms. When the
+	// first reply comes the result's ID is 1 again, and call 2 is still running.
+	// The island numbers the call it writes then from Seen, not from that ID.
+	late := signal.NewShared("bv.late", []Cmd{})
+	lateres := signal.NewShared("bv.late.result", BoxReply{})
+	latepair := func() {
+		if len(late.Get()) == 0 {
+			late.Set(append(late.Get(), Cmd{ID: lateres.Get().Seen + 1, Name: "wait", Args: Args{A: 900, B: 1}}))
+		} else {
+			late.Set(append(late.Get(), Cmd{ID: late.Get()[len(late.Get())-1].ID + 1, Name: "wait", Args: Args{A: 900, B: 1}}))
+		}
+		late.Set(append(late.Get(), Cmd{ID: late.Get()[len(late.Get())-1].ID + 1, Name: "wait", Args: Args{A: 400, B: 2}}))
+	}
+	latenext := func() {
+		if len(late.Get()) == 0 {
+			late.Set(append(late.Get(), Cmd{ID: lateres.Get().Seen + 1, Name: "add", Args: Args{A: 7, B: 8}}))
+		} else {
+			late.Set(append(late.Get(), Cmd{ID: late.Get()[len(late.Get())-1].ID + 1, Name: "add", Args: Args{A: 7, B: 8}}))
+		}
+	}
 	return <section>
 		<p id="state">{status.Get().State}/{status.Get().Thread}/{status.Get().Reason}</p>
 		<p id="tick">{view.Get().Tick}</p>
@@ -77,6 +143,17 @@ func Panel(props struct{}) Node {
 		<button id="fail" onClick={fail} disabled={status.Get().State != "running"}>fail</button>
 		<button id="slow" onClick={slow} disabled={status.Get().State != "running"}>slow</button>
 		<button id="crash" onClick={crash} disabled={status.Get().State != "running"}>crash</button>
+		<p id="box">{boxres.Get().ID}:{boxres.Get().Value.Total}:{boxres.Get().Error}:{boxres.Get().Value.Thread}</p>
+		<p id="recent"><Each of={boxres.Get().Recent} as="r"><span>{r.ID}={r.Value.Total}/{r.Error};</span></Each></p>
+		<p id="kept"><Each of={boxres.Get().Recent} as="r"><span>{r.ID}:{r.Kept};</span></Each></p>
+		<p id="pending">{len(box.Get())}</p>
+		<p id="seen">{boxres.Get().Seen}</p>
+		<button id="pair" onClick={pair} disabled={status.Get().State != "running"}>pair</button>
+		<button id="wait" onClick={wait} disabled={status.Get().State != "running"}>wait</button>
+		<button id="ordered" onClick={ordered} disabled={status.Get().State != "running"}>ordered</button>
+		<p id="late">{lateres.Get().ID}:{lateres.Get().Value.Total}:{lateres.Get().Error}:{lateres.Get().Seen}</p>
+		<button id="latepair" onClick={latepair} disabled={status.Get().State != "running"}>latepair</button>
+		<button id="latenext" onClick={latenext} disabled={status.Get().State != "running"}>latenext</button>
 	</section>
 }
 `
@@ -160,10 +237,15 @@ func islandRuntime(t *testing.T, dir string) (int64, string) {
 // "worker" (default), "fallback" (ForceWorkerFallback) or "required"
 // (WorkerRequired with ForceWorkerFallback).
 func callsPage(t *testing.T, dir, mode string) string {
+	return callsPageFor(t, dir, mode, `{"scenario":"calls"}`)
+}
+
+// callsPageFor is callsPage for the fixture scenario in props.
+func callsPageFor(t *testing.T, dir, mode, props string) string {
 	t.Helper()
 	cfg := engine.Config{
 		Name: "WorkerFixture", Kind: engine.KindWorker, Runtime: engine.RuntimeGoWASM, Thread: engine.ThreadWorker,
-		MountID: "bv", WASMPath: "/engines/fixture.wasm", Props: json.RawMessage(`{"scenario":"calls"}`),
+		MountID: "bv", WASMPath: "/engines/fixture.wasm", Props: json.RawMessage(props),
 	}
 	switch mode {
 	case "fallback":
@@ -266,6 +348,8 @@ func TestIslandCallsAWorkerAndSeesItsView(t *testing.T) {
 	if pace.Renders < 4 || pace.Renders > 25 {
 		t.Errorf("island rendered the view %d times in 1 s, want about 10 (engine ticks every 10 ms)", pace.Renders)
 	}
+	checkMailbox(t, o, "worker")
+	checkLateReplies(t, o)
 	var crash struct {
 		State       string `json:"state"`
 		Result      string `json:"result"`
@@ -279,13 +363,112 @@ func TestIslandCallsAWorkerAndSeesItsView(t *testing.T) {
 	}
 }
 
+// checkMailbox checks the bv.box steps of scripts/calls.mjs. An island handler
+// wrote two calls into a mailbox; the engine, which serves the channel on
+// goroutines, ran both and the page got both replies, in call order, with the
+// mailbox emptied again. thread is where the engine runs.
+func checkMailbox(t *testing.T, o callsObservation, thread string) {
+	t.Helper()
+	type seen = [3]any // ID, Value.Total, Error
+	var pair, promise, ordered struct {
+		Box     string `json:"box"`
+		Recent  string `json:"recent"`
+		Pending string `json:"pending"`
+		Seen    []seen `json:"seen"`
+	}
+	for name, into := range map[string]any{"pair": &pair, "promise": &promise, "ordered": &ordered} {
+		if err := json.Unmarshal(o.step(name), into); err != nil {
+			t.Fatalf("step %s: %v (%s)", name, err, o.step(name))
+		}
+	}
+	ids := func(list []seen) []float64 {
+		var out []float64
+		for _, s := range list {
+			out = append(out, s[0].(float64))
+		}
+		return out
+	}
+	// Two calls written by one handler: both replies reach the page, and the
+	// island, which renders only the newest result, still shows both through Recent.
+	if pair.Recent != "1=3/;2=30/;" || pair.Box != "2:30::"+thread || pair.Pending != "0" {
+		t.Errorf("pair: %+v", pair)
+	}
+	if len(pair.Seen) != 2 || pair.Seen[0][0] != 1.0 || pair.Seen[0][1] != 3.0 || pair.Seen[1][0] != 2.0 || pair.Seen[1][1] != 30.0 {
+		t.Errorf("the page store did not hold both replies: %v", pair.Seen)
+	}
+	// A handler that waits for a browser promise completes instead of hanging the engine.
+	if promise.Box != "3:121::"+thread {
+		t.Errorf("promise: %+v", promise)
+	}
+	// Call 4 waits 150 ms and call 5 is quick. The engine runs them in call
+	// order, so the page gets the reply to 4 before the reply to 5.
+	want := []float64{1, 2, 3, 4, 5}
+	got := ids(ordered.Seen)
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("replies reached the page in order %v, want %v", got, want)
+	}
+	if last := ordered.Seen[len(ordered.Seen)-1]; last[1] != 10.0 || ordered.Seen[3][1] != 250.0 {
+		t.Errorf("ordered replies: %v", ordered.Seen)
+	}
+	if ordered.Recent != "2=30/;3=121/;4=250/;5=10/;" || ordered.Pending != "0" {
+		t.Errorf("ordered: %+v", ordered)
+	}
+}
+
+// checkLateReplies checks the bv.late steps of scripts/calls.mjs. The page timed
+// out calls 1 and 2, which wait 900 ms and 400 ms. Call 1's late reply put the
+// result's ID back to 1 while call 2 ran. The island then wrote a call, and
+// counted its number from Seen: it got 3. Counted from the result's ID it would
+// have been 2, which the engine and the page had already seen, and it would
+// never have run. The engine ran call 3, and Seen never went down on the way.
+func checkLateReplies(t *testing.T, o callsObservation) {
+	t.Helper()
+	var late struct {
+		Final string `json:"final"`
+		Seen  [][4]any
+	}
+	if err := json.Unmarshal(o.step("late"), &late); err != nil {
+		t.Fatalf("step late: %v (%s)", err, o.step("late"))
+	}
+	if late.Final != "3:15::3" {
+		t.Errorf("the island's last reply on bv.late is %q, want 3:15::3 (call 3 ran)", late.Final)
+	}
+	var ids []float64
+	highest := 0.0
+	for _, r := range late.Seen { // ID, Value.Total, Error, Seen
+		id, _ := r[0].(float64)
+		seen, _ := r[3].(float64)
+		ids = append(ids, id)
+		if seen < highest {
+			t.Errorf("Seen went down from %v to %v in %v", highest, seen, late.Seen)
+		}
+		highest = seen
+	}
+	// The page times out calls 1 and 2 and reports the highest ID it watched, 2,
+	// in both. The engine, busy in call 1, then answers all three calls late.
+	if len(late.Seen) < 5 || late.Seen[0][0] != 1.0 || late.Seen[0][2] != "timeout" || late.Seen[0][3] != 2.0 ||
+		late.Seen[1][0] != 2.0 || late.Seen[1][2] != "timeout" || late.Seen[1][3] != 2.0 {
+		t.Errorf("results on bv.late = %v, want the timeouts of calls 1 and 2 first, both with Seen 2", late.Seen)
+	}
+	var replied []float64
+	for _, r := range late.Seen {
+		if r[2] == "" {
+			replied = append(replied, r[0].(float64))
+		}
+	}
+	if fmt.Sprint(replied) != "[1 2 3]" {
+		t.Errorf("replies on bv.late came for calls %v (all results %v), want [1 2 3] in order", replied, ids)
+	}
+}
+
 // ForceWorkerFallback runs the same Go code on the main thread: the same
 // calls get the same answers, the status says so, and the view still paces.
 func TestForcedFallbackRunsTheSameCallsOnTheMainThread(t *testing.T) {
 	srv, _ := callsServer(t)
-	state := driveScript(t, srv.url+"/?mode=fallback", fmt.Sprintf(callsDone, "fail"), 60*time.Second, "scripts/calls.mjs")
+	state := driveScript(t, srv.url+"/?mode=fallback", fmt.Sprintf(callsDone, "ordered"), 60*time.Second, "scripts/calls.mjs")
 	o := state.observed(t)
 	t.Logf("states: %v results: %v", o.States, o.Results)
+	checkMailbox(t, o, "main")
 	if !containsInOrder(o.States, []string{"running/main/worker-forced-fallback"}) {
 		t.Fatalf("status history %v", o.States)
 	}

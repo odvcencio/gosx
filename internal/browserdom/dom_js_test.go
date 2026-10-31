@@ -114,7 +114,7 @@ func TestTypedElementAndDatasetHandleSemantics(t *testing.T) {
 func TestElementHandlesAndLazyTargetsAllocateNoWrappers(t *testing.T) {
 	node, event := domObject(), domObject()
 	event.Set("target", node)
-	e := Event{event}
+	e := Event{value: event}
 	if got := testing.AllocsPerRun(1000, func() {
 		handle := FromJS(node)
 		if !handle.Valid() {
@@ -135,7 +135,7 @@ func TestElementHandlesAndLazyTargetsAllocateNoWrappers(t *testing.T) {
 func BenchmarkTypedEventTarget(b *testing.B) {
 	node, event := domObject(), domObject()
 	event.Set("target", node)
-	e := Event{event}
+	e := Event{value: event}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -172,7 +172,7 @@ func TestTypedRectReadsBoundedLayoutFields(t *testing.T) {
 
 func TestMessageDataAcceptsOnlyStrings(t *testing.T) {
 	event := domObject()
-	e := Event{event}
+	e := Event{value: event}
 	for _, value := range []any{nil, 42, map[string]any{"text": "wrong"}} {
 		event.Set("data", value)
 		if e.DataString() != "" {

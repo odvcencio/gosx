@@ -13,7 +13,7 @@ func registerHighlightRuntime() {
 }
 
 func highlightRuntimeFunc() js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.ValueOf("")
 		}

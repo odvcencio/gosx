@@ -14,6 +14,7 @@ import (
 )
 
 func registerRuntime(b *bridge.Bridge) {
+	registerDirectBatch(b)
 	b.RegisterIslandHostFactory("browser", func(islandID string) vm.HostReceiver {
 		return newBrowserHostReceiver(islandID)
 	})
@@ -23,6 +24,7 @@ func registerRuntime(b *bridge.Bridge) {
 			notify.Invoke(name, valueJSON)
 		}
 	})
+	b.SetSharedSignalBatchCallback(notifySharedSignalBatch)
 	b.SetPatchCallback(func(islandID, patchJSON string) {
 		applyLegacyPatches(islandID, patchJSON)
 	})
@@ -43,7 +45,13 @@ func registerRuntime(b *bridge.Bridge) {
 	registerHighlightRuntime()
 	setRuntimeFunc("__gosx_set_shared_signal", sharedSignalRuntimeFunc(b))
 	setRuntimeFunc("__gosx_get_shared_signal", sharedSignalGetRuntimeFunc(b))
-	setRuntimeFunc("__gosx_set_input_batch", inputBatchRuntimeFunc(b))
+	inputBatch := inputBatchRuntimeFunc(b)
+	// Tells the page that this function validates and decodes a batch itself and
+	// hands the page every change together, as JSON text, through
+	// __gosx_notify_shared_signal.batch. A page that sees the flag has no need to
+	// decode the batch before it sends it.
+	inputBatch.Set("batchDelivery", true)
+	setRuntimeFunc("__gosx_set_input_batch", inputBatch)
 	registerTextLayoutRuntime()
 	registerCRDTRuntime()
 	// Cross-frame postMessage relay for $preview.* shared signals
@@ -58,6 +66,27 @@ func setRuntimeFunc(name string, fn js.Func) {
 	js.Global().Set(name, fn)
 }
 
+// notifySharedSignalBatch gives the page the changes of one batch in a single
+// call, name then JSON text for each signal. A page whose notify function has
+// no batch method gets them one by one.
+func notifySharedSignalBatch(updates []bridge.SignalUpdate) {
+	notify := js.Global().Get("__gosx_notify_shared_signal")
+	if notify.Type() != js.TypeFunction {
+		return
+	}
+	if batch := notify.Get("batch"); batch.Type() == js.TypeFunction {
+		args := make([]any, 0, 2*len(updates))
+		for _, update := range updates {
+			args = append(args, update.Name, update.JSON)
+		}
+		batch.Invoke(args...)
+		return
+	}
+	for _, update := range updates {
+		notify.Invoke(update.Name, update.JSON)
+	}
+}
+
 // hydrateRuntimeFunc returns the unified __gosx_hydrate dispatcher.
 //
 // Call shapes (both are accepted to preserve the islands bootstrap that ships
@@ -70,7 +99,7 @@ func setRuntimeFunc(name string, fn js.Func) {
 // Bridge.HydrateReconciler — "dom" delegates to the island path, "scene3d"
 // to the engine path, "canvas2d" returns a Phase 2 stub error.
 func hydrateRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		surfaceKind, hydrateArgs, err := parseUnifiedHydrateArgs(args)
 		if err != nil {
 			return jsError(err)
@@ -145,7 +174,7 @@ func parseUnifiedHydrateArgs(args []js.Value) (string, []js.Value, error) {
 // The Phase 1d dispatcher accepts both shapes; this alias just removes the
 // boilerplate for the canvas2d case.
 func hydrateCanvasRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		call, err := parseHydrateCall(args)
 		if err != nil {
 			return jsError(err)
@@ -158,7 +187,7 @@ func hydrateCanvasRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func hydrateComputeRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		call, err := parseHydrateCall(args)
 		if err != nil {
 			return jsError(err)
@@ -171,7 +200,7 @@ func hydrateComputeRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func actionRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return js.Null()
 		}
@@ -195,7 +224,7 @@ func actionRuntimeFunc(b *bridge.Bridge) js.Func {
 // via the same decodeProgramData path the hydrate calls use. An unknown
 // islandID or a decode failure comes back as a string error from the bridge.
 func reloadProgramRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (islandID, programData, format)")
 		}
@@ -212,7 +241,7 @@ func reloadProgramRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func disposeRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return js.Null()
 		}
@@ -222,7 +251,7 @@ func disposeRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func sharedSignalRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return jsErrorf("need 2 args (signalName, valueJSON)")
 		}
@@ -234,7 +263,7 @@ func sharedSignalRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func sharedSignalGetRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (signalName)")
 		}
@@ -247,7 +276,7 @@ func sharedSignalGetRuntimeFunc(b *bridge.Bridge) js.Func {
 }
 
 func inputBatchRuntimeFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (batchJSON)")
 		}

@@ -29,7 +29,6 @@ package ir
 import (
 	"fmt"
 	"html"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +36,7 @@ import (
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/lazyre"
 	"m31labs.dev/gosx/internal/strictcomponent"
 )
 
@@ -3590,7 +3590,7 @@ func (l *lowerer) validateStrictConditionalExpression(span Span, source, compone
 // lowercase-first, valid Go identifier characters. Lowercase-first keeps a
 // binding visually and lexically disjoint from component tags and type
 // names.
-var strictBindingNamePattern = regexp.MustCompile(`^[a-z][A-Za-z0-9]*$`)
+var strictBindingNamePattern = lazyre.New(`^[a-z][A-Za-z0-9]*$`)
 
 // goKeywords is the exhaustive Go keyword set; a binding may not use one,
 // since it is emitted verbatim as a Go func parameter name

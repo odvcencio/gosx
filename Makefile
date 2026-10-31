@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity test-vm-parity test-det-parity test-det-parity-arm64-remote build-det-parity-darwin-arm64 lint-deterministic release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget wasm-heap-gate test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity test-vm-parity test-det-parity test-det-parity-arm64-remote build-det-parity-darwin-arm64 lint-deterministic release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -240,6 +240,8 @@ test-fuzz-smoke: test-telemetry-fuzz
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./route -run '^$$' -fuzz FuzzDanmujiRouterHandlesArbitraryEscapedPaths -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzVMEvalNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzIslandReuseMatchesFullEval -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzValueFromJSONFastMatchesReference -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./client/vm -run '^$$' -fuzz FuzzAppendJSONMatchesMarshal -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 
 # build-bootstrap regenerates the client bootstrap bundles (pure Go — no npm, no
 # node_modules; see cmd/buildbootstrap).
@@ -378,8 +380,8 @@ test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -timeout=3m -exec="$(GO_WASM_EXEC)" ./hub/client
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/jsutil
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/host
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/audio/host ./client/browser ./internal/browserdom ./game/storage ./hub/socket ./engine/wasm
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|Surface)'
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/audio/host ./client/browser ./internal/browserdom ./internal/jsreentry ./game/storage ./hub/socket ./engine/wasm ./netplay/client
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|Surface|FrameRejection)'
 
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
@@ -484,6 +486,15 @@ lint-deterministic:
 # bar for a planned-growth slice (require an ADR for any >10% bump).
 wasm-size-budget:
 	./scripts/check-wasm-size.sh
+
+# wasm-heap-gate sends batches of signals through the page's code to every
+# published production TinyGo runtime and fails if the WASM memory keeps growing,
+# the runtime lacks the direct batch entry, or a batch that re-renders a deep
+# island or carries deeply nested JSON overflows the system stack. It reuses the
+# runtimes that wasm-size-budget leaves in ${TMPDIR:-/tmp}/gosx-wasm-size, and
+# builds them when they are not there. See scripts/check-wasm-heap.sh.
+wasm-heap-gate:
+	./scripts/check-wasm-heap.sh
 
 test-e2e:
 ifdef E2E_SHARD
@@ -676,7 +687,7 @@ release-gate:
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 
-ci: fmt-check verify-danmuji lint-deterministic test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity test-vm-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+ci: fmt-check verify-danmuji lint-deterministic test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity test-vm-parity wasm-size-budget wasm-heap-gate test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
 
 .PHONY: test-assetmeasure
 test-assetmeasure:

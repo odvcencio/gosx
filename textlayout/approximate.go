@@ -1,13 +1,14 @@
 package textlayout
 
 import (
-	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"m31labs.dev/gosx/internal/lazyre"
 )
 
-var cssFontSizePattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)px`)
+var cssFontSizePattern = lazyre.New(`(?i)(\d+(?:\.\d+)?)px`)
 
 // ApproximateMeasurer provides a fast server-side width estimator for text
 // layout planning before the browser refines the result with real font metrics.

@@ -7,10 +7,18 @@ import (
 	"fmt"
 	"sync"
 	"syscall/js"
+
+	"m31labs.dev/gosx/client/jsutil"
 )
 
 // SetSignal writes a JSON value into the page's shared GoSX signal runtime.
 // Unlike signal.NewShared's native value, this crosses the engine/VM boundary.
+//
+// On the main thread the page notifies its subscribers before the write
+// returns. Go subscribers (SubscribeSignal) run after the page has notified the
+// others, and before SetSignal returns; they do not run inside the call into
+// JavaScript. In a worker, SetSignal posts the write to the page and returns,
+// and Go subscribers run later, when the page sends the value back.
 func (c Context) SetSignal(name string, value any) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -25,7 +33,7 @@ func (c Context) SetSignal(name string, value any) (err error) {
 	if err != nil {
 		return err
 	}
-	result := c.value.Call("setSignal", name, encoded)
+	result := jsutil.Call(c.value, "setSignal", name, encoded)
 	if result.Type() == js.TypeString && result.String() != "" {
 		return fmt.Errorf("set shared signal: %s", result.String())
 	}
@@ -34,16 +42,23 @@ func (c Context) SetSignal(name string, value any) (err error) {
 
 // SubscribeSignal receives JSON from subsequent writes to a page shared signal.
 // Dispose the returned HandleFunc to detach and release the Go callback.
+//
+// On the main thread, when Go itself writes the signal (SetSignal, SetSignals),
+// the handler runs after the page has notified its other subscribers and before
+// the write returns. A write from page code reaches the handler inside the
+// page's own notification, as before. In a worker the handler runs later, when
+// the page sends the value back, for a write from Go and for one from page code.
 func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (dispose HandleFunc, err error) {
 	return c.subscribeSignal(name, handler, false)
 }
 
 // subscribeSignalReplay is SubscribeSignal that also delivers the signal's
 // current value once. ServeCalls uses it so a call written before the engine
-// subscribed is answered. On the main thread the current value arrives before
-// this function returns, and a signal with no value delivers JSON null. In a
-// worker it arrives later, as a message, and a signal with no value delivers
-// nothing.
+// subscribed is answered. On the main thread the page delivers the current
+// value inside the subscribing call; the handler runs for it after that call
+// has returned, before this function returns, and a signal with no value
+// delivers JSON null. In a worker it arrives later, as a message, and a signal
+// with no value delivers nothing.
 func (c Context) subscribeSignalReplay(name string, handler func(json.RawMessage)) (HandleFunc, error) {
 	return c.subscribeSignal(name, handler, true)
 }
@@ -52,13 +67,12 @@ func (c Context) subscribeSignal(name string, handler func(json.RawMessage), rep
 	if handler == nil {
 		return nil, fmt.Errorf("shared signal handler is required")
 	}
-	var callback js.Func
-	created := false
+	var callback *jsutil.Callback
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("subscribe shared signal: %v", recovered)
 		}
-		if err != nil && created {
+		if err != nil && callback != nil {
 			callback.Release()
 		}
 	}()
@@ -72,9 +86,12 @@ func (c Context) subscribeSignal(name string, handler func(json.RawMessage), rep
 	if subscribe.Type() != js.TypeFunction {
 		return nil, fmt.Errorf("shared signal bridge is unavailable")
 	}
-	callback = js.FuncOf(func(_ js.Value, args []js.Value) any {
+	// The callback is deferred while Go is inside a call into the page (see
+	// jsutil.Callback). Hosts without subscribeSignalJSON hand over a decoded
+	// value, which Go encodes when the deferred call runs.
+	callback = jsutil.NewCallback(func(_ js.Value, args []js.Value) {
 		if len(args) == 0 {
-			return nil
+			return
 		}
 		encoded := args[0]
 		if !rawJSON {
@@ -83,10 +100,8 @@ func (c Context) subscribeSignal(name string, handler func(json.RawMessage), rep
 		if encoded.Type() == js.TypeString {
 			handler(json.RawMessage(encoded.String()))
 		}
-		return nil
 	})
-	created = true
-	unsubscribe := c.value.Call(method, name, callback, map[string]any{"immediate": replay})
+	unsubscribe := jsutil.Call(c.value, method, name, callback.Value(), map[string]any{"immediate": replay})
 	if unsubscribe.Type() != js.TypeFunction {
 		return nil, fmt.Errorf("shared signal subscription is unavailable")
 	}
@@ -146,7 +161,7 @@ func (c Context) setSignals(values map[string]any, changedOnly bool) (err error)
 		return err
 	}
 	if c.value.Get("setSignalsJSON").Type() == js.TypeFunction {
-		result := c.value.Call("setSignalsJSON", string(encoded), changedOnly)
+		result := jsutil.Call(c.value, "setSignalsJSON", string(encoded), changedOnly)
 		if result.Type() == js.TypeString && result.String() != "" {
 			return fmt.Errorf("set shared signals: %s", result.String())
 		}
@@ -158,7 +173,7 @@ func (c Context) setSignals(values map[string]any, changedOnly bool) (err error)
 		return fmt.Errorf("shared signal batch bridge is unavailable")
 	}
 	value := js.Global().Get("JSON").Call("parse", string(encoded))
-	result := c.value.Call("setSignals", value)
+	result := jsutil.Call(c.value, "setSignals", value)
 	if result.Type() == js.TypeString && result.String() != "" {
 		return fmt.Errorf("set shared signals: %s", result.String())
 	}
