@@ -67,8 +67,21 @@
   page has the `batch` method, and it calls the function unless the loader
   published exports with `gosx_batch_apply`. The core runtime grows by 14.9 KB
   as TinyGo builds it, to 690 KiB, inside the 700 KiB budget that CI checks on
-  that build, and by 14.0 KB after wasm-opt, to 652 KiB. The monolith bootstrap
+  that build, and by 14.0 KB after wasm-opt, to 652 KiB (4.6 KB of Brotli). The
+  full runtime shrinks despite this code, by 100 KB after wasm-opt and 30.6 KB
+  of Brotli, because of the change in the next entry. The monolith bootstrap
   grows by 2.8 KB; the JavaScript size budgets move by the measured amounts.
+
+- Keep `regexp` out of the browser runtimes that never match a pattern. The
+  validators in package `ir` and the server's text estimator compiled their
+  regular expressions with a package-level `regexp.MustCompile`. That call runs
+  at start-up, so the linker could not drop `regexp`, `regexp/syntax` and the
+  Unicode tables they reach, although no browser code matches those patterns.
+  They now use `internal/lazyre`, which compiles on first use and panics on a
+  malformed pattern, as `MustCompile` did. The full runtime shrinks by 30.6 KB
+  of Brotli (663,386 to 632,758 bytes, Go 1.26.10, TinyGo 0.41.1, Binaryen 108)
+  and the engine runtime by 33.8 KB. A test fails if a package that a runtime
+  links compiles a regexp at start-up.
 
   The exports apply the whole batch on the system stack, the decoding of its
   JSON and the render of every island it wakes, so the build now sizes that
