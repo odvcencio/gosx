@@ -22,6 +22,12 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // raw / 112 gzip / 243 Brotli and the three Scene3D route entries with labels by
 // 212 to 223 raw / 71 gzip and 52 to 54 Brotli bytes. Only those breached targets
 // move to their passing minima; allowances and every other target stay fixed.
+// The same 54 Brotli bytes reach the wire on the docs routes that load the engines
+// chunk (/, /demos/scene3d/ and /demos/water). Their jsWireBytes and
+// frameworkJsWireBytes caps in perf/budgets/wire.json rise by 54 each, and the
+// totalWireBytes caps of / and /demos/scene3d/ by 50 and 44, to the values that
+// hosted wire run 40817266098 measured at ce7b0e3524, with the reason recorded in
+// each route's raise map.
 // Keeping tone mapping and FXAA while adaptive quality suppresses post effects,
 // appending FXAA for a canvas that was antialiased, skipping a suppression that
 // sheds nothing, and weighing the chain the renderer drew and the FXAA pass that
