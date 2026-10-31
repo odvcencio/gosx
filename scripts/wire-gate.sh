@@ -20,6 +20,27 @@
 #                                a reason in each raise map.
 #   WIRE_GATE_REUSE_DOCS=1       reuse an existing examples/gosx-docs/dist.
 #   WIRE_GATE_OUT=DIR            report directory (default build/wire-gate).
+#
+# To estimate the size cost of a change to the WASM runtime before a hosted run,
+# without this gate: a docs route that loads the full runtime counts the Brotli
+# size of that runtime after Binaryen version_108 as its wasmWireBytes
+# (frameworkJsWireBytes and totalWireBytes contain it). With wasm-opt
+# version_108 on PATH, run
+#   GOWORK=off GOTOOLCHAIN=go1.26.10 go run ./cmd/gosx build-runtime OUTDIR
+# before and after the change and compare the sizes of
+# OUTDIR/gosx-runtime.wasm.br (the full runtime) and
+# OUTDIR/gosx-runtime-core.wasm.br (the core runtime). The command builds every
+# runtime variant, so it takes several minutes.
+#
+# Name the Go release that the hosted job's "Set up Go" step installed (1.26.10
+# in run 40748289292): the Go patch release changes the size. For PR 772 the
+# full runtime came out at 669,226 B at e248a8bd77 and 669,634 B at 369233ad51
+# with Go 1.26.10, the two sizes that hosted runs 40709787018 and 40748289292
+# measured. With Go 1.26.0, which go picked from go.mod on the machine that
+# priced the PR, it was 669,510 B at 369233ad51, and the growth since e248a8bd77
+# looked like 293 B against the hosted 408 B, so the caps built from it failed.
+# The Go 1.25.5 SDK in GOSX_TINYGO_GOROOT is only the fallback for a Go that
+# TinyGo rejects; built with it the runtime was 668,476 B.
 set -eu
 
 mode="${WIRE_GATE_MODE:-check}"

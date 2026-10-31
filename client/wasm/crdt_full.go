@@ -26,7 +26,7 @@ func registerCRDTRuntime() {
 }
 
 func crdtInitRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) == 0 || args[0].Type() == js.TypeUndefined || args[0].Type() == js.TypeNull {
 			if err := b.InitDoc(nil); err != nil {
 				return jsError(err)
@@ -45,7 +45,7 @@ func crdtInitRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtSyncRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (syncMsg)")
 		}
@@ -65,7 +65,7 @@ func crdtSyncRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtPutRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (obj, prop, value)")
 		}
@@ -81,7 +81,7 @@ func crdtPutRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtGetRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return jsErrorf("need 2 args (obj, prop)")
 		}
@@ -94,7 +94,7 @@ func crdtGetRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtMakeTextRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return jsErrorf("need 2 args (obj, prop)")
 		}
@@ -107,7 +107,7 @@ func crdtMakeTextRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtInsertAtRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (list, index, value)")
 		}
@@ -123,7 +123,7 @@ func crdtInsertAtRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtDeleteAtRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return jsErrorf("need 2 args (list, index)")
 		}
@@ -135,7 +135,7 @@ func crdtDeleteAtRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtCommitRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		msg := ""
 		if len(args) > 0 && args[0].Type() == js.TypeString {
 			msg = args[0].String()
@@ -148,7 +148,7 @@ func crdtCommitRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtSaveRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		data, err := b.Save()
 		if err != nil {
 			return jsError(err)
@@ -158,7 +158,7 @@ func crdtSaveRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtLoadRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (data)")
 		}
@@ -174,7 +174,7 @@ func crdtLoadRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtTextToStringRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return jsErrorf("need 1 arg (text)")
 		}
@@ -187,7 +187,7 @@ func crdtTextToStringRuntimeFunc(b *bridge.CRDTBridge) js.Func {
 }
 
 func crdtGetObjIDRuntimeFunc(b *bridge.CRDTBridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return jsErrorf("need 2 args (obj, prop)")
 		}

@@ -45,7 +45,7 @@ func registerCrossFrameRelay(b *bridge.Bridge) {
 }
 
 func enableCrossFrameRelayFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return jsErrorf("need 2 args (prefix, allowedOrigin)")
 		}
@@ -73,7 +73,7 @@ func enableCrossFrameRelayFunc(b *bridge.Bridge) js.Func {
 }
 
 func relayDispatchInboundFunc(b *bridge.Bridge) js.Func {
-	return js.FuncOf(func(this js.Value, args []js.Value) any {
+	return funcOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 3 {
 			return jsErrorf("need 3 args (name, valueJSON, origin)")
 		}
