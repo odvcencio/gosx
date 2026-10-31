@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"syscall/js"
+
+	"m31labs.dev/gosx/client/jsutil"
 )
 
 // jsViewSink sends batches through the engine context. On a worker the
@@ -30,7 +32,7 @@ func (s *jsViewSink) send(batch []byte, done func(bool)) (err error) {
 		}
 	}()
 	if s.ctx.value.Get("sendView").Type() != js.TypeFunction {
-		result := s.ctx.value.Call("setSignalsJSON", string(batch), true)
+		result := jsutil.Call(s.ctx.value, "setSignalsJSON", string(batch), true)
 		if result.Type() == js.TypeString && result.String() != "" {
 			return errors.New(result.String())
 		}
