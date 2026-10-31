@@ -111,3 +111,47 @@ func TestNavigateToAFragmentInABrowserNeverRunsGoListenersInsideTheCall(t *testi
 		t.Fatalf("the location hash is %q, want %q", hash, fragment)
 	}
 }
+
+// Reload makes Chrome and Firefox fire beforeunload before location.reload
+// returns. A Go listener must not run inside that call, so it runs when Reload
+// returns, after the page's listeners, and cannot stop the reload. The fixture is
+// plain JavaScript, as in the Navigate test above.
+func TestReloadNeverRunsGoListenersInsideTheCall(t *testing.T) {
+	descriptor := js.Global().Get("Object").Call("getOwnPropertyDescriptor", js.Global(), "location")
+	if descriptor.Truthy() && !descriptor.Get("configurable").Bool() {
+		t.Skip("this host does not let a test replace location")
+	}
+	probe := jsreentry.Install(t)
+	fixture := windowLikeGlobal(t)
+	location := js.Global().Get("Function").New("window", "log", `
+		const reloads = [];
+		return {
+			reloads,
+			reload() {
+				reloads.push("reload");
+				const unload = new Event("beforeunload", { cancelable: true });
+				window.dispatchEvent(unload);
+				log.push(unload.defaultPrevented ? "page:prevented" : "page:not-prevented");
+			},
+		};`).Invoke(js.Global(), fixture.Get("log"))
+	replaceBrowserGlobal(t, "location", location)
+	log := fixture.Get("log")
+	fixture.Call("listen", "beforeunload", "js-before")
+	unload := Window().On("beforeunload", func(e Event) {
+		e.PreventDefault()
+		log.Call("push", "go")
+	})
+	defer unload.Dispose()
+	fixture.Call("listen", "beforeunload", "js-after")
+	probe.Reset()
+
+	Reload()
+
+	probe.AssertNone(t, "Reload")
+	if got, want := fixtureLog(fixture), "js-before js-after page:not-prevented go"; got != want {
+		t.Fatalf("the Go listener must run when Reload returns, after the page's, and cannot stop the reload:\n got %q\nwant %q", got, want)
+	}
+	if n := location.Get("reloads").Length(); n != 1 {
+		t.Fatalf("location.reload ran %d times, want once", n)
+	}
+}

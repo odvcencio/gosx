@@ -29,10 +29,21 @@ func CurrentLocation() Location {
 // its listeners, and before Navigate returns (see Listener). They are too late
 // to change what the page does, so a Go gosx:popstate listener cannot cancel the
 // soft navigation that the page starts.
+//
+// A URL for another document makes Chrome and Firefox fire beforeunload before
+// Navigate returns (WebKit fires it later). A Go beforeunload listener runs after
+// that, so it cannot stop a navigation that Navigate starts, whatever it does
+// with PreventDefault. It can still stop one that the user starts. Run the
+// unsaved-changes check in Go before you call Navigate.
 func Navigate(url string) { jsutil.Call(js.Global().Get("location"), "assign", url) }
 
 func ReplaceHistory(url string) { js.Global().Get("history").Call("replaceState", js.Null(), "", url) }
-func Reload()                   { js.Global().Get("location").Call("reload") }
+
+// Reload reloads the page. Chrome and Firefox fire beforeunload before it
+// returns, so a Go beforeunload listener cannot stop a reload that Reload starts
+// (see Navigate). Run the unsaved-changes check in Go before you call Reload.
+func Reload() { jsutil.Call(js.Global().Get("location"), "reload") }
+
 func Viewport() Size {
 	g := js.Global()
 	return Size{Width: platformNumber(g.Get("innerWidth")), Height: platformNumber(g.Get("innerHeight"))}

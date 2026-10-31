@@ -91,14 +91,16 @@ GoSX keeps Go out of these calls:
   has returned and before the Go function returns. These are the calls:
   `Element.Dispatch`, `Focus`, `Blur` and `Click`; `Element.CheckValidity` and
   `ReportValidity`, which fire `invalid` on each invalid control (and
-  `ReportValidity` then focuses the first one); `Element.Remove`, `SetText` and
-  `ReplaceMarkup`, which remove the element's children (in Chrome for Testing
-  156, removing the node that has focus fires `blur` and `focusout` before the
-  call returns); `DispatchResize`, `DispatchError` and `browser.Navigate` (a
-  navigation to a fragment of the current page fires `popstate` before it
-  returns, and on a GoSX page the page's handler then dispatches
-  `gosx:popstate`, `gosx:navigation:state` and `gosx:navigate` in the same
-  call); `Context.Emit`, `Context.Navigate` (the page's `navigate` dispatches
+  `ReportValidity` then focuses the first one); `Element.Remove`, and
+  `SetText` and `ReplaceMarkup`, which remove the element's children (in Chrome
+  for Testing 156, removing the node that has focus, or an ancestor of it, fires
+  `blur` and `focusout` before the call returns; Firefox 146 and WebKit 26 fire
+  neither); `DispatchResize`, `DispatchError`, `browser.Navigate` and
+  `browser.Reload` (a navigation to a fragment of the current page fires
+  `popstate` before it returns, and on a GoSX page the page's handler then
+  dispatches `gosx:popstate`, `gosx:navigation:state` and `gosx:navigate` in the
+  same call; a navigation to another document, and a reload, fire
+  `beforeunload` before they return in Chrome and Firefox); `Context.Emit`, `Context.Navigate` (the page's `navigate` dispatches
   `gosx:navigation:state` before it first waits, and a same-document navigation
   also dispatches `gosx:navigate`), `Context.SetSignal`, `SetSignals`,
   `SetChangedSignals`, the main-thread batches of a `View`, the replay of the
@@ -133,25 +135,35 @@ What this changes for your code:
   still claims the entries that the user's Back and Forward buttons make. To let
   Go code decide whether a form submits, whether the report appears or whether
   the page navigates, call that code directly instead of making the call.
+- A Go `beforeunload` listener cannot stop a navigation that `browser.Navigate`
+  starts to another document, or a `browser.Reload`, in Chrome and Firefox: the
+  browser fires the event before the call returns, and the Go listener runs
+  after it (WebKit fires the event later). The listener can still stop a
+  navigation that the user starts. Run the unsaved-changes check in Go before
+  you call `Navigate` or `Reload`.
 - When the target is inside a shadow tree, `Event.Target` and
   `Event.RelatedTarget` may not name what they named during the dispatch. If the
-  event never left the shadow tree, the browser clears both after the dispatch,
-  and a cleared one is an invalid `Element`. That is the case for an event that
+  event's path ended inside a shadow tree, that is, the event never reached the
+  document, the browser clears both after the dispatch, and a cleared one is an
+  invalid `Element`. That is the case for an event that
   is not composed, such as every event that `Element.Dispatch` creates, and for a
   focus change between two elements of the same shadow tree (also between a
   shadow tree and one nested in it). Otherwise the browser leaves them as seen
   from the document: `Target` names the outermost shadow host, and
   `RelatedTarget` names the related element, or its outermost shadow host if it
   is inside a shadow tree. `Event.CurrentTarget` still names the element the
-  listener is attached to. Chrome for Testing 156 behaves this way; Firefox and
-  Safari were not tested.
+  listener is attached to. Chrome for Testing 156 behaves this way, and a
+  Playwright probe of Firefox 146 and WebKit 26 gave the same targets; Safari
+  itself was not tested.
 - A Go `blur` or `focusout` listener that a removal triggers runs after the
   removal. In Chrome for Testing 156, a page listener of the same event ran
   before it and saw the element in the document; the Go listener sees an element
-  that is out of the document (`Connected` reports false and `Parent` is
-  invalid), with its state intact, such as the value of a text field. A Go
-  listener that saves an inline edit when the field loses focus still reads the
-  value.
+  that is out of the document (`Connected` reports false; `Parent` is invalid
+  only if the removed node is the element itself), with its state intact, such
+  as the value of a text field. Firefox 146 and WebKit 26 fire no `blur` or
+  `focusout` on a removal, so no Go listener runs there. Save an inline edit
+  before you remove its row, or call `Blur` first (`Blur` is covered), instead
+  of relying on a `blur` listener.
 - On the main thread, a Go subscriber of a shared signal that Go writes runs
   after the page's other subscribers of that write, and sees the whole batch. A
   subscriber that writes another signal has that write's subscribers finish
@@ -174,7 +186,7 @@ return, and they are not covered. In Chrome for Testing 156, `Element.Append`
 and `InsertBefore` do so when they move the focused element (`blur` and
 `focusout`) or insert an iframe (`load`), `AppendMarkup` does so for an iframe
 (`load`), and `SetHidden` does so for the focused element (`blur` and
-`focusout`). A Go listener of such an event runs inside the call. Call `Blur` on
+`focusout`), and so does `SetAttr` with the name `hidden`. A Go listener of such an event runs inside the call. Call `Blur` on
 the focused element before you move or hide it: `Blur` is covered, and nothing
 is left to blur later. The other methods of the package were not checked against
 this list.

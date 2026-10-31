@@ -60,9 +60,12 @@
   Go listeners and subscribers no longer run inside the calls that start them.
   `Element.Dispatch`, `Focus`, `Blur` and `Click`, `Element.CheckValidity` and
   `ReportValidity` (they fire `invalid`), `Element.Remove`, `SetText` and
-  `ReplaceMarkup` (they fire `blur` and `focusout` when they remove the node
-  that has focus), `browser.DispatchResize`, `browser.DispatchError`,
-  `browser.Navigate` (to a fragment of the current page it fires `popstate`),
+  `ReplaceMarkup` (in Chrome, they fire `blur` and `focusout` when they remove
+  the node that has focus or an ancestor of it; Firefox and WebKit fire
+  neither), `browser.DispatchResize`, `browser.DispatchError`,
+  `browser.Navigate` (to a fragment of the current page it fires `popstate`; to
+  another document it fires `beforeunload` in Chrome and Firefox) and
+  `browser.Reload` (it fires `beforeunload` in Chrome and Firefox),
   `Context.Emit`, `Context.Navigate` (the page's `navigate` dispatches
   `gosx:navigation:state` before it first waits), `Context.SetSignal`,
   `SetSignals` and `SetChangedSignals`, the main-thread batches of a `View`, the
@@ -87,20 +90,29 @@
   reaction to `SetSignal` or `Emit`. `ReportValidity` reports the problem to the
   user whatever a Go `invalid` listener does, and a GoSX page starts the soft
   navigation that `browser.Navigate` to a fragment triggers whatever a Go
-  `gosx:popstate` listener does. To let Go code decide whether a form submits,
-  whether the report appears or whether the page navigates, call that code
-  directly instead of making the call. `Event.CurrentTarget` still names the
+  `gosx:popstate` listener does. For the same reason a Go `beforeunload`
+  listener cannot stop a navigation that `browser.Navigate` starts to another
+  document, or a `browser.Reload`, in Chrome and Firefox; it can still stop one
+  that the user starts. To let Go code decide whether a form submits, whether
+  the report appears or whether the page navigates, call that code directly
+  instead of making the call (run an unsaved-changes check before `Navigate` or
+  `Reload`). `Event.CurrentTarget` still names the
   listener's element. When the target is inside a shadow tree, `Event.Target` and
   `Event.RelatedTarget` may not name what they named during the dispatch. The
-  browser clears both when the event never left the shadow tree, which is the
-  case for an event that is not composed (every event that `Element.Dispatch`
-  creates) and for a focus change between two elements of the same shadow tree,
-  and a cleared one is an invalid `Element`. Otherwise it leaves them as seen
+  browser clears both when the event's path ended inside a shadow tree (it never
+  reached the document), which is the case for an event that is not composed
+  (every event that `Element.Dispatch` creates) and for a focus change between
+  two elements of the same shadow tree, also between a shadow tree and one
+  nested in it, and a cleared one is an invalid `Element`. Otherwise it leaves them as seen
   from the document: `Target` names the outermost shadow host, and
   `RelatedTarget` names the related element, or its outermost shadow host if it
   is inside a shadow tree. A Go `blur` or `focusout` listener that a removal
   triggers runs after the removal, so it sees an element that is out of the
-  document, with its state intact. An event that the page raises still reaches
+  document, with its state intact (only Chrome fires these events on a
+  removal). `Element.Append`, `InsertBefore`, `AppendMarkup`, `SetHidden` and
+  `SetAttr` with the name `hidden` can still run a Go listener inside the call when
+  they move or hide the focused element or insert an iframe; call `Blur` on the
+  focused element first. An event that the page raises still reaches
   a Go listener inside the browser's own dispatch. On the main thread, a Go
   subscriber of a shared signal that Go writes runs after the page's other
   subscribers of that write, and sees the whole batch; in a worker, a write goes

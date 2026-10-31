@@ -47,10 +47,12 @@ type Event struct{ value, current js.Value }
 //
 //   - When the target is inside a shadow tree, Event.Target and
 //     Event.RelatedTarget may not name what they named during the dispatch. If
-//     the event never left the shadow tree, the browser clears both after the
-//     dispatch, and a cleared one is an invalid Element. That is the case for an
-//     event that is not composed, such as every event that Dispatch creates, and
-//     for a focus change between two elements of the same shadow tree.
+//     the event's path ended inside a shadow tree, that is, the event never
+//     reached the document, the browser clears both after the dispatch, and a
+//     cleared one is an invalid Element. That is the case for an event that is
+//     not composed, such as every event that Dispatch creates, and for a focus
+//     change between two elements of the same shadow tree (also between a
+//     shadow tree and one nested in it).
 //     Otherwise the browser leaves them as seen from the document: Target names
 //     the outermost shadow host, and RelatedTarget names the related element,
 //     or its outermost shadow host if it is inside a shadow tree.
@@ -58,8 +60,10 @@ type Event struct{ value, current js.Value }
 //   - A blur or focusout listener that a removal triggers runs after the
 //     removal. In Chrome for Testing 156, a page listener of the same event ran
 //     before it and saw the element in the document; the Go listener sees an
-//     element that is out of the document (Connected reports false and Parent
-//     is invalid), with its state intact, such as the value of a text field.
+//     element that is out of the document (Connected reports false), with its
+//     state intact, such as the value of a text field. Parent is invalid only
+//     if the removed node is the element itself. Firefox 146 and WebKit 26 fire
+//     no blur or focusout on a removal, so no Go listener runs there.
 type Listener struct {
 	target   js.Value
 	event    string
@@ -113,6 +117,11 @@ func (e Element) Attr(name string) string {
 	}
 	return v.String()
 }
+
+// SetAttr sets an attribute. Setting "hidden" on the focused element makes
+// Chrome for Testing 156 fire blur and focusout inside the call, and a Go
+// listener of those events runs inside it (see SetHidden's caveat in package
+// browser). Call Blur first.
 func (e Element) SetAttr(name, value string) {
 	if e.Valid() {
 		e.value.Call("setAttribute", name, value)
