@@ -30,6 +30,8 @@
       await ensureSceneGatedFeatureLoaded("vessel", "gosxScene3dVesselUrl", "");
       if (!scene3DFactoryCurrent()) return {};
     }
+    // A spectral ocean needs the FFT chunk; if it cannot load, the renderer keeps the Gerstner ocean.
+    if ((props.scene || props).environment?.ocean?.spectrum) { try { await ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();

@@ -88,13 +88,16 @@
       const local=aboard?window.__gosx_scene3d_vessel_model.inversePoint(model.pose,Object.assign({},camera,{y:camera.y-lastBob})):null;
       lastBob=0;
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-      const q=helpers.lowHardware()?low:high,sample=(x,z)=>query.sample(q,x,z,waterSeconds);
+      // A spectral ocean's waves live in the water frame, and on WebGPU its graph answers the buoyancy points (see sampler in ocean-fft.ts); without it these are the plain CPU swell waves.
+      const q=helpers.lowHardware()?low:high,fft=window.__gosx_scene3d_ocean_fft_api,ws=fft?fft.sampler(query,q,waterSeconds):null,sample=ws?ws.sample:(x,z)=>query.sample(q,x,z,waterSeconds);
       if(first) {if(!link)state.y=sample(state.x,state.z).y;physics.presentation(state,true);first=false;}
       const input=link?link.input:window.__gosx_scene3d_vessel_input.value(controls.input,true);
       physics.look(state,input.lookYaw*Math.min(.1,dt)*1.4,input.lookPitch*Math.min(.1,dt)*1.4);
       if(link)link.apply(state);
-      else if(!paused)physics.advance(state,dt,seconds,input,sample,floor);
+      else if(!paused){if(ws)ws.begin();physics.advance(state,dt,seconds,input,ws?ws.probed:sample,floor);}
       const pose=link?state:physics.presentation(state);
+      // Publish the hull for scene-node readers (the ocean wake): bow forward is (sin, cos) of heading + pi, speed in m/s.
+      (window.__gosx_scene3d_node_poses||(window.__gosx_scene3d_node_poses={}))[props.vessel.nodeId]={x:pose.x,z:pose.z,heading:pose.heading+Math.PI,speed:state.speed||0};
       if(decks)decks.update(pose);if(!multi)deck(pose,physics,surface);if(cw)cw.update(decks);
       if(local&&(multi?decks.aboard(local):Math.abs(local.x)<surface.sizeX/2+.3&&Math.abs(local.z)<surface.sizeZ/2+.3&&Math.abs(local.y-state.helm.y)<2)) {
         const p=physics.localPoint(pose,local.x,local.y,local.z);
@@ -110,7 +113,7 @@
       if(navigation)navigation.advance(dt);
     },dispose() {
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-      disposed=true;if(cw)window.__gosx_scene3d_vessel_cutaway_api.unregister(mount.id,props.vessel.nodeId,cw);if(link)link.dispose();if(navigation)navigation.dispose();controls.dispose();if(wake)wake.dispose();if(props.walk)walk.surfaces=walk.surfaces.filter(s=>s!==floor0);
+      disposed=true;if(window.__gosx_scene3d_node_poses)delete window.__gosx_scene3d_node_poses[props.vessel.nodeId];if(cw)window.__gosx_scene3d_vessel_cutaway_api.unregister(mount.id,props.vessel.nodeId,cw);if(link)link.dispose();if(navigation)navigation.dispose();controls.dispose();if(wake)wake.dispose();if(props.walk)walk.surfaces=walk.surfaces.filter(s=>s!==floor0);
       suspend(false);base.dispose();if(sceneState._gosxMotionController===controller)sceneState._gosxMotionController=null;
     }};
   }

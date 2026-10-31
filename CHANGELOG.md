@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Draw the spectral ocean in the browser. A scene whose `Ocean` carries a
+  `Spectrum` now renders an FFT sea instead of the default six-wave sea, on
+  WebGPU and on WebGL2, and it reads the spectrum, swell waves, graph
+  parameters, presentation and wake that the Go `scene` package already
+  normalizes. The renderer lives in a new lazy chunk,
+  `bootstrap-feature-scene3d-ocean-fft.js` (262,099 bytes raw, 37,800 gzip,
+  31,969 Brotli), which a page loads only when its ocean has a spectrum, so
+  other Scene3D pages do not fetch it. The chunk holds the ocean kernels that
+  `elio emit ts --set ocean` generates (Elio v0.5.0, regenerate them with
+  `scripts/generate-elio-ocean.sh <elio-dir>`) and a generic Elio graph runner
+  with a WebGPU compute path and a WebGL2 gather path. If a pass cannot build
+  or the GPU rejects it, the renderer falls back to the Gerstner sea and says
+  why. A vessel's buoyancy reads the same spectral sea, so a hull and the
+  water it floats on agree. A vessel with `Ocean.Wake` set leaves a ship wake:
+  a bow wave, a wake height field and wake foam, driven by the hull's pose each
+  frame, with throttled passes, diagnostics and an opt-in debug view
+  (`OceanWake.Debug`). The runtime asset manifest gains
+  `BootstrapFeatureScene3DOceanFFT`, `RuntimePaths.BootstrapFeatureScene3DOceanFFT`
+  and `island.Renderer.SetBootstrapFeatureScene3DOceanFFTPath`. The extra code
+  in the shared Scene3D chunks (the scene normalizer, the lazy-load hooks, the
+  ocean pass hand-offs and the vessel sampler) adds 1,165 gzip and 1,248
+  Brotli bytes to a page that has loaded both renderer backends, and less than
+  800 bytes of either to a single-backend page. This replaces draft #737.
+
 - Hand a signal batch from a worker or native engine to the WASM runtime once,
   and without a goroutine on TinyGo. The page used to parse every batch with
   `JSON.parse` and hand the same text to the runtime, which decoded it again,

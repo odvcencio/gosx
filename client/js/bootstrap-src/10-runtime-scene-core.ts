@@ -3190,6 +3190,15 @@
       bathymetry,
     };
     if (raw.reflections) out.reflections = sceneOceanReflections(raw.reflections);
+    // Spectral ocean: Go normalizes the spectrum and computes the read-only swellWaves (scene.OceanSwellWaves).
+    if (sceneIsPlainObject(raw.spectrum)) { out.spectrum = sceneCloneData(raw.spectrum); out.swellWaves = sceneCloneData(raw.swellWaves || []); }
+    // The Elio ocean graph's value parameters and tween seconds, computed in Go (scene/ocean_graph.go); passed through unchanged.
+    if (out.spectrum && sceneIsPlainObject(raw.graphParams)) { out.graphParams = {}; for (const key of Object.keys(raw.graphParams)) if (Number.isFinite(raw.graphParams[key])) out.graphParams[key] = raw.graphParams[key]; if (Number.isFinite(raw.graphTween)) out.graphTween = raw.graphTween; if (sceneIsPlainObject(raw.graphNodes)) { out.graphNodes = {}; for (const key of Object.keys(raw.graphNodes)) if (typeof raw.graphNodes[key] === "string" && raw.graphNodes[key]) out.graphNodes[key] = raw.graphNodes[key]; } }
+    if (sceneIsPlainObject(raw.wake)) out.wake = { nodeId: typeof raw.wake.nodeId === "string" ? raw.wake.nodeId : "", enabled: raw.wake.enabled === true, length: sceneNumber(raw.wake.length, 0), beam: sceneNumber(raw.wake.beam, 0), debug: raw.wake.debug === true };
+    if (Array.isArray(raw.masks)) out.masks = raw.masks.filter(id => id && typeof id === "string");
+    // Presentation (scene.OceanPresentation): the water's clock scale, drift in m/s and sea-state transition time.
+    const view = sceneIsPlainObject(raw.presentation) ? raw.presentation : null;
+    if (view) { const num = key => sceneNumber(view[key], 0); out.presentation = { timeScale: Math.max(0, Math.min(4, num("timeScale"))) || 1, waterDriftX: Math.max(-100, Math.min(100, num("waterDriftX"))), waterDriftZ: Math.max(-100, Math.min(100, num("waterDriftZ"))), transitionSeconds: Math.max(0.1, Math.min(600, num("transitionSeconds") || 20)) }; }
     return out;
   }
 
