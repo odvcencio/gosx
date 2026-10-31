@@ -15,7 +15,11 @@ type fakeCalls struct {
 	mu      sync.Mutex
 	handler func(json.RawMessage)
 	results func(json.RawMessage)
+	// started is the engine's subscription to the started signal. A write to the
+	// signal reaches it, as a write to a shared signal reaches its subscribers.
+	started func(json.RawMessage)
 	writes  []json.RawMessage
+	marks   []json.RawMessage // writes to the started signal
 	signals []string
 	initial json.RawMessage
 	// resultInitial is the result signal's value when the engine subscribes.
@@ -36,6 +40,12 @@ func (f *fakeCalls) subscribe(signal string, h func(json.RawMessage)) (HandleFun
 		}
 		return func() { f.results = nil }, nil
 	}
+	if strings.HasSuffix(signal, ".started") {
+		f.mu.Lock()
+		f.started = h
+		f.mu.Unlock()
+		return func() { f.mu.Lock(); f.started = nil; f.mu.Unlock() }, nil
+	}
 	f.handler = h
 	if f.initial != nil {
 		h(f.initial)
@@ -49,9 +59,21 @@ func (f *fakeCalls) write(signal string, v any) error {
 		return err
 	}
 	f.mu.Lock()
+	if strings.HasSuffix(signal, ".started") {
+		// The mark of a call whose handler is starting (ServeCallsAsync); not a
+		// result. The page tells the engine's subscription about it before write
+		// returns.
+		f.marks = append(f.marks, data)
+		started := f.started
+		f.mu.Unlock()
+		if started != nil {
+			started(data)
+		}
+		return nil
+	}
+	defer f.mu.Unlock()
 	f.writes = append(f.writes, data)
 	f.signals = append(f.signals, signal)
-	f.mu.Unlock()
 	return nil
 }
 
@@ -221,5 +243,87 @@ func TestServeCallsWronglyTypedCallGetsBadCall(t *testing.T) {
 	}
 	if r := f.result(t, 0); r.ID != 5 || !strings.HasPrefix(r.Error, "bad-call:") {
 		t.Fatalf("result = %+v", r)
+	}
+}
+
+// A mailbox written by an island handler reaches the handler as separate calls.
+func TestServeCallsRunsEveryCallOfAMailbox(t *testing.T) {
+	f := &fakeCalls{}
+	_, _ = serveCalls(f, "c", CallOptions{Recent: 4}, adder)
+	f.send(t, `[{"ID":1,"Name":"add","Args":{"A":1,"B":2}},{"ID":2,"Name":"add","Args":{"A":3,"B":4}}]`)
+	if len(f.writes) != 2 || f.result(t, 0).Value.Total != 3 || f.result(t, 1).Value.Total != 7 {
+		t.Fatalf("writes = %s", f.writes)
+	}
+	var last struct {
+		Recent []struct {
+			ID    uint64
+			Value *sum
+		}
+	}
+	if err := json.Unmarshal(f.writes[1], &last); err != nil || len(last.Recent) != 2 || last.Recent[0].Value == nil || last.Recent[0].Value.Total != 3 {
+		t.Fatalf("Recent must carry the first reply's value: %s (%v)", f.writes[1], err)
+	}
+}
+
+// ServeCallsAsync only queues the call on the delivery stack. The handler runs
+// on a goroutine of its own and the result follows when it returns.
+func TestServeCallsAsyncAnswersOffTheDeliveryStack(t *testing.T) {
+	f := &fakeCalls{}
+	release := make(chan struct{})
+	_, err := serveCallsAsync(f, "bv.cmd", CallOptions{Timeout: 3 * time.Second}, func(name string, a addArgs) (sum, error) {
+		<-release
+		return sum{Total: a.A + a.B}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.declared.channel != "$bv.cmd" || f.declared.timeout != 3*time.Second {
+		t.Fatalf("declared = %+v", f.declared)
+	}
+	f.send(t, `{"ID":1,"Name":"add","Args":{"A":2,"B":3}}`) // returns while the handler waits
+	f.mu.Lock()
+	n := len(f.writes)
+	f.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("a result was written before the handler returned")
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		n = len(f.writes)
+		f.mu.Unlock()
+		if n == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if n != 1 || f.result(t, 0).Value.Total != 5 {
+		t.Fatalf("writes = %s", f.writes)
+	}
+}
+
+type trimmingCalls struct {
+	*fakeCalls
+	trims [][2]any
+}
+
+func (c *trimmingCalls) trimCalls(signal string, through uint64) error {
+	c.trims = append(c.trims, [2]any{signal, through})
+	return nil
+}
+
+// A transport that can read and rewrite the page's store trims the answered
+// calls; one that cannot is left alone.
+func TestServeCallsTrimsThroughATransportThatCan(t *testing.T) {
+	plain := &fakeCalls{}
+	_, _ = serveCalls(plain, "c", CallOptions{}, adder)
+	plain.send(t, `{"ID":1,"Name":"add"}`) // must not fail for want of a trimmer
+
+	tr := &trimmingCalls{fakeCalls: &fakeCalls{}}
+	_, _ = serveCalls(tr, "c", CallOptions{}, adder)
+	tr.send(t, `[{"ID":1,"Name":"add"},{"ID":2,"Name":"add"}]`)
+	if len(tr.trims) != 2 || tr.trims[0] != [2]any{"$c", uint64(1)} || tr.trims[1] != [2]any{"$c", uint64(2)} {
+		t.Fatalf("trims = %v", tr.trims)
 	}
 }

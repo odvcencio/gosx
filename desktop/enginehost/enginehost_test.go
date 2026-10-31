@@ -3,6 +3,7 @@ package enginehost
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -144,6 +145,26 @@ func (p *fakePage) waitMsg(id, typ string, n int) []hostMsg {
 	})
 	return got
 }
+
+// signalBatches returns the JSON of signal in each batch of shared-signal writes
+// that the host sent for id, in order.
+func (p *fakePage) signalBatches(id, signal string) []string {
+	var out []string
+	for _, m := range p.messages(id) {
+		if m.t() != "signals" {
+			continue
+		}
+		var batch map[string]json.RawMessage
+		if json.Unmarshal([]byte(m.str("text")), &batch) == nil {
+			if v, ok := batch[signal]; ok {
+				out = append(out, string(v))
+			}
+		}
+	}
+	return out
+}
+
+func (p *fakePage) countSignals(id, signal string) int { return len(p.signalBatches(id, signal)) }
 
 func (p *fakePage) count(id, typ string) int {
 	n := 0
@@ -419,6 +440,76 @@ func TestACallRunsOffTheDispatchGoroutine(t *testing.T) {
 	close(release)
 	if r := p.results(1)[0]; r.Value.Total != 1 {
 		t.Fatalf("result = %+v", r)
+	}
+}
+
+// A mailbox in the call signal delivers every call, and ServeCallsAsync runs
+// the handlers off the session goroutine, one at a time in ID order, writing
+// each result before the next call starts.
+func TestServeCallsAsyncAnswersAMailboxOverTheBridgeInOrder(t *testing.T) {
+	p := newFakePage(t)
+	h := newHost(t, p)
+	gate := make(chan struct{})
+	entered := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	var started []string
+	var resultsWhenSecondStarted int
+	_ = h.Register("Sim", func(in *Instance) (host.Handle, error) {
+		return host.ServeCallsAsync(in, "sim.cmd", host.CallOptions{}, func(name string, a addArgs) (sum, error) {
+			mu.Lock()
+			started = append(started, name)
+			if name == "add" {
+				resultsWhenSecondStarted = p.countSignals("e1", "$sim.cmd.result")
+			}
+			mu.Unlock()
+			if name == "slow" {
+				once.Do(func() { close(entered) })
+				<-gate
+			}
+			return sum{a.A + a.B}, nil
+		})
+	})
+	p.attach("e1", "Sim", false)
+	mountEngine(t, p, "e1")
+	// The result, the mark of a started call, then the call. A mailbox server
+	// subscribes to the mark so that an engine that mounts again can tell which
+	// call an engine before it started.
+	subs := p.waitMsg("e1", "subscribe", 3)
+	if subs[0].str("name") != "$sim.cmd.result" || subs[1].str("name") != "$sim.cmd.started" || subs[2].str("name") != "$sim.cmd" {
+		t.Fatalf("subscriptions = %v, %v, %v", subs[0], subs[1], subs[2])
+	}
+	call := uint64(subs[2].num("sid"))
+	p.reportMarks("e1", uint64(subs[1].num("sid"))) // the page reports each mark; a handler starts after it
+	p.post("e1", map[string]any{"t": "signal", "sid": call, "name": "$sim.cmd",
+		"json": `[{"ID":2,"Name":"add","Args":{"A":2,"B":3}},{"ID":1,"Name":"slow","Args":{"A":1,"B":1}}]`})
+	<-entered
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	if len(started) != 1 {
+		mu.Unlock()
+		t.Fatalf("handlers started %v while call 1 still ran; want only slow", started)
+	}
+	mu.Unlock()
+	if got := p.countSignals("e1", "$sim.cmd.result"); got != 0 {
+		t.Fatalf("call 2 was answered while call 1 still ran: %d result batches", got)
+	}
+	// The page knows call 1 started, before its handler could do anything.
+	if got := p.signalBatches("e1", "$sim.cmd.started"); len(got) != 1 || got[0] != "1" {
+		t.Fatalf("started marks written = %v, want [1]", got)
+	}
+	close(gate)
+	rs := p.results(2)
+	if rs[0].ID != 1 || rs[0].Value.Total != 2 || rs[1].ID != 2 || rs[1].Value.Total != 5 {
+		t.Fatalf("results = %+v", rs)
+	}
+	if len(rs[1].Recent) != 2 || rs[1].Recent[0].ID != 1 || rs[1].Recent[1].ID != 2 {
+		t.Fatalf("Recent = %+v", rs[1].Recent)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(started, []string{"slow", "add"}) || resultsWhenSecondStarted != 1 {
+		t.Fatalf("started %v; results written when call 2 started: %d, want [slow add] and 1", started, resultsWhenSecondStarted)
 	}
 }
 

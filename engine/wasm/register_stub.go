@@ -57,6 +57,9 @@ func (Context) subscribeSignalReplay(string, func(json.RawMessage)) (HandleFunc,
 }
 func (Context) declareCalls(string, time.Duration, int, string) {}
 
+func (Context) setSignalsFromEventLoop(map[string]any) error { return ErrUnsupported }
+func (Context) trimCallsFromEventLoop(string, uint64) error  { return ErrUnsupported }
+
 func (Context) viewSink() viewSink { return unsupportedViewSink{} }
 
 type unsupportedViewSink struct{}
