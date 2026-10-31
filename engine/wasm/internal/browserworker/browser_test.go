@@ -167,10 +167,13 @@ func page(t *testing.T, opts pageOptions) string {
 		gosx.RenderHTML(r.PageHead()) + "</head><body>" + body.String() + "</body></html>"
 }
 
-func serve(t *testing.T, dir string, html func(r *http.Request) string) *httptest.Server {
+func serve(t *testing.T, dir string, html func(r *http.Request) string, extra ...func(*http.ServeMux)) *httptest.Server {
 	t.Helper()
 	root := repoRoot(t)
 	mux := http.NewServeMux()
+	for _, add := range extra {
+		add(mux)
+	}
 	mux.HandleFunc("/gosx/", func(w http.ResponseWriter, r *http.Request) {
 		name := filepath.Base(r.URL.Path)
 		path := filepath.Join(root, "client", "js", name)

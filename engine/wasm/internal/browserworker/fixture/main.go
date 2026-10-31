@@ -9,9 +9,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"syscall/js"
 	"time"
 
+	"m31labs.dev/gosx/client/jsutil"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/engine/wasm"
 	"m31labs.dev/gosx/game"
@@ -59,6 +61,10 @@ func main() {
 			stop = startInput(ctx)
 		case "calls":
 			stop = startCalls(ctx)
+		case "remount":
+			stop = startRemount(ctx)
+		case "stall":
+			stop = startStall(ctx)
 		}
 		return wasm.HandleFunc(func() {
 			if stop != nil {
@@ -254,7 +260,11 @@ type callReply struct {
 // startCalls serves typed calls from an island and streams a paced view. The
 // call names pick the behavior the browser test needs: "add" answers, "fail"
 // returns an error, "slow" keeps the worker busy longer than the page's call
-// timeout, and "crash" ends the Go program.
+// timeout, and "crash" ends the Go program. Channel bv.cmd holds one call at a
+// time and is served on the event loop; channel bv.box holds a mailbox of calls
+// and is served on goroutines, with a "wait" call that waits for a promise.
+// Channel bv.late is a mailbox too, with a page timeout of 300 ms and a "wait"
+// call that answers late.
 func startCalls(ctx wasm.Context) (stop func()) {
 	off, err := wasm.ServeCalls(ctx, "bv.cmd", wasm.CallOptions{Timeout: 400 * time.Millisecond, Recent: 4},
 		func(name string, args callArgs) (callReply, error) {
@@ -274,6 +284,53 @@ func startCalls(ctx wasm.Context) (stop func()) {
 			return callReply{}, errors.New("unknown call " + name)
 		})
 	if err != nil {
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
+	// The mailbox channel: an island writes several calls in one handler, and
+	// the handlers may wait for the browser, so it is served asynchronously.
+	// The calls run one at a time, in call order.
+	box, err := wasm.ServeCallsAsync(ctx, "bv.box", wasm.CallOptions{Timeout: 5 * time.Second, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			switch name {
+			case "add":
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			case "wait":
+				// A is how long the browser takes to settle the promise, in
+				// milliseconds. Only the event loop can settle it, so a handler
+				// that ran inside the delivery callback would hang here.
+				if _, err := jsutil.AwaitPromise(settleAfter(args.A)); err != nil {
+					return callReply{}, err
+				}
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			case "fail":
+				return callReply{}, errors.New("refused")
+			}
+			return callReply{}, errors.New("unknown call " + name)
+		})
+	if err != nil {
+		off.Dispose()
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
+	// The late channel: the page times a call out after 300 ms, and the handler of
+	// "wait" answers after args.A milliseconds, so its reply comes late.
+	late, err := wasm.ServeCallsAsync(ctx, "bv.late", wasm.CallOptions{Timeout: 300 * time.Millisecond, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			switch name {
+			case "wait":
+				if _, err := jsutil.AwaitPromise(settleAfter(args.A)); err != nil {
+					return callReply{}, err
+				}
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			case "add":
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			}
+			return callReply{}, errors.New("unknown call " + name)
+		})
+	if err != nil {
+		box.Dispose()
+		off.Dispose()
 		report(ctx, "calls-error", map[string]any{"error": err.Error()})
 		return nil
 	}
@@ -297,8 +354,19 @@ func startCalls(ctx wasm.Context) (stop func()) {
 	return func() {
 		close(done)
 		view.Dispose()
+		late.Dispose()
+		box.Dispose()
 		off.Dispose()
 	}
+}
+
+// settleAfter returns a promise that the browser settles after ms milliseconds.
+// It uses Promise.withResolvers and setTimeout, both native, so no Go function
+// runs inside the call into JavaScript (new Promise with a Go executor would).
+func settleAfter(ms int) js.Value {
+	pr := js.Global().Get("Promise").Call("withResolvers")
+	js.Global().Call("setTimeout", pr.Get("resolve"), ms)
+	return pr.Get("promise")
 }
 
 func threadName(ctx wasm.Context) string {
@@ -306,4 +374,69 @@ func threadName(ctx wasm.Context) string {
 		return "worker"
 	}
 	return "main"
+}
+
+// startRemount serves channel bv.save for the test that remounts the engine
+// while a call runs. Each handler does its work against the test server (a
+// request to /effect), so that the server counts how often each call ran, in
+// whichever engine ran it: the page cannot count it once a worker is gone.
+//
+// "save" does its work and then waits for the test to open a gate on the server
+// with a synchronous request. That blocks the whole worker, so the page can
+// ask the engine to dispose while the worker cannot yet handle the request.
+// When the gate opens, the handler returns, and the server goes on to the next
+// call inside that gap. "order" does its work.
+func startRemount(ctx wasm.Context) (stop func()) {
+	save, err := wasm.ServeCallsAsync(ctx, "bv.save", wasm.CallOptions{Timeout: 10 * time.Second, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			if err := syncGet("/effect?name=" + name); err != nil {
+				return callReply{}, err
+			}
+			if name == "save" {
+				if err := syncGet("/gate"); err != nil {
+					return callReply{}, err
+				}
+			}
+			return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+		})
+	if err != nil {
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
+	report(ctx, "remount-ready", nil)
+	return save.Dispose
+}
+
+// startStall serves channel bv.stall for the test that keeps the page's main
+// thread busy for longer than the channel's timeout. Each handler does its work
+// against the test server (a request to /effect), so that the server counts how
+// often each call ran. The timeout is short, 300 ms, so a stall of 800 ms is well
+// past it: the page's watchdog fires when the page is free again, and the
+// engine's wait for the page to report a call's mark must outlast it.
+func startStall(ctx wasm.Context) (stop func()) {
+	serve, err := wasm.ServeCallsAsync(ctx, "bv.stall", wasm.CallOptions{Timeout: 300 * time.Millisecond, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			if err := syncGet("/effect?name=" + name); err != nil {
+				return callReply{}, err
+			}
+			return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+		})
+	if err != nil {
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
+	report(ctx, "stall-ready", nil)
+	return serve.Dispose
+}
+
+// syncGet makes a synchronous request. It blocks the whole worker until the
+// server answers; the remount test relies on that.
+func syncGet(path string) error {
+	xhr := js.Global().Get("XMLHttpRequest").New()
+	xhr.Call("open", "GET", path, false)
+	xhr.Call("send")
+	if status := xhr.Get("status").Int(); status != 200 {
+		return fmt.Errorf("%s: status %d", path, status)
+	}
+	return nil
 }

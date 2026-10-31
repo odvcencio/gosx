@@ -9,12 +9,13 @@
 // Transports plug in below it:
 //
 //   - engine/wasm adapts a Go WASM engine running in a browser worker or on the
-//     main thread (wasm.NewView, wasm.ServeCalls);
+//     main thread (wasm.NewView, wasm.ServeCalls, wasm.ServeCallsAsync);
 //   - desktop/enginehost adapts an engine running natively in a GoSX desktop
 //     host process, over desktop IPC.
 //
 // An engine written against this package (a Publisher for state, ServeCalls for
-// commands) runs behind either, and the page's islands do not change.
+// commands, or ServeCallsAsync when a command waits for something) runs behind
+// either, and the page's islands do not change.
 package host
 
 import "errors"

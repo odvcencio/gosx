@@ -274,6 +274,7 @@ type ObjectIR struct {
 	OutlineWidth        float64              `json:"outlineWidth,omitempty"`
 	CastShadow          bool                 `json:"castShadow,omitempty"`
 	ReceiveShadow       bool                 `json:"receiveShadow,omitempty"`
+	PlanarReflection    *bool                `json:"planarReflection,omitempty"`
 	DepthWrite          *bool                `json:"depthWrite,omitempty"`
 	Roughness           float64              `json:"roughness,omitempty"`
 	Metalness           float64              `json:"metalness,omitempty"`
@@ -2171,6 +2172,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 	if item.ReceiveShadow {
 		record["receiveShadow"] = true
 	}
+	if item.PlanarReflection != nil {
+		record["planarReflection"] = *item.PlanarReflection
+	}
 	if item.DepthWrite != nil {
 		record["depthWrite"] = *item.DepthWrite
 	}
@@ -2339,6 +2343,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	}
 	if item.Visible != nil {
 		record["visible"] = *item.Visible
+	}
+	if item.PlanarReflection != nil {
+		record["planarReflection"] = *item.PlanarReflection
 	}
 	setString(record, "animation", item.Animation)
 	setString(record, "animationSeq", item.AnimationSeq)

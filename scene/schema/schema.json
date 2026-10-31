@@ -382,6 +382,7 @@
             },
             "castShadow": { "type": "boolean" },
             "receiveShadow": { "type": "boolean" },
+            "planarReflection": { "type": "boolean" },
             "lodGroup": { "type": "string" },
             "lodLevel": {
               "type": "integer",

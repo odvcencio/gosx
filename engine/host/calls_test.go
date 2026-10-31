@@ -15,12 +15,19 @@ type fakeCalls struct {
 	mu      sync.Mutex
 	handler func(json.RawMessage)
 	results func(json.RawMessage)
+	// started is the engine's subscription to the started signal. A write to the
+	// signal reaches it, as a write to a shared signal reaches its subscribers.
+	started func(json.RawMessage)
 	writes  []json.RawMessage
+	marks   []json.RawMessage // writes to the started signal
 	signals []string
 	initial json.RawMessage
 	// resultInitial is the result signal's value when the engine subscribes.
 	resultInitial json.RawMessage
-	declared      struct {
+	// onWrite runs after each write, outside the lock, as a store's
+	// notification of a subscriber would.
+	onWrite  func()
+	declared struct {
 		channel string
 		timeout time.Duration
 		recent  int
@@ -36,6 +43,12 @@ func (f *fakeCalls) Subscribe(signal string, h func(json.RawMessage)) (HandleFun
 		}
 		return func() { f.results = nil }, nil
 	}
+	if strings.HasSuffix(signal, ".started") {
+		f.mu.Lock()
+		f.started = h
+		f.mu.Unlock()
+		return func() { f.mu.Lock(); f.started = nil; f.mu.Unlock() }, nil
+	}
 	f.handler = h
 	if f.initial != nil {
 		h(f.initial)
@@ -49,9 +62,24 @@ func (f *fakeCalls) Write(signal string, v any) error {
 		return err
 	}
 	f.mu.Lock()
+	if strings.HasSuffix(signal, ".started") {
+		// The mark of a call whose handler is starting (ServeCallsAsync). It is not
+		// a result, so the tests that count results do not see it. The page tells
+		// the engine's subscription about it before Write returns.
+		f.marks = append(f.marks, data)
+		started := f.started
+		f.mu.Unlock()
+		if started != nil {
+			started(data)
+		}
+		return nil
+	}
 	f.writes = append(f.writes, data)
 	f.signals = append(f.signals, signal)
 	f.mu.Unlock()
+	if f.onWrite != nil {
+		f.onWrite()
+	}
 	return nil
 }
 

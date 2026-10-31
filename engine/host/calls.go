@@ -11,36 +11,87 @@ import (
 	"m31labs.dev/gosx/engine"
 )
 
-// CallOptions tunes ServeCalls.
+// CallOptions tunes ServeCalls and ServeCallsAsync.
 type CallOptions struct {
 	// Timeout is how long the page waits for a reply before it writes the
 	// error "timeout" to the result signal. Zero means DefaultCallTimeout.
 	// The page enforces it, so it still fires if the handler never returns.
 	Timeout time.Duration
+	// MarkTimeout is how long ServeCallsAsync waits for the page to report the
+	// mark of a call before it gives up on that call: the call is answered with
+	// the error "not-started: ..." and no handler runs (see ServeCallsAsync).
+	// Zero, or a negative number, means DefaultCallMarkTimeout. ServeCalls writes
+	// no mark and ignores it.
+	//
+	// It does not depend on Timeout. A page whose main thread is busy for longer
+	// than Timeout still reports the mark when it is free again. The handler
+	// starts then and the call finishes late; its real reply replaces the page's
+	// "timeout". Only a page that stays silent for the whole MarkTimeout fails the
+	// call, and until then the calls behind it wait.
+	MarkTimeout time.Duration
 	// Recent is how many past replies Result.Recent keeps. Zero means
 	// DefaultCallRecent.
 	Recent int
+	// RecentBytes is how many bytes of reply values Result.Recent may carry
+	// besides the newest reply's own Value. The newest entries keep their value
+	// while they fit; an older entry that no longer fits keeps its ID and error
+	// only. Zero means DefaultCallRecentBytes; a negative number keeps no values.
+	RecentBytes int
 }
 
 const (
 	// DefaultCallTimeout is the page-side deadline for one call.
 	DefaultCallTimeout = 10 * time.Second
+	// DefaultCallMarkTimeout is how long ServeCallsAsync waits for the page to
+	// report the mark of a call when CallOptions.MarkTimeout is zero. A page that
+	// is only slow reports the mark well before it, and a page that has reported
+	// nothing by then is treated as silent: the call has already come back
+	// not-started, and a report that arrives later is ignored.
+	DefaultCallMarkTimeout = 30 * time.Second
 	// DefaultCallRecent is the default length of Result.Recent.
 	DefaultCallRecent = 8
+	// DefaultCallRecentBytes is the default byte budget for the values in
+	// Result.Recent.
+	DefaultCallRecentBytes = 8 << 10
 )
 
 // CallTransport is what ServeCalls needs from the page. Each transport
 // supplies one: the js/wasm engine context, or the desktop IPC bridge.
+//
+// A transport carries any signal name. Besides the call and result signals,
+// ServeCallsAsync subscribes to and writes "<call signal>.started" (see
+// ServeCallsAsync), so a transport that passes only the first two names breaks
+// the guard against running a call twice after a remount.
+//
+// A write to a shared signal reaches the writer's own subscriptions to that
+// signal, as it does for any other subscriber, and ServeCallsAsync relies on it:
+// it runs a handler only after the page has told it, on its subscription to
+// "<call signal>.started", that the mark of the call is in the page's store. An
+// engine that does not run on the page's thread (a worker, a native host) only
+// posts its writes. The page may drop a post, or refuse it with an error, once
+// it has begun to dispose that engine, and then it does not report the change.
 type CallTransport interface {
 	// Subscribe also delivers the signal's current value once, so a call
 	// written before the subscription is not lost.
 	Subscribe(signal string, handler func(json.RawMessage)) (HandleFunc, error)
-	// Write sets a shared signal to value.
+	// Write sets a shared signal to value. An error means the page took no part
+	// of the write.
 	Write(signal string, value any) error
 	// Declare tells the page half about the channel so its watchdog can fail a
 	// call that the engine never answers. It is a no-op where the page has no
 	// watchdog (the main thread).
 	Declare(channel string, timeout time.Duration, recent int, zeroResult string)
+}
+
+// CallTrimmer is an optional capability of a CallTransport that reads and
+// writes the page's own signal store at once (an engine on the main thread). A
+// mailbox in the call signal lists the calls that have no reply yet; after the
+// engine answers call n, ServeCalls asks such a transport to drop the calls at
+// or below n from it. It asks only on a channel that has held a mailbox. A
+// transport whose view of the page is a delayed copy (a worker, a native host)
+// does not implement it: the page host drops them itself.
+type CallTrimmer interface {
+	TrimCalls(callSignal string, through uint64) error
 }
 
 // callSignals returns the wire names of the call and result signals. A leading
@@ -56,27 +107,117 @@ func callSignals(channel string) (call, result string, err error) {
 // ServeCalls answers typed requests from islands and other page code.
 //
 // The page writes an engine.Call[A] to the shared signal "$channel" and the
-// engine replies with an engine.Result[R] on "$channel.result". For each call
-// with an ID higher than any it has handled, ServeCalls decodes the arguments,
-// runs handle, and writes one result. A call whose arguments do not decode gets
-// an error result instead of silence. A call that arrives before ServeCalls
-// subscribes is handled from the signal's current value, unless the result
-// signal shows it was already answered (an engine that remounts does not run an
-// old call again). Repeated deliveries of
-// the same value, which a batch flush can produce, are ignored.
+// engine replies with an engine.Result[R] on "$channel.result". The signal may
+// also hold a mailbox, an array of calls, so that several calls written
+// together (for example by one island handler) all arrive. ServeCalls runs
+// every call whose ID is higher than any it has handled, in ID order, and
+// writes one result for each. It decodes the arguments, runs handle and writes
+// the result. A call whose arguments do not decode gets an error result instead
+// of silence. A call that arrives before ServeCalls subscribes is handled from
+// the signal's current value, unless the result signal shows it was already
+// answered (an engine that remounts does not run an old call again). Repeated
+// deliveries of the same value, which a batch flush can produce, are ignored.
 //
-// Result.Recent lists the last CallOptions.Recent replies (ID and error), so an
-// island that sent two calls before the first reply still finds both. On a
-// worker engine the page also fails a call with "timeout" when no reply arrives
-// in CallOptions.Timeout, and with "worker-crashed" if the worker dies.
+// Result.Recent lists the last CallOptions.Recent replies (ID, error and,
+// within CallOptions.RecentBytes, value), so an island that sent several calls
+// before the first reply still finds each one. It also lists, with the error
+// "overwritten", each call that a writer of single calls skipped just before the
+// call that arrived: the signal keeps its newest value only, so the engine never
+// received it. Result.Seen is the highest call ID the engine has accepted or seen
+// in a result, the number a writer counts its next call from. On a worker engine
+// the page also fails a call with "timeout" when no reply arrives in
+// CallOptions.Timeout, and with "worker-crashed" if the worker dies.
 //
-// handle runs on the engine's event loop, one call at a time.
+// handle runs on the engine's event loop, one call at a time, and must not
+// wait for a browser promise or any callback that only the event loop can run:
+// the engine would deadlock. Use ServeCallsAsync for a handler that blocks.
+//
+// ServeCalls does not guard against a call that runs twice across a remount. A
+// call that reached the engine just before the page began to dispose it can run
+// its handler during the gap before the engine handles the dispose request, and
+// the page drops the reply (see ServeCallsAsync). The engine that mounts next
+// then finds the call with no result and runs it again. Serve work that must not
+// happen twice with ServeCallsAsync.
 func ServeCalls[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
 	return ServeCallsOn(ctx.CallTransport(), channel, opts, handle)
 }
 
 // ServeCallsOn is ServeCalls over an explicit transport.
 func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
+	return serveCalls(tr, channel, opts, handle, false)
+}
+
+// ServeCallsAsync is ServeCalls for a handler that may block, for example on a
+// browser promise (jsutil.AwaitPromise), storage or the network.
+//
+// ServeCalls runs the handler inside the JavaScript callback that delivers the
+// call. Go cannot run any other callback until that one returns, so a handler
+// that waits for one deadlocks the engine. ServeCallsAsync only queues the call
+// in that callback and returns at once. The handler runs on a goroutine of its
+// own, so the event loop stays free for the promise it waits for.
+//
+// Calls run one at a time, in ID order, and each result is written before the
+// next call starts. The result of call n therefore tells a client that every
+// call up to n has finished. A handler that never returns holds back every
+// later call on the channel; use one channel for each kind of work that must
+// not wait for the other.
+//
+// The page's watchdog counts from when the page saw a call, not from when its
+// handler starts, so a call that waits in the queue behind a slow one can time
+// out. Its real reply replaces the timeout when it comes. A client that keeps
+// one call in flight (wasm.Caller does by default) never queues calls here.
+//
+// A handler runs on its own goroutine, never inside a call from JavaScript into
+// Go. The engine's own writes to the page, a result, a mark and the trim of a
+// mailbox, are made so that they do not enter Go again either. A write to a
+// shared signal makes the page tell every subscriber before the write returns,
+// and the engine subscribes to the signals it writes. A write made inside a call
+// from Go into JavaScript can run a Go subscriber inside that call, as the
+// browser does for a function made with js.FuncOf. That is a nested entry from
+// JavaScript into Go, and two goroutines in nested entries at once can stop the
+// program. So the main-thread transport (wasm.ServeCallsAsync) has the browser
+// make its writes from the event loop, where no call from Go is pending, and
+// waits for them. A handler that publishes state should do the same with
+// wasm.Context.SetSignalsFromEventLoop; SetSignal and SetSignals make the write
+// inside a call into JavaScript. A handler that calls into JavaScript should also
+// avoid functions that run a Go callback before they return (new Promise with a
+// Go executor, dispatchEvent to a Go listener): jsutil.AwaitPromise follows the
+// rule.
+//
+// Disposing the returned HandleFunc drops the queued calls and the reply of the
+// call that is running; it does not stop a running handler. The page stops
+// taking the engine's writes before the engine hears that it is disposed: the
+// browser revokes the engine's context before it calls Dispose, and the page
+// host of a worker or native engine drops what the engine writes from the moment
+// it asks the engine to dispose until the engine handles the request. A reply
+// written then is lost. So that a call does not run twice, the server writes the
+// ID of each call to "<channel>.started" and runs the handler only after the page
+// reports that value on the server's own subscription to the signal. A page that
+// has begun to dispose the engine does not report it (or the write fails), so the
+// handler does not start, and the engine that mounts next runs the call. A write
+// that fails, or a page that reports nothing within CallOptions.MarkTimeout
+// (DefaultCallMarkTimeout unless you set it), answers the call with the error
+// "not-started: ..." and runs nothing; the next call goes on. That wait does not
+// end at CallOptions.Timeout: a page that is only slow reports the mark late, the
+// call runs late, and its real reply replaces the page's "timeout". The calls
+// behind a call whose mark is not yet reported wait for it.
+//
+// A server that mounts later on the same signals answers a call with no result
+// whose ID is at or below the mark with the error "interrupted" and does not run
+// it again: the earlier server marked it, so its handler started or was about to
+// start, and may have done its work. This includes a call whose handler finished
+// after the page began to dispose the engine, because its reply was dropped.
+// Calls that never started still run, once.
+func ServeCallsAsync[A, R any](ctx Context, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
+	return ServeCallsAsyncOn(ctx.CallTransport(), channel, opts, handle)
+}
+
+// ServeCallsAsyncOn is ServeCallsAsync over an explicit transport.
+func ServeCallsAsyncOn[A, R any](tr CallTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error)) (HandleFunc, error) {
+	return serveCalls(tr, channel, opts, handle, true)
+}
+
+func serveCalls[A, R any](tr CallTransport, channel string, opts CallOptions, handle func(name string, args A) (R, error), async bool) (HandleFunc, error) {
 	if handle == nil {
 		return nil, errors.New("call handler is required")
 	}
@@ -87,107 +228,358 @@ func ServeCallsOn[A, R any](tr CallTransport, channel string, opts CallOptions, 
 	if opts.Timeout <= 0 {
 		opts.Timeout = DefaultCallTimeout
 	}
+	if opts.MarkTimeout <= 0 {
+		opts.MarkTimeout = DefaultCallMarkTimeout
+	}
 	if opts.Recent <= 0 {
 		opts.Recent = DefaultCallRecent
 	}
-
-	var (
-		mu       sync.Mutex
-		last     uint64
-		recent   []engine.ResultRef
-		disposed bool
-	)
-	process := func(data json.RawMessage) {
-		// The ID decodes on its own, so a call with a wrongly typed Name or
-		// Args still gets an answer.
-		var head struct{ ID uint64 }
-		if json.Unmarshal(data, &head) != nil {
-			return // no ID to answer
-		}
-		mu.Lock()
-		if disposed || head.ID == 0 || head.ID <= last {
-			mu.Unlock()
-			return
-		}
-		last = head.ID
-		mu.Unlock()
-
-		result := engine.Result[R]{ID: head.ID}
-		var args A
-		var call engine.Call[json.RawMessage]
-		if err := safeDecode(data, &call); err != nil {
-			result.Error = "bad-call: " + err.Error()
-		} else {
-			result.Name = call.Name
-			if len(call.Args) > 0 && string(call.Args) != "null" {
-				if err := safeDecode(call.Args, &args); err != nil {
-					result.Error = "bad-args: " + err.Error()
-				}
-			}
-		}
-		if result.Error == "" {
-			value, err := safeHandle(handle, call.Name, args)
-			if err != nil {
-				result.Error = err.Error()
-			} else {
-				result.Value = value
-			}
-		}
-
-		mu.Lock()
-		recent = append(recent, engine.ResultRef{ID: result.ID, Error: result.Error})
-		if len(recent) > opts.Recent {
-			recent = append([]engine.ResultRef(nil), recent[len(recent)-opts.Recent:]...)
-		}
-		result.Recent = append([]engine.ResultRef(nil), recent...)
-		gone := disposed
-		mu.Unlock()
-		if gone {
-			return
-		}
-		// A result value that cannot be encoded is reported as an error result.
-		if err := tr.Write(resultSignal, result); err != nil {
-			fallback := engine.Result[R]{ID: result.ID, Name: result.Name, Error: "reply-failed: " + err.Error(), Recent: result.Recent}
-			_ = tr.Write(resultSignal, fallback)
-		}
+	if opts.RecentBytes == 0 {
+		opts.RecentBytes = DefaultCallRecentBytes
+	}
+	if opts.RecentBytes < 0 {
+		opts.RecentBytes = 0
 	}
 
+	s := &callServer[A, R]{
+		tr: tr, handle: handle, async: async, markTimeout: opts.MarkTimeout,
+		callSignal: callSignal, resultSignal: resultSignal, startedSignal: callSignal + ".started",
+		log: replyLog{keep: opts.Recent, budget: opts.RecentBytes},
+	}
+	s.trimmer, _ = tr.(CallTrimmer)
+	s.wake = sync.NewCond(&s.mu)
 	var zero string
 	if encoded, err := json.Marshal(engine.Result[R]{}); err == nil {
 		zero = string(encoded)
 	}
+	if encoded, err := json.Marshal(*new(R)); err == nil {
+		s.zero = encoded
+	} else {
+		s.zero = json.RawMessage("null")
+	}
+
 	// Shared signals outlive an engine instance, so a remounted engine finds
 	// the previous call and its result. Read the result first and treat every
 	// call up to its ID as answered. The result subscription comes before the
 	// call subscription so that on a worker, where both current values arrive
 	// as messages, the result is seen first.
 	offResult, err := tr.Subscribe(resultSignal, func(data json.RawMessage) {
-		var answered struct{ ID uint64 }
+		var answered struct{ ID, Seen uint64 }
 		if json.Unmarshal(data, &answered) != nil {
 			return
 		}
-		mu.Lock()
-		if answered.ID > last {
-			last = answered.ID
+		s.mu.Lock()
+		if answered.ID > s.last {
+			s.last = answered.ID
 		}
-		mu.Unlock()
+		// The page writes results too (a timeout), and a result may come from an
+		// engine that ran before this one. Seen never goes below what they saw.
+		s.seen = max(s.seen, s.last, answered.Seen)
+		s.mu.Unlock()
 	})
 	if err != nil {
 		return nil, fmt.Errorf("serve calls on %s: %w", resultSignal, err)
 	}
-	off, err := tr.Subscribe(callSignal, process)
+	// The mark comes between the two, so that a replay sees the result, then the
+	// mark, then the call. It is also how the page reports that it took a mark
+	// this server wrote (see markStarted).
+	offStarted := HandleFunc(func() {})
+	if async {
+		offStarted, err = tr.Subscribe(s.startedSignal, func(data json.RawMessage) {
+			var n uint64
+			if json.Unmarshal(data, &n) != nil {
+				return
+			}
+			s.mu.Lock()
+			s.started = max(s.started, n)
+			s.marked = max(s.marked, n)
+			s.mu.Unlock()
+			s.wake.Broadcast()
+		})
+		if err != nil {
+			offResult.Dispose()
+			return nil, fmt.Errorf("serve calls on %s: %w", s.startedSignal, err)
+		}
+	}
+	off, err := tr.Subscribe(callSignal, s.deliver)
 	if err != nil {
+		offStarted.Dispose()
 		offResult.Dispose()
 		return nil, fmt.Errorf("serve calls on %s: %w", callSignal, err)
 	}
 	tr.Declare(callSignal, opts.Timeout, opts.Recent, zero)
 	return func() {
-		mu.Lock()
-		disposed = true
-		mu.Unlock()
+		s.mu.Lock()
+		s.disposed = true
+		s.queue = nil
+		s.mu.Unlock()
+		s.wake.Broadcast() // a handler that waits for the page to report its mark does not start
 		off.Dispose()
+		offStarted.Dispose()
 		offResult.Dispose()
 	}, nil
+}
+
+// callReply is the outcome of one call.
+type callReply struct {
+	id    uint64
+	name  string
+	err   string
+	lost  []lostCall      // calls a writer of single calls skipped just below id
+	value json.RawMessage // the encoded Value to publish; the encoded zero value for an error
+	kept  json.RawMessage // the value for Result.Recent; nil for an error
+}
+
+// callServer is the engine side of one call channel. It keeps the accepted
+// calls in a queue and drains it one call at a time: ServeCalls on the stack
+// of the callback that delivered the call, ServeCallsAsync on a goroutine.
+//
+// mu guards the fields below it. It is never held across a call into the
+// handler or the transport, because the transport may call back into Go before
+// it returns (a write to a shared signal notifies this engine's own
+// subscriptions in the same call stack).
+type callServer[A, R any] struct {
+	tr            CallTransport
+	trimmer       CallTrimmer
+	handle        func(name string, args A) (R, error)
+	async         bool
+	callSignal    string
+	resultSignal  string
+	startedSignal string // the mark of the call whose handler started last (async only)
+	markTimeout   time.Duration
+	zero          json.RawMessage
+
+	mu       sync.Mutex
+	wake     *sync.Cond  // on mu: marked rose, or the server was disposed
+	last     uint64      // the highest ID accepted or reported as answered
+	seen     uint64      // the highest ID accepted, answered or seen by the page: Result.Seen
+	started  uint64      // the highest ID whose handler started, here or in an engine before this one
+	marked   uint64      // the highest mark the page has reported on the started signal
+	queue    []callEntry // accepted calls that have not started, in ID order
+	busy     bool        // a stack or goroutine is draining the queue
+	mailbox  bool        // the call signal has held a mailbox
+	disposed bool
+	log      replyLog
+}
+
+// deliver takes the value of the call signal.
+func (s *callServer[A, R]) deliver(data json.RawMessage) {
+	entries, mailbox := decodeCalls(data)
+	s.mu.Lock()
+	if s.disposed {
+		s.mu.Unlock()
+		return
+	}
+	if mailbox {
+		s.mailbox = true
+	}
+	for _, entry := range entries {
+		if entry.id > s.last {
+			if !mailbox {
+				// A mailbox lists every call it has, so a gap in it is no loss.
+				entry.lost = lostBefore(s.seen, s.started, entry.id, s.log.keep)
+			}
+			s.last = entry.id
+			s.seen = max(s.seen, entry.id)
+			// A call at or below the mark has no result, and its handler started: an
+			// engine before this one began it and went away. This engine ran no call
+			// above the mark yet, so no call it accepts now can be its own.
+			if entry.id <= s.started {
+				entry.skip = errInterrupted
+			}
+			s.queue = append(s.queue, entry)
+		}
+	}
+	start := len(s.queue) > 0 && !s.busy
+	if start {
+		s.busy = true
+	}
+	s.mu.Unlock()
+	switch {
+	case !start:
+	case s.async:
+		go s.drain()
+	default:
+		s.drain()
+	}
+}
+
+// drain runs the queued calls, oldest first, and writes each result before it
+// starts the next call. A call that arrives while drain runs (a handler or a
+// result write that reaches this engine's own subscription) joins the queue and
+// runs after the calls before it, so results stay in ID order.
+func (s *callServer[A, R]) drain() {
+	finished := false
+	defer func() {
+		if !finished { // a panic is leaving: let the next delivery drain again
+			s.mu.Lock()
+			s.busy = false
+			s.mu.Unlock()
+		}
+	}()
+	for {
+		s.mu.Lock()
+		if s.disposed || len(s.queue) == 0 {
+			s.busy = false
+			s.mu.Unlock()
+			finished = true
+			return
+		}
+		entry := s.queue[0]
+		s.queue[0] = callEntry{}
+		s.queue = s.queue[1:]
+		s.mu.Unlock()
+
+		if s.async && entry.skip == "" {
+			run, err := s.markStarted(entry.id)
+			if !run {
+				s.mu.Lock()
+				s.busy = false
+				s.mu.Unlock()
+				finished = true
+				return
+			}
+			if err != nil {
+				// The page took no mark, so the call has not started and must not: the
+				// engine that mounts next would find no mark and run it too.
+				entry.skip = "not-started: " + err.Error()
+			}
+		}
+		reply := s.run(entry)
+
+		s.mu.Lock()
+		if s.disposed {
+			s.busy = false
+			s.mu.Unlock()
+			finished = true
+			return
+		}
+		result := engine.Result[json.RawMessage]{
+			ID: reply.id, Name: reply.name, Error: reply.err, Value: reply.value,
+			Recent: s.log.add(reply.id, reply.err, reply.kept, reply.lost),
+			Seen:   s.seen,
+		}
+		trim := s.mailbox && s.trimmer != nil
+		s.mu.Unlock()
+
+		s.write(result)
+		if trim {
+			_ = s.trimmer.TrimCalls(s.callSignal, reply.id)
+		}
+	}
+}
+
+// markStarted writes the ID of a call whose handler is about to run to the
+// started signal, waits until the page reports that mark on this server's own
+// subscription to the signal, and reports whether the handler may run: it may not
+// once the server is disposed. It also returns the error of the write; the
+// handler must not run then either.
+//
+// The page stops taking an engine's writes before the engine hears that it is
+// disposed. The browser revokes an engine's context before it calls Dispose, and
+// the page host of a worker or native engine drops what the engine writes from
+// the moment it asks the engine to dispose until the engine handles the request.
+// A reply written then is lost, and so would be a mark that was not waited for:
+// the engine that mounts next finds a call with no result and no mark, and runs
+// it again. The page reports a change to the writer's own subscription only if
+// it applied the write, so the report is the proof that the mark is in the page's
+// store. Once it is, the engine that mounts next answers the call "interrupted"
+// and does not run it. If the page never applies the write, the handler does not
+// start, and the next engine runs the call. The wait ends with an error at
+// CallOptions.MarkTimeout, so that one report the page never makes does not hold
+// up the channel. That deadline is separate from the page's deadline for the
+// client (CallOptions.Timeout), and longer by default: a page that is only slow,
+// for example one whose main thread is busy for a while, still reports the mark.
+// The handler starts once the page is free again and the call finishes late, with
+// its real reply replacing the page's "timeout".
+func (s *callServer[A, R]) markStarted(id uint64) (run bool, err error) {
+	s.mu.Lock()
+	s.started = max(s.started, id)
+	s.mu.Unlock()
+	err = s.tr.Write(s.startedSignal, id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		return !s.disposed, err
+	}
+	// The report may come before Write returns (a write on the main thread tells
+	// this server's subscription inside the call), or much later, as a message from
+	// the page. A page that never reports it, because the bridge dropped the message
+	// or the transport does not tell a writer about its own writes, would hold up
+	// every later call, so the wait ends at the mark deadline. It is not the page's
+	// deadline for the call (CallOptions.Timeout): a page that is busy for longer
+	// than that is late, not silent.
+	if s.marked < id && !s.disposed {
+		expired := false
+		timer := time.AfterFunc(s.markTimeout, func() {
+			s.mu.Lock()
+			expired = true
+			s.mu.Unlock()
+			s.wake.Broadcast()
+		})
+		defer timer.Stop()
+		for !s.disposed && s.marked < id && !expired {
+			s.wake.Wait() // releases mu while it waits
+		}
+		if s.marked < id && expired && !s.disposed {
+			return true, fmt.Errorf("the page did not report the mark within %v", s.markTimeout)
+		}
+	}
+	return !s.disposed, nil
+}
+
+// run decodes one call, runs the handler and encodes the reply.
+func (s *callServer[A, R]) run(entry callEntry) callReply {
+	reply := callReply{id: entry.id, lost: entry.lost}
+	if entry.skip != "" {
+		// No handler runs: it started in an engine that is gone and may have
+		// finished ("interrupted"), or the call could not be marked as started. The
+		// result still names the call, when its name decodes.
+		var head struct{ Name string }
+		_ = safeDecode(entry.raw, &head)
+		reply.name, reply.err, reply.value = head.Name, entry.skip, s.zero
+		return reply
+	}
+	var args A
+	var call engine.Call[json.RawMessage]
+	if err := safeDecode(entry.raw, &call); err != nil {
+		reply.err = "bad-call: " + err.Error()
+	} else {
+		reply.name = call.Name
+		if len(call.Args) > 0 && string(call.Args) != "null" {
+			if err := safeDecode(call.Args, &args); err != nil {
+				reply.err = "bad-args: " + err.Error()
+			}
+		}
+	}
+	if reply.err == "" {
+		value, err := safeHandle(s.handle, call.Name, args)
+		if err != nil {
+			reply.err = err.Error()
+		} else if encoded, err := safeEncode(value); err != nil {
+			// A result value that cannot be encoded is reported as an error result.
+			reply.err = "reply-failed: " + err.Error()
+		} else {
+			reply.value, reply.kept = encoded, encoded
+		}
+	}
+	if reply.value == nil {
+		reply.value = s.zero
+	}
+	return reply
+}
+
+// write publishes one result. A result the page cannot take is replaced by an
+// error result for the same call.
+func (s *callServer[A, R]) write(result engine.Result[json.RawMessage]) {
+	if err := s.tr.Write(s.resultSignal, result); err != nil {
+		// A result the page cannot take is answered with an error result.
+		fallback := engine.Result[json.RawMessage]{
+			ID: result.ID, Name: result.Name, Error: "reply-failed: " + err.Error(),
+			Value: s.zero, Recent: result.Recent, Seen: result.Seen,
+		}
+		_ = s.tr.Write(s.resultSignal, fallback)
+	}
 }
 
 // safeDecode unmarshals data into v, turning a panic in a custom UnmarshalJSON
@@ -199,6 +591,16 @@ func safeDecode(data []byte, v any) (err error) {
 		}
 	}()
 	return json.Unmarshal(data, v)
+}
+
+// safeEncode marshals v, turning a panic in a custom MarshalJSON into an error.
+func safeEncode(v any) (data []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			data, err = nil, fmt.Errorf("encoder panic: %v", r)
+		}
+	}()
+	return json.Marshal(v)
 }
 
 func safeHandle[A, R any](handle func(string, A) (R, error), name string, args A) (value R, err error) {
