@@ -74,7 +74,11 @@
   The wire budget (`perf/budgets/wire.json`) rises by at most 648 B per route,
   all in JavaScript, to the values that hosted run 41236852240 measured: three
   docs routes by 648 B, `/docs/islands/` by 71 B and the scaffold counter page
-  by 69 to 226 B. WebAssembly wire bytes do not rise.
+  by 69 to 226 B. WebAssembly wire bytes do not rise. The water route's CI
+  transfer limit (`network_kb` in `perf/budgets/default.json`) rises from 1860
+  to 1863 KiB, with the owner's approval: hosted run 41237471018 measured 1862.37
+  KiB, because the dev server loads the core runtime, which grows by 4.6 KB of
+  Brotli, while the production full runtime shrinks by 30 KB.
 
 - Keep `regexp` out of the browser runtimes that never match a pattern. The
   validators in package `ir` and the server's text estimator compiled their
