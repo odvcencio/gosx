@@ -25,6 +25,8 @@
   ocean pass hand-offs and the vessel sampler) adds 1,165 gzip and 1,248
   Brotli bytes to a page that has loaded both renderer backends, and less than
   800 bytes of either to a single-backend page. This replaces draft #737.
+  The generated bootstrap bundles and the perf-loader fixtures now include the
+  new chunk.
 
 - Hand a signal batch from a worker or native engine to the WASM runtime once,
   and without a goroutine on TinyGo. The page used to parse every batch with
