@@ -27,6 +27,8 @@
   800 bytes of either to a single-backend page. This replaces draft #737.
   The generated bootstrap bundles and the perf-loader fixtures now include the
   new chunk.
+  The Scene3D size budgets and the renderer architecture limits move to the
+  measured sizes of this change, each with a dated reason.
 
 - Hand a signal batch from a worker or native engine to the WASM runtime once,
   and without a goroutine on TinyGo. The page used to parse every batch with
