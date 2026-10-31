@@ -299,7 +299,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath},
 				{"zoom", r.bootstrapFeatureScene3dZoomPath}, {"walk", r.bootstrapFeatureScene3dWalkPath},
 				{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath},
-				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath},
+				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath}, {"ocean-fft", r.bootstrapFeatureScene3dOceanFFTPath},
 				{"compute", r.bootstrapFeatureScene3dComputePath}, {"decompress", r.bootstrapFeatureScene3dDecompressPath},
 				{"gltf", r.bootstrapFeatureScene3dGLTFPath},
 			} {
@@ -331,7 +331,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath},
 				{"zoom", r.bootstrapFeatureScene3dZoomPath}, {"walk", r.bootstrapFeatureScene3dWalkPath},
 				{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath},
-				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath},
+				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath}, {"ocean-fft", r.bootstrapFeatureScene3dOceanFFTPath},
 			} {
 				if gates[entry.name] {
 					if err := mark(public(entry.path), "startup", "always", base); err != nil {

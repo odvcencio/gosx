@@ -1667,6 +1667,7 @@ func scene3DChunkGateRenderer(t *testing.T, props any) string {
 		BootstrapFeatureScene3DModelPreparation: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-model-preparation.js", Hash: "preparation"},
 		BootstrapFeatureScene3DVessel:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-vessel.js", Hash: "vessel"},
 		BootstrapFeatureScene3DOceanQuery:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-ocean-query.js", Hash: "query"},
+		BootstrapFeatureScene3DOceanFFT:         buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-ocean-fft.js", Hash: "fft"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)

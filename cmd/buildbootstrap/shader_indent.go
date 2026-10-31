@@ -10,7 +10,7 @@ var shaderWholeFloat = regexp.MustCompile(`\b([0-9]+)\.0\b`)
 var shaderCommaSpaces = regexp.MustCompile(`[ \t]*,[ \t]*`)
 var shaderEqualsSpaces = regexp.MustCompile(`[ \t]*=[ \t]*`)
 var shaderDivisionSpaces = regexp.MustCompile(`[ \t]+/[ \t]+`)
-var shaderArrayStart = regexp.MustCompile(`^\s*(const|var|let) SCENE_[A-Z0-9_]+_(SOURCE|GLSL) = \[$`)
+var shaderArrayStart = regexp.MustCompile(`^\s*(?:const|var|let) (SCENE_[A-Z0-9_]+_(?:SOURCE|GLSL)) = \[$`)
 
 // compactShaderIndentation keeps authored shader text and line origins intact
 // while dropping presentation-only indentation from shader array literals.
@@ -18,8 +18,9 @@ func compactShaderIndentation(code string) string {
 	lines := strings.Split(code, "\n")
 	shader := false
 	for i, line := range lines {
-		if shaderArrayStart.MatchString(line) {
-			shader = true
+		if m := shaderArrayStart.FindStringSubmatch(line); m != nil {
+			// A shader the ocean chunk patches by text keeps its authored spacing, as packBuiltinGLSL keeps it.
+			shader = !textPatchedShaders[m[1]]
 			continue
 		}
 		if !shader {

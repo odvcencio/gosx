@@ -102,6 +102,7 @@ type Renderer struct {
 	bootstrapFeatureScene3dVesselPath           string
 	bootstrapFeatureScene3dOceanQueryPath       string
 	bootstrapFeatureScene3dHierarchyPath        string
+	bootstrapFeatureScene3dOceanFFTPath         string
 	bootstrapFeatureScene3dParticleBurstPath    string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
@@ -287,6 +288,7 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
 	renderer.bootstrapFeatureScene3dOceanQueryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-query.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanQuery.Hash))
+	renderer.bootstrapFeatureScene3dOceanFFTPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-fft.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanFFT.Hash))
 	renderer.bootstrapFeatureTextlayoutPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-textlayout.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureTextlayout.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	// Cross-frame relay script. Default unversioned; SetRelayPath can
@@ -788,6 +790,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DOceanQueryPath(path string) {
 	r.bootstrapFeatureScene3dOceanQueryPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DOceanFFTPath overrides the optional spectral ocean chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DOceanFFTPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dOceanFFTPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DDecompressPath overrides the lazy Scene3D
 // decompress sub-feature chunk URL. NOT emitted as a static <script> tag: the
 // base scene3d bundle inserts a script with this URL before it builds the
@@ -897,6 +907,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DVessel, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-ocean-query.js", r.bootstrapFeatureScene3dOceanQueryPath, r.runtimeAssets.BootstrapFeatureScene3DOceanQuery):
 		return r.runtimeAssets.BootstrapFeatureScene3DOceanQuery, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-ocean-fft.js", r.bootstrapFeatureScene3dOceanFFTPath, r.runtimeAssets.BootstrapFeatureScene3DOceanFFT):
+		return r.runtimeAssets.BootstrapFeatureScene3DOceanFFT, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-textlayout.js", r.bootstrapFeatureTextlayoutPath, r.runtimeAssets.BootstrapFeatureTextlayout):
 		return r.runtimeAssets.BootstrapFeatureTextlayout, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/patch.js", r.patchPath, r.runtimeAssets.Patch):
@@ -1091,6 +1103,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
 	r.SetBootstrapFeatureScene3DOceanQueryPath(runtime.BootstrapFeatureScene3DOceanQuery)
+	r.SetBootstrapFeatureScene3DOceanFFTPath(runtime.BootstrapFeatureScene3DOceanFFT)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -2330,6 +2343,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"zoom", r.bootstrapFeatureScene3dZoomPath, r.scene3DNeedsZoomChunk()},
 		{"vessel", r.bootstrapFeatureScene3dVesselPath, r.scene3DNeedsVesselChunk()},
 		{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath, r.scene3DNeedsVesselChunk()},
+		{"ocean-fft", r.bootstrapFeatureScene3dOceanFFTPath, r.scene3DNeedsOceanFFTChunk()},
 		{"compute", r.bootstrapFeatureScene3dComputePath, needsCompute},
 		{"decompress", r.bootstrapFeatureScene3dDecompressPath, needsDecompress},
 	} {
@@ -3118,6 +3132,17 @@ func (r *Renderer) scene3DNeedsVesselChunk() bool {
 		}
 		props := sceneProbe(entry)
 		if strings.TrimSpace(props.ExperienceRef) != "" || (props.Vessel != nil && props.Vessel.NodeID != "") {
+			return true
+		}
+	}
+	return false
+}
+
+// The spectral ocean ships only to scenes whose ocean carries a wave spectrum.
+func (r *Renderer) scene3DNeedsOceanFFTChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).NeedsOceanFFT() {
 			return true
 		}
 	}
