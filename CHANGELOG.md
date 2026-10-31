@@ -147,6 +147,127 @@
   `DiffScene` with `PatchObjectState` changes the flag as a compact state patch
   that does not resend geometry, and a reset to the default is an explicit true.
 
+- Stop `jsutil.AwaitPromise`, `jsutil.AwaitPromiseContext`,
+  `jsutil.DocumentContext` and `browser.Fetch` from running Go code inside a
+  call from Go into JavaScript. A wait with a cancellable context built its
+  cancellation promise with a Go executor, which JavaScript runs inside
+  `new Promise`, so every such wait (`browser.Fetch`, `Context.Navigate`,
+  `Scene3D` calls, audio waits) nested one entry into Go.
+
+  A nested entry can stop the program, whether one goroutine or many make it.
+  Go's js/wasm runtime keeps the calls from JavaScript into Go that are in
+  progress on one stack (`runtime/lock_js.go`), and each call allocates its
+  record before it pushes it. If the first garbage collection of the process
+  pauses a call in that allocation, a nested entry that a goroutine makes
+  meanwhile goes onto the stack first, and the paused call goes on top of it,
+  against the order of the calls on the JavaScript stack. The runtime then
+  resumes the wrong goroutine and the program stops, usually with
+  `fatal error: traceback did not unwind completely`. The paused call can be a
+  timer, an event or a promise callback, so keeping nested calls on one
+  goroutine does not prevent the failure. In test programs in which one
+  goroutine made every nested entry, 14 to 19 of 256 runs stopped with
+  `new Promise(js.FuncOf(...))` and 31 to 46 of 256 with `dispatchEvent` on a Go
+  listener (go1.26.0 and go1.26.10, Node 26, 20 µs sleeps between calls); the
+  same programs with a native executor or listener stopped in none.
+
+  The waits now use a native cancellation promise (the new
+  `jsutil.NewPromiseWithResolvers`) and Go handlers that only signal a channel
+  from a microtask, and cancellation still aborts the request. `AwaitPromise`
+  also accepts a thenable that calls its handlers inside `then`, which used to
+  panic or nest. `DocumentContext` listened for the document's navigation abort
+  with a Go function, which the browser runs inside the call that starts a
+  navigation (`location.assign`, a form submission); it now listens with a
+  native function and cancels its context from a goroutine, a few microtasks
+  after the abort instead of inside it. It also reads the signal once more after
+  it adds its listener, so an abort that lands in between cancels the context,
+  and its documentation says that a request Go starts right after Go starts a
+  navigation is not refused until the program next returns to JavaScript.
+  `jsutil.Describe` no longer panics on a rejection that is not an `Error` (a
+  number, a Symbol, a BigInt, a revoked Proxy, or an object whose `message`
+  getter throws); the Scene3D frame rejection handlers called it inside a Go
+  callback, where a panic stopped the program. `__gosx_pick_engine` builds its
+  Promise the same way, which also stops it from keeping one `js.Func` per
+  call.
+
+  Go listeners and subscribers no longer run inside the calls that start them.
+  `Element.Dispatch`, `Focus`, `Blur` and `Click`, `Element.CheckValidity` and
+  `ReportValidity` (they fire `invalid`), `Element.Remove`, `SetText` and
+  `ReplaceMarkup` (in Chrome, they fire `blur` and `focusout` when they remove
+  the node that has focus or an ancestor of it; Firefox and WebKit fire
+  neither), `browser.DispatchResize`, `browser.DispatchError`,
+  `browser.Navigate` (to a fragment of the current page it fires `popstate`; to
+  another document it fires `beforeunload` in Chrome and Firefox) and
+  `browser.Reload` (it fires `beforeunload` in Chrome and Firefox),
+  `Context.Emit`, `Context.Navigate` (the page's `navigate` dispatches
+  `gosx:navigation:state` before it first waits), `Context.SetSignal`,
+  `SetSignals` and `SetChangedSignals`, the main-thread batches of a `View`, the
+  replay in `SubscribeSignal` (and so `ServeCalls`), and the netplay link's
+  `Open` and `Signal` made the browser run Go listeners, signal subscribers or
+  state callbacks inside the call from Go into JavaScript.
+  Those Go functions are now `jsutil.Callback`s, and these calls go through the
+  new `jsutil.Call`: while the JavaScript call runs, a callback only records the
+  call, and Go runs the recorded calls in order after the JavaScript call has
+  returned and before the Go function returns. Your own listener or subscriber
+  can use `jsutil.NewCallback` and `jsutil.Call` the same way. A function made
+  with `js.FuncOf` is not deferred and still nests.
+
+  Behavior change: a Go listener of a dispatch that Go starts runs after the
+  browser has delivered the event to every listener, so `PreventDefault`,
+  `StopPropagation` and `StopImmediatePropagation` no longer change that
+  dispatch, and a Go listener cannot cancel the click that `Click` performs.
+  The same holds for every event that the browser or page code raises while Go
+  is inside one of these calls, so a Go listener cannot cancel its default
+  action: `Click` on a submit button submits its form, whatever a Go `submit`
+  listener does, and so does a `requestSubmit` that a page script makes in
+  reaction to `SetSignal` or `Emit`. `ReportValidity` reports the problem to the
+  user whatever a Go `invalid` listener does, and a GoSX page starts the soft
+  navigation that `browser.Navigate` to a fragment triggers whatever a Go
+  `gosx:popstate` listener does. For the same reason a Go `beforeunload`
+  listener cannot stop a navigation that `browser.Navigate` starts to another
+  document, or a `browser.Reload`, in Chrome and Firefox; it can still stop one
+  that the user starts. To let Go code decide whether a form submits, whether
+  the report appears or whether the page navigates, call that code directly
+  instead of making the call (run an unsaved-changes check before `Navigate` or
+  `Reload`). `Event.CurrentTarget` still names the
+  listener's element. When the target is inside a shadow tree, `Event.Target` and
+  `Event.RelatedTarget` may not name what they named during the dispatch. The
+  browser clears both when the event's path ended inside a shadow tree (it never
+  reached the document), which is the case for an event that is not composed
+  (every event that `Element.Dispatch` creates) and for a focus change between
+  two elements of the same shadow tree, also between a shadow tree and one
+  nested in it, and a cleared one is an invalid `Element`. Otherwise it leaves them as seen
+  from the document: `Target` names the outermost shadow host, and
+  `RelatedTarget` names the related element, or its outermost shadow host if it
+  is inside a shadow tree. A Go `blur` or `focusout` listener that a removal
+  triggers runs after the removal, so it sees an element that is out of the
+  document, with its state intact (only Chrome fires these events on a
+  removal). `Element.Append`, `InsertBefore`, `AppendMarkup`, `SetHidden` and
+  `SetAttr` with the name `hidden` can still run a Go listener inside the call when
+  they move or hide the focused element or insert an iframe; call `Blur` on the
+  focused element first. An event that the page raises still reaches
+  a Go listener inside the browser's own dispatch. On the main thread, a Go
+  subscriber of a shared signal that Go writes runs after the page's other
+  subscribers of that write, and sees the whole batch; in a worker, a write goes
+  to the page as a message, and Go subscribers run later, when the page sends the
+  value back.
+
+  Three results change. `AwaitPromise` on a value that is not a thenable now
+  returns that value, where it used to panic. `jsutil.Describe` returns
+  `String(v)` for an `Error` with an empty message (`TypeError`, where it
+  returned an empty string), and `<unprintable value>` when the conversion
+  fails, where it panicked. `Element.SetText` and `ReplaceMarkup` panic with the
+  JavaScript error when the browser refuses the write (for example `innerHTML`
+  under a Trusted Types policy), where the exception used to escape through the
+  Go runtime and end the program.
+
+  Runtime size: the production full runtime (`gosx-runtime.wasm`) grows by 603
+  bytes raw and 1,061 bytes with Brotli, and the engine runtime by 603 raw and
+  722 with Brotli. The core, islands and collab runtimes do not change. The docs
+  wire budgets for `/`, `/demos/scene3d/` and `/demos/water` rise to the hosted
+  measurement (eight limits, 1,039 to 1,061 B each); the owner accepted the raise
+  on 31 October 2026. The `/demos/water` CI network limit rises from 1858 to 1860
+  KiB for the same growth (hosted measurement 1859.66 KiB).
+
 - Keep Scene3D tone mapping and antialiasing when adaptive quality suppresses
   post effects. Under sustained load the controller sheds every post effect as
   its last step. It now keeps the tone-mapping effect, so a physical or other

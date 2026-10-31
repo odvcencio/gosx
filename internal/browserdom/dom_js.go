@@ -2,7 +2,11 @@
 
 package browserdom
 
-import "syscall/js"
+import (
+	"syscall/js"
+
+	"m31labs.dev/gosx/client/jsutil"
+)
 
 // Element is an opaque DOM node. Its zero value represents a missing element.
 // Keep the handle inline: reading an event target or query result allocates no wrapper.
@@ -16,13 +20,54 @@ type Classes struct{ value js.Value }
 type Dataset struct{ value js.Value }
 
 // Event reads native fields lazily; it performs no JSON or snapshot allocation.
-type Event struct{ value js.Value }
+// current is the element the listener is attached to, which the browser passes
+// as this. A listener that runs after its event was delivered (see Listener)
+// cannot read it from the event, whose currentTarget is null by then.
+type Event struct{ value, current js.Value }
 
 // Listener owns one callback and removes it before releasing its Go function.
+//
+// The callback is a jsutil.Callback. When the event comes from the page, the
+// browser runs it inside its own dispatch, so PreventDefault and
+// StopPropagation work. When Go starts the dispatch (Dispatch, Focus, Blur,
+// Click, CheckValidity, ReportValidity, Remove, SetText and ReplaceMarkup, and
+// the package functions DispatchResize, DispatchError and Navigate of
+// client/browser), the browser would run the callback inside that call from Go
+// into JavaScript, where Go's js/wasm runtime can fail. The callback then runs
+// after the browser has delivered the event to all its listeners, and before
+// the Go call returns. PreventDefault, StopPropagation and
+// StopImmediatePropagation are too late to change that dispatch.
+//
+// This holds for every event that the browser or page code raises while Go is
+// inside such a call, not only for the event that Go dispatches. The Go listener
+// cannot cancel the default action of such an event: Click on a submit button
+// submits its form, whatever a Go submit listener does, and ReportValidity
+// reports the problem to the user, whatever a Go invalid listener does. Two
+// more results follow:
+//
+//   - When the target is inside a shadow tree, Event.Target and
+//     Event.RelatedTarget may not name what they named during the dispatch. If
+//     the event's path ended inside a shadow tree, that is, the event never
+//     reached the document, the browser clears both after the dispatch, and a
+//     cleared one is an invalid Element. That is the case for an event that is
+//     not composed, such as every event that Dispatch creates, and for a focus
+//     change between two elements of the same shadow tree (also between a
+//     shadow tree and one nested in it).
+//     Otherwise the browser leaves them as seen from the document: Target names
+//     the outermost shadow host, and RelatedTarget names the related element,
+//     or its outermost shadow host if it is inside a shadow tree.
+//     Event.CurrentTarget is not affected.
+//   - A blur or focusout listener that a removal triggers runs after the
+//     removal. In Chrome for Testing 156, a page listener of the same event ran
+//     before it and saw the element in the document; the Go listener sees an
+//     element that is out of the document (Connected reports false), with its
+//     state intact, such as the value of a text field. Parent is invalid only
+//     if the removed node is the element itself. Firefox 146 and WebKit 26 fire
+//     no blur or focusout on a removal, so no Go listener runs there.
 type Listener struct {
 	target   js.Value
 	event    string
-	fn       js.Func
+	callback *jsutil.Callback
 	capture  bool
 	disposed bool
 }
@@ -72,6 +117,11 @@ func (e Element) Attr(name string) string {
 	}
 	return v.String()
 }
+
+// SetAttr sets an attribute. Setting "hidden" on the focused element makes
+// Chrome for Testing 156 fire blur and focusout inside the call, and a Go
+// listener of those events runs inside it (see SetHidden's caveat in package
+// browser). Call Blur first.
 func (e Element) SetAttr(name, value string) {
 	if e.Valid() {
 		e.value.Call("setAttribute", name, value)
@@ -128,9 +178,33 @@ func (e Element) InsertBefore(child, before Element) {
 		e.value.Call("insertBefore", child.value, v)
 	}
 }
+
+// Reflect and the names of the two properties that SetText and ReplaceMarkup
+// write. They are made once. Looking up Reflect and converting the name on every
+// call made a write about three times slower than js.Value.Set in a Node
+// benchmark; with them made once it is 1.1 to 1.6 times slower.
+var (
+	reflectObject   = js.Global().Get("Reflect")
+	textContentName = js.ValueOf("textContent")
+	innerHTMLName   = js.ValueOf("innerHTML")
+)
+
+// setProperty writes target[name] = value through jsutil.Call. js.Value.Set does
+// the same Reflect.set, but jsutil.Call cannot wrap it, and a write can make the
+// browser run listeners before it returns: it fires blur and focusout when it
+// removes the node that has focus (measured in Chrome for Testing 156).
+func setProperty(target, name js.Value, value any) {
+	jsutil.Call(reflectObject, "set", target, name, value)
+}
+
+// ReplaceMarkup replaces the element's children with the parsed markup. It
+// removes the old children. When one of them has focus, Chrome for Testing 156
+// runs the blur and focusout listeners before ReplaceMarkup returns. Go
+// listeners run after the browser has delivered the events, and before
+// ReplaceMarkup returns (see Listener); they run after the removal.
 func (e Element) ReplaceMarkup(markup Markup) {
 	if e.Valid() {
-		e.value.Set("innerHTML", string(markup))
+		setProperty(e.value, innerHTMLName, string(markup))
 	}
 }
 func (e Element) AppendMarkup(markup Markup) {
@@ -192,19 +266,18 @@ func listen(target js.Value, name string, fn func(Event), options []ListenerOpti
 		o = options[0]
 	}
 	l.capture = o.Capture
-	l.fn = js.FuncOf(func(_ js.Value, args []js.Value) any {
+	l.callback = jsutil.NewCallback(func(this js.Value, args []js.Value) {
 		if !l.disposed && len(args) > 0 {
-			fn(Event{args[0]})
+			fn(Event{value: args[0], current: this})
 			if o.Once {
 				l.Dispose()
 			}
 		}
-		return nil
 	})
 	if o.Passive || o.Once {
-		target.Call("addEventListener", name, l.fn, map[string]any{"capture": o.Capture, "passive": o.Passive, "once": o.Once})
+		target.Call("addEventListener", name, l.callback.Value(), map[string]any{"capture": o.Capture, "passive": o.Passive, "once": o.Once})
 	} else {
-		target.Call("addEventListener", name, l.fn, o.Capture)
+		target.Call("addEventListener", name, l.callback.Value(), o.Capture)
 	}
 	return l
 }
@@ -213,8 +286,8 @@ func (l *Listener) Dispose() {
 		return
 	}
 	l.disposed = true
-	l.target.Call("removeEventListener", l.event, l.fn, l.capture)
-	l.fn.Release()
+	l.target.Call("removeEventListener", l.event, l.callback.Value(), l.capture)
+	l.callback.Release()
 }
 func (e Elements) Len() int {
 	if !e.value.Truthy() {
@@ -327,8 +400,16 @@ func (d Dataset) Get(name string) string {
 	}
 	return v.String()
 }
-func (e Event) Target() Element           { return FromJS(e.value.Get("target")) }
-func (e Event) CurrentTarget() Element    { return FromJS(e.value.Get("currentTarget")) }
+func (e Event) Target() Element { return FromJS(e.value.Get("target")) }
+
+// CurrentTarget is the element the listener is attached to, also for a listener
+// that runs after the browser has finished delivering the event.
+func (e Event) CurrentTarget() Element {
+	if e.current.Truthy() {
+		return FromJS(e.current)
+	}
+	return FromJS(e.value.Get("currentTarget"))
+}
 func (e Event) RelatedTarget() Element    { return FromJS(e.value.Get("relatedTarget")) }
 func (e Event) PreventDefault()           { e.value.Call("preventDefault") }
 func (e Event) StopPropagation()          { e.value.Call("stopPropagation") }
@@ -376,9 +457,15 @@ func (e Element) ClassName() string {
 	}
 	return e.value.Get("className").String()
 }
+
+// SetText replaces the element's children with one text node. It removes the old
+// children. When one of them has focus, Chrome for Testing 156 runs the blur and
+// focusout listeners before SetText returns. Go listeners run after the browser
+// has delivered the events, and before SetText returns (see Listener); they run
+// after the removal.
 func (e Element) SetText(value string) {
 	if e.Valid() {
-		e.value.Set("textContent", value)
+		setProperty(e.value, textContentName, value)
 	}
 }
 func (e Element) SetValue(value string) {
@@ -416,24 +503,43 @@ func (e Element) SetOpen(value bool) {
 		e.value.Set("open", value)
 	}
 }
+
+// Focus focuses the element. The browser runs the focus and focusin listeners
+// before Focus returns. Go listeners run after the browser has delivered the
+// events, and before Focus returns (see Listener).
 func (e Element) Focus() {
 	if e.Valid() {
-		e.value.Call("focus")
+		jsutil.Call(e.value, "focus")
 	}
 }
+
+// Click clicks the element. The browser runs the click listeners before Click
+// returns. Go listeners run after the browser has delivered the event, and
+// before Click returns (see Listener); they are too late to cancel the click's
+// default action.
 func (e Element) Click() {
 	if e.Valid() {
-		e.value.Call("click")
+		jsutil.Call(e.value, "click")
 	}
 }
+
+// Remove removes the element from its parent. When the element or one of its
+// descendants has focus, Chrome for Testing 156 runs the blur and focusout
+// listeners before Remove returns. Go listeners run after the browser has
+// delivered the events, and before Remove returns (see Listener); they run after
+// the removal.
 func (e Element) Remove() {
 	if e.Valid() {
-		e.value.Call("remove")
+		jsutil.Call(e.value, "remove")
 	}
 }
+
+// Blur removes focus from the element. The browser runs the blur and focusout
+// listeners before Blur returns. Go listeners run after the browser has
+// delivered the events, and before Blur returns (see Listener).
 func (e Element) Blur() {
 	if e.Valid() {
-		e.value.Call("blur")
+		jsutil.Call(e.value, "blur")
 	}
 }
 func (d Document) Body() Element          { return FromJS(d.value.Get("body")) }
@@ -559,7 +665,7 @@ func Value(e Element) js.Value {
 	}
 	return e.value
 }
-func FromEventJS(value js.Value) Event { return Event{value} }
+func FromEventJS(value js.Value) Event { return Event{value: value} }
 
 // Listen is internal framework interop for platform-owned event targets.
 func Listen(target js.Value, event string, fn func(Event), opts ...ListenerOptions) *Listener {
@@ -568,8 +674,24 @@ func Listen(target js.Value, event string, fn func(Event), opts ...ListenerOptio
 func (d Document) CreateText(text string) Element {
 	return FromJS(d.value.Call("createTextNode", text))
 }
-func (e Element) CheckValidity() bool  { return e.Valid() && e.value.Call("checkValidity").Bool() }
-func (e Element) ReportValidity() bool { return e.Valid() && e.value.Call("reportValidity").Bool() }
+
+// CheckValidity reports whether the element satisfies its constraints. The
+// browser fires invalid on each invalid control before CheckValidity returns. Go
+// listeners run after the browser has delivered the events, and before
+// CheckValidity returns (see Listener).
+func (e Element) CheckValidity() bool {
+	return e.Valid() && jsutil.Call(e.value, "checkValidity").Bool()
+}
+
+// ReportValidity is CheckValidity that also reports each problem to the user.
+// The browser fires invalid on each invalid control, and then focuses the first
+// one, before ReportValidity returns. Go listeners run after the browser has
+// delivered the events, and before ReportValidity returns (see Listener); they
+// cannot stop the report, because the browser decided it when it delivered the
+// invalid events.
+func (e Element) ReportValidity() bool {
+	return e.Valid() && jsutil.Call(e.value, "reportValidity").Bool()
+}
 func (e Element) ChildElementCount() int {
 	if !e.Valid() {
 		return 0
@@ -629,9 +751,14 @@ func (e Element) StepUp(steps int) {
 		e.value.Call("stepUp", steps)
 	}
 }
+
+// Dispatch dispatches a new event with the given name. The browser runs every
+// listener before Dispatch returns. Go listeners run after the browser has
+// delivered the event to all its listeners, in the order the browser called
+// them, and before Dispatch returns (see Listener).
 func (e Element) Dispatch(name string, bubbles bool) {
 	if e.Valid() {
 		event := js.Global().Get("Event").New(name, map[string]any{"bubbles": bubbles})
-		e.value.Call("dispatchEvent", event)
+		jsutil.Call(e.value, "dispatchEvent", event)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"syscall/js"
 
 	"m31labs.dev/gosx/client/browser"
+	"m31labs.dev/gosx/client/jsutil"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/internal/browserdom"
 )
@@ -105,7 +106,11 @@ func (c Context) DecodeProps(dst any) error {
 }
 
 // Emit dispatches a gosx:engine:<name> CustomEvent through the framework
-// context.
+// context. On the main thread the browser runs every listener before Emit
+// returns. Go listeners, such as one added with browser.Document().On, run after
+// the browser has delivered the event to all its listeners, and before Emit
+// returns. In a worker, Emit posts the event to the page and returns, and the
+// page dispatches it later.
 func (c Context) Emit(name string, detail any) error {
 	return emitContextEvent(c.value, name, detail)
 }
@@ -124,7 +129,7 @@ func emitContextEvent(context js.Value, name string, detail any) (err error) {
 	if err != nil {
 		return err
 	}
-	emit.Invoke(name, detailValue)
+	jsutil.Call(context, "emit", name, detailValue)
 	return nil
 }
 
