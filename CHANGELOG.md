@@ -133,7 +133,8 @@
   722 with Brotli. The core, islands and collab runtimes do not change. The docs
   wire budgets for `/`, `/demos/scene3d/` and `/demos/water` rise to the hosted
   measurement (eight limits, 1,039 to 1,061 B each); the owner accepted the raise
-  on 31 October 2026.
+  on 31 October 2026. The `/demos/water` CI network limit rises from 1858 to 1860
+  KiB for the same growth (hosted measurement 1859.66 KiB).
 
 - Keep Scene3D tone mapping and antialiasing when adaptive quality suppresses
   post effects. Under sustained load the controller sheds every post effect as
