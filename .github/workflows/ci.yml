@@ -538,6 +538,13 @@ jobs:
       - name: Physics cross-target float parity gate
         run: make test-physics-parity
 
+      # client/vm bakes the scene bundle, and its goldens were captured at the
+      # default GOAMD64. This runs the package at that level, under GOAMD64=v3
+      # (which fuses a multiply and an add) and under js/wasm (which cannot), and
+      # demands the same results.
+      - name: Scene bundle cross-target float parity gate
+        run: make test-vm-parity
+
       - name: WASM size-budget gate
         run: make wasm-size-budget
 

@@ -75,6 +75,9 @@ var goldenBoxBounds = rootengine.RenderBounds{
 // world positions and object bounds are EXACTLY equal to the golden values captured
 // under the motion path (base Euler + spin quaternion). This locks the bit-identical
 // guarantee of the motion-semantics path end-to-end.
+//
+// The goldens were captured without fused multiply-add. make test-vm-parity runs
+// this test under GOAMD64=v3, which fuses, and under js/wasm, which cannot.
 func TestRenderBundleGoldenBitIdentical(t *testing.T) {
 	rt := NewSceneAdapter(goldenBoxProgram(), `{}`)
 	rt.Reconcile()
