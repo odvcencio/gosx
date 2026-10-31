@@ -636,4 +636,3 @@ test("an environment update that adds a spectrum loads the FFT chunk once; one t
   assert.equal(fetched(), 1, "a later update does not fetch again");
   handle.dispose();
 });
-

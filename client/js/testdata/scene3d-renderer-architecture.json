@@ -896,22 +896,22 @@
     {
       "source": "../runtime/scene3d/mount-vessel.ts",
       "name": "anonymous@2:2",
-      "lines": 118,
-      "cyclomatic": 106,
-      "cognitive": 120,
+      "lines": 120,
+      "cyclomatic": 109,
+      "cognitive": 123,
       "maxNesting": 3,
       "parameters": 0,
-      "reason": "Measured paced-loop orchestration for bathymetry, dynamic deck, walker ownership, helm transitions, reset and landing. Look feeds the existing camera authority without another RAF. Stable vessel attributes and helm layout avoid per-frame DOM writes; deck carry reads the pose directly without allocating a matrix copy. Wave sampling uses the rendered animation clock, while simulation and foam aging retain elapsed time. Hull, deck, camera and wake use one interpolated presentation pose. Camera detach publishes authoritative navigation synchronously before another presentation request; the one declaration line is measured growth. The spectral ocean's sampler adds one declaration and the probe pass start to the paced loop: 1 line, 4 branches and one nesting level."
+      "reason": "Measured paced-loop orchestration for bathymetry, dynamic deck, walker ownership, helm transitions, reset and landing. Look feeds the existing camera authority without another RAF. Stable vessel attributes and helm layout avoid per-frame DOM writes; deck carry reads the pose directly without allocating a matrix copy. Wave sampling uses the rendered animation clock, while simulation and foam aging retain elapsed time. Hull, deck, camera and wake use one interpolated presentation pose. Camera detach publishes authoritative navigation synchronously before another presentation request; the one declaration line is measured growth. The spectral ocean's sampler adds one declaration and the probe pass start to the paced loop: 1 line, 4 branches and one nesting level. 31 October 2026: the spectral ocean's buoyancy sampler (begin and probed hooks) and the hull-pose publication for the wake raise this to 120 lines, 109 cyclomatic and 123 cognitive (from 118, 106 and 120); the limits equal the measured values."
     },
     {
       "source": "../runtime/scene3d/mount-vessel.ts",
       "name": "setup@25:3",
-      "lines": 93,
-      "cyclomatic": 99,
-      "cognitive": 112,
+      "lines": 95,
+      "cyclomatic": 102,
+      "cognitive": 115,
       "maxNesting": 3,
       "parameters": 5,
-      "reason": "Measured paced-loop orchestration for bathymetry, dynamic deck, walker ownership, helm transitions, reset and landing. Look feeds the existing camera authority without another RAF. Stable vessel attributes and helm layout avoid per-frame DOM writes; deck carry reads the pose directly without allocating a matrix copy. Wave sampling uses the rendered animation clock, while simulation and foam aging retain elapsed time. Hull, deck, camera and wake use one interpolated presentation pose. Camera detach publishes authoritative navigation synchronously before another presentation request; the one declaration line is measured growth. The spectral ocean's sampler adds one declaration and the probe pass start to the paced loop: 1 line, 4 branches and one nesting level."
+      "reason": "Measured paced-loop orchestration for bathymetry, dynamic deck, walker ownership, helm transitions, reset and landing. Look feeds the existing camera authority without another RAF. Stable vessel attributes and helm layout avoid per-frame DOM writes; deck carry reads the pose directly without allocating a matrix copy. Wave sampling uses the rendered animation clock, while simulation and foam aging retain elapsed time. Hull, deck, camera and wake use one interpolated presentation pose. Camera detach publishes authoritative navigation synchronously before another presentation request; the one declaration line is measured growth. The spectral ocean's sampler adds one declaration and the probe pass start to the paced loop: 1 line, 4 branches and one nesting level. 31 October 2026: the spectral ocean's buoyancy sampler (begin and probed hooks) and the hull-pose publication for the wake raise this to 95 lines, 102 cyclomatic and 115 cognitive (from 93, 99 and 112); the limits equal the measured values."
     },
     {
       "source": "../runtime/scene3d/mount-walk.ts",
