@@ -29,6 +29,10 @@
   new chunk.
   The Scene3D size budgets and the renderer architecture limits move to the
   measured sizes of this change, each with a dated reason.
+  The docs wire budgets rise to the hosted measurements of this change: the
+  startup JavaScript limit by 266 bytes and the on-demand JavaScript limit by
+  982 bytes, on three docs routes. The water route's network limit rises from
+  1863 to 1865 KiB.
 
 - Hand a signal batch from a worker or native engine to the WASM runtime once,
   and without a goroutine on TinyGo. The page used to parse every batch with
