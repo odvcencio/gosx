@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- Draw a night sky and a moonlit sea. `Sky.Night` (a `*scene.SkyNight`, physical
+  sky only) adds a seeded star field and a moon disc with phase to the sky
+  pass on WebGL2 and WebGPU, and when the sun is below the horizon the ocean
+  takes the moon as its key light: a glint path and crest scatter scaled by
+  the lit fraction, the moon's height and `Clouds.Coverage`. Fields are
+  `StarDensity`, `StarBrightness`, `StarSeed`, `MoonDirection`, `MoonPhase`
+  (0 new, 0.5 full), `MoonRadius` and `MoonIntensity`; `MoonIllumination()`
+  returns the lit fraction. The stars use an integer hash, so one seed draws
+  one sky on every backend. A scene without `Night` keeps its wire and its
+  pixels. The new browser test `e2e/scene3d_night_sky_e2e_test.go` renders a
+  full moon, a half moon, a new moon and an overcast night and checks the
+  stars, the disc and the path on the water. Size cost (raw / gzip / Brotli
+  bytes): the shared Scene3D chunk +2,280 / +1,001 / +874, the WebGL chunk
+  +2,150 / +1,026 / +787, the WebGPU chunk +2,353 / +1,015 / +810, and the
+  `bootstrap.js` monolith +7,306 / +3,039 / +2,284. The ocean shaders are
+  unchanged: the moon reaches the sea through the same key-light uniforms the
+  sun used. Measured on an RTX 5070 Ti at 1440x900, the renderer's GPU timer
+  reads a median of 0.125 ms for a night scene without `Night` and 0.134 ms
+  with a full moon on WebGL2, and 0.154 ms and 0.168 ms on WebGPU.
+
 ## v0.58.0
 
 - Draw the spectral ocean in the browser. A scene whose `Ocean` carries a

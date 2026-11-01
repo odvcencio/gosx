@@ -42,7 +42,8 @@
   var SCENE_POST_FXAA = "fxaa";
 
   // Shared sky layout: camera basis, linear gradient stops, and sampling controls.
-  function sceneSkyUniformData(out, environment, view, camera, aspect, linear) {
+  // With night true and room for 14 vec4s, the block also carries the night layer (vec4s 11-13).
+  function sceneSkyUniformData(out, environment, view, camera, aspect, linear, night) {
     var sky = environment.sky;
     var spread = camera.kind === "orthographic" || camera.mode === "ortho2d"
       ? 0 : Math.tan(sceneNumber(camera.fov, 60) * Math.PI / 360);
@@ -64,7 +65,68 @@
     if (sky.mode === "physical" && out.length >= 44) {
       out[23] = 4;
       sceneSkyPhysicalParams(sky, out, 28);
+      if (night && out.length >= 56) sceneSkyNightParams(sky, out[36], out[37], out[38], out, 44);
     }
+    return out;
+  }
+
+  // Night layer. sceneSkyNightTerms derives the scalars that the sky pass and
+  // the ocean share from Sky.Night, the sun's height and the cloud cover:
+  //   [0] night factor: 0 by day, 1 once the sun is 18 degrees down
+  //   [1] cloud clearance: 1 clear, down to 0.1 under full cloud
+  //   [2] moon illumination 0..1       [3] moon intensity
+  //   [4] moon disc cos(radius), 2 when hidden
+  //   [5] sin(phase angle)             [6] cos(phase angle)
+  // It returns false when the sky has no night layer.
+  var sceneSkyNightScratch = new Float32Array(8);
+  function sceneSkyNightTerms(sky, sunY, t) {
+    var n = sky && sky.night;
+    if (!n || sky.mode !== "physical") return false;
+    var x = Math.max(0, Math.min(1, (0.02 - sunY) / 0.33));
+    t[0] = x * x * (3 - 2 * x);
+    var cl = sky.clouds, cover = cl ? Math.max(0, Math.min(1, sceneNumber(cl.coverage, 0.45))) * Math.max(0, Math.min(1, sceneNumber(cl.opacity, 0.85) || 0.85)) : 0;
+    t[1] = 1 - 0.9 * cover;
+    var ph = sceneNumber(n.moonPhase, 0); ph -= Math.floor(ph);
+    t[5] = Math.sin(2 * Math.PI * ph); t[6] = Math.cos(2 * Math.PI * ph);
+    t[2] = (1 - t[6]) / 2;
+    t[3] = Math.max(0, Math.min(4, sceneNumber(n.moonIntensity, 0) || 1));
+    var r = sceneNumber(n.moonRadius, 0); r = r === 0 ? 0.9 : Math.min(5, r);
+    t[4] = r < 0 ? 2 : Math.cos(r * Math.PI / 180);
+    return true;
+  }
+
+  // sceneSkyNightMoon writes the unit moon direction into out[o..o+2]. An
+  // unset direction sits 40 degrees up, opposite the sun's bearing.
+  function sceneSkyNightMoon(sky, sunX, sunZ, out, o) {
+    var d = sky.night.moonDirection || {}, x = sceneNumber(d.x, 0), y = sceneNumber(d.y, 0), z = sceneNumber(d.z, 0);
+    var len = Math.sqrt(x * x + y * y + z * z);
+    if (!(len > 1e-9) || !isFinite(len)) {
+      var flat = Math.sqrt(sunX * sunX + sunZ * sunZ), c = Math.cos(40 * Math.PI / 180);
+      x = flat > 1e-6 ? -sunX / flat * c : 0; z = flat > 1e-6 ? -sunZ / flat * c : c; y = Math.sin(40 * Math.PI / 180); len = 1;
+    }
+    out[o] = x / len; out[o + 1] = y / len; out[o + 2] = z / len;
+  }
+
+  // sceneSkyNightParams packs the night layer for the sky pass (3 vec4s):
+  //   0  moon direction xyz, cos(disc radius) (2 hides the disc)
+  //   1  star gain (night x clearance x brightness; 0 hides), star density, seed, airglow
+  //   2  sin(phase angle), cos(phase angle), disc radiance, halo strength
+  function sceneSkyNightParams(sky, sunX, sunY, sunZ, out, offset) {
+    var t = sceneSkyNightScratch;
+    out.fill(0, offset, offset + 12);
+    if (!sceneSkyNightTerms(sky, sunY, t)) return out;
+    var n = sky.night, o = offset;
+    sceneSkyNightMoon(sky, sunX, sunZ, out, o);
+    out[o + 3] = t[4];
+    var density = sceneNumber(n.starDensity, 0);
+    out[o + 4] = density < 0 ? 0 : t[0] * t[1] * (Math.max(0, Math.min(4, sceneNumber(n.starBrightness, 0))) || 1);
+    out[o + 5] = density === 0 ? 0.5 : Math.min(1, density);
+    out[o + 6] = (sceneNumber(n.starSeed, 0) >>> 0) % 9973;
+    out[o + 7] = t[0];
+    out[o + 8] = t[5]; out[o + 9] = t[6];
+    var shown = t[4] <= 1;
+    out[o + 10] = shown ? t[3] * t[1] * (0.3 + 0.7 * t[0]) : 0;
+    out[o + 11] = shown ? t[3] * t[1] * Math.pow(t[2], 1.5) * t[0] : 0;
     return out;
   }
 
@@ -205,11 +267,39 @@
       var inv = 1 / (Math.cos(zen) + 0.15 * Math.pow(93.885 - zen * 57.29577951, -1.253));
       for (var c = 0; c < 3; c++) out[132 + c] = intensity * Math.exp(-(sp[c] * 8400 * inv + sp[4 + c] * 1250 * inv)) * sp[3] * 0.012;
       out[136] = sp[8]; out[137] = sp[9]; out[138] = sp[10];
+      sceneOceanMoonlight(sky, sp, out);
     } else {
       for (var b2 = 0; b2 < 3; b2++) out[128 + b2] = 0.6 * sceneOceanSkyScratch[12 + b2] * intensity + 0.4 * sceneOceanSkyScratch[16 + b2] * intensity;
       out[136] = 0.3; out[137] = 0.6; out[138] = -0.74; // No sun disk: a soft key light, no glint.
     }
     return out;
+  }
+
+  // sceneOceanMoonlight hands the sea's key light to the moon as the sun goes
+  // down (Sky.Night). It dims the reflected sky (the intensity at float 99) and rewrites
+  // the ambient, key radiance and key direction of the ocean block (floats 128-138). The glint path and crest scatter then
+  // follow from the same terms the sun used. Strength is the moon's lit
+  // fraction, its intensity, the cloud clearance (squared) and the moon's height above the
+  // horizon, so a set or new moon leaves the sea dark.
+  var sceneOceanMoonScratch = new Float32Array(3);
+  function sceneOceanMoonlight(sky, sp, out) {
+    var t = sceneSkyNightScratch;
+    if (!sceneSkyNightTerms(sky, sp[9], t) || t[0] <= 0) return;
+    out[84 + 15] *= 1 - 0.85 * t[0]; // The sea reflects the same dimmed night sky that the sky pass draws.
+    if (t[4] > 1) return;
+    var m = sceneOceanMoonScratch;
+    sceneSkyNightMoon(sky, sp[8], sp[10], m, 0);
+    var up = Math.max(0, Math.min(1, (m[1] + 0.05) / 0.15));
+    var gain = t[0] * t[1] * t[1] * t[3] * Math.pow(t[2], 1.6) * (up * up * (3 - 2 * up));
+    var sky2 = t[0] * t[1] * t[3] * (0.25 + 0.75 * t[2]);
+    var moonRad = [0.62, 0.78, 1.0], moonAmb = [0.02, 0.032, 0.06];
+    for (var c = 0; c < 3; c++) {
+      out[128 + c] += moonAmb[c] * sky2 * (sceneNumber(sky.intensity, 1) || 1);
+      out[132 + c] = out[132 + c] * (1 - t[0]) + moonRad[c] * 1.4 * gain * (sceneNumber(sky.intensity, 1) || 1);
+    }
+    var w = t[0] * (gain > 0 ? 1 : 0), x = out[136] * (1 - w) + m[0] * w, y = out[137] * (1 - w) + m[1] * w, z = out[138] * (1 - w) + m[2] * w;
+    var l = Math.sqrt(x * x + y * y + z * z) || 1;
+    out[136] = x / l; out[137] = y / l; out[138] = z / l;
   }
 
   // sceneSkyPhysicalShaderSource returns the GLSL ("glsl") or WGSL ("wgsl")

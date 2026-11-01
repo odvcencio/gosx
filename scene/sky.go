@@ -54,6 +54,9 @@ type Sky struct {
 	// SunDiskRadius is the drawn sun's angular radius in degrees, 0 to 5.
 	// Default 0.53. A negative value hides the disk.
 	SunDiskRadius float64 `json:"sunDiskRadius,omitempty"`
+	// Night adds stars and a moon with phase to a physical sky, and gives the
+	// ocean a moon path once the sun is down. Nil keeps the sky as it was.
+	Night *SkyNight `json:"night,omitempty"`
 }
 
 // normalizeSky trims string fields and reports a nil Sky as nil rather than a
@@ -82,6 +85,7 @@ func normalizeSky(s *Sky) *Sky {
 		if out.SunDiskRadius > 5 {
 			out.SunDiskRadius = 5
 		}
+		out.Night = normalizeSkyNight(s.Night, out.SunDirection)
 		// Canvas2D and any backend that cannot draw the physical pass fall
 		// back to the gradient stops, so fill unset stops from the model.
 		fillPhysicalSkyGradient(&out)
