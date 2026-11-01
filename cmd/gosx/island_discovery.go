@@ -775,18 +775,72 @@ func goListPackageReadOnly(projectDir, importPath string) (goListPackageInfo, er
 // goListPackageAtDirReadOnly asks the Go tool for the active package files in
 // one physical directory. A directory with no active Go files is valid for
 // GoSX because it may contain only .gsx sources (or only files excluded by the
-// current GOOS/GOARCH/cgo/build constraints). All other Go package errors stay
-// fail-closed.
+// current GOOS/GOARCH/cgo/build constraints). Dependency errors can leave the
+// active files and imports intact before the build's module sync; package
+// errors still fail closed.
 func goListPackageAtDirReadOnly(packageDir string) (goListPackageInfo, error) {
 	info, err := runGoListPackageReadOnly(packageDir, ".", false)
 	if err == nil {
 		return info, nil
 	}
 	fallback, fallbackErr := runGoListPackageReadOnly(packageDir, ".", true)
-	if fallbackErr == nil && len(fallback.GoFiles) == 0 && len(fallback.CgoFiles) == 0 && len(fallback.InvalidGoFiles) == 0 {
-		return fallback, nil
+	if fallbackErr != nil && strings.Contains(fallbackErr.Error(), "updates to go.mod needed") {
+		fallback, fallbackErr = goListLocalMetadataWithTemporaryModfile(packageDir)
+	}
+	if fallbackErr == nil && len(fallback.InvalidGoFiles) == 0 {
+		if len(fallback.GoFiles) == 0 && len(fallback.CgoFiles) == 0 {
+			return fallback, nil
+		}
+		if fallback.Error == nil && fallback.Dir != "" && fallback.Name != "" {
+			return fallback, nil
+		}
 	}
 	return goListPackageInfo{}, err
+}
+
+// An untidy module can prevent even go list -e from reporting local files.
+// Let Go update a temporary copy offline: discovery must not mutate the user's
+// module or resolve dependencies before the build's source-validation barrier.
+func goListLocalMetadataWithTemporaryModfile(packageDir string) (goListPackageInfo, error) {
+	root, _, err := moduleInfo(packageDir)
+	if err != nil {
+		return goListPackageInfo{}, err
+	}
+	dir, err := os.MkdirTemp("", "gosx-island-metadata-")
+	if err != nil {
+		return goListPackageInfo{}, err
+	}
+	modPath := filepath.Join(dir, "go.mod")
+	sumPath := filepath.Join(dir, "go.sum")
+	defer func() {
+		_ = os.Remove(modPath)
+		_ = os.Remove(sumPath)
+		_ = os.Remove(dir)
+	}()
+	for _, name := range []string{"go.mod", "go.sum"} {
+		data, readErr := os.ReadFile(filepath.Join(root, name))
+		if os.IsNotExist(readErr) && name == "go.sum" {
+			continue
+		}
+		if readErr != nil {
+			return goListPackageInfo{}, readErr
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			return goListPackageInfo{}, err
+		}
+	}
+	cmd := exec.Command("go", "list", "-e", "-mod=mod", "-modfile="+modPath, "-json", ".")
+	cmd.Dir = packageDir
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS=-buildvcs=false", "GOWORK=off", "GOPROXY=off", "GOPRIVATE=none", "GONOPROXY=none", "GOSUMDB=off", "GOVCS=*:off")
+	stdout, err := cmd.Output()
+	if err != nil {
+		return goListPackageInfo{}, err
+	}
+	var info goListPackageInfo
+	if err := json.Unmarshal(stdout, &info); err != nil {
+		return goListPackageInfo{}, err
+	}
+	return info, nil
 }
 
 func runGoListPackageReadOnly(commandDir, importPath string, tolerateErrors bool) (goListPackageInfo, error) {
