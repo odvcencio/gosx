@@ -7668,7 +7668,7 @@
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
     var transmissionResources = sceneCreateTransmissionWebGL(gl);
     var frameLinear = false;
     const programPreparation: ScenePBRPreparationHooks = { ensureSelenaProgram, ensureSkinnedProgram, ensureCustomProgram,
@@ -10959,7 +10959,7 @@
     function dispose() {
       sceneWebGLDisposeDetail(gl, detailResources);
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources);
-      if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
+      if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       transmissionResources.dispose();
       scenePBRDisposeProgramQueue(gl);

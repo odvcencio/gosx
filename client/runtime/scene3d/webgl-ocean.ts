@@ -167,18 +167,19 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
 // frame. draw() returns the state the mount reports as
 // data-gosx-scene3d-ocean: "surface", "shore", "bathymetry-pending",
 // "bathymetry-failed" or "unavailable".
-function createSceneOceanWebGLRenderer(gl, textureCache, placeholder, reflections, clouds) {
-  const vertex = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_OCEAN_VERTEX_GLSL);
+function createSceneOceanWebGLRenderer(gl, textureCache, placeholder, reflections, clouds, fft) {
+  let vertexSource = SCENE_OCEAN_VERTEX_GLSL, fragmentSource = SCENE_OCEAN_FRAGMENT_GLSL; // the spectral variant is patched in by the ocean-fft chunk
+  if (fft) { try { const s = window.__gosx_scene3d_ocean_fft_surface_gl.glsl(vertexSource, fragmentSource); vertexSource = s.vertex; fragmentSource = s.fragment; } catch (_e) { fft.fail("surface-patch"); fft = null; } }
+  const vertex = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
   const fragment = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER,
-    SCENE_OCEAN_FRAGMENT_GLSL.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl"))
+    fragmentSource.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl"))
       .replace("//GOSX_REFLECTION", reflections ? sceneOceanReflectGLSL() : "")
       .replace("//GOSX_CLOUD_SOURCE", clouds ? sceneOceanCloudGLSL() : "")
       .replace("//GOSX_CLOUD_REFLECT", clouds ? "vec4 cloud = gosxClouds(d,u_cloud[13].xyz,u_cloud[11],u_cloud[12],u_cloud[14].xyz,u_cloud[15].xyz,u_cloud[9].xyz); base = base*(1.-cloud.a)+cloud.rgb;" : "")
       .replace("//GOSX_REFLECTION_LOOKUP", reflections ? "refl = oceanGeometryReflection(v_w, normalize(R), N, rough, refl);" : "")
       .replace("//GOSX_SUN_PATH", reflections ? "spec = mix(spec, oceanSunPath(N,H,L,V,rough,sunCol), 0.35);" : ""));
-  if (!vertex || !fragment) return null;
-  const program = scenePBRLinkProgram(gl, vertex, fragment, "Scene ocean");
-  if (!program) return null;
+  const program = vertex && fragment ? scenePBRLinkProgram(gl, vertex, fragment, "Scene ocean") : null;
+  if (!program) { if (fft) { fft.fail("surface-compile"); return createSceneOceanWebGLRenderer(gl, textureCache, placeholder, reflections, clouds, null); } return null; }
   let uniforms;
   scenePBRWhenProgramReady(gl, program, function() {
     uniforms = scenePBRUniformLocations(gl, program, "viewProj ocean[0] bathymetry");
@@ -206,6 +207,7 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder, reflection
       if (clouds) sceneOceanCloudWebGL(gl, program, opts, cloudData);
       scenePBRBindTexture(gl, 0, bathymetry, gl.TEXTURE_2D);
       gl.uniform1i(uniforms.bathymetry, 0);
+      if (fft) fft.bind(gl, program);
       gl.enable(gl.BLEND);
       gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(true);
@@ -215,7 +217,7 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder, reflection
       gl.bindVertexArray(null);
       gl.disable(gl.BLEND);
       if (cull) gl.enable(gl.CULL_FACE);
-      return state;
+      return fft ? state + "+spectrum" : state;
     },
     dispose: function() {
       gl.deleteVertexArray(vao);
@@ -228,11 +230,14 @@ function sceneOceanWebGLDraw(resources, gl, opts) {
   const env = opts.environment;
   let state = "none";
   if (env && env.ocean) {
-    const featureKey = (sceneOceanReflections(oceanReflections(env)) ? 1 : 0) + (env.sky && env.sky.mode === "physical" && env.sky.clouds ? 2 : 0);
+    // A spectral ocean runs its gather passes first (float render targets, EXT_color_buffer_float); null keeps the Gerstner surface.
+    const api = window.__gosx_scene3d_ocean_fft_gl_api, fft = env.ocean.spectrum && api ? api.run(resources, gl, { ocean: env.ocean, tier: opts.quality, time: opts.timeSeconds, camera: opts.camera, textureCache: opts.textureCache, mount: opts.mount, caps: sceneWaterGLFloatCaps }) : null;
+    if (!fft && resources.fft) { resources.fft.dispose(); resources.fft = null; }
+    const featureKey = (sceneOceanReflections(oceanReflections(env)) ? 1 : 0) + (env.sky && env.sky.mode === "physical" && env.sky.clouds ? 2 : 0) + (fft ? 4 : 0);
     if (resources.renderer && resources.featureKey !== featureKey) { resources.renderer.dispose(); resources.renderer = null; resources.failed = false; }
     if (!resources.renderer && !resources.failed) {
       resources.featureKey = featureKey;
-      resources.renderer = createSceneOceanWebGLRenderer(gl, opts.textureCache, opts.placeholder, Boolean(featureKey & 1), Boolean(featureKey & 2));
+      resources.renderer = createSceneOceanWebGLRenderer(gl, opts.textureCache, opts.placeholder, Boolean(featureKey & 1), Boolean(featureKey & 2), fft);
       resources.failed = !resources.renderer;
     }
     state = resources.renderer ? resources.renderer.draw(opts) : "unavailable";
