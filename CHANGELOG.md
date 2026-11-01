@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.58.0
 
 - Draw the spectral ocean in the browser. A scene whose `Ocean` carries a
   `Spectrum` now renders an FFT sea instead of the default six-wave sea, on
