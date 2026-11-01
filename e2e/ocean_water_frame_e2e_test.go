@@ -37,7 +37,12 @@ const oceanWaterPage = `<!doctype html>
 <script data-gosx-script="bootstrap" src="/bootstrap.js" data-gosx-scene3d-ocean-fft-url="/gosx/bootstrap-feature-scene3d-ocean-fft.js" data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js"></script>
 </body></html>`
 
-func TestOceanWaterFrameOnTheGPU(t *testing.T) {
+func TestWaterFrameOnTheGPU(t *testing.T) {
+	// Hosted runners have no GPU. Like the water certification (ci.yml water-webgpu-certification), run only
+	// where GOSX_WATER_E2E_REQUIRE_WEBGPU=1 names a GPU runner; there a missing GPU fails the test.
+	if !waterRequireWebGPU() {
+		t.Skip("needs a real GPU: set GOSX_WATER_E2E_REQUIRE_WEBGPU=1 on a GPU runner (go test -tags e2e -run 'TestWater' ./e2e)")
+	}
 	chrome := e2eChromePath(t)
 	root := e2eRepoRoot(t)
 	spectrum := scene.OceanPreset("rough")
