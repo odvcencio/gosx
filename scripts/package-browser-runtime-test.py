@@ -4,6 +4,7 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tarfile
@@ -18,9 +19,12 @@ spec.loader.exec_module(package)
 
 class BundleTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        if os.environ.get("GOSX_TEST_KEEP_GIT_FIXTURES") == "1":
+            self.root = Path(tempfile.mkdtemp(prefix="gosx-runtime-test-"))
+        else:
+            self.temp = tempfile.TemporaryDirectory()
+            self.addCleanup(self.temp.cleanup)
+            self.root = Path(self.temp.name)
         self.source = self.root / "source"
         self.wasm = self.root / "wasm"
         self.wasm.mkdir()

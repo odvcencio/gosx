@@ -72,7 +72,8 @@ class NativeCleanupPolicyTests(unittest.TestCase):
     def test_owned_identity_exit_and_failure_policy(self):
         # Real PowerShell executes the policy with process/taskkill stubs. No
         # browser or user process is created, terminated or otherwise changed.
-        with tempfile.TemporaryDirectory(prefix="gosx-wcdp-test-", dir="/mnt/c/Temp") as temporary:
+        temp_root = os.environ.get("GOSX_WCDP_TEST_TMPDIR", "/mnt/c/Temp")
+        with tempfile.TemporaryDirectory(prefix="gosx-wcdp-test-", dir=temp_root) as temporary:
             native_root = subprocess.check_output(["wslpath", "-w", temporary], text=True).strip()
             subprocess.run(["bash", "-c", 'source "$1"; WCDP_DIR_WSL="$2"; wcdp_init',
                             "test", str(HELPER), temporary], check=True)

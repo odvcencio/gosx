@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.59.0
+
 - Resolve island map prop types from locally available imported Go packages,
   including aliases. Production file routes reuse verified compiled island
   programs without requiring the Go toolchain or dependency source. Custom
