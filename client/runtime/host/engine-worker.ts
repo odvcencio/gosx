@@ -846,6 +846,19 @@
         if (off) { rec.subs.delete(msg.sid); try { off(); } catch (_) {} }
       },
 
+      // Scene3D.OceanWater in a worker: once the worker has asked for a mount, the page sends it the drawn water's frame after every frame it
+      // draws ("ocean.water" below holds the latest). The unsubscribe is kept in rec.subs, so a stopped engine releases it.
+      "ocean.watch": function(rec, msg) {
+        var target = String(msg.target), key = "water|" + target, scene = window.__gosx.scene3d;
+        if (!current(rec) || rec.subs.has(key)) return;
+        var sink = function(w) { if (current(rec)) try { rec.worker.postMessage({ t: "ocean.water", target: target, v: w }); } catch (_) {} };
+        var off = function() { scene.oceanWater(target, null); };
+        rec.subs.set(key, off);
+        scene.whenReady(target).then(function() {
+          if (rec.subs.get(key) === off && (scene.oceanWater(target, sink) || [])[0] > 0) sink(scene.oceanWater(target)); // it drew before the worker asked
+        }, function() { rec.subs.delete(key); });
+      },
+
       // Calls that return a result use a request id.
       scene3d: function(rec, msg) {
         if (!current(rec)) { reply(rec, msg.rid, false, null, "engine context is disposed"); return; }
@@ -1111,6 +1124,7 @@
     var nextViewSeq = 1;
     var viewAcks = new Map();         // seq -> {token, fn}
     var vesselOK = new Map();         // "kind|target|nodeID" -> the page's last answer
+    var waters = new Map();           // mount id -> the Float64Array(9) water frame the page keeps filling (Scene3D.OceanWater)
 
     function post(msg, transfer) { scope.postMessage(msg, transfer || []); }
 
@@ -1281,6 +1295,12 @@
           var args = stripAbortOption(Array.prototype.slice.call(arguments, 2));
           if (method === "getCamera") return null; // reads are main-thread only; use SetCamera
           if (typeof target !== "string") throw new TypeError("a worker Scene3D needs the mount id as a string; use ScenebyID");
+          if (method === "oceanWater") {
+            // Answered here, not by the page, because a read must be synchronous; the page keeps this array current once it hears "ocean.watch".
+            var water = waters.get(target);
+            if (!water) { waters.set(target, water = new Float64Array(9)); post({ t: "ocean.watch", target: target }); }
+            return water;
+          }
           return request({ t: "scene3d", method: String(method), target: target, args: args });
         },
         emit: function(name, detail) { post({ t: "emit", name: String(name), detail: detail === undefined ? null : detail }); },
@@ -1377,6 +1397,7 @@
         mount().catch(function(error) { fatal(error && error.code || "worker-mount-failed", error); });
       },
       dispose: disposeEngine,
+      "ocean.water": function(msg) { var w = waters.get(String(msg.target)); if (w && msg.v && msg.v.length === w.length) w.set(msg.v); },
       "vessel.result": function(msg) { vesselOK.set(String(msg.kind) + "|" + String(msg.target) + "|" + String(msg.nodeID || ""), msg.ok === true); },
       ack: function(msg) {
         var waiter = viewAcks.get(msg.seq);

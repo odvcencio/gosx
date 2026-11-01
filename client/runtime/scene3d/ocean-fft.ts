@@ -125,8 +125,22 @@
   // timing is the WebGPU graph's own GPU time (its compute passes, which the renderer's frame stamps do not cover): the latest sample and the
   // last 120, in milliseconds, or null without timestamp-query. The renderer reports its render passes separately.
   function timing(): any { return timingSource && !timingSource.failed ? timingSource.gpuTiming() : null; }
+  // The record is reused, so publishing allocates nothing. scale, driftX and driftZ are the rates the water moves at (a host carries a
+  // reading forward with them); the page's Scene3D ocean-water record copies the whole frame (see recordOceanWater in mount-backend.ts).
+  const waterRecord: any = { x: 0, z: 0, time: 0, scale: 1, driftX: 0, driftZ: 0 };
   function publish(runner: any): void {
-    lastWater = runner.failed ? null : { x: runner.value("waterX"), z: runner.value("waterZ"), time: runner.value("simTime") };
+    if (runner.failed) { lastWater = null; return; }
+    waterRecord.x = runner.value("waterX"); waterRecord.z = runner.value("waterZ"); waterRecord.time = runner.value("simTime");
+    waterRecord.scale = runner.value("timeScale"); waterRecord.driftX = runner.value("driftX"); waterRecord.driftZ = runner.value("driftZ");
+    lastWater = waterRecord;
+  }
+  // fill writes the running graph's water frame into a host's record (indices 1 to 7 of scene.OceanWaterFloats) and answers whether there is one: false
+  // means the Gerstner sea is what is drawn (see recordOceanWater in mount-backend.ts).
+  function fill(w: Float64Array): boolean {
+    const f = lastWater;
+    if (!f) return false;
+    w[1] = f.time; w[2] = f.x; w[3] = f.z; w[4] = 1; w[5] = f.scale; w[6] = f.driftX; w[7] = f.driftZ;
+    return true;
   }
 
 
@@ -391,7 +405,7 @@
     if (host && host.mount && host.mount.setAttribute) host.mount.setAttribute("data-gosx-scene3d-ocean-fft-fallback", reason);
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, timing: timing, nodePose: nodePose, waterRelative: waterRelative, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, WAKE_DEBUG_RANGE: WAKE_DEBUG_RANGE, feed: feed, surfaceData: surfaceData };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, fill: fill, timing: timing, nodePose: nodePose, waterRelative: waterRelative, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, WAKE_DEBUG_RANGE: WAKE_DEBUG_RANGE, feed: feed, surfaceData: surfaceData };
   // The WebGL chunk's minifier renames some property names (frame among them); the method the two chunks share is called run.
   window.__gosx_scene3d_ocean_fft_gl_api = { run: frameGL, fail: failGL };
 })();

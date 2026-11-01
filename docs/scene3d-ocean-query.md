@@ -12,6 +12,30 @@ When the Ocean has a `Spectrum`, `NewOceanQuery` sums the ocean's `SwellWaves` i
 
 The query does not apply `Presentation`. When `Presentation` sets a drift or a `TimeScale`, the GPU surface samples the water at the position minus the integrated drift offset and evolves it at presentation time times `TimeScale`. `x` and `z` are therefore water-frame coordinates and `seconds` is wave time; apply the offset and the scale before the call if the query should follow the rendered water.
 
+## Where the drawn water is
+
+A host that moves a vessel's pose itself (an external-pose vessel, as Bon Voyage does) does its own buoyancy, and needs the offset and wave time the renderer drew with. In Go, take a reader once and read it each frame:
+
+```go
+water, err := ctx.Scene3DByID("sea").OceanWater() // after Ready
+...
+if frame, ok := water.Read(); ok {
+	frame = frame.Advance(age)              // optional: carry the reading forward
+	s := query.SampleWater(frame, x, z)     // s.Position.Y is the swell height at world (x, z)
+}
+```
+
+`Read` returns a `scene.OceanWaterFrame`: `X` and `Z` (the drift the water has integrated), `Time` (wave time), `Spectral`, the rates `TimeScale`, `DriftX` and `DriftZ`, the page's drawn-frame count `Frame`, and `AtMS`, the Unix time in milliseconds when the page recorded it. `SampleWater` moves the point into the water frame, queries at `Time` and moves the result back. The values are exactly what the shader draws with on WebGPU and on WebGL2 (the page copies the graph's own `waterX`, `waterZ`, `simTime`, `timeScale`, `driftX` and `driftZ`). When the spectral graph is not running, because it is still building, failed, or the ocean has no spectrum, the frame is the Gerstner sea's: `Spectral` is false, `X` and `Z` are zero and `Time` is the scene clock, and `OceanQuery` applies `Ocean.Speed` itself.
+
+Limits:
+
+- It is a reading for drawing. Presentation never feeds a simulation: do not use it in a game rule, a save or a replay.
+- `Read` allocates nothing. It reads a `Float64Array` the page keeps in place. The page records nothing until a reader is made.
+- The height is the swell height (`OceanQuery` sums the spectrum's strongest bins), not the height of every ripple of the FFT surface. The frame says where the swell is; it does not read the FFT textures back. Reading the WebGPU probe is a later step.
+- Latency: the reading is the last drawn frame, so a pose that the next render draws sees a reading 1 frame old. In an engine worker add the message hop. See `scene.OceanWaterFrame`.
+- The page keeps one spectral ocean per page; two mounted spectral scenes are not told apart.
+- A desktop-native engine host does not forward the request; the reader works on the main thread and in a Worker.
+
 Pass a bathymetry callback that reproduces the GPU texture's level-zero bilinear R sample. JS `bathymetry(ImageData, ocean.bathymetry)` clamps to texel centres, filters R and then decodes linear or signed-sqrt height. A nil callback means deep water. A terrain heightfield is useful for collision but differs from the filtered texture; use the texture for visual parity in shallow water.
 
 The query tests compare independent ports of the GLSL/WGSL vertex maths over a grid and several times to 0.0001 m. A shared 72-sample fixture checks Go/JS position, normal and velocity to 0.0000001. Actual GPU transcendental implementations and raster interpolation can introduce additional rounding.

@@ -749,6 +749,7 @@ Page to worker:
 | `fault` | `where, message` | The page rejected something the worker sent. |
 | `ack` | `seq, ok` | The page handled the view batch numbered `seq`; `ok` is false if it rejected the batch, and the view sends it again. |
 | `vessel.result` | `kind, target, nodeID, ok` | The page's answer for a vessel pose or cutaway target, sent on the first call and when it changes. |
+| `ocean.water` | `target, v` | The drawn water's frame for a mount the worker asked about (`Scene3D.OceanWater`): a copy of the page's nine-value record, sent after every frame the renderer draws with an ocean and once at once if it already drew. The worker keeps the latest in place; the layout is `scene.OceanWaterIdx*`. |
 
 Worker to page:
 
@@ -760,6 +761,7 @@ Worker to page:
 | `signals` | `changedOnly, buf, seq?` | A signal batch as UTF-8 JSON bytes. With `seq` (a view batch) the page answers `ack`. |
 | `calls` | `channel, timeout, recent, zero` | The engine serves calls on `channel`; the page starts a watchdog for each call it sees there, including each call listed in a mailbox. |
 | `vessel.cutaway` | `target, nodeID, json` | `scene.DispatchVesselCutaway`. Vessel poses travel as `frame` with `kind: "vessel-pose"`. |
+| `ocean.watch` | `target` | `Scene3D.OceanWater`: the first read of a mount's water frame. The page starts sending `ocean.water` for it and stops when the engine ends. |
 | `signal.set`, `subscribe`, `unsubscribe` | | Single write and subscription control. |
 | `scene3d`, `navigate` | `rid, ...` | Requests that answer with `reply`. |
 | `emit` | `name, detail` | `ctx.Emit`. |

@@ -19,3 +19,12 @@ func (Scene3D) SetCamera(context.Context, any) error            { return ErrUnsu
 func (Scene3D) SetOrbit(context.Context, scene.Orbit) error     { return ErrUnsupported }
 
 func (Scene3D) SetAnimationClock(context.Context, float64, bool) error { return ErrUnsupported }
+
+// OceanWaterReader is the browser-only water frame reader; off the browser it
+// never has a reading.
+type OceanWaterReader struct{}
+
+func (Scene3D) OceanWater() (*OceanWaterReader, error) { return nil, ErrUnsupported }
+func (*OceanWaterReader) Read() (scene.OceanWaterFrame, bool) {
+	return scene.OceanWaterFrame{}, false
+}

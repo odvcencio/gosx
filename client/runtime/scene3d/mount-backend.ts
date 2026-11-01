@@ -467,7 +467,8 @@
     setAttrValue(mount, "data-gosx-scene3d-water-unsupported-reason", unsupportedReason);
   }
 
-  function recordSceneWaterFrame(mount, bundle) {
+  function recordSceneWaterFrame(mount, bundle, sceneTime: number) {
+    recordOceanWater(mount, bundle, sceneTime);
     if (!mount || typeof mount.setAttribute !== "function" || !bundle ||
         !Array.isArray(bundle.waterSystems) || bundle.waterSystems.length === 0) return;
     const current = Number(mount.__gosxScene3DWaterFrameSeq);
@@ -489,6 +490,20 @@
     if (simulationNext === 1 || simulationNext % 15 === 0) {
       setAttrValue(mount, "data-gosx-scene3d-water-simulation-seq", String(simulationNext));
     }
+  }
+
+  // recordOceanWater keeps the drawn water's frame for a host that asked for it (Scene3D.OceanWater in Go): the origin and wave time the
+  // renderer used for the frame it just drew, in the Float64Array the handle's oceanWater() made. Nothing runs until a host asks. A spectral
+  // sea reports the FFT graph's own values (ocean-fft.ts fill()); a Gerstner sea, plain or the fallback of a graph that could not run,
+  // has no drift and runs on the scene clock. Layout: scene.OceanWaterIdx* in scene/ocean_water.go. A worker host gets the record as a
+  // message through the sink (the page half of engine-worker.ts).
+  function recordOceanWater(mount: any, bundle: any, sceneTime: number) {
+    const w = mount && mount.__gosxOceanWater;
+    if (!w || !bundle || !bundle.environment || !bundle.environment.ocean) return;
+    const api = window.__gosx_scene3d_ocean_fft_api;
+    if (!(api && api.fill(w))) { w[1] = sceneTime; w[2] = w[3] = w[4] = w[6] = w[7] = 0; w[5] = 1; }
+    w[8] = performance.timeOrigin + performance.now(); w[0]++;
+    if (mount.__gosxOceanWaterSink) mount.__gosxOceanWaterSink(w);
   }
 
   function sceneDebugBundleCounts(bundle, state) {

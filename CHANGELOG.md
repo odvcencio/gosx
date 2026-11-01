@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Tell a host that drives a vessel's pose itself where the drawn water is.
+  `engine/wasm` `Scene3D.OceanWater()` returns a reader, and `Read()` gives a
+  `scene.OceanWaterFrame`: the water's drift offset `X`/`Z` and wave `Time` the
+  renderer used for its last frame, whether the sea was spectral or the Gerstner
+  fallback, the rates to carry it forward (`Advance`), a drawn-frame count and
+  the Unix time it was recorded at. `OceanQuery.SampleWater` samples the ocean
+  in that frame, so an external-pose host's own heavy-hull filter can follow the
+  water the player sees. The values are the FFT graph's own on WebGPU and
+  WebGL2. A reading is 1 frame old when the next render draws the pose it
+  sizes; `Read` allocates nothing; an engine worker gets each frame by message.
+  The reading is for drawing only and never feeds a simulation. It is the
+  frame, not the FFT heights: the height still comes from the swell waves.
+  See `docs/scene3d-ocean-query.md`.
+  Size: the Scene3D core chunk grows 439 raw / 201 gzip / 104 Brotli bytes,
+  the command chunk 189 / 68 / 102, the monolith 442 / 162 / 352, the
+  engine-worker host 611 / 183 / 159 and the lazy ocean-fft chunk 276 / 24 /
+  172. The size budgets and renderer architecture limits move to the measured
+  minima. The generated bundles and perf-loader fixtures are regenerated.
+
 ## v0.58.0
 
 - Draw the spectral ocean in the browser. A scene whose `Ocean` carries a

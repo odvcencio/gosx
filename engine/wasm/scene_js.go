@@ -138,3 +138,46 @@ func (s Scene3D) SetOrbit(ctx context.Context, orbit scene.Orbit) error {
 func (s Scene3D) SetAnimationClock(ctx context.Context, seconds float64, paused bool) error {
 	return s.async(ctx, "setAnimationClock", map[string]any{"timeSeconds": seconds, "paused": paused})
 }
+
+// OceanWaterReader reads where a mounted scene draws its water, without
+// allocating. Get one from Scene3D.OceanWater once, then call Read each frame.
+type OceanWaterReader struct{ record js.Value }
+
+// OceanWater returns a reader for the water frame of this scene's ocean: the
+// origin and wave time the renderer drew the sea with, on WebGPU and WebGL2
+// (see scene.OceanWaterFrame for the fields, the Gerstner fallback and the
+// latency). A host that drives a vessel's pose itself (an external-pose
+// vessel) uses it to sample the sea the player sees:
+//
+//	frame, ok := reader.Read()
+//	q.SampleWater(frame, x, z) // q is a *scene.OceanQuery
+//
+// The reading is for drawing only. Presentation never feeds a simulation: keep
+// it out of game rules, saves and replays.
+//
+// Call it after Ready. The page starts recording a frame for this scene when
+// the reader is created; until the renderer has drawn an ocean frame, Read
+// reports false. In an engine worker the page posts each frame to the worker,
+// and the reading is the last one the worker received. Take one reader per
+// scene and keep it. The page keeps one spectral ocean per page: with two
+// mounted spectral scenes the frames are not told apart.
+func (s Scene3D) OceanWater() (*OceanWaterReader, error) {
+	value, err := s.call("oceanWater")
+	if err != nil {
+		return nil, err
+	}
+	if !value.Truthy() {
+		return nil, fmt.Errorf("Scene3D ocean water is not ready")
+	}
+	return &OceanWaterReader{record: value}, nil
+}
+
+// Read returns the latest water frame. It reports false until the page has
+// drawn a frame with an ocean. It does not allocate.
+func (r *OceanWaterReader) Read() (scene.OceanWaterFrame, bool) {
+	var wire [scene.OceanWaterFloats]float64
+	for i := range wire {
+		wire[i] = r.record.Index(i).Float()
+	}
+	return scene.OceanWaterFromWire(&wire)
+}

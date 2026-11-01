@@ -222,6 +222,16 @@
     return rec && typeof rec.handle.getCamera === "function" ? rec.handle.getCamera() : null;
   }
 
+  // oceanWater makes (once) and returns the Float64Array a host reads the drawn water's frame from (Scene3D.OceanWater); sink, when given, is
+  // called with it after every drawn frame, null stops that. recordOceanWater (mount-backend.ts) fills it. A handle given without its mount has none.
+  function oceanWater(target: any, sink?: any) {
+    const mount: any = record(target, {})?.mount;
+    if (!mount) return null;
+    if (!mount.__gosxOceanWater) mount.__gosxOceanWater = new Float64Array(9);
+    if (sink !== undefined) mount.__gosxOceanWaterSink = sink;
+    return mount.__gosxOceanWater;
+  }
+
   function whenReady(target: any, opts: any = {}) {
     return waitForCommandMount(target, { timeoutMS: 0, ...opts }, "readiness", (_rec, resolve) => resolve(true));
   }
@@ -1003,7 +1013,7 @@
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
     live: live,
-    getCamera, setCamera, setOrbit, whenReady, setAnimationClock,
+    getCamera, oceanWater, setCamera, setOrbit, whenReady, setAnimationClock,
     playTimeline: playTimeline,
     burstParticles: burstParticles,
     dispatchPoseFrame: dispatchPoseFrame,

@@ -42,6 +42,9 @@
   api.getCamera = function(target) {
     return window.__gosx_scene3d_command_bridge?.getCamera(target) || null;
   };
+  api.oceanWater = function(target, sink) {
+    return window.__gosx_scene3d_command_bridge?.oceanWater(target, sink) || null;
+  };
   function forceWebGLRequested() {
     if (window.__gosx_scene3d_force_webgl === true) return true;
     try {
