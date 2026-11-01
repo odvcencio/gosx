@@ -163,7 +163,9 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if version := strings.TrimSpace(r.URL.Query().Get("v")); version != "" {
+	// Dev URLs carry the staged runtime's digest. An older dist manifest may
+	// resolve the same compatibility name to different, incompatible bytes.
+	if version := strings.TrimSpace(r.URL.Query().Get("v")); version != "" && os.Getenv("GOSX_DEV") != "1" {
 		if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
 			MarkObservedRequest(r, "runtime", "/gosx/"+name)
 			serveImmutableRuntimeFile(w, r, fsPath, !a.compressionOff)
