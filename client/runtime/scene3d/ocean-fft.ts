@@ -96,10 +96,10 @@
   // frameInputs are the graph's "frame" parameter sources.
   function frameInputs(state: any, host: any): any {
     const time = Number.isFinite(host.time) ? host.time : 0;
-    const dt = state.last === null ? 0 : Math.min(MAX_DT, Math.max(0, time - state.last));
+    const clock = state.last === null ? 0 : Math.max(0, time - state.last), dt = Math.min(MAX_DT, clock);
     state.last = time;
     const cam = host.camera || {};
-    return { time: time, dt: dt, cameraX: cam.x || 0, cameraY: cam.y || 0, cameraZ: cam.z || 0 };
+    return { time: time, dt: dt, accumulateDt: clock, cameraX: cam.x || 0, cameraY: cam.y || 0, cameraZ: cam.z || 0 };
   }
 
   // nodePose is the graph runner's view of the scene: the pose a vessel (or any node that publishes) put in window.__gosx_scene3d_node_poses[id]
@@ -125,8 +125,23 @@
   // timing is the WebGPU graph's own GPU time (its compute passes, which the renderer's frame stamps do not cover): the latest sample and the
   // last 120, in milliseconds, or null without timestamp-query. The renderer reports its render passes separately.
   function timing(): any { return timingSource && !timingSource.failed ? timingSource.gpuTiming() : null; }
+  // The record is reused, so publishing allocates nothing. scale, driftX and driftZ are the rates the water moves at (a host carries a
+  // reading forward with them); the page's Scene3D ocean-water record copies the whole frame (see recordOceanWater in mount-backend.ts).
+  const waterRecord: any = { x: 0, z: 0, time: 0, scale: 1, driftX: 0, driftZ: 0, gen: 0 };
+  let generation = 0; // counts graph builds: a host sees Time, X and Z restart when it changes
   function publish(runner: any): void {
-    lastWater = runner.failed ? null : { x: runner.value("waterX"), z: runner.value("waterZ"), time: runner.value("simTime") };
+    if (runner.failed) { lastWater = null; return; }
+    waterRecord.x = runner.value("waterX"); waterRecord.z = runner.value("waterZ"); waterRecord.time = runner.value("simTime");
+    waterRecord.gen = runner.waterGen; waterRecord.scale = runner.value("timeScale"); waterRecord.driftX = runner.value("driftX"); waterRecord.driftZ = runner.value("driftZ");
+    lastWater = waterRecord;
+  }
+  // fill writes the running graph's water frame into a host's record (indices 1 to 7 and 9 of the record) and answers whether there is one: false
+  // means the Gerstner sea is what is drawn (see recordOceanWater in mount-backend.ts).
+  function fill(w: Float64Array): boolean {
+    const f = lastWater;
+    if (!f) return false;
+    w[1] = f.time; w[2] = f.x; w[3] = f.z; w[4] = 1; w[5] = f.scale; w[6] = f.driftX; w[7] = f.driftZ; w[9] = f.gen;
+    return true;
   }
 
 
@@ -244,7 +259,7 @@
     function build(tier: string): void {
       if (state.runner) state.runner.dispose();
       const runner = G.create({ module: MODULE, backend: "webgpu", tier: tier, host: { device: device, create: host.create, validation: host.validation, nodePose: function (id: string) { return waterRelative(nodePose(id), function () { return state.runner; }); } } });
-      state.runner = runner; state.tier = tier; state.last = null; state.viewList = null; engine.group = null; engine.ready = false;
+      runner.waterGen = ++generation; state.runner = runner; state.tier = tier; state.last = null; state.viewList = null; engine.group = null; engine.ready = false;
       state.info = runner.graph ? describe(runner.graph) : null;
     }
     // bindGroup (re)builds the surface bind group when the graph's exported textures changed.
@@ -330,6 +345,7 @@
     const state: any = { last: null };
     const runner = G.create({ module: MODULE, backend: "webgl2", tier: tierOf(host.tier), host: { gl: gl, caps: host.caps, textureCache: host.textureCache, profile: host.profile || diagnostics().profile, throttle: host.throttle || diagnostics().throttle || WAKE_THROTTLE, nodePose: function (id: string) { return waterRelative(nodePose(id), function () { return engine.runner; }); } } });
     const data = new Float32Array(SURFACE_FLOATS), cache = new Map();
+    runner.waterGen = ++generation;
     const info = runner.graph ? describe(runner.graph) : null;
     const engine: any = { gl: gl, runner: runner, tier: tierOf(host.tier), disposed: false, update: update, bind: bind, dispose: dispose, fail: function (reason: string) { runner.fail(reason); } };
     function update(frame: any): boolean {
@@ -360,7 +376,7 @@
     }
     function dispose(): void {
       if (engine.disposed) return;
-      engine.disposed = true;
+      engine.disposed = true; lastWater = null;
       runner.dispose();
       if (engine.dummy) gl.deleteTexture(engine.dummy);
     }
@@ -373,7 +389,7 @@
     let eng = resources.fft;
     if (eng && (eng.gl !== gl || eng.disposed || eng.tier !== tierOf(host.tier))) { eng.dispose(); eng = resources.fft = null; }
     if (resources.fftDisabled) return null;
-    if (gl.isContextLost && gl.isContextLost()) return null;
+    if (gl.isContextLost && gl.isContextLost()) { lastWater = null; return null; }
     if (!eng) eng = resources.fft = createGL(gl, host);
     const ok = eng.update({ ocean: host.ocean, time: host.time, camera: host.camera });
     if (eng.runner.failed) {
@@ -391,7 +407,7 @@
     if (host && host.mount && host.mount.setAttribute) host.mount.setAttribute("data-gosx-scene3d-ocean-fft-fallback", reason);
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, timing: timing, nodePose: nodePose, waterRelative: waterRelative, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, WAKE_DEBUG_RANGE: WAKE_DEBUG_RANGE, feed: feed, surfaceData: surfaceData };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, fill: fill, timing: timing, nodePose: nodePose, waterRelative: waterRelative, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, WAKE_DEBUG_RANGE: WAKE_DEBUG_RANGE, feed: feed, surfaceData: surfaceData };
   // The WebGL chunk's minifier renames some property names (frame among them); the method the two chunks share is called run.
   window.__gosx_scene3d_ocean_fft_gl_api = { run: frameGL, fail: failGL };
 })();

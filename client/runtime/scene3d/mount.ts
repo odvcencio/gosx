@@ -1878,7 +1878,7 @@
       const frameMeta = createSceneRenderFrameMeta(null);
       const frameOutcome = sceneRenderWithTiming(renderer, latestBundle, viewport, frameMeta, renderTiming);
       finishSceneSubmission(frameOutcome, frameMeta);
-      recordSceneWaterFrame(mount, latestBundle);
+      recordSceneWaterFrame(mount, latestBundle, frameMeta.sceneTime, frameOutcome);
       emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLayers();
@@ -3070,7 +3070,7 @@
       syncSceneNodeSentinels(bundle);
       const frameMeta = createSceneRenderFrameMeta(now);
       const frameOutcome = sceneRenderWithTiming(renderer, bundle, viewport, frameMeta, renderTiming);
-      recordSceneWaterFrame(mount, bundle);
+      recordSceneWaterFrame(mount, bundle, frameMeta.sceneTime, frameOutcome);
       if (checkEmpty) maybeEmitRenderEmpty(bundle);
       renderSceneLayers(bundle);
       if (statsOverlay) statsOverlay.update(bundle, frameStart, renderer, viewport);
