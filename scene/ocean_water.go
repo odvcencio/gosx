@@ -77,14 +77,15 @@ func OceanWaterFromWire(v *[OceanWaterFloats]float64) (OceanWaterFrame, bool) {
 // Advance returns the frame carried forward by seconds of scene time at the
 // rates it holds. Use it to cover the age of a reading (a negative age is
 // refused: the frame is returned unchanged). It uses only addition and
-// multiplication, so it gives the same value on every platform.
+// multiplication, each product rounded before the sum, so it gives the same
+// value on every platform.
 func (f OceanWaterFrame) Advance(seconds float64) OceanWaterFrame {
 	if !(seconds > 0) {
 		return f
 	}
-	f.Time += seconds * f.TimeScale
-	f.X += seconds * f.DriftX
-	f.Z += seconds * f.DriftZ
+	f.Time += float64(seconds * f.TimeScale)
+	f.X += float64(seconds * f.DriftX)
+	f.Z += float64(seconds * f.DriftZ)
 	return f
 }
 
