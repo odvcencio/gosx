@@ -9,7 +9,7 @@ import (
 )
 
 func TestSceneOceanWaterReaderFollowsThePageRecord(t *testing.T) {
-	host := js.Global().Call("eval", `({isCurrent(){return true}, asked:0, record:new Float64Array(9),
+	host := js.Global().Call("eval", `({isCurrent(){return true}, asked:0, record:new Float64Array(10),
  scene3D(method,mount){ if(method!=='oceanWater') throw new Error('unexpected '+method); this.asked++; this.mount=mount; return this.ready===false?null:this.record }})`)
 	target := Context{value: host}.Scene3DByID("ship")
 	host.Set("ready", false)
@@ -25,24 +25,24 @@ func TestSceneOceanWaterReaderFollowsThePageRecord(t *testing.T) {
 		t.Fatal("a record the page has not written is a reading")
 	}
 	record := host.Get("record")
-	for i, v := range []float64{61, 1.25, 2.5, -1.5, 1, 2, 4, 3, 1.7e12} {
+	for i, v := range []float64{61, 1.25, 2.5, -1.5, 1, 2, 4, 3, 1.7e12, 3} {
 		record.SetIndex(i, v)
 	}
 	frame, ok := reader.Read()
-	if !ok || frame.Frame != 61 || frame.Time != 1.25 || frame.X != 2.5 || frame.Z != -1.5 || !frame.Spectral ||
-		frame.TimeScale != 2 || frame.DriftX != 4 || frame.DriftZ != 3 || frame.AtMS != 1.7e12 {
+	if !ok || frame.Seq != 61 || frame.Generation != 3 || frame.Time != 1.25 || frame.X != 2.5 || frame.Z != -1.5 || !frame.Spectral ||
+		frame.TimeScale != 2 || frame.WaterDriftX != 4 || frame.WaterDriftZ != 3 || frame.PageEpochMS != 1.7e12 {
 		t.Fatalf("frame=%+v ok=%v", frame, ok)
 	}
 	// The page writes the same array in place: the reader keeps seeing it, with no call back into the page.
 	record.SetIndex(0, 62)
 	record.SetIndex(4, 0)
-	if frame, _ = reader.Read(); frame.Frame != 62 || frame.Spectral || host.Get("asked").Int() != 2 {
+	if frame, _ = reader.Read(); frame.Seq != 62 || frame.Spectral || host.Get("asked").Int() != 2 {
 		t.Fatalf("frame=%+v asked=%d", frame, host.Get("asked").Int())
 	}
 }
 
 func TestSceneOceanWaterReadDoesNotAllocate(t *testing.T) {
-	host := js.Global().Call("eval", `({isCurrent(){return true}, record:new Float64Array([1,2,3,4,1,1,0,0,5]), scene3D(){return this.record}})`)
+	host := js.Global().Call("eval", `({isCurrent(){return true}, record:new Float64Array([1,2,3,4,1,1,0,0,5,2]), scene3D(){return this.record}})`)
 	reader, err := Context{value: host}.Scene3DByID("ship").OceanWater()
 	if err != nil {
 		t.Fatal(err)

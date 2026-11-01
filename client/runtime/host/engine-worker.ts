@@ -852,11 +852,14 @@
         var target = String(msg.target), key = "water|" + target, scene = window.__gosx.scene3d;
         if (!current(rec) || rec.subs.has(key)) return;
         var sink = function(w) { if (current(rec)) try { rec.worker.postMessage({ t: "ocean.water", target: target, v: w }); } catch (_) {} };
-        var off = function() { scene.oceanWater(target, null); };
+        var cancel = new AbortController();
+        var off = function() { cancel.abort(); scene.oceanWater(target, sink, true); };
         rec.subs.set(key, off);
-        scene.whenReady(target).then(function() {
-          if (rec.subs.get(key) === off && (scene.oceanWater(target, sink) || [])[0] > 0) sink(scene.oceanWater(target)); // it drew before the worker asked
-        }, function() { rec.subs.delete(key); });
+        scene.whenReady(target, { signal: cancel.signal }).then(function() {
+          if (rec.subs.get(key) !== off) return;
+          var w = scene.oceanWater(target, sink);
+          if (w && w[0] > 0) sink(w); // it drew before the worker asked
+        }, function() { if (rec.subs.get(key) === off) rec.subs.delete(key); });
       },
 
       // Calls that return a result use a request id.
@@ -1124,7 +1127,7 @@
     var nextViewSeq = 1;
     var viewAcks = new Map();         // seq -> {token, fn}
     var vesselOK = new Map();         // "kind|target|nodeID" -> the page's last answer
-    var waters = new Map();           // mount id -> the Float64Array(9) water frame the page keeps filling (Scene3D.OceanWater)
+    var waters = new Map();           // mount id -> the Float64Array(10) water frame the page keeps filling (Scene3D.OceanWater)
 
     function post(msg, transfer) { scope.postMessage(msg, transfer || []); }
 
@@ -1298,7 +1301,7 @@
           if (method === "oceanWater") {
             // Answered here, not by the page, because a read must be synchronous; the page keeps this array current once it hears "ocean.watch".
             var water = waters.get(target);
-            if (!water) { waters.set(target, water = new Float64Array(9)); post({ t: "ocean.watch", target: target }); }
+            if (!water) { waters.set(target, water = new Float64Array(10)); post({ t: "ocean.watch", target: target }); }
             return water;
           }
           return request({ t: "scene3d", method: String(method), target: target, args: args });

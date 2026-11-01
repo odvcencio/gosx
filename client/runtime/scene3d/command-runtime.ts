@@ -223,12 +223,12 @@
   }
 
   // oceanWater makes (once) and returns the Float64Array a host reads the drawn water's frame from (Scene3D.OceanWater); sink, when given, is
-  // called with it after every drawn frame, null stops that. recordOceanWater (mount-backend.ts) fills it. A handle given without its mount has none.
-  function oceanWater(target: any, sink?: any) {
+  // added to the mount's sinks and called with it after every drawn frame; with stop it is removed again. recordOceanWater (mount-backend.ts) fills it. A handle given without its mount has none.
+  function oceanWater(target: any, sink?: any, stop?: boolean) {
     const mount: any = record(target, {})?.mount;
     if (!mount) return null;
-    if (!mount.__gosxOceanWater) mount.__gosxOceanWater = new Float64Array(9);
-    if (sink !== undefined) mount.__gosxOceanWaterSink = sink;
+    if (!mount.__gosxOceanWater) mount.__gosxOceanWater = new Float64Array(10);
+    if (sink) { const sinks = mount.__gosxOceanWaterSinks || (mount.__gosxOceanWaterSinks = new Set()); if (stop) sinks.delete(sink); else sinks.add(sink); }
     return mount.__gosxOceanWater;
   }
 

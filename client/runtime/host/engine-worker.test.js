@@ -54,7 +54,7 @@ function bootPage(opts = {}) {
   };
   class CustomEvent { constructor(type, init) { this.type = type; this.detail = init && init.detail; } }
   const context = vm.createContext({
-    window: win, document, location: { href: "https://app.test/play/" }, console, URL, CustomEvent, Worker: win.Worker,
+    window: win, document, location: { href: "https://app.test/play/" }, console, URL, CustomEvent, AbortController, Worker: win.Worker,
     performance: { timeOrigin: 1000, now: () => 5 }, TextDecoder, TextEncoder, ArrayBuffer, Uint8Array, JSON, Promise, Map, Set, Math, Number, String, Object, Array, Error,
     setTimeout, clearTimeout, setInterval, clearInterval, isFinite, Array, Set,
   });
@@ -1683,13 +1683,13 @@ test("worker: Scene3D oceanWater answers at once from a mirror the page keeps cu
   const w = await mountedWorker();
   const ctx = w.scope.factoryCtx;
   const first = ctx.scene3D("oceanWater", "ship");
-  assert.ok(Object.prototype.toString.call(first) === "[object Float64Array]" && first.length === 9 && first[0] === 0, "an empty record before the page has drawn a frame");
+  assert.ok(Object.prototype.toString.call(first) === "[object Float64Array]" && first.length === 10 && first[0] === 0, "an empty record before the page has drawn a frame");
   assert.equal(ctx.scene3D("oceanWater", "ship"), first, "the same array every time: a reader keeps it");
   assert.deepEqual(plain(w.of("ocean.watch").map(m => m.msg)), [{ t: "ocean.watch", target: "ship" }], "one request, not one per read");
   assert.equal(w.of("scene3d").length, 0, "no request/reply round trip for a read");
-  w.send({ t: "ocean.water", target: "ship", v: new Float64Array([7, 12.5, 3, -4, 1, 1, 0.5, -0.25, 1e12]) });
-  assert.deepEqual(Array.from(first), [7, 12.5, 3, -4, 1, 1, 0.5, -0.25, 1e12], "the next message replaces the reading in place");
-  w.send({ t: "ocean.water", target: "other", v: new Float64Array(9).fill(1) });
+  w.send({ t: "ocean.water", target: "ship", v: new Float64Array([7, 12.5, 3, -4, 1, 1, 0.5, -0.25, 1e12, 2]) });
+  assert.deepEqual(Array.from(first), [7, 12.5, 3, -4, 1, 1, 0.5, -0.25, 1e12, 2], "the next message replaces the reading in place");
+  w.send({ t: "ocean.water", target: "other", v: new Float64Array(10).fill(1) });
   w.send({ t: "ocean.water", target: "ship", v: new Float64Array(3) });
   assert.equal(first[0], 7, "a frame for another mount, or a short one, is ignored");
   assert.throws(() => ctx.scene3D("oceanWater", { mount: true }), /mount id as a string/);
@@ -1698,30 +1698,35 @@ test("worker: Scene3D oceanWater answers at once from a mirror the page keeps cu
 test("page: ocean.watch sends the drawn water frame to the worker after each frame, primes a scene that already drew, and stops with the engine", async () => {
   const page = bootPage();
   const { worker, handle } = await mounted(page);
-  const record = new Float64Array(9);
-  let sink = null, ready = 0;
+  const record = new Float64Array(10);
+  const sinks = new Set();
+  let ready = 0, signal = null;
   page.win.__gosx.scene3d = {
-    whenReady: () => { ready++; return Promise.resolve(true); },
-    oceanWater: (target, s) => { assert.equal(target, "ship"); if (s !== undefined) sink = s; return record; }, // null clears
+    whenReady: (target, opts) => { ready++; signal = opts && opts.signal; return Promise.resolve(true); },
+    oceanWater: (target, s, stop) => { assert.equal(target, "ship"); if (s) { if (stop) sinks.delete(s); else sinks.add(s); } return record; },
   };
   const post = worker.postMessage.bind(worker); // a real postMessage clones the array
   worker.postMessage = (m, t) => post(m.t === "ocean.water" ? { ...m, v: Float64Array.from(m.v) } : m, t);
-  record.set([5, 9.5, 1, 2, 1, 1, 0, 0.5, 1e12]); // it drew five frames before the worker asked
+  record.set([5, 9.5, 1, 2, 1, 1, 0, 0.5, 1e12, 1]); // it drew five frames before the worker asked
   worker.say({ t: "ocean.watch", target: "ship" });
   worker.say({ t: "ocean.watch", target: "ship" });
   await tick();
   assert.equal(ready, 1, "a second request for the same mount does nothing");
-  assert.deepEqual(plain(worker.of("ocean.water").map(m => Array.from(m.v))), [[5, 9.5, 1, 2, 1, 1, 0, 0.5, 1e12]], "the last frame it drew is sent at once");
-  record.set([6, 9.6, 1, 2.5, 1, 1, 0, 0.5, 1e12 + 16]);
+  assert.deepEqual(plain(worker.of("ocean.water").map(m => Array.from(m.v))), [[5, 9.5, 1, 2, 1, 1, 0, 0.5, 1e12, 1]], "the last frame it drew is sent at once");
+  const [sink] = sinks;
+  assert.equal(sinks.size, 1);
+  assert.equal(signal.aborted, false, "the readiness wait is tied to an abort signal");
+  record.set([6, 9.6, 1, 2.5, 1, 1, 0, 0.5, 1e12 + 16, 1]);
   sink(record);
-  record.set([7, 9.7, 1, 3, 1, 1, 0, 0.5, 1e12 + 33]);
+  record.set([7, 9.7, 1, 3, 1, 1, 0, 0.5, 1e12 + 33, 1]);
   sink(record);
   const seen = worker.of("ocean.water").map(m => m.v);
   assert.deepEqual(seen.map(v => v[0]), [5, 6, 7], "one message per drawn frame, each a copy of that frame");
   assert.equal(seen[1][3], 2.5);
   handle.dispose();
   worker.say({ t: "disposed" });
-  assert.equal(sink, null, "the engine's end stops the page sending: the sink is cleared");
+  assert.equal(sinks.size, 0, "the engine's end removes its sink");
+  assert.equal(signal.aborted, true, "and ends the readiness wait");
   const sent = worker.of("ocean.water").length;
   record[0] = 8;
   assert.equal(worker.of("ocean.water").length, sent);

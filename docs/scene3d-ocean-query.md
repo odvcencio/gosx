@@ -20,19 +20,22 @@ A host that moves a vessel's pose itself (an external-pose vessel, as Bon Voyage
 water, err := ctx.Scene3DByID("sea").OceanWater() // after Ready
 ...
 if frame, ok := water.Read(); ok {
-	frame = frame.Advance(age)              // optional: carry the reading forward
-	s := query.SampleWater(frame, x, z)     // s.Position.Y is the swell height at world (x, z)
+	frame = frame.Advance(age)          // optional: carry the reading forward, age about one frame
+	s := query.SampleWater(frame, x, z) // the swell waves' height at world (x, z)
 }
 ```
 
-`Read` returns a `scene.OceanWaterFrame`: `X` and `Z` (the drift the water has integrated), `Time` (wave time), `Spectral`, the rates `TimeScale`, `DriftX` and `DriftZ`, the page's drawn-frame count `Frame`, and `AtMS`, the Unix time in milliseconds when the page recorded it. `SampleWater` moves the point into the water frame, queries at `Time` and moves the result back. The values are exactly what the shader draws with on WebGPU and on WebGL2 (the page copies the graph's own `waterX`, `waterZ`, `simTime`, `timeScale`, `driftX` and `driftZ`). When the spectral graph is not running, because it is still building, failed, or the ocean has no spectrum, the frame is the Gerstner sea's: `Spectral` is false, `X` and `Z` are zero and `Time` is the scene clock, and `OceanQuery` applies `Ocean.Speed` itself.
+`Read` returns a `scene.OceanWaterFrame`: `X` and `Z` (the drift the water has integrated), `Time` (wave time), `Spectral`, the rates `TimeScale`, `WaterDriftX` and `WaterDriftZ`, `Seq` (the frames the renderer submitted with an ocean), `Generation` (changes when the graph is rebuilt, and `Time`, `X` and `Z` restart) and `PageEpochMS`. `SampleWater` moves the point into the water frame, queries at `Time` and moves the result back. The values are exactly what the shader draws with on WebGPU and on WebGL2 (the page copies the graph's own `waterX`, `waterZ`, `simTime`, `timeScale`, `driftX` and `driftZ`). When the spectral graph is not running, because it is still building, failed, or the ocean has no spectrum, the frame is the Gerstner sea's: `Spectral` is false, `X` and `Z` are zero and `Time` is the scene clock, and `OceanQuery` applies `Ocean.Speed` itself.
+
+The frame gives the phase and drift of the drawn sea. `SampleWater` approximates only its strongest waves. The query sums 24 bins of the first two tiles; the drawn sea sums about 12,000 bins on four. Measured against the full sum, the heave over a hull-sized footprint is off by about 93% of its signal in a calm sea, 82% in a moderate sea, 67% in a rough sea and 57% in a storm, and the slope at a point by 97% to 99%. Stay in phase with the drawn sea with the frame; do not expect `SampleWater` to reproduce its heights. Reading the drawn heights back from the GPU at host-given points is a later step.
 
 Limits:
 
 - It is a reading for drawing. Presentation never feeds a simulation: do not use it in a game rule, a save or a replay.
-- `Read` allocates nothing. It reads a `Float64Array` the page keeps in place. The page records nothing until a reader is made.
-- The height is the swell height (`OceanQuery` sums the spectrum's strongest bins), not the height of every ripple of the FFT surface. The frame says where the swell is; it does not read the FFT textures back. Reading the WebGPU probe is a later step.
-- Latency: the reading is the last drawn frame, so a pose that the next render draws sees a reading 1 frame old. In an engine worker add the message hop. See `scene.OceanWaterFrame`.
+- `Read` itself allocates nothing in Go. It reads a `Float64Array` the page keeps in place; in an engine worker the page posts each frame by message, which allocates in the browser. The page records nothing until a reader is made, and only frames the renderer submitted count.
+- Latency: the reading is the last drawn frame, so a pose that the next render draws sees a reading 1 frame old. In an engine worker add the message hop. Cap `Advance`'s age at about one frame; do not compare `PageEpochMS` with the worker's own clock. See `scene.OceanWaterFrame`.
+- `Time` is not a monotonic clock: it restarts when `Generation` changes and stops while the scene is paused. Keep your own clock for a filter.
+- After the ocean is removed or the renderer stops, `Read` keeps returning the last frame; a `Seq` that no longer changes means the ocean is gone.
 - The page keeps one spectral ocean per page; two mounted spectral scenes are not told apart.
 - A desktop-native engine host does not forward the request; the reader works on the main thread and in a Worker.
 

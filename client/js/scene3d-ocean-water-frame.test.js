@@ -15,8 +15,8 @@ const backend = fs.readFileSync(path.join(scene3d, "mount-backend.ts"), "utf8");
 const recordSource = backend.slice(backend.indexOf("  function recordSceneWaterFrame("), backend.indexOf("  function sceneDebugBundleCounts("));
 const CHUNK = ["ocean-fft-surface.ts", "ocean-fft-surface-gl.ts", "ocean-fft.ts"];
 
-// Indices of the record: scene/ocean_water.go (OceanWaterIdx*).
-const FRAME = 0, TIME = 1, X = 2, Z = 3, SPECTRAL = 4, SCALE = 5, DRIFT_X = 6, DRIFT_Z = 7, AT = 8;
+// Indices of the record: the oceanWater* constants in engine/wasm/scene_js.go.
+const SEQ = 0, TIME = 1, X = 2, Z = 3, SPECTRAL = 4, SCALE = 5, DRIFT_X = 6, DRIFT_Z = 7, AT = 8, GEN = 9;
 
 function page(options = {}) {
   const context = runnerContext({ Float64Array, performance: { timeOrigin: 1e12, now: () => options.now ? options.now() : 0 }, GPUBufferUsage: { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128, INDIRECT: 256, QUERY_RESOLVE: 512 }, GPUTextureUsage: { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 }, GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 } });
@@ -32,12 +32,12 @@ const close = (a, b, why) => assert.ok(Math.abs(a - b) < 1e-5, why + ": " + a + 
 function webgl2(options) {
   const context = page(options), gl = new RecordingGL(), mount = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
   const api = context.window.__gosx_scene3d_ocean_fft_gl_api, resources = {}, textureCache = { _sceneTextureEpoch: 0 };
-  const record = new Float64Array(9); mount.__gosxOceanWater = record;
+  const record = new Float64Array(10); mount.__gosxOceanWater = record;
   // One rendered frame: what sceneOceanWebGLDraw and renderMountedFrame do, in that order.
   const draw = (o, time) => {
     const eng = o.spectrum ? api.run(resources, gl, { ocean: o, tier: "high", time, camera: { x: 0, y: 30, z: 0 }, textureCache, mount, caps: floatCaps }) : null;
     if (!eng && resources.fft) { resources.fft.dispose(); resources.fft = null; }
-    context.recordFrame(mount, bundle(o), time);
+    context.recordFrame(mount, bundle(o), time, "submitted");
     return eng;
   };
   return { context, gl, mount, record, draw, resources, fft: context.window.__gosx_scene3d_ocean_fft_api };
@@ -45,16 +45,16 @@ function webgl2(options) {
 
 test("WebGL2: the record is the graph's water frame, follows a drift change, holds still on a pause, and counts frames", () => {
   const p = webgl2(), o = ocean();
-  assert.equal(p.record[FRAME], 0, "no reading before the first drawn frame");
+  assert.equal(p.record[SEQ], 0, "no reading before the first drawn frame");
   p.draw(o, 100);
-  assert.deepEqual([p.record[FRAME], p.record[SPECTRAL], p.record[X], p.record[TIME]], [1, 1, 0, 0], "first frame: dt is 0, the water has not moved");
+  assert.deepEqual([p.record[SEQ], p.record[SPECTRAL], p.record[X], p.record[TIME]], [1, 1, 0, 0], "first frame: dt is 0, the water has not moved");
   for (let i = 1; i <= 60; i++) p.draw(o, 100 + i / 60);
   const w = p.fft.water();
   close(p.record[X], 2, "driftX 2 m/s for one second"); close(p.record[Z], -1, "driftZ -1 m/s");
   close(p.record[TIME], 1, "wave time follows presentation time at timeScale 1");
   assert.deepEqual([p.record[X], p.record[Z], p.record[TIME]], [w.x, w.z, w.time], "exactly the graph's own values, not a recomputation");
   assert.deepEqual([p.record[SCALE], p.record[DRIFT_X], p.record[DRIFT_Z]], [1, 2, -1], "the rates carry a reading forward");
-  assert.equal(p.record[FRAME], 61);
+  assert.equal(p.record[SEQ], 61);
   assert.equal(p.record[AT], 1e12, "epoch milliseconds: timeOrigin plus now()");
   // The drift changes to (4, 3) and the timeScale to 2: the offset keeps what it had integrated and moves at the new rate.
   const o2 = ocean({ graphParams: { windSpeed: 9, foamThreshold: 0.3, driftX: 4, driftZ: 3, timeScale: 2 } });
@@ -63,10 +63,10 @@ test("WebGL2: the record is the graph's water frame, follows a drift change, hol
   close(p.record[TIME], 1 + 2, "a second at timeScale 2");
   assert.deepEqual([p.record[SCALE], p.record[DRIFT_X], p.record[DRIFT_Z]], [2, 4, 3]);
   // A pause: the scene clock stops, so the graph's dt is 0. The water frame holds still, and the frame count says a frame was drawn.
-  const held = [p.record[X], p.record[Z], p.record[TIME]], count = p.record[FRAME];
+  const held = [p.record[X], p.record[Z], p.record[TIME]], count = p.record[SEQ];
   for (let i = 0; i < 5; i++) p.draw(o2, 102);
   assert.deepEqual([p.record[X], p.record[Z], p.record[TIME]], held, "a paused scene's water does not move");
-  assert.equal(p.record[FRAME], count + 5);
+  assert.equal(p.record[SEQ], count + 5);
 });
 
 test("WebGL2: a graph that cannot run reports the Gerstner fallback: no drift, the scene clock, Spectral false", () => {
@@ -83,32 +83,32 @@ test("WebGL2: a graph that cannot run reports the Gerstner fallback: no drift, t
 
 test("a plain Gerstner ocean (no spectrum, no ocean-fft chunk) reports the scene clock", () => {
   const context = page({ chunk: false });
-  const mount = { __gosxOceanWater: new Float64Array(9) };
-  context.recordFrame(mount, bundle({ level: 0 }), 33.25);
+  const mount = { __gosxOceanWater: new Float64Array(10) };
+  context.recordFrame(mount, bundle({ level: 0 }), 33.25, "submitted");
   const r = mount.__gosxOceanWater;
   assert.deepEqual(Array.from(r.slice(0, 8)), [1, 33.25, 0, 0, 0, 1, 0, 0]);
 });
 
 test("nothing is recorded until a host asks, and not for a scene without an ocean", () => {
   const context = page({ chunk: false }), mount = {};
-  context.recordFrame(mount, bundle({ level: 0 }), 1);
+  context.recordFrame(mount, bundle({ level: 0 }), 1, "submitted");
   assert.equal(mount.__gosxOceanWater, undefined, "the record is made by the handle's oceanWater(), not by the render path");
-  mount.__gosxOceanWater = new Float64Array(9);
-  context.recordFrame(mount, { environment: {} }, 1);
-  context.recordFrame(mount, null, 1);
-  assert.equal(mount.__gosxOceanWater[FRAME], 0);
+  mount.__gosxOceanWater = new Float64Array(10);
+  context.recordFrame(mount, { environment: {} }, 1, "submitted");
+  context.recordFrame(mount, null, 1, "submitted");
+  assert.equal(mount.__gosxOceanWater[SEQ], 0);
 });
 
 test("latency: a reading taken before a frame is recorded is that of the frame before, a worker's sink gets each frame as it is recorded", () => {
   let now = 0;
   const p = webgl2({ now: () => now }), o = ocean(), sunk = [];
-  p.mount.__gosxOceanWaterSink = (w) => sunk.push(Array.from(w));
+  p.mount.__gosxOceanWaterSinks = new Set([(w) => sunk.push(Array.from(w))]);
   for (let i = 0; i <= 10; i++) { now = 1000 * i / 60; p.draw(o, 50 + i / 60); }
   // The host reads (to place the pose that the next render draws) after frame 10 and before frame 11 is recorded.
   const reading = Array.from(p.record);
-  assert.equal(reading[FRAME], 11);
+  assert.equal(reading[SEQ], 11);
   now = 1000 * 11 / 60; p.draw(o, 50 + 11 / 60);
-  assert.equal(p.record[FRAME] - reading[FRAME], 1, "the reading was one frame old when the next frame was drawn");
+  assert.equal(p.record[SEQ] - reading[SEQ], 1, "the reading was one frame old when the next frame was drawn");
   close(p.record[TIME] - reading[TIME], 1 / 60, "one frame of wave time");
   close(p.record[X] - reading[X], 2 / 60, "one frame of drift");
   assert.equal(sunk.length, 12, "the sink is called once per recorded frame, in the same task");
@@ -119,14 +119,14 @@ test("latency: a reading taken before a frame is recorded is that of the frame b
 // --- WebGPU ------------------------------------------------------------------------------------------------------------
 
 function webgpu() {
-  const context = page(), fake = makeFakeGPUDevice(), validation = new Map(), mount = { __gosxOceanWater: new Float64Array(9) };
+  const context = page(), fake = makeFakeGPUDevice(), validation = new Map(), mount = { __gosxOceanWater: new Float64Array(10) };
   const api = context.window.__gosx_scene3d_ocean_fft_api, resources = {};
   const host = { device: fake.device, validation, guard: { disabled: new Set(), failures: [], fail(label, message) { this.failures.push({ label, message }); this.disabled.add("oceanFFT"); } }, camera: { x: 0, y: 30, z: 0 }, tier: "high",
     create(device, kind, descriptor) { const handle = { label: descriptor.label }; validation.set(handle, { ready: false, label: descriptor.label }); return handle; } };
   const settle = () => { for (const state of validation.values()) state.ready = true; };
   const draw = (o, time) => {
     api.frame(resources, Object.assign({}, host, { environment: { ocean: o }, time, encoder: fake.device.createCommandEncoder() }));
-    context.recordFrame(mount, bundle(o), time);
+    context.recordFrame(mount, bundle(o), time, "submitted");
   };
   return { context, mount, record: mount.__gosxOceanWater, draw, settle, api, resources };
 }
@@ -167,23 +167,112 @@ test("the water frame is one reused object: publishing a frame allocates nothing
   assert.equal(p.fft.water(), first);
 });
 
-test("the command bridge makes the record on the mount once, keeps the sink, and has none for a handle without its mount", () => {
+test("the command bridge makes the record on the mount once, keeps each sink in a set, and has none for a handle without its mount", () => {
   const source = fs.readFileSync(path.join(scene3d, "command-runtime.ts"), "utf8");
   const text = source.slice(source.indexOf("  function oceanWater("), source.indexOf("  function whenReady("));
   const mount = {}, records = new Map([["ship", { handle: {}, mount }], ["bare", { handle: {}, mount: null }]]);
-  const context = vm.createContext({ Float64Array, record: (target) => records.get(target) || null });
+  const context = vm.createContext({ Float64Array, Set, record: (target) => records.get(target) || null });
   vm.runInContext(ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + "\nthis.oceanWater = oceanWater;", context);
   const first = context.oceanWater("ship");
-  assert.equal(first.length, 9);
+  assert.equal(first.length, 10);
   assert.equal(context.oceanWater("ship"), first, "the same array each time");
   assert.equal(mount.__gosxOceanWater, first);
-  const sink = () => {};
-  context.oceanWater("ship", sink);
-  assert.equal(mount.__gosxOceanWaterSink, sink);
-  context.oceanWater("ship", null);
-  assert.equal(mount.__gosxOceanWaterSink, null, "null stops the sink");
-  context.oceanWater("ship");
-  assert.equal(mount.__gosxOceanWaterSink, null, "a read does not touch the sink");
+  assert.equal(mount.__gosxOceanWaterSinks, undefined, "a read adds no sink");
+  const a = () => {}, b = () => {};
+  context.oceanWater("ship", a); context.oceanWater("ship", b); context.oceanWater("ship", a);
+  assert.deepEqual([...mount.__gosxOceanWaterSinks], [a, b], "two engines watching one mount keep both sinks");
+  context.oceanWater("ship", a, true);
+  assert.deepEqual([...mount.__gosxOceanWaterSinks], [b], "stopping one leaves the other");
   assert.equal(context.oceanWater("bare"), null);
   assert.equal(context.oceanWater("missing"), null);
+});
+
+test("only frames the renderer submitted are recorded", () => {
+  const p = webgl2();
+  p.draw(ocean(), 1);
+  const seq = p.record[SEQ], at = p.record[AT];
+  for (const outcome of ["empty", "skipped", undefined]) p.context.recordFrame(p.mount, bundle(ocean()), 2, outcome);
+  assert.equal(p.record[SEQ], seq, "a frame that was not submitted does not count");
+  assert.equal(p.record[AT], at);
+});
+
+test("the generation changes when the graph is rebuilt, and Time restarts with it", () => {
+  const p = webgl2(), o = ocean();
+  p.draw(o, 10); p.draw(o, 11);
+  const gen = p.record[GEN];
+  assert.ok(gen > 0, "a spectral reading carries its graph's generation");
+  const t = p.record[TIME];
+  p.draw(o, 12);
+  assert.equal(p.record[GEN], gen, "the same graph keeps its generation");
+  p.resources.fft.dispose(); p.resources.fft = null; // what a lost context or a tier change does
+  p.draw(o, 13); p.draw(o, 14);
+  assert.notEqual(p.record[GEN], gen);
+  assert.ok(p.record[TIME] < t + 2, "the new graph's clock restarted");
+  p.draw({ level: 0 }, 15);
+  assert.equal(p.record[GEN], 0, "the Gerstner sea has no graph");
+});
+
+test("WebGL2: a wave clock follows the scene clock across frames the renderer did not draw", () => {
+  const p = webgl2(), o = ocean();
+  p.draw(o, 100);
+  p.draw(o, 101); // a second of scene time passed with no ocean frame, as in the first frames of a backend
+  close(p.record[TIME], 1, "wave time is not capped to one long frame");
+  close(p.record[X], 2, "nor is the drift offset");
+  p.draw(o, 101.016);
+  close(p.record[TIME], 1.016, "normal frames add their own delta");
+});
+
+// --- the real WebGL renderer's ocean draw ----------------------------------------------------------------------------------
+
+const { createWebGLRendererForPost, makePointsBundle } = require("./runtime-test-harness.js");
+// The renderer's own sceneOceanWebGLDraw runs against its fake context; the graph glue is the real one, driven by the recording
+// WebGL2 double (the fake context cannot run gather passes). The wrapper only hands the renderer an engine whose bind does nothing.
+function realDrawRenderer() {
+  const h = createWebGLRendererForPost({ fresh: true });
+  const mount = h.env.document.createElement("div"); mount.appendChild(h.canvas);
+  const gl = h.canvas.getContext("webgl2"), enabled = new Set([gl.CULL_FACE]);
+  gl.isEnabled = (c) => enabled.has(c); gl.enable = (c) => enabled.add(c); gl.disable = (c) => enabled.delete(c);
+  for (const [name, fn] of Object.entries({ createSampler: () => ({}), deleteSampler() {}, samplerParameteri() {}, bindSampler() {}, uniform4fv() {}, uniform1i() {}, blendFuncSeparate() {}, uniformMatrix4fv() {} })) if (!gl[name]) gl[name] = fn;
+  const context = h.env.context;
+  context.window = context.window || context;
+  for (const name of ["Float32Array", "Float64Array", "Uint32Array", "Uint8Array", "ArrayBuffer", "DataView", "Set", "Map", "Promise", "Error"]) if (!context[name]) context[name] = globalThis[name];
+  context.performance = context.performance || { timeOrigin: 1e12, now: () => 0 };
+  loadSources(context, ["ocean-fft-kernels.ts", "elio-graph.ts", "elio-graph-gather.ts", "elio-graph-compute.ts", ...CHUNK]);
+  const recording = new RecordingGL(), real = context.window.__gosx_scene3d_ocean_fft_gl_api;
+  context.window.__gosx_scene3d_ocean_fft_gl_api = { run: (resources, g, host) => {
+    const eng = real.run(resources, recording, Object.assign({}, host, { caps: floatCaps }));
+    return eng ? { bind() {}, fail: (r) => eng.fail(r), dispose: () => eng.dispose() } : null;
+  } };
+  vm.runInContext(ts.transpileModule(recordSource, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + "\nthis.recordFrame = recordSceneWaterFrame;", context);
+  return { h, mount, context, fft: context.window.__gosx_scene3d_ocean_fft_api };
+}
+function seaBundle(spectrum) {
+  const b = makePointsBundle(null);
+  b.points = [];
+  b.environment.sky = { mode: "physical" };
+  b.environment.ocean = Object.assign({ level: 0, windDirection: 0, waveHeight: 0.8, waveLength: 18, choppiness: 0.6, speed: 1, deepColor: "#03141f", shallowColor: "#1f6f78", scatterColor: "#2fa58f", foamColor: "#e9eef0", clarity: 4, roughness: 0.06, foam: 0.6, surf: 0.5, extent: 4000, bathymetry: null }, spectrum ? { spectrum, graphParams: { windSpeed: 9, driftX: 2, driftZ: -1 }, graphTween: 0 } : {});
+  b.camera.y = 30; b.camera.z = 0;
+  return b;
+}
+
+test("the real WebGL ocean draw: removing the spectrum clears the water frame, so the record reports Gerstner", () => {
+  const r = realDrawRenderer(), record = new Float64Array(10);
+  r.mount.__gosxOceanWater = record;
+  const frame = (bundle, time) => { r.h.renderer.render(bundle, { width: 320, height: 180 }, { sceneTime: time }); r.context.recordFrame(r.mount, bundle, time, "submitted"); };
+  frame(seaBundle({ windSpeed: 9 }), 1); frame(seaBundle({ windSpeed: 9 }), 1.5);
+  assert.equal(record[SPECTRAL], 1, "a spectral frame is drawn");
+  assert.ok(r.fft.water(), "the graph published its water");
+  frame(seaBundle(null), 2);
+  assert.equal(r.fft.water(), null, "the renderer tore the graph down and the frame went with it");
+  assert.deepEqual([record[SPECTRAL], record[X], record[Z], record[GEN]], [0, 0, 0, 0]);
+  assert.equal(record[TIME], 2, "Gerstner runs on the scene clock");
+  r.h.renderer.dispose();
+});
+
+test("the real WebGL renderer's teardown (a lost context) clears the water frame", () => {
+  const r = realDrawRenderer();
+  r.h.renderer.render(seaBundle({ windSpeed: 9 }), { width: 320, height: 180 }, { sceneTime: 1 });
+  assert.ok(r.fft.water());
+  r.h.renderer.dispose();
+  assert.equal(r.fft.water(), null);
 });

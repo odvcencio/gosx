@@ -116,11 +116,11 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
   if (api) await api.whenReady("sea");
   const w = api && api.oceanWater ? api.oceanWater("sea") : null;
   return JSON.stringify({backend: el.getAttribute("data-gosx-scene3d-backend"), ocean: el.getAttribute("data-gosx-scene3d-ocean"),
-    fallback: el.getAttribute("data-gosx-scene3d-ocean-fft-fallback"), now: performance.timeOrigin + performance.now(), w: w ? Array.from(w) : null});
+    fallback: el.getAttribute("data-gosx-scene3d-ocean-fft-fallback"), clock: Number(el.getAttribute("data-gosx-scene3d-animation-clock")), now: performance.timeOrigin + performance.now(), w: w ? Array.from(w) : null});
 })()`
 			type reading struct {
 				Backend, Ocean, Fallback string
-				Now                      float64
+				Now, Clock               float64
 				W                        []float64
 			}
 			get := func() reading {
@@ -138,13 +138,13 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 			deadline := time.Now().Add(90 * time.Second)
 			for time.Now().Before(deadline) {
 				first = get()
-				if len(first.W) == 9 && first.W[0] >= 30 && first.W[4] == 1 {
+				if len(first.W) == 10 && first.W[0] >= 30 && first.W[4] == 1 && first.Ocean == "surface+spectrum" {
 					break
 				}
 				time.Sleep(500 * time.Millisecond)
 			}
 			t.Logf("first: %+v", first)
-			if len(first.W) != 9 || first.W[4] != 1 {
+			if len(first.W) != 10 || first.W[4] != 1 || first.Ocean != "surface+spectrum" {
 				t.Fatalf("no spectral reading: %+v", first)
 			}
 			if backend == "webgl2" && first.Backend != "webgl" {
@@ -158,11 +158,14 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 			if frames < 10 || dt < 1.5 {
 				t.Fatalf("frames advanced %v over %vs", frames, dt)
 			}
-			// The graph integrates the offset from the same clock as the wave time, so the offset moves at the drift
-			// per second of wave time. The wave clock is the scene clock, which may run behind the wall clock
-			// (the first frames of a backend, a clamped long frame) but never ahead of it.
+			// The wave clock is the scene clock: over the same readings the two move together (a frame of slack for
+			// reading them between frames), and the offset moves at the drift per second of wave time.
 			dx, dz, wave := second.W[2]-first.W[2], second.W[3]-first.W[3], second.W[1]-first.W[1]
-			if wave < 0.5 || wave > dt+0.25 {
+			clock := second.Clock - first.Clock
+			if math.Abs(wave-clock) > 0.05 {
+				t.Fatalf("wave time moved %.4fs but the scene clock moved %.4fs", wave, clock)
+			}
+			if wave < 0.5 || wave > dt+0.05 {
 				t.Fatalf("wave time moved %.3f over %.3fs of wall time", wave, dt)
 			}
 			if math.Abs(dx-3*wave) > 1e-3 || math.Abs(dz+2*wave) > 1e-3 {

@@ -2,29 +2,10 @@ package scene
 
 import "testing"
 
-func TestOceanWaterFromWire(t *testing.T) {
-	var wire [OceanWaterFloats]float64
-	if _, ok := OceanWaterFromWire(&wire); ok {
-		t.Fatal("a record the page has not written is a reading")
-	}
-	wire[OceanWaterIdxFrame], wire[OceanWaterIdxTime], wire[OceanWaterIdxX], wire[OceanWaterIdxZ] = 61, 1.25, 2.5, -1.5
-	wire[OceanWaterIdxSpectral], wire[OceanWaterIdxTimeScale], wire[OceanWaterIdxDriftX], wire[OceanWaterIdxDriftZ] = 1, 2, 4, 3
-	wire[OceanWaterIdxAtMS] = 1.7e12
-	got, ok := OceanWaterFromWire(&wire)
-	want := OceanWaterFrame{X: 2.5, Z: -1.5, Time: 1.25, Spectral: true, TimeScale: 2, DriftX: 4, DriftZ: 3, Frame: 61, AtMS: 1.7e12}
-	if !ok || got != want {
-		t.Fatalf("got %+v ok=%v, want %+v", got, ok, want)
-	}
-	wire[OceanWaterIdxSpectral] = 0
-	if got, _ = OceanWaterFromWire(&wire); got.Spectral {
-		t.Fatal("a Gerstner frame decoded as spectral")
-	}
-}
-
 func TestOceanWaterAdvance(t *testing.T) {
-	f := OceanWaterFrame{X: 1, Z: 2, Time: 3, TimeScale: 2, DriftX: 4, DriftZ: -8, Spectral: true, Frame: 9}
+	f := OceanWaterFrame{X: 1, Z: 2, Time: 3, TimeScale: 2, WaterDriftX: 4, WaterDriftZ: -8, Spectral: true, Seq: 9}
 	got := f.Advance(0.5)
-	if got.X != 3 || got.Z != -2 || got.Time != 4 || got.Frame != 9 || !got.Spectral {
+	if got.X != 3 || got.Z != -2 || got.Time != 4 || got.Seq != 9 || !got.Spectral {
 		t.Fatalf("advance: %+v", got)
 	}
 	for _, age := range []float64{0, -1} {

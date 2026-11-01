@@ -148,7 +148,7 @@
         return out;
       },
       evaluate: function (frame: any) {
-        const time = Number(frame.time) || 0, dt = Number(frame.dt) || 0;
+        const time = Number(frame.time) || 0, dt = Number(frame.dt) || 0, adt = Number.isFinite(frame.accumulateDt) ? Number(frame.accumulateDt) : dt; // an accumulator may follow a clock that dt is capped below
         const poses: any = {}; // this frame's pose per node id, with a derived speed
         const poseOf = function (id: string): any {
           if (id in poses) return poses[id];
@@ -187,7 +187,7 @@
             const of = String(src.of).replace(/^param:/, "");
             n = first ? 0 : (current[of] || 0) - (prev[of] || 0);
           } else if (src.kind === "accumulate") {
-            accum[d.name] = (accum[d.name] || 0) + ref(src.of) * dt;
+            accum[d.name] = (accum[d.name] || 0) + ref(src.of) * adt;
             n = accum[d.name];
           } else throw new Error("elio-graph: unknown parameter source " + src.kind);
           current[d.name] = /\[\]$/.test(d.type) ? targets[d.name] : coerce(d.type, n);

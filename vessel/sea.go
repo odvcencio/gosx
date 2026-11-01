@@ -70,8 +70,12 @@ type SwellWave struct {
 
 // Sea is a deterministic sum of sinusoids built from the Scene3D ocean wave
 // table, or from the swell waves of a spectral ocean. It models vertical motion
-// only, without the ocean's horizontal Gerstner displacement, so it differs
-// from the rendered surface by a small fraction of the wave height.
+// only, without the ocean's horizontal Gerstner displacement. Built from the
+// Scene3D wave table it differs from the rendered surface by a small fraction of
+// the wave height. Built from the swell waves of a spectral ocean (24 strongest
+// bins) it follows only part of the drawn sea: measured against the full
+// spectrum, the heave over a hull-sized footprint is wrong by 57% (storm) to 93%
+// (calm) of its signal, and the slope at a point by 97% to 99%.
 type Sea struct {
 	level float64
 	waves [6]seaWave
