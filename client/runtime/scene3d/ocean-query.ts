@@ -79,6 +79,6 @@
     };
   }
   // @ts-ignore TS7006 -- probe answers a host's probe record (ocean-fft.ts HP) from the Gerstner sea: the CPU query, exact, no readback.
-  function probe(host, ocean, seconds, seq) { const n = Math.min(64, Math.max(0, Math.floor(host[10]) || 0)); if (!n) return; if (host.gerstnerFor !== ocean) { host.gerstnerFor = ocean; host.gerstner = create(ocean, "high", null, true); } for (let i = 0; i < n; i++) { const s = sample(host.gerstner, host[18 + 2 * i], host[19 + 2 * i], seconds); host[146 + 3 * i] = s.y; host[147 + 3 * i] = s.normal.x; host[148 + 3 * i] = s.normal.z; } host[11] = seq; host[12] = 0; host[13] = 3; host[14] = n; host[15] = 0; host[16] = performance.timeOrigin + performance.now(); host[17]++; }
+  function probe(host, ocean, seconds, seq, quality) { const n = Math.min(64, Math.max(0, Math.floor(host[10]) || 0)); if (!n) return; if (host.gerstnerFor !== ocean || host.gerstnerQ !== quality) { host.gerstnerFor = ocean; host.gerstnerQ = quality; host.gerstner = create(ocean, quality, null, true); } for (let i = 0; i < n; i++) { const s = sample(host.gerstner, host[18 + 2 * i], host[19 + 2 * i], seconds); host[146 + 3 * i] = s.y; host[147 + 3 * i] = s.normal.x; host[148 + 3 * i] = s.normal.z; } host[11] = seq; host[12] = 0; host[13] = 3; host[14] = n; host[15] = 0; host[16] = performance.timeOrigin + performance.now(); host[17]++; host[339] = host[338]; }
   window.__gosx_scene3d_ocean_query_api = window.__gosx_scene3d_ocean_query = { create, evaluate, sample, bathymetry, probe };
 })();

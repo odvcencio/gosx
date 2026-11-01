@@ -504,7 +504,7 @@
     if (!(api && api.fill(w))) {
       w[1] = sceneTime; w[2] = w[3] = w[4] = w[6] = w[7] = w[9] = 0; w[5] = 1;
       const query = window.__gosx_scene3d_ocean_query; // the Gerstner sea's heights for a host's probe come from the CPU query
-      if (w[10] > 0) { if (query && query.probe) query.probe(w, bundle.environment.ocean, sceneTime, w[0] + 1); else ensureSceneGatedFeatureLoaded("ocean-query", "gosxScene3dOceanQueryUrl", "").catch(function() {}); }
+      if (w[10] > 0) { if (query && query.probe) query.probe(w, bundle.environment.ocean, sceneTime, w[0] + 1, typeof sceneLowHardware === "function" && sceneLowHardware() ? "low" : "high"); else ensureSceneGatedFeatureLoaded("ocean-query", "gosxScene3dOceanQueryUrl", "").catch(function() {}); }
     }
     w[8] = performance.timeOrigin + performance.now(); w[0]++;
     if (mount.__gosxOceanWaterSinks) mount.__gosxOceanWaterSinks.forEach(function(sink: any) { sink(w); });

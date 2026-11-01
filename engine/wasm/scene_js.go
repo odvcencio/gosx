@@ -168,7 +168,9 @@ const (
 	oceanProbeReadings   = 17
 	oceanProbePoints     = 18
 	oceanProbeResults    = oceanProbePoints + 2*scene.MaxOceanProbePoints
-	oceanWaterFloats     = oceanProbeResults + 3*scene.MaxOceanProbePoints
+	oceanProbeRequest    = oceanProbeResults + 3*scene.MaxOceanProbePoints // the host's request counter
+	oceanProbeEcho       = oceanProbeRequest + 1                           // the counter of the request the reading answers
+	oceanWaterFloats     = oceanProbeEcho + 1
 )
 
 // OceanWaterReader reads where a mounted scene draws its water, without
@@ -178,8 +180,9 @@ const (
 type OceanWaterReader struct {
 	record js.Value
 	// views of the record's bytes for the probe, and the worker's function that tells the page the host wrote its points
-	count, points, answer, results js.Value
-	send                           js.Value
+	count, points, answer, results, request, echo js.Value
+	send                                          js.Value
+	requests                                      uint64
 }
 
 // OceanWater returns a reader for the water frame of this scene's ocean: the
@@ -215,6 +218,7 @@ func (s Scene3D) OceanWater() (*OceanWaterReader, error) {
 		record: value, send: value.Get("send"),
 		count: view(oceanProbeCount, 1), points: view(oceanProbePoints, 2*scene.MaxOceanProbePoints),
 		answer: view(oceanProbeSeq, oceanProbeReadings-oceanProbeSeq+1), results: view(oceanProbeResults, 3*scene.MaxOceanProbePoints),
+		request: view(oceanProbeRequest, 1), echo: view(oceanProbeEcho, 1),
 	}, nil
 }
 
@@ -248,8 +252,11 @@ func (r *OceanWaterReader) SetProbe(points []scene.OceanProbePoint) {
 	for i := 0; i < n; i++ {
 		buf[2*i], buf[2*i+1] = points[i].X, points[i].Z
 	}
-	count := [1]float64{float64(n)}
+	count, request := [1]float64{float64(n)}, [1]float64{}
+	r.requests++
+	request[0] = float64(r.requests)
 	js.CopyBytesToJS(r.points, floatBytes(buf[:2*n]))
+	js.CopyBytesToJS(r.request, floatBytes(request[:]))
 	js.CopyBytesToJS(r.count, floatBytes(count[:]))
 	if r.send.Type() == js.TypeFunction {
 		r.send.Invoke() // an engine worker: tell the page
@@ -270,6 +277,9 @@ func (r *OceanWaterReader) ReadProbe(out *scene.OceanProbeReading) bool {
 	out.PageEpochMS, out.Readings = head[oceanProbeAtMS-oceanProbeSeq], uint64(head[oceanProbeReadings-oceanProbeSeq])
 	out.Gerstner, out.Unavailable = flags&2 != 0, flags&4 != 0
 	out.Count = min(out.Count, scene.MaxOceanProbePoints)
+	var echo [1]float64
+	js.CopyBytesToGo(floatBytes(echo[:]), r.echo)
+	out.Request = uint64(echo[0])
 	var res [3 * scene.MaxOceanProbePoints]float64
 	js.CopyBytesToGo(floatBytes(res[:]), r.results)
 	for i := 0; i < out.Count; i++ {
@@ -277,3 +287,7 @@ func (r *OceanWaterReader) ReadProbe(out *scene.OceanProbeReading) bool {
 	}
 	return true
 }
+
+// Close stops the probe: the page stops reading points back for this scene. Call it before dropping a reader that
+// used SetProbe, or the page keeps asking until the scene ends. Close is SetProbe(nil).
+func (r *OceanWaterReader) Close() { r.SetProbe(nil) }

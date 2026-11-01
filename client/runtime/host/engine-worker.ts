@@ -866,7 +866,7 @@
       // the frames it sends ("ocean.water").
       "ocean.points": function(rec, msg) {
         var w = current(rec) && window.__gosx.scene3d.oceanWater(String(msg.target));
-        if (w && msg.p && msg.p.length <= 128) { w[10] = +msg.n || 0; w.set(msg.p, 18); }
+        if (w && msg.p && msg.p.length <= 128) { w[10] = +msg.n || 0; w[338] = +msg.q || 0; w.set(msg.p, 18); }
       },
 
       // Calls that return a result use a request id.
@@ -1134,7 +1134,7 @@
     var nextViewSeq = 1;
     var viewAcks = new Map();         // seq -> {token, fn}
     var vesselOK = new Map();         // "kind|target|nodeID" -> the page's last answer
-    var waters = new Map();           // mount id -> the Float64Array(338) water record the page keeps filling (Scene3D.OceanWater)
+    var waters = new Map();           // mount id -> the Float64Array(340) water record the page keeps filling (Scene3D.OceanWater)
 
     function post(msg, transfer) { scope.postMessage(msg, transfer || []); }
 
@@ -1309,8 +1309,8 @@
             // Answered here, not by the page, because a read must be synchronous; the page keeps this array current once it hears "ocean.watch".
             var water = waters.get(target);
             if (!water) {
-              waters.set(target, water = new Float64Array(338)); post({ t: "ocean.watch", target: target });
-              water.send = function() { post({ t: "ocean.points", target: target, n: water[10], p: water.slice(18, 146) }); }; // after the host wrote its points
+              waters.set(target, water = new Float64Array(340)); post({ t: "ocean.watch", target: target });
+              water.send = function() { post({ t: "ocean.points", target: target, n: water[10], q: water[338], p: water.slice(18, 146) }); }; // after the host wrote its points
             }
             return water;
           }
@@ -1415,7 +1415,7 @@
         var w = waters.get(String(msg.target)), v = msg.v;
         if (!w || !v || v.length < 10 || v.length > w.length) return;
         w.set(v.subarray(0, 10));
-        if (v.length > 146) { w.set(v.subarray(11, 18), 11); w.set(v.subarray(146), 146); }
+        if (v.length > 146) { w.set(v.subarray(11, 18), 11); w.set(v.subarray(146, 338), 146); w[339] = v[339]; }
       },
       "vessel.result": function(msg) { vesselOK.set(String(msg.kind) + "|" + String(msg.target) + "|" + String(msg.nodeID || ""), msg.ok === true); },
       ack: function(msg) {

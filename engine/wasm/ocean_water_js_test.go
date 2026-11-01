@@ -11,7 +11,7 @@ import (
 )
 
 func TestSceneOceanWaterReaderFollowsThePageRecord(t *testing.T) {
-	host := js.Global().Call("eval", `({isCurrent(){return true}, asked:0, record:new Float64Array(338),
+	host := js.Global().Call("eval", `({isCurrent(){return true}, asked:0, record:new Float64Array(340),
  scene3D(method,mount){ if(method!=='oceanWater') throw new Error('unexpected '+method); this.asked++; this.mount=mount; return this.ready===false?null:this.record }})`)
 	target := Context{value: host}.Scene3DByID("ship")
 	host.Set("ready", false)
@@ -44,7 +44,7 @@ func TestSceneOceanWaterReaderFollowsThePageRecord(t *testing.T) {
 }
 
 func TestSceneOceanWaterReadDoesNotAllocate(t *testing.T) {
-	host := js.Global().Call("eval", `({isCurrent(){return true}, record:(()=>{const a=new Float64Array(338);a.set([1,2,3,4,1,1,0,0,5,2]);return a})(), scene3D(){return this.record}})`)
+	host := js.Global().Call("eval", `({isCurrent(){return true}, record:(()=>{const a=new Float64Array(340);a.set([1,2,3,4,1,1,0,0,5,2]);return a})(), scene3D(){return this.record}})`)
 	reader, err := Context{value: host}.Scene3DByID("ship").OceanWater()
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestSceneOceanWaterReadDoesNotAllocate(t *testing.T) {
 }
 
 func TestSceneOceanProbeWritesPointsAndReadsTheAnswer(t *testing.T) {
-	host := js.Global().Call("eval", `(()=>{const H={isCurrent(){return true}, sent:0, scene3D(){return this.record}};const a=new Float64Array(338);a.send=()=>{H.sent++};H.record=a;return H})()`)
+	host := js.Global().Call("eval", `(()=>{const H={isCurrent(){return true}, sent:0, scene3D(){return this.record}};const a=new Float64Array(340);a.send=()=>{H.sent++};H.record=a;return H})()`)
 	reader, err := Context{value: host}.Scene3DByID("ship").OceanWater()
 	if err != nil {
 		t.Fatal(err)
@@ -87,14 +87,23 @@ func TestSceneOceanProbeWritesPointsAndReadsTheAnswer(t *testing.T) {
 	if y := reading.NormalY(0); y < 0.97 || y > 0.98 {
 		t.Fatalf("NormalY=%v", y)
 	}
+	record.SetIndex(339, 1) // the page echoes the request counter it read
+	reader.ReadProbe(&reading)
+	if reading.Request != 1 || record.Index(338).Int() != 1 {
+		t.Fatalf("request counter: wrote %v, read %v", record.Index(338), reading.Request)
+	}
+	reader.SetProbe([]scene.OceanProbePoint{{X: 1}})
+	if record.Index(338).Int() != 2 {
+		t.Fatal("each SetProbe bumps the request counter")
+	}
 	record.SetIndex(13, 4)
 	reader.ReadProbe(&reading)
 	if !reading.Unavailable {
 		t.Fatal("the unavailable flag was lost")
 	}
-	reader.SetProbe(nil)
+	reader.Close()
 	if record.Index(10).Int() != 0 {
-		t.Fatal("an empty set must stop the probe")
+		t.Fatal("Close must stop the probe")
 	}
 	many := make([]scene.OceanProbePoint, 100)
 	reader.SetProbe(many)

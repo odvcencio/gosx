@@ -50,6 +50,36 @@ type probeReading struct {
 
 const probePoints = `(() => { const p = []; for (let i = 0; i < 7; i++) for (let j = 0; j < 5; j++) p.push([-12 + i * 4 + j * 0.37, -9 + j * 4.5 + i * 0.21]); return p; })()`
 
+// probeRefJS is a double-precision CPU evaluation of the cascades' displacement and slope textures, as the ocean shaders sample them
+// (bilinear at the texel centres, repeating), with the same Newton inversion of the horizontal map. cas[i] = { tile, n, d, s, om: [x, z] }.
+const probeRefJS = `
+  const bil = (d, n, u, v) => {
+    const x = u * n - 0.5, y = v * n - 0.5, x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, r = [0, 0, 0, 0];
+    for (const [i, j, k] of [[0, 0, (1 - fx) * (1 - fy)], [1, 0, fx * (1 - fy)], [0, 1, (1 - fx) * fy], [1, 1, fx * fy]]) {
+      const o = ((((y0 + j) % n) + n) % n * n + (((x0 + i) % n) + n) % n) * 4; for (let c = 0; c < 4; c++) r[c] += k * d[o + c];
+    }
+    return r;
+  };
+  const evalCas = (cas, q) => {
+    let s = [0, 0, 0], dx = [1, 0, 0], dz = [0, 0, 1];
+    for (const c of cas) {
+      const u = (q[0] - c.om[0]) / c.tile, v = (q[1] - c.om[1]) / c.tile, a = bil(c.d, c.n, u - Math.floor(u), v - Math.floor(v)), b = bil(c.s, c.n, u - Math.floor(u), v - Math.floor(v));
+      s[0] += a[0]; s[1] += a[1]; s[2] += a[2]; dx[0] += b[2]; dx[1] += b[0]; dx[2] += a[3]; dz[0] += a[3]; dz[1] += b[1]; dz[2] += b[3];
+    }
+    return { s, dx, dz };
+  };
+  const refAt = (cas, t, level) => {
+    let q = [t[0], t[1]], e;
+    for (let k = 0; k < 8; k++) {
+      e = evalCas(cas, q); const ex = q[0] + e.s[0] - t[0], ez = q[1] + e.s[2] - t[1], det = e.dx[0] * e.dz[2] - e.dz[0] * e.dx[2];
+      if (Math.abs(det) > 1e-4) { q = [q[0] - (e.dz[2] * ex - e.dz[0] * ez) / det, q[1] - (e.dx[0] * ez - e.dx[2] * ex) / det]; } else { q = [q[0] - ex * 0.5, q[1] - ez * 0.5]; }
+    }
+    e = evalCas(cas, q);
+    const n = [e.dz[1] * e.dx[2] - e.dz[2] * e.dx[1], e.dz[2] * e.dx[0] - e.dz[0] * e.dx[2], e.dz[0] * e.dx[1] - e.dz[1] * e.dx[0]], l = Math.hypot(n[0], n[1], n[2]);
+    return { h: level + e.s[1], n: [n[0] / l, n[2] / l] };
+  };
+`
+
 func TestWaterProbeOnTheGPU(t *testing.T) {
 	if !waterRequireWebGPU() {
 		t.Skip("needs a real GPU: set GOSX_WATER_E2E_REQUIRE_WEBGPU=1 on a GPU runner (go test -tags e2e -run 'TestWater' ./e2e)")
@@ -58,7 +88,7 @@ func TestWaterProbeOnTheGPU(t *testing.T) {
 	root := e2eRepoRoot(t)
 	spectrum := scene.OceanPreset("rough")
 	props := scene.Props{Environment: scene.Environment{Ocean: &scene.Ocean{
-		Spectrum:     &spectrum,
+		Level: 2, Spectrum: &spectrum,
 		Presentation: &scene.OceanPresentation{TimeScale: 0.0001, TransitionSeconds: 0.1}, // a nearly static sea, whose sea-state blend has finished
 	}}}
 	env, err := json.Marshal(props.SceneIR().Environment)
@@ -180,7 +210,7 @@ func TestWaterProbeOnTheGPU(t *testing.T) {
         }
         e = ev(q);
         const n = [e.dz[1] * e.dx[2] - e.dz[2] * e.dx[1], e.dz[2] * e.dx[0] - e.dz[0] * e.dx[2], e.dz[0] * e.dx[1] - e.dz[1] * e.dx[0]], l = Math.hypot(n[0], n[1], n[2]);
-        out.ref.push(e.s[1]); out.refN.push([n[0] / l, n[2] / l]);
+        out.ref.push(2 + e.s[1]); out.refN.push([n[0] / l, n[2] / l]);
       }
     } catch (error) { out.error = "cpu reference: " + error; }
   }

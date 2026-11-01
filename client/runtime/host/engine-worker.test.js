@@ -1683,13 +1683,13 @@ test("worker: Scene3D oceanWater answers at once from a mirror the page keeps cu
   const w = await mountedWorker();
   const ctx = w.scope.factoryCtx;
   const first = ctx.scene3D("oceanWater", "ship");
-  assert.ok(Object.prototype.toString.call(first) === "[object Float64Array]" && first.length === 338 && first[0] === 0, "an empty record before the page has drawn a frame");
+  assert.ok(Object.prototype.toString.call(first) === "[object Float64Array]" && first.length === 340 && first[0] === 0, "an empty record before the page has drawn a frame");
   assert.equal(ctx.scene3D("oceanWater", "ship"), first, "the same array every time: a reader keeps it");
   assert.deepEqual(plain(w.of("ocean.watch").map(m => m.msg)), [{ t: "ocean.watch", target: "ship" }], "one request, not one per read");
   assert.equal(w.of("scene3d").length, 0, "no request/reply round trip for a read");
   w.send({ t: "ocean.water", target: "ship", v: new Float64Array([7, 12.5, 3, -4, 1, 1, 0.5, -0.25, 1e12, 2]) });
   assert.deepEqual(Array.from(first.slice(0, 10)), [7, 12.5, 3, -4, 1, 1, 0.5, -0.25, 1e12, 2], "the next message replaces the reading in place");
-  w.send({ t: "ocean.water", target: "other", v: new Float64Array(338).fill(1) });
+  w.send({ t: "ocean.water", target: "other", v: new Float64Array(340).fill(1) });
   w.send({ t: "ocean.water", target: "ship", v: new Float64Array(3) });
   assert.equal(first[0], 7, "a frame for another mount, or a short one, is ignored");
   assert.throws(() => ctx.scene3D("oceanWater", { mount: true }), /mount id as a string/);
@@ -1742,7 +1742,7 @@ test("worker: the probe's count and points go to the page when the host sends th
   const sent = w.of("ocean.points").map(m => m.msg);
   assert.equal(sent.length, 1);
   assert.deepEqual([sent[0].target, sent[0].n, Array.from(sent[0].p.slice(0, 4)), sent[0].p.length], ["ship", 2, [1.5, -2, 10, 20], 128]);
-  const answer = new Float64Array(338);
+  const answer = new Float64Array(340);
   answer.set([9, 1, 2, 3, 1, 1, 0, 0, 1e12, 4]);               // the water frame
   answer.set([77, 4, 1, 2, 1, 1e12, 3], 11);                   // the probe's answer
   answer.set([8.5, 0.1, -0.1, 9.5, 0.2, -0.2], 146);
@@ -1755,7 +1755,7 @@ test("worker: the probe's count and points go to the page when the host sends th
 test("page: ocean.points sets the count and points a worker host wrote, and ocean.water carries the answer only while a host asks", async () => {
   const page = bootPage();
   const { worker } = await mounted(page);
-  const record = new Float64Array(338), sinks = new Set();
+  const record = new Float64Array(340), sinks = new Set();
   page.win.__gosx.scene3d = {
     whenReady: () => Promise.resolve(true),
     oceanWater: (target, s, stop) => { if (s) { if (stop) sinks.delete(s); else sinks.add(s); } return record; },
@@ -1771,7 +1771,7 @@ test("page: ocean.points sets the count and points a worker host wrote, and ocea
   worker.say({ t: "ocean.points", target: "ship", n: 2, p });
   assert.deepEqual([record[10], record[18], record[21]], [2, 4, 7]);
   sink(record);
-  assert.equal(worker.of("ocean.water").at(-1).v.length, 338, "a host asked: the answer crosses too");
+  assert.equal(worker.of("ocean.water").at(-1).v.length, 340, "a host asked: the answer crosses too");
   worker.say({ t: "ocean.points", target: "ship", n: 2, p: new Float64Array(500) });
   assert.equal(record[10], 2, "an oversized points message is refused");
 });

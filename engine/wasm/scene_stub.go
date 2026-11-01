@@ -29,4 +29,5 @@ func (*OceanWaterReader) Read() (scene.OceanWaterFrame, bool) {
 	return scene.OceanWaterFrame{}, false
 }
 func (*OceanWaterReader) SetProbe([]scene.OceanProbePoint)        {}
+func (*OceanWaterReader) Close()                                  {}
 func (*OceanWaterReader) ReadProbe(*scene.OceanProbeReading) bool { return false }
