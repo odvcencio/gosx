@@ -95,13 +95,19 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 			if backend == "webgl2" {
 				init += `window.__gosx_scene3d_force_webgl = true;`
 			}
-			if err := chromedp.Run(ctx,
-				chromedp.ActionFunc(func(ctx context.Context) error {
-					_, err := page.AddScriptToEvaluateOnNewDocument(init).Do(ctx)
-					return err
-				}),
-				chromedp.Navigate(pageURL),
-			); err != nil {
+			if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				_, err := page.AddScriptToEvaluateOnNewDocument(init).Do(ctx)
+				return err
+			})); err != nil {
+				t.Fatal(err)
+			}
+			// A new WSL port can take a moment to appear on Windows localhost: retry a refused load.
+			err = chromedp.Run(ctx, chromedp.Navigate(pageURL))
+			for i := 0; err != nil && strings.Contains(err.Error(), "ERR_CONNECTION_REFUSED") && i < 20; i++ {
+				time.Sleep(500 * time.Millisecond)
+				err = chromedp.Run(ctx, chromedp.Navigate(pageURL))
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
 			const read = `(async () => {
