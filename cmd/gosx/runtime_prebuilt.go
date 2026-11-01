@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/perf/ouroboros"
 )
 
@@ -268,7 +269,7 @@ func resolvePrebuiltRuntimeForProject(ctx context.Context, opts BuildOptions, pr
 type offlineRuntimeArtifactFetcher struct{}
 
 func (offlineRuntimeArtifactFetcher) FetchAsset(context.Context, string, string) ([]byte, error) {
-	return nil, fmt.Errorf("prebuilt runtime fetch is disabled by --offline")
+	return nil, fmt.Errorf("prebuilt runtime fetch is disabled by --offline; the cached runtime is missing, corrupt, or incompatible")
 }
 
 func runtimeCacheRoot() (string, error) {
@@ -317,6 +318,9 @@ func resolvePrebuiltRuntime(ctx context.Context, cacheRoot string, fetcher runti
 	var evidence ouroboros.RuntimeBuildEvidence
 	if err := json.Unmarshal(manifestData, &evidence); err != nil {
 		return prebuiltRuntimeBundle{}, fmt.Errorf("decode prebuilt runtime manifest for %s: %w", version, err)
+	}
+	if evidence.RuntimeABI != runtimewasm.ManifestIdentity() {
+		return prebuiltRuntimeBundle{}, fmt.Errorf("prebuilt runtime %s has an incompatible or missing runtime ABI; use a matching GoSX release or build from matching local source with TinyGo", version)
 	}
 
 	var shim *ouroboros.AssetMetrics
@@ -384,6 +388,9 @@ func loadVerifiedPrebuiltRuntimeCache(dir string) (prebuiltRuntimeBundle, bool) 
 	}
 	var evidence ouroboros.RuntimeBuildEvidence
 	if err := json.Unmarshal(manifestData, &evidence); err != nil {
+		return prebuiltRuntimeBundle{}, false
+	}
+	if evidence.RuntimeABI != runtimewasm.ManifestIdentity() {
 		return prebuiltRuntimeBundle{}, false
 	}
 	var shim *ouroboros.AssetMetrics

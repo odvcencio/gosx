@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Resolve island map prop types from locally available imported Go packages,
+  including aliases. Production file routes reuse verified compiled island
+  programs without requiring the Go toolchain or dependency source. Custom
+  JSON or text encoders for indexed maps remain unsupported and fail clearly.
+- Bind published browser runtime manifests to their compiler ABI so that
+  incompatible prebuilt runtimes are rejected before build output is replaced.
+- Check pinned README CLI installation commands against the release version.
+
 - Draw a night sky and a moonlit sea. `Sky.Night` (a `*scene.SkyNight`, physical
   sky only) adds a seeded star field and a moon disc with phase to the sky
   pass on WebGL2 and WebGPU, and when the sun is below the horizon the ocean

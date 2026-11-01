@@ -44,6 +44,32 @@ func TestRunFmtFormatsOnlyGSXFilesInDirectory(t *testing.T) {
 func Page() Node {
 	return <div  class="page"><span>Hi</span></div>
 }
+
+func TestRunFmtSkipsGeneratedAndCheckoutDirectories(t *testing.T) {
+	dir := t.TempDir()
+	unformatted := "package main\n\nfunc Page() Node {\n\treturn <div  class=\"page\">Hi</div>\n}\n"
+	writeTempFile(t, dir, "app/page.gsx", unformatted)
+	for _, name := range []string{".worktrees/old/page.gsx", "build/page.gsx", "dist/page.gsx", "tmp/page.gsx", "node_modules/pkg/page.gsx"} {
+		writeTempFile(t, dir, name, unformatted)
+	}
+
+	var stderr bytes.Buffer
+	count, err := RunFmt(dir, &stderr)
+	if err != nil || count != 1 {
+		t.Fatalf("RunFmt(root) = (%d, %v); output: %s", count, err, stderr.String())
+	}
+	for _, name := range []string{".worktrees/old/page.gsx", "build/page.gsx", "dist/page.gsx", "tmp/page.gsx", "node_modules/pkg/page.gsx"} {
+		if got := readFile(t, filepath.Join(dir, name)); got != unformatted {
+			t.Errorf("recursive format changed %s", name)
+		}
+	}
+	if _, err := RunFmtCheck(dir, &stderr); err != nil {
+		t.Fatalf("RunFmtCheck(root) included an excluded file: %v", err)
+	}
+	if count, err := RunFmt(filepath.Join(dir, "build"), &stderr); err != nil || count != 1 {
+		t.Fatalf("RunFmt(explicit build directory) = (%d, %v)", count, err)
+	}
+}
 `)
 	writeTempFile(t, dir, "app/page.server.go", `package main
 

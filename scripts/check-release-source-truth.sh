@@ -64,6 +64,13 @@ if [ -n "$stale_readme" ]; then
 	printf '%s\n' "$stale_readme" >&2
 	exit 1
 fi
+install_versions="$(grep -Eo 'go[[:space:]]+install[[:space:]]+m31labs[.]dev/gosx/cmd/gosx@v[0-9]+[.][0-9]+[.][0-9]+([-+][[:alnum:].-]+)?' "${repo_root}/README.md" | sed 's/^.*@//' || true)"
+stale_installs="$(printf '%s\n' "$install_versions" | grep -v '^$' | grep -Fxv "$release_tag" || true)"
+if [ -n "$stale_installs" ]; then
+	echo "check-release-source-truth: README.md contains a stale CLI installation command" >&2
+	printf '%s\n' "$stale_installs" >&2
+	exit 1
+fi
 if ! grep -E "^##[[:space:]]+\\[?${release_tag}\\]?([[:space:]]|$)" "${repo_root}/CHANGELOG.md" >/dev/null; then
 	echo "check-release-source-truth: CHANGELOG.md must contain section ${release_tag}" >&2
 	exit 1

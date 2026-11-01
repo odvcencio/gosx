@@ -72,12 +72,13 @@
     if (String(handshake.manifestHash || "") !== contract.manifestHash) return "runtime handshake manifest identity mismatch";
 
     if (expected && typeof expected === "object") {
+      // Both feature masks and manifest identities already match the same
+      // variant and contract, so comparing them again cannot reject a mismatch.
       const refError = referenceError(expected);
       if (refError) return refError;
-      if (String(handshake.variant) !== String(expected.variant)) return "runtime handshake variant does not match the manifest reference";
-      if ((Number(handshake.featureMask) >>> 0) !== (Number(expected.featureMask) >>> 0)) return "runtime handshake feature mask does not match the manifest reference";
-      if (String(handshake.manifestHash) !== String(expected.manifestHash)) return "runtime handshake manifest identity does not match the manifest reference";
-      return "";
+      return String(handshake.variant) === String(expected.variant)
+        ? ""
+        : "runtime handshake variant does not match the manifest reference";
     }
 
     const required = Number(expected || 0) >>> 0;

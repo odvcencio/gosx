@@ -72,6 +72,21 @@ func TestReleaseCheckDetectsStaleReadme(t *testing.T) {
 	}
 }
 
+func TestReleaseCheckDetectsStaleInstallCommand(t *testing.T) {
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "README.md")
+	mustWriteFile(t, filepath.Join(dir, "CHANGELOG.md"), "## "+version.Current+"\n")
+	mustWriteFile(t, readme, "Current release: **"+version.Current+"**.\n\ngo install m31labs.dev/gosx/cmd/gosx@"+version.Current+"\n")
+	if report := buildReleaseCheckReport(dir, ""); !report.OK {
+		t.Fatalf("matching install command failed: %+v", report.Checks)
+	}
+	mustWriteFile(t, readme, "Current release: **"+version.Current+"**.\n\ngo install m31labs.dev/gosx/cmd/gosx@v0.0.1\n")
+	report := buildReleaseCheckReport(dir, "")
+	if report.OK || !strings.Contains(releaseCheckText(report), "readme.install_version: fail") {
+		t.Fatalf("stale install command was accepted: %+v", report.Checks)
+	}
+}
+
 func TestReleaseCheckNextRequiresChangelogSection(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "README.md"), "Current release: **"+version.Current+"**.\n")

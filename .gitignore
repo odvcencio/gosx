@@ -1,5 +1,8 @@
 /dashboard
 build/
+!/build/
+/build/*
+!/build/go.mod
 .canopy/
 /docs/*
 !/docs/docs-site-operations.md
@@ -25,6 +28,7 @@ build/
 !/docs/commands.md
 !/docs/workbench.md
 !/docs/browser-services.md
+!/docs/browser-runtime.md
 !/docs/island-events.md
 !/docs/desktop-code-signing.md
 !/docs/expression-support-matrix.md

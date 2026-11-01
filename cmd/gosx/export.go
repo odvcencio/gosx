@@ -56,9 +56,15 @@ func RunExport(dir string) error {
 	if err := checkStrictProject(context.Background(), absDir); err != nil {
 		return fmt.Errorf("check strict components: %w", err)
 	}
+	if err := checkProjectRuntimeCompatibility(absDir); err != nil {
+		return err
+	}
 	distDir := filepath.Join(absDir, "dist")
 	if err := os.RemoveAll(distDir); err != nil {
 		return fmt.Errorf("clean output directory: %w", err)
+	}
+	if err := writeOutputModuleBoundary(distDir); err != nil {
+		return err
 	}
 	if err := prepareDevAssetsWithPrograms(absDir, discovery.Programs); err != nil {
 		return err

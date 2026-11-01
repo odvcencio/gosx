@@ -67,8 +67,11 @@ func TestReferencesGlobalNonLoaderMembers(t *testing.T) {
 // or a hand-maintained file list. Source maps, tests and tool scripts are absent
 // from these production declarations.
 func shippedJavaScriptFiles(t *testing.T) []string {
+	return shippedJavaScriptFilesAt(t, "../..")
+}
+
+func shippedJavaScriptFilesAt(t *testing.T, root string) []string {
 	t.Helper()
-	root := "../.."
 	paths := map[string]bool{}
 	add := func(path string) { paths[filepath.ToSlash(path)] = true }
 	built, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "cmd/buildbootstrap/main.go"), nil, 0)
@@ -107,7 +110,7 @@ func shippedJavaScriptFiles(t *testing.T) []string {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", "node_modules", "testdata", "examples", "build", "dist", "vendor":
+			case ".git", ".canopy", ".worktrees", "node_modules", "testdata", "examples", "build", "dist", "tmp", "vendor":
 				return filepath.SkipDir
 			}
 			if rel == "cmd" {
@@ -166,6 +169,30 @@ func shippedJavaScriptFiles(t *testing.T) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func TestShippedJavaScriptDiscoverySkipsRetainedWorktrees(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"cmd/buildbootstrap/main.go":     "package main\nvar chunks = []struct{name string}{{name: \"bootstrap.js\"}}\n",
+		"server/embed.go":                "package server\n//go:embed current.js\nvar current string\n",
+		"server/current.js":              "// current\n",
+		".worktrees/old/server/embed.go": "package server\n//go:embed old.js\nvar old string\n",
+		".worktrees/old/server/old.js":   "// old\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"client/js/bootstrap.js", "client/js/vendor/hls.min.js", "server/current.js"}
+	if got := shippedJavaScriptFilesAt(t, root); !reflect.DeepEqual(got, want) {
+		t.Fatalf("discovered JavaScript = %v, want %v", got, want)
+	}
 }
 
 // Each permitted literal must be an actual fetching expression, rather than an

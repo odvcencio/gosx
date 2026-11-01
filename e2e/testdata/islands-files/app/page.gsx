@@ -11,5 +11,6 @@ func Page() Node {
 		<ForeignContent />
 		<ui.Roster />
 		<ui.Sections />
+		<ImportedMap />
 	</main>
 }

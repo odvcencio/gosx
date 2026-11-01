@@ -614,7 +614,15 @@ func buildWindowsInstallerBinary(output, mainSource string) error {
 	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte(mainSource), 0644); err != nil {
 		return err
 	}
-	args := []string{"build", "-trimpath", "-ldflags=-H=windowsgui", "-o", output, "."}
+	args := []string{"build", "-trimpath"}
+	if installerBuildHasEmptyGitPlaceholder(workDir) {
+		// This generated temporary module has no Git repository to stamp.
+		// An empty ancestor placeholder is not a repository, but Go's VCS
+		// discovery treats it as one and otherwise fails the build. Scope the
+		// exception to this build; real repositories keep Go's default stamping.
+		args = append(args, "-buildvcs=false")
+	}
+	args = append(args, "-ldflags=-H=windowsgui", "-o", output, ".")
 	command := exec.Command("go", args...)
 	if runtime.GOOS != "windows" {
 		command = exec.Command("nice", append([]string{"-n", "10", "go"}, args...)...)
@@ -628,6 +636,44 @@ func buildWindowsInstallerBinary(output, mainSource string) error {
 		return fmt.Errorf("cross-build Windows installer host (CGO_ENABLED=0): %w\n%s", err, strings.TrimSpace(string(result)))
 	}
 	return nil
+}
+
+// installerBuildHasEmptyGitPlaceholder recognizes only an empty .git
+// directory that Git itself cannot use. Explicit Git environment overrides and
+// nonempty or unreadable metadata retain Go's ordinary fail-closed behavior.
+func installerBuildHasEmptyGitPlaceholder(dir string) bool {
+	if os.Getenv("GIT_DIR") != "" || os.Getenv("GIT_WORK_TREE") != "" {
+		return false
+	}
+	for _, flag := range strings.Fields(os.Getenv("GOFLAGS")) {
+		if strings.HasPrefix(flag, "-buildvcs") {
+			return false
+		}
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return false // Go's automatic VCS detection already handles missing Git.
+	}
+	for current := filepath.Clean(dir); ; current = filepath.Dir(current) {
+		marker := filepath.Join(current, ".git")
+		info, err := os.Stat(marker)
+		if err == nil {
+			if !info.IsDir() {
+				return false
+			}
+			entries, err := os.ReadDir(marker)
+			if err != nil || len(entries) != 0 {
+				return false
+			}
+			return exec.Command(git, "-C", dir, "rev-parse", "--git-dir").Run() != nil
+		}
+		if !os.IsNotExist(err) {
+			return false
+		}
+		if parent := filepath.Dir(current); parent == current {
+			return false
+		}
+	}
 }
 
 func setCommandEnvironment(environment []string, values map[string]string) []string {

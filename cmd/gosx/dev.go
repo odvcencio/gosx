@@ -67,6 +67,9 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	if err := checkStrictProject(context.Background(), absDir); err != nil {
 		return fmt.Errorf("check strict components: %w", err)
 	}
+	if err := checkProjectRuntimeCompatibility(absDir); err != nil {
+		return err
+	}
 	if err := prepareDevAssetsWithPrograms(absDir, discovery.Programs); err != nil {
 		return err
 	}

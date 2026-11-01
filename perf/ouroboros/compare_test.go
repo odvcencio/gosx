@@ -834,9 +834,12 @@ func TestCompareSmokeSkipsUnavailableWASMMemoryTelemetry(t *testing.T) {
 }
 
 func TestCompareLiveR00SmokeSelfCompareWhenPresent(t *testing.T) {
-	root := filepath.Join("..", "..", "build", "ouroboros", "o0.2", "browser-smoke-ci", "20260809T081011Z-3954451")
+	root := strings.TrimSpace(os.Getenv("GOSX_OUROBOROS_SMOKE_ROOT"))
+	if root == "" {
+		t.Skip("set GOSX_OUROBOROS_SMOKE_ROOT to validate a chosen live smoke artifact")
+	}
 	if _, err := os.Stat(filepath.Join(root, "manifest.json")); err != nil {
-		t.Skipf("live R00 smoke artifact not present: %v", err)
+		t.Fatalf("live R00 smoke artifact: %v", err)
 	}
 	report := runSmokeCompare(t, root, root)
 	if report.ExitCode != 0 {
