@@ -51,7 +51,7 @@ test("physical sky normalizes, clamps, and packs the Go golden parameter block",
   h.renderer.dispose();
 });
 
-test("WebGPU draws the physical sky from one 176-byte uniform block", async () => {
+test("WebGPU draws the physical sky from one 224-byte uniform block", async () => {
   const h = await createBoardWebGPUHarness({ fresh: true });
   const bundle = makePointsBundle(null); bundle.points = [];
   bundle.environment.sky = goldenSky();
@@ -62,11 +62,11 @@ test("WebGPU draws the physical sky from one 176-byte uniform block", async () =
   assert.match(module.desc ? module.desc.code : module.code, /fn gosxPhysicalSky\(/);
   const draw = h.fake.state.renderPasses.flatMap(p => p.draws).find(d => d.pipeline?.desc?.label === "gosx-sky");
   assert.ok(draw, "the physical sky draws with no geometry");
-  assert.ok(h.fake.state.buffers.some(b => b.size === 176), "one 176-byte sky uniform buffer");
+  assert.ok(h.fake.state.buffers.some(b => b.size === 224), "one 224-byte sky uniform buffer");
   h.renderer.dispose();
 });
 
-test("WebGL packs mode 4 and the physical parameters into u_sky[11]", () => {
+test("WebGL packs mode 4 and the physical parameters into u_sky[14]", () => {
   const h = createWebGLRendererForPost({ fresh: true });
   const mount = h.env.document.createElement("div"); mount.appendChild(h.canvas);
   const gl = h.canvas.getContext("webgl2");
@@ -82,9 +82,20 @@ test("WebGL packs mode 4 and the physical parameters into u_sky[11]", () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-sky"), "physical");
   const upload = gl.ops.filter(op => op[0] === "uniform4fv" && op[1] === "u_sky[0]").at(-1);
   assert.ok(upload, "the sky uniform block is uploaded");
-  assert.equal(upload[2].length, 44);
+  assert.equal(upload[2].length, 56);
   assert.equal(upload[2][23], 4, "mode 4 selects the physical branch");
   assert.ok(Math.abs(upload[2][31] - GOLDEN[3]) < 1e-3, "sunE reaches the shader");
   assert.deepEqual(h.warnLog, []);
+  h.renderer.dispose();
+});
+
+test("the sky pass draws the night function only in the sky shaders and packs the night block", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const bundle = makePointsBundle(null); bundle.points = [];
+  bundle.environment.sky = Object.assign(goldenSky(), { night: { moonPhase: 0.5, starSeed: 3 } });
+  h.canvas.width = h.canvas.height = 64;
+  h.renderer.render(bundle, { width: 64, height: 64 });
+  const sky = h.fake.state.shaderModules.find(m => m.label === "gosx-sky");
+  assert.match(sky.desc ? sky.desc.code : sky.code, /fn gosxNightSky\(/);
   h.renderer.dispose();
 });

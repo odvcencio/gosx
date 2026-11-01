@@ -6801,8 +6801,44 @@
     return out;
   }
 
+  // Night layer (Sky.Night): seeded stars on a cube-face grid, a moon disc with phase and its halo. px is the pixel angle in radians.
+  var WGSL_SCENE_SKY_NIGHT = [
+    "fn gosxNightHash(x0: u32) -> u32 { var x = x0; x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u; x *= 0x846ca68bu; return x ^ (x >> 16u); }",
+    "fn gosxNightRand(x: u32) -> f32 { return f32(gosxNightHash(x) >> 8u) / 16777216.0; }",
+    "fn gosxNightSky(ray: vec3f, moon: vec4f, star: vec4f, ph: vec4f, px: f32) -> vec3f {",
+    " var c = vec3f(0.0); let ct = dot(ray, moon.xyz); var edge = 0.0;",
+    " if (ph.z > 0.0 && ct > 0.0) {",
+    "  let sinR = sqrt(max(1.0 - moon.w * moon.w, 1e-8));",
+    "  let right = normalize(cross(moon.xyz, vec3f(0.0, 1.0, 0.0)) + vec3f(1e-6, 0.0, 0.0));",
+    "  let d = vec2f(dot(ray, right), dot(ray, cross(right, moon.xyz))) / sinR;",
+    "  let r = length(d); let aa = max(px / sinR, 1e-4);",
+    "  edge = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);",
+    "  let lit = smoothstep(-0.03, 0.06, dot(vec3f(d, sqrt(max(1.0 - r * r, 0.0))), vec3f(ph.x, 0.0, -ph.y)));",
+    "  c += edge * ph.z * 1.5 * vec3f(1.0, 0.97, 0.9) * (0.82 + 0.18 * sin(d.x * 5.3 + d.y * 2.1) * sin(d.y * 4.7 - d.x * 1.3)) * (0.006 + 0.994 * lit);",
+    " }",
+    " let ang = sqrt(max(2.0 * (1.0 - ct), 0.0));",
+    " c += ph.w * vec3f(0.5, 0.65, 1.0) * (0.5 * exp(-ang * 18.0) + 0.05 * exp(-ang * 4.0));",
+    " if (star.x > 0.0) {",
+    "  let a = abs(ray);",
+    "  var uv = ray.xy / a.z; var fid = select(5.0, 4.0, ray.z > 0.0);",
+    "  if (a.x >= a.y && a.x >= a.z) { uv = ray.yz / a.x; fid = select(1.0, 0.0, ray.x > 0.0); }",
+    "  else if (a.y >= a.z) { uv = ray.xz / a.y; fid = select(3.0, 2.0, ray.y > 0.0); }",
+    "  let g = (uv * 0.5 + 0.5) * 64.0; let cell = clamp(floor(g), vec2f(0.0), vec2f(63.0)); let f = g - cell; let cc = (cell + 0.5) / 32.0 - 1.0;",
+    "  let k = 1.0 + dot(cc, cc);",
+    "  let key = u32(cell.x) + 64u * u32(cell.y) + 4096u * u32(fid) + 24576u * u32(star.z);",
+    "  if (gosxNightRand(key) < star.y / (k * sqrt(k))) {",
+    "   let pos = 0.2 + 0.6 * vec2f(gosxNightRand(key ^ 0x68bc21ebu), gosxNightRand(key ^ 0x02e5be93u));",
+    "   var mag = gosxNightRand(key ^ 0x9e3779b9u); mag *= mag; mag *= mag;",
+    "   let dist = length(f - pos) / (32.0 * k); let rad = px * (1.1 + 0.8 * mag);",
+    "   c += star.x * (1.0 - edge) * smoothstep(0.0, 0.1, ray.y) * exp(-1.5 * dist * dist / (rad * rad)) * (0.12 + 0.88 * mag) * mix(vec3f(1.0, 0.82, 0.66), vec3f(0.7, 0.82, 1.0), gosxNightRand(key ^ 0x85ebca6bu));",
+    "  }",
+    " }",
+    " return c + star.w * vec3f(0.004, 0.007, 0.014) * (1.2 - 0.6 * clamp(ray.y, 0.0, 1.0));",
+    "}",
+  ].join("\n");
+
   var WGSL_SCENE_SKY = [
-    "struct Sky { right: vec4f, up: vec4f, forward: vec4f, top: vec4f, horizon: vec4f, bottom: vec4f, output: vec4f, betaR: vec4f, betaM: vec4f, sun: vec4f, extra: vec4f };",
+    "struct Sky { right: vec4f, up: vec4f, forward: vec4f, top: vec4f, horizon: vec4f, bottom: vec4f, output: vec4f, betaR: vec4f, betaM: vec4f, sun: vec4f, extra: vec4f, moon: vec4f, stars: vec4f, phase: vec4f };",
     "@group(0) @binding(0) var<uniform> sky: Sky;",
     "@group(0) @binding(1) var skySampler: sampler;",
     "@group(0) @binding(2) var skyImage: texture_2d<f32>;",
@@ -6813,7 +6849,7 @@
     "  var out: SkyVertex; out.position = vec4f(p[i], 1, 1); out.ndc = p[i]; return out;",
     "}",
     "fn gosxSkyColor(in: SkyVertex) -> vec4f {",
-    "  let ray = normalize(sky.forward.xyz + sky.right.xyz * in.ndc.x * sky.right.w + sky.up.xyz * in.ndc.y * sky.up.w);",
+    "  let ray = normalize(sky.forward.xyz + sky.right.xyz * in.ndc.x * sky.right.w + sky.up.xyz * in.ndc.y * sky.up.w); let px = length(dpdx(ray));",
     "  var color = mix(sky.horizon.xyz, select(sky.bottom.xyz, sky.top.xyz, ray.y >= 0), abs(ray.y));",
     "  let c = cos(sky.forward.w); let s = sin(sky.forward.w);",
     "  let d = vec3f(ray.x*c + ray.z*s, ray.y, -ray.x*s + ray.z*c);",
@@ -6821,7 +6857,7 @@
     "    let uv = vec2f(atan2(d.z,d.x)/6.28318530718+0.5, asin(clamp(d.y,-1.0,1.0))/3.14159265359+0.5);",
     "    color = textureSampleLevel(skyImage, skySampler, uv, sky.horizon.w).rgb;",
     "  } else if (sky.bottom.w == 2) { color = textureSampleLevel(skyCube, skySampler, d, sky.horizon.w).rgb;",
-    "  } else if (sky.bottom.w == 3) { color = sky.horizon.xyz; } else if (sky.bottom.w == 4) { color = gosxPhysicalSky(ray, sky.betaR, sky.betaM, sky.sun, sky.extra.x); }",
+    "  } else if (sky.bottom.w == 3) { color = sky.horizon.xyz; } else if (sky.bottom.w == 4) { color = gosxPhysicalSky(ray, sky.betaR, sky.betaM, sky.sun, sky.extra.x); if (sky.stars.x > 0 || sky.stars.w > 0 || sky.phase.z > 0) { color = color * (1.0 - 0.85 * sky.stars.w) + gosxNightSky(ray, sky.moon, sky.stars, sky.phase, px) / max(sky.top.w, 0.001); } }",
     "  color = max(color * sky.top.w, vec3f(0));",
     "  if (sky.output.x == 0) { color = select(1.055*pow(color,vec3f(1.0/2.4))-0.055, color*12.92, color <= vec3f(0.0031308)); }",
     "  return vec4f(color, 1);",
@@ -6833,7 +6869,7 @@
 
   // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
   function wgpuCreateSkyRenderer(device, textureCache, imagePlaceholder, cubePlaceholder) {
-    var data = new Float32Array(44);
+    var data = new Float32Array(56);
     var uniform = device.createBuffer({ label: "gosx-sky", size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     var sampler = device.createSampler({ addressModeU: "repeat", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear" });
     var layout = device.createBindGroupLayout({ entries: [
@@ -6843,7 +6879,7 @@
       { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
     ] });
     var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-    var module = device.createShaderModule({ label: "gosx-sky", code: WGSL_SCENE_SKY + "\n" + sceneSkyPhysicalSource("wgsl") });
+    var module = device.createShaderModule({ label: "gosx-sky", code: WGSL_SCENE_SKY + "\n" + sceneSkyPhysicalSource("wgsl") + "\n" + WGSL_SCENE_SKY_NIGHT });
     var pipelines = new Map();
     // @ts-ignore TS7018 -- bind-group identities become available on the first draw.
     var cached = { group: null, image: null, cube: null };
@@ -6851,7 +6887,7 @@
       // @ts-ignore TS7006 -- frame inputs follow the shared scene contract.
       draw: function(pass, opts) {
         var env = opts.environment, sky = env.sky;
-        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
+        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear, true);
         var image = imagePlaceholder, cube = cubePlaceholder, state = sky.mode === "physical" ? "physical" : "gradient";
         if (sky.mode === "environment") {
           var desc = env.ibl && env.ibl.radiance;

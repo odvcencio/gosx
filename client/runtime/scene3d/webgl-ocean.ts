@@ -119,7 +119,7 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
   "  float al = rough * rough, al2 = al * al, dd = NdH * NdH * (al2 - 1.) + 1.;",
   "  float k = al * 0.5, G = (NdL / (NdL * (1. - k) + k)) * (NdV / (NdV * (1. - k) + k));",
   "  float Fh = 0.02 + 0.98 * pow(1. - max(dot(H, V), 0.), 5.);",
-  "  vec3 spec = min(sunCol * (al2 / (3.14159265 * dd * dd)) * G * Fh / max(4. * NdV, 1e-3), vec3(64.));",
+  "  vec3 spec = min(sunCol * (al2 / (3.14159265 * dd * dd)) * G * Fh / max(4. * NdV, 1e-3), vec3(u_ocean[33].w > 0. ? u_ocean[33].w : 64.));",
   "  //GOSX_SUN_PATH",
   "  float crest = v_crest * v_crest;",
   "  vec3 scatter = u_ocean[3].xyz * (sunCol * 0.18 * pow(clamp(dot(V, -L) * 0.5 + 0.5, 0., 1.), 4.) + ambient * 0.12) * crest;",

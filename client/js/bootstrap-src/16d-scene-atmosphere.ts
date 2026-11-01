@@ -164,7 +164,7 @@ function sceneAtmospherePostUniforms(effect,ctx,webgpu,out) {
   out.set([uv[0],uv[1],visible?1:0,0],40);
   if(effect.rays)out.set([effect.rays.intensity,effect.rays.decay,effect.rays.density,Math.min(effect.rays.samples,sceneAtmosphereQuality(ctx.meta).raySamples)],44);
   out.set([effect.exposure||1,effect.grain||0,sceneNumber(sky.intensity,1)||1,0],48);
-  const light=sceneOceanUniformData({},Object.assign({},env,{sky}),camera,0,true,"low");out.set(light.subarray(128,131),52);out.set(light.subarray(132,135),56);
+  const light=sceneOceanUniformData({},Object.assign({},env,{sky}),camera,0,true,"low");out.set(light.subarray(128,131),52);out.set(light.subarray(132,135),56);out[43]=sceneOceanNightDim();out.set(out[43]>0?light.subarray(136,139):p.subarray(8,11),37);
   return out;
 }
 

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Draw a night sky and a moonlit sea. `Sky.Night` (a `*scene.SkyNight`, physical
+  sky only) adds a seeded star field and a moon disc with phase to the sky
+  pass on WebGL2 and WebGPU, and when the sun is below the horizon the ocean
+  takes the moon as its key light: a glint path and crest scatter scaled by
+  the lit fraction, the moon's height and `Clouds.Coverage`. Fields are
+  `StarDensity`, `StarBrightness`, `StarSeed`, `MoonDirection`, `MoonPhase`
+  (0 new, 0.5 full), `MoonRadius` and `MoonIntensity`; `MoonIllumination()`
+  returns the lit fraction. The stars use an integer hash, so one seed draws
+  one sky on every backend. A scene without `Night` keeps its wire and its
+  pixels. The new browser test `e2e/scene3d_night_sky_e2e_test.go` renders a
+  full moon, a half moon, a new moon and an overcast night and checks the
+  stars, the disc and the path on the water. Size cost against main before the water frame (raw / gzip / Brotli bytes): the shared Scene3D chunk +2,308 / +1,073 / +746, the WebGL chunk +2,274 / +1,081 / +710, the WebGPU chunk +2,499 / +1,096 / +866, and the `bootstrap.js` monolith +7,615 / +3,199 / +2,277. The ocean shaders gain one highlight-cap read (`u_ocean[33].w`); the moon reaches the sea through the same key-light uniforms the sun used. Measured on an RTX 5070 Ti at 1440x900, the renderer's GPU timer
+  reads a median of 0.125 ms for a night scene without `Night` and 0.134 ms
+  with a full moon on WebGL2, and 0.151 ms and 0.166 ms on WebGPU.
+
 - Tell a host that drives a vessel's pose itself where the drawn water is.
   `engine/wasm` `Scene3D.OceanWater()` returns a reader, and `Read()` gives a
   `scene.OceanWaterFrame`: the water's drift offset `X`/`Z` and wave `Time` the

@@ -7506,16 +7506,53 @@
     );
   }
 
+  // Night layer (Sky.Night): seeded stars on a cube-face grid, a moon disc with phase and its halo. px is the pixel angle in radians.
+  const SCENE_SKY_NIGHT_GLSL = [
+    "precision highp int;",
+    "uint gosxNightHash(uint x) { x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u; x *= 0x846ca68bu; return x ^ (x >> 16u); }",
+    "float gosxNightRand(uint x) { return float(gosxNightHash(x) >> 8u) / 16777216.; }",
+    "vec3 gosxNightSky(vec3 ray, vec4 moon, vec4 star, vec4 ph, float px) {",
+    " vec3 c = vec3(0.); float ct = dot(ray, moon.xyz), edge = 0.;",
+    " if (ph.z > 0. && ct > 0.) {",
+    "  float sinR = sqrt(max(1. - moon.w * moon.w, 1e-8));",
+    "  vec3 right = normalize(cross(moon.xyz, vec3(0., 1., 0.)) + vec3(1e-6, 0., 0.));",
+    "  vec2 d = vec2(dot(ray, right), dot(ray, cross(right, moon.xyz))) / sinR;",
+    "  float r = length(d), aa = max(px / sinR, 1e-4);",
+    "  edge = 1. - smoothstep(1. - aa, 1. + aa, r);",
+    "  float lit = smoothstep(-0.03, 0.06, dot(vec3(d, sqrt(max(1. - r * r, 0.))), vec3(ph.x, 0., -ph.y)));",
+    "  c += edge * ph.z * 1.5 * vec3(1., 0.97, 0.9) * (0.82 + 0.18 * sin(d.x * 5.3 + d.y * 2.1) * sin(d.y * 4.7 - d.x * 1.3)) * (0.006 + 0.994 * lit);",
+    " }",
+    " float ang = sqrt(max(2. * (1. - ct), 0.));",
+    " c += ph.w * vec3(0.5, 0.65, 1.) * (0.5 * exp(-ang * 18.) + 0.05 * exp(-ang * 4.));",
+    " if (star.x > 0.) {",
+    "  vec3 a = abs(ray); vec2 uv; float fid;",
+    "  if (a.x >= a.y && a.x >= a.z) { uv = ray.yz / a.x; fid = ray.x > 0. ? 0. : 1.; }",
+    "  else if (a.y >= a.z) { uv = ray.xz / a.y; fid = ray.y > 0. ? 2. : 3.; }",
+    "  else { uv = ray.xy / a.z; fid = ray.z > 0. ? 4. : 5.; }",
+    "  vec2 g = (uv * 0.5 + 0.5) * 64., cell = clamp(floor(g), vec2(0.), vec2(63.)), f = g - cell, cc = (cell + 0.5) / 32. - 1.;",
+    "  float k = 1. + dot(cc, cc);",
+    "  uint key = uint(cell.x) + 64u * uint(cell.y) + 4096u * uint(fid) + 24576u * uint(star.z);",
+    "  if (gosxNightRand(key) < star.y / (k * sqrt(k))) {",
+    "   vec2 pos = 0.2 + 0.6 * vec2(gosxNightRand(key ^ 0x68bc21ebu), gosxNightRand(key ^ 0x02e5be93u));",
+    "   float mag = gosxNightRand(key ^ 0x9e3779b9u); mag *= mag; mag *= mag;",
+    "   float dist = length(f - pos) / (32. * k), rad = px * (1.1 + 0.8 * mag);",
+    "   c += star.x * (1. - edge) * smoothstep(0., 0.1, ray.y) * exp(-1.5 * dist * dist / (rad * rad)) * (0.12 + 0.88 * mag) * mix(vec3(1., 0.82, 0.66), vec3(0.7, 0.82, 1.), gosxNightRand(key ^ 0x85ebca6bu));",
+    "  }",
+    " }",
+    " return c + star.w * vec3(0.004, 0.007, 0.014) * (1.2 - 0.6 * clamp(ray.y, 0., 1.));",
+    "}",
+  ].join("\n");
+
   const SCENE_SKY_FRAGMENT = [
     "#version 300 es",
     "precision highp float;",
     "in vec2 v_uv; layout(location=0) out vec4 fragColor; layout(location=1) out vec4 gosxSpecularOutput;",
-    "uniform vec4 u_sky[11]; uniform sampler2D u_skyImage; uniform samplerCube u_skyCube;",
+    "uniform vec4 u_sky[14]; uniform sampler2D u_skyImage; uniform samplerCube u_skyCube;",
     "//GOSX_SKY_PHYSICAL",
     "void main() {",
     "  gosxSpecularOutput = vec4(0);",
     "  vec2 ndc = v_uv*2.-1.;",
-    "  vec3 ray = normalize(u_sky[2].xyz + u_sky[0].xyz*ndc.x*u_sky[0].w + u_sky[1].xyz*ndc.y*u_sky[1].w);",
+    "  vec3 ray = normalize(u_sky[2].xyz + u_sky[0].xyz*ndc.x*u_sky[0].w + u_sky[1].xyz*ndc.y*u_sky[1].w); float px = length(dFdx(ray));",
     "  vec3 color = mix(u_sky[4].xyz, ray.y >= 0. ? u_sky[3].xyz : u_sky[5].xyz, abs(ray.y));",
     "  float c = cos(u_sky[2].w), s = sin(u_sky[2].w);",
     "  vec3 d = vec3(ray.x*c+ray.z*s, ray.y, -ray.x*s+ray.z*c);",
@@ -7524,7 +7561,7 @@
     "    color = textureLod(u_skyImage, uv, u_sky[4].w).rgb;",
     "  } else if (u_sky[5].w == 2.) { color = textureLod(u_skyCube,d,u_sky[4].w).rgb;",
     "  } else if (u_sky[5].w == 3.) { color = u_sky[4].xyz;",
-    "  } else if (u_sky[5].w == 4.) { color = gosxPhysicalSky(ray, u_sky[7], u_sky[8], u_sky[9], u_sky[10].x); }",
+    "  } else if (u_sky[5].w == 4.) { color = gosxPhysicalSky(ray, u_sky[7], u_sky[8], u_sky[9], u_sky[10].x); if (u_sky[12].x > 0. || u_sky[12].w > 0. || u_sky[13].z > 0.) color = color * (1. - 0.85 * u_sky[12].w) + gosxNightSky(ray, u_sky[11], u_sky[12], u_sky[13], px) / max(u_sky[3].w, 0.001); }",
     "  color = max(color*u_sky[3].w,vec3(0));",
     "  if (u_sky[6].x == 0.) { color = mix(1.055*pow(color,vec3(1./2.4))-.055,color*12.92,lessThanEqual(color,vec3(.0031308))); }",
     "  fragColor = vec4(color,1);",
@@ -7533,9 +7570,9 @@
 
   // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
   function createSceneSkyWebGLRenderer(gl, textureCache, imagePlaceholder) {
-    var program = createScenePostProgram(gl, SCENE_SKY_FRAGMENT.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl")));
+    var program = createScenePostProgram(gl, SCENE_SKY_FRAGMENT.replace("//GOSX_SKY_PHYSICAL", sceneSkyPhysicalSource("glsl") + "\n" + SCENE_SKY_NIGHT_GLSL));
     if (!program) return null;
-    var quad = createSceneFullscreenQuad(gl), data = new Float32Array(44);
+    var quad = createSceneFullscreenQuad(gl), data = new Float32Array(56);
     var uniforms = null, imageUniform = null, cubeUniform = null;
     scenePBRWhenProgramReady(gl, program.program, function() {
       uniforms = gl.getUniformLocation(program.program, "u_sky[0]");
@@ -7552,7 +7589,7 @@
       draw: function(opts) {
         if (!scenePBRPassReady(gl, program)) return "none";
         var env = opts.environment, sky = env.sky;
-        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear);
+        sceneSkyUniformData(data, env, opts.view, opts.camera, opts.aspect, opts.linear, true);
         var image = { texture: imagePlaceholder }, cube = scenePBRPlaceholderCube(gl, textureCache);
         var state = sky.mode === "physical" ? "physical" : "gradient";
         if (sky.mode === "environment") {

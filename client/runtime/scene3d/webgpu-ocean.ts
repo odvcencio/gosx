@@ -103,7 +103,7 @@ const WGSL_SCENE_OCEAN = [
   "  let al = rough * rough; let al2 = al * al; let dd = NdH * NdH * (al2 - 1.0) + 1.0;",
   "  let k = al * 0.5; let G = (NdL / (NdL * (1.0 - k) + k)) * (NdV / (NdV * (1.0 - k) + k));",
   "  let Fh = 0.02 + 0.98 * pow(1.0 - max(dot(H, V), 0.0), 5.0);",
-  "  var spec = min(sunCol * (al2 / (3.14159265 * dd * dd)) * G * Fh / max(4.0 * NdV, 1e-3), vec3f(64.0));",
+  "  var spec = min(sunCol * (al2 / (3.14159265 * dd * dd)) * G * Fh / max(4.0 * NdV, 1e-3), vec3f(select(64.0, ocean.p[33].w, ocean.p[33].w > 0.0)));",
   "  //GOSX_SUN_PATH",
   "  let crest = in.crest * in.crest;",
   "  let scatter = ocean.p[3].xyz * (sunCol * 0.18 * pow(clamp(dot(V, -L) * 0.5 + 0.5, 0.0, 1.0), 4.0) + ambient * 0.12) * crest;",

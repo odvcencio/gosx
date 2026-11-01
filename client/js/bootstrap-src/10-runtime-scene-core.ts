@@ -3144,12 +3144,21 @@
     // Physical-sky parameters keep "zero means the default"; see scene/sky.go.
     const sun = sceneIsPlainObject(raw.sunDirection) ? raw.sunDirection : {};
     const clamp = (key, lo, hi) => { const v = sceneNumber(raw[key], 0); return v === 0 ? 0 : Math.max(lo, Math.min(hi, v)); };
-    return Object.assign(sky, {
+    Object.assign(sky, {
       sunDirection: { x: sceneNumber(sun.x, 0), y: sceneNumber(sun.y, 0), z: sceneNumber(sun.z, 0) },
       turbidity: clamp("turbidity", 1, 20), rayleigh: clamp("rayleigh", 0, 8),
       mieCoefficient: clamp("mieCoefficient", 0, 0.1), mieDirectionalG: clamp("mieDirectionalG", 0, 0.999),
       sunDiskRadius: Math.min(5, sceneNumber(raw.sunDiskRadius, 0)),
     });
+    if (sceneIsPlainObject(raw.night)) { // Night layer (scene.SkyNight); zero keeps its documented default.
+      const n = raw.night, moon = sceneIsPlainObject(n.moonDirection) ? n.moonDirection : {}, num = key => sceneNumber(n[key], 0);
+      sky.night = { starDensity: Math.min(1, num("starDensity")), starBrightness: Math.min(4, num("starBrightness")),
+        starSeed: Math.max(0, Math.floor(num("starSeed"))) % 4294967296,
+        moonDirection: { x: sceneNumber(moon.x, 0), y: sceneNumber(moon.y, 0), z: sceneNumber(moon.z, 0) },
+        moonPhase: num("moonPhase") - Math.floor(num("moonPhase")), moonRadius: Math.min(5, num("moonRadius")),
+        moonIntensity: Math.min(4, num("moonIntensity")) };
+    }
+    return sky;
   }
 
   function normalizeSceneOcean(raw) {
