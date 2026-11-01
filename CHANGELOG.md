@@ -13,14 +13,34 @@
   one sky on every backend. A scene without `Night` keeps its wire and its
   pixels. The new browser test `e2e/scene3d_night_sky_e2e_test.go` renders a
   full moon, a half moon, a new moon and an overcast night and checks the
-  stars, the disc and the path on the water. Size cost (raw / gzip / Brotli
-  bytes): the shared Scene3D chunk +2,280 / +1,001 / +874, the WebGL chunk
-  +2,150 / +1,026 / +787, the WebGPU chunk +2,353 / +1,015 / +810, and the
-  `bootstrap.js` monolith +7,306 / +3,039 / +2,284. The ocean shaders are
-  unchanged: the moon reaches the sea through the same key-light uniforms the
-  sun used. Measured on an RTX 5070 Ti at 1440x900, the renderer's GPU timer
+  stars, the disc and the path on the water. Size cost against main before the water frame (raw / gzip / Brotli bytes): the shared Scene3D chunk +2,308 / +1,073 / +746, the WebGL chunk +2,274 / +1,081 / +710, the WebGPU chunk +2,499 / +1,096 / +866, and the `bootstrap.js` monolith +7,615 / +3,199 / +2,277. The ocean shaders gain one highlight-cap read (`u_ocean[33].w`); the moon reaches the sea through the same key-light uniforms the sun used. Measured on an RTX 5070 Ti at 1440x900, the renderer's GPU timer
   reads a median of 0.125 ms for a night scene without `Night` and 0.134 ms
-  with a full moon on WebGL2, and 0.154 ms and 0.168 ms on WebGPU.
+  with a full moon on WebGL2, and 0.151 ms and 0.166 ms on WebGPU.
+
+- Tell a host that drives a vessel's pose itself where the drawn water is.
+  `engine/wasm` `Scene3D.OceanWater()` returns a reader, and `Read()` gives a
+  `scene.OceanWaterFrame`: the water's drift offset `X`/`Z` and wave `Time` the
+  renderer used for its last submitted frame, whether the sea was spectral or
+  the Gerstner fallback, the rates to carry it forward (`Advance`), a drawn-frame
+  count `Seq`, a `Generation` that changes when the graph is rebuilt, and the
+  page's Unix time in milliseconds. The values are the FFT graph's own on
+  WebGPU and WebGL2. The frame gives the phase and drift of the drawn sea;
+  `OceanQuery.SampleWater` samples in that frame but sums only the strongest
+  24 swell waves, so against the full spectrum its heave over a hull-sized
+  footprint is off by 57% (storm) to 93% (calm) of the signal and its point
+  slope by 97% to 99%. A GPU readback of the drawn heights is the next step.
+  A reading is 1 frame old when the next render draws the pose it sizes. `Read`
+  does not allocate in Go; an engine worker receives each frame by message,
+  which allocates in the browser. The reading is for drawing only and never
+  feeds a simulation. See `docs/scene3d-ocean-query.md`.
+  The spectral ocean's wave time and drift offset now follow the scene clock
+  across frames the renderer did not draw, instead of losing the part of the
+  gap beyond 0.25 s (WebGL2 startup).
+  Size: the Scene3D core chunk grows 497 raw / 212 gzip / 151 Brotli bytes,
+  the command chunk 258 / 82 / 111, the monolith 502 / 201 / 182, the
+  engine-worker host 676 / 223 / 212 and the lazy ocean-fft chunk 464 / 99 /
+  137. The size budgets and renderer architecture limits move to the measured
+  minima. The generated bundles and perf-loader fixtures are regenerated.
 
 ## v0.58.0
 

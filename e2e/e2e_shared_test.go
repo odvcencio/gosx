@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -43,6 +44,44 @@ func e2eChromePath(t *testing.T) string {
 		}
 	}
 	return findChrome(t)
+}
+
+// e2eWindowsRelay reports whether the browser is Windows Chrome reached through the local GPU gate's shim
+// (GOSX_E2E_CHROME=.../fake-chrome.sh). Such a browser cannot reach a 127.0.0.1 listener in WSL, only a
+// listener on every interface at localhost:<port>.
+func e2eWindowsRelay() bool {
+	return filepath.Base(os.Getenv("GOSX_E2E_CHROME")) == "fake-chrome.sh"
+}
+
+// e2eExposeToWindows forwards a WSL loopback server to an all-interface listener and returns the localhost URL
+// that Windows Chrome can open. The forwarder ends with the test.
+func e2eExposeToWindows(t *testing.T, loopbackURL string) string {
+	t.Helper()
+	target := strings.TrimPrefix(loopbackURL, "http://")
+	l, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen for the Windows relay: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			in, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				out, err := net.Dial("tcp", target)
+				if err != nil {
+					_ = in.Close()
+					return
+				}
+				go func() { _, _ = io.Copy(out, in); _ = out.Close() }()
+				_, _ = io.Copy(in, out)
+				_ = in.Close()
+			}()
+		}
+	}()
+	return fmt.Sprintf("http://localhost:%d", l.Addr().(*net.TCPAddr).Port)
 }
 
 func e2eRepoRoot(t *testing.T) string {
@@ -126,6 +165,9 @@ func startDevApp(t *testing.T, appDir, baseURL string) *docsApp {
 	if err := waitForHealthy(baseURL+"/readyz", 45*time.Second); err != nil {
 		t.Fatalf("%v\n\nLogs:\n%s", err, logs.String())
 	}
+	if e2eWindowsRelay() {
+		app.baseURL = e2eExposeToWindows(t, baseURL)
+	}
 	return app
 }
 
@@ -156,6 +198,9 @@ func startProductionDocsApp(t *testing.T) *docsApp {
 	app := &docsApp{baseURL: baseURL, logs: logs}
 	if err := waitForHealthy(baseURL+"/readyz", 45*time.Second); err != nil {
 		t.Fatalf("%v\n\nLogs:\n%s", err, logs.String())
+	}
+	if e2eWindowsRelay() {
+		app.baseURL = e2eExposeToWindows(t, baseURL)
 	}
 	return app
 }
@@ -358,7 +403,13 @@ func (p *browserPage) navigate(t *testing.T, url string) int {
 			}
 		}
 	})
-	if err := chromedp.Run(p.ctx, chromedp.Navigate(url)); err != nil {
+	err := chromedp.Run(p.ctx, chromedp.Navigate(url))
+	// A new WSL port can take a moment to appear on Windows localhost: retry a refused load through the relay.
+	for i := 0; err != nil && e2eWindowsRelay() && strings.Contains(err.Error(), "ERR_CONNECTION_REFUSED") && i < 20; i++ {
+		time.Sleep(500 * time.Millisecond)
+		err = chromedp.Run(p.ctx, chromedp.Navigate(url))
+	}
+	if err != nil {
 		t.Fatalf("navigate %s: %v", url, err)
 	}
 	statusMu.Lock()
