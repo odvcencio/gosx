@@ -42,3 +42,27 @@ Limits:
 Pass a bathymetry callback that reproduces the GPU texture's level-zero bilinear R sample. JS `bathymetry(ImageData, ocean.bathymetry)` clamps to texel centres, filters R and then decodes linear or signed-sqrt height. A nil callback means deep water. A terrain heightfield is useful for collision but differs from the filtered texture; use the texture for visual parity in shallow water.
 
 The query tests compare independent ports of the GLSL/WGSL vertex maths over a grid and several times to 0.0001 m. A shared 72-sample fixture checks Go/JS position, normal and velocity to 0.0000001. Actual GPU transcendental implementations and raster interpolation can introduce additional rounding.
+
+## The drawn heights at your points
+
+`OceanQuery.SampleWater` is an approximation of the drawn sea (see above). To read the heights the renderer actually draws, ask the page to read them back from the GPU at the points you choose, for example the 7 by 5 grid of a hull:
+
+```go
+water, _ := ctx.Scene3DByID("sea").OceanWater() // after Ready
+water.SetProbe(points)                          // []scene.OceanProbePoint, world x and z, at most 64
+...
+var r scene.OceanProbeReading                   // keep one; ReadProbe fills it in place
+if water.ReadProbe(&r) && !r.Unavailable {
+	h := r.Height[i]                            // world Y of the drawn surface above points[i]
+	nx, nz := r.NormalX[i], r.NormalZ[i]        // r.NormalY(i) is the third component
+}
+```
+
+- **What it is.** For each point the height of the surface point that the renderer's displacement (choppiness included) moves to that x, z, with the normal's x and z. WebGPU runs a compute pass and WebGL2 draws the points into a float target; both sample the displacement and slope textures the ocean shader samples, over all cascades, with the same Newton inversion of the horizontal map. When the Gerstner sea is drawn (no spectrum, or a graph that is not running) the reading is the CPU query that mirrors the shader.
+- **Tags.** `Seq` and `Generation` are those of the water frame the points were drawn in. Compare `Seq` with the `Seq` of the frame you hold for the age in frames.
+- **Latency.** Measured on an RTX 5070 Ti in Chrome with 35 points every frame: WebGL2 1 frame, WebGPU 2 frames (`LatencyFrames`). The page never waits for the GPU: a pixel buffer behind a fence on WebGL2, a staging buffer mapped asynchronously on WebGPU. Add one frame of message hop in an engine worker. The first ask builds a shader or a pipeline, so the first reading takes a few frames longer. A Gerstner reading has no delay.
+- **No ask, no work.** Nothing is drawn, built, fenced or read until `SetProbe` is called with at least one point, and a call with none stops it.
+- **Accuracy.** On the RTX, against a double-precision CPU evaluation of the very textures the shader samples (read back from the GPU), 35 points: the maximum height difference is 0.003 m and the maximum normal component difference 0.001 on both backends; the two backends agree with each other to 0.0001 m on the same sea. The test is `TestWaterProbeOnTheGPU` in `e2e`. The test does not compare with the rasterized mesh, which is a straight line between vertices and a coarser mip far from the camera. A bathymetry's shoaling and a ship wake's height are not in a spectral reading.
+- **Unavailable.** When the page cannot read the sea back (the pass could not be built, the device failed) the reading has `Unavailable` set and no heights. Never use an older reading as current.
+- **Drawing only.** Presentation never feeds a simulation: keep readings out of game rules, saves and replays.
+- **Cost.** `SetProbe` and `ReadProbe` do not allocate in Go. In an engine worker the page posts the answer each frame (about 2.7 KB while a host asks, 80 bytes otherwise).

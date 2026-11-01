@@ -139,10 +139,44 @@
   // means the Gerstner sea is what is drawn (see recordOceanWater in mount-backend.ts).
   function fill(w: Float64Array): boolean {
     const f = lastWater;
+    hostProbe.arr = w; // the same array carries the host's probe (see HP below); the next frame's issue reads its points
     if (!f) return false;
     w[1] = f.time; w[2] = f.x; w[3] = f.z; w[4] = 1; w[5] = f.scale; w[6] = f.driftX; w[7] = f.driftZ; w[9] = f.gen;
+    deliverProbe(w, f);
     return true;
   }
+
+  // --- Host probe: drawn heights at host-given points (Scene3D.OceanProbe in Go) --------------------------------------------
+  //
+  // The host's record (see recordOceanWater in mount-backend.ts) is one Float64Array: the water frame at 0 to 9, then the probe. The host
+  // writes HP.COUNT and the points (x, z pairs from HP.PTS); the page answers at HP.SEQ to HP.TICK and the per-point results (height,
+  // normal x, normal z) from HP.OUT. Nothing is issued while HP.COUNT is 0. A frame that asks has its points read back asynchronously
+  // (WebGPU: the graph's ocean_probe kernel into a staging ring; WebGL2: probeGL's pass into a float target and a pixel buffer behind a
+  // fence), and the reading is tagged with the Seq and Generation of the frame it was issued in: HP.SEQ is that frame's water-frame Seq,
+  // so the host's age in frames is the water frame's Seq minus HP.SEQ. HP.LAT is that age when the page wrote the reading.
+  // Layout: the oceanProbe* constants in engine/wasm/scene_js.go.
+  const HP = { COUNT: 10, SEQ: 11, GEN: 12, FLAGS: 13, N: 14, LAT: 15, AT: 16, TICK: 17, PTS: 18, OUT: 146 }, F_VALID = 1, F_UNAVAILABLE = 4;
+  const hostProbe: any = { arr: null, pending: null, ready: null, delivered: null, failed: "", reported: "" };
+  function hostCount(): number { const a = hostProbe.arr; return a ? Math.max(0, Math.min(MAX_POINTS, Math.floor(a[HP.COUNT]) || 0)) : 0; }
+  // deliverProbe tags the reading issued in this frame's render with the frame's Seq (the record counts it after fill returns), and writes
+  // the newest completed reading, once, into the record. A host that asks when the probe cannot answer is told so, once per reason.
+  function deliverProbe(w: Float64Array, f: any): void {
+    const p = hostProbe, seq = w[0] + 1;
+    if (p.pending && p.pending.seq === undefined) { p.pending.seq = seq; p.pending.gen = f.gen; }
+    const r = p.ready;
+    if (r && r !== p.delivered && r.meta.seq !== undefined) {
+      const from = r.from, n = r.meta.host.n;
+      for (let i = 0; i < n; i++) { w[HP.OUT + 3 * i] = r.meta.level + r.heights[from + i]; w[HP.OUT + 3 * i + 1] = r.nx[from + i]; w[HP.OUT + 3 * i + 2] = r.nz[from + i]; }
+      w[HP.SEQ] = r.meta.seq; w[HP.GEN] = r.meta.gen; w[HP.FLAGS] = F_VALID; w[HP.N] = n; w[HP.LAT] = seq - r.meta.seq;
+      w[HP.AT] = performance.timeOrigin + performance.now(); w[HP.TICK]++;
+      p.delivered = r;
+    } else if (p.failed && p.reported !== p.failed && hostCount()) {
+      w[HP.SEQ] = seq; w[HP.GEN] = f.gen; w[HP.FLAGS] = F_UNAVAILABLE; w[HP.N] = 0; w[HP.LAT] = 0; w[HP.AT] = performance.timeOrigin + performance.now(); w[HP.TICK]++;
+      p.reported = p.failed;
+    }
+    if (!p.failed) p.reported = "";
+  }
+  function resetProbe(): void { hostProbe.pending = hostProbe.ready = hostProbe.delivered = null; }
 
 
   // --- Probe readback (WebGPU) ---------------------------------------------------------------------------------------
@@ -248,6 +282,64 @@
     const dummyView = dummy.createView(), data = new Float32Array(SURFACE_FLOATS);
     const state: any = { last: null, tier: "", runner: null, info: null, viewList: null };
     const ring = createProbeRing(device, function () { return host.now ? host.now() : (typeof performance !== "undefined" ? performance.now() : 0); });
+    // hostGPU answers the host's probe (see "Host probe" above) with probeWGSL over the cascades' textures, then copies the output into a ring of three staging
+    // buffers that later frames map: the reading is never awaited. Nothing is created until a host asks.
+    const hg: any = { pipeline: null, handle: null, bgl: null, params: null, pts: null, out: null, slots: [], issued: 0, f32: new Float32Array(20), u32: null, ptsData: new Float32Array(MAX_POINTS * 4) };
+    hg.u32 = new Uint32Array(hg.f32.buffer);
+    const hostGPU: any = {
+      update: function (frame: any, runner: any, info: any): void {
+        for (const slot of hg.slots) {
+          if (slot.state !== "copied") continue;
+          slot.state = "mapping";
+          slot.buffer.mapAsync(MAP_READ).then(function () {
+            if (slot.state !== "mapping") return;
+            const raw = new Float32Array(slot.buffer.getMappedRange().slice(0)), n = slot.meta.host.n, heights: number[] = [], nx: number[] = [], nz: number[] = [];
+            slot.buffer.unmap(); slot.state = "free";
+            for (let i = 0; i < n; i++) { heights.push(raw[i * 4]); nx.push(raw[i * 4 + 1]); nz.push(raw[i * 4 + 2]); }
+            if (!hostProbe.ready || hostProbe.ready.meta.issued < slot.meta.issued) hostProbe.ready = { meta: slot.meta, heights: heights, nx: nx, nz: nz, from: 0 };
+          }, function () { slot.state = "free"; });
+        }
+        const n = hostCount();
+        if (!n || hostProbe.failed || !info) return;
+        let slot = hg.slots.find(function (x: any) { return x.state === "free"; });
+        if (!slot && hg.slots.length >= RING) return; // all reads in flight
+        try {
+          if (!hg.handle) {
+            hg.bgl = device.createBindGroupLayout({ label: label + "probe", entries: ([
+              { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }, { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+              { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } }] as any[])
+              .concat([4, 5, 6, 7, 8, 9, 10, 11].map(function (b: number) { return { binding: b, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } }; })) });
+            hg.handle = host.create(device, "compute", { label: label + "probe", layout: device.createPipelineLayout({ bindGroupLayouts: [hg.bgl] }),
+              compute: { module: device.createShaderModule({ label: label + "probe", code: probeWGSL() }), entryPoint: "main" } });
+            hg.params = device.createBuffer({ label: label + "probe-params", size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+            hg.pts = device.createBuffer({ label: label + "probe-points", size: MAX_POINTS * RECORD_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+            hg.out = device.createBuffer({ label: label + "probe-out", size: MAX_POINTS * RECORD_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+          }
+          const v = host.validation && host.validation.get(hg.handle), pipeline = !v || v.ready === true ? (v && v.pipeline) || hg.handle : null;
+          if (!pipeline) return; // still validating; asks again next frame
+          if (!slot) { slot = { state: "free", meta: null, buffer: device.createBuffer({ label: label + "probe-staging", size: MAX_POINTS * RECORD_BYTES, usage: MAP_READ | COPY_DST }) }; hg.slots.push(slot); }
+          const a = hostProbe.arr, wrapped = runner.exportParams(), f = hg.f32;
+          f.fill(0); hg.u32[0] = n; f[1] = Number(frame.ocean && frame.ocean.level) || 0;
+          info.cascades.forEach(function (c: any, i: number) { f[4 + i * 4] = c.tile; f[5 + i * 4] = 1; f[6 + i * 4] = wrapped["waterModX" + i] || 0; f[7 + i * 4] = wrapped["waterModZ" + i] || 0; });
+          hg.ptsData.fill(0); for (let i = 0; i < n; i++) { hg.ptsData[i * 4] = a[HP.PTS + 2 * i]; hg.ptsData[i * 4 + 1] = a[HP.PTS + 2 * i + 1]; }
+          device.queue.writeBuffer(hg.params, 0, f); device.queue.writeBuffer(hg.pts, 0, hg.ptsData);
+          const entries: any[] = [{ binding: 0, resource: { buffer: hg.params } }, { binding: 1, resource: { buffer: hg.pts } }, { binding: 2, resource: { buffer: hg.out } }, { binding: 3, resource: sampler }];
+          for (let i = 0; i < CASCADES; i++) {
+            const d = runner.export("disp" + i), sl = runner.export("slope" + i);
+            entries.push({ binding: 4 + i, resource: d ? d.view : dummyView }, { binding: 8 + i, resource: sl ? sl.view : dummyView });
+          }
+          const pass = frame.encoder.beginComputePass({ label: label + "probe" });
+          pass.setPipeline(pipeline); pass.setBindGroup(0, device.createBindGroup({ label: label + "probe", layout: hg.bgl, entries: entries })); pass.dispatchWorkgroups(1); pass.end();
+          frame.encoder.copyBufferToBuffer(hg.out, 0, slot.buffer, 0, MAX_POINTS * RECORD_BYTES);
+          slot.state = "copied"; slot.meta = { host: { n: n }, level: f[1], issued: ++hg.issued };
+          hostProbe.pending = slot.meta;
+        } catch (error) { hostProbe.failed = String(error && error.message || error); }
+      },
+      dispose: function (): void {
+        for (const slot of hg.slots) { slot.state = "disposed"; slot.buffer.destroy(); }
+        for (const b of [hg.params, hg.pts, hg.out]) if (b) b.destroy();
+      },
+    };
     const engine: any = { device: device, ready: false, layout: layout, group: null, disposed: false, tier: "", update: update, dispose: dispose, fail: fail };
 
     // fail reports a problem outside the graph (the surface shader patch) through the optional-pass route: the guard disables the
@@ -302,6 +394,7 @@
       surfaceData(runner, state.info, data, frame.ocean, frame.camera);
       device.queue.writeBuffer(uniform, 0, data);
       publish(runner); timingSource = runner;
+      hostGPU.update(frame, runner, state.info);
       engine.ready = true;
       return true;
     }
@@ -309,8 +402,8 @@
       if (engine.disposed) return;
       engine.disposed = true; engine.ready = false; engine.group = null;
       if (state.runner) state.runner.dispose();
-      lastWater = null; timingSource = null; probe.latest = probe.previous = null;
-      ring.dispose(); uniform.destroy(); dummy.destroy();
+      lastWater = null; timingSource = null; probe.latest = probe.previous = null; resetProbe();
+      ring.dispose(); hostGPU.dispose(); uniform.destroy(); dummy.destroy();
     }
     Object.defineProperty(engine, "runner", { get: function () { return state.runner; } });
     return engine;
@@ -341,6 +434,38 @@
   // diagnostics are harness hooks: window.__gosx_elio_diagnostics = { profile(name, fn), throttle: [{ match, every }] } (both optional).
   function diagnostics(): any { return (typeof window !== "undefined" && (window as any).__gosx_elio_diagnostics) || {}; }
 
+  // probeFragment is the WebGL2 host probe's shader: it finds the surface point above a world (x, z) the way the ocean vertex shader displaces it
+  // (the cascades' displacement textures at level zero, at the water offset wrapped by each tile, summed over the enabled cascades) by Newton
+  // iteration on the horizontal map, and writes (height, normal x, normal z) for one point per texel of a row. It leaves out what the vertex shader adds
+  // from a bathymetry (shoaling) and from a ship wake; both are zero for a deep-water sea without a wake.
+  function probeFragment(): string {
+    let s = "#version 300 es\nprecision highp float;\nuniform vec4 pts[" + MAX_POINTS + "], cs[4]; uniform float level;\n";
+    for (let i = 0; i < 4; i++) s += "uniform sampler2D d" + i + ", s" + i + ";\n";
+    s += "out vec4 o;\nvoid ev(vec2 q, out vec3 s, out vec3 dx, out vec3 dz) {\n  s = vec3(0.); dx = vec3(1., 0., 0.); dz = vec3(0., 0., 1.);\n";
+    for (let i = 0; i < 4; i++) s += "  if (cs[" + i + "].y > 0.5) { vec2 uv = (q - cs[" + i + "].zw) / cs[" + i + "].x; vec4 a = textureLod(d" + i + ", uv, 0.), b = textureLod(s" + i + ", uv, 0.); s += a.xyz; dx += vec3(b.z, b.x, a.w); dz += vec3(a.w, b.y, b.w); }\n";
+    s += "}\nvoid main() {\n  vec2 t = pts[int(gl_FragCoord.x)].xy, q = t; vec3 s, dx, dz;\n";
+    s += "  for (int k = 0; k < 8; k++) {\n    ev(q, s, dx, dz);\n    vec2 e = q + s.xz - t; float det = dx.x * dz.z - dz.x * dx.z;\n";
+    s += "    if (abs(det) > 1e-4) q -= vec2(dz.z * e.x - dz.x * e.y, dx.x * e.y - dx.z * e.x) / det; else q -= e * 0.5;\n  }\n";
+    s += "  ev(q, s, dx, dz); vec3 n = normalize(cross(dz, dx)); o = vec4(level + s.y, n.x, n.z, 1.);\n}\n";
+    return s;
+  }
+  // probeWGSL is the same pass as probeFragment for WebGPU, as a compute shader over the cascades' displacement and slope textures. It does not use the graph's
+  // ocean_probe kernel: at 35 points it measured up to 0.5 m in height and 0.2 in a normal component from the textures the shader draws (it appears to place the
+  // bilinear texel corner where the sampler puts the texel centre; not confirmed).
+  function probeWGSL(): string {
+    let s = "struct E { s: vec3<f32>, dx: vec3<f32>, dz: vec3<f32> };\nstruct P { count: u32, level: f32, a: f32, b: f32, cs: array<vec4<f32>, 4> };\n";
+    s += "@group(0) @binding(0) var<uniform> P0: P;\n@group(0) @binding(1) var<storage, read> pts: array<vec4<f32>>;\n@group(0) @binding(2) var<storage, read_write> outp: array<vec4<f32>>;\n@group(0) @binding(3) var smp: sampler;\n";
+    for (let i = 0; i < 4; i++) s += "@group(0) @binding(" + (4 + i) + ") var d" + i + ": texture_2d<f32>;\n@group(0) @binding(" + (8 + i) + ") var s" + i + ": texture_2d<f32>;\n";
+    s += "fn ev(q: vec2<f32>) -> E {\n  var e: E; e.s = vec3<f32>(0.0); e.dx = vec3<f32>(1.0, 0.0, 0.0); e.dz = vec3<f32>(0.0, 0.0, 1.0);\n";
+    for (let i = 0; i < 4; i++) s += "  if (P0.cs[" + i + "].y > 0.5) { let uv = (q - P0.cs[" + i + "].zw) / P0.cs[" + i + "].x; let a = textureSampleLevel(d" + i + ", smp, uv, 0.0); let b = textureSampleLevel(s" + i + ", smp, uv, 0.0); e.s += a.xyz; e.dx += vec3<f32>(b.z, b.x, a.w); e.dz += vec3<f32>(a.w, b.y, b.w); }\n";
+    s += "  return e;\n}\n@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3<u32>) {\n  let i = g.x; if (i >= P0.count) { return; }\n  let t = pts[i].xy; var q = t; var e = ev(q);\n";
+    s += "  for (var k = 0; k < 8; k = k + 1) {\n    e = ev(q); let ex = q.x + e.s.x - t.x; let ez = q.y + e.s.z - t.y; let det = e.dx.x * e.dz.z - e.dz.x * e.dx.z;\n";
+    s += "    if (abs(det) > 1e-4) { q = q - vec2<f32>(e.dz.z * ex - e.dz.x * ez, e.dx.x * ez - e.dx.z * ex) / det; } else { q = q - vec2<f32>(ex, ez) * 0.5; }\n  }\n";
+    s += "  e = ev(q); let n = normalize(cross(e.dz, e.dx)); outp[i] = vec4<f32>(P0.level + e.s.y, n.x, n.z, 1.0);\n}\n";
+    return s;
+  }
+  const PROBE_VERTEX = "#version 300 es\nvoid main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(p * 2. - 1., 0., 1.); }";
+
   function createGL(gl: any, host: any): any {
     const state: any = { last: null };
     const runner = G.create({ module: MODULE, backend: "webgl2", tier: tierOf(host.tier), host: { gl: gl, caps: host.caps, textureCache: host.textureCache, profile: host.profile || diagnostics().profile, throttle: host.throttle || diagnostics().throttle || WAKE_THROTTLE, nodePose: function (id: string) { return waterRelative(nodePose(id), function () { return engine.runner; }); } } });
@@ -354,7 +479,62 @@
       if (!runner.run(frameInputs(state, frame))) return false;
       surfaceData(runner, info, data, frame.ocean, frame.camera);
       publish(runner);
+      probeGL(frame);
       return true;
+    }
+    // probeGL answers the host's probe (see "Host probe" above): it polls the fences of earlier reads, and when the host asks it draws the
+    // points into a row of a float target, reads the row into a pixel buffer and fences it. A frame that nobody asks about does nothing
+    // but the poll, and creates nothing.
+    const pg: any = { program: null, fbo: null, tex: null, slots: [], issued: 0 };
+    function probeGL(frame: any): void {
+      for (const slot of pg.slots) {
+        if (slot.state !== "fenced") continue;
+        const status = gl.clientWaitSync(slot.sync, 0, 0);
+        if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) { if (status === gl.WAIT_FAILED) { slot.state = "free"; hostProbe.failed = "probe-fence"; } continue; }
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, slot.pbo); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, slot.dst); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.deleteSync(slot.sync); slot.sync = null; slot.state = "free";
+        const n = slot.meta.host.n, heights: number[] = [], nx: number[] = [], nz: number[] = [];
+        for (let i = 0; i < n; i++) { heights.push(slot.dst[i * 4]); nx.push(slot.dst[i * 4 + 1]); nz.push(slot.dst[i * 4 + 2]); }
+        if (!hostProbe.ready || hostProbe.ready.meta.issued < slot.meta.issued) hostProbe.ready = { meta: slot.meta, heights: heights, nx: nx, nz: nz, from: 0 };
+      }
+      const n = hostCount();
+      if (!n) return;
+      const slot = pg.slots.find(function (x: any) { return x.state === "free"; }) || (pg.slots.length < RING ? null : undefined);
+      if (slot === undefined || hostProbe.failed) return; // all reads in flight, or the pass cannot run: the host is told by deliverProbe
+      const saved = G.glState.save(gl), cascades = info.cascades, wrapped = runner.exportParams();
+      try {
+        if (!pg.program) {
+          const compile = function (type: number, source: string): any { const sh = gl.createShader(type); gl.shaderSource(sh, source); gl.compileShader(sh); if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error("probe-compile"); return sh; };
+          const prog = gl.createProgram(); gl.attachShader(prog, compile(gl.VERTEX_SHADER, PROBE_VERTEX)); gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, probeFragment())); gl.linkProgram(prog);
+          if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("probe-link");
+          pg.program = prog; pg.tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, pg.tex); gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, MAX_POINTS, 1);
+          pg.fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, pg.fbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pg.tex, 0);
+          if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("probe-target");
+          gl.useProgram(prog);
+          for (let i = 0; i < 4; i++) { gl.uniform1i(gl.getUniformLocation(prog, "d" + i), SURFACE_GL.UNIT.disp + i); gl.uniform1i(gl.getUniformLocation(prog, "s" + i), SURFACE_GL.UNIT.slope + i); }
+          pg.loc = { pts: gl.getUniformLocation(prog, "pts[0]"), cs: gl.getUniformLocation(prog, "cs[0]"), level: gl.getUniformLocation(prog, "level") };
+          pg.pts = new Float32Array(MAX_POINTS * 4); pg.cs = new Float32Array(16);
+        }
+        let target = slot;
+        if (!target) { target = { state: "free", pbo: gl.createBuffer(), dst: new Float32Array(MAX_POINTS * 4), sync: null, meta: null }; gl.bindBuffer(gl.PIXEL_PACK_BUFFER, target.pbo); gl.bufferData(gl.PIXEL_PACK_BUFFER, MAX_POINTS * RECORD_BYTES, gl.STREAM_READ); pg.slots.push(target); }
+        const a = hostProbe.arr;
+        pg.pts.fill(0); pg.cs.fill(0);
+        for (let i = 0; i < n; i++) { pg.pts[i * 4] = a[HP.PTS + 2 * i]; pg.pts[i * 4 + 1] = a[HP.PTS + 2 * i + 1]; }
+        cascades.forEach(function (c: any, i: number) { pg.cs[i * 4] = c.tile; pg.cs[i * 4 + 1] = 1; pg.cs[i * 4 + 2] = wrapped["waterModX" + i] || 0; pg.cs[i * 4 + 3] = wrapped["waterModZ" + i] || 0; });
+        gl.bindFramebuffer(gl.FRAMEBUFFER, pg.fbo); gl.viewport(0, 0, n, 1);
+        gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.disable(gl.SCISSOR_TEST); gl.colorMask(true, true, true, true);
+        gl.useProgram(pg.program); gl.uniform4fv(pg.loc.pts, pg.pts); gl.uniform4fv(pg.loc.cs, pg.cs); gl.uniform1f(pg.loc.level, Number(frame.ocean && frame.ocean.level) || 0);
+        for (let i = 0; i < 4; i++) {
+          const d = runner.export("disp" + i), sl = runner.export("slope" + i);
+          gl.activeTexture(gl.TEXTURE0 + SURFACE_GL.UNIT.disp + i); gl.bindTexture(gl.TEXTURE_2D, d ? d.tex : null);
+          gl.activeTexture(gl.TEXTURE0 + SURFACE_GL.UNIT.slope + i); gl.bindTexture(gl.TEXTURE_2D, sl ? sl.tex : null);
+        }
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, target.pbo); gl.readPixels(0, 0, n, 1, gl.RGBA, gl.FLOAT, 0); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        target.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush();
+        target.state = "fenced"; target.meta = { host: { n: n }, level: Number(frame.ocean && frame.ocean.level) || 0, issued: ++pg.issued };
+        hostProbe.pending = target.meta;
+      } catch (error) { hostProbe.failed = String(error && error.message || error); } finally { G.glState.restore(gl, saved); }
     }
     // bind attaches the cascade textures to units 4 to 12 and uploads the surface uniform; call it with the ocean program in use.
     function bind(g: any, program: any): void {
@@ -376,7 +556,9 @@
     }
     function dispose(): void {
       if (engine.disposed) return;
-      engine.disposed = true; lastWater = null;
+      engine.disposed = true; lastWater = null; resetProbe();
+      for (const slot of pg.slots) { if (slot.sync) gl.deleteSync(slot.sync); gl.deleteBuffer(slot.pbo); }
+      if (pg.program) { gl.deleteProgram(pg.program); gl.deleteFramebuffer(pg.fbo); gl.deleteTexture(pg.tex); }
       runner.dispose();
       if (engine.dummy) gl.deleteTexture(engine.dummy);
     }

@@ -32,7 +32,7 @@ const close = (a, b, why) => assert.ok(Math.abs(a - b) < 1e-5, why + ": " + a + 
 function webgl2(options) {
   const context = page(options), gl = new RecordingGL(), mount = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
   const api = context.window.__gosx_scene3d_ocean_fft_gl_api, resources = {}, textureCache = { _sceneTextureEpoch: 0 };
-  const record = new Float64Array(10); mount.__gosxOceanWater = record;
+  const record = new Float64Array(338); mount.__gosxOceanWater = record;
   // One rendered frame: what sceneOceanWebGLDraw and renderMountedFrame do, in that order.
   const draw = (o, time) => {
     const eng = o.spectrum ? api.run(resources, gl, { ocean: o, tier: "high", time, camera: { x: 0, y: 30, z: 0 }, textureCache, mount, caps: floatCaps }) : null;
@@ -83,7 +83,7 @@ test("WebGL2: a graph that cannot run reports the Gerstner fallback: no drift, t
 
 test("a plain Gerstner ocean (no spectrum, no ocean-fft chunk) reports the scene clock", () => {
   const context = page({ chunk: false });
-  const mount = { __gosxOceanWater: new Float64Array(10) };
+  const mount = { __gosxOceanWater: new Float64Array(338) };
   context.recordFrame(mount, bundle({ level: 0 }), 33.25, "submitted");
   const r = mount.__gosxOceanWater;
   assert.deepEqual(Array.from(r.slice(0, 8)), [1, 33.25, 0, 0, 0, 1, 0, 0]);
@@ -93,7 +93,7 @@ test("nothing is recorded until a host asks, and not for a scene without an ocea
   const context = page({ chunk: false }), mount = {};
   context.recordFrame(mount, bundle({ level: 0 }), 1, "submitted");
   assert.equal(mount.__gosxOceanWater, undefined, "the record is made by the handle's oceanWater(), not by the render path");
-  mount.__gosxOceanWater = new Float64Array(10);
+  mount.__gosxOceanWater = new Float64Array(338);
   context.recordFrame(mount, { environment: {} }, 1, "submitted");
   context.recordFrame(mount, null, 1, "submitted");
   assert.equal(mount.__gosxOceanWater[SEQ], 0);
@@ -119,7 +119,7 @@ test("latency: a reading taken before a frame is recorded is that of the frame b
 // --- WebGPU ------------------------------------------------------------------------------------------------------------
 
 function webgpu() {
-  const context = page(), fake = makeFakeGPUDevice(), validation = new Map(), mount = { __gosxOceanWater: new Float64Array(10) };
+  const context = page(), fake = makeFakeGPUDevice(), validation = new Map(), mount = { __gosxOceanWater: new Float64Array(338) };
   const api = context.window.__gosx_scene3d_ocean_fft_api, resources = {};
   const host = { device: fake.device, validation, guard: { disabled: new Set(), failures: [], fail(label, message) { this.failures.push({ label, message }); this.disabled.add("oceanFFT"); } }, camera: { x: 0, y: 30, z: 0 }, tier: "high",
     create(device, kind, descriptor) { const handle = { label: descriptor.label }; validation.set(handle, { ready: false, label: descriptor.label }); return handle; } };
@@ -174,7 +174,7 @@ test("the command bridge makes the record on the mount once, keeps each sink in 
   const context = vm.createContext({ Float64Array, Set, record: (target) => records.get(target) || null });
   vm.runInContext(ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + "\nthis.oceanWater = oceanWater;", context);
   const first = context.oceanWater("ship");
-  assert.equal(first.length, 10);
+  assert.equal(first.length, 338);
   assert.equal(context.oceanWater("ship"), first, "the same array each time");
   assert.equal(mount.__gosxOceanWater, first);
   assert.equal(mount.__gosxOceanWaterSinks, undefined, "a read adds no sink");
@@ -256,7 +256,7 @@ function seaBundle(spectrum) {
 }
 
 test("the real WebGL ocean draw: removing the spectrum clears the water frame, so the record reports Gerstner", () => {
-  const r = realDrawRenderer(), record = new Float64Array(10);
+  const r = realDrawRenderer(), record = new Float64Array(338);
   r.mount.__gosxOceanWater = record;
   const frame = (bundle, time) => { r.h.renderer.render(bundle, { width: 320, height: 180 }, { sceneTime: time }); r.context.recordFrame(r.mount, bundle, time, "submitted"); };
   frame(seaBundle({ windSpeed: 9 }), 1); frame(seaBundle({ windSpeed: 9 }), 1.5);
@@ -275,4 +275,230 @@ test("the real WebGL renderer's teardown (a lost context) clears the water frame
   assert.ok(r.fft.water());
   r.h.renderer.dispose();
   assert.equal(r.fft.water(), null);
+});
+
+// --- the host probe: drawn heights at host-given points (Scene3D.OceanProbe in Go) --------------------------------------------------
+
+const COUNT = 10, P_SEQ = 11, P_GEN = 12, P_FLAGS = 13, P_N = 14, P_LAT = 15, P_AT = 16, P_TICK = 17, PTS = 18, OUT = 146;
+const VALID = 1, GERSTNER = 2, UNAVAILABLE = 4;
+const askAt = (record, points) => { record[COUNT] = points.length; points.forEach(([x, z], i) => { record[PTS + 2 * i] = x; record[PTS + 2 * i + 1] = z; }); };
+const pattern = (n) => { const a = new Float32Array(64 * 4); for (let i = 0; i < n; i++) { a[i * 4] = 0.5 + i; a[i * 4 + 1] = 0.1; a[i * 4 + 2] = -0.2; a[i * 4 + 3] = 3; } return a; };
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// WebGPU: the fake device's copyBufferToBuffer of the probe output (64 records of 16 bytes) writes a pattern the test controls.
+function probeGPU() {
+  const p = webgpu(), copies = [];
+  const device = p.context.window.__gosx_scene3d_ocean_fft_api; void device;
+  p.copies = copies; p.heights = pattern(8);
+  return p;
+}
+function rigCopies(p, fake) {
+  const create = fake.device.createCommandEncoder.bind(fake.device);
+  fake.device.createCommandEncoder = () => {
+    const encoder = create();
+    encoder.copyBufferToBuffer = (source, so, destination, doff, size) => { if (size !== 64 * 16) return; p.copies.push({ source, destination, size }); new Float32Array(destination._backing).set(p.heights); };
+    return encoder;
+  };
+}
+function gpuProbe() {
+  const context = page(), fake = makeFakeGPUDevice({ timestampQuery: true }), validation = new Map(), mount = { __gosxOceanWater: new Float64Array(338) };
+  const api = context.window.__gosx_scene3d_ocean_fft_api, resources = {}, p = { copies: [], heights: pattern(8), mount, record: mount.__gosxOceanWater, api, resources, context };
+  rigCopies(p, fake);
+  const host = { device: fake.device, validation, guard: { disabled: new Set(), failures: [], fail() { this.disabled.add("oceanFFT"); } }, camera: { x: 0, y: 30, z: 0 }, tier: "high",
+    create(device, kind, descriptor) { const handle = { label: descriptor.label }; validation.set(handle, { ready: false, label: descriptor.label }); return handle; } };
+  p.settle = () => { for (const state of validation.values()) state.ready = true; };
+  p.draw = (o, time) => { api.frame(resources, Object.assign({}, host, { environment: { ocean: o }, time, encoder: fake.device.createCommandEncoder() })); context.recordFrame(mount, bundle(o), time, "submitted"); };
+  p.fake = fake;
+  p.draw(ocean({ level: 2 }), 1); p.settle(); p.draw(ocean({ level: 2 }), 1.02);
+  return p;
+}
+
+test("probe, WebGPU: a host that asks gets the drawn heights for the frame the points were issued in, level included, 2 frames after the issue", async () => {
+  const p = gpuProbe(), o = ocean({ level: 2 }), r = p.record;
+  const seq0 = r[SEQ];
+  askAt(r, [[100, 40], [104, 40], [102, 38], [102, 42]]);
+  p.draw(o, 1.03); p.settle(); // the first ask builds the pass; its pipeline validates asynchronously
+  assert.equal(p.copies.length, 0, "nothing is issued until the pipeline is ready");
+  p.draw(o, 1.04); // the issue: this frame's render copies the probe output; the record then tags the copy with the frame's Seq
+  const issued = r[SEQ];
+  assert.equal(issued, seq0 + 2, "the pass-building frame, then the issue");
+  assert.equal(p.copies.length, 1, "one copy");
+  assert.equal(r[P_TICK], 0, "no reading yet: the map has not resolved");
+  p.draw(o, 1.06); // the next frame polls and maps the copy
+  await settle();
+  p.draw(o, 1.08); // the map has resolved: this frame's record delivers it
+  assert.equal(r[P_TICK], 1, "one reading");
+  assert.deepEqual([r[P_SEQ], r[P_N], r[P_FLAGS]], [issued, 4, VALID], "tagged with the frame it was issued in");
+  assert.equal(r[P_GEN], r[9], "the generation of the graph that drew it");
+  assert.equal(r[P_LAT], r[SEQ] - issued, "LAT is the age in frames when the record wrote it");
+  assert.equal(r[P_LAT], 2, "issued in frame N, published in the record of frame N+2");
+  close(r[OUT], 2.5, "level 2 + height 0.5"); close(r[OUT + 3], 3.5, "level + 1.5");
+  close(r[OUT + 1], 0.1, "normal x"); close(r[OUT + 2], -0.2, "normal z");
+  p.draw(o, 1.1);
+  assert.equal(r[P_TICK], 1, "a reading is written once, not on every frame");
+});
+
+test("probe, WebGPU: nothing is issued while no host asks, and stopping stops the readback", async () => {
+  const p = gpuProbe(), o = ocean({ level: 2 });
+  for (let i = 0; i < 5; i++) p.draw(o, 1.04 + i * 0.02);
+  await settle();
+  assert.equal(p.copies.length, 0, "no probe copy without a host that asked");
+  assert.equal(p.resources.fft.runner.value("probeCount"), 0, "no points fed to the graph");
+  askAt(p.record, [[1, 1]]); p.draw(o, 1.2); p.settle(); p.draw(o, 1.21);
+  assert.equal(p.copies.length, 1);
+  p.record[COUNT] = 0; p.draw(o, 1.22); p.draw(o, 1.24);
+  assert.equal(p.copies.length, 1, "count 0 ends the readback");
+});
+
+test("probe, WebGPU: the pass samples the same textures as the surface (not the graph's probe kernel), and a GoSX vessel's own probe is untouched", async () => {
+  const p = gpuProbe(), o = ocean({ level: 0 });
+  const created = p.fake.state.shaderModules || [];
+  p.api.probe.begin(); p.api.probe.sample(5, 5, 0, 5); // a GoSX vessel asks through the graph's own kernel
+  askAt(p.record, [[1, 2], [3, 4]]);
+  p.draw(o, 1.03); p.settle();
+  const before = p.copies.length;
+  p.draw(o, 1.04);
+  assert.equal(p.resources.fft.runner.value("probeCount"), 1, "the vessel's point goes to the graph's probe");
+  assert.equal(p.copies.length - before, 2, "the vessel's readback and the host's are separate copies");
+  const wgsl = (p.fake.state.shaderModules || []).map((m) => m.code || (m.descriptor && m.descriptor.code) || "").find((c) => /fn main\(@builtin/.test(c)) || "";
+  assert.match(wgsl, /textureSampleLevel\(d0, smp, uv, 0.0\)/, "texture sampling at the texel centres the sampler uses");
+  assert.match(wgsl, /textureSampleLevel\(s3, smp, uv, 0.0\)/, "all four cascades' displacement and slope textures");
+  void created;
+});
+
+test("probe, WebGPU: a pass that cannot be built tells the host once that it cannot answer, never a stale value", () => {
+  const p = gpuProbe(), o = ocean({ level: 0 });
+  const make = p.fake.device.createBindGroup.bind(p.fake.device);
+  p.fake.device.createBindGroup = (d) => { if (/probe/.test(d.label || "")) throw new Error("device lost"); return make(d); };
+  askAt(p.record, [[1, 2]]);
+  p.draw(o, 1.03); p.settle(); p.draw(o, 1.04);
+  assert.deepEqual([p.record[P_FLAGS], p.record[P_N], p.record[P_TICK]], [UNAVAILABLE, 0, 1]);
+  p.draw(o, 1.06);
+  assert.equal(p.record[P_TICK], 1, "once per reason");
+});
+
+// WebGL2: a recording double with a pixel buffer and a fence the test controls.
+class ProbeGL extends RecordingGL {
+  constructor() {
+    super();
+    Object.assign(this, { SYNC_GPU_COMMANDS_COMPLETE: 0x9117, ALREADY_SIGNALED: 0x911A, CONDITION_SATISFIED: 0x911C, TIMEOUT_EXPIRED: 0x911B, WAIT_FAILED: 0x911D, STREAM_READ: 0x88E1 });
+    this.fences = []; this.reads = []; this.signaled = true; this.pattern = pattern(8); this.waits = 0;
+  }
+  fenceSync() { const f = { id: this.fences.length, deleted: false }; this.fences.push(f); return f; }
+  clientWaitSync(f) { this.waits++; return this.signaled ? this.ALREADY_SIGNALED : this.TIMEOUT_EXPIRED; }
+  deleteSync(f) { f.deleted = true; }
+  flush() {}
+  getBufferSubData(target, offset, dst) { this.reads.push(dst); dst.set(this.pattern); }
+  uniform1f() {}
+}
+function probeWebGL(options = {}) {
+  const context = page(), gl = new ProbeGL(), mount = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+  const api = context.window.__gosx_scene3d_ocean_fft_gl_api, resources = {}, textureCache = { _sceneTextureEpoch: 0 };
+  const record = new Float64Array(338); mount.__gosxOceanWater = record;
+  const p = { context, gl, mount, record, resources, fft: context.window.__gosx_scene3d_ocean_fft_api };
+  p.draw = (o, time) => {
+    const eng = o.spectrum ? api.run(resources, gl, { ocean: o, tier: "high", time, camera: { x: 0, y: 30, z: 0 }, textureCache, mount, caps: floatCaps }) : null;
+    if (!eng && resources.fft) { resources.fft.dispose(); resources.fft = null; }
+    context.recordFrame(mount, bundle(o), time, "submitted");
+    return eng;
+  };
+  p.probeDraws = () => gl.draws.filter((d) => d.kind === "draw" && d.program && d.program.shaders.some((s) => /uniform vec4 pts\[/.test(s.source || "")));
+  return p;
+}
+
+test("probe, WebGL2: a host that asks gets the drawn heights through a float target, a pixel buffer and a fence that is never waited on, 1 frame after the issue", () => {
+  const p = probeWebGL(), o = ocean({ level: 2 }), r = p.record;
+  p.draw(o, 1); p.draw(o, 1.02);
+  askAt(r, [[100, 40], [104, 40], [102, 38], [102, 42]]);
+  p.draw(o, 1.04); // the issue
+  const issued = r[SEQ];
+  assert.equal(p.probeDraws().length, 1, "one probe pass");
+  assert.equal(p.gl.fences.length, 1);
+  assert.equal(p.gl.ops.filter((x) => x[0] === "readPixels").length, 1);
+  const sources = p.probeDraws()[0].program.shaders.map((s) => s.source).join("\n");
+  assert.match(sources, /textureLod\(d0/); assert.match(sources, /textureLod\(s3/, "all four cascades' displacement and slope textures");
+  assert.equal(p.probeDraws()[0].viewport[2], 4, "one texel per point");
+  assert.equal(p.probeDraws()[0].fbo.attachments[0].internal, p.gl.RGBA32F, "a float target");
+  askAt(r, []); // one read
+  assert.equal(r[P_TICK], 0, "nothing yet in the frame that issued it");
+  p.draw(o, 1.06); // its update polls the fence, finds it signalled, and reads the buffer; its record delivers the reading
+  assert.equal(r[P_TICK], 1);
+  assert.deepEqual([r[P_SEQ], r[P_N], r[P_FLAGS]], [issued, 4, VALID]);
+  assert.equal(r[P_LAT], r[SEQ] - issued);
+  assert.equal(r[P_LAT], 1, "issued in frame N, published in the record of frame N+1");
+  close(r[OUT], 2.5, "level 2 + height 0.5"); close(r[OUT + 3], 3.5, "level + 1.5"); close(r[OUT + 1], 0.1, "normal x");
+  assert.ok(p.gl.fences.every((f) => f.deleted), "fences are released");
+});
+
+test("probe, WebGL2: a fence that has not signalled is never waited on; the frame goes on and the reading arrives when it signals", () => {
+  const p = probeWebGL(), o = ocean({ level: 0 }), r = p.record;
+  p.draw(o, 1); p.draw(o, 1.02);
+  p.gl.signaled = false; askAt(r, [[1, 2]]);
+  p.draw(o, 1.04); const issued = r[SEQ]; askAt(r, []);
+  for (let i = 0; i < 4; i++) p.draw(o, 1.06 + i * 0.02);
+  assert.equal(r[P_TICK], 0, "no reading while the fence is pending");
+  assert.ok(p.gl.waits >= 4 && p.gl.reads.length === 0, "polled with a zero timeout each frame, nothing read");
+  p.gl.signaled = true; p.draw(o, 1.2);
+  assert.equal(r[P_TICK], 1);
+  assert.equal(r[P_SEQ], issued);
+  assert.equal(r[P_LAT], r[SEQ] - issued, "the age says how late it is: 5 frames here");
+  assert.equal(r[P_LAT], 5);
+});
+
+test("probe, WebGL2: no pass, fence or readPixels is issued while no host asks, and none after it stops", () => {
+  const p = probeWebGL(), o = ocean({ level: 0 });
+  for (let i = 0; i < 5; i++) p.draw(o, 1 + i * 0.02);
+  assert.equal(p.probeDraws().length, 0);
+  assert.equal(p.gl.fences.length, 0);
+  assert.equal(p.gl.ops.filter((x) => x[0] === "readPixels").length, 0);
+  assert.equal(p.gl.created.program.filter((x) => x.shaders.some((s) => /uniform vec4 pts\[/.test(s.source || ""))).length, 0, "the probe program is not even built");
+  askAt(p.record, [[1, 1]]); p.draw(o, 1.2);
+  assert.equal(p.probeDraws().length, 1);
+  p.record[COUNT] = 0; p.draw(o, 1.22); p.draw(o, 1.24);
+  assert.equal(p.probeDraws().length, 1);
+});
+
+test("probe, WebGL2: the draw leaves the GL state as the renderer had it, and a failed build is reported once as unavailable", () => {
+  const p = probeWebGL(), o = ocean({ level: 0 });
+  p.draw(o, 1); p.draw(o, 1.02);
+  const before = [p.gl.drawFB, p.gl.currentProgram, p.gl.viewportRect.join(), p.gl.enabled.has(p.gl.BLEND)];
+  askAt(p.record, [[1, 1]]);
+  p.draw(o, 1.04);
+  assert.deepEqual([p.gl.drawFB, p.gl.currentProgram, p.gl.viewportRect.join(), p.gl.enabled.has(p.gl.BLEND)], before, "framebuffer, program, viewport and blend are restored");
+  const q = probeWebGL();
+  q.gl.rejectShader = (src) => /uniform vec4 pts\[/.test(src);
+  q.draw(o, 1); q.draw(o, 1.02);
+  askAt(q.record, [[1, 1]]);
+  q.draw(o, 1.04);
+  assert.deepEqual([q.record[P_FLAGS], q.record[P_N], q.record[P_TICK]], [UNAVAILABLE, 0, 1]);
+  q.draw(o, 1.06);
+  assert.equal(q.record[P_TICK], 1, "told once");
+});
+
+test("probe: a graph torn down mid-flight leaves no readback for a later graph", () => {
+  const p = probeWebGL(), o = ocean({ level: 0 });
+  p.draw(o, 1); p.draw(o, 1.02);
+  askAt(p.record, [[1, 1]]); p.gl.signaled = false;
+  p.draw(o, 1.04);
+  p.resources.fft.dispose(); p.resources.fft = null;
+  p.gl.signaled = true;
+  p.draw(o, 1.06); p.draw(o, 1.08);
+  const gen = p.record[9];
+  assert.ok(p.record[P_TICK] === 0 || p.record[P_GEN] === gen || p.record[P_SEQ] > 0, "a reading, if any, carries the generation that drew it");
+});
+
+test("probe, Gerstner: the CPU query answers in the same frame, exact, with the Gerstner flag", () => {
+  const context = page({ chunk: false });
+  const queryContext = context; loadSources(queryContext, ["ocean-waves.ts", "ocean-query.ts"]);
+  const q = context.window.__gosx_scene3d_ocean_query;
+  const mount = { __gosxOceanWater: new Float64Array(338) }, o = { level: 1, waveHeight: 0.8, waveLength: 18, choppiness: 0.6, speed: 1, surf: 0.5 };
+  askAt(mount.__gosxOceanWater, [[10, 20], [-5, 7]]);
+  context.recordFrame(mount, bundle(o), 33.25, "submitted");
+  const r = mount.__gosxOceanWater;
+  assert.deepEqual([r[P_SEQ], r[P_N], r[P_FLAGS], r[P_LAT], r[P_GEN]], [1, 2, VALID + GERSTNER, 0, 0]);
+  const want = q.sample(q.create(o, "high", null, true), 10, 20, 33.25);
+  assert.equal(r[OUT], want.y); assert.equal(r[OUT + 1], want.normal.x); assert.equal(r[OUT + 2], want.normal.z);
+  askAt(r, []);
+  r[P_TICK] = 0; context.recordFrame(mount, bundle(o), 34, "submitted");
+  assert.equal(r[P_TICK], 0, "no points, no work");
 });

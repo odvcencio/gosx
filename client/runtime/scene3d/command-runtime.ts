@@ -227,7 +227,7 @@
   function oceanWater(target: any, sink?: any, stop?: boolean) {
     const mount: any = record(target, {})?.mount;
     if (!mount) return null;
-    if (!mount.__gosxOceanWater) mount.__gosxOceanWater = new Float64Array(10);
+    if (!mount.__gosxOceanWater) mount.__gosxOceanWater = new Float64Array(338);
     if (sink) { const sinks = mount.__gosxOceanWaterSinks || (mount.__gosxOceanWaterSinks = new Set()); if (stop) sinks.delete(sink); else sinks.add(sink); }
     return mount.__gosxOceanWater;
   }

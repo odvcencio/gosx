@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Read the drawn water's heights back from the GPU at points a host chooses.
+  `OceanWaterReader.SetProbe(points)` takes up to 64 world (x, z) points, and
+  `ReadProbe(&reading)` returns, per point, the height of the surface the
+  renderer draws and the normal's x and z (`scene.OceanProbeReading`), tagged
+  with the `Seq` and `Generation` of the water frame they were drawn in. It is for
+  an external-pose host whose ship motion must follow the sea the player sees:
+  `OceanQuery.SampleWater` sums only the 24 strongest swell waves. WebGPU runs a
+  compute pass and WebGL2 draws the points into a float target read through a
+  pixel buffer behind a fence; both sample the displacement and slope textures
+  the ocean shader samples, over all cascades and with choppiness. The Gerstner
+  sea (no spectrum, or a graph that is not running) is answered by the CPU query
+  that mirrors the shader. Measured on an RTX 5070 Ti, a reading is 1 frame old on
+  WebGL2 and 2 on WebGPU (`LatencyFrames`), one more in an engine worker, and the
+  page never waits for the GPU. Against a double-precision evaluation of the
+  textures the shader samples, heights differ by at most 0.003 m and normals by
+  0.001 on both backends, and the backends agree to 0.0001 m. A page that
+  cannot read the sea back sets `Unavailable`. Nothing is built, drawn or read
+  until a host asks. The WebGPU graph's own `ocean_probe` kernel, which GoSX's
+  floated vessels use, measured up to 0.5 m in height and 0.2 in a normal
+  component away from the drawn textures at 35 points (the kernel's bilinear
+  sampling appears to place texel corners where the sampler puts texel centres;
+  not confirmed). It is unchanged here, and the
+  host probe does not use it. A shoaling bathymetry and a ship wake's height are
+  not in a spectral reading. `Read` and `ReadProbe` do not allocate in Go;
+  presentation only. See `docs/scene3d-ocean-query.md`.
 - Draw a night sky and a moonlit sea. `Sky.Night` (a `*scene.SkyNight`, physical
   sky only) adds a seeded star field and a moon disc with phase to the sky
   pass on WebGL2 and WebGPU, and when the sun is below the horizon the ocean

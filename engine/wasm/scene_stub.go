@@ -28,3 +28,5 @@ func (Scene3D) OceanWater() (*OceanWaterReader, error) { return nil, ErrUnsuppor
 func (*OceanWaterReader) Read() (scene.OceanWaterFrame, bool) {
 	return scene.OceanWaterFrame{}, false
 }
+func (*OceanWaterReader) SetProbe([]scene.OceanProbePoint)        {}
+func (*OceanWaterReader) ReadProbe(*scene.OceanProbeReading) bool { return false }

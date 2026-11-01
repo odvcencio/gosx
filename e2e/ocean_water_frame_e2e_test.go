@@ -34,7 +34,7 @@ const oceanWaterPage = `<!doctype html>
 </head><body>
 <div id="sea"></div>
 <script id="gosx-manifest" type="application/json">%s</script>
-<script data-gosx-script="bootstrap" src="/bootstrap.js" data-gosx-scene3d-ocean-fft-url="/gosx/bootstrap-feature-scene3d-ocean-fft.js" data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js"></script>
+<script data-gosx-script="bootstrap" src="/bootstrap.js" data-gosx-scene3d-ocean-fft-url="/gosx/bootstrap-feature-scene3d-ocean-fft.js" data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js" data-gosx-scene3d-ocean-query-url="/gosx/bootstrap-feature-scene3d-ocean-query.js"></script>
 </body></html>`
 
 func TestWaterFrameOnTheGPU(t *testing.T) {
@@ -138,13 +138,13 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 			deadline := time.Now().Add(90 * time.Second)
 			for time.Now().Before(deadline) {
 				first = get()
-				if len(first.W) == 10 && first.W[0] >= 30 && first.W[4] == 1 && first.Ocean == "surface+spectrum" {
+				if len(first.W) >= 10 && first.W[0] >= 30 && first.W[4] == 1 && first.Ocean == "surface+spectrum" {
 					break
 				}
 				time.Sleep(500 * time.Millisecond)
 			}
 			t.Logf("first: %+v", first)
-			if len(first.W) != 10 || first.W[4] != 1 || first.Ocean != "surface+spectrum" {
+			if len(first.W) < 10 || first.W[4] != 1 || first.Ocean != "surface+spectrum" {
 				t.Fatalf("no spectral reading: %+v", first)
 			}
 			if backend == "webgl2" && first.Backend != "webgl" {
