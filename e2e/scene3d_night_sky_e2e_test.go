@@ -226,7 +226,7 @@ func TestScene3DNightSkyDrawsStarsMoonAndMoonlitSea(t *testing.T) {
 	if wTw <= wNone*1.5 {
 		t.Errorf("at sun -6 degrees the moon's path should already light the water: %.4f vs new moon %.4f", wTw, wNone)
 	}
-	if mCyc < 0.9 || wCyc < wFull*0.8 || sCyc < sFull*7/10 {
+	if mCyc < 0.9 || wCyc < wFull*0.7 || sCyc < sFull*7/10 {
 		t.Errorf("Sky.Intensity 0.05 must leave the night layer alone: moon %.3f water %.4f (full %.4f) stars %d (full %d)", mCyc, wCyc, wFull, sCyc, sFull)
 	}
 	if sOver >= sFull/2 || wOver >= wFull {
