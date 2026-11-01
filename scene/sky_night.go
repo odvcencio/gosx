@@ -1,6 +1,10 @@
 package scene
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // SkyNight adds a night layer to a physical Sky: a seeded star field and a
 // moon disc with phase, both drawn by the sky shader. Nil is off, and a scene
@@ -43,7 +47,7 @@ type SkyNight struct {
 
 // MoonIllumination returns the lit fraction of the moon's disc, 0..1.
 func (n SkyNight) MoonIllumination() float64 {
-	return (1 - math.Cos(2*math.Pi*wrapUnit(n.MoonPhase))) / 2
+	return (1 - det.Cos(float64(2*math.Pi*wrapUnit(n.MoonPhase)))) / 2
 }
 
 func wrapUnit(v float64) float64 {
@@ -73,11 +77,11 @@ func normalizeSkyNight(n *SkyNight, sun Vector3) *SkyNight {
 		MoonIntensity:  clampSkyParam(finiteOr(n.MoonIntensity, 0), 0, 4),
 	}
 	d := n.MoonDirection
-	length := math.Sqrt(d.X*d.X + d.Y*d.Y + d.Z*d.Z)
+	length := det.Sqrt(float64(d.X*d.X) + float64(d.Y*d.Y) + float64(d.Z*d.Z))
 	if length < 1e-9 || math.IsNaN(length) || math.IsInf(length, 0) {
 		az := 180.0
-		if math.Hypot(sun.X, sun.Z) > 1e-6 {
-			az = math.Atan2(-sun.X, sun.Z) * 180 / math.Pi // the sun's bearing plus 180
+		if det.Hypot(sun.X, sun.Z) > 1e-6 {
+			az = float64(det.Atan2(-sun.X, sun.Z)*180) / math.Pi // the sun's bearing plus 180
 		}
 		out.MoonDirection = SunDirectionFromAngles(40, az)
 	} else {
