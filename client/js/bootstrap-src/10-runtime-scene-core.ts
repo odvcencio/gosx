@@ -3152,11 +3152,11 @@
     });
     if (sceneIsPlainObject(raw.night)) { // Night layer (scene.SkyNight); zero keeps its documented default.
       const n = raw.night, moon = sceneIsPlainObject(n.moonDirection) ? n.moonDirection : {}, num = key => sceneNumber(n[key], 0);
-      sky.night = { starDensity: Math.min(1, num("starDensity")), starBrightness: Math.max(0, Math.min(4, num("starBrightness"))),
+      sky.night = { starDensity: Math.min(1, num("starDensity")), starBrightness: Math.min(4, num("starBrightness")),
         starSeed: Math.max(0, Math.floor(num("starSeed"))) % 4294967296,
         moonDirection: { x: sceneNumber(moon.x, 0), y: sceneNumber(moon.y, 0), z: sceneNumber(moon.z, 0) },
         moonPhase: num("moonPhase") - Math.floor(num("moonPhase")), moonRadius: Math.min(5, num("moonRadius")),
-        moonIntensity: Math.max(0, Math.min(4, num("moonIntensity"))) };
+        moonIntensity: Math.min(4, num("moonIntensity")) };
     }
     return sky;
   }

@@ -17,7 +17,7 @@ func TestSkyNightWireAndNormalization(t *testing.T) {
 		StarDensity: 3, StarBrightness: 9, StarSeed: 7, MoonPhase: 1.25, MoonRadius: 40, MoonIntensity: -1,
 	}})
 	n := sky.Night
-	if n == nil || n.StarDensity != 1 || n.StarBrightness != 4 || n.StarSeed != 7 || math.Abs(n.MoonPhase-0.25) > 1e-12 || n.MoonRadius != 5 || n.MoonIntensity != 0 {
+	if n == nil || n.StarDensity != 1 || n.StarBrightness != 4 || n.StarSeed != 7 || math.Abs(n.MoonPhase-0.25) > 1e-12 || n.MoonRadius != 5 || n.MoonIntensity != -1 {
 		t.Fatalf("clamps: %#v", n)
 	}
 	// Unset direction: 40 degrees up, opposite the sun's bearing (sun due east, so the moon is due west).

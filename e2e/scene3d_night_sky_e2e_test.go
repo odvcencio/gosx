@@ -30,13 +30,19 @@ import (
 // with --unsafely-treat-insecure-origin-as-secure for the same address and port.
 // GOSX_NIGHT_SKY_SHOTS names a folder for PNG copies.
 func nightSkyShot(t *testing.T, name string, width, height int, night *scene.SkyNight, clouds *scene.SkyClouds) image.Image {
+	return nightSkyShotAt(t, name, width, height, night, clouds, scene.Vector3{X: 0.3, Y: -0.35, Z: -0.9}, 0)
+}
+
+// nightSkyShotAt also takes the sun direction and Sky.Intensity (a day cycle
+// sets 0.05 at night; zero means 1).
+func nightSkyShotAt(t *testing.T, name string, width, height int, night *scene.SkyNight, clouds *scene.SkyClouds, sun scene.Vector3, intensity float64) image.Image {
 	t.Helper()
 	root, chrome := e2eRepoRoot(t), e2eChromePath(t)
 	webgpu := os.Getenv("GOSX_NIGHT_SKY_BACKEND") == "webgpu"
 	props := scene.Props{Width: width, Height: height, Responsive: scene.Bool(false), MaxDevicePixelRatio: 1, Controls: "none", Background: "#000000",
 		Camera: scene.PerspectiveCamera{Position: scene.Vec3(0, 6, 0), FOV: 60, Near: 0.1, Far: 30000},
 		Environment: scene.Environment{
-			Sky: &scene.Sky{Mode: "physical", SunDirection: scene.Vector3{X: 0.3, Y: -0.35, Z: -0.9}, Clouds: clouds, Night: night},
+			Sky: &scene.Sky{Mode: "physical", SunDirection: sun, Intensity: intensity, Clouds: clouds, Night: night},
 			Ocean: &scene.Ocean{WaveHeight: 0.9, WaveLength: 24, Roughness: 0.05, Speed: 0.5,
 				DeepColor: "#02101a", ShallowColor: "#0a3a48", ScatterColor: "#1c6f70"},
 		}}
@@ -141,6 +147,12 @@ func nightLuma(img image.Image, x, y int) float64 {
 // nightStats measures the sky above the horizon (the top 40 percent of the
 // frame) and the water below it.
 func nightStats(img image.Image) (stars int, moon, water float64) {
+	stars, moon, water, _ = nightStatsSat(img)
+	return
+}
+
+// nightStatsSat also counts the water pixels that are white (luma above 0.97).
+func nightStatsSat(img image.Image) (stars int, moon, water float64, saturated int) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	for y := 0; y < h*40/100; y++ {
@@ -156,7 +168,11 @@ func nightStats(img image.Image) (stars int, moon, water float64) {
 	}
 	for y := h * 60 / 100; y < h; y++ {
 		for x := w / 3; x < w*2/3; x++ {
-			water += nightLuma(img, x, y)
+			l := nightLuma(img, x, y)
+			water += l
+			if l > 0.97 {
+				saturated++
+			}
 		}
 	}
 	water /= float64(h*40/100) * float64(w/3)
@@ -177,6 +193,14 @@ func TestScene3DNightSkyDrawsStarsMoonAndMoonlitSea(t *testing.T) {
 	half := nightSkyShot(t, "half-moon", w, h, &scene.SkyNight{MoonDirection: moon, MoonPhase: 0.25}, nil)
 	over := nightSkyShot(t, "overcast-full-moon", w, h, &scene.SkyNight{MoonDirection: moon, MoonPhase: 0.5}, &scene.SkyClouds{Coverage: 1, Opacity: 1})
 
+	twilight := nightSkyShotAt(t, "twilight-sun-6", w, h, &scene.SkyNight{MoonDirection: moon, MoonPhase: 0.5}, nil, scene.Vector3{X: 0.3 * 0.9945, Y: -0.1045, Z: -0.95 * 0.9945}, 0)
+	cycle := nightSkyShotAt(t, "daycycle-night", w, h, &scene.SkyNight{MoonDirection: moon, MoonPhase: 0.5}, nil, scene.Vector3{X: 0.3, Y: -0.35, Z: -0.9}, 0.05)
+	sTw, mTw, wTw, _ := nightStatsSat(twilight)
+	_, _, _, satFull := nightStatsSat(full)
+	_, _, _, satHalf := nightStatsSat(half)
+	_, _, _, satOver := nightStatsSat(over)
+	sCyc, mCyc, wCyc, _ := nightStatsSat(cycle)
+	t.Logf("saturated water pixels: full %d half %d overcast %d; twilight stars %d moon %.3f water %.4f; day cycle stars %d moon %.3f water %.4f", satFull, satHalf, satOver, sTw, mTw, wTw, sCyc, mCyc, wCyc)
 	sDark, _, wDark := nightStats(dark)
 	sNone, _, wNone := nightStats(none)
 	sFull, mFull, wFull := nightStats(full)
@@ -195,6 +219,15 @@ func TestScene3DNightSkyDrawsStarsMoonAndMoonlitSea(t *testing.T) {
 	}
 	if !(wFull > wNone*2 && wFull > wHalf && wHalf > wNone) {
 		t.Errorf("moon path on the water should grow with the lit fraction: none %.4f half %.4f full %.4f", wNone, wHalf, wFull)
+	}
+	if satHalf*4 > satFull || satOver*20 > satFull {
+		t.Errorf("the highlight cap should follow the light: saturated pixels full %d half %d overcast %d", satFull, satHalf, satOver)
+	}
+	if wTw <= wNone*1.5 {
+		t.Errorf("at sun -6 degrees the moon's path should already light the water: %.4f vs new moon %.4f", wTw, wNone)
+	}
+	if mCyc < 0.9 || wCyc < wFull*0.8 || sCyc < sFull*7/10 {
+		t.Errorf("Sky.Intensity 0.05 must leave the night layer alone: moon %.3f water %.4f (full %.4f) stars %d (full %d)", mCyc, wCyc, wFull, sCyc, sFull)
 	}
 	if sOver >= sFull/2 || wOver >= wFull {
 		t.Errorf("overcast should dim the stars and the path: stars %d vs %d, water %.4f vs %.4f", sOver, sFull, wOver, wFull)
