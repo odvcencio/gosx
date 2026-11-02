@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The patch mailbox decoder (`client/runtime/wasm/mailbox.ts`) now builds one `TextDecoder` and reuses it for every
+  string, where it built one per string. A batch of 1,000 patches (4,001 strings) decodes in 0.95 ms instead of 1.55 ms
+  in Node (median of three runs). Output is unchanged. `bootstrap.js` and `bootstrap-runtime.js` grow by 18 raw bytes.
+
 - Read the renderer's sea heights back from the GPU at points a host chooses.
   `OceanWaterReader.SetProbe(points)` takes up to 64 world (x, z) points,
   `ReadProbe(&reading)` returns, per point, the height of the displaced sea
