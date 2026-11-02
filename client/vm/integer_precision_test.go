@@ -216,8 +216,13 @@ func TestIntegerPrecisionRandomIntrinsics(t *testing.T) {
 
 func TestIntegerPrecisionReuseKeepsFloatComparison(t *testing.T) {
 	negativeZero := math.Copysign(0, -1)
-	if sampleDiffers(sampleValue(FloatVal(negativeZero), true), sampleValue(FloatVal(0), true)) {
-		t.Fatal("float zero signs must compare equal")
+	// 0 and -0 render differently, so a node that shows one must be evaluated
+	// again when the other arrives. Compare the bits, not the floats.
+	if !sampleDiffers(sampleValue(FloatVal(negativeZero), true), sampleValue(FloatVal(0), true)) {
+		t.Fatal("float zero signs must count as a change")
+	}
+	if sampleDiffers(sampleValue(FloatVal(0.5), true), sampleValue(FloatVal(0.5), true)) {
+		t.Fatal("equal floats must not count as a change")
 	}
 	nan := sampleValue(FloatVal(math.NaN()), true)
 	if !sampleDiffers(nan, nan) {

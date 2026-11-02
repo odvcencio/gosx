@@ -8,6 +8,22 @@
   the matching GoSX version. Release builds now record their intended tag and
   verify both matching and mismatched project pins before publication.
 
+- Island subtree reuse now works on composite signal values. Before, any watched array or object counted as changed on every
+  reconcile, so a write to a signal such as `$ui.dock` that changed only a field no template reads re-evaluated and diffed the
+  whole island. Now (1) a composite compares by a 128-bit digest of its content, which still sees `OpFieldSet`/`OpIndexSet`
+  edits made in place; (2) a read of the form `signal.field.field` watches only the part it names, and a program that reads
+  more than 64 distinct paths merges deep paths into their ancestors instead of losing reuse; (3) the loop variables a
+  `forEach` binds no longer count as inputs of the elements around the loop; (4) a `forEach` that is reached once, outside
+  any other loop, with a pure body, copies single rows whose item, key and index are unchanged out of the previous tree, and
+  the diff skips a row copied into the index it already held. `go test ./client/vm -bench CompositeWrite` (200-row list, 4
+  nodes per row; host load about 30): a write that changes only an unread field takes 0.10 ms instead of 0.65 ms, one changed
+  row 0.34 ms instead of 0.67 ms, a heading-only write 0.13 ms instead of 0.65 ms. Rendered output and patches are unchanged;
+  tests compare each step with a full evaluation, in lockstep with an island that has every optimisation off, including a new
+  fuzz target. A scalar float input that changes between 0 and -0 is now a change (the comparison used `==`, and the two
+  render differently); an index marked typed-map and a field name that contains U+001F no longer produce a field path. An input that is absent on both sides (the lowerer reads the Go
+  identifier `nil` as a prop no island sets) now counts as unchanged; it used to make every element that compares with nil
+  dirty on every walk, which kept the whole Bon Voyage dock from being copied. The content digest allocates nothing per field and hashes strings eight bytes at a time. The reuse code is now unreachable by construction in TinyGo builds, which
+  never ran it (`tinygoDefensiveReconcile`), so the production core runtime is 698,608 bytes instead of 709,386.
 ## v0.59.0
 
 - Resolve island map prop types from locally available imported Go packages,
