@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.59.0
 
 - Island rendering checks each authored attribute's name once, when `NewVM` or `SwapProgram` loads the program, instead of
   on every render. Validity, the `on` prefix and the URL-attribute test were recomputed per attribute per render. For an
