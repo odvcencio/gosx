@@ -131,7 +131,10 @@ func (island *Island) ensureReuse() {
 		return
 	}
 	island.reuseBuilt = true
-	if island.reuseOff {
+	// The constant is checked on its own so a TinyGo build can prove that the
+	// analysis is never constructed, and drop it and everything it reaches
+	// from the binary.
+	if tinygoDefensiveReconcile || island.reuseOff {
 		return
 	}
 	island.reuse = newIslandReuse(island.program)
@@ -153,7 +156,7 @@ func (island *Island) evalTree() *ResolvedTree {
 // walk into the retired tree from the generation before last.
 func (island *Island) evalTreeInto(tree *ResolvedTree) {
 	reuse := island.reuse
-	if reuse == nil {
+	if tinygoDefensiveReconcile || reuse == nil {
 		island.vm.EvalTreeInto(tree)
 		return
 	}

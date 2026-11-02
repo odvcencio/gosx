@@ -12,7 +12,8 @@
   the diff skips a row copied into the index it already held. `go test ./client/vm -bench CompositeWrite` (200-row list, 4
   nodes per row; host load about 30): a write that changes only an unread field takes 0.10 ms instead of 0.65 ms, one changed
   row 0.34 ms instead of 0.67 ms, a heading-only write 0.13 ms instead of 0.65 ms. Rendered output and patches are unchanged;
-  tests compare each step with a full evaluation.
+  tests compare each step with a full evaluation. The reuse code is now unreachable by construction in TinyGo builds, which
+  never ran it (`tinygoDefensiveReconcile`), so the production core runtime is 698,608 bytes instead of 709,386.
 - Island rendering checks each authored attribute's name once, when `NewVM` or `SwapProgram` loads the program, instead of
   on every render. Validity, the `on` prefix and the URL-attribute test were recomputed per attribute per render. For an
   element with six attributes `resolveElementAttrs` takes about 0.93 us instead of 1.5 us (`go test ./client/vm -bench
