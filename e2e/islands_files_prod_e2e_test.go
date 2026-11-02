@@ -32,13 +32,16 @@ func TestProductionBuildHydratesIslandsAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("production fixture build: %v\n%s", err, output)
 	}
-	for _, name := range []string{"Counter", "Tally", "Chart", "ForeignContent", "Roster", "Sections"} {
+	for _, name := range []string{"Counter", "Tally", "Chart", "ForeignContent", "Roster", "Sections", "ImportedMap"} {
 		if !strings.Contains(string(output), name) {
 			t.Fatalf("missing compiled island %s:\n%s", name, output)
 		}
 	}
 	port := freeE2EPort(t)
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	// A deployed bundle must not need Go or the model package's source to
+	// reconstruct imported island types at request time.
+	t.Setenv("PATH", "/usr/bin:/bin")
 	logs := startBuiltFixture(t, filepath.Join(fixture, "dist"), port)
 	if err := waitForHealthy(baseURL+"/", 45*time.Second); err != nil {
 		t.Fatalf("%v\n%s", err, logs.String())
@@ -60,6 +63,8 @@ func TestProductionBuildHydratesIslandsAcrossFiles(t *testing.T) {
 			wait := func(script, label string) { t.Helper(); page.waitFor(t, script, 10*time.Second, label) }
 			click("#sibling-inc")
 			wait(`document.querySelector('#sibling-count').textContent==='1'`, "sibling island counter")
+			click("#imported-map-show")
+			wait(`document.querySelector('#imported-map-value')?.textContent==='false'`, "imported map zero value without Go")
 			click("#shared-dec")
 			wait(`document.querySelector('#shared-count').textContent==='9'`, "relative-imported island tally")
 			click("#chart-add")
@@ -94,5 +99,5 @@ func TestProductionBuildHydratesIslandsAcrossFiles(t *testing.T) {
 	}
 }
 
-const islandsFilesReady = `['#sibling-inc','#shared-dec','#chart-add','#foreign-toggle','#roster-add','#section-toggle'].every(selector=>{const button=document.querySelector(selector),root=button?.closest('[data-gosx-island]'),island=window.__gosx?.islands?.get(root?.id);return !!island&&island.root===root&&island.listeners.some(entry=>entry.type==='click'&&entry.target===root);})`
+const islandsFilesReady = `['#sibling-inc','#shared-dec','#chart-add','#foreign-toggle','#roster-add','#section-toggle','#imported-map-show'].every(selector=>{const button=document.querySelector(selector),root=button?.closest('[data-gosx-island]'),island=window.__gosx?.islands?.get(root?.id);return !!island&&island.root===root&&island.listeners.some(entry=>entry.type==='click'&&entry.target===root);})`
 const islandsFilesForeignNamespaces = `(()=>{const ns=id=>document.getElementById(id)?.namespaceURI;return ns('equation')==='http://www.w3.org/1998/Math/MathML'&&ns('equation-glyph')==='http://www.w3.org/1998/Math/MathML'&&ns('equation-mark')==='http://www.w3.org/1998/Math/MathML'&&ns('equation-text')==='http://www.w3.org/1999/xhtml'&&ns('equation-note')==='http://www.w3.org/1999/xhtml'&&ns('foreign-vector')==='http://www.w3.org/2000/svg'&&ns('vector-note')==='http://www.w3.org/1999/xhtml';})()`

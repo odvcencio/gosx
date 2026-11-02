@@ -6,17 +6,22 @@ import (
 	"bytes"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/build"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -46,6 +51,12 @@ var aotCheckCache = struct {
 // shares object identities across candidates, but each file retains its own
 // source maps. Even edits erased by projection invalidate both kinds of data.
 func aotCheckSource(p *Program) (*aotCheckedSource, error) {
+	return checkIslandSource(p, false)
+}
+
+// checkIslandSource preserves AOT's deliberately restricted importer. Map
+// typing can separately request real dependency export data when needed.
+func checkIslandSource(p *Program, resolveImports bool) (*aotCheckedSource, error) {
 	if p.Dir == "" {
 		return nil, fmt.Errorf("package_scope_unknown: source directory is required")
 	}
@@ -96,6 +107,38 @@ func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 		members = append(members, member{"candidate.gsx", p.aotBindings.source, true})
 		add([]byte("candidate.gsx"))
 		add(p.aotBindings.source)
+	}
+	var exports map[string]string
+	if resolveImports {
+		var imports []string
+		seen := map[string]bool{}
+		for _, member := range members {
+			file, err := parser.ParseFile(token.NewFileSet(), member.name, member.data, parser.ImportsOnly)
+			if err != nil {
+				return nil, fmt.Errorf("package imports: %w", err)
+			}
+			for _, spec := range file.Imports {
+				path, err := strconv.Unquote(spec.Path.Value)
+				if err != nil {
+					return nil, fmt.Errorf("package import: %w", err)
+				}
+				if !seen[path] && !strings.HasPrefix(path, ".") {
+					seen[path] = true
+					imports = append(imports, path)
+				}
+			}
+		}
+		sort.Strings(imports)
+		var err error
+		exports, err = islandImportExports(p.Dir, imports)
+		if err != nil {
+			return nil, err
+		}
+		add([]byte("map-imports-v1"))
+		for _, path := range imports {
+			add([]byte(path))
+			add([]byte(exports[path]))
+		}
 	}
 	var key [32]byte
 	copy(key[:], digest.Sum(nil))
@@ -237,7 +280,17 @@ func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 		file.Decls = declarations
 	}
 	var hardErrors []types.Error
-	cfg := types.Config{Importer: &aotStubImporter{packages: map[string]*types.Package{}}, Sizes: &types.StdSizes{WordSize: 4, MaxAlign: 4}, DisableUnusedImportCheck: true, Error: func(err error) {
+	var sourceImporter types.Importer = &aotStubImporter{packages: map[string]*types.Package{}}
+	if resolveImports {
+		sourceImporter = importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
+			file := exports[path]
+			if file == "" {
+				return nil, fmt.Errorf("no local export data for %q", path)
+			}
+			return os.Open(file)
+		})
+	}
+	cfg := types.Config{Importer: sourceImporter, Sizes: &types.StdSizes{WordSize: 4, MaxAlign: 4}, DisableUnusedImportCheck: true, Error: func(err error) {
 		if e, ok := err.(types.Error); ok && !e.Soft {
 			hardErrors = append(hardErrors, e)
 		}
@@ -262,6 +315,42 @@ func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 	aotCheckCache.entries[key] = views
 	aotCheckCache.order = append(aotCheckCache.order, key)
 	return views[candidateKey], nil
+}
+
+// islandImportExports asks the Go tool for the same module-selected export
+// data as the build. It never updates go.mod or downloads dependencies.
+func islandImportExports(dir string, imports []string) (map[string]string, error) {
+	result := make(map[string]string)
+	if len(imports) == 0 {
+		return result, nil
+	}
+	args := append([]string{"list", "-e", "-export", "-deps", "-json", "-mod=readonly"}, imports...)
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	var env []string
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "GOWORK=") && !strings.HasPrefix(entry, "GOFLAGS=") && !strings.HasPrefix(entry, "GOPROXY=") {
+			env = append(env, entry)
+		}
+	}
+	cmd.Env = append(env, "GOWORK=off", "GOFLAGS=", "GOPROXY=off")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("resolve imported map types using locally available Go dependencies: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	for {
+		var entry struct{ ImportPath, Export string }
+		if err := decoder.Decode(&entry); err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("read imported map type evidence: %w", err)
+		}
+		if entry.ImportPath != "" && entry.Export != "" {
+			result[entry.ImportPath] = entry.Export
+		}
+	}
+	return result, nil
 }
 
 type aotStubImporter struct{ packages map[string]*types.Package }

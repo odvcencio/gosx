@@ -2,6 +2,8 @@ package ir
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +37,9 @@ func lowerIslandWithEvidence(prog *Program, compIdx int, evidence islandExprEvid
 	scope := mergedIslandScope(prog, comp)
 	l := newIslandLowerer(prog, comp.Name, scope)
 	l.evidence = evidence
+	if comp.PropsName == "props" {
+		l.propsFields = comp.PropsFields
+	}
 
 	if err := l.lowerComponent(comp); err != nil {
 		return nil, err
@@ -175,6 +180,9 @@ type islandLowerer struct {
 	dst                *program.Program
 	srcIDs             []NodeID // tracks source node ID for each dst node
 	scope              *ExprScope
+	propsFields        map[string]string
+	mapTypes           map[string]program.ExprType
+	mapTypesResolved   bool
 	inlineHandlerIndex int
 	componentIndex     map[string]int
 	calleeErrors       map[int]error
@@ -1465,6 +1473,22 @@ func (l *islandLowerer) addExprWithContext(source string, context *islandInlineC
 	if err != nil {
 		return 0, fmt.Errorf("parse island expression %q: %w", source, err)
 	}
+	if context == nil || context.component == "" {
+		if l.src.Dir != "" && hasDirectPropIndex(exprs) {
+			if !l.mapTypesResolved {
+				l.mapTypes, err = islandPackageMapTypes(l.src, l.dst.Name)
+				if err != nil {
+					return 0, fmt.Errorf("resolve island %s map prop types: %w", l.dst.Name, err)
+				}
+				l.mapTypesResolved = true
+			}
+			if err := annotateResolvedMapIndexes(exprs, l.mapTypes); err != nil {
+				return 0, fmt.Errorf("island %s: %w", l.dst.Name, err)
+			}
+		} else if l.src.Dir == "" {
+			annotateTypedMapIndexes(exprs, l.propsFields, l.src.aotScalarShadows)
+		}
+	}
 	var record func(program.ExprID, program.ExprID)
 	if l.evidence != nil {
 		record, err = l.evidence(source, l.origin, exprs, rootID)
@@ -1473,6 +1497,75 @@ func (l *islandLowerer) addExprWithContext(source string, context *islandInlineC
 		}
 	}
 	return l.appendInlineExpr(exprs, rootID, context, make(map[program.ExprID]program.ExprID), record)
+}
+
+func hasDirectPropIndex(exprs []program.Expr) bool {
+	for _, e := range exprs {
+		if e.Op == program.OpIndex && len(e.Operands) == 2 {
+			if _, ok := directPropsField(exprs, e.Operands[0]); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+const unsupportedMapIndexType program.ExprType = 255
+
+func annotateResolvedMapIndexes(exprs []program.Expr, fields map[string]program.ExprType) error {
+	for i := range exprs {
+		e := &exprs[i]
+		if e.Op != program.OpIndex || len(e.Operands) != 2 {
+			continue
+		}
+		field, ok := directPropsField(exprs, e.Operands[0])
+		if typ, exists := fields[field]; ok && exists {
+			if typ == unsupportedMapIndexType {
+				return fmt.Errorf("indexed prop %s has an unsupported map key or element type", field)
+			}
+			if typ == program.TypeBool || typ == program.TypeString {
+				e.Value, e.Type = program.IndexTypedMap, typ
+			}
+		}
+	}
+	return nil
+}
+
+// annotateTypedMapIndexes preserves the zero type for directly declared map
+// props. Named and composed types are deliberately left to the existing path.
+func annotateTypedMapIndexes(exprs []program.Expr, fields map[string]string, shadows map[string]bool) {
+	for i := range exprs {
+		e := &exprs[i]
+		if e.Op != program.OpIndex || len(e.Operands) != 2 {
+			continue
+		}
+		field, ok := directPropsField(exprs, e.Operands[0])
+		if !ok {
+			continue
+		}
+		typ, err := parser.ParseExpr(fields[field])
+		if err != nil {
+			continue
+		}
+		m, ok := typ.(*ast.MapType)
+		if !ok {
+			continue
+		}
+		key, keyOK := m.Key.(*ast.Ident)
+		elem, elemOK := m.Value.(*ast.Ident)
+		if !keyOK || key.Name != "string" || !elemOK || shadows[key.Name] || shadows[elem.Name] {
+			continue
+		}
+		switch elem.Name {
+		case "bool":
+			e.Type = program.TypeBool
+		case "string":
+			e.Type = program.TypeString
+		default:
+			continue
+		}
+		e.Value = program.IndexTypedMap
+	}
 }
 
 func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID, context *islandInlineContext, memo map[program.ExprID]program.ExprID, record func(program.ExprID, program.ExprID)) (program.ExprID, error) {

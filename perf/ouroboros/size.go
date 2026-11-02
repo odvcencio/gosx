@@ -107,6 +107,7 @@ type SizeEvidenceTotals struct {
 type RuntimeBuildEvidence struct {
 	SchemaVersion string                   `json:"schemaVersion"`
 	Contract      string                   `json:"contractVersion"`
+	RuntimeABI    string                   `json:"runtimeABI,omitempty"`
 	GeneratedAt   string                   `json:"generatedAt,omitempty"`
 	Source        SourceIdentity           `json:"source"`
 	BuildInput    BuildInputEvidence       `json:"buildInput"`

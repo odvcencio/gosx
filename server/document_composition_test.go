@@ -185,13 +185,32 @@ func TestDocumentRendererCleanBreakRemovesRetiredSymbols(t *testing.T) {
 		t.Fatal("runtime.Caller failed")
 	}
 	root := filepath.Dir(filepath.Dir(file))
-	var checked int
 	retired := []string{"HTMLDocumentWith" + "Language", "HTMLDocumentWith" + "Nonce", "HTMLDocumentWith" + "BodyAttrs", "renderDocumentWith" + "Context"}
+	checked, err := findRetiredRendererSymbols(root, retired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked == 0 {
+		t.Fatal("did not inspect any server implementation files")
+	}
+}
+
+func findRetiredRendererSymbols(root string, retired []string) (int, error) {
+	var checked int
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || strings.HasSuffix(path, "_test.go") {
+		if entry.IsDir() {
+			if path != root {
+				switch entry.Name() {
+				case ".git", ".canopy", ".worktrees", "node_modules", "build", "dist", "tmp":
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		ext := filepath.Ext(path)
@@ -210,11 +229,32 @@ func TestDocumentRendererCleanBreakRemovesRetiredSymbols(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
+	return checked, err
+}
+
+func TestRetiredRendererScanSkipsRetainedWorktrees(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"server/current.go":            "package server\n",
+		".worktrees/old/server/old.go": "package server\nretiredSymbol\n",
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checked, err := findRetiredRendererSymbols(root, []string{"retiredSymbol"})
+	if err != nil || checked != 1 {
+		t.Fatalf("scan = (%d, %v), want one current file", checked, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "server/current.go"), []byte("package server\nretiredSymbol\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if checked == 0 {
-		t.Fatal("did not inspect any server implementation files")
+	if _, err := findRetiredRendererSymbols(root, []string{"retiredSymbol"}); err == nil {
+		t.Fatal("scan did not detect retired symbol in current source")
 	}
 }
 

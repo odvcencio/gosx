@@ -12,6 +12,10 @@ script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 repo_source="$(CDPATH= cd "${script_dir}/.." && pwd)"
 tmp_dir="$(mktemp -d)"
 cleanup() {
+	if [ "${GOSX_TEST_KEEP_GIT_FIXTURES:-0}" = 1 ]; then
+		echo "gosx docs deploy gate test: kept fixtures at ${tmp_dir}" >&2
+		return
+	fi
 	rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM
@@ -67,14 +71,11 @@ write_fake_tools() {
 		'      git switch -c docs-toctou >/dev/null 2>&1' \
 		'      ;;' \
 		'    remote-advance)' \
-		'      advance_dir="$(mktemp -d)"' \
-		'      git clone "$(git remote get-url origin)" "${advance_dir}/repo" >/dev/null 2>&1' \
-		'      git -C "${advance_dir}/repo" config user.email "docs-gate@example.invalid"' \
-		'      git -C "${advance_dir}/repo" config user.name "Docs Gate"' \
-		'      printf "%s\n" "remote advance" >>"${advance_dir}/repo/file.txt"' \
-		'      git -C "${advance_dir}/repo" commit -am "remote advance" >/dev/null' \
-		'      git -C "${advance_dir}/repo" push origin main >/dev/null' \
-		'      rm -rf "${advance_dir}"' \
+		'      remote="$(git remote get-url origin)"' \
+		'      parent="$(git --git-dir="$remote" rev-parse refs/heads/main)"' \
+		'      tree="$(git --git-dir="$remote" rev-parse "${parent}^{tree}")"' \
+		'      next="$(printf "%s\n" "remote advance" | git -c user.name="Docs Gate" -c user.email=docs-gate@example.invalid --git-dir="$remote" commit-tree "$tree" -p "$parent")"' \
+		'      git --git-dir="$remote" update-ref refs/heads/main "$next" "$parent"' \
 		'      ;;' \
 		'  esac' \
 		'  exit 0' \

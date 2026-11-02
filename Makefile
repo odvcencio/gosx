@@ -25,8 +25,11 @@ WATER_EVIDENCE_FLAGS ?=
 FUZZTIME ?= 2000x
 FUZZ_TIMEOUT ?= 45s
 FUZZ_PARALLEL ?= 2
-GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build/*')
-DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
+# Prune retained checkouts and generated output before descending into them.
+# In particular, fmt must never rewrite source in another checkout.
+SOURCE_PRUNE := -type d \( -name '.git' -o -name '.canopy' -o -name '.worktrees' -o -name 'dist' -o -name 'build' -o -name 'tmp' -o -name 'node_modules' \) -prune
+GOFILES := $(shell find . $(SOURCE_PRUNE) -o -type f -name '*.go' -print)
+DMJFILES := $(shell find . $(SOURCE_PRUNE) -o -type f -name '*.dmj' -print)
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
 .PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget wasm-heap-gate test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity test-vm-parity test-det-parity test-det-parity-arm64-remote build-det-parity-darwin-arm64 lint-deterministic release-gate

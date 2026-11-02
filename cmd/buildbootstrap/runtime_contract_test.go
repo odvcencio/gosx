@@ -28,6 +28,36 @@ func TestGeneratedRuntimeContractMatchesGoSchema(t *testing.T) {
 	}
 }
 
+func TestRuntimeContractGenerationAndStaleness(t *testing.T) {
+	f := newFixture(t)
+	useOutputs(t, chunk("runtime.js", runtimeContractFile))
+	if err := generateRuntimeContract(f.dir, true); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("missing contract check = %v", err)
+	}
+	if err := generateRuntimeContract(f.dir, false); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(f.dir, filepath.FromSlash(runtimeContractFile))
+	if got, err := os.ReadFile(path); err != nil || string(got) != runtimeContractTypeScript() {
+		t.Fatalf("generated contract differs: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := generateRuntimeContract(f.dir, true); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("stale contract check = %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "stale" {
+		t.Fatalf("check mode changed contract: %q, %v", got, err)
+	}
+	if err := generateRuntimeContract(f.dir, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := generateRuntimeContract(f.dir, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGeneratedRuntimeContractCompilesAndErasesTypes(t *testing.T) {
 	f := newFixture(t)
 	rel := f.writeSource("runtime-abi.ts", runtimeContractTypeScript())

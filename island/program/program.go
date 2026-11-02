@@ -436,6 +436,10 @@ const (
 	TypeAny
 )
 
+// IndexTypedMap marks an OpIndex whose statically known map element type is
+// carried in Expr.Type. Unmarked indexes retain their historical behavior.
+const IndexTypedMap = "typed-map"
+
 // Program is the client-side representation of an island component.
 // It is the VM-oriented artifact shipped to the browser, distinct from the
 // compiler IR.

@@ -6,6 +6,10 @@ check_script="${script_dir}/check-repo-hygiene.sh"
 tmp_dir="$(mktemp -d)"
 
 cleanup() {
+	if [ "${GOSX_TEST_KEEP_GIT_FIXTURES:-0}" = 1 ]; then
+		echo "check-repo-hygiene-test: kept fixtures at ${tmp_dir}" >&2
+		return
+	fi
 	rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM

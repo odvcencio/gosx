@@ -10,6 +10,7 @@ import (
 	"m31labs.dev/gosx/internal/sceneprobe"
 	"math"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	gosxcss "m31labs.dev/gosx/css"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/islandartifact"
 	"m31labs.dev/gosx/internal/strictcomponent"
 	"m31labs.dev/gosx/ir"
 	islandprogram "m31labs.dev/gosx/island/program"
@@ -1427,8 +1429,23 @@ func (r *fileProgramRenderer) islandProgram(name string) (*islandprogram.Program
 	if !ok {
 		return nil, fmt.Errorf("component %q not found", name)
 	}
+	if compiled, found, err := islandartifact.Load(r.opts.SourceFile, name); found || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		r.islandPrograms[name] = compiled
+		return compiled, nil
+	}
 
-	prog, err := ir.LowerIsland(r.prog, idx)
+	// Cached IR is shared by content across directories. Give this render a
+	// shallow copy with its actual package directory for type resolution.
+	source := *r.prog
+	if r.opts.SourceFile != "" {
+		source.Dir = filepath.Dir(r.opts.SourceFile)
+	} else if r.opts.SourceDir != "" {
+		source.Dir = r.opts.SourceDir
+	}
+	prog, err := ir.LowerIsland(&source, idx)
 	if err != nil {
 		return nil, err
 	}

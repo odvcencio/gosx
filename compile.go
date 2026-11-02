@@ -188,7 +188,11 @@ func Parse(source []byte) (*gotreesitter.Tree, *gotreesitter.Language, error) {
 	return tree, lang, nil
 }
 
-// Compile parses GoSX source and produces the component IR.
+// Compile parses one self-contained GoSX source and produces the component IR.
+// Callers lowering islands from a package should set Program.Dir to the source
+// directory and Program.PackagePath to its import path before ir.LowerIsland;
+// otherwise sibling Go and GoSX declarations are not available to resolve
+// package types. File-based CLI, route, and development paths do this for you.
 func Compile(source []byte) (*ir.Program, error) {
 	tree, lang, err := Parse(source)
 	if err != nil {

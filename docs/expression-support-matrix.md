@@ -18,9 +18,9 @@ Each row is one case from `internal/evalparity`'s differential test table (`case
 
 | Backend | Agrees | Diverges | Unsupported | Total |
 |---|---|---|---|---|
-| transpile | 55 | 0 | 20 | 75 |
-| route | 74 | 1 | 0 | 75 |
-| client-vm | 73 | 2 | 0 | 75 |
+| transpile | 61 | 0 | 20 | 81 |
+| route | 80 | 1 | 0 | 81 |
+| client-vm | 79 | 2 | 0 | 81 |
 
 ## numeric
 
@@ -179,6 +179,12 @@ Notes:
 | `index_map_present` | `props.M["k"]` | agrees: `42` | agrees: `42` | agrees: `42` |
 | `index_slice_out_of_range` | `props.Items[9]` | unsupported | diverges: `(empty)` | agrees: `0` |
 | `index_map_missing_key` | `props.M["missing"]` | agrees: `0` | agrees: `0` | agrees: `0` |
+| `index_bool_map_missing_key` | `props.M["missing"]` | agrees: `false` | agrees: `false` | agrees: `false` |
+| `index_bool_map_nil` | `props.M["missing"]` | agrees: `false` | agrees: `false` | agrees: `false` |
+| `index_bool_map_present` | `props.M["k"]` | agrees: `true` | agrees: `true` | agrees: `true` |
+| `index_string_map_missing_key` | `props.M["missing"]` | agrees: `(empty)` | agrees: `(empty)` | agrees: `(empty)` |
+| `index_string_map_nil` | `props.M[props.Key]` | agrees: `(empty)` | agrees: `(empty)` | agrees: `(empty)` |
+| `index_bool_map_dynamic_present_false` | `props.M[props.Key]` | agrees: `false` | agrees: `false` | agrees: `false` |
 | `index_nested_struct_field` | `props.Nested.X` | agrees: `5` | agrees: `5` | agrees: `5` |
 
 Notes:
@@ -189,6 +195,12 @@ Notes:
   - transpile unsupported: real Go panics at runtime: "index out of range [9] with length 3"
   - route diverges: route/fileeval.go's indexSequentialValue returns the zero any (nil) past the slice bound instead of erroring, which renders as empty text rather than a zero-valued element
 - `index_map_missing_key`: missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends. File routes preserve other element zero types; dynamically nil values render as empty text and compare equal to nil
+- `index_bool_map_missing_key`: a missing boolean map key has the Go zero value false
+- `index_bool_map_nil`: a nil boolean map also returns false for a missing key
+- `index_bool_map_present`: a present boolean map key retains its value
+- `index_string_map_missing_key`: a missing string map key has the empty string zero value
+- `index_string_map_nil`: a nil string map returns the empty string
+- `index_bool_map_dynamic_present_false`: a dynamic key preserves a present false map value
 - `index_nested_struct_field`: field access on a nested named-struct props field
 
 ## bool-coercion

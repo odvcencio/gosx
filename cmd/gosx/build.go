@@ -358,9 +358,26 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err := checkStrictProject(context.Background(), dir); err != nil {
 		return fmt.Errorf("check strict components: %w", err)
 	}
+	gosxRoot, err := resolveGoSXModuleRoot(dir)
+	if err != nil {
+		return err
+	}
+	if err := checkRuntimeSourceCompatibility(gosxRoot); err != nil {
+		return err
+	}
+	if err := ensureWASMRuntimeDependencies(dir); err != nil {
+		return err
+	}
+	compiler, tinygoPath, prebuiltRuntime, err := resolveWASMCompilerForProject(opts, dir, exec.LookPath)
+	if err != nil {
+		return err
+	}
 	distDir := filepath.Join(dir, "dist")
 	if err := os.RemoveAll(distDir); err != nil {
 		return fmt.Errorf("clean output directory: %w", err)
+	}
+	if err := writeOutputModuleBoundary(distDir); err != nil {
+		return err
 	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
 	islandDir := filepath.Join(distDir, "assets", "islands")
@@ -468,14 +485,6 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Build WASM. Production builds require TinyGo so runtime size is not an
 	// optional best effort; dev builds keep the standard Go toolchain loop.
-	gosxRoot, err := resolveGoSXModuleRoot(dir)
-	if err != nil {
-		return err
-	}
-	if err := ensureWASMRuntimeDependencies(dir); err != nil {
-		return err
-	}
-
 	type wasmResult struct {
 		data         []byte
 		asset        HashedAsset
@@ -485,10 +494,6 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		err          error
 	}
 
-	compiler, tinygoPath, prebuiltRuntime, err := resolveWASMCompilerForProject(opts, dir, exec.LookPath)
-	if err != nil {
-		return err
-	}
 	if compiler == wasmCompilerTinyGo {
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
 		fmt.Printf("    TinyGo toolchain: current Go\n")

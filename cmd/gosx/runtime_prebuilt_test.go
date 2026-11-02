@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/perf/ouroboros"
 )
 
@@ -70,6 +71,7 @@ func buildFakeRuntimeRelease(tag string) *fakeRuntimeArtifactFetcher {
 	evidence := ouroboros.RuntimeBuildEvidence{
 		SchemaVersion: ouroboros.SchemaVersion,
 		Contract:      ouroboros.ContractO02,
+		RuntimeABI:    runtimewasm.ManifestIdentity(),
 		Variants:      make([]ouroboros.RuntimeArtifactVariant, 0, len(variants)),
 	}
 	assets := map[string][]byte{
@@ -95,6 +97,123 @@ func buildFakeRuntimeRelease(tag string) *fakeRuntimeArtifactFetcher {
 	}
 	assets[tag+"/"+runtimeManifestAssetName] = manifestData
 	return &fakeRuntimeArtifactFetcher{assets: assets}
+}
+
+func TestPrebuiltRuntimeRejectsMissingOrStaleABI(t *testing.T) {
+	for _, abi := range []string{"", "old-runtime-identity"} {
+		t.Run(abi, func(t *testing.T) {
+			const tag = "v1.2.3"
+			fetcher := buildFakeRuntimeRelease(tag)
+			key := tag + "/" + runtimeManifestAssetName
+			var evidence ouroboros.RuntimeBuildEvidence
+			if err := json.Unmarshal(fetcher.assets[key], &evidence); err != nil {
+				t.Fatal(err)
+			}
+			evidence.RuntimeABI = abi
+			data, err := json.Marshal(evidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fetcher.assets[key] = data
+			cache := t.TempDir()
+			_, err = resolvePrebuiltRuntime(context.Background(), cache, fetcher, tag)
+			if err == nil || !strings.Contains(err.Error(), "incompatible or missing runtime ABI") {
+				t.Fatalf("stale ABI error = %v", err)
+			}
+			if len(fetcher.calls) != 1 {
+				t.Fatalf("downloaded assets before rejecting ABI: %v", fetcher.calls)
+			}
+			cached := filepath.Join(cache, tag)
+			if err := os.WriteFile(filepath.Join(cached, runtimeManifestAssetName), data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := loadVerifiedPrebuiltRuntimeCache(cached); ok {
+				t.Fatal("stale cached ABI accepted")
+			}
+			if _, err := resolvePrebuiltRuntime(context.Background(), cache, offlineRuntimeArtifactFetcher{}, tag); err == nil || !strings.Contains(err.Error(), "cached runtime is missing, corrupt, or incompatible") {
+				t.Fatalf("offline stale cache diagnostic = %v", err)
+			}
+		})
+	}
+}
+
+func TestReleaseManifestIsAcceptedByPrebuiltResolver(t *testing.T) {
+	const tag = "v1.2.3"
+	fetcher := buildFakeRuntimeRelease(tag)
+	dir := t.TempDir()
+	for key, body := range fetcher.assets {
+		name := strings.TrimPrefix(key, tag+"/")
+		if name == runtimeManifestAssetName {
+			continue
+		}
+		if name == runtimeManifestWASMExecName {
+			name = "wasm_exec.js"
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest := filepath.Join(dir, runtimeManifestAssetName)
+	script := filepath.Join(testRepoRoot(t), "scripts", "build-runtime-release-manifest.py")
+	if output, err := exec.Command("python3", script, dir, manifest).CombinedOutput(); err != nil {
+		t.Fatalf("release manifest: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence ouroboros.RuntimeBuildEvidence
+	if err := json.Unmarshal(data, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.RuntimeABI != runtimewasm.ManifestIdentity() {
+		t.Fatalf("published ABI = %q, want %q", evidence.RuntimeABI, runtimewasm.ManifestIdentity())
+	}
+	fetcher.assets[tag+"/"+runtimeManifestAssetName] = data
+	if _, err := resolvePrebuiltRuntime(context.Background(), t.TempDir(), fetcher, tag); err != nil {
+		t.Fatalf("consumer rejected release manifest: %v", err)
+	}
+}
+
+func TestBuildRejectsStalePrebuiltBeforeReplacingOutput(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "app")
+	if err := RunInit(dir, "example.com/stale-runtime", ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, dir)
+	tidyModule(t, dir)
+	const tag = "v1.2.3"
+	stubResolveProjectGoSXVersion(t, tag, false, true)
+	fetcher := buildFakeRuntimeRelease(tag)
+	key := tag + "/" + runtimeManifestAssetName
+	var evidence ouroboros.RuntimeBuildEvidence
+	if err := json.Unmarshal(fetcher.assets[key], &evidence); err != nil {
+		t.Fatal(err)
+	}
+	evidence.RuntimeABI = "old"
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher.assets[key] = data
+	previous := newDefaultRuntimeArtifactFetcher
+	newDefaultRuntimeArtifactFetcher = func(string, string) runtimeArtifactFetcher { return fetcher }
+	t.Cleanup(func() { newDefaultRuntimeArtifactFetcher = previous })
+	t.Setenv(runtimeModeEnv, "prebuilt")
+	t.Setenv(runtimeCacheEnv, t.TempDir())
+	output := filepath.Join(dir, "dist", "preserve.txt")
+	if err := os.MkdirAll(filepath.Dir(output), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, []byte("existing output"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunBuildWithOptions(dir, BuildOptions{}); err == nil || !strings.Contains(err.Error(), "incompatible or missing runtime ABI") {
+		t.Fatalf("build error = %v", err)
+	}
+	if got, err := os.ReadFile(output); err != nil || string(got) != "existing output" {
+		t.Fatalf("previous output changed: %q, %v", got, err)
+	}
 }
 
 func TestResolvePrebuiltRuntimeFetchesVerifiesAndCaches(t *testing.T) {

@@ -25,6 +25,7 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	}
 
 	for _, rel := range []string{
+		"dist/go.mod",
 		"dist/static/index.html",
 		"dist/static/stack/index.html",
 		"dist/static/404.html",

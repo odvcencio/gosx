@@ -16,6 +16,16 @@
   identifier `nil` as a prop no island sets) now counts as unchanged; it used to make every element that compares with nil
   dirty on every walk, which kept the whole Bon Voyage dock from being copied. The reuse code is now unreachable by construction in TinyGo builds, which
   never ran it (`tinygoDefensiveReconcile`), so the production core runtime is 698,608 bytes instead of 709,386.
+## v0.59.0
+
+- Resolve island map prop types from locally available imported Go packages,
+  including aliases. Production file routes reuse verified compiled island
+  programs without requiring the Go toolchain or dependency source. Custom
+  JSON or text encoders for indexed maps remain unsupported and fail clearly.
+- Bind published browser runtime manifests to their compiler ABI so that
+  incompatible prebuilt runtimes are rejected before build output is replaced.
+- Check pinned README CLI installation commands against the release version.
+
 - Island rendering checks each authored attribute's name once, when `NewVM` or `SwapProgram` loads the program, instead of
   on every render. Validity, the `on` prefix and the URL-attribute test were recomputed per attribute per render. For an
   element with six attributes `resolveElementAttrs` takes about 0.93 us instead of 1.5 us (`go test ./client/vm -bench

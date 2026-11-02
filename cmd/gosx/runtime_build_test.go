@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/perf/ouroboros"
 )
 
@@ -36,6 +37,29 @@ func TestCanonicalRuntimeBuildRejectsEvidenceSourceBuildRootMismatch(t *testing.
 	})
 	if err == nil || !strings.Contains(err.Error(), "canonical runtime root mismatch") {
 		t.Fatalf("root mismatch error = %v", err)
+	}
+}
+
+func TestRuntimeBuildRejectsMismatchedSourceBeforeCompiling(t *testing.T) {
+	restore := saveRuntimeBuildHooks()
+	defer restore()
+	root := t.TempDir()
+	stubSuccessfulRuntimeBuild(t, root)
+	contract := filepath.Join(root, "client", "runtime", "wasm", "abi.go")
+	if err := os.WriteFile(contract, []byte("package wasm\nconst wasmManifestIdentity = \"old\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runtimeBuildTinyGoWASM = func(string, string, string, string, ...string) error {
+		t.Fatal("runtime compilation ran with an incompatible source contract")
+		return nil
+	}
+	out := filepath.Join(t.TempDir(), "runtime")
+	err := RunBuildRuntimeWithOptions(out, buildRuntimeOptions{OuroborosOut: filepath.Join(t.TempDir(), "evidence"), RepoRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "incompatible ABI") {
+		t.Fatalf("mismatched source error = %v", err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("runtime output created before rejection: %v", err)
 	}
 }
 
@@ -217,6 +241,9 @@ func TestCanonicalRuntimeBuildWritesPortableMeasuredEvidence(t *testing.T) {
 	if written == nil || written.OutputDir != "." || written.BuildInput.GoSXModuleDir != "." {
 		t.Fatalf("portable evidence identity = %+v", written)
 	}
+	if written.RuntimeABI != runtimewasm.ManifestIdentity() {
+		t.Fatalf("runtime ABI evidence = %q, want %q", written.RuntimeABI, runtimewasm.ManifestIdentity())
+	}
 	if len(written.Variants) != 5 {
 		t.Fatalf("measured variants = %d, want 5", len(written.Variants))
 	}
@@ -290,6 +317,13 @@ func saveRuntimeBuildHooks() func() {
 
 func stubSuccessfulRuntimeBuild(t *testing.T, repoRoot string) {
 	t.Helper()
+	contract := filepath.Join(repoRoot, "client", "runtime", "wasm", "abi.go")
+	if err := os.MkdirAll(filepath.Dir(contract), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(contract, []byte("package wasm\nconst wasmManifestIdentity = \""+runtimewasm.ManifestIdentity()+"\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	runtimeResolveGoSXModuleRoot = func(projectDir string) (string, error) { return projectDir, nil }
 	runtimeEnsureWASMRuntimeDeps = func(string) error { return nil }
 	runtimeResolveWASMCompiler = func() (wasmCompiler, string, error) { return wasmCompilerTinyGo, "tinygo-fixture", nil }

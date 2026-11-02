@@ -12,6 +12,10 @@ script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 source_script="${script_dir}/check-gosx-docs-deploy-source.sh"
 tmp_dir="$(mktemp -d)"
 cleanup() {
+	if [ "${GOSX_TEST_KEEP_GIT_FIXTURES:-0}" = 1 ]; then
+		echo "gosx docs deploy source test: kept fixtures at ${tmp_dir}" >&2
+		return
+	fi
 	rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM

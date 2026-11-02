@@ -136,6 +136,7 @@ var scanExts = map[string]bool{
 var skipDirs = map[string]bool{
 	".git":         true,
 	".canopy":      true,
+	".worktrees":   true,
 	"node_modules": true,
 	"vendor":       true,
 	"testdata":     true,

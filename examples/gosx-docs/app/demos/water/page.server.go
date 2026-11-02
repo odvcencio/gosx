@@ -15,7 +15,7 @@ func init() {
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				addWaterDemoPreloadHead(ctx)
-				ctx.AddHead(server.LifecycleScript("/water-diag.js"))
+				addWaterDemoDiagnosticsHead(ctx)
 				data, err := WaterDemoData()
 				if err != nil {
 					return nil, err
@@ -34,4 +34,10 @@ func init() {
 
 func addWaterDemoPreloadHead(ctx *route.RouteContext) {
 	docsapp.AddScenePosterPreload(ctx, "/demos/posters/water.webp")
+}
+
+func addWaterDemoDiagnosticsHead(ctx *route.RouteContext) {
+	if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Query("diag") == "1" {
+		ctx.AddHead(server.LifecycleScript("/water-diag.js"))
+	}
 }

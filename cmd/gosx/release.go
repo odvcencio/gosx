@@ -96,6 +96,7 @@ func buildReleaseCheckReport(root, next string) releaseCheckReport {
 	}
 	report.addCheck(checkVersionPackage())
 	report.addCheck(checkREADMERelease(filepath.Join(root, "README.md"), current))
+	report.addCheck(checkREADMEInstallVersion(filepath.Join(root, "README.md"), current))
 	report.addCheck(checkChangelogRelease(filepath.Join(root, "CHANGELOG.md"), current, "changelog.current"))
 	if report.Next != "" {
 		report.addCheck(checkChangelogRelease(filepath.Join(root, "CHANGELOG.md"), report.Next, "changelog.next"))
@@ -166,6 +167,25 @@ func checkREADMERelease(path, current string) releaseCheckEntry {
 		Expected: current,
 		Actual:   fmt.Sprintf("%d matching statements", len(matches)),
 	}
+}
+
+func checkREADMEInstallVersion(path, current string) releaseCheckEntry {
+	const name = "readme.install_version"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return releaseCheckEntry{Name: name, Status: "fail", Expected: current, Detail: err.Error()}
+	}
+	re := regexp.MustCompile(`go\s+install\s+m31labs\.dev/gosx/cmd/gosx@(v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?)`)
+	matches := re.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		return releaseCheckEntry{Name: name, Status: "skip", Expected: current, Detail: "no pinned CLI installation command"}
+	}
+	for _, match := range matches {
+		if match[1] != current {
+			return releaseCheckEntry{Name: name, Status: "fail", Expected: current, Actual: match[1], Detail: "README.md contains a stale CLI installation command"}
+		}
+	}
+	return releaseCheckEntry{Name: name, Status: "pass", Expected: current, Actual: fmt.Sprintf("%d matching commands", len(matches))}
 }
 
 func checkChangelogRelease(path, tag, name string) releaseCheckEntry {

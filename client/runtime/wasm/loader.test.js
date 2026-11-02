@@ -32,6 +32,7 @@ function makeEnvironment(options) {
   Go.prototype.run = function() {
     runCalls++;
     if (options.batchFunction) window.__gosx_set_input_batch = options.batchFunction;
+    if (options.runThrow) throw options.runThrow;
     if (options.runFailure) return Promise.reject(options.runFailure);
     if (options.skipReady) return new Promise(function() {});
     const contract = window.__gosx_runtime_contract;
@@ -121,13 +122,38 @@ test("loader rejects a feature mask that contradicts its variant", async () => {
   assert.equal(env.hydrationReady(), 0);
 });
 
+test("loader validates the manifest reference before running the runtime", async () => {
+  for (const [field, value, error] of [
+    ["featureMask", 1, /runtime reference feature mask/],
+    ["manifestHash", "stale", /runtime manifest identity/],
+  ]) {
+    const env = makeEnvironment();
+    env.reference[field] = value;
+    await assert.rejects(env.runtime.loader.load(env.reference), error);
+    assert.equal(env.runCalls(), 0);
+    assert.equal(env.hydrationReady(), 0);
+  }
+});
+
 test("loader rejects stale manifest identity", async () => {
   const env = makeEnvironment({ handshake: { manifestHash: "stale" } });
   await assert.rejects(env.runtime.loader.load(env.reference), /manifest identity mismatch/);
   assert.equal(env.hydrationReady(), 0);
 });
 
+test("loader rejects a runtime predating typed map indexes", async () => {
+  const env = makeEnvironment({ handshake: { abiVersion: 4 } });
+  await assert.rejects(env.runtime.loader.load(env.reference), /runtime ABI version mismatch/);
+  assert.equal(env.hydrationReady(), 0);
+});
+
 test("loader rejects runtime exit and missing readiness", async () => {
+  const thrown = makeEnvironment({ runThrow: new Error("synchronous runtime trap") });
+  const previousReady = thrown.window.__gosx_runtime_ready;
+  await assert.rejects(thrown.runtime.loader.load(thrown.reference), /synchronous runtime trap/);
+  assert.equal(thrown.window.__gosx_runtime_ready, previousReady);
+  assert.equal(thrown.hydrationReady(), 0);
+
   const exited = makeEnvironment({ runFailure: new Error("runtime trap") });
   await assert.rejects(exited.runtime.loader.load(exited.reference), /runtime trap/);
   assert.equal(exited.hydrationReady(), 0);

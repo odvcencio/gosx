@@ -71,6 +71,10 @@ GOWORK=off "$go_cmd" build -o "$gosx_bin" ./cmd/gosx
 GOWORK=off "$go_cmd" build -o "$wiregate_bin" ./perf/wire/cmd/wiregate
 
 "$gosx_bin" init "$scaffold_dir" --module example.com/wiregate >/dev/null
+# This gate measures the checked-out compiler and runtime together. A freshly
+# scaffolded app otherwise pins the last release, whose ABI can be older than
+# the source currently under test.
+(cd "$scaffold_dir" && GOWORK=off "$go_cmd" mod edit -replace "m31labs.dev/gosx=$root")
 mkdir -p "$scaffold_dir/app/counter"
 cp perf/wire/testdata/counter/page.gsx perf/wire/testdata/counter/page.server.go "$scaffold_dir/app/counter/"
 # Measure the same static starter/counter snapshots as the wire baseline.

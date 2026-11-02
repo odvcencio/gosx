@@ -262,6 +262,7 @@ replace corp/widget => ../widget
 func Page() Node {
 	return <widget.Widget></widget.Widget>
 }
+
 `)
 	writeTempFile(t, appDir, "app/bridge_active.go", `//go:build linux && amd64
 
@@ -305,6 +306,68 @@ var _ = widget.Marker
 	}
 	if containsPath(discovery.WatchGoFiles, inactivePath) || containsPath(discovery.WatchFiles, inactivePath) {
 		t.Fatalf("inactive platform Go source entered watch identities: go=%#v all=%#v", discovery.WatchGoFiles, discovery.WatchFiles)
+	}
+}
+
+func TestLocalGoPackageMetadataBeforeModuleSync(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	root := t.TempDir()
+	mod := "module example.com/app\n\ngo 1.22\n"
+	writeTempFile(t, root, "go.mod", mod)
+	writeTempFile(t, root, "app/active.go", "package app\nimport _ \"example.invalid/missing\"\n")
+
+	files, name, imports, err := localGoPackageMetadata(filepath.Join(root, "app"))
+	if err != nil {
+		t.Fatalf("select active files with an unresolved dependency: %v", err)
+	}
+	if name != "app" || len(files) != 1 || !strings.HasSuffix(files[0], "active.go") || !reflect.DeepEqual(imports, []string{"example.invalid/missing"}) {
+		t.Fatalf("unexpected metadata: files=%v name=%q imports=%v", files, name, imports)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil || string(got) != mod {
+		t.Fatalf("go.mod changed during discovery: %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.sum")); !os.IsNotExist(err) {
+		t.Fatalf("discovery created go.sum or could not inspect it: %v", err)
+	}
+
+	writeTempFile(t, root, "app/conflict.go", "package other\n")
+	if _, _, _, err := localGoPackageMetadata(filepath.Join(root, "app")); err == nil {
+		t.Fatal("mixed package names must fail discovery")
+	}
+}
+
+func TestLocalGoPackageMetadataWithUntidyModule(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	root := t.TempDir()
+	app := filepath.Join(root, "app")
+	mod := `module example.com/app
+
+go 1.22
+
+require example.com/dep v0.0.0
+replace example.com/dep => ../dep
+replace example.com/nested => ../nested
+`
+	writeTempFile(t, app, "go.mod", mod)
+	writeTempFile(t, app, "pkg/active.go", "package pkg\nimport _ \"example.com/dep\"\n")
+	writeTempFile(t, root, "dep/go.mod", "module example.com/dep\n\ngo 1.22\n\nrequire example.com/nested v0.0.0\n")
+	writeTempFile(t, root, "dep/dep.go", "package dep\nimport _ \"example.com/nested\"\n")
+	writeTempFile(t, root, "nested/go.mod", "module example.com/nested\n\ngo 1.22\n")
+	writeTempFile(t, root, "nested/nested.go", "package nested\n")
+	if _, err := runGoListPackageReadOnly(filepath.Join(app, "pkg"), ".", true); err == nil || !strings.Contains(err.Error(), "updates to go.mod needed") {
+		t.Fatalf("fixture must require module sync, got %v", err)
+	}
+	files, name, imports, err := localGoPackageMetadata(filepath.Join(app, "pkg"))
+	if err != nil || name != "pkg" || len(files) != 1 || !reflect.DeepEqual(imports, []string{"example.com/dep"}) {
+		t.Fatalf("metadata before module sync: files=%v name=%q imports=%v err=%v", files, name, imports, err)
+	}
+	got, err := os.ReadFile(filepath.Join(app, "go.mod"))
+	if err != nil || string(got) != mod {
+		t.Fatalf("go.mod changed during discovery: %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(app, "go.sum")); !os.IsNotExist(err) {
+		t.Fatalf("discovery created go.sum or could not inspect it: %v", err)
 	}
 }
 

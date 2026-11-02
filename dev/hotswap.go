@@ -255,6 +255,7 @@ func compileChangedGSX(path string) ([]islandProgram, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("compile %s: %w", path, err)
 	}
+	irProg.Dir = filepath.Dir(path)
 
 	var out []islandProgram
 	serverBearing := false

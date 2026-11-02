@@ -47,6 +47,10 @@ case "$1" in
    *) exit 98 ;;
   esac
   ;;
+ mod)
+  test "$#" = 4 && test "$2" = edit && test "$3" = -replace
+  printf '%s\n' "$4" > "$FAKE_TOOLS/mod-edit.log"
+  ;;
  run) shift 2; exec "$FAKE_TOOLS/gosx" "$@" ;;
  *) exit 98 ;;
 esac
@@ -92,6 +96,7 @@ sh "$script_dir/prod-water-smoke.sh" >/dev/null
 summary="$tmp_dir/step-summary.md"
 printf 'existing step summary\n' > "$summary"
 GITHUB_STEP_SUMMARY="$summary" WIRE_GATE_REUSE_DOCS=1 sh "$script_dir/wire-gate.sh" >/dev/null
+grep -Fx "m31labs.dev/gosx=$tmp_dir" "$FAKE_TOOLS/mod-edit.log" >/dev/null
 test -s build/wire-gate/wire-report.json
 grep -Fx 'existing step summary' "$summary" >/dev/null
 grep -Fx '## Wire gate' "$summary" >/dev/null
