@@ -1575,9 +1575,26 @@ func (vm *VM) appendForEach(tree *ResolvedTree, out []int, source int, node prog
 	restore := vm.captureProps(scope.propNames())
 	defer vm.restoreProps(restore)
 
-	for _, entry := range entries {
+	rows := vm.rowsOf(source)
+	for i, entry := range entries {
+		var item, key valueHash
+		hashed := false
+		if rows {
+			var itemOK, keyOK bool
+			item, itemOK = hashValue(entry.Item)
+			key, keyOK = hashValue(entry.Key)
+			hashed = itemOK && keyOK
+			if reused, ok := vm.tryReuseRow(tree, out, source, i, item, key, hashed); ok {
+				out = reused
+				continue
+			}
+		}
 		vm.bindForEachEntry(scope, entry)
+		start, from := len(tree.Nodes), len(out)
 		out = vm.appendForEachChildren(out, tree, node.Children)
+		if rows {
+			vm.recordRow(tree, source, start, out[from:], item, key, hashed)
+		}
 	}
 	return out
 }

@@ -370,7 +370,9 @@ func (island *Island) Reconcile() []PatchOp {
 	if island.diff == nil {
 		island.diff = &diffWalk{}
 	}
+	island.diff.rowMark, island.diff.rowGen = island.verbatimRows()
 	ops := reconcileTreesInto(island.diff, island.prev, next, island.program.StaticMask, island.verbatimSpans())
+	island.diff.rowMark, island.diff.rowGen = nil, 0
 	// The tree that was current becomes the buffer the walk after next
 	// writes into. It stays readable until then, which is what
 	// CurrentTree's one-reconcile validity window states.
@@ -391,6 +393,16 @@ func (island *Island) verbatimSpans() []nodeSpan {
 		return nil
 	}
 	return island.reuse.ctx.spans
+}
+
+// verbatimRows returns the marks of the rows the walk that just ran copied into
+// the index range they already held, with the generation that makes them
+// current. It follows the same rules as verbatimSpans.
+func (island *Island) verbatimRows() ([]uint32, uint32) {
+	if island.skipOff || island.reuse == nil {
+		return nil, 0
+	}
+	return island.reuse.ctx.mark, island.reuse.ctx.gen
 }
 
 // Dispose cleans up the island's signals and effects.

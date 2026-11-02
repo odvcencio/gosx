@@ -128,6 +128,10 @@ type reusePlan struct {
 	pathDepth int
 	// rows holds, for each forEach node, what row reuse needs. See rowPlan.
 	rows []rowPlan
+	// carried lists, for each reusable node, the forEach nodes with row reuse
+	// inside its subtree. When the walk copies the subtree it carries their
+	// row records along, so the next walk can still copy single rows.
+	carried [][]program.NodeID
 	// overflow is set when the analysis passes maxWatchedInputs or its work
 	// limit. newReusePlan then tries a shallower path depth.
 	overflow bool
@@ -186,6 +190,24 @@ type treeReuse struct {
 	spans []nodeSpan
 	// dirty holds one bit per watched input whose value changed.
 	dirty uint64
+	// forced is true when the dirty set is "everything" because the snapshot
+	// was not primed or an auto-key prop changed. A forced walk copies no row.
+	forced bool
+	// rows, rowRange and roots record the rows this walk produced; the prev
+	// fields hold the previous walk's. See rowRecord.
+	rows         []rowRecord
+	rowRange     []rowSpan
+	roots        []int32
+	prevRows     []rowRecord
+	prevRowRange []rowSpan
+	prevRoots    []int32
+	// mark and gen say which nodes of this walk's tree are the roots of a row
+	// that was copied into the index range it already held: mark[i] == gen.
+	// The diff stops at such a node. See diffWalk.skipsSubtree.
+	mark []uint32
+	gen  uint32
+	// rowHits counts the rows copied. Tests read it.
+	rowHits int
 	// hits counts the subtrees the last walk copied instead of
 	// evaluating. Tests read it to prove that reuse fired; nothing in the
 	// runtime path depends on it.
@@ -281,7 +303,27 @@ func buildReusePlan(prog *program.Program, pathDepth int) (plan *reusePlan, over
 	if !plan.full {
 		return nil, false
 	}
+	plan.carried = make([][]program.NodeID, len(prog.Nodes))
+	for id := range prog.Nodes {
+		if plan.nodes[id].reusable {
+			plan.carried[id] = collectRowLoops(prog, plan, program.NodeID(id), nil, 0)
+		}
+	}
 	return plan, false
+}
+
+// collectRowLoops appends the forEach nodes under id that have row reuse.
+func collectRowLoops(prog *program.Program, plan *reusePlan, id program.NodeID, out []program.NodeID, depth int) []program.NodeID {
+	if int(id) >= len(prog.Nodes) || depth > maxReuseWalkDepth {
+		return out
+	}
+	if plan.rows[id].ok && prog.Nodes[id].Kind == program.NodeForEach {
+		out = append(out, id)
+	}
+	for _, child := range prog.Nodes[id].Children {
+		out = collectRowLoops(prog, plan, child, out, depth+1)
+	}
+	return out
 }
 
 // planSingletons marks the program nodes that the walk from Root reaches
@@ -828,12 +870,15 @@ func newIslandReuse(prog *program.Program) *islandReuse {
 	if plan == nil {
 		return nil
 	}
-	return &islandReuse{
+	r := &islandReuse{
 		plan:   plan,
 		snap:   make([]watchSample, len(plan.watch)),
 		spansA: make([]nodeSpan, len(prog.Nodes)),
 		spansB: make([]nodeSpan, len(prog.Nodes)),
 	}
+	r.ctx.rowRange = make([]rowSpan, len(prog.Nodes))
+	r.ctx.prevRowRange = make([]rowSpan, len(prog.Nodes))
+	return r
 }
 
 // refresh compares every watched input against the previous snapshot,
@@ -852,6 +897,7 @@ func newIslandReuse(prog *program.Program) *islandReuse {
 func (r *islandReuse) refresh(vm *VM) uint64 {
 	r.bindWatchedSignals(vm)
 	var dirty uint64
+	forced := false
 	for i, key := range r.plan.watch {
 		rev, revValid := r.signalRevision(i)
 		if r.primed && r.unwrittenSince(i, rev, revValid) {
@@ -878,11 +924,13 @@ func (r *islandReuse) refresh(vm *VM) uint64 {
 		r.autoKeySnap[i] = cur
 		if r.primed && changed {
 			dirty = ^uint64(0)
+			forced = true
 		}
 	}
 	if !r.primed {
 		dirty = ^uint64(0)
 	}
+	r.ctx.forced = forced || !r.primed
 	return dirty
 }
 
@@ -897,6 +945,19 @@ func (r *islandReuse) begin(vm *VM, prev *ResolvedTree, dirty uint64) {
 	r.ctx.spans = r.spansA
 	r.ctx.dirty = dirty
 	r.ctx.hits = 0
+	r.ctx.rowHits = 0
+	// The walk that just finished becomes the previous one; its buffers
+	// swap with the older ones, which the new walk overwrites.
+	c := &r.ctx
+	c.prevRows, c.rows = c.rows, c.prevRows[:0]
+	c.prevRoots, c.roots = c.roots, c.prevRoots[:0]
+	c.prevRowRange, c.rowRange = c.rowRange, c.prevRowRange
+	clear(c.rowRange)
+	r.ctx.gen++
+	if r.ctx.gen == 0 {
+		clear(r.ctx.mark)
+		r.ctx.gen = 1
+	}
 	if !r.primed || prev == nil {
 		// Nothing trustworthy to copy from on the first walk.
 		r.ctx.prev = nil
@@ -964,6 +1025,7 @@ func (vm *VM) reuseResolvedNode(tree *ResolvedTree, nodeID int) (int, bool) {
 		verbatim = true
 	}
 	vm.recordReuseSpan(nodeID, base, len(tree.Nodes), verbatim)
+	vm.carryRows(nodeID, base-int(span.start))
 	r.hits++
 	return base, true
 }
@@ -984,5 +1046,178 @@ func (vm *VM) recordReuseSpan(nodeID, start, end int, verbatim bool) {
 		end:      int32(end),
 		valid:    true,
 		verbatim: verbatim,
+	}
+}
+
+// Row reuse.
+//
+// A forEach that is reached once, outside any other loop, and whose body is
+// pure can copy single rows out of the previous tree. A row is the run of
+// resolved nodes the body produced for one entry. It is a function of the
+// entry's item, key and index and of the inputs the body reads besides the loop
+// variables, so it can be copied when
+//
+//   - none of the body's other inputs is dirty (rowPlan.mask),
+//   - the walk is not forced (the first walk, or an auto-key prop moved),
+//   - the entry holds the same index as the row it replaces, which is its
+//     position, and the same key, and an item with the same content digest.
+//
+// The match is by position. A list that gains a row at the front changes every
+// item at every position and evaluates in full, which is what it did before.
+//
+// Only rows whose roots are all tagged elements are recorded. The parent's
+// mergeAdjacentText rewrites a text root in place, so a copy of a range that
+// held one could merge twice. A tagged element is never rewritten after it is
+// built, which is the same guard newReusePlan applies to whole subtrees.
+
+// rowRecord describes one row of the walk that produced a tree.
+type rowRecord struct {
+	// start and end bound the row's nodes in the tree. The row's root nodes
+	// are roots[rootLo:rootHi], absolute indices into the same tree.
+	start, end     int32
+	rootLo, rootHi int32
+	ok             bool
+	item, key      valueHash
+}
+
+// rowSpan locates the records of one forEach node inside the walk's rows.
+type rowSpan struct{ lo, hi int32 }
+
+// rowsOf reports whether the forEach node at source records rows this walk.
+func (vm *VM) rowsOf(source int) bool {
+	c := vm.reuse
+	if c == nil || c.plan == nil || source < 0 || source >= len(c.plan.rows) || source >= len(c.rowRange) {
+		return false
+	}
+	if !c.plan.rows[source].ok {
+		return false
+	}
+	n := int32(len(c.rows))
+	c.rowRange[source] = rowSpan{lo: n, hi: n}
+	return true
+}
+
+// tryReuseRow copies row i of the forEach at source out of the previous tree
+// when the rules above hold. It appends the row's roots to out.
+func (vm *VM) tryReuseRow(tree *ResolvedTree, out []int, source, i int, item, key valueHash, hashed bool) ([]int, bool) {
+	c := vm.reuse
+	if !hashed || c.prev == nil || c.forced || source >= len(c.prevRowRange) {
+		return out, false
+	}
+	span := c.prevRowRange[source]
+	if i < 0 || int(span.lo)+i >= int(span.hi) || int(span.hi) > len(c.prevRows) {
+		return out, false
+	}
+	rec := c.prevRows[int(span.lo)+i]
+	if !rec.ok || rec.item != item || rec.key != key || c.plan.rows[source].mask&c.dirty != 0 {
+		return out, false
+	}
+	if rec.start < 0 || rec.end < rec.start || int(rec.end) > len(c.prev.Nodes) || rec.rootLo < 0 || rec.rootHi < rec.rootLo || int(rec.rootHi) > len(c.prevRoots) {
+		return out, false
+	}
+	base := len(tree.Nodes)
+	tree.Nodes = append(tree.Nodes, c.prev.Nodes[rec.start:rec.end]...)
+	delta := base - int(rec.start)
+	if delta != 0 {
+		for n := base; n < len(tree.Nodes); n++ {
+			node := &tree.Nodes[n]
+			if len(node.Children) == 0 {
+				continue
+			}
+			shifted := make([]int, len(node.Children))
+			for j, child := range node.Children {
+				shifted[j] = child + delta
+			}
+			node.Children = shifted
+		}
+	}
+	rootLo := int32(len(c.roots))
+	for _, root := range c.prevRoots[rec.rootLo:rec.rootHi] {
+		moved := int(root) + delta
+		out = append(out, moved)
+		c.roots = append(c.roots, int32(moved))
+		if delta == 0 {
+			vm.markVerbatim(moved)
+		}
+	}
+	c.rows = append(c.rows, rowRecord{
+		start: int32(base), end: int32(len(tree.Nodes)),
+		rootLo: rootLo, rootHi: int32(len(c.roots)),
+		ok: true, item: item, key: key,
+	})
+	c.rowRange[source].hi = int32(len(c.rows))
+	c.rowHits++
+	return out, true
+}
+
+// markVerbatim notes that the node at idx was copied into the index it came
+// from, with its whole subtree, so the diff may stop there.
+func (vm *VM) markVerbatim(idx int) {
+	c := vm.reuse
+	for len(c.mark) <= idx {
+		c.mark = append(c.mark, 0)
+	}
+	c.mark[idx] = c.gen
+}
+
+// recordRow records the row the body just produced. roots are the indices it
+// appended to the caller's list.
+func (vm *VM) recordRow(tree *ResolvedTree, source int, start int, roots []int, item, key valueHash, hashed bool) {
+	c := vm.reuse
+	rec := rowRecord{start: int32(start), end: int32(len(tree.Nodes)), item: item, key: key}
+	ok := hashed
+	for _, root := range roots {
+		// An index outside the row, or a node with no tag, is not a root the
+		// copy can promise to leave alone.
+		if root < start || root >= len(tree.Nodes) || tree.Nodes[root].Tag == "" {
+			ok = false
+			break
+		}
+	}
+	rec.ok = ok
+	rec.rootLo = int32(len(c.roots))
+	if ok {
+		for _, root := range roots {
+			c.roots = append(c.roots, int32(root))
+		}
+	}
+	rec.rootHi = int32(len(c.roots))
+	c.rows = append(c.rows, rec)
+	c.rowRange[source].hi = int32(len(c.rows))
+}
+
+// carryRows copies the row records of the forEach nodes inside a subtree the
+// walk just copied, so the next walk still finds them. delta is how far the
+// subtree moved.
+func (vm *VM) carryRows(nodeID, delta int) {
+	c := vm.reuse
+	if nodeID >= len(c.plan.carried) {
+		return
+	}
+	for _, f := range c.plan.carried[nodeID] {
+		if int(f) >= len(c.prevRowRange) {
+			continue
+		}
+		span := c.prevRowRange[f]
+		if span.hi < span.lo || int(span.hi) > len(c.prevRows) {
+			continue
+		}
+		lo := int32(len(c.rows))
+		for _, rec := range c.prevRows[span.lo:span.hi] {
+			moved := rec
+			moved.start += int32(delta)
+			moved.end += int32(delta)
+			moved.rootLo = int32(len(c.roots))
+			if rec.ok && rec.rootLo >= 0 && rec.rootHi >= rec.rootLo && int(rec.rootHi) <= len(c.prevRoots) {
+				for _, root := range c.prevRoots[rec.rootLo:rec.rootHi] {
+					c.roots = append(c.roots, root+int32(delta))
+				}
+			} else {
+				moved.ok = false
+			}
+			moved.rootHi = int32(len(c.roots))
+			c.rows = append(c.rows, moved)
+		}
+		c.rowRange[f] = rowSpan{lo: lo, hi: int32(len(c.rows))}
 	}
 }
