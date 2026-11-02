@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.59.1
+
+- Fix downloadable release binaries incorrectly rejecting projects pinned to
+  the matching GoSX version. Release builds now record their intended tag and
+  verify both matching and mismatched project pins before publication.
+
 - Island subtree reuse now works on composite signal values. Before, any watched array or object counted as changed on every
   reconcile, so a write to a signal such as `$ui.dock` that changed only a field no template reads re-evaluated and diffed the
   whole island. Now (1) a composite compares by a 128-bit digest of its content, which still sees `OpFieldSet`/`OpIndexSet`
