@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Update the generated ocean kernels to Elio v0.6.0. Its `ocean_probe` kernel,
+  which GoSX's floated vessels (`vessel.Sea` on a spectral ocean) read on WebGPU,
+  samples the displacement textures at the texel centres (`frac(u)*n - 0.5`, wrapped
+  lower index) like the hardware sampler; it was half a texel off, up to 1 to 2 m in
+  height. Measured on an RTX 5070 Ti against a CPU evaluation of the drawn
+  textures at 35 points, the kernel's height error is 0.001 m on a static sea. Fixes #781.
 - Read the renderer's sea heights back from the GPU at points a host chooses.
   `OceanWaterReader.SetProbe(points)` takes up to 64 world (x, z) points,
   `ReadProbe(&reading)` returns, per point, the height of the displaced sea
@@ -19,10 +25,10 @@
   difference is about 1 cm RMS at 20 m from the camera, 8 to 9 cm at 160 m and
   11 to 12 cm at 215 m. Shoaling, shore run-up and a ship wake's height are not
   in it. A page that cannot read the sea back sets `Unavailable`; nothing is
-  built, drawn or read until a host asks. The WebGPU graph's own `ocean_probe`
-  kernel, which GoSX's floated vessels use, measured up to 0.5 m in height and
-  0.2 in a normal component away from the drawn textures (issue 781); the host
-  probe does not use it. `ReadProbe` does not allocate in Go; presentation
+  built, drawn or read until a host asks. The host probe has its own WebGPU pass for the normals: the graph's
+  `ocean_probe` kernel now returns matching heights (Elio v0.6.0, below) but a normal
+  that is a 0.5 m central difference of height, up to 0.2 in a component away from
+  the slope-texture normal the shader draws. `ReadProbe` does not allocate in Go; presentation
   only. See `docs/scene3d-ocean-query.md`.
 - Draw a night sky and a moonlit sea. `Sky.Night` (a `*scene.SkyNight`, physical
   sky only) adds a seeded star field and a moon disc with phase to the sky

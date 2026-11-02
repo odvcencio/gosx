@@ -478,9 +478,9 @@
     s += "  ev(q, s, dx, dz); vec3 n = normalize(cross(dz, dx)); o = vec4(level + s.y, n.x, n.z, 1.);\n}\n";
     return s;
   }
-  // probeWGSL is the same pass as probeFragment for WebGPU, as a compute shader over the cascades' displacement and slope textures. It does not use the graph's
-  // ocean_probe kernel: at 35 points it measured up to 0.5 m in height and 0.2 in a normal component from the textures the shader draws (it appears to place the
-  // bilinear texel corner where the sampler puts the texel centre; not confirmed).
+  // probeWGSL is the same pass as probeFragment for WebGPU, as a compute shader over the cascades' displacement and slope textures. The host probe uses it, not the
+  // graph's ocean_probe kernel, for the normals: since Elio v0.6.0 the kernel's heights match the drawn textures (max 0.001 m at 35 points on an RTX 5070 Ti) but its
+  // normal is a 0.5 m central difference of height, which measured up to 0.2 in a component from the slope-texture normal this pass writes (and the shader draws).
   function probeWGSL(): string {
     let s = "struct E { s: vec3<f32>, dx: vec3<f32>, dz: vec3<f32> };\nstruct P { count: u32, level: f32, a: f32, b: f32, cs: array<vec4<f32>, 4> };\n";
     s += "@group(0) @binding(0) var<uniform> P0: P;\n@group(0) @binding(1) var<storage, read> pts: array<vec4<f32>>;\n@group(0) @binding(2) var<storage, read_write> outp: array<vec4<f32>>;\n@group(0) @binding(3) var smp: sampler;\n";
