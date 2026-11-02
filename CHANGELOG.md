@@ -12,6 +12,28 @@
   incompatible prebuilt runtimes are rejected before build output is replaced.
 - Check pinned README CLI installation commands against the release version.
 
+- Read the renderer's sea heights back from the GPU at points a host chooses.
+  `OceanWaterReader.SetProbe(points)` takes up to 64 world (x, z) points,
+  `ReadProbe(&reading)` returns, per point, the height of the displaced sea
+  (ocean level included) and the normal's x and z (`scene.OceanProbeReading`),
+  tagged with the `Seq` and `Generation` of the water frame they were drawn in
+  and the number of the `SetProbe` call they answer, and `Close()` stops it. It
+  is for an external-pose host whose ship motion must follow the sea the player
+  sees: `OceanQuery.SampleWater` sums only the 24 strongest swell waves. WebGPU
+  runs a compute pass and WebGL2 draws the points into a float target read
+  through a pixel buffer behind a fence; both sample the displacement and slope
+  textures the ocean shader samples, over all cascades and with choppiness. The
+  Gerstner sea (no spectrum, or a graph that is not running) is answered by the
+  CPU query that mirrors the shader, for the tier the frame draws. The reading
+  is the level-zero, camera-independent field, not the mip-sampled mesh: the
+  difference is about 1 cm RMS at 20 m from the camera, 8 to 9 cm at 160 m and
+  11 to 12 cm at 215 m. Shoaling, shore run-up and a ship wake's height are not
+  in it. A page that cannot read the sea back sets `Unavailable`; nothing is
+  built, drawn or read until a host asks. The WebGPU graph's own `ocean_probe`
+  kernel, which GoSX's floated vessels use, measured up to 0.5 m in height and
+  0.2 in a normal component away from the drawn textures (issue 781); the host
+  probe does not use it. `ReadProbe` does not allocate in Go; presentation
+  only. See `docs/scene3d-ocean-query.md`.
 - Draw a night sky and a moonlit sea. `Sky.Night` (a `*scene.SkyNight`, physical
   sky only) adds a seeded star field and a moon disc with phase to the sky
   pass on WebGL2 and WebGPU, and when the sun is below the horizon the ocean

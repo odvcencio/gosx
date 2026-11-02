@@ -851,7 +851,7 @@
       "ocean.watch": function(rec, msg) {
         var target = String(msg.target), key = "water|" + target, scene = window.__gosx.scene3d;
         if (!current(rec) || rec.subs.has(key)) return;
-        var sink = function(w) { if (current(rec)) try { rec.worker.postMessage({ t: "ocean.water", target: target, v: w }); } catch (_) {} };
+        var sink = function(w) { if (current(rec)) try { rec.worker.postMessage({ t: "ocean.water", target: target, v: w[10] > 0 ? w : w.slice(0, 10) }); } catch (_) {} };
         var cancel = new AbortController();
         var off = function() { cancel.abort(); scene.oceanWater(target, sink, true); };
         rec.subs.set(key, off);
@@ -860,6 +860,13 @@
           var w = scene.oceanWater(target, sink);
           if (w && w[0] > 0) sink(w); // it drew before the worker asked
         }, function() { if (rec.subs.get(key) === off) rec.subs.delete(key); });
+      },
+
+      // Scene3D.OceanProbe in a worker: the host asks for readings at points; the page keeps the count and points ("ocean.points") and answers in
+      // the frames it sends ("ocean.water").
+      "ocean.points": function(rec, msg) {
+        var w = current(rec) && window.__gosx.scene3d.oceanWater(String(msg.target));
+        if (w && msg.p && msg.p.length <= 128) { w[10] = +msg.n || 0; w[338] = +msg.q || 0; w.set(msg.p, 18); }
       },
 
       // Calls that return a result use a request id.
@@ -1127,7 +1134,7 @@
     var nextViewSeq = 1;
     var viewAcks = new Map();         // seq -> {token, fn}
     var vesselOK = new Map();         // "kind|target|nodeID" -> the page's last answer
-    var waters = new Map();           // mount id -> the Float64Array(10) water frame the page keeps filling (Scene3D.OceanWater)
+    var waters = new Map();           // mount id -> the Float64Array(340) water record the page keeps filling (Scene3D.OceanWater)
 
     function post(msg, transfer) { scope.postMessage(msg, transfer || []); }
 
@@ -1301,7 +1308,10 @@
           if (method === "oceanWater") {
             // Answered here, not by the page, because a read must be synchronous; the page keeps this array current once it hears "ocean.watch".
             var water = waters.get(target);
-            if (!water) { waters.set(target, water = new Float64Array(10)); post({ t: "ocean.watch", target: target }); }
+            if (!water) {
+              waters.set(target, water = new Float64Array(340)); post({ t: "ocean.watch", target: target });
+              water.send = function() { post({ t: "ocean.points", target: target, n: water[10], q: water[338], p: water.slice(18, 146) }); }; // after the host wrote its points
+            }
             return water;
           }
           return request({ t: "scene3d", method: String(method), target: target, args: args });
@@ -1400,7 +1410,13 @@
         mount().catch(function(error) { fatal(error && error.code || "worker-mount-failed", error); });
       },
       dispose: disposeEngine,
-      "ocean.water": function(msg) { var w = waters.get(String(msg.target)); if (w && msg.v && msg.v.length === w.length) w.set(msg.v); },
+      "ocean.water": function(msg) {
+        // The page owns the water frame (0 to 9) and the probe's answer (11 to 17 and 146 on); the worker owns the count and points it asked with.
+        var w = waters.get(String(msg.target)), v = msg.v;
+        if (!w || !v || v.length < 10 || v.length > w.length) return;
+        w.set(v.subarray(0, 10));
+        if (v.length > 146) { w.set(v.subarray(11, 18), 11); w.set(v.subarray(146, 338), 146); w[339] = v[339]; }
+      },
       "vessel.result": function(msg) { vesselOK.set(String(msg.kind) + "|" + String(msg.target) + "|" + String(msg.nodeID || ""), msg.ok === true); },
       ack: function(msg) {
         var waiter = viewAcks.get(msg.seq);
