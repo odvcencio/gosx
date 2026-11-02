@@ -1536,6 +1536,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if err := generateRuntimeContract(dir, *check); err != nil {
+		return err
+	}
 	if err := generateCloudLibrary(dir, *check); err != nil {
 		return err
 	}

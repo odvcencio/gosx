@@ -8,6 +8,7 @@ import (
 	"m31labs.dev/gosx/scene"
 	"m31labs.dev/selena/bindings"
 	"math"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,6 +37,24 @@ func TestWaterDemoPreloadHead(t *testing.T) {
 	} {
 		if strings.Contains(head, href) {
 			t.Fatalf("duck asset %s must remain lazy until Duck selection: %s", href, head)
+		}
+	}
+}
+
+func TestWaterDiagnosticsScriptLoadsOnlyWhenRequested(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  bool
+	}{
+		{"", false},
+		{"?diag=0", false},
+		{"?diag=1", true},
+	} {
+		ctx := &route.RouteContext{Request: httptest.NewRequest("GET", "/demos/water"+tc.query, nil)}
+		addWaterDemoDiagnosticsHead(ctx)
+		head := gosx.RenderHTML(ctx.Head())
+		if got := strings.Contains(head, "/water-diag.js"); got != tc.want {
+			t.Errorf("query %q: script present = %t, want %t; head %s", tc.query, got, tc.want, head)
 		}
 	}
 }

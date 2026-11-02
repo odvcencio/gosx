@@ -667,6 +667,7 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	}
 
 	for _, rel := range []string{
+		"dist/go.mod",
 		"dist/build.json",
 		"dist/export.json",
 		"dist/edge/worker.js",
@@ -679,6 +680,14 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("expected build artifact %s: %v", rel, err)
 		}
+	}
+	// This only enumerates packages; no binary is built or stamped.
+	list := exec.Command("go", "list", "-buildvcs=false", "./...")
+	list.Dir = dir
+	list.Env = setCommandEnvironment(os.Environ(), map[string]string{"GOWORK": "off"})
+	listed, err := list.CombinedOutput()
+	if err != nil || strings.Contains(string(listed), "example.com/build-app/dist/") {
+		t.Fatalf("production output entered Go package discovery: %v\n%s", err, listed)
 	}
 	for _, rel := range []string{
 		"dist/static/assets/runtime",

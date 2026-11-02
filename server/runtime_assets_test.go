@@ -105,6 +105,57 @@ func TestRuntimeManifestDirectAssetPathUsesDistAssetsForAppRoot(t *testing.T) {
 	}
 }
 
+func TestDevVersionedRuntimeAssetsPreferStagedFilesOverOldDist(t *testing.T) {
+	t.Setenv("GOSX_DEV", "1")
+	root := t.TempDir()
+	buildDir := filepath.Join(root, "build")
+	assetsDir := filepath.Join(root, "dist", "assets", "runtime")
+	for _, dir := range []string{buildDir, assetsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"bootstrap-runtime.js", "bootstrap-feature-engines.js", "gosx-runtime.wasm"} {
+		if err := os.WriteFile(filepath.Join(buildDir, name), []byte("current "+name), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"old-runtime.js", "old-engines.js", "old-runtime.wasm"} {
+		if err := os.WriteFile(filepath.Join(assetsDir, name), []byte("stale "+name), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest := buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		BootstrapRuntime:        buildmanifest.HashedAsset{File: "old-runtime.js"},
+		BootstrapFeatureEngines: buildmanifest.HashedAsset{File: "old-engines.js"},
+		WASM:                    buildmanifest.HashedAsset{File: "old-runtime.wasm"},
+	}}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dist", "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+	for _, tc := range []struct{ url, body string }{
+		{"/gosx/bootstrap-runtime.js?v=current", "current bootstrap-runtime.js"},
+		{"/gosx/bootstrap-feature-engines.js?v=current", "current bootstrap-feature-engines.js"},
+		{"/gosx/runtime.wasm?v=current", "current gosx-runtime.wasm"},
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.url, nil))
+		if w.Code != http.StatusOK || w.Body.String() != tc.body {
+			t.Errorf("%s: status=%d body=%q, want 200 and %q", tc.url, w.Code, w.Body.String(), tc.body)
+		}
+		if got := w.Header().Get("Cache-Control"); !strings.Contains(got, "no-store") {
+			t.Errorf("%s: cache control %q must not cache a dev asset", tc.url, got)
+		}
+	}
+}
+
 func TestRuntimeManifestDirectAssetPathRejectsTraversal(t *testing.T) {
 	root := t.TempDir()
 	if got, ok := runtimeManifestDirectAssetPath(root, "assets/../secret.js"); ok || got != "" {

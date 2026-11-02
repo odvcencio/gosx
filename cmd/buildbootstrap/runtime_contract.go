@@ -1,11 +1,41 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 )
+
+// generateRuntimeContract keeps the generated source in the same workflow as
+// the bundles that consume it. Synthetic chunk tables may omit the contract.
+func generateRuntimeContract(dir string, check bool) error {
+	requested := false
+	for _, entry := range outputs {
+		for _, source := range entry.sources {
+			requested = requested || source.rel == runtimeContractFile
+		}
+	}
+	if !requested {
+		return nil
+	}
+	path := filepath.Join(dir, filepath.FromSlash(runtimeContractFile))
+	want := []byte(runtimeContractTypeScript())
+	got, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(got, want) {
+		return nil
+	}
+	if check {
+		return fmt.Errorf("generated runtime ABI contract is stale: %s; run make build-bootstrap", path)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, want, 0644)
+}
 
 // runtimeContractTypeScript renders the executable browser/WASM contract.
 // Every value comes from the Go codec package. The generated file is included

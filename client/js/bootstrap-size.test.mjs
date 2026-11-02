@@ -985,8 +985,10 @@ const budgets = [
     // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 2,061,634 raw, 575,527 gzip and 472,822 Brotli bytes on the monolith;
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
   // 31 October 2026 (spectral ocean renderer, supersedes #737): measured raw 2,064,095 / gzip 576,417 / brotli 473,661 bytes; only the exhausted targets move, to their exact minima under the unchanged allowance. The spectral ocean renderer's plumbing in this shared chunk (see bootstrap-feature-scene3d-ocean-fft.js for the lazy renderer).
+    // The combined compiler/runtime and island optimizations measure 476119 Brotli bytes;
+    // increase only the exhausted target by 15 bytes, with no added allowance.
     file: "bootstrap.js", raw: 2006911, gzip: 563529,
-    brotli: 459720 },
+    brotli: 459735 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw

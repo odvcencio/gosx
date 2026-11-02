@@ -8,6 +8,10 @@ workflow_ref_script="${script_dir}/check-release-workflow-ref.sh"
 tag_grammar_script="${script_dir}/check-release-tag-grammar.sh"
 tmp_dir="$(mktemp -d)"
 cleanup() {
+	if [ "${GOSX_TEST_KEEP_GIT_FIXTURES:-0}" = 1 ]; then
+		echo "check-release-tag-ancestry-test: kept fixtures at ${tmp_dir}" >&2
+		return
+	fi
 	rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM

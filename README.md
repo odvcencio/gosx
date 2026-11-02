@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.58.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.59.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 Desktop hosts can discover late native-engine registrations with
 `window.gosxDesktop.refreshMethods()`, force selected components onto the WASM
@@ -17,7 +17,10 @@ For native mobile, editor, admin, and CMS periphery, read: [using-gosx-ecosystem
 
 ## What if you never had to leave Go?
 
-GoSX starts from a simple premise: the browser is a render target, not a runtime. Server components are Go functions that return HTML. Interactive components compile to bytecode and run in a shared WASM VM. Everything between those two points — the parser, the compiler, the reconciler, the signal system, the 3D scene graph, the vector store, the collaborative document model — is pure Go.
+GoSX starts with server-rendered Go components and adds browser interactivity where an application needs it. Interactive islands compile to bytecode and run in a shared Go/WASM VM. GoSX's browser host is authored in TypeScript and compiled to JavaScript: it loads WASM, connects events and DOM patches, and implements browser-facing features including the WebGPU and WebGL renderers. Applications need no JavaScript toolchain to use these features, but islands run JavaScript and WASM in the browser. The parser, compiler, signal system, and typed scene graph are Go packages.
+
+See [GoSX in the browser](docs/browser-runtime.md) for the boundary between the
+Go VM, the TypeScript host, and application code.
 
 ```gsx
 package app
@@ -125,6 +128,16 @@ slice elements, including no new elements. Additions use the VM's existing
 immutable append operation; earlier slice values remain independent. Variadic
 slice expansion (`append(items, more...)`) is not in this expression subset.
 
+For direct indexed props, file-based island compilation resolves map types
+from selected sibling Go and GoSX files and locally available imported Go
+modules. Unsupported map key or element types, custom JSON/text encoders, and
+dependencies the package checker cannot resolve are rejected rather than
+guessed. Resolve missing dependencies with `go mod download` before checking or
+building. Production file routes use their verified built island programs, so
+the deployed server does not need the Go toolchain or dependency sources.
+Callers of `gosx.Compile` that lower a package island themselves must supply
+the program's source directory and package path before `ir.LowerIsland`.
+
 Strict `//gosx:engine` declarations and automatic `.gsx` engine-surface
 discovery remain preview/post-v1. The v1 engine contract is the programmatic
 `engine.Config` / `ctx.Engine` surface described below.
@@ -214,7 +227,7 @@ use programmatic `engine.Config` / `ctx.Engine` for v1 engine work.
 GoSX is opinionated about a small number of things and flexible about everything else.
 
 - **The browser is a render target.** Server components are the baseline. Client-side JavaScript is something you opt into, feature by feature, not a default ambient runtime.
-- **One language, explicit browser compiler.** You write Go. `go build` produces the server and CLI, `gosx dev` keeps the standard Go WASM loop for local iteration, and production `gosx build --prod` requires TinyGo for browser runtime output. There is no app-side Node, npm, webpack, or bundler config.
+- **One language, explicit browser compiler.** You write Go. `go build` produces the server and CLI, and `gosx dev` uses standard Go WASM for local iteration. Production builds use TinyGo or, for eligible pinned releases, a verified prebuilt runtime. There is no app-side Node, npm, webpack, or bundler config.
 - **No JavaScript toolchain is not zero browser cost.** GoSX still ships a measured browser bootstrap, feature chunks, and WASM runtime only when a route needs them. The performance contract is that the compiler and build pipeline justify every shipped runtime slice.
 - **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
 - **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
@@ -244,6 +257,14 @@ streams. See [browser services and lifetimes](docs/browser-services.md) for the
 small-package boundaries and buffer ownership contracts.
 
 ## Quick Start
+
+Install Go 1.26 or newer and the CLI for the release you want to use:
+
+```bash
+go install m31labs.dev/gosx/cmd/gosx@v0.59.0
+```
+
+Make sure your Go binary directory is on `PATH`, then create an app:
 
 ```bash
 gosx init my-app
@@ -913,10 +934,14 @@ gosx perf budget perf.json budget.json # Check a saved report
 gosx size [--json] dist               # Report exact gzip sizes and feature chunks
 ```
 
+When formatting a directory, `gosx fmt` skips nested `.git`, `.canopy`,
+`.worktrees`, `node_modules`, `build`, `dist`, and `tmp` directories. Pass a
+file or directory explicitly to format it.
+
 Performance instrumentation preserves chained runtime-ready callbacks, including
 soft navigation, and records readiness once per page.
 
-Production builds require TinyGo on `PATH`, emit capability-linked `core`,
+Production builds use TinyGo or the [verified prebuilt runtime](#prebuilt-runtime-no-tinygo-required) for eligible pinned releases, emit capability-linked `core`,
 `engine`, `collab`, and `full` runtime profiles (plus the legacy `islands`
 compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
@@ -953,6 +978,9 @@ Install the CLI at the version required by your project's `go.mod`, using
 binary's compiled module version, so matching pseudo-versions work as well as
 releases. Local development binaries without a module version fall back to the
 release constant. A genuine mismatch still reports the matching install command.
+Build, dev, and export also check the browser runtime ABI: local compiler
+changes that alter island semantics must use matching GoSX runtime source,
+even if the release constant has not changed.
 
 ### Prebuilt runtime (no TinyGo required)
 
@@ -966,7 +994,8 @@ falls back to a release-matched, integrity-verified prebuilt runtime:
 2. It fetches that release's runtime WASM variants, `wasm_exec.js` shim, and
    a hashed manifest (`gosx-runtime-artifacts.json`) from the GitHub release
    published for that tag.
-3. It verifies every file's SHA-256 against the manifest before staging it
+3. It checks the manifest's runtime ABI identity, verifies every file's
+   SHA-256 against the manifest before staging it
    into `dist/`, and caches the verified files under
    `$GOSX_RUNTIME_CACHE` (default `os.UserCacheDir()/gosx/runtime`) so a
    later build for the same version fetches nothing.
@@ -987,6 +1016,11 @@ A project still building against unreleased GoSX source (a `go.mod` local
 always requires TinyGo — there is no prebuilt runtime for source that was
 never tagged. `gosx dev` never needs TinyGo; it always uses the standard Go
 WASM compiler.
+
+The compiler, browser host, and WASM runtime must share a compatible ABI.
+An older prebuilt runtime without the required ABI identity is rejected;
+use the CLI for the project's release, or use matching local source and TinyGo.
+The browser also rejects a mismatched runtime before hydration.
 
 When building runtimes with TinyGo, `gosx build` uses stable source-module
 paths under `$GOSX_RUNTIME_CACHE/tinygo-build` so TinyGo can reuse its package
@@ -1362,6 +1396,13 @@ Three tiers:
 
 ## Testing
 
+The tracked `build/go.mod` is a module boundary for generated build artifacts.
+It keeps retained files under `build/` out of the root `go test ./...` and
+`go list ./...` package patterns; it is not an application module. Keep or
+restore this file when cleaning build outputs. New builds and exports also
+write a boundary in `dist/go.mod`, so copied runtime source does not enter the
+app's package pattern. Older outputs without that boundary can still be seen.
+
 ```bash
 make test          # Full package test pass
 make test-race     # Race detector enabled
@@ -1403,7 +1444,7 @@ The six libraries the framework's runtime paths use:
 - [golang.org/x/image](https://pkg.go.dev/golang.org/x/image) — image optimization
 - [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) — HTML utilities
 
-**The module graph is larger, and `go.mod` is the honest record.** Beyond those six it carries direct requires for tooling and optional subsystems: `chromedp` and `cdproto` (the `perf` profiler and browser tests), `brotli` (asset compression), `fsnotify` (the dev watcher), `mdpp` (Markdown++ in `content`), `pixelmatch` (visual regression), `go-redis` and `miniredis` (the optional Redis stores and their tests), `selena` (shader compilation), and `golang.org/x/sys`. A `//go:build tools` file additionally pins sibling M31 Labs modules ahead of their migrations, which is why `google.golang.org/grpc` and `protobuf` appear in `go.sum` — they reach no shipped binary, but they do reach a dependency audit.
+**The module graph is larger, and `go.mod` is the honest record.** Beyond those six it carries direct requires for tooling and optional subsystems: `chromedp` and `cdproto` (the `perf` profiler and browser tests), `brotli` (asset compression), `fsnotify` (the dev watcher), `mdpp` (Markdown++ in `content`), `pixelmatch` (visual regression), `go-redis` and `miniredis` (the optional Redis stores and their tests), `selena` (shader compilation), and `golang.org/x/sys`. Imports and their transitive requirements enter the graph when used, rather than being pinned for prospective integrations.
 
 **No CGo.** `CGO_ENABLED=0 go build ./...` is clean, and `windows/amd64`, `darwin/arm64` and `linux/arm64` all cross-compile clean. `GOOS=js GOARCH=wasm` builds every package, with no exceptions — `make build-wasm-all` is a CI gate, so this sentence fails the build rather than going stale.
 
@@ -1420,7 +1461,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.58.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.59.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

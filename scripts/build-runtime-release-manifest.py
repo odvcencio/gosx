@@ -19,6 +19,7 @@ evidence.
 import hashlib
 import json
 import os
+import re
 import sys
 
 # (variant id, file name) pairs — must match runtimeBuildTargets() in
@@ -31,6 +32,16 @@ VARIANTS = [
     ("islands", "gosx-runtime-islands.wasm"),
 ]
 SHIM_FILE = "wasm_exec.js"
+ABI_SOURCE = os.path.join(os.path.dirname(__file__), "..", "client", "runtime", "wasm", "abi.go")
+
+
+def runtime_abi():
+    with open(ABI_SOURCE, encoding="utf-8") as f:
+        source = f.read()
+    matches = re.findall(r'^const wasmManifestIdentity = "([0-9a-f]{64})"$', source, re.MULTILINE)
+    if len(matches) != 1:
+        raise ValueError("runtime ABI source must declare exactly one valid manifest identity")
+    return matches[0]
 
 
 def digest(path):
@@ -75,6 +86,7 @@ def main(argv):
     manifest = {
         "schemaVersion": "gosx.ouroboros.baseline.v2",
         "contractVersion": "O0.2",
+        "runtimeABI": runtime_abi(),
         "variants": variants,
         "notes": [
             "Published by release-governed.yml's build-runtime-release job.",

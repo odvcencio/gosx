@@ -63,7 +63,7 @@ func TestGroupSpinNestedScaleAndStaticPrefix(t *testing.T) {
 	// Independent 2D construction: inner rotates -pi/4, outer rotates pi/2,
 	// then the static ancestor scales world axes and translates.
 	x, y := math.Sqrt(.5), -math.Sqrt(.5)
-	x, y = x+2, y
+	x += 2
 	x, y = -y, x
 	x = (x+1)*2 + 5
 	y = y*3 - 2

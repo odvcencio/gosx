@@ -59,31 +59,11 @@ var allowedWrongPath = map[string]string{
 // repository and there are dozens of them, including the one in the release
 // workflow that checks the vanity redirect resolves to exactly that URL.
 func TestNoDocumentationUsesTheRepositoryPathAsAnImportPath(t *testing.T) {
-	checked := 0
-	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if skippedDirs[entry.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		switch filepath.Ext(path) {
-		case ".go", ".gsx", ".md", ".mod", ".yml", ".yaml", ".html":
-		default:
-			return nil
-		}
-		if reason, ok := allowedWrongPath[filepath.ToSlash(path)]; ok {
+	checked, err := walkModulePathFiles(".", func(path string, data []byte) {
+		if reason, ok := allowedWrongPath[path]; ok {
 			t.Logf("skipping %s: %s", path, reason)
-			return nil
+			return
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		checked++
 		for number, line := range strings.Split(string(data), "\n") {
 			// Strip repository URLs first, so a line carrying both a link
 			// and an import is still judged on the import.
@@ -97,7 +77,6 @@ func TestNoDocumentationUsesTheRepositoryPathAsAnImportPath(t *testing.T) {
 					path, number+1, strings.TrimSpace(line))
 			}
 		}
-		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk: %v", err)
@@ -108,6 +87,64 @@ func TestNoDocumentationUsesTheRepositoryPathAsAnImportPath(t *testing.T) {
 		t.Fatalf("walked only %d files, expected the whole repository", checked)
 	}
 	t.Logf("checked %d files", checked)
+}
+
+func walkModulePathFiles(root string, visit func(string, []byte)) (int, error) {
+	checked := 0
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			// These top-level directories contain retained output or other
+			// checkouts, not source in the canonical repository.
+			if skippedDirs[entry.Name()] || rel == ".worktrees" || rel == "build" || rel == "tmp" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".go", ".gsx", ".md", ".mod", ".yml", ".yaml", ".html":
+		default:
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		checked++
+		visit(filepath.ToSlash(rel), data)
+		return nil
+	})
+	return checked, err
+}
+
+func TestModulePathWalkSkipsRetainedArtifacts(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{
+		"app/page.go", "nested/build/source.go", ".worktrees/old/page.go",
+		"build/validation/page.go", "tmp/old/page.go",
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package sample\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]bool{}
+	_, err := walkModulePathFiles(root, func(path string, _ []byte) { seen[path] = true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || !seen["app/page.go"] || !seen["nested/build/source.go"] {
+		t.Fatalf("walk visited %v; want only current source", seen)
+	}
 }
 
 // TestModuleDeclaresTheVanityPath is the fact the test above depends on. If

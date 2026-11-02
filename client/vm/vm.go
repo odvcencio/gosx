@@ -1049,7 +1049,16 @@ func (vm *VM) conditionalValue(e *program.Expr) Value {
 
 func (vm *VM) indexValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 2) {
-		return vm.Eval(e.Operands[0]).IndexVal(vm.Eval(e.Operands[1]))
+		target, key := vm.Eval(e.Operands[0]), vm.Eval(e.Operands[1])
+		if e.Value == program.IndexTypedMap && (e.Type == program.TypeBool || e.Type == program.TypeString) {
+			if target.isMap() {
+				if value, ok := target.dict()[key.String()]; ok {
+					return value
+				}
+			}
+			return ZeroValue(e.Type)
+		}
+		return target.IndexVal(key)
 	}
 	return ZeroValue(program.TypeAny)
 }

@@ -1,10 +1,33 @@
 package claimcheck
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 )
+
+func TestScanSkipsRetainedWorktrees(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"source.go", ".worktrees/old/source.go"} {
+		file := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		marker := "gosx:" + "claim has target.go `example`"
+		if err := os.WriteFile(file, []byte("package example\n// "+marker+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claims, malformed, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(malformed) != 0 || len(claims) != 1 || claims[0].Source != "source.go" {
+		t.Fatalf("got claims %v and malformed %v; want only current source", claims, malformed)
+	}
+}
 
 // The fixture corpus under testdata/corpus carries one marker per case, and
 // every marker ends with a unique "case-..." tag. The tests below address a

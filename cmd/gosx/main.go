@@ -507,6 +507,7 @@ func runCheck(file string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("%s:%w", file, err)
 	}
+	prog.Dir = filepath.Dir(file)
 	if len(prog.Components) == 0 {
 		tree, lang, err := gosx.Parse(source)
 		if err == nil {
@@ -659,7 +660,18 @@ func runFmt(path string, stderr io.Writer, check bool) (int, error) {
 			fmt.Fprintf(stderr, "gosx fmt: %s: %v\n", p, walkErr)
 			return nil
 		}
-		if fi.IsDir() || filepath.Ext(fi.Name()) != ".gsx" {
+		if fi.IsDir() {
+			// A directory explicitly supplied by the caller remains eligible;
+			// only recursive discovery skips other checkouts and output trees.
+			if p != path {
+				switch fi.Name() {
+				case ".git", ".canopy", ".worktrees", "node_modules", "build", "dist", "tmp":
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if filepath.Ext(fi.Name()) != ".gsx" {
 			return nil
 		}
 		if err := formatFile(p, check); err != nil {

@@ -113,6 +113,9 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 	if canonical && gosxRoot != projectRoot {
 		return fmt.Errorf("canonical runtime root mismatch: --root resolves to %s but GoSX compilation resolves to %s", projectRoot, gosxRoot)
 	}
+	if err := checkRuntimeSourceCompatibility(gosxRoot); err != nil {
+		return err
+	}
 	if err := runtimeEnsureWASMRuntimeDeps(gosxRoot); err != nil {
 		return err
 	}
@@ -240,6 +243,7 @@ func newRuntimeBuildEvidence(outDir string, canonical bool) *ouroboros.RuntimeBu
 	evidence := &ouroboros.RuntimeBuildEvidence{
 		SchemaVersion: ouroboros.SchemaVersion,
 		Contract:      ouroboros.ContractO02,
+		RuntimeABI:    runtimewasm.ManifestIdentity(),
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 		OutputDir:     outDir,
 		Variants:      []ouroboros.RuntimeArtifactVariant{},
