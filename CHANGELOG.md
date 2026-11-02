@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.59.1
+
+- Fix downloadable release binaries incorrectly rejecting projects pinned to
+  the matching GoSX version. Release builds now record their intended tag and
+  verify both matching and mismatched project pins before publication.
+
 ## v0.59.0
 
 - Resolve island map prop types from locally available imported Go packages,
