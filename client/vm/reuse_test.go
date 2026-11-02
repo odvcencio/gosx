@@ -278,7 +278,8 @@ func objectSignalProgram() *program.Program {
 
 // TestReuseTreatsCompositeSignalAsAlwaysDirty covers the in-place mutation
 // contract. OpFieldSet writes through the same map every alias holds, so a
-// value snapshot of an object signal always compares equal to itself.
+// stored reference to an object signal always compares equal to itself. The
+// snapshot is therefore a digest of the content, which changes with the edit.
 func TestReuseTreatsCompositeSignalAsAlwaysDirty(t *testing.T) {
 	island := NewIsland(objectSignalProgram(), `{}`)
 	fields := map[string]Value{"label": StringVal("first")}

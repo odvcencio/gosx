@@ -4,6 +4,7 @@ import (
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/signal"
 	"math"
+	"strings"
 )
 
 // Subtree reuse — route (b) of the Reconcile design note in island.go.
@@ -32,11 +33,15 @@ import (
 // silently stops updating. A value comparison knows none of them and still
 // catches all of them.
 //
-// The comparison only works for scalar payloads. A composite Value (array,
-// object, closure) is mutated in place by OpFieldSet and OpIndexSet, so the
-// snapshot would alias the mutated storage and always compare equal. Any
-// watched input holding a composite is therefore marked dirty on every
-// reconcile. See sampleValue.
+// A scalar input is compared by value. A composite input (array, object) is
+// compared by a digest of its content, because OpFieldSet and OpIndexSet edit
+// a composite in place: a stored reference would alias the edit and always
+// compare equal. The digest taken at the previous walk describes the content
+// that walk read, so an in-place edit shows up as a different digest. A read of
+// the form signal.field.field... watches only the part of the value it names
+// (see signalFieldPath), so a write that changes other fields leaves the node
+// clean. A closure, or a value nested past the evaluator's limit, cannot be
+// digested and counts as changed on every reconcile.
 //
 // What is deliberately NOT reused:
 //
@@ -44,7 +49,9 @@ import (
 //     `as`/`index` names per iteration, so the same program node resolves to
 //     different content in each pass. Reuse is gated on "singleton": the node
 //     is reached exactly once from the root and no ancestor is a forEach.
-//     TestForEachNodeUpdatesThroughReboundProp pins this.
+//     TestForEachNodeUpdatesThroughReboundProp pins this. The loop variables
+//     are internal to their forEach, so they add nothing to the read set of the
+//     elements around it.
 //   - Text and expression nodes. mergeAdjacentText concatenates a run of
 //     sibling text nodes into the first one, in place. Reusing a node whose
 //     Text was already merged would concatenate the same text twice. Only
@@ -79,7 +86,21 @@ const (
 type watchKey struct {
 	kind watchKind
 	name string
+	// path names the part of a signal's value the key watches: field names
+	// joined by pathSep, or "" for the whole value. Only signals carry a
+	// path. A key with a path is dirty when the digest of that part of the
+	// value changes, so a write that touches other fields leaves it clean.
+	path string
 }
+
+// pathSep joins the field names of a watched path. It cannot appear in a field
+// name the lowerer emits, and a name that contained it would only make two
+// distinct paths share a key, which widens a read set and never narrows it.
+const pathSep = "\x1f"
+
+// maxPathDepth is the longest field path one watch key follows. A longer
+// chain watches its first maxPathDepth fields.
+const maxPathDepth = 16
 
 // nodeReuseInfo is the per-program-node result of the static analysis.
 type nodeReuseInfo struct {
@@ -95,12 +116,34 @@ type nodeReuseInfo struct {
 // reconciles and a SwapProgram simply builds a new one.
 type reusePlan struct {
 	watch []watchKey
+	// paths holds the split field names of watch[i], nil for a whole-value
+	// key. It is parallel to watch.
+	paths [][]string
 	index map[watchKey]int
 	nodes []nodeReuseInfo
 	exprs []exprReuseInfo
+	// pathDepth is the field depth the plan was built with. A program that
+	// reads more distinct paths than maxWatchedInputs is analysed again at a
+	// shallower depth, which merges deep paths into their ancestors.
+	pathDepth int
+	// rows holds, for each forEach node, what row reuse needs. See rowPlan.
+	rows []rowPlan
+	// overflow is set when the analysis passes maxWatchedInputs or its work
+	// limit. newReusePlan then tries a shallower path depth.
+	overflow bool
 	// full is true when at least one node is reusable. A plan with no
 	// reusable node saves nothing and is dropped by newReusePlan.
 	full bool
+}
+
+// rowPlan is the per-forEach analysis for reusing single rows.
+type rowPlan struct {
+	// mask is the read set of the body, less the loop variables the forEach
+	// binds. A row can be copied only when none of its bits is dirty.
+	mask uint64
+	// ok reports that the forEach is reached once, outside any other loop,
+	// and that every expression in its body is pure.
+	ok bool
 }
 
 // exprReuseInfo memoizes the analysis of one expression.
@@ -173,18 +216,46 @@ type treeReuse struct {
 // newReusePlan analyses prog and returns a plan, or nil when subtree reuse
 // cannot help. A nil plan makes every reconcile evaluate the whole tree, so
 // returning nil is always safe.
+//
+// The read set is a 64-bit mask, so a program that reads more than
+// maxWatchedInputs distinct inputs is analysed again with shorter field paths,
+// down to whole values. Reading a longer path as its ancestor only widens a
+// read set, which is always safe.
 func newReusePlan(prog *program.Program) *reusePlan {
 	if prog == nil || len(prog.Nodes) == 0 || int(prog.Root) >= len(prog.Nodes) {
 		return nil
 	}
-	plan := &reusePlan{
-		index: make(map[watchKey]int),
-		nodes: make([]nodeReuseInfo, len(prog.Nodes)),
-		exprs: make([]exprReuseInfo, len(prog.Exprs)),
+	for _, depth := range [...]int{maxPathDepth, 3, 2, 1, 0} {
+		plan, overflow := buildReusePlan(prog, depth)
+		if !overflow {
+			return plan
+		}
+	}
+	return nil
+}
+
+// reuseWorkLimit bounds the node and expression visits one analysis may make.
+// The lowerer emits a tree, so a well-formed program stays far below it; a
+// hand-built graph that shares subtrees heavily would otherwise cost time
+// proportional to its paths, not its size.
+const reuseWorkLimit = 1 << 22
+
+func buildReusePlan(prog *program.Program, pathDepth int) (plan *reusePlan, overflow bool) {
+	plan = &reusePlan{
+		index:     make(map[watchKey]int),
+		nodes:     make([]nodeReuseInfo, len(prog.Nodes)),
+		exprs:     make([]exprReuseInfo, len(prog.Exprs)),
+		rows:      make([]rowPlan, len(prog.Nodes)),
+		pathDepth: pathDepth,
+	}
+	pure := make([]bool, len(prog.Nodes))
+	work := 0
+	plan.walkNode(prog, prog.Root, nil, 0, pure, &work)
+	if plan.overflow {
+		return nil, true
 	}
 	singleton := planSingletons(prog)
 	for id := range prog.Nodes {
-		mask, pure := plan.nodeInfo(prog, program.NodeID(id), 0)
 		node := prog.Nodes[id]
 		// The tag requirement is the merge guard, decided here so the walk
 		// pays nothing for it. mergeAdjacentText appends a following
@@ -194,16 +265,23 @@ func newReusePlan(prog *program.Program) *reusePlan {
 		// would both corrupt the tree and break the diff skip. Only a tagged
 		// element can be reused, and every element the lowerer emits has a
 		// tag.
-		reusable := pure && singleton[id] && node.Kind == program.NodeElement && node.Tag != ""
-		plan.nodes[id] = nodeReuseInfo{mask: mask, reusable: reusable}
+		reusable := pure[id] && singleton[id] && node.Kind == program.NodeElement && node.Tag != ""
+		plan.nodes[id].reusable = reusable
 		if reusable {
 			plan.full = true
 		}
+		if node.Kind == program.NodeForEach {
+			row := &plan.rows[id]
+			row.ok = row.ok && singleton[id]
+			if row.ok {
+				plan.full = true
+			}
+		}
 	}
-	if !plan.full || len(plan.watch) > maxWatchedInputs {
-		return nil
+	if !plan.full {
+		return nil, false
 	}
-	return plan
+	return plan, false
 }
 
 // planSingletons marks the program nodes that the walk from Root reaches
@@ -245,52 +323,85 @@ func planSingletons(prog *program.Program) []bool {
 	return singleton
 }
 
-// nodeInfo returns the read set of the subtree rooted at id, and whether
-// every expression in that subtree is pure.
-func (plan *reusePlan) nodeInfo(prog *program.Program, id program.NodeID, depth int) (uint64, bool) {
-	if int(id) >= len(prog.Nodes) || depth > maxReuseWalkDepth {
+// walkNode records the read set of the subtree rooted at id, and returns it
+// with whether every expression in that subtree is pure. bound names the loop
+// variables in scope: a forEach binds its item, index and key names for its
+// body, so a read of one is internal to the loop and adds nothing to the read
+// set of the nodes around it. Without that rule every element that contains a
+// list would read a prop that is absent between walks, and would be dirty on
+// every walk.
+func (plan *reusePlan) walkNode(prog *program.Program, id program.NodeID, bound []string, depth int, pure []bool, work *int) (uint64, bool) {
+	*work++
+	if int(id) >= len(prog.Nodes) || depth > maxReuseWalkDepth || *work > reuseWorkLimit {
+		if *work > reuseWorkLimit {
+			plan.overflow = true
+		}
 		return 0, false
 	}
 	node := prog.Nodes[id]
 	var mask uint64
+	ok := true
 	// Every node kind that carries an expression stores it in the same
 	// field: NodeExpr's content, NodeForEach's collection, NodeConditional's
 	// condition. NodeElement and NodeText leave it at zero, and expression 0
 	// is a legal ID, so read it only for the kinds that use it.
 	switch node.Kind {
 	case program.NodeExpr, program.NodeForEach, program.NodeConditional:
-		exprMask, pure := plan.exprInfo(prog, node.Expr, depth+1)
-		if !pure {
-			return 0, false
-		}
+		exprMask, exprPure := plan.exprInfo(prog, node.Expr, depth+1, bound, work)
 		mask |= exprMask
+		ok = ok && exprPure
 	}
 	for _, attr := range node.Attrs {
 		if attr.Kind != program.AttrExpr {
 			continue
 		}
-		exprMask, pure := plan.exprInfo(prog, attr.Expr, depth+1)
-		if !pure {
-			return 0, false
-		}
+		exprMask, exprPure := plan.exprInfo(prog, attr.Expr, depth+1, bound, work)
 		mask |= exprMask
+		ok = ok && exprPure
 	}
+	childBound := bound
+	if node.Kind == program.NodeForEach {
+		scope := resolveForEachScope(node.Attrs)
+		childBound = append(append([]string(nil), bound...), scope.propNames()...)
+	}
+	var childrenMask uint64
+	childrenPure := true
 	for _, child := range node.Children {
-		childMask, pure := plan.nodeInfo(prog, child, depth+1)
-		if !pure {
-			return 0, false
-		}
-		mask |= childMask
+		childMask, childPure := plan.walkNode(prog, child, childBound, depth+1, pure, work)
+		childrenMask |= childMask
+		childrenPure = childrenPure && childPure
 	}
-	return mask, true
+	mask |= childrenMask
+	ok = ok && childrenPure
+	if node.Kind == program.NodeForEach {
+		// A row's output depends on its item, index and key and on what the
+		// body reads besides them; the collection decides only which rows
+		// exist.
+		plan.rows[id] = rowPlan{mask: childrenMask, ok: childrenPure && len(node.Children) > 0}
+	}
+	if !ok {
+		mask = 0
+	}
+	plan.nodes[id].mask = mask
+	pure[id] = ok
+	return mask, ok
 }
 
 // exprInfo returns the read set of the expression tree rooted at id, and
 // whether every opcode in it is pure. Results are memoized because the same
-// expression is often shared by several nodes.
-func (plan *reusePlan) exprInfo(prog *program.Program, id program.ExprID, depth int) (uint64, bool) {
-	if int(id) >= len(prog.Exprs) || depth > maxReuseWalkDepth {
+// expression is often shared by several nodes. An expression analysed inside a
+// loop is not memoized: whether a prop read counts depends on the loop
+// variables in scope.
+func (plan *reusePlan) exprInfo(prog *program.Program, id program.ExprID, depth int, bound []string, work *int) (uint64, bool) {
+	*work++
+	if int(id) >= len(prog.Exprs) || depth > maxReuseWalkDepth || *work > reuseWorkLimit {
+		if *work > reuseWorkLimit {
+			plan.overflow = true
+		}
 		return 0, false
+	}
+	if len(bound) > 0 {
+		return plan.exprInfoUncached(prog, id, depth, bound, work)
 	}
 	slot := &plan.exprs[id]
 	if slot.done {
@@ -301,7 +412,7 @@ func (plan *reusePlan) exprInfo(prog *program.Program, id program.ExprID, depth 
 		return 0, false
 	}
 	slot.busy = true
-	mask, pure := plan.exprInfoUncached(prog, id, depth)
+	mask, pure := plan.exprInfoUncached(prog, id, depth, bound, work)
 	slot.busy = false
 	slot.mask = mask
 	slot.pure = pure
@@ -309,42 +420,96 @@ func (plan *reusePlan) exprInfo(prog *program.Program, id program.ExprID, depth 
 	return mask, pure
 }
 
-func (plan *reusePlan) exprInfoUncached(prog *program.Program, id program.ExprID, depth int) (uint64, bool) {
+func (plan *reusePlan) exprInfoUncached(prog *program.Program, id program.ExprID, depth int, bound []string, work *int) (uint64, bool) {
 	expr := &prog.Exprs[id]
 	switch expr.Op {
 	case program.OpSignalGet:
-		return plan.watchBit(watchKey{kind: watchSignal, name: expr.Value})
+		return plan.watchBit(watchKey{kind: watchSignal, name: expr.Value}, nil)
 	case program.OpPropGet:
-		return plan.watchBit(watchKey{kind: watchProp, name: expr.Value})
+		for _, name := range bound {
+			if name == expr.Value {
+				return 0, true
+			}
+		}
+		return plan.watchBit(watchKey{kind: watchProp, name: expr.Value}, nil)
+	case program.OpIndex:
+		if name, fields, ok := signalFieldPath(prog, id); ok {
+			if len(fields) > plan.pathDepth {
+				fields = fields[:plan.pathDepth]
+			}
+			return plan.watchBit(watchKey{kind: watchSignal, name: name, path: strings.Join(fields, pathSep)}, fields)
+		}
 	}
 	if !isPureOp(expr.Op) {
 		return 0, false
 	}
 	var mask uint64
+	pure := true
 	for _, operand := range expr.Operands {
-		operandMask, pure := plan.exprInfo(prog, operand, depth+1)
-		if !pure {
-			return 0, false
-		}
+		operandMask, operandPure := plan.exprInfo(prog, operand, depth+1, bound, work)
 		mask |= operandMask
+		pure = pure && operandPure
+	}
+	if !pure {
+		return 0, false
 	}
 	return mask, true
+}
+
+// signalFieldPath recognises a chain of field reads on a signal: OpIndex nodes
+// whose index operand is a string literal, down to an OpSignalGet. The result
+// of such a chain is a pure function of the part of the signal's value the
+// chain names, which is what a path watch key digests.
+func signalFieldPath(prog *program.Program, id program.ExprID) (string, []string, bool) {
+	var reversed []string
+	for step := 0; step <= maxReuseWalkDepth; step++ {
+		if int(id) >= len(prog.Exprs) {
+			return "", nil, false
+		}
+		expr := &prog.Exprs[id]
+		switch expr.Op {
+		case program.OpSignalGet:
+			if expr.Value == "" || len(reversed) == 0 {
+				return "", nil, false
+			}
+			fields := make([]string, len(reversed))
+			for i, f := range reversed {
+				fields[len(reversed)-1-i] = f
+			}
+			return expr.Value, fields, true
+		case program.OpIndex:
+			if len(expr.Operands) != 2 || int(expr.Operands[1]) >= len(prog.Exprs) {
+				return "", nil, false
+			}
+			key := &prog.Exprs[expr.Operands[1]]
+			if key.Op != program.OpLitString {
+				return "", nil, false
+			}
+			reversed = append(reversed, key.Value)
+			id = expr.Operands[0]
+		default:
+			return "", nil, false
+		}
+	}
+	return "", nil, false
 }
 
 // watchBit assigns key a bit position, creating it on first use. It returns
 // an impure result once the program passes maxWatchedInputs, which switches
 // reuse off for the whole program.
-func (plan *reusePlan) watchBit(key watchKey) (uint64, bool) {
+func (plan *reusePlan) watchBit(key watchKey, fields []string) (uint64, bool) {
 	if key.name == "" {
 		return 0, false
 	}
 	pos, ok := plan.index[key]
 	if !ok {
 		if len(plan.watch) >= maxWatchedInputs {
+			plan.overflow = true
 			return 0, false
 		}
 		pos = len(plan.watch)
 		plan.watch = append(plan.watch, key)
+		plan.paths = append(plan.paths, fields)
 		plan.index[key] = pos
 	}
 	return uint64(1) << uint(pos), true
@@ -392,10 +557,17 @@ func isPureOp(op program.OpCode) bool {
 // snapshot never keeps an object alive and never aliases mutable storage.
 type watchSample struct {
 	present bool
-	// stable is false for a composite or closure payload. Those mutate in
-	// place, so a snapshot of them proves nothing and the input counts as
-	// dirty on every reconcile.
-	stable  bool
+	// stable is false for a closure payload, and for a value too deep to
+	// digest. A snapshot of those proves nothing, so the input counts as dirty
+	// on every reconcile.
+	stable bool
+	// hashed marks a sample that holds a digest of the value's content
+	// instead of a copy of a scalar payload. A composite value is edited in
+	// place by OpFieldSet and OpIndexSet, so a stored reference to it would
+	// alias the edit; the digest describes the content the walk read, and the
+	// next digest differs if anyone edited it since.
+	hashed  bool
+	hash    valueHash
 	typ     program.ExprType
 	num     uint64
 	str     string
@@ -417,7 +589,10 @@ func sampleValue(v Value, present bool) watchSample {
 	if !present {
 		return watchSample{}
 	}
-	if v.isList() || v.isMap() || v.closureRefOf() != nil {
+	if v.isList() || v.isMap() {
+		return sampleDigest(v)
+	}
+	if v.closureRefOf() != nil {
 		return watchSample{present: true}
 	}
 	bits := math.Float64bits(v.num)
@@ -432,6 +607,13 @@ func sampleValue(v Value, present bool) watchSample {
 		str:     v.text(),
 		boolean: v.truth(),
 	}
+}
+
+// sampleDigest snapshots v by content. It is the sample of a composite value
+// and of a field path, whatever the value at the path holds.
+func sampleDigest(v Value) watchSample {
+	h, ok := hashValue(v)
+	return watchSample{present: true, stable: ok, hashed: true, hash: h}
 }
 
 // sampleDiffers reports whether the input changed between two snapshots, or
@@ -456,7 +638,9 @@ func sameSample(left, right watchSample) bool {
 		left.typ == right.typ &&
 		sameSampleNumber(left, right) &&
 		left.str == right.str &&
-		left.boolean == right.boolean
+		left.boolean == right.boolean &&
+		left.hashed == right.hashed &&
+		left.hash == right.hash
 }
 
 func sameSampleNumber(left, right watchSample) bool {
@@ -485,9 +669,22 @@ func (r *islandReuse) watchSampleAt(vm *VM, i int, key watchKey) watchSample {
 		// Computed values do not expose a mutable write revision. Sampling
 		// invokes their lazy refresh and lets the ordinary scalar comparison
 		// decide whether this subtree can be copied verbatim.
-		return sampleValue(computed.Get(), true)
+		return sampleSignal(computed.Get(), r.plan.paths[i])
 	}
-	return sampleValue(sig.Get(), true)
+	return sampleSignal(sig.Get(), r.plan.paths[i])
+}
+
+// sampleSignal samples a signal's value, or the part of it a path names. A path
+// is read with the same IndexVal steps the evaluator takes for the field reads
+// it stands for, so the digest describes exactly what those expressions see.
+func sampleSignal(v Value, fields []string) watchSample {
+	if len(fields) == 0 {
+		return sampleValue(v, true)
+	}
+	for _, field := range fields {
+		v = v.IndexVal(StringVal(field))
+	}
+	return sampleDigest(v)
 }
 
 // stampedSample reads the value of the watched input at index i and stamps it
@@ -529,29 +726,32 @@ func (r *islandReuse) signalRevision(i int) (uint64, bool) {
 //   - The numbers are equal, so no Set or Update changed the value between
 //     the two readings. Every write path in the package goes through one of
 //     those two methods.
-//   - The stored sample is stable, which means it holds a scalar payload. A
-//     composite is mutated in place by OpFieldSet and OpIndexSet without any
-//     Set at all, so its revision proves nothing and sampleValue already
-//     marks it unstable. See the note on sampleValue.
+//   - The stored sample is stable and holds a scalar payload. A composite is
+//     mutated in place by OpFieldSet and OpIndexSet without any Set at all, so
+//     its revision proves nothing: a digest sample is always read again.
 func (r *islandReuse) unwrittenSince(i int, rev uint64, revValid bool) bool {
 	stored := r.snap[i]
-	return revValid && stored.revValid && stored.rev == rev && stored.stable
+	return revValid && stored.revValid && stored.rev == rev && stored.stable && !stored.hashed
 }
 
 // currentWatchSample reads the live value of one watched input by name. It is
 // the reference reader watchSampleAt is checked against.
 func (vm *VM) currentWatchSample(key watchKey) watchSample {
+	var fields []string
+	if key.path != "" {
+		fields = strings.Split(key.path, pathSep)
+	}
 	switch key.kind {
 	case watchSignal:
 		sig, ok := vm.signals[key.name]
 		if ok && sig != nil {
-			return sampleValue(sig.Get(), true)
+			return sampleSignal(sig.Get(), fields)
 		}
 		computed, ok := vm.computeds[key.name]
 		if !ok || computed == nil {
 			return watchSample{}
 		}
-		return sampleValue(computed.Get(), true)
+		return sampleSignal(computed.Get(), fields)
 	default:
 		v, ok := vm.props[key.name]
 		return sampleValue(v, ok)
