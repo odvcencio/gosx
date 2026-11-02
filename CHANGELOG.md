@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Island rendering checks each authored attribute's name once, when `NewVM` or `SwapProgram` loads the program, instead of
+  on every render. Validity, the `on` prefix and the URL-attribute test were recomputed per attribute per render. For an
+  element with six attributes `resolveElementAttrs` takes about 0.93 us instead of 1.5 us (`go test ./client/vm -bench
+  ResolveElementAttrs`; host load was high, so read the ratio, not the figures). Rendered output is unchanged.
+  `htmlattr.IsURLAttr` is new.
 - The patch mailbox decoder (`client/runtime/wasm/mailbox.ts`) now builds one `TextDecoder` and reuses it for every
   string, where it built one per string. A batch of 1,000 patches (4,001 strings) decodes in 0.95 ms instead of 1.55 ms
   in Node (median of three runs). Output is unchanged. `bootstrap.js` and `bootstrap-runtime.js` grow by 18 raw bytes.
