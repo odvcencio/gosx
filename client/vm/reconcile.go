@@ -111,6 +111,11 @@ type diffWalk struct {
 	// spans is the reuse span table of the walk that produced next, indexed
 	// by program node. nil switches the subtree skip off. See skipsSubtree.
 	spans []nodeSpan
+	// rowMark and rowGen mark the roots of rows the tree walk copied into the
+	// index range they already held: rowMark[i] == rowGen. rowGen 0 switches
+	// the skip off.
+	rowMark []uint32
+	rowGen  uint32
 }
 
 // ReconcileTrees diffs the previous and next resolved trees and returns patch ops.
@@ -157,6 +162,9 @@ func reconcileTreesInto(w *diffWalk, prev, next *ResolvedTree, staticMask []bool
 // recorded, which mergeAdjacentText does, then reads a span whose start names
 // another index and falls through to the full comparison.
 func (w *diffWalk) skipsSubtree(prevIdx, nextIdx int) bool {
+	if prevIdx == nextIdx && w.rowGen != 0 && nextIdx >= 0 && nextIdx < len(w.rowMark) && w.rowMark[nextIdx] == w.rowGen {
+		return true
+	}
 	if prevIdx != nextIdx || len(w.spans) == 0 || nextIdx < 0 || nextIdx >= len(w.next.Nodes) {
 		return false
 	}

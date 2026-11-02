@@ -21,6 +21,7 @@
 package vm
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -233,4 +234,79 @@ func describeFuzzTree(tree *ResolvedTree) string {
 		out = append(out, ']')
 	}
 	return string(out)
+}
+
+// FuzzIslandCompositeReuseMatchesFullEval is the property above for composite
+// signals. Two islands run in lockstep over the same program: one with subtree
+// reuse, row reuse, the diff skip and buffer recycling, one with all of them
+// off. After every step the trees and the patch ops must agree, and the reused
+// tree must equal a fresh walk. The steps replace the signal with new shapes,
+// edit it in place (the way OpFieldSet and OpIndexSet do), change list
+// contents and lengths, and dispatch handlers that write in place.
+//
+// The programs read field paths, lists, absent fields, rows that move when a
+// conditional ahead of them appears, and rows with explicit empty or duplicate
+// keys.
+func FuzzIslandCompositeReuseMatchesFullEval(f *testing.F) {
+	for seed := int64(0); seed < 8; seed++ {
+		f.Add(seed, 30)
+	}
+	f.Fuzz(func(t *testing.T, seed int64, rawSteps int) {
+		r := rand.New(rand.NewSource(seed))
+		steps := boundedFuzzCount(rawSteps, 60) + 1
+		var prog *program.Program
+		var handlers []string
+		switch ((seed % 4) + 4) % 4 {
+		case 0:
+			prog = handlerProgram()
+			for _, h := range prog.Handlers {
+				handlers = append(handlers, h.Name)
+			}
+		case 1:
+			prog = movedRowProgram()
+		case 2:
+			prog = movedKeyedRowProgram("empty")
+		default:
+			prog = movedKeyedRowProgram("dup")
+		}
+		p := rvNewPair(t, prog, `{}`, "s")
+		cur := ObjectVal(map[string]Value{
+			"title": StringVal("T0"), "show": BoolVal(true), "head": StringVal("H"),
+			"rows": rvRows(r), "meta": obj2("a", StringVal("m0")),
+		})
+		p.set("s", cur)
+		if !p.step("init") {
+			return
+		}
+		for i := 0; i < steps; i++ {
+			switch k := r.Intn(6); {
+			case k == 0 && len(handlers) > 0:
+				h := handlers[r.Intn(len(handlers))]
+				if !p.compare("dispatch "+h, p.a.Dispatch(h, "{}"), p.b.Dispatch(h, "{}")) {
+					return
+				}
+				continue
+			case k == 1:
+				what := rvMutate(r, cur)
+				if !p.step("in place: " + what) {
+					return
+				}
+				continue
+			case k == 2:
+				fields := rvDict(cur)
+				next := map[string]Value{}
+				for key, v := range fields {
+					next[key] = v
+				}
+				next["show"] = BoolVal(r.Intn(2) == 0)
+				cur = ObjectVal(next)
+			default:
+				cur = rvRoot(r, cur)
+			}
+			p.set("s", cur)
+			if !p.step(fmt.Sprintf("set root %d", i)) {
+				return
+			}
+		}
+	})
 }
