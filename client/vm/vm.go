@@ -5,7 +5,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 
 	"m31labs.dev/gosx/internal/htmlattr"
@@ -20,6 +19,7 @@ type VM struct {
 	signals        map[string]*signal.Signal[Value]
 	computeds      map[string]*signal.Computed[Value]
 	exprs          []program.Expr
+	attrFlags      [][]uint8                   // per-node attribute verdicts computed at load (attrflags.go); nil entries fall back to checking on render
 	lits           []litSlot                   // numeric literals decoded once, indexed by ExprID
 	eventData      map[string]Value            // current event data (set during handler dispatch)
 	frame          *frame                      // locals table for the current handler evaluation (X.A)
@@ -84,6 +84,7 @@ func NewVM(prog *program.Program, props map[string]Value) *VM {
 	}
 	vm.exprs = prog.Exprs
 	vm.lits = buildLiteralTable(prog.Exprs)
+	vm.attrFlags = buildAttrFlags(prog)
 	// Slice Y.D: build a fast funcDef lookup so OpIndirectCall is one
 	// map probe. Programs without user functions (Funcs nil/empty)
 	// pay nothing — the map stays nil and the dispatcher records the
@@ -175,6 +176,7 @@ func (vm *VM) SwapProgram(p *program.Program) {
 	vm.program = p
 	vm.exprs = p.Exprs
 	vm.lits = buildLiteralTable(p.Exprs)
+	vm.attrFlags = buildAttrFlags(p)
 	vm.funcs = nil
 	if len(p.Funcs) > 0 {
 		vm.funcs = make(map[string]*program.FuncDef, len(p.Funcs))
@@ -1429,7 +1431,7 @@ func isResolvedTextNode(n *ResolvedNode) bool {
 }
 
 func (vm *VM) resolveElementNode(rn *ResolvedNode, source int, node program.Node) {
-	resolved, domAttrs, events, key, explicitKey := vm.resolveElementAttrs(node.Attrs)
+	resolved, domAttrs, events, key, explicitKey := vm.resolveElementAttrs(node.Attrs, vm.attrFlagsFor(source, len(node.Attrs)))
 	rn.Attrs = resolved
 	rn.DOMAttrs = domAttrs
 	rn.Key = key
@@ -1458,15 +1460,18 @@ func (vm *VM) resolveElementNode(rn *ResolvedNode, source int, node program.Node
 // single []ResolvedAttr slice instead of the two the earlier fused
 // implementation used. Elements with only statics (resolved == domAttrs)
 // and elements with no attrs at all (both nil) stay the same.
-func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []ResolvedAttr, events []ResolvedEvent, key string, explicitKey bool) {
+func (vm *VM) resolveElementAttrs(attrs []program.Attr, flags []uint8) (resolved, domAttrs []ResolvedAttr, events []ResolvedEvent, key string, explicitKey bool) {
 	// Two-pass: first count what we need so we can allocate exactly once.
 	// Counting is cheap (it's the same loop body minus the writes) and
 	// lets us avoid the lazy-init branches the earlier version used.
 	staticCount := 0
 	eventCount := 0
 	clickCount := 0
-	for _, attr := range attrs {
-		if attr.Kind != program.AttrEvent && (!htmlattr.SafeAuthoredName(attr.Name) || strings.HasPrefix(strings.ToLower(attr.Name), "on")) {
+	for i, attr := range attrs {
+		if flags == nil {
+			flags = checkAttrFlags(attrs)
+		}
+		if flags[i]&attrSkip != 0 {
 			continue
 		}
 		switch attr.Kind {
@@ -1492,8 +1497,11 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 		events = make([]ResolvedEvent, 0, eventCount)
 	}
 
-	for _, attr := range attrs {
-		if attr.Kind != program.AttrEvent && (!htmlattr.SafeAuthoredName(attr.Name) || strings.HasPrefix(strings.ToLower(attr.Name), "on")) {
+	for i, attr := range attrs {
+		if flags == nil {
+			flags = checkAttrFlags(attrs)
+		}
+		if flags[i]&attrSkip != 0 {
 			continue
 		}
 		switch attr.Kind {
@@ -1503,7 +1511,7 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 				explicitKey = true
 				continue
 			}
-			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: htmlattr.FilterURL(attr.Name, attr.Value)})
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: filterURLFlag(flags[i], attr.Name, attr.Value)})
 		case program.AttrExpr:
 			value := vm.Eval(attr.Expr)
 			if attr.Name == "key" {
@@ -1517,7 +1525,7 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 				}
 				continue
 			}
-			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: htmlattr.FilterURL(attr.Name, value.String())})
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: filterURLFlag(flags[i], attr.Name, value.String())})
 		case program.AttrBool:
 			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Bool: true})
 		case program.AttrEvent:
