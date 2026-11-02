@@ -341,4 +341,5 @@
   }
 
   window.__gosx_elio_graph.executors.webgl2 = make;
+  window.__gosx_elio_graph.glState = { save: saveState, restore: restoreState }; // for glue that draws one extra pass between the graph's (ocean-fft.ts probeGL)
 })();
