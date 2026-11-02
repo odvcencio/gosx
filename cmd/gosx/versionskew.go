@@ -39,10 +39,19 @@ func checkVersionSkew(projectDir string) error {
 
 var readCLIBuildInfo = debug.ReadBuildInfo
 
+// releaseBuildVersion is set by the governed release build. Release binaries
+// are built before the tag exists, so Go can otherwise stamp the main module
+// with a pseudo-version for the very commit that will receive that tag.
+// Unstamped source and go-install builds continue to use their module version.
+var releaseBuildVersion string
+
 // cliGoSXVersion uses the module compiled into the binary, including versions
-// between releases. Source builds without a module version use the release
-// constant so the existing development workflow keeps its diagnostic.
+// between releases. Governed binaries identify their matching release through
+// an explicit linker stamp; a mismatched stamp never overrides build metadata.
 func cliGoSXVersion() string {
+	if releaseBuildVersion == "v"+gosx.Version {
+		return releaseBuildVersion
+	}
 	info, ok := readCLIBuildInfo()
 	if ok && info != nil {
 		if info.Main.Path == gosxModulePath {

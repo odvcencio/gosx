@@ -309,8 +309,13 @@ jobs:
           ext=""
           if [[ "${GOOS}" = "windows" ]]; then ext=".exe"; fi
           mkdir -p release-artifacts
-          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.releaseBuildVersion=${RELEASE_TAG}" \
             -o "release-artifacts/gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
+
+      - name: Verify packaged CLI version compatibility
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64' && needs.prepare.outputs.mode == 'create'
+        working-directory: source
+        run: bash scripts/check-release-cli.sh "$PWD/release-artifacts/gosx-linux-amd64" "${RELEASE_TAG}"
 
       - name: Sign in to Azure for Artifact Signing
         if: >-
