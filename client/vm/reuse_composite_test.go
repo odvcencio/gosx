@@ -549,3 +549,45 @@ func TestCompositeReuseMatchesFullEvalOnRandomWrites(t *testing.T) {
 		}
 	}
 }
+
+// TestAbsentPropStaysCleanUntilItAppears pins the rule for an input that is
+// absent on both sides: the lowerer reads the Go identifier nil as a prop that
+// no island sets, and that read must not make its elements dirty on every walk.
+func TestAbsentPropStaysCleanUntilItAppears(t *testing.T) {
+	prog := &program.Program{
+		Name: "Nil",
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}},
+			{Kind: program.NodeElement, Tag: "p", Children: []program.NodeID{2}},
+			{Kind: program.NodeExpr, Expr: 2},
+		},
+		Exprs: []program.Expr{
+			{Op: program.OpPropGet, Value: "nil", Type: program.TypeAny},                        // 0
+			{Op: program.OpLitString, Value: "set", Type: program.TypeString},                   // 1
+			{Op: program.OpCond, Operands: []program.ExprID{3, 1, 4}, Type: program.TypeString}, // 2: nil != nil ? set : unset
+			{Op: program.OpNeq, Operands: []program.ExprID{0, 0}, Type: program.TypeBool},       // 3
+			{Op: program.OpLitString, Value: "unset", Type: program.TypeString},                 // 4
+		},
+	}
+	island := NewIsland(prog, `{}`)
+	island.Reconcile()
+	if island.reuse == nil {
+		t.Fatal("no plan")
+	}
+	island.Reconcile()
+	if hits := reuseHits(island); hits != 1 {
+		t.Fatalf("root hits with an absent prop = %d, want 1: the absent read made the root dirty", hits)
+	}
+	island.vm.props["nil"] = StringVal("now present")
+	island.Reconcile()
+	mustMatchFullEval(t, island, "prop appeared")
+	if hits := reuseHits(island); hits != 0 {
+		t.Fatalf("root hits after the prop appeared = %d, want 0", hits)
+	}
+	delete(island.vm.props, "nil")
+	island.Reconcile()
+	mustMatchFullEval(t, island, "prop vanished")
+	if hits := reuseHits(island); hits != 0 {
+		t.Fatalf("root hits after the prop vanished = %d, want 0", hits)
+	}
+}

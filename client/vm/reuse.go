@@ -624,9 +624,9 @@ type watchSample struct {
 	revValid bool
 }
 
-// sampleValue snapshots v. present reports whether the input existed at all;
-// a missing input counts as dirty so that a transient loop binding, which is
-// absent between reconciles, never looks unchanged.
+// sampleValue snapshots v. present reports whether the input existed at all.
+// An input that appears or disappears counts as changed; one that stays absent
+// does not (see sampleDiffers).
 func sampleValue(v Value, present bool) watchSample {
 	if !present {
 		return watchSample{}
@@ -660,7 +660,16 @@ func sampleDigest(v Value) watchSample {
 
 // sampleDiffers reports whether the input changed between two snapshots, or
 // whether either snapshot is one this analysis cannot trust.
+//
+// An input that is absent in both snapshots is unchanged. The lowerer emits a
+// prop read for the Go identifier nil, which no island ever sets; counting that
+// read as changed on every walk made every element that compares with nil dirty
+// on every walk. A loop variable is also absent between walks, but a read of
+// one inside its loop is not an input of the nodes outside (see walkNode).
 func sampleDiffers(prev, cur watchSample) bool {
+	if !prev.present && !cur.present {
+		return false
+	}
 	if !prev.present || !cur.present || !prev.stable || !cur.stable {
 		return true
 	}
