@@ -205,7 +205,7 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 28620,
-          "htmlWireBytes": 10861,
+          "htmlWireBytes": 11137,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
           "jsWireBytes": 28620,
@@ -225,7 +225,7 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "htmlWireBytes": "2026-10-26: PR #657 enables framework adaptive quality defaults, shares the windowed RAF recovery rule, and regenerates the hashed runtime assets advertised by the docs pages. Combined current-main source 68da2c8296500661ca9303d732dae95eee2e1f2e was production-built on the approved buildbox with go version go1.26.9 linux/amd64, v22.23.4 and wasm-opt version 108 (version_108). The fresh wire measurement found htmlWireBytes=10861 B for docs /performance/ (11 B above its previous cap). Raise only this exhausted metric to its exact measured value, with no added headroom; request counts, required policies, other limits and tolerance stay unchanged."
+          "htmlWireBytes": "2026-10-26: PR #657 enables framework adaptive quality defaults, shares the windowed RAF recovery rule, and regenerates the hashed runtime assets advertised by the docs pages. Combined current-main source 68da2c8296500661ca9303d732dae95eee2e1f2e was production-built on the approved buildbox with go version go1.26.9 linux/amd64, v22.23.4 and wasm-opt version 108 (version_108). The fresh wire measurement found htmlWireBytes=10861 B for docs /performance/ (11 B above its previous cap). Raise only this exhausted metric to its exact measured value, with no added headroom; request counts, required policies, other limits and tolerance stay unchanged. 2026-11-02: hosted wire run 41383399396 on bc345a7 measured 10881 B (+20 B) after embedding the refreshed performance receipt. Allow the budget policy minimum of 256 B above that measurement because this page includes variable measured values; no other route policy or request limit changes."
         }
       }
     },
