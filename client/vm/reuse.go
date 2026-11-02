@@ -93,9 +93,9 @@ type watchKey struct {
 	path string
 }
 
-// pathSep joins the field names of a watched path. It cannot appear in a field
-// name the lowerer emits, and a name that contained it would only make two
-// distinct paths share a key, which widens a read set and never narrows it.
+// pathSep joins the field names of a watched path. signalFieldPath refuses a
+// field name that contains it, because two different paths could then join to
+// the same key and one of them would watch the wrong part of the value.
 const pathSep = "\x1f"
 
 // maxPathDepth is the longest field path one watch key follows. A longer
@@ -502,6 +502,13 @@ func (plan *reusePlan) exprInfoUncached(prog *program.Program, id program.ExprID
 // whose index operand is a string literal, down to an OpSignalGet. The result
 // of such a chain is a pure function of the part of the signal's value the
 // chain names, which is what a path watch key digests.
+//
+// An index marked program.IndexTypedMap is not part of the path: its lookup
+// differs from IndexVal (a missing key and a null value are not the same
+// there), so the sampler, which follows IndexVal, would not see the difference.
+// The path stops at the parent of such an index and the whole lookup counts as
+// a read of the parent. A field name that contains pathSep also ends the
+// search, so no two paths can share a key.
 func signalFieldPath(prog *program.Program, id program.ExprID) (string, []string, bool) {
 	var reversed []string
 	for step := 0; step <= maxReuseWalkDepth; step++ {
@@ -523,8 +530,14 @@ func signalFieldPath(prog *program.Program, id program.ExprID) (string, []string
 			if len(expr.Operands) != 2 || int(expr.Operands[1]) >= len(prog.Exprs) {
 				return "", nil, false
 			}
+			if expr.Value == program.IndexTypedMap {
+				// Watch the parent: drop the fields read through this index.
+				reversed = reversed[:0]
+				id = expr.Operands[0]
+				continue
+			}
 			key := &prog.Exprs[expr.Operands[1]]
-			if key.Op != program.OpLitString {
+			if key.Op != program.OpLitString || strings.Contains(key.Value, pathSep) {
 				return "", nil, false
 			}
 			reversed = append(reversed, key.Value)
@@ -694,11 +707,14 @@ func sameSample(left, right watchSample) bool {
 		left.hash == right.hash
 }
 
+// sameSampleNumber compares the stored bits. Comparing the floats would call
+// 0 and -0 equal, and they render differently ("0" and "-0"). A NaN is never
+// the same as itself, so a NaN input stays dirty.
 func sameSampleNumber(left, right watchSample) bool {
-	if left.typ == program.TypeInt {
-		return left.num == right.num
+	if left.typ != program.TypeInt && math.IsNaN(math.Float64frombits(left.num)) {
+		return false
 	}
-	return math.Float64frombits(left.num) == math.Float64frombits(right.num)
+	return left.num == right.num
 }
 
 // watchSampleAt reads the live value of the watched input at index i.

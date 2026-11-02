@@ -2,6 +2,7 @@ package vm
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"strings"
 	"testing"
@@ -603,5 +604,67 @@ func TestValueDigestDoesNotAllocatePerField(t *testing.T) {
 	v := ObjectVal(fields)
 	if allocs := testing.AllocsPerRun(20, func() { hashValue(v) }); allocs > 20 {
 		t.Fatalf("hashValue allocated %.0f times for a 200-field value; it must not allocate per field", allocs)
+	}
+}
+
+// TestFieldNameWithThePathSeparatorDoesNotShareAKey pins that the field "a\x1fb"
+// and the path a.b are different watch keys. If they joined to one key, a write
+// to a.b would leave the node that reads the field "a\x1fb" looking unchanged.
+func TestFieldNameWithThePathSeparatorDoesNotShareAKey(t *testing.T) {
+	b := newRV("Sep")
+	prog := b.finish(b.el("div", nil,
+		b.el("p", nil, b.txt(b.path(b.sig("s"), "a\x1fb"))),
+		b.el("p", nil, b.txt(b.path(b.sig("s"), "a", "b")))), "s")
+	p := rvNewPair(t, prog, `{}`, "s")
+	steps := []Value{
+		obj2("a\x1fb", StringVal("flat1"), "a", obj2("b", StringVal("nested1"))),
+		obj2("a\x1fb", StringVal("flat2"), "a", obj2("b", StringVal("nested1"))),
+		obj2("a\x1fb", StringVal("flat2"), "a", obj2("b", StringVal("nested2"))),
+		obj2("a\x1fb", StringVal("flat3"), "a", obj2("b", StringVal("nested2"))),
+	}
+	for i, v := range steps {
+		p.set("s", v)
+		if !p.step(fmt.Sprintf("step %d", i)) {
+			return
+		}
+	}
+	if name, fields, ok := signalFieldPath(prog, b.path(b.sig("s"), "a\x1fb")); ok {
+		t.Fatalf("a field name with the separator produced the path %q %q", name, fields)
+	}
+}
+
+// TestTypedMapIndexWatchesItsParent pins that a lookup marked typed-map is a
+// read of the value it indexes: it tells a missing key from a null one, which
+// the field-path sampler does not.
+func TestTypedMapIndexWatchesItsParent(t *testing.T) {
+	b := newRV("Typed")
+	m := b.path(b.sig("s"), "m")
+	leaf := b.e(program.OpIndex, program.IndexTypedMap, program.TypeString, m, b.lit("k"))
+	prog := b.finish(b.el("div", nil, b.el("p", nil, b.txt(leaf))), "s")
+	if name, fields, ok := signalFieldPath(prog, leaf); !ok || name != "s" || len(fields) != 1 || fields[0] != "m" {
+		t.Fatalf("typed-map path = %q %q %v, want s [m]", name, fields, ok)
+	}
+	p := rvNewPair(t, prog, `{}`, "s")
+	for i, text := range []string{`{"m":{"k":null}}`, `{"m":{}}`, `{"m":{"k":"v"}}`, `{"m":{"k":null}}`, `{"m":{}}`} {
+		v, err := ValueFromJSON(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.set("s", v)
+		if !p.step(fmt.Sprintf("step %d %s", i, text)) {
+			return
+		}
+	}
+}
+
+func TestNegativeZeroIsAChangeForScalarInputs(t *testing.T) {
+	b := newRV("NegZeroUnit")
+	prog := b.finish(b.el("div", nil, b.el("p", nil, b.txt(b.sig("f")))), "f")
+	p := rvNewPair(t, prog, `{}`, "f")
+	for i, v := range []float64{0, math.Copysign(0, -1), 0, 1.5, 1.5} {
+		p.set("f", FloatVal(v))
+		if !p.step(fmt.Sprintf("step %d", i)) {
+			return
+		}
 	}
 }
