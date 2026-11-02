@@ -39,6 +39,32 @@ func TestCLIGoSXVersion(t *testing.T) {
 	}
 }
 
+func TestCLIGoSXVersionGovernedReleaseStamp(t *testing.T) {
+	const pseudo = "v0.0.0-20261102040411-86d19110497d"
+	previousInfo, previousStamp := readCLIBuildInfo, releaseBuildVersion
+	t.Cleanup(func() { readCLIBuildInfo, releaseBuildVersion = previousInfo, previousStamp })
+	readCLIBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Path: gosxModulePath, Version: pseudo}}, true
+	}
+
+	for _, tc := range []struct {
+		name  string
+		stamp string
+		want  string
+	}{
+		{"matching release", "v" + gosx.Version, "v" + gosx.Version},
+		{"unstamped pseudo-version", "", pseudo},
+		{"different release", "v999.0.0", pseudo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			releaseBuildVersion = tc.stamp
+			if got := cliGoSXVersion(); got != tc.want {
+				t.Fatalf("CLI version = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCheckVersionSkewInstalledPseudoVersion(t *testing.T) {
 	const pseudo = "v0.57.6-0.20261005064753-1dcc1a2d26b4"
 	t.Setenv(skipVersionCheckEnv, "")
