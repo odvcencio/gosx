@@ -166,6 +166,8 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // 3,774 gzip / 3,326 Brotli bytes (the WebGPU compute pass and the WebGL2 float-target pass with its fenced pixel
 // buffers; the approved raise was 3,059 Brotli). Only exhausted targets move to the measured minima (measured
 // value minus the allowance); allowances and route fractions stay fixed.
+// 2026-11-01 (Elio v0.6.0 ocean kernels, fixing the ocean_probe half-texel offset): the lazy ocean-fft chunk changes by +22 raw / +19 gzip / -47 Brotli bytes.
+// Only the exhausted gzip target moves to the measured minimum; allowances and route fractions stay fixed.
 const budgets = [
   // Optional document views; no new payload on pages without the binding.
   { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
@@ -1585,11 +1587,11 @@ const budgets = [
   // therefore keep the existing initial-route ceilings. Canonical measured:
   // 2_115 / 988 / 879, with narrow next-boundary headroom.
   { file: "bootstrap-feature-scene3d-hydrate.js", raw: 2200, gzip: 1000, brotli: 900 },
-  // Spectral ocean chunk, fetched only when environment.ocean.spectrum is set: the Elio v0.5.0 generated kernel module,
+  // Spectral ocean chunk, fetched only when environment.ocean.spectrum is set: the Elio v0.6.0 generated kernel module,
   // the Elio graph runner (WebGPU compute scheduler and WebGL2 gather scheduler), the wake and the surface shader patches.
   // Measured 262,099 / 37,800 / 31,969 bytes (raw / gzip / Brotli); targets rise to the next 100 bytes.
   // New budget, spectral ocean renderer (31 October 2026, supersedes #737). The owner approved this lazy chunk's size.
-  { file: "bootstrap-feature-scene3d-ocean-fft.js", raw: 262100, gzip: 39694, brotli: 33753 },
+  { file: "bootstrap-feature-scene3d-ocean-fft.js", raw: 262100, gzip: 39707, brotli: 33753 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

@@ -496,7 +496,7 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		"__gosx_scene3d_vessel_external", "__gosx_scene3d_vessel_pose", "__gosx_scene3d_vessel_decks", "__gosx_scene3d_vessel_cutaway", "__gosx_scene3d_vessel_cutaway_api",
 		// Opt-in spectral ocean authorities in the lazy ocean-fft chunk (and the vessel chunk's hull pose for the wake).
 		"__gosx_elio_graph",                    // The generic Elio graph runner shared by the WebGPU and WebGL2 ocean passes.
-		"__gosx_scene3d_elio_ocean",            // The generated ocean kernels (Elio v0.5.0).
+		"__gosx_scene3d_elio_ocean",            // The generated ocean kernels (Elio v0.6.0).
 		"__gosx_scene3d_node_poses",            // Hull poses the vessel publishes for scene-node readers such as the wake.
 		"__gosx_scene3d_ocean_fft_api",         // WebGPU spectral ocean API and buoyancy sampler.
 		"__gosx_scene3d_ocean_fft_gl_api",      // WebGL2 spectral ocean API.

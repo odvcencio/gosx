@@ -1,4 +1,4 @@
-(function(){"use strict";function ne(F){if(F&&typeof F=="object"){for(const D of Object.keys(F))ne(F[D]);Object.freeze(F)}return F}window.__gosx_scene3d_elio_ocean=ne({elio:"v0.5.0",set:"ocean",sha256:"3164f8e7d5544d0d8812b023cf2baa4774c1f688e98e9935fa8b702a90bd3125",kernels:{oceanSpectrum:{wgsl:`struct OceanSpectrumParams {
+(function(){"use strict";function ne(F){if(F&&typeof F=="object"){for(const D of Object.keys(F))ne(F[D]);Object.freeze(F)}return F}window.__gosx_scene3d_elio_ocean=ne({elio:"v0.6.0",set:"ocean",sha256:"08c0b504826d61cc6b8340869602cb894b36fb2a6eacf74c0d4251c977d21905",kernels:{oceanSpectrum:{wgsl:`struct OceanSpectrumParams {
   n : u32,
   cascade : u32,
   seed : u32,
@@ -1321,12 +1321,12 @@ fn ocean_probe(@builtin(global_invocation_id) gid : vec3<u32>) {
         }
         let u = ((px + ox) / lc);
         let v = ((pz + oz) / lc);
-        let fxs = ((u - floor(u)) * f32(nc));
-        let fzs = ((v - floor(v)) * f32(nc));
+        let fxs = (((u - floor(u)) * f32(nc)) - 0.5);
+        let fzs = (((v - floor(v)) * f32(nc)) - 0.5);
         let fxf = floor(fxs);
         let fzf = floor(fzs);
-        let x0 = min(u32(fxf), (nc - 1u));
-        let z0 = min(u32(fzf), (nc - 1u));
+        let x0 = (u32((fxf + f32(nc))) % nc);
+        let z0 = (u32((fzf + f32(nc))) % nc);
         let rx = (fxs - fxf);
         let rz = (fzs - fzf);
         let x1 = ((x0 + 1u) % nc);
