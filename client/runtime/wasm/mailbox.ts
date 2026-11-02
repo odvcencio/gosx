@@ -38,8 +38,13 @@
     throw new TypeError("runtime mailbox requires a Uint8Array or ArrayBuffer");
   }
 
+  // One decoder serves every string in every mailbox: constructing a
+  // TextDecoder per string cost more than decoding it. decode() without
+  // stream:true keeps no state between calls.
+  const sharedDecoder = typeof TextDecoder === "function" ? new TextDecoder() : null;
+
   function decodeUTF8(bytes) {
-    if (typeof TextDecoder === "function") return new TextDecoder().decode(bytes);
+    if (sharedDecoder) return sharedDecoder.decode(bytes);
     let out = "";
     for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
     return out;

@@ -72,13 +72,20 @@ func SafeSpreadName(name string) bool {
 	return SafeAuthoredName(name) && !strings.HasPrefix(name, "on") && name != "style" && name != "srcdoc" && !strings.HasPrefix(name, "data-gosx-")
 }
 
+// IsURLAttr reports whether FilterURL sanitizes values of the named attribute.
+func IsURLAttr(name string) bool {
+	switch strings.ToLower(name) {
+	case "href", "src", "action", "formaction", "xlink:href", "poster":
+		return true
+	}
+	return false
+}
+
 // FilterURL allows web, email and telephone URLs and relative references.
 // Unsafe schemes use an inert fragment, matching html/template's fail-closed
 // approach. This runs before HTML escaping so entities remain literal data.
 func FilterURL(name, value string) string {
-	switch strings.ToLower(name) {
-	case "href", "src", "action", "formaction", "xlink:href", "poster":
-	default:
+	if !IsURLAttr(name) {
 		return value
 	}
 	// Browsers ignore leading whitespace and ASCII controls in URL schemes.

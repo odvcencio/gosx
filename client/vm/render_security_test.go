@@ -12,7 +12,7 @@ func TestIslandDOMUpdatesKeepURLAndNameFiltering(t *testing.T) {
 	for _, name := range []string{"href", "src", "action", "formaction", "xlink:href", "poster"} {
 		attrs = append(attrs, program.Attr{Kind: program.AttrStatic, Name: name, Value: "java\nscript:example"})
 	}
-	resolved, dom, events, _, _ := machine.resolveElementAttrs(attrs)
+	resolved, dom, events, _, _ := machine.resolveElementAttrs(attrs, nil)
 	if len(resolved) != 7 || len(events) != 1 || len(dom) != 9 {
 		t.Fatalf("resolved=%#v DOM=%#v events=%#v", resolved, dom, events)
 	}
@@ -21,7 +21,7 @@ func TestIslandDOMUpdatesKeepURLAndNameFiltering(t *testing.T) {
 			t.Fatalf("unsafe DOM URL: %#v", attr)
 		}
 	}
-	dynamic, _, _, _, _ := machine.resolveElementAttrs([]program.Attr{{Kind: program.AttrExpr, Name: "href", Expr: 0}})
+	dynamic, _, _, _, _ := machine.resolveElementAttrs([]program.Attr{{Kind: program.AttrExpr, Name: "href", Expr: 0}}, nil)
 	if len(dynamic) != 1 || dynamic[0].Value != "#" {
 		t.Fatalf("unsafe bound URL: %#v", dynamic)
 	}
@@ -43,7 +43,7 @@ func TestIslandDOMUpdatesRejectReservedDispatchAttrs(t *testing.T) {
 		}
 	}
 	attrs = append(attrs, program.Attr{Kind: program.AttrStatic, Name: "data-gosx-link", Value: "true"}, program.Attr{Kind: program.AttrEvent, Name: "onClick", Event: "real"})
-	resolved, dom, events, _, _ := machine.resolveElementAttrs(attrs)
+	resolved, dom, events, _, _ := machine.resolveElementAttrs(attrs, nil)
 	if len(resolved) != 1 || len(dom) != 3 || len(events) != 1 {
 		t.Fatalf("authored markers survived: resolved=%+v DOM=%+v events=%+v", resolved, dom, events)
 	}
