@@ -591,3 +591,17 @@ func TestAbsentPropStaysCleanUntilItAppears(t *testing.T) {
 		t.Fatalf("root hits after the prop vanished = %d, want 0", hits)
 	}
 }
+
+// TestValueDigestDoesNotAllocatePerField guards the cost of the digest. Taking
+// the address of a local inside the recursion moved every map field to the heap,
+// which doubled the time a dock-sized value took to digest.
+func TestValueDigestDoesNotAllocatePerField(t *testing.T) {
+	fields := map[string]Value{}
+	for i := 0; i < 200; i++ {
+		fields[fmt.Sprintf("f%d", i)] = obj("a", StringVal("text of some length"), "b", ArrayVal([]Value{IntVal(i), FloatVal(1.5)}))
+	}
+	v := ObjectVal(fields)
+	if allocs := testing.AllocsPerRun(20, func() { hashValue(v) }); allocs > 20 {
+		t.Fatalf("hashValue allocated %.0f times for a 200-field value; it must not allocate per field", allocs)
+	}
+}

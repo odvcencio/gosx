@@ -39,6 +39,17 @@ func (h *valueHash) word(x uint64) {
 
 func (h *valueHash) text(s string) {
 	a, b := h.a, h.b
+	total := len(s)
+	// Eight bytes per step: the strings dominate a view model's size.
+	for len(s) >= 8 {
+		x := uint64(s[0]) | uint64(s[1])<<8 | uint64(s[2])<<16 | uint64(s[3])<<24 |
+			uint64(s[4])<<32 | uint64(s[5])<<40 | uint64(s[6])<<48 | uint64(s[7])<<56
+		a = (a ^ x) * hashPrimeA
+		a ^= a >> 29
+		b = (b + x + 1) * hashPrimeB
+		b ^= b >> 32
+		s = s[8:]
+	}
 	for i := 0; i < len(s); i++ {
 		c := uint64(s[i])
 		a = (a ^ c) * hashPrimeA
@@ -46,29 +57,30 @@ func (h *valueHash) text(s string) {
 		b ^= b >> 32
 	}
 	h.a, h.b = a, b
-	h.word(uint64(len(s)))
+	h.word(uint64(total))
 }
 
 // hashValue digests v. ok is false when v holds something that cannot be
 // compared by content (a closure) or nests deeper than the evaluator allows;
 // the caller then treats the input as changed.
 func hashValue(v Value) (valueHash, bool) {
-	var h valueHash
-	h.a, h.b = 0xcbf29ce484222325, 0x84222325cbf29ce4
-	ok := h.value(&v, 0)
-	return h, ok
+	return hashInto(valueHash{a: 0xcbf29ce484222325, b: 0x84222325cbf29ce4}, v, 0)
 }
 
-func (h *valueHash) value(v *Value, depth int) bool {
+// hashInto folds v into h and returns the new state. It passes both by value
+// so no Value or state has to live on the heap: taking the address of a local
+// in a recursive function makes the compiler move it there, which cost one
+// allocation per field of every map.
+func hashInto(h valueHash, v Value, depth int) (valueHash, bool) {
 	if depth > maxValueRecursionDepth {
-		return false
+		return h, false
 	}
 	h.word(uint64(v.Type)<<8 | uint64(v.tag))
 	h.word(uint64(int64(v.n)))
 	h.word(math.Float64bits(v.num))
 	switch v.kind() {
 	case kindClosure:
-		return false
+		return h, false
 	case kindString:
 		h.text(v.text())
 	case kindArray:
@@ -78,8 +90,9 @@ func (h *valueHash) value(v *Value, depth int) bool {
 			h.word(1)
 		}
 		for i := range items {
-			if !h.value(&items[i], depth+1) {
-				return false
+			var ok bool
+			if h, ok = hashInto(h, items[i], depth+1); !ok {
+				return h, false
 			}
 		}
 	case kindMap:
@@ -94,9 +107,9 @@ func (h *valueHash) value(v *Value, depth int) bool {
 		for key, field := range fields {
 			e := valueHash{a: 0x1234567890abcdef, b: 0xfedcba0987654321}
 			e.text(key)
-			f := field
-			if !e.value(&f, depth+1) {
-				return false
+			var ok bool
+			if e, ok = hashInto(e, field, depth+1); !ok {
+				return h, false
 			}
 			sumA += mix64(e.a)
 			sumB ^= mix64(e.b + 0x2545f4914f6cdd1d)
@@ -104,5 +117,5 @@ func (h *valueHash) value(v *Value, depth int) bool {
 		h.word(sumA)
 		h.word(sumB)
 	}
-	return true
+	return h, true
 }

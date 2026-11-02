@@ -1128,12 +1128,21 @@ func (vm *VM) tryReuseRow(tree *ResolvedTree, out []int, source, i int, item, ke
 	tree.Nodes = append(tree.Nodes, c.prev.Nodes[rec.start:rec.end]...)
 	delta := base - int(rec.start)
 	if delta != 0 {
+		// One allocation holds every shifted child list of the row. The
+		// lists in the previous tree stay as they are: that tree is still
+		// read by the diff.
+		total := 0
+		for n := base; n < len(tree.Nodes); n++ {
+			total += len(tree.Nodes[n].Children)
+		}
+		backing := make([]int, total)
 		for n := base; n < len(tree.Nodes); n++ {
 			node := &tree.Nodes[n]
 			if len(node.Children) == 0 {
 				continue
 			}
-			shifted := make([]int, len(node.Children))
+			shifted := backing[:len(node.Children):len(node.Children)]
+			backing = backing[len(node.Children):]
 			for j, child := range node.Children {
 				shifted[j] = child + delta
 			}

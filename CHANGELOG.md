@@ -14,7 +14,7 @@
   row 0.34 ms instead of 0.67 ms, a heading-only write 0.13 ms instead of 0.65 ms. Rendered output and patches are unchanged;
   tests compare each step with a full evaluation. An input that is absent on both sides (the lowerer reads the Go
   identifier `nil` as a prop no island sets) now counts as unchanged; it used to make every element that compares with nil
-  dirty on every walk, which kept the whole Bon Voyage dock from being copied. The reuse code is now unreachable by construction in TinyGo builds, which
+  dirty on every walk, which kept the whole Bon Voyage dock from being copied. The content digest allocates nothing per field and hashes strings eight bytes at a time. The reuse code is now unreachable by construction in TinyGo builds, which
   never ran it (`tinygoDefensiveReconcile`), so the production core runtime is 698,608 bytes instead of 709,386.
 ## v0.59.0
 
