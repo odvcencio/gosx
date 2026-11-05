@@ -1653,17 +1653,67 @@
     };
   }
 
+  let gosxEnhancementRoot = null;
+  let gosxEnhancementObserver = null;
+  let gosxEnhancementSnapshot = null;
+  const GOSX_ENHANCEMENT_ATTRIBUTES = [
+    "data-gosx-enhance", "data-gosx-enhance-layer", "data-gosx-fallback",
+    "data-gosx-engine", "id",
+  ];
+
+  function gosxDocumentEnhancementRoot() {
+    const root = document.body || document.documentElement;
+    if (root !== gosxEnhancementRoot) {
+      if (gosxEnhancementObserver) {
+        gosxEnhancementObserver.disconnect();
+      }
+      gosxEnhancementRoot = root;
+      gosxEnhancementObserver = null;
+      gosxEnhancementSnapshot = null;
+      if (root && typeof MutationObserver === "function") {
+        const observer = new MutationObserver(function() {
+          gosxEnhancementSnapshot = null;
+        });
+        // takeRecords also catches a synchronous mutation followed immediately
+        // by document.refresh(), before the observer callback can run.
+        if (typeof observer.observe === "function" && typeof observer.takeRecords === "function") {
+          observer.observe(root, {
+            subtree: true, childList: true, attributes: true,
+            attributeFilter: GOSX_ENHANCEMENT_ATTRIBUTES,
+          });
+          gosxEnhancementObserver = observer;
+        }
+      }
+    }
+    if (gosxEnhancementObserver && gosxEnhancementObserver.takeRecords().length > 0) {
+      gosxEnhancementSnapshot = null;
+    }
+    return root;
+  }
+
   function gosxDocumentEnhancements() {
+    const root = gosxDocumentEnhancementRoot();
+    if (gosxEnhancementObserver && gosxEnhancementSnapshot) {
+      return gosxEnhancementSnapshot;
+    }
     const entries = [];
     let order = 0;
-    gosxWalkDocumentElements(document.body || document.documentElement, function(node) {
+    const collect = function(node) {
       const entry = gosxDocumentEnhancementEntry(node, order);
       if (!entry) {
         return;
       }
       entries.push(entry);
       order += 1;
-    });
+    };
+    if (root && typeof root.querySelectorAll === "function") {
+      collect(root);
+      for (const node of root.querySelectorAll("[data-gosx-enhance]")) {
+        collect(node);
+      }
+    } else {
+      gosxWalkDocumentElements(root, collect);
+    }
     const layers = Object.create(null);
     for (const layer of GOSX_DOCUMENT_ENHANCEMENT_LAYERS) {
       layers[layer] = gosxDocumentEnhancementLayerState(layer);
@@ -1692,12 +1742,14 @@
       kindBucket.entries.push(Object.assign({}, entry));
       kinds[entry.kind] = kindBucket;
     }
-    return {
+    const snapshot = {
       count: entries.length,
       entries,
       layers,
       kinds,
     };
+    gosxEnhancementSnapshot = snapshot;
+    return snapshot;
   }
 
   function gosxDocumentRuntimeAssets(contract, enhancement, layer) {
