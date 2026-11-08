@@ -94,7 +94,7 @@ function createSceneReflectWebGL(gl) {
       return Object.assign({}, opts.target, { framebuffer: scene.fbo });
     },
     capture: function(opts, config, quality) {
-      const main = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      const main = sceneGLShadow(gl).framebuffer();
       const w = Math.max(1, Math.round(opts.width*config.resolution));
       const h = Math.max(1, Math.round(opts.height*config.resolution));
       opaque = target(opaque, w, h, true);
@@ -114,7 +114,7 @@ function createSceneReflectWebGL(gl) {
         settings: [config.strength, config.mode.includes("ssr") ? quality.reflectionSteps : 0, doPlanar ? 1 : 0, opts.linear ? 1 : 0] };
     },
     end: function(w,h) {
-      if (!scene || gl.getParameter(gl.FRAMEBUFFER_BINDING) !== scene.fbo) return;
+      if (!scene || sceneGLShadow(gl).framebuffer() !== scene.fbo) return;
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER,scene.fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,null);
       gl.blitFramebuffer(0,0,w,h,0,0,w,h,gl.COLOR_BUFFER_BIT,gl.NEAREST);
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);
@@ -146,7 +146,7 @@ function sceneReflectWebGLBind(gl, program, record) {
   });
 }
 function sceneReflectWebGLDrawOpaque(gl, ctx, view, proj) {
-  const cull = gl.isEnabled(gl.CULL_FACE), level = ctx.bundle.environment.ocean.level || 0;
+  const cull = sceneGLShadow(gl).isEnabled(gl.CULL_FACE), level = ctx.bundle.environment.ocean.level || 0;
   const originalView = new Float32Array(ctx.view), originalProj = new Float32Array(ctx.proj), cameraY = ctx.camera.y;
   // Frame uploads in skinned/rigid programs read these retained arrays. Use
   // the mirrored camera for every program, then restore before the ocean.

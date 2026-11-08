@@ -21,7 +21,7 @@ function createSceneCloudWebGL(gl) {
  if(!program) return null;
  const data=new Float32Array(64),loc=gl.getUniformLocation(program.program,"u_cloud[0]"),quad=createSceneFullscreenQuad(gl);
  return {draw:function(opts) {
-   sceneCloudUniformData(opts,data);const cull=gl.isEnabled(gl.CULL_FACE);
+   sceneCloudUniformData(opts,data);const cull=sceneGLShadow(gl).isEnabled(gl.CULL_FACE);
    gl.useProgram(program.program);gl.uniform4fv(loc,data);
    gl.disable(gl.CULL_FACE);gl.disable(gl.DEPTH_TEST);gl.depthMask(false);
    gl.enable(gl.BLEND);gl.blendFuncSeparate(gl.ONE,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);

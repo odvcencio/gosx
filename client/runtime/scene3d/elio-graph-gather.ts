@@ -13,13 +13,20 @@
 (function () {
   const FULLSCREEN_VERTEX = "#version 300 es\nvoid main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(p * 2. - 1., 0., 1.); }";
 
-  function saveState(gl: any): any {
+  // saveState answers from the shadow of the context's state (gl-state-shadow.ts, handed over as window.__gosx_gl_shadow), because
+  // gl.getParameter and gl.isEnabled wait for the GPU process, and this runs once per graph run and once per extra pass, on the main
+  // thread, every frame. queryState asks the context instead: it is the route for a host whose renderer did not load the shadow.
+  function queryState(gl: any): any {
     return {
       draw: gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING), read: gl.getParameter(gl.READ_FRAMEBUFFER_BINDING), viewport: gl.getParameter(gl.VIEWPORT),
       program: gl.getParameter(gl.CURRENT_PROGRAM), vao: gl.getParameter(gl.VERTEX_ARRAY_BINDING), active: gl.getParameter(gl.ACTIVE_TEXTURE),
       blend: gl.isEnabled(gl.BLEND), depth: gl.isEnabled(gl.DEPTH_TEST), cull: gl.isEnabled(gl.CULL_FACE), scissor: gl.isEnabled(gl.SCISSOR_TEST),
       colorMask: gl.getParameter(gl.COLOR_WRITEMASK), depthMask: gl.getParameter(gl.DEPTH_WRITEMASK),
     };
+  }
+  function saveState(gl: any): any {
+    const shadow = window.__gosx_gl_shadow;
+    return shadow ? shadow(gl).snapshot() : queryState(gl);
   }
   function restoreState(gl: any, s: any): void {
     gl.bindBuffer(gl.UNIFORM_BUFFER, null); gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, null); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);

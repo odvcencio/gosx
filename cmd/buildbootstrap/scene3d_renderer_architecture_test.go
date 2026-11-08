@@ -187,6 +187,7 @@ func rendererChunkRoleAuthorities(backend string, governedSources []string) map[
 			"shared-scene-support": {
 				"bootstrap-src/15a1-scene-texture-budget.ts",
 				"bootstrap-src/16b-scene-hdr.ts",
+				"../runtime/scene3d/gl-state-shadow.ts",
 			},
 			"backend-support": {
 				"bootstrap-src/16e-scene-webgl-legacy.ts",

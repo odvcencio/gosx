@@ -7604,7 +7604,7 @@
           }
           data[19] = Math.max(0, sceneNumber(record && record.levels, 1) - 1) * Math.max(0, Math.min(1, sceneNumber(sky.blur, 0)));
         }
-        var cull = gl.isEnabled(gl.CULL_FACE);
+        var cull = sceneGLShadow(gl).isEnabled(gl.CULL_FACE);
         gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
         gl.useProgram(program.program); gl.uniform4fv(uniforms, data);
         scenePBRBindTexture(gl, 0, image.texture, gl.TEXTURE_2D); gl.uniform1i(imageUniform, 0);

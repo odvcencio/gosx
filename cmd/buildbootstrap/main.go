@@ -167,6 +167,10 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/dom-regions.ts"),
 			sourceFile("bootstrap-src/15a1-scene-texture-budget.ts"),
 			sourceFile("bootstrap-src/16b-scene-hdr.ts"),
+			// The WebGL state shadow and the uniform-location cache. The Elio graph
+			// chunk reaches them through window.__gosx_gl_shadow, so only one chunk
+			// ships the source.
+			sourceFile("../runtime/scene3d/gl-state-shadow.ts"),
 			// 16c holds the backend-agnostic PBR helpers 16-scene-webgl.js used
 			// to own. The monolith keeps 16-scene-webgl.js inline right after
 			// it, so both files ship here and neither declares a name twice.
@@ -565,6 +569,10 @@ var outputs = []output{
 			// solver and a Radiance HDR decoder it can never reach.
 			sourceFile("bootstrap-src/15a1-scene-texture-budget.ts"),
 			sourceFile("bootstrap-src/16b-scene-hdr.ts"),
+			// The WebGL state shadow and the uniform-location cache. The Elio graph
+			// chunk reaches them through window.__gosx_gl_shadow, so only one chunk
+			// ships the source.
+			sourceFile("../runtime/scene3d/gl-state-shadow.ts"),
 			// 16e is the legacy vertex-colour renderer. It left
 			// 10-runtime-scene-core.js, where every Scene3D page paid for it,
 			// and joined the renderer it backs up. createSceneWebGLResult in

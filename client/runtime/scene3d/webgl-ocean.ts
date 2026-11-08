@@ -199,7 +199,7 @@ function createSceneOceanWebGLRenderer(gl, textureCache, placeholder, reflection
         if (record && record.loaded && !record.failed) { bathymetry = record.texture; state = "shore"; }
         else { data[26] = 0; state = record && record.failed ? "bathymetry-failed" : "bathymetry-pending"; }
       }
-      const cull = gl.isEnabled(gl.CULL_FACE);
+      const cull = sceneGLShadow(gl).isEnabled(gl.CULL_FACE);
       gl.useProgram(program);
       gl.uniformMatrix4fv(uniforms.viewProj, false, viewProj);
       gl.uniform4fv(uniforms["ocean[0]"], data);
