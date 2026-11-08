@@ -200,7 +200,7 @@ func TestNativeBridgeMessageBoxMethodRegistered(t *testing.T) {
 // backend (app_windows.go or app_darwin.go) instead of the unsupported stub.
 func nativeBackendCompiled() bool {
 	switch runtime.GOOS {
-	case "windows", "darwin":
+	case "windows", "darwin", "linux":
 		return runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
 	}
 	return false
