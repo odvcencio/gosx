@@ -50,11 +50,11 @@ const {
 test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () => {
   const webgl = readSceneRendererBackendSrc("webgl");
 
-  assert.match(webgl, /function sceneWebGLNormalizeCustomShaderSource\(source\)/);
+  assert.match(webgl, /function sceneWebGLNormalizeCustomShaderSource\(source, fragment = false, promote = false\)/);
   assert.match(webgl, /precision\s+highp\s+float/);
   assert.match(webgl, /precision\s+highp\s+int/);
-  assert.match(webgl, /vertexSource = sceneWebGLNormalizeCustomShaderSource\(vertexSource\);/);
-  assert.match(webgl, /fragmentSource = sceneWebGLNormalizeCustomShaderSource\(fragmentSource\);/);
+  assert.match(webgl, /vertexSource = sceneWebGLNormalizeCustomShaderSource\(vertexSource, false, promote\);/);
+  assert.match(webgl, /fragmentSource = sceneWebGLNormalizeCustomShaderSource\(fragmentSource, true, promote\);/);
   assert.match(webgl, /var vertexSource = sceneWebGLNormalizeCustomShaderSource\(material\.customVertex\);/);
   assert.match(webgl, /var fragmentSource = sceneWebGLNormalizeCustomShaderSource\(material\.customFragment\);/);
   assert.match(webgl, /sceneWebGLNormalizeCustomShaderSource\(entry\.customVertex\.trim\(\)\)/);

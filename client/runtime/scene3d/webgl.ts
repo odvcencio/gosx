@@ -1525,16 +1525,9 @@
       .replace("u_modelMatrix *", "a_instanceMatrix *") : SCENE_SHADOW_VERTEX_SOURCE;
     if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {")
       .replace("a_instanceMatrix *", "a_instanceMatrix * gosxCrowdSkin() *");
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, source);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Shadow shader");
-    if (!program) return null;
+    var linked = sceneWebGLCompileProgram(gl, source, SCENE_SHADOW_FRAGMENT_SOURCE, "Shadow shader");
+    if (!linked) return null;
+    var { program, vertexShader, fragmentShader } = linked;
 
     return {
       program: program,
@@ -1932,46 +1925,9 @@
     gl.bindVertexArray(null);
   }
 
-  // Compile and link a post-processing shader program from the shared
-  // vertex shader and a specific fragment shader source.
-  function createScenePostProgram(gl, fragmentSource) {
-    var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_POST_VERTEX_SOURCE);
-    if (!vs) return null;
-    var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-    if (!fs) {
-      gl.deleteShader(vs);
-      return null;
-    }
-
-    var prog = scenePBRLinkProgram(gl, vs, fs, "Post-process shader");
-    if (!prog) return null;
-
-    return { program: prog, vertexShader: vs, fragmentShader: fs };
-  }
-
-  function sceneWebGLNormalizeCustomShaderSource(source) {
-    if (typeof source !== "string" || source.length === 0) {
-      return source;
-    }
-    if (/^\s*#version\s+300\s+es\b/.test(source)) {
-      return source;
-    }
-    let out = source.replace(/\bprecision\s+(lowp|mediump|highp)\s+float\s*;/g, "precision highp float;");
-    out = out.replace(/\bprecision\s+(lowp|mediump|highp)\s+int\s*;/g, "precision highp int;");
-    if (!/\bprecision\s+highp\s+float\s*;/.test(out)) {
-      out = "precision highp float;\n" + out;
-    }
-    if (!/\bprecision\s+highp\s+int\s*;/.test(out)) {
-      out = out.replace(/precision\s+highp\s+float\s*;/, "precision highp float;\nprecision highp int;");
-    }
-    return out;
-  }
-
-  // createSceneCustomPostProgram: links a Selena post program using the
-  // caller-supplied vertex source (Selena emits its own vertex GLSL).
-  function createSceneCustomPostProgram(gl, vertexSource, fragmentSource) {
-    vertexSource = sceneWebGLNormalizeCustomShaderSource(vertexSource);
-    fragmentSource = sceneWebGLNormalizeCustomShaderSource(fragmentSource);
+  // Synchronous programs share shader ownership and compile/link cleanup.
+  // The separate parallel-prewarm path retains its nonblocking status checks.
+  function sceneWebGLCompileProgram(gl: WebGL2RenderingContext, vertexSource: string, fragmentSource: string, label: string) {
     var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
     if (!vs) return null;
     var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
@@ -1979,9 +1935,76 @@
       gl.deleteShader(vs);
       return null;
     }
-    var prog = scenePBRLinkProgram(gl, vs, fs, "Custom post shader");
+    var prog = scenePBRLinkProgram(gl, vs, fs, label);
     if (!prog) return null;
     return { program: prog, vertexShader: vs, fragmentShader: fs };
+  }
+
+  function createScenePostProgram(gl, fragmentSource) {
+    return sceneWebGLCompileProgram(gl, SCENE_POST_VERTEX_SOURCE, fragmentSource, "Post-process shader");
+  }
+
+  // Explicit LOD posts opt into ES 3.00 after the shared precision repair.
+  // Other authored shaders keep their dialect, geometry and uniform contract.
+  function sceneWebGLNormalizeCustomShaderSource(source, fragment = false, promote = false) {
+    if (typeof source !== "string" || source.length === 0) {
+      return source;
+    }
+    if (/^\s*#version\s+300\s+es\b/.test(source)) {
+      return source;
+    }
+    let out = source.replace(/\bprecision\s+(?:lowp|mediump|highp)\s+(float|int)\s*;/g, "precision highp $1;");
+    if (!/\bprecision\s+highp\s+float\s*;/.test(out)) {
+      out = "precision highp float;\n" + out;
+    }
+    if (!/\bprecision\s+highp\s+int\s*;/.test(out)) {
+      out = out.replace(/precision\s+highp\s+float\s*;/, "precision highp float;\nprecision highp int;");
+    }
+    if (!promote) return out;
+    out = out.replace(/^\s*#version\s+100\s*$/gm, "");
+    out = out.replace(/^\s*#extension\s+GL_EXT_shader_texture_lod\s*:\s*\w+\s*$/gm, "");
+    out = out.replace(/\b(attribute|varying)\b/g, (qualifier: string) => qualifier === "attribute" || fragment ? "in" : "out");
+    out = out.replace(/\btexture2D(LodEXT)?\s*\(/g, (_: string, lod?: string) => lod ? "textureLod(" : "texture(");
+    if (fragment) {
+      const output = sceneWebGLPostName(out, "_gosxPostFragColor");
+      out = out.replace(/\bgl_FragColor\b/g, output);
+      out = out.replace(/precision\s+highp\s+int\s*;/,
+        "precision highp int;\nout vec4 " + output + ";");
+    }
+    return "#version 300 es\n" + out;
+  }
+
+  // Reserve generated names together with their optional LOD helper suffix.
+  function sceneWebGLPostName(source: string, name: string) {
+    while (new RegExp("\\b" + name + "(?:Lod)?\\b").test(source)) name += "_";
+    return name;
+  }
+
+  // DOMRegions uses top-left viewport UVs on both backends. The legacy
+  // Selena quad vertex emits bottom-left UVs; adapt only that opted-in ABI.
+  // Flip engine texture reads back so the scene itself keeps its orientation.
+  function sceneWebGLPostDOMCoordinates(vertexSource: string, fragmentSource: string) {
+    vertexSource = vertexSource.replace(/\bv_uv\s*=\s*a_position\s*\*\s*0\.5\s*\+\s*0\.5\s*;/,
+      "v_uv = vec2(a_position.x * 0.5 + 0.5, 0.5 - a_position.y * 0.5);");
+    const sample = sceneWebGLPostName(fragmentSource, "_gosxPostTexture");
+    const lod = /\btexture2DLodEXT\s*\(/.test(fragmentSource);
+    fragmentSource = fragmentSource.replace(/\b(texture2D|texture2DLodEXT)\s*\(\s*(_sceneColor|_sceneDepth)\s*,/g,
+      (_: string, call: string, texture: string) => sample + (call === "texture2DLodEXT" ? "Lod" : "") + "(" + texture + ",");
+    let helpers = "vec4 " + sample + "(sampler2D tex, vec2 uv) { return texture2D(tex, vec2(uv.x, 1.0 - uv.y)); }\n";
+    if (lod) helpers += "vec4 " + sample + "Lod(sampler2D tex, vec2 uv, float level) { return texture2DLodEXT(tex, vec2(uv.x, 1.0 - uv.y), level); }\n";
+    fragmentSource = fragmentSource.replace(/\bvoid\s+main\s*\(/, helpers + "void main(");
+    return [vertexSource, fragmentSource];
+  }
+
+  function createSceneCustomPostProgram(gl, vertexSource, fragmentSource, domRegions: boolean) {
+    if (domRegions && !/^\s*#version\s+300\s+es\b/.test(vertexSource) &&
+        /\bv_uv\s*=\s*a_position\s*\*\s*0\.5\s*\+\s*0\.5\s*;/.test(vertexSource)) {
+      [vertexSource, fragmentSource] = sceneWebGLPostDOMCoordinates(vertexSource, fragmentSource);
+    }
+    const promote = /\btexture2DLodEXT\s*\(/.test(fragmentSource) && !/^\s*#version\s+300\s+es\b/.test(fragmentSource);
+    vertexSource = sceneWebGLNormalizeCustomShaderSource(vertexSource, false, promote);
+    fragmentSource = sceneWebGLNormalizeCustomShaderSource(fragmentSource, true, promote);
+    return sceneWebGLCompileProgram(gl, vertexSource, fragmentSource, "Custom post shader");
   }
 
   // Dispose an FBO and its attachments.
@@ -2257,17 +2280,13 @@
       if (!spec || !spec.fragment) return null;
       var vsSrc = spec.vertex || sharedVertex;
       if (!vsSrc) return null;
-      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vsSrc);
-      if (!vs) return null;
-      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, spec.fragment);
-      if (!fs) { gl.deleteShader(vs); return null; }
-      var prog = scenePBRLinkProgram(gl, vs, fs, "Water sim (" + name + ")");
-      gl.deleteShader(vs);
-      gl.deleteShader(fs);
-      if (!prog) return null;
-      compiledShaders.push(prog);
+      var linked = sceneWebGLCompileProgram(gl, vsSrc, spec.fragment, "Water sim (" + name + ")");
+      if (!linked) return null;
+      gl.deleteShader(linked.vertexShader);
+      gl.deleteShader(linked.fragmentShader);
+      compiledShaders.push(linked.program);
       return {
-        program: prog,
+        program: linked.program,
         descriptor: sceneWaterParseDescriptor(descriptors[spec.desc]),
       };
     }
@@ -2999,13 +3018,11 @@
       // stages, matching the ES 3.00 vertex default (highp), so the shared
       // uniforms (mvp, poolWidth, ...) agree in precision across stages and the
       // program links without the earlier mediump->highp fragment rewrite.
-      var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vsSrc);
-      if (!vs) return null;
-      var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fsSrc);
-      if (!fs) { gl.deleteShader(vs); return null; }
-      var prog = scenePBRLinkProgram(gl, vs, fs, label);
-      gl.deleteShader(vs); gl.deleteShader(fs);
-      return prog;
+      var linked = sceneWebGLCompileProgram(gl, vsSrc, fsSrc, label);
+      if (!linked) return null;
+      gl.deleteShader(linked.vertexShader);
+      gl.deleteShader(linked.fragmentShader);
+      return linked.program;
     }
 
     var poolProgram = compile(entry.poolVertexGLES, entry.poolFragmentGLES, "Water pool");
@@ -4463,7 +4480,7 @@
       if (!vertSrc || !fragSrc) return inputTex; // no GLSL → identity
 
       if (!customPostPrograms.hasOwnProperty(name)) {
-        var prog = createSceneCustomPostProgram(gl, vertSrc, fragSrc);
+        var prog = createSceneCustomPostProgram(gl, vertSrc, fragSrc, !!effect.domRegions);
         if (!prog) {
           console.warn("[gosx] custom post pass '" + name + "' (WebGL2) compile/link failed; falling back to identity.");
           // Journal it: a GLSL pass that Selena emitted and this driver
@@ -4908,9 +4925,7 @@
         }
         for (var key in programs) {
           if (programs[key]) {
-            gl.deleteShader(programs[key].vertexShader);
-            gl.deleteShader(programs[key].fragmentShader);
-            gl.deleteProgram(programs[key].program);
+            sceneWebGLDisposeProgram(gl, programs[key]);
           }
         }
         programs = {};
@@ -4918,17 +4933,13 @@
         for (var cpKey in customPostPrograms) {
           var cpProg = customPostPrograms[cpKey];
           if (cpProg) {
-            gl.deleteShader(cpProg.vertexShader);
-            gl.deleteShader(cpProg.fragmentShader);
-            gl.deleteProgram(cpProg.program);
+            sceneWebGLDisposeProgram(gl, cpProg);
           }
         }
         customPostPrograms = {};
         customPostFailed = {};
         if (blitProg) {
-          gl.deleteShader(blitProg.vertexShader);
-          gl.deleteShader(blitProg.fragmentShader);
-          gl.deleteProgram(blitProg.program);
+          sceneWebGLDisposeProgram(gl, blitProg);
           blitProg = null;
         }
         if (quad) {
@@ -5644,24 +5655,10 @@
     if (warmed) {
       return scenePBRFinalizeBaseProgram(gl, warmed);
     }
-    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_VERTEX_SOURCE);
-    if (!vertexShader) {
-      return null;
-    }
-    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
+    const linked = sceneWebGLCompileProgram(gl, SCENE_PBR_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), "PBR shader");
+    if (!linked) return null;
 
-    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "PBR shader");
-    if (!program) return null;
-
-    return scenePBRFinalizeBaseProgram(gl, {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-    });
+    return scenePBRFinalizeBaseProgram(gl, linked);
   }
 
   function scenePBRFinalizeBaseProgram(gl, linked) {
@@ -5902,10 +5899,9 @@
   // custom-stream record (their binding is owned by the builtin path).
   var SCENE_WEBGL_RESERVED_ATTRIBUTES = "position positions normal normals uv uvs uv1 tangent tangents index indices skin skinIndex joints weights".split(" ");
 
-  // sceneSelenaDiscardProgram releases a compiled Selena program whose
-  // attribute descriptor failed validation, so a failed compile path never
-  // leaks GPU programs across repeated material rejections.
-  function sceneSelenaDiscardProgram(gl, info) {
+  // Release a synchronously owned program and its shader pair, including
+  // rejected material layouts and cached renderer/post programs.
+  function sceneWebGLDisposeProgram(gl, info) {
     if (!info) return;
     if (info.program) gl.deleteProgram(info.program);
     if (info.vertexShader) gl.deleteShader(info.vertexShader);
@@ -5923,15 +5919,9 @@
       if (!skinInfo) return null;
       vertexSource = skinInfo.source;
     }
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, skinned ? "Selena shader (skinned)" : "Selena shader");
-    if (!program) return null;
+    var linked = sceneWebGLCompileProgram(gl, vertexSource, fragmentSource, skinned ? "Selena shader (skinned)" : "Selena shader");
+    if (!linked) return null;
+    var { program, vertexShader, fragmentShader } = linked;
     var attrs = {};
     var layoutAttrs = Array.isArray(layout.attributes) ? layout.attributes : [];
     var result = {
@@ -5956,7 +5946,7 @@
       var isReserved = SCENE_WEBGL_RESERVED_ATTRIBUTES.indexOf(attrName) >= 0;
       if (typeof attrName !== "string") {
         if (!isReserved) {
-          sceneSelenaDiscardProgram(gl, result);
+          sceneWebGLDisposeProgram(gl, result);
           return null;
         }
         continue;
@@ -5972,7 +5962,7 @@
         // vertex shader exposes it at a unique compiled location; anything else
         // discards the program so the object takes the journaled builtin-PBR
         // fallback.
-        sceneSelenaDiscardProgram(gl, result);
+        sceneWebGLDisposeProgram(gl, result);
         return null;
       }
       seenCustomLocations[loc] = true;
@@ -5995,17 +5985,9 @@
   function createScenePBRCustomProgram(gl, material) {
     const vertexSource = scenePBRBuildCustomVertexSource(material);
     const fragmentSource = scenePBRFragmentSourceForContext(gl, scenePBRBuildCustomFragmentSource(material));
-    const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
-    if (!vertexShader) {
-      return null;
-    }
-    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-    const program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Custom PBR shader");
-    if (!program) return null;
+    const linked = sceneWebGLCompileProgram(gl, vertexSource, fragmentSource, "Custom PBR shader");
+    if (!linked) return null;
+    const { program, vertexShader, fragmentShader } = linked;
     const attributes = {
       position: gl.getAttribLocation(program, "a_position"),
       normal: gl.getAttribLocation(program, "a_normal"),
@@ -6027,16 +6009,9 @@
   // Returns a program object with cached attribute/uniform locations including
   // the joint matrix array and skin flag, or null on failure.
   function createScenePBRSkinnedProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_SKINNED_VERTEX_SOURCE);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Skinned PBR shader");
-    if (!program) return null;
+    var linked = sceneWebGLCompileProgram(gl, SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader");
+    if (!linked) return null;
+    var { program, vertexShader, fragmentShader } = linked;
 
     // Cache attribute locations.
     var attributes = {
@@ -6069,16 +6044,9 @@
   // Compile the points vertex + fragment shaders and return a program object
   // with cached attribute/uniform locations, or null on failure.
   function createScenePointsProgram(gl) {
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_POINTS_VERTEX_SOURCE);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_POINTS_FRAGMENT_SOURCE);
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
-
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Points shader");
-    if (!program) return null;
+    var linked = sceneWebGLCompileProgram(gl, SCENE_POINTS_VERTEX_SOURCE, SCENE_POINTS_FRAGMENT_SOURCE, "Points shader");
+    if (!linked) return null;
+    var { program, vertexShader, fragmentShader } = linked;
 
     var attributes = {
       position: gl.getAttribLocation(program, "a_position"),
@@ -6122,22 +6090,10 @@
     if (warmed) {
       return scenePBRFinalizeInstancedProgram(gl, warmed, true);
     }
-    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, crowd ? SCENE_PBR_CROWD_VERTEX_SOURCE : SCENE_PBR_INSTANCED_VERTEX_SOURCE);
-    if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
-    if (!fragmentShader) {
-      gl.deleteShader(vertexShader);
-      return null;
-    }
+    var linked = sceneWebGLCompileProgram(gl, crowd ? SCENE_PBR_CROWD_VERTEX_SOURCE : SCENE_PBR_INSTANCED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), "Instanced PBR shader");
+    if (!linked) return null;
 
-    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Instanced PBR shader");
-    if (!program) return null;
-
-    return scenePBRFinalizeInstancedProgram(gl, {
-      program: program,
-      vertexShader: vertexShader,
-      fragmentShader: fragmentShader,
-    }, crowd);
+    return scenePBRFinalizeInstancedProgram(gl, linked, crowd);
   }
 
   function scenePBRFinalizeInstancedProgram(gl, linked, crowd) {
@@ -7297,7 +7253,7 @@
       for (const record of crowdAtlasTextures.values()) gl.deleteTexture(record.texture);
       crowdAtlasTextures.clear();
       crowdPaletteBytes = 0;
-      for (const cp of [crowdProgram, crowdShadowProgram]) if (cp) { gl.deleteProgram(cp.program); gl.deleteShader(cp.vertexShader); gl.deleteShader(cp.fragmentShader); }
+      for (const cp of [crowdProgram, crowdShadowProgram]) sceneWebGLDisposeProgram(gl, cp);
       crowdProgram = crowdShadowProgram = null;
       crowdCapabilities = crowdCapabilityError = null;
     }
@@ -10348,9 +10304,7 @@
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
       if (rigidShadowProgram) {
-        gl.deleteProgram(rigidShadowProgram.program);
-        gl.deleteShader(rigidShadowProgram.vertexShader);
-        gl.deleteShader(rigidShadowProgram.fragmentShader);
+        sceneWebGLDisposeProgram(gl, rigidShadowProgram);
       }
       staticPointEntries.clear();
       activeStaticPointEntries.clear();
@@ -10391,24 +10345,18 @@
       }
 
       if (shadowProgram) {
-        gl.deleteShader(shadowProgram.vertexShader);
-        gl.deleteShader(shadowProgram.fragmentShader);
-        gl.deleteProgram(shadowProgram.program);
+        sceneWebGLDisposeProgram(gl, shadowProgram);
       }
 
       // Clean up skinned PBR program.
       if (skinnedProgram) {
-        gl.deleteShader(skinnedProgram.vertexShader);
-        gl.deleteShader(skinnedProgram.fragmentShader);
-        gl.deleteProgram(skinnedProgram.program);
+        sceneWebGLDisposeProgram(gl, skinnedProgram);
         skinnedProgram = null;
       }
 
       // Clean up points program.
       if (pointsProgram) {
-        gl.deleteShader(pointsProgram.vertexShader);
-        gl.deleteShader(pointsProgram.fragmentShader);
-        gl.deleteProgram(pointsProgram.program);
+        sceneWebGLDisposeProgram(gl, pointsProgram);
         pointsProgram = null;
       }
       // Authored points programs own their shader objects independently of the
@@ -10416,18 +10364,14 @@
       // delete the same GL objects twice or retain failed layer IDs.
       for (const authoredRecord of pointsAuthoredGLPrograms.values()) {
         if (!authoredRecord || authoredRecord.failed) continue;
-        gl.deleteShader(authoredRecord.vertexShader);
-        gl.deleteShader(authoredRecord.fragmentShader);
-        gl.deleteProgram(authoredRecord.program);
+        sceneWebGLDisposeProgram(gl, authoredRecord);
       }
       pointsAuthoredGLPrograms.clear();
       pointsAuthoredGLFailed.clear();
 
       // Clean up instanced PBR program.
       if (instancedProgram) {
-        gl.deleteShader(instancedProgram.vertexShader);
-        gl.deleteShader(instancedProgram.fragmentShader);
-        gl.deleteProgram(instancedProgram.program);
+        sceneWebGLDisposeProgram(gl, instancedProgram);
         instancedProgram = null;
       }
       instancedGeometryCache = {};
@@ -10435,9 +10379,7 @@
       for (const record of customProgramCache.values()) {
         const cp = record && record.program;
         if (cp) {
-          gl.deleteShader(cp.vertexShader);
-          gl.deleteShader(cp.fragmentShader);
-          gl.deleteProgram(cp.program);
+          sceneWebGLDisposeProgram(gl, cp);
         }
       }
       customProgramCache.clear();
@@ -10445,9 +10387,7 @@
       for (const record of selenaProgramCache.values()) {
         const sp = record && record.program;
         if (sp) {
-          gl.deleteShader(sp.vertexShader);
-          gl.deleteShader(sp.fragmentShader);
-          gl.deleteProgram(sp.program);
+          sceneWebGLDisposeProgram(gl, sp);
         }
       }
       selenaProgramCache.clear();

@@ -23,6 +23,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const nodeCrypto = require("node:crypto");
+const { stripTypeScriptTypes } = require("node:module");
 const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
@@ -4379,6 +4380,9 @@ function readBootstrapTailSrc() {
 // exercise a bootstrap-src edit BEFORE the bundles are regenerated (for
 // example this file's pool-pass Selena-routing test) can opt into a bundle
 // built fresh from bootstrap-src via this helper.
+// Fixtures erase syntax only; the pinned tsc gates retain semantic checking.
+// Cache each complete fixture variant while still rereading current sources.
+const freshTypeScriptSources = new Map();
 function freshFeatureBundleSource(name, options) {
   const clientJS = __dirname;
   const opts = options || {};
@@ -4396,7 +4400,13 @@ function freshFeatureBundleSource(name, options) {
       + "window.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n"
       + source.slice(finalSourceStart);
   }
-  return source;
+  // Prefix/suffix files are fragments; erase only after the factory closes.
+  const key = name + ":" + Boolean(opts.exportWaterRendererForTest);
+  const cached = freshTypeScriptSources.get(key);
+  if (cached && cached.raw === source) return cached.stripped;
+  const stripped = stripTypeScriptTypes(source, { mode: "strip" });
+  freshTypeScriptSources.set(key, { raw: source, stripped });
+  return stripped;
 }
 
 // createBoardWebGPUHarness boots the runtime + scene3d + scene3d-webgpu chunks
