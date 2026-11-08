@@ -251,5 +251,11 @@ func readDocsPagePair(t *testing.T, root, page string) string {
 		joined.Write(body)
 		joined.WriteByte('\n')
 	}
+	content, err := os.ReadFile(filepath.Join(root, "..", "..", "content", "docs", page+".md"))
+	if err == nil {
+		joined.Write(content)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	return joined.String()
 }

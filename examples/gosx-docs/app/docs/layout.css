@@ -7,6 +7,12 @@
    Grid
    ------------------------------------------------------------ */
 
+.docs-section {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
 .docs-grid {
   display: grid;
   grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);

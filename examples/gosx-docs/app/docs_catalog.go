@@ -48,7 +48,7 @@ var docsCatalog = []DocSection{
 				Href:        "/docs/getting-started",
 				Description: "Create, run, and understand a GoSX project from the first command.",
 				Section:     "start",
-				Source:      "examples/gosx-docs/app/docs/getting-started/page.gsx",
+				Source:      "examples/gosx-docs/content/docs/getting-started.md",
 				Keywords:    []string{"install", "quickstart", "init", "setup", "project"},
 			},
 			{
@@ -243,7 +243,7 @@ var docsCatalog = []DocSection{
 				Href:        "/docs/deployment",
 				Description: "Build, export, inspect, and operate a staged GoSX deployment bundle.",
 				Section:     "operations",
-				Source:      "examples/gosx-docs/app/docs/deployment/page.gsx",
+				Source:      "examples/gosx-docs/content/docs/deployment.md",
 				Keywords:    []string{"build", "deploy", "container", "static", "ssr", "isr", "offline"},
 			},
 		},
