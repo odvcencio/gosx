@@ -1286,6 +1286,7 @@
     return {
       id,
       target: sceneHTMLStringField(item, current, ["target", "targetID"]),
+      targetOffset: item.targetOffset === undefined ? current.targetOffset : item.targetOffset,
       mode,
       perspective,
       html: sceneHTMLMarkup(item, current),
@@ -5196,7 +5197,14 @@
     for (const sprite of sprites || []) {
       appendSceneSpriteToBundle(bundle, camera, width, height, sprite, timeSeconds);
     }
-    for (const entry of html || []) {
+    for (let entry of html || []) {
+      if (Array.isArray(entry.targetOffset) && entry.targetOffset.length === 3) {
+        const target = (objects || []).find(object => object.id === entry.target);
+        if (!target) continue;
+        const point = {};
+        translateScenePointInto(point, ...entry.targetOffset.map(value => sceneNumber(value, 0)), target, timeSeconds);
+        entry = { ...entry, ...point };
+      }
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
     appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes);

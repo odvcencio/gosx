@@ -607,6 +607,9 @@ The release boundary is narrower than the full feature inventory below. See
 [the Scene3D v1 support contract](docs/scene3d-v1-support.md) for the executable
 corpus, current blockers, backend evidence targets, and non-goals.
 
+For Go-authored bubbles and seat cards that follow scene objects, see
+[anchored DOM overlays](docs/scene3d-overlays.md).
+
 Generic hosted CI certifies production WebGPU renderer execution and exact
 pixels from a proof-private GPU target. Actual WebGPU canvas presentation is a
 separate release-pinned hardware certification obligation in that contract.

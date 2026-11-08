@@ -432,30 +432,31 @@ type IRLabelNode struct {
 }
 
 type IRHTMLNode struct {
-	Target           string  `json:"target,omitempty"`
-	Mode             string  `json:"mode,omitempty"`
-	Perspective      bool    `json:"perspective,omitempty"`
-	HTML             string  `json:"html"`
-	ClassName        string  `json:"className,omitempty"`
-	Fallback         string  `json:"fallback,omitempty"`
-	FallbackReason   string  `json:"fallbackReason,omitempty"`
-	TextureKey       string  `json:"textureKey,omitempty"`
-	TextureWidth     int     `json:"textureWidth,omitempty"`
-	TextureHeight    int     `json:"textureHeight,omitempty"`
-	MaxTexturePixels int     `json:"maxTexturePixels,omitempty"`
-	SurfaceWidth     float64 `json:"surfaceWidth,omitempty"`
-	SurfaceHeight    float64 `json:"surfaceHeight,omitempty"`
-	Priority         float64 `json:"priority,omitempty"`
-	Width            float64 `json:"width,omitempty"`
-	Height           float64 `json:"height,omitempty"`
-	Scale            float64 `json:"scale,omitempty"`
-	Opacity          float64 `json:"opacity,omitempty"`
-	OffsetX          float64 `json:"offsetX,omitempty"`
-	OffsetY          float64 `json:"offsetY,omitempty"`
-	AnchorX          float64 `json:"anchorX,omitempty"`
-	AnchorY          float64 `json:"anchorY,omitempty"`
-	Occlude          bool    `json:"occlude,omitempty"`
-	PointerEvents    string  `json:"pointerEvents,omitempty"`
+	Target           string      `json:"target,omitempty"`
+	TargetOffset     *[3]float64 `json:"targetOffset,omitempty"`
+	Mode             string      `json:"mode,omitempty"`
+	Perspective      bool        `json:"perspective,omitempty"`
+	HTML             string      `json:"html"`
+	ClassName        string      `json:"className,omitempty"`
+	Fallback         string      `json:"fallback,omitempty"`
+	FallbackReason   string      `json:"fallbackReason,omitempty"`
+	TextureKey       string      `json:"textureKey,omitempty"`
+	TextureWidth     int         `json:"textureWidth,omitempty"`
+	TextureHeight    int         `json:"textureHeight,omitempty"`
+	MaxTexturePixels int         `json:"maxTexturePixels,omitempty"`
+	SurfaceWidth     float64     `json:"surfaceWidth,omitempty"`
+	SurfaceHeight    float64     `json:"surfaceHeight,omitempty"`
+	Priority         float64     `json:"priority,omitempty"`
+	Width            float64     `json:"width,omitempty"`
+	Height           float64     `json:"height,omitempty"`
+	Scale            float64     `json:"scale,omitempty"`
+	Opacity          float64     `json:"opacity,omitempty"`
+	OffsetX          float64     `json:"offsetX,omitempty"`
+	OffsetY          float64     `json:"offsetY,omitempty"`
+	AnchorX          float64     `json:"anchorX,omitempty"`
+	AnchorY          float64     `json:"anchorY,omitempty"`
+	Occlude          bool        `json:"occlude,omitempty"`
+	PointerEvents    string      `json:"pointerEvents,omitempty"`
 }
 
 type IRVector3 struct {
@@ -1299,6 +1300,7 @@ func htmlToIRNode(html HTMLIR) IRNode {
 		Transform: transformFromHTMLIR(html),
 		HTML: &IRHTMLNode{
 			Target:           html.Target,
+			TargetOffset:     html.TargetOffset,
 			Mode:             html.Mode,
 			Perspective:      html.Perspective,
 			HTML:             html.HTML,

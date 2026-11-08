@@ -803,6 +803,17 @@ func validateSprite(report *Report, sprite scene.SpriteIR, path string) {
 }
 
 func validateHTML(report *Report, html scene.HTMLIR, path string, opts Options, targetIDs map[string]struct{}) {
+	if html.TargetOffset != nil {
+		if strings.TrimSpace(html.Target) == "" {
+			report.add(Error, "scene.html.target_offset_without_target", "Target-local HTML placement requires a target", path+".targetOffset", html.ID, nil)
+		}
+		for _, n := range html.TargetOffset {
+			if math.IsNaN(n) || math.IsInf(n, 0) {
+				report.add(Error, "scene.html.invalid_target_offset", "HTML target offset must be finite", path+".targetOffset", html.ID, nil)
+				break
+			}
+		}
+	}
 	mode := strings.ToLower(strings.TrimSpace(html.Mode))
 	if mode == "" {
 		mode = "dom"

@@ -1021,6 +1021,7 @@
             "target": { "type": "string" },
             "mode": { "type": "string" },
             "html": { "type": "string" },
+            "targetOffset": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } },
             "className": { "type": "string" },
             "fallback": { "type": "string" },
             "fallbackReason": { "type": "string" },

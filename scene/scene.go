@@ -1059,8 +1059,11 @@ const (
 // receives the same tonemap, bloom, and grade as the geometry it is mounted
 // on. UI chrome that must remain outside post-processing should use HTMLDOM.
 type HTML struct {
-	ID               string
-	Target           string
+	ID     string
+	Target string
+	// FollowTarget keeps Position relative to the target's current transform.
+	// A missing target hides the overlay until that object is present.
+	FollowTarget     bool
 	Mode             HTMLMode
 	Markup           string
 	ClassName        string
@@ -2343,6 +2346,14 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 	case *HTML:
 		if current != nil {
 			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: *current, parent: parent})
+		}
+	case Overlay:
+		if surface, err := current.Surface(); err == nil {
+			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: surface, parent: parent})
+		}
+	case *Overlay:
+		if current != nil {
+			l.lowerNode(*current, parent)
 		}
 	case HTMLSurface:
 		l.pendingHTML = append(l.pendingHTML, pendingHTML{html: htmlSurfaceFallback(current), parent: parent})
@@ -3992,9 +4003,14 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 	if mode == "" {
 		mode = string(HTMLDOM)
 	}
+	var targetOffset *[3]float64
+	if item.html.FollowTarget && strings.TrimSpace(item.html.Target) != "" {
+		targetOffset = &[3]float64{item.html.Position.X, item.html.Position.Y, item.html.Position.Z}
+	}
 	return HTMLIR{
 		ID:               l.nextSceneHTMLID(item.html.ID),
 		Target:           strings.TrimSpace(item.html.Target),
+		TargetOffset:     targetOffset,
 		Mode:             mode,
 		HTML:             markup,
 		ClassName:        strings.TrimSpace(item.html.ClassName),

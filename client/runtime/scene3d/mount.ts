@@ -380,7 +380,6 @@
 
     const labelLayer = document.createElement("div");
     labelLayer.setAttribute(sceneAttr("label-layer"), "true");
-    labelLayer.setAttribute("aria-hidden", "true");
     labelLayer.style.pointerEvents = "none";
     mount.appendChild(labelLayer);
     const sceneFocusProxies = setupSceneNodeFocusProxies(mount);

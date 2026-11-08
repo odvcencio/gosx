@@ -470,6 +470,7 @@ type SpriteIR struct {
 type HTMLIR struct {
 	ID               string       `json:"id"`
 	Target           string       `json:"target,omitempty"`
+	TargetOffset     *[3]float64  `json:"targetOffset,omitempty"`
 	Mode             string       `json:"mode,omitempty"`
 	Perspective      bool         `json:"perspective,omitempty"`
 	HTML             string       `json:"html"`
@@ -3135,6 +3136,9 @@ func (item HTMLIR) legacyProps() map[string]any {
 	}
 	setString(record, "target", item.Target)
 	setString(record, "mode", item.Mode)
+	if item.TargetOffset != nil {
+		record["targetOffset"] = *item.TargetOffset
+	}
 	if item.Perspective {
 		record["perspective"] = true
 	}
