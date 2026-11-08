@@ -6559,14 +6559,38 @@
     });
   }
 
+  // Index keys by their source strings before encoding them. A frame may build
+  // fresh material profiles, so material identity cannot guard this cache.
+  // The weak owner is the renderer's program cache, not a global shader registry.
+  var scenePBRAuthoredProgramKeys = new WeakMap();
+  function scenePBRAuthoredProgramKey(programCache: any, vertex: any, fragment: any, layoutKey: string, skinned = false) {
+    let vertices = scenePBRAuthoredProgramKeys.get(programCache);
+    if (!vertices || programCache.size === 0) {
+      vertices = new Map();
+      scenePBRAuthoredProgramKeys.set(programCache, vertices);
+    }
+    let fragments = vertices.get(vertex);
+    if (!fragments) vertices.set(vertex, fragments = new Map());
+    let layouts = fragments.get(fragment);
+    if (!layouts) fragments.set(fragment, layouts = new Map());
+    const variant = skinned ? layoutKey + "::skinned" : layoutKey;
+    let key = layouts.get(variant);
+    if (key === undefined) {
+      const sources = JSON.stringify([vertex, fragment]);
+      key = sources.slice(0, -1) + "," + layoutKey + "]" + (skinned ? "::skinned" : "");
+      layouts.set(variant, key);
+    }
+    return key;
+  }
+
   function scenePBREnsureCustomProgram(gl: WebGL2RenderingContext, customProgramCache: any, material: any) {
     if (!scenePBRHasCustomHooks(material)) {
       return null;
     }
     // Programs depend on authored code and uniform declarations, not values.
     // Dynamic uniforms are uploaded for each draw without recompilation.
-    const key = JSON.stringify([material.customVertex || "", material.customFragment || "",
-      scenePBRCustomUniformDeclarations(material.customUniforms)]);
+    const key = scenePBRAuthoredProgramKey(customProgramCache, material.customVertex || "", material.customFragment || "",
+      JSON.stringify(scenePBRCustomUniformDeclarations(material.customUniforms)));
     const cached = customProgramCache.get(key);
     if (cached) {
       return cached.failed || scenePBRProgramFailed(cached.program.program) ? null : cached.program;
@@ -6587,13 +6611,13 @@
     }
     // Match the WebGPU path: uniform values belong to per-draw bindings.
     // The material key includes values and would leak a program per frame.
-    const baseKey = JSON.stringify([material.customVertex || "", selective ? material.specularFragmentGLSL : material.customFragment || "",
-      sceneSelenaMaterialLayout(material)]);
     // Skinned draws compile a distinct program variant (augmented vertex
     // source — see scenePBRSelenaSkinAugmentVertex), so it's cached under
     // its own key: the same material can back both static and skinned
     // objects across a scene.
-    const key = skinned ? baseKey + "::skinned" : baseKey;
+    const key = scenePBRAuthoredProgramKey(selenaProgramCache, material.customVertex || "",
+      selective ? material.specularFragmentGLSL : material.customFragment || "",
+      JSON.stringify(sceneSelenaMaterialLayout(material)), !!skinned);
     const cached = selenaProgramCache.get(key);
     if (cached) {
       return cached.failed || scenePBRProgramFailed(cached.program.program) ? null : cached.program;
@@ -11032,6 +11056,7 @@
         }
       }
       customProgramCache.clear();
+      scenePBRAuthoredProgramKeys.delete(customProgramCache);
 
       for (const record of selenaProgramCache.values()) {
         const sp = record && record.program;
@@ -11042,6 +11067,7 @@
         }
       }
       selenaProgramCache.clear();
+      scenePBRAuthoredProgramKeys.delete(selenaProgramCache);
 
       if (lineProgram && lineResources) {
         disposeSceneWebGLRenderer(gl, lineProgram, lineResources);
