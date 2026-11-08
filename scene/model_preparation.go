@@ -23,6 +23,10 @@ type ModelPreparation struct {
 type ModelPreparationResult struct {
 	Models   int `json:"models"`
 	Textures int `json:"textures"`
+	// RigidModels acknowledges unique source URLs with prepared CPU geometry.
+	// Zero (including older runtimes) does not prove rigid preparation. It does
+	// not acknowledge GPU geometry buffers or shaders.
+	RigidModels int `json:"rigidModels,omitempty"`
 }
 
 func modelPreparationSnapshot(requests []ModelPreparation) ([]byte, error) {

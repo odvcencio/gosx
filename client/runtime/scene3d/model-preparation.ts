@@ -39,7 +39,7 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
   const handle = mount?.__gosxScene3DHandle, renderer = state?._crowdRenderer;
   const canvas = mount?.querySelector('canvas');
   if (!state || !handle || !canvas || typeof renderer?.texturePreparation?.load !== 'function') return Promise.reject(new Error('Scene3D preparation renderer unavailable'));
-  const records = new Set<any>();
+  const records = new Set<any>(), rigid = new Set<string>();
   return new Promise((resolve, reject) => {
     let done = false, decoded = false;
     const alive = () => mount.isConnected && mount.__gosxScene3DState === state && mount.__gosxScene3DHandle === handle && state._crowdRenderer === renderer;
@@ -48,7 +48,7 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
       done = true;
       canvas.removeEventListener('gosx:scene3d:resource-ready', check);
       signal?.removeEventListener('abort', cancel);
-      error ? reject(error) : resolve({ models: selected.length, textures: records.size });
+      error ? reject(error) : resolve({ models: selected.length, textures: records.size, ...(rigid.size ? { rigidModels: rigid.size } : {}) });
     }
     function cancel() { close(new DOMException('Scene3D preparation canceled', 'AbortError')); }
     function check() {
@@ -79,6 +79,7 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
           ['points', 'labels', 'sprites', 'html', 'lights'].some(key => asset[key].length) ||
           asset.objects.some((raw: any) => !raw.vertices || raw.vertices.count <= 0 || raw.skin || raw._morphAnim || raw._nodeAnim) ||
           asset.objects.some((raw: any) => !geometry.prepare(raw))) throw new Error('Not rigid: ' + req.id);
+        rigid.add(req.src);
       }
       sceneModelPreparationMaps(asset, renderer, records);
     })).then(() => { decoded = true; check(); }, close);

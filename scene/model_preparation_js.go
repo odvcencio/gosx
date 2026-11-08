@@ -88,6 +88,9 @@ func (s *Surface) PrepareModels(ctx context.Context, requests []ModelPreparation
 		return result, err
 	}
 	result.Models, result.Textures = value.Get("models").Int(), value.Get("textures").Int()
+	if count := value.Get("rigidModels"); count.Type() == js.TypeNumber {
+		result.RigidModels = count.Int()
+	}
 	return result, nil
 }
 

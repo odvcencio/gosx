@@ -72,7 +72,7 @@ func TestSurfaceModelPreparationSnapshotsAndLoadsOptionalModule(t *testing.T) {
 	}
 	f.Get("resolve").Invoke(map[string]any{"models": 2, "textures": 7})
 	got := <-done
-	if got.err != nil || got.result.Models != 2 || got.result.Textures != 7 {
+	if got.err != nil || got.result.Models != 2 || got.result.Textures != 7 || got.result.RigidModels != 0 {
 		t.Fatalf("got %#v, %v", got.result, got.err)
 	}
 	if !f.Get("signal").Get("aborted").Bool() {
@@ -190,5 +190,27 @@ func TestSurfaceModelPreparationOwnsLifetimeDuringReadyAndChunkDelays(t *testing
 				f.Get("reject").Invoke(js.Global().Get("Error").New("late owner failure"))
 			})
 		}
+	}
+}
+
+func TestSurfaceModelPreparationRigidAcknowledgment(t *testing.T) {
+	f := preparationFixture(t)
+	s := NewSurface("stage")
+	defer s.Dispose()
+	done := make(chan ModelPreparationResult, 1)
+	go func() {
+		result, err := s.PrepareModels(context.Background(), []ModelPreparation{{ID: "prop", Src: "/prop.glb", RigidGeometry: true}})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- result
+	}()
+	awaitScene(t, func() bool { return f.Get("calls").Length() == 1 })
+	if !f.Get("calls").Index(0).Get("requests").Index(0).Get("rigidGeometry").Bool() {
+		t.Fatal("opt-in not transmitted")
+	}
+	f.Get("resolve").Invoke(map[string]any{"models": 1, "textures": 0, "rigidModels": 1})
+	if got := <-done; got.RigidModels != 1 {
+		t.Fatalf("missing typed acknowledgment: %+v", got)
 	}
 }

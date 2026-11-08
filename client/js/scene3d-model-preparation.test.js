@@ -132,7 +132,9 @@ test('preparation is separately gated and has a fixed new-chunk size bound', () 
   for (const base of ['bootstrap.js', 'bootstrap-feature-scene3d.js', 'bootstrap-feature-scene3d-command.js']) {
     assert.ok(!chunks.find(chunk => chunk.name === base).sources.includes('../runtime/scene3d/model-preparation.ts'));
   }
-  for (const [suffix, limit] of [['', 4096], ['.gz', 1536], ['.br', 1280]]) {
+  // Unique-source rigid acknowledgment adds 27 Brotli bytes (1271 → 1298).
+  // Only this optional chunk's reviewed Brotli bound changes.
+  for (const [suffix, limit] of [['', 4096], ['.gz', 1536], ['.br', 1298]]) {
     assert.ok(fs.statSync(path.join(__dirname, chunk.name + suffix)).size <= limit, 'new optional chunk budget ' + suffix);
   }
   assert.doesNotMatch(source, /requestAnimationFrame|setInterval|getParameter|getError/);
@@ -151,7 +153,7 @@ for(const backend of ['webgl','webgpu']) {
   const wait=h.prepare(selection);
   selection[0].rigidGeometry=false;
   h.pending.get('/prop.glb').resolve(asset);
-  assert.deepEqual({...await wait},{models:1,textures:0});
+  assert.deepEqual({...await wait},{models:1,textures:0,rigidModels:1});
   assert.equal(geometry.length,1);assert.equal(geometry[0],asset.objects[0]);assert.equal(draws,0);
   assert.equal(h.mount.__gosxScene3DState.objects,undefined,'no scene member map is created');
   for(const [name,change] of Object.entries({skin:{objects:[{...asset.objects[0],skin:{joints:[0],inverseBindMatrices:new Float32Array(16)}}]},morph:{objects:[{...asset.objects[0],_morphAnim:{}}]},node:{objects:[{...asset.objects[0],_nodeAnim:{}}]},aux:{points:[{}]},invalid:{objects:[{vertices:{count:3,positions:[]}}]}})) {
@@ -194,3 +196,22 @@ test('rigid preparation failure is explicit and opt-out leaves it untouched',asy
  assert.equal(h.listeners.size,0);
  assert.throws(()=>h.prepare([{id:'bad',src:'/bad.glb',rigidGeometry:1}]),/preparation/);
 });
+
+for (const backend of ['webgl','webgpu']) {
+ test('rigid acknowledgment counts unique completed sources only on '+backend,async()=>{
+  const native=backend==='webgl'?createWebGLRendererForPost({fresh:true}):await createBoardWebGPUHarness({fresh:true});
+  const h=boundary(native),asset={objects:[{vertices:{count:3,positions:[0,0,0,1,0,0,0,1,0]}}],skins:[],animations:[],points:[],labels:[],sprites:[],html:[],lights:[]};
+  const wait=h.prepare([{id:'first',src:'/same.glb',rigidGeometry:true},{id:'alias',src:' /same.glb ',rigidGeometry:true},{id:'ordinary',src:'/ordinary.glb'}]);
+  h.pending.get('/same.glb').resolve(asset);h.pending.get('/ordinary.glb').resolve(asset);
+  assert.deepEqual({...await wait},{models:3,textures:0,rigidModels:1});
+  const partial=h.prepare([{id:'good',src:'/good.glb',rigidGeometry:true},{id:'bad',src:'/bad.glb',rigidGeometry:true}]);
+  const rejected=assert.rejects(partial,/Not rigid/);
+  h.pending.get('/good.glb').resolve(asset);h.pending.get('/bad.glb').resolve({...asset,objects:[{vertices:{count:3,positions:[]}}]});await rejected;
+  const controller=new AbortController(),canceled=h.prepare([{id:'good-again',src:'/good.glb',rigidGeometry:true},{id:'waiting',src:'/waiting.glb',rigidGeometry:true}],controller);
+  const aborted=assert.rejects(canceled,/canceled/);await tick();controller.abort();await aborted;
+  // A canceled/failed call never returns a partial acknowledgment. A fresh
+  // default call retains its original response shape, even for cached assets.
+  const ordinary=h.prepare([{id:'default',src:'/ordinary.glb'}]);assert.deepEqual({...await ordinary},{models:1,textures:0});
+  native.renderer.dispose();
+ });
+}
