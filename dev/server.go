@@ -91,15 +91,21 @@ type Server struct {
 	ProxyTarget         string
 	PreflightChange     func([]string) error
 	OnChange            func() error
-	PollInterval        time.Duration
-	SceneInspector      bool
-	Logf                func(format string, args ...any)
+	// SelenaChange rebuilds the artifacts of changed .sel sources and returns
+	// the new shaders. When set, a change that touches only .sel files is
+	// hot-swapped into the page instead of reloading it (see emitSelena).
+	SelenaChange   func([]string) ([]SelenaUpdate, error)
+	PollInterval   time.Duration
+	SceneInspector bool
+	Logf           func(format string, args ...any)
 
 	mu          sync.RWMutex
 	clients     map[chan sseEvent]struct{}
 	lastBuild   time.Time
 	lastError   string
 	quarantined bool
+	appStale    bool
+	rebuildMu   sync.Mutex
 	proxyTarget string
 	server      *http.Server
 	stopWatch   chan struct{}
@@ -341,6 +347,7 @@ func safeDevAssetPath(root, rel string) (string, bool) {
 }
 
 func (s *Server) serveProxy(w http.ResponseWriter, r *http.Request) {
+	s.refreshStaleApp(r)
 	targetURL, err := s.proxyURL()
 	if err != nil {
 		http.Error(w, "gosx dev proxy target is not ready", http.StatusBadGateway)
@@ -412,12 +419,15 @@ func injectReloadScript(body string) string {
 	if strings.Contains(body, "data-gosx-dev-reload") {
 		return body
 	}
-	snippet := `<script data-gosx-dev-reload="true">(function(){if(window.__gosxDevReload){return;}window.__gosxDevReload=true;var source=new EventSource("/gosx/dev/events");source.addEventListener("reload",function(){window.location.reload();});source.addEventListener("program",function(event){var payload;try{payload=JSON.parse(event.data||"{}");}catch(_){console.error("[gosx dev] bad program payload");return;}var swap=window.__gosx_reload_program;if(typeof swap!=="function"){window.location.reload();return;}var registry=window.__gosx&&window.__gosx.islands;if(!registry||typeof registry.forEach!=="function"){return;}var fmt=payload.format||"json";var matched=0;registry.forEach(function(entry,islandID){if(!entry||entry.component!==payload.component){return;}matched++;try{var res=swap(islandID,payload.program,fmt);if(typeof res==="string"&&res!==""){console.error("[gosx dev] hot-swap failed for "+islandID+": "+res);}}catch(err){console.error("[gosx dev] hot-swap error for "+islandID+":",err);}});if(matched===0&&console.debug){console.debug("[gosx dev] no live island for component "+payload.component);}});source.addEventListener("patch",function(event){var payload;try{payload=JSON.parse(event.data||"{}");}catch(_){return;}var apply=window.__gosx_apply_patches;if(typeof apply==="function"&&payload.islandID){apply(payload.islandID,payload.patch||"[]");}});source.addEventListener("build-error",function(event){try{var payload=JSON.parse(event.data||"{}");console.error("[gosx dev] build failed:",payload.error||payload);}catch(_){console.error("[gosx dev] build failed");}});source.onerror=function(){console.warn("[gosx dev] reload connection lost");};})();</script>`
+	snippet := `<script data-gosx-dev-reload="true">(function(){if(window.__gosxDevReload){return;}window.__gosxDevReload=true;var source=new EventSource("/gosx/dev/events");window.__gosxDevEvents=source;source.addEventListener("reload",function(){window.location.reload();});source.addEventListener("program",function(event){var payload;try{payload=JSON.parse(event.data||"{}");}catch(_){console.error("[gosx dev] bad program payload");return;}var swap=window.__gosx_reload_program;if(typeof swap!=="function"){window.location.reload();return;}var registry=window.__gosx&&window.__gosx.islands;if(!registry||typeof registry.forEach!=="function"){return;}var fmt=payload.format||"json";var matched=0;registry.forEach(function(entry,islandID){if(!entry||entry.component!==payload.component){return;}matched++;try{var res=swap(islandID,payload.program,fmt);if(typeof res==="string"&&res!==""){console.error("[gosx dev] hot-swap failed for "+islandID+": "+res);}}catch(err){console.error("[gosx dev] hot-swap error for "+islandID+":",err);}});if(matched===0&&console.debug){console.debug("[gosx dev] no live island for component "+payload.component);}});source.addEventListener("patch",function(event){var payload;try{payload=JSON.parse(event.data||"{}");}catch(_){return;}var apply=window.__gosx_apply_patches;if(typeof apply==="function"&&payload.islandID){apply(payload.islandID,payload.patch||"[]");}});source.addEventListener("build-error",function(event){try{var payload=JSON.parse(event.data||"{}");console.error("[gosx dev] build failed:",payload.error||payload);}catch(_){console.error("[gosx dev] build failed");}});source.onerror=function(){console.warn("[gosx dev] reload connection lost");};})();</script>`
 	return injectDevScriptSnippet(body, snippet)
 }
 
 func (s *Server) injectDevScripts(body string) string {
 	body = injectReloadScript(body)
+	if s.SelenaChange != nil && !strings.Contains(body, "data-gosx-dev-selena") {
+		body = injectDevScriptSnippet(body, selenaSwapScript)
+	}
 	if !s.SceneInspector || strings.Contains(body, "data-gosx-dev-scene-inspector") {
 		return body
 	}
@@ -1497,7 +1507,7 @@ func sameSnapshotEntry(left, right snapshotEntry) bool {
 
 func shouldWatchProjectFile(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".gsx", ".go", ".css", ".js":
+	case ".gsx", ".go", ".css", ".js", ".sel":
 		return true
 	default:
 		return false

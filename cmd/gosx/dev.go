@@ -115,6 +115,7 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 		RefreshWatchTargets: func() ([]string, []string, []string, error) {
 			return collectProjectIslandWatchTargets(absDir)
 		},
+		SelenaChange: devSelenaChange(absDir),
 	}
 
 	serverErr := make(chan error, 1)
@@ -200,6 +201,9 @@ func prepareDevAssets(dir string) error {
 func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) error {
 	if err := validateUniqueIslandProgramNames(islands); err != nil {
 		return err
+	}
+	if err := devSelenaBuild(dir, os.Stderr); err != nil {
+		return fmt.Errorf("build selena artifacts: %w", err)
 	}
 	buildDir := filepath.Join(dir, "build")
 	islandDir := filepath.Join(buildDir, "islands")
