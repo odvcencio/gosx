@@ -7,6 +7,7 @@ build/
 /docs/*
 !/docs/docs-site-operations.md
 !/docs/netplay.md
+!/docs/rooms.md
 !/docs/game-kit.md
 !/docs/engine-worker.md
 !/docs/scene3d-group-spin.md
