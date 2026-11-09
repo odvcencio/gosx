@@ -126,8 +126,8 @@ behind still runs every tick the server ran.
 
    ```go
    physicsys.Characters(func(ctx *game.Context, c *physics.Character) physics.CharacterInput {
-   	v := cmds[agentOf(c)].Vel
-   	return physics.CharacterInput{Move: physics.Vec3{X: v.X, Z: v.Y}}
+       v := cmds[agentOf(c)].Vel
+       return physics.CharacterInput{Move: physics.Vec3{X: v.X, Z: v.Y}}
    })
    ```
 
