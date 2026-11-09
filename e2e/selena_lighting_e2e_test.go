@@ -166,7 +166,9 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(out, backend+".png"), shot, 0o644)
 			}
 			if !ok {
-				t.Fatalf("%s did not render the lighting probe: %+v; pageErrors=%v; console=%s", backend, reading, browser.PageErrors(), browser.Console())
+				var attributes map[string]string
+				browser.eval(t, `(() => {const e=document.querySelector('[data-gosx-scene3d-mounted]');return e?Object.fromEntries(e.getAttributeNames().filter(n=>n.startsWith('data-gosx')).map(n=>[n,e.getAttribute(n)])):{}})()`, &attributes)
+				t.Fatalf("%s did not render the lighting probe: %+v; attributes=%v; pageErrors=%v; console=%s", backend, reading, attributes, browser.PageErrors(), browser.Console())
 			}
 			if errors := browser.PageErrors(); len(errors) != 0 {
 				t.Fatalf("page errors: %v", errors)
