@@ -2,7 +2,7 @@
 # Package fields are space-separated 'go' package patterns, relative to moddir.
 # name	url	ref	moddir	build_pkgs	vet_pkgs	test_pkgs	test_timeout	wasm_pkgs	public
 primalrage	git@github.com:odvcencio/primalrage.git	main	.	./...	./...	./fight/... ./app/... ./portal ./lobby ./replay ./tickproto ./integration	8m	./cmd/fightsim	no
-chitin-choir	git@github.com:odvcencio/chitin-choir.git	main	.	./...	./...	./client ./ui ./internal/clientframe ./internal/audiofx ./internal/presentation/...	8m	./client ./internal/audiofx	no
+chitin-choir	git@github.com:odvcencio/chitin-choir.git	main	.	. ./cmd/... ./internal/... ./ui/...	. ./cmd/... ./internal/... ./ui/...	./client ./ui ./internal/clientframe ./internal/audiofx ./internal/presentation/...	8m	./client ./internal/audiofx	no
 bon-voyage	git@github.com:odvcencio/bon-voyage.git	main	.	./...	./...	./internal/ui/...	12m	./cmd/bon-voyage-worker ./cmd/bon-voyage-live ./cmd/bon-voyage-app/engine/live ./cmd/bon-voyage-app/engine/ui	no
 caribbean-dominoes	git@github.com:odvcencio/caribbean-dominoes.git	main	.	./...	./...	./app/... ./hud/... ./table/... ./audio/client	8m	./app/client ./app/roomclient ./app/tableclient ./audio/client ./hud/client	no
 gridiron-2000	https://github.com/odvcencio/gridiron-2000.git	main	.	./...	./...	./app/... ./internal/wire/... ./internal/livescore/...	8m	-	yes

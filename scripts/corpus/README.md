@@ -13,11 +13,13 @@ release that breaks a game is caught before it ships.
 The integrator runs this before each release, from a GoSX checkout:
 
     export TMPDIR=/home/draco/work/.runtime/tmp
-    scripts/corpus/run.sh -r origin/main -b
+    scripts/corpus/run.sh -r origin/main -b -R buildbox
 
 - `-r REF` exports REF of this repo into a clean directory. `-g DIR` tests an existing checkout instead.
 - `-b` reruns each failed check against the consumer's own pinned GoSX, so a pre-existing failure is not blamed on the new GoSX. A cell reads `FAIL (base PASS)` for a regression.
-- `-c a,b` limits the consumers. `-k` keeps the consumer copies. `-B SEC` sets the budget.
+- `-R HOST` runs every check on a tailnet host through `tailnet-run --host HOST` instead of the local machine (no local heavy lock needed; the host's slots cap the load). The runner copies the GoSX checkout into the consumer copy so the host can see it. Use `buildbox` for the private consumers: chitin-choir carries a large art pack, so never send it to the macOS hosts. A step may wait for a free slot first; `CORPUS_SLOT_WAIT` (default 30) minutes are added to each step timeout for that.
+- `-a` keeps the existing matrix for this GoSX sha and replaces only the `-c` consumers (use it to rerun one consumer).
+- `-c a,b` limits the consumers. `-k` keeps the consumer copies. `-B SEC` sets the run-time budget.
 - Exit status is 1 when a check regressed (with `-b`) or failed (without it).
 
 ## What it does
@@ -38,7 +40,7 @@ For each row of `manifest.tsv`, in order, never in parallel:
 
 If resolve fails, the other checks are skipped.
 
-Every `go` command runs under `flock /home/draco/work/.runtime/locks/gosx-heavy.lock` (`CORPUS_LOCK` overrides it) and under `timeout`: 10 minutes per build, vet, resolve and wasm step (`CORPUS_STEP_TIMEOUT`), and the manifest's `test_timeout` (8 minutes) per test run. The whole run stops starting new checks after `CORPUS_BUDGET` seconds (default 5400, lock waits included); the rest show as SKIP.
+Without `-R`, the runner holds `flock /home/draco/work/.runtime/locks/gosx-heavy.lock` (`CORPUS_LOCK` overrides it) while it runs one consumer's checks, and releases it between consumers. Every `go` command runs under `timeout`: 10 minutes per build, vet, resolve and wasm step (`CORPUS_STEP_TIMEOUT`), and the manifest's `test_timeout` (8 minutes) per test run. The whole run stops starting new checks after `CORPUS_BUDGET` seconds of check run time (default 3600; time spent waiting for the lock is not counted); the rest show as SKIP. Measured on buildbox: about 25 minutes of check run time for all six consumers with baselines (bon-voyage tests are the longest at about 9 minutes); waiting for a free slot or lock comes on top.
 
 ## Output
 
