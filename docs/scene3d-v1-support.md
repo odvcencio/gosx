@@ -349,11 +349,9 @@ spreads that to the neighboring tiles, then gathers samples along the dominant v
 depth and by how far its own velocity reaches, so a sharp object that moves across a blurred background keeps its
 edge and a fast object does not smear over a still one in front of it.
 
-| Field | Meaning |
-|---|---|
-| `Quality` | `low` (6 taps, 32 px tiles), `medium` (10 taps, 24 px, default) or `high` (16 taps, 16 px). |
-| `Strength` | The fraction of a frame the shutter is open, 0..1. Default 0.5, a 180 degree shutter. |
-| `MaxBlur` | The longest blur in pixels at 1080p, 1..128, and never more than the tile size. Default 32. |
+- `Quality`: `low` (6 taps, 32 px tiles), `medium` (10 taps, 24 px, default) or `high` (16 taps, 16 px).
+- `Strength`: the fraction of a frame the shutter is open, 0..1. Default 0.5, a 180 degree shutter.
+- `MaxBlur`: the longest blur in pixels at 1080p, 1..128, and never more than the tile size. Default 32.
 
 **Backends.** WebGPU blurs camera motion, rigid bodies and skinned meshes, using the motion vectors the renderer
 already draws for TAA (static geometry reprojects through the depth buffer and the previous view-projection; moving
