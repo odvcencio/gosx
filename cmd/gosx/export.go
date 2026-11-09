@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -11,103 +9,47 @@ import (
 
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/env"
-	"m31labs.dev/gosx/internal/bundlepolicy"
 )
 
-// RunExport prerenders static file-routed pages into dist/static.
+// ExportOptions configures gosx export.
+type ExportOptions struct {
+	// Zip writes the bundle as one archive. "-" or "auto" means dist/static.zip.
+	Zip string
+}
+
+// RunExport builds the app's static bundle into dist/static.
 func RunExport(dir string) error {
+	return RunExportWithOptions(dir, ExportOptions{})
+}
+
+// RunExportWithOptions runs the production build pipeline (TinyGo runtime,
+// content-hashed assets, wasm-opt when installed) and keeps its static output,
+// so `gosx export` and `gosx build --prod` write the same dist/static. The
+// export differs in two ways: it needs no Go server on the host, so a page that
+// cannot be prerendered fails the command, and it can write a zip archive.
+func RunExportWithOptions(dir string, opts ExportOptions) error {
 	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
-	discovery, err := collectProjectIslandDiscovery(absDir)
-	if err != nil {
-		return err
-	}
-	if err := checkVersionSkew(absDir); err != nil {
-		return err
-	}
-	cfg, err := loadProjectConfig(absDir)
-	if err != nil {
-		return err
-	}
-	printBundlePolicyWarnings(cfg.Build.Bundle)
-	if diagnostics := bundlepolicy.ValidateProject(absDir, cfg.Build.Bundle); !diagnostics.Empty() {
-		return errors.New(diagnostics.Error())
-	}
-
-	isMain, err := isMainPackage(absDir)
-	if err != nil {
-		return fmt.Errorf("inspect package: %w", err)
-	}
-	if !isMain {
-		return fmt.Errorf("gosx export requires a runnable app directory (package main): %s", absDir)
-	}
-	if err := syncModulesPackage(absDir); err != nil {
-		return err
-	}
-	if err := ensureModuleDependencies(absDir); err != nil {
-		return err
-	}
-
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
 	}
-	if err := checkStrictProject(context.Background(), absDir); err != nil {
-		return fmt.Errorf("check strict components: %w", err)
+	buildOpts := BuildOptions{StaticOnly: true}
+	if z := strings.TrimSpace(opts.Zip); z != "" {
+		if z == "-" || z == "auto" {
+			z = filepath.Join(absDir, "dist", "static.zip")
+		} else if !filepath.IsAbs(z) {
+			if z, err = filepath.Abs(z); err != nil {
+				return err
+			}
+		}
+		buildOpts.ZipPath = z
 	}
-	if err := checkProjectRuntimeCompatibility(absDir); err != nil {
+	if err := RunBuildWithOptions(absDir, buildOpts); err != nil {
 		return err
 	}
-	distDir := filepath.Join(absDir, "dist")
-	if err := os.RemoveAll(distDir); err != nil {
-		return fmt.Errorf("clean output directory: %w", err)
-	}
-	if err := writeOutputModuleBoundary(distDir); err != nil {
-		return err
-	}
-	if err := prepareDevAssetsWithPrograms(absDir, discovery.Programs); err != nil {
-		return err
-	}
-
-	binDir, err := os.MkdirTemp("", "gosx-export-bin-*")
-	if err != nil {
-		return fmt.Errorf("create temp bin dir: %w", err)
-	}
-	defer os.RemoveAll(binDir)
-
-	binaryPath := filepath.Join(binDir, "app")
-	built, err := buildServerBinaryIfPresent(absDir, binaryPath)
-	if err != nil {
-		return fmt.Errorf("build export binary: %w", err)
-	}
-	if !built {
-		return fmt.Errorf("gosx export requires a runnable app binary: %s", absDir)
-	}
-
-	manifest, err := prerenderStaticBundle(staticExportOptions{
-		AppRoot:      absDir,
-		OutputDir:    filepath.Join(distDir, "static"),
-		BinaryPath:   binaryPath,
-		BundlePolicy: cfg.Build.Bundle,
-		StageAssets: func(outputDir string, manifest exportManifest) error {
-			return copyExportRuntime(filepath.Join(absDir, "build"), outputDir, manifest)
-		},
-	})
-	if err != nil {
-		return err
-	}
-	if err := writeExportManifest(filepath.Join(distDir, "export.json"), manifest); err != nil {
-		return err
-	}
-	if err := writeBundlePolicySidecar(distDir, cfg.Build.Bundle); err != nil {
-		return err
-	}
-	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg.Build.Bundle); !diagnostics.Empty() {
-		return errors.New(diagnostics.Error())
-	}
-
-	fmt.Fprintf(os.Stderr, "gosx export: wrote %d pages to %s\n", len(manifest.Pages), filepath.Join(absDir, "dist", "static"))
+	fmt.Fprintf(os.Stderr, "gosx export: static bundle in %s\n", filepath.Join(absDir, "dist", "static"))
 	return nil
 }
 

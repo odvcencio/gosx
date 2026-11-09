@@ -146,9 +146,10 @@ func TestPrefixedProductionBuild(t *testing.T) {
 	}
 	poll(frame + `.document.querySelector("#reactive-link")?.href.endsWith("/.proxy/game/news")`)
 	poll(frame + `.__gosx?.islands?.size > 0`)
-	poll(frame + `.document.querySelector("#video video[data-gosx-video=true]")?.getAttribute("src") === "/.proxy/game/media/movie.webm"`)
+	// Static pages carry document-relative URLs; the resolved property is the public URL.
+	poll(frame + `.document.querySelector("#video video[data-gosx-video=true]")?.src.endsWith("/.proxy/game/media/movie.webm")`)
 	poll(frame + `.document.querySelector("#video video")?.readyState >= 1`)
-	poll(frame + `.document.querySelector("#video video")?.getAttribute("poster") === "/.proxy/game/assets/wood.png"`)
+	poll(frame + `.document.querySelector("#video video")?.poster.endsWith("/.proxy/game/assets/wood.png")`)
 	poll(frame + `.document.querySelector("#scene")?.getAttribute("data-gosx-scene3d-model-hydration-committed") === "true"`)
 	poll(frame + `.document.querySelector("#scene canvas") != null`)
 	syncDeadline := time.Now().Add(5 * time.Second)

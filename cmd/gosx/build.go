@@ -51,6 +51,11 @@ type BuildOptions struct {
 	// PerfAppID enables private performance asset metadata for a production
 	// build. The stable app identity must be provided explicitly.
 	PerfAppID string
+	// StaticOnly builds the production static bundle for a host with no Go
+	// server (gosx export). Pages that cannot be exported fail the build.
+	StaticOnly bool
+	// ZipPath, when set with StaticOnly, also writes the bundle as one archive.
+	ZipPath string
 }
 
 // runtimeFeatureChunks lists opt-in feature chunks that ship as
@@ -334,6 +339,14 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return err
 	}
 
+	if opts.StaticOnly {
+		// Fail before the multi-minute runtime build when a page can never be static.
+		if skipped, err := staticOnlySkippedRoutes(filepath.Join(dir, "app")); err != nil {
+			return err
+		} else if len(skipped) > 0 {
+			return staticOnlyPagesError(skipped)
+		}
+	}
 	if err := checkVersionSkew(dir); err != nil {
 		return err
 	}
@@ -859,8 +872,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 
 	staticPages := 0
-	if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
+	if opts.StaticOnly && !builtServer {
+		return fmt.Errorf("gosx export requires a runnable app (package main): %s", dir)
+	}
+	if !opts.Dev && builtServer && (cfg.Build.Prerender.enabled() || opts.StaticOnly) {
 		exportManifest, err := prerenderStaticBundle(staticExportOptions{
+			StaticOnly:   opts.StaticOnly,
 			AppRoot:      distDir,
 			OutputDir:    filepath.Join(distDir, "static"),
 			BinaryPath:   serverBinaryPath,
@@ -876,8 +893,20 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		if err := writeExportManifest(filepath.Join(distDir, "export.json"), exportManifest); err != nil {
 			return err
 		}
-		if err := writeEdgeBundle(distDir, exportManifest, builtServer); err != nil {
-			return fmt.Errorf("write edge bundle: %w", err)
+		if err := checkStaticServerEndpoints(filepath.Join(distDir, "static"), opts.StaticOnly); err != nil {
+			return err
+		}
+		if opts.StaticOnly && opts.ZipPath != "" {
+			n, err := writeStaticZip(filepath.Join(distDir, "static"), opts.ZipPath)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("  Static archive: %s (%d files)\n", opts.ZipPath, n)
+		}
+		if !opts.StaticOnly {
+			if err := writeEdgeBundle(distDir, exportManifest, builtServer); err != nil {
+				return fmt.Errorf("write edge bundle: %w", err)
+			}
 		}
 	}
 	if opts.Offline {
@@ -938,15 +967,20 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if releaseArtifacts.AppInstaller != "" {
 		fmt.Printf("  AppInstaller: %s\n", releaseArtifacts.AppInstaller)
 	}
-	fmt.Println("\nDeploy strategy:")
-	fmt.Println("  • Server binary rolls often (Tier 1)")
-	fmt.Println("  • Runtime assets cached forever with content hashes (Tier 2)")
-	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
-	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
-	fmt.Println("  • dist/ includes app/, content/, and public/ for file-routed runtime deployment")
-	if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
-		fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
-		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
+	if opts.StaticOnly {
+		fmt.Println("\nUpload the contents of dist/static (or the zip) to any static host. See docs/static-game.md.")
+	} else {
+		fmt.Println("\nDeploy strategy:")
+		fmt.Println("  • Server binary rolls often (Tier 1)")
+		fmt.Println("  • Runtime assets cached forever with content hashes (Tier 2)")
+		fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
+		fmt.Println("  • Manifest tells the server which hashed URLs to reference")
+		fmt.Println("  • dist/ includes app/, content/, and public/ for file-routed runtime deployment")
+		if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
+			fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
+			fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
+		}
+
 	}
 
 	if err := runBuildHookCommands(dir, "post-build", cfg.Build.Hooks.Post); err != nil {
@@ -1106,11 +1140,42 @@ type optionalWASMOptimizer struct {
 }
 
 func newOptionalWASMOptimizer(diagnostics io.Writer) *optionalWASMOptimizer {
-	tool, err := exec.LookPath("wasm-opt")
-	if err != nil {
-		tool = ""
+	return &optionalWASMOptimizer{tool: resolveWASMOpt(exec.LookPath, tinygoEnvRoot), diagnostics: diagnostics}
+}
+
+// resolveWASMOpt finds the optimizer: wasm-opt on PATH first, then the copy
+// that TinyGo bundles (<TINYGOROOT>/bin/wasm-opt, or ../lib/tinygo/bin beside
+// the tinygo binary). It returns "" when neither exists.
+func resolveWASMOpt(lookPath func(string) (string, error), tinygoRoot func(tinygo string) string) string {
+	if tool, err := lookPath("wasm-opt"); err == nil {
+		return tool
 	}
-	return &optionalWASMOptimizer{tool: tool, diagnostics: diagnostics}
+	tinygo, err := lookPath("tinygo")
+	if err != nil {
+		return ""
+	}
+	var candidates []string
+	if root := tinygoRoot(tinygo); root != "" {
+		candidates = append(candidates, filepath.Join(root, "bin", "wasm-opt"))
+	}
+	if real, err := filepath.EvalSymlinks(tinygo); err == nil {
+		tinygo = real
+	}
+	candidates = append(candidates, filepath.Join(filepath.Dir(tinygo), "..", "lib", "tinygo", "bin", "wasm-opt"))
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+			return c
+		}
+	}
+	return ""
+}
+
+func tinygoEnvRoot(tinygo string) string {
+	out, err := exec.Command(tinygo, "env", "TINYGOROOT").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func optimizeWASMWithWasmOptDiagnostics(path string, diagnostics io.Writer) (bool, error) {
@@ -1131,7 +1196,7 @@ func (optimizer *optionalWASMOptimizer) optimize(path string) (bool, error) {
 	}
 	if optimizer.tool == "" {
 		optimizer.missing.Do(func() {
-			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH; keeping compiled WASM. Install Binaryen matching your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
+			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH (TinyGo's bundled copy was not found either); keeping compiled WASM (the runtime ships larger). Install Binaryen to shrink it: apt install binaryen, brew install binaryen, or https://github.com/WebAssembly/binaryen/releases. Match your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
 		})
 		return false, nil
 	}

@@ -13,8 +13,18 @@
     return Number.isFinite(parsed) && parsed > 0 ? Math.max(1, Math.floor(parsed)) : fallback;
   }
 
+  // Static exports mark pages with <meta name="gosx-telemetry" content="off">:
+  // no server receives events, so telemetry stays off unless the app opts in.
+  function gosxTelemetryStaticOff() {
+    const meta = typeof document !== "undefined" && document.querySelector?.('meta[name="gosx-telemetry"]');
+    return Boolean(meta) && meta.getAttribute("content") === "off";
+  }
+
   function gosxTelemetryConfig() {
     const cfg = (typeof window !== "undefined" && window.__gosx_telemetry_config) || {};
+    if (cfg.enabled !== true && gosxTelemetryStaticOff()) {
+      window.__gosx_telemetry_config = Object.assign(cfg, { enabled: false });
+    }
     const rawFlushInterval = Number(cfg.flushInterval);
     const endpoint = cfg.endpoint;
     return {

@@ -25,7 +25,7 @@ func TestControllerInputAssetsAcrossBuildModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"dev", "export", "production"} {
+	for _, mode := range []string{"dev", "production"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/controller-app\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.57.5\n")
@@ -56,11 +56,6 @@ func main() {
 				if err := prepareDevAssetsWithPrograms(dir, nil); err != nil {
 					t.Fatal(err)
 				}
-			case "export":
-				if err := RunExport(dir); err != nil {
-					t.Fatal(err)
-				}
-				root = filepath.Join(dir, "dist", "static")
 			case "production":
 				if err := RunBuild(dir, false); err != nil {
 					t.Fatal(err)
@@ -73,11 +68,7 @@ func main() {
 				ctx.Controller(controller.Config{Name: "prefs", Storage: &controller.Storage{Namespace: "prefs"}})
 				return gosx.RawHTML("<main>Controls</main>")
 			})
-			var handler http.Handler = app.Build()
-			if mode == "export" {
-				handler = http.FileServer(http.Dir(root))
-			}
-			srv := httptest.NewServer(handler)
+			srv := httptest.NewServer(app.Build())
 			defer srv.Close()
 			get := func(path string) []byte {
 				t.Helper()

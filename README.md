@@ -913,7 +913,7 @@ gosx scene inspect [--strict] [--budget file] <file-or-dir>...
 gosx scene validate [--strict] <file-or-dir>...
                                       # Structured schema diagnostics for scene documents
 gosx scene schema [--out path]        # Emit the SceneIR JSON schema
-gosx export [app]                     # Pre-render static pages to dist/static/
+gosx export [--zip] [app]              # Server-less static bundle in dist/static/ (see docs/static-game.md)
 gosx compile <file.gsx>                # Compile .gsx to Go
 gosx check <file.gsx>                  # Parse, validate, and check strict props with Go
 gosx render <file.gsx> [component]     # Render component to HTML

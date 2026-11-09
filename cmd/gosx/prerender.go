@@ -62,6 +62,11 @@ type staticExportOptions struct {
 	BinaryPath   string
 	BundlePolicy bundlepolicy.Config
 	StageAssets  func(outputDir string, manifest exportManifest) error
+	// StaticOnly marks an export that ships without a server. The exporter
+	// prerenders loader pages once, and fails when a page cannot be exported
+	// (actions, route parameters, private responses, or a server endpoint
+	// reference) instead of dropping it.
+	StaticOnly bool
 }
 
 var errPrivateExportPage = errors.New("response is not shared-cacheable")
@@ -152,6 +157,9 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		"GOSX_APP_ROOT="+appRoot,
 		"GOSX_STATIC_EXPORT=1",
 	)
+	if opts.StaticOnly {
+		cmd.Env = append(cmd.Env, "GOSX_STATIC_EXPORT_ONLY=1")
+	}
 	if err := cmd.Start(); err != nil {
 		return exportManifest{}, fmt.Errorf("start export app: %w", err)
 	}
@@ -178,12 +186,22 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	assetRefs := map[string]struct{}{}
 	fileCSSAssets := map[string]bool{}
 	exportedRoutes := make([]exportRoute, 0, len(routes))
+	var unexportable []string
+	rewriteOpts := staticRewriteOptions{Prefix: mount.prefix, TelemetryOff: opts.StaticOnly, AssetExists: func(rel string) bool {
+		info, err := os.Stat(filepath.Join(contentDir, filepath.FromSlash(strings.TrimPrefix(rel, "/"))))
+		return err == nil && info.Mode().IsRegular()
+	}}
 	for _, entry := range routes {
 		internalPath := entry.Path
 		entry.Path = mount.publicPath(internalPath)
 		entry.File = buildmanifest.ExportFilePath(entry.Path)
 		pageHTML, status, headers, err := fetchExportPageResponse(client, baseURL+mount.upstreamURL(entry.Path))
 		if errors.Is(err, errDynamicExportPage) {
+			if opts.StaticOnly && headers.Get("X-GoSX-Prerender-Reason") != "config" {
+				unexportable = append(unexportable, fmt.Sprintf("%s: %s", entry.Path, dynamicSkipReason(headers)))
+			} else {
+				fmt.Fprintf(os.Stderr, "gosx export: %s is served by the app at request time (%s); it is not in the static bundle\n", entry.Path, dynamicSkipReason(headers))
+			}
 			continue
 		}
 		if err == nil && status != http.StatusOK {
@@ -193,6 +211,9 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 			// Keep session-creating and private pages dynamic. A build visitor's
 			// token or personalized state must never reach a shared artifact.
 			fmt.Fprintf(os.Stderr, "gosx export: keeping %s dynamic (private response)\n", entry.Path)
+			if opts.StaticOnly {
+				unexportable = append(unexportable, entry.Path+": private response (sets a cookie or Cache-Control private/no-store)")
+			}
 			continue
 		}
 		if err != nil {
@@ -208,8 +229,9 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		if err := stageExportFileCSS(client, baseURL, outputDir, pageHTML, fileCSSAssets, mount); err != nil {
 			return exportManifest{}, fmt.Errorf("export %s stylesheets: %w", entry.Path, err)
 		}
+		pageHTML = dropDormantRuntime(pageHTML, entry.Capabilities)
 		addExportRuntimeAssetRefs(assetRefs, pageHTML)
-		pageHTML, err = rewriteStaticExportHTML(entry.Path, pageHTML)
+		pageHTML, err = rewriteStaticExportHTMLWith(entry.Path, pageHTML, rewriteOpts)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite %s: %w", entry.Path, err)
 		}
@@ -224,8 +246,11 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		if err := stageExportFileCSS(client, baseURL, outputDir, missingHTML, fileCSSAssets, mount); err != nil {
 			return exportManifest{}, fmt.Errorf("export 404 stylesheets: %w", err)
 		}
+		if caps, capErr := routeCapabilitiesFromHTML(missingHTML); capErr == nil {
+			missingHTML = dropDormantRuntime(missingHTML, caps)
+		}
 		addExportRuntimeAssetRefs(assetRefs, missingHTML)
-		missingHTML, err = rewriteStaticExportHTML(mount.publicPath("/"), missingHTML)
+		missingHTML, err = rewriteStaticExportHTMLWith(mount.publicPath("/"), missingHTML, rewriteOpts)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite 404 page: %w", err)
 		}
@@ -234,6 +259,9 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		}
 	}
 
+	if opts.StaticOnly && len(unexportable) > 0 {
+		return exportManifest{}, staticOnlyPagesError(unexportable)
+	}
 	manifest := exportManifest{BasePath: mount.prefix, Pages: pages, Routes: exportedRoutes, AssetRefs: sortedExportRuntimeAssetRefs(assetRefs)}
 	for _, ref := range manifest.AssetRefs {
 		if ref != runtimehost.NavigationRuntimePath {
@@ -277,6 +305,16 @@ func completeStaticExport(opts staticExportOptions, outputDir string, manifest e
 		contentDir := filepath.Join(outputDir, filepath.FromSlash(strings.TrimPrefix(manifest.BasePath, "/")))
 		if err := opts.StageAssets(contentDir, manifest); err != nil {
 			return exportManifest{}, err
+		}
+	}
+	{
+		contentDir := filepath.Join(outputDir, filepath.FromSlash(strings.TrimPrefix(manifest.BasePath, "/")))
+		cssOpts := staticRewriteOptions{Prefix: manifest.BasePath, AssetExists: func(rel string) bool {
+			info, err := os.Stat(filepath.Join(contentDir, filepath.FromSlash(strings.TrimPrefix(rel, "/"))))
+			return err == nil && info.Mode().IsRegular()
+		}}
+		if err := rewriteStaticCSSTree(contentDir, cssOpts); err != nil {
+			return exportManifest{}, fmt.Errorf("rewrite static stylesheets: %w", err)
 		}
 	}
 	if err := writeTextSidecars(outputDir, opts.BundlePolicy); err != nil {
@@ -498,6 +536,39 @@ func fetchExportPageWithStatus(client *http.Client, url string) (string, int, er
 	return body, status, err
 }
 
+func staticOnlyPagesError(pages []string) error {
+	pages = append([]string(nil), pages...)
+	sort.Strings(pages)
+	return fmt.Errorf("these pages cannot be part of a static bundle:\n  %s\nRemove the actions, move the work to the client, or set {\"prerender\":false} in route.config.json to leave the page out on purpose", strings.Join(pages, "\n  "))
+}
+
+func dynamicSkipReason(headers http.Header) string {
+	switch headers.Get("X-GoSX-Prerender-Reason") {
+	case "config":
+		return `route.config.json sets "prerender": false`
+	case "actions":
+		return "the page declares actions, which need a server; set \"prerender\": true to export it without them"
+	}
+	return "the page opts out of prerendering"
+}
+
+// staticOnlySkippedRoutes lists file routes that staticExportRoutes leaves out
+// without trying them: pages with route parameters. An explicit
+// {"prerender":false} is the owner's choice and is not an error.
+func staticOnlySkippedRoutes(appDir string) ([]string, error) {
+	bundle, err := route.ScanDir(appDir)
+	if err != nil {
+		return nil, fmt.Errorf("scan file routes: %w", err)
+	}
+	var out []string
+	for _, page := range bundle.Pages {
+		if len(page.Params) > 0 && page.Config.PrerenderEnabled(true) {
+			out = append(out, page.RoutePath+": route parameters need a server; add {\"prerender\":false} to leave it out, or replace it with a fixed route")
+		}
+	}
+	return out, nil
+}
+
 func prerenderLoadWarning(routePath string) string {
 	return fmt.Sprintf("gosx prerender: warning: %s has Load and RevalidateSeconds=0; build-time data stays unchanged until rebuild or explicit invalidation (set a public cache lifetime in route.config.json, or disable prerender)", routePath)
 }
@@ -554,14 +625,29 @@ func writeExportPage(outputDir, routePath, html string) error {
 }
 
 func rewriteStaticExportHTML(routePath, input string) (string, error) {
+	return rewriteStaticExportHTMLWith(routePath, input, staticRewriteOptions{})
+}
+
+// rewriteStaticExportHTMLWith makes every published-file URL in a page resolve
+// against the document: attributes, data-gosx-*-url attributes, and the string
+// values of the GoSX JSON contracts. It also marks the page as static so the
+// client sends no telemetry to a server that does not exist.
+func rewriteStaticExportHTMLWith(routePath, input string, opts staticRewriteOptions) (string, error) {
 	root, err := html.Parse(strings.NewReader(input))
 	if err != nil {
 		return "", err
 	}
 
+	var head *html.Node
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
 		if node.Type == html.ElementNode {
+			if node.Data == "head" && head == nil {
+				head = node
+			}
+			if node.Data == "script" && isGoSXJSONScript(node) && node.FirstChild != nil && node.FirstChild.Type == html.TextNode {
+				node.FirstChild.Data = rewriteStaticJSON(routePath, node.FirstChild.Data, opts)
+			}
 			for i := range node.Attr {
 				key := strings.ToLower(node.Attr[i].Key)
 				switch key {
@@ -573,6 +659,14 @@ func rewriteStaticExportHTML(routePath, input string) (string, error) {
 					if looksLikeExportURLValue(node.Attr, node.Attr[i].Val) {
 						node.Attr[i].Val = rewriteStaticExportURL(routePath, node.Attr[i].Val)
 					}
+				case "data-gosx-engine-bytecode":
+					node.Attr[i].Val = rewriteStaticExportURL(routePath, node.Attr[i].Val)
+				default:
+					if strings.HasPrefix(key, "data-gosx-") && strings.HasSuffix(key, "-url") && strings.HasPrefix(node.Attr[i].Val, "/gosx/") {
+						node.Attr[i].Val = rewriteStaticExportURL(routePath, node.Attr[i].Val)
+					} else if strings.HasPrefix(key, "data-gosx-") && strings.HasSuffix(key, "-url") && opts.Prefix != "" && strings.HasPrefix(node.Attr[i].Val, opts.Prefix+"/gosx/") {
+						node.Attr[i].Val = rewriteStaticExportURL(routePath, node.Attr[i].Val)
+					}
 				}
 			}
 		}
@@ -581,12 +675,60 @@ func rewriteStaticExportHTML(routePath, input string) (string, error) {
 		}
 	}
 	walk(root)
+	if head != nil && opts.TelemetryOff && !hasStaticTelemetryMeta(head) {
+		meta := &html.Node{Type: html.ElementNode, Data: "meta", DataAtom: 0, Attr: []html.Attribute{
+			{Key: "name", Val: "gosx-telemetry"}, {Key: "content", Val: "off"},
+		}}
+		head.InsertBefore(meta, head.FirstChild)
+	}
 
 	var b strings.Builder
 	if err := html.Render(&b, root); err != nil {
 		return "", err
 	}
 	return b.String(), nil
+}
+
+func isGoSXJSONScript(node *html.Node) bool {
+	for _, a := range node.Attr {
+		if a.Key == "id" && (a.Val == "gosx-manifest" || a.Val == "gosx-document") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStaticTelemetryMeta(head *html.Node) bool {
+	for c := head.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode || c.Data != "meta" {
+			continue
+		}
+		for _, a := range c.Attr {
+			if a.Key == "name" && a.Val == "gosx-telemetry" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// dropDormantRuntime removes the unused WASM bundle reference from a page that
+// needs no WASM (see dropDormantRuntimeBundles).
+func dropDormantRuntime(page string, caps routeCapabilities) string {
+	if caps.WASM {
+		return page
+	}
+	const open = `<script id="gosx-manifest" type="application/json">`
+	i := strings.Index(page, open)
+	if i < 0 {
+		return page
+	}
+	start := i + len(open)
+	end := strings.Index(page[start:], "</script>")
+	if end < 0 {
+		return page
+	}
+	return page[:start] + dropDormantRuntimeBundles(page[start:start+end]) + page[start+end:]
 }
 
 func looksLikeExportURLValue(attrs []html.Attribute, value string) bool {
