@@ -203,6 +203,9 @@ func (r *Runtime) withRuntimeProps(cfg engine.Config) engine.Config {
 	}
 	props["gameProfile"] = r.profile.Name
 	props["fixedStepSeconds"] = r.FixedStep().Seconds()
+	if _, set := props["framePacing"]; !set && r.profile.FramePacing != "" {
+		props["framePacing"] = r.profile.FramePacing
+	}
 	if assets := r.assets.Manifest(); len(assets) > 0 {
 		props["assets"] = assets
 	}
