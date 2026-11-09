@@ -227,6 +227,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
 			sourceFile("../runtime/scene3d/gltf.ts"),
 			sourceFile("../runtime/scene3d/asset-ext.ts"),
+			sourceFile("../runtime/scene3d/asset-meshopt.ts"),
 			sourceFile("../runtime/scene3d/animation.ts"),
 			sourceFile("bootstrap-src/19b-scene-control-forms.ts"),
 			// 16d publishes the base symbols the lazy WebGL chunk reads through
@@ -763,6 +764,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
 			sourceFile("../runtime/scene3d/gltf.ts"),
 			sourceFile("../runtime/scene3d/asset-ext.ts"),
+			sourceFile("../runtime/scene3d/asset-meshopt.ts"),
 			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"),
 		},
 	},

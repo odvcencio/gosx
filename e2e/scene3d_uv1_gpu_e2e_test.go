@@ -275,18 +275,15 @@ func TestUV1MapsReadTheSecondUVSetOnTheGPU(t *testing.T) {
 	for _, backend := range []string{"webgl", "webgpu"} {
 		for _, tc := range cases {
 			t.Run(backend+"/"+tc.name, func(t *testing.T) {
-				if backend == "webgpu" && os.Getenv("GOSX_UV1_WEBGPU") != "1" {
-					t.Skip("WebGPU second UV stream is not implemented yet; set GOSX_UV1_WEBGPU=1 to run it")
-				}
 				yes, no := true, false
 				glb := uv1GLB(t, tc.f)
 				props := scene.Props{
 					Width: 480, Height: 320, Background: "#000000", AutoRotate: &no,
 					Camera: scene.PerspectiveCamera{Position: scene.Vector3{Z: 6}, FOV: 50, Near: 0.1, Far: 40},
-					Graph: scene.NewGraph(
-						scene.AmbientLight{Intensity: 1.2},
-						scene.Model{ID: "quad", Src: "/quad.glb"},
-					),
+					// Occlusion only dims the environment term, so light the quad with
+					// that term alone.
+					Environment: scene.Environment{AmbientColor: "#ffffff", AmbientIntensity: 1.5},
+					Graph:       scene.NewGraph(scene.Model{ID: "quad", Src: "/quad.glb"}),
 				}
 				if backend == "webgl" {
 					props.ForceWebGL, props.RequireWebGL = &yes, &yes
