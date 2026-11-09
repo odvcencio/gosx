@@ -22,5 +22,5 @@ golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=
 golang.org/x/sys v0.43.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 m31labs.dev/prism v0.1.3 h1:mRtbGQ0Ost7fkeGpmnDRu8OLtcwQd8lY9mk8zObcNpU=
 m31labs.dev/prism v0.1.3/go.mod h1:y3Eg5GDXRB6G0rNIPOOnmFXpmZGjy4eOjyDMORyWHf8=
-m31labs.dev/selena v0.5.3-0.20261109065633-112e7ec05072 h1:O5cYzs0vG9FKP7bmFPhL30vBscK8Y6G+mOSmniqlaZY=
-m31labs.dev/selena v0.5.3-0.20261109065633-112e7ec05072/go.mod h1:gWixT9H7Gbfs+SBKJj12/01lEXu5YpBuabrQUiH0TD0=
+m31labs.dev/selena v0.5.3-0.20261109153528-6546b7df4e1c h1:E+4wfOBVXt4uo6Z/uU4NgAWs8Ou8LDV/GtemtBZscgk=
+m31labs.dev/selena v0.5.3-0.20261109153528-6546b7df4e1c/go.mod h1:gWixT9H7Gbfs+SBKJj12/01lEXu5YpBuabrQUiH0TD0=
