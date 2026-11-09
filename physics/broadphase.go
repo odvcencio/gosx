@@ -409,14 +409,18 @@ func comparePairsByIndex(x, y ColliderPair) int {
 
 // appendCandidate applies the same admission rules the old single-map
 // broadphase used (validEntryPair): reject a nil or self pair, a pair sharing
-// a body, a pair where both sides are immovable, and a bounded pair whose
-// boxes do not overlap. A surviving pair's packed side IDs, ordered low to
-// high, are appended to pairKeys for the sort-and-dedupe pass.
+// a body, a pair whose collision layers do not interact, a pair where both
+// sides are immovable, and a bounded pair whose boxes do not overlap. A
+// surviving pair's packed side IDs, ordered low to high, are appended to
+// pairKeys for the sort-and-dedupe pass.
 func (s *SpatialHash) appendCandidate(sideA uint32, a *Collider, aabbA AABB, sideB uint32, b *Collider, aabbB AABB) {
 	if a == nil || b == nil || a == b {
 		return
 	}
 	if a.Body != nil && a.Body == b.Body {
+		return
+	}
+	if !collidersInteract(a, b) {
 		return
 	}
 	if immovableCollider(a) && immovableCollider(b) {

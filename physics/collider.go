@@ -62,6 +62,13 @@ type ColliderConfig struct {
 	// Indices lists triangle corners for ShapeTriangleMesh, three per
 	// triangle. Every other shape ignores it.
 	Indices []int
+
+	// Layer is the set of collision layers the collider belongs to, and Mask
+	// the set it collides with. Zero means LayerDefault and LayerAll, so a
+	// config that leaves both alone collides with everything. See
+	// collidersInteract for the rule.
+	Layer uint32 `json:",omitempty"`
+	Mask  uint32 `json:",omitempty"`
 }
 
 type Collider struct {
@@ -78,6 +85,11 @@ type Collider struct {
 	Distance  float64
 
 	index int
+
+	// layer and mask hold the normalized collision filter. Read them through
+	// Layer and Mask; change them through SetCollisionFilter.
+	layer uint32
+	mask  uint32
 
 	// hull holds the local-space convex point cloud for ShapeConvexHull.
 	hull []Vec3
@@ -121,6 +133,7 @@ func newCollider(body *RigidBody, config ColliderConfig) *Collider {
 		Normal:    normal.Normalize(),
 		Distance:  config.Distance,
 	}
+	c.layer, c.mask = normalizeLayer(config.Layer, config.Mask)
 	c.buildGeometry(config)
 	c.invalid = c.validate()
 	return c

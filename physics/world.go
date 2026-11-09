@@ -91,6 +91,22 @@ type World struct {
 	broadphaseStep uint64
 	// sweepTargets is the reused result buffer of the swept broadphase query.
 	sweepTargets []*Collider
+
+	// colliderVersion counts collider additions and removals. Queries compare
+	// it with queryVersion to know when the static grid needs a rebuild
+	// before it can answer.
+	colliderVersion uint64
+	queryVersion    uint64
+	// queryBuilt is the broadphase build count queryMovable was listed at.
+	queryBuilt   uint64
+	queryMovable []queryEntry
+	// Query scratch. One query runs at a time, so these are shared.
+	queryOut       []*Collider
+	queryTris      []int
+	queryContacts  []ContactManifold
+	queryProbe     Collider
+	castScratch    castQuery
+	overlapScratch overlapQuery
 }
 
 func DefaultWorldConfig() WorldConfig {
@@ -660,6 +676,7 @@ func (w *World) registerCollider(collider *Collider) {
 		collider.index = w.nextColliderIndex
 	}
 	w.colliders = append(w.colliders, collider)
+	w.colliderVersion++
 }
 
 func dampingFactor(damping, dt float64) float64 {
