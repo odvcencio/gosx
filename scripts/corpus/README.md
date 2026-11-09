@@ -40,7 +40,7 @@ For each row of `manifest.tsv`, in order, never in parallel:
 
 If resolve fails, the other checks are skipped.
 
-Without `-R`, the runner holds `flock /home/draco/work/.runtime/locks/gosx-heavy.lock` (`CORPUS_LOCK` overrides it) while it runs one consumer's checks, and releases it between consumers. Every `go` command runs under `timeout`: 10 minutes per build, vet, resolve and wasm step (`CORPUS_STEP_TIMEOUT`), and the manifest's `test_timeout` (8 minutes) per test run. The whole run stops starting new checks after `CORPUS_BUDGET` seconds of check run time (default 3600; time spent waiting for the lock is not counted); the rest show as SKIP. Measured on buildbox: about 25 minutes of check run time for all six consumers with baselines (bon-voyage tests are the longest at about 9 minutes); waiting for a free slot or lock comes on top.
+Without `-R`, the runner holds `flock /home/draco/work/.runtime/locks/gosx-heavy.lock` (`CORPUS_LOCK` overrides it) while it runs one consumer's checks, and releases it between consumers. Every `go` command runs under `timeout`: 10 minutes per build, vet, resolve and wasm step (`CORPUS_STEP_TIMEOUT`), and the manifest's `test_timeout` (8 minutes) per test run. The whole run stops starting new checks after `CORPUS_BUDGET` seconds of check run time (default 3600; time spent waiting for the lock is not counted); the rest show as SKIP. Measured on buildbox: about 30 minutes of check run time (summed step seconds) for all six consumers with baselines (bon-voyage tests are the longest at about 9 minutes); waiting for a free slot or lock comes on top.
 
 ## Output
 
