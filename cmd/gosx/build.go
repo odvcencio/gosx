@@ -68,6 +68,10 @@ var runtimeFeatureChunks = []struct{ name, role string }{
 	{"motion-svg", "motion"},
 	{"motion-scene", "motion"},
 	{"motion-track", "motion"},
+	// Environment.Terrain and Environment.Wind (scene/terrain.go, scene/wind.go).
+	// The Scene3D mount fetches /gosx/bootstrap-feature-scene3d-terrain.js
+	// itself when a scene declares either.
+	{"scene3d-terrain", "scene3d"},
 }
 
 type wasmCompiler string

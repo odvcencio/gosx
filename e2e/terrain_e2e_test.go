@@ -46,7 +46,7 @@ func terrainTestTexture(seed uint64, base color.NRGBA, contrast float64) []byte 
 	return buf.Bytes()
 }
 
-func terrainTestProps(width, height int, withTerrain bool, camera scene.Vector3) scene.Props {
+func terrainTestProps(width, height int, withTerrain, full bool, camera scene.Vector3) scene.Props {
 	heightmap := scene.GenerateHeightmap(scene.TerrainNoise{Seed: 7, Columns: 257, Rows: 257, Frequency: 3, Ridged: 0.35, Island: 0.55, Exponent: 1.3})
 	terrain := &scene.Terrain{
 		Heightmap: heightmap, Position: scene.Vector3{Y: -6}, Width: 512, HeightScale: 70,
@@ -75,7 +75,7 @@ func terrainTestProps(width, height int, withTerrain bool, camera scene.Vector3)
 	}
 	props := scene.Props{Width: width, Height: height, Responsive: scene.Bool(false), MaxDevicePixelRatio: 1, Background: "#9fb8d6",
 		Controls: "orbit", ControlTarget: scene.Vector3{X: -6, Y: 6, Z: 30},
-		Camera:   scene.PerspectiveCamera{Position: camera, FOV: 55, Near: 0.5, Far: 3000},
+		Camera: scene.PerspectiveCamera{Position: camera, FOV: 55, Near: 0.5, Far: 3000},
 		Environment: scene.Environment{
 			Sky:      &scene.Sky{Mode: "gradient", TopColor: "#4a77b8", HorizonColor: "#c4d6ea", BottomColor: "#c4d6ea"},
 			FogColor: "#c4d6ea", FogDensity: 0.0018,
@@ -85,13 +85,36 @@ func terrainTestProps(width, height int, withTerrain bool, camera scene.Vector3)
 	if withTerrain {
 		props.Environment.Terrain = terrain
 	}
+	if full {
+		sea := 0.0
+		props.Environment.Wind = &scene.Wind{Direction: 60, Speed: 7, Gust: 0.45}
+		props.Environment.Ocean = &scene.Ocean{WindDirection: 60, WaveHeight: 0.6, Shoreline: &scene.OceanShoreline{}}
+		props.GPUDriven = &scene.GPUDriven{}
+		props.Graph.Nodes = append(props.Graph.Nodes, scene.Scatter{
+			ID: "veg", Terrain: terrain, Seed: 42, WaterLevel: &sea, WaterMargin: 0.6,
+			Species: []scene.ScatterSpecies{
+				{Name: "grass", Density: 0.35, MaxSlope: 28, MinScale: 0.7, MaxScale: 1.3, Align: 1, Wind: 0.9, WindHeight: 0.7,
+					LODs: []scene.ScatterLOD{
+						{Distance: 70, Geometry: scene.CylinderGeometry{RadiusBottom: 0.18, RadiusTop: 0.01, Height: 0.7, Segments: 5}, OffsetY: 0.35,
+							Material: scene.StandardMaterial{Color: "#55802c", Roughness: 0.9}},
+						{Distance: 140, Keep: 0.4, Geometry: scene.BoxGeometry{Width: 0.25, Height: 0.5, Depth: 0.25}, OffsetY: 0.25,
+							Material: scene.StandardMaterial{Color: "#55802c", Roughness: 0.9}},
+					}},
+				{Name: "tree", Density: 0.01, MinHeight: scene.Float(2), MaxSlope: 32, MinScale: 0.8, MaxScale: 1.5, Sink: 0.3,
+					CastShadow: true, ReceiveShadow: true, Wind: 0.15, WindHeight: 6,
+					LODs: []scene.ScatterLOD{{Distance: 220, Geometry: scene.CylinderGeometry{RadiusBottom: 1.6, RadiusTop: 0.05, Height: 6, Segments: 8},
+						OffsetY: 3, Material: scene.StandardMaterial{Color: "#2f5a2a", Roughness: 0.85}}},
+					Billboard: &scene.ScatterBillboard{Distance: 700, Width: 3, Height: 6, Material: scene.StandardMaterial{Color: "#2f5a2a"}}},
+			},
+		})
+	}
 	return props
 }
 
 type terrainReading struct {
-	Backend, Terrain, Patches string
-	GPU                       string
-	CPU                       float64
+	Backend, Terrain, Patches, Ocean string
+	GPU                              string
+	CPU                              float64
 }
 
 func TestTerrainOnTheGPU(t *testing.T) {
@@ -104,9 +127,9 @@ func TestTerrainOnTheGPU(t *testing.T) {
 	evidence := os.Getenv("GOSX_TERRAIN_EVIDENCE")
 	summary := map[string]any{}
 	for _, backend := range []string{"webgpu", "webgl"} {
-		for _, variant := range []string{"before", "terrain", "lod"} {
+		for _, variant := range []string{"before", "terrain", "lod", "full"} {
 			t.Run(backend+"-"+variant, func(t *testing.T) {
-				props := terrainTestProps(width, height, variant != "before", scene.Vector3{X: -150, Y: 70, Z: 210})
+				props := terrainTestProps(width, height, variant != "before", variant == "full", scene.Vector3{X: -150, Y: 70, Z: 210})
 				if backend == "webgpu" {
 					props.PreferWebGPU = scene.Bool(true)
 				} else {
@@ -119,7 +142,7 @@ func TestTerrainOnTheGPU(t *testing.T) {
 				tint := map[bool]string{true: "window.__gosx_scene3d_terrain_lod_tint=true;", false: ""}[variant == "lod"]
 				markup := fmt.Sprintf(`<!doctype html><html><body style="margin:0;background:#000"><div id="scene" style="width:%dpx;height:%dpx"></div>
 <script src="/gosx/bootstrap-runtime.js"></script>
-<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js" data-gosx-scene3d-terrain-url="/gosx/bootstrap-feature-scene3d-terrain.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
+<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js" data-gosx-scene3d-terrain-url="/gosx/bootstrap-feature-scene3d-terrain.js" data-gosx-scene3d-compute-url="/gosx/bootstrap-feature-scene3d-compute.js" data-gosx-scene3d-decompress-url="/gosx/bootstrap-feature-scene3d-decompress.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
 <script>%swindow.ready=(async()=>{window.handle=await window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('scene'),emit(){},props:%s});window.mounted=true;})().catch(error=>{window.mountError=String(error);});</script></body></html>`, width, height, tint, payload)
 				mux := http.NewServeMux()
 				mux.Handle("/gosx/", http.StripPrefix("/gosx/", http.FileServer(http.Dir(filepath.Join(root, "client", "js")))))
@@ -154,6 +177,11 @@ func TestTerrainOnTheGPU(t *testing.T) {
 					page.eval(t, `(document.getElementById('scene').getAttribute('data-gosx-scene3d-terrain')||'missing')`, &state)
 					t.Fatalf("terrain state %q\n%s", state, page.Console())
 				}
+				if variant == "full" && !page.pollFor(`document.getElementById('scene').getAttribute('data-gosx-scene3d-ocean') === 'shore'`, 30*time.Second) {
+					var state string
+					page.eval(t, `(document.getElementById('scene').getAttribute('data-gosx-scene3d-ocean')||'missing')`, &state)
+					t.Fatalf("ocean state %q, want the baked shoreline loaded\n%s", state, page.Console())
+				}
 				time.Sleep(1500 * time.Millisecond)
 				var reading terrainReading
 				var raw string
@@ -169,7 +197,7 @@ func TestTerrainOnTheGPU(t *testing.T) {
   }
   const g = Array.from(gpu.values()).sort((a, b) => a - b); cpu.sort((a, b) => a - b);
   return JSON.stringify({ Backend: el.getAttribute('data-gosx-scene3d-renderer'), Terrain: el.getAttribute('data-gosx-scene3d-terrain') || '',
-    Patches: el.getAttribute('data-gosx-scene3d-terrain-patches') || '', GPU: g.length ? g[g.length >> 1].toFixed(3) + ' ms (' + g.length + ' frames)' : 'unmeasured (' + status + ')',
+    Patches: el.getAttribute('data-gosx-scene3d-terrain-patches') || '', Ocean: el.getAttribute('data-gosx-scene3d-ocean') || '', GPU: g.length ? g[g.length >> 1].toFixed(3) + ' ms (' + g.length + ' frames)' : 'unmeasured (' + status + ')',
     CPU: cpu.length ? cpu[cpu.length >> 1] : -1 });
 })()`, &raw)
 				if err := json.Unmarshal([]byte(raw), &reading); err != nil {
@@ -197,6 +225,9 @@ func TestTerrainOnTheGPU(t *testing.T) {
 					if reading.Terrain != "ready" || reading.Patches == "" || reading.Patches == "0" {
 						t.Fatalf("terrain pass did not draw: %+v", reading)
 					}
+				}
+				if variant == "full" && reading.Ocean != "shore" {
+					t.Fatalf("ocean state %q, want the baked shoreline loaded", reading.Ocean)
 				}
 				summary[backend+"-"+variant] = reading
 				if evidence != "" {
