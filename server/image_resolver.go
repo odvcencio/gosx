@@ -47,14 +47,6 @@ func RegisterImageResolver(name string, resolver ImageResolver) error {
 	return nil
 }
 
-// MustRegisterImageResolver registers a named image URL resolver.
-//
-// Deprecated: use RegisterImageResolver and check the returned error. This
-// method no longer panics so resolver configuration cannot crash requests.
-func MustRegisterImageResolver(name string, resolver ImageResolver) error {
-	return RegisterImageResolver(name, resolver)
-}
-
 // ImageURLWithResolver resolves an optimized image URL through a named backend.
 func ImageURLWithResolver(name, src string, transform ImageTransform) string {
 	src = AssetURL(src)

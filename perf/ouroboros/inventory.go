@@ -1402,69 +1402,6 @@ func loadCompatibilityReceipt() (compatibilityReceiptArtifact, error) {
 	return receipt, nil
 }
 
-func scanCompatibilityNameSet(root string, identity CompatibilitySourceIdentity) (CompatibilityNameSetEvidence, error) {
-	files, err := compatibilityAuditSourceFiles(root)
-	if err != nil {
-		return CompatibilityNameSetEvidence{}, err
-	}
-	return scanCompatibilityNameSetFromFiles(files, func(src SourceFile) ([]byte, error) {
-		return os.ReadFile(filepath.Join(root, filepath.FromSlash(src.Path)))
-	}, identity)
-}
-
-func scanCompatibilityNameSetAtRevision(ctx context.Context, repoRoot, revision string, identity CompatibilitySourceIdentity) (CompatibilityNameSetEvidence, error) {
-	if !validGitRevision(revision) {
-		return CompatibilityNameSetEvidence{}, fmt.Errorf("unsafe revision %q", revision)
-	}
-	out, err := gitOutput(ctx, repoRoot, "git", "ls-tree", "-r", "--name-only", revision, "--", "client/js/bootstrap-src", "client/wasm")
-	if err != nil {
-		return CompatibilityNameSetEvidence{}, err
-	}
-	var files []SourceFile
-	for _, rel := range strings.Split(out, "\n") {
-		rel = strings.TrimSpace(rel)
-		if rel == "" || !isSafeRepoRelPath(rel) {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(rel, "client/js/bootstrap-src/") && strings.HasSuffix(rel, ".js"):
-			files = append(files, SourceFile{Path: rel, Language: "javascript", SourceKind: "compatibility-bootstrap"})
-		case strings.HasPrefix(rel, "client/wasm/") && strings.HasSuffix(rel, ".go"):
-			files = append(files, SourceFile{Path: rel, Language: "go", SourceKind: "compatibility-wasm"})
-		}
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	return scanCompatibilityNameSetFromFiles(files, func(src SourceFile) ([]byte, error) {
-		body, err := gitOutput(ctx, repoRoot, "git", "show", revision+":"+src.Path)
-		if err != nil {
-			return nil, err
-		}
-		return []byte(body), nil
-	}, identity)
-}
-
-func scanCompatibilityNameSetFromFiles(files []SourceFile, read func(SourceFile) ([]byte, error), identity CompatibilitySourceIdentity) (CompatibilityNameSetEvidence, error) {
-	names := map[string]bool{}
-	var evidence []string
-	for _, src := range files {
-		body, err := read(src)
-		if err != nil {
-			return CompatibilityNameSetEvidence{}, err
-		}
-		for index, line := range splitLines(string(body)) {
-			for _, name := range gosxNameRe.FindAllString(line, -1) {
-				if ignoreGosxRawName(name) {
-					continue
-				}
-				names[name] = true
-				evidence = append(evidence, src.Path+"#"+strconv.Itoa(index+1)+":global-name:"+name)
-			}
-		}
-	}
-	sorted := sortedBoolKeys(names)
-	return compatibilityEvidenceFromNamesWithEvidence(sorted, identity, evidence), nil
-}
-
 func scanFullRuntimeJSONNameSetAtRevision(ctx context.Context, repoRoot, revision string, identity CompatibilitySourceIdentity) (CompatibilityNameSetEvidence, error) {
 	if !validGitRevision(revision) {
 		return CompatibilityNameSetEvidence{}, fmt.Errorf("unsafe revision %q", revision)
@@ -1541,38 +1478,12 @@ func isSafeRepoRelPath(rel string) bool {
 	return rel != "" && !filepath.IsAbs(rel) && !strings.Contains(rel, "\x00") && rel == filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))) && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
-func compatibilityAuditSourceFiles(root string) ([]SourceFile, error) {
-	var out []SourceFile
-	jsFiles, err := sourceFiles(filepath.Join(root, "client", "js", "bootstrap-src"), ".js", false)
-	if err != nil {
-		return nil, err
-	}
-	for _, path := range jsFiles {
-		rel, _ := filepath.Rel(root, path)
-		out = append(out, SourceFile{Path: filepath.ToSlash(rel), Language: "javascript", SourceKind: "compatibility-bootstrap"})
-	}
-	goFiles, err := sourceFiles(filepath.Join(root, "client", "wasm"), ".go", true)
-	if err != nil {
-		return nil, err
-	}
-	for _, path := range goFiles {
-		rel, _ := filepath.Rel(root, path)
-		out = append(out, SourceFile{Path: filepath.ToSlash(rel), Language: "go", SourceKind: "compatibility-wasm"})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out, nil
-}
-
 func compatibilityEvidenceFromNames(names []string, identity CompatibilitySourceIdentity) CompatibilityNameSetEvidence {
 	return compatibilityReceiptEvidenceFromNames(names, identity)
 }
 
 func compatibilityReceiptEvidenceFromNames(names []string, identity CompatibilitySourceIdentity) CompatibilityNameSetEvidence {
 	return compatibilityEvidenceFromNamesWithEvidenceAndMetadata(names, identity, compatibilityAuditScope, compatibilityReceiptMethod, compatibilityReceiptClassifier, nil)
-}
-
-func compatibilityEvidenceFromNamesWithEvidence(names []string, identity CompatibilitySourceIdentity, evidence []string) CompatibilityNameSetEvidence {
-	return compatibilityEvidenceFromNamesWithEvidenceAndMetadata(names, identity, compatibilityAuditScope, compatibilityReceiptMethod, compatibilityReceiptClassifier, evidence)
 }
 
 func compatibilityEvidenceFromNamesWithEvidenceAndScope(names []string, identity CompatibilitySourceIdentity, scope string, evidence []string) CompatibilityNameSetEvidence {

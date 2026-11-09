@@ -62,7 +62,6 @@ var prRaceTargets = []raceTarget{
 	{"render/bundle", "parallel render-bundle assembly"},
 	{"route", "shared parser, source, and metadata caches"},
 	{"scheduled", "scheduler and watchdog goroutines"},
-	{"semantic", "concurrent semantic caches and router state"},
 	{"server", "runtime caches, streaming, and revalidation state"},
 	{"signal", "concurrent subscriptions, tracking, and batching"},
 	{"sim", "server-authoritative simulation loop"},

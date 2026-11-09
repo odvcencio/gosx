@@ -15,9 +15,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"m31labs.dev/gosx/internal/filepolicy"
-	"m31labs.dev/gosx/internal/htmlattr"
-	"m31labs.dev/gosx/internal/sceneprobe"
 	"maps"
 	neturl "net/url"
 	"os"
@@ -28,6 +25,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"m31labs.dev/gosx/internal/filepolicy"
+	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/sceneprobe"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
@@ -1493,21 +1494,6 @@ func cspNonceAttr(nonce string) string {
 		return ""
 	}
 	return ` nonce="` + html.EscapeString(nonce) + `"`
-}
-
-// htmlJSStringLiteral returns a JS string literal (including surrounding
-// quotes) safe to embed inside an inline <script> tag. Uses JSON encoding
-// plus a </script> guard so the result can sit inside an HTML context
-// without being terminated early by a literal </script> in the payload.
-func htmlJSStringLiteral(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return `""`
-	}
-	// HTML spec forbids the literal string "</" inside a script element
-	// if it starts a closing tag; escape the forward slash to be safe.
-	out := strings.ReplaceAll(string(b), "</", `<\/`)
-	return out
 }
 
 // RenderEngine registers an engine instance in the hydration manifest and,
