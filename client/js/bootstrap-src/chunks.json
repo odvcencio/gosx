@@ -494,6 +494,17 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-crowd.js",
+      "sources": [
+        "../runtime/scene3d/crowd-layout.ts",
+        "../runtime/scene3d/crowd-rig.ts",
+        "../runtime/scene3d/crowd-state.ts",
+        "../runtime/scene3d/crowd-glsl.ts",
+        "../runtime/scene3d/crowd-wgsl.ts",
+        "../runtime/scene3d/crowd.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-zoom.js",
       "sources": [
         "../runtime/scene3d/mount-pan.ts",
