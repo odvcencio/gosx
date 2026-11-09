@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/internal/bundlepolicy"
+	"m31labs.dev/gosx/scene/selenabuild"
 )
 
 type projectConfig struct {
@@ -24,6 +25,8 @@ type projectBuildConfig struct {
 	Bundle    bundlepolicy.Config   `json:"bundle"`
 	Runtime   projectBuildRuntime   `json:"runtime"`
 	Prerender projectBuildPrerender `json:"prerender"`
+	// Selena configures the build-time Selena artifact step (gosx selena).
+	Selena selenabuild.Options `json:"selena"`
 }
 
 type projectBuildServer struct {

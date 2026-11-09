@@ -343,6 +343,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err != nil {
 		return err
 	}
+	// Selena artifacts are embedded by Go packages, so write them before any
+	// Go compilation.
+	if err := runSelenaBuildStep(dir, cfg.Build.Selena, os.Stdout); err != nil {
+		return err
+	}
 	islandProgs, gsxFiles := discovery.Programs, discovery.GSXFiles
 	backend := opts.IslandsBackend
 	if backend == "" {
