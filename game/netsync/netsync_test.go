@@ -233,24 +233,30 @@ func TestReconnectResumesSeat(t *testing.T) {
 	}
 }
 
-// TestFallbackWhenServerUnreachable: no server answers, so after the connect
-// timeout the client plays a local match against bots.
+// TestFallbackWhenServerUnreachable: no server answers. Play starts locally
+// on the first frame, and after the connect timeout the same local match goes
+// on as offline play: the player never waits.
 func TestFallbackWhenServerUnreachable(t *testing.T) {
 	h, m := newHarness(t, harnessOptions{seats: 3})
 	h.down = true
 	c := h.client(m, func(_ uint64, dst []byte) []byte { return append(dst, roomtest.Right) }, func(cfg *netsync.Config) {
 		cfg.ConnectTimeout = 2 * time.Second
 	})
+	h.run(20*time.Millisecond, []*netsync.Client{c}, nil)
+	if c.Status() != netsync.StatusConnecting || !c.Local() || c.Sim() == nil || c.Phase() != wire.PhaseRunning {
+		t.Fatalf("first frame: status %v local %v phase %v, want a local match while connecting", c.Status(), c.Local(), c.Phase())
+	}
 	h.run(1900*time.Millisecond, []*netsync.Client{c}, nil)
-	if c.Status() != netsync.StatusConnecting {
-		t.Fatalf("status %v before the timeout", c.Status())
+	before, world := c.Tick(), c.Sim()
+	if c.Status() != netsync.StatusConnecting || before < 50 {
+		t.Fatalf("status %v tick %d before the timeout, want connecting and about 57 local ticks", c.Status(), before)
 	}
 	h.run(2*time.Second, []*netsync.Client{c}, nil)
-	if c.Status() != netsync.StatusOffline || !c.Room().Offline {
+	if c.Status() != netsync.StatusOffline || !c.Room().Offline || !c.Local() {
 		t.Fatalf("status %v, want offline", c.Status())
 	}
-	if c.Tick() < 50 || c.Tick() > 70 {
-		t.Fatalf("offline match ran %d ticks in ~1.9 s at 30 Hz", c.Tick())
+	if c.Sim() != world || c.Tick() < before+50 || c.Tick() > before+70 {
+		t.Fatalf("the local match restarted or stalled at the fallback: tick %d -> %d", before, c.Tick())
 	}
 	g := roomtest.Of(c.Sim())
 	if g.World.Bodies[0].X <= 0 && g.World.Bodies[0].VX <= 0 {
@@ -259,6 +265,72 @@ func TestFallbackWhenServerUnreachable(t *testing.T) {
 	seats := c.Room().Seats
 	if seats[0].Kind != wire.SeatHuman || seats[1].Kind != wire.SeatBot || seats[2].Kind != wire.SeatBot {
 		t.Fatalf("offline seats %+v", seats)
+	}
+}
+
+// TestLocalPlayHandsOverToRoom: the first dials fail, so the player starts
+// in a local match. When the connection comes up, the local match keeps
+// running through the room's countdown, then the client switches to the
+// room's match and predicts it exactly.
+func TestLocalPlayHandsOverToRoom(t *testing.T) {
+	h, m := newHarness(t, harnessOptions{seats: 2, bot: mode.IdleBot, net: netsync.SimNet{Seed: 8, Up: 30 * time.Millisecond, Down: 30 * time.Millisecond}})
+	h.refuse = 3
+	var predicted *recorder
+	c := h.client(clientRecorderMode(m, &predicted), scripted, nil)
+	h.run(500*time.Millisecond, []*netsync.Client{c}, nil)
+	if !c.Local() || c.Tick() < 10 {
+		t.Fatalf("local %v tick %d while the first dials fail", c.Local(), c.Tick())
+	}
+	sawBridge := false
+	h.run(4*time.Second, []*netsync.Client{c}, func() {
+		if c.Status() == netsync.StatusOnline && c.Local() {
+			sawBridge = true // welcomed, still playing locally through the countdown
+			if c.Room().Code == "" || !c.Room().Local {
+				t.Fatalf("bridging room view %+v", c.Room())
+			}
+		}
+	})
+	if !sawBridge {
+		t.Fatal("never saw the welcomed-but-local bridge")
+	}
+	if c.Status() != netsync.StatusOnline || c.Local() || c.Phase() != wire.PhaseRunning {
+		t.Fatalf("status %v local %v phase %v after the room started", c.Status(), c.Local(), c.Phase())
+	}
+	r := roomOf(t, h, c)
+	if r.Info().SeatList[c.Seat()].Kind != "human" {
+		t.Fatalf("seat %d is not ours on the server", c.Seat())
+	}
+	st := c.Stats()
+	checked, wrong := 0, 0
+	for tick := uint64(10); tick <= st.AuthTick; tick++ {
+		want, ok := h.serverState(tick)
+		got, ok2 := predicted.get(tick)
+		if ok && ok2 {
+			checked++
+			if !sameState(got, want) {
+				wrong++
+			}
+		}
+	}
+	t.Logf("room stats %+v client %+v", r.Stats(), st)
+	if checked < 20 || wrong != 0 {
+		t.Fatalf("after handover %d of %d predicted ticks differ", wrong, checked)
+	}
+}
+
+// TestWaitForServerStaysIdle: with WaitForServer the client runs no local
+// match while connecting.
+func TestWaitForServerStaysIdle(t *testing.T) {
+	h, m := newHarness(t, harnessOptions{seats: 2})
+	h.down = true
+	c := h.client(m, scripted, func(cfg *netsync.Config) { cfg.WaitForServer = true; cfg.ConnectTimeout = time.Second })
+	h.run(500*time.Millisecond, []*netsync.Client{c}, nil)
+	if c.Local() || c.Sim() != nil || c.Tick() != 0 {
+		t.Fatalf("local %v tick %d while waiting for the server", c.Local(), c.Tick())
+	}
+	h.run(time.Second, []*netsync.Client{c}, nil)
+	if c.Status() != netsync.StatusOffline || !c.Local() {
+		t.Fatalf("status %v after the timeout", c.Status())
 	}
 }
 

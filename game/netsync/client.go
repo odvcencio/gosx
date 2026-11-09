@@ -11,9 +11,11 @@
 // a tick, so its tick count stays aligned with the server's), and sends the
 // newest inputs with the previous few repeated for redundancy.
 //
-// When the server cannot be reached, or the connection drops and does not come
-// back, the Client plays on locally with bots in every other seat, so a game is
-// always playable alone.
+// The Client plays a local match against bots from its first frame while the
+// first connection runs, and hands over to the room once the room's match has
+// started. When the server cannot be reached, or the connection drops and does
+// not come back, the local match simply continues, so a game is always
+// playable alone and never waits on the network.
 //
 // The package builds for js/wasm without importing net/http: the browser
 // transport goes through hub/socket.
@@ -105,9 +107,13 @@ type Config struct {
 	// Redundancy is how many recent ticks every input frame carries.
 	// Default 8, at most wire.MaxRedundancy.
 	Redundancy int
-	// ConnectTimeout bounds the first connection before falling back to
-	// offline play. Default 5 s.
+	// ConnectTimeout bounds the first connection. Play runs locally from the
+	// first frame meanwhile; after the timeout the client stops trying and
+	// the local match continues as StatusOffline. Default 5 s.
 	ConnectTimeout time.Duration
+	// WaitForServer keeps the client idle (no local match, Sim nil) until the
+	// room's match starts, for games that show a lobby screen instead.
+	WaitForServer bool
 	// ReconnectTimeout bounds attempts to resume after a drop before falling
 	// back. Default 10 s; keep it below the server's ReconnectGrace.
 	ReconnectTimeout time.Duration
@@ -149,7 +155,11 @@ type RoomView struct {
 	Remaining time.Duration
 	Seats     []wire.SeatInfo
 	Results   []byte
-	Offline   bool
+	// Offline reports StatusOffline. Local reports that Sim is a local match:
+	// offline, or bridging while the first connection and the room's lobby
+	// run. While bridging, Code, Phase and Seats describe the server's room.
+	Offline bool
+	Local   bool
 }
 
 // Stats reports connection and prediction health.
@@ -241,9 +251,13 @@ type Client struct {
 	nextPing  time.Duration
 	pings     int
 
-	// Offline play.
-	bots     []mode.Bot
-	localEnd uint64
+	// Local play: offline, or bridging until the room's match starts.
+	local     bool
+	localSeat int
+	localRoom wire.Room
+	localAt   time.Duration
+	bots      []mode.Bot
+	localEnd  uint64
 
 	sendBuf []byte
 	stats   Stats
@@ -327,6 +341,9 @@ func (c *Client) Start() {
 		return
 	}
 	now := c.now()
+	if !c.cfg.WaitForServer {
+		c.startLocal() // play at once; hand over when the room's match starts
+	}
 	c.setStatus(StatusConnecting, "")
 	c.deadline = now + c.cfg.ConnectTimeout
 	c.backoff = 250 * time.Millisecond
@@ -367,19 +384,37 @@ func (c *Client) Tick() uint64 { return c.tick }
 // render interpolation.
 func (c *Client) Alpha() float64 { return c.alpha }
 
-// Seat returns the local seat, or -1 for a spectator or before Welcome.
-func (c *Client) Seat() int { return c.seat }
+// Seat returns the seat the player controls in Sim: the room seat online
+// (-1 for a spectator or before Welcome), the local seat in a local match.
+func (c *Client) Seat() int {
+	if c.local {
+		return c.localSeat
+	}
+	return c.seat
+}
+
+// Local reports that Sim is a local match: offline, or bridging while the
+// first connection and the room's lobby run.
+func (c *Client) Local() bool { return c.local }
 
 // Token returns the reconnect token of the current seat.
 func (c *Client) Token() string { return c.token }
 
-// Phase returns the room phase.
-func (c *Client) Phase() wire.Phase { return c.room.Phase }
+// Phase returns the room phase (see Room).
+func (c *Client) Phase() wire.Phase { return c.Room().Phase }
 
 // Room returns the room the client is in. Seats is shared; copy it to keep it.
 func (c *Client) Room() RoomView {
+	if c.local && (c.status == StatusOffline || !c.haveWelcome) {
+		v := RoomView{Mode: c.mode.Name, Phase: c.localRoom.Phase, Seats: c.localRoom.Seats,
+			Results: c.localRoom.Results, Offline: c.status == StatusOffline, Local: true}
+		if c.localRoom.Remaining > 0 && c.localRoom.Phase == wire.PhaseRunning {
+			v.Remaining = max(0, c.localRoom.Remaining-(c.now()-c.localAt))
+		}
+		return v
+	}
 	v := RoomView{Code: c.welcome.Code, Mode: c.mode.Name, Phase: c.room.Phase, Seats: c.room.Seats,
-		Results: c.results, Offline: c.status == StatusOffline}
+		Results: c.results, Local: c.local}
 	if c.room.Remaining > 0 {
 		v.Remaining = max(0, c.room.Remaining-(c.now()-c.roomAt))
 	}
@@ -388,7 +423,7 @@ func (c *Client) Room() RoomView {
 
 // ServerTick estimates the server's tick timeline now. Offline it is Tick.
 func (c *Client) ServerTick() float64 {
-	if c.status == StatusOffline {
+	if c.local {
 		return float64(c.tick) + c.alpha
 	}
 	if t, ok := c.estimateServer(c.now()); ok {
@@ -426,13 +461,16 @@ func (c *Client) Frame(delta time.Duration) game.Frame {
 	}
 	c.maintain(now)
 	c.frame = game.Frame{}
-	switch c.status {
-	case StatusOffline:
+	running := c.room.Phase == wire.PhaseRunning && c.haveAuth
+	if c.local && c.status == StatusOnline && running {
+		c.handover()
+	}
+	switch {
+	case c.status == StatusClosed:
+	case c.local:
 		c.runOffline(delta)
-	case StatusOnline, StatusReconnecting:
-		if c.room.Phase == wire.PhaseRunning && c.haveAuth {
-			c.runOnline(delta, now)
-		}
+	case (c.status == StatusOnline || c.status == StatusReconnecting) && running:
+		c.runOnline(delta, now)
 	}
 	if c.status == StatusOnline && c.conn != nil {
 		c.sendInputs()
@@ -721,11 +759,12 @@ func (c *Client) targetTick(now time.Duration) (float64, bool) {
 }
 
 func (c *Client) runOnline(delta time.Duration, now time.Duration) {
+	fresh := false
 	if c.sim == nil || c.simSeed != c.welcome.Seed {
 		c.sim, c.simSeed = c.mode.NewSim(c.welcome.Seed), c.welcome.Seed
 		c.tick = c.authTick
 		c.hist.reset()
-		c.newAuth = true
+		c.newAuth, fresh = true, true
 	}
 	if c.newAuth {
 		c.reconcile()
@@ -734,6 +773,11 @@ func (c *Client) runOnline(delta time.Duration, now time.Duration) {
 	if target, ok := c.targetTick(now); ok {
 		err := target - (float64(c.tick) + c.alpha)
 		snap := max(4, float64(c.mode.TickRate)/5)
+		// A new simulation starts at the snapshot's tick, behind the target:
+		// jump there at once, or the first inputs would reach the server late.
+		if fresh && err > 0.5 {
+			snap = 0
+		}
 		if math.Abs(err) > snap {
 			c.resync(int64(math.Round(target)))
 		} else {
@@ -843,7 +887,7 @@ func (c *Client) localInput(t uint64) []byte {
 // sendInputs sends the newest local inputs, with up to Redundancy earlier ones
 // the server has not confirmed.
 func (c *Client) sendInputs() {
-	if c.seat < 0 || c.room.Phase != wire.PhaseRunning || !c.haveAuth || c.tick <= c.hist.sent {
+	if c.local || c.seat < 0 || c.room.Phase != wire.PhaseRunning || !c.haveAuth || c.tick <= c.hist.sent {
 		return
 	}
 	first := uint64(1)
@@ -888,54 +932,74 @@ func (c *Client) maybePing(now time.Duration) {
 	}
 }
 
-// fallback switches to offline play. A running match continues from its
-// current state with bots in every other seat; otherwise a fresh local match
-// starts.
+// fallback switches to offline play. A local match keeps running; a running
+// online match continues from its current state with bots in every other seat;
+// otherwise a fresh local match starts.
 func (c *Client) fallback(reason string) {
 	if c.cfg.NoFallback {
 		c.dropConn(1000, "closing")
+		c.local = false
 		c.setStatus(StatusClosed, reason)
 		return
 	}
 	c.dropConn(1000, "playing offline")
-	running := c.room.Phase == wire.PhaseRunning || (c.room.Phase == wire.PhaseClosed && c.closedFrom == wire.PhaseRunning)
-	if c.sim == nil || !running {
-		seed := c.cfg.Seed
-		if seed == 0 {
-			var b [8]byte
-			_, _ = rand.Read(b[:])
-			seed = binary.LittleEndian.Uint64(b[:])
+	if !c.local {
+		running := c.room.Phase == wire.PhaseRunning || (c.room.Phase == wire.PhaseClosed && c.closedFrom == wire.PhaseRunning)
+		if c.sim != nil && running && c.haveAuth {
+			c.playLocally(max(c.seat, 0))
+		} else {
+			c.startLocal()
 		}
-		c.sim, c.simSeed, c.tick = c.mode.NewSim(seed), seed, 0
-		c.hist.reset()
-		c.seat = 0
-		c.welcome.Code = ""
 	}
-	if c.seat < 0 {
-		c.seat = 0
+	c.setStatus(StatusOffline, reason)
+}
+
+// startLocal starts a fresh local match in seat 0.
+func (c *Client) startLocal() {
+	seed := c.cfg.Seed
+	if seed == 0 {
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		seed = binary.LittleEndian.Uint64(b[:])
 	}
+	c.sim, c.simSeed, c.tick = c.mode.NewSim(seed), seed, 0
+	c.hist.reset()
+	c.playLocally(0)
+}
+
+// playLocally makes the current simulation a local match with the player in
+// seat and a bot in every other seat.
+func (c *Client) playLocally(seat int) {
+	c.local, c.localSeat = true, seat
 	c.bots = make([]mode.Bot, c.mode.Seats)
 	seats := make([]wire.SeatInfo, c.mode.Seats)
 	for i := range c.bots {
 		seats[i] = wire.SeatInfo{Kind: wire.SeatBot, Role: c.mode.Role(i), Name: "Bot " + itoa(i+1)}
-		if i != c.seat {
+		if i != seat {
 			c.bots[i] = c.mode.Bot(i)
 		}
 	}
-	seats[c.seat] = wire.SeatInfo{Kind: wire.SeatHuman, Connected: true, Role: c.mode.Role(c.seat), Name: c.cfg.Join.Name}
-	c.room = wire.Room{Phase: wire.PhaseRunning, Tick: c.tick, Seats: seats}
-	c.localEnd = 0
+	seats[seat] = wire.SeatInfo{Kind: wire.SeatHuman, Connected: true, Role: c.mode.Role(seat), Name: c.cfg.Join.Name}
+	c.localRoom = wire.Room{Phase: wire.PhaseRunning, Tick: c.tick, Seats: seats}
+	c.localEnd, c.localAt = 0, c.now()
 	if c.mode.Duration > 0 {
 		c.localEnd = c.tick + uint64(c.mode.Duration/c.period)
-		c.room.Remaining = c.mode.Duration
-		c.roomAt = c.now()
+		c.localRoom.Remaining = c.mode.Duration
 	}
 	c.newClock()
-	c.setStatus(StatusOffline, reason)
+}
+
+// handover leaves the local match for the room's: the next online frame
+// builds the room's simulation from its seed and its newest snapshot.
+func (c *Client) handover() {
+	c.local, c.bots = false, nil
+	c.sim, c.simSeed = nil, 0
+	c.hist.reset()
+	c.newClock()
 }
 
 func (c *Client) runOffline(delta time.Duration) {
-	if c.room.Phase != wire.PhaseRunning {
+	if c.localRoom.Phase != wire.PhaseRunning {
 		return
 	}
 	c.frame = c.clock.AdvanceFunc(delta, c.offlineStep)
@@ -943,13 +1007,13 @@ func (c *Client) runOffline(delta time.Duration) {
 }
 
 func (c *Client) offlineStep(uint64) {
-	if c.room.Phase != wire.PhaseRunning {
+	if c.localRoom.Phase != wire.PhaseRunning {
 		return
 	}
 	c.tick++
 	t := c.tick
 	for i := 0; i < c.mode.Seats; i++ {
-		if i == c.seat {
+		if i == c.localSeat {
 			c.inputs.Set(i, c.localInput(t))
 			continue
 		}
@@ -957,12 +1021,12 @@ func (c *Client) offlineStep(uint64) {
 		c.inputs.Set(i, c.bots[i].Input(ctx, c.inputs.Buffer(i)))
 	}
 	c.sim.Tick(c.inputs.Map())
-	c.room.Tick = t
+	c.localRoom.Tick = t
 	over := c.mode.Over != nil && c.mode.Over(c.sim, t)
 	if over || (c.localEnd > 0 && t >= c.localEnd) {
-		c.room.Phase = wire.PhaseResults
+		c.localRoom.Phase = wire.PhaseResults
 		if c.mode.Results != nil {
-			c.results = c.mode.Results(c.sim)
+			c.localRoom.Results = c.mode.Results(c.sim)
 		}
 	}
 }

@@ -217,16 +217,32 @@ ip.Sample(client.ServerTick()-2, func(id uint32, v []float32) { drawRemote(id, v
 before the local replay. `Begin`, `Add` and `Sample` do not allocate once the
 buffer has warmed.
 
+### Play starts at once
+
+A player never waits on the network. From the first `Frame`, the client runs
+a local match: the player in seat 0, a bot in every other seat. Meanwhile the
+first connection runs in the background. When it connects, the local match
+keeps running through the room's lobby and countdown, and the client hands
+over to the room's match as soon as that match starts. If the server never
+answers, the same local match simply continues.
+
+`client.Local()` reports that `Sim()` is a local match. While the client is
+connected but still playing locally, `client.Room()` already describes the
+server's room (its code, phase and seats, with `Local` set), so a game can
+show "joining room 7K3QX, starting in 2 s" over local play. Set
+`WaitForServer` to keep `Sim()` nil until the room's match starts instead,
+for games that show a lobby screen.
+
 ### Status, reconnect and offline play
 
 `client.Status()` is one of:
 
 | Status | Meaning |
 |---|---|
-| `StatusConnecting` | first dial, up to `ConnectTimeout` (5 s) |
+| `StatusConnecting` | first dial, up to `ConnectTimeout` (5 s); play runs locally meanwhile |
 | `StatusOnline` | in a room; `client.Room()` has the code, phase and seats |
 | `StatusReconnecting` | the link dropped; prediction continues while the client redials with its token |
-| `StatusOffline` | playing locally: the same world continues with a bot in every other seat |
+| `StatusOffline` | playing locally: the current world continues with a bot in every other seat |
 | `StatusClosed` | the match ended (`Room().Results` holds the result), the seat moved to a newer tab, or `Close` was called |
 
 A drop is noticed when the socket closes or nothing arrives for
@@ -234,8 +250,8 @@ A drop is noticed when the socket closes or nothing arrives for
 up to `ReconnectTimeout` (10 s); the server keeps the seat for
 `ReconnectGrace` (30 s) with a bot covering it. If the room refuses the client
 for good (closed, full, seat expired), or the time runs out, the client falls
-back to offline play. A client that never reached the server starts a fresh
-local match. Set `NoFallback` to end in `StatusClosed` instead.
+back to offline play and the room's world continues locally from where it
+was. Set `NoFallback` to end in `StatusClosed` instead.
 
 `client.Stats()` reports round trip, jitter, predicted and authoritative
 ticks, the input buffer the server holds (`Lead`), reconciles, replayed ticks,
