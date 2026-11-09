@@ -578,7 +578,7 @@
         nowMS: nowMS,
         // Declarative scene seconds; telemetry retains the separate wall clock.
         sceneTime: clockSeconds,
-        oceanTier: sceneLowHardware() ? "low" : "high",
+        oceanTier: sceneLowHardware() ? "low" : "high", warmup: sceneShaderWarmupFrame(mount, props, renderer),
         clockRevision: clockSubmission.requested,
         displayDeltaMS: displayDeltaMS,
         active: active,

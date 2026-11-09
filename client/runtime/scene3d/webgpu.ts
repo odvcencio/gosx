@@ -5,7 +5,7 @@
   }
 
   function wgpuCreatePipelineGuard(canvas: any): any {
-    var guard: any = { frameAbort: null, pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
+    var guard: any = { frameAbort: null, pending: 0, created: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
     var notificationPending = false;
     function changed() {
       if (guard.disposed || notificationPending) return;
@@ -64,7 +64,7 @@
     var pipeline: any;
     var scoped = false;
     var error: any = null;
-    if (guard) guard.pending++;
+    if (guard) { guard.pending++; guard.created++; }
     function finish(failure: any) {
       state.ready = !failure;
       if (guard) {
@@ -18736,6 +18736,7 @@
       if (detailEnabled && detailResources) sceneWebGPUDetailBakeResources(device, detailResources, placeholderView);
       if (scenePicker && scenePicker.hasPending()) scenePicker.preparePipelines();
       prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing);
+      if (frameMeta?.warmup) prepareBundlePipelines(frameMeta.warmup, frameMeta.warmup.prepared, [], false);
       if (pipelineGuard.coreError) return "failed";
       if (pipelineGuard.pending) return "pending";
       // The standard mesh, shadow and post variants are prepared above. Other
@@ -19748,7 +19749,7 @@
       getPerformanceTimingStatus: getPerformanceTimingStatus,
       getFrameTiming: getFrameTiming,
       diagnostics: diagnostics,
-      getFrameProgress: function() { return webGPUFrameProof; },
+      getFrameProgress: function() { return webGPUFrameProof; }, shaderPrograms: function() { return { total: pipelineGuard.created, pending: pipelineGuard.pending, failed: pipelineGuard.failures.length }; },
       render: pipelineGuard.wrapFrame(render, endWebGPUErrorScope),
       getFailureReason: function() { return pipelineGuard.coreError ? "webgpu-pipeline-failed" : ""; },
       dispose: dispose,

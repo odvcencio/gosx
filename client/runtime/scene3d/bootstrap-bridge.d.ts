@@ -332,3 +332,4 @@ declare function setSharedSignalValue(name: string, value: any): any;
 
 declare var scenePrepareCrowdColors: any;
 declare var sceneCommitCrowdPoseUpdates: any;
+declare var sceneWorldObjectRenderPass: any;
