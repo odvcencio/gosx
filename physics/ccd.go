@@ -76,7 +76,7 @@ func (w *World) sweepBody(body *RigidBody, displacement Vec3) (ccdHit, bool) {
 			w.sweepTargets[:0],
 		)
 		for _, target := range w.sweepTargets {
-			if target == moving || target.Body == body {
+			if target == moving || target.Body == body || !collidersInteract(moving, target) {
 				continue
 			}
 			hit, ok := sweepSphereLikeCollider(origin, radius, direction, distance, target)
