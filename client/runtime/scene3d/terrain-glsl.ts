@@ -163,11 +163,13 @@ function sceneTerrainGLShader(gl: any, type: number, source: string): any {
   return shader;
 }
 
+// The renderer passes its PBR fragment as a function (the source depends on the
+// context's HDR support), so the program is built once per context.
 function sceneTerrainGLProgram(res: any, gl: any, o: any): any {
-  if (res.program && res.programSource === o.fragment) return res.program;
-  if (res.program) { gl.deleteProgram(res.program.program); res.program = null; }
+  if (res.program) return res.program;
+  const pbr = typeof o.fragment === "function" ? o.fragment() : o.fragment;
   const vertex = sceneTerrainGLShader(gl, gl.VERTEX_SHADER, SCENE_TERRAIN_VERTEX_GLSL);
-  const fragment = sceneTerrainGLShader(gl, gl.FRAGMENT_SHADER, sceneTerrainFragmentGLSL(o.fragment));
+  const fragment = sceneTerrainGLShader(gl, gl.FRAGMENT_SHADER, sceneTerrainFragmentGLSL(String(pbr || "")));
   const program = gl.createProgram();
   gl.attachShader(program, vertex); gl.attachShader(program, fragment);
   gl.bindAttribLocation(program, 0, "a_terrainTile");
@@ -183,7 +185,6 @@ function sceneTerrainGLProgram(res: any, gl: any, o: any): any {
   uniforms.terrainHeights = gl.getUniformLocation(program, "u_terrainHeights");
   uniforms.terrainMaps = ["u_albedoMap", "u_normalMap"].concat(SCENE_TERRAIN_GL_LAYER_SAMPLERS).map(function(name: string) { return gl.getUniformLocation(program, name); });
   res.program = { program, uniforms };
-  res.programSource = o.fragment;
   return res.program;
 }
 
@@ -214,7 +215,8 @@ function sceneTerrainGLDispose(res: any): void {
   if (res.vao) gl.deleteVertexArray(res.vao);
   for (const key of ["patchBuffer", "indexBuffer"]) if (res[key]) gl.deleteBuffer(res[key]);
   if (res.white) gl.deleteTexture(res.white);
-  Object.assign(res, { kind: "", program: null, vao: null, patchBuffer: null, indexBuffer: null, white: null, model: null, modelKey: "" });
+  if (res.repeat) gl.deleteSampler(res.repeat);
+  Object.assign(res, { kind: "", program: null, vao: null, patchBuffer: null, indexBuffer: null, white: null, repeat: null, model: null, modelKey: "" });
 }
 
 function sceneTerrainGLStatic(res: any, gl: any): void {
@@ -238,6 +240,11 @@ function sceneTerrainGLStatic(res: any, gl: any): void {
   gl.bindVertexArray(previousVAO);
   res.white = sceneTerrainGLTexture(gl, [{ width: 1, height: 1, data: new Uint8Array([255, 255, 255, 255]) }], gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, true);
   res.uniformData = new Float32Array(SCENE_TERRAIN_VEC4S * 4);
+  res.repeat = gl.createSampler();
+  gl.samplerParameteri(res.repeat, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.samplerParameteri(res.repeat, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  gl.samplerParameteri(res.repeat, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.samplerParameteri(res.repeat, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   const combined = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS), fragmentUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
   res.heightUnit = combined - 2 >= fragmentUnits ? combined - 2 : 8;
 }
@@ -290,6 +297,9 @@ function sceneTerrainGLDraw(res: any, gl: any, o: any): string {
       gl.bindTexture(gl.TEXTURE_2D, textures[i]);
       if (u.terrainMaps[i]) gl.uniform1i(u.terrainMaps[i], units[i]);
     }
+    // Layer textures tile: a sampler object repeats them without changing the
+    // shared texture's own wrap state.
+    for (const unit of SCENE_TERRAIN_GL_LAYER_UNITS) gl.bindSampler(unit, res.repeat);
     gl.activeTexture(gl.TEXTURE0 + res.heightUnit);
     gl.bindTexture(gl.TEXTURE_2D, res.heightTex);
     gl.uniform1i(u.terrainHeights, res.heightUnit);
@@ -299,6 +309,7 @@ function sceneTerrainGLDraw(res: any, gl: any, o: any): string {
     gl.bindBuffer(gl.ARRAY_BUFFER, res.patchBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, res.patches, 0, count * 4);
     gl.drawElementsInstanced(gl.TRIANGLES, res.indexCount, gl.UNSIGNED_SHORT, 0, count);
+    for (const unit of SCENE_TERRAIN_GL_LAYER_UNITS) gl.bindSampler(unit, null);
     gl.bindVertexArray(previousVAO);
     gl.activeTexture(gl.TEXTURE0);
     if (o.textureCache) o.textureCache._sceneTextureEpoch = (o.textureCache._sceneTextureEpoch || 0) + 1;
@@ -310,6 +321,7 @@ function sceneTerrainGLDraw(res: any, gl: any, o: any): string {
     if (o.mount && typeof o.mount.setAttribute === "function") {
       o.mount.setAttribute("data-gosx-scene3d-terrain", state);
       o.mount.setAttribute("data-gosx-scene3d-terrain-patches", String(res.count || 0));
+      if (state === "failed") o.mount.setAttribute("data-gosx-scene3d-terrain-error", res.error || res.modelError || "");
     }
   }
   return state;
@@ -330,6 +342,7 @@ if (typeof window !== "undefined") {
     samples: sceneTerrainSamples,
     bytes: sceneTerrainBytes,
     windFor: sceneWindFor,
+    bands: sceneTerrainBands,
     windUpdate: sceneWindUpdate,
     windGust: sceneWindGust,
   };

@@ -2,7 +2,10 @@
 // camera sits inside their distance band, and keep their wind sway.
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { bootstrapSource, createContext, runScript, flushAsyncWork } = require("./runtime-test-harness.js");
+const terrainChunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-terrain.js"), "utf8");
 
 function batch(id, level, min, max, wind) {
   return {
@@ -14,6 +17,8 @@ function batch(id, level, min, max, wind) {
 async function bundleAt(cameraX) {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
+  // The band selection ships in the terrain chunk the mount fetches for scatter scenes.
+  runScript(terrainChunk, env.context, "bootstrap-feature-scene3d-terrain.js");
   await flushAsyncWork();
   const api = env.context.__gosx_scene3d_api;
   const meshes = [
@@ -26,7 +31,7 @@ async function bundleAt(cameraX) {
 }
 
 test("scatter bands select one level by camera distance and drop the cell beyond the last band", async () => {
-  const ids = async (x) => (await bundleAt(x)).instancedMeshes.map((mesh) => mesh.id).sort();
+  const ids = async (x) => JSON.parse(JSON.stringify((await bundleAt(x)).instancedMeshes.map((mesh) => mesh.id).sort()));
   assert.deepEqual(await ids(0), ["near", "plain"]);
   assert.deepEqual(await ids(-60), ["far", "plain"]);
   assert.deepEqual(await ids(-300), ["plain"]);
@@ -35,7 +40,7 @@ test("scatter bands select one level by camera distance and drop the cell beyond
 test("scatter batches keep their wind sway and band fields through normalization", async () => {
   const bundle = await bundleAt(0);
   const near = bundle.instancedMeshes.find((mesh) => mesh.id === "near");
-  assert.deepEqual(near.wind, { sway: 0.8, height: 0.6 });
+  assert.deepEqual(JSON.parse(JSON.stringify(near.wind)), { sway: 0.8, height: 0.6 });
   assert.equal(near.lodMaxDistance, 40);
   assert.equal(near.x, 10);
 });

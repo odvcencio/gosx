@@ -433,3 +433,17 @@ function sceneWindGust(state: ArrayLike<number>, x: number, z: number, t: number
   const phase = (along - state[6] * t) * (2 * Math.PI) / state[5] + 0.35 * Math.sin(across * (2 * Math.PI) / (state[5] * 1.7));
   return 1 + state[4] * Math.sin(phase);
 }
+
+// sceneTerrainBands keeps the scatter batches (scene.Scatter) whose distance
+// band holds the camera's distance to their cell centre; unbanded meshes pass.
+// The scene core calls it while it builds each render bundle.
+function sceneTerrainBands(meshes: any[], camera: any): any[] {
+  if (!Array.isArray(meshes) || !meshes.some(function(mesh: any) { return mesh && mesh.lodGroup; })) return meshes;
+  const cx = sceneTerrainNumber(camera && camera.x, 0), cy = sceneTerrainNumber(camera && camera.y, 0), cz = sceneTerrainNumber(camera && camera.z, 0);
+  return meshes.filter(function(mesh: any) {
+    if (!mesh || !mesh.lodGroup) return true;
+    const d = Math.hypot(sceneTerrainNumber(mesh.x, 0) - cx, sceneTerrainNumber(mesh.y, 0) - cy, sceneTerrainNumber(mesh.z, 0) - cz);
+    const far = sceneTerrainNumber(mesh.lodMaxDistance, 0);
+    return d + 0.0001 >= sceneTerrainNumber(mesh.lodMinDistance, 0) && (!(far > 0) || d < far);
+  });
+}

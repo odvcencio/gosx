@@ -5,9 +5,8 @@
 // waterline foam band and the surf-zone absorption.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
 const { createBoardWebGPUHarness } = require("./runtime-test-harness.js");
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 
 function oceanRecord(bathymetry) {
   return { level: 0, windDirection: 0, waveHeight: 0.8, waveLength: 18, choppiness: 0.6, speed: 1,
@@ -27,8 +26,7 @@ test("ocean uniform vec4 23 carries the shoreline distance, foam width and surf 
 });
 
 test("both ocean passes read the shoreline only from vec4 23 and keep every spectral-surface anchor", () => {
-  const read = (name) => fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
-  const gl = read("webgl-ocean.ts"), gpu = read("webgpu-ocean.ts");
+  const gl = readSceneRendererBackendSrc("webgl"), gpu = readSceneRendererBackendSrc("webgpu");
   assert.match(gl, /float oceanShore\(vec2 xz\)/);
   assert.match(gpu, /fn oceanShore\(xz: vec2f\) -> f32/);
   for (const source of [gl, gpu]) {
@@ -36,6 +34,6 @@ test("both ocean passes read the shoreline only from vec4 23 and keep every spec
   }
   // Anchors the spectral (FFT) surface patches replace.
   for (const anchor of ["    foam = (1. - smoothstep(0.12, 0.35, v_j)) * lace * bu;\n", "  if (dist < 250.) {", "  color = mix(color, fl, foam); alpha = mix(alpha, 1., foam);"]) {
-    assert.ok(gl.split('",\n  "').join("\n").includes(anchor.trimEnd()), anchor);
+    assert.ok(gl.includes(JSON.stringify(anchor.replace(/\n$/, "")).slice(1, -1)), anchor);
   }
 });

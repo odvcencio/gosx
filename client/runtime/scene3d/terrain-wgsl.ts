@@ -323,6 +323,7 @@ function sceneTerrainGPUDraw(res: any, pass: any, o: any): string {
     if (typeof o.attr === "function") {
       o.attr("data-gosx-scene3d-terrain", state);
       o.attr("data-gosx-scene3d-terrain-patches", String(res.count || 0));
+      if (state === "failed") o.attr("data-gosx-scene3d-terrain-error", res.error || res.modelError || "");
     }
   }
   return state;

@@ -2308,7 +2308,8 @@
         : (Object.prototype.hasOwnProperty.call(current, "pickable") ? sceneBool(current.pickable, true) : undefined),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
-      ...sceneInstancedScatter(item.lodGroup || item.wind ? item : current),
+      // Scatter (scene/scatter.go): the distance band, its cell centre and the wind sway; terrain.ts selects the bands.
+      ...(({ lodGroup, lodLevel, lodMinDistance, lodMaxDistance, x, y, z, wind }) => ({ lodGroup, lodLevel, lodMinDistance, lodMaxDistance, x, y, z, wind }))(item.lodGroup || item.wind ? item : current),
       ...lifecycle,
     };
     // Carry the cached Float32Array view of transforms forward when the
@@ -3181,7 +3182,7 @@
         const encoding = typeof source.encoding === "string" && source.encoding.trim().toLowerCase() === "signed-sqrt" ? "signed-sqrt" : "linear";
         bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
         // The baked shoreline (scene.OceanShoreline) also fills G with the signed waterline distance.
-        if (sceneNumber(source.shoreDistance, 0) > 0) Object.assign(bathymetry, { shoreDistance: sceneNumber(source.shoreDistance, 0), shoreFoam: sceneNumber(source.shoreFoam, 3), shoreTurbidity: sceneNumber(source.shoreTurbidity, 0.35) });
+        if (source.shoreDistance > 0) Object.assign(bathymetry, { shoreDistance: source.shoreDistance, shoreFoam: source.shoreFoam, shoreTurbidity: source.shoreTurbidity });
       }
     }
     const out = {
@@ -5139,24 +5140,6 @@
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
-  // Scatter batches (scene/scatter.go) carry a distance band, a cell centre
-  // and an optional wind sway. A banded batch draws while the camera distance
-  // to its centre lies in [lodMinDistance, lodMaxDistance); zero has no limit.
-  function sceneInstancedScatter(item) {
-    const out = item && item.wind ? { wind: { sway: sceneNumber(item.wind.sway, 0), height: sceneNumber(item.wind.height, 1) } } : {};
-    return item && item.lodGroup ? Object.assign(out, { lodGroup: item.lodGroup, lodLevel: item.lodLevel || 0,
-      lodMinDistance: item.lodMinDistance || 0, lodMaxDistance: item.lodMaxDistance || 0, x: item.x || 0, y: item.y || 0, z: item.z || 0 }) : out;
-  }
-
-  function sceneSelectLODInstanced(meshes, camera) {
-    if (!Array.isArray(meshes) || !meshes.some(function(mesh) { return mesh && mesh.lodGroup; })) return meshes;
-    return meshes.filter(function(mesh) {
-      if (!mesh || !mesh.lodGroup) return true;
-      const distance = sceneLODDistance(mesh, camera);
-      return distance + 0.0001 >= mesh.lodMinDistance && (!(mesh.lodMaxDistance > 0) || distance < mesh.lodMaxDistance);
-    });
-  }
-
   function sceneLODLevelActive(entries, distance) {
     let best = null;
     let bestMin = -1;
@@ -5469,7 +5452,7 @@
     for (const entry of html || []) {
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
-    appendSceneInstancedMeshesToBundle(bundle, materialLookup, sceneSelectLODInstanced(instancedMeshes, renderCamera), objects, timeSeconds, hierarchy);
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, (window.__gosx_scene3d_terrain_api?.bands(instancedMeshes, renderCamera) || instancedMeshes), objects, timeSeconds, hierarchy);
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
     bundle.vertexCount = bundle.positions.length / 2;

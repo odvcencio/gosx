@@ -137,7 +137,7 @@ Up to four `TerrainLayer`s are painted in order. Layer 0 covers everything; each
 
 A layer is a `Color` tint, an optional `Albedo` texture repeated every `Scale` meters, and a `Roughness`. On slopes steeper than `TriplanarSlope` (default 35 degrees) textures switch to triplanar projection, so cliffs do not stretch.
 
-Terrain receives the scene's directional and spot shadows, fog and image-based lighting on both backends, because its pixels run through the same PBR fragment as every other mesh.
+Terrain receives the scene's directional and spot shadows, fog and image-based lighting on both backends, because its pixels run through the same PBR fragment as every other mesh. The directional shadow map is fitted to cover the whole terrain as well as the shadow casters, so a large terrain spreads the map's texels thinner: raise the light's `ShadowSize` for sharper shadows.
 
 ## Physics
 

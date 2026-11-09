@@ -70,11 +70,13 @@ func terrainTestProps(width, height int, withTerrain, full bool, camera scene.Ve
 			Material: scene.StandardMaterial{Color: "#9a3b2f", Roughness: 0.6}, Position: scene.Vector3{X: x, Y: y, Z: 40}, CastShadow: true, ReceiveShadow: true})
 	}
 	if !withTerrain {
-		nodes = append(nodes, scene.Mesh{ID: "ground", Geometry: scene.PlaneGeometry{Width: 512, Height: 512}, Rotation: scene.Euler{X: -math.Pi / 2},
+		nodes = append(nodes, scene.Mesh{ID: "ground", Geometry: scene.PlaneGeometry{Width: 512, Height: 512},
 			Material: scene.StandardMaterial{Color: "#5f7f3a", Roughness: 0.95}, ReceiveShadow: true})
 	}
+	// AutoRotate keeps every variant rendering (frame timing) and moves the
+	// camera through the LOD ranges while the frames are sampled.
 	props := scene.Props{Width: width, Height: height, Responsive: scene.Bool(false), MaxDevicePixelRatio: 1, Background: "#9fb8d6",
-		Controls: "orbit", ControlTarget: scene.Vector3{X: -6, Y: 6, Z: 30},
+		Controls: "orbit", ControlTarget: scene.Vector3{X: -6, Y: 6, Z: 30}, AutoRotate: scene.Bool(true),
 		Camera: scene.PerspectiveCamera{Position: camera, FOV: 55, Near: 0.5, Far: 3000},
 		Environment: scene.Environment{
 			Sky:      &scene.Sky{Mode: "gradient", TopColor: "#4a77b8", HorizonColor: "#c4d6ea", BottomColor: "#c4d6ea"},
@@ -114,7 +116,8 @@ func terrainTestProps(width, height int, withTerrain, full bool, camera scene.Ve
 type terrainReading struct {
 	Backend, Terrain, Patches, Ocean string
 	GPU                              string
-	CPU                              float64
+	CPU, Frame                       float64
+	Frames                           int
 }
 
 func TestTerrainOnTheGPU(t *testing.T) {
@@ -127,9 +130,24 @@ func TestTerrainOnTheGPU(t *testing.T) {
 	evidence := os.Getenv("GOSX_TERRAIN_EVIDENCE")
 	summary := map[string]any{}
 	for _, backend := range []string{"webgpu", "webgl"} {
-		for _, variant := range []string{"before", "terrain", "lod", "full"} {
+		for _, variant := range []string{"before", "terrain", "lod", "full", "close", "close-plane"} {
 			t.Run(backend+"-"+variant, func(t *testing.T) {
-				props := terrainTestProps(width, height, variant != "before", variant == "full", scene.Vector3{X: -150, Y: 70, Z: 210})
+				props := terrainTestProps(width, height, variant != "before" && variant != "close-plane", variant == "full", scene.Vector3{X: -150, Y: 70, Z: 210})
+				if variant == "lod" {
+					// A coarse error target makes the level bands visible in the tint.
+					props.Environment.Terrain.PixelError = 8
+				}
+				if variant == "close" || variant == "close-plane" {
+					// Low over the boxes: their shadows must fall on the ground.
+					ground := 0.0
+					if props.Environment.Terrain != nil {
+						ground = props.Environment.Terrain.HeightAt(-9, 40)
+					}
+					props.ControlTarget = scene.Vector3{X: -9, Y: ground, Z: 40}
+					// A steep view from above shows shadows whichever way they fall.
+					props.Camera.Position = scene.Vector3{X: -9, Y: ground + 48, Z: 64}
+					props.AutoRotate = scene.Bool(false)
+				}
 				if backend == "webgpu" {
 					props.PreferWebGPU = scene.Bool(true)
 				} else {
@@ -172,10 +190,12 @@ func TestTerrainOnTheGPU(t *testing.T) {
 				if !page.pollFor(fmt.Sprintf(`document.getElementById('scene').getAttribute('data-gosx-scene3d-renderer') === %q`, backend), 30*time.Second) {
 					t.Fatalf("renderer is not %s\n%s", backend, page.Console())
 				}
-				if variant != "before" && !page.pollFor(`document.getElementById('scene').getAttribute('data-gosx-scene3d-terrain') === 'ready'`, 30*time.Second) {
+				if props.Environment.Terrain != nil && !page.pollFor(`document.getElementById('scene').getAttribute('data-gosx-scene3d-terrain') === 'ready'`, 30*time.Second) {
 					var state string
 					page.eval(t, `(document.getElementById('scene').getAttribute('data-gosx-scene3d-terrain')||'missing')`, &state)
-					t.Fatalf("terrain state %q\n%s", state, page.Console())
+					var reason string
+					page.eval(t, `(document.getElementById('scene').getAttribute('data-gosx-scene3d-terrain-error')||'')`, &reason)
+					t.Fatalf("terrain state %q (%s)\n%s", state, reason, page.Console())
 				}
 				if variant == "full" && !page.pollFor(`document.getElementById('scene').getAttribute('data-gosx-scene3d-ocean') === 'shore'`, 30*time.Second) {
 					var state string
@@ -189,21 +209,31 @@ func TestTerrainOnTheGPU(t *testing.T) {
   const el = document.getElementById('scene');
   const dbg = window.__gosx_scene3d_debug, rec = dbg && dbg.listSurfaces && dbg.listSurfaces()[0], id = rec && (rec.surfaceID || rec.id);
   const gpu = new Map(), cpu = []; let status = 'none';
+  const stamps = []; let stop = false; const tick = (t) => { stamps.push(t); if (!stop) requestAnimationFrame(tick); }; requestAnimationFrame(tick);
   for (let i = 0; i < 40; i++) {
     const snap = id && dbg.inspect(id), ft = snap && snap.frameTiming;
     if (ft) { status = ft.status; if (ft.status === 'measured') gpu.set(ft.frameSeq, ft.gpuMS); if (ft.cpuSubmitMS > 0) cpu.push(ft.cpuSubmitMS); }
     await new Promise(r => requestAnimationFrame(r));
     await new Promise(r => setTimeout(r, 40));
   }
+  stop = true;
   const g = Array.from(gpu.values()).sort((a, b) => a - b); cpu.sort((a, b) => a - b);
+  const gaps = stamps.slice(1).map((t, i) => t - stamps[i]).sort((a, b) => a - b);
   return JSON.stringify({ Backend: el.getAttribute('data-gosx-scene3d-renderer'), Terrain: el.getAttribute('data-gosx-scene3d-terrain') || '',
     Patches: el.getAttribute('data-gosx-scene3d-terrain-patches') || '', Ocean: el.getAttribute('data-gosx-scene3d-ocean') || '', GPU: g.length ? g[g.length >> 1].toFixed(3) + ' ms (' + g.length + ' frames)' : 'unmeasured (' + status + ')',
-    CPU: cpu.length ? cpu[cpu.length >> 1] : -1 });
+    CPU: cpu.length ? cpu[cpu.length >> 1] : -1, Frame: gaps.length ? gaps[gaps.length >> 1] : -1, Frames: stamps.length });
 })()`, &raw)
 				if err := json.Unmarshal([]byte(raw), &reading); err != nil {
 					t.Fatalf("%s: %v", raw, err)
 				}
 				t.Logf("%s %s: %+v", backend, variant, reading)
+				if os.Getenv("GOSX_TERRAIN_DEBUG") != "" {
+					var diag string
+					page.eval(t, `(() => { const el = document.getElementById('scene'); const attrs = Array.from(el.attributes).filter(a => /shadow|light|quality|tier/.test(a.name)).map(a => a.name + '=' + a.value);
+  const dbg = window.__gosx_scene3d_debug, rec = dbg && dbg.listSurfaces && dbg.listSurfaces()[0], id = rec && (rec.surfaceID || rec.id), snap = id && dbg.inspect(id);
+  const stats = snap && (snap.frameStats || snap.stats || {}); return JSON.stringify({ features: snap && snap.features, counts: snap && snap.counts, renderer: snap && snap.rendererDiagnostics && JSON.stringify(snap.rendererDiagnostics).slice(0, 600) }); })()`, &diag)
+					t.Logf("debug: %s", diag)
+				}
 				shot := page.screenshotElement(t, "#scene canvas")
 				img, err := png.Decode(bytes.NewReader(shot))
 				if err != nil {
@@ -221,7 +251,7 @@ func TestTerrainOnTheGPU(t *testing.T) {
 				if lumaMax-lumaMin < 0.1 {
 					t.Fatalf("lower half of the frame is flat (luma %.3f..%.3f)", lumaMin, lumaMax)
 				}
-				if variant != "before" {
+				if props.Environment.Terrain != nil {
 					if reading.Terrain != "ready" || reading.Patches == "" || reading.Patches == "0" {
 						t.Fatalf("terrain pass did not draw: %+v", reading)
 					}

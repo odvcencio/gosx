@@ -265,9 +265,8 @@
     sceneSkyUniformData(sceneOceanSkyScratch, skyEnv, sceneOceanViewScratch, { fov: 60 }, 1, true);
     if (sky && sky.mode !== "physical") sceneOceanSkyScratch[23] = 0; // Reflect the gradient stops for image skies.
     out.set(sceneOceanSkyScratch, 84);
-    var shore = b && b.src && b.shoreDistance > 0 ? b : null;
-    out[92] = shore ? shore.shoreDistance : 0; out[93] = shore ? sceneNumber(shore.shoreFoam, 3) : 0;
-    out[94] = shore ? sceneNumber(shore.shoreTurbidity, 0.35) : 1; out[95] = 0;
+    var shore = b && b.src && b.shoreDistance > 0 ? b : 0;
+    out.set(shore ? [shore.shoreDistance, sceneNumber(shore.shoreFoam, 3), sceneNumber(shore.shoreTurbidity, 0.35), 0] : [0, 0, 1, 0], 92);
     var intensity = sceneOceanSkyScratch[15];
     if (sky && sky.mode === "physical") {
       var sp = sceneOceanSkyScratch.subarray(28, 44);
@@ -746,6 +745,14 @@
       }
     }
 
+    // Environment.Terrain receives shadows over its whole rectangle, so the
+    // light frustum must reach it as well as the casters.
+    var terrain = bundle.environment && bundle.environment.terrain;
+    if (terrain && terrain.sizeX > 0 && terrain.sizeZ > 0) {
+      minX = Math.min(minX, terrain.minX); maxX = Math.max(maxX, terrain.minX + terrain.sizeX);
+      minZ = Math.min(minZ, terrain.minZ); maxZ = Math.max(maxZ, terrain.minZ + terrain.sizeZ);
+      minY = Math.min(minY, terrain.minHeight); maxY = Math.max(maxY, terrain.maxHeight);
+    }
     if (!isFinite(minX)) {
       return { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
     }

@@ -7,6 +7,7 @@ import vm from "node:vm";
 import { createRequire } from "node:module";
 
 const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
+const { readSceneRendererBackendSrc } = createRequire(import.meta.url)("./scene3d-renderer-source-set.js");
 const read = (name) => fs.readFileSync(new URL("../runtime/scene3d/" + name, import.meta.url), "utf8");
 const transpile = (source) => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const code = ["terrain.ts", "terrain-wgsl.ts", "terrain-glsl.ts"].map((name) => transpile(read(name))).join("\n");
@@ -214,7 +215,7 @@ test("fragment patches insert the terrain surface into the renderer's PBR fragme
 });
 
 test("the shipped renderer fragments still carry every patch anchor", () => {
-  const gpu = read("webgpu.ts"), gl = read("webgl.ts");
+  const gpu = readSceneRendererBackendSrc("webgpu"), gl = readSceneRendererBackendSrc("webgl");
   for (const anchor of ["@fragment fn fragmentMain(in: VertexOutput)", "fn gosxPBRColor(in: VertexOutput) -> vec4f {", "    let V = normalize(frame.cameraPos - in.worldPos);"]) assert.ok(gpu.includes(anchor), anchor);
   for (const anchor of ["void main() {", "    vec3 V = normalize(u_cameraPosition - v_worldPosition);"]) assert.ok(gl.includes(anchor), anchor);
   assert.match(gpu, /window\.__gosx_scene3d_terrain_api\?\.webgpu\(terrainResources, mainPass/);
@@ -262,7 +263,7 @@ test("wind state packs direction, speed, time and per-batch sway", () => {
 });
 
 test("both renderers sway instanced batches from the shared wind without breaking derived shaders", () => {
-  const gpu = read("webgpu.ts"), gl = read("webgl.ts");
+  const gpu = readSceneRendererBackendSrc("webgpu"), gl = readSceneRendererBackendSrc("webgl");
   assert.match(gpu, /"    let world = gosxWindSway\(model, in\.position\);"/);
   assert.match(gpu, /@group\(1\) @binding\(0\) var<uniform> material: MaterialUniforms;", "fn gosxWindSway/);
   assert.match(gpu, /f\.set\(window\.__gosx_scene3d_terrain_api\.windFor\(mat\.wind\), 20\)/);
