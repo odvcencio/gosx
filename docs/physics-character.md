@@ -268,16 +268,16 @@ Your own scene and input code needs the same care when a server and a client mus
 
 ## Cost
 
-Measured with `go test -bench` on an Apple M4 Pro (darwin/arm64), with 0 allocations per operation for each:
+Measured with `go test -bench` on an Apple M4 Pro (darwin/arm64), median of three runs, with 0 allocations per operation for each:
 
 | Operation | Time |
 |---|---|
-| `Character.Step`, walking on mesh terrain | 4.1 µs |
-| `Character.Step`, pushing into a wall | 2.2 µs |
-| capsule cast down onto mesh terrain | 1.5 µs |
-| box cast across a level of 150 boxes | 1.5 µs |
-| capsule overlap | 1.7 µs |
-| filtered 30 m raycast | 2.4 µs |
-| sphere cast across the level | 8.0 µs |
+| `Character.Step`, walking on mesh terrain | 4.2 µs |
+| `Character.Step`, pushing into a wall | 2.3 µs |
+| capsule cast down onto mesh terrain | 1.6 µs |
+| box cast across a level of 150 boxes | 1.6 µs |
+| capsule overlap | 1.8 µs |
+| filtered 30 m raycast | 2.5 µs |
+| sphere cast across the level | 8.4 µs |
 
-The level for the query numbers is a 32 x 32 cell mesh terrain, 150 static boxes, 40 dynamic props, 4 kinematic platforms and 8 triggers (`queryBenchWorld` in `physics/query_bench_test.go`).
+The level for the query numbers is a 32 x 32 cell mesh terrain, 150 static boxes, 40 dynamic props, 4 kinematic platforms and 8 triggers (`queryBenchWorld` in `physics/query_bench_test.go`). One whole fixed step of the determinism scene (four characters, the world step, triggers) takes 31 µs (`BenchmarkGoldenSceneStep`).
