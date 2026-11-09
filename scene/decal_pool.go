@@ -147,7 +147,7 @@ func (p *DecalPool) Update(dt float64) {
 			opacity := slot.base
 			if slot.fade > 0 {
 				if left := slot.life - slot.age; left < slot.fade {
-					opacity *= left / slot.fade
+					opacity = opacity * left / slot.fade
 					p.dirty = true
 				}
 			}

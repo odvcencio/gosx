@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"math"
 	"strings"
+
+	"m31labs.dev/gosx/det"
 )
 
 // DecalRecordStride is the float32 count of one packed decal record. Static
@@ -302,7 +304,7 @@ func packDecalRecord(pos, normal Vector3, spin float64, size Vector3, frame int,
 // then spins the box about normal by spin radians.
 func decalOrientation(normal Vector3, spin float64) (x, y, z, w float32) {
 	nx, ny, nz := normal.X, normal.Y, normal.Z
-	length := math.Sqrt(nx*nx + ny*ny + nz*nz)
+	length := math.Sqrt(float64(nx*nx) + float64(ny*ny) + float64(nz*nz))
 	if length < 1e-9 || math.IsNaN(length) || math.IsInf(length, 0) {
 		nx, ny, nz, length = 0, 1, 0, 1
 	}
@@ -317,15 +319,15 @@ func decalOrientation(normal Vector3, spin float64) (x, y, z, w float32) {
 	default:
 		// cross((0,0,1), n) = (-ny, nx, 0); w = 1 + dot.
 		ax, ay, az, aw = -ny, nx, 0, 1+nz
-		l := math.Sqrt(ax*ax + ay*ay + az*az + aw*aw)
+		l := math.Sqrt(float64(ax*ax) + float64(ay*ay) + float64(az*az) + float64(aw*aw))
 		ax, ay, az, aw = ax/l, ay/l, az/l, aw/l
 	}
 	// Spin about the new local Z (post-multiply: q = arc * spinZ).
-	s, c := math.Sincos(spin / 2)
-	bx, by, bz, bw := 0.0, 0.0, s, c
-	rx := aw*bx + ax*bw + ay*bz - az*by
-	ry := aw*by - ax*bz + ay*bw + az*bx
-	rz := aw*bz + ax*by - ay*bx + az*bw
-	rw := aw*bw - ax*bx - ay*by - az*bz
+	s, c := det.Sin(spin/2), det.Cos(spin/2)
+	// The spin quaternion is (0, 0, s, c), so the product reduces to:
+	rx := float64(ax*c) + float64(ay*s)
+	ry := float64(ay*c) - float64(ax*s)
+	rz := float64(aw*s) + float64(az*c)
+	rw := float64(aw*c) - float64(az*s)
 	return float32(rx), float32(ry), float32(rz), float32(rw)
 }
