@@ -3,8 +3,6 @@ package audio
 import (
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"sync"
 
 	"m31labs.dev/gosx/game"
@@ -17,31 +15,6 @@ var ErrNoLoader = errors.New("audio: no ClipLoader configured")
 // ClipLoader fetches a clip's raw encoded bytes by URI.
 type ClipLoader interface {
 	Load(uri string) ([]byte, error)
-}
-
-// HTTPLoader loads clip bytes with net/http.Get. It works unmodified under
-// GOOS=js/GOARCH=wasm, where the standard library's RoundTripper for that
-// platform is implemented on top of the browser's fetch API.
-type HTTPLoader struct {
-	// Client selects the HTTP client. A nil Client uses http.DefaultClient.
-	Client *http.Client
-}
-
-// Load implements ClipLoader.
-func (l HTTPLoader) Load(uri string) ([]byte, error) {
-	client := l.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("audio: GET %s: status %d", uri, resp.StatusCode)
-	}
-	return io.ReadAll(resp.Body)
 }
 
 type activeVoice struct {

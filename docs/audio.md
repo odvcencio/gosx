@@ -89,6 +89,8 @@ _ = player.LoadManifest(manifest)
 player.Play(game.AudioPlayback{Clip: "door"})
 ```
 
+`audio.HTTPLoader{}` loads clip bytes. In a `js/wasm` build it uses the browser's `fetch` and links no `net/http`; on native builds it uses `net/http`, and its `Client` field picks the client.
+
 Call `player.Unlock()` from a click or key handler. Browsers keep a new context
 suspended until then.
 

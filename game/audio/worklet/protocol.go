@@ -99,7 +99,6 @@ func SplitRecords(batch []byte, size int) ([][]byte, error) {
 	return out, nil
 }
 
-
 // CheckCommands validates a command batch against the backend layout before it
 // is posted. The processor repeats the check on the audio thread.
 func (b Backend) CheckCommands(batch []byte) error {
