@@ -3,6 +3,7 @@ package teamai
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -185,5 +186,21 @@ func exerciseBook(t *testing.T, b *Book) {
 	snap := ex.AppendState(nil)
 	if err := ex.LoadState(snap); err != nil {
 		t.Fatalf("own snapshot does not load: %v", err)
+	}
+}
+
+// TestDocsExampleLoads keeps the JSON example in docs/team-ai.md valid.
+func TestDocsExampleLoads(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/team-ai.md")
+	if err != nil {
+		t.Skipf("docs not found: %v", err)
+	}
+	_, rest, ok := strings.Cut(string(doc), "```json\n")
+	if !ok {
+		t.Fatal("docs/team-ai.md has no json block")
+	}
+	block, _, _ := strings.Cut(rest, "```")
+	if _, err := LoadJSON([]byte(block), nil); err != nil {
+		t.Fatalf("the docs example does not load: %v", err)
 	}
 }
