@@ -40,6 +40,19 @@ rt := game.New(game.Config{
 })
 ```
 
+The `Scene` builder returns the scene declaration. The runtime runs it at the
+end of the first `Step` and of every `Step` after `rt.InvalidateScene()` (or
+`ctx.InvalidateScene()` from a system), not on every step. Call it when the
+declaration changes: an entity appears or goes, a mesh or material changes, a
+body is added. Per-frame motion (poses and instance transforms) goes through the
+binary instance stream instead (see `docs/engine-frame-loop.md`). A steady-state
+`Step` therefore does no scene work and allocates nothing: the 80-node
+`BenchmarkRuntimeStep80Nodes` runs in about 0.2 µs with 0 allocations, against
+about 0.5 to 0.8 ms and 507 allocations when every step rebuilt and hashed the
+scene. The runtime reuses one `Context` and its `NetworkInputs` for every step,
+so do not keep either after a system returns. `rt.BuildScene()` still runs the
+builder on demand.
+
 For full-stack web pages where 3D is a primary interface surface but not a
 game, start from `game.Web3DProfile()`. It keeps Scene3D, pointer input,
 keyboard inspection, fetch, and storage in the browser capability contract

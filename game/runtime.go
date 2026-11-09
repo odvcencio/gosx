@@ -475,6 +475,11 @@ type Event struct {
 // then counts steps that did not run, and PhaseLateUpdate and PhaseRender see
 // the settled frame, with FixedSteps, Steps and Time counting the steps that
 // ran and Lag the rest. Tick is exact in every phase.
+//
+// The runtime reuses one Context, its NetworkInputs map and the input bytes in
+// it for every Step, so a steady-state Step allocates nothing. Do not keep the
+// Context, the map or an Input's Data after the system returns; copy what you
+// need.
 type Context struct {
 	Runtime   *Runtime
 	World     *World
@@ -498,6 +503,14 @@ func (ctx *Context) Emit(event Event) {
 		return
 	}
 	ctx.Runtime.events = append(ctx.Runtime.events, event)
+}
+
+// InvalidateScene marks the scene declaration as changed, so the runtime runs
+// the SceneBuilder at the end of this Step. See Runtime.InvalidateScene.
+func (ctx *Context) InvalidateScene() {
+	if ctx != nil {
+		ctx.Runtime.InvalidateScene()
+	}
 }
 
 // Config describes a game/simulation runtime.
@@ -538,9 +551,13 @@ type Runtime struct {
 	physicsFromScene bool
 
 	frame         Frame
+	ctx           Context // reused by every Step
 	events        []Event
-	networkInputs map[string]sim.Input
+	networkInputs map[string]sim.Input // this Step's inputs, or nil
+	netInputs     map[string]sim.Input // reused storage behind networkInputs
+	netBytes      []byte               // reused storage behind the Data of netInputs
 	latestScene   latestScene
+	sceneDirty    bool
 }
 
 // Runtime implements sim.CheckedRestorer, so Runner.RestoreSnapshot sees why it
@@ -599,6 +616,7 @@ func New(cfg Config) *Runtime {
 		snapshot:         cfg.Snapshot,
 		manualPhysics:    cfg.ManualPhysics,
 		physicsFromScene: cfg.Physics == nil && !cfg.ManualPhysics,
+		sceneDirty:       true,
 	}
 }
 
@@ -612,15 +630,17 @@ func (r *Runtime) Step(delta time.Duration) (Frame, error) {
 	}
 	frame := r.clock.plan(delta)
 	r.frame = frame
-	r.events = nil
-	ctx := &Context{
+	clear(r.events) // drop references held by last frame's event data
+	r.events = r.events[:0]
+	ctx := &r.ctx
+	*ctx = Context{
 		Runtime:       r,
 		World:         r.world,
 		Input:         r.input,
 		Assets:        r.assets,
 		Physics:       r.physics,
 		Frame:         frame,
-		NetworkInputs: cloneSimInputs(r.networkInputs),
+		NetworkInputs: r.networkInputs,
 	}
 	var firstErr error
 	capture := func(err error) {
@@ -651,9 +671,12 @@ func (r *Runtime) Step(delta time.Duration) (Frame, error) {
 	}
 	capture(r.runPhase(ctx, PhaseLateUpdate, frame.Delta, 0))
 	capture(r.runPhase(ctx, PhaseRender, frame.Delta, 0))
-	r.rebuildScene(ctx)
+	if r.sceneDirty {
+		r.rebuildScene(ctx)
+	}
 	r.input.EndFrame()
 	r.networkInputs = nil
+	ctx.NetworkInputs = nil
 	return frame, firstErr
 }
 
@@ -694,7 +717,7 @@ func (r *Runtime) ApplyNetworkInputs(inputs map[string]sim.Input) {
 	if r == nil || len(inputs) == 0 {
 		return
 	}
-	r.networkInputs = cloneSimInputs(inputs)
+	r.networkInputs = r.copyNetworkInputs(inputs)
 	// Ascending player order keeps event order and last-writer fields
 	// (pointer position) identical across runs and replays.
 	sim.EachInput(inputs, func(playerID string, input sim.Input) {
@@ -1091,6 +1114,8 @@ func (r *Runtime) applyRuntimeState(state RuntimeState) {
 	if r.physics != nil && state.Physics != nil {
 		r.physics.ApplyState(*state.Physics)
 	}
+	// The restored state can change what the SceneBuilder returns.
+	r.sceneDirty = true
 }
 
 // State returns the current authoritative state for sim.Runner broadcasts. It
@@ -1147,16 +1172,29 @@ func (r *Runtime) runtimeState(restorable bool) RuntimeState {
 	return state
 }
 
-func cloneSimInputs(inputs map[string]sim.Input) map[string]sim.Input {
-	if len(inputs) == 0 {
-		return nil
+// copyNetworkInputs copies inputs into storage the runtime reuses from Step to
+// Step, so the caller may reuse its map and buffers once
+// ApplyNetworkInputs returns.
+func (r *Runtime) copyNetworkInputs(inputs map[string]sim.Input) map[string]sim.Input {
+	if r.netInputs == nil {
+		r.netInputs = make(map[string]sim.Input, len(inputs))
 	}
-	out := make(map[string]sim.Input, len(inputs))
+	clear(r.netInputs)
+	size := 0
+	for _, input := range inputs {
+		size += len(input.Data)
+	}
+	if cap(r.netBytes) < size {
+		r.netBytes = make([]byte, 0, size)
+	}
+	r.netBytes = r.netBytes[:0]
 	for key, input := range inputs {
 		if len(input.Data) > 0 {
-			input.Data = append([]byte(nil), input.Data...)
+			start := len(r.netBytes)
+			r.netBytes = append(r.netBytes, input.Data...)
+			input.Data = r.netBytes[start:len(r.netBytes):len(r.netBytes)]
 		}
-		out[key] = input
+		r.netInputs[key] = input
 	}
-	return out
+	return r.netInputs
 }
