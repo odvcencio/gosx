@@ -1125,6 +1125,7 @@
           ? Math.max(0, Math.min(1, Math.floor(sceneFallbackNumber(item, current, "shadowCascades", 0))))
           : 0),
       shadowSoftness: Math.max(0, sceneFallbackNumber(item, current, "shadowSoftness", 0)),
+      shadowDistance: Math.max(0, sceneFallbackNumber(item, current, "shadowDistance", 0)),
       ...lifecycle,
     };
     if (normalized.kind === "directional" && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {
@@ -2383,6 +2384,7 @@
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
       minPixelSize: sceneClampNumberOrCSSVar(item.minPixelSize, sceneNumber(current.minPixelSize, 0), 0, Number.POSITIVE_INFINITY),
       maxPixelSize: sceneClampNumberOrCSSVar(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0), 0, Number.POSITIVE_INFINITY),
+      softDistance: sceneClampNumberOrCSSVar(item.softDistance, sceneNumber(current.softDistance, 0), 0, Number.POSITIVE_INFINITY),
     };
   }
 
@@ -3240,6 +3242,7 @@
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(has("exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
+      autoExposure: typeof sceneNormalizeAutoExposure === "function" ? sceneNormalizeAutoExposure(has("autoExposure") ? source.autoExposure : base.autoExposure) : null,
       toneMapping: text("toneMapping"),
       fogColor: text("fogColor"),
       fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),
@@ -3290,6 +3293,7 @@
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
+        autoExposure: environment.autoExposure || null,
         toneMapping: sceneEnvironmentText(environment, "toneMapping"),
         fogColor: sceneEnvironmentText(environment, "fogColor"),
         fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
@@ -8341,6 +8345,7 @@
     scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
+    sceneShadowCascadeBiasScale: typeof sceneShadowCascadeBiasScale === "function" ? sceneShadowCascadeBiasScale : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
     generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
     normalizeInstancedGeometryKind: typeof normalizeInstancedGeometryKind === "function" ? normalizeInstancedGeometryKind : undefined,

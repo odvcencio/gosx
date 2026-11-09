@@ -301,6 +301,7 @@ struct FOut { @location(0) color: vec4f };
           pass.draw(36, runLength[r], 0, runFirst[r]);
         }
         pass.end();
+        fx.stats.decals.frames++; fx.stats.decals.visible = count;
         return true;
       } catch (error: any) {
         failed = true;

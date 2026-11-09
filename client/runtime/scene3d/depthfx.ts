@@ -164,17 +164,23 @@
     return entry.pass;
   }
 
-  // WebGPU hook: draws the effect from input into output. Returns true when it
-  // wrote output; false leaves the chain's current texture unchanged.
-  function webgpuRun(state: any, effect: any, index: number, encoder: any, input: any, output: any, format: string, depthView: any, width: number, height: number, frame: any): boolean {
+  // WebGPU hook: draws the effect from input into output and returns the view
+  // the chain continues from: output when the pass wrote it, else input. chain
+  // is the render-truth record, or null.
+  function webgpuRun(state: any, effect: any, index: number, encoder: any, input: any, output: any, format: string, depthView: any, width: number, height: number, frame: any, chain: any): any {
     const pass = slot(state, api.webgpu, effect, index);
-    return !!pass && pass.apply(effect, encoder, input, output, format, depthView, width, height, frame);
+    if (!pass || !pass.apply(effect, encoder, input, output, format, depthView, width, height, frame)) return input;
+    const truth = (window as any).__gosx_scene3d_render_truth_api;
+    if (chain && truth) truth.mark(chain, index, "ok", 1);
+    return output;
   }
 
-  // WebGL2 hook: same contract; targetFBO null means the default framebuffer.
-  function webglRun(state: any, effect: any, index: number, inputTex: any, targetFBO: any, width: number, height: number, depthTex: any, frame: any): boolean {
+  // WebGL2 hook: same contract; targetFBO null means the default framebuffer, and
+  // a null result means the pass already drew to it.
+  function webglRun(state: any, effect: any, index: number, inputTex: any, targetFBO: any, width: number, height: number, depthTex: any, frame: any): any {
     const pass = slot(state, api.webgl, effect, index);
-    return !!pass && pass.apply(effect, inputTex, targetFBO, width, height, depthTex, frame);
+    if (!pass || !pass.apply(effect, inputTex, targetFBO, width, height, depthTex, frame)) return inputTex;
+    return targetFBO ? targetFBO.colorTex : null;
   }
 
   function disposeState(state: any): void {
@@ -192,6 +198,8 @@
     // Kinds this chunk draws.
     handles: (kind: string): boolean => kind === "decals" || kind === "motionBlur",
     webgpuRun, webglRun, dispose: disposeState,
+    // Counters for tests and diagnostics: frames each pass drew, and for motion blur whether mover velocity was bound.
+    stats: { decals: { frames: 0, visible: 0 }, motionBlur: { frames: 0, moverFrames: 0 } },
     webgpu: {} as any,
     webgl: {} as any,
   };

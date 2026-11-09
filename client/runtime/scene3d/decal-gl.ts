@@ -1,4 +1,4 @@
-// WebGL2 projected decals. The same technique as decal-gpu.ts: copy the input
+// WebGL2 projected decals. The same technique as decal-wgpu.ts: copy the input
 // color into the target, then draw each decal box (back faces) with blending,
 // reading the scene depth texture to place and shade the decal.
 (() => {
@@ -254,6 +254,7 @@ void main() { fragColor = texture(u_texture, v_uv); }`;
         gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
         for (let t = 5; t >= 1; t--) { gl.activeTexture(gl.TEXTURE0 + t); gl.bindTexture(gl.TEXTURE_2D, null); }
         gl.activeTexture(gl.TEXTURE0);
+        fx.stats.decals.frames++; fx.stats.decals.visible = count;
         return true;
       } catch (error: any) {
         failed = true;

@@ -47,7 +47,7 @@ struct Params {
   let len = length(vp);
   if (len > P.settings.y) { vp = vp * (P.settings.y / len); }
   if (len < 0.5) { vp = vec2f(0.0); }
-  return vec4f(vp, dot(world.xyz - P.eye.xyz, P.forward.xyz), 1.0);
+  return vec4f(vp, -dot(world.xyz - P.eye.xyz, P.forward.xyz), 1.0); // view-space z: negative in front, as the gather expects
 }`;
 
   function tileWGSL(tile: number): string {
@@ -189,21 +189,19 @@ fn cylinder(dist: f32, len: f32) -> f32 { return 1.0 - smoothstep(0.95 * len, 1.
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         if (!fx.invert(invVP, frame.viewProj)) return false;
         fx.eyeAndForward(invVP, 0, 1, eye, forward);
-        const hasPrev = history.step(now, eye);
+        const hasPrev = history.begin(now, eye, frame.viewProj); // every frame, so a skipped one still advances history
         const prevVP = history.prev;
         const motion = frame.motion;
         const moverView = motion && motion.velocityView || null;
-        const drawIt = !plan.skip && hasPrev;
-        // Always remember this frame so the next one has a previous matrix.
         const snapshot = paramsData;
-        if (!drawIt) { history.commit(frame.viewProj, now, eye); return false; }
+        if (plan.skip || !hasPrev) return false;
         const t = ensureTargets(width, height, plan.tile);
+        fx.stats.motionBlur.frames++; if (moverView) fx.stats.motionBlur.moverFrames++;
         snapshot.set(invVP, 0); snapshot.set(prevVP, 16); snapshot.set(frame.viewProj, 32);
         snapshot.set([eye[0], eye[1], eye[2], 0], 48); snapshot.set([forward[0], forward[1], forward[2], 0], 52);
         snapshot.set([plan.strength, plan.maxBlur, 1, moverView ? 1 : 0], 56);
         snapshot.set([width, height, 1 / width, 1 / height], 60);
         device.queue.writeBuffer(paramsBuffer, 0, snapshot);
-        history.commit(frame.viewProj, now, eye);
 
         const velBGL = layout("velocity", [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } }, { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } }, tex(2)]);
         const unf = (n: number) => layout("tex" + n, Array.from({ length: n }, (_v, i) => tex(i)));

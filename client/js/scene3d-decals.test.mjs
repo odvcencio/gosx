@@ -8,7 +8,7 @@ const ts = createRequire(new URL('../runtime/package.json', import.meta.url))('t
 const read = path => fs.readFileSync(new URL(path, import.meta.url), 'utf8');
 
 let lastWindow = null;
-function load(files = ['depthfx', 'decal-data', 'decal-gpu', 'decal-gl']) {
+function load(files = ['depthfx', 'decal-data', 'decal-wgpu', 'decal-gl']) {
   const window = lastWindow = { console };
   const context = vm.createContext({ window, console, Float32Array, Int32Array, Uint32Array, Float64Array, Math, Object, Array, Map, WeakMap, Promise, GPUBufferUsage: { UNIFORM: 1, COPY_DST: 2, STORAGE: 4 }, GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 }, GPUTextureUsage: { TEXTURE_BINDING: 1, COPY_DST: 2, RENDER_ATTACHMENT: 4 } });
   context.fetch = () => Promise.reject(new Error('no network in unit test'));
@@ -193,7 +193,8 @@ test('WebGL pass draws one instanced batch per material run with the matching bl
   const state = { gl };
   const effect = { kind: 'decals', materials: [material(), material({ name: 'b', blend: 'multiply' })], records: [record({ material: 0 }), record({ material: 1 }), record({ material: 1 })].flat() };
   const frame = { viewProj: orthoVP(), camera: { x: 0, y: 0, z: 0 }, lights: [], environment: {} };
-  assert.equal(fx.webglRun(state, effect, 0, { tex: 'in' }, { fbo: 'f', colorTex: 'out' }, 64, 64, { tex: 'depth' }, frame), true);
+  const out = { tex: 'out' };
+  assert.equal(fx.webglRun(state, effect, 0, { tex: 'in' }, { fbo: 'f', colorTex: out }, 64, 64, { tex: 'depth' }, frame), out, 'the chain continues from the target texture');
   const draws = calls.filter(c => c[0] === 'drawArraysInstanced');
   assert.deepEqual(draws.map(c => c[4]), [1, 2]);
   const blends = calls.filter(c => c[0] === 'blendFuncSeparate').map(c => c[1]);
@@ -211,11 +212,14 @@ test('WebGL pass is a no-op without decals, depth or a view-projection', () => {
   const { gl, calls } = mockGL();
   const state = { gl };
   const frame = { viewProj: orthoVP(), camera: {}, lights: [] };
-  assert.equal(fx.webglRun(state, { kind: 'decals', materials: [material()], records: [] }, 0, {}, null, 8, 8, {}, frame), false);
-  assert.equal(fx.webglRun(state, { kind: 'decals', materials: [material()], records: record() }, 0, {}, null, 8, 8, null, frame), false);
-  assert.equal(fx.webglRun(state, { kind: 'decals', materials: [material()], records: record() }, 0, {}, null, 8, 8, {}, {}), false);
+  const input = { tex: 'in' };
+  assert.equal(fx.webglRun(state, { kind: 'decals', materials: [material()], records: [] }, 0, input, null, 8, 8, {}, frame), input);
+  assert.equal(fx.webglRun(state, { kind: 'decals', materials: [material()], records: record() }, 0, input, null, 8, 8, null, frame), input);
+  assert.equal(fx.webglRun(state, { kind: 'decals', materials: [material()], records: record() }, 0, input, null, 8, 8, {}, {}), input);
   assert.equal(calls.filter(c => c[0] === 'drawArraysInstanced').length, 0);
-  assert.equal(fx.webglRun(state, { kind: 'unknown' }, 1, {}, null, 8, 8, {}, frame), false);
+  assert.equal(fx.webglRun(state, { kind: 'unknown' }, 1, input, null, 8, 8, {}, frame), input);
+  // The last pass draws to the default framebuffer: the result is null.
+  assert.equal(fx.webglRun(state, { kind: 'decals', materials: [material()], records: record() }, 0, input, null, 8, 8, {}, frame), null);
 });
 
 function mockDevice() {
@@ -244,7 +248,7 @@ test('WebGPU pass blits the input, then draws each material run from its first i
   const frame = { viewProj: orthoVPZeroOne(), camera: { x: 0, y: 0, z: 0 }, lights: [], environment: {} };
   const encoder = device.createCommandEncoder();
   const input = { id: 'in' }, output = { id: 'out' };
-  assert.equal(fx.webgpuRun(state, effect, 2, encoder, input, output, 'rgba16float', { id: 'depth' }, 64, 64, frame), true);
+  assert.equal(fx.webgpuRun(state, effect, 2, encoder, input, output, 'rgba16float', { id: 'depth' }, 64, 64, frame, null), output);
   const draws = log.filter(e => e[0] === 'draw');
   assert.deepEqual(draws, [['draw', 3], ['draw', 36, 2, 0, 0], ['draw', 36, 1, 0, 2]]);
   const pipelines = log.filter(e => e[0] === 'pipeline').map(e => e[1]);
@@ -258,7 +262,8 @@ test('WebGPU pass leaves the output alone when nothing is visible', () => {
   const state = { device };
   const frame = { viewProj: orthoVPZeroOne(), camera: {}, lights: [] };
   const effect = { kind: 'decals', materials: [material()], records: record({ pos: [99, 0, 0] }) };
-  assert.equal(fx.webgpuRun(state, effect, 0, device.createCommandEncoder(), {}, {}, 'rgba16float', {}, 8, 8, frame), false);
+  const input = { id: 'in' };
+  assert.equal(fx.webgpuRun(state, effect, 0, device.createCommandEncoder(), input, {}, 'rgba16float', {}, 8, 8, frame, null), input);
   assert.equal(log.filter(e => e[0] === 'pass').length, 0);
 });
 
@@ -268,10 +273,10 @@ test('a slot rebuilds its pass when the effect kind changes and dispose clears s
   fx.webgpu.decals = () => { created++; return { apply: () => true, dispose: () => { disposed++; } }; };
   fx.webgpu.motionBlur = () => { created++; return { apply: () => true, dispose: () => { disposed++; } }; };
   const state = { device: {} };
-  fx.webgpuRun(state, { kind: 'decals' }, 0, 0, 0, 0, '', 0, 1, 1, {});
-  fx.webgpuRun(state, { kind: 'decals' }, 0, 0, 0, 0, '', 0, 1, 1, {});
+  fx.webgpuRun(state, { kind: 'decals' }, 0, 0, 0, 0, '', 0, 1, 1, {}, null);
+  fx.webgpuRun(state, { kind: 'decals' }, 0, 0, 0, 0, '', 0, 1, 1, {}, null);
   assert.equal(created, 1);
-  fx.webgpuRun(state, { kind: 'motionBlur' }, 0, 0, 0, 0, '', 0, 1, 1, {});
+  fx.webgpuRun(state, { kind: 'motionBlur' }, 0, 0, 0, 0, '', 0, 1, 1, {}, null);
   assert.deepEqual([created, disposed], [2, 1]);
   fx.dispose(state);
   assert.equal(disposed, 2);
@@ -292,4 +297,19 @@ test('steady-state decal preparation does not allocate typed arrays', () => {
   vp[0] = 0.099; // a new view forces a cull pass
   set.prepare(vp, false, eye);
   assert.equal(set.instances, before, 'culled instance buffer is reused');
+});
+
+test('the WebGPU hook marks the render-truth chain only when a pass drew', () => {
+  const fx = load();
+  const marks = [];
+  lastWindow.__gosx_scene3d_render_truth_api = { mark: (...args) => marks.push(args) };
+  let draws = true;
+  fx.webgpu.decals = () => ({ apply: () => draws, dispose() {} });
+  const state = { device: {} }, chain = { chain: 1 }, input = {}, output = {};
+  assert.equal(fx.webgpuRun(state, { kind: 'decals' }, 3, 0, input, output, '', 0, 1, 1, {}, chain), output);
+  assert.deepEqual(marks, [[chain, 3, 'ok', 1]]);
+  draws = false;
+  assert.equal(fx.webgpuRun(state, { kind: 'decals' }, 3, 0, input, output, '', 0, 1, 1, {}, chain), input);
+  assert.equal(marks.length, 1, 'a pass that drew nothing stays unmarked');
+  assert.equal(fx.webgpuRun(state, { kind: 'decals' }, 3, 0, input, output, '', 0, 1, 1, {}, null), input);
 });

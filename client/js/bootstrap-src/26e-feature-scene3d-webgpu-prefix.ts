@@ -119,6 +119,7 @@
   var sceneOceanUniformData = sceneApi.sceneOceanUniformData;
   var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
+  var sceneShadowCascadeBiasScale = sceneApi.sceneShadowCascadeBiasScale || function() { return 1; };
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;

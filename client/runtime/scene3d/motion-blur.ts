@@ -30,25 +30,29 @@
     return plan;
   }
 
-  // Previous-frame view-projection with cut detection. step() answers whether a
-  // usable previous matrix exists for the current frame; commit() stores this
-  // frame's matrix for the next one.
+  // Previous-frame view-projection with cut detection. begin() records this
+  // frame's matrix and answers whether a usable previous one exists. A second
+  // render within 3 ms (the renderer drew the same animation frame twice) keeps
+  // the previous matrix, so that render blurs like the first instead of reading
+  // zero motion.
   function createMotionHistory() {
-    const prev = new Float32Array(16);
-    const prevEye = new Float32Array(3);
-    let valid = false, lastNow = 0;
+    const prev = new Float32Array(16), cur = new Float32Array(16);
+    const curEye = new Float32Array(3);
+    let seen = false, prevValid = false, curAt = 0;
     return {
       get prev() { return prev; },
-      step(now: number, eye: Float32Array): boolean {
-        if (!valid) return false;
-        if (now - lastNow > 250) return false;
-        const dx = eye[0] - prevEye[0], dy = eye[1] - prevEye[1], dz = eye[2] - prevEye[2];
-        return dx * dx + dy * dy + dz * dz < 100;
+      begin(now: number, eye: Float32Array, vp: Float32Array): boolean {
+        if (seen && now - curAt >= 3) {
+          const dx = eye[0] - curEye[0], dy = eye[1] - curEye[1], dz = eye[2] - curEye[2];
+          prevValid = now - curAt <= 250 && dx * dx + dy * dy + dz * dz < 100;
+          prev.set(cur);
+        }
+        if (!seen || now - curAt >= 3) curAt = now;
+        seen = true;
+        cur.set(vp); curEye.set(eye);
+        return prevValid;
       },
-      commit(vp: Float32Array, now: number, eye: Float32Array): void {
-        prev.set(vp); prevEye.set(eye); lastNow = now; valid = true;
-      },
-      reset(): void { valid = false; },
+      reset(): void { seen = false; prevValid = false; },
     };
   }
 

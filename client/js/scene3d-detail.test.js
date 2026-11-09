@@ -61,7 +61,9 @@ test("WebGL detail is a cached compile variant with nil source unchanged", () =>
   // The browser optics oracle covers behavior; nil detail must keep this base exact.
   // Reviewed vessel cutaway base: two u_cut clip planes discard before shading; all-zero planes cut nothing
   // (scripts/scene3d-vessel-cutaway.mjs checks the pixels).
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "ba5119d2f1e7d21615e685e8cc757367ac048e774ad9893ed3d0f807efdf2411");
+  // Reviewed cascaded-shadow base: u_shadowBias0/1 are per-cascade arrays scaled to each cascade's texels
+  // (scene3d-shadow-cascade-bias.test.js; e2e TestBeaconTowerShadowBand checks the pixels).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "55dcbd9b4f496c7cccd1ab9d6c51a0b27456bafcd39a536ff45f525a9ef137bf");
   const shader = c.sceneWebGLDetailFragment(base, true);
   const glWithUnits = units => ({ MAX_TEXTURE_IMAGE_UNITS: 1, getParameter: () => units });
   assert.match(c.scenePBRFragmentSourceForContext(glWithUnits(16), base), /#define GOSX_HDR_IBL 1/);
@@ -98,7 +100,9 @@ test("WebGPU detail preserves the nil shader and uses a separate array binding",
   // The browser optics oracle covers behavior; nil detail must keep this base exact.
   // Reviewed vessel cutaway base: the fragment reads two planes from its model slot and discards before shading;
   // all-zero planes cut nothing.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "c36e68d8d98ee29f9ac4116d838e35e7bc9d35df4996a2e6c8d793faaebd6738");
+  // Reviewed cascaded-shadow base: shadow maps are depth arrays sampled through
+  // shadowSlotFactor (webgpu-shadows module); the detail splice points are unchanged.
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "38b74a610a5100b39c302e63918ad4ca2c612855c7b701bbdcf2b33f7aac3391");
   const shader = c.sceneWebGPUDetailFragment(base, true);
   assert.match(shader, /textureSampleGrad\(detailAtlas/);
   assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);

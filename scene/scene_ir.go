@@ -571,6 +571,7 @@ type LightIR struct {
 	ShadowSize     int            `json:"shadowSize,omitempty"`
 	ShadowCascades int            `json:"shadowCascades,omitempty"`
 	ShadowSoftness float64        `json:"shadowSoftness,omitempty"`
+	ShadowDistance float64        `json:"shadowDistance,omitempty"`
 	Transition     TransitionIR   `json:"transition,omitzero"`
 	InState        map[string]any `json:"inState,omitempty"`
 	OutState       map[string]any `json:"outState,omitempty"`
@@ -1106,6 +1107,7 @@ type ParticleMaterialIR struct {
 	Attenuation  bool    `json:"attenuation,omitempty"`
 	MinPixelSize float64 `json:"minPixelSize,omitempty"`
 	MaxPixelSize float64 `json:"maxPixelSize,omitempty"`
+	SoftDistance float64 `json:"softDistance,omitempty"`
 }
 
 // AnimationClipIR is the typed compatibility record for one procedural
@@ -1155,6 +1157,7 @@ type EnvironmentIR struct {
 	Sky              *Sky           `json:"sky,omitempty"`
 	Ocean            *Ocean         `json:"ocean,omitempty"`
 	Haze             *Haze          `json:"haze,omitempty"`
+	AutoExposure     *AutoExposure  `json:"autoExposure,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
@@ -3338,6 +3341,7 @@ func (item LightIR) legacyProps() map[string]any {
 	setInt(record, "shadowSize", item.ShadowSize)
 	setInt(record, "shadowCascades", item.ShadowCascades)
 	setNumeric(record, "shadowSoftness", item.ShadowSoftness)
+	setNumeric(record, "shadowDistance", item.ShadowDistance)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	setString(record, "parentNode", item.ParentNode)
 	return record
@@ -3355,7 +3359,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.GroundIntensity == 0 &&
 		item.EnvMap == "" &&
 		item.IBL.IsZero() &&
-		item.Sky == nil && item.Haze == nil &&
+		item.Sky == nil && item.Haze == nil && item.AutoExposure == nil &&
 		item.Ocean == nil &&
 		item.EnvIntensity == 0 &&
 		item.EnvRotation == 0 &&
@@ -3390,6 +3394,9 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	if item.Haze != nil {
 		record["haze"] = item.Haze
 	}
+	if item.AutoExposure != nil {
+		record["autoExposure"] = item.AutoExposure
+	}
 	if item.Ocean != nil {
 		record["ocean"] = item.Ocean
 	}
@@ -3416,6 +3423,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		Sky:              normalizeSky(environment.Sky),
 		Ocean:            normalizeOcean(environment.Ocean),
 		Haze:             normalizeHaze(environment.Haze),
+		AutoExposure:     normalizeAutoExposure(environment.AutoExposure),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,

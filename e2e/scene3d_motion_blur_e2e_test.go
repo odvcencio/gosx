@@ -6,8 +6,9 @@
 //   - Camera sweep: the camera slides sideways at a constant speed. With MotionBlur the horizontal edges of the
 //     boxes spread across many pixels while the vertical edges stay sharp, so the ratio of horizontal to
 //     vertical gradient energy falls against the same sweep without the effect.
-//   - Moving object (WebGPU only, where the renderer draws per-object motion vectors): a box circles a still
-//     camera. The frame's total gradient energy falls against the same scene without the effect.
+//   - Moving object (WebGPU only, where the renderer draws per-object motion vectors): a bar spins about its
+//     center in front of a still camera. Its tips smear into a band of partly covered pixels, so the share of
+//     partly covered pixels rises against the same scene without the effect.
 //
 // Run with a GPU runner and GOSX_WATER_E2E_REQUIRE_WEBGPU=1:
 //
@@ -36,28 +37,27 @@ import (
 )
 
 // motionBlurScene is a row of white boxes, optionally with one box circling the origin, and an optional
-// MotionBlur effect.
+// MotionBlur effect. Ambient light keeps the flat boxes visible on both backends.
 func motionBlurScene(t *testing.T, blur bool, orbiter bool) string {
 	t.Helper()
 	nodes := []scene.Node{}
 	for i := 0; i < 70; i++ {
 		nodes = append(nodes, scene.Mesh{ID: fmt.Sprintf("b%d", i), Geometry: scene.BoxGeometry{Width: 0.5, Height: 2, Depth: 0.5},
-			Material: scene.FlatMaterial{Color: "#ffffff"}, Position: scene.Vec3(-5+1.7*float64(i), 0, -1)})
+			Material: scene.FlatMaterial{Color: "#ffffff", Wireframe: scene.Bool(false)}, Position: scene.Vec3(-5+1.7*float64(i), 0, -1)})
 	}
 	if orbiter {
-		nodes = []scene.Node{scene.Group{ID: "spin", Spin: scene.Rotate(0, 0, 7), Children: []scene.Node{
-			scene.Mesh{ID: "orbiter", Geometry: scene.BoxGeometry{Width: 0.7, Height: 0.7, Depth: 0.7}, Material: scene.FlatMaterial{Color: "#ffffff"}, Position: scene.Vec3(2.2, 0, 0)},
-		}}}
+		// A bar spinning about its center: its tips move fast, and it stays a retained mesh with a changing model matrix.
+		nodes = []scene.Node{scene.Mesh{ID: "bar", Geometry: scene.BoxGeometry{Width: 5, Height: 0.5, Depth: 0.5}, Material: scene.FlatMaterial{Color: "#ffffff", Wireframe: scene.Bool(false)}, Spin: scene.Rotate(0, 0, 10)}}
 	}
 	effects := []scene.PostEffect{}
 	if blur {
-		effects = append(effects, scene.MotionBlur{Quality: scene.MotionBlurHigh, Strength: 0.9, MaxBlur: 16})
+		effects = append(effects, scene.MotionBlur{Quality: scene.MotionBlurMedium, Strength: 1, MaxBlur: 128})
 	}
 	effects = append(effects, scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1})
 	props := scene.Props{
 		Camera: scene.PerspectiveCamera{Position: scene.Vec3(0, 0, 6), FOV: 60, Near: 0.1, Far: 100},
 		PostFX: scene.PostFX{Effects: effects},
-		Graph:  scene.NewGraph(nodes...),
+		Graph:  scene.NewGraph(append(nodes, scene.AmbientLight{ID: "amb", Color: "#ffffff", Intensity: 1})...),
 	}
 	data, err := json.Marshal(props.SceneIR())
 	if err != nil {
@@ -167,6 +167,10 @@ func motionBlurShots(t *testing.T, backend string, blur, orbiter bool, n int) []
 		}
 		time.Sleep(180 * time.Millisecond)
 	}
+	var stats string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`JSON.stringify(window.__gosx_scene3d_depthfx_api && window.__gosx_scene3d_depthfx_api.stats)`, &stats)); err == nil {
+		t.Logf("%s blur=%v orbit=%v: depthfx stats %s", backend, blur, orbiter, stats)
+	}
 	return shots
 }
 
@@ -195,18 +199,45 @@ func TestMotionBlurCameraSweepOnTheGPU(t *testing.T) {
 	}
 }
 
+// partialShare is the fraction of lit pixels that are partly covered: between the ground (luma about 39) and
+// the white box (about 231). A sharp bar has only an antialiased rim; a blurred one smears its tips across a
+// band of partly covered pixels.
+func partialShare(shots []image.Image) float64 {
+	var partial, lit float64
+	for _, shot := range shots {
+		roi := image.Rect(100, 60, 700, 390).Intersect(shot.Bounds())
+		for y := roi.Min.Y; y < roi.Max.Y; y++ {
+			for x := roi.Min.X; x < roi.Max.X; x++ {
+				r, g, b, _ := shot.At(x, y).RGBA()
+				l := (0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b)) / 257
+				switch {
+				case l > 190:
+					lit++
+				case l > 80:
+					partial++
+					lit++
+				}
+			}
+		}
+	}
+	if lit == 0 {
+		return 0
+	}
+	return partial / lit
+}
+
 func TestMotionBlurMovingObjectOnWebGPU(t *testing.T) {
 	if !waterRequireWebGPU() {
 		t.Skip("needs a real GPU: set GOSX_WATER_E2E_REQUIRE_WEBGPU=1 on a GPU runner (go test -tags e2e -run TestMotionBlur ./e2e)")
 	}
-	sharpH, sharpV := meanEnergy(motionBlurShots(t, "webgpu", false, true, 8))
-	blurH, blurV := meanEnergy(motionBlurShots(t, "webgpu", true, true, 8))
-	sharp, blurred := sharpH+sharpV, blurH+blurV
-	t.Logf("webgpu: orbiting box gradient energy: sharp %.0f, blurred %.0f (%.2fx)", sharp, blurred, blurred/math.Max(sharp, 1))
-	if sharp < 1000 {
-		t.Fatalf("the orbiting box is not visible (energy %.0f)", sharp)
+	sharpShots := motionBlurShots(t, "webgpu", false, true, 8)
+	blurShots := motionBlurShots(t, "webgpu", true, true, 8)
+	sharp, blurred := partialShare(sharpShots), partialShare(blurShots)
+	t.Logf("webgpu: spinning bar, share of lit pixels that are partly covered: sharp %.3f, blurred %.3f (%.1fx)", sharp, blurred, blurred/math.Max(sharp, 1e-6))
+	if sharp == 0 || sharp > 0.25 {
+		t.Fatalf("the sharp bar is not a clean reference (partial share %.3f)", sharp)
 	}
-	if blurred > sharp*0.75 {
-		t.Errorf("moving box: gradient energy %.0f with blur against %.0f without; the blur should cut it below 0.75x", blurred, sharp)
+	if blurred < sharp*2 || blurred < 0.05 {
+		t.Errorf("moving bar: partial share %.3f with blur against %.3f without; blur along the bar's motion should at least double it", blurred, sharp)
 	}
 }

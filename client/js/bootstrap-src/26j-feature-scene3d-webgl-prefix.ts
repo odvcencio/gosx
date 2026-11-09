@@ -195,6 +195,7 @@
   var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
+  var sceneShadowCascadeBiasScale = sceneApi.sceneShadowCascadeBiasScale || function() { return 1; };
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
   var sceneTransmissionPublish = sceneApi.sceneTransmissionPublish;

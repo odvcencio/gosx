@@ -43,8 +43,7 @@
     const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     const rafNow = Number.isFinite(Number(frameNowMS)) ? Number(frameNowMS) : now;
     const cpuDurationMS = Math.max(0, now - sceneNumber(frameStart, now));
-    const rafIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
-    state.lastRAFNowMS = rafNow;
+    const rafIntervalMS = sceneAdaptiveCadence(state, rafNow, cpuDurationMS);
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
@@ -70,6 +69,10 @@
     }
     const frameMS = sample.durationMS;
     const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
+    if (sceneAdaptiveStallSample(state, isRAFMeasured, rafIntervalMS)) {
+      applySceneAdaptiveQualityState(mount, state, now, false);
+      return false;
+    }
     if (isRAFMeasured && sceneQualityLadderScrollInputActive(sceneState, now)) {
       state.lastFrameMS = frameMS;
       state.measurement = sample.source + "-scroll-interaction";
@@ -96,7 +99,7 @@
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
     const cpuMeasured = isRAFMeasured || sample.source.indexOf("cpu-work+") === 0;
-    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const target = sceneAdaptiveTarget(state, cpuMeasured);
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     // rungPromoteRule: which promotion rule this frame's measurement source
@@ -137,12 +140,14 @@
       // DEMOTE: the SAME sustained-miss condition the dprCap-tier controller
       // uses (badFrames >= 20 || severeFrames >= 3).
       changed = sceneQualityLadderSetRung(state, state.rungIndex - 1, severeMiss ? "severe" : "sustained", now);
-    } else if (now >= state.cooldownUntilMS && state.goodFrames >= state.rungPromoteFrames) {
+    } else if (now >= state.cooldownUntilMS && state.goodFrames >= sceneAdaptivePromotionFrames(state, state.rungPromoteFrames)) {
       // PROMOTE: N (default ~120) consecutive headroom frames — NOT gated on
       // a 300-sample floor like the dprCap-tier controller, since the ladder
       // has no postFX-suppression secondary shed step to reserve budget for.
+      // A clean window on the top rung clears the promotion backoff.
       changed = sceneQualityLadderSetRung(state, state.rungIndex + 1, "recovered", now);
     }
+    if (!changed && state.rungIndex === state.ladder.length - 1 && state.goodFrames >= state.rungPromoteFrames) state.promotionBackoff = 1;
     if (changed) {
       sceneApplyQualityLadderRung(sceneState, state);
       applyScenePostFXState(mount, sceneState);
@@ -180,6 +185,7 @@
     if (nextIndex === state.rungIndex) {
       return false;
     }
+    sceneAdaptivePromotionBackoff(state, state.rungIndex, nextIndex, reason);
     state.rungIndex = nextIndex;
     state.rungRevision += 1;
     state.rungReason = reason;
@@ -259,7 +265,7 @@
       if (kind === "toneMapping") tone = true;
       else if (kind === "fxaa") fxaa = true;
       else if (kind === "taa") taa = true;
-      if (kind === "toneMapping" || kind === "fxaa") kept.push(source[i]);
+      if (kind === "toneMapping" || kind === "fxaa" || kind === "decals") kept.push(source[i]); // decals are scene content, not polish
     }
     if (tone && taa && !fxaa) kept.push({ kind: "fxaa" });
     return tone ? kept : [];
@@ -287,7 +293,7 @@
     if (kind === "fxaa") return 2;
     if (kind === "bloom") return effect.mode !== "mip" && effect.scale > 0 && effect.scale < 0.5 ? 2 : 3;
     if (kind === "atmosphere") return (effect.rays ? 3 : 0) + (effect.grain > 0 ? 1 : 0) + (effect.agx ? 1 : 0);
-    return kind === "ssao" || kind === "contactShadows" || kind === "dof" || kind === "godRays" || kind === "taa" || kind === "customPost" ? 3 : 0;
+    return kind === "ssao" || kind === "contactShadows" || kind === "dof" || kind === "godRays" || kind === "taa" || kind === "customPost" || kind === "motionBlur" ? 3 : 0;
   }
 
   const sceneAdaptiveFXAAEffect = { kind: "fxaa" };
@@ -727,6 +733,217 @@
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-point-budget-scale", rung ? String(rung.pointBudgetScale) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-cadence", rung ? String(rung.expensivePassCadence) : "");
   }
+
+  // --------------------------------------------------------------------------
+  // Shared cadence model for both governors (tier and ladder).
+  //
+  // 1. sceneObserveAdaptiveQualityRAF sees every scheduled display tick,
+  //    including ticks a frame cap skips, so a capped scene is judged by the
+  //    display interval rather than its own render interval.
+  // 2. sceneAdaptiveCadence estimates the display interval only from light
+  //    frames (CPU work under half the interval). A CPU stall cannot raise its
+  //    own budget, and a refresh-rate change (a 60 to 120 Hz switch, or a
+  //    window moved between monitors) moves the estimate within a few dozen
+  //    light frames. The estimate counts as a display interval only within 3%
+  //    of a common refresh rate, because a GPU-bound frame also arrives late
+  //    with little CPU work; a steady 25 ms (40 Hz) cadence is therefore still
+  //    a miss. Both governors floor their budget at that interval, so a 30 Hz
+  //    display does not read every frame as a miss.
+  // 3. A gap of SCENE_ADAPTIVE_STALL_MS or more is a stall or a resume (tab
+  //    switch, GC, shader compile, context restore). It resets the sampling
+  //    window and never counts as a miss, so quality returns once it clears.
+  // 4. A level that drops again right after a promotion doubles the frames
+  //    the next promotion needs, up to 64x (300 to 19,200 tier frames). A full
+  //    promotion window of clean frames at the requested level clears it.
+  // --------------------------------------------------------------------------
+  const SCENE_ADAPTIVE_STALL_MS = 250;
+  const SCENE_ADAPTIVE_MAX_BACKOFF = 64;
+
+  function sceneObserveAdaptiveQualityRAF(state: any, nowMS: number) {
+    if (!state || !(state.enabled || state.mode === "ladder") || !Number.isFinite(nowMS)) return;
+    const interval = state.lastTickNowMS == null ? 0 : nowMS - state.lastTickNowMS;
+    state.lastTickNowMS = nowMS;
+    state.rafTickIntervalMS = interval > 0 && interval < SCENE_ADAPTIVE_STALL_MS ? interval : 0;
+    if (interval >= SCENE_ADAPTIVE_STALL_MS) sceneAdaptiveResumeSampling(state);
+  }
+
+  function sceneAdaptiveSetTier(state: any, tier: string, reason: string, nowMS: number) {
+    if (!state.profiles[tier] || state.activeTier === tier) return false;
+    sceneAdaptivePromotionBackoff(state, state.activeTier, tier, reason);
+    state.activeTier = tier;
+    state.activeProfile = state.profiles[tier];
+    state.tier = tier;
+    state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, state.activeProfile.dprCap);
+    state.qualityRevision += 1;
+    state.transitionReason = reason;
+    state.cooldownUntilMS = nowMS + state.cooldownMS;
+    state.badFrames = 0;
+    state.goodFrames = 0;
+    state.severeFrames = 0;
+    return true;
+  }
+
+  // Frame caps quantize rAF intervals on displays such as 90 and 144 Hz.
+  // Judge sustained cadence from the existing timing window so isolated long
+  // intervals do not strand either governor below its requested quality.
+  /** @param {{ewmaFrameMS:number,p95FrameMS:number}} state @param {number} target */
+  function sceneAdaptiveHealthyRAFCadence(state: { ewmaFrameMS: number, p95FrameMS: number }, target: number) {
+    return state.ewmaFrameMS <= target * 1.06 && state.p95FrameMS <= target * 1.35;
+  }
+
+  // sceneAdaptiveCadenceFields seeds the shared cadence model's state.
+  function sceneAdaptiveCadenceFields() {
+    return { lastTickNowMS: null as number | null, rafTickIntervalMS: 0, lightIntervalMS: 0, vsyncIntervalMS: 0, promotionBackoff: 1, promotedLevel: null as unknown, stallSamples: 0 };
+  }
+
+  // sceneAdaptiveResumeSampling discards the timing window. Renderer swaps,
+  // context restores and long gaps call it so their stall is never sampled.
+  function sceneAdaptiveResumeSampling(state: any) {
+    if (!state || !Array.isArray(state.sampleWindow)) return;
+    state.resumePending = true;
+    state.lastRAFNowMS = null;
+    state.sampleWindow.length = 0;
+    state.sampleCursor = 0;
+    state.ewmaFrameMS = 0;
+    state.p95FrameMS = 0;
+    state.badFrames = state.goodFrames = state.severeFrames = 0;
+  }
+
+  // sceneAdaptiveCadence returns the interval that judges this frame and
+  // refreshes the display-interval estimate from light frames.
+  function sceneAdaptiveCadence(state: any, rafNow: number, cpuDurationMS: number): number {
+    const renderIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
+    const rafIntervalMS = state.lastTickNowMS === rafNow ? state.rafTickIntervalMS : renderIntervalMS;
+    state.lastRAFNowMS = rafNow;
+    if (rafIntervalMS > 0 && rafIntervalMS < SCENE_ADAPTIVE_STALL_MS && cpuDurationMS < rafIntervalMS * 0.5) {
+      const light = Math.min(50, rafIntervalMS);
+      state.lightIntervalMS = state.lightIntervalMS > 0 ? state.lightIntervalMS * 0.9 + light * 0.1 : light;
+      state.vsyncIntervalMS = sceneAdaptiveDisplayInterval(state.lightIntervalMS);
+    }
+    return rafIntervalMS;
+  }
+
+  const SCENE_ADAPTIVE_DISPLAY_HZ = [30, 48, 50, 60, 72, 75, 90, 100, 120, 144, 165, 240];
+
+  // sceneAdaptiveDisplayInterval snaps a light-frame interval to a common
+  // display refresh interval, or returns 0 when none is within 3%.
+  function sceneAdaptiveDisplayInterval(intervalMS: number): number {
+    for (const hz of SCENE_ADAPTIVE_DISPLAY_HZ) {
+      if (Math.abs(intervalMS * hz / 1000 - 1) <= 0.03) return 1000 / hz;
+    }
+    return 0;
+  }
+
+  // sceneAdaptiveTarget is the budget both governors judge a sample against.
+  function sceneAdaptiveTarget(state: any, cpuMeasured: boolean): number {
+    return Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7), sceneNumber(state.vsyncIntervalMS, 0));
+  }
+
+  // sceneAdaptiveStallSample drops a rAF-measured stall frame. It returns true
+  // when the caller must skip the sample.
+  function sceneAdaptiveStallSample(state: any, isRAFMeasured: boolean, rafIntervalMS: number): boolean {
+    if (!isRAFMeasured || rafIntervalMS < SCENE_ADAPTIVE_STALL_MS) return false;
+    state.badFrames = state.goodFrames = state.severeFrames = 0;
+    state.stallSamples = (state.stallSamples || 0) + 1;
+    return true;
+  }
+
+  // sceneAdaptiveScrollHeld holds rAF-measured decisions while the page
+  // scrolls the camera: scroll handlers share the main thread with the frame.
+  function sceneAdaptiveScrollHeld(state: any, isRAFMeasured: boolean, sceneState: any, now: number): boolean {
+    if (!isRAFMeasured || !sceneQualityLadderScrollInputActive(sceneState, now)) return false;
+    state.badFrames = state.goodFrames = state.severeFrames = 0;
+    return true;
+  }
+
+  // sceneAdaptivePromotionBackoff records a level change for oscillation
+  // damping. Levels are tier names or ladder rung indices.
+  function sceneAdaptivePromotionBackoff(state: any, fromLevel: any, toLevel: any, reason: string) {
+    if (reason === "recovered") { state.promotedLevel = toLevel; return; }
+    if (state.promotedLevel !== fromLevel) return;
+    state.promotionBackoff = Math.min(SCENE_ADAPTIVE_MAX_BACKOFF, Math.max(1, state.promotionBackoff || 1) * 2);
+    state.promotedLevel = null;
+  }
+
+  function sceneAdaptivePromotionFrames(state: any, base: number): number {
+    return base * Math.max(1, state.promotionBackoff || 1);
+  }
+
+  // --------------------------------------------------------------------------
+  // Graphics resets. The mount rebuilds its renderer after a WebGL context
+  // loss or a WebGPU device loss without reloading the page. Each transition
+  // dispatches "gosx:scene3d:graphics-reset" on the mount, so a game can pause
+  // play or show a notice (scene.Surface.OnGraphicsReset in Go):
+  //   detail.phase   "lost" | "restored"
+  //   detail.backend renderer kind after the transition ("webgpu", "webgl", ...)
+  //   detail.reason  the loss or recovery reason
+  //   detail.count   resets observed by this mount
+  // A WebGPU device loss first falls back to WebGL so the scene keeps drawing.
+  // When the probe acquires a new device after a genuine loss (not a page's own
+  // device.destroy()), the mount returns to WebGPU at most
+  // SCENE_WEBGPU_LOSS_RETURNS times per SCENE_WEBGPU_LOSS_WINDOW_MS; past
+  // that, the mount stays on WebGL until it remounts.
+  // --------------------------------------------------------------------------
+  const SCENE_WEBGPU_LOSS_RETURNS = 2;
+  const SCENE_WEBGPU_LOSS_WINDOW_MS = 300000;
+
+  function createSceneGraphicsRecovery() {
+    return { resets: 0, active: false, lossReason: "", returns: [] as number[] };
+  }
+
+  // sceneWebGPULossReturnAllowed spends one WebGPU return when the budget
+  // allows it. A device the page destroyed on purpose (reason "destroyed")
+  // never returns; only a genuine loss does.
+  function sceneWebGPULossReturnAllowed(recovery: any, nowMS: number, reason?: string): boolean {
+    if (reason === "destroyed") return false;
+    recovery.returns = recovery.returns.filter(function(at: number) { return nowMS - at < SCENE_WEBGPU_LOSS_WINDOW_MS; });
+    if (recovery.returns.length >= SCENE_WEBGPU_LOSS_RETURNS) return false;
+    recovery.returns.push(nowMS);
+    return true;
+  }
+
+  function sceneFallbackRequiresReplacementCanvas(reason: string) {
+    // A canvas that already had getContext("webgpu") called on it is
+    // permanently tainted to that context type — getContext("webgl2")
+    // on the SAME canvas returns null regardless of whether the WebGPU
+    // device itself is still alive. webgpu-persistent-frame-error's
+    // canvas was claimed by the (still-alive-but-broken) WebGPU
+    // renderer exactly like webgpu-device-lost's was, so it needs the
+    // same fresh-canvas treatment. Failed PBR shaders also need a fresh
+    // context so their teardown cannot cancel the legacy shader queue.
+    return reason === "webgpu-pipeline-failed" || reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
+  }
+
+  // sceneGraphicsRecoverySwap runs on every renderer swap: the new renderer's
+  // first frames are a resume, not load, and a swap after a loss restores.
+  function sceneGraphicsRecoverySwap(mount: any, adaptive: any, recovery: any, kind: string, reason: string) {
+    sceneAdaptiveResumeSampling(adaptive);
+    sceneGraphicsResetSwap(mount, recovery, kind, reason);
+  }
+
+  // sceneGraphicsResetSwap reports "restored" when a GPU renderer replaces one
+  // that lost its context or device. A Canvas2D stand-in is not a restore. A
+  // return to WebGPU from the WebGL fallback reports a second "restored".
+  function sceneGraphicsResetSwap(mount: any, recovery: any, kind: string, reason: string) {
+    if (kind !== "webgl" && kind !== "webgpu") return;
+    if (!recovery.active && !(kind === "webgpu" && reason === "webgpu-probe-recovered" && recovery.resets > 0)) return;
+    sceneDispatchGraphicsReset(mount, recovery, "restored", kind, reason);
+  }
+
+  // lossReason is the WebGPU device-lost reason ("destroyed", "unknown") that
+  // decides whether this loss may return to WebGPU.
+  function sceneDispatchGraphicsReset(mount: any, recovery: any, phase: string, backend: string, reason: string, lossReason?: string) {
+    if (phase === "lost") { recovery.resets += 1; recovery.lossReason = lossReason || ""; }
+    recovery.active = phase === "lost";
+    if (!mount || typeof mount.dispatchEvent !== "function") return;
+    const detail = { phase: phase, backend: backend || "", reason: reason || "", count: recovery.resets };
+    try {
+      mount.dispatchEvent(typeof CustomEvent === "function"
+        ? new CustomEvent("gosx:scene3d:graphics-reset", { detail: detail })
+        : { type: "gosx:scene3d:graphics-reset", detail: detail });
+    } catch (_err) { /* a listener error must not stop recovery */ }
+  }
+
 
   function applyScenePostFXState(mount, state) {
     if (!mount || !state) {

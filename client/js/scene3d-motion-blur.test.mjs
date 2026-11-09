@@ -7,7 +7,7 @@ import test from 'node:test';
 const ts = createRequire(new URL('../runtime/package.json', import.meta.url))('typescript');
 const read = path => fs.readFileSync(new URL(path, import.meta.url), 'utf8');
 
-function load(files = ['depthfx', 'motion-blur', 'motion-blur-gpu', 'motion-blur-gl']) {
+function load(files = ['depthfx', 'motion-blur', 'motion-blur-wgpu', 'motion-blur-gl']) {
   const window = { console };
   const context = vm.createContext({ window, console, Float32Array, Int32Array, Math, Object, Array, Map, WeakMap, performance: { now: () => clock }, Date,
     GPUBufferUsage: { UNIFORM: 1, COPY_DST: 2, STORAGE: 4 }, GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 }, GPUTextureUsage: { TEXTURE_BINDING: 1, COPY_DST: 2, RENDER_ATTACHMENT: 4 } });
@@ -59,15 +59,28 @@ test('history needs a previous frame, resets after a gap, and after a camera cut
   const fx = load(['depthfx', 'motion-blur']);
   const h = fx.createMotionHistory();
   const eye = new Float32Array([0, 0, 5]);
-  const vp = perspective();
-  assert.equal(h.step(0, eye), false, 'first frame has no history');
-  h.commit(vp, 0, eye);
-  assert.equal(h.step(16, eye), true);
-  assert.equal(h.step(400, eye), false, 'a 400 ms gap drops history');
-  h.commit(vp, 400, eye);
-  assert.equal(h.step(416, new Float32Array([40, 0, 5])), false, 'a 40 unit jump is a cut');
+  const a = perspective(0), b = perspective(0.5);
+  assert.equal(h.begin(0, eye, a), false, 'first frame has no history');
+  assert.equal(h.begin(16, eye, b), true);
+  assert.deepEqual([...h.prev], [...a], 'the previous matrix is the last frame\'s');
+  assert.equal(h.begin(416, eye, a), false, 'a 400 ms gap drops history');
+  assert.equal(h.begin(432, new Float32Array([40, 0, 5]), b), false, 'a 40 unit jump is a cut');
+  assert.equal(h.begin(448, new Float32Array([40, 0, 5]), a), true, 'history resumes after the cut');
   h.reset();
-  assert.equal(h.step(420, eye), false);
+  assert.equal(h.begin(464, eye, a), false);
+});
+
+test('a second render inside one animation frame keeps the previous matrix', () => {
+  const fx = load(['depthfx', 'motion-blur']);
+  const h = fx.createMotionHistory();
+  const eye = new Float32Array([0, 0, 5]);
+  const a = perspective(0), b = perspective(0.5);
+  h.begin(0, eye, a);
+  assert.equal(h.begin(16, eye, b), true);
+  assert.equal(h.begin(17, eye, b), true, 'the repeat render still blurs');
+  assert.deepEqual([...h.prev], [...a], 'and uses the same previous matrix');
+  assert.equal(h.begin(33, eye, perspective(1)), true);
+  assert.deepEqual([...h.prev], [...b], 'the next real frame moves history on');
 });
 
 test('eye and forward come out of the inverse view-projection', () => {
@@ -110,10 +123,11 @@ test('WebGL blur skips the first frame, then runs four passes per frame and rest
   const effect = { kind: 'motionBlur', quality: 'medium', strength: 0.5, maxBlur: 32 };
   const frame = x => ({ viewProj: perspective(x, false), camera: {}, lights: [] });
   clock = 1000;
-  assert.equal(fx.webglRun(state, effect, 0, { c: 1 }, { fbo: 'f' }, 320, 180, { d: 1 }, frame(0)), false, 'no previous frame yet');
+  const input = { c: 1 }, target = { fbo: 'f', colorTex: { t: 'out' } };
+  assert.equal(fx.webglRun(state, effect, 0, input, target, 320, 180, { d: 1 }, frame(0)), input, 'no previous frame yet');
   assert.equal(calls.filter(c => c[0] === 'drawArrays').length, 0);
   clock = 1016;
-  assert.equal(fx.webglRun(state, effect, 0, { c: 1 }, { fbo: 'f' }, 320, 180, { d: 1 }, frame(0.1)), true);
+  assert.equal(fx.webglRun(state, effect, 0, input, target, 320, 180, { d: 1 }, frame(0.1)), target.colorTex);
   assert.equal(calls.filter(c => c[0] === 'drawArrays').length, 4, 'velocity, tile max, neighbor max, gather');
   const viewports = calls.filter(c => c[0] === 'viewport').map(c => [c[3], c[4]]);
   assert.deepEqual(viewports, [[320, 180], [14, 8], [14, 8], [320, 180]], 'tile targets are ceil(size / 24)');
@@ -128,15 +142,16 @@ test('WebGL blur needs float color targets and a depth texture', () => {
   clock = 2000;
   let m = mockGL({ floatTargets: false });
   let state = { gl: m.gl };
-  fx.webglRun(state, effect, 0, {}, null, 64, 64, {}, frame);
+  const input = { c: 1 };
+  fx.webglRun(state, effect, 0, input, null, 64, 64, {}, frame);
   clock = 2016;
-  assert.equal(fx.webglRun(state, effect, 0, {}, null, 64, 64, {}, frame), false);
+  assert.equal(fx.webglRun(state, effect, 0, input, null, 64, 64, {}, frame), input);
   m = mockGL();
   state = { gl: m.gl };
   clock = 3000;
   fx.webglRun(state, effect, 0, {}, null, 64, 64, {}, frame);
   clock = 3016;
-  assert.equal(fx.webglRun(state, effect, 0, {}, null, 64, 64, null, frame), false, 'no depth texture');
+  assert.equal(fx.webglRun(state, effect, 0, input, null, 64, 64, null, frame), input, 'no depth texture');
 });
 
 function mockDevice() {
@@ -161,10 +176,11 @@ test('WebGPU blur runs four passes and feeds mover velocity when the renderer su
   const encoder = device.createCommandEncoder();
   const frame = (x, motion) => ({ viewProj: perspective(x, true), camera: {}, lights: [], motion });
   clock = 5000;
-  assert.equal(fx.webgpuRun(state, effect, 1, encoder, {}, {}, 'rgba16float', {}, 640, 360, frame(0)), false);
+  const input = { id: 'in' }, output = { id: 'out' };
+  assert.equal(fx.webgpuRun(state, effect, 1, encoder, input, output, 'rgba16float', {}, 640, 360, frame(0), null), input);
   clock = 5016;
   const velocityView = { v: 1 };
-  assert.equal(fx.webgpuRun(state, effect, 1, encoder, {}, {}, 'rgba16float', {}, 640, 360, frame(0.1, { velocityView })), true);
+  assert.equal(fx.webgpuRun(state, effect, 1, encoder, input, output, 'rgba16float', {}, 640, 360, frame(0.1, { velocityView }), null), output);
   const passes = log.filter(e => e[0] === 'pass').map(e => e[1]);
   assert.deepEqual(passes, ['gosx-motion-velocity', 'gosx-motion-tilemax', 'gosx-motion-neighbor', 'gosx-motion-gather']);
   const targets = log.filter(e => e[0] === 'pipeline').map(e => e[1]);
@@ -179,12 +195,13 @@ test('WebGPU blur does nothing on the survival tier but keeps its history', () =
   const encoder = device.createCommandEncoder();
   const tiered = { viewProj: perspective(0, true), camera: {}, meta: { qualityEnabled: true, qualityTier: 'survival' } };
   clock = 7000;
-  fx.webgpuRun(state, { kind: 'motionBlur' }, 0, encoder, {}, {}, 'rgba16float', {}, 64, 64, tiered);
+  const input = { id: 'in' }, output = { id: 'out' };
+  fx.webgpuRun(state, { kind: 'motionBlur' }, 0, encoder, input, output, 'rgba16float', {}, 64, 64, tiered, null);
   clock = 7016;
-  assert.equal(fx.webgpuRun(state, { kind: 'motionBlur' }, 0, encoder, {}, {}, 'rgba16float', {}, 64, 64, tiered), false);
+  assert.equal(fx.webgpuRun(state, { kind: 'motionBlur' }, 0, encoder, input, output, 'rgba16float', {}, 64, 64, tiered, null), input);
   assert.equal(log.filter(e => e[0] === 'pass').length, 0);
   // Back on the full tier the very next frame blurs: history kept advancing.
   clock = 7032;
   const full = { viewProj: perspective(0.1, true), camera: {} };
-  assert.equal(fx.webgpuRun(state, { kind: 'motionBlur' }, 0, encoder, {}, {}, 'rgba16float', {}, 64, 64, full), true);
+  assert.equal(fx.webgpuRun(state, { kind: 'motionBlur' }, 0, encoder, input, output, 'rgba16float', {}, 64, 64, full, null), output);
 });

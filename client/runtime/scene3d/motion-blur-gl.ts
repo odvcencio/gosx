@@ -1,4 +1,4 @@
-// WebGL2 motion blur: the same four passes as motion-blur-gpu.ts. The WebGL2
+// WebGL2 motion blur: the same four passes as motion-blur-wgpu.ts. The WebGL2
 // renderer has no per-object velocity target, so only camera motion blurs
 // here: each pixel reprojects through the previous frame's view-projection.
 // Moving objects on a still camera are not blurred on this backend.
@@ -35,7 +35,7 @@ void main() {
   float len = length(vp);
   if (len > u_settings.y) vp *= u_settings.y / len;
   if (len < 0.5) vp = vec2(0.0);
-  fragColor = vec4(vp, dot(world.xyz - u_eye, u_forward), 1.0);
+  fragColor = vec4(vp, -dot(world.xyz - u_eye, u_forward), 1.0); // view-space z: negative in front, as the gather expects
 }`;
 
   const tileSource = (tile: number): string => HEAD + `
@@ -178,10 +178,11 @@ void main() {
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         if (!fx.invert(invVP, frame.viewProj)) return false;
         fx.eyeAndForward(invVP, -1, 1, eye, forward);
-        const hasPrev = history.step(now, eye);
+        const hasPrev = history.begin(now, eye, frame.viewProj); // every frame, so a skipped one still advances history
         const prevVP = history.prev;
-        if (plan.skip || !hasPrev) { history.commit(frame.viewProj, now, eye); return false; }
+        if (plan.skip || !hasPrev) return false;
         const t = ensureTargets(width, height, plan.tile);
+        fx.stats.motionBlur.frames++;
         if (!vao) vao = gl.createVertexArray();
         gl.bindVertexArray(vao);
         gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
@@ -195,7 +196,6 @@ void main() {
         gl.uniform4f(gl.getUniformLocation(vel, "u_settings"), plan.strength, plan.maxBlur, 1, 0);
         gl.uniform2f(gl.getUniformLocation(vel, "u_size"), width, height);
         pass(t.velocity.fbo, width, height, vel);
-        history.commit(frame.viewProj, now, eye);
 
         const tile = program("tile:" + plan.tile, tileSource(plan.tile));
         gl.useProgram(tile); bind(0, t.velocity.texture, tile, "u_velocity");

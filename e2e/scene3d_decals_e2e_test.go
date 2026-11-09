@@ -26,7 +26,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -95,7 +94,7 @@ func decalSlopeSceneJSON(t *testing.T, withDecal bool) string {
 	return string(data)
 }
 
-const decalPage = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000;overflow:hidden}#s{width:800px;height:450px}</style></head><body>
+const decalPage = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000;overflow:hidden}#s{width:%dpx;height:%dpx}</style></head><body>
 <div id="s"></div>
 <script src="/gosx/bootstrap-runtime.js"></script>
 <script data-gosx-script="feature-scene3d"
@@ -114,13 +113,14 @@ window.ready = (async () => {
  window.mounted = true;
 })().catch(error => { window.mountError = String(error && error.stack || error); });
 // Pool of n decals scattered across the slope, published the way DecalPool.Publish does.
-window.setPool = function(n) {
+window.setPool = function(n, size) {
+ size = size || 1.2;
  const stride = 20, data = new Float32Array(Math.max(1, n) * stride);
  let seed = 12345; const rand = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
  const k = Math.SQRT1_2;
  for (let i = 0; i < n; i++) {
   const u = (rand() - 0.5) * 9, v = (rand() - 0.5) * 6;
-  data.set([u, v * k + 0.1 * k, -v * k + 0.1 * k, 1, -0.3826834, 0, 0, 0.9238795, 1.2, 1.2, 1, i %% 2, 1, 1, 1, 1, 0, i, 0, 0], i * stride);
+  data.set([u, v * k + 0.1 * k, -v * k + 0.1 * k, 1, -0.3826834, 0, 0, 0.9238795, size, size, 1, i %% 2, 1, 1, 1, 1, 0, i, 0, 0], i * stride);
  }
  window.__gosx_scene3d_decal_pools = window.__gosx_scene3d_decal_pools || {};
  const store = window.__gosx_scene3d_decal_pools.hits || (window.__gosx_scene3d_decal_pools.hits = {});
@@ -136,10 +136,14 @@ type decalRun struct {
 }
 
 func decalServer(t *testing.T, withDecal bool) (string, func()) {
+	return decalServerSized(t, withDecal, decalShotW, decalShotH)
+}
+
+func decalServerSized(t *testing.T, withDecal bool, width, height int) (string, func()) {
 	t.Helper()
 	root := e2eRepoRoot(t)
-	markup := fmt.Sprintf(decalPage, mustJSON(t, map[string]any{
-		"width": decalShotW, "height": decalShotH, "responsive": false, "maxDevicePixelRatio": 1, "controls": "none",
+	markup := fmt.Sprintf(decalPage, width, height, mustJSON(t, map[string]any{
+		"width": width, "height": height, "responsive": false, "maxDevicePixelRatio": 1, "controls": "none",
 		"shaded": true, "background": "#101820", "scene": json.RawMessage(decalSlopeSceneJSON(t, withDecal)),
 	}))
 	mux := http.NewServeMux()
@@ -337,52 +341,94 @@ func TestDecalsPaintTheSlopeOnTheGPU(t *testing.T) {
 	}
 }
 
-// TestDecalsFrameCost measures frame time with no decals, a few hundred, and a few thousand pooled decals.
-// The page draws as fast as the browser lets it; where vsync caps the rate, the numbers sit at the display
-// interval and say only that the cost fits inside a frame.
+// TestDecalsFrameCost measures what decals cost per frame at 1920 x 1080. Two loads run on each backend: 256
+// ordinary pooled decals (about 1.2 units across, spread over the slope) and a stress of full-screen decals,
+// each covering most of the picture, which shows the per-layer fill cost. GPU time comes from timestamp queries
+// on WebGPU (the whole frame; the empty-pool run is the baseline) and from EXT_disjoint_timer_query_webgl2 on
+// WebGL2, summed over the decal draw calls only. Where the extension is missing, only the frame interval is
+// reported; it sits at the display interval until the GPU is the bottleneck.
 func TestDecalsFrameCost(t *testing.T) {
+	const width, height = 1920, 1080
 	for _, backend := range decalBackends(t) {
 		t.Run(backend, func(t *testing.T) {
 			ctx, closeBrowser := decalBrowser(t, backend)
 			defer closeBrowser()
-			url, stop := decalServer(t, true)
+			url, stop := decalServerSized(t, true, width, height)
 			defer stop()
 			decalNavigate(t, ctx, url, backend)
-			measure := func(n int) (ms, gpuMS float64) {
-				if err := chromedp.Run(ctx, chromedp.Evaluate(fmt.Sprintf(`window.setPool(%d)`, n), nil)); err != nil {
+			if err := chromedp.Run(ctx, emulation.SetDeviceMetricsOverride(width, height, 1, false)); err != nil {
+				t.Fatal(err)
+			}
+			if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => {
+ // Sum EXT_disjoint_timer_query_webgl2 time over each frame's drawArraysInstanced calls (only the decal pass uses them here).
+ const canvas = document.querySelector('#s canvas'); const gl = canvas && canvas.getContext('webgl2');
+ const ext = gl && gl.getExtension('EXT_disjoint_timer_query_webgl2');
+ window.__glTimer = { supported: !!ext, frame: 0, queries: [], done: [] };
+ if (!ext) return;
+ const draw = gl.drawArraysInstanced.bind(gl);
+ gl.drawArraysInstanced = function(...args) {
+  const q = gl.createQuery(); gl.beginQuery(ext.TIME_ELAPSED_EXT, q); draw(...args); gl.endQuery(ext.TIME_ELAPSED_EXT);
+  window.__glTimer.queries.push({ q, frame: window.__glTimer.frame });
+ };
+ (function tick() {
+  window.__glTimer.frame++;
+  const t = window.__glTimer; const keep = [];
+  for (const item of t.queries) {
+   if (gl.getQueryParameter(item.q, gl.QUERY_RESULT_AVAILABLE)) { if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) t.done.push({ frame: item.frame, ns: gl.getQueryParameter(item.q, gl.QUERY_RESULT) }); gl.deleteQuery(item.q); } else keep.push(item);
+  }
+  t.queries = keep; requestAnimationFrame(tick);
+ })();
+})()`, nil)); err != nil {
+				t.Fatal(err)
+			}
+			type reading struct{ Median, GPU, DecalGPU float64 }
+			measure := func(n int, size float64) reading {
+				if err := chromedp.Run(ctx, chromedp.Evaluate(fmt.Sprintf(`window.setPool(%d, %g); window.__glTimer.done.length = 0;`, n, size), nil)); err != nil {
 					t.Fatal(err)
 				}
-				time.Sleep(700 * time.Millisecond)
+				time.Sleep(1200 * time.Millisecond)
 				const sample = `(async () => {
  const frames = []; let last = performance.now();
- await new Promise(resolve => { function tick(now) { frames.push(now - last); last = now; if (frames.length < 150) requestAnimationFrame(tick); else resolve(); } requestAnimationFrame(tick); });
+ await new Promise(resolve => { function tick(now) { frames.push(now - last); last = now; if (frames.length < 200) requestAnimationFrame(tick); else resolve(); } requestAnimationFrame(tick); });
+ await new Promise(resolve => setTimeout(resolve, 300));
  frames.shift(); frames.sort((a, b) => a - b);
  const gpu = Number(document.getElementById('s').getAttribute('data-gosx-scene3d-webgpu-gpu-ms')) || 0;
- return JSON.stringify({median: frames[frames.length >> 1], gpu});
+ const t = window.__glTimer; let decalGPU = 0;
+ if (t.supported && t.done.length) { const per = new Map(); for (const d of t.done) per.set(d.frame, (per.get(d.frame) || 0) + d.ns); decalGPU = [...per.values()].reduce((a, b) => a + b, 0) / per.size / 1e6; }
+ return JSON.stringify({median: frames[frames.length >> 1], gpu, decalGPU});
 })()`
 				var raw string
 				if err := chromedp.Run(ctx, chromedp.Evaluate(sample, &raw, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil {
 					t.Fatal(err)
 				}
-				var r struct{ Median, Gpu float64 }
+				var r struct{ Median, Gpu, DecalGPU float64 }
 				if err := json.Unmarshal([]byte(raw), &r); err != nil {
 					t.Fatalf("%s: %v", raw, err)
 				}
-				return r.Median, r.Gpu
+				return reading{Median: r.Median, GPU: r.Gpu, DecalGPU: r.DecalGPU}
 			}
-			results := map[int][2]float64{}
-			for _, n := range []int{0, 256, 2048} {
-				ms, gpu := measure(n)
-				results[n] = [2]float64{ms, gpu}
-				t.Logf("%s: %4d pooled decals: median frame %.2f ms, GPU %.3f ms", backend, n, ms, gpu)
+			loads := []struct {
+				name string
+				n    int
+				size float64
+			}{{"empty pool", 0, 1.2}, {"256 decals", 256, 1.2}, {"2048 decals", 2048, 1.2}, {"16 full-screen decals", 16, 40}, {"64 full-screen decals", 64, 40}, {"256 full-screen decals", 256, 40}, {"1024 full-screen decals", 1024, 40}}
+			results := map[string]reading{}
+			for _, load := range loads {
+				r := measure(load.n, load.size)
+				results[load.name] = r
+				t.Logf("%s @%dx%d, %-22s median frame %6.2f ms, WebGPU frame GPU %6.3f ms, WebGL2 decal-draw GPU %6.3f ms", backend, width, height, load.name, r.Median, r.GPU, r.DecalGPU)
 			}
-			keys := make([]int, 0, len(results))
-			for k := range results {
-				keys = append(keys, k)
+			var timer bool
+			_ = chromedp.Run(ctx, chromedp.Evaluate(`!!(window.__glTimer && window.__glTimer.supported)`, &timer))
+			if backend == "webgl2" {
+				t.Logf("webgl2: EXT_disjoint_timer_query_webgl2 supported: %v", timer)
+				// With no GPU timer, a stress deep enough to pass the display interval gives the per-layer cost.
+				if r := results["1024 full-screen decals"]; r.Median > 12 {
+					t.Logf("webgl2: 1024 full-screen decals took %.2f ms a frame, so about %.4f ms per full-screen layer at %dx%d", r.Median, r.Median/1024, width, height)
+				}
 			}
-			sort.Ints(keys)
 			// 256 decals must not push a frame past a 60 Hz budget on top of the empty scene.
-			if base, many := results[0][0], results[256][0]; many > math.Max(base*2, 20) {
+			if base, many := results["empty pool"].Median, results["256 decals"].Median; many > math.Max(base*2, 20) {
 				t.Errorf("256 decals: median frame %.2f ms against %.2f ms with none", many, base)
 			}
 		})
