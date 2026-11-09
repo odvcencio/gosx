@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"m31labs.dev/gosx/hub"
@@ -29,10 +30,16 @@ const (
 // not paused the two are equal. Steps is the total number of fixed steps run
 // since the clock started.
 //
-// DroppedDuration is game time the frame did not run as fixed steps: what was
-// left after MaxSubsteps steps, and, once game time has reached the end of a
-// time.Duration, every step's worth that gathers (see Clock.Advance). A frame
-// whose scaled time is longer than a Duration reports the excess here too.
+// DroppedDuration is game time the frame did not run as fixed steps and will
+// never run: under CatchUpDrop, what was left after MaxSubsteps steps; under
+// both policies, once game time has reached the end of a time.Duration, every
+// step's worth that gathers (see Clock.Advance). A frame whose scaled time is
+// longer than a Duration reports the excess here too.
+//
+// Lag is game time that was due as fixed steps but did not run this frame
+// because the CatchUpLag wall-time budget ran out. The clock keeps it and runs
+// it in later frames, so it is a whole number of FixedSteps. It is always zero
+// under CatchUpDrop.
 type Frame struct {
 	Index           uint64        `json:"index"`
 	Delta           time.Duration `json:"delta"`
@@ -45,21 +52,81 @@ type Frame struct {
 	Alpha           float64       `json:"alpha"`
 	Time            time.Duration `json:"time"`
 	DroppedDuration time.Duration `json:"droppedDuration,omitempty"`
+	Lag             time.Duration `json:"lag,omitempty"`
 }
+
+// CatchUp selects what the clock does with due fixed steps that one frame
+// cannot run.
+type CatchUp uint8
+
+const (
+	// CatchUpDrop runs at most MaxSubsteps fixed steps per frame and drops the
+	// rest of the gathered game time, reported as Frame.DroppedDuration. A stall
+	// then does not fast-forward the world, which suits a single-player game.
+	// It is the default.
+	CatchUpDrop CatchUp = iota
+	// CatchUpLag never drops a due fixed step. Each frame runs due steps until
+	// the wall-time budget (LoopConfig.CatchUpBudget) is spent, and always at
+	// least one when one is due. The steps it did not run stay in the clock,
+	// reported as Frame.Lag, and run first in the next frame. MaxSubsteps does
+	// not apply. Netplay, replay and server-authoritative clients use it,
+	// because a dropped step makes their tick count disagree with the other
+	// side's.
+	//
+	// MaxDelta still clamps each frame's real delta before it becomes game
+	// time; time cut by that clamp was never due. A client that must track wall
+	// time through long stalls raises MaxDelta.
+	CatchUpLag
+)
+
+// String returns "drop" or "lag".
+func (p CatchUp) String() string {
+	switch p {
+	case CatchUpDrop:
+		return "drop"
+	case CatchUpLag:
+		return "lag"
+	}
+	return "CatchUp(" + strconv.Itoa(int(p)) + ")"
+}
+
+// DefaultCatchUpBudget is the CatchUpLag wall-time budget when
+// LoopConfig.CatchUpBudget is zero: half of a 60 Hz frame, which leaves the
+// other half for rendering.
+const DefaultCatchUpBudget = 8 * time.Millisecond
 
 // LoopConfig configures the deterministic frame clock.
 type LoopConfig struct {
 	FixedStep   time.Duration
 	MaxDelta    time.Duration
 	MaxSubsteps int
+	// CatchUp selects the catch-up policy. The zero value is CatchUpDrop.
+	CatchUp CatchUp
+	// CatchUpBudget bounds the wall time one frame spends running fixed steps
+	// under CatchUpLag. Zero selects DefaultCatchUpBudget and a negative value
+	// removes the bound. CatchUpDrop ignores it.
+	CatchUpBudget time.Duration
+	// WallClock reads a monotonic wall clock for CatchUpBudget. Nil uses the
+	// process's monotonic clock. Tests inject a fake one so budget decisions are
+	// deterministic. The clock reads it only under CatchUpLag with a budget.
+	WallClock func() time.Duration
 }
+
+// processStart anchors the default monotonic wall clock.
+var processStart = time.Now()
+
+func monotonicNow() time.Duration { return time.Since(processStart) }
 
 // Clock converts variable render deltas into bounded fixed simulation steps.
 type Clock struct {
 	fixedStep   time.Duration
 	maxDelta    time.Duration
 	maxSubsteps int
+	catchUp     CatchUp
+	budget      time.Duration // < 0 means no bound
+	wallClock   func() time.Duration
 	accumulator time.Duration
+	lag         time.Duration // due steps carried under CatchUpLag, a multiple of fixedStep
 	frame       uint64
 	elapsed     time.Duration
 	steps       uint64
@@ -69,7 +136,8 @@ type Clock struct {
 }
 
 // SetPaused freezes or resumes game time. While paused, Advance still returns
-// frames (the index advances) but runs no fixed steps and adds no time.
+// frames (the index advances) but runs no fixed steps and adds no time. Steps
+// that CatchUpLag carries wait until the clock resumes.
 func (c *Clock) SetPaused(paused bool) {
 	if c != nil {
 		c.paused = paused
@@ -97,6 +165,23 @@ func (c *Clock) TimeScale() float64 {
 	return c.scale
 }
 
+// CatchUp returns the clock's catch-up policy.
+func (c *Clock) CatchUp() CatchUp {
+	if c == nil {
+		return CatchUpDrop
+	}
+	return c.catchUp
+}
+
+// Lag returns the game time that CatchUpLag carries: due fixed steps that
+// earlier frames did not run. It is zero under CatchUpDrop.
+func (c *Clock) Lag() time.Duration {
+	if c == nil {
+		return 0
+	}
+	return c.lag
+}
+
 // NewClock creates a deterministic fixed-step clock.
 func NewClock(cfg LoopConfig) *Clock {
 	fixed := cfg.FixedStep
@@ -111,10 +196,25 @@ func NewClock(cfg LoopConfig) *Clock {
 	if maxSubsteps <= 0 {
 		maxSubsteps = 5
 	}
+	budget := cfg.CatchUpBudget
+	if budget == 0 {
+		budget = DefaultCatchUpBudget
+	}
+	wallClock := cfg.WallClock
+	if wallClock == nil {
+		wallClock = monotonicNow
+	}
+	catchUp := cfg.CatchUp
+	if catchUp != CatchUpLag {
+		catchUp = CatchUpDrop
+	}
 	return &Clock{
 		fixedStep:   fixed,
 		maxDelta:    maxDelta,
 		maxSubsteps: maxSubsteps,
+		catchUp:     catchUp,
+		budget:      budget,
+		wallClock:   wallClock,
 		scale:       1,
 	}
 }
@@ -147,18 +247,71 @@ func floorDuration(ns float64) time.Duration {
 	return 0
 }
 
-// Advance advances the clock and returns the frame plan.
+// Advance advances the clock and returns the frame plan. The caller runs
+// Frame.FixedSteps fixed steps.
+//
+// Under CatchUpLag, Advance has no step work to time, so the budget does not
+// apply: the frame plans every due step and Frame.Lag is zero. Use AdvanceFunc
+// to run steps within the budget.
 //
 // Game time is a time.Duration, so it ends at about 292 years (math.MaxInt64
 // nanoseconds), which is about 4.9 hours of play at a time scale of 525,600. The
 // clock does not wrap past that. A frame whose scaled time is longer than a
 // Duration counts as maxDuration, and the clock runs no fixed step that would
 // take Frame.Time past maxDuration: from then on Time stays where it is and each
-// frame reports the time it could not run in Frame.DroppedDuration.
+// frame reports the time it could not run in Frame.DroppedDuration, under
+// either policy.
 func (c *Clock) Advance(delta time.Duration) Frame {
 	if c == nil {
 		return Frame{}
 	}
+	return c.plan(delta)
+}
+
+// AdvanceFunc advances the clock by delta and runs the frame's fixed steps
+// itself: it calls step once per fixed step, in order, with tick, the 1-based
+// number of that step since the clock started. Under CatchUpLag with a budget,
+// it reads the wall clock before every step after the first and stops once the
+// steps have used the budget; the due steps it did not run stay in the clock
+// and the returned Frame reports them as Lag. Under CatchUpDrop it is Advance
+// followed by Frame.FixedSteps calls to step.
+//
+// The returned Frame counts only the steps that ran. A nil step runs nothing
+// but still advances the clock as Advance does.
+func (c *Clock) AdvanceFunc(delta time.Duration, step func(tick uint64)) Frame {
+	if c == nil {
+		return Frame{}
+	}
+	frame := c.plan(delta)
+	if step == nil {
+		return frame
+	}
+	first := frame.Steps - uint64(frame.FixedSteps) + 1
+	budgeted := c.budgeted()
+	var start time.Duration
+	if budgeted && frame.FixedSteps > 1 {
+		start = c.wallClock()
+	}
+	ran := 0
+	for ; ran < frame.FixedSteps; ran++ {
+		if ran > 0 && budgeted && c.wallClock()-start >= c.budget {
+			break
+		}
+		step(first + uint64(ran))
+	}
+	return c.settle(frame, ran)
+}
+
+// budgeted reports whether the frame's fixed steps run within a wall-time
+// budget.
+func (c *Clock) budgeted() bool {
+	return c.catchUp == CatchUpLag && c.budget > 0
+}
+
+// plan adds delta to the clock and moves it past every fixed step the frame may
+// run: up to MaxSubsteps under CatchUpDrop, every due step under CatchUpLag.
+// settle gives back the steps a budget stopped.
+func (c *Clock) plan(delta time.Duration) Frame {
 	if delta < 0 {
 		delta = 0
 	}
@@ -182,14 +335,31 @@ func (c *Clock) Advance(delta time.Duration) Frame {
 		}
 	}
 	var over time.Duration
+	limit := c.maxSubsteps
+	if c.catchUp == CatchUpLag {
+		limit = math.MaxInt
+	}
+	if !c.paused && c.lag > 0 {
+		// Carried steps run first; a paused clock keeps them. Only CatchUpLag
+		// carries steps, but a restored snapshot can hand them to either policy.
+		c.accumulator, over = addDuration(c.accumulator, c.lag)
+		dropped, _ = addDuration(dropped, over)
+		c.lag = 0
+	}
 	c.accumulator, over = addDuration(c.accumulator, scaled)
 	dropped, _ = addDuration(dropped, over)
-	steps := 0
-	for c.accumulator >= c.fixedStep && steps < c.maxSubsteps && c.elapsed <= maxDuration-c.fixedStep {
-		c.accumulator -= c.fixedStep
-		c.elapsed += c.fixedStep
-		steps++
+	// The number of steps is the gathered time in whole steps, bounded by the
+	// frame limit and by the steps left before game time reaches maxDuration.
+	due := int64(c.accumulator / c.fixedStep)
+	if room := int64((maxDuration - c.elapsed) / c.fixedStep); due > room {
+		due = room
 	}
+	if due > int64(limit) {
+		due = int64(limit)
+	}
+	steps := int(due)
+	c.accumulator -= time.Duration(due) * c.fixedStep
+	c.elapsed += time.Duration(due) * c.fixedStep
 	c.steps += uint64(steps)
 	if c.accumulator >= c.fixedStep {
 		// The frame used its MaxSubsteps, or game time has reached the end of a
@@ -215,7 +385,27 @@ func (c *Clock) Advance(delta time.Duration) Frame {
 		Alpha:           alpha,
 		Time:            c.elapsed,
 		DroppedDuration: dropped,
+		Lag:             c.lag,
 	}
+}
+
+// settle completes a planned frame in which only ran of its FixedSteps ran. The
+// clock takes back the rest as lag, so a later frame runs them.
+func (c *Clock) settle(frame Frame, ran int) Frame {
+	if ran < 0 {
+		ran = 0
+	}
+	if back := frame.FixedSteps - ran; back > 0 {
+		owed := time.Duration(back) * c.fixedStep
+		c.elapsed -= owed
+		c.steps -= uint64(back)
+		c.lag, _ = addDuration(c.lag, owed)
+		frame.FixedSteps = ran
+		frame.Steps = c.steps
+		frame.Time = c.elapsed
+	}
+	frame.Lag = c.lag
+	return frame
 }
 
 func (c *Clock) restore(frame uint64, elapsed time.Duration) {
@@ -226,6 +416,7 @@ func (c *Clock) restore(frame uint64, elapsed time.Duration) {
 	c.elapsed = elapsed
 	c.steps = uint64(elapsed / c.fixedStep)
 	c.accumulator = 0
+	c.lag = 0
 	c.scaleFrac = 0
 }
 
@@ -277,6 +468,13 @@ type Event struct {
 }
 
 // Context is passed to systems for each phase.
+//
+// Frame is the frame being advanced. In PhaseUpdate and PhaseFixedUpdate it is
+// the clock's plan for the frame. Under CatchUpDrop the plan is final. Under
+// CatchUpLag the wall-time budget can stop the fixed steps early: the plan
+// then counts steps that did not run, and PhaseLateUpdate and PhaseRender see
+// the settled frame, with FixedSteps, Steps and Time counting the steps that
+// ran and Lag the rest. Tick is exact in every phase.
 type Context struct {
 	Runtime   *Runtime
 	World     *World
@@ -304,15 +502,20 @@ func (ctx *Context) Emit(event Event) {
 
 // Config describes a game/simulation runtime.
 type Config struct {
-	Name          string
-	Profile       Profile
-	World         *World
-	Input         *Input
-	Assets        *Assets
-	Physics       *physics.World
-	FixedStep     time.Duration
-	MaxDelta      time.Duration
-	MaxSubsteps   int
+	Name        string
+	Profile     Profile
+	World       *World
+	Input       *Input
+	Assets      *Assets
+	Physics     *physics.World
+	FixedStep   time.Duration
+	MaxDelta    time.Duration
+	MaxSubsteps int
+	// CatchUp, CatchUpBudget and WallClock set the clock's catch-up policy; see
+	// LoopConfig. The zero values keep CatchUpDrop.
+	CatchUp       CatchUp
+	CatchUpBudget time.Duration
+	WallClock     func() time.Duration
 	Systems       []System
 	Scene         SceneBuilder
 	Snapshot      SnapshotCodec
@@ -377,13 +580,20 @@ func New(cfg Config) *Runtime {
 		assets = NewAssets()
 	}
 	return &Runtime{
-		name:             cfg.Name,
-		profile:          profile,
-		world:            world,
-		input:            input,
-		assets:           assets,
-		physics:          cfg.Physics,
-		clock:            NewClock(LoopConfig{FixedStep: fixedStep, MaxDelta: maxDelta, MaxSubsteps: maxSubsteps}),
+		name:    cfg.Name,
+		profile: profile,
+		world:   world,
+		input:   input,
+		assets:  assets,
+		physics: cfg.Physics,
+		clock: NewClock(LoopConfig{
+			FixedStep:     fixedStep,
+			MaxDelta:      maxDelta,
+			MaxSubsteps:   maxSubsteps,
+			CatchUp:       cfg.CatchUp,
+			CatchUpBudget: cfg.CatchUpBudget,
+			WallClock:     cfg.WallClock,
+		}),
 		systems:          append([]System(nil), cfg.Systems...),
 		sceneBuilder:     cfg.Scene,
 		snapshot:         cfg.Snapshot,
@@ -392,12 +602,15 @@ func New(cfg Config) *Runtime {
 	}
 }
 
-// Step advances the runtime by delta.
+// Step advances the runtime by delta. It runs PhaseUpdate, then the frame's
+// fixed steps (PhaseFixedUpdate and physics), then PhaseLateUpdate and
+// PhaseRender. Under CatchUpLag the fixed steps run within the clock's
+// wall-time budget, and the returned Frame reports the steps left over as Lag.
 func (r *Runtime) Step(delta time.Duration) (Frame, error) {
 	if r == nil {
 		return Frame{}, nil
 	}
-	frame := r.clock.Advance(delta)
+	frame := r.clock.plan(delta)
 	r.frame = frame
 	r.events = nil
 	ctx := &Context{
@@ -416,11 +629,25 @@ func (r *Runtime) Step(delta time.Duration) (Frame, error) {
 		}
 	}
 	capture(r.runPhase(ctx, PhaseUpdate, frame.Delta, 0))
-	for step := 0; step < frame.FixedSteps; step++ {
-		capture(r.runPhase(ctx, PhaseFixedUpdate, frame.FixedStep, step))
+	budgeted := r.clock.budgeted()
+	var start time.Duration
+	if budgeted && frame.FixedSteps > 1 {
+		start = r.clock.wallClock()
+	}
+	ran := 0
+	for ; ran < frame.FixedSteps; ran++ {
+		if ran > 0 && budgeted && r.clock.wallClock()-start >= r.clock.budget {
+			break
+		}
+		capture(r.runPhase(ctx, PhaseFixedUpdate, frame.FixedStep, ran))
 		if r.physics != nil && !r.manualPhysics {
 			r.physics.StepFixed()
 		}
+	}
+	if ran < frame.FixedSteps {
+		frame = r.clock.settle(frame, ran)
+		r.frame = frame
+		ctx.Frame = frame
 	}
 	capture(r.runPhase(ctx, PhaseLateUpdate, frame.Delta, 0))
 	capture(r.runPhase(ctx, PhaseRender, frame.Delta, 0))
@@ -699,6 +926,12 @@ type RuntimeState struct {
 	AccumulatorNanos int64          `json:"accumulatorNanos,omitempty"`
 	ScaleFrac        float64        `json:"scaleFrac,omitempty"`
 	Cadence          []CadenceState `json:"cadence,omitempty"`
+	// LagNanos is the game time that CatchUpLag carried when the snapshot was
+	// written: due fixed steps not yet run, a whole number of FixedStepNanos.
+	// Only a version 2 snapshot of a lagging runtime writes it. Restore sets it
+	// with the clock remainder, under the same fixed-step rule; a runtime
+	// under CatchUpDrop runs the carried steps within its MaxSubsteps.
+	LagNanos int64 `json:"lagNanos,omitempty"`
 	// World holds registered world content. Only a SaveCodec snapshot writes
 	// it; the default snapshot leaves it out.
 	World *WorldSave `json:"world,omitempty"`
@@ -789,6 +1022,9 @@ func decodeRuntimeState(snapshot []byte) (RuntimeState, error) {
 	if state.ScaleFrac < 0 || state.ScaleFrac >= 1 {
 		return state, fmt.Errorf("game: snapshot scale fraction %v is not in [0, 1)", state.ScaleFrac)
 	}
+	if lag := time.Duration(state.LagNanos); lag < 0 || lag%step != 0 {
+		return state, fmt.Errorf("game: snapshot lag %v is not a whole number of fixed steps (%v)", lag, step)
+	}
 	for _, c := range state.Cadence {
 		if c.GatheredNanos < 0 {
 			return state, fmt.Errorf("game: snapshot cadence %q has negative gathered time %v", c.System, time.Duration(c.GatheredNanos))
@@ -831,7 +1067,9 @@ func (r *Runtime) applyRuntimeState(state RuntimeState) {
 		if state.Version >= 2 && time.Duration(state.FixedStepNanos) == r.clock.fixedStep {
 			r.clock.accumulator = time.Duration(state.AccumulatorNanos)
 			r.clock.scaleFrac = state.ScaleFrac
+			r.clock.lag = time.Duration(state.LagNanos)
 		}
+		r.frame.Lag = r.clock.lag
 		r.frame.Index = state.Frame
 		r.frame.Time = elapsed
 		r.frame.FixedStep = r.FixedStep()
@@ -896,6 +1134,7 @@ func (r *Runtime) runtimeState(restorable bool) RuntimeState {
 		if r.clock != nil {
 			state.AccumulatorNanos = int64(r.clock.accumulator)
 			state.ScaleFrac = r.clock.scaleFrac
+			state.LagNanos = int64(r.clock.lag)
 		}
 		state.Cadence = r.cadenceStates()
 	}
