@@ -79,7 +79,7 @@ function sceneShaderWarmupFrame(mount: any, props: any, renderer: any): any {
   if (!spec || !mount || !renderer) return null;
   let state = sceneShaderWarmups.get(mount);
   if (!state || state.renderer !== renderer) {
-    state = { renderer, phase: "compiling", published: "", backend: String(renderer.kind || ""), bundle: sceneShaderWarmupBundle(spec), mount };
+    state = { renderer, phase: "compiling", published: "", backend: String(renderer.kind || ""), bundle: sceneShaderWarmupBundle(spec), mount, started: Date.now() };
     state.bundle.warmupState = state;
     sceneShaderWarmups.set(mount, state);
   }
@@ -114,7 +114,9 @@ function sceneShaderWarmupPoll(state: any) {
   state.poll = true;
   next(function() {
     state.poll = false;
-    if (state.phase === "ready" || sceneShaderWarmups.get(state.mount) !== state || state.mount.isConnected === false) return;
+    // A disposed or stuck mount stops polling after two minutes; the boot
+    // gate's own stall timer reports a warm-up that never finishes.
+    if (state.phase === "ready" || sceneShaderWarmups.get(state.mount) !== state || state.mount.isConnected === false || Date.now() - state.started > 120000) return;
     sceneShaderWarmupPublish(state.mount, state, sceneShaderWarmupCounts(state.renderer));
     sceneShaderWarmupPoll(state);
   });
