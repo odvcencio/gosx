@@ -726,6 +726,15 @@ separate release-pinned hardware certification obligation in that contract.
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes
 
+  Browser builds load Selena materials from build-time artifacts:
+  `gosx build` (or `gosx selena build`) writes `<file>.sel.json` next to each
+  `.sel` source, and `scene.DecodeSelenaArtifact` plus
+  `scene.MaterialFromSelenaArtifact` turn an embedded artifact into a material
+  without linking the compiler. `gosx selena check` fails when an artifact no
+  longer matches its source. Selena mesh materials can read every scene light,
+  both shadow slots with their cascades, and fog. See
+  [Selena materials in Scene3D](docs/scene3d-selena.md).
+
   Selena browser shaders use GLSL ES 3.00 for GoSX's WebGL2 contexts. The returned
   binding layout contains the WebGL2 host requirements. Materials with extra host
   requirements include `shaderLayout.targetRequires`; `scene.SelenaTargetRequirements(material.ShaderLayout, target)`

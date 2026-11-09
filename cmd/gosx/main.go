@@ -28,6 +28,7 @@
 //	gosx scene check             Check Scene3D feature support and budgets
 //	gosx scene inspect           Inspect Scene3D feature use and budgets
 //	gosx scene validate          Validate SceneIR JSON files
+//	gosx selena build|check      Compile .sel sources into artifacts / check them
 //	gosx size [--json] <dist|build.json>
 //	                              Report runtime bundle sizes
 //	gosx ui list                 List source-owned UI recipes
@@ -113,6 +114,8 @@ func main() {
 		cmdRelease()
 	case "scene":
 		cmdScene()
+	case "selena":
+		cmdSelena()
 	case "version":
 		fmt.Printf("gosx v%s\n", gosx.Version)
 	case "help", "-h", "--help":
@@ -254,6 +257,8 @@ Usage:
 		releaseUsage(w)
 	case "scene":
 		sceneUsage(w)
+	case "selena":
+		selenaUsage(w)
 	case "version":
 		fmt.Fprintf(w, `gosx version - Print version
 
@@ -311,6 +316,8 @@ Commands:
   scene check          Check Scene3D feature support and budgets
   scene inspect        Inspect Scene3D feature use and budgets
   scene validate       Validate SceneIR JSON files
+  selena build         Compile .sel sources into <file>.sel.json artifacts
+  selena check         Fail when a Selena artifact is missing or stale
   version              Print version
 
 Init templates:

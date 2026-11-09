@@ -1,0 +1,124 @@
+{
+  "schema": "selena.artifact.v1",
+  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "languageVersion": "selena.lang.v1",
+  "source": {
+    "path": "sources/carved-wood.sel",
+    "sha256": "9b891d1a052eaf7dbba09682adfe2b143852d1c46bbb95c58fc328a4e019c966"
+  },
+  "options": {
+    "targets": [
+      "wgsl",
+      "gles"
+    ]
+  },
+  "default": "CarvedWood",
+  "materials": [
+    {
+      "name": "CarvedWood",
+      "layout": {
+        "schemaVersion": "selena.descriptor.v1",
+        "languageVersion": "selena.lang.v1",
+        "material": "CarvedWood",
+        "kind": "mesh",
+        "entryPoints": {
+          "vertex": "vertexMain",
+          "fragment": "fragmentMain"
+        },
+        "uniformBlock": {
+          "size": 144,
+          "fields": [
+            {
+              "name": "mvp",
+              "type": "mat4",
+              "offset": 0,
+              "size": 64
+            },
+            {
+              "name": "normalMatrix",
+              "type": "mat3",
+              "offset": 64,
+              "size": 48
+            },
+            {
+              "name": "darkWalnut",
+              "type": "vec3",
+              "offset": 112,
+              "size": 12
+            },
+            {
+              "name": "warmWalnut",
+              "type": "vec3",
+              "offset": 128,
+              "size": 12
+            },
+            {
+              "name": "satinLift",
+              "type": "float",
+              "offset": 140,
+              "size": 4
+            }
+          ],
+          "defaults": [
+            {
+              "name": "darkWalnut",
+              "type": "vec3",
+              "values": [
+                0.16,
+                0.07,
+                0.035
+              ]
+            },
+            {
+              "name": "warmWalnut",
+              "type": "vec3",
+              "values": [
+                0.48,
+                0.25,
+                0.12
+              ]
+            },
+            {
+              "name": "satinLift",
+              "type": "float",
+              "values": [
+                0.08
+              ]
+            }
+          ]
+        },
+        "attributes": [
+          {
+            "name": "position",
+            "location": 0,
+            "type": "vec3"
+          },
+          {
+            "name": "uv",
+            "location": 1,
+            "type": "vec2"
+          }
+        ],
+        "textures": [],
+        "wgsl": {
+          "group": 0,
+          "binding": 0
+        },
+        "metal": {
+          "buffer": 0
+        }
+      },
+      "shaders": [
+        {
+          "target": "wgsl",
+          "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  darkWalnut : vec3<f32>,\n  warmWalnut : vec3<f32>,\n  satinLift : f32,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let grainLine = sin(((in.vUv.x * 92.0) + (sin((in.vUv.y * 11.0)) * 2.2)));\n  let grain = ((grainLine * 0.5) + 0.5);\n  let endGrain = (sin(((in.vUv.x + in.vUv.y) * 17.0)) * 0.04);\n  let holeUV = (in.vUv - vec2<f32>(0.5, 0.5));\n  let carved = (smoothstep(0.34, 0.04, length(holeUV)) * 0.18);\n  let body = mix(u.darkWalnut.rgb, u.warmWalnut.rgb, ((grain * 0.52) + endGrain));\n  return vec4<f32>(((body * (1.0 - carved)) + vec3<f32>(u.satinLift, u.satinLift, u.satinLift)), 1.0);\n}\n"
+        },
+        {
+          "target": "gles",
+          "vertex": "#version 300 es\nin vec3 position;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 darkWalnut;\nuniform vec3 warmWalnut;\nuniform float satinLift;\nout vec2 vUv;\n\nvoid main() {\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
+          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 darkWalnut;\nuniform vec3 warmWalnut;\nuniform float satinLift;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  float grainLine = sin(((vUv.x * 92.0) + (sin((vUv.y * 11.0)) * 2.2)));\n  float grain = ((grainLine * 0.5) + 0.5);\n  float endGrain = (sin(((vUv.x + vUv.y) * 17.0)) * 0.04);\n  vec2 holeUV = (vUv - vec2(0.5, 0.5));\n  float carved = (smoothstep(0.34, 0.04, length(holeUV)) * 0.18);\n  vec3 body = mix(darkWalnut.rgb, warmWalnut.rgb, ((grain * 0.52) + endGrain));\n  fragColor = vec4(((body * (1.0 - carved)) + vec3(satinLift, satinLift, satinLift)), 1.0);\n}\n"
+        }
+      ]
+    }
+  ]
+}
