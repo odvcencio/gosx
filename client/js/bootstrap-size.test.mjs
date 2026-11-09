@@ -2110,7 +2110,7 @@ const routeBudgets = [
     // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 311,321 raw, 88,207 gzip and 79,462 Brotli bytes on this route;
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
     raw: 300757, // 8 November 2026: the shared audio mixer adds its code to this route (measured 315,583); allowance unchanged.
-   
+
     gzip: 85484,
     brotli: 76990,
     maxMonolithFraction: 0.25,
