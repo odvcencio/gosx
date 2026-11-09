@@ -16,6 +16,10 @@ const (
 	ShapeCone
 	ShapeConvexHull
 	ShapeTriangleMesh
+	// ShapeHeightfield is a regular grid of heights (see heightfield.go). Use
+	// it for terrain: it collides and raycasts like a triangle mesh of the
+	// grid but stores one float per sample.
+	ShapeHeightfield
 )
 
 // String names the shape for diagnostics.
@@ -37,6 +41,8 @@ func (s ColliderShape) String() string {
 		return "convexhull"
 	case ShapeTriangleMesh:
 		return "trianglemesh"
+	case ShapeHeightfield:
+		return "heightfield"
 	default:
 		return fmt.Sprintf("shape(%d)", int(s))
 	}
@@ -62,6 +68,13 @@ type ColliderConfig struct {
 	// Indices lists triangle corners for ShapeTriangleMesh, three per
 	// triangle. Every other shape ignores it.
 	Indices []int
+
+	// Heights, Columns and Rows describe a ShapeHeightfield: Columns x Rows
+	// local Y values, row-major, spanning Width along local X and Depth along
+	// local Z, centred on the collider origin. Every other shape ignores them.
+	Heights []float64
+	Columns int
+	Rows    int
 }
 
 type Collider struct {
@@ -84,6 +97,10 @@ type Collider struct {
 	// mesh holds the local-space triangle soup plus its BVH for
 	// ShapeTriangleMesh.
 	mesh *triangleMesh
+	// heightfield holds the local-space grid for ShapeHeightfield, and
+	// heightfieldErr why it could not be built.
+	heightfield    *heightfield
+	heightfieldErr error
 	// localBounds is the collider-local bounding box of hull or mesh
 	// geometry. AABB projects it into world space.
 	localBounds AABB
@@ -148,6 +165,11 @@ func (c *Collider) buildGeometry(config ColliderConfig) {
 		if c.mesh != nil {
 			c.localBounds = c.mesh.bounds
 		}
+	case ShapeHeightfield:
+		c.heightfield, c.heightfieldErr = newHeightfield(config)
+		if c.heightfield != nil {
+			c.localBounds = c.heightfield.bounds
+		}
 	}
 }
 
@@ -205,6 +227,10 @@ func (c *Collider) validate() error {
 	case ShapeTriangleMesh:
 		if c.mesh == nil || len(c.mesh.tris) == 0 {
 			return fmt.Errorf("physics: triangle mesh collider needs Vertices plus Indices in multiples of 3 that name valid corners")
+		}
+	case ShapeHeightfield:
+		if c.heightfield == nil {
+			return c.heightfieldErr
 		}
 	default:
 		return fmt.Errorf("physics: unknown collider shape %d", int(c.Shape))
@@ -306,7 +332,7 @@ func (c *Collider) AABB() AABB {
 			Z: float64(radius * discExtent(axis.Z)),
 		}
 		return AABB{Min: apex, Max: apex}.Union(AABBFromCenterHalfExtents(base, discHalf))
-	case ShapeConvexHull, ShapeTriangleMesh:
+	case ShapeConvexHull, ShapeTriangleMesh, ShapeHeightfield:
 		// Project the local bounds through the world rotation. Slightly loose
 		// for a rotated hull, and O(1) instead of O(vertices).
 		center := c.WorldCenter()
@@ -387,7 +413,7 @@ func (c *Collider) BoundingRadius() float64 {
 	case ShapeCylinder, ShapeCone:
 		half := math.Abs(c.Height) * 0.5
 		return math.Sqrt(float64(half*half) + float64(c.Radius*c.Radius))
-	case ShapeConvexHull, ShapeTriangleMesh:
+	case ShapeConvexHull, ShapeTriangleMesh, ShapeHeightfield:
 		// The local bounds are not centred on the collider origin, so measure
 		// to the farthest corner rather than to the box centre.
 		return math.Max(c.localBounds.Min.Len(), c.localBounds.Max.Len())

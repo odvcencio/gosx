@@ -1,7 +1,7 @@
 {
   "name": "box_manifold_tower",
   "why": "box against box clip, four-point manifold reduction, deep penetration position pass",
-  "generatedBy": "go1.26.4 linux/amd64",
+  "generatedBy": "go1.26.0 linux/amd64",
   "fmaContraction": false,
   "steps": 540,
   "sampleEvery": 54,
@@ -87,7 +87,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -155,7 +158,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -223,7 +229,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -291,7 +300,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -359,7 +371,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -427,7 +442,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -495,7 +513,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       }
@@ -527,12 +548,15 @@
         },
         "Distance": 0,
         "Vertices": null,
-        "Indices": null
+        "Indices": null,
+        "Heights": null,
+        "Columns": 0,
+        "Rows": 0
       }
     ],
     "Diagnostics": null
   },
-  "specDigest": "faa1c3d719c47669",
+  "specDigest": "a87399fb038a9279",
   "stateDigest": "e06e6ed438b16c80",
   "contactSteps": 540,
   "contactPoints": 14691,

@@ -1,7 +1,7 @@
 {
   "name": "continuous_collision",
   "why": "swept conservative advance, capsule and cone narrowphase, restitution at high speed",
-  "generatedBy": "go1.26.4 linux/amd64",
+  "generatedBy": "go1.26.0 linux/amd64",
   "fmaContraction": false,
   "steps": 360,
   "sampleEvery": 36,
@@ -87,7 +87,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -155,7 +158,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -223,7 +229,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -291,7 +300,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -359,7 +371,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -427,7 +442,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -495,7 +513,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       }
@@ -527,7 +548,10 @@
         },
         "Distance": 0,
         "Vertices": null,
-        "Indices": null
+        "Indices": null,
+        "Heights": null,
+        "Columns": 0,
+        "Rows": 0
       },
       {
         "Shape": 0,
@@ -554,12 +578,15 @@
         },
         "Distance": 0,
         "Vertices": null,
-        "Indices": null
+        "Indices": null,
+        "Heights": null,
+        "Columns": 0,
+        "Rows": 0
       }
     ],
     "Diagnostics": null
   },
-  "specDigest": "58bede7e75207de7",
+  "specDigest": "0c1400d7fffa5c7b",
   "stateDigest": "1c1d556fba3cbf6a",
   "contactSteps": 332,
   "contactPoints": 1038,

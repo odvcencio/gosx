@@ -1,7 +1,7 @@
 {
   "name": "convex_hull_pile",
   "why": "GJK simplex search and EPA polytope expansion for hull against hull and hull against box",
-  "generatedBy": "go1.26.4 linux/amd64",
+  "generatedBy": "go1.26.0 linux/amd64",
   "fmaContraction": false,
   "steps": 480,
   "sampleEvery": 48,
@@ -138,7 +138,10 @@
                 "Z": 0.03233075214862684
               }
             ],
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -257,7 +260,10 @@
                 "Z": 0.26367920421895136
               }
             ],
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -376,7 +382,10 @@
                 "Z": 0.041230885419898625
               }
             ],
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -495,7 +504,10 @@
                 "Z": 0.08987655554743128
               }
             ],
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -614,7 +626,10 @@
                 "Z": 0.34569994068277654
               }
             ],
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -733,7 +748,10 @@
                 "Z": -0.15911550373437539
               }
             ],
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -852,7 +870,10 @@
                 "Z": -0.07622975962558176
               }
             ],
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -971,7 +992,10 @@
                 "Z": -0.3359750281032343
               }
             ],
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       }
@@ -1003,7 +1027,10 @@
         },
         "Distance": 0,
         "Vertices": null,
-        "Indices": null
+        "Indices": null,
+        "Heights": null,
+        "Columns": 0,
+        "Rows": 0
       },
       {
         "Shape": 0,
@@ -1030,12 +1057,15 @@
         },
         "Distance": 0,
         "Vertices": null,
-        "Indices": null
+        "Indices": null,
+        "Heights": null,
+        "Columns": 0,
+        "Rows": 0
       }
     ],
     "Diagnostics": null
   },
-  "specDigest": "143dac5f0044b865",
+  "specDigest": "05891839b61e76b5",
   "stateDigest": "35b80b9d20c7a7a0",
   "contactSteps": 467,
   "contactPoints": 3628,

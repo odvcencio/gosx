@@ -1,7 +1,7 @@
 {
   "name": "constraint_chain",
   "why": "point, hinge with motor and limits, soft distance and fixed joint impulse accumulation",
-  "generatedBy": "go1.26.4 linux/amd64",
+  "generatedBy": "go1.26.0 linux/amd64",
   "fmaContraction": false,
   "steps": 600,
   "sampleEvery": 60,
@@ -127,7 +127,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -195,7 +198,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -263,7 +269,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -331,7 +340,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       },
@@ -399,7 +411,10 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null
+            "Indices": null,
+            "Heights": null,
+            "Columns": 0,
+            "Rows": 0
           }
         ]
       }
@@ -572,12 +587,15 @@
         },
         "Distance": 0,
         "Vertices": null,
-        "Indices": null
+        "Indices": null,
+        "Heights": null,
+        "Columns": 0,
+        "Rows": 0
       }
     ],
     "Diagnostics": null
   },
-  "specDigest": "1eaaf01d580aeee0",
+  "specDigest": "5625f2e985e97260",
   "stateDigest": "ce0c130782a0811c",
   "contactSteps": 587,
   "contactPoints": 3156,

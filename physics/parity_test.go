@@ -388,6 +388,7 @@ func parityScenarios() []parityCase {
 		parityContinuousCollision(),
 		paritySleepAndWake(),
 		parityMeshTerrain(),
+		parityHeightfieldTerrain(),
 	}
 }
 
@@ -734,6 +735,52 @@ func parityMeshTerrain() parityCase {
 	}
 }
 
+// parityHeightfieldTerrain drops the mesh_terrain rollers onto the same saddle
+// stored as a ShapeHeightfield: the cell walk, the on-the-fly internal-edge
+// filter and the heightfield narrowphase must agree bit for bit across builds.
+func parityHeightfieldTerrain() parityCase {
+	const cells = 12
+	const span = 9.0
+	heights := make([]float64, 0, (cells+1)*(cells+1))
+	for iz := 0; iz <= cells; iz++ {
+		for ix := 0; ix <= cells; ix++ {
+			x := -span/2 + span*float64(ix)/float64(cells)
+			z := -span/2 + span*float64(iz)/float64(cells)
+			heights = append(heights, 0.35*math.Sin(0.9*x)-0.28*math.Cos(0.7*z)-0.06*x)
+		}
+	}
+	spec := WorldSpec{
+		Config: WorldConfig{Gravity: Vec3{Y: -9.81}, FixedTimestep: 1.0 / 60.0, SolverIterations: 10},
+		Static: []ColliderConfig{{Shape: ShapeHeightfield, Heights: heights, Columns: cells + 1, Rows: cells + 1, Width: span, Depth: span}},
+	}
+	rng := rand.New(rand.NewSource(11))
+	for i := 0; i < 6; i++ {
+		body := BodySpec{Body: BodyConfig{
+			ID:              "roller-" + strconv.Itoa(i),
+			Mass:            1 + 0.3*float64(i),
+			Position:        Vec3{X: -3 + float64(i)*1.1, Y: 2.5 + 0.4*float64(i), Z: (rng.Float64() - 0.5) * 2},
+			Rotation:        randomUnitQuatForParity(rng),
+			Velocity:        Vec3{X: 1.5},
+			AngularVelocity: Vec3{Z: -3},
+			Friction:        0.45,
+			Restitution:     0.25,
+		}}
+		if i%2 == 0 {
+			body.Colliders = []ColliderConfig{{Shape: ShapeSphere, Radius: 0.3}}
+		} else {
+			body.Colliders = []ColliderConfig{{Shape: ShapeBox, Width: 0.5, Height: 0.5, Depth: 0.5}}
+		}
+		spec.Bodies = append(spec.Bodies, body)
+	}
+	return parityCase{
+		Name:        "heightfield_terrain",
+		Why:         "heightfield cell walk, on-the-fly internal edge filtering, heightfield against sphere and box contacts",
+		Steps:       420,
+		SampleEvery: 42,
+		Scenario:    spec,
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Corpus location
 // ---------------------------------------------------------------------------
@@ -800,7 +847,7 @@ func TestParityCorpus(t *testing.T) {
 
 	// A parity gate that passes on an empty corpus is worse than no gate,
 	// because it reports success while checking nothing.
-	const wantFiles = 7
+	const wantFiles = 8
 	if len(paths) != wantFiles {
 		t.Fatalf("parity corpus holds %d file(s) in %s, want %d; run PHYSICS_PARITY_REGEN=1 go test ./physics/ -run TestRegenerateParityCorpus",
 			len(paths), dir, wantFiles)
