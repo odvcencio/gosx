@@ -11,19 +11,30 @@ const (
 // LandmarkID indexes Book landmarks and World.Landmarks.
 type LandmarkID int16
 
-// Book is a compiled, validated Spec. It is read-only after Compile and safe to
-// share between executors and goroutines.
+// Book is a compiled, validated Spec. Its tables are read-only after Compile.
+// A Book can be shared by executors on different goroutines when the
+// registered predicates and choosers it holds are safe for concurrent use;
+// the built-in data rules are.
 type Book struct {
-	roles      []string
-	bands      []string
-	landmarks  []landmark
-	formations []Formation
-	paths      []Path
-	marks      []string
-	// predicates and choosers are the rule names decisions use, in order of
-	// first use; Decision branch rule indices point here.
-	predicates []string
-	choosers   []string
+	roles        []string
+	bands        []string
+	objects      []string
+	signals      []string
+	teamSignals  []string
+	agentSignals []string
+	landmarks    []landmark
+	formations   []Formation
+	slotNames    []string // every slot name used by a move step
+	paths        []Path
+	assignments  []Assignment
+	plans        []Plan
+	marks        []string
+	// preds and choosers are indexed by Decision branch rules, step untils
+	// and interrupts.
+	predNames []string
+	preds     []Predicate
+	chNames   []string
+	choosers  []Chooser
 }
 
 type landmark struct {
@@ -33,9 +44,10 @@ type landmark struct {
 	side Side
 }
 
-// Compile validates spec and returns its Book. On failure the error is a
-// *SpecError that lists every problem with the path of the offending entry.
-func Compile(spec *Spec) (*Book, error) {
+// Compile validates spec and returns its Book. reg supplies the predicates and
+// choosers written in Go; it can be nil. On failure the error is a *SpecError
+// that lists every problem with the path of the offending entry.
+func Compile(spec *Spec, reg *Registry) (*Book, error) {
 	var is issues
 	switch {
 	case spec.Format != Format:
@@ -48,17 +60,30 @@ func Compile(spec *Spec) (*Book, error) {
 	if err := is.err(); err != nil {
 		return nil, err
 	}
-	b := &Book{}
-	checkTable(&is, "roles", len(spec.Roles))
-	checkTable(&is, "bands", len(spec.Bands))
-	checkTable(&is, "landmarks", len(spec.Landmarks))
-	checkTable(&is, "formations", len(spec.Formations))
-	checkTable(&is, "paths", len(spec.Paths))
+	for _, t := range []struct {
+		name string
+		n    int
+	}{
+		{"roles", len(spec.Roles)}, {"bands", len(spec.Bands)}, {"objects", len(spec.Objects)},
+		{"signals", len(spec.Signals)}, {"team_signals", len(spec.TeamSignals)},
+		{"agent_signals", len(spec.AgentSignals)}, {"landmarks", len(spec.Landmarks)},
+		{"formations", len(spec.Formations)}, {"paths", len(spec.Paths)}, {"rules", len(spec.Rules)},
+		{"assignments", len(spec.Assignments)}, {"plans", len(spec.Plans)},
+	} {
+		if t.n > maxTable {
+			is.addf(t.name, "%d entries; at most %d", t.n, maxTable)
+		}
+	}
 	if err := is.err(); err != nil {
 		return nil, err
 	}
+	b := &Book{}
 	b.roles = nameTable(&is, "roles", spec.Roles)
 	b.bands = nameTable(&is, "bands", spec.Bands)
+	b.objects = nameTable(&is, "objects", spec.Objects)
+	b.signals = nameTable(&is, "signals", spec.Signals)
+	b.teamSignals = nameTable(&is, "team_signals", spec.TeamSignals)
+	b.agentSignals = nameTable(&is, "agent_signals", spec.AgentSignals)
 
 	b.landmarks = make([]landmark, len(spec.Landmarks))
 	for i := range spec.Landmarks {
@@ -89,19 +114,59 @@ func Compile(spec *Spec) (*Book, error) {
 		checkEntryName(&is, p, ps.Name, i, func(j int) string { return spec.Paths[j].Name })
 		b.paths[i] = compilePath(&is, p, ps, b, &marks, &rb)
 	}
+
+	// Assignment names are needed by plans, and steps name slots of any
+	// formation, so collect both before compiling.
+	b.assignments = make([]Assignment, len(spec.Assignments))
+	for i := range spec.Assignments {
+		b.assignments[i].name = spec.Assignments[i].Name
+	}
+	for i := range spec.Assignments {
+		as := &spec.Assignments[i]
+		p := at("", "assignments", i, as.Name)
+		checkEntryName(&is, p, as.Name, i, func(j int) string { return spec.Assignments[j].Name })
+		b.assignments[i] = compileAssignment(&is, p, as, b, &marks, &rb)
+	}
+	for i := range b.formations {
+		f := &b.formations[i]
+		f.nameSlot = make([]int16, len(b.slotNames))
+		for k, n := range b.slotNames {
+			f.nameSlot[k] = int16(f.SlotIndex(n))
+		}
+	}
+
+	b.plans = make([]Plan, len(spec.Plans))
+	for i := range spec.Plans {
+		ps := &spec.Plans[i]
+		p := at("", "plans", i, ps.Name)
+		checkEntryName(&is, p, ps.Name, i, func(j int) string { return spec.Plans[j].Name })
+		b.plans[i] = compilePlan(&is, p, ps, b)
+	}
 	b.marks = marks.names
-	b.predicates = rb.preds
-	b.choosers = rb.choosers
+
+	// Rules last: facts can name marks, objects and signals.
+	compileRules(&is, b, spec.Rules, reg, &rb)
+	b.predNames = rb.preds
+	b.chNames = rb.choosers
 	if err := is.err(); err != nil {
 		return nil, err
 	}
 	return b, nil
 }
 
-func checkTable(is *issues, name string, n int) {
-	if n > maxTable {
-		is.addf(name, "%d entries; at most %d", n, maxTable)
+// slotName returns the index of a slot name used by a move step, adding it
+// when some formation has it, or -1 when none does.
+func (b *Book) slotName(name string) int {
+	if i := indexOf(b.slotNames, name); i >= 0 {
+		return i
 	}
+	for i := range b.formations {
+		if b.formations[i].SlotIndex(name) >= 0 {
+			b.slotNames = append(b.slotNames, name)
+			return len(b.slotNames) - 1
+		}
+	}
+	return -1
 }
 
 // checkEntryName checks the name of entry i and that no earlier entry has it.
@@ -143,6 +208,42 @@ func (b *Book) Band(name string) (int, bool) {
 	return i, i >= 0
 }
 
+// Object returns the index of the named object in World.Objects.
+func (b *Book) Object(name string) (int, bool) {
+	i := indexOf(b.objects, name)
+	return i, i >= 0
+}
+
+// NumObjects returns the length World.Objects must have.
+func (b *Book) NumObjects() int { return len(b.objects) }
+
+// Signal returns the index of the named signal in World.Signals.
+func (b *Book) Signal(name string) (int, bool) {
+	i := indexOf(b.signals, name)
+	return i, i >= 0
+}
+
+// NumSignals returns the length World.Signals must have.
+func (b *Book) NumSignals() int { return len(b.signals) }
+
+// TeamSignal returns the index of the named team signal.
+func (b *Book) TeamSignal(name string) (int, bool) {
+	i := indexOf(b.teamSignals, name)
+	return i, i >= 0
+}
+
+// NumTeamSignals returns the number of team signals per team.
+func (b *Book) NumTeamSignals() int { return len(b.teamSignals) }
+
+// AgentSignal returns the index of the named agent signal.
+func (b *Book) AgentSignal(name string) (int, bool) {
+	i := indexOf(b.agentSignals, name)
+	return i, i >= 0
+}
+
+// NumAgentSignals returns the number of agent signals per agent.
+func (b *Book) NumAgentSignals() int { return len(b.agentSignals) }
+
 // NumLandmarks returns the number of landmarks: the length World.Landmarks
 // must have.
 func (b *Book) NumLandmarks() int { return len(b.landmarks) }
@@ -166,8 +267,8 @@ func (b *Book) LandmarkName(id LandmarkID) string {
 }
 
 // LandmarkPos returns the world position of landmark id for a team in frame
-// fr: World.Landmarks[id] for a host landmark, otherwise the authored point in
-// fr. hosted is World.Landmarks.
+// fr: hosted[id] (World.Landmarks) for a host landmark, otherwise the authored
+// point in fr.
 func (b *Book) LandmarkPos(id LandmarkID, fr *Frame, hosted []Vec2) Vec2 {
 	l := &b.landmarks[id]
 	if l.host {
@@ -219,6 +320,48 @@ func (b *Book) Path(id PathID) *Path {
 		return nil
 	}
 	return &b.paths[id]
+}
+
+// NumAssignments returns the number of assignments.
+func (b *Book) NumAssignments() int { return len(b.assignments) }
+
+// AssignmentID returns the ID of the named assignment.
+func (b *Book) AssignmentID(name string) (AssignmentID, bool) {
+	for i := range b.assignments {
+		if b.assignments[i].name == name {
+			return AssignmentID(i), true
+		}
+	}
+	return NoAssignment, false
+}
+
+// Assignment returns assignment id, or nil when id is out of range.
+func (b *Book) Assignment(id AssignmentID) *Assignment {
+	if id < 0 || int(id) >= len(b.assignments) {
+		return nil
+	}
+	return &b.assignments[id]
+}
+
+// NumPlans returns the number of plans.
+func (b *Book) NumPlans() int { return len(b.plans) }
+
+// PlanID returns the ID of the named plan.
+func (b *Book) PlanID(name string) (PlanID, bool) {
+	for i := range b.plans {
+		if b.plans[i].name == name {
+			return PlanID(i), true
+		}
+	}
+	return -1, false
+}
+
+// Plan returns plan id, or nil when id is out of range.
+func (b *Book) Plan(id PlanID) *Plan {
+	if id < 0 || int(id) >= len(b.plans) {
+		return nil
+	}
+	return &b.plans[id]
 }
 
 // NumMarks returns the number of distinct mark names.

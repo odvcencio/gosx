@@ -16,6 +16,9 @@ type Decision struct {
 	weighted  bool
 	chooser   int16 // index into the Book's choosers, or -1
 	otherwise int16 // target when no branch fires; -1 ends
+	// key identifies the decision in weighted draws: its position in the
+	// Spec, so the draw does not depend on memory addresses.
+	key uint32
 }
 
 type branch struct {
@@ -70,7 +73,8 @@ type DecisionSpec struct {
 // compileDecision checks ds. labels maps a label to its index; next is the
 // index that follows the decision (-1 at the end).
 func compileDecision(is *issues, path string, ds *DecisionSpec, labels func(string) int, next int16, rb *ruleBinder) Decision {
-	d := Decision{window: ds.Window, chooser: -1, otherwise: next}
+	rb.decisions++
+	d := Decision{window: ds.Window, chooser: -1, otherwise: next, key: rb.decisions}
 	if !finite(ds.Window) || ds.Window < 0 {
 		is.addf(field(path, "window"), "window %v: want a finite number of seconds, 0 or more", ds.Window)
 		d.window = 0

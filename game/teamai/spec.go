@@ -27,12 +27,26 @@ type Spec struct {
 	// Bands names the lateral bands a frame origin can be in. Frame.Band
 	// indexes this list.
 	Bands []string `json:"bands,omitempty"`
+	// Objects names the tracked bodies in World.Objects, such as a ball.
+	Objects []string `json:"objects,omitempty"`
+	// Signals names the host scalars in World.Signals.
+	Signals []string `json:"signals,omitempty"`
+	// TeamSignals names the per-team host scalars in World.TeamSignals.
+	TeamSignals []string `json:"team_signals,omitempty"`
+	// AgentSignals names the per-agent host scalars in World.AgentSignals.
+	AgentSignals []string `json:"agent_signals,omitempty"`
 	// Landmarks are named points: host-placed, or local to a team's frame.
 	Landmarks []LandmarkSpec `json:"landmarks,omitempty"`
 	// Formations are sets of alignment slots.
 	Formations []FormationSpec `json:"formations,omitempty"`
 	// Paths are timed sequences of segments.
 	Paths []PathSpec `json:"paths,omitempty"`
+	// Rules are named predicates over facts.
+	Rules []RuleSpec `json:"rules,omitempty"`
+	// Assignments are the step machines agents run.
+	Assignments []AssignmentSpec `json:"assignments,omitempty"`
+	// Plans put a team in a formation with an assignment per slot.
+	Plans []PlanSpec `json:"plans,omitempty"`
 }
 
 // LandmarkSpec is a named point. A host landmark takes its position from

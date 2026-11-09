@@ -14,7 +14,7 @@ func near(a, b Vec2) bool {
 
 func mustCompile(t testing.TB, s *Spec) *Book {
 	t.Helper()
-	b, err := Compile(s)
+	b, err := Compile(s, nil)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestFormationValidation(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			s := drillSpec()
 			c.edit(s)
-			_, err := Compile(s)
+			_, err := Compile(s, nil)
 			var se *SpecError
 			if !errors.As(err, &se) {
 				t.Fatalf("Compile error = %v, want a *SpecError", err)

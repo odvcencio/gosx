@@ -55,7 +55,14 @@ func pathBook(t testing.TB, segs ...SegmentSpec) (*Book, *Path) {
 	s := drillSpec()
 	s.Landmarks = []LandmarkSpec{{Name: "flag", Host: true}}
 	s.Paths = []PathSpec{{Name: "p", Segments: segs}}
-	b := mustCompile(t, s)
+	reg := NewRegistry()
+	never := PredicateFunc(func(*Query) bool { return false })
+	_ = reg.Predicate("open", never)
+	_ = reg.Predicate("closed", never)
+	b, err := Compile(s, reg)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
 	return b, b.Path(0)
 }
 
@@ -317,7 +324,7 @@ func TestPathValidation(t *testing.T) {
 			s := drillSpec()
 			s.Landmarks = []LandmarkSpec{{Name: "flag", Host: true}}
 			s.Paths = []PathSpec{{Name: "p", Segments: []SegmentSpec{c.seg}}}
-			_, err := Compile(s)
+			_, err := Compile(s, nil)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("error %v, want it to contain %q", err, c.want)
 			}
@@ -332,7 +339,7 @@ func TestPathTooManyMarks(t *testing.T) {
 		segs = append(segs, SegmentSpec{Kind: "hold", Duration: 1, Mark: "m" + itoa(i)})
 	}
 	s.Paths = []PathSpec{{Name: "p", Segments: segs}}
-	_, err := Compile(s)
+	_, err := Compile(s, nil)
 	if err == nil || !strings.Contains(err.Error(), "paths[0](p).segments[32].mark: more than 32 distinct marks") {
 		t.Fatalf("error %v", err)
 	}

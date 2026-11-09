@@ -13,6 +13,9 @@ type Formation struct {
 	slots []slot
 	// order lists slots so that every From reference comes first.
 	order []int16
+	// nameSlot maps a Book slot-name index (move steps) to a slot here, or
+	// -1.
+	nameSlot []int16
 }
 
 type slot struct {
