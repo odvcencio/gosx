@@ -3564,7 +3564,7 @@
   function wgpuTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
     var descriptor = raw && typeof raw === "object" ? raw : {};
     return {
-      uri: sceneTextAtlasURL(typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim()),
+      uri: (typeof sceneTextAtlasURL === "function" ? sceneTextAtlasURL : String)(typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim()),
       role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
       colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
         ? descriptor.colorSpace.trim().toLowerCase()
