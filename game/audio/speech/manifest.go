@@ -17,7 +17,30 @@ type RenderManifest struct {
 	// text-to-speech voice toward a rising, level or falling finish; audition
 	// the result, because voices differ.
 	Variants map[string]string `json:"variants,omitempty"`
-	Phrases  []RenderPhrase    `json:"phrases"`
+	// Packs declares the voice packs clips are bundled into. A phrase names its
+	// pack; phrases that name none go to the pack "default", which is created
+	// on demand as a bundled pack with no budget.
+	Packs   map[string]PackSpec `json:"packs,omitempty"`
+	Phrases []RenderPhrase      `json:"phrases"`
+}
+
+// Pack modes.
+const (
+	// PackBundled packs ship inside the game and load at boot (for example a
+	// small PA pack).
+	PackBundled = "bundled"
+	// PackStream packs load on demand (a booth voice pack, or a name pack for
+	// one matchup).
+	PackStream = "stream"
+)
+
+// PackSpec describes one voice pack.
+type PackSpec struct {
+	// Mode is "bundled" (default) or "stream".
+	Mode string `json:"mode,omitempty"`
+	// BudgetBytes caps the pack's audio files. Render fails when a pack is
+	// over its budget. Zero means no cap.
+	BudgetBytes int64 `json:"budget_bytes,omitempty"`
 }
 
 // Voice configures one speaker.
@@ -52,6 +75,16 @@ type RenderPhrase struct {
 	// Override replaces the text sent for one variant, for example to spell
 	// out a name the voice mispronounces.
 	Override map[string]string `json:"override,omitempty"`
+	// Pack names the voice pack this phrase ships in. Default "default".
+	Pack string `json:"pack,omitempty"`
+}
+
+// PackName returns the phrase's pack, defaulting to "default".
+func (p RenderPhrase) PackName() string {
+	if p.Pack == "" {
+		return "default"
+	}
+	return p.Pack
 }
 
 // DefaultVariantTemplates are the text templates used when the manifest sets
@@ -102,8 +135,25 @@ func (m *RenderManifest) Validate() error {
 			return fmt.Errorf("speech: variant %q template lacks {text}", name)
 		}
 	}
+	for name, p := range m.Packs {
+		if name == "" || strings.ContainsAny(name, "/\\.") {
+			return fmt.Errorf("speech: pack name %q must be a plain name", name)
+		}
+		if p.Mode != "" && p.Mode != PackBundled && p.Mode != PackStream {
+			return fmt.Errorf("speech: pack %q has unknown mode %q", name, p.Mode)
+		}
+		if p.BudgetBytes < 0 {
+			return fmt.Errorf("speech: pack %q has a negative budget", name)
+		}
+	}
 	seen := map[string]bool{}
+	stems := map[string]string{}
 	for i, p := range m.Phrases {
+		if pk := p.PackName(); strings.ContainsAny(pk, "/\\.") {
+			return fmt.Errorf("speech: phrase %q has pack name %q; use a plain name", p.Key, pk)
+		} else if _, ok := m.Packs[pk]; !ok && p.Pack != "" && len(m.Packs) > 0 {
+			return fmt.Errorf("speech: phrase %q uses undeclared pack %q", p.Key, pk)
+		}
 		if p.Key == "" || strings.TrimSpace(p.Text) == "" {
 			return fmt.Errorf("speech: phrase %d needs a key and text", i)
 		}
@@ -111,6 +161,14 @@ func (m *RenderManifest) Validate() error {
 			return fmt.Errorf("speech: duplicate phrase key %q", p.Key)
 		}
 		seen[p.Key] = true
+		stem := Stem(p.Key)
+		if stem == "" {
+			return fmt.Errorf("speech: phrase key %q has no letters or digits", p.Key)
+		}
+		if other, dup := stems[stem]; dup {
+			return fmt.Errorf("speech: phrase keys %q and %q give the same file stem %q", other, p.Key, stem)
+		}
+		stems[stem] = p.Key
 		if _, ok := m.Voices[p.Voice]; !ok {
 			return fmt.Errorf("speech: phrase %q uses unknown voice %q", p.Key, p.Voice)
 		}
@@ -128,11 +186,31 @@ func (m *RenderManifest) Validate() error {
 	return nil
 }
 
-// Request is one text-to-speech call the manifest implies.
+// Stem turns a fragment key into a file-name stem: lower case, every run of
+// other characters becomes one underscore. "lit/takes the lead" becomes
+// "lit_takes_the_lead". Recorded takes and imported files are named by stem.
+func Stem(key string) string {
+	var b strings.Builder
+	under := true
+	for _, r := range strings.ToLower(key) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			under = false
+		} else if !under {
+			b.WriteByte('_')
+			under = true
+		}
+	}
+	return strings.TrimRight(b.String(), "_")
+}
+
+// Request is one recording the manifest implies: a phrase in one pitch
+// variant, as text for a provider or as a line for a speaker to read.
 type Request struct {
 	Key     string
 	Variant string
 	Voice   string
+	Pack    string
 	// Text is the exact text sent to the provider.
 	Text string
 }
@@ -155,7 +233,7 @@ func (m *RenderManifest) Requests() []Request {
 				}
 				text = strings.ReplaceAll(tpl, "{text}", p.Text)
 			}
-			out = append(out, Request{Key: p.Key, Variant: v, Voice: p.Voice, Text: text})
+			out = append(out, Request{Key: p.Key, Variant: v, Voice: p.Voice, Pack: p.PackName(), Text: text})
 		}
 	}
 	return out
@@ -209,6 +287,25 @@ type VoiceStats struct {
 	Characters      int     `json:"characters"`
 	MeanLUFS        float64 `json:"mean_lufs"`
 	MaxTruePeakDBTP float64 `json:"max_true_peak_dbtp"`
+}
+
+// PackIndex lists the packs a render produced. The runtime reads it to decide
+// what to load at boot (bundled) and what to fetch later (stream).
+type PackIndex struct {
+	Version int         `json:"version"`
+	Packs   []PackEntry `json:"packs"`
+}
+
+// PackEntry is one pack in the index.
+type PackEntry struct {
+	Name string `json:"name"`
+	Mode string `json:"mode"`
+	// Manifest is the pack's clip manifest path, relative to the index.
+	Manifest string `json:"manifest"`
+	// Bytes is the total size of the pack's audio files.
+	Bytes       int64 `json:"bytes"`
+	BudgetBytes int64 `json:"budget_bytes,omitempty"`
+	Clips       int   `json:"clips"`
 }
 
 // ParseClipManifest decodes and validates a clip manifest.

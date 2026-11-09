@@ -123,11 +123,14 @@ func (m *model) CreateGain() audio.GainNode {
 	m.gains = append(m.gains, g)
 	return g
 }
+
 type comp struct{ *node }
 
 func (c *comp) Configure(a, b, d, e float64) {}
 
-func (m *model) CreateCompressor() audio.CompressorNode { return &comp{node: &node{m: m, name: "comp"}} }
+func (m *model) CreateCompressor() audio.CompressorNode {
+	return &comp{node: &node{m: m, name: "comp"}}
+}
 func (m *model) CreateSource(b audio.Buffer) audio.SourceNode {
 	s := &source{node: &node{m: m, name: "source"}, buf: b.(*atlasBuf)}
 	m.sources = append(m.sources, s)
