@@ -11,8 +11,8 @@ function particles(material, extra = {}) {
   return Object.assign({ id: "spray", count: 12, emitter: { kind: "sphere", radius: 1, lifetime: 2 }, material }, extra);
 }
 
-async function renderWebGPU(computeParticles, frames = 4) {
-  const h = await createBoardWebGPUHarness({ fresh: true });
+async function renderWebGPU(computeParticles, frames = 4, fresh = true) {
+  const h = await createBoardWebGPUHarness({ fresh });
   const bundle = makePointsBundle({ id: "anchor", count: 1, positions: [0, 0, 0] });
   bundle.computeParticles = computeParticles;
   for (let i = 0; i < frames; i++) {
@@ -48,9 +48,27 @@ test("WebGPU draws soft sprites in a read-only depth continuation pass", async (
     assert.equal(stats.computeParticleSoftDrawCalls, 1);
     assert.equal(stats.computeParticleDrawCalls, 2, "hard and soft draws both count once");
     const module = h.fake.state.shaderModules.find((m) => m.label === "points-soft-frag");
-    for (const piece of ["soft: vec4f", "@builtin(position) fragCoord", "softParticleFade(in.fragCoord)", "@group(3) @binding(0) var softDepth"]) {
+    for (const piece of ["soft: vec4f", "@builtin(position) fragCoord", "softParticleFade(fragCoord)", "@group(3) @binding(0) var softDepth", "fn pointsShade("]) {
       assert.ok(module.code.includes(piece), "soft fragment carries " + piece);
     }
+  } finally { h.renderer.dispose(); }
+});
+
+test("the shipped WebGPU chunk keeps the soft shader coherent after shader packing", async () => {
+  // The bundle packer renames shader locals and strips indentation. The soft
+  // entry point must still declare the extended uniforms and call the shared
+  // shading function it was packed beside.
+  const h = await renderWebGPU([particles({ blendMode: "alpha", softDistance: 0.5 })], 4, false);
+  try {
+    const soft = h.fake.state.shaderModules.find((m) => m.label === "points-soft-frag");
+    const hard = h.fake.state.shaderModules.find((m) => m.label === "points-frag");
+    assert.ok(soft && hard, "both points fragment modules compile from the shipped chunk");
+    for (const code of [soft.code, hard.code]) {
+      assert.match(code, /fn pointsShade\(in: PointsInput\) -> vec4f/);
+      assert.match(code, /return pointsShade\(in\)|pointsShade\(in\);/);
+    }
+    assert.match(soft.code, /struct PointsUniforms \{[^}]*soft: vec4f,?\s*\}/);
+    assert.doesNotMatch(hard.code, /soft: vec4f/);
   } finally { h.renderer.dispose(); }
 });
 
@@ -108,7 +126,7 @@ test("WebGL2 copies scene depth once and draws soft sprites through the post tar
     h.frame(); await flushAsyncWork(); h.frame(); await flushAsyncWork(); h.frame();
     const soft = h.sources.find((source) => source.includes("softParticleFade"));
     assert.ok(soft, "the soft points program compiles");
-    assert.ok(soft.includes("void pointsMain()") && soft.includes("fragColor.a *= softParticleFade()"));
+    assert.ok(soft.includes("vec4 pointsShade()") && soft.includes("softParticleFade()"));
     assert.equal(h.mount.__gosxScene3DWebGLStats.softDrawCalls, 1);
     const blits = h.gl.ops.filter((op) => op[0] === "blitFramebuffer" && op[1] === h.gl.DEPTH_BUFFER_BIT);
     assert.ok(blits.length >= 1 && blits.length <= 3, "at most one depth copy per frame");

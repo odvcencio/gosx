@@ -32,19 +32,20 @@ function wgpuSoftParticleInverseDistance(entry: any): number {
   return 1 / distance;
 }
 
-// wgpuSoftParticleFragment derives the soft fragment shader from the builtin
-// points fragment, so sprite styles and fog stay identical to hard sprites.
-function wgpuSoftParticleFragment(base: string, frameStructs: string, multisampled: boolean): string {
+// wgpuSoftParticleFragment builds the soft entry point over the shared
+// pointsShade function, so sprite styles and fog match hard sprites exactly.
+// PointsUniforms gains one trailing vec4 for the fade terms.
+function wgpuSoftParticleFragment(multisampled: boolean): string {
   var depthType = multisampled ? "texture_depth_multisampled_2d" : "texture_depth_2d";
-  var source = base
-    .replace("    fogColor: vec4f,\n};", "    fogColor: vec4f,\n    soft: vec4f,\n};")
-    .replace("struct PointsInput {\n", "struct PointsInput {\n    @builtin(position) fragCoord: vec4f,\n")
-    .replace("    return vec4f(color, alpha);\n}", "    return vec4f(color, alpha * softParticleFade(in.fragCoord));\n}");
   return [
-    frameStructs,
+    WGSL_FRAME_STRUCTS,
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "struct PointsUniforms {",
+    WGSL_POINTS_UNIFORM_FIELDS,
+    "    soft: vec4f,",
+    "};",
     "@group(3) @binding(0) var softDepth: " + depthType + ";",
-    source,
+    WGSL_POINTS_SHADE,
     "fn softParticleViewDistance(z: f32) -> f32 {",
     "    let m = frame.projMatrix;",
     "    return -(m[3][2] - z * m[3][3]) / (z * m[2][3] - m[2][2]);",
@@ -55,20 +56,25 @@ function wgpuSoftParticleFragment(base: string, frameStructs: string, multisampl
     "    let gap = softParticleViewDistance(sceneDepth) - softParticleViewDistance(fragCoord.z);",
     "    return clamp(gap * points.soft.x, 0.0, 1.0);",
     "}",
+    "@fragment fn fragmentMain(in: PointsInput, @builtin(position) fragCoord: vec4f) -> @location(0) vec4f {",
+    "    let shaded = pointsShade(in);",
+    "    return vec4f(shaded.rgb, shaded.a * softParticleFade(fragCoord));",
+    "}",
   ].join("\n");
 }
 
 // wgpuCreateSoftParticles owns the soft pipelines and depth bind groups for one
-// renderer. resources() returns the renderer's live device and layouts; it is
-// read lazily, so a scene without soft sprites allocates nothing.
+// renderer. resources() returns the renderer's live device, layouts, scratch
+// uniforms and cache helpers; it is read lazily, so a scene without soft
+// sprites allocates nothing.
 function wgpuCreateSoftParticles(resources: () => any) {
   var layouts: any = {}, modules: any = {}, pipelines: any = {};
   var group: any = null, groupView: any = null, groupSamples = 0;
   var scratch = new Float32Array(SCENE_WEBGPU_SOFT_POINTS_FLOATS);
-  function layoutFor(samples: number) {
+  var model = new Float32Array(16), tilt = new Float32Array(16), spin = new Float32Array(16);
+  function layoutFor(r: any, samples: number) {
     var key = samples > 1 ? "ms" : "single";
     if (layouts[key]) return layouts[key];
-    var r = resources();
     var depthLayout = r.device.createBindGroupLayout({ label: "gosx-soft-particle-depth", entries: [
       { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: samples > 1 } },
     ] });
@@ -78,23 +84,36 @@ function wgpuCreateSoftParticles(resources: () => any) {
     };
     return layouts[key];
   }
-  function moduleFor(samples: number) {
-    var key = samples > 1 ? "ms" : "single";
-    if (!modules[key]) {
-      var r = resources();
-      modules[key] = r.device.createShaderModule({ label: "points-soft-frag", code: wgpuSoftParticleFragment(r.fragmentSource, r.frameStructs, samples > 1) });
-    }
-    return modules[key];
+  function pipelineFor(r: any, blendMode: string) {
+    var key = blendMode + "|" + r.format + "|" + r.samples;
+    if (pipelines[key]) return pipelines[key];
+    var moduleKey = r.samples > 1 ? "ms" : "single";
+    if (!modules[moduleKey]) modules[moduleKey] = r.device.createShaderModule({ label: "points-soft-frag", code: wgpuSoftParticleFragment(r.samples > 1) });
+    pipelines[key] = wgpuCreatePointsPipeline(r.device, layoutFor(r, r.samples).pipeline, r.vertex, modules[moduleKey], blendMode, false, r.format, r.samples);
+    return pipelines[key];
+  }
+  function depthGroup(r: any, depthView: any) {
+    if (group && groupView === depthView && groupSamples === r.samples) return group;
+    group = r.device.createBindGroup({ label: "gosx-soft-particle-depth", layout: layoutFor(r, r.samples).depth, entries: [
+      { binding: 0, resource: depthView },
+    ] });
+    groupView = depthView; groupSamples = r.samples;
+    return group;
+  }
+  function softSystem(record: any) {
+    var system = record && record.system;
+    if (!system || !system.renderBuffer || system.count <= 0) return null;
+    if (typeof system.isReady === "function" && !system.isReady()) return null;
+    return wgpuSoftParticleInverseDistance(system.entry) > 0 ? system : null;
   }
   return {
     // plan reports whether this frame needs the soft continuation pass.
     plan: function(records: any[], depthView: any): boolean {
-      if (!depthView || !Array.isArray(records)) return false;
-      for (var i = 0; i < records.length; i++) {
-        var system = records[i] && records[i].system;
-        if (system && system.count > 0 && wgpuSoftParticleInverseDistance(system.entry) > 0) return true;
-      }
-      return false;
+      return !!depthView && Array.isArray(records) && records.some(function(record: any) { return !!softSystem(record); });
+    },
+    // hard returns the records the main pass draws: everything not soft.
+    hard: function(records: any[]) {
+      return records.filter(function(record: any) { return !softSystem(record); });
     },
     // beginPass ends the main pass and reopens its targets with read-only depth.
     beginPass: function(encoder: any, pass: any, descriptor: any) {
@@ -108,38 +127,41 @@ function wgpuCreateSoftParticles(resources: () => any) {
         depthStencilAttachment: { view: descriptor.depthStencilAttachment.view, depthReadOnly: true },
       });
     },
-    pipeline: function(blendMode: string, targetFormat: string, samples: number) {
-      var key = blendMode + "|" + targetFormat + "|" + samples;
-      if (!pipelines[key]) {
-        var r = resources();
-        pipelines[key] = wgpuCreatePointsPipeline(r.device, layoutFor(samples).pipeline, r.vertex, moduleFor(samples), blendMode, false, targetFormat, samples);
+    // draw renders every soft system into the continuation pass.
+    draw: function(pass: any, records: any[], environment: any, timeSeconds: number, depthView: any) {
+      var r = resources();
+      var stats = { computeParticleDrawEntries: 0, computeParticleDrawInstances: 0, computeParticleDrawCalls: 0 };
+      var env = environment || {};
+      var fogDensity = sceneNumber(env.fogDensity, 0);
+      var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+      for (var i = 0; i < records.length; i++) {
+        var system = softSystem(records[i]);
+        if (!system) continue;
+        var entry = system.entry, material = entry.material;
+        wgpuComputeParticleModelMatrix(entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {}, timeSeconds, model, tilt, spin);
+        var uniforms = wgpuComputeParticlePointsUniforms(r.scratchF, r.scratchU, entry, material, tilt, model, fogDensity, fogColorRGBA);
+        scratch.set(uniforms.subarray(0, 32), 0);
+        scratch[32] = wgpuSoftParticleInverseDistance(entry);
+        var points = r.bindGroup(system, "_gosxWGPUCPSoftPointsBG", r.points, [
+          { binding: 0, resource: { buffer: r.buffer(system, scratch) } },
+          { binding: 1, resource: { buffer: system.renderBuffer } },
+        ]);
+        pass.setPipeline(wgpuRequirePipeline(pipelineFor(r, material.blendMode.toLowerCase())));
+        pass.setBindGroup(1, r.materialGroup(), [0]);
+        pass.setBindGroup(2, points);
+        pass.setBindGroup(3, depthGroup(r, depthView));
+        pass.draw(6, system.count);
+        stats.computeParticleDrawEntries += 1;
+        stats.computeParticleDrawInstances += system.count;
+        stats.computeParticleDrawCalls += 1;
       }
-      return pipelines[key];
+      return stats;
     },
-    depthGroup: function(depthView: any, samples: number) {
-      if (group && groupView === depthView && groupSamples === samples) return group;
-      group = resources().device.createBindGroup({ label: "gosx-soft-particle-depth", layout: layoutFor(samples).depth, entries: [
-        { binding: 0, resource: depthView },
-      ] });
-      groupView = depthView; groupSamples = samples;
-      return group;
-    },
-    // uniforms copies the 32-float points uniforms and appends the fade terms.
-    uniforms: function(pointsUniforms: Float32Array, inverseDistance: number) {
-      scratch.set(pointsUniforms.subarray(0, 32), 0);
-      scratch[32] = inverseDistance; scratch[33] = 0; scratch[34] = 0; scratch[35] = 0;
-      return scratch;
-    },
-    reset: function() { layouts = {}; modules = {}; pipelines = {}; group = null; groupView = null; groupSamples = 0; },
   };
 }
 
 // wgpuSoftParticleMergeStats adds the soft pass draw counters to the frame.
 function wgpuSoftParticleMergeStats(frameStats: any, softStats: any) {
-  // The soft pass walks the same records, so its skip counters repeat the
-  // main pass and are left out.
-  for (var key in softStats) {
-    if (typeof softStats[key] === "number" && key.indexOf("Skipped") < 0) frameStats[key] = (frameStats[key] || 0) + softStats[key];
-  }
-  frameStats.computeParticleSoftDrawCalls = softStats.computeParticleDrawCalls || 0;
+  for (var key in softStats) frameStats[key] = (frameStats[key] || 0) + softStats[key];
+  frameStats.computeParticleSoftDrawCalls = softStats.computeParticleDrawCalls;
 }

@@ -8,8 +8,9 @@
 // copy. A scene drawn straight to the canvas keeps hard sprites (the default
 // framebuffer depth format is not guaranteed to match).
 //
-// The fade shader wraps the builtin points fragment shader rather than editing
-// its expressions, because the bundle builder compacts WebGL shader text.
+// The fade shader reuses the shared pointsShade function from
+// the builtin points shaders; the bundle packer renames shader locals, so no
+// shader text is patched at runtime.
 
 // sceneWebGLSoftParticleInverseDistance returns 1 / softDistance for a compute
 // points entry that may soften, else 0.
@@ -23,27 +24,29 @@ function sceneWebGLSoftParticleInverseDistance(entry: any): number {
   return 1 / distance;
 }
 
-function sceneWebGLSoftParticleFragment(base: string): string {
-  var fade = [
-    "uniform highp sampler2D u_softDepth;",
-    "uniform float u_softInverse;",
-    "uniform mat4 u_projectionMatrix;",
-    "float softParticleViewDistance(float z) {",
-    "    mat4 m = u_projectionMatrix;",
-    "    return -(m[3][2] - z * m[3][3]) / (z * m[2][3] - m[2][2]);",
-    "}",
-    "float softParticleFade() {",
-    "    if (u_softInverse <= 0.0) return 1.0;",
-    "    float sceneDepth = texelFetch(u_softDepth, ivec2(gl_FragCoord.xy), 0).r * 2.0 - 1.0;",
-    "    float spriteDepth = gl_FragCoord.z * 2.0 - 1.0;",
-    "    float gap = softParticleViewDistance(sceneDepth) - softParticleViewDistance(spriteDepth);",
-    "    return clamp(gap * u_softInverse, 0.0, 1.0);",
-    "}",
-  ].join("\n");
-  return base.replace("out vec4 fragColor;", "out vec4 fragColor;\n" + fade)
-    .replace("void main() {", "void pointsMain() {")
-    + "\nvoid main() { pointsMain(); fragColor.a *= softParticleFade(); }\n";
-}
+// SCENE_POINTS_SOFT_FRAGMENT_SOURCE wraps the shared pointsShade function, so
+// sprite styles and fog match hard sprites exactly.
+const SCENE_POINTS_SOFT_FRAGMENT_SOURCE = [
+  "#version 300 es",
+  "precision highp float;",
+  "precision highp int;",
+  SCENE_POINTS_SHADE_GLSL,
+  "uniform highp sampler2D u_softDepth;",
+  "uniform float u_softInverse;",
+  "uniform mat4 u_projectionMatrix;",
+  "float softParticleViewDistance(float z) {",
+  "    mat4 m = u_projectionMatrix;",
+  "    return -(m[3][2] - z * m[3][3]) / (z * m[2][3] - m[2][2]);",
+  "}",
+  "float softParticleFade() {",
+  "    if (u_softInverse <= 0.0) return 1.0;",
+  "    float sceneDepth = texelFetch(u_softDepth, ivec2(gl_FragCoord.xy), 0).r * 2.0 - 1.0;",
+  "    float spriteDepth = gl_FragCoord.z * 2.0 - 1.0;",
+  "    float gap = softParticleViewDistance(sceneDepth) - softParticleViewDistance(spriteDepth);",
+  "    return clamp(gap * u_softInverse, 0.0, 1.0);",
+  "}",
+  "void main() { vec4 shaded = pointsShade(); fragColor = vec4(shaded.rgb, shaded.a * softParticleFade()); }",
+].join("\n");
 
 // createSceneWebGLSoftParticles owns the soft program and the depth copy for
 // one PBR renderer.
@@ -88,7 +91,7 @@ function createSceneWebGLSoftParticles(gl: any) {
   }
   function ensureProgram() {
     if (program || failed) return program;
-    program = scenePBRCreateShaderProgram(gl, SCENE_POINTS_VERTEX_SOURCE, sceneWebGLSoftParticleFragment(SCENE_POINTS_FRAGMENT_SOURCE), "Soft points shader", function(linked: any, vertexShader: any, fragmentShader: any) {
+    program = scenePBRCreateShaderProgram(gl, SCENE_POINTS_VERTEX_SOURCE, SCENE_POINTS_SOFT_FRAGMENT_SOURCE, "Soft points shader", function(linked: any, vertexShader: any, fragmentShader: any) {
       var info: any = scenePointsProgramInfo(gl, linked, vertexShader, fragmentShader);
       info.uniforms.softDepth = gl.getUniformLocation(linked, "u_softDepth");
       info.uniforms.softInverse = gl.getUniformLocation(linked, "u_softInverse");

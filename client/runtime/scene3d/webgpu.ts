@@ -2753,259 +2753,6 @@
   ].join("\n");
 
   // -----------------------------------------------------------------------
-  // Points Vertex Shader (WGSL) -- instanced billboard quads
-  // -----------------------------------------------------------------------
-
-  var WGSL_POINTS_VERTEX = [
-    WGSL_FRAME_STRUCTS,
-    "",
-    "struct ParticleInstance {",
-    "    position: vec3f,",
-    "    size: f32,",
-    "    color: vec4f,",
-    "};",
-    "",
-    "struct PointsUniforms {",
-    "    modelMatrix: mat4x4f,",
-    "    defaultColorAndSize: vec4f,",
-    "    flags: vec4u,",
-    "    params: vec4f,",
-    "    fogColor: vec4f,",
-    "};",
-    "",
-    "struct PointsOutput {",
-    "    @builtin(position) clipPos: vec4f,",
-    "    @location(0) @interpolate(flat) color: vec3f,",
-    "    @location(1) @interpolate(flat) fogFactor: f32,",
-    "    @location(2) @interpolate(flat) alpha: f32,",
-    "    @location(3) pointCoord: vec2f,",
-    "    @location(4) @interpolate(flat) pointSize: f32,",
-    "};",
-    "",
-    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
-    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
-    "@group(2) @binding(1) var<storage, read> particles: array<ParticleInstance>;",
-    "",
-    // Unit quad: 6 vertices for 2 triangles.
-    "const quadPos = array<vec2f, 6>(",
-    "    vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(-0.5, 0.5),",
-    "    vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5),",
-    ");",
-    "",
-    "@vertex fn vertexMain(",
-    "    @builtin(vertex_index) vertexIndex: u32,",
-    "    @builtin(instance_index) instanceIndex: u32,",
-    ") -> PointsOutput {",
-    "    let quad = quadPos[vertexIndex];",
-    "    let p = particles[instanceIndex];",
-    "",
-    "    let worldPos = (points.modelMatrix * vec4f(p.position, 1.0)).xyz;",
-    "    let viewPos = frame.viewMatrix * vec4f(worldPos, 1.0);",
-    "",
-    // Compute point size with optional attenuation.
-    "    var rawSize = p.size;",
-    "    if (points.flags.y == 0u) { rawSize = points.defaultColorAndSize.w; }",
-    "",
-    "    var pixelSize: f32;",
-    "    if (points.flags.z != 0u) {",
-    "        pixelSize = max(rawSize * (frame.viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
-    "    } else {",
-    "        pixelSize = max(rawSize, 1.0);",
-    "    }",
-    "    let minPixelSize = max(points.fogColor.a, 0.0);",
-    "    if (minPixelSize > 0.0) {",
-    "        pixelSize = max(pixelSize, minPixelSize);",
-    "    }",
-    "    if (points.params.w > 0.0) {",
-    "        pixelSize = min(pixelSize, points.params.w);",
-    "    }",
-    "",
-    // Billboard: offset in clip space by quad * pixelSize.
-    "    let clipPos = frame.projMatrix * viewPos;",
-    "    let viewport = max(vec2f(frame.viewportWidth, frame.viewportHeight), vec2f(1.0));",
-    "    let ndcOffsetX = quad.x * pixelSize / viewport.x * clipPos.w * 2.0;",
-    "    let ndcOffsetY = quad.y * pixelSize / viewport.y * clipPos.w * 2.0;",
-    "",
-    "    var out: PointsOutput;",
-    "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
-    "",
-    // Color.
-    "    if (points.flags.x != 0u) {",
-    "        out.color = p.color.rgb;",
-    "    } else {",
-    "        out.color = points.defaultColorAndSize.rgb;",
-    "    }",
-    "    out.alpha = p.color.a * points.params.x;",
-    "    out.pointCoord = quad + vec2f(0.5, 0.5);",
-    "    out.pointSize = pixelSize;",
-    "",
-    // Fog.
-    "    if (points.params.y != 0.0) {",
-    "        let dist = length(viewPos.xyz);",
-    "        out.fogFactor = clamp(exp(-points.params.z * points.params.z * dist * dist), 0.0, 1.0);",
-    "    } else {",
-    "        out.fogFactor = 1.0;",
-    "    }",
-    "",
-    "    return out;",
-    "}",
-  ].join("\n");
-
-  var WGSL_POINTS_INSTANCED_VERTEX = [
-    WGSL_FRAME_STRUCTS,
-    "",
-    "struct PointsUniforms {",
-    "    modelMatrix: mat4x4f,",
-    "    defaultColorAndSize: vec4f,",
-    "    flags: vec4u,",
-    "    params: vec4f,",
-    "    fogColor: vec4f,",
-    "};",
-    "",
-    "struct PointsInput {",
-    "    @location(0) position: vec3f,",
-    "    @location(1) size: f32,",
-    "    @location(2) color: vec4f,",
-    "};",
-    "",
-    "struct PointsOutput {",
-    "    @builtin(position) clipPos: vec4f,",
-    "    @location(0) @interpolate(flat) color: vec3f,",
-    "    @location(1) @interpolate(flat) fogFactor: f32,",
-    "    @location(2) @interpolate(flat) alpha: f32,",
-    "    @location(3) pointCoord: vec2f,",
-    "    @location(4) @interpolate(flat) pointSize: f32,",
-    "};",
-    "",
-    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
-    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
-    "",
-    // Unit quad: 6 vertices for 2 triangles.
-    "const quadPos = array<vec2f, 6>(",
-    "    vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(-0.5, 0.5),",
-    "    vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5),",
-    ");",
-    "",
-    "@vertex fn vertexMain(",
-    "    @builtin(vertex_index) vertexIndex: u32,",
-    "    in: PointsInput,",
-    ") -> PointsOutput {",
-    "    let quad = quadPos[vertexIndex];",
-    "",
-    "    let worldPos = (points.modelMatrix * vec4f(in.position, 1.0)).xyz;",
-    "    let viewPos = frame.viewMatrix * vec4f(worldPos, 1.0);",
-    "",
-    // Compute point size with optional attenuation.
-    "    var rawSize = in.size;",
-    "    if (points.flags.y == 0u) { rawSize = points.defaultColorAndSize.w; }",
-    "",
-    "    var pixelSize: f32;",
-    "    if (points.flags.z != 0u) {",
-    "        pixelSize = max(rawSize * (frame.viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
-    "    } else {",
-    "        pixelSize = max(rawSize, 1.0);",
-    "    }",
-    "    let minPixelSize = max(points.fogColor.a, 0.0);",
-    "    if (minPixelSize > 0.0) {",
-    "        pixelSize = max(pixelSize, minPixelSize);",
-    "    }",
-    "    if (points.params.w > 0.0) {",
-    "        pixelSize = min(pixelSize, points.params.w);",
-    "    }",
-    "",
-    // Billboard: offset in clip space by quad * pixelSize.
-    "    let clipPos = frame.projMatrix * viewPos;",
-    "    let viewport = max(vec2f(frame.viewportWidth, frame.viewportHeight), vec2f(1.0));",
-    "    let ndcOffsetX = quad.x * pixelSize / viewport.x * clipPos.w * 2.0;",
-    "    let ndcOffsetY = quad.y * pixelSize / viewport.y * clipPos.w * 2.0;",
-    "",
-    "    var out: PointsOutput;",
-    "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
-    "",
-    // Color.
-    "    if (points.flags.x != 0u) {",
-    "        out.color = in.color.rgb;",
-    "    } else {",
-    "        out.color = points.defaultColorAndSize.rgb;",
-    "    }",
-    "    out.alpha = in.color.a * points.params.x;",
-    "    out.pointCoord = quad + vec2f(0.5, 0.5);",
-    "    out.pointSize = pixelSize;",
-    "",
-    // Fog.
-    "    if (points.params.y != 0.0) {",
-    "        let dist = length(viewPos.xyz);",
-    "        out.fogFactor = clamp(exp(-points.params.z * points.params.z * dist * dist), 0.0, 1.0);",
-    "    } else {",
-    "        out.fogFactor = 1.0;",
-    "    }",
-    "",
-    "    return out;",
-    "}",
-  ].join("\n");
-
-  // -----------------------------------------------------------------------
-  // Points Fragment Shader (WGSL)
-  // -----------------------------------------------------------------------
-
-  var WGSL_POINTS_FRAGMENT = [
-    "struct PointsUniforms {",
-    "    modelMatrix: mat4x4f,",
-    "    defaultColorAndSize: vec4f,",
-    "    flags: vec4u,",
-    "    params: vec4f,",
-    "    fogColor: vec4f,",
-    "};",
-    "",
-    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
-    "",
-    "struct PointsInput {",
-    "    @location(0) @interpolate(flat) color: vec3f,",
-    "    @location(1) @interpolate(flat) fogFactor: f32,",
-    "    @location(2) @interpolate(flat) alpha: f32,",
-    "    @location(3) pointCoord: vec2f,",
-    "    @location(4) @interpolate(flat) pointSize: f32,",
-    "};",
-    "",
-    "@fragment fn fragmentMain(in: PointsInput) -> @location(0) vec4f {",
-    "    var color = in.color;",
-    "    var alpha = in.alpha;",
-    "    if (points.flags.w == 1u) {",
-    "        let centered = in.pointCoord - vec2f(0.5, 0.5);",
-    "        let radial = length(centered);",
-    "        let square = max(abs(centered.x), abs(centered.y));",
-    "        let focus = clamp((in.pointSize - 1.0) / 10.0, 0.0, 1.0);",
-    "        let coreRadius = mix(0.49, 0.18, focus);",
-    "        let core = 1.0 - smoothstep(coreRadius, coreRadius + 0.05, square);",
-    "        let halo = (1.0 - smoothstep(0.12, 0.72, radial)) * focus;",
-    "        let streakX = 1.0 - smoothstep(0.02, 0.16, abs(centered.x));",
-    "        let streakY = 1.0 - smoothstep(0.02, 0.16, abs(centered.y));",
-    "        let streak = max(streakX, streakY) * focus;",
-    "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0) * in.alpha;",
-    "        color = mix(color, vec3f(1.0, 1.0, 1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
-    "    } else if (points.flags.w == 2u) {",
-    "        let centered = in.pointCoord - vec2f(0.5, 0.5);",
-    "        let radial = length(centered) * 2.0;",
-    "        if (radial > 1.0) {",
-    "            discard;",
-    "        }",
-    "        let sizeFocus = clamp((in.pointSize - 4.0) / 48.0, 0.0, 1.0);",
-    "        let falloff = mix(4.2, 3.2, sizeFocus);",
-    "        let core = exp(-radial * radial * falloff);",
-    "        let edgeFeather = 1.0 - smoothstep(0.78, 1.0, radial);",
-    "        alpha = core * edgeFeather * in.alpha;",
-    "    }",
-    "    if (alpha <= 0.003) {",
-    "        discard;",
-    "    }",
-    "    if (points.params.y != 0.0) {",
-    "        color = mix(points.fogColor.rgb, color, in.fogFactor);",
-    "    }",
-    "    return vec4f(color, alpha);",
-    "}",
-  ].join("\n");
-
-  // -----------------------------------------------------------------------
   // Post-processing shaders (WGSL)
   // -----------------------------------------------------------------------
 
@@ -7344,8 +7091,10 @@
     var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
     var softParticles = wgpuCreateSoftParticles(function() {
-      return { device: device, frame: frameBindGroupLayout, material: materialBindGroupLayout, points: pointsBindGroupLayout,
-        vertex: pointsVertexModule, fragmentSource: WGSL_POINTS_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS };
+      return { device: device, frame: frameBindGroupLayout, material: materialBindGroupLayout, points: pointsBindGroupLayout, vertex: pointsVertexModule,
+        scratchF: pointsUniformScratchF, scratchU: pointsUniformScratchU, format: targetFormat, samples: activeSampleCount, bindGroup: wgpuCachedBindGroup,
+        buffer: function(owner: any, data: Float32Array) { return wgpuCachedTrackedBuffer(owner, "_gosxWGPUSoftPointsUniformBuffer", data, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true); },
+        materialGroup: function() { return createMaterialBindGroup(null, false, defaultMaterialOwner); } };
     });
     var waterSystems = new Map();
     var waterSystemRetireSerial = 0;
@@ -17528,9 +17277,19 @@
       return stats;
     }
 
-    // softMode: 0 draws every system hard, 1 skips soft systems for the soft
-    // continuation pass, 2 draws only soft systems inside that pass.
-    function drawComputeParticleEntries(pass: any, records: any[], environment: any, timeSeconds: number, softMode: number = 0, softDepthView: any = null) {
+    // drawComputeParticlePasses draws hard systems in the main pass, then soft
+    // systems in the read-only depth continuation pass when any exist.
+    function drawComputeParticlePasses(encoder: any, pass: any, descriptor: any, frameGroup: any, records: any[], environment: any, timeSeconds: number, depthView: any) {
+      var soft = softParticles.plan(records, depthView);
+      Object.assign(frameStats, drawComputeParticleEntries(pass, soft ? softParticles.hard(records) : records, environment, timeSeconds));
+      if (!soft) return pass;
+      pass = softParticles.beginPass(encoder, pass, descriptor);
+      pass.setBindGroup(0, frameGroup);
+      wgpuSoftParticleMergeStats(frameStats, softParticles.draw(pass, records, environment, timeSeconds, depthView));
+      return pass;
+    }
+
+    function drawComputeParticleEntries(pass: any, records: any[], environment: any, timeSeconds: number) {
       var stats = {
         computeParticleDrawEntries: 0,
         computeParticleDrawInstances: 0,
@@ -17569,70 +17328,9 @@
         var material = entry.material && typeof entry.material === "object" ? entry.material : {};
         var emitter = entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
 
-        var px = sceneNumber(emitter.x, 0);
-        var py = sceneNumber(emitter.y, 0);
-        var pz = sceneNumber(emitter.z, 0);
-        var hasSpin = sceneNumber(emitter.spinX, 0) !== 0 || sceneNumber(emitter.spinY, 0) !== 0 || sceneNumber(emitter.spinZ, 0) !== 0;
+        wgpuComputeParticleModelMatrix(emitter, timeSeconds, _computeModelMat, _computeTilt, _computeSpin);
 
-        if (hasSpin) {
-          var spx = sceneNumber(emitter.spinX, 0) * timeSeconds;
-          var spy = sceneNumber(emitter.spinY, 0) * timeSeconds;
-          var spz = sceneNumber(emitter.spinZ, 0) * timeSeconds;
-          var csx = Math.cos(spx), ssx = Math.sin(spx);
-          var csy = Math.cos(spy), ssy = Math.sin(spy);
-          var csz = Math.cos(spz), ssz = Math.sin(spz);
-          _computeSpin[0] = csy*csz; _computeSpin[4] = ssx*ssy*csz-csx*ssz; _computeSpin[8]  = csx*ssy*csz+ssx*ssz; _computeSpin[12] = 0;
-          _computeSpin[1] = csy*ssz; _computeSpin[5] = ssx*ssy*ssz+csx*csz; _computeSpin[9]  = csx*ssy*ssz-ssx*csz; _computeSpin[13] = 0;
-          _computeSpin[2] = -ssy;    _computeSpin[6] = ssx*csy;             _computeSpin[10] = csx*csy;             _computeSpin[14] = 0;
-          _computeSpin[3] = 0;       _computeSpin[7] = 0;                   _computeSpin[11] = 0;                   _computeSpin[15] = 1;
-
-          var rx = sceneNumber(emitter.rotationX, 0);
-          var ry = sceneNumber(emitter.rotationY, 0);
-          var rz = sceneNumber(emitter.rotationZ, 0);
-          var cxr = Math.cos(rx), sxr = Math.sin(rx);
-          var cyr = Math.cos(ry), syr = Math.sin(ry);
-          var czr = Math.cos(rz), szr = Math.sin(rz);
-          _computeTilt[0] = cyr*czr; _computeTilt[4] = sxr*syr*czr-cxr*szr; _computeTilt[8]  = cxr*syr*czr+sxr*szr; _computeTilt[12] = px;
-          _computeTilt[1] = cyr*szr; _computeTilt[5] = sxr*syr*szr+cxr*czr; _computeTilt[9]  = cxr*syr*szr-sxr*czr; _computeTilt[13] = py;
-          _computeTilt[2] = -syr;    _computeTilt[6] = sxr*cyr;             _computeTilt[10] = cxr*cyr;             _computeTilt[14] = pz;
-          _computeTilt[3] = 0;       _computeTilt[7] = 0;                   _computeTilt[11] = 0;                   _computeTilt[15] = 1;
-
-          sceneMat4MultiplyInto(_computeModelMat, _computeTilt, _computeSpin);
-        } else {
-          var rx2 = sceneNumber(emitter.rotationX, 0);
-          var ry2 = sceneNumber(emitter.rotationY, 0);
-          var rz2 = sceneNumber(emitter.rotationZ, 0);
-          var cxr2 = Math.cos(rx2), sxr2 = Math.sin(rx2);
-          var cyr2 = Math.cos(ry2), syr2 = Math.sin(ry2);
-          var czr2 = Math.cos(rz2), szr2 = Math.sin(rz2);
-          _computeModelMat[0] = cyr2*czr2; _computeModelMat[4] = sxr2*syr2*czr2-cxr2*szr2; _computeModelMat[8]  = cxr2*syr2*czr2+sxr2*szr2; _computeModelMat[12] = px;
-          _computeModelMat[1] = cyr2*szr2; _computeModelMat[5] = sxr2*syr2*szr2+cxr2*czr2; _computeModelMat[9]  = cxr2*syr2*szr2-sxr2*czr2; _computeModelMat[13] = py;
-          _computeModelMat[2] = -syr2;     _computeModelMat[6] = sxr2*cyr2;                _computeModelMat[10] = cxr2*cyr2;                _computeModelMat[14] = pz;
-          _computeModelMat[3] = 0;         _computeModelMat[7] = 0;                        _computeModelMat[11] = 0;                        _computeModelMat[15] = 1;
-        }
-
-        pointsUniformScratchF.fill(0);
-        var puF = pointsUniformScratchF;
-        var puU = pointsUniformScratchU;
-        puF.set(sceneWebGPUPointModelMatrix(entry, _computeTilt, _computeModelMat), 0);
-
-        var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
-        puF[16] = defaultColorRGBA[0];
-        puF[17] = defaultColorRGBA[1];
-        puF[18] = defaultColorRGBA[2];
-        puF[19] = sceneNumber(material.size, 1);
-        puU[20] = 1;
-        puU[21] = 1;
-        puU[22] = material.attenuation ? 1 : 0;
-        puU[23] = scenePointStyleCode(material.style);
-        puF[24] = 1;
-        puF[25] = fogDensity > 0 ? 1 : 0;
-        puF[26] = fogDensity;
-        puF[27] = sceneNumber(material.maxPixelSize, 0);
-        puF[28] = fogColorRGBA[0];
-        puF[29] = fogColorRGBA[1];
-        puF[30] = fogColorRGBA[2];
-        puF[31] = sceneNumber(material.minPixelSize, 0);
+        var puF = wgpuComputeParticlePointsUniforms(pointsUniformScratchF, pointsUniformScratchU, entry, material, _computeTilt, _computeModelMat, fogDensity, fogColorRGBA);
 
         var blendMode = typeof material.blendMode === "string" ? material.blendMode.toLowerCase() : "";
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
@@ -17643,11 +17341,7 @@
         // validates once, memoized on the entry.
         var hasAuthoredRender = (typeof entry.renderVertexWGSL === "string" && entry.renderVertexWGSL) &&
                                 (typeof entry.renderFragmentWGSL === "string" && entry.renderFragmentWGSL);
-        var softInverse = softMode ? wgpuSoftParticleInverseDistance(entry) : 0;
-        if (softMode === 1 ? softInverse > 0 : softMode === 2 && !(softInverse > 0)) continue;
-        var pointsUniformBuffer = softMode === 2
-          ? wgpuCachedTrackedBuffer(system, "_gosxWGPUSoftPointsUniformBuffer", softParticles.uniforms(puF, softInverse), GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true)
-          : ensurePointsUniformGPUBuffer(system, puF);
+        var pointsUniformBuffer = ensurePointsUniformGPUBuffer(system, puF);
         var cpSystemID = (entry && typeof entry.id === "string") ? entry.id : ("cp-" + i);
         if (hasAuthoredRender) {
           stats.computeParticleAuthoredCandidateEntries += 1;
@@ -17680,15 +17374,14 @@
           pass.setBindGroup(2, pointsBG);
         } else {
           // Builtin render path.
-          pointsBG = wgpuCachedBindGroup(system, softMode === 2 ? "_gosxWGPUCPSoftPointsBG" : "_gosxWGPUCPPointsBG", pointsBindGroupLayout, [
+          pointsBG = wgpuCachedBindGroup(system, "_gosxWGPUCPPointsBG", pointsBindGroupLayout, [
             { binding: 0, resource: { buffer: pointsUniformBuffer } },
             { binding: 1, resource: { buffer: system.renderBuffer } },
           ]);
-          pipeline = softMode === 2 ? softParticles.pipeline(validBlend, targetFormat, activeSampleCount) : getPointsPipeline(validBlend, depthWrite);
+          pipeline = getPointsPipeline(validBlend, depthWrite);
           pass.setPipeline(wgpuRequirePipeline(pipeline));
           pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner), [0]);
           pass.setBindGroup(2, pointsBG);
-          if (softMode === 2) pass.setBindGroup(3, softParticles.depthGroup(softDepthView, activeSampleCount));
         }
         pass.draw(6, system.count);
         stats.computeParticleDrawEntries += 1;
@@ -19339,13 +19032,7 @@
         var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG, [0]);
         Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, selenaFrame.time));
-        var softParticlePass = softParticles.plan(computeParticleRecords, mainDepthTargetView);
-        Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds, softParticlePass ? 1 : 0));
-        if (softParticlePass) {
-          mainPass = softParticles.beginPass(encoder, mainPass, mainPassDescriptor);
-          mainPass.setBindGroup(0, frameBindGroup);
-          wgpuSoftParticleMergeStats(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds, 2, mainDepthTargetView));
-        }
+        mainPass = drawComputeParticlePasses(encoder, mainPass, mainPassDescriptor, frameBindGroup, computeParticleRecords, bundle.environment, frameTimeSeconds, mainDepthTargetView);
       }
 
       mainPass.end();
@@ -19477,7 +19164,6 @@
       boardGlyphAtlases.clear();
       boardTextOwners.clear();
       disposeComputeParticleSystems();
-      softParticles.reset();
       disposeWaterSystems();
       for (const record of instancedCullSystems.values()) {
         if (record && record.system && typeof record.system.dispose === "function") {
