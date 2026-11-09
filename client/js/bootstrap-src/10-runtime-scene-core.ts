@@ -5204,10 +5204,58 @@
     return selected;
   }
 
-  function sceneCreateFloat32Builder() {
+  function sceneCreateFloat32Builder(slot) {
     // World-baked attributes can be large. Write them directly into typed
     // bundle-owned storage instead of staging boxed numbers in JS arrays.
-    return { buffer: null, length: 0 };
+    // A retention slot (sceneRetentionSlot) lends the scratch storage that the
+    // last build did not hand out, so an unchanged frame allocates nothing.
+    return { buffer: slot && slot.scratch ? slot.scratch : null, length: 0, slot: slot || null };
+  }
+
+  // ---- Bundle array retention ---------------------------------------------
+  //
+  // A mount passes one retention object to every createSceneRenderBundle call.
+  // When a frame produces the same values as the last one for a typed array,
+  // the bundle gets last frame's array again: the build allocates nothing for
+  // it, and a renderer that caches GPU uploads by array identity (the WebGL
+  // staticMeshArrayVBOs WeakMap, for one) skips the upload. An array that a
+  // bundle received is never written again, so identity still means content:
+  // a frame with other values gets a new array, as before retention.
+  function sceneRetentionSlot(retention, key) {
+    if (!retention) return null;
+    let slot = retention[key];
+    if (!slot) {
+      slot = { handed: null, scratch: null };
+      retention[key] = slot;
+    }
+    return slot;
+  }
+
+  function sceneTypedPrefixEqual(a, b, length) {
+    for (let i = 0; i < length; i += 1) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
+  // sceneRetainTypedArray converts the JS array values to Ctor, reusing last
+  // frame's array when the converted values are the same.
+  function sceneRetainTypedArray(retention, key, values, Ctor) {
+    const slot = sceneRetentionSlot(retention, key);
+    if (!slot || !values || typeof values.length !== "number") return new Ctor(values || []);
+    const length = values.length;
+    let scratch = slot.scratch;
+    if (!scratch || !(scratch instanceof Ctor) || scratch.length < length) scratch = new Ctor(length);
+    for (let i = 0; i < length; i += 1) scratch[i] = values[i];
+    const handed = slot.handed;
+    if (handed && handed instanceof Ctor && handed.length === length && sceneTypedPrefixEqual(handed, scratch, length)) {
+      slot.scratch = scratch;
+      return handed;
+    }
+    const out = scratch.length === length ? scratch : scratch.subarray(0, length);
+    slot.handed = out;
+    slot.scratch = null;
+    return out;
   }
 
   function sceneReserveFloat32Builder(builder, additionalLength) {
@@ -5277,7 +5325,15 @@
   }
 
   function sceneFinishFloat32Builder(builder) {
-    if (!builder || builder.length <= 0 || !builder.buffer) return new Float32Array(0);
+    const slot = builder && builder.slot;
+    if (!builder || builder.length <= 0 || !builder.buffer) {
+      if (!slot) return new Float32Array(0);
+      if (builder && builder.buffer) slot.scratch = builder.buffer;
+      if (builder) builder.buffer = null;
+      if (slot.handed && slot.handed.length === 0) return slot.handed;
+      slot.handed = new Float32Array(0);
+      return slot.handed;
+    }
     // Transfer this build's storage to the completed bundle. Its exact-length
     // view avoids copying large attribute streams at every animation frame.
     // Detach the builder so a later reserve/append cannot mutate that bundle.
@@ -5285,6 +5341,19 @@
     const length = builder.length;
     builder.buffer = null;
     builder.length = 0;
+    if (slot) {
+      const handed = slot.handed;
+      if (handed && handed.length === length && sceneTypedPrefixEqual(handed, buffer, length)) {
+        // The same values as last frame: keep last frame's array, and this
+        // storage, never handed out, becomes the next build's scratch.
+        slot.scratch = buffer;
+        return handed;
+      }
+      const out = length === buffer.length ? buffer : buffer.subarray(0, length);
+      slot.handed = out;
+      slot.scratch = null;
+      return out;
+    }
     return length === buffer.length ? buffer : buffer.subarray(0, length);
   }
 
@@ -5325,7 +5394,9 @@
     sceneReserveWorldMeshAttributes(bundle, count);
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities, hierarchyState) {
+  // retention, optional, is the mount's bundle array retention object (see
+  // sceneRetentionSlot); pass the same object every frame.
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities, hierarchyState, retention) {
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
       : Date.now();
@@ -5383,11 +5454,11 @@
       // already happens in the draw plan.
       worldLinePasses: [],
       meshObjects: [],
-      worldMeshPositions: sceneCreateFloat32Builder(),
-      worldMeshColors: sceneCreateFloat32Builder(),
-      worldMeshNormals: sceneCreateFloat32Builder(),
-      worldMeshUVs: sceneCreateFloat32Builder(),
-      worldMeshTangents: sceneCreateFloat32Builder(),
+      worldMeshPositions: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshPositions")),
+      worldMeshColors: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshColors")),
+      worldMeshNormals: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshNormals")),
+      worldMeshUVs: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshUVs")),
+      worldMeshTangents: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshTangents")),
       vertexCount: 0,
       worldVertexCount: 0,
       worldMeshVertexCount: 0,
@@ -5449,14 +5520,14 @@
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
     appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy);
-    bundle.positions = new Float32Array(bundle.positions);
-    bundle.colors = new Float32Array(bundle.colors);
+    bundle.positions = sceneRetainTypedArray(retention, "positions", bundle.positions, Float32Array);
+    bundle.colors = sceneRetainTypedArray(retention, "colors", bundle.colors, Float32Array);
     bundle.vertexCount = bundle.positions.length / 2;
-    bundle.worldPositions = new Float32Array(bundle.worldPositions);
-    bundle.worldColors = new Float32Array(bundle.worldColors);
+    bundle.worldPositions = sceneRetainTypedArray(retention, "worldPositions", bundle.worldPositions, Float32Array);
+    bundle.worldColors = sceneRetainTypedArray(retention, "worldColors", bundle.worldColors, Float32Array);
     bundle.worldVertexCount = bundle.worldPositions.length / 3;
-    bundle.worldLineWidths = new Float32Array(bundle.worldLineWidths);
-    bundle.worldLinePasses = new Uint8Array(bundle.worldLinePasses);
+    bundle.worldLineWidths = sceneRetainTypedArray(retention, "worldLineWidths", bundle.worldLineWidths, Float32Array);
+    bundle.worldLinePasses = sceneRetainTypedArray(retention, "worldLinePasses", bundle.worldLinePasses, Uint8Array);
     bundle.worldMeshPositions = sceneFinishFloat32Builder(bundle.worldMeshPositions);
     bundle.worldMeshColors = sceneFinishFloat32Builder(bundle.worldMeshColors);
     bundle.worldMeshNormals = sceneFinishFloat32Builder(bundle.worldMeshNormals);
