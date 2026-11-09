@@ -4,7 +4,15 @@ Selena is the shader language for custom Scene3D looks. You write a material
 once in a `.sel` file; the Selena compiler emits WGSL for WebGPU, GLSL ES 3.00
 for WebGL2, and a binding layout the renderers wire uniforms and textures
 from. This page covers the two ways to get a compiled material into a scene,
-and how a Selena material reads the scene's lights, shadows and fog.
+surface materials that the standard lighting shades, and how a full Selena
+material reads the scene's lights, shadows and fog.
+
+A Selena material is one of two kinds:
+
+| Kind | Source | Lighting |
+|---|---|---|
+| Surface material | `surface(geo) -> Surface` | The renderer's standard lighting, exactly as for a `StandardMaterial`: every light, shadows, image-based lighting, fog, exposure and tone mapping. Start here for a custom look on lit geometry. |
+| Full material | `surface(geo) -> color` | The material's own; it replaces the whole shader. Use it for unlit effects and stylized lighting. |
 
 ## Compile at build time, load without the compiler
 
@@ -113,9 +121,188 @@ emitters. A browser build that must compile at run time can opt back in with
 `-tags gosx_selena_compiler`. The artifact path and run-time compilation give
 equal materials for equal source and options; `scene` tests check that.
 
+## Surface materials
+
+A surface material returns a typed `Surface` record instead of a color. Both
+renderers splice it into their standard PBR shader in place of the
+StandardMaterial's map and factor reads, so the record is lit by the same code:
+a surface material configured like a StandardMaterial renders the same pixels
+(the real-GPU test below measures a largest difference of 1/255).
+
+```selena
+material WetRock {
+    param albedo : texture2d
+    param wet : float = 0.0
+
+    surface(geo) -> Surface {
+        let s = pbr(sample(albedo, geo.uv).rgb, 0.85, 0.0)
+        return withRoughness(s, mix(s.roughness, 0.2, wet))
+    }
+}
+```
+
+```go
+material, _, err := scene.MaterialFromSelenaArtifact(file, scene.SelenaMaterialOptions{
+	Uniforms: map[string]any{
+		"albedo": scene.SelenaTexture{URL: "/rock.png", ColorSpace: scene.TextureColorSpaceSRGB},
+		"wet":    0.3,
+	},
+})
+```
+
+`pbr(baseColor, roughness, metallic)` builds the record. `withBaseColor`,
+`withAlpha`, `withNormal`, `withRoughness`, `withMetallic`, `withOcclusion`,
+`withEmissive`, `withSheen`, `withTransmission` and `withClearcoat(s, amount,
+roughness)` replace fields; `mixSurface(a, b, t)` blends two records; `s.field`
+reads one. Selena's
+[interop page](https://github.com/M31-Labs/selena/blob/main/docs/standard-material-interop.md)
+lists every field and rule.
+
+| `geo` field | Meaning |
+|---|---|
+| `geo.worldPos`, `geo.worldNormal` | World position and the unit geometric normal. |
+| `geo.uv` | First UV set. |
+| `geo.tangent`, `geo.bitangent` | Mesh tangent frame, not normalized; zero when the mesh has no tangents. |
+| `geo.viewDir` | Unit vector toward the camera. |
+| `geo.color` | Instance or vertex color; the renderer already multiplies the base color by its rgb. |
+
+Textures:
+
+- Bind each `texture2d` param with a `scene.SelenaTexture` in `Uniforms`. Set
+  `ColorSpace: scene.TextureColorSpaceSRGB` for color images (base color,
+  emissive); data maps (normal, roughness, occlusion, height, masks) keep the
+  linear default. A plain URL string also works and samples as linear data.
+- Textures repeat (REPEAT wrap), so tiling and triplanar projection work.
+- A surface material samples at most six textures. The renderers bind them in
+  the six standard material map slots, so they cost no extra texture units.
+
+`opts.Standard` still supplies the state the record does not: blend mode,
+alpha cutoff, opacity, IOR and specular factors, rim light, wireframe. Its map
+fields (`Texture`, `NormalMap`, ...) are rejected; declare `texture2d` params
+instead.
+
+Limits today:
+
+- Meshes, models and skinned meshes draw surface materials on both renderers.
+  Instanced meshes still draw them with the standard material.
+- WebGL2 binds the occlusion slot (the sixth texture) only where the context
+  supports half-float image-based lighting, which every desktop GPU does.
+- No `vertex()` hook, engine textures, early `return`, or WebGL 1 and Metal
+  targets; Selena reports each at compile time.
+
+### Authoring helpers
+
+Link the Selena `surface` module (`"modules": ["surface"]` in
+`build.selena`, or `SelenaMaterialOptions.Modules`) for the helpers a
+sculpted-asset game needs:
+
+| Need | Helpers |
+|---|---|
+| A UV-mapped PBR texture set (base color, normal map, glTF ORM map) | `mlPBRSet`, `mlSurfaceFromSet`, `mlUnpackNormal`, `mlTangentToWorld` |
+| Seamless projection for sculpts without clean UVs | `mlTriplanar`, `mlTriplanarNormal`, `mlTriplanarSet`, `mlTriplanarWeights` |
+| Rock, moss and sand layers | `mlSlopeMask`, `mlHeightMask`, `mlHeightBlend`, `mlLayer` |
+| Detail normals | `mlBlendNormalsRNM`, `mlBlendNormalsUDN`, `mlDetailNormal`, `mlDetailWorldNormal` |
+
+The module reference is Selena's
+[material-library/surface.md](https://github.com/M31-Labs/selena/blob/main/docs/material-library/surface.md).
+
+### Example: a sculpted rock
+
+A boulder sculpted in Blender and exported as glTF rarely has clean UVs. This
+material projects a rock texture set triplanar, adds a finer detail normal,
+grows moss on upward faces into the cracks first, blends sand around the base
+and darkens a wet band at the water line. It uses all six texture slots and
+reads 21 texels per pixel.
+
+```selena
+material SculptedRock {
+    param rockAlbedo : texture2d
+    param rockNormal : texture2d
+    param rockORM    : texture2d
+    param mossAlbedo : texture2d
+    param mossNormal : texture2d
+    param sandAlbedo : texture2d
+    param scale      : float = 0.5
+    param mossCover  : float = 0.6
+    param sandLine   : float = 0.4
+    param waterLine  : float = 0.0
+
+    surface(geo) -> Surface {
+        let n = normalize(geo.worldNormal)
+        let rockOrm = mlTriplanar(rockORM, geo.worldPos, n, scale, 4.0)
+        let rockN = mlTriplanarNormal(rockNormal, geo.worldPos, n, scale, 4.0, 1.0)
+        let detailN = mlTriplanarNormal(rockNormal, geo.worldPos, n, scale * 6.0, 4.0, 0.5)
+        let rock = mlSurfaceFromSet(mlTriplanar(rockAlbedo, geo.worldPos, n, scale, 4.0), mlDetailWorldNormal(rockN, detailN, n, 0.6), rockOrm.rgb)
+
+        let mossC = mlTriplanar(mossAlbedo, geo.worldPos, n, scale * 2.0, 4.0)
+        let moss = withNormal(pbr(mossC.rgb, 0.9, 0.0), mlTriplanarNormal(mossNormal, geo.worldPos, n, scale * 2.0, 4.0, 0.7))
+        let mossWeight = mlSlopeMask(n, vec3f(0.0, 1.0, 0.0), 0.55, 0.85) * mossCover
+        let mossy = mlLayer(rock, moss, rockOrm.a, mossC.a, mossWeight, 0.08)
+
+        let sand = pbr(mlTriplanar(sandAlbedo, geo.worldPos, n, scale * 3.0, 2.0).rgb, 0.95, 0.0)
+        let sandy = mixSurface(mossy, sand, 1.0 - mlHeightMask(geo.worldPos.y, sandLine - 0.3, sandLine))
+
+        let wet = 1.0 - mlHeightMask(geo.worldPos.y, waterLine, waterLine + 0.25)
+        return withRoughness(withBaseColor(sandy, sandy.baseColor * (1.0 - 0.45 * wet)), mix(sandy.roughness, 0.15, wet))
+    }
+}
+```
+
+`rockORM` packs occlusion (r), roughness (g), metallic (b) and height (a);
+`mossAlbedo` carries the moss height in alpha. In Go:
+
+```go
+srgb := func(url string) scene.SelenaTexture {
+	return scene.SelenaTexture{URL: url, ColorSpace: scene.TextureColorSpaceSRGB}
+}
+rock, _, err := scene.MaterialFromSelenaArtifact(file, scene.SelenaMaterialOptions{
+	Uniforms: map[string]any{
+		"rockAlbedo": srgb("/textures/rock_albedo.png"),
+		"rockNormal": "/textures/rock_normal.png",
+		"rockORM":    "/textures/rock_orm.png",
+		"mossAlbedo": srgb("/textures/moss_albedo.png"),
+		"mossNormal": "/textures/moss_normal.png",
+		"sandAlbedo": srgb("/textures/sand_albedo.png"),
+		"waterLine":  0.1,
+	},
+})
+```
+
+### Standard lighting energy
+
+The standard lighting that both StandardMaterial and surface materials use
+conserves energy across roughness:
+
+- Multiple scattering for the GGX lobe (Fdez-Agüera 2019). Image light adds
+  the energy single-scattering microfacets lose, and direct lights scale the
+  lobe by `1 + F0 (1/Ess - 1)`. A white, fully rough, fully metallic sphere
+  under uniform white image light now reflects all of it (the white-furnace
+  test below). Single scattering alone returns 1 − ln 2 = 0.31 of the light
+  at roughness 1 facing the camera, so rough metals look up to about three
+  times brighter than before this change; smooth materials barely change.
+- Clear coat is a layer: its own GGX lobe with F0 0.04, over a base attenuated
+  by the coat's Fresnel, for direct and image light. It replaces the earlier
+  additive highlight, so clear-coated materials look different. A
+  StandardMaterial's coat roughness is 0.04 (glTF has no coat-roughness field
+  in GoSX yet); a surface material sets it with `withClearcoat`.
+
+### Tests
+
+`e2e/selena_surface_e2e_test.go` runs on the real-GPU runners:
+
+```sh
+/home/draco/work/.runtime/tools/gpu/gpu-chrome.sh run -- env GOSX_SELENA_SURFACE_WEBGPU=1 go test -tags e2e -timeout 25m -run 'TestSelenaSurface|TestStandardLightingWhiteFurnace' ./e2e/
+```
+
+`TestSelenaSurfaceMatchesStandardMaterial` renders one scene (sky image
+light, a shadowing directional light, a point and a spot light, fog, a texture
+and a clear coat) with a StandardMaterial and with its surface twin, and
+compares the pixels. `TestStandardLightingWhiteFurnace` is the furnace check
+above, for both material kinds.
+
 ## Scene lights, shadows and fog
 
-A Selena mesh material reads the renderer's lighting by declaring engine
+A full Selena mesh material reads the renderer's lighting by declaring engine
 inputs in its `context` block. Both renderers fill them every frame:
 
 | Input | What the renderer writes |

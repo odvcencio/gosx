@@ -53,6 +53,7 @@ type scene3DReading struct {
 	Backend  string `json:"backend"`
 	Fallback string `json:"fallback"`
 	Drawn    string `json:"drawn"`
+	Error    string `json:"error"`
 }
 
 // e2eSceneFiles builds the uniform or sky IBL products plus a periodic test
@@ -133,18 +134,16 @@ func renderScene3DStable(t *testing.T, backend string, props scene.Props, files 
 	} else {
 		props.PreferWebGPU = &yes
 	}
-	// A production page: the manifest plus the runtime bootstrap, which
-	// inflates shared shader sources and lazy-loads the scene3d feature and
-	// the packed renderer chunk.
-	manifest, err := json.Marshal(map[string]any{"engines": []any{map[string]any{
-		"id": "surface-probe", "component": "GoSXScene3D", "kind": "surface", "mountId": "scene", "props": props,
-	}}})
+	// The production lazy-chunk page: the runtime bootstrap and the scene3d
+	// feature, which loads the packed renderer chunk for the backend.
+	payload, err := json.Marshal(props)
 	if err != nil {
 		t.Fatal(err)
 	}
 	page := []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#scene{width:%dpx;height:%dpx}</style></head><body><div id="scene"></div>
-<script id="gosx-manifest" type="application/json">%s</script>
-<script src="/gosx/bootstrap-runtime.js"></script></body></html>`, int(props.Width), int(props.Height), manifest))
+<script src="/gosx/bootstrap-runtime.js"></script>
+<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
+<script>window.ready=(async()=>{window.handle=await window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('scene'),emit(){},props:%s});window.mounted=true;})().catch(error=>{window.mountError=String(error);});</script></body></html>`, int(props.Width), int(props.Height), payload))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/":
@@ -181,7 +180,10 @@ func renderScene3DStable(t *testing.T, backend string, props scene.Props, files 
 	same := 0
 	start := time.Now()
 	for deadline := start.Add(90 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
-		browser.eval(t, `(() => {const e=document.querySelector('[data-gosx-scene3d-mounted]')||document.getElementById('scene');return {backend:e?.getAttribute('data-gosx-scene3d-renderer')||e?.getAttribute('data-gosx-scene3d-backend')||'',fallback:e?.getAttribute('data-gosx-scene3d-render-mesh-material-fallback')||'',drawn:e?.getAttribute('data-gosx-scene3d-render-mesh-drawn')||''}})()`, &reading)
+		browser.eval(t, `(() => {const e=document.getElementById('scene');return {backend:e?.getAttribute('data-gosx-scene3d-renderer')||'',fallback:e?.getAttribute('data-gosx-scene3d-render-mesh-material-fallback')||'',drawn:e?.getAttribute('data-gosx-scene3d-render-mesh-drawn')||'',error:window.mountError||''}})()`, &reading)
+		if reading.Error != "" {
+			t.Fatalf("%s mount failed: %s\n%s", backend, reading.Error, browser.Console())
+		}
 		if console := browser.Console(); strings.Contains(console, "pipeline failed") || strings.Contains(console, "Selena surface anchor") {
 			t.Fatalf("%s renderer failed: %s", backend, console)
 		}
@@ -301,15 +303,20 @@ func srgbToLinear(c uint8) float64 {
 
 // surfaceParityProps is one scene with every standard lighting input: image
 // light from a sky, a shadowing directional light, a point and a spot light,
-// fog, a texture and a clear coat. Only the material changes between runs.
+// fog, a texture and a clear coat. Only the ball's material changes between
+// runs; an occluder shadows part of it. The ball is the only object with the
+// material under test, so its shaders stay inline rather than hoisted into the
+// scene's shader library, which only a manifest-loaded page inflates.
 func surfaceParityProps(env scene.EnvironmentIBL, material scene.Material) scene.Props {
+	ground := scene.StandardMaterial{Color: "#7a8a70", Roughness: 0.8}
 	return scene.Props{
 		Width: 320, Height: 240, Background: "#000000",
 		Camera:      scene.PerspectiveCamera{Position: scene.Vector3{Y: 1.6, Z: 4.2}, Rotation: scene.Euler{X: -0.33}, FOV: 50, Near: 0.1, Far: 30},
 		Environment: scene.Environment{IBL: env, EnvIntensity: 0.6, FogColor: "#8899aa", FogDensity: 0.04, ToneMapping: "linear"},
 		Graph: scene.NewGraph(
-			scene.Mesh{ID: "ground", Geometry: scene.BoxGeometry{Width: 10, Height: 0.1, Depth: 10}, Position: scene.Vector3{Y: -1.05}, Material: material, ReceiveShadow: true},
+			scene.Mesh{ID: "ground", Geometry: scene.BoxGeometry{Width: 10, Height: 0.1, Depth: 10}, Position: scene.Vector3{Y: -1.05}, Material: ground, ReceiveShadow: true},
 			scene.Mesh{ID: "ball", Geometry: scene.SphereGeometry{Radius: 1, Segments: 48}, Material: material, CastShadow: true, ReceiveShadow: true},
+			scene.Mesh{ID: "occluder", Geometry: scene.BoxGeometry{Width: 0.7, Height: 0.1, Depth: 0.7}, Position: scene.Vector3{X: 0.75, Y: 1.9, Z: 0.6}, Material: ground, CastShadow: true},
 			scene.DirectionalLight{ID: "sun", Color: "#ffffff", Intensity: 1.5, Direction: scene.Vector3{X: -0.5, Y: -1, Z: -0.4}, CastShadow: true, ShadowSize: 1024, ShadowBias: 0.002},
 			scene.PointLight{ID: "lamp", Color: "#ffcc88", Intensity: 3, Position: scene.Vector3{X: 2, Y: 1.5, Z: 2}},
 			scene.SpotLight{ID: "spot", Color: "#88aaff", Intensity: 4, Position: scene.Vector3{X: -2, Y: 3, Z: 1}, Direction: scene.Vector3{X: 0.5, Y: -1, Z: -0.2}, Angle: 0.6, Penumbra: 0.3},
