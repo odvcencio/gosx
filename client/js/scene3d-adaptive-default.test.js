@@ -83,3 +83,105 @@ for (const [name, limits, width, dpr] of [
     assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-dpr-cap"), dpr);
   });
 }
+
+// Ported from salvage/perf/scene3d-adaptive-default onto the shared cadence
+// model in mount-quality.ts, which both governors now use.
+test("on-demand refresh gaps do not demote a static scene", async () => {
+  const s = await mountQuality({autoRotate: false});
+  for (let i = 0; i < 12; i++) {
+    s.mount.__gosxScene3DHandle.applyCommands([{kind: 7, data: {background: "#123456"}}]);
+    s.tick(2000); await H.flushAsyncWork();
+  }
+  assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "full");
+  assert.equal(s.canvas.width, 1600);
+});
+
+for (const hz of [50, 48, 30]) {
+  test(`rAF-only quality stays full at ${hz} Hz`, async () => {
+    const s = await mountQuality();
+    for (let i = 0; i < 600; i++) s.tick(1000 / hz);
+    assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "full");
+  });
+}
+
+test("rAF-only quality follows a display changing from 60 to 30 Hz", async () => {
+  const s = await mountQuality();
+  for (let i = 0; i < 120; i++) s.tick(1000 / 60);
+  for (let i = 0; i < 600; i++) s.tick(1000 / 30);
+  assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "full");
+});
+
+test("reversed promotions back off instead of repeatedly flapping", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  let transitions = 0;
+  let last = h.state.activeTier;
+  for (let i = 0; i < 3600; i++) {
+    h.sample(h.state.activeTier === "full" ? 24 : 5, 1000 / 60);
+    if (last !== h.state.activeTier) {transitions++; last = h.state.activeTier;}
+  }
+  console.log(`tier transitions over 60 seconds: ${transitions}`);
+  assert.ok(transitions <= 7, `expected promotion backoff, got ${transitions} transitions`);
+  assert.ok(h.state.promotionBackoff >= 2, "each reversed promotion doubles the next window");
+});
+
+test("a clean window at the requested tier clears the promotion backoff", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  h.state.promotionBackoff = 8;
+  for (let i = 0; i < 400; i++) h.sample(5, 1000 / 60);
+  assert.equal(h.state.activeTier, "full");
+  assert.equal(h.state.promotionBackoff, 1);
+});
+
+test("scroll interaction holds rAF-only tier decisions", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  h.sceneState._scrollCamera = {_activeInputUntil: 1e9};
+  for (let i = 0; i < 600; i++) {
+    h.clock.now += 60;
+    h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now, h.clock.now, null);
+  }
+  assert.equal(h.state.activeTier, "full");
+});
+
+test("CPU-bound ticks do not raise the measured display budget", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  for (let i = 0; i < 40; i++) {
+    h.clock.now += 40;
+    h.api.sceneObserveAdaptiveQualityRAF(h.state, h.clock.now);
+    h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 30, h.clock.now, null);
+  }
+  assert.equal(h.state.activeTier, "balanced");
+  assert.equal(h.state.vsyncIntervalMS, 0, "heavy frames never feed the display estimate");
+});
+
+test("GPU timing uses the measured 30 Hz display budget", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  for (let i = 0; i < 600; i++) h.sample(22, 1000 / 30);
+  assert.equal(h.state.activeTier, "full");
+  assert.ok(Math.abs(h.state.vsyncIntervalMS - 1000 / 30) < 0.5);
+});
+
+test("a long stall is not a sample, so quality returns after it clears", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  for (let i = 0; i < 60; i++) h.sample(5, 1000 / 60);
+  // A 1.2 s stall (GC, upload, tab switch) arrives as one rAF interval.
+  h.clock.now += 1200;
+  h.api.sceneObserveAdaptiveQualityRAF(h.state, h.clock.now);
+  h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 2, h.clock.now, null);
+  assert.equal(h.state.resumePending, false, "the stall resets the window and is consumed as a resume");
+  assert.equal(h.state.badFrames, 0);
+  assert.equal(h.state.activeTier, "full");
+});
+
+test("a demotion caused by sustained misses recovers once frames are clean", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  for (let i = 0; i < 40; i++) h.sample(40, 1000 / 60);
+  assert.equal(h.state.activeTier, "balanced");
+  for (let i = 0; i < 1200; i++) h.sample(5, 1000 / 60);
+  assert.equal(h.state.activeTier, "full", "quality comes back after the load clears");
+});
+
+test("the ladder governor floors its budget at the measured display interval", () => {
+  const h = H.createQualityLadderHarness(H.THREE_RUNG_LADDER, {qualityStartRung: 2});
+  for (let i = 0; i < 400; i++) h.sample(22, 1000 / 30);
+  assert.equal(h.state.rungIndex, 2, "30 Hz GPU frames inside the display interval are not misses");
+});

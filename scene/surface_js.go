@@ -121,6 +121,47 @@ func (s *Surface) OnFrameSubmitted(handler func(MountFrameSubmission)) (cancel f
 	return cancel, nil
 }
 
+// OnGraphicsReset subscribes to GPU context and device resets on this mount.
+// The renderer rebuilds its resources without a page reload; the handler only
+// needs to pause or resume game state. Cancel releases the JS callback, and
+// Dispose cancels every subscription. Worker-hosted surfaces cannot observe
+// DOM events and return an error.
+func (s *Surface) OnGraphicsReset(handler func(GraphicsReset)) (cancel func(), err error) {
+	defer surfaceRecover(&err)
+	if handler == nil {
+		return nil, errors.New("scene: graphics reset handler is nil")
+	}
+	if _, ok := workerBridge(); ok {
+		return nil, errWorkerDOM
+	}
+	mount, err := s.element()
+	if err != nil {
+		return nil, err
+	}
+	active := true
+	callback := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if !active || s.disposed || len(args) == 0 || !args[0].Get("target").Equal(mount) {
+			return nil
+		}
+		var reset GraphicsReset
+		raw := js.Global().Get("JSON").Call("stringify", args[0].Get("detail")).String()
+		if json.Unmarshal([]byte(raw), &reset) == nil && (reset.Phase == GraphicsResetLost || reset.Phase == GraphicsResetRestored) {
+			handler(reset)
+		}
+		return nil
+	})
+	mount.Call("addEventListener", MountGraphicsResetEvent, callback)
+	cancel = func() {
+		if active {
+			active = false
+			mount.Call("removeEventListener", MountGraphicsResetEvent, callback)
+			callback.Release()
+		}
+	}
+	s.frameSubscriptions = append(s.frameSubscriptions, cancel)
+	return cancel, nil
+}
+
 // CancelFrameRequest cancels only the matching pending request on this mount.
 func (s *Surface) CancelFrameRequest(id string) (err error) {
 	defer surfaceRecover(&err)

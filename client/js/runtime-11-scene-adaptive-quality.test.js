@@ -623,9 +623,16 @@ test("Scene3D adaptive measurement escapes stale renderer timing and respects au
   locked.renderer.pollPerformanceSample = function() { return null; };
   locked.renderer.getPerformanceTimingStatus = function() { return { available: true, active: true, pending: true, source: "gpu-test" }; };
   const before = locked.state.validSamples;
-  for (let i = 0; i < 7; i++) locked.sample(99, 34);
+  // Model actual CPU work: a 34 ms frame with almost no CPU work can be a
+  // healthy 30 Hz display, so these frames spend 33 ms of it on the CPU.
+  function stalledFrame() {
+    locked.clock.now += 34;
+    locked.api.sceneUpdateAdaptiveQuality(locked.state, locked.mount, locked.sceneState, {},
+      locked.clock.now - 33, locked.clock.now, locked.renderer);
+  }
+  for (let i = 0; i < 7; i++) stalledFrame();
   assert.equal(locked.state.validSamples, before, "a healthy timestamp ring gets a bounded window to deliver a sample");
-  for (let i = 0; i < 3; i++) locked.sample(99, 34);
+  for (let i = 0; i < 3; i++) stalledFrame();
   assert.ok(locked.state.validSamples > before, "a renderer timer that never resolves must fall back to display-frame timing");
   assert.equal(locked.state.measurement, "cpu-raf-stale-renderer-timing");
   assert.equal(locked.state.activeTier, "survival", "severely missed display frames must still downshift quality");

@@ -36,6 +36,8 @@ func (*Surface) ApplyTextureProfile(context.Context, TextureDeliveryProfile, []M
 	return ModelPreparationResult{}, errSurfaceBrowser
 }
 
+func (*Surface) OnGraphicsReset(func(GraphicsReset)) (func(), error) { return nil, errSurfaceBrowser }
+
 func (*Surface) OnFrameSubmitted(func(MountFrameSubmission)) (func(), error) {
 	return nil, errSurfaceBrowser
 }

@@ -3364,6 +3364,8 @@ function loadSceneAdaptiveQualityAPI() {
   ` + capabilityDPR + sceneProps + sceneIsPlainObject + qualityLadderCore + source.slice(start, end) + `
     globalThis.adaptiveAPI = {
       createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
+      sceneObserveAdaptiveQualityRAF, sceneAdaptiveResumeSampling,
+      createSceneGraphicsRecovery, sceneWebGPULossReturnAllowed, sceneDispatchGraphicsReset, sceneGraphicsResetSwap,
       sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,
       sceneEffectivePointQualityGroup, sceneFilterPointsByQualityGroups,
       sceneQualityLadderPointBudgetScale, sceneApplyPointBudgetScale,

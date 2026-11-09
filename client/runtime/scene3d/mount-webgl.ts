@@ -5134,7 +5134,7 @@
     ));
     const cpuRAFBudgetMS = Math.max(targetFrameMS, authoredFrameIntervalMS > 0
       ? authoredFrameIntervalMS
-      : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 0));
+      : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 1000 / 60));
     const profileOverrides = (props && (props.qualityProfiles || props.adaptiveQualityProfiles)) || adaptiveConfig.profiles || {};
     const defaults = {
       full: { dprCap: defaultSceneMaxDevicePixelRatio(capability), surfaceResolution: 160, causticsResolution: 512, objectShadowResolution: 512, objectTextureMaxSide: 512, objectTexturePixelBudget: 786432, expensivePassCadence: 1 },
@@ -5215,6 +5215,7 @@
       sampleCursor: 0,
       sampleScratch: new Array(120),
       lastRAFNowMS: null,
+      ...sceneAdaptiveCadenceFields(),
       missingRendererSamples: 0,
       rendererTimingFallbackFrames: Math.max(2, Math.floor(sceneNumber(props && props.adaptiveRendererTimingFallbackFrames, 8))),
       resumePending: true,
@@ -5404,29 +5405,6 @@
     }
   }
 
-  function sceneAdaptiveSetTier(state, tier, reason, nowMS) {
-    if (!state.profiles[tier] || state.activeTier === tier) return false;
-    state.activeTier = tier;
-    state.activeProfile = state.profiles[tier];
-    state.tier = tier;
-    state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, state.activeProfile.dprCap);
-    state.qualityRevision += 1;
-    state.transitionReason = reason;
-    state.cooldownUntilMS = nowMS + state.cooldownMS;
-    state.badFrames = 0;
-    state.goodFrames = 0;
-    state.severeFrames = 0;
-    return true;
-  }
-
-  // Frame caps quantize rAF intervals on displays such as 90 and 144 Hz.
-  // Judge sustained cadence from the existing timing window so isolated long
-  // intervals do not strand either governor below its requested quality.
-  /** @param {{ewmaFrameMS:number,p95FrameMS:number}} state @param {number} target */
-  function sceneAdaptiveHealthyRAFCadence(state, target) {
-    return state.ewmaFrameMS <= target * 1.06 && state.p95FrameMS <= target * 1.35;
-  }
-
   function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
     if (state && viewport && viewport.devicePixelRatio > 0 && state.renderDevicePixelRatio !== viewport.devicePixelRatio) {
       state.renderDevicePixelRatio = viewport.devicePixelRatio;
@@ -5441,8 +5419,7 @@
     const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     const rafNow = Number.isFinite(Number(frameNowMS)) ? Number(frameNowMS) : now;
     const cpuDurationMS = Math.max(0, now - sceneNumber(frameStart, now));
-    const rafIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
-    state.lastRAFNowMS = rafNow;
+    const rafIntervalMS = sceneAdaptiveCadence(state, rafNow, cpuDurationMS);
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
@@ -5467,6 +5444,8 @@
       return false;
     }
     const frameMS = sample.durationMS;
+    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
+    if (sceneAdaptiveStallSample(state, isRAFMeasured, rafIntervalMS) || sceneAdaptiveScrollHeld(state, isRAFMeasured, sceneState, now)) { applySceneAdaptiveQualityState(mount, state, now, false); return false; }
     state.lastFrameMS = frameMS;
     state.measurement = sample.source;
     state.lastMeasurement = sample;
@@ -5481,9 +5460,8 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
     const cpuMeasured = isRAFMeasured || sample.source.indexOf("cpu-work+") === 0;
-    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const target = sceneAdaptiveTarget(state, cpuMeasured);
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     if (missesBudget) {
@@ -5514,7 +5492,7 @@
         state.cooldownUntilMS = now + state.cooldownMS;
         changed = true;
       }
-    } else if (now >= state.cooldownUntilMS && state.validSamples >= 300 && state.goodFrames >= 300) {
+    } else if (now >= state.cooldownUntilMS && state.validSamples >= sceneAdaptivePromotionFrames(state, 300) && state.goodFrames >= sceneAdaptivePromotionFrames(state, 300)) {
       if (state.postFXSuppressed) {
         state.postFXSuppressed = false;
         state.qualityRevision += 1;
@@ -5525,6 +5503,7 @@
         changed = sceneAdaptiveSetTier(state, order[activeIndex - 1], "recovered", now);
       }
     }
+    if (!changed && activeIndex <= requestedIndex && state.goodFrames >= 300) state.promotionBackoff = 1;
     if (changed) {
       sceneApplyAdaptivePostFX(sceneState, state);
       applyScenePostFXState(mount, sceneState);
@@ -5537,7 +5516,7 @@
         ewmaFrameMS: state.ewmaFrameMS,
         p95FrameMS: state.p95FrameMS,
         targetFrameMS: state.targetFrameMS,
-        dprCap: state.renderDevicePixelRatio || state.currentMaxDevicePixelRatio,
+        dprCap: state.currentMaxDevicePixelRatio,
         postFXSuppressed: state.postFXSuppressed,
       });
       return true;
