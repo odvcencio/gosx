@@ -114,3 +114,22 @@ func TestNeedsSelenaDataTextureReadsLayoutsAndReferences(t *testing.T) {
 		t.Fatal("nil probe needs a data texture")
 	}
 }
+
+func TestNeedsShaderWarmupAndTextAtlasesReadBothShapes(t *testing.T) {
+	for raw, want := range map[string][2]bool{
+		`{}`: {false, false},
+		`{"shaderWarmup":null,"textAtlases":null}`:                     {false, false},
+		`{"shaderWarmup":{"materials":[]}}`:                            {true, false},
+		`{"scene":{"textAtlases":[{"id":"numbers"}]}}`:                 {false, true},
+		`{"shaderWarmup":{"materials":[]},"textAtlases":[{"id":"a"}]}`: {true, true},
+	} {
+		probe := Decode(json.RawMessage(raw))
+		if got := [2]bool{probe.NeedsShaderWarmup(), probe.NeedsTextAtlases()}; got != want {
+			t.Errorf("%s: warm-up, text atlases = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsShaderWarmup() || nilProbe.NeedsTextAtlases() {
+		t.Fatal("a nil probe needs no opt-in chunk")
+	}
+}

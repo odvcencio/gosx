@@ -511,6 +511,10 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DSelenaLighting.File)
 	case "bootstrap-feature-scene3d-data-texture.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DDataTexture.File)
+	case "bootstrap-feature-scene3d-warmup.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWarmup.File)
+	case "bootstrap-feature-scene3d-text-atlas.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DTextAtlas.File)
 	case "bootstrap-feature-scene3d-particle-burst.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
 	case "bootstrap-feature-scene3d-zoom.js":

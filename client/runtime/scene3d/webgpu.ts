@@ -5,7 +5,7 @@
   }
 
   function wgpuCreatePipelineGuard(canvas: any): any {
-    var guard: any = { frameAbort: null, pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
+    var guard: any = { frameAbort: null, pending: 0, created: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
     var notificationPending = false;
     function changed() {
       if (guard.disposed || notificationPending) return;
@@ -64,7 +64,7 @@
     var pipeline: any;
     var scoped = false;
     var error: any = null;
-    if (guard) guard.pending++;
+    if (guard) { guard.pending++; guard.created++; }
     function finish(failure: any) {
       state.ready = !failure;
       if (guard) {
@@ -3026,7 +3026,7 @@
   function wgpuTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
     var descriptor = raw && typeof raw === "object" ? raw : {};
     return {
-      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
+      uri: (typeof sceneTextAtlasURL === "function" ? sceneTextAtlasURL : String)(typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim()),
       role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
       colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
         ? descriptor.colorSpace.trim().toLowerCase()
@@ -8176,7 +8176,7 @@
     function instancedMeshUsesCull(mesh: any) {
       return Boolean(typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) || webGPUBuiltinCullEligible(mesh);
     }
-    function prepareBundlePipelines(bundle: any, prepared: any, effects: any[], post: boolean) {
+    function prepareBundlePipelines(bundle: any, prepared: any, effects: any[], post: boolean, warmup?: any) { if (warmup) prepareBundlePipelines(warmup, warmup.prepared, [], false); // Props.ShaderWarmup variants (pipeline-warmup.ts)
       var materials = bundle.materials || [];
       var instancedVariants = (bundle.instancedMeshes || []).map(function(mesh: any) {
         var material = instancedMeshMaterial(mesh, materials), blend = scenePBRObjectRenderPass(mesh, material);
@@ -15055,7 +15055,7 @@
       }
       pass.setIndexBuffer(record.buffer, "uint32");
       return data.length;
-    }
+    } function webGPUSelenaIndexCount(pass: any, obj: any): number { return obj.directVertices ? webGPUBindRetainedMeshIndexBuffer(pass, obj) : 0; } // Selena: world-baked streams are already index-expanded
 
     function webGPUDefaultAttributeData(obj, key, count, tupleSize, defaults) {
       var direct = webGPUDirectAttribute(obj, key, count, tupleSize);
@@ -16010,7 +16010,7 @@
             // Fail closed: skip the whole object (and its draw-call stat)
             // when any declared attribute could not be bound.
             if (!allBound) continue;
-            var selenaIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            var selenaIndexCount = webGPUSelenaIndexCount(pass, obj);
             if (selenaIndexCount > 0) pass.drawIndexed(selenaIndexCount);
             else pass.draw(count);
             if (frameRequest) frameRequest.record(obj.id);
@@ -18136,7 +18136,7 @@
       detailEnabled = frameMeta?.detailEnabled !== false;
       if (detailEnabled && detailResources) sceneWebGPUDetailBakeResources(device, detailResources, placeholderView);
       if (scenePicker && scenePicker.hasPending()) scenePicker.preparePipelines();
-      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing); temporalAA.prepare(postEffects, usePostProcessing, sampleCount); autoExposure.prepare(bundle.environment, usePostProcessing);
+      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing, frameMeta?.warmup); temporalAA.prepare(postEffects, usePostProcessing, sampleCount); autoExposure.prepare(bundle.environment, usePostProcessing);
       if (pipelineGuard.coreError) return "failed";
       if (pipelineGuard.pending) return "pending";
       // The standard mesh, shadow and post variants are prepared above. Other
@@ -19136,7 +19136,7 @@
       getPerformanceTimingStatus: getPerformanceTimingStatus,
       getFrameTiming: getFrameTiming,
       diagnostics: diagnostics,
-      getFrameProgress: function() { return webGPUFrameProof; },
+      getFrameProgress: function() { return webGPUFrameProof; }, shaderPrograms: function() { return { total: pipelineGuard.created, pending: pipelineGuard.pending, failed: pipelineGuard.failures.length }; },
       render: pipelineGuard.wrapFrame(render, endWebGPUErrorScope),
       getFailureReason: function() { return pipelineGuard.coreError ? "webgpu-pipeline-failed" : ""; },
       dispose: dispose,

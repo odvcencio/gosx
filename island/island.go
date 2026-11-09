@@ -105,6 +105,8 @@ type Renderer struct {
 	bootstrapFeatureScene3dHierarchyPath        string
 	bootstrapFeatureScene3dSelenaLightingPath   string
 	bootstrapFeatureScene3dDataTexturePath      string
+	bootstrapFeatureScene3dWarmupPath           string
+	bootstrapFeatureScene3dTextAtlasPath        string
 	bootstrapFeatureScene3dOceanFFTPath         string
 	bootstrapFeatureScene3dParticleBurstPath    string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
@@ -289,6 +291,8 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapFeatureScene3dHierarchyPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hierarchy.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHierarchy.Hash))
 	renderer.bootstrapFeatureScene3dSelenaLightingPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-selena-lighting.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DSelenaLighting.Hash))
 	renderer.bootstrapFeatureScene3dDataTexturePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-data-texture.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDataTexture.Hash))
+	renderer.bootstrapFeatureScene3dWarmupPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-warmup.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWarmup.Hash))
+	renderer.bootstrapFeatureScene3dTextAtlasPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-text-atlas.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTextAtlas.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
@@ -781,6 +785,24 @@ func (r *Renderer) SetBootstrapFeatureScene3DDataTexturePath(path string) {
 	r.bootstrapFeatureScene3dDataTexturePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DWarmupPath overrides the content-gated shader
+// warm-up URL.
+func (r *Renderer) SetBootstrapFeatureScene3DWarmupPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dWarmupPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DTextAtlasPath overrides the content-gated text
+// atlas URL.
+func (r *Renderer) SetBootstrapFeatureScene3DTextAtlasPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dTextAtlasPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DParticleBurstPath overrides the demand-loaded burst URL.
 func (r *Renderer) SetBootstrapFeatureScene3DParticleBurstPath(path string) {
 	if r == nil {
@@ -926,6 +948,10 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DSelenaLighting, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-data-texture.js", r.bootstrapFeatureScene3dDataTexturePath, r.runtimeAssets.BootstrapFeatureScene3DDataTexture):
 		return r.runtimeAssets.BootstrapFeatureScene3DDataTexture, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-warmup.js", r.bootstrapFeatureScene3dWarmupPath, r.runtimeAssets.BootstrapFeatureScene3DWarmup):
+		return r.runtimeAssets.BootstrapFeatureScene3DWarmup, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-text-atlas.js", r.bootstrapFeatureScene3dTextAtlasPath, r.runtimeAssets.BootstrapFeatureScene3DTextAtlas):
+		return r.runtimeAssets.BootstrapFeatureScene3DTextAtlas, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
 		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
@@ -1128,6 +1154,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DHierarchyPath(runtime.BootstrapFeatureScene3DHierarchy)
 	r.SetBootstrapFeatureScene3DSelenaLightingPath(runtime.BootstrapFeatureScene3DSelenaLighting)
 	r.SetBootstrapFeatureScene3DDataTexturePath(runtime.BootstrapFeatureScene3DDataTexture)
+	r.SetBootstrapFeatureScene3DWarmupPath(runtime.BootstrapFeatureScene3DWarmup)
+	r.SetBootstrapFeatureScene3DTextAtlasPath(runtime.BootstrapFeatureScene3DTextAtlas)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
@@ -2349,6 +2377,8 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath, true},
 		{"selena-lighting", r.bootstrapFeatureScene3dSelenaLightingPath, r.scene3DNeedsSelenaLightingChunk()},
 		{"data-texture", r.bootstrapFeatureScene3dDataTexturePath, r.scene3DNeedsSelenaDataTextureChunk()},
+		{"warmup", r.bootstrapFeatureScene3dWarmupPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsShaderWarmup)},
+		{"text-atlas", r.bootstrapFeatureScene3dTextAtlasPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsTextAtlases)},
 		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
 		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
 		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
@@ -2863,6 +2893,19 @@ func (r *Renderer) scene3DNeedsSelenaDataTextureChunk() bool {
 	for i := range r.manifest.Engines {
 		entry := &r.manifest.Engines[i]
 		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).NeedsSelenaDataTexture() {
+			return true
+		}
+	}
+	return false
+}
+
+// scene3DNeedsChunk reports whether any Scene3D engine on the page needs the
+// chunk the probe method gates: shader warm-up and text atlases are
+// advertised only for scenes that declare them.
+func (r *Renderer) scene3DNeedsChunk(needs func(*sceneprobe.Probe) bool) bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && needs(sceneProbe(entry)) {
 			return true
 		}
 	}

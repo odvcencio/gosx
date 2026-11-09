@@ -47,6 +47,10 @@ type islandProgram struct {
 // -> component). A fully-general changed-file -> runtime-islandID mapping (and a
 // paired "patch"-only path) is broader than the Phase-0 seam and is deferred.
 func (s *Server) emitChange(paths []string) {
+	if s.SelenaChange != nil && isSelenaChange(paths) && !s.isQuarantined() {
+		s.emitSelena(paths)
+		return
+	}
 	if err := s.runPreflightChange(paths); err != nil {
 		s.recordBuildError(err)
 		s.setQuarantined(true)
@@ -165,7 +169,17 @@ func (s *Server) runOnChange() error {
 	if s.OnChange == nil {
 		return nil
 	}
-	return s.OnChange()
+	// The watcher and a page load after a Selena hot swap can both rebuild;
+	// one rebuild at a time, and a successful one clears the stale mark.
+	s.rebuildMu.Lock()
+	defer s.rebuildMu.Unlock()
+	if err := s.OnChange(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.appStale = false
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Server) recordBuildError(err error) {

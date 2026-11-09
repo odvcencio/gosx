@@ -226,6 +226,11 @@ const budgets = [
   // Host-written Selena data textures (store, WebGPU and WebGL2 upload) are fetched only by pages
   // whose Selena materials read a data texture; targets are the measured 2026-11-09 sizes.
   { file: "bootstrap-feature-scene3d-data-texture.js", raw: 7_165, gzip: 2_977, brotli: 2_705 },
+  // Shader warm-up (Props.ShaderWarmup) and text atlases (Props.TextAtlases) are
+  // fetched only by pages whose scenes declare them; targets are the measured
+  // 2026-11-09 sizes.
+  { file: "bootstrap-feature-scene3d-warmup.js", raw: 2_753, gzip: 1_264, brotli: 1_135 },
+  { file: "bootstrap-feature-scene3d-text-atlas.js", raw: 1_676, gzip: 872, brotli: 784 },
   { file: "bootstrap-feature-scene3d-timeline.js", raw: 5_400, gzip: 2_400, brotli: 2_200 },
   // The opt-in chunk now includes fixed-camera pan, touch centroid tracking and
   // accessible captured handles. Its reviewed raw target grows by 400 bytes.
@@ -1033,7 +1038,11 @@ const budgets = [
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap.js raw 2179382; only this exhausted target moves (2102117 -> 2113846), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt, with the UV1 program choice in sceneWebGLAuthoredProgram): measured bootstrap.js gzip 614168; only this exhausted target moves (597776 -> 597784), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt, with the UV1 program choice in sceneWebGLAuthoredProgram): measured bootstrap.js raw 2179398; only this exhausted target moves (2113846 -> 2113862), allowance unchanged.
-    file: "bootstrap.js", raw: 2113862, gzip: 597784,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): bootstrap.js raw measures 2153172 bytes; only this exhausted target moves (2081708 -> 2087636), allowance unchanged.
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): bootstrap.js gzip measures 605541 bytes; only this exhausted target moves (587191 -> 589157), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap.js gzip 616262; only this exhausted target moves (597784 -> 599878), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap.js raw 2185326; only this exhausted target moves (2113862 -> 2119790), allowance unchanged.
+    file: "bootstrap.js", raw: 2119790, gzip: 599878,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1041,7 +1050,9 @@ const budgets = [
     // train 5 (#822 Selena data textures): measured bootstrap.js brotli 497758; only this exhausted target moves (481019 -> 481374), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured bootstrap.js brotli 498848; only this exhausted target moves (481374 -> 482464), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap.js brotli 502076; only this exhausted target moves (482464 -> 485692), allowance unchanged.
-    brotli: 485692 },
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): bootstrap.js brotli measures 495852 bytes; only this exhausted target moves (477719 -> 479468), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap.js brotli 503399; only this exhausted target moves (485692 -> 487015), allowance unchanged.
+    brotli: 487015 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1459,7 +1470,10 @@ const budgets = [
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap-feature-scene3d-webgl.js raw 327924; only this exhausted target moves (311850 -> 312308), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt, with the UV1 program choice in sceneWebGLAuthoredProgram): measured bootstrap-feature-scene3d-webgl.js gzip 98115; only this exhausted target moves (93439 -> 93442), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt, with the UV1 program choice in sceneWebGLAuthoredProgram): measured bootstrap-feature-scene3d-webgl.js raw 327947; only this exhausted target moves (312308 -> 312330), allowance unchanged.
-    file: "bootstrap-feature-scene3d-webgl.js", raw: 312330, gzip: 93442, brotli: 80890 },
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d-webgl.js brotli 85054; only this exhausted target moves (80890 -> 81003), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d-webgl.js gzip 98311; only this exhausted target moves (93442 -> 93629), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d-webgl.js raw 328248; only this exhausted target moves (312330 -> 312617), allowance unchanged.
+    file: "bootstrap-feature-scene3d-webgl.js", raw: 312617, gzip: 93629, brotli: 81003 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1625,7 +1639,11 @@ const budgets = [
     // train 5 (#804 terrain, scatter, wind and shoreline): measured bootstrap-feature-scene3d.js raw 689236; only this exhausted target moves (655364 -> 656415), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap-feature-scene3d.js gzip 197845; only this exhausted target moves (188110 -> 188423), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap-feature-scene3d.js raw 690283; only this exhausted target moves (656415 -> 657412), allowance unchanged.
-    file: "bootstrap-feature-scene3d.js", raw: 657412, gzip: 188423,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): bootstrap-feature-scene3d.js raw measures 688934 bytes; only this exhausted target moves (655363 -> 656127), allowance unchanged.
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): bootstrap-feature-scene3d.js gzip measures 197378 bytes; only this exhausted target moves (187787 -> 187979), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d.js gzip 198209; only this exhausted target moves (188423 -> 188770), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d.js raw 691265; only this exhausted target moves (657412 -> 658347), allowance unchanged.
+    file: "bootstrap-feature-scene3d.js", raw: 658347, gzip: 188770,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
@@ -1633,7 +1651,9 @@ const budgets = [
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d.js brotli 167630; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured bootstrap-feature-scene3d.js brotli 168023; only this exhausted target moves (159699 -> 160021), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap-feature-scene3d.js brotli 168245; only this exhausted target moves (160021 -> 160233), allowance unchanged.
-    brotli: 160233 },
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): bootstrap-feature-scene3d.js brotli measures 167872 bytes; only this exhausted target moves (159699 -> 159878), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d.js brotli 168412; only this exhausted target moves (160233 -> 160392), allowance unchanged.
+    brotli: 160392 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1888,7 +1908,9 @@ const budgets = [
     // train 5 (#804 terrain, scatter, wind and shoreline): measured bootstrap-feature-scene3d-webgpu.js raw 542045; only this exhausted target moves (514508 -> 516233), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap-feature-scene3d-webgpu.js gzip 146103; only this exhausted target moves (139016 -> 139145), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap-feature-scene3d-webgpu.js raw 542647; only this exhausted target moves (516233 -> 516806), allowance unchanged.
-    raw: 516806, gzip: 139145,
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d-webgpu.js gzip 146185; only this exhausted target moves (139145 -> 139223), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d-webgpu.js raw 542904; only this exhausted target moves (516806 -> 517051), allowance unchanged.
+    raw: 517051, gzip: 139223,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -1897,7 +1919,8 @@ const budgets = [
     // train 5 (#822 Selena data textures): measured bootstrap-feature-scene3d-webgpu.js brotli 122680; only this exhausted target moves (116629 -> 116838), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured bootstrap-feature-scene3d-webgpu.js brotli 123066; only this exhausted target moves (116838 -> 117205), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured bootstrap-feature-scene3d-webgpu.js brotli 123294; only this exhausted target moves (117205 -> 117422), allowance unchanged.
-    brotli: 117422 },
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d-webgpu.js brotli 123420; only this exhausted target moves (117422 -> 117542), allowance unchanged.
+    brotli: 117542 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -2448,7 +2471,9 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D Chromium route (WebGPU, with labels) raw 1586485; only this exhausted target moves (1519876 -> 1520949), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Chromium route (WebGPU, with labels) raw 1589399; only this exhausted target moves (1520949 -> 1523863), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Chromium route (WebGPU, with labels) raw 1591048; only this exhausted target moves (1523863 -> 1525512), allowance unchanged.
-    raw: 1525512,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Chromium route (WebGPU, with labels) raw measures 1578780 bytes; only this exhausted target moves (1511974 -> 1513244), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Chromium route (WebGPU, with labels) raw 1592287; only this exhausted target moves (1525512 -> 1526751), allowance unchanged.
+    raw: 1526751,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 427783 bytes; only this exhausted target moves (411074 -> 411399), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) gzip 439916; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route (WebGPU, with labels) gzip measures 430169 bytes; only this exhausted target moves (411399 -> 413785), allowance unchanged.
@@ -2456,7 +2481,9 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D Chromium route (WebGPU, with labels) gzip 442938; only this exhausted target moves (426105 -> 426554), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Chromium route (WebGPU, with labels) gzip 443729; only this exhausted target moves (426554 -> 427345), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Chromium route (WebGPU, with labels) gzip 444194; only this exhausted target moves (427345 -> 427810), allowance unchanged.
-    gzip: 427810,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Chromium route (WebGPU, with labels) gzip measures 440483 bytes; only this exhausted target moves (423664 -> 424099), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Chromium route (WebGPU, with labels) gzip 444640; only this exhausted target moves (427810 -> 428256), allowance unchanged.
+    gzip: 428256,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2467,7 +2494,9 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D Chromium route (WebGPU, with labels) brotli 380762; only this exhausted target moves (364139 -> 364378), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Chromium route (WebGPU, with labels) brotli 381521; only this exhausted target moves (364378 -> 365137), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Chromium route (WebGPU, with labels) brotli 381971; only this exhausted target moves (365137 -> 365587), allowance unchanged.
-    brotli: 365587,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Chromium route (WebGPU, with labels) brotli measures 379007 bytes; only this exhausted target moves (362334 -> 362623), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Chromium route (WebGPU, with labels) brotli 382264; only this exhausted target moves (365587 -> 365880), allowance unchanged.
+    brotli: 365880,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2693,7 +2722,9 @@ const routeBudgets = [
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1374797; only this exhausted target moves (1306442 -> 1309330), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1376325; only this exhausted target moves (1309330 -> 1310789), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt, with the UV1 program choice in sceneWebGLAuthoredProgram): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1376348; only this exhausted target moves (1310789 -> 1310812), allowance unchanged.
-    raw: 1310812,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Safari and Firefox route (WebGL, with labels) raw measures 1364335 bytes; only this exhausted target moves (1299055 -> 1299366), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1377631; only this exhausted target moves (1310812 -> 1312095), allowance unchanged.
+    raw: 1312095,
     // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 385941 bytes; only this exhausted target moves (369041 -> 369557), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 392100; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Safari and Firefox route (WebGL, with labels) gzip measures 388236 bytes; only this exhausted target moves (369557 -> 371852), allowance unchanged.
@@ -2702,7 +2733,9 @@ const routeBudgets = [
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 395728; only this exhausted target moves (378599 -> 379344), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 396202; only this exhausted target moves (379344 -> 379818), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt, with the UV1 program choice in sceneWebGLAuthoredProgram): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 396206; only this exhausted target moves (379818 -> 379822), allowance unchanged.
-    gzip: 379822,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Safari and Firefox route (WebGL, with labels) gzip measures 392514 bytes; only this exhausted target moves (375716 -> 376130), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 396766; only this exhausted target moves (379822 -> 380382), allowance unchanged.
+    gzip: 380382,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
@@ -2714,7 +2747,9 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 342313; only this exhausted target moves (325901 -> 326012), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 343263; only this exhausted target moves (326012 -> 326917), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 343612; only this exhausted target moves (326917 -> 327249), allowance unchanged.
-    brotli: 327249,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Safari and Firefox route (WebGL, with labels) brotli measures 340588 bytes; only this exhausted target moves (324292 -> 324369), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 343898; only this exhausted target moves (327249 -> 327521), allowance unchanged.
+    brotli: 327521,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2936,7 +2971,9 @@ const routeBudgets = [
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1916842; only this exhausted target moves (1846463 -> 1851306), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1918972; only this exhausted target moves (1851306 -> 1853436), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt, with the UV1 program choice in sceneWebGLAuthoredProgram): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1918990; only this exhausted target moves (1853436 -> 1853454), allowance unchanged.
-    raw: 1853454,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw measures 1896063 bytes; only this exhausted target moves (1828953 -> 1830527), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1920535; only this exhausted target moves (1853454 -> 1854999), allowance unchanged.
+    raw: 1854999,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 517576 bytes; only this exhausted target moves (500351 -> 501192), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 534654; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip measures 522257 bytes; only this exhausted target moves (501192 -> 505873), allowance unchanged.
@@ -2944,7 +2981,9 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 540417; only this exhausted target moves (523186 -> 524033), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 541695; only this exhausted target moves (524033 -> 525311), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 542305; only this exhausted target moves (525311 -> 525921), allowance unchanged.
-    gzip: 525921,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip measures 535373 bytes; only this exhausted target moves (518402 -> 518989), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 542951; only this exhausted target moves (525921 -> 526567), allowance unchanged.
+    gzip: 526567,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -2955,7 +2994,9 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 464993; only this exhausted target moves (448273 -> 448609), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 466329; only this exhausted target moves (448609 -> 449945), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 466906; only this exhausted target moves (449945 -> 450522), allowance unchanged.
-    brotli: 450522,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli measures 461291 bytes; only this exhausted target moves (444521 -> 444907), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 467318; only this exhausted target moves (450522 -> 450934), allowance unchanged.
+    brotli: 450934,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -3145,7 +3186,9 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1428385; only this exhausted target moves (1361776 -> 1362849), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1431299; only this exhausted target moves (1362849 -> 1365763), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1432948; only this exhausted target moves (1365763 -> 1367412), allowance unchanged.
-    raw: 1367412,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw measures 1420680 bytes; only this exhausted target moves (1353874 -> 1355144), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1434187; only this exhausted target moves (1367412 -> 1368651), allowance unchanged.
+    raw: 1368651,
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 383698 bytes; only this exhausted target moves (366989 -> 367314), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395831; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (unshadowed PBR fragment for frames without a shadow slot): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395963; only this exhausted target moves (379447 -> 379579) under the unchanged allowance.
@@ -3154,7 +3197,9 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 398853; only this exhausted target moves (382020 -> 382469), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 399644; only this exhausted target moves (382469 -> 383260), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 400109; only this exhausted target moves (383260 -> 383725), allowance unchanged.
-    gzip: 383725,
+    // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip measures 396398 bytes; only this exhausted target moves (379579 -> 380014), allowance unchanged.
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 400555; only this exhausted target moves (383725 -> 384171), allowance unchanged.
+    gzip: 384171,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
@@ -3164,7 +3209,8 @@ const routeBudgets = [
     // train 5 (#822 Selena data textures): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 340545; only this exhausted target moves (324101 -> 324328), allowance unchanged.
     // train 5 (#804 terrain, scatter, wind and shoreline): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 341304; only this exhausted target moves (324328 -> 325051), allowance unchanged.
     // train 5 (#812 glTF TEXCOORD_1 and meshopt): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 341754; only this exhausted target moves (325051 -> 325480), allowance unchanged.
-    brotli: 325480,
+    // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 342047; only this exhausted target moves (325480 -> 325759), allowance unchanged.
+    brotli: 325759,
   },
 
 ];

@@ -119,6 +119,9 @@
         "../runtime/scene3d/mount-controls.ts",
         "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/frame-owner.ts",
+        "../runtime/scene3d/optional-chunks.ts",
+        "../runtime/scene3d/pipeline-warmup.ts",
+        "../runtime/scene3d/text-atlas.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount-input.ts",
@@ -334,6 +337,7 @@
         "../runtime/scene3d/mount-controls.ts",
         "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/frame-owner.ts",
+        "../runtime/scene3d/optional-chunks.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount-input.ts",
         "../runtime/scene3d/geometry-assets.ts",
@@ -488,6 +492,18 @@
       "name": "bootstrap-feature-scene3d-data-texture.js",
       "sources": [
         "../runtime/scene3d/data-texture.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-warmup.js",
+      "sources": [
+        "../runtime/scene3d/pipeline-warmup.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-text-atlas.js",
+      "sources": [
+        "../runtime/scene3d/text-atlas.ts"
       ]
     },
     {

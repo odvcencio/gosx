@@ -303,6 +303,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				{"compute", r.bootstrapFeatureScene3dComputePath}, {"decompress", r.bootstrapFeatureScene3dDecompressPath},
 				{"selena-lighting", r.bootstrapFeatureScene3dSelenaLightingPath},
 				{"data-texture", r.bootstrapFeatureScene3dDataTexturePath},
+				{"warmup", r.bootstrapFeatureScene3dWarmupPath}, {"text-atlas", r.bootstrapFeatureScene3dTextAtlasPath},
 				{"gltf", r.bootstrapFeatureScene3dGLTFPath},
 			} {
 				if gates[entry.name] {
