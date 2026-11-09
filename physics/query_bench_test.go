@@ -70,6 +70,7 @@ func queryBenchWorld(seed int64) *World {
 func BenchmarkSphereCast(b *testing.B) {
 	w := queryBenchWorld(1)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		w.SphereCast(Vec3{X: -1, Y: 1, Z: 0.3}, 0.4, Vec3{X: 1, Y: -0.2}, 12, QueryFilter{})
 	}
@@ -78,6 +79,7 @@ func BenchmarkSphereCast(b *testing.B) {
 func BenchmarkCapsuleCastDown(b *testing.B) {
 	w := queryBenchWorld(1)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		w.CapsuleCast(Vec3{X: 3, Y: 3, Z: 3}, IdentityQuat(), 0.35, 1.1, Vec3{Y: -1}, 6, QueryFilter{})
 	}
@@ -86,6 +88,7 @@ func BenchmarkCapsuleCastDown(b *testing.B) {
 func BenchmarkBoxCast(b *testing.B) {
 	w := queryBenchWorld(1)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		w.BoxCast(Vec3{Y: 1}, QuatFromAxisAngle(Vec3{Y: 1}, 0.4), Vec3{X: 0.5, Y: 0.5, Z: 0.5}, Vec3{X: 1}, 15, QueryFilter{})
 	}
@@ -95,6 +98,7 @@ func BenchmarkOverlapCapsule(b *testing.B) {
 	w := queryBenchWorld(1)
 	var out []*Collider
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		out = w.OverlapCapsule(Vec3{X: 2, Y: 0.5}, IdentityQuat(), 0.5, 1, QueryFilter{}, out[:0])
 	}
@@ -103,6 +107,7 @@ func BenchmarkOverlapCapsule(b *testing.B) {
 func BenchmarkRaycastFiltered(b *testing.B) {
 	w := queryBenchWorld(1)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		w.RaycastFiltered(Ray{Origin: Vec3{Y: 5}, Direction: Vec3{X: 0.3, Y: -1}}, 30, QueryFilter{})
 	}

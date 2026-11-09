@@ -50,7 +50,6 @@ type SpatialHash struct {
 	infinite []int32
 
 	staticCells    map[cellKey][]int32
-	staticKeys     []cellKey
 	staticEntries  []spatialEntry
 	staticInfinite []int32
 	// staticSlot maps a collider's identity (the *Collider pointer itself,
@@ -178,9 +177,13 @@ func (s *SpatialHash) reset(colliderCount int) {
 	s.infinite = s.infinite[:0]
 }
 
+// insert adds index to a cell. keys, when not nil, records each cell that
+// turns non-empty, which is how reset finds the dynamic cells to clear. The
+// static grid passes nil: it never clears by key, and recording its keys grew
+// a list without bound while kinematic bodies moved through it.
 func (s *SpatialHash) insert(cells map[cellKey][]int32, keys *[]cellKey, key cellKey, index int32) {
 	bucket, exists := cells[key]
-	if !exists || len(bucket) == 0 {
+	if keys != nil && (!exists || len(bucket) == 0) {
 		*keys = append(*keys, key)
 	}
 	cells[key] = append(bucket, index)
@@ -237,7 +240,7 @@ func (s *SpatialHash) insertStatic(slot int32, aabb AABB) {
 		for y := minCell.y; y <= maxCell.y; y++ {
 			for z := minCell.z; z <= maxCell.z; z++ {
 				key := cellKey{x: x, y: y, z: z}
-				s.insert(s.staticCells, &s.staticKeys, key, slot)
+				s.insert(s.staticCells, nil, key, slot)
 			}
 		}
 	}
