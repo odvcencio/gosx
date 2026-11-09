@@ -118,7 +118,16 @@ Each display frame then runs in this order:
 While a hook is registered the mount draws every frame, at the pacing its
 props select (see `FramePacing` in `scene.Props`), even when the scene clock is
 paused or the page asks for reduced motion: the game pauses its own time with
-`rt.SetPaused`. When the driver stops, the source unregisters and the mount goes
+`rt.SetPaused`. The game profiles (`game.InteractiveProfile`,
+`FightingProfile`, `FirstPersonProfile`) ask for `"vsync-divisor"` pacing
+unless the scene props set one: the mount renders on every k-th display
+refresh, with the smallest k whose refreshes cover the frame's cost. A frame
+that takes longer than one refresh then lands on every second refresh, evenly,
+instead of on a fixed timer that drifts against the display. A hook frame in which nothing changed (the hook wrote nothing, and
+the camera, viewport and scene are as they were) draws the last render bundle
+again instead of building a new one; `handle.getTelemetry().bundle` counts
+builds and reuses. When a bundle is built, a typed array whose values did not
+change keeps last frame's array, so the renderer can skip its upload. When the driver stops, the source unregisters and the mount goes
 back to drawing only when something changes. The renderer's JavaScript API is
 `handle.setFrameHook(fn)` on the mount's `__gosxScene3DHandle`; it returns a
 function that removes the hook, and one hook replaces the previous one.

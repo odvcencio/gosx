@@ -168,15 +168,7 @@
     let disposePresentation = () => {};
     let publishMetrics = () => {};
     let clockLastFrameMS = NaN;
-    // Frame hook (docs/engine-frame-loop.md): one engine callback that runs
-    // inside this mount's animation frame, before the bundle build, so poses it
-    // streams draw in the same frame and the page keeps one frame loop. It is
-    // called hook(nowMS, deltaMS) and returns the frame's interpolation alpha;
-    // hook(nowMS, 0, true) tells it the mount let it go.
-    let frameHook: any = null;
-    let frameHookLastMS = NaN;
-    let frameHookAlpha = 0;
-    let frameHookRunning = false;
+    const frameOwner = createSceneFrameOwner(); // the engine frame hook and the retained bundle (frame-owner.ts)
     let animationPaused = false;
     let animationToggle = null;
 
@@ -185,9 +177,9 @@
 
     function sceneAnimationState() {
       if (sceneRequiredShaderFailure) return { wants: false, reason: sceneRequiredShaderFailure };
-      // An engine that owns a simulation steps every frame, paused scene clock
-      // or reduced motion alike; it pauses its own game time.
-      if (frameHook) return { wants: true, reason: "frame-hook" };
+      return frameOwner.hook ? { wants: true, reason: "frame-hook" } : sceneOwnAnimationState(); // the hook's engine pauses its own time
+    }
+    function sceneOwnAnimationState() { // what the scene needs without a hook: "static" moves only on scheduleRender
       // Sailing is user-controlled motion; the vessel separately suppresses camera bob.
       if (motion.reducedMotion) return { wants: !animationPaused && sceneVesselEnabled(props) && Boolean(sceneState._gosxMotionController?.active), reason: "reduced-motion" };
       // A user-paused declarative scene stops the loop outright: wants
@@ -2038,6 +2030,7 @@
       if (disposed || sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) {
         return;
       }
+      frameOwner.serial++;
       if (/^(controls|controls-inertia|controls-reset|controls-keyboard|controls-pan|controls-zoom|camera|signal-camera|scroll|gizmo-drag|vessel-helm|vessel-camera|vessel-look|vessel-reset|vessel-command)$/.test(reason || "")) sceneActiveInputUntil = sceneNowMilliseconds() + 180;
       lastRenderReason = reason || "refresh";
       recordScenePerfCounter("schedule:" + (reason || "refresh"));
@@ -3074,32 +3067,7 @@
       performance.clearMarks(end);
     }
 
-    // runSceneFrameHook runs the engine's frame hook before this frame's bundle
-    // is built. Delta is 0 on the first hook frame and after the mount could
-    // not render (hidden or out of view).
-    function runSceneFrameHook(now: number) {
-      if (!frameHook || frameHookRunning) return;
-      const hook = frameHook;
-      const at = typeof now === "number" && Number.isFinite(now) ? now : sceneNowMilliseconds();
-      const delta = Number.isFinite(frameHookLastMS) ? Math.max(0, at - frameHookLastMS) : 0;
-      frameHookLastMS = at;
-      frameHookRunning = true;
-      let alpha: any = 0;
-      try {
-        alpha = hook(at, delta);
-      } catch (error) {
-        console.error("[gosx] scene3d frame hook failed", error);
-      } finally {
-        frameHookRunning = false;
-      }
-      frameHookAlpha = typeof alpha === "number" && Number.isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 0;
-      // The hook's stream writes and commands render in this frame, so the
-      // render they scheduled for the next frame is redundant.
-      if (renderHandle != null) cancelScheduledRender();
-    }
-
     function renderMountedFrame(bundle: any, now: number, frameStart: number, checkEmpty = false) {
-      if (frameHook && bundle) bundle.simAlpha = frameHookAlpha;
       if (!ensureRendererCanCoverBundle(bundle)) {
         scheduleNextAnimationFrame();
         return;
@@ -3146,39 +3114,29 @@
         viewportDirty = false;
       }
       if (!sceneCanRender()) {
-        frameHookLastMS = NaN;
-        cancelFrame();
+        frameOwner.lastMS = NaN; cancelFrame();
         return;
       }
-      runSceneFrameHook(now);
+      if (sceneFrameOwnerRun(frameOwner, now, sceneNowMilliseconds()) && renderHandle != null) cancelScheduledRender(); // the hook's writes draw now
       sceneAdvanceScrollCamera(sceneState._scrollCamera);
       // Advance the pausable scene clock. Deltas clamp at 250 ms so a
       // backgrounded tab cannot fast-forward the choreography on return;
       // while paused (or under reduced motion) the clock simply stops, and
       // every declared-animation consumer below samples the frozen time.
-      const frameDeltaSeconds = !Number.isFinite(clockLastFrameMS)
-        ? 0
-        : Math.max(0, Math.min(0.25, (now - clockLastFrameMS) / 1000));
+      const frameDeltaSeconds = !Number.isFinite(clockLastFrameMS) ? 0 : Math.max(0, Math.min(0.25, (now - clockLastFrameMS) / 1000));
       clockLastFrameMS = now;
-      if (!animationPaused && !motion.reducedMotion) {
-        clockSeconds += frameDeltaSeconds;
-      }
+      if (!animationPaused && !motion.reducedMotion) clockSeconds += frameDeltaSeconds;
       const timeSeconds = clockSeconds;
       if (dayCycle) dayCycle.advance(timeSeconds);
       if (exploration) exploration.advance(timeSeconds);
       // @ts-ignore TS7005 -- the optional authority is installed after renderer creation
       const advanceVessel = sceneControlHandle?.advance;
-      if (advanceVessel) {
-        advanceVessel(frameDeltaSeconds, frameStart / 1000,
-          sceneQualityLadderPointBudgetScale(adaptiveQuality), animationPaused, timeSeconds);
-      }
+      if (advanceVessel) advanceVessel(frameDeltaSeconds, frameStart / 1000, sceneQualityLadderPointBudgetScale(adaptiveQuality), animationPaused, timeSeconds);
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
       // so a frozen value proves the pause contract observably.
       publishSceneFrameAttr(sceneAttr("animation-clock"), timeSeconds.toFixed(3));
-      const modelAnimationDelta = lastModelAnimationTimeSeconds == null
-        ? 0
-        : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
+      const modelAnimationDelta = lastModelAnimationTimeSeconds == null ? 0 : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
       lastModelAnimationTimeSeconds = timeSeconds;
       if (perfEnabled) performance.mark("scene3d-model-animations-start");
       sceneAdvanceModelAnimations(sceneState, modelAnimationDelta, motion.reducedMotion);
@@ -3190,7 +3148,7 @@
             applySceneMotionBindings(runtimeBundle, sceneState, sceneControlHandle),
             sceneCurrentControlCamera(sceneControlController(sceneControlHandle), runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
-          effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources; effectiveBundle.gpuDriven = sceneState.gpuDriven;
+          effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources; effectiveBundle.gpuDriven = sceneState.gpuDriven; effectiveBundle.simAlpha = frameOwner.alpha;
           sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
           latestBundle = effectiveBundle;
           publishMountedSceneCamera(effectiveBundle.camera, reason || "render");
@@ -3201,11 +3159,7 @@
       if (runtimeScene && ctx.runtime) {
         const commandResult = applySceneCommands(sceneState, ctx.runtime.tick());
         notifySceneRendererLifecycle("runtime-tick", false, false);
-        if (commandResult && typeof commandResult.then === "function") {
-          commandResult.then(function() {
-            scheduleRender("runtime-model-commands");
-          });
-        }
+        if (commandResult && typeof commandResult.then === "function") commandResult.then(function() { scheduleRender("runtime-model-commands"); });
       }
       applyWasmMotionFrame(timeSeconds);
       // C3: write motion-evaluated material uniforms into customUniforms BEFORE
@@ -3226,7 +3180,9 @@
         }
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
-      const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport);
+      const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport), bundleSerial = frameOwner.serial;
+      // @ts-ignore TS7005 -- scroll, vessel and motion-controller motion run outside scheduleRender
+      if (sceneFrameOwnerCanReuse(frameOwner, latestBundle, renderer, viewport, activeCamera, () => sceneState._scrollCamera || sceneState._gosxMotionController?.active || sceneControlHandle?.advance || sceneOwnAnimationState().wants)) return renderMountedFrame(Object.assign(latestBundle, { timeSeconds, simAlpha: frameOwner.alpha }), now, frameStart, true);
       applySceneHTMLTextureRecordsToState(sceneState, htmlTextureState);
       const pointQualityGroups = sceneQualityLadderAdmittedGroups(adaptiveQuality);
       const pointBudgetScale = sceneQualityLadderPointBudgetScale(adaptiveQuality);
@@ -3264,9 +3220,10 @@
           // Only the PBR WebGL renderer can draw a crowd batch record.
           crowdBatches: Boolean(renderer && typeof renderer.prepareCrowdMotionShaders === "function"),
           meshWireframeFallback: renderer?.kind === "canvas",
-        }, sceneState,
+        }, sceneState, frameOwner.arrays,
       ), sceneState, sceneControlHandle);
-      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
+      sceneFrameOwnerRetain(frameOwner, bundleSerial, renderer, viewport, activeCamera);
+      latestBundle.simAlpha = frameOwner.alpha; latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups
       // this frame (0 when no ladder is active or nothing was tagged). Same
@@ -3615,28 +3572,8 @@
       applyInstanceStream(bytes) {
         return window.__gosx_scene3d_apply_instance_stream_frame(sceneState, bytes, scheduleRender, mount);
       },
-      // setFrameHook registers the one per-frame engine callback (see the
-      // frameHook declaration) and returns a function that removes it. A new
-      // hook replaces the old one, which is told it was let go. null removes.
-      setFrameHook(fn: any) {
-        if (disposed) throw new Error("disposed");
-        if (fn != null && typeof fn !== "function") throw new TypeError("frame hook must be a function");
-        const previous = frameHook;
-        frameHook = fn || null;
-        frameHookLastMS = NaN;
-        frameHookAlpha = 0;
-        if (previous && previous !== frameHook) {
-          try { previous(sceneNowMilliseconds(), 0, true); } catch (_) { /* the old owner is gone */ }
-        }
-        if (frameHook) scheduleRender("frame-hook");
-        else applySceneRenderLoopState("frame-hook");
-        return function() {
-          if (frameHook !== fn) return;
-          frameHook = null;
-          frameHookLastMS = NaN;
-          applySceneRenderLoopState("frame-hook");
-        };
-      },
+      // setFrameHook(fn) installs the one engine frame callback and returns its remover (frame-owner.ts).
+      setFrameHook(fn: any) { if (disposed) throw new Error("disposed"); return sceneFrameOwnerSet(frameOwner, fn, sceneNowMilliseconds(), (on: boolean) => on ? scheduleRender("frame-hook") : applySceneRenderLoopState("frame-hook")); },
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
         return currentMountedSceneCamera();
       },
@@ -3647,8 +3584,7 @@
           selectionID: lastAppliedSelectionID || "",
           lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
           rendererStats: renderer && typeof renderer.getStats === "function" ? renderer.getStats() : null,
-          poseFrames: handle.__gosxPoseFrameStats || null,
-          frameHook: frameHook ? { alpha: frameHookAlpha } : null,
+          poseFrames: handle.__gosxPoseFrameStats || null, ...sceneFrameOwnerTelemetry(frameOwner),
           // @ts-ignore TS7005 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
           motionFrames: handle.__gosxMotionFrameStats || null,
         };
@@ -3756,12 +3692,7 @@
     function disposeMountedScene() {
       pendingFrameRequest = null;
       const ownsMount = mount.__gosxScene3DOwner === sceneMountOwner;
-      disposed = true;
-      if (frameHook) {
-        const hook = frameHook;
-        frameHook = null;
-        try { hook(sceneNowMilliseconds(), 0, true); } catch (_) { /* the engine is gone */ }
-      }
+      disposed = true; sceneFrameOwnerDispose(frameOwner, sceneNowMilliseconds());
       disposePresentation();
       if (dayCycle) dayCycle.dispose();
       if (exploration) exploration.dispose();
