@@ -521,6 +521,16 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-animation-graph.js",
+      "sources": [
+        "bootstrap-src/26n-feature-scene3d-animation-graph-prefix.ts",
+        "../runtime/scene3d/animation-rig.ts",
+        "../runtime/scene3d/ik.ts",
+        "../runtime/scene3d/animation-graph.ts",
+        "bootstrap-src/26n-feature-scene3d-animation-graph-suffix.ts"
+      ]
+    },
+    {
       "name": "patch.js",
       "sources": [
         "../runtime/host/compatibility.ts",
