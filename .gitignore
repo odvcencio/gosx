@@ -20,6 +20,7 @@ build/
 !/docs/scene3d-shadows.md
 !/docs/scene3d-image-quality.md
 !/docs/scene3d-clip-frames.md
+!/docs/scene3d-animation.md
 !/docs/scene3d-crowd-motion.md
 !/docs/scene3d-powered-vessels.md
 !/docs/scene3d-model-preparation.md
