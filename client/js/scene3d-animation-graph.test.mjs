@@ -470,3 +470,24 @@ test("the animation API hook captures clips for records created after the chunk 
   assert.deepEqual(captured, ["late"]);
   assert.equal(record.__animGraphClips, list);
 });
+
+test("a rig defined after the first frame binds on the next frame", () => {
+  const { api } = loadChunk();
+  const { nodes, skins } = humanoid();
+  const record = { id: "hero", nodes, rootNodes: [0], skins, model: {}, rootTransform: null };
+  const m = api.createModel(record, clips());
+  const holder = api.holder({}, "hero");
+  const decode = api.createDecoder();
+  const frame = encodeFrame([{ id: "hero", rigHash: 99, ...base([], { ik: [{ chain: 0, weight: 1, ground: { height: 0.2 } }] }) }]);
+  holder.data = api.copyModel(holder.data, decode(frame).models[0]);
+  holder.serial++;
+  api.evaluate(m, holder);
+  assert.equal(holder.feedback[0], 0, "no rig yet: feedback reports rig 0");
+  near(pos(m, 4), [0.1, 0.1, 0], 1e-6, "no IK without a rig");
+  api.defineRig(99, JSON.stringify(RIG));
+  holder.data = api.copyModel(holder.data, decode(frame).models[0]);
+  holder.serial++;
+  api.evaluate(m, holder);
+  assert.equal(holder.feedback[0], 99, "rig bound");
+  near(pos(m, 4), [0.1, 0.3, 0], 1e-5, "foot IK applies once the rig is known");
+});

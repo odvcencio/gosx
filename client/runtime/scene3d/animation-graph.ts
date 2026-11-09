@@ -496,10 +496,13 @@
 
   // Bind (or rebind) the model's rig: masks, layer modes, IK and look-at
   // bones. The humanoid bone map comes from animation-rig.ts.
+  // A frame can name a rig before defineAnimationRig delivers it; the model
+  // then poses without one and binds it on the first frame after it arrives.
   function agBindRig(m: any, hash: number) {
-    if (m.rigHash === hash) return m.rig;
-    m.rigHash = hash;
+    if (m.rigHash === hash && (m.rig || !hash)) return m.rig;
     const rig = hash ? agRigs.get(hash) : null;
+    if (hash && !rig) { m.rigHash = -1; m.rig = null; return null; }
+    m.rigHash = hash;
     m.rig = rig ? agResolveRig(m, rig) : null;
     return m.rig;
   }

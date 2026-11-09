@@ -15,6 +15,8 @@ type dispatcher struct {
 	defined map[uint32]bool
 	buf     js.Value
 	bufCap  int
+	view    js.Value
+	viewLen int
 	fb      js.Value
 	fbBytes js.Value
 	fbGo    []byte
@@ -61,8 +63,14 @@ func Dispatch(target string, models ...*Instance) error {
 	if d.bufCap < len(data) {
 		d.bufCap = 2 * len(data)
 		d.buf = js.Global().Get("Uint8Array").New(d.bufCap)
+		d.viewLen = -1
 	}
-	view := d.buf.Call("subarray", 0, len(data))
+	// Frames usually keep their size, so the exact-length view is reused.
+	if d.viewLen != len(data) {
+		d.view = d.buf.Call("subarray", 0, len(data))
+		d.viewLen = len(data)
+	}
+	view := d.view
 	js.CopyBytesToJS(view, data)
 	result := api.Call("dispatchAnimationFrame", target, view)
 	if result.Type() == js.TypeObject && !result.Get("applied").Truthy() {
