@@ -252,7 +252,7 @@
     const strings: any[] = [];
     const names: string[] = [];
     const frame: any = { models: [] as any[], count: 0 };
-    let bytes = new Uint8Array(0), at = 0;
+    let bytes: Uint8Array = new Uint8Array(0), at = 0;
     function need(n: number) { if (n > bytes.length - at) throw new RangeError("truncated animation graph frame"); }
     function u8() { need(1); return bytes[at++]; }
     function u16() { need(2); const v = bytes[at] | (bytes[at + 1] << 8); at += 2; return v; }
@@ -920,6 +920,25 @@
     const count = Math.min(holder.feedbackCount, out.length);
     for (let i = 0; i < count; i++) out[i] = holder.feedback[i];
     return count;
+  }
+
+  // agMeasure re-evaluates a posed model `iterations` times and returns the
+  // mean microseconds per evaluation, or -1. Browsers coarsen
+  // performance.now() on pages that are not cross-origin isolated (Chrome to
+  // 100 us), so the per-frame EvalMicros feedback is only meaningful as a
+  // long average; this loop gives tools and tests a stable figure. The IK
+  // smoothing state does not advance (the frame serial is unchanged).
+  function agMeasure(target: any, id: any, iterations: any) {
+    const handle = agHandle(target);
+    const state = handle ? agStates.get(handle) : null;
+    const record = state ? agRecordIndex(state).byID.get(String(id)) : null;
+    const sampler = record && record.clipSampler;
+    const m = sampler && sampler.__animGraph ? sampler.model : null;
+    if (!m || !sampler.holder.data) return -1;
+    const n = Math.max(1, Math.min(100000, Math.floor(Number(iterations) || 1)));
+    const start = performance.now();
+    for (let i = 0; i < n; i++) agEvaluate(m, sampler.holder);
+    return ((performance.now() - start) * 1000) / n;
   }
 
   if (typeof window !== "undefined") {

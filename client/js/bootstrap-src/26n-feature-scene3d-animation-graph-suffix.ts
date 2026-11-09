@@ -13,6 +13,7 @@
     holder: agHolder,
     copyModel: agCopyModel,
     solveTwoBone: ikTwoBone,
+    measure: agMeasure,
   };
   window.__gosx_scene3d_animation_graph_loaded = true;
 })();
