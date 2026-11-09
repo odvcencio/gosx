@@ -115,6 +115,10 @@ type World struct {
 	triggerPrev    []triggerPair
 	triggerEvents  []TriggerEvent
 	triggerHandler func(TriggerEvent)
+
+	// characters lists the character controllers in creation order.
+	characters         []*Character
+	nextCharacterIndex int
 }
 
 func DefaultWorldConfig() WorldConfig {

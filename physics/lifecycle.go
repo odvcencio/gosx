@@ -21,6 +21,7 @@ func (w *World) RemoveBody(body *RigidBody) bool {
 	w.constraints = filterConstraintsForBody(w.constraints, body)
 	w.pruneContactState(removedColliders)
 	w.pruneTriggers(removedColliders)
+	w.dropCharacterForBody(body)
 	w.colliderVersion++
 	//gosx:allow map-range each iteration writes only its own collider, so order does not matter
 	for collider := range removedColliders {
