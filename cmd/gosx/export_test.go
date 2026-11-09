@@ -12,6 +12,8 @@ import (
 )
 
 func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
+	// The test checks exported pages, the manifest and the navigation asset, not runtime bytes.
+	useFakePrebuiltRuntime(t)
 	dir := filepath.Join(t.TempDir(), "export-app")
 	if err := RunInit(dir, "example.com/export-app", ""); err != nil {
 		t.Fatal(err)
