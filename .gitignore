@@ -35,6 +35,7 @@ build/
 !/docs/immutable-asset-caching.md
 !/docs/shutdown-hooks.md
 !/docs/hub-snapshots.md
+!/docs/physics-character.md
 !/docs/deterministic-simulation.md
 !/docs/game-performance.md
 !/docs/scene3d-selena.md
