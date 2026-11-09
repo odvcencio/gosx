@@ -64,6 +64,7 @@ type hitchRun struct {
 	Backend       string      `json:"backend"`
 	Warmup        bool        `json:"warmup"`
 	ToneMapped    bool        `json:"toneMapped"`
+	Chunked       bool        `json:"chunked"`
 	FirstFrameMS  float64     `json:"firstFrameMS"`
 	ShadersReady  string      `json:"shadersReady"`
 	ShadersTotal  string      `json:"shadersTotal"`
@@ -77,10 +78,12 @@ type hitchRun struct {
 // clearcoat. For each addition it records the longest interval between two
 // drawn frames (a frame waits while its programs link) and the longest
 // requestAnimationFrame interval (a synchronous compile blocks the page).
-// It runs each backend three times: without Props.ShaderWarmup, with every
-// added material listed in it, and with the warm-up plus a tone-mapping post
+// It runs each backend four times: without Props.ShaderWarmup, with every
+// added material listed in it, with the warm-up plus a tone-mapping post
 // effect from the start, which keeps WebGPU's render target format fixed when
-// the first transmission material appears. The numbers are logged and, with
+// the first transmission material appears, and with the warm-up on the
+// production page shape (bootstrap-runtime.js and the lazy feature chunks
+// instead of the bootstrap.js monolith). The numbers are logged and, with
 // GOSX_WARMUP_HITCH_OUT, written as JSON. Run on the GPU runners:
 //
 //	/home/draco/work/.runtime/tools/gpu/gpu-chrome.sh run -- go test -tags e2e -run TestShaderWarmupRemovesFirstUseHitches -timeout 20m ./e2e/
@@ -99,11 +102,11 @@ func TestShaderWarmupRemovesFirstUseHitches(t *testing.T) {
 	}
 	var runs []hitchRun
 	for _, backend := range backends {
-		for _, mode := range []string{"cold", "warm", "warm-tonemapped"} {
+		for _, mode := range []string{"cold", "warm", "warm-tonemapped", "warm-chunked"} {
 			name := backend + "/" + mode
-			warm, post := mode != "cold", mode == "warm-tonemapped"
+			warm, post, chunked := mode != "cold", mode == "warm-tonemapped", mode == "warm-chunked"
 			t.Run(name, func(t *testing.T) {
-				run := runWarmupHitch(t, chrome, bootstrap, root, backend, warm, post)
+				run := runWarmupHitch(t, chrome, bootstrap, root, backend, warm, post, chunked)
 				runs = append(runs, run)
 				for _, s := range run.Steps {
 					t.Logf("%s %-12s frame gap %7.1f ms  rAF gap %7.1f ms  (%d frames after)", name, s.Label, s.FrameGapMS, s.RAFGapMS, s.FramesAfter)
@@ -119,7 +122,7 @@ func TestShaderWarmupRemovesFirstUseHitches(t *testing.T) {
 	}
 }
 
-func runWarmupHitch(t *testing.T, chrome string, bootstrap []byte, root, backend string, warm, post bool) hitchRun {
+func runWarmupHitch(t *testing.T, chrome string, bootstrap []byte, root, backend string, warm, post, chunked bool) hitchRun {
 	t.Helper()
 	nonce := fmt.Sprintf("%d.%d", time.Now().UnixNano()%1000, time.Now().Nanosecond()%997+1)
 	var added []scene.Material
@@ -187,6 +190,16 @@ func runWarmupHitch(t *testing.T, chrome string, bootstrap []byte, root, backend
 		t.Fatal(err)
 	}
 	page := []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#warmup-root{width:480px;height:320px}</style></head><body><div id="warmup-root"></div><script id="hitch-steps" type="application/json">%s</script><script id="gosx-manifest" type="application/json">%s</script><script src="/bootstrap.js"></script></body></html>`, stepJSON, manifest))
+	if chunked {
+		propsJSON, err := json.Marshal(initial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page = []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#warmup-root{width:480px;height:320px}</style></head><body><div id="warmup-root"></div><script id="hitch-steps" type="application/json">%s</script>
+<script src="/gosx/bootstrap-runtime.js"></script>
+<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js" data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js" data-gosx-scene3d-selena-lighting-url="/gosx/bootstrap-feature-scene3d-selena-lighting.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
+<script>window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('warmup-root'),emit(){},props:%s}).catch(error=>{window.mountError=String(error);});</script></body></html>`, stepJSON, propsJSON))
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/":
@@ -195,7 +208,7 @@ func runWarmupHitch(t *testing.T, chrome string, bootstrap []byte, root, backend
 		case r.URL.Path == "/bootstrap.js":
 			w.Header().Set("Content-Type", "application/javascript")
 			_, _ = w.Write(bootstrap)
-		case strings.HasPrefix(r.URL.Path, "/gosx/bootstrap-feature-") && strings.HasSuffix(r.URL.Path, ".js"):
+		case strings.HasPrefix(r.URL.Path, "/gosx/bootstrap-") && strings.HasSuffix(r.URL.Path, ".js"):
 			http.ServeFile(w, r, filepath.Join(root, "client", "js", filepath.Base(r.URL.Path)))
 		default:
 			http.NotFound(w, r)
@@ -222,7 +235,7 @@ new PerformanceObserver(list => { for (const e of list.getEntries()) if (e.name 
 	browser.navigate(t, url+"/")
 
 	var run hitchRun
-	run.Backend, run.Warmup, run.ToneMapped = backend, warm, post
+	run.Backend, run.Warmup, run.ToneMapped, run.Chunked = backend, warm, post, chunked
 	var state struct {
 		Backend string  `json:"backend"`
 		Ready   string  `json:"ready"`

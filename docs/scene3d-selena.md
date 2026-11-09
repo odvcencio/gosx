@@ -287,7 +287,9 @@ values, camera and game state. Nothing reloads and the app does not restart.
 
 Materials match by name (`material Lava` in the source and
 `shaderLayout.material` in the scene), so keep material names unique across
-the project's `.sel` files.
+the project's `.sel` files. Mesh objects are patched in place; a Selena post
+effect or points material has no in-place patch, so editing one reloads the
+page.
 
 ## Editor support
 
