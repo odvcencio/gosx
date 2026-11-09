@@ -185,7 +185,7 @@ WebGPU is the primary backend. WebGL2 draws the same terrain, scatter, wind and 
 | Scatter culling | GPU-driven with `Props.GPUDriven` | per-batch distance bands only |
 | Wind | vertex sway on every instanced path | vertex sway on the instanced program |
 
-The terrain, wind and shoreline code ships in its own lazily loaded chunk, `bootstrap-feature-scene3d-terrain.js`, which a page fetches only when its scene sets `Environment.Terrain` or `Environment.Wind`.
+The terrain, wind and shoreline code ships in its own lazily loaded chunk, `bootstrap-feature-scene3d-terrain.js`, which a page fetches only when its scene sets `Environment.Terrain` or `Environment.Wind`, or contains a `Scatter` with LOD bands.
 
 ## Limits
 
