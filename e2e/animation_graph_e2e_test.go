@@ -532,4 +532,3 @@ func animMean(v []float64) float64 {
 	}
 	return s / float64(len(v))
 }
-
