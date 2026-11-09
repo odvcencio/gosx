@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"m31labs.dev/gosx/room/group"
 	"m31labs.dev/gosx/room/identity"
 	"m31labs.dev/gosx/room/store"
+	"m31labs.dev/gosx/server"
 )
 
 var keys = []identity.Key{{ID: "k1", Secret: []byte("0123456789abcdef0123")}}
@@ -50,16 +52,95 @@ func (c client) do(method, path, bearer string, body any, out any) int {
 // boot opens the store in dir and serves a League on it, as a pod start would.
 func boot(t *testing.T, dir string, clk *fakeClock) (*League, client, func()) {
 	t.Helper()
+	l, st := newLeague(t, dir, clk, 0)
+	srv := httptest.NewServer(l)
+	return l, client{t, srv}, func() { srv.Close(); st.Close() }
+}
+
+func newLeague(t *testing.T, dir string, clk *fakeClock, joinsPerMinute int) (*League, *store.Store) {
+	t.Helper()
 	st, err := store.Open(dir, store.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := New(Config{Store: st, Keys: keys, AdminToken: "admin", Now: clk.Now})
+	l, err := New(Config{Store: st, Keys: keys, AdminToken: "admin", Now: clk.Now, JoinsPerMinute: joinsPerMinute})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return l, st
+}
+
+func joinStatus(t *testing.T, url, forwardedFor, code string) int {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"code": code})
+	req, _ := http.NewRequest("POST", url+"/join", bytes.NewReader(body))
+	if forwardedFor != "" {
+		req.Header.Set("X-Forwarded-For", forwardedFor)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+// POST /join is limited per client address, and a correct code is refused
+// too once the address is over the limit. The limit resets after a minute.
+func TestJoinRateLimitedPerAddress(t *testing.T) {
+	clk := &fakeClock{}
+	clk.ns.Store(time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC).UnixNano())
+	l, st := newLeague(t, t.TempDir(), clk, 3)
+	defer st.Close()
 	srv := httptest.NewServer(l)
-	return l, client{t, srv}, func() { srv.Close(); st.Close() }
+	defer srv.Close()
+	if _, err := l.Groups.Create("spring", "Spring", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Groups.AddMember("spring", group.Member{ID: "red"}); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := l.IDs.CreateInvite(identity.InviteSpec{Group: "spring", Seat: "red"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		if code := joinStatus(t, srv.URL, "", identity.NewInviteCode()); code != http.StatusNotFound {
+			t.Fatalf("guess %d = %d, want 404", i, code)
+		}
+	}
+	if code := joinStatus(t, srv.URL, "", inv.Code); code != http.StatusTooManyRequests {
+		t.Fatalf("correct code over the limit = %d, want 429", code)
+	}
+	clk.Advance(time.Minute)
+	if code := joinStatus(t, srv.URL, "", inv.Code); code != http.StatusOK {
+		t.Fatalf("correct code after the window = %d, want 200", code)
+	}
+}
+
+// Mounted in a gosx App with a trusted proxy, the limit keys by the address
+// the proxy forwards, so two players behind one ingress get separate limits.
+func TestJoinKeyedByTrustedProxyClient(t *testing.T) {
+	clk := &fakeClock{}
+	clk.ns.Store(time.Date(2026, 11, 9, 9, 0, 0, 0, time.UTC).UnixNano())
+	l, st := newLeague(t, t.TempDir(), clk, 2)
+	defer st.Close()
+	app := server.New()
+	if err := app.SetTrustedProxies(server.TrustedProxyPolicy{Proxies: []string{"127.0.0.1", "::1"}}); err != nil {
+		t.Fatal(err)
+	}
+	app.Mount("/", l)
+	srv := httptest.NewServer(app.Build())
+	defer srv.Close()
+	for range 2 {
+		joinStatus(t, srv.URL, "203.0.113.7", identity.NewInviteCode())
+	}
+	if code := joinStatus(t, srv.URL, "203.0.113.7", identity.NewInviteCode()); code != http.StatusTooManyRequests {
+		t.Fatalf("third join from one client = %d, want 429", code)
+	}
+	if code := joinStatus(t, srv.URL, "198.51.100.9", identity.NewInviteCode()); code != http.StatusNotFound {
+		t.Fatalf("another client behind the same proxy = %d, want 404 (not limited)", code)
+	}
 }
 
 // TestLeagueEndToEnd persists a group, invites two devices, restarts the
