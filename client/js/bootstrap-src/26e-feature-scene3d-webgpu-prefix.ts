@@ -101,6 +101,27 @@
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
+  // Selena scene lighting (16c2-scene-selena-lighting) ships in the gated
+  // scene3d-selena-lighting chunk, advertised only when a Selena material
+  // reads lights, shadows or fog. Until it loads WebGPU supplies none of it.
+  var sceneSelenaLightingRequested = false;
+  function sceneSelenaFrameLighting(holder, cam, view, bundle, slots, lightIndices, matrices, clip) {
+    var api = window.__gosx_scene3d_selena_lighting_api;
+    if (!api && !sceneSelenaLightingRequested && typeof sceneApi.loadPresentation === "function") {
+      sceneSelenaLightingRequested = true;
+      sceneApi.loadPresentation("selena-lighting", "gosxScene3dSelenaLightingUrl", "").catch(function() {});
+    }
+    return api ? api.frame(holder, cam, view, bundle, slots, lightIndices, matrices, clip) : null;
+  }
+  function sceneSelenaLightingValue(lighting, field) {
+    var api = window.__gosx_scene3d_selena_lighting_api;
+    return api ? api.value(lighting, field) : undefined;
+  }
+  function sceneSelenaShadowMapSlot(lighting, texture) {
+    var api = window.__gosx_scene3d_selena_lighting_api, engine = texture && texture.engine;
+    if (api) return api.shadowSlot(lighting, texture);
+    return engine === "shadowMap0" || engine === "shadowMap1" ? null : undefined;
+  }
   var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
   var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
   var sceneAtmosphereQuality = sceneApi.sceneAtmosphereQuality;
