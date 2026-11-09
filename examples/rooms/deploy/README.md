@@ -19,8 +19,9 @@ annotations, TLS issuer and DNS.
 ## What runs
 
 One replica with `Recreate`: rooms live in process memory, so one process
-owns them. A restart drops every room. Connected clients keep playing locally
-(netsync's offline fallback) and quick-match again on their next start.
+owns them. A restart drops every room, and a rollout leaves a few seconds
+with no replica (HTTP 503). Connected clients keep playing locally (netsync's
+offline fallback) and quick-match again on their next start.
 
 The pod runs as UID 65532 with a read-only root, no service-account token and
 no outbound network beyond cluster DNS. It requests 50m CPU and 64 MiB and is
@@ -33,10 +34,22 @@ Configuration is environment variables in `k8s.yaml`:
 |---|---|---|
 | `ROOMS_ORIGINS` | see below | browser origins that may connect |
 | `ROOMS_REQUIRE_ORIGIN` | `true` | browsers always send Origin; refuse clients that omit it |
-| `ROOMS_TRUST_FORWARDED_FOR` | `true` | rate limits per client: Traefik appends the real peer address (`externalTrafficPolicy: Local`) |
-| `ROOMS_CONNECTS_PER_MINUTE` | `30` | WebSocket connections per client address |
-| `ROOMS_CREATES_PER_MINUTE` | `10` | new rooms per client address |
+| `ROOMS_TRUST_FORWARDED_FOR` | `true` | key rate limits by the address Traefik appends (forged values are stripped) |
+| `ROOMS_CONNECTS_PER_MINUTE` | `600` | WebSocket connections per key per minute |
+| `ROOMS_CREATES_PER_MINUTE` | `120` | new rooms per key per minute |
 | `ROOMS_MAX_ROOMS` | `64` | live rooms; more joins get close code 4006 and play offline |
+
+**The rate limits are global on this cluster.** k3s ServiceLB hands Traefik an
+in-cluster address for every client, so every request reaches the pod with
+the same peer and the same `X-Forwarded-For` entry (check with
+`curl https://rooms.draco.quest/whoami` from two networks). The limits are
+sized as global buckets: 10 connections and 2 new rooms per second across all
+players. Someone who floods the server can use them up for a minute; players
+refused meanwhile get close code 4029 or HTTP 429 and keep playing locally.
+Preserving client addresses needs a cluster change (Traefik on the host
+network, or a ServiceLB that keeps the source address), outside this
+namespace. The per-socket inbound limit (twice the tick rate plus 20 frames
+per second) and the room cap still apply per connection.
 
 Allowed origins, besides `https://rooms.draco.quest` itself (always allowed):
 
@@ -80,6 +93,7 @@ bash examples/rooms/deploy/render.sh harbor.draco.quest/orchard/gosx-rooms@sha25
 curl -fsS https://rooms.draco.quest/healthz
 curl -fsS https://rooms.draco.quest/readyz
 curl -fsS https://rooms.draco.quest/play/rooms
+curl -fsS https://rooms.draco.quest/whoami   # the peer and X-Forwarded-For the pod sees
 kubectl --context default -n gosx-rooms get pods,ingress,certificate
 kubectl --context default -n gosx-rooms logs deployment/gosx-rooms --tail=50
 ```

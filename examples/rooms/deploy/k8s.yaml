@@ -58,16 +58,23 @@ spec:
             # Browsers always send Origin; refuse clients that omit it.
             - name: ROOMS_REQUIRE_ORIGIN
               value: "true"
-            # Traefik appends the peer address (externalTrafficPolicy Local
-            # keeps it the real client), so rate limits are per client.
+            # Key rate limits by the address Traefik appends. On this cluster
+            # ServiceLB hands Traefik an in-cluster address for every client
+            # (GET /whoami shows it), so that key is shared by everyone and the
+            # limits below act as global buckets. Traefik strips forged
+            # X-Forwarded-For values, so the key cannot be spoofed; if the
+            # cluster starts preserving client addresses, the limits become
+            # per client with no change here.
             - name: ROOMS_TRUST_FORWARDED_FOR
               value: "true"
             - name: ROOMS_MAX_ROOMS
               value: "64"
+            # Global while the key is shared: 10 connections and 2 new rooms
+            # per second across all players.
             - name: ROOMS_CONNECTS_PER_MINUTE
-              value: "30"
+              value: "600"
             - name: ROOMS_CREATES_PER_MINUTE
-              value: "10"
+              value: "120"
             - name: GOMEMLIMIT
               value: 200MiB
             - name: GOMAXPROCS
