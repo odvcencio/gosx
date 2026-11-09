@@ -502,11 +502,14 @@ func (c *Client) dialNow(now time.Duration) {
 // pump reads the connection.
 func (c *Client) pump(now time.Duration) {
 	before := c.stats.BytesIn
-	state := c.conn.Poll(c.pollFn)
+	conn := c.conn
+	state := conn.Poll(c.pollFn)
 	if c.stats.BytesIn != before {
 		c.lastRecv = now
 	}
-	if state == wire.ConnClosed {
+	// A frame handler may have dropped the connection (a protocol mismatch
+	// falls back to offline play) or replaced it.
+	if c.conn == conn && state == wire.ConnClosed {
 		c.onClosed(now)
 	}
 }
@@ -584,8 +587,8 @@ func closeReason(reason, fallback string) string {
 func (c *Client) onFrame(frame []byte) {
 	c.stats.BytesIn += uint64(len(frame))
 	kind, ok := wire.KindOf(frame)
-	if !ok {
-		return
+	if !ok || c.status == StatusOffline || c.status == StatusClosed {
+		return // frames still queued after a fallback or close are not ours
 	}
 	now := c.now()
 	switch kind {

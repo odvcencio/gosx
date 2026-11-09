@@ -198,3 +198,41 @@ func (c *recordConn) Poll(fn func([]byte)) wire.ConnState {
 }
 func (c *recordConn) Close(int, string)          {}
 func (c *recordConn) CloseStatus() (int, string) { return 0, "" }
+
+// TestWelcomeMismatchFallsBack: a server that runs another mode is refused
+// cleanly, even when more frames follow the Welcome in the same poll.
+func TestWelcomeMismatchFallsBack(t *testing.T) {
+	now := time.Duration(0)
+	m := mode.Mode{Name: "count", Seats: 2, TickRate: 60, InputSize: 1, NewSim: func(uint64) sim.Simulation { return &countSim{} }}
+	conn := &closingConn{}
+	c, _ := New(Config{URL: "ws://x/ws", Mode: m, Now: func() time.Duration { return now }, CatchUpBudget: -1,
+		Dial: func(string) (Conn, error) { return conn, nil }})
+	w := wire.Welcome{Version: wire.Version, Seat: 0, Seats: 2, TickRate: 60, SnapshotEvery: 1, Mode: "other", Code: "ABCDE"}
+	room := wire.Room{Phase: wire.PhaseLobby, Seats: make([]wire.SeatInfo, 2)}
+	conn.queue = [][]byte{w.Append(nil), room.Append(nil)}
+	now += 16 * time.Millisecond
+	c.Frame(16 * time.Millisecond)
+	if c.Status() != StatusOffline || c.Phase() != wire.PhaseRunning || !c.Room().Offline {
+		t.Fatalf("status %v phase %v after a mode mismatch", c.Status(), c.Phase())
+	}
+}
+
+// closingConn reports closed once Close was called, like a real socket.
+type closingConn struct {
+	queue  [][]byte
+	closed bool
+}
+
+func (c *closingConn) Send([]byte) error { return nil }
+func (c *closingConn) Poll(fn func([]byte)) wire.ConnState {
+	for _, f := range c.queue {
+		fn(f)
+	}
+	c.queue = nil
+	if c.closed {
+		return wire.ConnClosed
+	}
+	return wire.ConnOpen
+}
+func (c *closingConn) Close(int, string)          { c.closed = true }
+func (c *closingConn) CloseStatus() (int, string) { return 1000, "" }
