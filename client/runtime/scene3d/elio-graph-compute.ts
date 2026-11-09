@@ -141,6 +141,9 @@
         }, function () { slot.state = "free"; });
       }
     }
+    function stampPass(encoder: any, which: string, write: any): void {
+      encoder.beginComputePass({ label: prefix + "time-" + which, timestampWrites: Object.assign({ querySet: timing.querySet }, write) }).end();
+    }
     function recordTiming(encoder: any): void {
       const slot = timing.slots.find(function (x: any) { return x.state === "free"; });
       encoder.resolveQuerySet(timing.querySet, 0, 2, timing.resolve, 0);
@@ -174,24 +177,33 @@
         for (const r of graph.resources) if (r.feed) queue.writeBuffer(resources[r.name].buffer, 0, params[r.feed]);
         pollTiming();
         const running = plans.filter(function (plan: any) { return ctx.holds(plan.pass.when, params, changed); });
-        running.forEach(function (plan: any, index: number) {
+        // With GPU timing on, the graph's passes run in a command buffer of their own and the two stamps go on empty passes outside it.
+        // On Metal (Apple M4 Pro, Chrome 157) a command buffer that holds ~400 compute passes and any timestampWrites (this graph's or
+        // the renderer's frame stamps) fails with "Insufficient Memory" and loses the device. Queue order keeps the passes ahead of the
+        // frame's own passes; the begin stamp is submitted before them and the end stamp rides in the frame's encoder after them.
+        const timed = !!timing && running.length > 0;
+        const target = timed ? device.createCommandEncoder({ label: prefix + "graph" }) : encoder;
+        if (timed) {
+          const first = device.createCommandEncoder({ label: prefix + "time-begin" });
+          stampPass(first, "begin", { beginningOfPassWriteIndex: 0 });
+          queue.submit([first.finish()]);
+        }
+        running.forEach(function (plan: any) {
           const pass = plan.pass;
           for (const b of plan.blocks) {
             if (b.constant && b.written) continue;
             queue.writeBuffer(b.buffer, 0, new Uint8Array(ctx.pack(b.layout, b.values, params, pass.name)));
             b.written = true;
           }
-          const descriptor: any = { label: prefix + pass.name };
-          if (timing && (index === 0 || index === running.length - 1)) {
-            descriptor.timestampWrites = { querySet: timing.querySet };
-            if (index === 0) descriptor.timestampWrites.beginningOfPassWriteIndex = 0;
-            if (index === running.length - 1) descriptor.timestampWrites.endOfPassWriteIndex = 1;
-          }
-          const cp = encoder.beginComputePass(descriptor);
+          const cp = target.beginComputePass({ label: prefix + pass.name });
           cp.setPipeline(validated(plan.p)); cp.setBindGroup(0, bindGroup(plan));
           cp.dispatchWorkgroups(pass.dispatch[0], pass.dispatch[1] || 1, pass.dispatch[2] || 1);
           cp.end();
         });
+        if (timed) {
+          queue.submit([target.finish()]);
+          stampPass(encoder, "end", { endOfPassWriteIndex: 1 });
+        }
         if (timing && running.length) recordTiming(encoder);
         exchange(graph.frameSwaps || []);
         return true;
