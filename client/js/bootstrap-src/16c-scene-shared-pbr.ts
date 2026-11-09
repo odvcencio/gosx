@@ -640,16 +640,18 @@
     upY = rz * fx - rx * fz;
     upZ = rx * fy - ry * fx;
 
-    // View matrix (column-major).
+    // View matrix (column-major), rows right, up, -forward: points in front
+    // of the light get negative view z, which the orthographic projection
+    // below maps into clip depth. A +forward row put every caster at clip
+    // z near -2, outside the map, so one-map directional shadows drew nothing.
     var tx = -(rx * eyeX + ry * eyeY + rz * eyeZ);
     var ty = -(upX * eyeX + upY * eyeY + upZ * eyeZ);
-    var tz = -(fx * eyeX + fy * eyeY + fz * eyeZ);
+    var tz = fx * eyeX + fy * eyeY + fz * eyeZ;
 
-    // Note: forward is positive — we look along +forward, so no negation.
     var view = new Float32Array([
-      rx,  upX, fx,  0,
-      ry,  upY, fy,  0,
-      rz,  upZ, fz,  0,
+      rx,  upX, -fx, 0,
+      ry,  upY, -fy, 0,
+      rz,  upZ, -fz, 0,
       tx,  ty,  tz,  1,
     ]);
 

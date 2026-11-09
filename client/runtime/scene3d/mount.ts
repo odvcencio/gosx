@@ -852,7 +852,7 @@
         adapterInfo: (priorDiagnostics && priorDiagnostics.adapterInfo) || null,
       } : null;
       publishSceneRenderWatchdogState(recoveryReason, stalledFor || 0);
-      if (recoveryReason === "webgpu-device-lost") sceneDispatchGraphicsReset(mount, graphicsRecovery, "lost", "webgpu", recoveryReason);
+      if (recoveryReason === "webgpu-device-lost") sceneDispatchGraphicsReset(mount, graphicsRecovery, "lost", "webgpu", recoveryReason, renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.reason : "");
       gosxSceneEmit("warn", "render-watchdog-recovery", {
         rendererKind: renderer?.kind || "",
         reason: recoveryReason,
@@ -916,7 +916,7 @@
       // event fires, that variable already reads "" even though this is
       // still, right now, a WebGPU-failure fallback.
       const fallbackReason = sceneDebugAttr(mount, sceneAttr("renderer-fallback"));
-      if (fallbackReason === "webgpu-device-lost" ? !sceneWebGPULossReturnAllowed(graphicsRecovery, sceneFrameNowMS()) : !sceneFallbackRequiresReplacementCanvas(fallbackReason)) {
+      if (fallbackReason === "webgpu-device-lost" ? !sceneWebGPULossReturnAllowed(graphicsRecovery, sceneFrameNowMS(), graphicsRecovery.lossReason) : !sceneFallbackRequiresReplacementCanvas(fallbackReason)) {
         return false;
       }
       const trialCanvas = prepareSceneReplacementCanvas();
@@ -964,7 +964,7 @@
       }
       /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ if (reason === "webgpu-device-lost") {
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
-        recoverSceneWebGPURenderer(reason, 0, !sceneWebGPULossReturnAllowed(graphicsRecovery, sceneFrameNowMS()));
+        recoverSceneWebGPURenderer(reason, 0, !sceneWebGPULossReturnAllowed(graphicsRecovery, sceneFrameNowMS(), diagnostics && diagnostics.deviceLostInfo ? diagnostics.deviceLostInfo.reason : ""));
         return;
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);

@@ -191,251 +191,268 @@ function sceneWebGPUTAAWaterRegions(bundle: any, out: Float32Array, offset: numb
   }
 }
 
+function taaDestroyTargets(st: any) {
+  for (var i = 0; i < st.history.length; i++) st.history[i].texture.destroy();
+  if (st.velocity) st.velocity.destroy();
+  if (st.velocityDepth) st.velocityDepth.destroy();
+  st.history = []; st.velocity = st.velocityDepth = null; st.valid = false;
+}
+function taaEnsureTargets(st: any, r: any, w: number, h: number) {
+  if (st.history.length && w === st.width && h === st.height) return;
+  taaDestroyTargets(st);
+  for (var i = 0; i < 2; i++) {
+    var texture = r.device.createTexture({ label: "gosx-taa-history", size: [w, h, 1], format: "rgba16float",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    st.history.push({ texture: texture, view: texture.createView() });
+  }
+  st.velocity = r.device.createTexture({ label: "gosx-taa-velocity", size: [w, h, 1], format: "rgba16float",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+  st.velocityDepth = r.device.createTexture({ label: "gosx-taa-velocity-depth", size: [w, h, 1], format: "depth24plus",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT });
+  st.width = w; st.height = h;
+}
+function taaPipeline(st: any, r: any, key: string, build: () => any) {
+  return st.pipelines[key] || (st.pipelines[key] = build());
+}
+function taaResolvePipeline(st: any, r: any, ms: boolean) {
+  return taaPipeline(st, r, "resolve" + (ms ? "ms" : ""), function() {
+    var module = r.device.createShaderModule({ label: "taa-resolve", code: wgpuTAAResolveWGSL(ms) });
+    var layout = r.device.createBindGroupLayout({ label: "gosx-taa-resolve", entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: ms } },
+      { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
+      { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+      { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+    ] });
+    return { layout: layout, pipeline: wgpuCreateValidatedPipeline(r.device, "render", { label: "gosx-taa-resolve", layout: r.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+      vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: "rgba16float" }] },
+      primitive: { topology: "triangle-list" } }) };
+  });
+}
+function taaBlitPipeline(st: any, r: any, format: string) {
+  return taaPipeline(st, r, "blit|" + format, function() {
+    var module = r.device.createShaderModule({ label: "taa-blit", code: wgpuTAABlitWGSL() });
+    var layout = r.device.createBindGroupLayout({ label: "gosx-taa-blit", entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
+    ] });
+    return { layout: layout, pipeline: wgpuCreateValidatedPipeline(r.device, "render", { label: "gosx-taa-blit", layout: r.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+      vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: format }] },
+      primitive: { topology: "triangle-list" } }) };
+  });
+}
+function taaVelocityPipeline(st: any, r: any) {
+  return taaPipeline(st, r, "velocity", function() {
+    var module = r.device.createShaderModule({ label: "taa-velocity", code: WGSL_TAA_VELOCITY });
+    var layout = r.device.createBindGroupLayout({ label: "gosx-taa-mover", entries: [
+      { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 128 } },
+    ] });
+    var position = function(location: number) { return { arrayStride: 12, attributes: [{ shaderLocation: location, offset: 0, format: "float32x3" }] }; };
+    return { layout: layout, pipeline: wgpuCreateValidatedPipeline(r.device, "render", { label: "gosx-taa-velocity", layout: r.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+      vertex: { module: module, entryPoint: "vertexMain", buffers: [position(0), position(1)] },
+      fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: "rgba16float" }] },
+      primitive: { topology: "triangle-list" }, depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" } }) };
+  });
+}
+function taaMaskPipeline(st: any, r: any, ms: boolean) {
+  return taaPipeline(st, r, "mask" + (ms ? "ms" : ""), function() {
+    var code = [WGSL_FRAME_STRUCTS, "@group(0) @binding(0) var<uniform> frame: FrameUniforms;", "struct PointsUniforms {", WGSL_POINTS_UNIFORM_FIELDS, "};",
+      "@group(3) @binding(0) var sceneDepth: " + (ms ? "texture_depth_multisampled_2d" : "texture_depth_2d") + ";", WGSL_POINTS_SHADE,
+      "@fragment fn fragmentMain(in: PointsInput, @builtin(position) fragCoord: vec4f) -> @location(0) vec4f {",
+      "    if (pointsShade(in).a < 0.05 || fragCoord.z > textureLoad(sceneDepth, vec2i(fragCoord.xy), 0)) { discard; }",
+      "    return vec4f(0.0, 0.0, 0.0, 2.0);",
+      "}"].join("\n");
+    var depthLayout = r.device.createBindGroupLayout({ label: "gosx-taa-mask-depth", entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: ms } },
+    ] });
+    var module = r.device.createShaderModule({ label: "taa-particle-mask", code: code });
+    return { depthLayout: depthLayout, pipeline: wgpuCreateValidatedPipeline(r.device, "render", { label: "gosx-taa-particle-mask",
+      layout: r.device.createPipelineLayout({ bindGroupLayouts: [r.frameLayout, r.materialLayout, r.pointsLayout, depthLayout] }),
+      vertex: { module: r.pointsVertex, entryPoint: "vertexMain", buffers: [] },
+      fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: "rgba16float",
+        blend: { color: { operation: "add", srcFactor: "zero", dstFactor: "one" }, alpha: { operation: "max", srcFactor: "one", dstFactor: "one" } } }] },
+      primitive: { topology: "triangle-list" }, depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "always" } }) };
+  });
+}
+function taaEnsureMoverBuffer(st: any, r: any, count: number) {
+  if (st.moverBuffer && st.moverCapacity >= count) return;
+  if (st.moverBuffer) st.moverBuffer.destroy();
+  st.moverCapacity = Math.max(16, count * 2);
+  st.moverBuffer = r.device.createBuffer({ label: "gosx-taa-movers", size: st.moverCapacity * 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+}
+// drawMovers renders every retained or skinned mesh that moved since the
+// previous frame and returns how many it drew.
+function taaDrawMovers(st: any, r: any, pass: any, objects: any[]) {
+  var list: any[] = [], scratch = new Float32Array(16), seen = new Set();
+  for (var i = 0; i < objects.length; i++) {
+    var obj = objects[i];
+    if (!obj || obj.viewCulled || !obj.id) continue;
+    // Skinned output is already in world space; retained meshes carry a model matrix.
+    var skin = r.skinBuffer(obj);
+    var model = skin ? SCENE_WEBGPU_TAA_IDENTITY : obj.modelMatrix && obj.modelMatrix.length >= 16 ? obj.modelMatrix : null;
+    if (!model || (!obj.retainedGeometry && !skin)) continue;
+    seen.add(obj.id);
+    var record = st.movers.get(obj.id);
+    var moved = !record || skin || record.model.some(function(v: number, k: number) { return v !== model[k]; });
+    if (record && moved) list.push({ obj: obj, skin: skin, model: model, previous: record.model.slice() });
+    if (!record) st.movers.set(obj.id, record = { model: new Float32Array(16), previousSkin: null });
+    record.model.set(model);
+  }
+  st.movers.forEach(function(_value: any, id: any) { if (!seen.has(id)) st.movers.delete(id); });
+  if (!list.length) return 0;
+  taaEnsureMoverBuffer(st, r, list.length);
+  var vp = taaVelocityPipeline(st, r), data = new Float32Array(64);
+  var group = r.device.createBindGroup({ layout: vp.layout, entries: [{ binding: 0, resource: { buffer: st.moverBuffer, size: 128 } }] });
+  pass.setPipeline(wgpuRequirePipeline(vp.pipeline));
+  var drawn = 0;
+  for (var m = 0; m < list.length; m++) {
+    var item = list[m];
+    sceneMat4MultiplyInto(scratch, st.viewProjection, item.model); data.set(scratch, 0);
+    sceneMat4MultiplyInto(scratch, st.previousViewProjection, item.previous); data.set(scratch, 16);
+    r.device.queue.writeBuffer(st.moverBuffer, m * 256, data, 0, 32);
+    pass.setBindGroup(0, group, [m * 256]);
+    if (item.skin) {
+      pass.setVertexBuffer(0, item.skin);
+      pass.setVertexBuffer(1, r.previousSkin(item.obj) || item.skin);
+    } else if (!r.bindPositions(pass, 0, item.obj) || !r.bindPositions(pass, 1, item.obj)) continue;
+    var indexCount = r.bindIndices(pass, item.obj);
+    if (indexCount > 0) pass.drawIndexed(indexCount); else pass.draw(item.obj.vertexCount);
+    drawn += 1;
+  }
+  return drawn;
+}
+function taaDrawParticleMask(st: any, r: any, pass: any, records: any[], depthView: any, ms: boolean, frameGroup: any) {
+  var mp = null, drawn = 0;
+  for (var i = 0; i < (records || []).length; i++) {
+    var system = records[i] && records[i].system;
+    var cached = system && (system._gosxWGPUCPPointsBG || system._gosxWGPUCPSoftPointsBG);
+    var blend = system && system.entry && system.entry.material && String(system.entry.material.blendMode || "").toLowerCase();
+    if (!cached || !cached.bg || system.count <= 0 || (blend !== "alpha" && blend !== "additive")) continue;
+    if (!mp) {
+      mp = taaMaskPipeline(st, r, ms);
+      pass.setPipeline(wgpuRequirePipeline(mp.pipeline));
+      pass.setBindGroup(0, frameGroup);
+      pass.setBindGroup(1, r.materialGroup(), [0]);
+      pass.setBindGroup(3, r.device.createBindGroup({ layout: mp.depthLayout, entries: [{ binding: 0, resource: depthView }] }));
+    }
+    pass.setBindGroup(2, cached.bg);
+    pass.draw(6, system.count);
+    drawn += 1;
+  }
+  return drawn;
+}
+
+// taaBeginFrame decides whether this frame accumulates history and, if so,
+// jitters the projection already written to the frame uniforms.
+function taaBeginFrame(st: any, effects: any[], frame: any): boolean {
+  var effect = Array.isArray(effects) ? effects.find(function(e: any) { return e && e.kind === "taa"; }) : null;
+  st.active = !!effect && frame.postProcessing && frame.perspective;
+  if (!st.active) { if (st.history.length) taaDestroyTargets(st); return false; }
+  var r = st.resources();
+  var nextStamp = JSON.stringify([effects, frame.width, frame.height, frame.samples]);
+  var view = frame.view, eye = [-(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]), -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]), -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])];
+  var forward = [-view[2], -view[6], -view[10]];
+  var cut = Math.hypot(eye[0] - st.previousEye[0], eye[1] - st.previousEye[1], eye[2] - st.previousEye[2]) > 2 ||
+    forward[0] * st.previousForward[0] + forward[1] * st.previousForward[1] + forward[2] * st.previousForward[2] < 0.5;
+  var projectionChanged = [0, 5, 10, 11, 14].some(function(k) { return Math.abs(frame.projection[frame.projectionOffset + k] - st.previousProjection[k]) > 1e-5; });
+  if (st.stamp !== nextStamp || frame.now - st.lastAt > 250 || cut || projectionChanged || st.samples !== frame.samples) { if (st.valid) st.resets += 1; st.valid = false; }
+  st.stamp = nextStamp; st.lastAt = frame.now; st.samples = frame.samples;
+  st.previousEye = eye; st.previousForward = forward;
+  st.previousProjection.set(frame.projection.subarray(frame.projectionOffset, frame.projectionOffset + 16));
+  taaEnsureTargets(st, r, frame.width, frame.height);
+  st.previousViewProjection.set(st.viewProjection);
+  st.viewProjection.set(frame.viewProjection);
+  st.previousJitter = st.jitter;
+  st.jitter = st.valid ? sceneWebGPUTAAJitter(frame.projection, frame.projectionOffset, frame.width, frame.height, st.frameIndex) : [0, 0];
+  return st.valid;
+}
+
+// taaResolve runs the velocity pass and the temporal resolve, writes the
+// result back into the scene target, and returns the effects the post chain
+// still needs (without "taa" once the frame resolved).
+function taaResolve(st: any, encoder: any, effects: any[], frame: any) {
+  if (!st.active || !st.history.length) return effects;
+  var r = st.resources(), ms = frame.samples > 1;
+  // Create every pipeline this frame may need at once, so they validate
+  // together and cost at most one pending frame.
+  taaResolvePipeline(st, r, ms); taaBlitPipeline(st, r, frame.colorFormat); taaVelocityPipeline(st, r);
+  if (Array.isArray(frame.particles) && frame.particles.length) taaMaskPipeline(st, r, ms);
+  var effect = effects.find(function(e: any) { return e && e.kind === "taa"; }) || {};
+  var vpass = encoder.beginRenderPass({ label: "gosx-taa-velocity",
+    colorAttachments: [{ view: st.velocity.createView(), loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+    depthStencilAttachment: { view: st.velocityDepth.createView(), depthLoadOp: "clear", depthClearValue: 1, depthStoreOp: "discard" } });
+  st.moverCount = st.valid ? taaDrawMovers(st, r, vpass, frame.objects || []) : 0;
+  var masked = st.valid ? taaDrawParticleMask(st, r, vpass, frame.particles, frame.depthView, ms, frame.frameGroup) : 0;
+  vpass.end();
+  if (!sceneWebGPUInvertMat4(st.viewProjection, st.inverse)) st.valid = false;
+  st.params.set(st.inverse, 0); st.params.set(st.viewProjection, 16); st.params.set(st.previousViewProjection, 32);
+  st.params[48] = Math.max(0, Math.min(0.95, sceneNumber(effect.historyWeight, 0.9)));
+  st.params[49] = Math.max(0.5, Math.min(3, sceneNumber(effect.clampGamma, 1)));
+  st.params[50] = st.valid ? 1 : 0;
+  st.params[51] = st.moverCount + masked > 0 ? 1 : 0;
+  // History holds the previous frame's jittered image: look it up at the
+  // reprojected unjittered point plus that frame's st.jitter.
+  st.params[52] = st.jitter[0]; st.params[53] = st.jitter[1]; st.params[54] = st.previousJitter[0]; st.params[55] = st.previousJitter[1];
+  sceneWebGPUTAAWaterRegions(frame.bundle, st.params, 56);
+  if (!st.paramBuffer) st.paramBuffer = r.device.createBuffer({ label: "gosx-taa-params", size: st.params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  r.device.queue.writeBuffer(st.paramBuffer, 0, st.params);
+  var target = st.history[st.historyIndex % 2], previous = st.history[(st.historyIndex + 1) % 2];
+  var rp = taaResolvePipeline(st, r, ms);
+  var group = r.device.createBindGroup({ layout: rp.layout, entries: [
+    { binding: 0, resource: frame.colorView }, { binding: 1, resource: previous.view }, { binding: 2, resource: frame.depthView },
+    { binding: 3, resource: st.velocity.createView() }, { binding: 4, resource: r.linearSampler }, { binding: 5, resource: { buffer: st.paramBuffer } },
+  ] });
+  var pass = encoder.beginRenderPass({ label: "gosx-taa-resolve", colorAttachments: [{ view: target.view, loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 0 } }] });
+  pass.setPipeline(wgpuRequirePipeline(rp.pipeline)); pass.setBindGroup(0, group); pass.draw(3); pass.end();
+  var bp = taaBlitPipeline(st, r, frame.colorFormat);
+  var blit = encoder.beginRenderPass({ label: "gosx-taa-copy", colorAttachments: [{ view: frame.colorView, loadOp: "load", storeOp: "store" }] });
+  blit.setPipeline(wgpuRequirePipeline(bp.pipeline));
+  blit.setBindGroup(0, r.device.createBindGroup({ layout: bp.layout, entries: [{ binding: 0, resource: target.view }] }));
+  blit.draw(3); blit.end();
+  var resolved = st.valid;
+  st.valid = true; st.historyIndex += 1; st.frameIndex += 1;
+  return resolved ? effects.filter(function(e: any) { return !e || e.kind !== "taa"; }) : effects;
+}
+
+// taaCapturePreviousSkins copies each skinned mesh's positions before this
+// frame's skinning dispatch overwrites them.
+function taaCapturePreviousSkins(st: any, encoder: any, objects: any[]) {
+  if (!st.active || !st.valid) return;
+  var r = st.resources();
+  for (var i = 0; i < (objects || []).length; i++) {
+    var obj = objects[i], skin = obj && r.skinBuffer(obj);
+    if (!skin) continue;
+    if (!obj._gosxTAAPreviousSkin || obj._gosxTAAPreviousSkin.size !== skin.size) {
+      obj._gosxTAAPreviousSkin = r.device.createBuffer({ label: "gosx-taa-previous-skin", size: skin.size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    }
+    encoder.copyBufferToBuffer(skin, 0, obj._gosxTAAPreviousSkin, 0, skin.size);
+  }
+}
+
 // wgpuCreateTemporalAA owns one renderer's history, jitter and velocity
 // state. resources() returns the device, layouts and closure helpers the
 // passes need; nothing is allocated until a frame asks for "taa".
 function wgpuCreateTemporalAA(resources: () => any) {
-  var history: any[] = [], historyIndex = 0, width = 0, height = 0, samples = 0, valid = false;
-  var stamp = "", lastAt = -Infinity, frameIndex = 0, active = false, resets = 0;
-  var jitter = [0, 0], previousJitter = [0, 0];
-  var viewProjection = new Float32Array(16), previousViewProjection = new Float32Array(16), inverse = new Float32Array(16);
-  var previousEye = [0, 0, 0], previousForward = [0, 0, -1], previousProjection = new Float32Array(16);
-  var params = new Float32Array(16 * 3 + 4 * 3 + 16);
-  var paramBuffer: any = null, moverBuffer: any = null, moverCapacity = 0;
-  var velocity: any = null, velocityDepth: any = null, movers = new Map(), moverCount = 0;
-  var pipelines: any = {}, layouts: any = {};
-  function destroyTargets() {
-    for (var i = 0; i < history.length; i++) history[i].texture.destroy();
-    if (velocity) velocity.destroy();
-    if (velocityDepth) velocityDepth.destroy();
-    history = []; velocity = velocityDepth = null; valid = false;
-  }
-  function ensureTargets(r: any, w: number, h: number) {
-    if (history.length && w === width && h === height) return;
-    destroyTargets();
-    for (var i = 0; i < 2; i++) {
-      var texture = r.device.createTexture({ label: "gosx-taa-history", size: [w, h, 1], format: "rgba16float",
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-      history.push({ texture: texture, view: texture.createView() });
-    }
-    velocity = r.device.createTexture({ label: "gosx-taa-velocity", size: [w, h, 1], format: "rgba16float",
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-    velocityDepth = r.device.createTexture({ label: "gosx-taa-velocity-depth", size: [w, h, 1], format: "depth24plus",
-      usage: GPUTextureUsage.RENDER_ATTACHMENT });
-    width = w; height = h;
-  }
-  function pipeline(r: any, key: string, build: () => any) {
-    return pipelines[key] || (pipelines[key] = build());
-  }
-  function resolvePipeline(r: any, ms: boolean) {
-    return pipeline(r, "resolve" + (ms ? "ms" : ""), function() {
-      var module = r.device.createShaderModule({ label: "taa-resolve", code: wgpuTAAResolveWGSL(ms) });
-      var layout = r.device.createBindGroupLayout({ label: "gosx-taa-resolve", entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: ms } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
-      ] });
-      return { layout: layout, pipeline: wgpuCreateValidatedPipeline(r.device, "render", { label: "gosx-taa-resolve", layout: r.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-        vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: "rgba16float" }] },
-        primitive: { topology: "triangle-list" } }) };
-    });
-  }
-  function blitPipeline(r: any, format: string) {
-    return pipeline(r, "blit|" + format, function() {
-      var module = r.device.createShaderModule({ label: "taa-blit", code: wgpuTAABlitWGSL() });
-      var layout = r.device.createBindGroupLayout({ label: "gosx-taa-blit", entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
-      ] });
-      return { layout: layout, pipeline: wgpuCreateValidatedPipeline(r.device, "render", { label: "gosx-taa-blit", layout: r.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-        vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: format }] },
-        primitive: { topology: "triangle-list" } }) };
-    });
-  }
-  function velocityPipeline(r: any) {
-    return pipeline(r, "velocity", function() {
-      var module = r.device.createShaderModule({ label: "taa-velocity", code: WGSL_TAA_VELOCITY });
-      var layout = r.device.createBindGroupLayout({ label: "gosx-taa-mover", entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 128 } },
-      ] });
-      var position = function(location: number) { return { arrayStride: 12, attributes: [{ shaderLocation: location, offset: 0, format: "float32x3" }] }; };
-      return { layout: layout, pipeline: wgpuCreateValidatedPipeline(r.device, "render", { label: "gosx-taa-velocity", layout: r.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-        vertex: { module: module, entryPoint: "vertexMain", buffers: [position(0), position(1)] },
-        fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: "rgba16float" }] },
-        primitive: { topology: "triangle-list" }, depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less" } }) };
-    });
-  }
-  function maskPipeline(r: any, ms: boolean) {
-    return pipeline(r, "mask" + (ms ? "ms" : ""), function() {
-      var code = [WGSL_FRAME_STRUCTS, "@group(0) @binding(0) var<uniform> frame: FrameUniforms;", "struct PointsUniforms {", WGSL_POINTS_UNIFORM_FIELDS, "};",
-        "@group(3) @binding(0) var sceneDepth: " + (ms ? "texture_depth_multisampled_2d" : "texture_depth_2d") + ";", WGSL_POINTS_SHADE,
-        "@fragment fn fragmentMain(in: PointsInput, @builtin(position) fragCoord: vec4f) -> @location(0) vec4f {",
-        "    if (pointsShade(in).a < 0.05 || fragCoord.z > textureLoad(sceneDepth, vec2i(fragCoord.xy), 0)) { discard; }",
-        "    return vec4f(0.0, 0.0, 0.0, 2.0);",
-        "}"].join("\n");
-      var depthLayout = r.device.createBindGroupLayout({ label: "gosx-taa-mask-depth", entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: ms } },
-      ] });
-      var module = r.device.createShaderModule({ label: "taa-particle-mask", code: code });
-      return { depthLayout: depthLayout, pipeline: wgpuCreateValidatedPipeline(r.device, "render", { label: "gosx-taa-particle-mask",
-        layout: r.device.createPipelineLayout({ bindGroupLayouts: [r.frameLayout, r.materialLayout, r.pointsLayout, depthLayout] }),
-        vertex: { module: r.pointsVertex, entryPoint: "vertexMain", buffers: [] },
-        fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: "rgba16float",
-          blend: { color: { operation: "add", srcFactor: "zero", dstFactor: "one" }, alpha: { operation: "max", srcFactor: "one", dstFactor: "one" } } }] },
-        primitive: { topology: "triangle-list" }, depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "always" } }) };
-    });
-  }
-  function ensureMoverBuffer(r: any, count: number) {
-    if (moverBuffer && moverCapacity >= count) return;
-    if (moverBuffer) moverBuffer.destroy();
-    moverCapacity = Math.max(16, count * 2);
-    moverBuffer = r.device.createBuffer({ label: "gosx-taa-movers", size: moverCapacity * 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  }
-  // drawMovers renders every retained or skinned mesh that moved since the
-  // previous frame and returns how many it drew.
-  function drawMovers(r: any, pass: any, objects: any[]) {
-    var list: any[] = [], scratch = new Float32Array(16), seen = new Set();
-    for (var i = 0; i < objects.length; i++) {
-      var obj = objects[i];
-      if (!obj || obj.viewCulled || !obj.id) continue;
-      // Skinned output is already in world space; retained meshes carry a model matrix.
-      var skin = r.skinBuffer(obj);
-      var model = skin ? SCENE_WEBGPU_TAA_IDENTITY : obj.modelMatrix && obj.modelMatrix.length >= 16 ? obj.modelMatrix : null;
-      if (!model || (!obj.retainedGeometry && !skin)) continue;
-      seen.add(obj.id);
-      var record = movers.get(obj.id);
-      var moved = !record || skin || record.model.some(function(v: number, k: number) { return v !== model[k]; });
-      if (record && moved) list.push({ obj: obj, skin: skin, model: model, previous: record.model.slice() });
-      if (!record) movers.set(obj.id, record = { model: new Float32Array(16), previousSkin: null });
-      record.model.set(model);
-    }
-    movers.forEach(function(_value: any, id: any) { if (!seen.has(id)) movers.delete(id); });
-    if (!list.length) return 0;
-    ensureMoverBuffer(r, list.length);
-    var vp = velocityPipeline(r), data = new Float32Array(64);
-    var group = r.device.createBindGroup({ layout: vp.layout, entries: [{ binding: 0, resource: { buffer: moverBuffer, size: 128 } }] });
-    pass.setPipeline(wgpuRequirePipeline(vp.pipeline));
-    var drawn = 0;
-    for (var m = 0; m < list.length; m++) {
-      var item = list[m];
-      sceneMat4MultiplyInto(scratch, viewProjection, item.model); data.set(scratch, 0);
-      sceneMat4MultiplyInto(scratch, previousViewProjection, item.previous); data.set(scratch, 16);
-      r.device.queue.writeBuffer(moverBuffer, m * 256, data, 0, 32);
-      pass.setBindGroup(0, group, [m * 256]);
-      if (item.skin) {
-        pass.setVertexBuffer(0, item.skin);
-        pass.setVertexBuffer(1, r.previousSkin(item.obj) || item.skin);
-      } else if (!r.bindPositions(pass, 0, item.obj) || !r.bindPositions(pass, 1, item.obj)) continue;
-      var indexCount = r.bindIndices(pass, item.obj);
-      if (indexCount > 0) pass.drawIndexed(indexCount); else pass.draw(item.obj.vertexCount);
-      drawn += 1;
-    }
-    return drawn;
-  }
-  function drawParticleMask(r: any, pass: any, records: any[], depthView: any, ms: boolean, frameGroup: any) {
-    var mp = null, drawn = 0;
-    for (var i = 0; i < (records || []).length; i++) {
-      var system = records[i] && records[i].system;
-      var cached = system && (system._gosxWGPUCPPointsBG || system._gosxWGPUCPSoftPointsBG);
-      var blend = system && system.entry && system.entry.material && String(system.entry.material.blendMode || "").toLowerCase();
-      if (!cached || !cached.bg || system.count <= 0 || (blend !== "alpha" && blend !== "additive")) continue;
-      if (!mp) {
-        mp = maskPipeline(r, ms);
-        pass.setPipeline(wgpuRequirePipeline(mp.pipeline));
-        pass.setBindGroup(0, frameGroup);
-        pass.setBindGroup(1, r.materialGroup(), [0]);
-        pass.setBindGroup(3, r.device.createBindGroup({ layout: mp.depthLayout, entries: [{ binding: 0, resource: depthView }] }));
-      }
-      pass.setBindGroup(2, cached.bg);
-      pass.draw(6, system.count);
-      drawn += 1;
-    }
-    return drawn;
-  }
+  var st: any = {
+    resources: resources, history: [], historyIndex: 0, width: 0, height: 0, samples: 0, valid: false,
+    stamp: "", lastAt: -Infinity, frameIndex: 0, active: false, resets: 0, jitter: [0, 0], previousJitter: [0, 0],
+    viewProjection: new Float32Array(16), previousViewProjection: new Float32Array(16), inverse: new Float32Array(16),
+    previousEye: [0, 0, 0], previousForward: [0, 0, -1], previousProjection: new Float32Array(16),
+    params: new Float32Array(16 * 3 + 4 * 3 + 16), paramBuffer: null, moverBuffer: null, moverCapacity: 0,
+    velocity: null, velocityDepth: null, movers: new Map(), moverCount: 0, pipelines: {},
+  };
   return {
-    // beginFrame decides whether this frame accumulates history and, if so,
-    // jitters the projection already written to the frame uniforms.
-    beginFrame: function(effects: any[], frame: any): boolean {
-      var effect = Array.isArray(effects) ? effects.find(function(e: any) { return e && e.kind === "taa"; }) : null;
-      active = !!effect && frame.postProcessing && frame.perspective;
-      if (!active) { if (history.length) destroyTargets(); return false; }
-      var r = resources();
-      var nextStamp = JSON.stringify([effects, frame.width, frame.height, frame.samples]);
-      var view = frame.view, eye = [-(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]), -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]), -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])];
-      var forward = [-view[2], -view[6], -view[10]];
-      var cut = Math.hypot(eye[0] - previousEye[0], eye[1] - previousEye[1], eye[2] - previousEye[2]) > 2 ||
-        forward[0] * previousForward[0] + forward[1] * previousForward[1] + forward[2] * previousForward[2] < 0.5;
-      var projectionChanged = [0, 5, 10, 11, 14].some(function(k) { return Math.abs(frame.projection[frame.projectionOffset + k] - previousProjection[k]) > 1e-5; });
-      if (stamp !== nextStamp || frame.now - lastAt > 250 || cut || projectionChanged || samples !== frame.samples) { if (valid) resets += 1; valid = false; }
-      stamp = nextStamp; lastAt = frame.now; samples = frame.samples;
-      previousEye = eye; previousForward = forward;
-      previousProjection.set(frame.projection.subarray(frame.projectionOffset, frame.projectionOffset + 16));
-      ensureTargets(r, frame.width, frame.height);
-      previousViewProjection.set(viewProjection);
-      viewProjection.set(frame.viewProjection);
-      previousJitter = jitter;
-      jitter = valid ? sceneWebGPUTAAJitter(frame.projection, frame.projectionOffset, frame.width, frame.height, frameIndex) : [0, 0];
-      return valid;
+    // prepare creates the TAA pipelines with the frame's other pipelines, so
+    // a scene that asks for TAA costs no extra pending frame.
+    prepare: function(effects: any[], postProcessing: boolean, samples: number) {
+      if (!postProcessing || !Array.isArray(effects) || !effects.some(function(e: any) { return e && e.kind === "taa"; })) return;
+      var r = st.resources();
+      taaResolvePipeline(st, r, samples > 1); taaBlitPipeline(st, r, "rgba16float"); taaVelocityPipeline(st, r);
     },
-    // resolve runs the velocity pass and the temporal resolve, writes the
-    // result back into the scene target, and returns the effects the post
-    // chain still needs (without "taa" once the frame resolved).
-    resolve: function(encoder: any, effects: any[], frame: any) {
-      if (!active || !history.length) return effects;
-      var r = resources(), ms = frame.samples > 1;
-      var effect = effects.find(function(e: any) { return e && e.kind === "taa"; }) || {};
-      var vpass = encoder.beginRenderPass({ label: "gosx-taa-velocity",
-        colorAttachments: [{ view: velocity.createView(), loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
-        depthStencilAttachment: { view: velocityDepth.createView(), depthLoadOp: "clear", depthClearValue: 1, depthStoreOp: "discard" } });
-      moverCount = valid ? drawMovers(r, vpass, frame.objects || []) : 0;
-      var masked = valid ? drawParticleMask(r, vpass, frame.particles, frame.depthView, ms, frame.frameGroup) : 0;
-      vpass.end();
-      if (!sceneWebGPUInvertMat4(viewProjection, inverse)) valid = false;
-      params.set(inverse, 0); params.set(viewProjection, 16); params.set(previousViewProjection, 32);
-      params[48] = Math.max(0, Math.min(0.95, sceneNumber(effect.historyWeight, 0.9)));
-      params[49] = Math.max(0.5, Math.min(3, sceneNumber(effect.clampGamma, 1)));
-      params[50] = valid ? 1 : 0;
-      params[51] = moverCount + masked > 0 ? 1 : 0;
-      // History holds the previous frame's jittered image: look it up at the
-      // reprojected unjittered point plus that frame's jitter.
-      params[52] = jitter[0]; params[53] = jitter[1]; params[54] = previousJitter[0]; params[55] = previousJitter[1];
-      sceneWebGPUTAAWaterRegions(frame.bundle, params, 56);
-      if (!paramBuffer) paramBuffer = r.device.createBuffer({ label: "gosx-taa-params", size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      r.device.queue.writeBuffer(paramBuffer, 0, params);
-      var target = history[historyIndex % 2], previous = history[(historyIndex + 1) % 2];
-      var rp = resolvePipeline(r, ms);
-      var group = r.device.createBindGroup({ layout: rp.layout, entries: [
-        { binding: 0, resource: frame.colorView }, { binding: 1, resource: previous.view }, { binding: 2, resource: frame.depthView },
-        { binding: 3, resource: velocity.createView() }, { binding: 4, resource: r.linearSampler }, { binding: 5, resource: { buffer: paramBuffer } },
-      ] });
-      var pass = encoder.beginRenderPass({ label: "gosx-taa-resolve", colorAttachments: [{ view: target.view, loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 0 } }] });
-      pass.setPipeline(wgpuRequirePipeline(rp.pipeline)); pass.setBindGroup(0, group); pass.draw(3); pass.end();
-      var bp = blitPipeline(r, frame.colorFormat);
-      var blit = encoder.beginRenderPass({ label: "gosx-taa-copy", colorAttachments: [{ view: frame.colorView, loadOp: "load", storeOp: "store" }] });
-      blit.setPipeline(wgpuRequirePipeline(bp.pipeline));
-      blit.setBindGroup(0, r.device.createBindGroup({ layout: bp.layout, entries: [{ binding: 0, resource: target.view }] }));
-      blit.draw(3); blit.end();
-      var resolved = valid;
-      valid = true; historyIndex += 1; frameIndex += 1;
-      return resolved ? effects.filter(function(e: any) { return !e || e.kind !== "taa"; }) : effects;
-    },
-    // capturePreviousSkins copies each skinned mesh's positions before this
-    // frame's skinning dispatch overwrites them.
-    capturePreviousSkins: function(encoder: any, objects: any[]) {
-      if (!active || !valid) return;
-      var r = resources();
-      for (var i = 0; i < (objects || []).length; i++) {
-        var obj = objects[i], skin = obj && r.skinBuffer(obj);
-        if (!skin) continue;
-        if (!obj._gosxTAAPreviousSkin || obj._gosxTAAPreviousSkin.size !== skin.size) {
-          obj._gosxTAAPreviousSkin = r.device.createBuffer({ label: "gosx-taa-previous-skin", size: skin.size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-        }
-        encoder.copyBufferToBuffer(skin, 0, obj._gosxTAAPreviousSkin, 0, skin.size);
-      }
-    },
-    stats: function() { return { taaActive: active ? 1 : 0, taaHistoryValid: valid ? 1 : 0, taaMovers: moverCount, taaResets: resets }; },
-    dispose: function() { destroyTargets(); if (paramBuffer) paramBuffer.destroy(); if (moverBuffer) moverBuffer.destroy(); paramBuffer = moverBuffer = null; movers.clear(); },
+    beginFrame: function(effects: any[], frame: any): boolean { return taaBeginFrame(st, effects, frame); },
+    resolve: function(encoder: any, effects: any[], frame: any) { return taaResolve(st, encoder, effects, frame); },
+    capturePreviousSkins: function(encoder: any, objects: any[]) { taaCapturePreviousSkins(st, encoder, objects); },
+    stats: function() { return { taaActive: st.active ? 1 : 0, taaHistoryValid: st.valid ? 1 : 0, taaMovers: st.moverCount, taaResets: st.resets }; },
+    dispose: function() { taaDestroyTargets(st); if (st.paramBuffer) st.paramBuffer.destroy(); if (st.moverBuffer) st.moverBuffer.destroy(); st.paramBuffer = st.moverBuffer = null; st.movers.clear(); },
   };
 }

@@ -272,9 +272,13 @@ function wgpuFitShadowSlot(slot: any, light: any, rawMatrix: Float32Array, frame
   return slot;
 }
 
-// wgpuPackShadowUniforms writes ShadowUniforms for both slots. slots[s] may be
-// null; lightIndices[s] is the light's index in lights, or -1.
-function wgpuPackShadowUniforms(f: Float32Array, i32: Int32Array, slots: any[], lightIndices: number[], lights: any[]) {
+// wgpuPackShadowUniforms writes ShadowUniforms for both slots and reports
+// whether they differ from the last packed values, so an unchanged frame skips
+// the upload. slots[s] may be null; lightIndices[s] is the light's index in
+// lights, or -1.
+function wgpuPackShadowUniforms(f: Float32Array, i32: Int32Array, slots: any[], lightIndices: number[], lights: any[]): boolean {
+  var last = (f as any).__gosxShadowLast as Float32Array | undefined;
+  if (!last) last = (f as any).__gosxShadowLast = new Float32Array(f.length).fill(NaN);
   f.fill(0);
   for (var s = 0; s < 2; s++) {
     var slot = slots[s], light = lightIndices[s] >= 0 ? lights[lightIndices[s]] : null;
@@ -293,4 +297,8 @@ function wgpuPackShadowUniforms(f: Float32Array, i32: Int32Array, slots: any[], 
     f[base + 77] = slot ? slot.size : 0;
     i32[160 + s] = count > 0 ? lightIndices[s] : -1;
   }
+  var changed = false;
+  for (var k = 0; k < f.length && !changed; k++) changed = !Object.is(f[k], last[k]);
+  if (changed) last.set(f);
+  return changed;
 }

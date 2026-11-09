@@ -22,6 +22,8 @@ test("a WebGPU device loss may return to WebGPU twice per five minutes", () => {
   assert.equal(api.sceneWebGPULossReturnAllowed(recovery, 2000), true);
   assert.equal(api.sceneWebGPULossReturnAllowed(recovery, 3000), false, "a third loss in the window stays on WebGL");
   assert.equal(api.sceneWebGPULossReturnAllowed(recovery, 1000 + 300000), true, "the window slides");
+  assert.equal(api.sceneWebGPULossReturnAllowed(api.createSceneGraphicsRecovery(), 0, "destroyed"), false, "a page's own device.destroy() stays on WebGL");
+  assert.equal(api.sceneWebGPULossReturnAllowed(api.createSceneGraphicsRecovery(), 0, "unknown"), true);
 });
 
 test("reset events pair each loss with the renderer that draws next", () => {

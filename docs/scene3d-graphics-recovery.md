@@ -35,7 +35,9 @@ number of losses the mount has seen. Page scripts can listen for the same
 | WebGPU device lost | Falls back to WebGL at once so the scene keeps drawing, then returns to WebGPU when the browser grants a new device. |
 
 A mount returns to WebGPU at most twice in five minutes. A third loss in that
-window keeps it on WebGL until it remounts, so a failing GPU cannot loop.
+window keeps it on WebGL until it remounts, so a failing GPU cannot loop. A
+device the page destroys itself (`device.destroy()`) is not a loss to recover
+from; that mount stays on WebGL.
 
 ## Adaptive quality
 

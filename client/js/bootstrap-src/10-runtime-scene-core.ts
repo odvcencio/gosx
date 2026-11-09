@@ -3240,7 +3240,7 @@
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(has("exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
-      autoExposure: sceneNormalizeAutoExposure(has("autoExposure") ? source.autoExposure : base.autoExposure),
+      autoExposure: typeof sceneNormalizeAutoExposure === "function" ? sceneNormalizeAutoExposure(has("autoExposure") ? source.autoExposure : base.autoExposure) : null,
       toneMapping: text("toneMapping"),
       fogColor: text("fogColor"),
       fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),

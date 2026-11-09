@@ -245,3 +245,30 @@ test("the shadow memory cap covers every cascade layer, and a spot light keeps o
     assert.deepEqual(Array.from(texture.desc.size), [256, 256, 1]);
   } finally { h.renderer.dispose(); }
 });
+
+test("the one-map directional fit keeps the whole scene inside the light's clip depth", () => {
+  // Regression: the light view used a +forward row, which put every caster
+  // at clip z near -2, outside the map, so one-map directional shadows drew
+  // nothing on either backend.
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.ts"), "utf8");
+  const context = { Float32Array, Math };
+  vm.createContext(context);
+  vm.runInContext([
+    "function sceneNumber(v, f) { const n = Number(v); return Number.isFinite(n) ? n : f; }",
+    "function sceneSpotShadowLightSpaceMatrix() { return null; }",
+    extract("bootstrap-src/11-scene-math.ts", "sceneMat4MultiplyInto"),
+    "function sceneMat4Multiply(a, b) { return sceneMat4MultiplyInto(new Float32Array(16), a, b); }",
+    ts.transpileModule(extract("bootstrap-src/16c-scene-shared-pbr.ts", "sceneShadowLightSpaceMatrix"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
+    "globalThis.fit = sceneShadowLightSpaceMatrix;",
+  ].join("\n"), context);
+  const bounds = { minX: -10, maxX: 10, minY: -0.1, maxY: 3.1, minZ: -10, maxZ: 10 };
+  for (const light of [{ directionX: 1, directionY: -1 }, { directionY: -1 }, { directionX: -0.3, directionY: -0.8, directionZ: 0.5 }]) {
+    const m = context.fit(light, bounds);
+    for (const x of [-10, 10]) for (const y of [-0.1, 3.1]) for (const z of [-10, 10]) {
+      const q = project(m, [x, y, z]);
+      assert.ok(Math.abs(q[0]) <= 1 && Math.abs(q[1]) <= 1 && q[2] > -1 && q[2] < 1, `corner ${[x, y, z]} -> ${q}`);
+    }
+    // Depth grows away from the light, so a caster above the ground is nearer.
+    assert.ok(project(m, [0, 3, 0])[2] < project(m, [0, 0, 0])[2], "the caster is nearer the light than its receiver");
+  }
+});

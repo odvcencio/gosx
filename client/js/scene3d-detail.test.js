@@ -98,7 +98,9 @@ test("WebGPU detail preserves the nil shader and uses a separate array binding",
   // The browser optics oracle covers behavior; nil detail must keep this base exact.
   // Reviewed vessel cutaway base: the fragment reads two planes from its model slot and discards before shading;
   // all-zero planes cut nothing.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "c36e68d8d98ee29f9ac4116d838e35e7bc9d35df4996a2e6c8d793faaebd6738");
+  // Reviewed cascaded-shadow base: shadow maps are depth arrays sampled through
+  // shadowSlotFactor (webgpu-shadows module); the detail splice points are unchanged.
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "38b74a610a5100b39c302e63918ad4ca2c612855c7b701bbdcf2b33f7aac3391");
   const shader = c.sceneWebGPUDetailFragment(base, true);
   assert.match(shader, /textureSampleGrad\(detailAtlas/);
   assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);

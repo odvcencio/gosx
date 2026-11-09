@@ -14669,8 +14669,7 @@
     // uploadShadowUniforms packs every slot's cascades (webgpu-shadows module).
     // shadowLightMatrices is kept for callers that read the one-map matrices.
     function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
-      wgpuPackShadowUniforms(_shadowUniformF, _shadowUniformI, shadowSlots, shadowLightIndices, Array.isArray(lights) ? lights : []);
-      device.queue.writeBuffer(shadowUniformBuffer, 0, _shadowUniformF);
+      if (wgpuPackShadowUniforms(_shadowUniformF, _shadowUniformI, shadowSlots, shadowLightIndices, Array.isArray(lights) ? lights : [])) device.queue.writeBuffer(shadowUniformBuffer, 0, _shadowUniformF);
     }
 
     // Normal-incidence dielectric Fresnel for an authored material IOR:
@@ -18359,7 +18358,7 @@
       detailEnabled = frameMeta?.detailEnabled !== false;
       if (detailEnabled && detailResources) sceneWebGPUDetailBakeResources(device, detailResources, placeholderView);
       if (scenePicker && scenePicker.hasPending()) scenePicker.preparePipelines();
-      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing);
+      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing); temporalAA.prepare(postEffects, usePostProcessing, sampleCount); autoExposure.prepare(bundle.environment, usePostProcessing);
       if (pipelineGuard.coreError) return "failed";
       if (pipelineGuard.pending) return "pending";
       // The standard mesh, shadow and post variants are prepared above. Other

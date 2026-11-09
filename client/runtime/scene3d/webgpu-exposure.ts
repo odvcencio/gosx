@@ -107,6 +107,10 @@ function wgpuCreateAutoExposure(resources: () => any) {
     return jumped;
   }
   return {
+    // prepare creates the exposure pipelines with the frame's other pipelines.
+    prepare: function(environment: any, postProcessing: boolean) {
+      if (postProcessing && wgpuAutoExposureSettings(environment && environment.autoExposure)) ensure(resources());
+    },
     // apply measures and adapts on the GPU, then multiplies the scene target.
     // It returns false (and does nothing) unless the scene asked for it.
     apply: function(encoder: any, environment: any, target: any, camera: any, nowMS: number): boolean {

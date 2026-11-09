@@ -135,25 +135,27 @@
     }
     var rawColors = entry.colors;
     if (!entry._cachedColors && rawColors && (Array.isArray(rawColors) || sceneIsNumericTypedArray(rawColors)) && rawColors.length >= count) {
-      if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-        entry._cachedColors = new Float32Array(count * 4);
-        for (var ci = 0; ci < count; ci++) {
-          var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
-          entry._cachedColors[ci * 4] = crgba[0];
-          entry._cachedColors[ci * 4 + 1] = crgba[1];
-          entry._cachedColors[ci * 4 + 2] = crgba[2];
-          entry._cachedColors[ci * 4 + 3] = crgba[3];
-        }
-      } else if (rawColors.length >= count * 4) {
-        entry._cachedColors = new Float32Array(rawColors);
-      } else if (rawColors.length >= count * 3) {
-        entry._cachedColors = new Float32Array(count * 4);
-        for (var ci2 = 0; ci2 < count; ci2++) {
-          entry._cachedColors[ci2 * 4] = rawColors[ci2 * 3];
-          entry._cachedColors[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
-          entry._cachedColors[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
-          entry._cachedColors[ci2 * 4 + 3] = 1;
-        }
-      }
+      entry._cachedColors = sceneWebGLPointColorArray(rawColors, count);
     }
+  }
+
+  // sceneWebGLPointColorArray converts CSS colors, RGBA or RGB numbers to RGBA
+  // floats, or returns undefined when the array is too short.
+  function sceneWebGLPointColorArray(rawColors: any, count: number) {
+    var out;
+    if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
+      out = new Float32Array(count * 4);
+      for (var ci = 0; ci < count; ci++) out.set(sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]).slice(0, 4), ci * 4);
+      return out;
+    }
+    if (rawColors.length >= count * 4) return new Float32Array(rawColors);
+    if (rawColors.length < count * 3) return undefined;
+    out = new Float32Array(count * 4);
+    for (var ci2 = 0; ci2 < count; ci2++) {
+      out[ci2 * 4] = rawColors[ci2 * 3];
+      out[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
+      out[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
+      out[ci2 * 4 + 3] = 1;
+    }
+    return out;
   }

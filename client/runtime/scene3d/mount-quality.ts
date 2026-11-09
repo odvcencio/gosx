@@ -879,7 +879,8 @@
   //   detail.reason  the loss or recovery reason
   //   detail.count   resets observed by this mount
   // A WebGPU device loss first falls back to WebGL so the scene keeps drawing.
-  // When the probe acquires a new device, the mount returns to WebGPU at most
+  // When the probe acquires a new device after a genuine loss (not a page's own
+  // device.destroy()), the mount returns to WebGPU at most
   // SCENE_WEBGPU_LOSS_RETURNS times per SCENE_WEBGPU_LOSS_WINDOW_MS; past
   // that, the mount stays on WebGL until it remounts.
   // --------------------------------------------------------------------------
@@ -887,12 +888,14 @@
   const SCENE_WEBGPU_LOSS_WINDOW_MS = 300000;
 
   function createSceneGraphicsRecovery() {
-    return { resets: 0, active: false, returns: [] as number[] };
+    return { resets: 0, active: false, lossReason: "", returns: [] as number[] };
   }
 
   // sceneWebGPULossReturnAllowed spends one WebGPU return when the budget
-  // allows it.
-  function sceneWebGPULossReturnAllowed(recovery: any, nowMS: number): boolean {
+  // allows it. A device the page destroyed on purpose (reason "destroyed")
+  // never returns; only a genuine loss does.
+  function sceneWebGPULossReturnAllowed(recovery: any, nowMS: number, reason?: string): boolean {
+    if (reason === "destroyed") return false;
     recovery.returns = recovery.returns.filter(function(at: number) { return nowMS - at < SCENE_WEBGPU_LOSS_WINDOW_MS; });
     if (recovery.returns.length >= SCENE_WEBGPU_LOSS_RETURNS) return false;
     recovery.returns.push(nowMS);
@@ -927,8 +930,10 @@
     sceneDispatchGraphicsReset(mount, recovery, "restored", kind, reason);
   }
 
-  function sceneDispatchGraphicsReset(mount: any, recovery: any, phase: string, backend: string, reason: string) {
-    if (phase === "lost") recovery.resets += 1;
+  // lossReason is the WebGPU device-lost reason ("destroyed", "unknown") that
+  // decides whether this loss may return to WebGPU.
+  function sceneDispatchGraphicsReset(mount: any, recovery: any, phase: string, backend: string, reason: string, lossReason?: string) {
+    if (phase === "lost") { recovery.resets += 1; recovery.lossReason = lossReason || ""; }
     recovery.active = phase === "lost";
     if (!mount || typeof mount.dispatchEvent !== "function") return;
     const detail = { phase: phase, backend: backend || "", reason: reason || "", count: recovery.resets };
