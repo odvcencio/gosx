@@ -131,6 +131,12 @@ func selenaSurfaceKind(layout any) (string, bool) {
 }
 
 func selenaCustomMaterial(res result.Result, opts SelenaMaterialOptions) (CustomMaterial, error) {
+	for _, texture := range res.Layout.Textures {
+		ref, _ := opts.Uniforms[texture.Name].(string)
+		if err := validateSelenaDataTextureRef(texture, ref); err != nil {
+			return CustomMaterial{}, err
+		}
+	}
 	wgsl, ok := res.Artifact(result.TargetWGSL)
 	if !ok || strings.TrimSpace(wgsl.Source) == "" {
 		return CustomMaterial{}, fmt.Errorf("selena material %q did not emit WGSL", res.Material.Name)

@@ -174,6 +174,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
 			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
+			sourceFile("bootstrap-src/16c3-scene-data-texture-shims.ts"),
 			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
@@ -571,6 +572,7 @@ var outputs = []output{
 			// solver and a Radiance HDR decoder it can never reach.
 			sourceFile("bootstrap-src/15a1-scene-texture-budget.ts"),
 			sourceFile("bootstrap-src/16b-scene-hdr.ts"),
+			sourceFile("bootstrap-src/16c3-scene-data-texture-shims.ts"),
 			// 16e is the legacy vertex-colour renderer. It left
 			// 10-runtime-scene-core.js, where every Scene3D page paid for it,
 			// and joined the renderer it backs up. createSceneWebGLResult in
@@ -633,6 +635,7 @@ var outputs = []output{
 			// It now ships once, in the base scene3d chunk, and this bridge
 			// hands 16a the two symbols it reads lexically.
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
+			sourceFile("bootstrap-src/16c3-scene-data-texture-shims.ts"),
 			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
 			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
@@ -709,6 +712,10 @@ var outputs = []output{
 			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
 			sourceFile("bootstrap-src/26n-feature-scene3d-selena-lighting-suffix.ts"),
 		},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-data-texture.js",
+		sources: []source{sourceFile("../runtime/scene3d/data-texture.ts")},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",

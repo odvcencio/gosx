@@ -190,6 +190,7 @@ func rendererChunkRoleAuthorities(backend string, governedSources []string) map[
 			},
 			"backend-support": {
 				"bootstrap-src/16e-scene-webgl-legacy.ts",
+				"bootstrap-src/16c3-scene-data-texture-shims.ts",
 			},
 		},
 		"webgpu": {
@@ -199,6 +200,7 @@ func rendererChunkRoleAuthorities(backend string, governedSources []string) map[
 			},
 			"backend-support": {
 				"bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
+				"bootstrap-src/16c3-scene-data-texture-shims.ts",
 			},
 		},
 	}

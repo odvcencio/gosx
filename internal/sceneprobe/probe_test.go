@@ -90,3 +90,27 @@ func TestNeedsSelenaLightingReadsMaterialLayouts(t *testing.T) {
 		t.Fatal("nil probe needs lighting")
 	}
 }
+
+func TestNeedsSelenaDataTextureReadsLayoutsAndReferences(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{}`: false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"albedo"}]}}]}}`:                                                      false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"albedo","format":"rgba8unorm"}]}}]}}`:                                false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"spectrum","format":"r16float"}]}}]}}`:                                true,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"t","format":"rgba32float"}]}}]}}`:                                    true,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"t","sampleMode":"load"}]}}]}}`:                                       true,
+		`{"objects":[{"shaderLayout":{"textures":[{"name":"t","sampleMode":"both"}]}}]}`:                                                 true,
+		`{"scene":{"points":[{"customUniforms":{"spectrum":"gosx:data:spectrum"}}]}}`:                                                    true,
+		`{"scene":{"instancedMeshes":[{"customUniforms":{"spectrum":{"resource":" gosx:data:a/b "}}}]}}`:                                 true,
+		`{"scene":{"objects":[{"customUniforms":{"radiance":"gosx:environment:radiance","gain":[1,2]}}]}}`:                               false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"s","engine":"shadowMap0"}]},"customUniforms":{"tint":[1,0,0,1]}}]}}`: false,
+	} {
+		if got := Decode(json.RawMessage(raw)).NeedsSelenaDataTexture(); got != want {
+			t.Errorf("%s: NeedsSelenaDataTexture = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsSelenaDataTexture() {
+		t.Fatal("nil probe needs a data texture")
+	}
+}

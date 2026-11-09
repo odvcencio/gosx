@@ -3572,6 +3572,7 @@
       applyInstanceStream(bytes) {
         return window.__gosx_scene3d_apply_instance_stream_frame(sceneState, bytes, scheduleRender, mount);
       },
+      applyDataTexture(bytes: any) { const api = window.__gosx_scene3d_data_texture_api, copy = api ? bytes : bytes.slice(); return api ? api.apply(copy, scheduleRender, mount) : ensureSceneGatedFeatureLoaded("data-texture", "gosxScene3dDataTextureUrl", "").then((loaded: any) => loaded.apply(copy, scheduleRender, mount)); },
       // setFrameHook(fn) installs the one engine frame callback and returns its remover (frame-owner.ts).
       setFrameHook(fn: any) { if (disposed) throw new Error("disposed"); return sceneFrameOwnerSet(frameOwner, fn, sceneNowMilliseconds(), (on: boolean) => on ? scheduleRender("frame-hook") : applySceneRenderLoopState("frame-hook")); },
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
