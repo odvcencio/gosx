@@ -6,7 +6,6 @@ build/
 .canopy/
 /docs/*
 !/docs/docs-site-operations.md
-!/docs/docs-site-spec.md
 !/docs/netplay.md
 !/docs/engine-worker.md
 !/docs/scene3d-group-spin.md
