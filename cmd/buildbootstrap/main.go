@@ -599,6 +599,7 @@ var outputs = []output{
 	{
 		name: "bootstrap-feature-scene3d-command.js",
 		sources: []source{
+			sourceFile("../runtime/scene3d/pose-interp.ts"),
 			sourceFile("../runtime/scene3d/command-runtime.ts"),
 		},
 	},

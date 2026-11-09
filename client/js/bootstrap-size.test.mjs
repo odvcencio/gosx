@@ -1606,7 +1606,11 @@ const budgets = [
   // Holding a motion frame until the models hydrate (the retry in waitForCommandMount and
   // the pending result) adds 326 raw / 87 gzip / 42 Brotli bytes; only exhausted minimums move.
   // Ending the wait when a hydration failed adds 26 raw / 8 gzip / 10 Brotli bytes; only exhausted minimums move.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 22918, gzip: 6991, brotli: 6347 },
+  // Timed pose frames (pose-interp.ts, the page-side interpolation for a simulation that
+  // runs in a Web Worker) add 3435 raw / 1249 gzip / 1184 Brotli bytes to this optional chunk,
+  // which loads only when a page dispatches Scene3D commands or frames. The raw target was
+  // already at its hard limit; all three move to the smallest value that clears the new size.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 26353, gzip: 8240, brotli: 7531 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
