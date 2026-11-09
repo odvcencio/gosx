@@ -366,6 +366,193 @@ of `game/netsync` show the harness.
 `examples/rooms` runs a server and a static client cross-origin on one
 machine.
 
+## 9. Persistent groups and identities
+
+Live rooms are matches: they end, and a restart drops them. A league, a clan,
+or a season is longer. Four packages keep that kind of state on disk, hold no
+game rules, and use only the Go standard library plus GoSX:
+
+| Package | What it keeps |
+| --- | --- |
+| `room/store` | Durable key-value pairs and append logs: a write-ahead log (WAL) plus snapshots. |
+| `room/group` | Named persistent groups, their members (seats), a state blob, and an event log. |
+| `room/identity` | Invite codes, device tokens, display names, and the binding of a device to a seat. |
+| `room/advance` | Per-group jobs that run on a deadline or when a condition holds, built on `scheduled`. |
+
+`examples/rooms/league` wires all four into a small HTTP service:
+`go run ./examples/rooms/league/cmd -dir ./league-data`. Its test
+(`TestLeagueEndToEnd`) creates a group, invites two devices, restarts the
+server twice, and advances one round early and one on its deadline.
+
+### Store
+
+```go
+st, err := store.Open("/data", store.Options{LockTimeout: 30 * time.Second})
+defer st.Close()
+
+srv, _ := room.NewServer(room.Config{Modes: modes, Store: st})
+league, _ := srv.Groups().Create("spring", "Spring League", nil)
+srv.Groups().AddMember("spring", group.Member{ID: "red", Name: "Red"})
+```
+
+`Config.Store` makes `Server.Groups()` return the registry; you open the store,
+you close it after `Server.Close`. A `store.Batch` commits several puts,
+deletes, and log appends as one unit: after a crash you see all of it or none.
+
+How it stays safe:
+
+- Every commit appends one checksummed frame to `wal-<n>.log` and calls fsync
+  before it returns (`Options.Sync: store.SyncNever` skips the fsync; a process
+  crash still loses nothing, a power cut can).
+- When the WAL passes `CompactAt` (4 MiB), the store writes `snap-<n+1>.snap` to
+  a temporary file, fsyncs it, renames it into place, fsyncs the directory,
+  starts `wal-<n+1>.log`, and deletes generation `n`. A crash at any step leaves
+  a directory `Open` recovers; the tests stop the compaction at each step.
+- On `Open`, a WAL frame that is short, fails its checksum, or does not parse
+  ends the log; the store truncates the file there and reports the dropped bytes
+  in `Stats().TruncatedBytes`. A snapshot that fails to load is disk corruption,
+  and `Open` returns `ErrCorrupt` rather than start from less data.
+- Disk use is bounded: values are at most 1 MiB, each append log keeps its newest
+  10000 records (sequence numbers keep counting), live data is capped by
+  `MaxDataBytes` (256 MiB, `ErrFull` beyond it), and the WAL is compacted at
+  `CompactAt`. Expect disk use below the live data size plus `CompactAt`, plus one
+  more snapshot while a compaction runs.
+- One process owns a directory. `Open` takes an exclusive `flock` on `LOCK` (Unix);
+  a second `Open` fails with `ErrLocked`, or waits for `LockTimeout`. On other
+  platforms there is no lock: run one process per directory.
+
+The store keeps all data in memory, so it suits state measured in megabytes
+(leagues, rosters, settings, results), not media.
+
+### Invites, devices, and seats
+
+```go
+ids, _ := identity.New(st, identity.Config{
+    Keys:         keys,                  // from identity.ParseKeys(os.Getenv("LEAGUE_KEYS"))
+    ValidateSeat: srv.Groups().HasMember,
+})
+inv, _ := ids.CreateInvite(identity.InviteSpec{Group: "spring", Seat: "red"})
+// inv.Code is "7KQ2-MXD9": 8 characters from an alphabet without 0 1 I L O U.
+
+sess, _ := ids.Redeem(typedCode, identity.RedeemOptions{Name: "Ada"})
+// sess.Token goes to the browser's local storage; sess.Seat is "red".
+
+sess, err := ids.Authenticate(token, "spring") // on every request
+```
+
+- An invite expires (default 7 days, at most 30) and has 1 to 100 uses. An invite
+  for one named seat has one use; an open invite lets each redeemer choose a free
+  seat (`RedeemOptions.Seat`). A redemption commits the device, the seat binding,
+  and the spent use as one batch, so a failed redemption spends nothing.
+- A token is `v1.<key id>.<payload>.<HMAC-SHA-256>`; the payload holds the
+  device ID, a generation number, and the issue time. There are no passwords,
+  email addresses, or third-party logins. A person who loses a token asks the
+  organiser for a new invite to the same seat (`Unbind` or `Revoke` frees it).
+- `Config.Keys` is a ring, newest first. The first key signs; the others only
+  verify. To rotate: put the new key first and keep the old one; clients call
+  `Refresh(token)` to get a token signed by the new key; drop the old key when
+  the clients have refreshed (tokens signed by a dropped key stop verifying).
+  `Config.MaxTokenAge` expires tokens by age if you want that.
+- `Rotate(deviceID)` invalidates every earlier token of one device and returns a
+  new one. `Revoke(deviceID)` disables the device and frees its seats.
+- Guessing: a code has about 39 bits. Put `ratelimit` in front of the endpoint
+  that calls `Redeem`, as the room server does for connections.
+- A display name is at most 24 printable characters (`SetName`). Names are labels,
+  not unique.
+
+### Scheduled advances
+
+```go
+runner := advance.New(st, srv.Groups(), advance.Options{})
+runner.Handle("round", advance.Handler{
+    Ready: func(ctx context.Context, v advance.View) (bool, error) {
+        return allHumanMatchesFinished(v.Group, v.Round+1), nil // optional
+    },
+    Advance: func(ctx context.Context, a advance.Advance) (advance.Result, error) {
+        next := computeNextRound(a.Group, a.Round)   // pure; no commits here
+        return advance.Result{Apply: func(b *store.Batch) { next.Write(b) }}, nil
+    },
+})
+runner.Schedule(advance.Job{Group: "spring", Name: "round", Kind: "round",
+    Interval: 24 * time.Hour, Deadline: firstDeadline})
+runner.Start(ctx) // runs a scan on a scheduled.Scheduler; Stop(ctx) on shutdown
+```
+
+A job advances when its deadline passes or `Ready` returns true, whichever
+comes first. The runner is exactly-once for the store changes in `Result.Apply`:
+
+1. It saves an intent (round `n`, reason) in the store.
+2. It calls `Advance` with `Round: n` and `Key: "<group>/<job>/<n>"`.
+3. It commits `Apply`'s changes, the new round number, the next deadline, and an
+   entry in the group's event log as one batch.
+
+If the process dies after step 1, the next process finds the intent and calls
+`Advance` again with the same round and key. Because the handler's changes only
+land in step 3, they land once. A handler that acts outside the store (a push
+message, an HTTP call) must dedupe on `Key`. A handler error is recorded on the
+job and retried with backoff (1 s, doubling, up to 5 min).
+
+After downtime the runner starts with an immediate scan. A job that missed ten
+deadlines advances once and schedules its next deadline one interval from now;
+it does not replay ten rounds. `Ready` is polled at least every `Options.Poll`
+(15 s); call `runner.Poke()` when a match ends to check at once.
+
+### Kubernetes: volume, restart, and rollout
+
+The store assumes a single writer, which matches the one-replica deployment in
+`examples/rooms/deploy/k8s.yaml`.
+
+```yaml
+spec:
+  strategy: {type: Recreate}      # never two pods on the volume at once
+  template:
+    spec:
+      securityContext: {runAsUser: 65532, fsGroup: 65532}
+      containers:
+        - name: app
+          env: [{name: LEAGUE_DIR, value: /data}]
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: gosx-league-data}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: gosx-league-data}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+```
+
+- Use a block-storage PVC (ReadWriteOnce). Do not use `emptyDir` (lost on pod
+  restart) or an NFS volume (`flock` may not exclude across clients).
+- Set `fsGroup` so the non-root user can write the volume.
+- **Restart** (crash, OOM kill, node drain): the new pod runs `Open`, which
+  replays the WAL, drops any torn tail, and starts the runner's catch-up scan.
+  Persistent groups, memberships, device tokens, invites, and jobs are back.
+  Live rooms are not: matches in progress end, and clients reconnect with the
+  existing reconnect behaviour (section 5).
+- **Rollout** with `Recreate`: the old pod gets SIGTERM, drains, and exits
+  before the new pod starts, so there is a short outage and no double writer.
+  With `RollingUpdate` the new pod starts while the old one runs. `Open` with
+  `LockTimeout` then waits for the old pod to exit and fails with `ErrLocked`
+  if it does not, so a rolling update works only if the old pod stops within the
+  timeout. A ReadWriteOnce volume also blocks the overlap on most clusters. Keep
+  `Recreate`; I did not test `RollingUpdate`.
+- **Shutdown**: on SIGTERM call `runner.Stop`, then `Server.Close`, then
+  `store.Close` (which fsyncs). `terminationGracePeriodSeconds: 20` is enough.
+- **Signing keys** come from a Secret, not the image. Rotate as described above;
+  a rollout picks up the new ring.
+- **Backups**: snapshot the volume (CSI VolumeSnapshot). Copying the directory
+  while the pod runs can catch a compaction in the middle, so stop the pod or
+  take the volume snapshot.
+- **Watch**: log `store.Stats()` at start (generation, keys, recovered batches,
+  torn bytes). A nonzero torn-byte count after a clean shutdown is worth a look.
+
+Not covered: more than one replica, hot standby, and replication. The
+store is not a database; if you need those, keep the same `group`, `identity`,
+and `advance` calls and put your own storage behind a copy of `room/store`'s API.
+
 ## Limits
 
 - The server runs every room's simulation on its own goroutine. A
