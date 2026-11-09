@@ -33,7 +33,6 @@ import (
 	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/internal/httpcache"
-	"m31labs.dev/gosx/internal/telemetryerr"
 	"m31labs.dev/gosx/scheduled"
 )
 
@@ -120,10 +119,9 @@ type App struct {
 	draining            atomic.Bool
 	shutdown            appShutdown
 
-	schedulerOnce         sync.Once
-	scheduler             *scheduled.Scheduler
-	publicScheduledStatus bool
-	srv                   *http.Server
+	schedulerOnce sync.Once
+	scheduler     *scheduled.Scheduler
+	srv           *http.Server
 
 	// staleIslandsOnce guards warnStaleIslands, so hashing every island's
 	// source runs at most once per App even if Build() runs more than once
@@ -613,26 +611,6 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 			Logger: a.clientEventsLogger,
 		}))
 	}
-	if a.publicScheduledStatus && !a.hasRoute("GET /_gosx/scheduled") {
-		mux.Handle("GET /_gosx/scheduled", a.ScheduledStatusHandler())
-	}
-}
-
-// EnablePublicScheduledStatus exposes bounded, redacted task status on the
-// public listener. Call it before Build and protect the route with application
-// authentication.
-//
-// Deprecated: this compatibility opt-in lasts one minor release. Use the
-// authenticated internal telemetry listener when available instead.
-func (a *App) EnablePublicScheduledStatus() error {
-	if a == nil {
-		return &telemetryerr.ConfigError{Field: "app", Code: "required"}
-	}
-	if a.configurationClosed.Load() {
-		return telemetryerr.ErrAfterBuild
-	}
-	a.publicScheduledStatus = true
-	return nil
 }
 
 // SetClientEventsLogger overrides the slog.Logger used by the
@@ -1146,10 +1124,6 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 		node = defaultStatusBody("Page not found", "The requested page could not be found.")
 	}
 	a.renderPage(w, ctx, "", node, "Not Found")
-}
-
-func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
-	a.renderErrorPattern(w, r, err, "")
 }
 
 func (a *App) renderErrorPattern(w http.ResponseWriter, r *http.Request, err error, pattern string) {
