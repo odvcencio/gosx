@@ -70,6 +70,7 @@
     "scene3d/vessel-external.ts",
     "scene3d/webgl-depth-post.ts",
     "scene3d/webgl-contact-shadows.ts",
+    "scene3d/webgl-taa-motion.ts",
     "scene3d/webgl-taa.ts",
     "scene3d/webgl-soft-particles.ts",
     "scene3d/webgl-exposure.ts",

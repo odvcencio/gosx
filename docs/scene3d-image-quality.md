@@ -16,7 +16,7 @@ PostFX: scene.PostFX{Effects: []scene.PostEffect{
 | Backend | What TAA does |
 |---|---|
 | WebGPU | Resolves the linear HDR image before the post chain. Static surfaces reproject through depth; moving retained meshes and skinned meshes draw motion vectors. Blended particles and pixels near an ocean or pool surface keep less history, because they move without depth. |
-| WebGL2 | Resolves inside the post chain and reprojects through depth and the camera. It has no per-object motion vectors and turns itself off over composited water. |
+| WebGL2 | Resolves inside the post chain. Static surfaces reproject through depth; moving retained meshes and skinned meshes draw motion vectors (skinned ones need 528 vertex uniform vectors, which most desktop GPUs have). Pixels near an ocean or pool surface keep less history. It has no particle mask and turns itself off over composited water. |
 
 The first frame, and any frame after a reset, uses FXAA. History resets on a
 resize, a projection change, a camera cut (more than 2 units or 60 degrees in

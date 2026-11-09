@@ -27,6 +27,7 @@ import (
 // self-shadow band (depth acne, or a filter kernel reaching past a sloped
 // receiver) darkens whole rows and fails the check.
 func TestBeaconTowerShadowBand(t *testing.T) {
+	requireRenderGPU(t)
 	root := e2eRepoRoot(t)
 	for _, backend := range renderUpgradeBackends() {
 		t.Run(backend, func(t *testing.T) {

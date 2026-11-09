@@ -44,6 +44,15 @@ func renderUpgradeBackends() []string {
 	return backends
 }
 
+// requireRenderGPU skips a real-GPU check on hosts without a GPU browser: the
+// CI browser shards run headless Chrome on a software rasterizer.
+func requireRenderGPU(t *testing.T) {
+	t.Helper()
+	if !e2eWindowsRelay() && os.Getenv("GOSX_WATER_E2E_REQUIRE_WEBGPU") != "1" && os.Getenv("GPU_CHROME_ENDPOINT") == "" {
+		t.Skip("needs a GPU browser (gpu-chrome.sh or mac-gpu-run)")
+	}
+}
+
 func renderUpgradeBundles(root string) string {
 	if dir := os.Getenv("GOSX_RENDER_BUNDLES"); dir != "" {
 		return dir
@@ -121,6 +130,7 @@ func lumaAt(img image.Image, x, y int) float64 {
 // x = -2 casts the shadow of a light travelling down at 45 degrees toward +x
 // onto the ground near x = +1 (pixel 195 of 320); x = +4 (pixel 299) is lit.
 func TestStandardMaterialShadowOnGPU(t *testing.T) {
+	requireRenderGPU(t)
 	root := e2eRepoRoot(t)
 	for _, backend := range renderUpgradeBackends() {
 		for _, cascades := range []int{0, 4} {

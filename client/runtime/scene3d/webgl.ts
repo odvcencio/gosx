@@ -4776,7 +4776,7 @@
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
         return temporalEnabled;
       },
-      resetTemporal: function() { if (temporal) { temporal.dispose(); temporal = null; } temporalEnabled = false; },
+      resetTemporal: function() { if (temporal) { temporal.dispose(); temporal = null; } temporalEnabled = false; }, temporalMotion: function(bundle: any, helpers: any) { temporal.motion(bundle, helpers); },
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
@@ -7966,7 +7966,7 @@
     const activeStaticPointKeys = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
-    var softParticles = createSceneWebGLSoftParticles(gl), exposureGL = createSceneWebGLAutoExposure(gl);
+    var softParticles = createSceneWebGLSoftParticles(gl), exposureGL = createSceneWebGLAutoExposure(gl), motionHelpers = { attribute: bindScenePBRDirectAttribute, data: scenePBRDirectAttribute, indices: bindScenePBRDirectIndexBuffer };
     var lastPreparedScene = null;
     var webglComputeParticleDrawStats = {
       drawEntries: 0,
@@ -9158,7 +9158,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        exposureGL.apply(renderTarget, renderW, renderH, bundle.environment, cam); var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
+        if (temporalActive) postProcessor.temporalMotion(bundle, motionHelpers); exposureGL.apply(renderTarget, renderW, renderH, bundle.environment, cam); var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
         // Post passes replace material texture bindings, including unit zero.
         textureCache._sceneTextureEpoch++;
         if (postResult && postResult.postChain) {
