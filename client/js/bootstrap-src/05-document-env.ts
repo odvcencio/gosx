@@ -814,6 +814,9 @@
     compressor: null,
     buses: new Map(),
     listeners: new Set(),
+    followsCamera: true,
+    cameraKey: "",
+    pose: null,
   };
 
   function gosxMixerBusID(id) {
@@ -922,6 +925,9 @@
       return null;
     }
     Array.from(gosxMixerState.buses.values()).forEach(gosxMixerBuildNode);
+    if (gosxMixerState.pose) {
+      gosxMixerSetListener(gosxMixerState.pose[0], gosxMixerState.pose[1], gosxMixerState.pose[2]);
+    }
     return gosxMixerState.context;
   }
 
@@ -1014,7 +1020,10 @@
   // gosxMixerSetListener places the shared AudioListener. Call it each frame
   // with the camera's position, forward direction and up vector.
   function gosxMixerSetListener(position, forward, up) {
-    const context = gosxMixerContext();
+    // Do not create the AudioContext just to move a listener: browsers keep a
+    // new context suspended until a user gesture, and frames run before one.
+    gosxMixerState.pose = [position, forward, up];
+    const context = gosxMixerState.context;
     const listener = context && context.listener;
     if (!listener) {
       return false;
@@ -1040,7 +1049,47 @@
     return true;
   }
 
+  // gosxMixerRotate applies a Scene3D camera's X, Y, Z rotation to v, the same
+  // order sceneRotatePoint uses to take camera space to world space.
+  function gosxMixerRotate(v, rx, ry, rz) {
+    let y = v[1] * Math.cos(rx) - v[2] * Math.sin(rx);
+    let z = v[1] * Math.sin(rx) + v[2] * Math.cos(rx);
+    let x = v[0] * Math.cos(ry) + z * Math.sin(ry);
+    z = -v[0] * Math.sin(ry) + z * Math.cos(ry);
+    const nx = x * Math.cos(rz) - y * Math.sin(rz);
+    const ny = x * Math.sin(rz) + y * Math.cos(rz);
+    return { x: nx, y: ny, z };
+  }
+
+  // gosxMixerFollowCamera moves the listener to a Scene3D camera ({x, y, z,
+  // rotationX, rotationY, rotationZ}). The renderer calls it every frame; it
+  // does nothing while following is off (gosxMixerAPI.followCamera(false)) and
+  // skips a camera that has not moved.
+  function gosxMixerFollowCamera(camera) {
+    if (!gosxMixerState.followsCamera || !camera) {
+      return false;
+    }
+    const rx = gosxNumber(camera.rotationX, 0);
+    const ry = gosxNumber(camera.rotationY, 0);
+    const rz = gosxNumber(camera.rotationZ, 0);
+    const key = [camera.x, camera.y, camera.z, rx, ry, rz].join(",");
+    if (key === gosxMixerState.cameraKey) {
+      return false;
+    }
+    gosxMixerState.cameraKey = key;
+    return gosxMixerSetListener(
+      { x: gosxNumber(camera.x, 0), y: gosxNumber(camera.y, 0), z: gosxNumber(camera.z, 0) },
+      gosxMixerRotate([0, 0, -1], rx, ry, rz),
+      gosxMixerRotate([0, 1, 0], rx, ry, rz),
+    );
+  }
+
   const gosxMixerAPI = {
+    followCamera: function(enabled) {
+      gosxMixerState.followsCamera = enabled !== false;
+      gosxMixerState.cameraKey = "";
+    },
+    updateCamera: gosxMixerFollowCamera,
     buses: ["master"].concat(GOSX_MIXER_STANDARD_BUSES),
     context: gosxMixerContext,
     input: gosxMixerInput,

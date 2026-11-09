@@ -3188,6 +3188,10 @@
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
       const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport);
+      // The audio listener follows the camera (window.__gosx.audioMixer is
+      // installed by the bootstrap; it ignores frames until audio is in use).
+      const audioMixer = window.__gosx && window.__gosx.audioMixer;
+      if (audioMixer && typeof audioMixer.updateCamera === "function") audioMixer.updateCamera(activeCamera);
       applySceneHTMLTextureRecordsToState(sceneState, htmlTextureState);
       const pointQualityGroups = sceneQualityLadderAdmittedGroups(adaptiveQuality);
       const pointBudgetScale = sceneQualityLadderPointBudgetScale(adaptiveQuality);
