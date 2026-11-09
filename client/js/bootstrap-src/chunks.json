@@ -385,6 +385,7 @@
     {
       "name": "bootstrap-feature-scene3d-command.js",
       "sources": [
+        "../runtime/scene3d/pose-interp.ts",
         "../runtime/scene3d/command-runtime.ts"
       ]
     },
