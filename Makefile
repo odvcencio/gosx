@@ -480,7 +480,7 @@ build-det-parity-darwin-arm64:
 # it opts in, and to the paths and the go test line of
 # .github/workflows/determinism-arm64.yml, which runs the goldens on arm64. The
 # analyzer type-checks each package, so list packages instead of using ./... .
-DET_LINT_PKGS ?= ./det/... ./oceanspec ./physics ./vessel ./motion ./scene/geom ./scene/harness ./scene/imagediff ./scene/preview ./internal/sceneaffine ./render/gpu/headless ./scene
+DET_LINT_PKGS ?= ./det/... ./oceanspec ./physics ./vessel ./motion ./scene/geom ./scene/harness ./scene/imagediff ./scene/preview ./internal/sceneaffine ./render/gpu/headless ./scene ./game/teamai
 lint-deterministic:
 	$(GO) run ./cmd/gosx-detlint $(DET_LINT_PKGS)
 
