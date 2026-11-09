@@ -6,9 +6,8 @@ build/
 .canopy/
 /docs/*
 !/docs/docs-site-operations.md
-!/docs/docs-site-spec.md
-!/docs/polar.md
 !/docs/netplay.md
+!/docs/rooms.md
 !/docs/game-kit.md
 !/docs/engine-worker.md
 !/docs/scene3d-group-spin.md
@@ -22,7 +21,6 @@ build/
 !/docs/motion-transport.md
 !/docs/performance-metrics.md
 !/docs/scene3d-text.md
-!/docs/stripe.md
 !/docs/embedded-apps.md
 !/docs/ui-recipes.md
 !/docs/controllers.md
