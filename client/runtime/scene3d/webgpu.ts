@@ -2194,6 +2194,10 @@
     // arrayLength bounds the loop against the storage buffer the JS side sized
     // this frame. No compile-time light cap remains.
     "    let lightCount = min(frame.lightCount, arrayLength(&lights));",
+    // Each slot's shadow is sampled once per fragment, outside the light loop. Frames without a shadow slot use wgpuUnshadowedPBRFragment, which drops these calls.
+    "    var shadowSlot0 = 1.0; var shadowSlot1 = 1.0;",
+    "    if (material.receiveShadow != 0u && shadow.lightIndex.x >= 0) { shadowSlot0 = shadowSlotFactor(shadowMap0, shadowSampler0, shadow.slot0, in.worldPos); }",
+    "    if (material.receiveShadow != 0u && shadow.lightIndex.y >= 0) { shadowSlot1 = shadowSlotFactor(shadowMap1, shadowSampler1, shadow.slot1, in.worldPos); }",
     "    for (var i = 0u; i < lightCount; i = i + 1u) {",
     "        let light = lights[i];",
     "        let lightType = u32(light.position.w);",
@@ -2269,11 +2273,7 @@
     // Shadow attenuation follows the light associated with each slot.
     "        var shadowAtten: f32 = 1.0;",
     "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {",
-    "            if (i32(i) == shadow.lightIndex.x) {",
-    "                shadowAtten = shadowSlotFactor(shadowMap0, shadowSampler0, shadow.slot0, in.worldPos);",
-    "            } else if (i32(i) == shadow.lightIndex.y) {",
-    "                shadowAtten = shadowSlotFactor(shadowMap1, shadowSampler1, shadow.slot1, in.worldPos);",
-    "            }",
+    "            if (i32(i) == shadow.lightIndex.x) { shadowAtten = shadowSlot0; } else if (i32(i) == shadow.lightIndex.y) { shadowAtten = shadowSlot1; }",
     "        }",
     "",
     "        let radiance = lightColor * intensity * attenuation;",
@@ -6853,7 +6853,7 @@
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
     var pbrInstancedCullVertexModule = null;
-    var pbrFragmentModule = null;
+    var pbrFragmentModule = null, pbrUnshadowedFragmentModule = null, pbrShadowsActive = false;
     var elioSkinShaderModule: any = null;
     var elioSkinPipeline: any = null;
     var computedMorphShaderModule: any = null;
@@ -8073,7 +8073,7 @@
         pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
         pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
         pbrInstancedCullVertexModule = device.createShaderModule({ label: "pbr-instanced-cull-vert", code: WGSL_PBR_INSTANCED_CULL_VERTEX });
-        pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
+        pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT }); pbrUnshadowedFragmentModule = null;
         shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
         shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
         shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
@@ -8367,6 +8367,7 @@
       if (key && key === preparedPipelineKey) return;
       var passes = prepared && prepared.pbrPasses || buildDrawList(bundle);
       var shadows = Array.isArray(bundle.lights) && bundle.lights.some(function(light: any) { return light.castShadow; });
+      pbrShadowsActive = shadows && bundle.lights.some(wgpuShadowCaster);
       if (shadows) getShadowPipeline(false);
       for (var blend of ["opaque", "alpha", "additive"]) {
         var objects = passes[blend] || [];
@@ -8399,12 +8400,22 @@
       preparedPipelineKey = key;
     }
 
+    // pbrFragment picks the PBR fragment module: the detail module, the full
+    // module while a shadow slot is active, or the unshadowed module.
+    function pbrFragment(detail: boolean) {
+      if (detail) return detailResources.fragment;
+      if (pbrShadowsActive) return pbrFragmentModule;
+      if (!pbrUnshadowedFragmentModule) pbrUnshadowedFragmentModule = device.createShaderModule({ label: "pbr-frag-unshadowed", code: wgpuUnshadowedPBRFragment(WGSL_PBR_FRAGMENT) });
+      return pbrUnshadowedFragmentModule;
+    }
+    function pbrKeyPrefix(detail: boolean) { return (selectiveBloom ? "specular|" : "") + (detail || pbrShadowsActive ? "" : "unshadowed|"); }
+
     // Get or create a PBR pipeline for the given blend mode.
     function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
       var reflected = frontFace === "cw";
-      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = pbrKeyPrefix(detail) + wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
+      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, pbrFragment(detail), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -8423,17 +8434,17 @@
     }
 
     function getPBRInstancedPipeline(blendMode, depthWrite, detail = false) {
-      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = pbrKeyPrefix(detail) + wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, pbrFragment(detail), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
 
     function getPBRInstancedCullPipeline(blendMode, depthWrite, detail = false) {
-      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = pbrKeyPrefix(detail) + wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedCullVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedCullVertexModule, pbrFragment(detail), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -18403,9 +18414,7 @@
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
-        if (!light || !light.castShadow) continue;
-        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-        if (kind !== "directional" && kind !== "spot") continue;
+        if (!wgpuShadowCaster(light)) continue;
 
         if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
 
@@ -18429,6 +18438,7 @@
         }
       }
 
+      pbrShadowsActive = activeShadowCount > 0;
       uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights); sceneSelenaFrameLighting(selenaFrame, cam, scratchViewMatrix, bundle, shadowSlots, shadowLightIndices, shadowLightMatrices, "gpu");
 
       // Create frame bind group.

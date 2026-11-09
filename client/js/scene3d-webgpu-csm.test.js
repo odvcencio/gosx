@@ -254,6 +254,41 @@ test("a four-cascade sun renders one array layer per cascade and samples the arr
   } finally { h.renderer.dispose(); }
 });
 
+test("a frame without a shadow slot draws with the PBR fragment that omits the shadow calls", async () => {
+  const h = await cascadeHarness();
+  try {
+    const api = h.env.context.__gosx_scene3d_api;
+    const pbrModules = (start) => h.fake.state.renderPasses.slice(start).flatMap((pass) => pass.draws)
+      .filter((draw) => draw.pipeline && /^gosx-pbr-opaque$/.test(draw.pipeline.desc.label))
+      .map((draw) => draw.pipeline.desc.fragment.module);
+    // Solid boxes: cascadeBundle's boxes default to wireframe, which draws lines.
+    const solid = (lights) => {
+      const state = api.createSceneState({ scene: { materials: [{ id: "m", color: "#ffffff", roughness: 1 }], lights, objects: [
+        { id: "caster", kind: "box", width: 1, height: 1, depth: 1, material: "m", wireframe: false, castShadow: true, receiveShadow: true },
+        { id: "ground", kind: "box", width: 40, height: 0.1, depth: 40, y: -1, material: "m", wireframe: false, receiveShadow: true },
+      ] } }, { tier: "full" });
+      return api.createSceneRenderBundle(64, 64, "#000000", { x: 0, y: 3, z: 8, fov: 60, near: 0.1, far: 100 },
+        api.sceneStateObjectsWithMaterials(state), [], [], [], api.sceneStateLights(state), {}, 0, [], [], [], [], [], 0, false);
+    };
+    const unlit = { id: "key", kind: "directional", directionX: 0, directionY: -1, directionZ: 0 };
+    let start = h.fake.state.renderPasses.length;
+    h.renderer.render(solid([unlit]), { width: 64, height: 64 }, { nowMS: 0, active: true });
+    let modules = pbrModules(start);
+    assert.ok(modules.length > 0, "the scene draws PBR objects");
+    assert.deepEqual([...new Set(modules.map((m) => m.label))], ["pbr-frag-unshadowed"]);
+    assert.doesNotMatch(modules[0].code, /= shadowSlotFactor\(/);
+    assert.match(modules[0].code, /var shadowSlot0 = 1\.0;/, "the light loop still reads the default factor");
+    start = h.fake.state.renderPasses.length;
+    h.renderer.render(solid([sun]), { width: 64, height: 64 }, { nowMS: 17, active: true });
+    modules = pbrModules(start);
+    assert.deepEqual([...new Set(modules.map((m) => m.label))], ["pbr-frag"], "a shadow slot switches to the full fragment");
+    // A point light that asks for shadows takes no slot, so it keeps the cheap module.
+    start = h.fake.state.renderPasses.length;
+    h.renderer.render(solid([{ id: "p", kind: "point", castShadow: true, y: 3 }]), { width: 64, height: 64 }, { nowMS: 34, active: true });
+    assert.deepEqual([...new Set(pbrModules(start).map((m) => m.label))], ["pbr-frag-unshadowed"]);
+  } finally { h.renderer.dispose(); }
+});
+
 test("the shadow memory cap covers every cascade layer, and a spot light keeps one layer", async () => {
   const h = await cascadeHarness();
   try {

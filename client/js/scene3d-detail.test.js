@@ -102,7 +102,8 @@ test("WebGPU detail preserves the nil shader and uses a separate array binding",
   // all-zero planes cut nothing.
   // Reviewed cascaded-shadow base: shadow maps are depth arrays sampled through
   // shadowSlotFactor (webgpu-shadows module); the detail splice points are unchanged.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "38b74a610a5100b39c302e63918ad4ca2c612855c7b701bbdcf2b33f7aac3391");
+  // Reviewed shadow hoist: each slot's factor is computed once before the light loop.
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "65a49e7789ebe9749e138a81c86263cdd621dfd3065949ee03df557011427598");
   const shader = c.sceneWebGPUDetailFragment(base, true);
   assert.match(shader, /textureSampleGrad\(detailAtlas/);
   assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);

@@ -44,3 +44,8 @@ up to four cascades each. WebGPU stores each light's cascades in one depth
 texture array; WebGL2 does the same with a 2D depth array texture. Custom
 Selena materials can read the same cascades; the binding and uniform layout is
 documented at the top of `client/runtime/scene3d/webgpu-shadows.ts`.
+
+On WebGPU, a frame with no shadow-casting light draws with a lit shader that
+has no shadow sampling code. Software renderers such as SwiftShader run both
+sides of a branch, so a scene without shadows would otherwise still pay for
+them on every pixel.

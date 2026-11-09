@@ -67,6 +67,9 @@ const WGSL_SHADOW_CASCADE_FNS = [
   "    vec2f(0.38277543, 0.27676845), vec2f(0.97484398, 0.75648379),",
   ");",
   "",
+  // One sampling loop: 4 taps one texel apart for hard shadows, or 8 taps over
+  // the PCSS penumbra after a blocker search. Keeping one copy of the tap code
+  // matters on CPU rasterizers such as SwiftShader, which pay for shader size.
   "fn shadowCascadeTaps(map: texture_depth_2d_array, samp: sampler_comparison, slot: ShadowCascades, c: u32, worldPos: vec3f) -> f32 {",
   "    let p = slot.matrices[c] * vec4f(worldPos, 1.0);",
   "    if (p.w <= 0.0) { return 1.0; }",
@@ -77,35 +80,34 @@ const WGSL_SHADOW_CASCADE_FNS = [
   "    let receiver = clamp(ndc.z - slot.params.y * slot.scales[c], 0.0, 1.0);",
   "    let layer = i32(c);",
   "    let softness = slot.params.z;",
-  "    if (softness <= 0.0001) {",
-  "        var hard = 0.0;",
-  "        for (var i = 0u; i < 4u; i = i + 1u) {",
-  "            hard = hard + textureSampleCompareLevel(map, samp, clamp(uv + kShadowDisk8[i] * texel, vec2f(0.0), vec2f(1.0)), layer, receiver);",
+  "    var radius = 1.0;",
+  "    var taps = 4u;",
+  "    if (softness > 0.0001) {",
+  "        let size = vec2f(slot.texel.y);",
+  "        let blockerRadius = max(1.0, softness * 32.0);",
+  "        var blockerSum = 0.0;",
+  "        var blockers = 0.0;",
+  "        for (var i = 0u; i < 8u; i = i + 1u) {",
+  "            let tap = clamp(uv + kShadowDisk8[i] * texel * blockerRadius, vec2f(0.0), vec2f(1.0));",
+  "            let d = textureLoad(map, vec2i(min(tap * size, size - vec2f(1.0))), layer, 0);",
+  "            if (receiver > d) { blockerSum = blockerSum + d; blockers = blockers + 1.0; }",
   "        }",
-  "        return hard / 4.0;",
+  "        if (blockers < 0.5) { return 1.0; }",
+  "        let blocker = blockerSum / blockers;",
+  "        let penumbra = (receiver - blocker) * softness / max(blocker, 0.0001);",
+  "        radius = max(1.0, clamp(penumbra * 128.0, 1.0, softness * 96.0));",
+  "        taps = 8u;",
   "    }",
-  "    let size = vec2f(slot.texel.y);",
-  "    let blockerRadius = max(1.0, softness * 32.0);",
-  "    var blockerSum = 0.0;",
-  "    var blockers = 0.0;",
-  "    for (var i = 0u; i < 8u; i = i + 1u) {",
-  "        let tap = clamp(uv + kShadowDisk8[i] * texel * blockerRadius, vec2f(0.0), vec2f(1.0));",
-  "        let d = textureLoad(map, vec2i(min(tap * size, size - vec2f(1.0))), layer, 0);",
-  "        if (receiver > d) { blockerSum = blockerSum + d; blockers = blockers + 1.0; }",
-  "    }",
-  "    if (blockers < 0.5) { return 1.0; }",
-  "    let blocker = blockerSum / blockers;",
-  "    let penumbra = (receiver - blocker) * softness / max(blocker, 0.0001);",
-  "    let radius = max(1.0, clamp(penumbra * 128.0, 1.0, softness * 96.0));",
   "    var lit = 0.0;",
-  "    for (var i = 0u; i < 8u; i = i + 1u) {",
+  "    for (var i = 0u; i < taps; i = i + 1u) {",
   "        lit = lit + textureSampleCompareLevel(map, samp, clamp(uv + kShadowDisk8[i] * texel * radius, vec2f(0.0), vec2f(1.0)), layer, receiver);",
   "    }",
-  "    return lit / 8.0;",
+  "    return lit / f32(taps);",
   "}",
   "",
   // Pick the cascade by view depth, blend across the seam into the next
-  // cascade, and fade to lit at the end of the shadow distance.
+  // cascade (past the last one the blend fades to lit), and fade to lit at the
+  // end of the shadow distance. One tap call serves both cascades.
   "fn shadowSlotFactor(map: texture_depth_2d_array, samp: sampler_comparison, slot: ShadowCascades, worldPos: vec3f) -> f32 {",
   "    let count = u32(slot.params.x);",
   "    if (count == 0u) { return 1.0; }",
@@ -113,16 +115,19 @@ const WGSL_SHADOW_CASCADE_FNS = [
   "    if (count > 1u && viewDepth >= slot.splits[count - 1u]) { return 1.0; }",
   "    var c = 0u;",
   "    for (var k = 0u; k + 1u < count; k = k + 1u) { if (viewDepth >= slot.splits[k]) { c = k + 1u; } }",
-  "    var factor = shadowCascadeTaps(map, samp, slot, c, worldPos);",
-  "    if (count == 1u) { return factor; }",
-  "    let far = slot.splits[c];",
-  "    let near = select(0.0, slot.splits[max(c, 1u) - 1u], c > 0u);",
-  "    let band = max((far - near) * slot.params.w, 0.0001);",
-  "    let t = clamp((viewDepth - (far - band)) / band, 0.0, 1.0);",
-  "    if (t > 0.0) {",
-  "        var next = 1.0;",
-  "        if (c + 1u < count) { next = shadowCascadeTaps(map, samp, slot, c + 1u, worldPos); }",
-  "        factor = mix(factor, next, t);",
+  "    var t = 0.0;",
+  "    if (count > 1u) {",
+  "        let far = slot.splits[c];",
+  "        let near = select(0.0, slot.splits[max(c, 1u) - 1u], c > 0u);",
+  "        let band = max((far - near) * slot.params.w, 0.0001);",
+  "        t = clamp((viewDepth - (far - band)) / band, 0.0, 1.0);",
+  "    }",
+  "    var factor = 1.0;",
+  "    let layers = select(1u, 2u, t > 0.0);",
+  "    for (var n = 0u; n < layers; n = n + 1u) {",
+  "        var taps = 1.0;",
+  "        if (c + n < count) { taps = shadowCascadeTaps(map, samp, slot, c + n, worldPos); }",
+  "        if (n == 0u) { factor = taps; } else { factor = mix(factor, taps, t); }",
   "    }",
   "    return factor;",
   "}",
@@ -270,6 +275,22 @@ function wgpuFitShadowSlot(slot: any, light: any, rawMatrix: Float32Array, frame
     previous = splits[c];
   }
   return slot;
+}
+
+// wgpuShadowCaster reports whether a light can take a shadow slot: it casts
+// shadows and is directional or spot. The frame loop and pipeline preparation
+// share it, so both pick the same PBR fragment variant.
+function wgpuShadowCaster(light: any): boolean {
+  var kind = light && typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+  return Boolean(light && light.castShadow) && (kind === "directional" || kind === "spot");
+}
+
+// wgpuUnshadowedPBRFragment removes the shadow-slot calls from the PBR
+// fragment, for frames with no active shadow slot. A CPU rasterizer such as
+// SwiftShader runs both sides of a branch, so the untaken shadow code still
+// cost every pixel: it doubled the renderer proof's textured-scene frame time.
+function wgpuUnshadowedPBRFragment(code: string): string {
+  return code.split("\n").filter(function(line) { return line.indexOf("= shadowSlotFactor(") < 0; }).join("\n");
 }
 
 // wgpuPackShadowUniforms writes ShadowUniforms for both slots and returns the
