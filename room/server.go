@@ -42,7 +42,9 @@ import (
 	"github.com/gorilla/websocket"
 	"m31labs.dev/gosx/hub"
 	"m31labs.dev/gosx/ratelimit"
+	"m31labs.dev/gosx/room/group"
 	"m31labs.dev/gosx/room/mode"
+	"m31labs.dev/gosx/room/store"
 	"m31labs.dev/gosx/room/wire"
 )
 
@@ -107,6 +109,10 @@ type Config struct {
 	// NewSeed picks each new room's simulation seed. Nil draws from
 	// crypto/rand. Tests set it to reproduce a match.
 	NewSeed func() uint64
+	// Store makes persistent groups available through Server.Groups. The
+	// caller opens the store, owns it, and closes it after Server.Close. Nil
+	// disables persistent groups; live rooms never touch the store.
+	Store *store.Store
 	// Logf receives diagnostics. Nil uses log.Printf; use a no-op to silence.
 	Logf func(format string, args ...any)
 }
@@ -205,6 +211,8 @@ type Server struct {
 	wg       sync.WaitGroup
 	localIDs atomic.Uint64
 
+	groups *group.Registry
+
 	mu     sync.Mutex
 	rooms  map[string]*Room
 	tokens map[string]*Room
@@ -229,9 +237,17 @@ func NewServer(cfg Config) (*Server, error) {
 	for _, m := range cfg.Modes {
 		s.modes[m.Name] = m
 	}
+	if cfg.Store != nil {
+		s.groups = group.New(cfg.Store, group.Options{})
+	}
 	s.reject.CheckOrigin = s.checkOrigin
 	return s, nil
 }
+
+// Groups returns the persistent group registry, or nil when Config.Store is
+// not set. Groups, their members, and their state survive a restart; live
+// rooms do not (see docs/rooms.md, "Persistent groups and identities").
+func (s *Server) Groups() *group.Registry { return s.groups }
 
 func (s *Server) now() time.Duration { return s.cfg.Now() }
 
