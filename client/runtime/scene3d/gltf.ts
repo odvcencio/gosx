@@ -1092,7 +1092,7 @@
     }
     return out;
   }
-  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node) {
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node, uvSet) {
     // One named-attribute read: absent names hand back null exactly like the
     // inline guards they replace.
     function attrValues(name) {
@@ -1109,7 +1109,16 @@
       normals = gltfRenormalizeVec3(normals);
     }
 
-    var uvs = attrValues("TEXCOORD_0");
+    // The renderers sample every map with one UV stream, so the material's
+    // dominant UV set (see gltfResolveUVSet) becomes that stream. A missing
+    // set falls back to TEXCOORD_0 and then to generated planar UVs.
+    var uvs = null;
+    if (uvSet > 0) {
+      uvs = attrValues("TEXCOORD_" + uvSet);
+    }
+    if (!uvs) {
+      uvs = attrValues("TEXCOORD_0");
+    }
 
     // glTF 2.0: when NORMAL is absent, normals are calculated (flat) and both
     // authored tangents and morph TANGENT displacement must be ignored — the
@@ -1842,6 +1851,61 @@
     return uvs;
   }
 
+  // Texture slots whose texCoord selects a UV set. Each entry is a textureInfo.
+  function gltfMaterialTextureInfos(mat) {
+    var pbr = mat.pbrMetallicRoughness || {};
+    var specular = gltfExtension(mat, "KHR_materials_specular") || {};
+    var infos = {
+      baseColor: pbr.baseColorTexture,
+      metallicRoughness: pbr.metallicRoughnessTexture,
+      normal: mat.normalTexture,
+      occlusion: mat.occlusionTexture,
+      emissive: mat.emissiveTexture,
+      specular: specular.specularTexture,
+      specularColor: specular.specularColorTexture,
+    };
+    return infos;
+  }
+
+  // Per-map texCoord (glTF: textureInfo.texCoord, default 0; with
+  // KHR_texture_transform the extension's texCoord overrides it). Returns
+  // { sets: {slot: index}, uvSet, mixed }. uvSet is the set the renderers
+  // sample every map with: the base colour's set when it is textured, else the
+  // most used set (lowest index on ties). mixed is true when textured maps
+  // disagree; those maps sample uvSet, which is the documented limit.
+  function gltfResolveUVSet(mat) {
+    var infos = gltfMaterialTextureInfos(mat);
+    var sets = {};
+    var counts = [0, 0, 0, 0, 0, 0, 0, 0];
+    var used = 0;
+    for (var slot in infos) {
+      var info = infos[slot];
+      if (!info || info.index == null) {
+        continue;
+      }
+      var transform = gltfExtension(info, "KHR_texture_transform");
+      var set = transform && transform.texCoord != null ? transform.texCoord : info.texCoord;
+      set = Math.floor(Number(set));
+      if (!isFinite(set) || set < 0 || set > 7) {
+        set = 0;
+      }
+      sets[slot] = set;
+      counts[set] += 1;
+      used += 1;
+    }
+    var chosen = 0;
+    if (sets.baseColor != null) {
+      chosen = sets.baseColor;
+    } else {
+      for (var k = 1; k < counts.length; k++) {
+        if (counts[k] > counts[chosen]) {
+          chosen = k;
+        }
+      }
+    }
+    return { sets: sets, uvSet: chosen, mixed: used > 0 && counts[chosen] !== used };
+  }
+
   function gltfExtractMaterial(gltf, materialIndex, binaryBuffer) {
     if (materialIndex == null || !gltf.materials || materialIndex >= gltf.materials.length) {
       return gltfDefaultPBRMaterial();
@@ -2072,6 +2136,14 @@
       record.uvTransform = uvMatrix;
     }
 
+    var uvInfo = gltfResolveUVSet(mat);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.uvSet = uvInfo.uvSet;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.texCoords = uvInfo.sets;
+    if (uvInfo.mixed && !mat.__gosxUVWarned) {
+      Object.defineProperty(mat, "__gosxUVWarned", { value: true, enumerable: false });
+      console.warn("[gosx] glTF material " + JSON.stringify(mat.name || String(materialIndex)) + " reads maps from different UV sets (" + JSON.stringify(uvInfo.sets) + "); every map samples TEXCOORD_" + uvInfo.uvSet + ". Bake AO and lightmaps into the base UV set, or give the maps one set.");
+    }
+
     return record;
   }
 
@@ -2278,7 +2350,7 @@
       var authoredWeights = node && Array.isArray(node.weights)
         ? node.weights
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ : mesh.weights;
-      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node);
+      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node, material.uvSet);
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
