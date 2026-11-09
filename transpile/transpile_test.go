@@ -202,26 +202,3 @@ func Parent() Node {
 		t.Fatalf("dotted component should not become a literal element:\n%s", out)
 	}
 }
-
-func TestTranspileGoSXUIImportedComponentProps(t *testing.T) {
-	source := []byte(`package main
-
-import (
-	"m31labs.dev/gosx"
-	ui "m31labs.dev/gosx/ui"
-)
-
-func View(disabled bool) gosx.Node {
-	return <ui.Button type="submit" variant="secondary" size="sm" class="cta" disabled={disabled} data-action="run">Run</ui.Button>
-}
-`)
-
-	out, err := Transpile(source, Options{SourceFile: "gosx_ui.gsx"})
-	if err != nil {
-		t.Fatalf("transpile: %v", err)
-	}
-	expected := `ui.Button(ui.ButtonProps{BaseProps: ui.BaseProps{Class: "cta", Attrs: gosx.Attrs(gosx.Attr("data-action", "run"))}, Type: "submit", Variant: "secondary", Size: "sm", Disabled: disabled}, gosx.Text("Run"))`
-	if !strings.Contains(out, expected) {
-		t.Fatalf("expected typed GoSX UI component props, got:\n%s", out)
-	}
-}

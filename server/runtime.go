@@ -444,11 +444,3 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		Controllers:                     summary.Controllers,
 	}
 }
-
-func (r *PageRuntime) usesCompatRuntimeAssets() bool {
-	if r == nil || r.renderer == nil {
-		return false
-	}
-	head := gosx.RenderHTML(r.renderer.PageHead())
-	return strings.Contains(head, "/gosx/")
-}

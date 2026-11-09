@@ -403,10 +403,3 @@ func scanGoBlockComment(lexer *gotreesitter.ExternalLexer) bool {
 		}
 	}
 }
-
-func stripGSXAttributeExpression(text string) string {
-	if len(text) >= 2 && text[0] == '{' && text[len(text)-1] == '}' {
-		return text[1 : len(text)-1]
-	}
-	return text
-}
