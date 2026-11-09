@@ -75,6 +75,7 @@ function extract(material) {
   const result = vm.runInContext("gltfExtractScene(gltfDoc, binaryBuffer)", context);
   return {
     uvs: Array.from(result.objects[0].vertices.uvs),
+    uvs1: result.objects[0].vertices.uvs1 ? Array.from(result.objects[0].vertices.uvs1) : null,
     material: result.materials ? result.materials[0] : result.objects[0].material,
   };
 }
@@ -107,11 +108,31 @@ test("a KHR_texture_transform texCoord overrides the textureInfo texCoord", () =
   assert.deepEqual(out.uvs, UV1);
 });
 
-test("mixed UV sets sample the base colour set and warn once", () => {
+test("occlusion on UV1 with base colour on UV0 carries a second UV stream", () => {
+  const out = extract({
+    pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+    occlusionTexture: { index: 1, texCoord: 1 },
+    emissiveTexture: { index: 1, texCoord: 1 },
+  });
+  assert.deepEqual(out.uvs, UV0);
+  assert.deepEqual(out.uvs1, UV1);
+  assert.equal(out.material.occlusionTexCoord, 1);
+  assert.equal(out.material.emissiveTexCoord, 1);
+  assert.equal(out.material.uvSet1, 1);
+  assert.equal(warnings.length, 0);
+});
+
+test("a material that needs no second stream carries none", () => {
+  const out = extract({ pbrMetallicRoughness: { baseColorTexture: { index: 0 } }, occlusionTexture: { index: 1 } });
+  assert.equal(out.uvs1, null);
+  assert.equal(out.material.occlusionTexCoord, undefined);
+});
+
+test("a normal map on a different set than the base colour still warns once", () => {
   const out = extract({
     name: "hull",
     pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
-    occlusionTexture: { index: 1, texCoord: 1 },
+    normalTexture: { index: 1, texCoord: 1 },
   });
   assert.deepEqual(out.uvs, UV0);
   assert.equal(warnings.filter((w) => /different UV sets/.test(w) && /hull/.test(w)).length, 1);

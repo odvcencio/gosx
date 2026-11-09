@@ -1092,7 +1092,7 @@
     }
     return out;
   }
-  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node, uvSet) {
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node, uvSet, uvSet1) {
     // One named-attribute read: absent names hand back null exactly like the
     // inline guards they replace.
     function attrValues(name) {
@@ -1119,6 +1119,7 @@
     if (!uvs) {
       uvs = attrValues("TEXCOORD_0");
     }
+    var uvs1 = uvSet1 > 0 || uvSet1 === 0 ? attrValues("TEXCOORD_" + uvSet1) : null;
 
     // glTF 2.0: when NORMAL is absent, normals are calculated (flat) and both
     // authored tangents and morph TANGENT displacement must be ignored — the
@@ -1161,6 +1162,14 @@
         normals = expanded.normals;
       }
       uvs = expanded.uvs;
+      if (uvs1) {
+        var expanded1 = new Float32Array(indices.length * 2);
+        for (var ci = 0; ci < indices.length; ci++) {
+          expanded1[ci * 2] = uvs1[indices[ci] * 2];
+          expanded1[ci * 2 + 1] = uvs1[indices[ci] * 2 + 1];
+        }
+        uvs1 = expanded1;
+      }
       tangentsRaw = expanded.tangents;
       joints = expanded.joints;
       weights = expanded.weights;
@@ -1233,6 +1242,7 @@
       positions: positions,
       normals: normals,
       uvs: uvs,
+      uvs1: uvs1,
       tangents: tangents,
       joints: joints,
       weights: weights,
@@ -1358,6 +1368,12 @@
       outUVs[vertex * 2] = streams.uvs[sourceVertex * 2];
       outUVs[vertex * 2 + 1] = streams.uvs[sourceVertex * 2 + 1];
     }
+    var outUVs1 = streams.uvs1 ? new Float32Array(streams.uvs1.length) : null;
+    if (outUVs1) for (vertex = 0; vertex < vertexCount; vertex++) {
+      sourceVertex = orientation < 0 && vertex % 3 ? vertex + (vertex % 3 === 1 ? 1 : -1) : vertex;
+      outUVs1[vertex * 2] = streams.uvs1[sourceVertex * 2];
+      outUVs1[vertex * 2 + 1] = streams.uvs1[sourceVertex * 2 + 1];
+    }
     var outTangents = new Float32Array(streams.tangents.length);
     for (vertex = 0; vertex < vertexCount; vertex++) {
       sourceVertex = orientation < 0 && vertex % 3 ? vertex + (vertex % 3 === 1 ? 1 : -1) : vertex;
@@ -1380,7 +1396,7 @@
       var w = streams.tangents[t + 3];
       outTangents[outT + 3] = (typeof w === "number" && isFinite(w) ? w : 1) * orientation;
     }
-    return { positions: outPositions, normals: outNormals, uvs: outUVs, tangents: outTangents };
+    return { positions: outPositions, normals: outNormals, uvs: outUVs, uvs1: outUVs1, tangents: outTangents };
   }
 
   // Cache keys the bounds/snapshot layers attach to vertices objects.
@@ -1903,7 +1919,16 @@
         }
       }
     }
-    return { sets: sets, uvSet: chosen, mixed: used > 0 && counts[chosen] !== used };
+    // Occlusion and emissive may use a second set (an AO or light bake). The
+    // renderers carry that set as a second UV stream.
+    var secondary = -1;
+    if (sets.occlusion != null && sets.occlusion !== chosen) secondary = sets.occlusion;
+    else if (sets.emissive != null && sets.emissive !== chosen) secondary = sets.emissive;
+    var unsupported = 0;
+    for (var slot in sets) {
+      if (sets[slot] !== chosen && !((slot === "occlusion" || slot === "emissive") && sets[slot] === secondary)) unsupported++;
+    }
+    return { sets: sets, uvSet: chosen, secondary: secondary, mixed: unsupported > 0 };
   }
 
   function gltfExtractMaterial(gltf, materialIndex, binaryBuffer) {
@@ -2139,9 +2164,14 @@
     var uvInfo = gltfResolveUVSet(mat);
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.uvSet = uvInfo.uvSet;
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.texCoords = uvInfo.sets;
+    if (uvInfo.secondary >= 0) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.uvSet1 = uvInfo.secondary;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.occlusionTexCoord = uvInfo.sets.occlusion === uvInfo.secondary ? 1 : 0;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.emissiveTexCoord = uvInfo.sets.emissive === uvInfo.secondary ? 1 : 0;
+    }
     if (uvInfo.mixed && !mat.__gosxUVWarned) {
       Object.defineProperty(mat, "__gosxUVWarned", { value: true, enumerable: false });
-      console.warn("[gosx] glTF material " + JSON.stringify(mat.name || String(materialIndex)) + " reads maps from different UV sets (" + JSON.stringify(uvInfo.sets) + "); every map samples TEXCOORD_" + uvInfo.uvSet + ". Bake AO and lightmaps into the base UV set, or give the maps one set.");
+      console.warn("[gosx] glTF material " + JSON.stringify(mat.name || String(materialIndex)) + " reads maps from different UV sets (" + JSON.stringify(uvInfo.sets) + "); maps other than occlusion and emissive sample TEXCOORD_" + uvInfo.uvSet + ". Give them one set.");
     }
 
     return record;
@@ -2350,7 +2380,7 @@
       var authoredWeights = node && Array.isArray(node.weights)
         ? node.weights
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ : mesh.weights;
-      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node, material.uvSet);
+      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node, material.uvSet, material.uvSet1);
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
@@ -2368,6 +2398,7 @@
         objectNormals = transformed.normals;
         objectTangents = transformed.tangents;
         geometry.uvs = transformed.uvs;
+        geometry.uvs1 = transformed.uvs1;
       }
 
       // Determine render pass from material alpha mode.
@@ -2382,6 +2413,9 @@
         tangents: objectTangents,
         count: vertCount,
       };
+      if (geometry.uvs1) {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ vertices.uvs1 = geometry.uvs1;
+      }
 
       var object = {
         id: objectID,
