@@ -497,13 +497,15 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		// Opt-in Selena scene lighting (lights, shadow cascades, fog) in the content-gated selena-lighting chunk.
 		"__gosx_scene3d_selena_lighting_api",
 		// Opt-in spectral ocean authorities in the lazy ocean-fft chunk (and the vessel chunk's hull pose for the wake).
-		"__gosx_elio_graph",                    // The generic Elio graph runner shared by the WebGPU and WebGL2 ocean passes.
-		"__gosx_scene3d_elio_ocean",            // The generated ocean kernels (Elio v0.6.0).
-		"__gosx_scene3d_node_poses",            // Hull poses the vessel publishes for scene-node readers such as the wake.
-		"__gosx_scene3d_ocean_fft_api",         // WebGPU spectral ocean API and buoyancy sampler.
-		"__gosx_scene3d_ocean_fft_gl_api",      // WebGL2 spectral ocean API.
-		"__gosx_scene3d_ocean_fft_surface",     // WGSL surface patches.
-		"__gosx_scene3d_ocean_fft_surface_gl")) // GLSL surface patches.
+		"__gosx_elio_graph",                   // The generic Elio graph runner shared by the WebGPU and WebGL2 ocean passes.
+		"__gosx_scene3d_elio_ocean",           // The generated ocean kernels (Elio v0.6.0).
+		"__gosx_scene3d_node_poses",           // Hull poses the vessel publishes for scene-node readers such as the wake.
+		"__gosx_scene3d_ocean_fft_api",        // WebGPU spectral ocean API and buoyancy sampler.
+		"__gosx_scene3d_ocean_fft_gl_api",     // WebGL2 spectral ocean API.
+		"__gosx_scene3d_ocean_fft_surface",    // WGSL surface patches.
+		"__gosx_scene3d_ocean_fft_surface_gl", // GLSL surface patches.
+		// Optional glTF asset features in the glTF chunk: the second UV stream and meshopt decoding.
+		"__gosx_scene3d_asset_ext"))
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}
