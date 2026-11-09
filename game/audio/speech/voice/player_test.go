@@ -1,6 +1,8 @@
 package voice
 
 import (
+	"encoding/json"
+	"errors"
 	"math"
 	"sort"
 	"testing"
@@ -393,4 +395,40 @@ func maxAbs(v []float32) float32 {
 		}
 	}
 	return m
+}
+
+func TestLoadPackReadsManifestAndAtlasRelativeToIndex(t *testing.T) {
+	f := newFixture(t, Config{})
+	atlas := make([]byte, 2400)
+	man := &speech.ClipManifest{Version: 1, Rate: rate, Atlases: []speech.Atlas{{File: "pa.wav", Voice: "v", Frames: 2400}},
+		Clips: []speech.ClipEntry{{Key: "lit/one", Variant: "end", Offset: 0, Frames: 1200}}}
+	mj, _ := json.Marshal(man)
+	var asked []string
+	read := func(p string) ([]byte, error) {
+		asked = append(asked, p)
+		if p == "names/speech.clips.json" {
+			return mj, nil
+		}
+		if p == "names/pa.wav" {
+			return atlas, nil
+		}
+		return nil, errors.New("unexpected " + p)
+	}
+	n, err := LoadPack(f.m, f.lib, speech.PackEntry{Name: "names", Mode: speech.PackStream, Manifest: "names/speech.clips.json"}, read)
+	if err != nil || n != 1 {
+		t.Fatalf("LoadPack = %d, %v (asked %v)", n, err, asked)
+	}
+	idx, err := speech.ParsePackIndex([]byte(`{"version":1,"packs":[{"name":"pa","mode":"bundled","manifest":"pa/speech.clips.json"},{"name":"names","mode":"stream","manifest":"names/speech.clips.json"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := idx.Bundled(); len(b) != 1 || b[0].Name != "pa" {
+		t.Errorf("bundled = %v", b)
+	}
+	if _, ok := idx.Find("names"); !ok {
+		t.Error("Find missed a pack")
+	}
+	if _, err := speech.ParsePackIndex([]byte(`{"version":9}`)); err == nil {
+		t.Error("future index version accepted")
+	}
 }

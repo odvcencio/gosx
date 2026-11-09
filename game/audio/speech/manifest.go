@@ -308,6 +308,39 @@ type PackEntry struct {
 	Clips       int   `json:"clips"`
 }
 
+// ParsePackIndex decodes the pack index a render wrote.
+func ParsePackIndex(data []byte) (*PackIndex, error) {
+	var idx PackIndex
+	if err := json.Unmarshal(data, &idx); err != nil {
+		return nil, fmt.Errorf("speech: pack index: %w", err)
+	}
+	if idx.Version != 1 {
+		return nil, fmt.Errorf("speech: pack index version %d is not supported", idx.Version)
+	}
+	return &idx, nil
+}
+
+// Bundled returns the packs that ship with the game and load at boot.
+func (p *PackIndex) Bundled() []PackEntry {
+	var out []PackEntry
+	for _, e := range p.Packs {
+		if e.Mode != PackStream {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Find returns the pack called name.
+func (p *PackIndex) Find(name string) (PackEntry, bool) {
+	for _, e := range p.Packs {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return PackEntry{}, false
+}
+
 // ParseClipManifest decodes and validates a clip manifest.
 func ParseClipManifest(data []byte) (*ClipManifest, error) {
 	var m ClipManifest

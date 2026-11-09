@@ -286,3 +286,36 @@ func atlasIndex(m *speech.ClipManifest, a *speech.Atlas) int {
 	}
 	return 0
 }
+
+// LoadPack loads one pack from a pack index: it reads the pack's clip
+// manifest and atlases through read (paths are relative to the index's
+// directory, with forward slashes) and attaches the clips. Load bundled packs
+// at boot and streamed packs when a match or screen needs them; each call adds
+// to lib, and a later pack's clip replaces an earlier one with the same key
+// and variant.
+func LoadPack(host audio.Host, lib *speech.Library, e speech.PackEntry, read func(path string) ([]byte, error)) (attached int, err error) {
+	data, err := read(e.Manifest)
+	if err != nil {
+		return 0, fmt.Errorf("voice: read pack %q manifest: %w", e.Name, err)
+	}
+	m, err := speech.ParseClipManifest(data)
+	if err != nil {
+		return 0, err
+	}
+	dir := e.Manifest[:max(0, lastSlash(e.Manifest))]
+	return LoadClips(host, lib, m, func(file string) ([]byte, error) {
+		if dir == "" {
+			return read(file)
+		}
+		return read(dir + "/" + file)
+	})
+}
+
+func lastSlash(s string) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '/' {
+			return i
+		}
+	}
+	return 0
+}

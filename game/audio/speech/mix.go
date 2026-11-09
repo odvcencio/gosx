@@ -82,3 +82,37 @@ func (m *Mix) Render(from int64, n int) []float32 {
 	}
 	return out
 }
+
+// PlacedSegment is a scheduled segment with the line it belongs to.
+type PlacedSegment struct {
+	Line uint64
+	Segment
+}
+
+// Cut records a CutLine call.
+type Cut struct {
+	Line uint64
+	At   int64
+	Fade int32
+}
+
+// Segments returns every scheduled segment in scheduling order. Backends
+// that replay the timeline (a browser test, a recorder) read it.
+func (m *Mix) Segments() []PlacedSegment {
+	out := make([]PlacedSegment, len(m.segs))
+	for i, s := range m.segs {
+		out[i] = PlacedSegment{Line: s.line, Segment: s.seg}
+	}
+	return out
+}
+
+// Cuts returns the interrupt fades applied so far.
+func (m *Mix) Cuts() []Cut {
+	var out []Cut
+	for _, l := range m.lines {
+		if l.cut {
+			out = append(out, Cut{Line: l.id, At: l.cutAt, Fade: l.fade})
+		}
+	}
+	return out
+}
