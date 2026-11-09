@@ -158,3 +158,17 @@ func TestWaitForNetworkQuietGivesUpOnBusyPage(t *testing.T) {
 		t.Fatalf("a page that never settles must time out, quiet=%v err=%v", quiet, err)
 	}
 }
+
+func TestMedianTimingIgnoresMissingLoadTimings(t *testing.T) {
+	// Hosted run: lcp 620 / 504 / 0. The 0 is "not reported".
+	got := MedianTiming([]TimingSample{{LCPMs: 620, TBTMs: 180}, {LCPMs: 504, TBTMs: 0}, {LCPMs: 0, TBTMs: 253}})
+	if got.LCPMs != 562 {
+		t.Fatalf("lcp median = %v, want 562 (zero dropped)", got.LCPMs)
+	}
+	if got.TBTMs != 180 {
+		t.Fatalf("tbt median = %v, want 180 (zero kept)", got.TBTMs)
+	}
+	if MedianTiming([]TimingSample{{}, {}}).LCPMs != 0 {
+		t.Fatal("all-zero lcp stays 0")
+	}
+}

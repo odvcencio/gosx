@@ -242,11 +242,21 @@ func RunScenario(s *Scenario) (*Report, error) {
 			// Read the resource list only after it stops growing, so the byte
 			// total does not depend on when a lazy script finished.
 			if err := runPhase("network-quiet", func() error {
+				// Never spend the time collect needs: stop waiting 20 s before the route deadline.
+				maxWait := networkQuietMax
+				if deadline, ok := routeCtx.Deadline(); ok {
+					if room := time.Until(deadline) - 20*time.Second; room < maxWait {
+						maxWait = room
+					}
+				}
+				if maxWait <= 0 {
+					return nil
+				}
 				waited, quiet, err := waitForNetworkQuiet(routeCtx, func() (int, error) {
 					var n int
 					err := routeD.Evaluate(`performance.getEntriesByType("resource").length`, &n)
 					return n, err
-				}, networkQuietWindow, networkQuietMax, networkQuietPoll)
+				}, networkQuietWindow, maxWait, networkQuietPoll)
 				if err != nil {
 					// A failed probe must not fail the measurement; collect reads the list itself.
 					fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s network-quiet probe failed: %v\n", i+1, total, url, err)

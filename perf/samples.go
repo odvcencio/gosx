@@ -64,7 +64,23 @@ func TimingSampleOf(p PageReport) TimingSample {
 // ordered on its own, so the result may combine values from different
 // samples. For an even count the median is the mean of the two middle values.
 func MedianTiming(samples []TimingSample) TimingSample {
+	// A zero load timing means the browser reported nothing (a hosted run
+	// recorded an LCP of 0 for a page that had painted), not a fast page. Drop
+	// zeros from those metrics when any sample has a real value. Blocking time
+	// and hydration time can be a true zero and keep every sample.
 	pick := func(get func(TimingSample) float64) float64 {
+		values := make([]float64, 0, len(samples))
+		for _, s := range samples {
+			if v := get(s); v > 0 {
+				values = append(values, v)
+			}
+		}
+		if len(values) == 0 {
+			return 0
+		}
+		return median(values)
+	}
+	pickAll := func(get func(TimingSample) float64) float64 {
 		values := make([]float64, len(samples))
 		for i, s := range samples {
 			values[i] = get(s)
@@ -76,8 +92,8 @@ func MedianTiming(samples []TimingSample) TimingSample {
 		DCLMs:         pick(func(s TimingSample) float64 { return s.DCLMs }),
 		FullyLoadedMs: pick(func(s TimingSample) float64 { return s.FullyLoadedMs }),
 		LCPMs:         pick(func(s TimingSample) float64 { return s.LCPMs }),
-		TBTMs:         pick(func(s TimingSample) float64 { return s.TBTMs }),
-		HydrationMs:   pick(func(s TimingSample) float64 { return s.HydrationMs }),
+		TBTMs:         pickAll(func(s TimingSample) float64 { return s.TBTMs }),
+		HydrationMs:   pickAll(func(s TimingSample) float64 { return s.HydrationMs }),
 	}
 }
 
