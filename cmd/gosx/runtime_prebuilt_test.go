@@ -777,3 +777,20 @@ func TestRunBuildProdSucceedsWithoutTinyGoUsingPrebuiltRuntime(t *testing.T) {
 		t.Fatal("expected the fake prebuilt fetcher to be used")
 	}
 }
+
+// useFakePrebuiltRuntime makes a production build stage a fixture runtime
+// instead of compiling five TinyGo variants (about two minutes each build).
+// Use it in tests that check the prerender, export or static-output stages and
+// do not look at the runtime bytes. Tests that need the real pipeline must not
+// call it.
+func useFakePrebuiltRuntime(t *testing.T) {
+	t.Helper()
+	const tag = "v1.2.3"
+	stubResolveProjectGoSXVersion(t, tag, false, true)
+	fetcher := buildFakeRuntimeRelease(tag)
+	previous := newDefaultRuntimeArtifactFetcher
+	newDefaultRuntimeArtifactFetcher = func(string, string) runtimeArtifactFetcher { return fetcher }
+	t.Cleanup(func() { newDefaultRuntimeArtifactFetcher = previous })
+	t.Setenv(runtimeModeEnv, "prebuilt")
+	t.Setenv(runtimeCacheEnv, t.TempDir())
+}

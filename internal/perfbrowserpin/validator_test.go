@@ -1244,7 +1244,7 @@ func TestShardLaneMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name:   "js-tests-scene3d timeout raised",
-			mutate: replaceJobOnce("js-tests-scene3d", "timeout-minutes: 15", "timeout-minutes: 30"),
+			mutate: replaceJobOnce("js-tests-scene3d", "timeout-minutes: 10", "timeout-minutes: 30"),
 			want:   "js-tests-scene3d job.timeout-minutes",
 		},
 		{
@@ -1256,6 +1256,46 @@ func TestShardLaneMutationsFailClosed(t *testing.T) {
 			name:   "aggregate drops js-tests-scene3d",
 			mutate: removeAggregateSlot("js-tests-scene3d", "JS_TESTS_SCENE3D_RESULT"),
 			want:   "aggregate test job.needs",
+		},
+		{
+			name:   "js-tests-scene3d-b repeats the runtime group",
+			mutate: replaceJobOnce("js-tests-scene3d-b", "NODE_TEST_GROUP=scene3d-b", "NODE_TEST_GROUP=runtime"),
+			want:   "js-tests-scene3d-b job shard step.run",
+		},
+		{
+			name:   "js-tests-scene3d-b shard step ignores failure",
+			mutate: replaceJobOnce("js-tests-scene3d-b", "make test-js-node NODE_TEST_GROUP=scene3d-b", "make test-js-node NODE_TEST_GROUP=scene3d-b || true"),
+			want:   "js-tests-scene3d-b job shard step.run",
+		},
+		{
+			name:   "js-tests-scene3d-b skips draft pull requests",
+			mutate: replaceJobOnce("js-tests-scene3d-b", "    runs-on: ubuntu-latest\n", "    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n    runs-on: ubuntu-latest\n"),
+			want:   "js-tests-scene3d-b job: unexpected field \"if\"",
+		},
+		{
+			name:   "js-tests-scene3d-b timeout raised",
+			mutate: replaceJobOnce("js-tests-scene3d-b", "timeout-minutes: 10", "timeout-minutes: 30"),
+			want:   "js-tests-scene3d-b job.timeout-minutes",
+		},
+		{
+			name:   "js-tests-scene3d-b job removed",
+			mutate: removeJobAndSlot("js-tests-scene3d-b", "JS_TESTS_SCENE3D_B_RESULT"),
+			want:   "js-tests-scene3d-b job is missing",
+		},
+		{
+			name:   "aggregate drops js-tests-scene3d-b",
+			mutate: removeAggregateSlot("js-tests-scene3d-b", "JS_TESTS_SCENE3D_B_RESULT"),
+			want:   "aggregate test job.needs",
+		},
+		{
+			name:   "js-tests-scene3d-b repeats the first scene3d group",
+			mutate: replaceJobOnce("js-tests-scene3d-b", "NODE_TEST_GROUP=scene3d-b", "NODE_TEST_GROUP=scene3d"),
+			want:   "js-tests-scene3d-b job shard step.run",
+		},
+		{
+			name:   "js-tests-scene3d runs the second scene3d group",
+			mutate: replaceJobOnce("js-tests-scene3d", "NODE_TEST_GROUP=scene3d", "NODE_TEST_GROUP=scene3d-b"),
+			want:   "js-tests-scene3d job shard step.run",
 		},
 		{
 			name:   "go-cli-tests-c draft gate removed",

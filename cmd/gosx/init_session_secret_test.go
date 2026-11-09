@@ -110,6 +110,8 @@ func TestRunInitProductionExportUsesDisposableSecret(t *testing.T) {
 	}
 	t.Setenv("GOSX_ENV", "production")
 	t.Setenv("SESSION_SECRET", "change-me-in-production")
+	// The test checks the prerender subprocess environment, not the runtime bytes.
+	useFakePrebuiltRuntime(t)
 	for _, template := range []string{initTemplateApp, initTemplateDocs} {
 		t.Run(template, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "scaffold")
