@@ -7022,6 +7022,7 @@
         bindPositions: function(pass: any, slot: number, obj: any) { return webGPUBindRetainedMeshAttribute(pass, slot, obj, "positions", 3); },
         bindIndices: function(pass: any, obj: any) { return webGPUBindRetainedMeshIndexBuffer(pass, obj); } };
     });
+    var autoExposure = wgpuCreateAutoExposure(function() { return { device: device }; });
     var softParticles = wgpuCreateSoftParticles(function() {
       return { device: device, frame: frameBindGroupLayout, material: materialBindGroupLayout, points: pointsBindGroupLayout, vertex: pointsVertexModule,
         scratchF: pointsUniformScratchF, scratchU: pointsUniformScratchU, format: targetFormat, samples: activeSampleCount, bindGroup: wgpuCachedBindGroup,
@@ -18365,7 +18366,7 @@
       // feature renderers can discover pipelines while encoding; defer their
       // canvas commands until the entire frame has encoded successfully.
       pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost().present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
-        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds) ||
+        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds || bundle.environment.autoExposure) ||
         (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
         postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST || effect.kind === "taa"; }));
 
@@ -18960,8 +18961,8 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
-        var chain = temporalAA.resolve(encoder, postEffects, { colorView: postTarget.colorView, colorFormat: targetFormat, depthView: mainDepthTargetView, samples: sampleCount, objects: bundle.meshObjects, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle });
-        Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }), temporalAA.stats());
+        var chain = temporalAA.resolve(encoder, postEffects, { colorView: postTarget.colorView, colorFormat: targetFormat, depthView: mainDepthTargetView, samples: sampleCount, objects: bundle.meshObjects, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle }); autoExposure.apply(encoder, bundle.environment, postTarget, cam, frameNowMS);
+        Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }), temporalAA.stats(), autoExposure.stats());
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);

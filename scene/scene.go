@@ -98,6 +98,9 @@ type Environment struct {
 	EnvIntensity float64
 	EnvRotation  float64
 	Exposure     float64
+	// AutoExposure adapts exposure to the scene's brightness over time. Nil
+	// keeps Exposure fixed. See exposure.go.
+	AutoExposure *AutoExposure
 	ToneMapping  string // "aces", "reinhard", "linear", "" (default = aces)
 	FogColor     string
 	FogDensity   float64 // for exponential fog (0 = no fog)

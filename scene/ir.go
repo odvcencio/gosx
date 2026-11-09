@@ -122,6 +122,7 @@ type IREnvironment struct {
 	Sky              *Sky           `json:"sky,omitempty"`
 	Ocean            *Ocean         `json:"ocean,omitempty"`
 	Haze             *Haze          `json:"haze,omitempty"`
+	AutoExposure     *AutoExposure  `json:"autoExposure,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Background       string         `json:"background,omitempty"`
@@ -1050,6 +1051,7 @@ func environmentToIR(background string, environment EnvironmentIR) IREnvironment
 		Sky:              normalizeSky(environment.Sky),
 		Ocean:            normalizeOcean(environment.Ocean),
 		Haze:             normalizeHaze(environment.Haze),
+		AutoExposure:     normalizeAutoExposure(environment.AutoExposure),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Background:       strings.TrimSpace(background),

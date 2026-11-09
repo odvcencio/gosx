@@ -4760,7 +4760,7 @@
 	        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
             gl.drawBuffers(sceneFBO.specularTex ? [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1] : [gl.COLOR_ATTACHMENT0]);
 	        return {
-            framebuffer: sceneFBO.fbo, width: sw,
+            framebuffer: sceneFBO.fbo, colorTexture: sceneFBO.colorTex, width: sw,
             height: sh,
             factor: factor,
             hdrSupported: sceneFBO.hdrSupported,
@@ -7966,7 +7966,7 @@
     const activeStaticPointKeys = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
-    var softParticles = createSceneWebGLSoftParticles(gl);
+    var softParticles = createSceneWebGLSoftParticles(gl), exposureGL = createSceneWebGLAutoExposure(gl);
     var lastPreparedScene = null;
     var webglComputeParticleDrawStats = {
       drawEntries: 0,
@@ -9158,7 +9158,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
+        exposureGL.apply(renderTarget, renderW, renderH, bundle.environment, cam); var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
         // Post passes replace material texture bindings, including unit zero.
         textureCache._sceneTextureEpoch++;
         if (postResult && postResult.postChain) {
@@ -10858,7 +10858,7 @@
       if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       transmissionResources.dispose();
-      softParticles.dispose();
+      softParticles.dispose(); exposureGL.dispose();
       scenePBRDisposeProgramQueue(gl);
 
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
