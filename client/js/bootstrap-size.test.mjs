@@ -990,8 +990,14 @@ const budgets = [
     // increase only the exhausted target by 15 bytes, with no added allowance.
     // Blender asset path (joint palette texture, KHR_lights_punctual, UV set selection, GOSX_texture_variants) adds about 5,000 raw bytes to the monolith; only exhausted minimums move, under the unchanged allowance.
     // 9 November 2026 (game frame owner, PR #793: frame-owner.ts, typed-array reuse in the bundle build and binary worker input records): measured raw 2,081,573 / gzip 582,928 / brotli 478,787; only the exhausted targets move to their exact minima under the unchanged allowance.
-    file: "bootstrap.js", raw: 2016037, gzip: 566544,
-    brotli: 462403 },
+    // 8 November 2026 (one shared audio mixer, 05-document-env.ts): the monolith grows by the mixer's five
+    // buses, ducking, element routing and camera-following listener (measured raw 2,077,324). Only the
+    // exhausted raw target moves, to its exact minimum under the unchanged allowance.
+    // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measured raw 2,086,694 /
+    // gzip 584,679 / brotli 479,980. Both PRs moved these targets, so each is set to its exact minimum
+    // under the unchanged allowance.
+    file: "bootstrap.js", raw: 2021158, gzip: 568295,
+    brotli: 463596 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1080,7 +1086,7 @@ const budgets = [
   // The lazily decoded signal store, the batch notify method and the loader's publication of the
   // runtime's exports add 1,789 raw / 506 gzip / 330 Brotli bytes to the runtime core; only the
   // exhausted raw and Brotli minimums move.
-  { file: "bootstrap-runtime.js", raw: 186439, gzip: 52300, brotli: 46604 },
+  { file: "bootstrap-runtime.js", raw: 190682, gzip: 53534, brotli: 47899 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -1141,7 +1147,7 @@ const budgets = [
   // The lite core carries the same document liveness guard: +961 raw / +294 Brotli.
   // The same store, batch method and export publication add 1,555 raw / 425 gzip / 363 Brotli bytes
   // to the lite core; only the exhausted raw and Brotli minimums move.
-  { file: "bootstrap-lite.js", raw: 145261, gzip: 40400, brotli: 36419 },
+  { file: "bootstrap-lite.js", raw: 149752, gzip: 41619, brotli: 37813 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1542,12 +1548,15 @@ const budgets = [
     // only exhausted minimums move.
   // 31 October 2026 (spectral ocean renderer, supersedes #737): measured raw 677,797 / gzip 193,531 / brotli 164,635 bytes; only the exhausted targets move, to their exact minima under the unchanged allowance. The spectral ocean renderer's plumbing in this shared chunk (see bootstrap-feature-scene3d-ocean-fft.js for the lazy renderer).
     // 9 November 2026 (game frame owner, PR #793: frame-owner.ts, typed-array reuse in the bundle build and binary worker input records): measured raw 684,260 / gzip 195,862 / brotli 166,549; only the exhausted targets move to their exact minima under the unchanged allowance.
-    file: "bootstrap-feature-scene3d.js", raw: 651676, gzip: 186535,
+    // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures raw 684,349 /
+    // gzip 195,902 / brotli 166,532. Both PRs moved these targets, so each is set to its exact minimum
+    // under the unchanged allowance; the Brotli target falls 17 bytes to its minimum.
+    file: "bootstrap-feature-scene3d.js", raw: 651761, gzip: 186573,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
     // target by 32 B, retaining the governed 5% allowance.
-    brotli: 158618 },
+    brotli: 158601 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1936,7 +1945,7 @@ const budgets = [
   // hard limit had only 10 bytes left; targets grow by the measured change.
   // Fighting-hub edge sends and the scene-committed ready gate add 1,685 / 641 / 555 bytes; targets grow by the measured change.
   // Absolute held-input mode adds 1,408 / 437 / 376 bytes; targets grow by the measured change.
-  { file: "bootstrap-feature-hubs.js", raw: 51720, gzip: 15882, brotli: 14245 },
+  { file: "bootstrap-feature-hubs.js", raw: 52163, gzip: 15882, brotli: 14245 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
@@ -2110,9 +2119,10 @@ const routeBudgets = [
     // exhausted minimums move.
     // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 311,321 raw, 88,207 gzip and 79,462 Brotli bytes on this route;
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
-    raw: 296515,
-    gzip: 84028,
-    brotli: 75695,
+    raw: 300757, // 8 November 2026: the shared audio mixer adds its code to this route (measured 315,583); allowance unchanged.
+
+    gzip: 85484,
+    brotli: 76990,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -2314,12 +2324,14 @@ const routeBudgets = [
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
     // 8 November 2026: the game frame owner measures 1,532,469 raw, 425,922 gzip and 367,031 Brotli bytes on this route;
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
-    raw: 1466933,
-    gzip: 409538,
+    // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,537,064 raw,
+    // 427,458 gzip and 368,337 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
+    raw: 1471528,
+    gzip: 411074,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    brotli: 350647,
+    brotli: 351953,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2535,13 +2547,15 @@ const routeBudgets = [
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
     // 8 November 2026: the game frame owner measures 1,337,929 raw, 383,889 gzip and 333,443 Brotli bytes on this route;
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
-    raw: 1274218,
-    gzip: 367505,
+    // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,342,524 raw,
+    // 385,425 gzip and 334,749 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
+    raw: 1278594,
+    gzip: 369041,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 317564,
+    brotli: 318808,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2752,12 +2766,14 @@ const routeBudgets = [
     // only the raw, gzip and Brotli minimums move, to the smallest values that clear them.
     // 8 November 2026: the game frame owner measures 1,832,526 raw, 515,199 gzip and 444,816 Brotli bytes on this route;
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
-    raw: 1766990,
-    gzip: 498815,
+    // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,837,121 raw,
+    // 516,735 gzip and 446,122 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
+    raw: 1771585,
+    gzip: 500351,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 428432,
+    brotli: 429738,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2937,11 +2953,13 @@ const routeBudgets = [
     // only exhausted minimums move.
     // 8 November 2026: the game frame owner measures 1,374,369 raw, 381,837 gzip and 326,814 Brotli bytes on this route;
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
-    raw: 1308922,
-    gzip: 365453,
+    // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,378,964 raw,
+    // 383,373 gzip and 328,120 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
+    raw: 1313428,
+    gzip: 366989,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
-    brotli: 311251,
+    brotli: 312495,
   },
 
 ];

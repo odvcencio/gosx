@@ -2705,7 +2705,7 @@
       if (!arcadeAudio) {
         return;
       }
-      const synthOptions = { intensity: cue.intensity, pan: cue.pan, depth: cue.depth, rate: cue.rate };
+      const synthOptions = { intensity: cue.intensity, pan: cue.pan, depth: cue.depth, rate: cue.rate, bus: cue.bus };
       if (cue.patch && typeof cue.patch === "object" && typeof arcadeAudio.playPatch === "function") {
         arcadeAudio.playPatch(cue.patch, synthOptions);
         return;
@@ -3180,7 +3180,7 @@
         }
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
-      const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport), bundleSerial = frameOwner.serial;
+      const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport), bundleSerial = frameOwner.serial; const audioMixer = window.__gosx && window.__gosx.audioMixer; if (audioMixer && audioMixer.updateCamera) audioMixer.updateCamera(activeCamera);
       // @ts-ignore TS7005 -- scroll, vessel and motion-controller motion run outside scheduleRender
       if (sceneFrameOwnerCanReuse(frameOwner, latestBundle, renderer, viewport, activeCamera, () => sceneState._scrollCamera || sceneState._gosxMotionController?.active || sceneControlHandle?.advance || sceneOwnAnimationState().wants)) return renderMountedFrame(Object.assign(latestBundle, { timeSeconds, simAlpha: frameOwner.alpha }), now, frameStart, true);
       applySceneHTMLTextureRecordsToState(sceneState, htmlTextureState);
