@@ -16,7 +16,7 @@ function extract(file, name) {
 }
 
 function loadTAA() {
-  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu-taa.ts"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "taa-wgpu.ts"), "utf8");
   const context = { GPUTextureUsage: { RENDER_ATTACHMENT: 16, TEXTURE_BINDING: 4 }, GPUBufferUsage: { UNIFORM: 64, COPY_DST: 8, VERTEX: 32 }, GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 }, Float32Array, Math, JSON, Map, Set };
   vm.createContext(context);
   vm.runInContext([

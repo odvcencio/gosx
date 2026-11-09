@@ -33,7 +33,7 @@ function createSceneTemporalHistory(gl: any, quad: any) {
         // Live custom inputs cannot seed reusable history; spatial AA avoids jitter.
         if (!effect || !canJitter || failed || upstream.some(e => e.kind === SCENE_POST_CUSTOM_POST)) { release(); return false; }
         if (!gl.getExtension("EXT_color_buffer_float") || !gl.blitFramebuffer || !gl.checkFramebufferStatus) return false;
-        if (!program) program = createScenePostProgram(gl, SCENE_POST_TAA_SOURCE);
+        if (!program) program = createScenePostProgram(gl, sceneWebGLTAAResolveSource());
         if (!program) { failed = true; return false; }
         if (!targets || width !== size.width || height !== size.height) {
             release(); width = size.width; height = size.height;

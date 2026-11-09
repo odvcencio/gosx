@@ -41,6 +41,11 @@ const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
+// TAA, depth of field and auto exposure ship per backend in on-demand chunks
+// (bootstrap-feature-scene3d-postfx-<backend>.js). The board harnesses load the
+// WebGPU one with the renderer, as a page that declares those effects would.
+const bootstrapFeatureScene3DPostFXWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-postfx-webgpu.js"), "utf8");
+const bootstrapFeatureScene3DPostFXWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-postfx-webgl.js"), "utf8");
 const scene3DWebGPUBackendSource = readSceneRendererBackendSrc("webgpu");
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.ts"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
@@ -2227,6 +2232,7 @@ function createContext(options) {
   // does a WebGPU page whose device is lost. A test can still override the
   // route through options.fetchRoutes, or drop it to prove the chunk is absent.
   routes.set("/gosx/bootstrap-feature-scene3d-webgl.js", { text: bootstrapFeatureScene3DWebGLSource });
+  routes.set("/gosx/bootstrap-feature-scene3d-postfx-webgl.js", { text: bootstrapFeatureScene3DPostFXWebGLSource });
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
     routes.set(url, response);
   }
@@ -4579,6 +4585,7 @@ async function createBoardWebGPUHarness(options) {
   };
 
   runScript(scene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  runScript(opts.fresh ? freshFeatureBundleSource("scene3d-postfx-webgpu") : bootstrapFeatureScene3DPostFXWebGPUSource, env.context, "bootstrap-feature-scene3d-postfx-webgpu.js");
   const api = env.context.__gosx_scene3d_webgpu_api;
   assert.ok(api && typeof api.createRenderer === "function", "webgpu chunk must publish createRenderer");
 
@@ -5060,6 +5067,7 @@ async function createCanvasBoardRoutingHarness(options = {}) {
       return { adapter: { __kind: "adapter" }, device: fake.device, ready: true };
     };
     runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+    runScript(bootstrapFeatureScene3DPostFXWebGPUSource, env.context, "bootstrap-feature-scene3d-postfx-webgpu.js");
     assert.ok(
       env.context.__gosx_scene3d_webgpu_api && typeof env.context.__gosx_scene3d_webgpu_api.createRenderer === "function",
       "webgpu chunk must publish createRenderer",
@@ -5294,6 +5302,7 @@ async function createComputeParticleHarness(fakeDevice, options) {
     return { adapter: { __kind: "adapter" }, device: fakeDevice, ready: true };
   };
   runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  runScript(bootstrapFeatureScene3DPostFXWebGPUSource, env.context, "bootstrap-feature-scene3d-postfx-webgpu.js");
 
   const api = env.context.__gosx_scene3d_webgpu_api;
   const mount = new FakeElement("div", null);
@@ -5557,8 +5566,11 @@ function createWebGLRendererForPost(options) {
     runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
     runScript(freshFeatureBundleSource("scene3d-compute"), env.context, "bootstrap-feature-scene3d-compute.js");
     runScript(freshFeatureBundleSource("scene3d-webgl"), env.context, "bootstrap-feature-scene3d-webgl.js");
+    runScript(freshFeatureBundleSource("scene3d-postfx-webgl"), env.context, "bootstrap-feature-scene3d-postfx-webgl.js");
   } else {
     runScript(bootstrapSource, env.context, "bootstrap.js");
+    // The monolith keeps the renderers inline but not their post effects.
+    runScript(bootstrapFeatureScene3DPostFXWebGLSource, env.context, "bootstrap-feature-scene3d-postfx-webgl.js");
   }
   const api = env.context.__gosx_scene3d_api;
   const registry = api.sceneBackendRegistry;
@@ -5680,6 +5692,7 @@ async function createCullSystemHarness(fakeDevice) {
     return { adapter: { __kind: "adapter" }, device: fakeDevice, ready: true };
   };
   runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  runScript(bootstrapFeatureScene3DPostFXWebGPUSource, env.context, "bootstrap-feature-scene3d-postfx-webgpu.js");
 
   const api = env.context.__gosx_scene3d_api;
   return { env, api };

@@ -1485,7 +1485,8 @@ test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /var WGSL_POST_SSAO_FRAGMENT = \[/);
-  assert.match(webgpu, /var WGSL_POST_DOF_FRAGMENT = \[/);
+  // DOF ships in the on-demand WebGPU post-effects chunk.
+  assert.match(fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dof-wgpu.ts"), "utf8"), /var WGSL_POST_DOF_FRAGMENT = \[/);
   assert.match(webgpu, /var depthTex: texture_depth_2d/);
   assert.match(webgpu, /textureLoad\(depthTex, p, 0\)/);
   assert.match(webgpu, /texture: \{ sampleType: "depth" \}/);
