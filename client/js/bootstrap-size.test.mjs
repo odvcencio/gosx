@@ -996,11 +996,11 @@ const budgets = [
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measured raw 2,086,694 /
     // gzip 584,679 / brotli 479,980. Both PRs moved these targets, so each is set to its exact minimum
     // under the unchanged allowance.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js raw 2132502; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js gzip 598217; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    file: "bootstrap.js", raw: 2066966, gzip: 581833,
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 490198; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    brotli: 473814 },
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js raw 2133551; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js gzip 598759; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    file: "bootstrap.js", raw: 2068015, gzip: 582375,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 490672; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    brotli: 474288 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1398,8 +1398,8 @@ const budgets = [
   // 31 October 2026 (spectral ocean renderer, supersedes #737): measured brotli 76,462 bytes; only the exhausted targets move, to their exact minima under the unchanged allowance. The spectral ocean renderer's plumbing in this shared chunk (see bootstrap-feature-scene3d-ocean-fft.js for the lazy renderer).
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgl.js raw 315392; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgl.js gzip 94099; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgl.js brotli 81643; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    file: "bootstrap-feature-scene3d-webgl.js", raw: 300852, gzip: 89847, brotli: 77938 },
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgl.js brotli 81861; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    file: "bootstrap-feature-scene3d-webgl.js", raw: 300852, gzip: 89847, brotli: 77964 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -2338,15 +2338,15 @@ const routeBudgets = [
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,537,064 raw,
     // 427,458 gzip and 368,337 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) raw 1567517; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    raw: 1501981,
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) gzip 436577; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    gzip: 420193,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) raw 1568005; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    raw: 1502469,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) gzip 436905; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    gzip: 420521,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) brotli 375634; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    brotli: 359250,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) brotli 375923; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    brotli: 359539,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2566,14 +2566,14 @@ const routeBudgets = [
     // 385,425 gzip and 334,749 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1353424; only the exhausted targets move, to their exact minima under the unchanged allowance.
     raw: 1289494,
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 388824; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    gzip: 372440,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 389010; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    gzip: 372626,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 337487; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    brotli: 321546,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 337705; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    brotli: 321627,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2786,15 +2786,15 @@ const routeBudgets = [
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,837,121 raw,
     // 516,735 gzip and 446,122 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1882909; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    raw: 1817373,
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 530676; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    gzip: 514292,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1883646; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    raw: 1818110,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 531190; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    gzip: 514806,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 457277; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    brotli: 440893,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 457784; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    brotli: 441400,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2976,10 +2976,10 @@ const routeBudgets = [
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,378,964 raw,
     // 383,373 gzip and 328,120 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1409417; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    raw: 1343881,
-    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 392492; only the exhausted targets move, to their exact minima under the unchanged allowance.
-    gzip: 376108,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1409905; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    raw: 1344369,
+    // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 392820; only the exhausted targets move, to their exact minima under the unchanged allowance.
+    gzip: 376436,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 335417; only the exhausted targets move, to their exact minima under the unchanged allowance.
