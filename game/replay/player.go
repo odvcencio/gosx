@@ -41,6 +41,7 @@ type Player struct {
 	ids    idCache
 	// Stats of the last Seek.
 	lastResim int
+	seeks     uint64
 	err       error
 }
 
@@ -83,6 +84,11 @@ func (p *Player) AtEnd() bool { return p.tick >= p.rec.End() }
 // Err returns the first error a playback step hit, such as a refused snapshot.
 func (p *Player) Err() error { return p.err }
 
+// Seeks counts the Seek calls that moved the player. A renderer that blends
+// the previous and current state resets its blend when this changes, because
+// the previous tick is no longer the one just before.
+func (p *Player) Seeks() uint64 { return p.seeks }
+
 // LastResim is how many ticks the last Seek re-simulated after its keyframe.
 func (p *Player) LastResim() int { return p.lastResim }
 
@@ -114,6 +120,7 @@ func (p *Player) Seek(tick uint64) error {
 		from = seg.start
 	}
 	p.lastResim = int(tick - from)
+	p.seeks++
 	for t := from; t < tick; t++ {
 		if err := p.advanceTo(t); err != nil {
 			return err
