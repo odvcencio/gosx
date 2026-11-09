@@ -381,6 +381,9 @@ type LoadingProps struct {
 	Snapshot boot.Snapshot
 	// Recovering, Failed and Retry text.
 	RecoveringText, FailedText, RetryLabel string
+	// BudgetMS is the stall budget the page watchdog script uses, in
+	// milliseconds. Zero leaves the script default (12000).
+	BudgetMS int
 }
 
 // BootRoot renders the loading screen inside the element the page watchdog
@@ -419,10 +422,14 @@ func BootRoot(p LoadingProps, game ...gosx.Node) gosx.Node {
 			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("class", "kit-button"), gosx.Attr("data-boot-retry", true),
 				gosx.Attr("data-kit-action", "boot-retry"), gosx.Attr("data-kit-primary", true)), gosx.Text(p.RetryLabel)),
 		))
-	args := []any{gosx.Attrs(gosx.Attr("data-boot-root", true), gosx.Attr("data-boot", phase), gosx.Attr("aria-busy", strconv.FormatBool(p.Snapshot.Phase != boot.PhaseReady)),
+	budget := []any{}
+	if p.BudgetMS > 0 {
+		budget = append(budget, gosx.Attr("data-boot-budget-ms", p.BudgetMS))
+	}
+	args := []any{gosx.Attrs(append(budget, gosx.Attr("data-boot-root", true), gosx.Attr("data-boot", phase), gosx.Attr("aria-busy", strconv.FormatBool(p.Snapshot.Phase != boot.PhaseReady)),
 		gosx.Attr("style", "--boot-progress:"+progress),
 		gosx.Attr("data-boot-recovering-title", "Reconnecting"), gosx.Attr("data-boot-recovering-copy", p.RecoveringText),
-		gosx.Attr("data-boot-failed-title", "Could not start"), gosx.Attr("data-boot-failed-copy", p.FailedText)), screen}
+		gosx.Attr("data-boot-failed-title", "Could not start"), gosx.Attr("data-boot-failed-copy", p.FailedText))...), screen}
 	for _, g := range game {
 		args = append(args, g)
 	}

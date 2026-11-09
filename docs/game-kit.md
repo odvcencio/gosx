@@ -81,6 +81,16 @@ Server side, put `kitui.Styles()`, `kitui.Script()`, `bootpage.Watchdog()` and `
 
 `SlotStore` writes each slot to two copies and always overwrites the one that does not hold the newest valid save. A copy carries a sequence number and a SHA-256 checksum, so a torn or corrupt write falls back to the previous save. A save from a newer build returns `ErrSaveTooNew` and is never overwritten. `Autosaver.Update(dt)` saves on an interval.
 
+## Browser tests
+
+`e2e/game_kit_e2e_test.go` (build tag `e2e`) builds `e2e/testdata/kitbrowser` for js/wasm, serves it from a local server and drives it with Chrome:
+
+```
+go test -tags e2e -run TestGameKitBrowserAdapters ./e2e/
+```
+
+It covers keyboard, mouse buttons, wheel, the tap latch, blur release, pause on blur and tab hide, gamepad Start, the boot gate (stall, soft retry, one reload, failed, late ready), the watchdog script without WASM, and keyboard use and the Tab focus trap in the pause, settings and rebinding screens. Blur, tab hide and the gamepad are synthetic (window events and a stubbed `navigator.getGamepads`). Headless Chrome refuses pointer lock, so that test uses a `pointerLockElement` override.
+
 ## Limits
 
-The browser adapters (`actions.Attach`, `flow.AttachBrowser`, `boot.DOMObserver`, `kitui.Bind`, the watchdog script and `events.js`) are compiled for js/wasm or syntax-checked but not driven by a browser test yet. The event listeners allocate the Go strings that `syscall/js` creates for `event.code`; the per-frame path does not.
+The event listeners allocate the Go strings that `syscall/js` creates for `event.code`; the per-frame path does not. After `kitui.Render` replaces a panel's HTML, keyboard focus inside it is lost.
