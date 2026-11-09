@@ -25,6 +25,20 @@ func (s *segment) bytes() int {
 	return len(s.snapshot) + len(s.inputs) + 4*len(s.offsets) + 64
 }
 
+// truncated returns a copy of s holding only its first n ticks.
+func (s *segment) truncated(n int) *segment {
+	end := len(s.inputs)
+	if n < len(s.offsets) {
+		end = int(s.offsets[n])
+	}
+	return &segment{
+		start:    s.start,
+		snapshot: s.snapshot,
+		offsets:  append([]uint32(nil), s.offsets[:n]...),
+		inputs:   append([]byte(nil), s.inputs[:end]...),
+	}
+}
+
 func (s *segment) clone() *segment {
 	return &segment{
 		start:    s.start,
@@ -108,6 +122,16 @@ type Recording struct {
 	segs    []*segment
 	markers []Marker
 	tickHz  float64
+	lo, hi  uint64 // the ticks a player may show; segments may hold more
+}
+
+// newRecording builds a Recording over all of segs.
+func newRecording(segs []*segment, markers []Marker, hz float64) *Recording {
+	r := &Recording{segs: segs, markers: markers, tickHz: hz}
+	if len(segs) > 0 {
+		r.lo, r.hi = segs[0].start, segs[len(segs)-1].end()
+	}
+	return r
 }
 
 // Start is the first tick the recording can show.
@@ -115,7 +139,7 @@ func (r *Recording) Start() uint64 {
 	if r == nil || len(r.segs) == 0 {
 		return 0
 	}
-	return r.segs[0].start
+	return r.lo
 }
 
 // End is the last tick the recording can show: the state after the last
@@ -124,7 +148,7 @@ func (r *Recording) End() uint64 {
 	if r == nil || len(r.segs) == 0 {
 		return 0
 	}
-	return r.segs[len(r.segs)-1].end()
+	return r.hi
 }
 
 // Keyframes returns the ticks that hold a snapshot.

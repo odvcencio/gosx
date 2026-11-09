@@ -105,7 +105,7 @@ func (r *Recorder) closeCurrent() {
 	}
 }
 
-// Tick returns the tick the simulation is at after the recorded inputs run.
+// TickCount returns the tick the simulation is at after the recorded inputs run.
 // Between Record and the simulation's Tick it is one ahead of the simulation.
 func (r *Recorder) TickCount() uint64 { return r.tick }
 
@@ -127,10 +127,35 @@ func (r *Recorder) Dropped() uint64 { return r.dropped }
 // unchanged as recording continues. The inputs recorded before the simulation
 // has ticked are included, so call it between whole ticks.
 func (r *Recorder) Recording() *Recording {
-	rec := &Recording{tickHz: r.cfg.TickRate}
-	rec.segs = make([]*segment, 0, len(r.closed)+1)
-	rec.segs = append(rec.segs, r.closed...)
-	rec.segs = append(rec.segs, r.cur.clone())
-	rec.markers = append([]Marker(nil), r.markers...)
-	return rec
+	segs := make([]*segment, 0, len(r.closed)+1)
+	segs = append(segs, r.closed...)
+	segs = append(segs, r.cur.clone())
+	start := segs[0].start
+	var marks []Marker
+	for _, m := range r.markers {
+		if m.Tick >= start {
+			marks = append(marks, m)
+		}
+	}
+	return newRecording(segs, marks, r.cfg.TickRate)
+}
+
+// Mark labels the current tick as a moment of interest and returns the marker.
+// Call it between ticks, for example from a game system after a goal or a
+// kill. Markers older than the oldest kept tick are dropped with their ticks.
+func (r *Recorder) Mark(label string) Marker {
+	m := Marker{Tick: r.tick, Label: label}
+	r.markers = append(r.markers, m)
+	// Keep the marker list bounded along with the ticks.
+	if len(r.markers) > 4096 {
+		start := r.Start()
+		keep := r.markers[:0]
+		for _, k := range r.markers {
+			if k.Tick >= start {
+				keep = append(keep, k)
+			}
+		}
+		r.markers = keep
+	}
+	return m
 }
