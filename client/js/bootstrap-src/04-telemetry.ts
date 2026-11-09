@@ -13,8 +13,28 @@
     return Number.isFinite(parsed) && parsed > 0 ? Math.max(1, Math.floor(parsed)) : fallback;
   }
 
+  // A static export marks its pages with <meta name="gosx-telemetry" content="off">.
+  // There is no server to receive events, so telemetry stays off unless the app
+  // sets __gosx_telemetry_config.enabled to true itself.
+  function gosxTelemetryStaticDefaultOff() {
+    try {
+      const meta = typeof document !== "undefined" && document.querySelector
+        ? document.querySelector('meta[name="gosx-telemetry"]')
+        : null;
+      return Boolean(meta) && String(meta.getAttribute("content") || "").toLowerCase() === "off";
+    } catch (_err) {
+      return false;
+    }
+  }
+
   function gosxTelemetryConfig() {
     const cfg = (typeof window !== "undefined" && window.__gosx_telemetry_config) || {};
+    if (cfg.enabled !== true && gosxTelemetryStaticDefaultOff()) {
+      cfg.enabled = false;
+      if (typeof window !== "undefined") {
+        window.__gosx_telemetry_config = cfg;
+      }
+    }
     const rawFlushInterval = Number(cfg.flushInterval);
     const endpoint = cfg.endpoint;
     return {

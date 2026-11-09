@@ -11,7 +11,7 @@
 //	gosx detlint <packages>      Check //gosx:deterministic packages for cross-platform hazards
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
 //	gosx desktop package         Package a Windows desktop app for direct download
-//	gosx export <dir>            Pre-render static GoSX pages
+//	gosx export [--zip] <dir>    Build a server-less static bundle
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
 //	gosx check <file.gsx>        Parse and validate without emitting
@@ -183,10 +183,18 @@ Usage:
 	case "detlint":
 		detlintUsage(w)
 	case "export":
-		fmt.Fprintf(w, `gosx export - Pre-render static GoSX pages
+		fmt.Fprintf(w, `gosx export - Build a static bundle that needs no Go server
+
+Runs the production build (TinyGo runtime, content-hashed assets) and keeps
+dist/static. Every URL in the bundle is relative to its page, so the folder
+runs from any path on any static host. Fails when a page cannot be exported.
 
 Usage:
-  gosx export [dir]
+  gosx export [--zip[=path]] [dir]
+
+Flags:
+  --zip         also write dist/static.zip (index.html at the archive root)
+  --zip=path    write the archive to path
 
 `)
 	case "init":
@@ -445,8 +453,23 @@ func cmdDev() {
 }
 
 func cmdExport() {
-	dir := argOrDefault(2, ".")
-	if err := RunExport(dir); err != nil {
+	dir := "."
+	opts := ExportOptions{}
+	for i := 2; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		switch {
+		case arg == "--zip":
+			opts.Zip = "auto"
+		case strings.HasPrefix(arg, "--zip="):
+			opts.Zip = strings.TrimPrefix(arg, "--zip=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "gosx export: unknown flag %s\n", arg)
+			os.Exit(1)
+		default:
+			dir = arg
+		}
+	}
+	if err := RunExportWithOptions(dir, opts); err != nil {
 		fmt.Fprintf(os.Stderr, "gosx export: %v\n", err)
 		os.Exit(1)
 	}
