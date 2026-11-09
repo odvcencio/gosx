@@ -2516,15 +2516,16 @@
   // Skin extraction (stored for downstream skeletal animation)
   // ---------------------------------------------------------------------------
 
+  var GLTF_MAX_SKIN_JOINTS = 256;
+
   function gltfExtractSkin(gltf, skinIndex, binaryBuffer) {
     if (skinIndex == null || !gltf.skins || skinIndex >= gltf.skins.length) {
       return null;
     }
     var skin = gltf.skins[skinIndex];
     var joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
-    if (joints.length > 64) {
-      console.warn("[gosx] glTF skin has " + joints.length + " joints; max supported is 64. Rendering mesh as static:", skin.name || skinIndex);
-      return null;
+    if (joints.length > GLTF_MAX_SKIN_JOINTS) {
+      throw new Error("[gosx] glTF skin " + JSON.stringify(skin.name || String(skinIndex)) + " has " + joints.length + " joints; the maximum supported is " + GLTF_MAX_SKIN_JOINTS + ". Split the rig or reduce the bone count in the export.");
     }
     var ibm = skin.inverseBindMatrices != null
       ? new Float32Array(gltfReadAccessor(gltf, skin.inverseBindMatrices, binaryBuffer))
