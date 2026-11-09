@@ -6,7 +6,7 @@
     textureCache: Parameters<typeof wgpuLoadTexture>[2];
     iblResources: SceneSelenaIBLTextures;
     placeholderCubeView: unknown; placeholderView: unknown;
-    envMapSampler: unknown; linearSampler: unknown;
+    envMapSampler: unknown; linearSampler: unknown; frame?: unknown;
     liveView: (material: SceneSelenaTextureMaterial, texture: SceneSelenaTextureDescriptor) => unknown;
     url: (material: SceneSelenaTextureMaterial, texture: SceneSelenaTextureDescriptor, index: number) => string;
   };
@@ -33,7 +33,7 @@
       var isCube = tex.dimension === "cube";
       var environmentSlot = sceneWebGPUSelenaEnvironmentSlot(material, tex);
       var environmentRecord = environmentSlot && iblResources.active ? iblResources[environmentSlot === "brdf-lut" ? "brdfLUT" : environmentSlot] : null;
-      var liveView = environmentSlot ? (environmentRecord && environmentRecord.view) : context.liveView(material, tex);
+      var liveView = environmentSlot ? (environmentRecord && environmentRecord.view) : (sceneSelenaShadowMapView(context, tex) || context.liveView(material, tex));
       var url = liveView || environmentSlot ? "" : context.url(material, tex, i);
       // dimension:"cube" (the water surface/surface-below "sky" environment
       // map) loads through wgpuLoadCubeTexture/placeholderCubeView instead

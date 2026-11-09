@@ -207,6 +207,9 @@ const budgets = [
   // Finite choreography remains demand-loaded; existing route limits are unchanged.
   // Retained parent transforms are fetched only by animated hierarchies.
   { file: "bootstrap-feature-scene3d-hierarchy.js", raw: 5_630, gzip: 2_360, brotli: 2_148 },
+  // Selena scene lighting (lights, shadow cascades, fog) is fetched only by pages
+  // whose Selena materials read it; targets are the measured 2026-11-09 sizes.
+  { file: "bootstrap-feature-scene3d-selena-lighting.js", raw: 4_184, gzip: 1_798, brotli: 1_650 },
   { file: "bootstrap-feature-scene3d-timeline.js", raw: 5_400, gzip: 2_400, brotli: 2_200 },
   // The opt-in chunk now includes fixed-camera pan, touch centroid tracking and
   // accessible captured handles. Its reviewed raw target grows by 400 bytes.
@@ -996,9 +999,12 @@ const budgets = [
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measured raw 2,086,694 /
     // gzip 584,679 / brotli 479,980. Both PRs moved these targets, so each is set to its exact minimum
     // under the unchanged allowance.
+    // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; raw measures 2090948 bytes; only this exhausted target moves (2021158 -> 2025412), allowance unchanged.
+    // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; gzip measures 586109 bytes; only this exhausted target moves (568295 -> 569725), allowance unchanged.
     // Second UV stream and meshopt decoding (asset-ext.ts, asset-meshopt.ts, loader hooks) add about 12,000 raw bytes to the monolith; only exhausted minimums move, under the unchanged allowance.
-    file: "bootstrap.js", raw: 2032839, gzip: 572275,
-    brotli: 466981 },
+    file: "bootstrap.js", raw: 2037094, gzip: 573937,
+    // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
+    brotli: 467934 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1394,7 +1400,9 @@ const budgets = [
     // minimum target under the unchanged 5% allowance; retain raw and gzip.
     // Wind-ripple warping measures 73,997 Brotli bytes; the minimum target rises by 24 bytes.
   // 31 October 2026 (spectral ocean renderer, supersedes #737): measured brotli 76,462 bytes; only the exhausted targets move, to their exact minima under the unchanged allowance. The spectral ocean renderer's plumbing in this shared chunk (see bootstrap-feature-scene3d-ocean-fft.js for the lazy renderer).
-    file: "bootstrap-feature-scene3d-webgl.js", raw: 290800, gzip: 85173, brotli: 74082 },
+    // 2026-11-09 Selena scene lighting: the WebGL chunk gains the on-demand lighting loader, the classic-lighting fallback, array uniforms and shadow-map binding; gzip measures 89793 bytes; only this exhausted target moves (85027 -> 85517), allowance unchanged.
+    // 2026-11-09 Selena scene lighting: the WebGL chunk gains the on-demand lighting loader, the classic-lighting fallback, array uniforms and shadow-map binding; brotli measures 78115 bytes; only this exhausted target moves (74082 -> 74395), allowance unchanged.
+    file: "bootstrap-feature-scene3d-webgl.js", raw: 290800, gzip: 85639, brotli: 74595 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1790,9 +1798,12 @@ const budgets = [
     // Merged WebGPU sources measure 118,032 gzip bytes; raise only this target by 1,411 B under the unchanged 5% allowance.
     // Explicit failed-texture retry adds 74 gzip bytes to this chunk; retain
     // its other targets and the governed allowance.
-    raw: 471573, gzip: 125234,
+    // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; raw measures 495713 bytes; only this exhausted target moves (471044 -> 472107), allowance unchanged.
+    // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; gzip measures 131635 bytes; only this exhausted target moves (125057 -> 125366), allowance unchanged.
+    raw: 472632, gzip: 125507,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
-    brotli: 106147 },
+    // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
+    brotli: 106388 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -2327,12 +2338,15 @@ const routeBudgets = [
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,537,064 raw,
     // 427,458 gzip and 368,337 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
-    raw: 1473128,
-    gzip: 411595,
+    // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); raw measures 1538180 bytes; only this exhausted target moves (1471528 -> 1472644), allowance unchanged.
+    raw: 1474241,
+    // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 427783 bytes; only this exhausted target moves (411074 -> 411399), allowance unchanged.
+    gzip: 411883,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    brotli: 352445,
+    // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 368439 bytes; only this exhausted target moves (351953 -> 352055), allowance unchanged.
+    brotli: 352699,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2550,13 +2564,16 @@ const routeBudgets = [
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,342,524 raw,
     // 385,425 gzip and 334,749 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
-    raw: 1280020,
-    gzip: 369531,
+    // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); raw measures 1343869 bytes; only this exhausted target moves (1278594 -> 1279875), allowance unchanged.
+    raw: 1281303,
+    // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 385941 bytes; only this exhausted target moves (369041 -> 369557), allowance unchanged.
+    gzip: 370021,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 319177,
+    // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 335079 bytes; only this exhausted target moves (318808 -> 319122), allowance unchanged.
+    brotli: 319715,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2769,12 +2786,15 @@ const routeBudgets = [
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,837,121 raw,
     // 516,735 gzip and 446,122 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
-    raw: 1773633,
-    gzip: 501025,
+    // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); raw measures 1839582 bytes; only this exhausted target moves (1771585 -> 1774046), allowance unchanged.
+    raw: 1776094,
+    // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 517576 bytes; only this exhausted target moves (500351 -> 501192), allowance unchanged.
+    gzip: 501802,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 430203,
+    // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 446554 bytes; only this exhausted target moves (429738 -> 430170), allowance unchanged.
+    brotli: 431022,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2956,11 +2976,14 @@ const routeBudgets = [
     // only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (merge train 2: the audio mixer, PR 799, merged after PR 793 on main): measures 1,378,964 raw,
     // 383,373 gzip and 328,120 Brotli bytes on this route; both PRs moved these targets, so each is set to its exact minimum.
-    raw: 1315029,
-    gzip: 367511,
+    // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); raw measures 1380080 bytes; only this exhausted target moves (1313428 -> 1314544), allowance unchanged.
+    raw: 1316141,
+    // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 383698 bytes; only this exhausted target moves (366989 -> 367314), allowance unchanged.
+    gzip: 367798,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
-    brotli: 312965,
+    // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
+    brotli: 313206,
   },
 
 ];
