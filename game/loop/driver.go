@@ -14,6 +14,8 @@ type FrameSource = host.FrameSource
 // RenderFunc is called once per advanced frame, after the fixed-step
 // accumulator inside game.Runtime.Step has run, with that frame's
 // interpolation alpha for rendering between the last two simulated states.
+// With a host.SceneFrameSource it runs inside the Scene3D renderer's frame,
+// before the draw: write poses through scene.StreamWriter here.
 type RenderFunc func(alpha float64, frame game.Frame)
 
 // Driver drives a game.Runtime's Step from a FrameSource, replacing the
@@ -172,6 +174,9 @@ func (d *Driver) advanceFrame(epoch uint64, timestampMS float64) (Observer, Fram
 	}
 	if render != nil {
 		render(frame.Alpha, frame)
+	}
+	if sink, ok := d.source.(host.FrameAlphaSink); ok {
+		sink.SetFrameAlpha(frame.Alpha)
 	}
 	if observer == nil {
 		return nil, FrameEvent{}

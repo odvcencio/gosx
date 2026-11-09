@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package telemetry
 
 import (
@@ -5,6 +7,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/game"
+	"m31labs.dev/gosx/game/serve"
 	"m31labs.dev/gosx/hub"
 	"m31labs.dev/gosx/sim"
 	"m31labs.dev/gosx/telemetry/telemetrytest"
@@ -61,7 +64,7 @@ func TestGameNewRunnerInheritsSimulationObserver(t *testing.T) {
 	c := telemetrytest.NewClock(time.Unix(0, 0))
 	runtime := game.New(game.Config{FixedStep: time.Millisecond})
 	events := make(chan sim.TickEvent, 1)
-	r := game.NewRunner(hub.New("test"), runtime, sim.Options{TickRate: 10, Clock: c, Observer: simObserverFunc(func(e sim.TickEvent) { events <- e })})
+	r := serve.NewRunner(hub.New("test"), runtime, sim.Options{TickRate: 10, Clock: c, Observer: simObserverFunc(func(e sim.TickEvent) { events <- e })})
 	r.Start()
 	t.Cleanup(r.Stop)
 	deadline := time.Now().Add(time.Second)
