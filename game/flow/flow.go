@@ -42,6 +42,9 @@ type State struct {
 	Input string
 	// Pause pauses the simulation while this state is anywhere on the stack.
 	Pause bool
+	// Pausable lets HandleInput push Config.PauseState while this state is the
+	// top of the stack.
+	Pausable bool
 	// PauseOnBlur makes Blur and Hidden push Config.PauseState while this
 	// state is the top of the stack (set it on play).
 	PauseOnBlur bool
@@ -318,4 +321,47 @@ func (f *Flow) Hidden(hidden bool) {
 		f.Blur()
 	}
 	f.sync()
+}
+
+// ActionReader is the part of actions.Map that HandleInput reads.
+type ActionReader interface{ Pressed(name string) bool }
+
+// Controls names the actions HandleInput reads.
+type Controls struct {
+	// Pause is pressed in a Pausable state to push the pause state.
+	// Default "pause".
+	Pause string
+	// Resume is pressed in the pause state to pop it. Default "back".
+	Resume string
+}
+
+// HandleInput turns the pause and resume actions into transitions. Call it
+// once per frame after actions.Map.Update. Bind both actions to Escape and to
+// the gamepad Start button (actions.PauseBindings and actions.BackBindings) and
+// a pad can pause and resume with no extra code. It reports whether the
+// stack changed.
+func (f *Flow) HandleInput(r ActionReader, c Controls) bool {
+	if r == nil {
+		return false
+	}
+	if c.Pause == "" {
+		c.Pause = "pause"
+	}
+	if c.Resume == "" {
+		c.Resume = "back"
+	}
+	t := f.top()
+	switch {
+	case t == nil:
+		return false
+	case t.Name == f.cfg.PauseState:
+		if r.Pressed(c.Resume) {
+			return f.Pop() == nil
+		}
+	case t.Pausable && f.states[f.cfg.PauseState] != nil:
+		if r.Pressed(c.Pause) {
+			return f.Push(f.cfg.PauseState) == nil
+		}
+	}
+	return false
 }

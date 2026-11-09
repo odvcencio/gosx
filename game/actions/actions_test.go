@@ -564,3 +564,85 @@ func TestUpdateAndQueriesDoNotAllocate(t *testing.T) {
 		t.Fatalf("allocs per frame = %v", n)
 	}
 }
+
+func TestAddRemoveSlotsAndPersist(t *testing.T) {
+	m := newMap()
+	n := len(m.Bindings("gameplay", "jump"))
+	if !m.CanAddSlot("gameplay", "jump") {
+		t.Fatal("CanAddSlot")
+	}
+	// A new slot can take a key; the conflict rules still apply.
+	if conf, err := m.Rebind("gameplay", "jump", n, Key("ShiftLeft"), ConflictReject); !errors.Is(err, ErrConflict) || len(conf) != 1 {
+		t.Fatalf("add with conflict: %v %v", conf, err)
+	}
+	if _, err := m.Rebind("gameplay", "jump", n, Key("KeyK"), ConflictReject); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Bindings("gameplay", "jump"); len(got) != n+1 || got[n].Source != Key("KeyK") || got[n].Scale != 1 {
+		t.Fatalf("%v", got)
+	}
+	press(m, Key("KeyK"))
+	m.Update(frame)
+	if !m.Down("jump") {
+		t.Fatal("added slot is inactive")
+	}
+	if _, err := m.Rebind("gameplay", "jump", n+2, Key("KeyL"), ConflictReject); !errors.Is(err, ErrBadSlot) {
+		t.Fatal("gap slot", err)
+	}
+	// Round trip keeps the extra slot.
+	store := storage.New("t", storage.NewMemoryBackend())
+	if err := m.Save(store, "b"); err != nil {
+		t.Fatal(err)
+	}
+	m2 := newMap()
+	if ok, err := m2.Load(store, "b"); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if !reflect.DeepEqual(m.Bindings("gameplay", "jump"), m2.Bindings("gameplay", "jump")) {
+		t.Fatalf("%v vs %v", m.Bindings("gameplay", "jump"), m2.Bindings("gameplay", "jump"))
+	}
+	// Defaults cannot be removed; extras can, and then nothing is exported.
+	if err := m2.RemoveSlot("gameplay", "jump", 0); !errors.Is(err, ErrBadSlot) {
+		t.Fatal(err)
+	}
+	if err := m2.RemoveSlot("gameplay", "jump", n); err != nil {
+		t.Fatal(err)
+	}
+	if len(m2.Export().Contexts) != 0 {
+		t.Fatal("removed extra still exported")
+	}
+	// The cap.
+	for i := len(m.Bindings("gameplay", "jump")); i < MaxBindings; i++ {
+		if _, err := m.Rebind("gameplay", "jump", i, Key("F"+string(rune('1'+i))), ConflictReject); err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	if m.CanAddSlot("gameplay", "jump") {
+		t.Fatal("cap not reached")
+	}
+	if _, err := m.Rebind("gameplay", "jump", MaxBindings, Key("KeyZ"), ConflictReject); !errors.Is(err, ErrTooManyBindings) {
+		t.Fatal(err)
+	}
+	// A hostile save with too many slots is skipped.
+	big := make([]SavedBinding, MaxBindings+1)
+	for i := range big {
+		big[i] = SavedBinding{Source: "key:KeyA"}
+	}
+	if n, _ := newMap().Import(SavedBindings{Version: 1, Contexts: map[string]map[string][]SavedBinding{"gameplay": {"jump": big}}}); n != 0 {
+		t.Fatal("oversized import accepted")
+	}
+}
+
+func TestStartButtonDefaults(t *testing.T) {
+	m := NewMap()
+	m.Define(Context{Name: "g", Actions: []ActionDef{{Name: "pause", Bindings: PauseBindings()}}})
+	m.Push("g")
+	m.Feed(Event{Device: PadDevice(0), Source: PadButton(PadStart), Value: 1})
+	m.Update(frame)
+	if !m.Pressed("pause") {
+		t.Fatal("Start does not press pause")
+	}
+	if len(BackBindings()) != 3 {
+		t.Fatal("back bindings")
+	}
+}

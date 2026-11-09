@@ -144,3 +144,38 @@ func TestErrorsAndUpdate(t *testing.T) {
 		t.Fatal(total)
 	}
 }
+
+type pressed map[string]bool
+
+func (p pressed) Pressed(n string) bool { return p[n] }
+
+func TestHandleInputPauseAndResume(t *testing.T) {
+	p, in := &fakePauser{}, &fakeInput{}
+	f := New(Config{Pauser: p, Input: in},
+		State{Name: Play, Input: "gameplay", Pausable: true},
+		State{Name: Pause, Input: "menu", Pause: true},
+		State{Name: Title},
+	)
+	ctl := Controls{}
+	_ = f.Push(Title)
+	if f.HandleInput(pressed{"pause": true}, ctl) {
+		t.Fatal("title is not pausable")
+	}
+	_ = f.Reset(Play)
+	if f.HandleInput(pressed{}, ctl) || f.HandleInput(nil, ctl) {
+		t.Fatal("nothing pressed")
+	}
+	if !f.HandleInput(pressed{"pause": true}, ctl) || !f.Is(Pause) || !f.Paused() {
+		t.Fatal("pause button should push pause", f.Stack())
+	}
+	if f.HandleInput(pressed{"pause": true}, ctl) {
+		t.Fatal("pause pressed in the pause state must not push again")
+	}
+	if !f.HandleInput(pressed{"back": true}, ctl) || !f.Is(Play) || f.Paused() {
+		t.Fatal("back should resume", f.Stack())
+	}
+	custom := Controls{Pause: "menu", Resume: "close"}
+	if !f.HandleInput(pressed{"menu": true}, custom) || !f.HandleInput(pressed{"close": true}, custom) {
+		t.Fatal("custom action names")
+	}
+}

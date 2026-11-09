@@ -63,8 +63,8 @@ func (m *Map) Export() SavedBindings {
 
 // Import applies saved bindings over the current ones. Entries for contexts
 // or actions that no longer exist are skipped, so a save from an older build
-// loads. An entry that does not parse, or that has a different slot count
-// from the action it names, is skipped too. The count of applied actions is
+// loads. An entry that does not parse, or that has fewer slots than the
+// action's defaults (extra slots added by Rebind are kept), is skipped too. The count of applied actions is
 // returned. A version newer than BindingsVersion is an error.
 func (m *Map) Import(saved SavedBindings) (int, error) {
 	if saved.Version > BindingsVersion {
@@ -74,7 +74,7 @@ func (m *Map) Import(saved SavedBindings) (int, error) {
 	for ctx, acts := range saved.Contexts {
 		for action, list := range acts {
 			d := m.def(ctx, action)
-			if d == nil || len(list) != len(d.defaults) {
+			if d == nil || len(list) < len(d.defaults) || len(list) > MaxBindings {
 				continue
 			}
 			next := make([]Binding, len(list))
@@ -85,7 +85,7 @@ func (m *Map) Import(saved SavedBindings) (int, error) {
 					ok = false
 					break
 				}
-				if !src.Zero() && !d.defaults[i].Source.Zero() && src.Class() != d.defaults[i].Source.Class() {
+				if i < len(d.defaults) && !src.Zero() && !d.defaults[i].Source.Zero() && src.Class() != d.defaults[i].Source.Class() {
 					ok = false
 					break
 				}

@@ -300,7 +300,8 @@ func RebindID(ctx, action string, slot int) string {
 
 // RebindPanel lists each action of a context with a button per binding slot.
 // Selecting a slot sends a "rebind" event named RebindID; the game then calls
-// Map.Capture and, with the captured source, Map.Rebind.
+// Map.Capture and, with the captured source, Map.Rebind. The last button of a
+// row ("+") has slot number len(bindings) and adds a binding.
 func RebindPanel(p RebindProps) gosx.Node {
 	if p.Class == 0 {
 		p.Class = actions.ClassKeyboardMouse
@@ -312,7 +313,8 @@ func RebindPanel(p RebindProps) gosx.Node {
 			name = n
 		}
 		row := []any{gosx.Attrs(gosx.Attr("class", "kit-bind-row")), gosx.El("span", gosx.Text(name))}
-		for slot, b := range p.Map.Bindings(p.Context, action) {
+		bindings := p.Map.Bindings(p.Context, action)
+		for slot, b := range bindings {
 			if !b.Source.Zero() && b.Source.Class() != p.Class {
 				continue
 			}
@@ -325,6 +327,18 @@ func RebindPanel(p RebindProps) gosx.Node {
 				gosx.Attr("data-kit-rebind", RebindID(p.Context, action, slot)),
 				gosx.Attr("aria-pressed", strconv.FormatBool(listening)),
 				gosx.Attr("aria-label", name+": "+text)), gosx.Text(text)))
+		}
+		if p.Map.CanAddSlot(p.Context, action) {
+			slot := len(bindings)
+			listening := p.Listening && p.ListeningAction == action && p.ListeningSlot == slot
+			text := "+"
+			if listening {
+				text = "Press a key..."
+			}
+			row = append(row, gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("class", "kit-button"),
+				gosx.Attr("data-kit-rebind", RebindID(p.Context, action, slot)),
+				gosx.Attr("aria-pressed", strconv.FormatBool(listening)),
+				gosx.Attr("aria-label", "Add binding for "+name)), gosx.Text(text)))
 		}
 		rows = append(rows, gosx.El("div", row...))
 	}

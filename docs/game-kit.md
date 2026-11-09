@@ -23,16 +23,16 @@ opts.Load()
 in := actions.NewMap()
 in.Define(actions.Context{Name: "gameplay", Actions: []actions.ActionDef{
 	{Name: "jump", Bindings: []actions.Binding{{Source: actions.Key("Space")}, {Source: actions.PadButton(0)}}},
-	{Name: "pause", Bindings: []actions.Binding{{Source: actions.Key("Escape")}}}}})
+	{Name: "pause", Bindings: actions.PauseBindings()}}})
 in.Define(actions.Context{Name: "menu", Opaque: true, Actions: []actions.ActionDef{
-	{Name: "back", Bindings: []actions.Binding{{Source: actions.Key("Escape")}}}}})
+	{Name: "back", Bindings: actions.BackBindings()}}})
 in.Import(opts.Get().Bindings)
 rt := game.New(game.Config{})
 cam := camera.NewDirector(camera.DirectorConfig{ReducedMotion: opts.ReducedMotion, ShakeScale: opts.ShakeScale},
 	&camera.Follow{Distance: 8, Pitch: 0.5, SmoothTime: 0.2})
 gate := boot.New(boot.Config{}, boot.Task{Name: "assets"})
 fl := flow.New(flow.Config{Pauser: rt, Input: in},
-	flow.State{Name: flow.Boot}, flow.State{Name: flow.Play, Input: "gameplay", PauseOnBlur: true},
+	flow.State{Name: flow.Boot}, flow.State{Name: flow.Play, Input: "gameplay", Pausable: true, PauseOnBlur: true},
 	flow.State{Name: flow.Pause, Input: "menu", Pause: true})
 fl.Push(flow.Boot)
 frame := func(dt time.Duration) {
@@ -41,11 +41,7 @@ frame := func(dt time.Duration) {
 	if gate.Ready() && fl.Is(flow.Boot) {
 		fl.Replace(flow.Play)
 	}
-	if in.Pressed("pause") {
-		fl.Push(flow.Pause)
-	} else if in.Pressed("back") {
-		fl.Pop()
-	}
+	fl.HandleInput(in, flow.Controls{}) // Escape or gamepad Start pauses and resumes
 	cam.Update(dt.Seconds())
 }
 ```
@@ -71,7 +67,8 @@ Server side, put `kitui.Styles()`, `kitui.Script()`, `bootpage.Watchdog()` and `
 - Call `Update(dt)` once per frame. `Update` and the query methods (`Pressed`, `Down`, `Value`, `Vec2`, `State`) do not allocate.
 - A button pressed and released between two `Update` calls reads as pressed in the next frame, then released in the one after (the tap latch). Analog sticks do not latch.
 - Timing per action: `Tap`, `Hold`, `DoubleTap`. Read `Tapped`, `Holding`, `State().HoldStarted`, `DoubleTapped`.
-- `Rebind(ctx, action, slot, source, policy)` returns the conflicts and, under `ConflictReject`, changes nothing. `ConflictSwap` trades the sources; `ConflictUnbind` clears the other binding. `Capture()` then `TakeCaptured()` gives a "press a key" flow; Escape cancels.
+- `Rebind(ctx, action, slot, source, policy)` returns the conflicts and, under `ConflictReject`, changes nothing. `ConflictSwap` trades the sources; `ConflictUnbind` clears the other binding. `Capture()` then `TakeCaptured()` gives a "press a key" flow; Escape cancels. A slot number equal to the binding count adds a binding (up to `MaxBindings`); `RemoveSlot` deletes an added one.
+- Pause: bind `actions.PauseBindings()` (Escape, gamepad Start) in gameplay and `actions.BackBindings()` in the menu, then call `flow.HandleInput(map, flow.Controls{})` each frame.
 - `Export()` returns only the changed bindings; `Save`/`Load` use `game/storage`. Settings hold the same data in `Settings.Bindings`.
 - Local multiplayer: `NewRouter(p1Map, p2Map)`, `Join(device)` on a first press from a new device, then `Feed` and `Update` on the router. Devices are `keyboard`, `mouse` and `pad:N`.
 - `actions/bridge.Publisher` copies action state into a `game.Input` for systems that read it.

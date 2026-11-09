@@ -25,16 +25,16 @@ func Example() {
 	in := actions.NewMap()
 	in.Define(actions.Context{Name: "gameplay", Actions: []actions.ActionDef{
 		{Name: "jump", Bindings: []actions.Binding{{Source: actions.Key("Space")}, {Source: actions.PadButton(0)}}},
-		{Name: "pause", Bindings: []actions.Binding{{Source: actions.Key("Escape")}}}}})
+		{Name: "pause", Bindings: actions.PauseBindings()}}})
 	in.Define(actions.Context{Name: "menu", Opaque: true, Actions: []actions.ActionDef{
-		{Name: "back", Bindings: []actions.Binding{{Source: actions.Key("Escape")}}}}})
+		{Name: "back", Bindings: actions.BackBindings()}}})
 	in.Import(opts.Get().Bindings)
 	rt := game.New(game.Config{})
 	cam := camera.NewDirector(camera.DirectorConfig{ReducedMotion: opts.ReducedMotion, ShakeScale: opts.ShakeScale},
 		&camera.Follow{Distance: 8, Pitch: 0.5, SmoothTime: 0.2})
 	gate := boot.New(boot.Config{}, boot.Task{Name: "assets"})
 	fl := flow.New(flow.Config{Pauser: rt, Input: in},
-		flow.State{Name: flow.Boot}, flow.State{Name: flow.Play, Input: "gameplay", PauseOnBlur: true},
+		flow.State{Name: flow.Boot}, flow.State{Name: flow.Play, Input: "gameplay", Pausable: true, PauseOnBlur: true},
 		flow.State{Name: flow.Pause, Input: "menu", Pause: true})
 	fl.Push(flow.Boot)
 	frame := func(dt time.Duration) {
@@ -43,16 +43,12 @@ func Example() {
 		if gate.Ready() && fl.Is(flow.Boot) {
 			fl.Replace(flow.Play)
 		}
-		if in.Pressed("pause") {
-			fl.Push(flow.Pause)
-		} else if in.Pressed("back") {
-			fl.Pop()
-		}
+		fl.HandleInput(in, flow.Controls{}) // Escape or gamepad Start pauses and resumes
 		cam.Update(dt.Seconds())
 	}
 	gate.Complete("assets")
 	frame(16 * time.Millisecond)
-	in.Feed(actions.Event{Source: actions.Key("Escape"), Value: 1})
+	in.Feed(actions.Event{Device: actions.PadDevice(0), Source: actions.PadButton(actions.PadStart), Value: 1})
 	frame(16 * time.Millisecond)
 	fmt.Println(fl.Stack(), rt.Paused(), len(gosx.RenderHTML(kitui.PauseMenu(kitui.PauseProps{}))) > 0)
 	// Output: [play pause] true true

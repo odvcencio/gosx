@@ -32,10 +32,15 @@ var (
 	ErrUnknownAction = errors.New("actions: unknown action")
 	// ErrBadSlot means the slot is outside the action's binding list.
 	ErrBadSlot = errors.New("actions: binding slot out of range")
+	// ErrTooManyBindings means an action already has MaxBindings slots.
+	ErrTooManyBindings = errors.New("actions: too many bindings on one action")
 	// ErrWrongClass means the source is on a different device family than
 	// the slot it would replace (a key cannot replace a gamepad button).
 	ErrWrongClass = errors.New("actions: source device does not match slot")
 )
+
+// MaxBindings is the most binding slots one action can have.
+const MaxBindings = 8
 
 func (m *Map) def(ctx, action string) *actionDef {
 	c := m.contexts[ctx]
@@ -99,10 +104,13 @@ func (m *Map) inScope(ctx *context, other *context) bool {
 // replaced is not a conflict.
 func (m *Map) Conflicts(ctx, action string, slot int, src Source) []Conflict {
 	d := m.def(ctx, action)
-	if d == nil || slot < 0 || slot >= len(d.Bindings) {
+	if d == nil || slot < 0 || slot > len(d.Bindings) {
 		return nil
 	}
-	probe := Binding{Source: src, Scale: d.Bindings[slot].Scale}
+	probe := Binding{Source: src, Scale: 1}
+	if slot < len(d.Bindings) {
+		probe.Scale = d.Bindings[slot].Scale
+	}
 	self := m.contexts[ctx]
 	var out []Conflict
 	for _, name := range m.order {
@@ -125,23 +133,28 @@ func (m *Map) Conflicts(ctx, action string, slot int, src Source) []Conflict {
 }
 
 // Rebind replaces binding slot of an action with src, keeping the slot's
-// Scale. The slot must exist; define spare slots with a zero Source (an
-// unbound slot) when a player should be able to add a second key. It returns the conflicts found; with ConflictReject it changes nothing
+// Scale. A slot equal to the number of bindings adds a new binding with
+// scale 1 (at most MaxBindings per action). It returns the conflicts found; with ConflictReject it changes nothing
 // and returns ErrConflict when there are any.
 func (m *Map) Rebind(ctx, action string, slot int, src Source, policy ConflictPolicy) ([]Conflict, error) {
 	d := m.def(ctx, action)
 	if d == nil {
 		return nil, fmt.Errorf("%w: %s/%s", ErrUnknownAction, ctx, action)
 	}
-	if slot < 0 || slot >= len(d.Bindings) {
+	if slot < 0 || slot > len(d.Bindings) {
 		return nil, ErrBadSlot
 	}
 	if src.Zero() {
 		return nil, ErrBadSource
 	}
-	old := d.Bindings[slot]
-	if !old.Source.Zero() && old.Source.Class() != src.Class() {
-		return nil, ErrWrongClass
+	var old Binding
+	if slot < len(d.Bindings) {
+		old = d.Bindings[slot]
+		if !old.Source.Zero() && old.Source.Class() != src.Class() {
+			return nil, ErrWrongClass
+		}
+	} else if len(d.Bindings) >= MaxBindings {
+		return nil, ErrTooManyBindings
 	}
 	conflicts := m.Conflicts(ctx, action, slot, src)
 	if len(conflicts) > 0 && policy == ConflictReject {
@@ -156,8 +169,32 @@ func (m *Map) Rebind(ctx, action string, slot int, src Source, policy ConflictPo
 			o.Bindings[c.Slot].Source = Source{}
 		}
 	}
-	d.Bindings[slot].Source = src
+	if slot == len(d.Bindings) {
+		d.Bindings = append(d.Bindings, Binding{Source: src, Scale: 1})
+	} else {
+		d.Bindings[slot].Source = src
+	}
 	return conflicts, nil
+}
+
+// CanAddSlot reports whether Rebind can add one more binding to the action.
+func (m *Map) CanAddSlot(ctx, action string) bool {
+	d := m.def(ctx, action)
+	return d != nil && len(d.Bindings) < MaxBindings
+}
+
+// RemoveSlot deletes a binding that was added beyond the defaults. Slots that
+// came from Define cannot be removed (use Unbind to clear them).
+func (m *Map) RemoveSlot(ctx, action string, slot int) error {
+	d := m.def(ctx, action)
+	if d == nil {
+		return ErrUnknownAction
+	}
+	if slot < len(d.defaults) || slot >= len(d.Bindings) {
+		return ErrBadSlot
+	}
+	d.Bindings = append(d.Bindings[:slot], d.Bindings[slot+1:]...)
+	return nil
 }
 
 // Unbind clears a slot. The slot stays in the list so a rebinding screen can

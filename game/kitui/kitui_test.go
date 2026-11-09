@@ -83,9 +83,10 @@ func TestRebindPanel(t *testing.T) {
 	html := gosx.RenderHTML(RebindPanel(RebindProps{Map: am, Context: "gameplay", Names: map[string]string{"jump": "Jump"}, Message: "Space is used by Fire"}))
 	has(t, html, `data-kit-rebind="gameplay/jump/0"`, `data-kit-rebind="gameplay/jump/1"`, `>Space<`, `>J<`, `Left Click`, `>Jump<`,
 		`>fire<`, `Unbound`, `role="status"`, `Space is used by Fire`, `aria-pressed="false"`)
-	if strings.Contains(html, "gameplay/jump/2") {
+	if strings.Contains(html, `"gameplay/jump/2"`) {
 		t.Error("gamepad slot shown on the keyboard tab")
 	}
+	has(t, html, `data-kit-rebind="gameplay/jump/3"`, `Add binding for Jump`, `>+<`)
 	pad := gosx.RenderHTML(RebindPanel(RebindProps{Map: am, Context: "gameplay", Class: actions.ClassGamepad, Style: actions.PadXbox}))
 	has(t, pad, `data-kit-rebind="gameplay/jump/2"`, `>A<`)
 	listening := gosx.RenderHTML(RebindPanel(RebindProps{Map: am, Context: "gameplay", Listening: true, ListeningAction: "jump", ListeningSlot: 1}))
