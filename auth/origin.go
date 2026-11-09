@@ -78,11 +78,6 @@ func newOriginResolver(baseURL string, allowedHosts []string, trust ForwardedTru
 	return resolver, nil
 }
 
-// baseConfigured reports whether an absolute base URL is present.
-func (o *originResolver) baseConfigured() bool {
-	return o != nil && o.baseURL != ""
-}
-
 // resolve returns the absolute origin for a request.
 func (o *originResolver) resolve(r *http.Request) (string, error) {
 	if o == nil {

@@ -403,10 +403,6 @@ func registerBaseFileFuncs(env *fileRenderEnv, bindings fileRequestBindings) {
 	}
 }
 
-func evalStaticFileExpr(expr string) any {
-	return evalFileExpr(expr, fileRenderEnv{})
-}
-
 func evalFileExpr(expr string, env fileRenderEnv) any {
 	// Call the lowered closure. See route/exprlower.go for the lowering and
 	// route/exprcache.go for why sharing one lowered form across goroutines is

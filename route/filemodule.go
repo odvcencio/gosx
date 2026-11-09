@@ -202,27 +202,9 @@ func (r *FileModuleRegistry) RegisterHere(opts FileModuleOptions) error {
 	return r.Register(FileModuleFor(fileModuleSourceHere(1), opts))
 }
 
-// MustRegisterHere registers a file module inferred from the calling file.
-//
-// Deprecated: use RegisterHere and handle the returned error.
-func (r *FileModuleRegistry) MustRegisterHere(opts FileModuleOptions) error {
-	return r.Register(FileModuleFor(fileModuleSourceHere(1), opts))
-}
-
 // RegisterCaller registers a file module inferred from a caller higher in the
 // stack. `skip=0` means the immediate caller.
 func (r *FileModuleRegistry) RegisterCaller(skip int, opts FileModuleOptions) error {
-	if skip < 0 {
-		skip = 0
-	}
-	return r.Register(FileModuleFor(fileModuleSourceHere(skip+1), opts))
-}
-
-// MustRegisterCaller registers a file module inferred from a caller higher in
-// the stack.
-//
-// Deprecated: use RegisterCaller and handle the returned error.
-func (r *FileModuleRegistry) MustRegisterCaller(skip int, opts FileModuleOptions) error {
 	if skip < 0 {
 		skip = 0
 	}
