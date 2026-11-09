@@ -129,6 +129,15 @@
       : Math.pow((channel + 0.055) / 1.055, 2.4);
   }
 
+  // Joint palette for skinned vertex shaders. Rigs of up to 64 joints use the
+  // u_jointMatrices uniform array. Larger rigs (up to SCENE_MAX_SKIN_JOINTS)
+  // set u_jointTexCount > 0 and read the palette from a float texture, four
+  // RGBA32F texels per matrix on row 0, so the uniform-vector budget stays flat.
+  const SCENE_UNIFORM_SKIN_JOINTS = 64;
+  const SCENE_MAX_SKIN_JOINTS = 256;
+  const SCENE_GLSL_JOINT_PALETTE = "uniform mat4 u_jointMatrices[64];\nuniform highp sampler2D u_jointTexture;\nuniform int u_jointTexCount;\nmat4 gosxJointMatrix(int j){if(u_jointTexCount>0){int x=j*4;return mat4(texelFetch(u_jointTexture,ivec2(x,0),0),texelFetch(u_jointTexture,ivec2(x+1,0),0),texelFetch(u_jointTexture,ivec2(x+2,0),0),texelFetch(u_jointTexture,ivec2(x+3,0),0));}return u_jointMatrices[j];}";
+  // GLSL ES 1.00 sources (no texelFetch) keep the 64-joint uniform array only.
+  const SCENE_GLSL_JOINT_PALETTE_LEGACY = "uniform mat4 u_jointMatrices[64];\nmat4 gosxJointMatrix(int j){return u_jointMatrices[j];}";
   const SCENE_GLSL_AFFINE_NORMAL = "vec4 gosxAffineNormal(mat3 m,vec3 n){vec3 e=max(max(abs(m[0]),abs(m[1])),abs(m[2]));float s=max(e.x,max(e.y,e.z));mat3 a=m/s;vec3 x=cross(a[1],a[2]),y=cross(a[2],a[0]),z=cross(a[0],a[1]);float d=dot(a[0],x);if(!(s>0.)||abs(d)<=1e-12)return vec4(normalize(n),1.);float o=sign(d);return vec4(normalize(mat3(x,y,z)*n*o),o);}";
 
   const SCENE_PBR_VERTEX_SOURCE = [
@@ -1199,7 +1208,7 @@
 	    "uniform mat4 u_viewMatrix;",
 	    "uniform mat4 u_projectionMatrix;",
 	    "uniform mat4 u_modelMatrix;",
-	    "uniform mat4 u_jointMatrices[64];",
+	    SCENE_GLSL_JOINT_PALETTE,
 	    "uniform bool u_hasSkin;",
     "",
     "out vec3 v_worldPosition;",
@@ -1216,10 +1225,10 @@
     "",
     "    if (u_hasSkin) {",
     "        skinMatrix =",
-    "            a_weights.x * u_jointMatrices[int(a_joints.x)] +",
-    "            a_weights.y * u_jointMatrices[int(a_joints.y)] +",
-    "            a_weights.z * u_jointMatrices[int(a_joints.z)] +",
-    "            a_weights.w * u_jointMatrices[int(a_joints.w)];",
+    "            a_weights.x * gosxJointMatrix(int(a_joints.x)) +",
+    "            a_weights.y * gosxJointMatrix(int(a_joints.y)) +",
+    "            a_weights.z * gosxJointMatrix(int(a_joints.z)) +",
+    "            a_weights.w * gosxJointMatrix(int(a_joints.w));",
     "",
     "    }",
     "",
@@ -6069,7 +6078,7 @@
       "\n" + qualifier + " vec4 a_joints;" +
       "\n" + qualifier + " vec4 a_weights;" +
       "\nuniform mat4 u_modelMatrix;" +
-      "\nuniform mat4 u_jointMatrices[64];" +
+      "\n" + (/#version\s+300\s+es/.test(source) ? SCENE_GLSL_JOINT_PALETTE : SCENE_GLSL_JOINT_PALETTE_LEGACY) +
       "\nuniform bool u_hasSkin;\n" + SCENE_GLSL_AFFINE_NORMAL + "\n";
     out = out.slice(0, mainIdx) + extraDecls + out.slice(mainIdx);
 
@@ -6077,10 +6086,10 @@
     var bodyStart = mainIdx + mainMarker.length;
     var skinBlock =
       "\n  mat4 selenaSkinMatrix = u_hasSkin ? (" +
-      "\n      a_weights.x * u_jointMatrices[int(a_joints.x)] +" +
-      "\n      a_weights.y * u_jointMatrices[int(a_joints.y)] +" +
-      "\n      a_weights.z * u_jointMatrices[int(a_joints.z)] +" +
-      "\n      a_weights.w * u_jointMatrices[int(a_joints.w)]" +
+      "\n      a_weights.x * gosxJointMatrix(int(a_joints.x)) +" +
+      "\n      a_weights.y * gosxJointMatrix(int(a_joints.y)) +" +
+      "\n      a_weights.z * gosxJointMatrix(int(a_joints.z)) +" +
+      "\n      a_weights.w * gosxJointMatrix(int(a_joints.w))" +
       "\n  ) : mat4(1.0);" +
       "\n  vec4 selenaSkinWorldPos4 = u_modelMatrix * (selenaSkinMatrix * vec4(a_position, 1.0));" +
       "\n  vec3 position = selenaSkinWorldPos4.xyz;";
@@ -6164,6 +6173,8 @@
         result.skinUniforms = {
           modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
           jointMatrices: gl.getUniformLocation(program, "u_jointMatrices[0]"),
+          jointTexture: gl.getUniformLocation(program, "u_jointTexture"),
+          jointTexCount: gl.getUniformLocation(program, "u_jointTexCount"),
           hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
         /* @ts-expect-error TS2551 -- skinAttributes is added to the program record only when skinned */ };
         result.skinAttributes = {
@@ -6205,6 +6216,8 @@
       uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
       uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
       uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
+      uniforms.jointTexture = gl.getUniformLocation(program, "u_jointTexture");
+      uniforms.jointTexCount = gl.getUniformLocation(program, "u_jointTexCount");
 
       return {
         attributes: attributes,
@@ -6319,6 +6332,86 @@
     return scenePBRDeferredProgramInfo(gl, program, function() {
       return initialize(program, vertexShader, fragmentShader);
     }, { vertexShader, fragmentShader });
+  }
+
+  // Joint palette texture shared by every skinned draw on this context.
+  // Rigs above SCENE_UNIFORM_SKIN_JOINTS joints upload their matrices here
+  // (4 RGBA32F texels per matrix on one row) instead of the uniform array.
+  var sceneJointPalettes = new WeakMap();
+  function sceneUploadJointPalette(gl, locs, matrices, jointCount) {
+    var jointPalette = sceneJointPalettes.get(gl);
+    if (!locs.jointTexture || !locs.jointTexCount) return false;
+    if (jointCount > SCENE_MAX_SKIN_JOINTS) {
+      if (!jointPalette || !jointPalette.warned) {
+        jointPalette = jointPalette || { texture: null, width: 0, unit: 0, warned: false };
+        sceneJointPalettes.set(gl, jointPalette);
+        jointPalette.warned = true;
+        console.warn("[gosx] skin has " + jointCount + " joints; the WebGL2 backend supports at most " + SCENE_MAX_SKIN_JOINTS + ". Extra joints are ignored.");
+      }
+      jointCount = SCENE_MAX_SKIN_JOINTS;
+    }
+    var width = jointCount * 4;
+    if (!jointPalette) { jointPalette = { texture: null, width: 0, unit: 0, warned: false }; sceneJointPalettes.set(gl, jointPalette); }
+    var unit = Math.floor(sceneNumber(gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS), 0)) - 1;
+    var fragmentUnits = Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0));
+    if (unit < fragmentUnits || unit < 1 || width > gl.getParameter(gl.MAX_TEXTURE_SIZE)) return false;
+    var previousActive = gl.getParameter(gl.ACTIVE_TEXTURE);
+    var previousFlip = gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL);
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    try {
+      if (!jointPalette.texture) {
+        jointPalette.texture = gl.createTexture();
+        if (!jointPalette.texture) return false;
+        gl.bindTexture(gl.TEXTURE_2D, jointPalette.texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      } else {
+        gl.bindTexture(gl.TEXTURE_2D, jointPalette.texture);
+      }
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      var data = matrices.length === jointCount * 16 ? matrices : matrices.subarray(0, jointCount * 16);
+      if (jointPalette.width < width) {
+        // Grow to the largest palette seen; smaller rigs reuse the texture.
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, 1, 0, gl.RGBA, gl.FLOAT, data);
+        jointPalette.width = width;
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, 1, gl.RGBA, gl.FLOAT, data);
+      }
+    } finally {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, Boolean(previousFlip));
+      gl.activeTexture(previousActive);
+    }
+    gl.uniform1i(locs.jointTexture, unit);
+    gl.uniform1i(locs.jointTexCount, jointCount);
+    return true;
+  }
+
+  function sceneDisposeJointPalette(gl) {
+    var jointPalette = sceneJointPalettes.get(gl);
+    if (jointPalette && jointPalette.texture) gl.deleteTexture(jointPalette.texture);
+    sceneJointPalettes.delete(gl);
+  }
+
+  // locs carries the program's cached skin uniform locations:
+  // jointMatrices (array), jointTexture and jointTexCount.
+  function sceneUploadSkinJoints(gl, locs, skin) {
+    var matrices = skin && skin.jointMatrices;
+    var location = locs && locs.jointMatrices;
+    var total = matrices ? Math.floor(matrices.length / 16) : 0;
+    if (!location || !total) return;
+    if (total > SCENE_UNIFORM_SKIN_JOINTS && sceneUploadJointPalette(gl, locs, matrices, total)) return;
+    if (locs.jointTexCount) gl.uniform1i(locs.jointTexCount, 0);
+    var length = Math.min(total, SCENE_UNIFORM_SKIN_JOINTS) * 16;
+    var upload = matrices;
+    if (matrices.length !== length) {
+      var views = skin._jointMatrixUploadViews || (skin._jointMatrixUploadViews = Object.create(null));
+      var cached = views[length];
+      if (!cached || cached.source !== matrices) cached = views[length] = { source: matrices, view: matrices.subarray(0, length) };
+      upload = cached.view;
+    }
+    gl.uniformMatrix4fv(location, false, upload);
   }
 
   function scenePBRAttributeLocations(gl: any, program: any, names: string) {
@@ -9445,20 +9538,6 @@
     // built-in skinned-PBR upload a few lines below (isSkinned branch of
     // drawPBRObjectList), reused verbatim here since both paths share the
     // exact same joint-matrix contract (SCENE_PBR_SKINNED_VERTEX_SOURCE).
-    function uploadSkinJoints(location, skin) {
-      var matrices = skin && skin.jointMatrices;
-      var length = matrices && Math.min(Math.floor(matrices.length / 16), 64) * 16;
-      if (!location || !length) return;
-      var upload = matrices;
-      if (matrices.length !== length) {
-        var views = skin._jointMatrixUploadViews || (skin._jointMatrixUploadViews = Object.create(null));
-        var cached = views[length];
-        if (!cached || cached.source !== matrices) cached = views[length] = { source: matrices, view: matrices.subarray(0, length) };
-        upload = cached.view;
-      }
-      gl.uniformMatrix4fv(location, false, upload);
-    }
-
     function uploadSelenaSkinUniforms(gl, info, obj) {
       var skinUniforms = info && info.skinUniforms;
       if (!skinUniforms) return;
@@ -9466,7 +9545,7 @@
       if (skinUniforms.modelMatrix) {
         gl.uniformMatrix4fv(skinUniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
       }
-      uploadSkinJoints(skinUniforms.jointMatrices, obj.skin);
+      sceneUploadSkinJoints(gl, skinUniforms, obj.skin);
     }
 
     // Bind the a_joints/a_weights attributes for a skinned Selena draw.
@@ -10178,7 +10257,7 @@
 	        if (isSkinned) {
 	          gl.uniform1i(currentUniforms.hasSkin, 1);
 
-          uploadSkinJoints(currentUniforms.jointMatrices, obj.skin);
+          sceneUploadSkinJoints(gl, currentUniforms, obj.skin);
         } else if (currentUniforms.hasSkin) {
           gl.uniform1i(currentUniforms.hasSkin, 0);
         }
@@ -10998,6 +11077,7 @@
       instancedStreamRecords.clear();
       rigidBatchRecords.clear();
       disposeCrowdResources();
+      sceneDisposeJointPalette(gl);
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
       disposeOwnedProgram(rigidShadowProgram);

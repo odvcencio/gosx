@@ -805,14 +805,6 @@ func (s *Server) reconcileDependencyWatchTargets(watcher *fsnotify.Watcher, curr
 	return next
 }
 
-// repairDependencyWatches restores kernel watches for logically desired
-// dependency directories. Linux drops a directory watch when that directory
-// is removed; retaining the logical path and checking WatchList lets a later
-// recreation be re-added even though the dependency closure did not change.
-func (s *Server) repairDependencyWatches(watcher *fsnotify.Watcher, desired []string) {
-	s.syncDependencyWatches(watcher, desired, desired)
-}
-
 func (s *Server) repairDependencyTargetWatches(watcher *fsnotify.Watcher, desired dependencyWatchTargets) {
 	dirs := dependencyKernelWatchDirs(desired)
 	s.syncDependencyWatches(watcher, dirs, dirs)
@@ -1465,31 +1457,6 @@ func snapshotChanged(prev map[string]snapshotEntry, next map[string]snapshotEntr
 		}
 	}
 	return false
-}
-
-// changedPaths diffs two project snapshots and returns the absolute paths of
-// added, modified, or removed watched files. The dev-socket delivery seam uses
-// these to classify a change (island .gsx hot-swap vs. full reload), so the
-// returned paths are absolute to match the fsnotify watcher.
-func changedPaths(root string, prev map[string]snapshotEntry, next map[string]snapshotEntry) []string {
-	changed := make(map[string]struct{})
-	for rel, prevEntry := range prev {
-		nextEntry, ok := next[rel]
-		if !ok || !sameSnapshotEntry(prevEntry, nextEntry) {
-			changed[rel] = struct{}{}
-		}
-	}
-	for rel := range next {
-		if _, ok := prev[rel]; !ok {
-			changed[rel] = struct{}{}
-		}
-	}
-	paths := make([]string, 0, len(changed))
-	for rel := range changed {
-		paths = append(paths, filepath.Join(root, filepath.FromSlash(rel)))
-	}
-	sort.Strings(paths)
-	return paths
 }
 
 func sameSnapshotEntry(left, right snapshotEntry) bool {
