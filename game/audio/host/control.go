@@ -10,9 +10,18 @@ var ErrUnsupported = errors.New("audio: host does not support this operation")
 
 // HostOptions configures a browser AudioContext. Zero SampleRate uses the
 // device default; LatencyHint accepts the browser's named latency categories.
+//
+// When the page has a shared mixer (window.__gosx.audioMixer, installed by the
+// GoSX bootstrap), the host adopts its AudioContext, so Go audio, clips, the
+// synth and streamed media share one context and one set of buses. SampleRate
+// and LatencyHint then apply only if this call creates the context. If the
+// shared context already runs at another sample rate, the host builds a
+// private context instead and HostJS.Shared reports false. Private opts out
+// and creates a separate context.
 type HostOptions struct {
 	SampleRate  float64
 	LatencyHint string
+	Private     bool
 }
 
 // WorkletOptions describes an AudioWorkletNode without embedding processor

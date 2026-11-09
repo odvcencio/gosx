@@ -250,7 +250,14 @@ test("bootstrap registers audio manifests and plays clips", async () => {
   });
   assert.equal(handle, "hit-1");
   assert.equal(audioGraph.starts, 1);
-  assert.ok(Math.abs(audioGraph.gains[0].gain.value - 0.15) < 0.000001);
+  // The clip gain carries clip volume * requested volume (0.75 * 0.5). The bus
+  // volumes (sfx 0.8, master 0.5) live on the shared mixer's bus nodes, so a
+  // later bus change reaches a clip that is already playing.
+  const clipGain = audioGraph.gains[audioGraph.gains.length - 1];
+  assert.ok(Math.abs(clipGain.gain.value - 0.375) < 0.000001);
+  const busGains = audioGraph.gains.filter((gain) => gain !== clipGain).map((gain) => gain.gain.value);
+  assert.ok(busGains.includes(0.8) && busGains.includes(0.5), "bus gains = " + busGains);
+  assert.ok(audioGraph.panners[0].connections.some((node) => node.gain && node.gain.value === 0.8), "the panner feeds the sfx bus");
   assert.equal(audioGraph.stereoPanners.length, 0);
   assert.equal(audioGraph.panners.length, 1);
   assert.equal(audioGraph.panners[0].positionX.value, 2);
