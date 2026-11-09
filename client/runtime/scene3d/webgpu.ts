@@ -14669,7 +14669,7 @@
     // uploadShadowUniforms packs every slot's cascades (webgpu-shadows module).
     // shadowLightMatrices is kept for callers that read the one-map matrices.
     function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
-      if (wgpuPackShadowUniforms(_shadowUniformF, _shadowUniformI, shadowSlots, shadowLightIndices, Array.isArray(lights) ? lights : [])) device.queue.writeBuffer(shadowUniformBuffer, 0, _shadowUniformF);
+      var span = wgpuPackShadowUniforms(_shadowUniformF, _shadowUniformI, shadowSlots, shadowLightIndices, Array.isArray(lights) ? lights : []); if (span) device.queue.writeBuffer(shadowUniformBuffer, span[0] * 4, _shadowUniformF.subarray(span[0], span[1]));
     }
 
     // Normal-incidence dielectric Fresnel for an authored material IOR:

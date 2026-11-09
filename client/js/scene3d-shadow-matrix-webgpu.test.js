@@ -3,7 +3,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
-const { createBoardWebGPUHarness } = require("./runtime-test-harness.js");
+const { createBoardWebGPUHarness, shadowUniformState } = require("./runtime-test-harness.js");
 
 function multiplyMatrix(left, right) {
   const out = new Float32Array(16);
@@ -151,9 +151,8 @@ for (const kinds of lightPairs) {
       assert.equal(frames.length, 1);
       assert.equal(frames[0].length, 2, "unsupported light consumes no shadow slot");
       // ShadowUniforms: slot 0 cascade 0 at float 0, slot 1 cascade 0 at 80.
-      const receiver = harness.fake.state.writeBufferCalls.filter((call) => call.data?.length === 164).at(-1);
-      assert.ok(receiver, "frame uploads both receiver light matrices");
-      const matrices = [Array.from(receiver.data.slice(0, 16)), Array.from(receiver.data.slice(80, 96))];
+      const receiver = shadowUniformState(harness.fake).f;
+      const matrices = [Array.from(receiver.slice(0, 16)), Array.from(receiver.slice(80, 96))];
       assert.notDeepEqual(matrices[0], matrices[1], "fixture lights produce distinct matrices");
       const slotsPerLight = bundle.meshObjects.length + 1;
       const arenas = new Set();

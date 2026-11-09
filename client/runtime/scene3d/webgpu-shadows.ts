@@ -272,13 +272,20 @@ function wgpuFitShadowSlot(slot: any, light: any, rawMatrix: Float32Array, frame
   return slot;
 }
 
-// wgpuPackShadowUniforms writes ShadowUniforms for both slots and reports
-// whether they differ from the last packed values, so an unchanged frame skips
-// the upload. slots[s] may be null; lightIndices[s] is the light's index in
-// lights, or -1.
-function wgpuPackShadowUniforms(f: Float32Array, i32: Int32Array, slots: any[], lightIndices: number[], lights: any[]): boolean {
-  var last = (f as any).__gosxShadowLast as Float32Array | undefined;
-  if (!last) last = (f as any).__gosxShadowLast = new Float32Array(f.length).fill(NaN);
+// wgpuPackShadowUniforms writes ShadowUniforms for both slots and returns the
+// float span [first, end) that differs from the last upload, or null when
+// nothing changed, so a frame uploads only what moved. WebGPU zeroes new
+// buffers, so the comparison starts from zero; an empty slot stays zero
+// (count 0 means unshadowed). slots[s] may be null; lightIndices[s] is the
+// light's index in lights, or -1.
+function wgpuPackShadowUniforms(f: Float32Array, i32: Int32Array, slots: any[], lightIndices: number[], lights: any[]): number[] | null {
+  var cache = f as any;
+  if (!cache.__gosxShadowLast) {
+    cache.__gosxShadowLast = new Uint32Array(f.length);
+    cache.__gosxShadowBits = new Uint32Array(f.buffer, f.byteOffset, f.length);
+    cache.__gosxShadowSpan = [0, 0];
+  }
+  var last = cache.__gosxShadowLast as Uint32Array, bits = cache.__gosxShadowBits as Uint32Array, span = cache.__gosxShadowSpan as number[];
   f.fill(0);
   for (var s = 0; s < 2; s++) {
     var slot = slots[s], light = lightIndices[s] >= 0 ? lights[lightIndices[s]] : null;
@@ -289,16 +296,23 @@ function wgpuPackShadowUniforms(f: Float32Array, i32: Int32Array, slots: any[], 
       f[base + 64 + c] = slot.cascades[c].splitFar;
       f[base + 72 + c] = slot.cascades[c].biasScale;
     }
-    f[base + 68] = count;
-    f[base + 69] = light ? sceneNumber(light.shadowBias, 0.005) : 0.005;
-    f[base + 70] = light ? Math.max(0, sceneNumber(light.shadowSoftness, 0)) : 0;
-    f[base + 71] = SCENE_WEBGPU_SHADOW_BLEND_BAND;
-    f[base + 76] = slot ? 1 / slot.size : 0;
-    f[base + 77] = slot ? slot.size : 0;
+    if (count > 0) {
+      f[base + 68] = count;
+      f[base + 69] = sceneNumber(light.shadowBias, 0.005);
+      f[base + 70] = Math.max(0, sceneNumber(light.shadowSoftness, 0));
+      f[base + 71] = SCENE_WEBGPU_SHADOW_BLEND_BAND;
+      f[base + 76] = 1 / slot.size;
+      f[base + 77] = slot.size;
+    }
     i32[160 + s] = count > 0 ? lightIndices[s] : -1;
   }
-  var changed = false;
-  for (var k = 0; k < f.length && !changed; k++) changed = !Object.is(f[k], last[k]);
-  if (changed) last.set(f);
-  return changed;
+  var first = -1, stop = 0;
+  for (var k = 0; k < bits.length; k++) {
+    if (bits[k] !== last[k]) { if (first < 0) first = k; stop = k + 1; }
+  }
+  if (first < 0) return null;
+  last.set(bits.subarray(first, stop), first);
+  span[0] = first;
+  span[1] = stop;
+  return span;
 }

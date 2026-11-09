@@ -8,7 +8,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const ts = require("../runtime/node_modules/typescript");
-const { createBoardWebGPUHarness } = require("./runtime-test-harness.js");
+const { createBoardWebGPUHarness, shadowUniformState } = require("./runtime-test-harness.js");
 
 function extract(file, name) {
   const source = fs.readFileSync(path.join(__dirname, file), "utf8");
@@ -159,6 +159,21 @@ test("shadow uniforms pack both slots at the documented offsets", () => {
   assert.deepEqual([i32[160], i32[161]], [2, -1]);
 });
 
+test("shadow uniforms report only the span that changed since the last upload", () => {
+  const f = new Float32Array(csm.SCENE_WEBGPU_SHADOW_UNIFORM_BYTES / 4), i32 = new Int32Array(f.buffer);
+  // The GPU buffer starts zeroed, so an unshadowed first frame uploads only
+  // the two -1 light indices.
+  assert.deepEqual(Array.from(csm.wgpuPackShadowUniforms(f, i32, [null, null], [-1, -1], [])), [160, 162]);
+  assert.equal(csm.wgpuPackShadowUniforms(f, i32, [null, null], [-1, -1], []), null, "an unchanged frame uploads nothing");
+  const lights = [{}, {}, { ...light, shadowSoftness: 0.25 }];
+  const slot = fit([0, 6, 20], [0, 2, 0]);
+  const first = Array.from(csm.wgpuPackShadowUniforms(f, i32, [slot, null], [2, -1], lights));
+  assert.deepEqual([first[0], first[1]], [0, 161], "a new shadow uploads slot 0 and its light index");
+  slot.cascades[1].lightMatrix[3] += 1;
+  assert.deepEqual(Array.from(csm.wgpuPackShadowUniforms(f, i32, [slot, null], [2, -1], lights)), [19, 20], "one moved matrix element uploads one float");
+  assert.equal(f[80 + 69], 0, "an empty slot keeps zero parameters");
+});
+
 test("the cascade WGSL declares the documented struct and samples array layers", () => {
   assert.match(csm.WGSL_SHADOW_UNIFORMS_STRUCT, /matrices: array<mat4x4f, 4>,\s*splits: vec4f,\s*params: vec4f,\s*scales: vec4f,\s*texel: vec4f/);
   assert.match(csm.WGSL_SHADOW_CASCADE_FNS, /fn shadowSlotFactor\(map: texture_depth_2d_array, samp: sampler_comparison, slot: ShadowCascades, worldPos: vec3f\) -> f32/);
@@ -219,9 +234,7 @@ test("a four-cascade sun renders one array layer per cascade and samples the arr
     assert.equal(new Set(offsets).size, 4, `distinct arena offsets: ${offsets}`);
     const texture = h.fake.state.textures.find((t) => t.desc && t.desc.label === "gosx-shadow-cascades");
     assert.deepEqual(Array.from(texture.desc.size), [512, 512, 4]);
-    const write = h.fake.state.writeBufferCalls.filter((call) => call.data && call.data.length === 164).at(-1);
-    const f = new Float32Array(write.data.buffer, write.data.byteOffset, 164);
-    const i32 = new Int32Array(write.data.buffer, write.data.byteOffset, 164);
+    const { f, i32 } = shadowUniformState(h.fake);
     assert.deepEqual([f[68], i32[160], i32[161]], [4, 0, -1]);
     assert.ok(f[64] < f[65] && f[65] < f[66] && f[66] < f[67] && Math.abs(f[67] - 100) < 1e-3, "splits rise to the camera far plane");
     const pbr = h.fake.state.shaderModules.find((m) => m.label === "pbr-frag");

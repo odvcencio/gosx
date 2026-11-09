@@ -10,6 +10,7 @@ const ts = require("../runtime/node_modules/typescript");
 const {
   createBoardWebGPUHarness,
   flushAsyncWork,
+  shadowUniformState,
 } = require("./runtime-test-harness.js");
 
 const sourceRoot = path.join(__dirname, "bootstrap-src");
@@ -324,11 +325,7 @@ test("WebGPU spot shadows render in deterministic slots and retire on removal an
   assert.equal(new Set(shadowTextureIDs).size, 2);
 
   // ShadowUniforms: two 80-float cascade slots, then the light indices.
-  const uniformWrite = harness.fake.state.writeBufferCalls.filter(
-    (call) => call.data && call.data.length === 164,
-  ).at(-1);
-  assert.ok(uniformWrite);
-  const words = new Int32Array(uniformWrite.data.buffer, uniformWrite.data.byteOffset, uniformWrite.data.length);
+  const words = shadowUniformState(harness.fake).i32;
   assert.deepEqual([words[160], words[161]], [2, 3]);
 
   harness.renderer.render(spotShadowBundle(api, []), { width: 64, height: 64 }, { nowMS: 17, active: true });
