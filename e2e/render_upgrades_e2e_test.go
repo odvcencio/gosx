@@ -82,7 +82,24 @@ func renderUpgradePage(t *testing.T, mountID string, width, height int, props an
 	if err != nil {
 		t.Fatal(err)
 	}
-	return []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#%s{width:%dpx;height:%dpx}</style></head><body><div id="%s"></div><script id="gosx-manifest" type="application/json">%s</script><script src="/bootstrap.js"></script></body></html>`, mountID, width, height, mountID, manifest))
+	return []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#%s{width:%dpx;height:%dpx}</style></head><body><div id="%s"></div><script id="gosx-manifest" type="application/json">%s</script><script src="/bootstrap.js" data-gosx-script="bootstrap"%s></script></body></html>`, mountID, width, height, mountID, manifest, renderUpgradeChunkAttrs(t)))
+}
+
+// renderUpgradeChunkAttrs advertises every Scene3D feature chunk on the
+// bootstrap tag (data-gosx-scene3d-<kind>-url), as the docs site does, so
+// opt-in chunks such as zoom load on demand.
+func renderUpgradeChunkAttrs(t *testing.T) string {
+	files, err := filepath.Glob(filepath.Join(renderUpgradeBundles(e2eRepoRoot(t)), "bootstrap-feature-scene3d-*.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attrs strings.Builder
+	for _, file := range files {
+		name := filepath.Base(file)
+		kind := strings.TrimSuffix(strings.TrimPrefix(name, "bootstrap-feature-scene3d-"), ".js")
+		fmt.Fprintf(&attrs, ` data-gosx-scene3d-%s-url="/gosx/%s"`, kind, name)
+	}
+	return attrs.String()
 }
 
 func renderUpgradeBrowser(t *testing.T, backend string, width, height int, init string) *browserPage {
@@ -175,7 +192,10 @@ type frameCost struct {
 	GPUP95     float64 `json:"gpuP95MS"`
 	GPUSource  string  `json:"gpuSource"`
 	TAA        float64 `json:"taaHistoryValid"`
+	TAAActive  float64 `json:"taaActive"`
 	Exposure   float64 `json:"autoExposure"`
+	Tier       string  `json:"qualityTier"`
+	PostFX     string  `json:"postFX"`
 }
 
 func percentile(values []float64, p float64) float64 {
@@ -205,6 +225,12 @@ func beaconProps(t *testing.T, backend string, features bool) map[string]any {
 	if err := json.Unmarshal(data, &record); err != nil {
 		t.Fatal(err)
 	}
+	// Pin quality: the adaptive governor drops TAA below the full tier and
+	// swaps effects for FXAA under load, which would change what is measured.
+	// A 50 ms target (the maximum) keeps the governor measuring (it owns the
+	// WebGL GPU timer) without ever leaving the full tier on these GPUs.
+	record["adaptiveTargetFrameMS"] = 50
+	record["adaptivePostFX"] = false
 	// The experience descriptor (camera tour, bookmarks) is served by the docs
 	// site and changes no rendering work; this page draws the authored camera.
 	delete(record, "experienceRef")
@@ -223,8 +249,13 @@ func beaconProps(t *testing.T, backend string, features bool) map[string]any {
 			}
 		}
 	}
-	effects, _ := record["postEffects"].([]any)
-	record["postEffects"] = append(effects, map[string]any{"kind": "taa"})
+	// Post effects live in the scene record (SceneIR.PostEffects).
+	target := record
+	if _, ok := sceneRecord["postEffects"]; ok {
+		target = sceneRecord
+	}
+	effects, _ := target["postEffects"].([]any)
+	target["postEffects"] = append(effects, map[string]any{"kind": "taa"})
 	env, _ := sceneRecord["environment"].(map[string]any)
 	if env == nil {
 		env = map[string]any{}
@@ -235,7 +266,7 @@ func beaconProps(t *testing.T, backend string, features bool) map[string]any {
 }
 
 const frameCostProbe = `(() => {
-  const out = { intervals: [], cpu: [], gpu: [], gpuSource: "", taa: 0, exposure: 0 };
+  const out = { intervals: [], cpu: [], gpu: [], gpuSource: "", taa: 0, taaActive: 0, exposure: 0, tier: "", postfx: "" };
   window.__gosxFrameCost = out;
   document.addEventListener("gosx:scene3d:perf", (e) => { if (e.detail && e.detail.scope === "frame" && e.detail.gpuMS > 0) { out.gpu.push(e.detail.gpuMS); out.gpuSource = e.detail.source; } });
   let last = 0;
@@ -247,7 +278,9 @@ const frameCostProbe = `(() => {
     const sample = quality && quality.lastMeasurement;
     if (sample && String(sample.source).indexOf("webgl-timer") >= 0 && sample.rendererDurationMS > 0 && sample.atMS !== out.lastAt) { out.lastAt = sample.atMS; out.gpu.push(sample.rendererDurationMS); out.gpuSource = "webgl-timer"; }
     const stats = mount && mount.__gosxScene3DWebGPUStats;
-    if (stats) { out.taa = stats.taaHistoryValid || 0; out.exposure = stats.autoExposure || 0; }
+    if (stats) { out.taa = stats.taaHistoryValid || 0; out.taaActive = stats.taaActive || 0; out.exposure = stats.autoExposure || 0; }
+    if (quality) out.tier = String(quality.activeTier || "");
+    if (mount) out.postfx = mount.getAttribute("data-gosx-scene3d-postfx") || "";
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -256,8 +289,9 @@ const frameCostProbe = `(() => {
 })()`
 
 // TestBeaconFrameCost measures the Blackglass Coast beacon view for 8 s per
-// backend and variant. It records numbers; it fails only on page errors or a
-// renderer that never mounts.
+// backend and variant, with adaptive quality pinned. It records numbers; it
+// fails on page errors, a renderer that never mounts, or (WebGPU "features")
+// TAA or auto exposure that never runs.
 func TestBeaconFrameCost(t *testing.T) {
 	if os.Getenv("GOSX_RENDER_FRAMES") != "1" {
 		t.Skip("set GOSX_RENDER_FRAMES=1 on a GPU runner")
@@ -296,7 +330,10 @@ func TestBeaconFrameCost(t *testing.T) {
 					GPU       []float64 `json:"gpu"`
 					GPUSource string    `json:"gpuSource"`
 					TAA       float64   `json:"taa"`
+					TAAActive float64   `json:"taaActive"`
 					Exposure  float64   `json:"exposure"`
+					Tier      string    `json:"tier"`
+					PostFX    string    `json:"postfx"`
 				}
 				browser.eval(t, `window.__gosxFrameCost`, &raw)
 				mean := 0.0
@@ -305,7 +342,7 @@ func TestBeaconFrameCost(t *testing.T) {
 				}
 				cost := frameCost{Backend: backend, Variant: variant, Frames: len(raw.Intervals), IntervalMS: mean,
 					CPUP50: percentile(raw.CPU, 0.5), CPUP95: percentile(raw.CPU, 0.95), GPUP50: percentile(raw.GPU, 0.5), GPUP95: percentile(raw.GPU, 0.95),
-					GPUSource: raw.GPUSource, TAA: raw.TAA, Exposure: raw.Exposure}
+					GPUSource: raw.GPUSource, TAA: raw.TAA, TAAActive: raw.TAAActive, Exposure: raw.Exposure, Tier: raw.Tier, PostFX: raw.PostFX}
 				results = append(results, cost)
 				t.Logf("%+v", cost)
 				if out := os.Getenv("GOSX_RENDER_OUT"); out != "" {
@@ -317,6 +354,9 @@ func TestBeaconFrameCost(t *testing.T) {
 				}
 				if errors := browser.PageErrors(); len(errors) != 0 {
 					t.Fatalf("page errors: %v", errors)
+				}
+				if backend == "webgpu" && variant == "features" && (raw.TAAActive != 1 || raw.Exposure <= 0) {
+					t.Fatalf("WebGPU TAA or auto exposure did not run: %+v console=%s", cost, browser.Console())
 				}
 			})
 		}
@@ -363,8 +403,6 @@ func TestWebGPUDeviceLossFallsBackWithoutReload(t *testing.T) {
 	if !waitBackend("webgpu", 60*time.Second) {
 		t.Fatalf("never mounted on WebGPU; console=%s", browser.Console())
 	}
-	var listening bool
-	browser.eval(t, `(() => { const m = document.querySelector('[data-gosx-scene3d-mounted]'); m.addEventListener("gosx:scene3d:graphics-reset", e => window.__gosxResets.push(e.detail)); return true; })()`, &listening)
 	started := time.Now()
 	var destroyed bool
 	browser.eval(t, `(() => { const p = window.__gosx_scene3d_webgpu_probe && window.__gosx_scene3d_webgpu_probe(); if (!p || !p.device) return false; p.device.destroy(); return true; })()`, &destroyed)
@@ -378,13 +416,9 @@ func TestWebGPUDeviceLossFallsBackWithoutReload(t *testing.T) {
 	if !fellBack {
 		t.Fatalf("mount did not rebuild on WebGL; resets=%v console=%s", resets, browser.Console())
 	}
-	sawLost, sawRestored := false, false
-	for _, reset := range resets {
-		sawLost = sawLost || reset["phase"] == "lost" && reset["backend"] == "webgpu"
-		sawRestored = sawRestored || reset["phase"] == "restored" && reset["backend"] == "webgl"
-	}
-	if !sawLost || !sawRestored {
-		t.Fatalf("graphics-reset events missing the WebGPU loss or the WebGL restore: %v", resets)
+	// The init script's capture listener sees each mount event exactly once.
+	if len(resets) != 2 || resets[0]["phase"] != "lost" || resets[0]["backend"] != "webgpu" || resets[1]["phase"] != "restored" || resets[1]["backend"] != "webgl" {
+		t.Fatalf("want one WebGPU loss then one WebGL restore, got %v", resets)
 	}
 	if errors := browser.PageErrors(); len(errors) != 0 {
 		t.Fatalf("page errors: %v", errors)
