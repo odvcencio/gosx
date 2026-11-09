@@ -119,11 +119,21 @@ behind still runs every tick the server ran.
    (`book.Object("flag")`, `book.Landmark("goal")`, `book.Signal("clock")`).
 2. Call `ex.Step(&world)`. It reads the world and returns one `Command` per
    agent. It does not change the world.
-3. Move each agent with its command. With GoSX physics, feed `Command.Vel` to
-   the character controller and let collisions decide the final position.
-   (Character capsules, shape casts, layers and triggers arrive with ash's
-   PR #807; until then use `teamai.Integrate`, or set a kinematic body's
-   velocity.)
+3. Move each agent with its command. With GoSX physics, list the executor's
+   system before `physicsys.Characters`, and have the characters' input
+   function return the command as the desired horizontal velocity. teamai's
+   Y is the world's Z:
+
+   ```go
+   physicsys.Characters(func(ctx *game.Context, c *physics.Character) physics.CharacterInput {
+   	v := cmds[agentOf(c)].Vel
+   	return physics.CharacterInput{Move: physics.Vec3{X: v.X, Z: v.Y}}
+   })
+   ```
+
+   The capsule controller then slides along walls and climbs steps; read the
+   agents' next positions from `c.Position()` (X and Z). Without physics, use
+   `teamai.Integrate`.
 4. Handle `ex.Events()`: marks reached, decisions taken, interrupts, contacts,
    finished assignments. Contacts are where contests start.
 5. Put `ex.AppendState(dst)` in your simulation snapshot and call
