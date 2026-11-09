@@ -3365,6 +3365,8 @@ function loadSceneAdaptiveQualityAPI() {
   ` + capabilityDPR + sceneProps + sceneIsPlainObject + qualityLadderCore + source.slice(start, end) + `
     globalThis.adaptiveAPI = {
       createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
+      sceneObserveAdaptiveQualityRAF, sceneAdaptiveResumeSampling,
+      createSceneGraphicsRecovery, sceneWebGPULossReturnAllowed, sceneDispatchGraphicsReset, sceneGraphicsResetSwap,
       sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,
       sceneEffectivePointQualityGroup, sceneFilterPointsByQualityGroups,
       sceneQualityLadderPointBudgetScale, sceneApplyPointBudgetScale,
@@ -4849,6 +4851,22 @@ function deviceCallDelta(before, after) {
 
 // Retry the same frame after builtin pipeline compilation settles. Authored
 // shader fallback/recovery remains visible to tests after the first submission.
+// shadowUniformState rebuilds the WebGPU ShadowUniforms buffer (656 bytes)
+// from every queue.writeBuffer to it, because a frame uploads only the span
+// that changed (wgpuPackShadowUniforms).
+function shadowUniformState(fake) {
+  const writes = fake.state.writeBufferCalls.filter((call) => call.buffer && call.buffer.size === 656 && call.data);
+  assert.ok(writes.length > 0, "expected a ShadowUniforms upload");
+  const target = writes.at(-1).buffer;
+  const bytes = new Uint8Array(656);
+  for (const call of writes) {
+    if (call.buffer !== target) continue;
+    const data = call.data;
+    bytes.set(ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data), call.offset || 0);
+  }
+  return { f: new Float32Array(bytes.buffer), i32: new Int32Array(bytes.buffer) };
+}
+
 async function renderPreparedFrame(renderer, ...args) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const result = renderer.render(...args);
@@ -5980,6 +5998,7 @@ module.exports = {
   deviceCallDelta,
   renderWaterPerfShapeFrames,
   renderPreparedFrame,
+  shadowUniformState,
   waterComputeKernelPipeline,
   assertWaterComputeKernelBindings,
   loadBoardLabels,

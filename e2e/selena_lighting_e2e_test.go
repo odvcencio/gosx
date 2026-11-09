@@ -156,7 +156,7 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 				reading.Shadow = pixel8(img, b.Min.X+b.Dx()*195/320, b.Min.Y+b.Dy()/2)
 				reading.Lit = pixel8(img, b.Min.X+b.Dx()*299/320, b.Min.Y+b.Dy()/2)
 				reading.Corner = pixel8(img, b.Max.X-3, b.Min.Y+2)
-				if selenaLightingReadingOK(reading, backend == "webgl") {
+				if selenaLightingReadingOK(reading) {
 					ok = true
 					break
 				}
@@ -184,17 +184,14 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 // the shadowed center is dark red and the lit side is bright red; green shows
 // two lights; blue shows fog thinning toward the far corner.
 //
-// requireShadow is false on WebGPU: on 2026-11-08 the WebGPU renderer drew no
-// directional shadow in this scene for its own standard material either (the
-// same scene with a standard-material ground showed none on an RTX 5070 Ti),
-// so the probe can only confirm that WebGPU binds the shadow inputs without
-// error. WebGL's standard-material shadow and the probe's shadow matched pixel
-// for pixel. Require the WebGPU shadow once the renderer draws it.
-func selenaLightingReadingOK(r selenaLightingReading, requireShadow bool) bool {
+// Both backends must draw the shadow. Until the light-view fix in
+// sceneShadowLightSpaceMatrix and the WebGPU cascaded shadow maps, WebGPU drew
+// no directional shadow here, even for its own standard material.
+func selenaLightingReadingOK(r selenaLightingReading) bool {
 	if r.Fallback != "0" {
 		return false
 	}
-	shadowed := r.Shadow[0] < 60 || !requireShadow
+	shadowed := r.Shadow[0] < 60
 	lit := r.Lit[0] > 150
 	lights := r.Lit[1] > 40 && r.Lit[1] < 175 && r.Shadow[1] > 40 && r.Shadow[1] < 175
 	fog := r.Shadow[2] > 110 && r.Shadow[2] < 240 && r.Corner[2] < r.Shadow[2]-12

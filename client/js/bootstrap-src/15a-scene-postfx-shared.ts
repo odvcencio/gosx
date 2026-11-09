@@ -231,12 +231,16 @@ function sceneRenderTruthTimeAdvancing(mount, seconds) {
 // populates these far more richly), then the user agent. Reported honestly as
 // "dawn" / "wgpu" / "unknown" so a consumer can tell a guess from a fact via
 // the accompanying engine + adapter strings.
+// Headless Chromium reports "HeadlessChrome/<ver>" with no word boundary
+// before "Chrome", and Chrome on iOS reports "CriOS/" over WebKit. Both tokens
+// are matched explicitly: HeadlessChrome is Blink, CriOS stays WebKit.
 function sceneRenderTruthBrowserEngine() {
   if (typeof navigator === "undefined" || !navigator) return "";
   var ua = String(navigator.userAgent || "");
   if (/\bFirefox\/|\bGecko\//.test(ua) && ua.indexOf("like Gecko") < 0) return "gecko";
-  if (/\bEdg\//.test(ua)) return "blink-edge";
-  if (/\bChrome\/|\bChromium\//.test(ua)) return "blink";
+  if (/\bCriOS\/|\bFxiOS\/|\bEdgiOS\//.test(ua)) return "webkit";
+  if (/\bEdg\/|\bHeadlessEdg\//.test(ua)) return "blink-edge";
+  if (/\b(?:Headless)?Chrome\/|\bChromium\//.test(ua)) return "blink";
   if (/\bSafari\//.test(ua)) return "webkit";
   return "";
 }
@@ -595,4 +599,19 @@ function sceneSpecularBloomEffects(bundle: any, effects: any[], backend: string,
   }
   if (mount && mount.setAttribute) mount.setAttribute("data-gosx-scene3d-specular-bloom", reason || "supported");
   return reason ? effects.filter(effect => !(effect.kind === "bloom" && effect.source === "specular")) : effects;
+}
+
+// sceneNormalizeAutoExposure returns the auto-exposure settings both renderers
+// read, with defaults filled in, or null when the scene did not ask for it.
+// Exposure values are linear multipliers on the HDR scene before tone mapping.
+function sceneNormalizeAutoExposure(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  var positive = function(value, fallback) { var n = Number(value); return isFinite(n) && n > 0 ? n : fallback; };
+  var minimum = positive(raw.minExposure, 0.1), maximum = positive(raw.maxExposure, 8);
+  var compensation = Number(raw.compensation);
+  return {
+    minExposure: Math.min(minimum, maximum), maxExposure: Math.max(minimum, maximum),
+    key: positive(raw.key, 0.18), speedUp: positive(raw.speedUp, 3), speedDown: positive(raw.speedDown, 1),
+    compensation: isFinite(compensation) ? Math.max(-8, Math.min(8, compensation)) : 0,
+  };
 }
