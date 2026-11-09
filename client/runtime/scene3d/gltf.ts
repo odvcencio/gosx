@@ -2490,8 +2490,7 @@
   // extensions.KHR_lights_punctual.lights; a node references one through
   // extensions.KHR_lights_punctual.light. A glTF light shines down its node's
   // -Z axis. The scene light takes world position and direction from the node
-  // world matrix. Intensity passes through as authored (lux for directional,
-  // candela for point and spot); the scene clamps it to its 0..6 range.
+  // world matrix. Intensity converts from lux or candela (see below).
   function gltfLightHex(color) {
     var rgb = Array.isArray(color) && color.length >= 3 ? color : [1, 1, 1];
     var out = "#";
@@ -2520,7 +2519,16 @@
     var dir = gltfTransformDirection(worldTransform, 0, 0, -1);
     var len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z) || 1;
     var pos = gltfTransformPoint(worldTransform, 0, 0, 0);
-    var intensity = def.intensity != null && isFinite(Number(def.intensity)) ? Number(def.intensity) : 1;
+    // glTF intensity is photometric: lux (lm/m2) for directional, candela
+    // (lm/sr) for point and spot. Dividing by 683 lm/W gives W/m2 and W/sr, and
+    // a point light of I W/sr lights a surface 1 m away like a sun of I W/m2.
+    // The scene intensity scale is that W/m2 value. The default intensity is 1
+    // in glTF, so an unset intensity stays at 1/683 of a unit, as authored.
+    // extras.gosx.intensityScale multiplies the result for lights that read dark.
+    var rawIntensity = def.intensity != null && isFinite(Number(def.intensity)) ? Number(def.intensity) : 1;
+    var extra = def.extras && def.extras.gosx;
+    var scale = extra && isFinite(Number(extra.intensityScale)) && Number(extra.intensityScale) > 0 ? Number(extra.intensityScale) : 1;
+    var intensity = rawIntensity / 683 * scale;
     var light = {
       id: "gltf-light-" + (def.name || ref.light) + "-n" + nodeIndex,
       kind: type,

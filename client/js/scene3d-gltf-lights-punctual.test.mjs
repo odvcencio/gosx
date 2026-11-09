@@ -44,9 +44,9 @@ function lightDoc() {
     extensions: {
       KHR_lights_punctual: {
         lights: [
-          { name: "sun", type: "directional", color: [1, 0.5, 0], intensity: 3 },
-          { name: "lamp", type: "point", intensity: 2, range: 12 },
-          { name: "beam", type: "spot", intensity: 4, spot: { innerConeAngle: 0.2, outerConeAngle: 0.8 } },
+          { name: "sun", type: "directional", color: [1, 0.5, 0], intensity: 2049 },
+          { name: "lamp", type: "point", intensity: 683, range: 12, extras: { gosx: { intensityScale: 2 } } },
+          { name: "beam", type: "spot", intensity: 1366, spot: { innerConeAngle: 0.2, outerConeAngle: 0.8 } },
           { name: "open", type: "point" },
         ],
       },
@@ -81,18 +81,19 @@ test("KHR_lights_punctual imports directional, point and spot lights", () => {
   const sun = byName.sun;
   assert.equal(sun.kind, "directional");
   assert.equal(sun.color, "#ff8000");
-  assert.equal(sun.intensity, 3);
+  near(sun.intensity, 3); // 2049 lux / 683 lm per W
   near(sun.directionX, 0); near(sun.directionY, -1); near(sun.directionZ, 0);
 
   const lamp = byName.lamp;
   assert.equal(lamp.kind, "point");
   assert.deepEqual([lamp.x, lamp.y, lamp.z], [1, 2, 3]);
   assert.equal(lamp.range, 12);
+  near(lamp.intensity, 2); // 683 cd -> 1, times intensityScale 2
   assert.equal(lamp.decay, 2);
 
   const open = byName.open;
   assert.equal(open.range, 0, "absent range means unbounded");
-  assert.equal(open.intensity, 1);
+  near(open.intensity, 1 / 683); // glTF's default intensity of 1
 });
 
 test("KHR_lights_punctual spot cone maps to angle and penumbra and follows the parent transform", () => {
@@ -100,6 +101,7 @@ test("KHR_lights_punctual spot cone maps to angle and penumbra and follows the p
   assert.deepEqual([beam.x, beam.y, beam.z], [0, 5, 2]);
   near(beam.directionX, 0); near(beam.directionY, 0); near(beam.directionZ, -1);
   near(beam.angle, 0.8);
+  near(beam.intensity, 2);
   near(beam.penumbra, 1 - 0.2 / 0.8);
 });
 

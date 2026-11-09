@@ -202,11 +202,18 @@ skinned vertex. Instanced crowd batches still cap at 64 joints.
 
 `KHR_lights_punctual` lights import as scene lights: directional, point (with
 `range`), and spot (with `innerConeAngle` and `outerConeAngle`). A light shines
-down its node's -Z axis, so aim lights in Blender and export. Intensity is
-passed through as authored (lux for directional, candela for point and spot)
-and the scene clamps it to its 0 to 6 range. Blender exports sun strength and
-point power in physical units, so expect to lower the Blender values or
-re-tune intensity on the imported light.
+down its node's -Z axis, so aim lights in Blender and export.
+
+Intensity converts from glTF's photometric units. The scene intensity is
+`value / 683`, where 683 is the luminous efficacy in lm/W: lux becomes W/m2 for
+a directional light, and candela becomes W/sr for a point or spot light. A point
+light of I W/sr lights a surface 1 m away like a sun of I W/m2, so one scale
+serves all three kinds. A sun exported as 2049 lux loads as intensity 3. The
+scene clamps intensity to 0 to 6. If a light reads dark or bright, set
+`extras.gosx.intensityScale` on the light in Blender (Custom Properties, a
+`gosx` object with `intensityScale`) and the loader multiplies the converted
+value by it. The mapping is a documented convention. I did not verify it
+against the unit conversions Blender's exporter applies in each lighting mode.
 
 ### Compression
 
