@@ -133,7 +133,9 @@ func init() {
 }
 `)
 	tidyModule(t, dir)
-	if err := RunExport(dir); err != nil {
+	// A hybrid production build keeps session-creating pages dynamic. (gosx
+	// export fails on them instead; see TestRunExportFailsOnPagesItCannotShip.)
+	if err := RunBuildWithOptions(dir, BuildOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	index := readFile(t, filepath.Join(dir, "dist", "static", "index.html"))

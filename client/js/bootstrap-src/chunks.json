@@ -53,11 +53,14 @@
         "../runtime/scene3d/ocean-waves.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
         "bootstrap-src/16c2-scene-selena-lighting.ts",
+        "bootstrap-src/16c3-scene-data-texture-shims.ts",
         "bootstrap-src/16c1-scene-detail.ts",
         "bootstrap-src/16d-scene-atmosphere.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl-brdf.ts",
         "../runtime/scene3d/webgl-transmission.ts",
         "../runtime/scene3d/webgl-detail.ts",
+        "../runtime/scene3d/webgl-selena-surface.ts",
         "../runtime/scene3d/webgl-points.ts",
         "../runtime/scene3d/webgl.ts",
         "../runtime/scene3d/webgl-ocean.ts",
@@ -73,8 +76,10 @@
         "../runtime/scene3d/webgl-soft-particles.ts",
         "../runtime/scene3d/webgl-exposure.ts",
         "bootstrap-src/16z-scene-webgpu-probe.ts",
+        "../runtime/scene3d/webgpu-brdf.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
+        "../runtime/scene3d/webgpu-selena-surface.ts",
         "../runtime/scene3d/pipeline-recovery.ts",
         "../runtime/scene3d/webgpu-selena-textures.ts",
         "../runtime/scene3d/webgpu-cutaway.ts",
@@ -99,6 +104,8 @@
         "bootstrap-src/18-scene-canvas.ts",
         "bootstrap-src/19a-scene-ktx2.ts",
         "../runtime/scene3d/gltf.ts",
+        "../runtime/scene3d/asset-ext.ts",
+        "../runtime/scene3d/asset-meshopt.ts",
         "../runtime/scene3d/animation.ts",
         "bootstrap-src/19b-scene-control-forms.ts",
         "bootstrap-src/16d-scene-webgl-bridge.ts",
@@ -346,9 +353,12 @@
         "bootstrap-src/26j-feature-scene3d-webgl-prefix.ts",
         "bootstrap-src/15a1-scene-texture-budget.ts",
         "bootstrap-src/16b-scene-hdr.ts",
+        "bootstrap-src/16c3-scene-data-texture-shims.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl-brdf.ts",
         "../runtime/scene3d/webgl-transmission.ts",
         "../runtime/scene3d/webgl-detail.ts",
+        "../runtime/scene3d/webgl-selena-surface.ts",
         "../runtime/scene3d/webgl-points.ts",
         "../runtime/scene3d/webgl.ts",
         "../runtime/scene3d/webgl-ocean.ts",
@@ -375,6 +385,7 @@
     {
       "name": "bootstrap-feature-scene3d-command.js",
       "sources": [
+        "../runtime/scene3d/pose-interp.ts",
         "../runtime/scene3d/command-runtime.ts"
       ]
     },
@@ -396,8 +407,11 @@
       "sources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
+        "bootstrap-src/16c3-scene-data-texture-shims.ts",
+        "../runtime/scene3d/webgpu-brdf.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
+        "../runtime/scene3d/webgpu-selena-surface.ts",
         "../runtime/scene3d/pipeline-recovery.ts",
         "../runtime/scene3d/webgpu-selena-textures.ts",
         "../runtime/scene3d/webgpu-cutaway.ts",
@@ -476,6 +490,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-data-texture.js",
+      "sources": [
+        "../runtime/scene3d/data-texture.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-warmup.js",
       "sources": [
         "../runtime/scene3d/pipeline-warmup.ts"
@@ -491,6 +511,18 @@
       "name": "bootstrap-feature-scene3d-particle-burst.js",
       "sources": [
         "../runtime/scene3d/particle-burst.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-depthfx.js",
+      "sources": [
+        "../runtime/scene3d/depthfx.ts",
+        "../runtime/scene3d/decal-data.ts",
+        "../runtime/scene3d/decal-wgpu.ts",
+        "../runtime/scene3d/decal-gl.ts",
+        "../runtime/scene3d/motion-blur.ts",
+        "../runtime/scene3d/motion-blur-wgpu.ts",
+        "../runtime/scene3d/motion-blur-gl.ts"
       ]
     },
     {
@@ -532,10 +564,29 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-crowd.js",
+      "sources": [
+        "../runtime/scene3d/crowd-layout.ts",
+        "../runtime/scene3d/crowd-rig.ts",
+        "../runtime/scene3d/crowd-state.ts",
+        "../runtime/scene3d/crowd-glsl.ts",
+        "../runtime/scene3d/crowd-wgsl.ts",
+        "../runtime/scene3d/crowd.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-zoom.js",
       "sources": [
         "../runtime/scene3d/mount-pan.ts",
         "../runtime/scene3d/mount-zoom.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-terrain.js",
+      "sources": [
+        "../runtime/scene3d/terrain.ts",
+        "../runtime/scene3d/terrain-wgsl.ts",
+        "../runtime/scene3d/terrain-glsl.ts"
       ]
     },
     {
@@ -561,6 +612,8 @@
         "bootstrap-src/26f-feature-scene3d-gltf-prefix.ts",
         "bootstrap-src/19a-scene-ktx2.ts",
         "../runtime/scene3d/gltf.ts",
+        "../runtime/scene3d/asset-ext.ts",
+        "../runtime/scene3d/asset-meshopt.ts",
         "bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"
       ]
     },

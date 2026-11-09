@@ -496,6 +496,10 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		"__gosx_scene3d_vessel_external", "__gosx_scene3d_vessel_pose", "__gosx_scene3d_vessel_decks", "__gosx_scene3d_vessel_cutaway", "__gosx_scene3d_vessel_cutaway_api",
 		// Opt-in Selena scene lighting (lights, shadow cascades, fog) in the content-gated selena-lighting chunk.
 		"__gosx_scene3d_selena_lighting_api",
+		// Host-written Selena data textures in the content-gated data-texture chunk.
+		"__gosx_scene3d_data_texture_api",
+		// Timed pose frame interpolation (a simulation in a Web Worker) in the optional command chunk.
+		"__gosx_scene3d_pose_interpolation",
 		// Opt-in spectral ocean authorities in the lazy ocean-fft chunk (and the vessel chunk's hull pose for the wake).
 		"__gosx_elio_graph",                   // The generic Elio graph runner shared by the WebGPU and WebGL2 ocean passes.
 		"__gosx_scene3d_elio_ocean",           // The generated ocean kernels (Elio v0.6.0).
@@ -505,7 +509,13 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		"__gosx_scene3d_ocean_fft_surface",    // WGSL surface patches.
 		"__gosx_scene3d_ocean_fft_surface_gl", // GLSL surface patches.
 		// Opt-in animation graph chunk (motion/animgraph frames): introspection API and load marker.
-		"__gosx_scene3d_animation_graph_api", "__gosx_scene3d_animation_graph_loaded"))
+		"__gosx_scene3d_animation_graph_api", "__gosx_scene3d_animation_graph_loaded",
+		"__gosx_scene3d_terrain_api", // Opt-in terrain, wind and scatter-band API in the lazy terrain chunk.
+		// Optional glTF asset features in the glTF chunk: the second UV stream and meshopt decoding.
+		"__gosx_scene3d_asset_ext",
+		// Opt-in stadium and arena crowds (Environment.Crowds) in the lazy crowd chunk.
+		"__gosx_scene3d_crowd_api",
+		"__gosx_scene3d_depthfx_api")) // Decals and motion blur, in the on-demand depthfx chunk.
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}

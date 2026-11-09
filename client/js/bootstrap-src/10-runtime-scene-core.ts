@@ -608,6 +608,16 @@
     return typed;
   }
 
+  // Material fields that name the UV set an occlusion or emissive map reads.
+  // Only the second set (1) is carried; the default stays absent so materials
+  // that never use it keep their exact shape.
+  function sceneMaterialUVSets(occlusion, emissive) {
+    const out = {};
+    if (occlusion === 1) out.occlusionTexCoord = 1;
+    if (emissive === 1) out.emissiveTexCoord = 1;
+    return out;
+  }
+
   function sceneNormalizeMeshFloatArray(value, tupleSize) {
     const typed = sceneTypedFloatArray(value);
     const safeTupleSize = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
@@ -730,6 +740,8 @@
       positions: count * 3 === positions.length ? positions : positions.slice(0, count * 3),
       normals: sceneMeshSnapshotAttribute(normals, count, [0, 1, 0], snapshot),
       uvs: sceneMeshSnapshotAttribute(uvs, count, [0, 0], snapshot),
+      // Optional second UV set (TEXCOORD_1) for occlusion and emissive maps.
+      uvs1: item.uvs1 && item.uvs1.length >= count * 2 ? sceneNormalizeMeshFloatArray(item.uvs1, 2).slice(0, count * 2) : null,
       tangents: sceneMeshSnapshotAttribute(tangents, count, [1, 0, 0, 1], snapshot),
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
@@ -926,6 +938,7 @@
       normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
       normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(item, "normalUVScale"), current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(item, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(item, "emissiveTexCoord") ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -1678,6 +1691,7 @@
         : (Object.prototype.hasOwnProperty.call(current, "occlusionStrength")
           ? clamp01(sceneNumber(current.occlusionStrength, 1))
           : undefined),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(raw, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(raw, "emissiveTexCoord") ?? current.emissiveTexCoord),
       blendMode: normalizeSceneMaterialBlendMode(
         sceneObjectMaterialHasValue(raw, "blendMode") ? sceneObjectMaterialValue(raw, "blendMode") : current.blendMode,
         materialKind || current.materialKind || "flat",
@@ -2262,6 +2276,7 @@
       normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
       normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(item, "normalUVScale"), current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(item, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(item, "emissiveTexCoord") ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -2309,6 +2324,8 @@
         : (Object.prototype.hasOwnProperty.call(current, "pickable") ? sceneBool(current.pickable, true) : undefined),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
+      // Scatter (scene/scatter.go): the distance band, its cell centre and the wind sway; terrain.ts selects the bands.
+      ...(({ lodGroup, lodLevel, lodMinDistance, lodMaxDistance, x, y, z, wind }) => ({ lodGroup, lodLevel, lodMinDistance, lodMaxDistance, x, y, z, wind }))(item.lodGroup || item.wind ? item : current),
       ...lifecycle,
     };
     // Carry the cached Float32Array view of transforms forward when the
@@ -2724,6 +2741,7 @@
       normalScale: sceneFallbackNumber(item, current, "normalScale", 1),
       normalUVScale: sceneNormalUVScale(item.normalUVScale, current.normalUVScale),
       occlusionStrength: clamp01(sceneFallbackNumber(item, current, "occlusionStrength", 1)),
+      ...sceneMaterialUVSets(item.occlusionTexCoord ?? current.occlusionTexCoord, item.emissiveTexCoord ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -2827,6 +2845,8 @@
     fxaa: "fxaa",
     godrays: "godRays",
     grain: "grain",
+    decals: "decals",
+    motionblur: "motionBlur",
     taa: "taa",
     custompost: "customPost",
     "custom-post": "customPost",
@@ -3181,6 +3201,8 @@
       if (src && maxX > minX && maxZ > minZ && maxHeight > minHeight) {
         const encoding = typeof source.encoding === "string" && source.encoding.trim().toLowerCase() === "signed-sqrt" ? "signed-sqrt" : "linear";
         bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
+        // The baked shoreline (scene.OceanShoreline) also fills G with the signed waterline distance.
+        if (source.shoreDistance > 0) Object.assign(bathymetry, { shoreDistance: source.shoreDistance, shoreFoam: source.shoreFoam, shoreTurbidity: source.shoreTurbidity });
       }
     }
     const out = {
@@ -3213,6 +3235,17 @@
     return out;
   }
 
+  // Environment.Crowds (scene/crowd.go) pass through unchanged; the crowd chunk
+  // (crowd*.ts) expands and draws them, and is fetched the first time a scene
+  // declares one. Until it arrives the renderers draw no crowd.
+  function sceneEnvironmentCrowds(list) {
+    if (!Array.isArray(list) || list.length === 0) return null;
+    if (typeof window !== "undefined" && !window.__gosx_scene3d_crowd_api && typeof ensureSceneGatedFeatureLoaded === "function") {
+      ensureSceneGatedFeatureLoaded("crowd", "gosxScene3dCrowdUrl", "/gosx/bootstrap-feature-scene3d-crowd.js").catch(function() {});
+    }
+    return list;
+  }
+
   function sceneEnvironmentText(source, key) {
     return typeof source[key] === "string" ? source[key] : "";
   }
@@ -3235,7 +3268,7 @@
       envMap: text("envMap"),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(has("sky") ? source.sky : base.sky),
-      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null),
+      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null), terrain: has("terrain") ? source.terrain || null : (base.terrain || null), wind: has("wind") ? source.wind || null : (base.wind || null),
       haze: sceneIsPlainObject(haze) ? sceneHaze(haze) : null,
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
@@ -3244,6 +3277,7 @@
       toneMapping: text("toneMapping"),
       fogColor: text("fogColor"),
       fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),
+      crowds: sceneEnvironmentCrowds(has("crowds") ? source.crowds : base.crowds),
       ...lifecycle,
       specified: false,
     };
@@ -3286,7 +3320,7 @@
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
-        ocean: environment.ocean || null,
+        ocean: environment.ocean || null, terrain: environment.terrain || null, wind: environment.wind || null,
         haze: environment.haze || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
@@ -3295,6 +3329,7 @@
         toneMapping: sceneEnvironmentText(environment, "toneMapping"),
         fogColor: sceneEnvironmentText(environment, "fogColor"),
         fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
+        crowds: environment.crowds || null,
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
@@ -5523,7 +5558,7 @@
     for (const entry of html || []) {
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
-    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy);
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, (window.__gosx_scene3d_terrain_api?.bands(instancedMeshes, renderCamera) || instancedMeshes), objects, timeSeconds, hierarchy);
     bundle.positions = sceneRetainTypedArray(retention, "positions", bundle.positions, Float32Array);
     bundle.colors = sceneRetainTypedArray(retention, "colors", bundle.colors, Float32Array);
     bundle.vertexCount = bundle.positions.length / 2;
@@ -7348,7 +7383,8 @@
   }
 
   function sceneMeshCanCacheWorldBakedGeometry(bundle, object, material, vertices, emitWireSegments, timeSeconds) {
-    return sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) &&
+    // A second UV stream is baked per object below, outside the geometry cache.
+    return !vertices.uvs1 && sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) &&
       sceneMaterialUsesAuthoredMeshShader(material) &&
       !sceneMeshObjectSupportsRetainedBackend(object, material, timeSeconds);
   }
@@ -7566,6 +7602,10 @@
       (!vertices.attributes || Object.keys(vertices.attributes).length === 0);
     if (!cachedView) sceneReserveWorldMeshAttributes(bundle, bakedVertexCount);
     if (!cacheEligible) sceneDropWorldBakedGeometryCache(object);
+    // Occlusion and emissive maps on TEXCOORD_1 read this per-object stream. It
+    // follows the same corner order as the world stream: index dereference and
+    // the mirrored-winding swap. The renderers bind it with the object.
+    const uvs1Out = !cachedGeometry && vertices.uvs1 ? new Float32Array(bakedVertexCount * 2) : null;
     if (cachedGeometry) {
       // Cached attributes already have the final Float32 representation.
       // Backends without direct world views receive their own aggregate copy.
@@ -7657,6 +7697,13 @@
         sceneMeshVertexUVInto(uvs[0], vertices, source0);
         sceneMeshVertexUVInto(uvs[1], vertices, source1);
         sceneMeshVertexUVInto(uvs[2], vertices, source2);
+        if (uvs1Out) {
+          const u1 = vertices.uvs1;
+          const o1 = meshVertexCount * 2;
+          uvs1Out[o1] = u1[source0 * 2]; uvs1Out[o1 + 1] = u1[source0 * 2 + 1];
+          uvs1Out[o1 + 2] = u1[source1 * 2]; uvs1Out[o1 + 3] = u1[source1 * 2 + 1];
+          uvs1Out[o1 + 4] = u1[source2 * 2]; uvs1Out[o1 + 5] = u1[source2 * 2 + 1];
+        }
 
         for (let index = 0; index < 3; index += 1) {
           const point = points[index];
@@ -7752,6 +7799,7 @@
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,
     });
+    if (uvs1Out) meshRecord.uvs1 = meshVertexCount * 2 === uvs1Out.length ? uvs1Out : uvs1Out.subarray(0, meshVertexCount * 2);
     if (cachedView) {
       // These vertices already include the authored transform, index expansion
       // and mirrored winding. Use the ordinary direct draw contract with an

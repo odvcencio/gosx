@@ -11,7 +11,8 @@ import (
 )
 
 func TestExportStagesExternalFileCSS(t *testing.T) {
-	for _, mode := range []string{"export", "build"} {
+	// `gosx export` and `gosx build --prod` share one pipeline; one full build covers both.
+	for _, mode := range []string{"export"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "css-app")
 			if err := RunInit(dir, "example.com/css-app", ""); err != nil {

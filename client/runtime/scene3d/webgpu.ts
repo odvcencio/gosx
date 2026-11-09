@@ -1731,7 +1731,7 @@
   ].join("\n");
 
   var WGSL_PBR_INSTANCED_VERTEX = [
-    WGSL_FRAME_STRUCTS,
+    WGSL_FRAME_STRUCTS, WGSL_MATERIAL_STRUCT,
     WGSL_AFFINE_NORMAL,
     "",
     "struct VertexInput {",
@@ -1756,12 +1756,12 @@
     "    @location(5) @interpolate(flat) instanceColor: vec4f,",
     "};",
     "",
-    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;", "@group(1) @binding(0) var<uniform> material: MaterialUniforms;", "fn gosxWindSway(m: mat4x4f, p: vec3f) -> vec4f { let w = m * vec4f(p, 1.0); let s = material.modelMatrix[2]; if (s.x <= 0.0) { return w; } let a = material.modelMatrix[0]; let b = material.modelMatrix[1]; let o = m[3].xz; let ph = (dot(o, a.xy) - b.z * a.w) * 6.2831853 / b.y + 0.35 * sin(dot(o, vec2f(a.y, -a.x)) * 6.2831853 / (b.y * 1.7)); let k = clamp(p.y / s.y, 0.0, 1.0); let f = s.x * a.z * 0.1 * (1.0 + b.x * sin(ph)) * (0.75 + 0.25 * sin(6.2831853 * b.w * a.w + o.x * 0.37 + o.y * 0.53)) * k * k * s.y * length(m[1].xyz); return vec4f(w.x + a.x * f, w.y - 0.3 * abs(f) * k, w.z + a.y * f, 1.0); }",
     "",
     "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    var out: VertexOutput;",
     "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-    "    let world = model * vec4f(in.position, 1.0);",
+    "    let world = gosxWindSway(model, in.position);",
     "    out.worldPos = world.xyz;",
     "    let an = gosxAffineNormal(model, in.normal);",
     "    out.normal = an.xyz;",
@@ -1865,41 +1865,6 @@
     // Cascaded shadow sampling (webgpu-shadows module).
     WGSL_SHADOW_CASCADE_FNS,
     "",
-    // GGX/Trowbridge-Reitz normal distribution function.
-    "fn distributionGGX(N: vec3f, H: vec3f, roughness: f32) -> f32 {",
-    "    let a = roughness * roughness;",
-    "    let a2 = a * a;",
-    "    let NdotH = max(dot(N, H), 0.0);",
-    "    let NdotH2 = NdotH * NdotH;",
-    "    let denom = NdotH2 * (a2 - 1.0) + 1.0;",
-    "    return a2 / max(PI * denom * denom, 0.0000001);",
-    "}",
-    "",
-    // Smith geometry function (GGX variant) -- single direction.
-    "fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {",
-    "    let r = roughness + 1.0;",
-    "    let k = (r * r) / 8.0;",
-    "    return NdotV / (NdotV * (1.0 - k) + k);",
-    "}",
-    "",
-    // Smith geometry function -- combined for view and light directions.
-    "fn geometrySmith(N: vec3f, V: vec3f, L: vec3f, roughness: f32) -> f32 {",
-    "    let NdotV = max(dot(N, V), 0.0);",
-    "    let NdotL = max(dot(N, L), 0.0);",
-    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
-    "}",
-    "",
-    // Schlick fresnel approximation. F90 is the authored specular intensity:
-    // the grazing reflectance the KHR specular extension scales, so an
-    // intensity below 1 dims the whole lobe, not just the F0 floor.
-    "fn fresnelSchlick(cosTheta: f32, F0: vec3f, F90: f32) -> vec3f {",
-    "    return F0 + (vec3f(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
-    "fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3f, F90: f32, roughness: f32) -> vec3f {",
-    "    return F0 + (max(vec3f(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
     "fn rotateEnvY(dir: vec3f, radians: f32) -> vec3f {",
     "    let c = cos(radians);",
     "    let s = sin(radians);",
@@ -1935,133 +1900,13 @@
     "    return clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0);",
     "}",
     "",
-    // -- Rect-area light: polygon form factor --------------------------------
-    //
-    // The next three functions reproduce the diffuse half of three.js
-    // RE_Direct_RectArea_Physical. three.js evaluates the diffuse term with
-    // LTC_Evaluate and an IDENTITY matrix, which reduces to the analytic polygon
-    // form factor and needs no lookup table. The diffuse response of a
-    // RectAreaLight is therefore exact here, not an approximation.
-    //
-    // The specular half of three.js reads two fitted 64x64 LTC tables. This
-    // renderer uploads no such tables, so rectAreaLightRadiance approximates
-    // specular with a representative point. See the rect-area-specular cell in
-    // scene/capability/capability.go for the recorded gap.
-
-    // Edge integral of the polygon form factor.
-    "fn ltcEdgeVectorFormFactor(v1: vec3f, v2: vec3f) -> vec3f {",
-    "    let x = dot(v1, v2);",
-    "    let y = abs(x);",
-    "    let a = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;",
-    "    let b = 3.4175940 + (4.1616724 + y) * y;",
-    "    let v = a / b;",
-    "    var thetaSinTheta = 0.5 * inverseSqrt(max(1.0 - x * x, 0.0000001)) - v;",
-    "    if (x > 0.0) {",
-    "        thetaSinTheta = v;",
-    "    }",
-    "    return cross(v1, v2) * thetaSinTheta;",
-    "}",
-    "",
-    // Clipped sphere form factor of the accumulated edge vector.
-    "fn ltcClippedSphereFormFactor(f: vec3f) -> f32 {",
-    "    let l = length(f);",
-    "    return max((l * l + f.z) / (l + 1.0), 0.0);",
-    "}",
-    "",
-    // Diffuse form factor of a rectangle at a shaded point. Returns 0 when the
-    // point sits behind the emitter, so a rect-area light only lights the side
-    // its direction points at.
-    //
-    // The tangent basis: with the identity matrix the form factor depends only
-    // on N, so any basis around N gives the same answer. Pick a stable one.
-    "fn rectAreaFormFactor(N: vec3f, P: vec3f, halfWidth: vec3f, halfHeight: vec3f, center: vec3f) -> f32 {",
-    "    let rect0 = center + halfWidth - halfHeight;",
-    "    let rect1 = center - halfWidth - halfHeight;",
-    "    let rect2 = center - halfWidth + halfHeight;",
-    "    let rect3 = center + halfWidth + halfHeight;",
-    "    let lightNormal = cross(rect1 - rect0, rect3 - rect0);",
-    "    if (dot(lightNormal, P - rect0) < 0.0) {",
-    "        return 0.0;",
-    "    }",
-    "    var helper = vec3f(0.0, 0.0, 1.0);",
-    "    if (abs(N.z) > 0.999) {",
-    "        helper = vec3f(1.0, 0.0, 0.0);",
-    "    }",
-    "    let T1 = normalize(cross(helper, N));",
-    "    let T2 = cross(N, T1);",
-    "    let basis = transpose(mat3x3f(T1, T2, N));",
-    "    let c0 = normalize(basis * (rect0 - P));",
-    "    let c1 = normalize(basis * (rect1 - P));",
-    "    let c2 = normalize(basis * (rect2 - P));",
-    "    let c3 = normalize(basis * (rect3 - P));",
-    "    var edges = ltcEdgeVectorFormFactor(c0, c1);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c1, c2);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c2, c3);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c3, c0);",
-    "    return ltcClippedSphereFormFactor(edges);",
-    "}",
-    "",
-    // Closest point on the rectangle to the mirror direction. This is the
-    // representative-point stand-in for the LTC specular table.
-    "fn rectAreaRepresentativePoint(P: vec3f, N: vec3f, V: vec3f, center: vec3f, halfWidth: vec3f, halfHeight: vec3f, planeNormal: vec3f) -> vec3f {",
-    "    let R = reflect(-V, N);",
-    "    var hit = center;",
-    "    let denom = dot(planeNormal, R);",
-    "    if (abs(denom) > 0.00001) {",
-    "        let t = dot(planeNormal, center - P) / denom;",
-    "        if (t > 0.0) {",
-    "            hit = P + R * t;",
-    "        }",
-    "    }",
-    "    let wLen = max(length(halfWidth), 0.00001);",
-    "    let hLen = max(length(halfHeight), 0.00001);",
-    "    let wDir = halfWidth / wLen;",
-    "    let hDir = halfHeight / hLen;",
-    "    let offset = hit - center;",
-    "    let u = clamp(dot(offset, wDir), -wLen, wLen);",
-    "    let v = clamp(dot(offset, hDir), -hLen, hLen);",
-    "    return center + wDir * u + hDir * v;",
-    "}",
-    "",
-    // Full rect-area contribution: exact diffuse form factor plus a
-    // representative-point specular lobe.
-    //
-    // three.js multiplies the diffuse term by diffuseColor, which already folds
-    // in metalness. The form factor carries the cosine and the solid angle, so
-    // there is no separate NdotL or 1/PI in the diffuse line.
-    "fn rectAreaLightRadiance(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, F90: f32, NoV: f32) -> vec3f {",
-    "    let center = light.position.xyz;",
-    "    let halfWidth = light.areaHalfWidth.xyz;",
-    "    let halfHeight = light.areaHalfHeight.xyz;",
-    "    let formFactor = rectAreaFormFactor(N, P, halfWidth, halfHeight, center);",
-    "    if (formFactor <= 0.0) {",
-    "        return vec3f(0.0);",
-    "    }",
-    "    let radiance = light.color.rgb * light.direction.w;",
-    "    var out = albedo * (1.0 - metalness) * radiance * formFactor;",
-    "    let repPoint = rectAreaRepresentativePoint(P, N, V, center, halfWidth, halfHeight, light.direction.xyz);",
-    "    let toRep = repPoint - P;",
-    "    let repDist = length(toRep);",
-    "    let L = toRep / max(repDist, 0.0001);",
-    "    let NdotL = max(dot(N, L), 0.0);",
-    "    if (NdotL > 0.0) {",
-    "        let H = normalize(V + L);",
-    "        let D = distributionGGX(N, H, roughness);",
-    "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "        let brdf = (D * G * F) / (4.0 * NoV * NdotL + 0.0001);",
-    "        out = out + radiance * brdf * formFactor;",
-    "        gosxSpecularRadiance += radiance * brdf * formFactor;",
-    "    }",
-    "    return out;",
-    "}",
-    "",
     "fn gsxSpecularRoughness(n: vec3f, r: f32, aa: vec2f) -> f32 {",
     "    let dx = dpdx(n); let dy = dpdy(n);",
     "    let kernel = min(2.0 * aa.x * (dot(dx, dx) + dot(dy, dy)), aa.y);",
     "    if (kernel > 0.0) { return sqrt(sqrt(min(r*r*r*r + kernel, 1.0))); }",
     "    return r;",
     "}",
+    WGSL_BRDF,
     WGSL_TRANSMISSION,
     "fn gosxPBRColor(in: VertexOutput) -> vec4f {",
     SCENE_WEBGPU_CUTAWAY_DISCARD_WGSL,
@@ -2142,7 +1987,7 @@
     "        mapNormal = vec3f(mapNormal.xy * material.normalScale, mapNormal.z);",
     "        N = normalize(TBN * mapNormal);",
     "    }",
-    "",
+    "    let surfaceClearcoat = material.clearcoat; let surfaceClearcoatRoughness = 0.04; let surfaceSheen = material.sheen; let surfaceTransmission = material.transmission;",
     "    let V = normalize(frame.cameraPos - in.worldPos);",
     "    let NoV = max(dot(N, V), 0.0);",
       "",
@@ -2188,7 +2033,8 @@
       "    }",
     "",
     // Accumulate direct lighting.
-    "    let transmission = clamp(material.transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    let transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    let gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
     "    var Lo = vec3f(0.0);",
     "",
     // arrayLength bounds the loop against the storage buffer the JS side sized
@@ -2251,25 +2097,10 @@
     "            attenuation = pointLightAttenuation(dist, range, decay);",
     "        }",
     "",
-    "        let H = normalize(V + L);",
     "        let NdotL = max(dot(N, L), 0.0);",
-    "",
-    // Cook-Torrance specular BRDF.
-    "        let D = distributionGGX(N, H, roughness);",
-    "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "",
-    "        let numerator = D * G * F;",
-    "        let denominator = 4.0 * NoV * NdotL + 0.0001;",
-    "        let specular = numerator / denominator;",
-    "",
-    // Energy conservation: diffuse complement of the dielectric specular.
-    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
-    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
-    // the Fresnel colour and never borrows the metallic Fresnel.
-    "        let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
-    "        let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
-    "",
+    // Cook-Torrance GGX with multiscatter energy and the clear-coat layer;
+    // the diffuse weight is (1 - maxRGB(dielectric Fresnel)) * (1 - metalness).
+    "        let lit = gosxDirectBRDF(N, V, L, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer);",
     // Shadow attenuation follows the light associated with each slot.
     "        var shadowAtten: f32 = 1.0;",
     "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {",
@@ -2277,26 +2108,17 @@
     "        }",
     "",
     "        let radiance = lightColor * intensity * attenuation;",
-    "        Lo = Lo + (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadowAtten;",
-    "        gosxSpecularRadiance += specular * radiance * NdotL * shadowAtten;",
+    "        Lo = Lo + lit.color * radiance * NdotL * shadowAtten;",
+    "        gosxSpecularRadiance += lit.specular * radiance * NdotL * shadowAtten;",
     "    }",
     "",
     "    // Assetpipe split-sum IBL, with hemisphere fallback while products load.",
     "    var ambient: vec3f;",
     "    var specularEnvironment = vec3f(0.0);",
     "    if (env.hasIBL != 0u) {",
-    "        let Nr = rotateEnvY(N, env.envRotation);",
-    "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
-    "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        let irradiance = textureSample(iblIrradiance, iblSampler, Nr).rgb;",
-    "        let maxLod = f32(max(env.radianceMipLevels, 1u) - 1u);",
-    "        let prefiltered = textureSampleLevel(iblRadiance, iblSampler, Rr, roughness * maxLod).rgb;",
-    "        let brdf = textureSample(iblBRDFLUT, iblSampler, vec2f(NoV, roughness)).rg;",
-    "        let diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
-    "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
-    "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
-    "        specularEnvironment = specularIBL * env.envIntensity;",
+    "        let ibl = gosxImageLight(N, V, NoV, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer);",
+    "        ambient = ibl.color * env.envIntensity;",
+    "        specularEnvironment = ibl.specular * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
     // Explicit LOD avoids seam/pole derivative blur and matches WebGL2.
     "        let Nr = rotateEnvY(N, env.envRotation);",
@@ -2307,14 +2129,17 @@
     "        let Fenv = fresnelSchlickRoughness(NoV, F0, F90, roughness);",
     "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
-    "        specularEnvironment = envSpecular * Fenv * (1.0 - roughness * 0.65) * env.envIntensity;",
+    "        let envLit = gosxCoatOver(GosxLit((kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity, envSpecular * Fenv * (1.0 - roughness * 0.65) * env.envIntensity), textureSampleLevel(envMapTex, envMapSampler, envEquirectUV(Rr), gosxLayer.coatRoughness * maxLod).rgb * env.envIntensity, NoV, gosxLayer);",
+    "        ambient = envLit.color;",
+    "        specularEnvironment = envLit.specular;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
     "                       + env.skyColor * env.skyIntensity * hemi",
     "                       + env.groundColor * env.groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "        let hemiLit = gosxCoatOver(GosxLit(envDiffuse * albedo * (1.0 - transmission), vec3f(0.0)), envDiffuse, NoV, gosxLayer);",
+    "        ambient = hemiLit.color;",
+    "        specularEnvironment = hemiLit.specular;",
     "    }",
     "    if (env.hasIBL == 0u && env.hasEnvMap == 0u) {",
     "        let reflectedTransmission = transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
@@ -2337,13 +2162,7 @@
     "        color = color + material.rimColor * rim;",
     "    }",
     "",
-    "    let clearcoat = clamp(material.clearcoat, 0.0, 1.0);",
-    "    if (clearcoat > 0.0001) {",
-    "        let cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
-    "        color = color + vec3f(cc * 0.28);",
-    "    }",
-    "",
-    "    let sheen = clamp(material.sheen, 0.0, 1.0);",
+    "    let sheen = clamp(surfaceSheen, 0.0, 1.0);",
     "    if (sheen > 0.0001) {",
     "        let velvet = pow(1.0 - NoV, 3.0) * sheen;",
     "        color = color + albedo * velvet * 0.55;",
@@ -3796,7 +3615,7 @@
       vertex: {
         module: vertexModule,
         entryPoint: "vertexMain",
-        buffers: WGPU_PBR_VERTEX_LAYOUT,
+        buffers: vertexModule.gosxVertexLayout || WGPU_PBR_VERTEX_LAYOUT,
       },
       fragment: sceneWebGPUColorFragment(fragmentModule, targetFormat, wgpuBlendState(blendMode)),
       primitive: { topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 ? "cw" : "ccw" },
@@ -4170,6 +3989,8 @@
   }
 
   function wgpuPostOutput(direct: boolean, canvasOutput: any, intermediateOutput: any) { return direct ? canvasOutput : intermediateOutput; }
+  function wgpuDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webgpuRun(state, effect, i, ...rest) : rest[1]; }
+  function wgpuDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
   function wgpuPostPipelineName(name: string, canvasVariant: boolean) { return canvasVariant && name !== "present" ? "canvas-" + name : name; }
 
   function wgpuWarmPostOutputs(name: string, source: string, layout: any, canvasVariant: boolean, presentation: string, target: string, getPipeline: any) {
@@ -4193,7 +4014,7 @@
     var pingPongB = null, pingPongBView = null;
     var pingPongWidth = 0, pingPongHeight = 0;
     var depthTex = null, depthTexView: any = null, depthResolvePipeline: any = null, depthResolveLayout: any = null;
-    var currentWidth = 0, currentHeight = 0;
+    var currentWidth = 0, currentHeight = 0, depthFx: any = { device: device }; // decals and motion blur: see depthfx.ts
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
     var atmospherePost = createSceneAtmospherePostWebGPU({ device, format: targetFormat, sampler: linearSampler, getPipeline, getParamBuffer, fullscreenPass });
     var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
@@ -4543,7 +4364,7 @@
 
     // Resolve covered MSAA depth before a depth-reading post pass.
     function prepareSceneDepth(effects: any[], samples: number) {
-      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST].includes(effect.kind))) return false;
+      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST, "decals", "motionBlur"].includes(effect.kind))) return false;
       if (!depthResolvePipeline) {
         depthResolveLayout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: true } }] });
         var module = device.createShaderModule({ label: "post-depth-resolve", code: `@group(0) @binding(0) var source: texture_depth_multisampled_2d;
@@ -4886,8 +4707,7 @@
               currentTexView = outputView;
               break;
             }
-            default:
-              break;
+            default: currentTexView = wgpuDepthFxPass(depthFx, effect, i, encoder, currentTexView, outputView, outputFormat, depthTexView, scaledW, scaledH, atmosphereContext, postChain); break;
           }
         }
 
@@ -4908,12 +4728,10 @@
       },
 
       dispose: function() {
-        mipBloom.dispose(); atmospherePost.dispose();
+        mipBloom.dispose(); atmospherePost.dispose(); wgpuDepthFxDispose(depthFx);
         disposed = true;
         for (const texture of [sceneTex, auxTex, depthTex, pingPongA, pingPongB]) if (texture) texture.destroy();
-        for (var key in postParamBuffers) {
-          if (postParamBuffers[key]) postParamBuffers[key].destroy();
-        }
+        for (var key in postParamBuffers) { if (postParamBuffers[key]) postParamBuffers[key].destroy(); }
         customPostUniformBuffers.forEach(function(buf) { if (buf) buf.destroy(); });
         customPostUniformBuffers.clear();
         customPostPipelineCache.clear();
@@ -6853,7 +6671,7 @@
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
     var pbrInstancedCullVertexModule = null;
-    var pbrFragmentModule = null, pbrUnshadowedFragmentModule = null, pbrShadowsActive = false;
+    var pbrFragmentModule = null, pbrUnshadowedFragmentModule = null, pbrShadowsActive = false; if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = Object.assign({ gpuWanted() { return ""; }, gpuModules(): any { return null; }, gpuDraw() {}, gpuDispose() {} }, window.__gosx_scene3d_asset_ext.uv1); }
     var elioSkinShaderModule: any = null;
     var elioSkinPipeline: any = null;
     var computedMorphShaderModule: any = null;
@@ -6899,7 +6717,7 @@
     var pointsFragmentModule = null;
 
     // Pipeline cache.
-    var detailResources = new Map().get("active");
+    var detailResources = new Map().get("active"), selenaSurfaces = sceneWebGPUSelenaSurfaceResources();
     var detailEnabled = true;
     var pipelineCache = {};
     var activeSampleCount = 1;
@@ -7628,7 +7446,7 @@
     // Post-processor.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -8375,7 +8193,7 @@
         for (var object of objects) {
           var material = materials[object.materialIndex];
           var reflected = sceneWebGPUObjectReflected(object);
-          if (!getObjectSelenaPipeline(object, material, blend, depth)) getPBRPipeline(blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", Boolean(material && material.detail));
+          if (!getObjectSelenaPipeline(object, material, blend, depth)) getPBRPipeline(blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", pbrVariant(material));
           if (shadows && object.castShadow) getShadowPipeline(reflected);
           if (webGPUObjectIsSkinned(object)) ensureElioSkinPipeline();
           if (object.computedMorph) ensureComputedMorphPipeline();
@@ -8411,11 +8229,13 @@
     function pbrKeyPrefix(detail: boolean) { return (selectiveBloom ? "specular|" : "") + (detail || pbrShadowsActive ? "" : "unshadowed|"); }
 
     // Get or create a PBR pipeline for the given blend mode.
-    function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
-      var reflected = frontFace === "cw";
-      var key = pbrKeyPrefix(detail) + wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    // PBR variant: true for detail, a Selena surface variant, else false.
+    function pbrVariant(material: any) { return material && material.detail ? true : sceneWebGPUSelenaSurfaceVariant(device, selenaSurfaces, material, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT) || false; }
+    function getPBRPipeline(blendMode, depthWrite, frontFace, detail: any = false, uv1 = "") {
+      var reflected = frontFace === "cw", variant = detail === true ? detailResources : detail || null, kind = sceneWebGPUPipelineKind(reflected, "pbr");
+      var key = pbrKeyPrefix(!!variant) + wgpuPipelineKey((detail === true ? sceneDetailVariantKey(kind, true) : variant ? variant.key + ":" + kind : kind) + (uv1 ? ":uv1" + uv1 : ""), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, pbrFragment(detail), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
+      var uv1Modules = uv1 ? window.__gosx_scene3d_asset_ext.uv1.gpuModules(device, WGSL_PBR_VERTEX, WGSL_PBR_FRAGMENT, uv1) : null; var pipeline = wgpuCreatePBRPipeline(device, variant ? variant.pipelineLayout : pbrPipelineLayout, uv1Modules ? uv1Modules.vertex : pbrVertexModule, variant ? variant.fragment : uv1Modules ? uv1Modules.fragment : pbrFragment(false), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -8631,7 +8451,7 @@
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
           /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
-          sampler: { type: "filtering" },
+          sampler: { type: texLayout.sampleType === "unfilterable-float" ? "non-filtering" : "filtering" },
         });
       }
       var storageBuffers = sceneSelenaStorageBufferDescriptors(layout);
@@ -14786,7 +14606,7 @@
       u[13] = 0; u[14] = 0; u[15] = 0; u[16] = 0; u[17] = 0;
       u[18] = receiveShadow ? 1 : 0;
       u[19] = 0; // hasOcclusionMap, set by createMaterialBindGroup
-      for (var mi = 0; mi < 16; mi++) f[20 + mi] = mi % 5 === 0 ? 1 : 0;
+      for (var mi = 0; mi < 16; mi++) f[20 + mi] = mi % 5 === 0 ? 1 : 0; if (mat.wind && window.__gosx_scene3d_terrain_api) f.set(window.__gosx_scene3d_terrain_api.windFor(mat.wind), 20); // wind sway (scene/wind.go): material.modelMatrix is otherwise unused
       f[36] = f[37] = f[38] = 1;
       f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1; // modelScaleSigns.w: normal-map U scale
       f[40] = sceneWebGPUDielectricF0(mat.ior);
@@ -16092,12 +15912,13 @@
         }
         return false;
       }
-      function bindPBRPipeline(reflected, material = Object.create(null)) {
-        var hasDetail = Boolean(material && material.detail);
-        var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr");
-        kind += ":" + objectDepthWrite;
+      function bindPBRPipeline(reflected, material = Object.create(null), uv1 = "") {
+        var hasDetail = Boolean(material && material.detail), variant = pbrVariant(material), surface = variant === true ? null : variant;
+        var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : (surface ? surface.key + ":" : "") + sceneWebGPUPipelineKind(reflected, "pbr");
+        kind += ":" + objectDepthWrite + uv1;
+        if (surface && surface.groupLayout) pass.setBindGroup(2, sceneWebGPUSelenaSurfaceGroup(device, selenaSurfaces, material, surface, selenaFrame));
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail)));
+        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", variant, uv1)));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -16217,7 +16038,7 @@
           }
           continue;
         }
-        bindPBRPipeline(reflectedDirect, mat);
+        bindPBRPipeline(reflectedDirect, mat, window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat));
 
         var matBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
         var modelOffset = webGPUCutawayOffset(materialFrame, obj);
@@ -16256,7 +16077,7 @@
         }
         if (!worldBuffersBound) worldBuffersBound = wgpuBindWorldMeshBuffers(pass, pbrBuffers);
         if (!worldBuffersBound) continue;
-        pass.draw(count, 1, offset);
+        window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat) ? (worldBuffersBound = false, window.__gosx_scene3d_asset_ext.uv1.gpuDraw(device, pass, obj, offset, count, webGPUBindSceneMeshVertexBuffer, pbrBuffers)) : pass.draw(count, 1, offset);
         if (frameRequest) frameRequest.record(obj.id);
         if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
       }
@@ -16447,7 +16268,7 @@
 
         var mat = instancedMeshMaterial(mesh, materials);
         var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
+        pass.setBindGroup(1, createMaterialBindGroup(mesh.wind ? Object.assign({}, mat, { wind: mesh.wind }) : mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
         if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
         if (webGPUGPUDrivenHost().drawMesh(pass, mesh, meshDepthWrite)) continue;
 
@@ -18260,7 +18081,7 @@
       webGPUPrepareMaterialFrame(materialFrame, device, bundle, retainedMeshAttributeEpoch, wgpuCreateTrackedBuffer, destroyRendererGPUResource, pointsEntryGPUBuffers);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer && !oceanResources.renderer) {
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !skyResources.renderer && !oceanResources.renderer) {
         webGPUSweepRetainedMeshBuffers();
         return "empty";
       }
@@ -18321,7 +18142,7 @@
       // feature renderers can discover pipelines while encoding; defer their
       // canvas commands until the entire frame has encoded successfully.
       pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost().present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
-        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds || bundle.environment.autoExposure) ||
+        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds || bundle.environment.autoExposure || bundle.environment.terrain) ||
         (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
         postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST || effect.kind === "taa"; }));
 
@@ -18353,6 +18174,7 @@
       beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
+      sceneWebGPUSelenaSurfaceFrame(selenaSurfaces);
       detailResources = sceneWebGPUPrepareDetailFrame(device, detailResources, bundle.materials, textureCache, {
         placeholderView: placeholderView, enabled: detailEnabled,
       });
@@ -18720,7 +18542,7 @@
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
+        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() || Boolean(bundle.environment && bundle.environment.wind) ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
@@ -18784,9 +18606,9 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} }; window.__gosx_scene3d_terrain_api?.webgpu(terrainResources, mainPass, { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, height: scaledH, frameGroup: frameBindGroup, frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: materialUniformData, time: selenaFrame.time, frameBuffer: frameUniformBuffer, format: targetFormat, samples: sampleCount, specular: selectiveBloom, textureCache: textureCache, load: wgpuLoadTexture, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, attr: queueWebGPUAttribute });
       // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
-      const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
+      const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; }; window.__gosx_scene3d_crowd_api?.webgpu(mainPass, { device: device, environment: bundle.environment, camera: cam, proj: scratchProjMatrix, viewProj: scratchSelenaViewProjection, height: scaledH, time: bundle.timeSeconds, frameGroup: frameBindGroup, frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: materialUniformData, format: targetFormat, samples: sampleCount, specular: selectiveBloom, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, mount: canvas.parentNode }); // Environment.Crowds (crowd-wgsl.ts)
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
         if (drawList.opaque.length > 0) {
@@ -18916,7 +18738,7 @@
       if (usePostProcessing && postProcessor) {
         var screenView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
         var chain = temporalAA.resolve(encoder, postEffects, { colorView: postTarget.colorView, colorFormat: targetFormat, depthView: mainDepthTargetView, samples: sampleCount, objects: bundle.meshObjects, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle }); autoExposure.apply(encoder, bundle.environment, postTarget, cam, frameNowMS);
-        Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }), temporalAA.stats(), autoExposure.stats());
+        Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: temporalAA.velocityView() } }), temporalAA.stats(), autoExposure.stats());
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);
@@ -18955,8 +18777,8 @@
     function dispose() { pipelineGuard.release(rawDevice);
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true; clearTimeout(webGPUAttributeTimer); webGPUAttributeTimer = null;
-      if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); oceanResources.fft?.dispose(); sceneReflectDispose(oceanResources);
-      if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null;
+      if (skyResources.renderer) skyResources.renderer.dispose(); terrainResources.dispose?.(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); oceanResources.fft?.dispose(); sceneReflectDispose(oceanResources);
+      if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null; window.__gosx_scene3d_crowd_api?.dispose(device);
       skyResources.renderer = null;
 
       gpuTimingDisposed = true;
@@ -19073,7 +18895,7 @@
           destroyRendererGPUResource(record.texture);
         }
       }
-      sceneWebGPUDisposeDetail(detailResources); detailResources = null;
+      sceneWebGPUDisposeDetail(detailResources); detailResources = null; sceneWebGPUDisposeSelenaSurfaces(selenaSurfaces);
       textureCache.clear();
       selenaPipelineCache.clear();
       selenaComputePipelineCache.clear();
@@ -19462,7 +19284,7 @@
     return groups[shadow] = record.bg;
   }
   function sceneWebGPUIsSelenaMaterial(material: any) {
-    return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) &&
+    return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) && !sceneWebGPUSelenaSurfaceHook(material) &&
       ((typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
        (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())));
   }

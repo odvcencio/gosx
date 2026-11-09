@@ -1524,14 +1524,14 @@ test("KHR_texture_transform never writes into the shared GLB buffer", () => {
 
 // --- Compression extensions -------------------------------------------------
 
-test("EXT_meshopt_compression raises a named error instead of reading garbage", () => {
+test("EXT_meshopt_compression names the extension when its decoder is not loaded", () => {
   const { context } = createLoaderContext();
   assert.throws(
-    () => call(context, `gltfRejectCompressedBufferView({ buffer: 0, byteOffset: 0, byteLength: 16, extensions: { EXT_meshopt_compression: { mode: "ATTRIBUTES" } } })`),
+    () => call(context, `gltfDecodeMeshoptBufferView({ buffers: [{ byteLength: 16 }] }, new ArrayBuffer(16), { extensions: { EXT_meshopt_compression: { buffer: 0, byteOffset: 0, byteLength: 16, count: 1, byteStride: 16, mode: "ATTRIBUTES" } } }, 0, "test")`),
     /EXT_meshopt_compression/,
   );
-  // A plain bufferView passes through.
-  call(context, `gltfRejectCompressedBufferView({ buffer: 0, byteOffset: 0, byteLength: 16 })`);
+  // A plain bufferView is not decoded.
+  assert.equal(call(context, `gltfDecodeMeshoptBufferView({}, null, { buffer: 0, byteOffset: 0, byteLength: 16 }, 0, "test")`), null);
 });
 
 test("KHR_draco_mesh_compression raises a named error", () => {

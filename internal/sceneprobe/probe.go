@@ -44,6 +44,8 @@ type Record struct {
 	// ShaderLayout is the Selena binding descriptor of a custom material;
 	// only the parts that gate the Selena lighting chunk are decoded.
 	ShaderLayout *ShaderLayout `json:"shaderLayout"`
+	// CustomUniforms is read only to find "gosx:data:<key>" texture references.
+	CustomUniforms map[string]json.RawMessage `json:"customUniforms"`
 
 	Generator            Presence `json:"generator"`
 	CompressedPositions  Presence `json:"compressedPositions"`
@@ -158,6 +160,7 @@ type Probe struct {
 
 	Scene                                                                                                                *Probe
 	ParticleBursts, Timelines, ControlZoom, ModelPreparation                                                             bool
+	PostEffects, PostFX                                                                                                  json.RawMessage
 	ForceWebGL, RequireWebGL, PreferCanvas                                                                               bool
 	PreferWebGL                                                                                                          *bool
 	BackendCaps                                                                                                          *struct{ Capable []string }
@@ -183,7 +186,7 @@ type Probe struct {
 // whether to advertise the Selena scene lighting chunk.
 type ShaderLayout struct {
 	Context  []string
-	Textures []struct{ Engine string }
+	Textures []struct{ Engine, Format, SampleMode string }
 }
 
 // selenaLightingInputs are the Selena engine inputs only the lighting chunk
@@ -209,6 +212,54 @@ func (p *Probe) NeedsSelenaLighting() bool {
 		}
 	}
 	return p.Scene.NeedsSelenaLighting()
+}
+
+// NeedsSelenaDataTexture reports whether any Selena material in the scene reads
+// a data texture: a texture the descriptor marks sampleMode "load" or "both",
+// one with an explicit float format, or a uniform that references a host-written
+// texture ("gosx:data:<key>"). Only such a scene advertises the data-texture
+// chunk.
+func (p *Probe) NeedsSelenaDataTexture() bool {
+	if p == nil {
+		return false
+	}
+	for _, records := range [][]Record{p.Objects, p.InstancedMeshes, p.Points, p.InstancedGLBMeshes, p.Models, p.Sprites} {
+		for _, record := range records {
+			if record.ShaderLayout.readsDataTexture() || record.referencesDataTexture() {
+				return true
+			}
+		}
+	}
+	return p.Scene.NeedsSelenaDataTexture()
+}
+
+func (l *ShaderLayout) readsDataTexture() bool {
+	if l == nil {
+		return false
+	}
+	for _, texture := range l.Textures {
+		switch texture.SampleMode {
+		case "load", "both":
+			return true
+		}
+		switch texture.Format {
+		case "r16float", "r32float", "rgba16float", "rgba32float":
+			return true
+		}
+	}
+	return false
+}
+
+// referencesDataTexture is permissive on purpose: a "gosx:data:" substring in
+// any custom uniform, bare or inside a {resource|ref|sceneResource} object,
+// costs at most one unused chunk URL.
+func (r Record) referencesDataTexture() bool {
+	for _, raw := range r.CustomUniforms {
+		if bytes.Contains(raw, []byte("gosx:data:")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *ShaderLayout) readsSelenaLighting() bool {
@@ -238,6 +289,29 @@ func (p *Probe) NeedsShaderWarmup() bool {
 // bootstrap-feature-scene3d-text-atlas.js draws.
 func (p *Probe) NeedsTextAtlases() bool {
 	return p != nil && (p.TextAtlases.Truthy || p.Scene.NeedsTextAtlases())
+}
+
+// NeedsDepthFX reports whether the scene declares a decals or motionBlur post
+// effect in either accepted props shape. Those passes live in
+// bootstrap-feature-scene3d-depthfx.js. An effect entry that cannot be read as
+// an object counts as absent.
+func (p *Probe) NeedsDepthFX() bool {
+	if p == nil {
+		return false
+	}
+	for _, field := range []json.RawMessage{p.PostEffects, p.PostFX} {
+		var list []json.RawMessage
+		if json.Unmarshal(field, &list) != nil {
+			continue
+		}
+		for _, raw := range list {
+			var effect struct{ Kind string }
+			if json.Unmarshal(raw, &effect) == nil && (effect.Kind == "decals" || effect.Kind == "motionBlur") {
+				return true
+			}
+		}
+	}
+	return p.Scene.NeedsDepthFX()
 }
 
 // NeedsOceanFFT reports whether the scene's ocean carries a wave spectrum, in

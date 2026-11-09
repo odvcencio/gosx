@@ -69,7 +69,7 @@ test("WebGL Selena shares validated IBL textures and uses cube-safe pending fall
     scenePBRPlaceholderCube:()=>({texture:cube}),
     scenePBRBindTexture:(gl,unit,value,target)=>bound.push({unit,value,target}),
     scenePBRLoadTexture:(gl,url)=>{fetched.push(url); return null;},
-    sceneSelenaShadowMapSlot:()=>undefined,
+    sceneSelenaShadowMapSlot:()=>undefined, sceneDataTextureBind:()=>false,
   });
   vm.runInContext(["sceneWebGLSelenaEnvironmentSlot","sceneSelenaTextureURL","sceneWebGLBindSelenaTextures"].map(n=>fn(source,n)).join("\n"),context);
   const gl = {TEXTURE_CUBE_MAP:34067,TEXTURE_2D:3553,getUniformLocation:()=>({}),uniform1i:()=>{}};
@@ -103,7 +103,7 @@ test("WebGPU Selena reuses IBL views, updates bind groups on readiness/replaceme
     sceneWaterMainSelenaContext:()=>undefined,
     wgpuCachedTrackedBuffer:()=>buffer,sceneSelenaTextureDescriptors:l=>l.textures,
     sceneSelenaStorageBufferDescriptors:()=>[],sceneSelenaStateDescriptors:()=>[],
-    sceneSelenaLiveTextureView:()=>null, sceneSelenaShadowMapView:()=>null,
+    sceneSelenaLiveTextureView:()=>null, sceneSelenaShadowMapView:()=>null, sceneDataTextureView:()=>null, sceneDataTextureSampler:()=>null,
     sceneSelenaTextureURL:()=>{throw Error("IBL resource passed to URL loader");},
   });
   vm.runInContext(["sceneWebGPUSelenaEnvironmentSlot","sceneWebGPUAppendSelenaTextures","createSelenaBindGroup"].map(n=>fn(source,n)).join("\n"),context);

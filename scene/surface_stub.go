@@ -33,6 +33,20 @@ func (*StreamWriter) Prepare() bool                           { return false }
 func (*StreamWriter) Apply(InstanceStreamFrame) (bool, error) { return false, errSurfaceBrowser }
 func (*StreamWriter) Dispose()                                {}
 
+type TextureWriter struct{}
+
+func NewTextureWriter(string) *TextureWriter { return &TextureWriter{} }
+func (*TextureWriter) Prepare() bool         { return false }
+func (*TextureWriter) Err() error            { return errSurfaceBrowser }
+func (*TextureWriter) Create(string, int, int, TextureFormat) (bool, error) {
+	return false, errSurfaceBrowser
+}
+func (*TextureWriter) WriteTexture(string, int, int, TextureFormat, []byte, int, int) (bool, error) {
+	return false, errSurfaceBrowser
+}
+func (*TextureWriter) Delete(string) (bool, error) { return false, errSurfaceBrowser }
+func (*TextureWriter) Dispose()                    {}
+
 func (*Surface) PrepareModels(context.Context, []ModelPreparation) (ModelPreparationResult, error) {
 	return ModelPreparationResult{}, errSurfaceBrowser
 }

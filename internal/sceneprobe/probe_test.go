@@ -91,6 +91,30 @@ func TestNeedsSelenaLightingReadsMaterialLayouts(t *testing.T) {
 	}
 }
 
+func TestNeedsSelenaDataTextureReadsLayoutsAndReferences(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{}`: false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"albedo"}]}}]}}`:                                                      false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"albedo","format":"rgba8unorm"}]}}]}}`:                                false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"spectrum","format":"r16float"}]}}]}}`:                                true,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"t","format":"rgba32float"}]}}]}}`:                                    true,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"t","sampleMode":"load"}]}}]}}`:                                       true,
+		`{"objects":[{"shaderLayout":{"textures":[{"name":"t","sampleMode":"both"}]}}]}`:                                                 true,
+		`{"scene":{"points":[{"customUniforms":{"spectrum":"gosx:data:spectrum"}}]}}`:                                                    true,
+		`{"scene":{"instancedMeshes":[{"customUniforms":{"spectrum":{"resource":" gosx:data:a/b "}}}]}}`:                                 true,
+		`{"scene":{"objects":[{"customUniforms":{"radiance":"gosx:environment:radiance","gain":[1,2]}}]}}`:                               false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"s","engine":"shadowMap0"}]},"customUniforms":{"tint":[1,0,0,1]}}]}}`: false,
+	} {
+		if got := Decode(json.RawMessage(raw)).NeedsSelenaDataTexture(); got != want {
+			t.Errorf("%s: NeedsSelenaDataTexture = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsSelenaDataTexture() {
+		t.Fatal("nil probe needs a data texture")
+	}
+}
+
 func TestNeedsShaderWarmupAndTextAtlasesReadBothShapes(t *testing.T) {
 	for raw, want := range map[string][2]bool{
 		`{}`: {false, false},
@@ -107,5 +131,26 @@ func TestNeedsShaderWarmupAndTextAtlasesReadBothShapes(t *testing.T) {
 	var nilProbe *Probe
 	if nilProbe.NeedsShaderWarmup() || nilProbe.NeedsTextAtlases() {
 		t.Fatal("a nil probe needs no opt-in chunk")
+	}
+}
+
+func TestProbeNeedsDepthFX(t *testing.T) {
+	cases := map[string]bool{
+		`{}`:                                  false,
+		`{"postEffects":[{"kind":"bloom"}]}`:  false,
+		`{"postEffects":[{"kind":"decals"}]}`: true,
+		`{"postFX":[{"kind":"motionBlur"}]}`:  true,
+		`{"scene":{"postEffects":[{"kind":"bloom"},{"kind":"decals"}]}}`: true,
+		`{"postFX":{"effects":[{"kind":"decals"}]}}`:                     false,
+		`{"postEffects":[null,7,{"kind":3}]}`:                            false,
+	}
+	for raw, want := range cases {
+		p := Decode(json.RawMessage(raw))
+		if p.Err != nil {
+			t.Fatalf("%s: decode: %v", raw, p.Err)
+		}
+		if got := p.NeedsDepthFX(); got != want {
+			t.Errorf("%s: NeedsDepthFX = %v, want %v", raw, got, want)
+		}
 	}
 }

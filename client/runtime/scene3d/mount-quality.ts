@@ -265,7 +265,7 @@
       if (kind === "toneMapping") tone = true;
       else if (kind === "fxaa") fxaa = true;
       else if (kind === "taa") taa = true;
-      if (kind === "toneMapping" || kind === "fxaa") kept.push(source[i]);
+      if (kind === "toneMapping" || kind === "fxaa" || kind === "decals") kept.push(source[i]); // decals are scene content, not polish
     }
     if (tone && taa && !fxaa) kept.push({ kind: "fxaa" });
     return tone ? kept : [];
@@ -293,7 +293,7 @@
     if (kind === "fxaa") return 2;
     if (kind === "bloom") return effect.mode !== "mip" && effect.scale > 0 && effect.scale < 0.5 ? 2 : 3;
     if (kind === "atmosphere") return (effect.rays ? 3 : 0) + (effect.grain > 0 ? 1 : 0) + (effect.agx ? 1 : 0);
-    return kind === "ssao" || kind === "contactShadows" || kind === "dof" || kind === "godRays" || kind === "taa" || kind === "customPost" ? 3 : 0;
+    return kind === "ssao" || kind === "contactShadows" || kind === "dof" || kind === "godRays" || kind === "taa" || kind === "customPost" || kind === "motionBlur" ? 3 : 0;
   }
 
   const sceneAdaptiveFXAAEffect = { kind: "fxaa" };

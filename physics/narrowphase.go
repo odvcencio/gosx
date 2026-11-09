@@ -14,7 +14,7 @@ func Collide(a, b *Collider) (ContactManifold, bool) {
 	if a == nil || b == nil || !collidersInteract(a, b) {
 		return ContactManifold{}, false
 	}
-	if a.Shape == ShapeTriangleMesh || b.Shape == ShapeTriangleMesh {
+	if a.Shape == ShapeTriangleMesh || b.Shape == ShapeTriangleMesh || a.Shape == ShapeHeightfield || b.Shape == ShapeHeightfield {
 		manifolds := CollideAll(a, b, nil)
 		if len(manifolds) == 0 {
 			return ContactManifold{}, false
@@ -35,6 +35,15 @@ func CollideAll(a, b *Collider, out []ContactManifold) []ContactManifold {
 		return out
 	}
 	switch {
+	case a.Shape == ShapeHeightfield:
+		return collideHeightfieldShape(a, b, out)
+	case b.Shape == ShapeHeightfield:
+		start := len(out)
+		out = collideHeightfieldShape(b, a, out)
+		for i := start; i < len(out); i++ {
+			out[i] = flipManifold(out[i])
+		}
+		return out
 	case a.Shape == ShapeTriangleMesh && b.Shape == ShapeTriangleMesh:
 		// Not implemented. World.Diagnostics reports the pair.
 		return out

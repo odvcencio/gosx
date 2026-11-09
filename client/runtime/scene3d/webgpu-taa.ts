@@ -1,23 +1,19 @@
 // WebGPU temporal anti-aliasing with motion vectors.
 //
-// The resolve runs on the linear HDR scene color before the post chain, then
-// copies its result back into the scene target, so tone mapping, bloom and the
-// rest of the chain see the anti-aliased image. While no history exists (the
-// first frame, or after a reset) the "taa" effect stays in the chain and the
-// post processor draws its FXAA fallback.
+// The resolve runs on the linear HDR scene color before the post chain, then copies its result back into the scene target, so tone mapping,
+// bloom and the rest of the chain see the anti-aliased image. While no history exists (the first frame, or after a reset) the "taa" effect
+// stays in the chain and the post processor draws its FXAA fallback.
 //
-// Motion: static geometry reprojects through the scene depth and the previous
-// unjittered view-projection. Moving retained meshes and skinned meshes render
-// a velocity pass (rgba16float: rg = uv offset to the previous frame, b = clip
-// w, a = 1) into their own single-sample target; the resolve uses a mover's
-// offset only where that mover is the visible surface. Blended compute
-// particles write a = 2 into the same target (a reactive mask), and pixels
-// near an ocean or pool surface count as water; both keep less history,
-// because their surfaces move without depth.
+// Motion: static geometry reprojects through the scene depth and the previous unjittered view-projection. Moving retained meshes and skinned
+// meshes render a velocity pass (rgba16float: rg = uv offset to the previous frame, b = clip w, a = 1) into their own single-sample target;
+// the resolve uses a mover's offset only where that mover is the visible surface. Blended compute particles write a = 2 into the same target
+// (a reactive mask), and pixels near an ocean or pool surface count as water; both keep less history, because their surfaces move without depth.
 //
-// History resets on resize, sample-count or post-chain change, a projection
-// change, a camera cut (more than 2 units or 60 degrees in one frame), a gap
-// over 250 ms, and renderer replacement (a new renderer owns new history).
+// Motion blur ("motionBlur" in the chain) shares the velocity pass: with no "taa" effect only that pass runs, with no jitter, history or
+// resolve, and velocityView() hands the mover velocities to the blur.
+//
+// History resets on resize, sample-count or post-chain change, a projection change, a camera cut (more than 2 units or 60 degrees in one
+// frame), a gap over 250 ms, and renderer replacement (a new renderer owns new history).
 
 const WGSL_TAA_VELOCITY = `
 struct MoverUniforms { current: mat4x4f, previous: mat4x4f };
@@ -195,12 +191,12 @@ function taaDestroyTargets(st: any) {
   for (var i = 0; i < st.history.length; i++) st.history[i].texture.destroy();
   if (st.velocity) st.velocity.destroy();
   if (st.velocityDepth) st.velocityDepth.destroy();
-  st.history = []; st.velocity = st.velocityDepth = null; st.valid = false;
+  st.history = []; st.velocity = st.velocityDepth = st.velocityView = null; st.valid = false;
 }
 function taaEnsureTargets(st: any, r: any, w: number, h: number) {
-  if (st.history.length && w === st.width && h === st.height) return;
+  if (st.velocity && (!st.taa || st.history.length) && w === st.width && h === st.height) return;
   taaDestroyTargets(st);
-  for (var i = 0; i < 2; i++) {
+  for (var i = 0; st.taa && i < 2; i++) {
     var texture = r.device.createTexture({ label: "gosx-taa-history", size: [w, h, 1], format: "rgba16float",
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
     st.history.push({ texture: texture, view: texture.createView() });
@@ -209,6 +205,7 @@ function taaEnsureTargets(st: any, r: any, w: number, h: number) {
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   st.velocityDepth = r.device.createTexture({ label: "gosx-taa-velocity-depth", size: [w, h, 1], format: "depth24plus",
     usage: GPUTextureUsage.RENDER_ATTACHMENT });
+  st.velocityView = st.velocity.createView();
   st.width = w; st.height = h;
 }
 function taaPipeline(st: any, r: any, key: string, build: () => any) {
@@ -346,8 +343,9 @@ function taaDrawParticleMask(st: any, r: any, pass: any, records: any[], depthVi
 // jitters the projection already written to the frame uniforms.
 function taaBeginFrame(st: any, effects: any[], frame: any): boolean {
   var effect = Array.isArray(effects) ? effects.find(function(e: any) { return e && e.kind === "taa"; }) : null;
-  st.active = !!effect && frame.postProcessing && frame.perspective;
-  if (!st.active) { if (st.history.length) taaDestroyTargets(st); return false; }
+  var blur = Array.isArray(effects) && effects.some(function(e: any) { return e && e.kind === "motionBlur"; });
+  st.taa = !!effect; st.active = (!!effect || blur) && frame.postProcessing && frame.perspective;
+  if (!st.active) { if (st.history.length || st.velocity) taaDestroyTargets(st); return false; }
   var r = st.resources();
   var nextStamp = JSON.stringify([effects, frame.width, frame.height, frame.samples]);
   var view = frame.view, eye = [-(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]), -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]), -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])];
@@ -363,19 +361,19 @@ function taaBeginFrame(st: any, effects: any[], frame: any): boolean {
   st.previousViewProjection.set(st.viewProjection);
   st.viewProjection.set(frame.viewProjection);
   st.previousJitter = st.jitter;
-  st.jitter = st.valid ? sceneWebGPUTAAJitter(frame.projection, frame.projectionOffset, frame.width, frame.height, st.frameIndex) : [0, 0];
-  return st.valid;
+  st.jitter = st.valid && st.taa ? sceneWebGPUTAAJitter(frame.projection, frame.projectionOffset, frame.width, frame.height, st.frameIndex) : [0, 0];
+  return st.valid && st.taa;
 }
 
 // taaResolve runs the velocity pass and the temporal resolve, writes the
 // result back into the scene target, and returns the effects the post chain
 // still needs (without "taa" once the frame resolved).
 function taaResolve(st: any, encoder: any, effects: any[], frame: any) {
-  if (!st.active || !st.history.length) return effects;
+  if (!st.active || !st.velocity || (st.taa && !st.history.length)) return effects;
   var r = st.resources(), ms = frame.samples > 1;
-  // Create every pipeline this frame may need at once, so they validate
-  // together and cost at most one pending frame.
-  taaResolvePipeline(st, r, ms); taaBlitPipeline(st, r, frame.colorFormat); taaVelocityPipeline(st, r);
+  // Create every pipeline this frame may need at once, so they validate together and cost at most one pending frame.
+  if (st.taa) { taaResolvePipeline(st, r, ms); taaBlitPipeline(st, r, frame.colorFormat); }
+  taaVelocityPipeline(st, r);
   if (Array.isArray(frame.particles) && frame.particles.length) taaMaskPipeline(st, r, ms);
   var effect = effects.find(function(e: any) { return e && e.kind === "taa"; }) || {};
   var vpass = encoder.beginRenderPass({ label: "gosx-taa-velocity",
@@ -384,6 +382,7 @@ function taaResolve(st: any, encoder: any, effects: any[], frame: any) {
   st.moverCount = st.valid ? taaDrawMovers(st, r, vpass, frame.objects || []) : 0;
   var masked = st.valid ? taaDrawParticleMask(st, r, vpass, frame.particles, frame.depthView, ms, frame.frameGroup) : 0;
   vpass.end();
+  if (!st.taa) { st.valid = true; return effects; } // velocity only, for motion blur
   if (!sceneWebGPUInvertMat4(st.viewProjection, st.inverse)) st.valid = false;
   st.params.set(st.inverse, 0); st.params.set(st.viewProjection, 16); st.params.set(st.previousViewProjection, 32);
   st.params[48] = Math.max(0, Math.min(0.95, sceneNumber(effect.historyWeight, 0.9)));
@@ -435,7 +434,7 @@ function taaCapturePreviousSkins(st: any, encoder: any, objects: any[]) {
 function wgpuCreateTemporalAA(resources: () => any) {
   var st: any = {
     resources: resources, history: [], historyIndex: 0, width: 0, height: 0, samples: 0, valid: false,
-    stamp: "", lastAt: -Infinity, frameIndex: 0, active: false, resets: 0, jitter: [0, 0], previousJitter: [0, 0],
+    taa: false, velocityView: null, stamp: "", lastAt: -Infinity, frameIndex: 0, active: false, resets: 0, jitter: [0, 0], previousJitter: [0, 0],
     viewProjection: new Float32Array(16), previousViewProjection: new Float32Array(16), inverse: new Float32Array(16),
     previousEye: [0, 0, 0], previousForward: [0, 0, -1], previousProjection: new Float32Array(16),
     params: new Float32Array(16 * 3 + 4 * 3 + 16), paramBuffer: null, moverBuffer: null, moverCapacity: 0,
@@ -445,13 +444,14 @@ function wgpuCreateTemporalAA(resources: () => any) {
     // prepare creates the TAA pipelines with the frame's other pipelines, so
     // a scene that asks for TAA costs no extra pending frame.
     prepare: function(effects: any[], postProcessing: boolean, samples: number) {
-      if (!postProcessing || !Array.isArray(effects) || !effects.some(function(e: any) { return e && e.kind === "taa"; })) return;
-      var r = st.resources();
-      taaResolvePipeline(st, r, samples > 1); taaBlitPipeline(st, r, "rgba16float"); taaVelocityPipeline(st, r);
+      if (!postProcessing || !Array.isArray(effects) || !effects.some(function(e: any) { return e && (e.kind === "taa" || e.kind === "motionBlur"); })) return;
+      var r = st.resources(); taaVelocityPipeline(st, r);
+      if (effects.some(function(e: any) { return e && e.kind === "taa"; })) { taaResolvePipeline(st, r, samples > 1); taaBlitPipeline(st, r, "rgba16float"); }
     },
     beginFrame: function(effects: any[], frame: any): boolean { return taaBeginFrame(st, effects, frame); },
     resolve: function(encoder: any, effects: any[], frame: any) { return taaResolve(st, encoder, effects, frame); },
     capturePreviousSkins: function(encoder: any, objects: any[]) { taaCapturePreviousSkins(st, encoder, objects); },
+    velocityView: function() { return st.active && st.valid ? st.velocityView : null; },
     stats: function() { return { taaActive: st.active ? 1 : 0, taaHistoryValid: st.valid ? 1 : 0, taaMovers: st.moverCount, taaResets: st.resets }; },
     dispose: function() { taaDestroyTargets(st); if (st.paramBuffer) st.paramBuffer.destroy(); if (st.moverBuffer) st.moverBuffer.destroy(); st.paramBuffer = st.moverBuffer = null; st.movers.clear(); },
   };

@@ -33,7 +33,7 @@
       var isCube = tex.dimension === "cube";
       var environmentSlot = sceneWebGPUSelenaEnvironmentSlot(material, tex);
       var environmentRecord = environmentSlot && iblResources.active ? iblResources[environmentSlot === "brdf-lut" ? "brdfLUT" : environmentSlot] : null;
-      var liveView = environmentSlot ? (environmentRecord && environmentRecord.view) : (sceneSelenaShadowMapView(context, tex) || context.liveView(material, tex));
+      var liveView = environmentSlot ? (environmentRecord && environmentRecord.view) : (sceneSelenaShadowMapView(context, tex) || sceneDataTextureView(context, material, tex) || context.liveView(material, tex));
       var url = liveView || environmentSlot ? "" : context.url(material, tex, i);
       // dimension:"cube" (the water surface/surface-below "sky" environment
       // map) loads through wgpuLoadCubeTexture/placeholderCubeView instead
@@ -44,7 +44,7 @@
       var view = liveView || (record && record.view ? record.view : (isCube ? placeholderCubeView : placeholderView));
       var wgsl = tex.wgsl || {};
       entries.push({ binding: sceneNumber(wgsl.textureBinding, 1 + i * 2), resource: view });
-      entries.push({ binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2), resource: environmentSlot ? envMapSampler : linearSampler });
+      entries.push({ binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2), resource: environmentSlot ? envMapSampler : sceneDataTextureSampler(context, tex) || linearSampler });
       cacheViews.push(view);
     }
   }

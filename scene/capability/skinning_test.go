@@ -49,7 +49,7 @@ func TestSkinningImplementedOnBothGPUBackends(t *testing.T) {
 		"uniform highp sampler2D u_jointTexture;",
 		"gosxJointMatrix(int(a_joints.x))",
 		`"mat4 model=u_modelMatrix*skinMatrix;vec4 worldPos=model*vec4(a_position,1.0);",`,
-		"function createScenePBRSkinnedProgram(gl, detail = false) {",
+		"function createScenePBRSkinnedProgram(gl, detail = false, variant: any = null) {",
 	} {
 		if !strings.Contains(webgl, symbol) {
 			t.Errorf("Matrix[skinning][webgl] is true but %q is missing from %s; "+

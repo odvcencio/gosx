@@ -1392,7 +1392,7 @@
         count: vertexCount,
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
-        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs), uvs1: vertices.uvs1 instanceof Float32Array ? new Float32Array(vertices.uvs1) : null,
         tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
@@ -1408,7 +1408,7 @@
           return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
         }),
         normals: transformedNormals,
-        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs), uvs1: vertices.uvs1 instanceof Float32Array ? new Float32Array(vertices.uvs1) : null,
         tangents: sceneModelTransformTangents(vertices.tangents, transformedNormals, model, modelOrientation),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
@@ -2098,9 +2098,9 @@
 
   // A scene command can add a wave spectrum after mount. Ask for the FFT chunk once; until it lands the renderer keeps
   // drawing Gerstner waves, and a failed fetch is not retried on every schedule.
-  var sceneOceanFFTRequested = false;
+  var sceneOceanFFTRequested = false; function sceneTerrainFeature(state) { /* terrain, wind and scatter bands (terrain.ts) */ return (state?.environment?.terrain || state?.environment?.wind || state?.instancedMeshes?.some((mesh) => mesh?.lodGroup)) && !window.__gosx_scene3d_terrain_api ? ensureSceneGatedFeatureLoaded("terrain", "gosxScene3dTerrainUrl", "/gosx/bootstrap-feature-scene3d-terrain.js").catch(() => null) : null; }
   function requestSceneOceanFFTIfNeeded(state) {
-    if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
+    sceneTerrainFeature(state); if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
     sceneOceanFFTRequested = true;
     ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", "").catch(function() {});
   }
@@ -2121,7 +2121,7 @@
   // settleSceneComputeFeature awaits the compute chunk before the first
   // render when the scene needs it. Await it next to settlePreferredWebGLBackend
   // so the first frame draws the particles instead of skipping them.
-  async function settleSceneComputeFeature(state) {
+  async function settleSceneComputeFeature(state) { await sceneTerrainFeature(state);
     if (!sceneNeedsComputeFeature(state)) {
       return false;
     }

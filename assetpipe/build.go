@@ -83,6 +83,10 @@ type BuildOptions struct {
 	NoTextures bool
 	// NoOptimize skips vertex welding, reordering, and quantization.
 	NoOptimize bool
+	// Meshopt compresses mesh vertex and index data with
+	// EXT_meshopt_compression. The GLB then requires the extension, which the
+	// scene loader decodes in its glTF chunk.
+	Meshopt bool
 	// Optimize tunes the optimization stage.
 	Optimize OptimizeOptions
 	// LOD tunes simplification.
@@ -214,13 +218,26 @@ func buildModel(opts BuildOptions, input BuildInput, outDir string) (manifest.Mo
 	}
 	load := func() (*gltfedit.Document, error) { return gltfedit.Parse(source, resolve) }
 
+	var meshoptStats manifest.Meshopt
 	finish := func(document *gltfedit.Document) ([]byte, error) {
 		if !opts.NoOptimize {
 			if _, err := optimizeDocument(document, opts.Optimize); err != nil {
 				return nil, err
 			}
 		}
-		return document.WriteGLB()
+		encoded, err := document.WriteGLB()
+		if err != nil || !opts.Meshopt {
+			return encoded, err
+		}
+		compressed, stats, cerr := compressMeshopt(encoded)
+		if cerr != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: meshopt skipped: %v", input.Name, cerr))
+			return encoded, nil
+		}
+		if meshoptStats.Views == 0 {
+			meshoptStats = manifest.Meshopt{Views: stats.Views, Skipped: stats.Skipped, ViewBytesBefore: stats.ViewBytesBefore, ViewBytesAfter: stats.ViewBytesAfter}
+		}
+		return compressed, nil
 	}
 
 	document, err := load()
@@ -266,6 +283,9 @@ func buildModel(opts BuildOptions, input BuildInput, outDir string) (manifest.Mo
 		}},
 	}
 	model.Stats.TextureBytes = mainStats.textureBytes
+	if meshoptStats.Views > 0 {
+		model.Meshopt = &meshoptStats
+	}
 	for _, note := range mainStats.notes {
 		warnings = append(warnings, input.Name+": "+note)
 	}

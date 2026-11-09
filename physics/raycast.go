@@ -48,6 +48,8 @@ func (c *Collider) Raycast(ray Ray, maxDistance float64) (RaycastHit, bool) {
 		hit, ok = raycastCone(c, r, limit)
 	case ShapeTriangleMesh:
 		hit, ok = raycastMesh(c, r, limit)
+	case ShapeHeightfield:
+		hit, ok = raycastHeightfield(c, r, limit)
 	case ShapeConvexHull:
 		// A hull is stored as a point cloud with no face list, so there is no
 		// surface to intersect. Supply Indices to also get a triangulated
@@ -75,7 +77,7 @@ func (c *Collider) RaycastSupported() bool {
 		return false
 	}
 	switch c.Shape {
-	case ShapeSphere, ShapePlane, ShapeBox, ShapeCapsule, ShapeCylinder, ShapeCone, ShapeTriangleMesh:
+	case ShapeSphere, ShapePlane, ShapeBox, ShapeCapsule, ShapeCylinder, ShapeCone, ShapeTriangleMesh, ShapeHeightfield:
 		return true
 	case ShapeConvexHull:
 		return c.mesh != nil

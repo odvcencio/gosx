@@ -907,11 +907,12 @@
             vesselResult(rec, "pose", msg.target, "", typeof pose === "function" && pose(String(msg.target), bytes) === true);
             return;
           }
-          if (msg.kind === "instance") {
+          if (msg.kind === "instance" || msg.kind === "data-texture") {
             var mount = resolveMount(msg.target);
             var handle = mount && mount.__gosxScene3DHandle;
-            if (!handle || typeof handle.applyInstanceStream !== "function") throw new Error("Scene3D instance stream target is not ready");
-            result = handle.applyInstanceStream(bytes);
+            var applyName = msg.kind === "instance" ? "applyInstanceStream" : "applyDataTexture";
+            if (!handle || typeof handle[applyName] !== "function") throw new Error("Scene3D " + msg.kind + " target is not ready");
+            result = handle[applyName](bytes);
           } else {
             var method = FRAME_METHODS[msg.kind];
             if (!method || !scene || typeof scene[method] !== "function") throw new Error("Scene3D " + msg.kind + " frame dispatch is unavailable");
@@ -1290,10 +1291,11 @@
       post({ t: "vessel.cutaway", target: String(target), nodeID: String(nodeID), json: String(json) });
       return vesselOK.get("cutaway|" + target + "|" + nodeID) === true;
     };
-    scene3d.applyInstanceStream = function(target, bytes) {
-      postFrame("instance", target, bytes);
+    scene3d.applyInstanceStream = function(target, bytes, kind) {
+      postFrame(kind || "instance", target, bytes);
       return { applied: true, queued: true };
     };
+    scene3d.applyDataTexture = function(target, bytes) { return scene3d.applyInstanceStream(target, bytes, "data-texture"); };
 
     var netplayShim = createNetplayShim(scope, post, function() { return init; });
     var gosx = scope.__gosx = scope.__gosx || {};

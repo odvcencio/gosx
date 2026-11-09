@@ -348,6 +348,16 @@
 
   function dispatchPoseFrame(target, frame, options) {
     var opts = options || {};
+    // Timed frames (options.at, options.step) are interpolated by pose-interp.ts
+    // once the mount takes commands; until then they queue like any frame.
+    if (opts.at != null && timedPoses) {
+      try {
+        var timed = timedPoses.push(target, frame, opts);
+        if (timed) return Promise.resolve(timed);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
     var queueKey = key(target, opts) || target;
     if (!queueKey) return Promise.reject(new Error("Scene3D pose frame target has no stable id"));
     return new Promise(function(resolve, reject) {
@@ -1009,6 +1019,10 @@
       });
     }
   }
+
+  var timedPoses = window.__gosx_scene3d_pose_interpolation
+    ? window.__gosx_scene3d_pose_interpolation.create({ record: record, decode: decodePoseFrame })
+    : null;
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,

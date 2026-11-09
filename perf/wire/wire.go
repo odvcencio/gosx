@@ -183,7 +183,7 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 	}
 	add(docHops)
 
-	refs, inline, err := scanHTML(body)
+	refs, inline, err := scanHTML(body, finalURL)
 	if err != nil {
 		return Route{}, fmt.Errorf("%s: parse html: %w", pageURL, err)
 	}
@@ -297,7 +297,31 @@ type inlineStats struct {
 	dataBytes   int64
 }
 
-func scanHTML(body []byte) ([]ref, inlineStats, error) {
+// onDemandRuntimeURL reports whether a data-gosx-*-url value names a GoSX
+// runtime asset on the page's own origin. Prerendered and statically exported
+// pages write these values relative to the page (gosx/assets/... on /,
+// ../../gosx/assets/... two levels down), so the value is resolved against the
+// page URL before the /gosx/ path check; a root-absolute /gosx/ value counts
+// the same way.
+func onDemandRuntimeURL(page *url.URL, value string) bool {
+	ref, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || ref.Path == "" && ref.Opaque == "" {
+		return false
+	}
+	if page != nil {
+		ref = page.ResolveReference(ref)
+		if ref.Host != page.Host {
+			return false
+		}
+	} else if ref.IsAbs() || ref.Host != "" {
+		return false
+	}
+	return strings.HasPrefix(ref.Path, "/gosx/")
+}
+
+// scanHTML lists the resources a page references. page is the URL the HTML was
+// served from; on-demand data-gosx-*-url values resolve against it.
+func scanHTML(body []byte, page *url.URL) ([]ref, inlineStats, error) {
 	root, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
 		return nil, inlineStats{}, err
@@ -308,7 +332,7 @@ func scanHTML(body []byte) ([]ref, inlineStats, error) {
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
 			for _, a := range n.Attr {
-				if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") && strings.HasPrefix(a.Val, "/gosx/") {
+				if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") && onDemandRuntimeURL(page, a.Val) {
 					refs = append(refs, ref{href: a.Val, kind: KindLazyScript, initiator: "on-demand"})
 				}
 			}

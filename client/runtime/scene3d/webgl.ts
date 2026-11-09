@@ -425,42 +425,6 @@
     "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1[c], u_shadowSoftness1);",
     "}",
     "",
-    // GGX/Trowbridge-Reitz normal distribution function.
-    "float distributionGGX(vec3 N, vec3 H, float roughness) {",
-    "    float a = roughness * roughness;",
-    "    float a2 = a * a;",
-    "    float NdotH = max(dot(N, H), 0.0);",
-    "    float NdotH2 = NdotH * NdotH;",
-    "    float denom = NdotH2 * (a2 - 1.0) + 1.0;",
-    "    denom = PI * denom * denom;",
-    "    return a2 / max(denom, 0.0000001);",
-    "}",
-    "",
-    // Smith geometry function (GGX variant) — single direction.
-    "float geometrySchlickGGX(float NdotV, float roughness) {",
-    "    float r = roughness + 1.0;",
-    "    float k = (r * r) / 8.0;",
-    "    return NdotV / (NdotV * (1.0 - k) + k);",
-    "}",
-    "",
-    // Smith geometry function — combined for view and light directions.
-    "float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {",
-    "    float NdotV = max(dot(N, V), 0.0);",
-    "    float NdotL = max(dot(N, L), 0.0);",
-    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
-    "}",
-    "",
-    // Schlick fresnel approximation. F90 is the authored specular intensity:
-    // the grazing reflectance the KHR specular extension scales, so an
-    // intensity below 1 dims the whole lobe, not just the F0 floor.
-    "vec3 fresnelSchlick(float cosTheta, vec3 F0, float F90) {",
-    "    return F0 + (vec3(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
-    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float F90, float roughness) {",
-    "    return F0 + (max(vec3(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
     "vec3 rotateEnvY(vec3 dir, float radians) {",
     "    float c = cos(radians);",
     "    float s = sin(radians);",
@@ -486,6 +450,7 @@
     "    float kernel = min(2.0 * aa.x * (dot(dx, dx) + dot(dy, dy)), aa.y);",
     "    return kernel > 0.0 ? sqrt(sqrt(min(r*r*r*r + kernel, 1.0))) : r;",
     "}",
+    GLSL_BRDF,
     GLSL_TRANSMISSION,
     "void main() {",
     "    if (dot(u_cut[1].xyz, v_worldPosition) + u_cut[1].w > 0.0) discard;",
@@ -580,7 +545,7 @@
     "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
-    "",
+    "    float surfaceClearcoat = u_clearcoat, surfaceClearcoatRoughness = 0.04, surfaceSheen = u_sheen, surfaceTransmission = u_transmission;",
     "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
     "    float NoV = max(dot(N, V), 0.0);",
     "",
@@ -630,7 +595,8 @@
     "    }",
     "",
     // Accumulate direct lighting.
-    "    float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    float transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    GosxLayer gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
     "    vec3 Lo = vec3(0.0);",
     "    vec3 specularRadiance = vec3(0.0);",
     "    vec3 specularEnvironment = vec3(0.0);",
@@ -690,25 +656,11 @@
     "            attenuation = pointLightAttenuation(dist, u_lightRanges[i], u_lightDecays[i]);",
     "        }",
     "",
-    "        vec3 H = normalize(V + L);",
     "        float NdotL = max(dot(N, L), 0.0);",
-    "",
-    // Cook-Torrance specular BRDF.
-    "        float D = distributionGGX(N, H, roughness);",
-    "        float G = geometrySmith(N, V, L, roughness);",
-    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "",
-    "        vec3 numerator = D * G * F;",
-    "        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
-    "        vec3 specular = numerator / denominator;",
-    "",
-    // Energy conservation: diffuse complement of the dielectric specular.
-    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
-    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
-    // the Fresnel colour and never borrows the metallic Fresnel.
-    "        vec3 Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
-    "        float kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
-    "",
+    // Cook-Torrance GGX with multiscatter energy and the clear-coat layer;
+    // the diffuse weight is (1 - maxRGB(dielectric Fresnel)) * (1 - metalness).
+    "        vec3 specular;",
+    "        vec3 brdf = gosxDirectBRDF(N, V, L, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer, specular);",
     // Shadow attenuation follows the light associated with each slot.
     "        float shadow = 1.0;",
     "        if (u_receiveShadow && (lightType == 1 || lightType == 3)) {",
@@ -720,7 +672,7 @@
     "        }",
     "",
     "        vec3 radiance = lightColor * intensity * attenuation;",
-    "        Lo += (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadow;",
+    "        Lo += brdf * radiance * NdotL * shadow;",
     "        specularRadiance += specular * radiance * NdotL * shadow;",
     "    }",
     "",
@@ -730,17 +682,8 @@
     "    vec3 ambient;",
     "#if GOSX_HDR_IBL",
     "    if (u_hasIBL) {",
-    "        vec3 Nr = rotateEnvY(N, u_envRotation);",
-    "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
-    "        vec3 FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        vec3 irradiance = texture(u_iblIrradiance, Nr).rgb;",
-    "        vec3 prefiltered = textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod).rgb;",
-    "        vec2 brdf = texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg;",
-    "        vec3 diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
-    "        vec3 specularIBL = prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y);",
-    "        ambient = (diffuseIBL + specularIBL) * u_envIntensity;",
-    "        specularEnvironment = specularIBL * u_envIntensity;",
+    "        ambient = gosxImageLight(N, V, NoV, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer, specularEnvironment) * u_envIntensity;",
+    "        specularEnvironment *= u_envIntensity;",
     "    } else",
     "#endif",
     "    if (u_hasEnvMap) {",
@@ -757,14 +700,14 @@
     "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, F90, roughness);",
     "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
     "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
     "        specularEnvironment = envSpecular * Fenv * (1.0 - roughness * 0.65) * u_envIntensity;",
+    "        ambient = gosxCoatOver(kDenv * envDiffuse * (1.0 - transmission) * u_envIntensity + specularEnvironment, textureLod(u_envMap, envEquirectUV(Rr), gosxLayer.coatRoughness * u_envMapMaxLod).rgb * u_envIntensity, NoV, gosxLayer, specularEnvironment);",
     "    } else {",
     "        float hemi = N.y * 0.5 + 0.5;",
     "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
     "                        + u_skyColor * u_skyIntensity * hemi",
     "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "        ambient = gosxCoatOver(envDiffuse * albedo * (1.0 - transmission), envDiffuse, NoV, gosxLayer, specularEnvironment);",
     "    }",
     "    if (!u_hasEnvMap) {",
     "#if GOSX_HDR_IBL",
@@ -797,13 +740,7 @@
     "        color += u_rimColor * rim;",
     "    }",
     "",
-    "    float clearcoat = clamp(u_clearcoat, 0.0, 1.0);",
-    "    if (clearcoat > 0.0001) {",
-    "        float cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
-    "        color += vec3(cc * 0.28);",
-    "    }",
-    "",
-    "    float sheen = clamp(u_sheen, 0.0, 1.0);",
+    "    float sheen = clamp(surfaceSheen, 0.0, 1.0);",
     "    if (sheen > 0.0001) {",
     "        float velvet = pow(1.0 - NoV, 3.0) * sheen;",
     "        color += albedo * velvet * 0.55;",
@@ -877,7 +814,7 @@
   // --- Shadow Depth Shader Sources ---
 
   // Cutaway planes are off when every value is zero.
-  const SCENE_NO_CUT = new Float32Array(12);
+  const SCENE_NO_CUT = new Float32Array(12); function sceneWebGLWindUpload(gl: any, ip: any, wind: any) { if (ip.uniforms.wind === undefined) ip.uniforms.wind = gl.getUniformLocation(ip.program, "u_wind[0]"); if (ip.uniforms.wind) gl.uniform4fv(ip.uniforms.wind, wind && window.__gosx_scene3d_terrain_api ? window.__gosx_scene3d_terrain_api.windFor(wind) : SCENE_NO_CUT); } // Environment.Wind sway for instanced batches (terrain.ts sceneWindFor)
   const SCENE_SHADOW_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -923,7 +860,7 @@
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
-    "uniform bool u_hasInstanceColor;",
+    "uniform bool u_hasInstanceColor;", "uniform vec4 u_wind[3];", "vec3 gosxWindOffset(mat4 m, vec3 p) { vec4 s = u_wind[2]; if (s.x <= 0.0) return vec3(0.0); vec4 a = u_wind[0]; vec4 b = u_wind[1]; vec2 o = m[3].xz; float ph = (dot(o, a.xy) - b.z * a.w) * 6.2831853 / b.y + 0.35 * sin(dot(o, vec2(a.y, -a.x)) * 6.2831853 / (b.y * 1.7)); float k = clamp(p.y / s.y, 0.0, 1.0); float f = s.x * a.z * 0.1 * (1.0 + b.x * sin(ph)) * (0.75 + 0.25 * sin(6.2831853 * b.w * a.w + o.x * 0.37 + o.y * 0.53)) * k * k * s.y * length(m[1].xyz); return vec3(a.x * f, -0.3 * abs(f) * k, a.y * f); }",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -935,7 +872,7 @@
     SCENE_GLSL_AFFINE_NORMAL,
     "",
     "void main() {",
-    "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
+    "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0); worldPos.xyz += gosxWindOffset(a_instanceMatrix, a_position);",
     "    v_worldPosition = worldPos.xyz;",
     "mat3 m=mat3(a_instanceMatrix);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
     "    v_uv = a_uv;",
@@ -4342,6 +4279,8 @@
     return typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api || SCENE_WEBGL_RENDER_TRUTH_NOOP;
   }
 
+  function sceneWebGLDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webglRun(state, effect, i, ...rest) : rest[0]; }
+  function sceneWebGLDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
   function createScenePostProcessor(gl, resolveSelenaUniform) {
 
     var quad = createSceneFullscreenQuad(gl);
@@ -4355,7 +4294,7 @@
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     function postFrameContext(projection, view, lights) { return projection && projection.projection ? projection : { projection: projection, view: view, lights: lights }; }
     var currentLinearInput = true;
-    var currentWidth = 0;
+    var currentWidth = 0, depthFx: any = { gl: gl };
     var currentHeight = 0;
     var hdrDegradationReported = false;
     // Lazily compiled shader programs, keyed by effect name.
@@ -4897,13 +4836,7 @@
               }
               break;
             }
-            default:
-              // Unknown effect — skip. A kind that reaches here NEVER draws;
-              // the chain record stays at pipeline="missing", dispatched=0,
-              // which is precisely how a case-sensitivity mismatch on the
-              // effect kind (the customPost defect) becomes visible instead of
-              // being masked by a healthy-looking postEffects count.
-              break;
+            default: currentTexture = sceneWebGLDepthFxPass(depthFx, effect, i, currentTexture, targetFBO, passW, passH, sceneFBO.depthTex, atmosphereContext); break; // decals and motion blur; any other kind never draws
           }
 
           if (postChain) {
@@ -4931,7 +4864,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
-        mipBloom.dispose(); atmospherePost.dispose();
+        mipBloom.dispose(); atmospherePost.dispose(); sceneWebGLDepthFxDispose(depthFx);
         if (temporal) temporal.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);
@@ -5692,13 +5625,13 @@
   // Compile PBR vertex + fragment shaders and return a program object with
   // cached uniform locations. Returns null on compile/link failure so the
   // caller can fall back to the legacy renderer.
-  function createScenePBRProgram(gl, detail = false) {
-    const warmed = detail ? null : scenePBRTakeInitialProgram(gl, "base");
+  function createScenePBRProgram(gl, detail = false, variant: any = null) {
+    const warmed = detail || variant ? null : scenePBRTakeInitialProgram(gl, "base");
     if (warmed === false) return null;
     if (warmed) {
       return scenePBRFinalizeBaseProgram(gl, warmed);
     }
-    const compiled = scenePBRBuildProgram(gl, SCENE_PBR_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "PBR shader");
+    const compiled = scenePBRBuildProgram(gl, variant ? variant.vertex(SCENE_PBR_VERTEX_SOURCE) : SCENE_PBR_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : variant ? variant.fragment(SCENE_PBR_FRAGMENT_SOURCE) : SCENE_PBR_FRAGMENT_SOURCE), "PBR shader");
     if (!compiled) return null;
     const { program, vertexShader, fragmentShader } = compiled;
 
@@ -6050,8 +5983,8 @@
   // Compile the skinned PBR vertex shader with the same PBR fragment shader.
   // Returns a program object with cached attribute/uniform locations including
   // the joint matrix array and skin flag, or null on failure.
-  function createScenePBRSkinnedProgram(gl, detail = false) {
-    return scenePBRCreateProgramInfo(gl, SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader", function(program: any) {
+  function createScenePBRSkinnedProgram(gl, detail = false, variant: any = null) {
+    return scenePBRCreateProgramInfo(gl, variant ? variant.vertex(SCENE_PBR_SKINNED_VERTEX_SOURCE) : SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : variant ? variant.fragment(SCENE_PBR_FRAGMENT_SOURCE) : SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader", function(program: any) {
 
       // Cache attribute locations.
       var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights");
@@ -6185,7 +6118,7 @@
   // Joint palette texture shared by every skinned draw on this context.
   // Rigs above SCENE_UNIFORM_SKIN_JOINTS joints upload their matrices here
   // (4 RGBA32F texels per matrix on one row) instead of the uniform array.
-  var sceneJointPalettes = new WeakMap();
+  var sceneJointPalettes = new WeakMap(); if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = window.__gosx_scene3d_asset_ext.uv1 || { use() { return null; }, bind() {}, dispose() {} }; }
   function sceneUploadJointPalette(gl, locs, matrices, jointCount) {
     var jointPalette = sceneJointPalettes.get(gl);
     if (!locs.jointTexture || !locs.jointTexCount) return false;
@@ -7587,6 +7520,7 @@
       // Shadow maps bind the slot's depth array, or a lit placeholder array.
       const shadowSlot = sceneSelenaShadowMapSlot(textureCache._gosxSelenaLighting, tex);
       if (shadowSlot !== undefined) { scenePBRBindTexture(gl, unit, shadowSlot ? shadowSlot.depthTexture : scenePBRPlaceholderShadow(gl, textureCache), gl.TEXTURE_2D_ARRAY); gl.uniform1i(loc, unit); continue; }
+      if (sceneDataTextureBind(gl, info, unit, loc, material, tex, selenaPlaceholderTexture)) continue;
       const environmentSlot = sceneWebGLSelenaEnvironmentSlot(material, tex);
       if (environmentSlot) {
         const environment = textureCache._gosxSelenaEnvironment;
@@ -7644,7 +7578,7 @@
 	    var skinnedProgramFailed = false;
     var detailResources = { programs: new Map(), atlases: new Map(), materials: new Map(), bake: null };
     var detailEnabled = true;
-    var customProgramCache = new Map();
+    var customProgramCache = new Map(), selenaSurfacePrograms = new Map();
     var selenaProgramCache = new Map();
 
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Shadow program (depth-only shader for shadow pass).
@@ -7657,7 +7591,7 @@
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
     var transmissionResources = sceneCreateTransmissionWebGL(gl);
     var frameLinear = false;
     const programPreparation: ScenePBRPreparationHooks = { ensureSelenaProgram, ensureSkinnedProgram, ensureCustomProgram,
@@ -8858,7 +8792,7 @@
           return surface && !(surface.sourceKind === "html" && !surface.textureReady);
         }));
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         retireInstancedStreams();
         return "empty";
@@ -9127,7 +9061,7 @@
       applyDepthMode(gl, "opaque");
       drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta?.frameRequest);
       } // end if (hasPBRData)
-      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque"); window.__gosx_scene3d_terrain_api?.webgl(terrainResources, gl, { environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix, viewMatrix), height: renderH, textureCache: textureCache, time: sceneSelenaFrameTime, load: scenePBRLoadTexture, uniforms: scenePBRCacheBaseUniforms, fragment: () => scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), program: program, mount: canvas.parentNode, prepare: (u, m) => { gl.uniformMatrix4fv(u.viewMatrix, false, viewMatrix); gl.uniformMatrix4fv(u.projectionMatrix, false, projMatrix); gl.uniform3f(u.cameraPosition, cam.x, cam.y, cam.z); scenePBRUploadExposure(gl, u, bundle.environment, frameLinear); scenePBRUploadLights(gl, u, bundle.lights, bundle.environment, _frameLightsHash); scenePBRUploadEnvironmentMap(gl, u, bundle.environment, textureCache, shadowSlots, shadowLightIndices); scenePBRUploadShadowUniforms(gl, u, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache); uploadMaterial(gl, u, m, textureCache); } });
       const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
       sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: sceneSelenaFrameTime, quality: frameMeta?.oceanTier,
         meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
@@ -9135,7 +9069,7 @@
       scenePBRCompositePass(gl, frameMeta, renderTarget);
       // The ocean owns a program and texture unit zero. Restore the PBR pass
       // and invalidate material bindings before drawing glass against it.
-      gl.useProgram(program);
+      gl.useProgram(program); window.__gosx_scene3d_crowd_api?.webgl(gl, { environment: bundle.environment, camera: cam, proj: projMatrix, viewProj: sceneMat4Multiply(projMatrix, viewMatrix), height: renderH, time: bundle.timeSeconds, uniforms: scenePBRCacheBaseUniforms, fragment: () => scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), program: program, mount: canvas.parentNode, textureCache: textureCache, prepare: (u: any, m: any) => { gl.uniformMatrix4fv(u.viewMatrix, false, viewMatrix); gl.uniformMatrix4fv(u.projectionMatrix, false, projMatrix); gl.uniform3f(u.cameraPosition, cam.x, cam.y, cam.z); scenePBRUploadExposure(gl, u, bundle.environment, frameLinear); scenePBRUploadLights(gl, u, bundle.lights, bundle.environment, _frameLightsHash); scenePBRUploadEnvironmentMap(gl, u, bundle.environment, textureCache, shadowSlots, shadowLightIndices); scenePBRUploadShadowUniforms(gl, u, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache); uploadMaterial(gl, u, m, textureCache); } }); // Environment.Crowds (crowd-glsl.ts)
       if (bundle.environment && bundle.environment.ocean || scenePBRHasComposite(frameMeta)) textureCache._sceneTextureEpoch++;
 
       if (transmissionSettings.screen) transmissionResources.capture(renderTarget);
@@ -9230,8 +9164,8 @@
 	      return skinnedProgram;
 	    }
 
-    function ensureCustomProgram(material) {
-      return scenePBREnsureCustomProgram(gl, customProgramCache, material);
+    function ensureCustomProgram(material, skinned = false) {
+      return skinned ? null : scenePBREnsureCustomProgram(gl, customProgramCache, material);
     }
 
     function ensureSelenaProgram(material, skinned) {
@@ -9697,7 +9631,7 @@
           meshColorVisibility.set(obj, count > 0);
           if (count > 0 && obj.directVertices && obj.retainedGeometry && obj.vertices &&
               obj.vertexCount > 0 && scenePBRObjectRenderPass(obj, mat) === "opaque" &&
-              !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat)) {
+              !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat) && !sceneWebGLSelenaSurfaceHook(mat)) {
             if (count === 1) obj.modelMatrix = batch.transforms.subarray(0, 16);
             rigidObjectBatches.set(obj, batch);
           }
@@ -9720,7 +9654,7 @@
             objectIsSkinned(obj) ||
             !obj.modelMatrix || !(sceneAffineDeterminant(obj.modelMatrix, 0) > 0.000001) ||
             scenePBRObjectRenderPass(obj, mat) !== "opaque" ||
-            sceneSelenaIsMaterial(mat) || scenePBRHasCustomHooks(mat)) continue;
+            sceneSelenaIsMaterial(mat) || scenePBRHasCustomHooks(mat) || sceneWebGLSelenaSurfaceHook(mat)) continue;
         let groups = rigidBatchRecords.get(obj.vertices);
         if (!groups) {
           groups = new Map();
@@ -9860,7 +9794,7 @@
       uploadMaterial(gl, ip.uniforms, mat, textureCache);
       if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
       gl.uniform1i(ip.uniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
-      gl.uniform1i(ip.uniforms.hasInstanceColor, 0);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 0); sceneWebGLWindUpload(gl, ip, null);
       gl.depthMask(sceneTransmissionDepthWrite(obj, mat, scenePBRObjectRenderPass(obj, mat) === "opaque"));
       const allowed = {};
       for (const [name, size, fallback] of [
@@ -10025,7 +9959,8 @@
           continue;
         }
 
-        var customProgram = !isSkinned ? ensureCustomProgram(mat) : null;
+        var customProgram = sceneWebGLAuthoredProgram(gl, selenaSurfacePrograms, mat, isSkinned, ensureCustomProgram, obj, { base: createScenePBRProgram, skinned: createScenePBRSkinnedProgram, usable: scenePBRUsableProgramInfo });
+        if (customProgram === false) continue;
 
         // Reaching this line means the object is about to draw with the
         // built-in PBR shader. If it authored a Selena or CustomMaterial
@@ -10080,6 +10015,7 @@
         }
 
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, currentUniforms, mat, detailEnabled);
+        sceneWebGLUploadSelenaSurface(gl, customProgram, mat, selenaUniformValue);
 
         // Per-object shadow receive control.
         gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
@@ -10151,7 +10087,7 @@
           gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
         }
 
-        // Joints and weights (skinned meshes only).
+        window.__gosx_scene3d_asset_ext.uv1.bind(gl, currentProgram, obj, mat);
         if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
           var joints = obj.vertices.joints;
           var weights = obj.vertices.weights;
@@ -10747,7 +10683,7 @@
         if (!ip) continue;
         gl.useProgram(ip.program); uploadInstancedFrame(ip);
         gl.depthMask(sceneTransmissionDepthWrite(mesh, mat, renderPass === "opaque"));
-        uploadMaterial(gl, ip.uniforms, mat, textureCache);
+        uploadMaterial(gl, ip.uniforms, mat, textureCache); sceneWebGLWindUpload(gl, ip, mesh.wind);
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.
@@ -10860,9 +10796,9 @@
     function dispose() {
       sceneWebGLDisposeDetail(gl, detailResources);
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources);
-      if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
+      if (oceanResources.renderer) oceanResources.renderer.dispose(); terrainResources.dispose?.(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
-      transmissionResources.dispose();
+      transmissionResources.dispose(); window.__gosx_scene3d_crowd_api?.dispose(gl);
       softParticles.dispose(); exposureGL.dispose();
       scenePBRDisposeProgramQueue(gl);
 
@@ -10898,7 +10834,7 @@
       instancedStreamRecords.clear();
       rigidBatchRecords.clear();
       disposeCrowdResources();
-      sceneDisposeJointPalette(gl);
+      sceneDisposeJointPalette(gl); window.__gosx_scene3d_asset_ext.uv1.dispose(gl);
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
       disposeOwnedProgram(rigidShadowProgram);
@@ -10967,6 +10903,7 @@
         disposeOwnedProgram(cp);
       }
       customProgramCache.clear();
+      sceneWebGLDisposeSelenaSurfaces(selenaSurfacePrograms, disposeOwnedProgram);
       scenePBRAuthoredProgramKeys.delete(customProgramCache);
 
       for (const record of selenaProgramCache.values()) {

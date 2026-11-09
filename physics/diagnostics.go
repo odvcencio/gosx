@@ -71,7 +71,7 @@ func (w *World) Diagnostics() []Diagnostic {
 			})
 			continue
 		}
-		if collider.Shape == ShapeTriangleMesh {
+		if collider.Shape == ShapeTriangleMesh || collider.Shape == ShapeHeightfield {
 			meshes++
 			if !immovableCollider(collider) {
 				dynamicMeshes++

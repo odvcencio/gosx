@@ -295,10 +295,11 @@ func filesInMoreThanOneLazyChunk() map[string][]string {
 // showing up later as a size budget breach with no named cause.
 func TestNoUnexpectedSourceFileShipsInTwoLazyChunks(t *testing.T) {
 	allowed := map[string]string{
-		"../runtime/motion/easing.ts":                "the small, idempotent easing compiler is shared by independently optional SVG and scene transitions; its guarded motion.createEasing handoff avoids an eager base/transport dependency or another network request",
-		"bootstrap-src/30h-tail-capability-probe.ts": "the islands chunk and the engines chunk both call entryRequiresAsyncWebGPUProbe, and either can load without the other",
-		"bootstrap-src/30c2-tail-arcade-audio.ts":    "the hubs chunk's fight controller calls the synth as in-scope functions, and a page without hubs (a Go WASM engine playing arcade cues) requires the standalone arcade-audio chunk instead; the chunk keeps an already published synth, and a page needing both is rare and pays 8 KB",
-		"../runtime/host/compatibility.ts":           "each independently loadable typed host chunk must install the same reload-safe adapter until Stack 07 collapses the final facade",
+		"../runtime/motion/easing.ts":                    "the small, idempotent easing compiler is shared by independently optional SVG and scene transitions; its guarded motion.createEasing handoff avoids an eager base/transport dependency or another network request",
+		"bootstrap-src/30h-tail-capability-probe.ts":     "the islands chunk and the engines chunk both call entryRequiresAsyncWebGPUProbe, and either can load without the other",
+		"bootstrap-src/30c2-tail-arcade-audio.ts":        "the hubs chunk's fight controller calls the synth as in-scope functions, and a page without hubs (a Go WASM engine playing arcade cues) requires the standalone arcade-audio chunk instead; the chunk keeps an already published synth, and a page needing both is rare and pays 8 KB",
+		"bootstrap-src/16c3-scene-data-texture-shims.ts": "both renderer chunks request the data-texture chunk and bind its textures through the same 0.6 KB shim; a page loads both backends only after a WebGPU device loss, and the upload code itself ships once in the data-texture chunk",
+		"../runtime/host/compatibility.ts":               "each independently loadable typed host chunk must install the same reload-safe adapter until Stack 07 collapses the final facade",
 	}
 	for rel, chunks := range filesInMoreThanOneLazyChunk() {
 		if _, ok := allowed[rel]; ok {

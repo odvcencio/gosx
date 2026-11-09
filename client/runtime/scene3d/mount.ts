@@ -33,10 +33,10 @@
     // A spectral ocean needs the FFT chunk; if it cannot load, the renderer keeps the Gerstner ocean.
     if ((props.scene || props).environment?.ocean?.spectrum) { try { await ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; }
     for (const [on, kind, key] of [[props.shaderWarmup, "warmup", "gosxScene3dWarmupUrl"], [props.textAtlases, "text-atlas", "gosxScene3dTextAtlasUrl"]]) if (on) { try { await ensureSceneGatedFeatureLoaded(kind, key, ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; } // opt-in chunks (optional-chunks.ts); a scene draws without them
+    // Decals and motion blur live in their own chunk, loaded before the first frame; without it the renderers skip those effects.
+    if (scenePostEffects(props).some((effect: any) => effect.kind === "decals" || effect.kind === "motionBlur")) { try { await ensureSceneGatedFeatureLoaded("depthfx", "gosxScene3dDepthfxUrl", ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
-    function scene3DFactoryCurrent() {
-      return !ctx.isCurrent || ctx.isCurrent();
-    }
+    function scene3DFactoryCurrent() { return !ctx.isCurrent || ctx.isCurrent(); }
     let initialRuntimeCommands = null;
     if (runtimeScene) {
       ctx._ssr = true;
@@ -210,6 +210,7 @@
         return { wants: true, reason: "compute-particles" };
       }
       if (sceneState.environment && sceneState.environment.ocean) return { wants: true, reason: "ocean" };
+      if (sceneState.environment?.crowds?.length) return { wants: true, reason: "crowd" }; // crowd fans animate on the scene clock (crowd*.ts)
       if (Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length > 0) {
         if (sceneWaterSystemsPaused(sceneState)) {
           return { wants: false, reason: "water-paused" };
@@ -3566,6 +3567,7 @@
       applyInstanceStream(bytes) {
         return window.__gosx_scene3d_apply_instance_stream_frame(sceneState, bytes, scheduleRender, mount);
       },
+      applyDataTexture(bytes: any) { const api = window.__gosx_scene3d_data_texture_api, copy = api ? bytes : bytes.slice(); return api ? api.apply(copy, scheduleRender, mount) : ensureSceneGatedFeatureLoaded("data-texture", "gosxScene3dDataTextureUrl", "").then((loaded: any) => loaded.apply(copy, scheduleRender, mount)); },
       // setFrameHook(fn) installs the one engine frame callback and returns its remover (frame-owner.ts).
       setFrameHook(fn: any) { if (disposed) throw new Error("disposed"); return sceneFrameOwnerSet(frameOwner, fn, sceneNowMilliseconds(), (on: boolean) => on ? scheduleRender("frame-hook") : applySceneRenderLoopState("frame-hook")); },
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
