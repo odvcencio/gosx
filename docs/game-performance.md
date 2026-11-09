@@ -216,7 +216,7 @@ and grow with the scene:
 
 | Function | Where | WebGPU ms per frame | WebGL2 ms per frame |
 |---|---|---|---|
-| `ingestManifestText`, called through `updateWaterSystems` and `sceneWaterManifestShaderSourceStats` | `client/runtime/scene3d/webgpu.ts` | 6.2 | – |
+| `ingestManifestText`, called through `updateWaterSystems` and `sceneWaterManifestShaderSourceStats` | The WebGPU renderer | 6.2 | – |
 | `sceneCrowdBatchPartition` | `client/js/bootstrap-src/10-runtime-scene-core.ts` | 2.9 | 3.6 |
 | `sceneFocusCandidates`, called through `syncSceneNodeFocusProxies` | `client/runtime/scene3d/mount-scene-focus.ts` | 1.1 | 1.6 |
 | The Go engine's whole frame (step, replays, poses) | `stress.wasm` | 0.8 | 1.0 |

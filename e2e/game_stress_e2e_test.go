@@ -346,8 +346,15 @@ func runStress(t *testing.T, base string, spec stressSpec) (stressSummary, stres
 	t.Helper()
 	chrome := e2eChromePath(t)
 	timeout := time.Duration(spec.Warmup+spec.Seconds)*time.Second + 4*time.Minute
-	browser := newBrowserPage(t, chrome, map[string]any{"enable-unsafe-webgpu": true, "ignore-gpu-blocklist": true,
-		"autoplay-policy": "no-user-gesture-required"}, spec.Width+40, spec.Height+80, "", timeout)
+	flags := map[string]any{"enable-unsafe-webgpu": true, "ignore-gpu-blocklist": true, "autoplay-policy": "no-user-gesture-required"}
+	if !gpuRunnerAvailable() {
+		// No GPU runner: draw WebGL2 with SwiftShader, as CI's headless Chrome
+		// offers no WebGL otherwise. The GPU runners' Chrome ignores these flags.
+		for k, v := range map[string]any{"use-gl": "angle", "use-angle": "swiftshader", "enable-unsafe-swiftshader": true, "enable-webgl": true} {
+			flags[k] = v
+		}
+	}
+	browser := newBrowserPage(t, chrome, flags, spec.Width+40, spec.Height+80, "", timeout)
 	ctx := browser.ctx
 	if err := chromedp.Run(ctx, emulation.SetDeviceMetricsOverride(int64(spec.Width), int64(spec.Height), 1, false)); err != nil {
 		t.Fatalf("viewport: %v", err)

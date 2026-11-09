@@ -496,6 +496,8 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		"__gosx_scene3d_vessel_external", "__gosx_scene3d_vessel_pose", "__gosx_scene3d_vessel_decks", "__gosx_scene3d_vessel_cutaway", "__gosx_scene3d_vessel_cutaway_api",
 		// Opt-in Selena scene lighting (lights, shadow cascades, fog) in the content-gated selena-lighting chunk.
 		"__gosx_scene3d_selena_lighting_api",
+		// Timed pose frame interpolation (a simulation in a Web Worker) in the optional command chunk.
+		"__gosx_scene3d_pose_interpolation",
 		// Opt-in spectral ocean authorities in the lazy ocean-fft chunk (and the vessel chunk's hull pose for the wake).
 		"__gosx_elio_graph",                    // The generic Elio graph runner shared by the WebGPU and WebGL2 ocean passes.
 		"__gosx_scene3d_elio_ocean",            // The generated ocean kernels (Elio v0.6.0).
