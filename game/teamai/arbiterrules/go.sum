@@ -18,5 +18,5 @@ google.golang.org/grpc v1.83.2 h1:EManeRomTObA0BU7I8vXgg/78uE5MJ9M8B39EX2WscU=
 google.golang.org/grpc v1.83.2/go.mod h1:YPI1hK3kDked6iHvgX3tR0y+nX/qpMFKhPgFsokw1S8=
 google.golang.org/protobuf v1.36.11 h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=
 google.golang.org/protobuf v1.36.11/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
-m31labs.dev/arbiter v1.13.0 h1:PTjZBq+oI0eC7pax8AtWKt0Bnh6tblVRzLHUt5lU5sY=
-m31labs.dev/arbiter v1.13.0/go.mod h1:G79dyAu8PoDVa9K2MHcEHbgnM0l53WO7kFNR/6i6wvo=
+m31labs.dev/arbiter v1.13.1-0.20261109081613-a233ceea7e30 h1:Ab7rvbjNXr9TQpRbJSlfU5SmAUQvVC6wpahdcUfjTgo=
+m31labs.dev/arbiter v1.13.1-0.20261109081613-a233ceea7e30/go.mod h1:G79dyAu8PoDVa9K2MHcEHbgnM0l53WO7kFNR/6i6wvo=

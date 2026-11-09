@@ -1,51 +1,51 @@
 package arbiterrules
 
 import (
+	_ "embed"
 	"strings"
 	"testing"
+
+	"m31labs.dev/arbiter/gameai"
 
 	"m31labs.dev/gosx/game/teamai"
 )
 
-const source = `
-rule LaneOpen {
-    when { nearest_opponent.dist > 6 and self.y < 30 }
-    then Read { branch: "deep" }
-}
-
-rule Crowded {
-    when { nearest_opponent.dist <= 6 }
-    then Read { branch: "short" }
-}
-
-rule Late {
-    when { signal.clock < 10 }
-    then Read { branch: "short" }
-}
-`
+// The bundles are built from testdata/*.arb by TestBundlesAreCurrent (native
+// builds only); these tests load them, so they also run as js/wasm.
+var (
+	//go:embed testdata/reads.bundle
+	readsBundle []byte
+	//go:embed testdata/bad.bundle
+	badBundle []byte
+)
 
 func spec() *teamai.Spec {
+	decide := func(chooser string, branches ...teamai.BranchSpec) teamai.StepSpec {
+		return teamai.StepSpec{Do: "decide", DecisionSpec: teamai.DecisionSpec{
+			Window: 1, Chooser: chooser, Branches: branches,
+		}}
+	}
+	holds := []teamai.StepSpec{
+		{Label: "deep", Do: "hold", Duration: 5},
+		{Label: "short", Do: "hold", Duration: 5},
+	}
 	return &teamai.Spec{
 		Format: teamai.Format, Version: teamai.Version,
 		Roles:   []string{"runner"},
 		Signals: []string{"clock"},
 		Assignments: []teamai.AssignmentSpec{
-			{Name: "read", Steps: []teamai.StepSpec{
-				{Do: "decide", DecisionSpec: teamai.DecisionSpec{
-					Window:   1,
-					Branches: []teamai.BranchSpec{{When: "LaneOpen", Goto: "deep"}, {When: "Crowded", Goto: "short"}},
-				}},
-				{Label: "deep", Do: "hold", Duration: 5},
-				{Label: "short", Do: "hold", Duration: 5},
-			}},
-			{Name: "pick", Steps: []teamai.StepSpec{
-				{Do: "decide", DecisionSpec: teamai.DecisionSpec{
-					Chooser:  "reads",
-					Branches: []teamai.BranchSpec{{Goto: "deep"}, {Goto: "short"}},
-				}},
-				{Label: "deep", Do: "hold", Duration: 5},
-				{Label: "short", Do: "hold", Duration: 5},
-			}},
+			{Name: "read", Steps: append([]teamai.StepSpec{
+				decide("", teamai.BranchSpec{When: "LaneOpen", Goto: "deep"}, teamai.BranchSpec{When: "Crowded", Goto: "short"}),
+			}, holds...)},
+			{Name: "pick", Steps: append([]teamai.StepSpec{
+				decide("reads", teamai.BranchSpec{Goto: "deep"}, teamai.BranchSpec{Goto: "short"}),
+			}, holds...)},
+			{Name: "best", Steps: append([]teamai.StepSpec{
+				decide("best", teamai.BranchSpec{Goto: "deep"}, teamai.BranchSpec{Goto: "short"}),
+			}, holds...)},
+			{Name: "weighted", Steps: append([]teamai.StepSpec{
+				decide("weighted", teamai.BranchSpec{Goto: "deep"}, teamai.BranchSpec{Goto: "short"}),
+			}, holds...)},
 		},
 	}
 }
@@ -63,7 +63,7 @@ func world(oppY float64) *teamai.World {
 
 func compile(t testing.TB) (*teamai.Book, *Rules) {
 	t.Helper()
-	r, err := Compile([]byte(source))
+	r, err := Load(readsBundle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +75,18 @@ func compile(t testing.TB) (*teamai.Book, *Rules) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reg.Chooser("reads", ch); err != nil {
+	best, err := r.Decision("pick", gameai.Best("score"))
+	if err != nil {
 		t.Fatal(err)
+	}
+	weighted, err := r.Decision("pick", gameai.Weighted("weight"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]teamai.Chooser{"reads": ch, "best": best, "weighted": weighted} {
+		if err := reg.Chooser(name, c); err != nil {
+			t.Fatal(err)
+		}
 	}
 	b, err := teamai.Compile(spec(), reg)
 	if err != nil {
@@ -120,31 +130,58 @@ func TestChooserReadsBranchParam(t *testing.T) {
 	}
 }
 
-func TestPredicateDoesNotAllocate(t *testing.T) {
-	b, r := compile(t)
-	p, err := r.Predicate("LaneOpen")
-	if err != nil {
-		t.Fatal(err)
+func TestBestDecisionScores(t *testing.T) {
+	b, _ := compile(t)
+	// PickDeep scores the opponent distance, PickShort 8 minus it.
+	if got := run(t, b, "best", world(25)); got != 1 {
+		t.Fatalf("opponent 20 away: step %d, want 1 (deep scores 20 against -12)", got)
 	}
+	if got := run(t, b, "best", world(7)); got != 2 {
+		t.Fatalf("opponent 2 away: step %d, want 2 (short scores 6 against 2)", got)
+	}
+}
+
+func TestWeightedDecisionIsSeeded(t *testing.T) {
+	b, _ := compile(t)
+	counts := [3]int{}
+	for seed := uint64(0); seed < 2000; seed++ {
+		w := world(20)
+		w.Seed = seed
+		counts[run(t, b, "weighted", w)]++
+	}
+	// Weights 1 (deep) and 3 (short).
+	if frac := float64(counts[2]) / 2000; frac < 0.71 || frac > 0.79 {
+		t.Fatalf("short drawn %.3f of the time, want about 0.75 (%v)", frac, counts)
+	}
+	w := world(20)
+	w.Seed = 42
+	first := run(t, b, "weighted", w)
+	if again := run(t, b, "weighted", w); again != first {
+		t.Fatal("the same seed and tick drew differently")
+	}
+}
+
+func TestDecisionsDoNotAllocate(t *testing.T) {
+	b, _ := compile(t)
 	ex, _ := teamai.NewExecutor(b, teamai.Options{Step: 1.0 / 30})
 	ex.Reset(2, 2)
-	a, _ := b.AssignmentID("read")
-	ex.Assign(0, a)
 	w := world(20)
-	ex.Step(w)
-	allocs := testing.AllocsPerRun(200, func() {
+	for _, name := range []string{"read", "pick", "best", "weighted"} {
+		a, _ := b.AssignmentID(name)
 		ex.Assign(0, a)
 		ex.Step(w)
-	})
-	t.Logf("decide step through Arbiter: %.1f allocs", allocs)
-	if allocs != 0 {
-		t.Fatalf("a decision through Arbiter allocated %.1f times", allocs)
+		allocs := testing.AllocsPerRun(200, func() {
+			ex.Assign(0, a)
+			ex.Step(w)
+		})
+		if allocs != 0 {
+			t.Errorf("%s: a decision through Arbiter allocated %.1f times", name, allocs)
+		}
 	}
-	_ = p
 }
 
 func TestUnknownFactFailsAtCompile(t *testing.T) {
-	r, err := Compile([]byte(`rule Bad { when { self.altitude > 1 } then Read { branch: "x" } }`))
+	r, err := Load(badBundle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,21 +197,16 @@ func TestUnknownFactFailsAtCompile(t *testing.T) {
 	}
 }
 
-func TestGovernanceIsRefused(t *testing.T) {
-	_, err := Compile([]byte(`
-rule Slow {
-    rollout 50
-    when { self.speed > 1 }
-    then Read { branch: "x" }
-}`))
-	if err == nil || !strings.Contains(err.Error(), "uses a rollout") {
-		t.Fatalf("err = %v, want rollouts refused", err)
+func TestDigestIsStable(t *testing.T) {
+	a, _ := Load(readsBundle)
+	b, _ := Load(readsBundle)
+	if a.Digest() != b.Digest() || a.Program().DigestHex() == "" {
+		t.Fatal("the same bundle gave different digests")
 	}
 }
 
 func BenchmarkArbiterPredicate(b *testing.B) {
-	book, r := compile(b)
-	p, _ := r.Predicate("LaneOpen")
+	book, _ := compile(b)
 	ex, _ := teamai.NewExecutor(book, teamai.Options{Step: 1.0 / 30})
 	ex.Reset(2, 2)
 	a, _ := book.AssignmentID("read")
@@ -185,5 +217,18 @@ func BenchmarkArbiterPredicate(b *testing.B) {
 		ex.Assign(0, a)
 		ex.Step(w)
 	}
-	_ = p
+}
+
+func BenchmarkArbiterBestDecision(b *testing.B) {
+	book, _ := compile(b)
+	ex, _ := teamai.NewExecutor(book, teamai.Options{Step: 1.0 / 30})
+	ex.Reset(2, 2)
+	a, _ := book.AssignmentID("best")
+	w := world(20)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ex.Assign(0, a)
+		ex.Step(w)
+	}
 }

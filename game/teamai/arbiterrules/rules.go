@@ -1,27 +1,43 @@
 // Package arbiterrules lets Arbiter rules (m31labs.dev/arbiter) answer
-// game/teamai decisions: each Arbiter rule becomes a teamai.Predicate, and an
-// ordered list of rules becomes a teamai.Chooser.
+// game/teamai decisions. Each rule becomes a teamai.Predicate, a list of rules
+// becomes a first-match teamai.Chooser, and a tagged Arbiter decision
+// (gameai.Decider with First, Best or Weighted selection) becomes a Chooser
+// too.
 //
 // It is its own Go module so that the core GoSX module does not depend on
 // Arbiter. Import it only in games that author their reads in Arbiter.
 //
-// A rule reads teamai facts by name. Every variable path in a rule is a fact
+// A rule reads teamai facts by name. Every variable a rule reads is a fact
 // name for Book.ParseFact, such as nearest_opponent.dist or signal.clock:
 //
-//	rule LaneOpen {
+//	rule LaneOpen tag "read" {
 //	    when { nearest_opponent.dist > 6 and self.y < 30 }
-//	    then Read { branch: "deep" }
+//	    then Read { branch: "deep", score: 10 - self.y / 5 }
 //	}
 //
 // A fact whose subject is missing reads as null, so a comparison with it is
-// false. Rules are evaluated with the Arbiter VM against a data context that
-// reads the teamai.Query directly: no maps or JSON are built per tick, and a
-// predicate call does not allocate once each fact name has been seen.
+// false.
 //
-// Determinism: the adapter evaluates rule conditions only. It refuses rules
-// that use governance features that depend on the clock or on rollout state
-// (active_from, active_until, rollout, segments, prerequisites, excludes and
-// kill switches), so the answer depends only on the facts.
+// # Bundles
+//
+// The game ships a precompiled bundle and loads it with Load, which uses
+// Arbiter's gameai runtime: no .arb parser and no gotreesitter, so a js/wasm
+// client stays small. Compile, CompileFile and Bundle (in build.go, left out
+// of js/wasm builds) compile .arb source at build time or on a development
+// server. They keep rule names, which Register and Predicate use; a bundle
+// built elsewhere must keep them too (build.Options.KeepNames).
+//
+// # Determinism and cost
+//
+// Rules are evaluated by the Arbiter VM against a data context that reads the
+// teamai.Query directly and caches each name's compiled fact by its string
+// pool index (vm.IndexedDataContext). No maps or JSON are built per tick, and
+// a predicate or decision does not allocate once each name has been seen.
+// gameai.Load refuses rules that depend on more than their inputs (active
+// windows, segments, requires, excludes, rollouts); rules with kill_switch on
+// never hold. Weighted decisions draw from gameai.Seed(world seed, tick,
+// agent, gameai.Key(tag)). Record Digest with your snapshots and swap bundles
+// only at a tick every peer agrees on.
 package arbiterrules
 
 import (
@@ -29,109 +45,80 @@ import (
 	"fmt"
 	"sync"
 
-	"m31labs.dev/arbiter"
-	"m31labs.dev/arbiter/compiler"
-	"m31labs.dev/arbiter/ir"
+	"m31labs.dev/arbiter/bytecode"
+	"m31labs.dev/arbiter/gameai"
 	"m31labs.dev/arbiter/vm"
 
 	"m31labs.dev/gosx/game/teamai"
 )
 
-// Rules is a compiled Arbiter ruleset bound to at most one teamai.Book.
-// Its predicates and choosers share one VM behind a mutex, so they are safe
-// for concurrent use; for many rooms stepping in parallel, build one Rules per
-// room to avoid contention.
+// Rules is a loaded Arbiter program bound to at most one teamai.Book. Its
+// predicates and choosers share one VM behind a mutex, so they are safe for
+// concurrent use; for many rooms stepping in parallel, load one Rules per room
+// (they can share the bundle bytes) to avoid contention.
 type Rules struct {
-	rs     *compiler.CompiledRuleset
-	vars   []string // variable paths from the IR; nil for a precompiled ruleset
+	prog   *gameai.Program
+	rs     *bytecode.CompiledRuleset
 	names  []string // rule names, by header index
 	mu     sync.Mutex
 	eval   *vm.Evaluator
 	book   *teamai.Book
-	facts  map[string]factEntry
+	byIdx  []factEntry // by string pool index
+	byName map[string]factEntry
 	dc     dataContext
-	branch []string // per header: the "branch" action param, for choosers
+	branch []string // per header: the "branch" action param
 }
 
 type factEntry struct {
-	f  teamai.Fact
-	ok bool
+	f     teamai.Fact
+	state uint8 // 0 unseen, 1 known, 2 unknown
 }
 
-// dataContext implements vm.DataContext over the current teamai.Query.
+// dataContext implements vm.IndexedDataContext over the current Query.
 type dataContext struct {
 	r *Rules
 	q *teamai.Query
 }
 
-// Compile compiles Arbiter source.
-func Compile(src []byte) (*Rules, error) {
-	prog, err := arbiter.Compile(src)
+// Load loads a bundle written by Bundle, build.Compile or
+// `arbiter bundle --game`.
+func Load(bundle []byte) (*Rules, error) {
+	p, err := gameai.Load(bundle)
 	if err != nil {
 		return nil, fmt.Errorf("arbiterrules: %w", err)
 	}
-	r, err := New(prog.Ruleset)
-	if err != nil {
-		return nil, err
-	}
-	if prog.IR != nil {
-		r.vars = []string{}
-		for i := range prog.IR.Exprs {
-			if e := &prog.IR.Exprs[i]; e.Kind == ir.ExprVarRef {
-				name := e.Path
-				if name == "" {
-					name = e.Name
-				}
-				r.vars = append(r.vars, name)
-			}
-		}
-	}
-	return r, nil
+	return New(p)
 }
 
-// New wraps a compiled ruleset, for example one loaded from a precompiled
-// Arbiter bundle. Without the IR the fact names are checked the first time a
-// rule reads them; an unknown name reads as null.
-func New(rs *compiler.CompiledRuleset) (*Rules, error) {
-	if rs == nil {
-		return nil, errors.New("arbiterrules: nil ruleset")
+// New wraps a loaded gameai Program.
+func New(p *gameai.Program) (*Rules, error) {
+	if p == nil {
+		return nil, errors.New("arbiterrules: nil program")
 	}
-	r := &Rules{rs: rs, facts: map[string]factEntry{}}
-	r.eval = vm.NewEvaluator(rs, vm.NewStringPool(rs.Constants.Strings()))
+	rs := p.Ruleset()
+	r := &Rules{
+		prog:   p,
+		rs:     rs,
+		eval:   vm.NewEvaluator(rs, p.Strings()),
+		byIdx:  make([]factEntry, rs.Constants.StringCount()),
+		byName: map[string]factEntry{},
+	}
 	r.dc.r = r
 	r.names = make([]string, len(rs.Rules))
 	for i, h := range rs.Rules {
-		name := rs.Constants.GetString(h.NameIdx)
-		r.names[i] = name
-		if err := deterministic(name, h); err != nil {
-			return nil, err
-		}
+		r.names[i] = rs.Constants.GetString(h.NameIdx)
 	}
 	return r, nil
 }
 
-func deterministic(name string, h compiler.RuleHeader) error {
-	var uses string
-	switch {
-	case h.HasActiveFrom || h.HasActiveUntil:
-		uses = "an active window"
-	case h.HasRollout:
-		uses = "a rollout"
-	case h.HasSegment:
-		uses = "a segment"
-	case h.PrereqLen > 0:
-		uses = "requires"
-	case h.ExcludeLen > 0:
-		uses = "excludes"
-	case h.KillSwitch.IsSet():
-		uses = "a kill switch"
-	default:
-		return nil
-	}
-	return fmt.Errorf("arbiterrules: rule %s uses %s; team AI rules must depend only on facts", name, uses)
-}
+// Program returns the loaded program.
+func (r *Rules) Program() *gameai.Program { return r.prog }
 
-// Names returns the rule names in the ruleset.
+// Digest returns the SHA-256 of the bundle. Record it with snapshots and
+// replays, so a restore can tell which rules made the decisions.
+func (r *Rules) Digest() [32]byte { return r.prog.Digest() }
+
+// Names returns the rule names.
 func (r *Rules) Names() []string { return append([]string(nil), r.names...) }
 
 // Register adds every rule to reg as a predicate named prefix + rule name.
@@ -173,6 +160,20 @@ func (r *Rules) Chooser(names ...string) (teamai.Chooser, error) {
 	return c, nil
 }
 
+// Decision returns a chooser that runs the rules tagged tag as one Arbiter
+// decision with selection sel: gameai.First(), gameai.Best("score") for
+// utility scoring, or gameai.Weighted("weight") for a seeded weighted draw.
+// The chosen rule's "branch" param names the teamai decision branch. Weighted
+// draws use gameai.Seed(World.Seed, World.Tick, agent, gameai.Key(tag)), so
+// they are the same on every peer.
+func (r *Rules) Decision(tag string, sel gameai.Selection) (teamai.Chooser, error) {
+	d, err := gameai.NewDecider(r.prog, tag)
+	if err != nil {
+		return nil, fmt.Errorf("arbiterrules: %w", err)
+	}
+	return &decision{r: r, d: d, sel: sel, key: gameai.Key(tag)}, nil
+}
+
 func (r *Rules) index(name string) int {
 	for i, n := range r.names {
 		if n == name {
@@ -182,8 +183,8 @@ func (r *Rules) index(name string) int {
 	return -1
 }
 
-// bind attaches the Book: it checks every variable path the source uses and
-// reads each rule's branch param.
+// bind attaches the Book: it checks every name the program reads and reads
+// each rule's branch param.
 func (r *Rules) bind(b *teamai.Book) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -191,14 +192,18 @@ func (r *Rules) bind(b *teamai.Book) error {
 		return nil
 	}
 	if r.book != nil {
-		return errors.New("arbiterrules: these Rules are already bound to another Book; build one Rules per Book")
+		return errors.New("arbiterrules: these Rules are already bound to another Book; load one Rules per Book")
 	}
-	for _, v := range r.vars {
-		f, err := b.ParseFact(v)
+	all, err := gameai.NewDecider(r.prog, "")
+	if err != nil {
+		return fmt.Errorf("arbiterrules: %w", err)
+	}
+	for _, name := range all.Reads() {
+		f, err := b.ParseFact(name)
 		if err != nil {
 			return fmt.Errorf("arbiterrules: %w", err)
 		}
-		r.facts[v] = factEntry{f: f, ok: true}
+		r.byName[name] = factEntry{f: f, state: 1}
 	}
 	r.branch = make([]string, len(r.rs.Rules))
 	for i, h := range r.rs.Rules {
@@ -221,13 +226,40 @@ func (nullContext) Get(string) vm.Value { return vm.NullVal() }
 
 // Get reads a fact for the VM.
 func (c *dataContext) Get(key string) vm.Value {
-	e, seen := c.r.facts[key]
+	e, seen := c.r.byName[key]
 	if !seen {
-		f, err := c.r.book.ParseFact(key)
-		e = factEntry{f: f, ok: err == nil}
-		c.r.facts[key] = e
+		e = c.r.parse(key)
+		c.r.byName[key] = e
 	}
-	if !e.ok {
+	return c.value(e)
+}
+
+// GetIndexed reads a fact by its string pool index, without hashing the name.
+func (c *dataContext) GetIndexed(idx uint16, key string) vm.Value {
+	if int(idx) >= len(c.r.byIdx) {
+		return c.Get(key)
+	}
+	e := &c.r.byIdx[idx]
+	if e.state == 0 {
+		if known, seen := c.r.byName[key]; seen {
+			*e = known
+		} else {
+			*e = c.r.parse(key)
+		}
+	}
+	return c.value(*e)
+}
+
+func (r *Rules) parse(key string) factEntry {
+	f, err := r.book.ParseFact(key)
+	if err != nil {
+		return factEntry{state: 2}
+	}
+	return factEntry{f: f, state: 1}
+}
+
+func (c *dataContext) value(e factEntry) vm.Value {
+	if e.state != 1 {
 		return vm.NullVal()
 	}
 	v := c.q.Fact(e.f)
@@ -237,11 +269,16 @@ func (c *dataContext) Get(key string) vm.Value {
 	return vm.NumVal(v)
 }
 
-// test evaluates rule header i for q. An evaluation error counts as false.
+// test evaluates rule header i for q. An evaluation error, or a rule with
+// kill_switch on, counts as false.
 func (r *Rules) test(i int, q *teamai.Query) bool {
+	h := r.rs.Rules[i]
+	if h.KillSwitch.Enabled() {
+		return false
+	}
 	r.dc.q = q
 	r.eval.ResetBudget()
-	ok, err := r.eval.EvalRuleCondition(r.rs.Rules[i], &r.dc)
+	ok, err := r.eval.EvalRuleCondition(h, &r.dc)
 	r.dc.q = nil
 	return err == nil && ok
 }
@@ -270,16 +307,41 @@ func (c *chooser) Choose(q *teamai.Query, d *teamai.Decision) int {
 	c.r.mu.Lock()
 	defer c.r.mu.Unlock()
 	for _, h := range c.headers {
-		if !c.r.test(h, q) {
-			continue
+		if c.r.test(h, q) {
+			return branchIndex(d, c.r.branch[h])
 		}
-		label := c.r.branch[h]
-		for i := 0; i < d.NumBranches(); i++ {
-			if d.BranchLabel(i) == label {
-				return i
-			}
-		}
+	}
+	return -1
+}
+
+type decision struct {
+	r   *Rules
+	d   *gameai.Decider
+	sel gameai.Selection
+	key uint64
+}
+
+func (c *decision) Bind(b *teamai.Book) error { return c.r.bind(b) }
+
+func (c *decision) Choose(q *teamai.Query, d *teamai.Decision) int {
+	c.r.mu.Lock()
+	defer c.r.mu.Unlock()
+	w := q.World()
+	seed := gameai.Seed(w.Seed, w.Tick, uint64(q.Self()), c.key)
+	c.r.dc.q = q
+	choice, err := c.d.Decide(&c.r.dc, c.sel, seed, nil)
+	c.r.dc.q = nil
+	if err != nil || !choice.OK() {
 		return -1
+	}
+	return branchIndex(d, choice.Text("branch"))
+}
+
+func branchIndex(d *teamai.Decision, label string) int {
+	for i := 0; i < d.NumBranches(); i++ {
+		if d.BranchLabel(i) == label {
+			return i
+		}
 	}
 	return -1
 }

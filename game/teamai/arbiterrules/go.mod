@@ -3,7 +3,7 @@ module m31labs.dev/gosx/game/teamai/arbiterrules
 go 1.26.10
 
 require (
-	m31labs.dev/arbiter v1.13.0
+	m31labs.dev/arbiter v1.13.1-0.20261109081613-a233ceea7e30
 	m31labs.dev/gosx v0.25.2
 )
 

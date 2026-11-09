@@ -304,31 +304,61 @@ counts over 20,000 keys.
 ## Arbiter rules
 
 `game/teamai/arbiterrules` is its own module, so GoSX does not depend on
-Arbiter. Each Arbiter rule becomes a predicate; its variable paths are fact
-names:
+Arbiter. It runs Arbiter's `gameai` runtime, which evaluates precompiled
+bundles without the `.arb` parser, so the browser client stays small. Every
+variable a rule reads is a fact name:
 
 ```arb
-rule LaneOpen {
+tag "read"
+
+rule LaneOpen tag "read" {
     when { nearest_opponent.dist > 6 and self.y < 30 }
-    then Read { branch: "deep" }
+    then Read { branch: "deep", score: nearest_opponent.dist }
+}
+
+rule Crowded tag "read" {
+    when { nearest_opponent.dist <= 6 }
+    then Read { branch: "short", score: 8 - nearest_opponent.dist }
 }
 ```
 
+Build the bundle at build time (or on a development server), and load it in
+the game:
+
 ```go
-rules, err := arbiterrules.Compile(src)
-rules.Register(reg, "")                          // predicates named after the rules
-ch, _ := rules.Chooser("Late", "LaneOpen")       // first rule that holds picks its "branch"
-reg.Chooser("reads", ch)
-book, err := teamai.LoadJSON(data, reg)          // unknown fact names fail here
+// Build step (not in js/wasm builds): arbiterrules.Bundle, Compile and
+// CompileFile link the parser and keep rule names.
+bundle, err := arbiterrules.Bundle(src)
+
+// Game, server and browser alike:
+rules, err := arbiterrules.Load(bundle)
+rules.Register(reg, "")                               // a predicate per rule, by name
+first, _ := rules.Chooser("LaneOpen", "Crowded")      // first rule that holds picks its "branch"
+best, _ := rules.Decision("read", gameai.Best("score")) // utility scoring over the "read" tag
+reg.Chooser("read", best)
+book, err := teamai.LoadJSON(data, reg)               // unknown fact names fail here
 ```
 
-The adapter reads facts straight from the `Query`, with no maps or JSON per
-tick, and a predicate call does not allocate. It refuses rules with active
-windows, rollouts, segments, prerequisites, excludes or kill switches, because
-those depend on more than the facts. The module needs Go 1.26.10 (Arbiter
-v1.13.0 does). Today it links Arbiter's parser; a runtime-only evaluator for
-precompiled bundles is in progress in Arbiter, and `arbiterrules.New` already
-takes a compiled ruleset.
+`Decision` takes `gameai.First()`, `gameai.Best(scoreKey)` or
+`gameai.Weighted(weightKey)`; weighted draws use
+`gameai.Seed(World.Seed, World.Tick, agent, gameai.Key(tag))`. The chosen
+rule's `branch` param names the decision branch.
+
+The adapter reads facts straight from the `Query`, by string-pool index, with
+no maps or JSON per tick. A predicate or decision does not allocate, under
+js/wasm too. `gameai.Load` refuses rules with active windows, rollouts,
+segments, `requires` or `excludes`, because those depend on more than the
+facts; a rule with `kill_switch on` never holds. Arbiter's own per-agent memory
+names (`mem.last.<key>`, `mem.count.<key>`) are not facts here; use teamai's
+`mem.0` to `mem.3`.
+
+Record `rules.Digest()` with snapshots and replays, and swap bundles only at a
+tick every peer agrees on. The module needs Go 1.26.10, as Arbiter does.
+
+Size in a js/wasm client (Go 1.26, `-trimpath -ldflags=-s -w`, brotli -q 11):
+loading a bundle adds 273 KB to a client that links teamai, `encoding/json`
+and `fmt`, or 125 KB to one that also links `regexp`, `math/big` and
+`crypto/sha256`. Compiling source in the client (the old path) added 18.5 MB.
 
 ## Data format reference (version 1)
 
@@ -400,9 +430,11 @@ At 30 ticks per second a tick lasts 33 ms, so the slowest row spends about
 
 `Step` is the executor alone. A drill tick adds the host's event handling,
 contests and integration. A snapshot is `AppendState` plus `LoadState`. A
-Go-registered predicate costs a function call. A decision answered through
-Arbiter costs about 190 ns on arm64 (measured with `arbiterrules`'
-`BenchmarkArbiterPredicate`, which also re-arms the assignment).
+Go-registered predicate costs a function call. Through Arbiter, on the Apple
+M4 Pro, a decision with two rule branches costs 127 ns and a two-rule
+`gameai.Best` decision 281 ns, including re-arming the assignment
+(`BenchmarkArbiterPredicate` and `BenchmarkArbiterBestDecision` in
+`arbiterrules`).
 
 ## Limits
 
