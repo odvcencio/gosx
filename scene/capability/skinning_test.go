@@ -21,7 +21,8 @@ import (
 // WebGL2 skins per vertex in the vertex shader:
 //   - SCENE_PBR_SKINNED_VERTEX_SOURCE: the skinned vertex program
 //   - a_joints / a_weights:            the per-vertex joint indices and weights
-//   - u_jointMatrices[64]:             the bone palette uniform
+//   - u_jointMatrices[64]:             the bone palette uniform (rigs of up to 64 joints)
+//   - u_jointTexture:                  the float-texture palette for rigs of 65 to 256 joints
 //   - createScenePBRSkinnedProgram:    compiles and links it
 //
 // WebGPU skins in a compute pass and feeds the result to the draw:
@@ -43,7 +44,10 @@ func TestSkinningImplementedOnBothGPUBackends(t *testing.T) {
 		"SCENE_PBR_SKINNED_VERTEX_SOURCE",
 		`"in vec4 a_joints;",`,
 		`"in vec4 a_weights;",`,
-		`"uniform mat4 u_jointMatrices[64];",`,
+		"SCENE_GLSL_JOINT_PALETTE,",
+		"uniform mat4 u_jointMatrices[64];",
+		"uniform highp sampler2D u_jointTexture;",
+		"gosxJointMatrix(int(a_joints.x))",
 		`"mat4 model=u_modelMatrix*skinMatrix;vec4 worldPos=model*vec4(a_position,1.0);",`,
 		"function createScenePBRSkinnedProgram(gl, detail = false) {",
 	} {

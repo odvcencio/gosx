@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "name": "props/crate",
+      "source": "/home/draco/work/.runtime/go-tmp/TestBuildModelsReferencesKTX2FromEveryGLB1962030393/001/props/crate.glb",
+      "uri": "props/crate.glb",
+      "bytes": 22896,
+      "radius": 6.9282,
+      "stats": {
+        "triangles": 1536,
+        "vertices": 825,
+        "drawCalls": 1,
+        "materials": 1,
+        "joints": 0,
+        "textureBytes": 21844
+      },
+      "lods": [
+        {
+          "level": 0,
+          "uri": "props/crate.glb",
+          "triangles": 1536,
+          "bytes": 22896,
+          "ratio": 1,
+          "distance": 0
+        },
+        {
+          "level": 1,
+          "uri": "props/crate.lod1.glb",
+          "triangles": 768,
+          "bytes": 13280,
+          "ratio": 0.5,
+          "distance": 39.1918
+        }
+      ],
+      "textures": [
+        {
+          "image": "albedo-0",
+          "role": "base-color",
+          "width": 64,
+          "height": 64,
+          "variants": [
+            {
+              "uri": "props/crate.textures/albedo-0.high.rgba8unorm-srgb.ktx2",
+              "tier": "high",
+              "format": "rgba8unorm-srgb",
+              "bytes": 12722
+            },
+            {
+              "uri": "props/crate.textures/albedo-0.high.rgb8unorm-srgb.ktx2",
+              "tier": "high",
+              "format": "rgb8unorm-srgb",
+              "bytes": 10694
+            },
+            {
+              "uri": "props/crate.textures/albedo-0.high.bc7-rgba-unorm-srgb.ktx2",
+              "tier": "high",
+              "format": "bc7-rgba-unorm-srgb",
+              "bytes": 1967
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
