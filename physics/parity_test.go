@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -236,12 +237,20 @@ func TestFusedMultiplyAddProbeIsSound(t *testing.T) {
 // digestSpec walks a WorldSpec in declaration order and feeds every leaf value
 // into d. The walk uses reflection so a new spec field joins the digest without
 // an edit here; a forgotten field would silently leave an input unchecked.
+//
+// A field whose JSON tag says omitempty is skipped while it holds its zero
+// value, because the corpus file does not carry it either. That lets a spec
+// gain an optional field without invalidating every recorded scenario.
 func digestSpec(d *digest, v reflect.Value) {
 	switch v.Kind() {
 	case reflect.Struct:
 		d.str("{")
 		for i := 0; i < v.NumField(); i++ {
-			d.str(v.Type().Field(i).Name)
+			field := v.Type().Field(i)
+			if v.Field(i).IsZero() && strings.Contains(field.Tag.Get("json"), "omitempty") {
+				continue
+			}
+			d.str(field.Name)
 			digestSpec(d, v.Field(i))
 		}
 		d.str("}")

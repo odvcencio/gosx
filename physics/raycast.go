@@ -11,27 +11,11 @@ type RaycastHit struct {
 	Distance float64
 }
 
-// Raycast returns the closest hit against all world colliders. maxDistance <= 0
-// means unbounded.
+// Raycast returns the closest hit against all world colliders, triggers
+// included. maxDistance <= 0 means unbounded. Use RaycastFiltered to choose
+// layers, skip triggers or exclude a body.
 func (w *World) Raycast(ray Ray, maxDistance float64) (RaycastHit, bool) {
-	if w == nil {
-		return RaycastHit{}, false
-	}
-	limit := raycastMaxDistance(maxDistance)
-	best := RaycastHit{Distance: math.Inf(1)}
-	found := false
-	for _, collider := range w.colliders {
-		hit, ok := collider.Raycast(ray, limit)
-		if !ok {
-			continue
-		}
-		if !found || hit.Distance < best.Distance-epsilon ||
-			(math.Abs(hit.Distance-best.Distance) <= epsilon && colliderIndex(hit.Collider) < colliderIndex(best.Collider)) {
-			best = hit
-			found = true
-		}
-	}
-	return best, found
+	return w.RaycastFiltered(ray, maxDistance, QueryFilter{IncludeTriggers: true})
 }
 
 // Raycast returns the closest hit against this collider. maxDistance <= 0

@@ -87,10 +87,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -158,10 +155,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -229,10 +223,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -300,10 +291,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -371,10 +359,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -442,10 +427,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       }
@@ -655,7 +637,7 @@
     ],
     "Diagnostics": null
   },
-  "specDigest": "25d958bb7da1d2b4",
+  "specDigest": "4e0d90fb48c4d8ac",
   "stateDigest": "27ad23521469e870",
   "contactSteps": 367,
   "contactPoints": 1998,

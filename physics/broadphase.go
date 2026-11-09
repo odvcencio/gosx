@@ -50,7 +50,6 @@ type SpatialHash struct {
 	infinite []int32
 
 	staticCells    map[cellKey][]int32
-	staticKeys     []cellKey
 	staticEntries  []spatialEntry
 	staticInfinite []int32
 	// staticSlot maps a collider's identity (the *Collider pointer itself,
@@ -178,9 +177,13 @@ func (s *SpatialHash) reset(colliderCount int) {
 	s.infinite = s.infinite[:0]
 }
 
+// insert adds index to a cell. keys, when not nil, records each cell that
+// turns non-empty, which is how reset finds the dynamic cells to clear. The
+// static grid passes nil: it never clears by key, and recording its keys grew
+// a list without bound while kinematic bodies moved through it.
 func (s *SpatialHash) insert(cells map[cellKey][]int32, keys *[]cellKey, key cellKey, index int32) {
 	bucket, exists := cells[key]
-	if !exists || len(bucket) == 0 {
+	if keys != nil && (!exists || len(bucket) == 0) {
 		*keys = append(*keys, key)
 	}
 	cells[key] = append(bucket, index)
@@ -237,7 +240,7 @@ func (s *SpatialHash) insertStatic(slot int32, aabb AABB) {
 		for y := minCell.y; y <= maxCell.y; y++ {
 			for z := minCell.z; z <= maxCell.z; z++ {
 				key := cellKey{x: x, y: y, z: z}
-				s.insert(s.staticCells, &s.staticKeys, key, slot)
+				s.insert(s.staticCells, nil, key, slot)
 			}
 		}
 	}
@@ -409,9 +412,15 @@ func comparePairsByIndex(x, y ColliderPair) int {
 
 // appendCandidate applies the same admission rules the old single-map
 // broadphase used (validEntryPair): reject a nil or self pair, a pair sharing
-// a body, a pair where both sides are immovable, and a bounded pair whose
-// boxes do not overlap. A surviving pair's packed side IDs, ordered low to
-// high, are appended to pairKeys for the sort-and-dedupe pass.
+// a body, a pair whose collision layers do not interact, a pair where both
+// sides are immovable, and a bounded pair whose boxes do not overlap. A
+// surviving pair's packed side IDs, ordered low to high, are appended to
+// pairKeys for the sort-and-dedupe pass.
+//
+// One immovable pair survives: a trigger against a collider on a kinematic
+// body, or a trigger on a kinematic body. That is how a trigger volume sees a
+// kinematic character or a moving platform. Such a pair only ever produces
+// trigger events; the solver skips trigger manifolds.
 func (s *SpatialHash) appendCandidate(sideA uint32, a *Collider, aabbA AABB, sideB uint32, b *Collider, aabbB AABB) {
 	if a == nil || b == nil || a == b {
 		return
@@ -419,7 +428,10 @@ func (s *SpatialHash) appendCandidate(sideA uint32, a *Collider, aabbA AABB, sid
 	if a.Body != nil && a.Body == b.Body {
 		return
 	}
-	if immovableCollider(a) && immovableCollider(b) {
+	if !collidersInteract(a, b) {
+		return
+	}
+	if immovableCollider(a) && immovableCollider(b) && !kinematicTriggerPair(a, b) {
 		return
 	}
 	if aabbA.IsFinite() && aabbB.IsFinite() && !aabbA.Overlaps(aabbB) {
@@ -517,6 +529,21 @@ func (s *SpatialHash) cellRange(aabb AABB) (cellKey, cellKey, bool) {
 
 func immovableCollider(c *Collider) bool {
 	return c == nil || c.Body == nil || !c.Body.IsDynamic()
+}
+
+// kinematicTriggerPair reports whether two immovable colliders still need a
+// trigger test: at least one is a trigger and at least one rides a kinematic
+// body. Two static colliders never need one, because neither can move into
+// the other.
+func kinematicTriggerPair(a, b *Collider) bool {
+	if !a.IsTrigger && !b.IsTrigger {
+		return false
+	}
+	return kinematicCollider(a) || kinematicCollider(b)
+}
+
+func kinematicCollider(c *Collider) bool {
+	return c != nil && c.Body != nil && c.Body.IsKinematic
 }
 
 // orderedColliderIndexes returns the two collider indexes in ascending order.

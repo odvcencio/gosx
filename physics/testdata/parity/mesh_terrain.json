@@ -1,7 +1,7 @@
 {
   "name": "mesh_terrain",
   "why": "triangle mesh hierarchy walk, internal edge filtering, mesh against sphere and box contacts",
-  "generatedBy": "go1.26.0 linux/amd64",
+  "generatedBy": "go1.26.4 linux/amd64",
   "fmaContraction": false,
   "steps": 420,
   "sampleEvery": 42,
@@ -87,10 +87,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -158,10 +155,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -229,10 +223,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -300,10 +291,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -371,10 +359,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -442,10 +427,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       }
@@ -940,15 +922,12 @@
           41,
           47,
           48
-        ],
-        "Heights": null,
-        "Columns": 0,
-        "Rows": 0
+        ]
       }
     ],
     "Diagnostics": null
   },
-  "specDigest": "65e7876fb91729b0",
+  "specDigest": "ca2aa94eceba9d34",
   "stateDigest": "04695130306b63b9",
   "contactSteps": 369,
   "contactPoints": 2058,

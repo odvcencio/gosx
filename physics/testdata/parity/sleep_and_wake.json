@@ -1,7 +1,7 @@
 {
   "name": "sleep_and_wake",
   "why": "sleep countdown, sleep blocking through contacts, wake on arrival, warm-start cache reuse",
-  "generatedBy": "go1.26.0 linux/amd64",
+  "generatedBy": "go1.26.4 linux/amd64",
   "fmaContraction": false,
   "steps": 600,
   "sampleEvery": 60,
@@ -87,10 +87,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -158,10 +155,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -229,10 +223,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -300,10 +291,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -371,10 +359,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       }
@@ -406,15 +391,12 @@
         },
         "Distance": 0,
         "Vertices": null,
-        "Indices": null,
-        "Heights": null,
-        "Columns": 0,
-        "Rows": 0
+        "Indices": null
       }
     ],
     "Diagnostics": null
   },
-  "specDigest": "ddd8f17c49ff2a65",
+  "specDigest": "e92a6bfd224b9e0d",
   "stateDigest": "7d24a1a429fe50fe",
   "contactSteps": 600,
   "contactPoints": 8948,

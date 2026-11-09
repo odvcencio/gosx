@@ -1,7 +1,7 @@
 {
   "name": "tumbling_mixed_shapes",
   "why": "inertia tensor rotation, box and sphere and cylinder narrowphase, warm-start cache, sleep pass",
-  "generatedBy": "go1.26.0 linux/amd64",
+  "generatedBy": "go1.26.4 linux/amd64",
   "fmaContraction": false,
   "steps": 600,
   "sampleEvery": 60,
@@ -87,10 +87,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -158,10 +155,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -229,10 +223,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -300,10 +291,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -371,10 +359,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -442,10 +427,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -513,10 +495,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -584,10 +563,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -655,10 +631,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -726,10 +699,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -797,10 +767,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       },
@@ -868,10 +835,7 @@
             },
             "Distance": 0,
             "Vertices": null,
-            "Indices": null,
-            "Heights": null,
-            "Columns": 0,
-            "Rows": 0
+            "Indices": null
           }
         ]
       }
@@ -903,15 +867,12 @@
         },
         "Distance": 0,
         "Vertices": null,
-        "Indices": null,
-        "Heights": null,
-        "Columns": 0,
-        "Rows": 0
+        "Indices": null
       }
     ],
     "Diagnostics": null
   },
-  "specDigest": "f8e06e00bcd74810",
+  "specDigest": "86568dbd6db28b1c",
   "stateDigest": "476ff38a471ce42d",
   "contactSteps": 586,
   "contactPoints": 14555,
