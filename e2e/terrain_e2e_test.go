@@ -121,8 +121,11 @@ type terrainReading struct {
 }
 
 func TestTerrainOnTheGPU(t *testing.T) {
-	if os.Getenv("GOSX_E2E_CHROME") == "" {
-		t.Skip("needs a real GPU browser: run under gpu-chrome.sh or mac-gpu-run")
+	// Hosted runners set GOSX_E2E_CHROME but have no GPU. gpu-chrome.sh and
+	// mac-gpu-run also set GPU_CHROME_STATE or GPU_CHROME_ENDPOINT.
+	gpu := os.Getenv("GPU_CHROME_STATE") != "" || os.Getenv("GPU_CHROME_ENDPOINT") != "" || os.Getenv("GOSX_TERRAIN_E2E_REQUIRE_GPU") == "1"
+	if os.Getenv("GOSX_E2E_CHROME") == "" || !gpu {
+		t.Skip("needs a real GPU browser: run under gpu-chrome.sh or mac-gpu-run, or set GOSX_TERRAIN_E2E_REQUIRE_GPU=1")
 	}
 	root, chrome := e2eRepoRoot(t), e2eChromePath(t)
 	const width, height = 960, 540
