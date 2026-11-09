@@ -125,9 +125,6 @@ func (ctx *Context) Close() {
 	}
 }
 
-// close is the package-internal alias.
-func (ctx *Context) close() { ctx.Close() }
-
 // Canvas is the 2-D drawing surface available to surface handlers.
 // On the WASM target this wraps the browser CanvasRenderingContext2D via
 // syscall/js; on the host the methods are no-ops provided by canvas_stub.go.

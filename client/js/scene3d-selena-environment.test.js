@@ -27,7 +27,7 @@ test("PBR vertex variants compile with the degenerate tangent fallback", t => {
   // Read the actual authored constants, including the shared affine/crowd
   // helpers. Compile all variants: a duplicate local can otherwise hide in
   // a path that a fake GPU accepts but a real driver rejects.
-  const names = ["SCENE_GLSL_AFFINE_NORMAL", "SCENE_CROWD_MOTION_MAX_CLIPS",
+  const names = ["SCENE_GLSL_AFFINE_NORMAL", "SCENE_GLSL_JOINT_PALETTE", "SCENE_CROWD_MOTION_MAX_CLIPS",
     "SCENE_CROWD_MOTION_ATTRIBUTES_GLSL", "SCENE_CROWD_SKIN_MOTION_GLSL",
     "SCENE_PBR_VERTEX_SOURCE", "SCENE_PBR_INSTANCED_VERTEX_SOURCE",
     "SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE", "SCENE_PBR_SKINNED_VERTEX_SOURCE"];

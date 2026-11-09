@@ -1092,7 +1092,7 @@
     }
     return out;
   }
-  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node) {
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node, uvSet: any, uvSet1: any) {
     // One named-attribute read: absent names hand back null exactly like the
     // inline guards they replace.
     function attrValues(name) {
@@ -1109,7 +1109,17 @@
       normals = gltfRenormalizeVec3(normals);
     }
 
-    var uvs = attrValues("TEXCOORD_0");
+    // The renderers sample every map with one UV stream, so the material's
+    // dominant UV set (see gltfResolveUVSet) becomes that stream. A missing
+    // set falls back to TEXCOORD_0 and then to generated planar UVs.
+    var uvs = null;
+    if (uvSet > 0) {
+      uvs = attrValues("TEXCOORD_" + uvSet);
+    }
+    if (!uvs) {
+      uvs = attrValues("TEXCOORD_0");
+    }
+    var uvs1 = uvSet1 > 0 || uvSet1 === 0 ? attrValues("TEXCOORD_" + uvSet1) : null;
 
     // glTF 2.0: when NORMAL is absent, normals are calculated (flat) and both
     // authored tangents and morph TANGENT displacement must be ignored — the
@@ -1152,6 +1162,14 @@
         normals = expanded.normals;
       }
       uvs = expanded.uvs;
+      if (uvs1) {
+        var expanded1 = new Float32Array(indices.length * 2);
+        for (var ci = 0; ci < indices.length; ci++) {
+          expanded1[ci * 2] = uvs1[indices[ci] * 2];
+          expanded1[ci * 2 + 1] = uvs1[indices[ci] * 2 + 1];
+        }
+        uvs1 = expanded1;
+      }
       tangentsRaw = expanded.tangents;
       joints = expanded.joints;
       weights = expanded.weights;
@@ -1224,6 +1242,7 @@
       positions: positions,
       normals: normals,
       uvs: uvs,
+      uvs1: uvs1,
       tangents: tangents,
       joints: joints,
       weights: weights,
@@ -1349,6 +1368,12 @@
       outUVs[vertex * 2] = streams.uvs[sourceVertex * 2];
       outUVs[vertex * 2 + 1] = streams.uvs[sourceVertex * 2 + 1];
     }
+    var outUVs1 = streams.uvs1 ? new Float32Array(streams.uvs1.length) : null;
+    if (outUVs1) for (vertex = 0; vertex < vertexCount; vertex++) {
+      sourceVertex = orientation < 0 && vertex % 3 ? vertex + (vertex % 3 === 1 ? 1 : -1) : vertex;
+      outUVs1[vertex * 2] = streams.uvs1[sourceVertex * 2];
+      outUVs1[vertex * 2 + 1] = streams.uvs1[sourceVertex * 2 + 1];
+    }
     var outTangents = new Float32Array(streams.tangents.length);
     for (vertex = 0; vertex < vertexCount; vertex++) {
       sourceVertex = orientation < 0 && vertex % 3 ? vertex + (vertex % 3 === 1 ? 1 : -1) : vertex;
@@ -1371,7 +1396,7 @@
       var w = streams.tangents[t + 3];
       outTangents[outT + 3] = (typeof w === "number" && isFinite(w) ? w : 1) * orientation;
     }
-    return { positions: outPositions, normals: outNormals, uvs: outUVs, tangents: outTangents };
+    return { positions: outPositions, normals: outNormals, uvs: outUVs, uvs1: outUVs1, tangents: outTangents };
   }
 
   // Cache keys the bounds/snapshot layers attach to vertices objects.
@@ -1842,6 +1867,70 @@
     return uvs;
   }
 
+  // Texture slots whose texCoord selects a UV set. Each entry is a textureInfo.
+  function gltfMaterialTextureInfos(mat: any) {
+    var pbr = mat.pbrMetallicRoughness || {};
+    var specular = gltfExtension(mat, "KHR_materials_specular") || {};
+    var infos: any = {
+      baseColor: pbr.baseColorTexture,
+      metallicRoughness: pbr.metallicRoughnessTexture,
+      normal: mat.normalTexture,
+      occlusion: mat.occlusionTexture,
+      emissive: mat.emissiveTexture,
+      specular: specular.specularTexture,
+      specularColor: specular.specularColorTexture,
+    };
+    return infos;
+  }
+
+  // Per-map texCoord (glTF: textureInfo.texCoord, default 0; with
+  // KHR_texture_transform the extension's texCoord overrides it). Returns
+  // { sets: {slot: index}, uvSet, mixed }. uvSet is the set the renderers
+  // sample every map with: the base colour's set when it is textured, else the
+  // most used set (lowest index on ties). mixed is true when textured maps
+  // disagree; those maps sample uvSet, which is the documented limit.
+  function gltfResolveUVSet(mat: any) {
+    var infos = gltfMaterialTextureInfos(mat);
+    var sets: any = {};
+    var counts = [0, 0, 0, 0, 0, 0, 0, 0];
+    var used = 0;
+    for (var slot in infos) {
+      var info = infos[slot];
+      if (!info || info.index == null) {
+        continue;
+      }
+      var transform = gltfExtension(info, "KHR_texture_transform");
+      var set = transform && transform.texCoord != null ? transform.texCoord : info.texCoord;
+      set = Math.floor(Number(set));
+      if (!isFinite(set) || set < 0 || set > 7) {
+        set = 0;
+      }
+      sets[slot] = set;
+      counts[set] += 1;
+      used += 1;
+    }
+    var chosen = 0;
+    if (sets.baseColor != null) {
+      chosen = sets.baseColor;
+    } else {
+      for (var k = 1; k < counts.length; k++) {
+        if (counts[k] > counts[chosen]) {
+          chosen = k;
+        }
+      }
+    }
+    // Occlusion and emissive may use a second set (an AO or light bake). The
+    // renderers carry that set as a second UV stream.
+    var secondary = -1;
+    if (sets.occlusion != null && sets.occlusion !== chosen) secondary = sets.occlusion;
+    else if (sets.emissive != null && sets.emissive !== chosen) secondary = sets.emissive;
+    var unsupported = 0;
+    for (var slot in sets) {
+      if (sets[slot] !== chosen && !((slot === "occlusion" || slot === "emissive") && sets[slot] === secondary)) unsupported++;
+    }
+    return { sets: sets, uvSet: chosen, secondary: secondary, mixed: unsupported > 0 };
+  }
+
   function gltfExtractMaterial(gltf, materialIndex, binaryBuffer) {
     if (materialIndex == null || !gltf.materials || materialIndex >= gltf.materials.length) {
       return gltfDefaultPBRMaterial();
@@ -2072,6 +2161,20 @@
       record.uvTransform = uvMatrix;
     }
 
+    var uvInfo = gltfResolveUVSet(mat);
+    var recordUV: any = record;
+    recordUV.uvSet = uvInfo.uvSet;
+    recordUV.texCoords = uvInfo.sets;
+    if (uvInfo.secondary >= 0) {
+      recordUV.uvSet1 = uvInfo.secondary;
+      recordUV.occlusionTexCoord = uvInfo.sets.occlusion === uvInfo.secondary ? 1 : 0;
+      recordUV.emissiveTexCoord = uvInfo.sets.emissive === uvInfo.secondary ? 1 : 0;
+    }
+    if (uvInfo.mixed && !mat.__gosxUVWarned) {
+      Object.defineProperty(mat, "__gosxUVWarned", { value: true, enumerable: false });
+      console.warn("[gosx] glTF material " + JSON.stringify(mat.name || String(materialIndex)) + " reads maps from different UV sets (" + JSON.stringify(uvInfo.sets) + "); maps other than occlusion and emissive sample TEXCOORD_" + uvInfo.uvSet + ". Give them one set.");
+    }
+
     return record;
   }
 
@@ -2278,7 +2381,7 @@
       var authoredWeights = node && Array.isArray(node.weights)
         ? node.weights
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ : mesh.weights;
-      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node);
+      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node, material.uvSet, material.uvSet1);
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
@@ -2296,6 +2399,7 @@
         objectNormals = transformed.normals;
         objectTangents = transformed.tangents;
         geometry.uvs = transformed.uvs;
+        geometry.uvs1 = transformed.uvs1;
       }
 
       // Determine render pass from material alpha mode.
@@ -2310,6 +2414,9 @@
         tangents: objectTangents,
         count: vertCount,
       };
+      if (geometry.uvs1) {
+        (vertices as any).uvs1 = geometry.uvs1;
+      }
 
       var object = {
         id: objectID,
@@ -2414,6 +2521,81 @@
     return out;
   }
 
+  // KHR_lights_punctual: the document declares lights under
+  // extensions.KHR_lights_punctual.lights; a node references one through
+  // extensions.KHR_lights_punctual.light. A glTF light shines down its node's
+  // -Z axis. The scene light takes world position and direction from the node
+  // world matrix. Intensity converts from lux or candela (see below).
+  function gltfLightHex(color: any) {
+    var rgb = Array.isArray(color) && color.length >= 3 ? color : [1, 1, 1];
+    var out = "#";
+    for (var i = 0; i < 3; i++) {
+      var v = Number(rgb[i]);
+      var byte = Math.round(Math.max(0, Math.min(1, isFinite(v) ? v : 1)) * 255);
+      out += (byte < 16 ? "0" : "") + byte.toString(16);
+    }
+    return out;
+  }
+
+  function gltfExtractNodeLight(gltf: any, node: any, nodeIndex: any, worldTransform: any, result: any) {
+    var ref = gltfExtension(node, "KHR_lights_punctual");
+    var doc = gltfExtension(gltf, "KHR_lights_punctual");
+    if (!ref || !doc || !Array.isArray(doc.lights) || ref.light == null) {
+      return;
+    }
+    var def = doc.lights[ref.light];
+    if (!def || typeof def !== "object") {
+      return;
+    }
+    var type = def.type;
+    if (type !== "directional" && type !== "point" && type !== "spot") {
+      return;
+    }
+    var dir = gltfTransformDirection(worldTransform, 0, 0, -1);
+    var len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z) || 1;
+    var pos = gltfTransformPoint(worldTransform, 0, 0, 0);
+    // glTF intensity is photometric: lux (lm/m2) for directional, candela
+    // (lm/sr) for point and spot. Dividing by 683 lm/W gives W/m2 and W/sr, and
+    // a point light of I W/sr lights a surface 1 m away like a sun of I W/m2.
+    // The scene intensity scale is that W/m2 value. The default intensity is 1
+    // in glTF, so an unset intensity stays at 1/683 of a unit, as authored.
+    // extras.gosxIntensityScale multiplies the result for lights that read dark.
+    var rawIntensity = def.intensity != null && isFinite(Number(def.intensity)) ? Number(def.intensity) : 1;
+    var scale = Number(def.extras && def.extras.gosxIntensityScale);
+    if (!(scale > 0) || !isFinite(scale)) scale = 1;
+    var intensity = rawIntensity / 683 * scale;
+    var light: any = {
+      id: "gltf-light-" + (def.name || ref.light) + "-n" + nodeIndex,
+      kind: type,
+      color: gltfLightHex(def.color),
+      intensity: intensity,
+    };
+    if (type === "directional" || type === "spot") {
+      light.directionX = dir.x / len;
+      light.directionY = dir.y / len;
+      light.directionZ = dir.z / len;
+    }
+    if (type !== "directional") {
+      light.x = pos.x;
+      light.y = pos.y;
+      light.z = pos.z;
+      // glTF range 0/absent means unbounded; the scene reads 0 the same way.
+      light.range = def.range != null && isFinite(Number(def.range)) && Number(def.range) > 0 ? Number(def.range) : 0;
+      light.decay = 2;
+    }
+    if (type === "spot") {
+      var spot = def.spot || {};
+      var outer = spot.outerConeAngle != null && isFinite(Number(spot.outerConeAngle)) ? Number(spot.outerConeAngle) : Math.PI / 4;
+      var inner = spot.innerConeAngle != null && isFinite(Number(spot.innerConeAngle)) ? Number(spot.innerConeAngle) : 0;
+      outer = Math.max(0.001, Math.min(Math.PI / 2, outer));
+      inner = Math.max(0, Math.min(outer, inner));
+      light.angle = outer;
+      // The scene cone fades from cos(angle * (1 - penumbra)) to cos(angle).
+      light.penumbra = 1 - inner / outer;
+    }
+    result.lights.push(light);
+  }
+
   function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result, animatedTRS, inheritedAnimated, sharedMeshes) {
     var node = gltf.nodes[nodeIndex];
     if (!node) {
@@ -2452,6 +2634,8 @@
         gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, nodeSuffix, nodeIndex, null, animated);
       }
     }
+
+    gltfExtractNodeLight(gltf, node, nodeIndex, worldTransform, result);
 
     var children = node.children || [];
     for (var i = 0; i < children.length; i++) {
@@ -2516,15 +2700,16 @@
   // Skin extraction (stored for downstream skeletal animation)
   // ---------------------------------------------------------------------------
 
+  var GLTF_MAX_SKIN_JOINTS = 256;
+
   function gltfExtractSkin(gltf, skinIndex, binaryBuffer) {
     if (skinIndex == null || !gltf.skins || skinIndex >= gltf.skins.length) {
       return null;
     }
     var skin = gltf.skins[skinIndex];
     var joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
-    if (joints.length > 64) {
-      console.warn("[gosx] glTF skin has " + joints.length + " joints; max supported is 64. Rendering mesh as static:", skin.name || skinIndex);
-      return null;
+    if (joints.length > GLTF_MAX_SKIN_JOINTS) {
+      throw new Error("[gosx] glTF skin " + JSON.stringify(skin.name || String(skinIndex)) + " has " + joints.length + " joints; the maximum supported is " + GLTF_MAX_SKIN_JOINTS + ". Split the rig or reduce the bone count in the export.");
     }
     var ibm = skin.inverseBindMatrices != null
       ? new Float32Array(gltfReadAccessor(gltf, skin.inverseBindMatrices, binaryBuffer))
@@ -2572,6 +2757,8 @@
     "KHR_materials_anisotropy",
     "KHR_materials_unlit",
     "KHR_texture_transform",
+    "KHR_lights_punctual",
+    "GOSX_texture_variants",
   ];
 
   // Warn once per load about required extensions the loader ignores. A required
@@ -3085,6 +3272,16 @@
     return new URL(baseURL).pathname + "#image=" + index;
   }
 
+  // GOSX_texture_variants lives on an image and lists the KTX2 files the asset
+  // build wrote for it: {"variants": [{uri, quality, bytes, format, channels,
+  // role, colorSpace, requiredCapabilities}]}. Each entry has the shape of a
+  // page-manifest texture variant, so one eligibility rule covers both. URIs
+  // resolve against the GLB.
+  function gltfEmbeddedImageVariants(image: any) {
+    var ext = gltfExtension(image, "GOSX_texture_variants");
+    return ext && Array.isArray(ext.variants) ? ext.variants : null;
+  }
+
   function gltfResolveExternalImageURIs(gltf, baseURL, variantContext) {
     if (!gltf || !gltf.images || !gltf.images.length) {
       return;
@@ -3103,9 +3300,6 @@
     // profiles must not claim readiness with an authored full-size fallback.
     var strict = profile === "low" || profile === "standard";
     var usages = gltfImageUsages(gltf);
-    if (!table) {
-      tokens = null;
-    }
     for (var i = 0; i < gltf.images.length; i += 1) {
       var image = gltf.images[i];
       if (!image) {
@@ -3122,8 +3316,20 @@
       }
       var keys = embedded ? [gltfEmbeddedImageKey(baseURL, i)] : gltfVariantTableKeys(image.uri, authored);
       var selected = false;
+      // Variants written into the GLB by `gosx assets build` come first: they
+      // travel with the model, so no page manifest has to list them. The page
+      // table is the fallback for assets built without the extension. An image
+      // with no eligible variant keeps its authored bytes.
+      var embeddedVariants = gltfEmbeddedImageVariants(image);
+      var candidateSets = [];
+      if (tokens && embeddedVariants) {
+        candidateSets.push(embeddedVariants);
+      }
       for (var k = 0; table && tokens && k < keys.length; k++) {
-        var winner = gltfSelectTextureVariant(table[keys[k]], tokens, profile, usages[i]);
+        candidateSets.push(table[keys[k]]);
+      }
+      for (var c = 0; c < candidateSets.length; c++) {
+        var winner = gltfSelectTextureVariant(candidateSets[c], tokens, profile, usages[i]);
         if (!winner) {
           continue;
         }
