@@ -507,7 +507,8 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		"__gosx_scene3d_ocean_fft_surface",    // WGSL surface patches.
 		"__gosx_scene3d_ocean_fft_surface_gl", // GLSL surface patches.
 		// Opt-in animation graph chunk (motion/animgraph frames): introspection API and load marker.
-		"__gosx_scene3d_animation_graph_api", "__gosx_scene3d_animation_graph_loaded"))
+		"__gosx_scene3d_animation_graph_api", "__gosx_scene3d_animation_graph_loaded",
+		"__gosx_scene3d_terrain_api")) // Opt-in terrain, wind and scatter-band API in the lazy terrain chunk.
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}

@@ -2098,9 +2098,9 @@
 
   // A scene command can add a wave spectrum after mount. Ask for the FFT chunk once; until it lands the renderer keeps
   // drawing Gerstner waves, and a failed fetch is not retried on every schedule.
-  var sceneOceanFFTRequested = false;
+  var sceneOceanFFTRequested = false; function sceneTerrainFeature(state) { /* terrain, wind and scatter bands (terrain.ts) */ return (state?.environment?.terrain || state?.environment?.wind || state?.instancedMeshes?.some((mesh) => mesh?.lodGroup)) && !window.__gosx_scene3d_terrain_api ? ensureSceneGatedFeatureLoaded("terrain", "gosxScene3dTerrainUrl", "/gosx/bootstrap-feature-scene3d-terrain.js").catch(() => null) : null; }
   function requestSceneOceanFFTIfNeeded(state) {
-    if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
+    sceneTerrainFeature(state); if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
     sceneOceanFFTRequested = true;
     ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", "").catch(function() {});
   }
@@ -2121,7 +2121,7 @@
   // settleSceneComputeFeature awaits the compute chunk before the first
   // render when the scene needs it. Await it next to settlePreferredWebGLBackend
   // so the first frame draws the particles instead of skipping them.
-  async function settleSceneComputeFeature(state) {
+  async function settleSceneComputeFeature(state) { await sceneTerrainFeature(state);
     if (!sceneNeedsComputeFeature(state)) {
       return false;
     }

@@ -38,8 +38,11 @@ type Ocean struct {
 	// Surf is the shore run-up amount, 0-1. Default: 0.5.
 	Surf float64 `json:"surf,omitempty"`
 	// Extent is in meters, 100-20000. Default: 4000.
-	Extent      float64           `json:"extent,omitempty"`
-	Bathymetry  *OceanBathymetry  `json:"bathymetry,omitempty"`
+	Extent     float64          `json:"extent,omitempty"`
+	Bathymetry *OceanBathymetry `json:"bathymetry,omitempty"`
+	// Shoreline bakes the seabed and a shoreline distance field from
+	// Environment.Terrain when Bathymetry is nil. See OceanShoreline.
+	Shoreline   *OceanShoreline   `json:"shoreline,omitempty"`
 	Reflections *OceanReflections `json:"reflections,omitempty"`
 	// Spectrum switches the surface from the six-wave Gerstner sum to the
 	// spectral ocean. When it is set, WaveHeight, WaveLength and Speed are
@@ -229,6 +232,14 @@ type OceanBathymetry struct {
 	// |MaxHeight|). Signed-sqrt spends the 8-bit steps near y = 0, so a gentle
 	// beach gets millimetre steps at the waterline instead of 5 cm terraces.
 	Encoding string `json:"encoding,omitempty"`
+	// ShoreDistance, when positive, says the G channel holds the signed
+	// distance to the waterline over ±ShoreDistance meters (0.5 at the shore,
+	// below 0.5 at sea). ShoreFoam is the foam band width in meters and
+	// ShoreTurbidity the surf zone's clarity factor. BakeShoreline and
+	// Ocean.Shoreline fill all three.
+	ShoreDistance  float64 `json:"shoreDistance,omitempty"`
+	ShoreFoam      float64 `json:"shoreFoam,omitempty"`
+	ShoreTurbidity float64 `json:"shoreTurbidity,omitempty"`
 }
 
 // normalizeOcean trims colors and bathymetry URLs, preserves zero as the
@@ -254,6 +265,7 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Surf = clampOceanParam(ocean.Surf, 0, 1)
 	out.Extent = clampOceanParam(ocean.Extent, 100, 20000)
 	out.Bathymetry = normalizeOceanBathymetry(ocean.Bathymetry)
+	out.Shoreline = normalizeOceanShoreline(ocean.Shoreline)
 	out.Reflections = normalizeOceanReflections(ocean.Reflections)
 	out.Spectrum = normalizeOceanSpectrum(ocean.Spectrum)
 	out.Masks = normalizeOceanMasks(ocean.Masks)

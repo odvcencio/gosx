@@ -758,6 +758,28 @@ type InstancedMeshIR struct {
 	CullKernelEntry   string  `json:"cullKernelEntry,omitempty"`
 	CullRadius        float64 `json:"cullRadius,omitempty"`
 	CullBackend       string  `json:"cullBackend,omitempty"`
+
+	// LOD bands from Scatter (scene/scatter.go). The browser draws a banded
+	// record only while the camera distance to (X, Y, Z) lies in
+	// [LODMinDistance, LODMaxDistance); a zero maximum has no far limit.
+	// Records without LODGroup always draw.
+	LODGroup       string  `json:"lodGroup,omitempty"`
+	LODLevel       int     `json:"lodLevel,omitempty"`
+	LODMinDistance float64 `json:"lodMinDistance,omitempty"`
+	LODMaxDistance float64 `json:"lodMaxDistance,omitempty"`
+	X              float64 `json:"x,omitempty"`
+	Y              float64 `json:"y,omitempty"`
+	Z              float64 `json:"z,omitempty"`
+	// Wind sways the batch's vertices under Environment.Wind (scene/wind.go).
+	Wind *InstancedWindIR `json:"wind,omitempty"`
+}
+
+// InstancedWindIR is the per-batch sway: Sway 0..1 scales the shared wind,
+// and a vertex's weight grows from 0 at the instance origin to 1 at Height
+// meters above it (instance space, before scale).
+type InstancedWindIR struct {
+	Sway   float64 `json:"sway"`
+	Height float64 `json:"height"`
 }
 
 // ComputeParticlesIR is the typed compatibility record for one GPU particle system.
@@ -1158,6 +1180,8 @@ type EnvironmentIR struct {
 	Ocean            *Ocean         `json:"ocean,omitempty"`
 	Haze             *Haze          `json:"haze,omitempty"`
 	AutoExposure     *AutoExposure  `json:"autoExposure,omitempty"`
+	Terrain          *TerrainIR     `json:"terrain,omitempty"`
+	Wind             *WindIR        `json:"wind,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
@@ -2594,6 +2618,16 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setNumeric(record, "cullRadius", item.CullRadius)
 	setString(record, "cullBackend", item.CullBackend)
 	setString(record, "parentNode", item.ParentNode)
+	setString(record, "lodGroup", item.LODGroup)
+	setInt(record, "lodLevel", item.LODLevel)
+	setNumeric(record, "lodMinDistance", item.LODMinDistance)
+	setNumeric(record, "lodMaxDistance", item.LODMaxDistance)
+	setNumeric(record, "x", item.X)
+	setNumeric(record, "y", item.Y)
+	setNumeric(record, "z", item.Z)
+	if item.Wind != nil {
+		record["wind"] = item.Wind
+	}
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }
@@ -3361,6 +3395,8 @@ func (item EnvironmentIR) IsZero() bool {
 		item.IBL.IsZero() &&
 		item.Sky == nil && item.Haze == nil && item.AutoExposure == nil &&
 		item.Ocean == nil &&
+		item.Terrain == nil &&
+		item.Wind == nil &&
 		item.EnvIntensity == 0 &&
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
@@ -3400,6 +3436,12 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	if item.Ocean != nil {
 		record["ocean"] = item.Ocean
 	}
+	if item.Terrain != nil {
+		record["terrain"] = item.Terrain
+	}
+	if item.Wind != nil {
+		record["wind"] = item.Wind
+	}
 	setNumeric(record, "envIntensity", item.EnvIntensity)
 	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
@@ -3421,9 +3463,11 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		EnvMap:           strings.TrimSpace(environment.EnvironmentMap),
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
 		Sky:              normalizeSky(environment.Sky),
-		Ocean:            normalizeOcean(environment.Ocean),
+		Ocean:            shorelineOcean(normalizeOcean(environment.Ocean), environment.Terrain),
 		Haze:             normalizeHaze(environment.Haze),
 		AutoExposure:     normalizeAutoExposure(environment.AutoExposure),
+		Terrain:          environment.Terrain.SceneIR(),
+		Wind:             environment.Wind.SceneIR(),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,

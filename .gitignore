@@ -28,6 +28,7 @@ build/
 !/docs/motion-transport.md
 !/docs/performance-metrics.md
 !/docs/scene3d-text.md
+!/docs/scene3d-terrain.md
 !/docs/embedded-apps.md
 !/docs/ui-recipes.md
 !/docs/controllers.md

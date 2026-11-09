@@ -93,8 +93,12 @@ type Environment struct {
 	// keeps the flat Props.Background clear color. See sky.go.
 	Sky *Sky
 	// Ocean describes the open-ocean surface. See ocean.go.
-	Haze         *Haze
-	Ocean        *Ocean
+	Haze  *Haze
+	Ocean *Ocean
+	// Terrain is the heightmap ground surface. See terrain.go.
+	Terrain *Terrain
+	// Wind is the shared wind field vegetation sways under. See wind.go.
+	Wind         *Wind
 	EnvIntensity float64
 	EnvRotation  float64
 	Exposure     float64
@@ -2477,6 +2481,12 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 	case *ComputeParticles:
 		if current != nil {
 			l.lowerComputeParticles(*current, parent)
+		}
+	case Scatter:
+		l.lowerScatter(current)
+	case *Scatter:
+		if current != nil {
+			l.lowerScatter(*current)
 		}
 	case WaterSystem:
 		l.lowerWaterSystem(current)

@@ -1731,7 +1731,7 @@
   ].join("\n");
 
   var WGSL_PBR_INSTANCED_VERTEX = [
-    WGSL_FRAME_STRUCTS,
+    WGSL_FRAME_STRUCTS, WGSL_MATERIAL_STRUCT,
     WGSL_AFFINE_NORMAL,
     "",
     "struct VertexInput {",
@@ -1756,12 +1756,12 @@
     "    @location(5) @interpolate(flat) instanceColor: vec4f,",
     "};",
     "",
-    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;", "@group(1) @binding(0) var<uniform> material: MaterialUniforms;", "fn gosxWindSway(m: mat4x4f, p: vec3f) -> vec4f { let w = m * vec4f(p, 1.0); let s = material.modelMatrix[2]; if (s.x <= 0.0) { return w; } let a = material.modelMatrix[0]; let b = material.modelMatrix[1]; let o = m[3].xz; let ph = (dot(o, a.xy) - b.z * a.w) * 6.2831853 / b.y + 0.35 * sin(dot(o, vec2f(a.y, -a.x)) * 6.2831853 / (b.y * 1.7)); let k = clamp(p.y / s.y, 0.0, 1.0); let f = s.x * a.z * 0.1 * (1.0 + b.x * sin(ph)) * (0.75 + 0.25 * sin(6.2831853 * b.w * a.w + o.x * 0.37 + o.y * 0.53)) * k * k * s.y * length(m[1].xyz); return vec4f(w.x + a.x * f, w.y - 0.3 * abs(f) * k, w.z + a.y * f, 1.0); }",
     "",
     "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    var out: VertexOutput;",
     "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-    "    let world = model * vec4f(in.position, 1.0);",
+    "    let world = gosxWindSway(model, in.position);",
     "    out.worldPos = world.xyz;",
     "    let an = gosxAffineNormal(model, in.normal);",
     "    out.normal = an.xyz;",
@@ -7447,7 +7447,7 @@
     // Post-processor.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -14607,7 +14607,7 @@
       u[13] = 0; u[14] = 0; u[15] = 0; u[16] = 0; u[17] = 0;
       u[18] = receiveShadow ? 1 : 0;
       u[19] = 0; // hasOcclusionMap, set by createMaterialBindGroup
-      for (var mi = 0; mi < 16; mi++) f[20 + mi] = mi % 5 === 0 ? 1 : 0;
+      for (var mi = 0; mi < 16; mi++) f[20 + mi] = mi % 5 === 0 ? 1 : 0; if (mat.wind && window.__gosx_scene3d_terrain_api) f.set(window.__gosx_scene3d_terrain_api.windFor(mat.wind), 20); // wind sway (scene/wind.go): material.modelMatrix is otherwise unused
       f[36] = f[37] = f[38] = 1;
       f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1; // modelScaleSigns.w: normal-map U scale
       f[40] = sceneWebGPUDielectricF0(mat.ior);
@@ -16269,7 +16269,7 @@
 
         var mat = instancedMeshMaterial(mesh, materials);
         var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
+        pass.setBindGroup(1, createMaterialBindGroup(mesh.wind ? Object.assign({}, mat, { wind: mesh.wind }) : mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
         if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
         if (webGPUGPUDrivenHost().drawMesh(pass, mesh, meshDepthWrite)) continue;
 
@@ -18082,7 +18082,7 @@
       webGPUPrepareMaterialFrame(materialFrame, device, bundle, retainedMeshAttributeEpoch, wgpuCreateTrackedBuffer, destroyRendererGPUResource, pointsEntryGPUBuffers);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer && !oceanResources.renderer) {
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !skyResources.renderer && !oceanResources.renderer) {
         webGPUSweepRetainedMeshBuffers();
         return "empty";
       }
@@ -18143,7 +18143,7 @@
       // feature renderers can discover pipelines while encoding; defer their
       // canvas commands until the entire frame has encoded successfully.
       pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost().present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
-        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds || bundle.environment.autoExposure) ||
+        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds || bundle.environment.autoExposure || bundle.environment.terrain) ||
         (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
         postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST || effect.kind === "taa"; }));
 
@@ -18543,7 +18543,7 @@
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
+        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() || Boolean(bundle.environment && bundle.environment.wind) ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
@@ -18607,7 +18607,7 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} }; window.__gosx_scene3d_terrain_api?.webgpu(terrainResources, mainPass, { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, height: scaledH, frameGroup: frameBindGroup, frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: materialUniformData, time: selenaFrame.time, frameBuffer: frameUniformBuffer, format: targetFormat, samples: sampleCount, specular: selectiveBloom, textureCache: textureCache, load: wgpuLoadTexture, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, attr: queueWebGPUAttribute });
       // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
       const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
@@ -18778,7 +18778,7 @@
     function dispose() { pipelineGuard.release(rawDevice);
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true; clearTimeout(webGPUAttributeTimer); webGPUAttributeTimer = null;
-      if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); oceanResources.fft?.dispose(); sceneReflectDispose(oceanResources);
+      if (skyResources.renderer) skyResources.renderer.dispose(); terrainResources.dispose?.(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); oceanResources.fft?.dispose(); sceneReflectDispose(oceanResources);
       if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null;
       skyResources.renderer = null;
 

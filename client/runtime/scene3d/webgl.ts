@@ -814,7 +814,7 @@
   // --- Shadow Depth Shader Sources ---
 
   // Cutaway planes are off when every value is zero.
-  const SCENE_NO_CUT = new Float32Array(12);
+  const SCENE_NO_CUT = new Float32Array(12); function sceneWebGLWindUpload(gl: any, ip: any, wind: any) { if (ip.uniforms.wind === undefined) ip.uniforms.wind = gl.getUniformLocation(ip.program, "u_wind[0]"); if (ip.uniforms.wind) gl.uniform4fv(ip.uniforms.wind, wind && window.__gosx_scene3d_terrain_api ? window.__gosx_scene3d_terrain_api.windFor(wind) : SCENE_NO_CUT); } // Environment.Wind sway for instanced batches (terrain.ts sceneWindFor)
   const SCENE_SHADOW_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -860,7 +860,7 @@
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
-    "uniform bool u_hasInstanceColor;",
+    "uniform bool u_hasInstanceColor;", "uniform vec4 u_wind[3];", "vec3 gosxWindOffset(mat4 m, vec3 p) { vec4 s = u_wind[2]; if (s.x <= 0.0) return vec3(0.0); vec4 a = u_wind[0]; vec4 b = u_wind[1]; vec2 o = m[3].xz; float ph = (dot(o, a.xy) - b.z * a.w) * 6.2831853 / b.y + 0.35 * sin(dot(o, vec2(a.y, -a.x)) * 6.2831853 / (b.y * 1.7)); float k = clamp(p.y / s.y, 0.0, 1.0); float f = s.x * a.z * 0.1 * (1.0 + b.x * sin(ph)) * (0.75 + 0.25 * sin(6.2831853 * b.w * a.w + o.x * 0.37 + o.y * 0.53)) * k * k * s.y * length(m[1].xyz); return vec3(a.x * f, -0.3 * abs(f) * k, a.y * f); }",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -872,7 +872,7 @@
     SCENE_GLSL_AFFINE_NORMAL,
     "",
     "void main() {",
-    "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
+    "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0); worldPos.xyz += gosxWindOffset(a_instanceMatrix, a_position);",
     "    v_worldPosition = worldPos.xyz;",
     "mat3 m=mat3(a_instanceMatrix);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
     "    v_uv = a_uv;",
@@ -7595,7 +7595,7 @@
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
     var transmissionResources = sceneCreateTransmissionWebGL(gl);
     var frameLinear = false;
     const programPreparation: ScenePBRPreparationHooks = { ensureSelenaProgram, ensureSkinnedProgram, ensureCustomProgram,
@@ -8796,7 +8796,7 @@
           return surface && !(surface.sourceKind === "html" && !surface.textureReady);
         }));
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         retireInstancedStreams();
         return "empty";
@@ -9065,7 +9065,7 @@
       applyDepthMode(gl, "opaque");
       drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta?.frameRequest);
       } // end if (hasPBRData)
-      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque"); window.__gosx_scene3d_terrain_api?.webgl(terrainResources, gl, { environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix, viewMatrix), height: renderH, textureCache: textureCache, time: sceneSelenaFrameTime, load: scenePBRLoadTexture, uniforms: scenePBRCacheBaseUniforms, fragment: () => scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), program: program, mount: canvas.parentNode, prepare: (u, m) => { gl.uniformMatrix4fv(u.viewMatrix, false, viewMatrix); gl.uniformMatrix4fv(u.projectionMatrix, false, projMatrix); gl.uniform3f(u.cameraPosition, cam.x, cam.y, cam.z); scenePBRUploadExposure(gl, u, bundle.environment, frameLinear); scenePBRUploadLights(gl, u, bundle.lights, bundle.environment, _frameLightsHash); scenePBRUploadEnvironmentMap(gl, u, bundle.environment, textureCache, shadowSlots, shadowLightIndices); scenePBRUploadShadowUniforms(gl, u, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache); uploadMaterial(gl, u, m, textureCache); } });
       const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
       sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: sceneSelenaFrameTime, quality: frameMeta?.oceanTier,
         meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
@@ -9798,7 +9798,7 @@
       uploadMaterial(gl, ip.uniforms, mat, textureCache);
       if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
       gl.uniform1i(ip.uniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
-      gl.uniform1i(ip.uniforms.hasInstanceColor, 0);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 0); sceneWebGLWindUpload(gl, ip, null);
       gl.depthMask(sceneTransmissionDepthWrite(obj, mat, scenePBRObjectRenderPass(obj, mat) === "opaque"));
       const allowed = {};
       for (const [name, size, fallback] of [
@@ -10687,7 +10687,7 @@
         if (!ip) continue;
         gl.useProgram(ip.program); uploadInstancedFrame(ip);
         gl.depthMask(sceneTransmissionDepthWrite(mesh, mat, renderPass === "opaque"));
-        uploadMaterial(gl, ip.uniforms, mat, textureCache);
+        uploadMaterial(gl, ip.uniforms, mat, textureCache); sceneWebGLWindUpload(gl, ip, mesh.wind);
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.
@@ -10800,7 +10800,7 @@
     function dispose() {
       sceneWebGLDisposeDetail(gl, detailResources);
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources);
-      if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
+      if (oceanResources.renderer) oceanResources.renderer.dispose(); terrainResources.dispose?.(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       transmissionResources.dispose();
       softParticles.dispose(); exposureGL.dispose();

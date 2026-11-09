@@ -2309,6 +2309,8 @@
         : (Object.prototype.hasOwnProperty.call(current, "pickable") ? sceneBool(current.pickable, true) : undefined),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
+      // Scatter (scene/scatter.go): the distance band, its cell centre and the wind sway; terrain.ts selects the bands.
+      ...(({ lodGroup, lodLevel, lodMinDistance, lodMaxDistance, x, y, z, wind }) => ({ lodGroup, lodLevel, lodMinDistance, lodMaxDistance, x, y, z, wind }))(item.lodGroup || item.wind ? item : current),
       ...lifecycle,
     };
     // Carry the cached Float32Array view of transforms forward when the
@@ -3181,6 +3183,8 @@
       if (src && maxX > minX && maxZ > minZ && maxHeight > minHeight) {
         const encoding = typeof source.encoding === "string" && source.encoding.trim().toLowerCase() === "signed-sqrt" ? "signed-sqrt" : "linear";
         bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
+        // The baked shoreline (scene.OceanShoreline) also fills G with the signed waterline distance.
+        if (source.shoreDistance > 0) Object.assign(bathymetry, { shoreDistance: source.shoreDistance, shoreFoam: source.shoreFoam, shoreTurbidity: source.shoreTurbidity });
       }
     }
     const out = {
@@ -3235,7 +3239,7 @@
       envMap: text("envMap"),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(has("sky") ? source.sky : base.sky),
-      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null),
+      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null), terrain: has("terrain") ? source.terrain || null : (base.terrain || null), wind: has("wind") ? source.wind || null : (base.wind || null),
       haze: sceneIsPlainObject(haze) ? sceneHaze(haze) : null,
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
@@ -3286,7 +3290,7 @@
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
-        ocean: environment.ocean || null,
+        ocean: environment.ocean || null, terrain: environment.terrain || null, wind: environment.wind || null,
         haze: environment.haze || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
@@ -5523,7 +5527,7 @@
     for (const entry of html || []) {
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
-    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy);
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, (window.__gosx_scene3d_terrain_api?.bands(instancedMeshes, renderCamera) || instancedMeshes), objects, timeSeconds, hierarchy);
     bundle.positions = sceneRetainTypedArray(retention, "positions", bundle.positions, Float32Array);
     bundle.colors = sceneRetainTypedArray(retention, "colors", bundle.colors, Float32Array);
     bundle.vertexCount = bundle.positions.length / 2;
