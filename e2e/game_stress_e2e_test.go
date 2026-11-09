@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/profiler"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
@@ -39,7 +41,7 @@ import (
 //	GOSX_STRESS_BENCH=1 GPU_CHROME_EXCLUSIVE=1 mac-gpu-run <wt> go test -tags e2e -timeout 40m -run GameStressBenchmark -v ./e2e
 //
 // GOSX_STRESS_RUNS picks the runs (default all: webgpu and webgl, main and
-// worker, and both at a 4x CPU slowdown), GOSX_STRESS_SECONDS the measured
+// worker, each also at a 4x CPU slowdown of the page's main thread), GOSX_STRESS_SECONDS the measured
 // seconds per run (30), GOSX_STRESS_OUT a directory for the JSON of each run,
 // and GOSX_CICADA_FIXTURE a directory with Cicada's fixture.json and
 // kernel.wasm for live music.
@@ -54,6 +56,7 @@ type stressSpec struct {
 	Warmup          float64
 	Audio           string
 	Probes          int
+	NoCull          bool // turn off GPU frustum culling of the crowd (WebGPU)
 }
 
 func (s stressSpec) label() string {
@@ -74,6 +77,9 @@ func (s stressSpec) query() string {
 	q.Set("width", strconv.Itoa(s.Width))
 	q.Set("height", strconv.Itoa(s.Height))
 	q.Set("audio", s.Audio)
+	if s.NoCull {
+		q.Set("cull", "0")
+	}
 	return q.Encode()
 }
 
@@ -114,7 +120,14 @@ func startStressServer(t *testing.T) string {
 			cicada = ""
 		}
 	}
-	h, err := web.Handler(web.Options{Root: root, EngineWASM: stressWASM, CicadaDir: cicada,
+	// GOSX_STRESS_CLIENT_ROOT serves the browser runtime from another
+	// checkout, for example bundles built with GOSX_BUNDLE_DEBUG=1 (source
+	// maps) for a readable CPU profile.
+	clientRoot := root
+	if alt := os.Getenv("GOSX_STRESS_CLIENT_ROOT"); alt != "" {
+		clientRoot = alt
+	}
+	h, err := web.Handler(web.Options{Root: clientRoot, EngineWASM: stressWASM, CicadaDir: cicada,
 		WASMExec: filepath.Join(strings.TrimSpace(string(goroot)), "lib", "wasm", "wasm_exec.js")})
 	if err != nil {
 		t.Fatal(err)
@@ -210,11 +223,14 @@ type stressSummary struct {
 	Allocs                     dist // KiB allocated per frame by Go
 	AudioState                 string
 	Errors                     []string
+	// Fallback is the mount's renderer fallback reason; Console holds the
+	// start of the page console when the backend is not the one asked for.
+	Fallback, Console string
 }
 
 func summarize(spec stressSpec, raw stressRaw) stressSummary {
 	s := stressSummary{Label: spec.label(), Backend: raw.Mount.Backend, Thread: spec.Thread, UA: raw.UA, Throttle: spec.Throttle,
-		Hashes: map[string]string{}, Frames: len(raw.Frames)}
+		Hashes: map[string]string{}, Frames: len(raw.Frames), Fallback: raw.Mount.Fallback}
 	var mainT, gap, render, bundle, jsAnim, msg []float64
 	for i, f := range raw.Frames {
 		mainT = append(mainT, f.Raf+f.Msg)
@@ -373,7 +389,29 @@ func runStress(t *testing.T, base string, spec stressSpec) (stressSummary, stres
 	time.Sleep(time.Duration(spec.Warmup * float64(time.Second)))
 	var from float64
 	browser.eval(t, `performance.now()`, &from)
+	// GOSX_STRESS_PROFILE=1 records a main-thread CPU profile of the measured
+	// window (the profiler adds its own cost, so profile in a separate run).
+	profiling := os.Getenv("GOSX_STRESS_PROFILE") == "1" && os.Getenv("GOSX_STRESS_OUT") != ""
+	if profiling {
+		if err := chromedp.Run(ctx, profiler.Enable(), profiler.SetSamplingInterval(200), profiler.Start()); err != nil {
+			t.Fatalf("start profiler: %v", err)
+		}
+	}
 	time.Sleep(time.Duration(spec.Seconds * float64(time.Second)))
+	if profiling {
+		var prof *profiler.Profile
+		if err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+			var err error
+			prof, err = profiler.Stop().Do(c)
+			return err
+		})); err != nil {
+			t.Fatalf("stop profiler: %v", err)
+		}
+		data, _ := json.Marshal(prof)
+		_ = os.MkdirAll(os.Getenv("GOSX_STRESS_OUT"), 0o755)
+		name := "game-stress-" + strings.NewReplacer("/", "-", "@", "-").Replace(spec.label()) + ".cpuprofile"
+		_ = os.WriteFile(filepath.Join(os.Getenv("GOSX_STRESS_OUT"), name), data, 0o644)
+	}
 	var raw string
 	browser.eval(t, fmt.Sprintf(`__stress.collect(%f)`, from), &raw)
 	if dir := os.Getenv("GOSX_STRESS_OUT"); dir != "" {
@@ -413,7 +451,14 @@ func runStress(t *testing.T, base string, spec stressSpec) (stressSummary, stres
 			parsed.Errors = append(parsed.Errors, map[string]any{"name": "pageerror", "detail": e})
 		}
 	}
-	return summarize(spec, parsed), parsed
+	sum := summarize(spec, parsed)
+	if sum.Backend != spec.Backend {
+		console := browser.Console()
+		var diag string
+		browser.eval(t, `JSON.stringify({fallback: document.getElementById("arena").getAttribute("data-gosx-scene3d-renderer-fallback"), attrs: Array.from(document.getElementById("arena").attributes).filter(a => /webgpu|fallback|backend/.test(a.name)).map(a => a.name + "=" + a.value)})`, &diag)
+		sum.Console = diag + "\n" + console[:min(len(console), 3000)]
+	}
+	return sum, parsed
 }
 
 // nativeStressHash is the hash the browser runs must report at tick t: the
@@ -478,8 +523,10 @@ func TestGameStressSmoke(t *testing.T) {
 	}
 	var runs []stressSummary
 	for _, thread := range []string{"main", "worker"} {
+		// NoCull: GPU crowd culling loses the Metal device on Apple GPUs
+		// (docs/game-performance.md); this test covers the worker path.
 		spec := stressSpec{Backend: backend, Thread: thread, Players: 22, Crowd: 800, Sections: 4, Width: 480, Height: 270,
-			Seconds: 6, Warmup: 6, Audio: "worklet", Probes: 3}
+			Seconds: 6, Warmup: 6, Audio: "worklet", Probes: 3, NoCull: true}
 		s, raw := runStress(t, base, spec)
 		runs = append(runs, s)
 		writeStressJSON(t, os.Getenv("GOSX_STRESS_OUT"), s, raw)
@@ -543,7 +590,7 @@ func TestGameStressBenchmark(t *testing.T) {
 	}
 	names := os.Getenv("GOSX_STRESS_RUNS")
 	if names == "" {
-		names = "webgpu/main,webgpu/worker,webgl/main,webgl/worker,webgpu/main@4,webgpu/worker@4"
+		names = "webgpu/main,webgpu/worker,webgl/main,webgl/worker,webgpu/main@4,webgpu/worker@4,webgl/main@4,webgl/worker@4"
 	}
 	want := nativeStressHash(22, 300)
 	var runs []stressSummary
@@ -559,6 +606,7 @@ func TestGameStressBenchmark(t *testing.T) {
 		if len(parts) == 2 {
 			spec.Throttle, _ = strconv.ParseFloat(parts[1], 64)
 		}
+		spec.NoCull = os.Getenv("GOSX_STRESS_CULL") == "0"
 		s, raw := runStress(t, base, spec)
 		writeStressJSON(t, os.Getenv("GOSX_STRESS_OUT"), s, raw)
 		if s.Hashes["300"] != "" && s.Hashes["300"] != want {
