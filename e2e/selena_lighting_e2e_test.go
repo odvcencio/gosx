@@ -53,10 +53,11 @@ type selenaLightingReading struct {
 }
 
 // The camera looks straight down at a ground slab from 6 m. A shadow-casting
-// box hangs at 9 m, behind the camera, so the camera never sees it but the
-// directional light (straight down) shadows a 2 m square at the screen center.
-// The fog density puts 70% of the color through at the center (5.95 m) and
-// about 50% at the corners.
+// bar (x -2.5..-1.5, 3 m up) sits at the left edge of the view, and the
+// directional light travels down at 45 degrees toward +x, so the bar's shadow
+// falls on the ground at x 0.5..1.5 (about pixel 195 of 320). The ground at
+// x = +4 (pixel 299) is lit. The fog density lets 69% of the color through at
+// the shadow sample (6.1 m away) and about 50% at the top-right corner (8.3 m).
 //
 // Run on real GPUs with the charter runners, for example:
 //
@@ -85,12 +86,13 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 			yes, no := true, false
 			props := scene.Props{
 				Width: 320, Height: 240, Background: "#000000", AutoRotate: &no,
-				Camera:      scene.PerspectiveCamera{Position: scene.Vector3{Y: 6}, Rotation: scene.Euler{X: -math.Pi / 2}, FOV: 60, Near: 0.1, Far: 30},
+				// Z is 0.001, not 0: the camera normalizer treats z = 0 as unset and moves the camera to z = 6.
+				Camera:      scene.PerspectiveCamera{Position: scene.Vector3{Y: 6, Z: 0.001}, Rotation: scene.Euler{X: -math.Pi / 2}, FOV: 60, Near: 0.1, Far: 30},
 				Environment: scene.Environment{FogColor: "#000000", FogDensity: 0.1, ToneMapping: "linear"},
 				Graph: scene.NewGraph(
 					scene.Mesh{ID: "ground", Geometry: scene.BoxGeometry{Width: 20, Height: 0.1, Depth: 20}, Position: scene.Vector3{Y: -0.05}, Material: material, ReceiveShadow: true},
-					scene.Mesh{ID: "occluder", Geometry: scene.BoxGeometry{Width: 2, Height: 0.2, Depth: 2}, Position: scene.Vector3{Y: 9}, Material: scene.StandardMaterial{Color: "#808080"}, CastShadow: true},
-					scene.DirectionalLight{ID: "sun", Color: "#ffffff", Intensity: 1, Direction: scene.Vector3{Y: -1}, CastShadow: true, ShadowSize: 1024, ShadowBias: 0.002, ShadowCascades: 2},
+					scene.Mesh{ID: "occluder", Geometry: scene.BoxGeometry{Width: 1, Height: 0.2, Depth: 6}, Position: scene.Vector3{X: -2, Y: 3}, Material: scene.StandardMaterial{Color: "#808080"}, CastShadow: true},
+					scene.DirectionalLight{ID: "sun", Color: "#ffffff", Intensity: 1, Direction: scene.Vector3{X: 1, Y: -1}, CastShadow: true, ShadowSize: 1024, ShadowBias: 0.002, ShadowCascades: 2},
 					scene.PointLight{ID: "lamp", Color: "#ffffff", Intensity: 1, Position: scene.Vector3{X: 3, Y: 2}},
 				),
 			}
@@ -151,10 +153,10 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 					t.Fatal(err)
 				}
 				b := img.Bounds()
-				reading.Shadow = pixel8(img, b.Min.X+b.Dx()/2, b.Min.Y+b.Dy()/2)
-				reading.Lit = pixel8(img, b.Min.X+b.Dx()/8, b.Min.Y+b.Dy()/2)
-				reading.Corner = pixel8(img, b.Min.X+2, b.Min.Y+2)
-				if selenaLightingReadingOK(reading) {
+				reading.Shadow = pixel8(img, b.Min.X+b.Dx()*195/320, b.Min.Y+b.Dy()/2)
+				reading.Lit = pixel8(img, b.Min.X+b.Dx()*299/320, b.Min.Y+b.Dy()/2)
+				reading.Corner = pixel8(img, b.Max.X-3, b.Min.Y+2)
+				if selenaLightingReadingOK(reading, backend == "webgl") {
 					ok = true
 					break
 				}
@@ -175,16 +177,24 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 }
 
 // selenaLightingReadingOK checks the probe colors with wide margins, so tone
-// mapping or a color-space conversion on either backend cannot flip a verdict:
+// mapping or the sRGB encoding of the canvas cannot flip a verdict (0.25 reads
+// as 64 linear or 137 sRGB):
 // the shadowed center is dark red and the lit side is bright red; green shows
 // two lights; blue shows fog thinning toward the far corner.
-func selenaLightingReadingOK(r selenaLightingReading) bool {
+//
+// requireShadow is false on WebGPU: on 2026-11-08 the WebGPU renderer drew no
+// directional shadow in this scene for its own standard material either (the
+// same scene with a standard-material ground showed none on an RTX 5070 Ti),
+// so the probe can only confirm that WebGPU binds the shadow inputs without
+// error. WebGL's standard-material shadow and the probe's shadow matched pixel
+// for pixel. Require the WebGPU shadow once the renderer draws it.
+func selenaLightingReadingOK(r selenaLightingReading, requireShadow bool) bool {
 	if r.Fallback != "0" {
 		return false
 	}
-	shadowed := r.Shadow[0] < 60
+	shadowed := r.Shadow[0] < 60 || !requireShadow
 	lit := r.Lit[0] > 150
-	lights := r.Lit[1] > 25 && r.Lit[1] < 130 && r.Shadow[1] > 25 && r.Shadow[1] < 130
+	lights := r.Lit[1] > 40 && r.Lit[1] < 175 && r.Shadow[1] > 40 && r.Shadow[1] < 175
 	fog := r.Shadow[2] > 110 && r.Shadow[2] < 240 && r.Corner[2] < r.Shadow[2]-12
 	return shadowed && lit && lights && fog
 }
