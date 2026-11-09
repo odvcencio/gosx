@@ -487,6 +487,14 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-terrain.js",
+      "sources": [
+        "../runtime/scene3d/terrain.ts",
+        "../runtime/scene3d/terrain-wgsl.ts",
+        "../runtime/scene3d/terrain-glsl.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-walk.js",
       "sources": [
         "../runtime/scene3d/walk-surfaces.ts",
