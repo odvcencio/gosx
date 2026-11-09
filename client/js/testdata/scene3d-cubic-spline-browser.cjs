@@ -313,7 +313,14 @@ function recordClientEventNames(body) {
   for (const event of Array.isArray(batch && batch.events) ? batch.events : []) {
     let caseName = '';
     try { caseName = new URL(String(event.url || ''), BASE).pathname.replace(/^\/case\//, ''); } catch (_e) {}
-    clientEventNames.push({ caseName, cat: String(event.cat || ''), lvl: String(event.lvl || ''), msg: String(event.msg || '') });
+    // A quality transition also names why it fired and the timing it judged.
+    const fields = event.fields && typeof event.fields === 'object' ? event.fields : {};
+    const detail = String(event.msg || '') === 'adaptive-quality-transition'
+      ? ['reason', 'activeTier', 'frameMS', 'ewmaFrameMS', 'p95FrameMS', 'targetFrameMS', 'measurement']
+        .filter((key) => fields[key] !== undefined)
+        .map((key) => key + '=' + (typeof fields[key] === 'number' ? Math.round(fields[key] * 10) / 10 : String(fields[key]).slice(0, 40))).join(',')
+      : '';
+    clientEventNames.push({ caseName, cat: String(event.cat || ''), lvl: String(event.lvl || ''), msg: String(event.msg || '') + (detail ? '(' + detail + ')' : '') });
   }
 }
 
