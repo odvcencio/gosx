@@ -28,7 +28,7 @@ function decl(source, name) {
 
 const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c2-scene-selena-lighting.ts"), "utf8");
 const lightingFunctions = ["sceneSelenaLightingRecord", "sceneSelenaLightKind", "sceneSelenaPackLight", "sceneSelenaClipToShadowUV",
-  "sceneSelenaFillShadowSlot", "sceneSelenaFillLighting", "sceneSelenaLightingValue", "sceneSelenaShadowMapSlot",
+  "sceneSelenaCascadeBias", "sceneSelenaFillShadowSlot", "sceneSelenaFillLighting", "sceneSelenaLightingValue", "sceneSelenaShadowMapSlot",
   "sceneSelenaFrameLighting"];
 
 function lightingContext(extra = {}) {
@@ -157,6 +157,34 @@ test("WebGL cascades and WebGPU single maps fill both shadow slots", () => {
   const skipped = ctx.sceneSelenaFillLighting(null, {lights: [{kind: "rect-area"}], slots: [gpuSlot], lightIndices: [0], matrices: [ident], clip: "gpu"});
   assert.equal(skipped.shadow0[0], 0);
   assert.equal(skipped.shadowMaps[0], null);
+});
+
+test("WebGPU cascaded slots fill the Selena layout and scale the bias per cascade", () => {
+  const ctx = lightingContext();
+  // The WebGPU cascaded shadow slot: one depth texture array, each cascade's
+  // matrix already in WebGPU clip (depth 0..1), and a per-cascade bias scale.
+  const ortho = (z) => new Float32Array([0.1, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, -0.01, 0, 0, 0, z, 1]);
+  const slot = {texture: {}, view: {}, size: 2048, numCascades: 2, cascades: [
+    {lightMatrix: ortho(0.4), splitFar: 12, biasScale: 0.25}, {lightMatrix: ortho(0.5), splitFar: 60, biasScale: 1}]};
+  const lights = [{kind: "directional", shadowBias: 0.004, shadowSoftness: 0}];
+  const out = ctx.sceneSelenaFillLighting(null, {lights, slots: [slot, null], lightIndices: [0, -1], matrices: [null, null], clip: "gpu"});
+  assert.equal(out.shadow0[0], 2, "both cascades reach the shader");
+  assert.equal(out.shadowSplits0[0], 12);
+  assert.equal(out.shadowMaps[0], slot, "the shader samples the slot's depth texture array");
+  close(out.shadowMatrices0[14], 0.4 + 0.004 * 0.75, "cascade 0 compares with a quarter of the bias");
+  close(out.shadowMatrices0[16 + 14], 0.5, "cascade 1 keeps the authored bias");
+  close(out.shadowMatrices0[13], 0.5, "gpu mapping centers y");
+});
+
+test("the monolith publishes the lighting API that the gated WebGPU chunk reads", () => {
+  // The monolith inlines 16c2, but WebGPU still loads as its own chunk, whose
+  // shims only see window.__gosx_scene3d_selena_lighting_api.
+  const { createContext, runScript, bootstrapSource } = require("./runtime-test-harness.js");
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const api = env.context.__gosx_scene3d_selena_lighting_api;
+  assert.ok(api, "the monolith publishes the API");
+  assert.deepEqual(["frame", "value", "shadowSlot"].map((k) => typeof api[k]), ["function", "function", "function"]);
 });
 
 test("only engine context fields read the lighting record", () => {

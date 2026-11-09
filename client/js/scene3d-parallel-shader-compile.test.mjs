@@ -774,6 +774,9 @@ function pointsHarness(h) {
     webglComputeParticleDrawStats: { drawEntries: 0, drawInstances: 0, drawCalls: 0,
       authoredDrawEntries: 0, authoredDrawInstances: 0, authoredDrawCalls: 0 },
     ensurePointsProgram: () => { throw new Error("authored particles must prepare their own program"); },
+    // Soft particles and point-array caching live in their own modules.
+    softParticles: { program: () => null, bind() {}, used: () => false }, textureCache: { _sceneTextureEpoch: 0 },
+    sceneWebGLCachePointArrays() {},
   });
   runSource(sourceBetween(webglSource, "function sceneSelenaUploadScalar", "// Degraded resolver used only"), h.context);
   runSource(sourceBetween(webglSource, "function scenePointsProgramInfo", "// Compile the instanced PBR vertex shader"), h.context);

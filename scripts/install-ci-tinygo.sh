@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 curl --fail --location --silent --show-error \
-	--retry 5 --retry-delay 2 --retry-all-errors \
+	--connect-timeout 30 --retry 9 --retry-max-time 600 --retry-all-errors \
 	--output "${work_dir}/tinygo.deb" \
 	"https://github.com/tinygo-org/tinygo/releases/download/v${tinygo_version}/tinygo_${tinygo_version}_amd64.deb"
 printf '%s  %s\n' "${tinygo_sha256}" "${work_dir}/tinygo.deb" | sha256sum --check --status
@@ -31,7 +31,7 @@ if [[ ! -x "${compat_root}/bin/go" ]]; then
 		exit 1
 	fi
 	curl --fail --location --silent --show-error \
-		--retry 5 --retry-delay 2 --retry-all-errors \
+		--connect-timeout 30 --retry 9 --retry-max-time 600 --retry-all-errors \
 		--output "${work_dir}/go.tar.gz" \
 		"https://dl.google.com/go/go${compat_go_version}.linux-amd64.tar.gz"
 	printf '%s  %s\n' "${compat_go_sha256}" "${work_dir}/go.tar.gz" | sha256sum --check --status

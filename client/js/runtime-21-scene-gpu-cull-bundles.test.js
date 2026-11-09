@@ -1073,7 +1073,7 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
   // Use the call site, not the function definition — the definition appears first
   // in the file but runs only when invoked. The call constructs a shadow-view
   // descriptor; the definition only names its shadowResource parameter.
-  const shadowPos = webgpu.indexOf("renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots");
+  const shadowPos = webgpu.indexOf("renderLightShadowCascades(encoder, light, li, activeShadowCount");
   // The main color pass is identified by `var mainPass = encoder.beginRenderPass(`
   // to avoid matching earlier shadow/utility beginRenderPass calls.
   const mainPassPos = webgpu.indexOf("var mainPass = encoder.beginRenderPass(");

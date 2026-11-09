@@ -373,6 +373,18 @@ function checkIdentity(failures, value, label) {
   }, label);
 }
 
+// clientEventNames is the producer's per-event diagnostic list for the report
+// being verified; checkTelemetry names a case's events next to a count
+// mismatch so the extra event is visible without the artifact.
+let clientEventNames = [];
+
+function caseEventNote(label) {
+  const caseName = String(label).replace(/\.telemetry$/, '');
+  const names = clientEventNames.filter((event) => event && event.caseName === caseName)
+    .map((event) => [event.cat, event.lvl, event.msg].join(' '));
+  return ' [events: ' + (names.length ? names.join('; ') : 'none recorded') + ']';
+}
+
 function checkTelemetry(failures, value, label) {
   check(failures, value && typeof value === 'object', label + ': missing');
   if (!value || typeof value !== 'object') return;
@@ -385,7 +397,8 @@ function checkTelemetry(failures, value, label) {
   for (const field of ['emittedEvents', 'attemptedEvents', 'attemptedBatches',
     'dispatchedEvents', 'dispatchedBatches', 'serverAcceptedEvents',
     'serverAcceptedBatches']) {
-    exact(failures, value[field], 1, label + '.' + field);
+    const note = (field === 'emittedEvents' || field === 'attemptedEvents') && value[field] !== 1 ? caseEventNote(label) : '';
+    exact(failures, value[field], 1, label + '.' + field + note);
   }
   exact(failures, value.lastFlushReason, 'manual-drain', label + '.lastFlushReason');
   exact(failures, value.lastFailureReason, '', label + '.lastFailureReason');
@@ -1102,6 +1115,7 @@ function verifyReport(report, mode, browser) {
   const failures = [];
   check(failures, report && typeof report === 'object', 'report is not an object');
   if (!report || typeof report !== 'object') return failures;
+  clientEventNames = Array.isArray(report.clientEventNames) ? report.clientEventNames : [];
   checkTopLevel(failures, report, mode, browser);
   const affineGL = Array.isArray(report.cases) ?
     report.cases.find((value) => value.name === 'affine-gl') : null;

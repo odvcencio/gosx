@@ -182,6 +182,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
 			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgl-detail.ts"),
+			sourceFile("../runtime/scene3d/webgl-points.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			// The Environment.Ocean passes ship beside the renderer that calls them.
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
@@ -191,7 +192,11 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgl-dof.ts"),
+			sourceFile("../runtime/scene3d/webgl-taa-motion.ts"),
 			sourceFile("../runtime/scene3d/webgl-taa.ts"),
+			sourceFile("../runtime/scene3d/webgl-soft-particles.ts"),
+			sourceFile("../runtime/scene3d/webgl-exposure.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
 			// legacy monolithic bootstrap.js throws ReferenceError the first
@@ -208,6 +213,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
 			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu-cutaway.ts"),
+			sourceFile("../runtime/scene3d/webgpu-shadows.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -216,6 +222,11 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-points.ts"),
+			sourceFile("../runtime/scene3d/webgpu-soft-particles.ts"),
+			sourceFile("../runtime/scene3d/webgpu-taa.ts"),
+			sourceFile("../runtime/scene3d/webgpu-dof.ts"),
+			sourceFile("../runtime/scene3d/webgpu-exposure.ts"),
 			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
@@ -586,6 +597,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
 			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgl-detail.ts"),
+			sourceFile("../runtime/scene3d/webgl-points.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
 			sourceFile("../runtime/scene3d/webgl-reflect.ts"),
@@ -594,7 +606,11 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgl-dof.ts"),
+			sourceFile("../runtime/scene3d/webgl-taa-motion.ts"),
 			sourceFile("../runtime/scene3d/webgl-taa.ts"),
+			sourceFile("../runtime/scene3d/webgl-soft-particles.ts"),
+			sourceFile("../runtime/scene3d/webgl-exposure.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
 	},
@@ -644,6 +660,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
 			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu-cutaway.ts"),
+			sourceFile("../runtime/scene3d/webgpu-shadows.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -652,6 +669,11 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-points.ts"),
+			sourceFile("../runtime/scene3d/webgpu-soft-particles.ts"),
+			sourceFile("../runtime/scene3d/webgpu-taa.ts"),
+			sourceFile("../runtime/scene3d/webgpu-dof.ts"),
+			sourceFile("../runtime/scene3d/webgpu-exposure.ts"),
 			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
@@ -793,6 +815,21 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26g-feature-scene3d-animation-prefix.ts"),
 			sourceFile("../runtime/scene3d/animation.ts"),
 			sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.ts"),
+		},
+	},
+	{
+		// Animation graph evaluation for models driven by motion/animgraph:
+		// layered clip sampling with bone masks and additive layers, humanoid
+		// rig mapping and retargeting, and IK. A page loads it by requiring the
+		// "scene3d-animation-graph" feature; it wraps the animation chunk's
+		// sampled-clip hooks at run time, so no renderer chunk grows.
+		name: "bootstrap-feature-scene3d-animation-graph.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26n-feature-scene3d-animation-graph-prefix.ts"),
+			sourceFile("../runtime/scene3d/animation-rig.ts"),
+			sourceFile("../runtime/scene3d/ik.ts"),
+			sourceFile("../runtime/scene3d/animation-graph.ts"),
+			sourceFile("bootstrap-src/26n-feature-scene3d-animation-graph-suffix.ts"),
 		},
 	},
 	{

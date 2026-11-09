@@ -768,6 +768,7 @@
     let idleContextTimer = null;
     let contextVoluntarilyLost = false;
     let voluntaryLoseContextExtension = null;
+    const graphicsRecovery = createSceneGraphicsRecovery();
 
     function sceneRenderLoopSnapshot(reason) {
       const animation = sceneAnimationState();
@@ -856,6 +857,7 @@
         adapterInfo: (priorDiagnostics && priorDiagnostics.adapterInfo) || null,
       } : null;
       publishSceneRenderWatchdogState(recoveryReason, stalledFor || 0);
+      if (recoveryReason === "webgpu-device-lost") sceneDispatchGraphicsReset(mount, graphicsRecovery, "lost", "webgpu", recoveryReason, renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.reason : "");
       gosxSceneEmit("warn", "render-watchdog-recovery", {
         rendererKind: renderer?.kind || "",
         reason: recoveryReason,
@@ -919,7 +921,7 @@
       // event fires, that variable already reads "" even though this is
       // still, right now, a WebGPU-failure fallback.
       const fallbackReason = sceneDebugAttr(mount, sceneAttr("renderer-fallback"));
-      if (fallbackReason === "webgpu-device-lost" || !sceneFallbackRequiresReplacementCanvas(fallbackReason)) {
+      if (fallbackReason === "webgpu-device-lost" ? !sceneWebGPULossReturnAllowed(graphicsRecovery, sceneFrameNowMS(), graphicsRecovery.lossReason) : !sceneFallbackRequiresReplacementCanvas(fallbackReason)) {
         return false;
       }
       const trialCanvas = prepareSceneReplacementCanvas();
@@ -967,7 +969,7 @@
       }
       /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ if (reason === "webgpu-device-lost") {
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
-        recoverSceneWebGPURenderer(reason, 0, true);
+        recoverSceneWebGPURenderer(reason, 0, !sceneWebGPULossReturnAllowed(graphicsRecovery, sceneFrameNowMS(), diagnostics && diagnostics.deviceLostInfo ? diagnostics.deviceLostInfo.reason : ""));
         return;
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);
@@ -1492,6 +1494,7 @@
     function runSceneFrame() { return sceneRunFrameGuard(runSceneFrameInner, arguments, function() { return frameHandle === -1; }, function() { frameHandle = 0; }); }
     function runSceneFrameInner() {
         const now = motionScheduler && typeof motionScheduler.now === "function" ? motionScheduler.now() : arguments[0];
+        sceneObserveAdaptiveQualityRAF(adaptiveQuality, now);
         if (frameHandle !== -1) frameHandle = 0;
         const scheduledRender = renderHandle === -1;
         if (scheduledRender) renderHandle = null;
@@ -1569,6 +1572,7 @@
       renderWatchdogLastSeq = -1;
       renderWatchdogLastAt = 0;
       renderWatchdogLastAdvanceAt = sceneFrameNowMS();
+      sceneGraphicsRecoverySwap(mount, adaptiveQuality, graphicsRecovery, nextRenderer.kind, fallbackReason || "");
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
       }
@@ -1666,18 +1670,6 @@
 	        reason: reason || "",
 	      });
 	      return true;
-	    }
-
-	    function sceneFallbackRequiresReplacementCanvas(reason) {
-	      // A canvas that already had getContext("webgpu") called on it is
-	      // permanently tainted to that context type — getContext("webgl2")
-	      // on the SAME canvas returns null regardless of whether the WebGPU
-	      // device itself is still alive. webgpu-persistent-frame-error's
-	      // canvas was claimed by the (still-alive-but-broken) WebGPU
-	      // renderer exactly like webgpu-device-lost's was, so it needs the
-	      // same fresh-canvas treatment. Failed PBR shaders also need a fresh
-	      // context so their teardown cannot cancel the legacy shader queue.
-	      return reason === "webgpu-pipeline-failed" || reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
 	    }
 
     // WebGL fallback owner: null = idle, 0 = settled, false = terminal, or the
@@ -1958,6 +1950,7 @@
       gosxSceneEmit("warn", "webgl-context-lost", {
         voluntary: contextVoluntarilyLost === true,
       });
+      sceneDispatchGraphicsReset(mount, graphicsRecovery, "lost", "webgl", "webgl-context-lost");
       // Dispose the live WebGL renderer immediately so its closures release
       // every handle (programs, FBOs, cascade textures, IBL cubemaps,
       // post-fx pipeline) before the browser can re-attach a fresh context
