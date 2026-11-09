@@ -331,6 +331,14 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return err
 	}
 
+	if opts.StaticOnly {
+		// Fail before the multi-minute runtime build when a page can never be static.
+		if skipped, err := staticOnlySkippedRoutes(filepath.Join(dir, "app")); err != nil {
+			return err
+		} else if len(skipped) > 0 {
+			return staticOnlyPagesError(skipped)
+		}
+	}
 	if err := checkVersionSkew(dir); err != nil {
 		return err
 	}

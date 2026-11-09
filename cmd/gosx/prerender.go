@@ -259,16 +259,8 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		}
 	}
 
-	if opts.StaticOnly {
-		skipped, err := staticOnlySkippedRoutes(filepath.Join(appRoot, "app"))
-		if err != nil {
-			return exportManifest{}, err
-		}
-		unexportable = append(unexportable, skipped...)
-		if len(unexportable) > 0 {
-			sort.Strings(unexportable)
-			return exportManifest{}, fmt.Errorf("these pages cannot be part of a static bundle:\n  %s\nRemove the actions, move the work to the client, or set {\"prerender\":false} in route.config.json to leave the page out on purpose", strings.Join(unexportable, "\n  "))
-		}
+	if opts.StaticOnly && len(unexportable) > 0 {
+		return exportManifest{}, staticOnlyPagesError(unexportable)
 	}
 	manifest := exportManifest{BasePath: mount.prefix, Pages: pages, Routes: exportedRoutes, AssetRefs: sortedExportRuntimeAssetRefs(assetRefs)}
 	for _, ref := range manifest.AssetRefs {
@@ -542,6 +534,12 @@ func fetchExportPage(client *http.Client, url string) (string, error) {
 func fetchExportPageWithStatus(client *http.Client, url string) (string, int, error) {
 	body, status, _, err := fetchExportPageResponse(client, url)
 	return body, status, err
+}
+
+func staticOnlyPagesError(pages []string) error {
+	pages = append([]string(nil), pages...)
+	sort.Strings(pages)
+	return fmt.Errorf("these pages cannot be part of a static bundle:\n  %s\nRemove the actions, move the work to the client, or set {\"prerender\":false} in route.config.json to leave the page out on purpose", strings.Join(pages, "\n  "))
 }
 
 func dynamicSkipReason(headers http.Header) string {
