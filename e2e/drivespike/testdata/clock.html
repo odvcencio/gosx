@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><title>clock</title>
+<script>
+window.first = { probe: !!window.__drive, patched: String(setTimeout).indexOf("[native code]") < 0,
+  perf: performance.now(), date: Date.now(), origin: performance.timeOrigin, docId: window.__drive ? __drive.docId : "" };
+window.log = [];
+window.rec = function (name) { log.push({ name: name, perf: performance.now(), date: Date.now(), origin: performance.timeOrigin, v: window.__drive ? __drive.now() : null }); };
+window.rafs = [];
+requestAnimationFrame(function loop(ts) { rafs.push(ts); if (rafs.length < 100000) requestAnimationFrame(loop); });
+var iv = setInterval(function () { rec("interval300"); }, 300);
+setTimeout(function () { rec("t0"); }, 0);
+setTimeout(function () { rec("t100"); }, 100);
+setTimeout(function () { rec("t250a"); }, 250);
+setTimeout(function () { rec("t250b"); }, 250);
+setTimeout(function () { rec("t500"); setTimeout(function () { rec("t500+50"); }, 50); }, 500);
+setTimeout(function () { rec("t999"); }, 999);
+setTimeout(function () { rec("t1000"); }, 1000);
+setTimeout(function () { rec("t1001"); }, 1001);
+var cancelled = setTimeout(function () { rec("cancelled"); }, 400); clearTimeout(cancelled);
+setTimeout(function () { clearInterval(iv); }, 950);
+if (window.requestIdleCallback) requestIdleCallback(function () { rec("idle"); });
+setTimeout(function () { var e = new Event("x"); window.stamp = { ts: e.timeStamp, perf: performance.now() }; }, 700);
+window.childMsgs = [];
+addEventListener("message", function (e) { if (e.data && e.data.kind === "child") childMsgs.push(e.data); });
+</script></head><body>
+<iframe id="same" src="/child.html"></iframe>
+<script>
+var cross = location.hostname === "127.0.0.1" ? "localhost" : "127.0.0.1";
+var f = document.createElement("iframe");
+f.id = "cross";
+f.src = location.protocol + "//" + cross + ":" + location.port + "/child.html?cross=1";
+document.body.appendChild(f);
+</script>
+</body></html>

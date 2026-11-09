@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>css</title>
+<style>
+body { margin: 0; }
+#tr { width: 40px; height: 40px; background: #c33; transform: translateX(0px); transition: transform 300ms linear; }
+#tr.go { transform: translateX(300px); }
+#kf { width: 40px; height: 40px; background: #33c; animation: slide 1000ms linear 1 forwards; }
+@keyframes slide { from { transform: translateX(0px); } to { transform: translateX(1000px); } }
+</style></head><body>
+<div id="tr"></div><div id="kf"></div>
+<script>
+window.events = [];
+["transitionrun", "transitionstart", "transitionend", "animationstart", "animationend"].forEach(function (n) {
+  document.addEventListener(n, function (e) { events.push({ type: e.type, v: window.__drive ? __drive.now() : performance.now(), elapsed: e.elapsedTime }); });
+});
+window.tx = function (id) { return new DOMMatrix(getComputedStyle(document.getElementById(id)).transform).m41; };
+window.startTransition = function () { var el = document.getElementById("tr"); getComputedStyle(el).transform; el.classList.add("go"); getComputedStyle(el).transform; return true; };
+window.cssState = function () {
+  return { tr: tx("tr"), kf: tx("kf"), events: events.slice(), timeline: document.timeline.currentTime,
+    anims: document.getAnimations().map(function (a) { return { name: a.animationName || a.transitionProperty || "", t: a.currentTime, state: a.playState, rate: a.playbackRate }; }) };
+};
+</script></body></html>

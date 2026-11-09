@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="utf-8"><title>worker</title><script>
+window.wlog = [];
+window.w = null;
+window.startWorker = function () {
+  w = new Worker("/worker.js");
+  w.onmessage = function (e) { wlog.push(Object.assign({ pageV: window.__drive ? __drive.now() : null, pagePerf: performance.now(), pageDate: Date.now() }, e.data)); };
+  return true;
+};
+window.ask = function () { w.postMessage("now"); return true; };
+</script></head><body>worker page</body></html>

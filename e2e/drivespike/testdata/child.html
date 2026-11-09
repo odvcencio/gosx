@@ -1,0 +1,6 @@
+<!doctype html><html><head><meta charset="utf-8"><script>
+window.first = { probe: !!window.__drive, shared: window.__drive ? __drive.shared : null, perf: performance.now(), date: Date.now(), cross: location.search.indexOf("cross=1") >= 0 };
+window.log = [];
+setTimeout(function () { log.push({ perf: performance.now(), date: Date.now(), v: window.__drive ? __drive.now() : null }); parent.postMessage({ kind: "child", timer: true, cross: first.cross, perf: performance.now() }, "*"); }, 200);
+parent.postMessage({ kind: "child", first: first }, "*");
+</script></head><body>child</body></html>
