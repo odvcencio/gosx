@@ -1,0 +1,60 @@
+/* Game kit UI. Override any --kit-* variable on :root or on a .kit-root element. */
+:root {
+  --kit-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --kit-fg: #f2f4f8;
+  --kit-fg-dim: #aab2c0;
+  --kit-bg: rgba(12, 14, 20, 0.92);
+  --kit-backdrop: rgba(0, 0, 0, 0.55);
+  --kit-panel-radius: 12px;
+  --kit-panel-padding: 1.5rem;
+  --kit-panel-width: min(32rem, 92vw);
+  --kit-accent: #5b9dff;
+  --kit-accent-fg: #06101f;
+  --kit-danger: #ff6b6b;
+  --kit-border: rgba(255, 255, 255, 0.16);
+  --kit-gap: 0.75rem;
+  --kit-focus: 0 0 0 3px rgba(91, 157, 255, 0.55);
+  --kit-z: 1000;
+}
+.kit-overlay {
+  position: fixed; inset: 0; z-index: var(--kit-z);
+  display: grid; place-items: center;
+  background: var(--kit-backdrop); font-family: var(--kit-font); color: var(--kit-fg);
+}
+.kit-overlay[hidden] { display: none; }
+.kit-panel {
+  width: var(--kit-panel-width); max-height: 90vh; overflow: auto;
+  padding: var(--kit-panel-padding); border-radius: var(--kit-panel-radius);
+  background: var(--kit-bg); border: 1px solid var(--kit-border);
+  display: grid; gap: var(--kit-gap);
+}
+.kit-title { margin: 0; font-size: 1.4rem; }
+.kit-copy { margin: 0; color: var(--kit-fg-dim); }
+.kit-menu { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--kit-gap); }
+.kit-button {
+  font: inherit; color: var(--kit-fg); background: transparent; cursor: pointer;
+  border: 1px solid var(--kit-border); border-radius: calc(var(--kit-panel-radius) / 2);
+  padding: 0.65rem 1rem; text-align: center; width: 100%;
+}
+.kit-button:hover:not(:disabled) { border-color: var(--kit-accent); }
+.kit-button:focus-visible { outline: none; box-shadow: var(--kit-focus); }
+.kit-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.kit-button[data-kit-primary] { background: var(--kit-accent); color: var(--kit-accent-fg); border-color: transparent; }
+.kit-button[data-kit-danger] { color: var(--kit-danger); }
+.kit-field { display: grid; grid-template-columns: 1fr minmax(8rem, 2fr) 3rem; align-items: center; gap: var(--kit-gap); }
+.kit-field label { color: var(--kit-fg); }
+.kit-field input[type="range"] { accent-color: var(--kit-accent); width: 100%; }
+.kit-field select, .kit-field input[type="checkbox"] { justify-self: end; font: inherit; }
+.kit-value { text-align: right; color: var(--kit-fg-dim); font-variant-numeric: tabular-nums; }
+.kit-section { margin: 0; font-size: 0.85rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--kit-fg-dim); }
+.kit-binds { display: grid; gap: calc(var(--kit-gap) / 2); }
+.kit-bind-row { display: grid; grid-template-columns: 1fr repeat(var(--kit-bind-slots, 2), minmax(5rem, auto)); gap: calc(var(--kit-gap) / 2); align-items: center; }
+.kit-bind-row .kit-button { width: auto; padding: 0.4rem 0.7rem; }
+.kit-bind-row .kit-button[aria-pressed="true"] { background: var(--kit-accent); color: var(--kit-accent-fg); }
+.kit-message { min-height: 1.2em; margin: 0; color: var(--kit-danger); }
+.kit-progress { height: 0.6rem; border-radius: 999px; background: var(--kit-border); overflow: hidden; }
+.kit-progress > span { display: block; height: 100%; width: calc(var(--boot-progress, 0) * 100%); background: var(--kit-accent); transition: width 120ms linear; }
+[data-boot-root][data-boot="ready"] .kit-overlay--boot { display: none; }
+[data-boot-root][data-boot="failed"] .kit-progress, [data-boot-root][data-boot="recovering"] .kit-progress { display: none; }
+[data-boot-root]:not([data-boot="failed"]) [data-boot-retry] { display: none; }
+@media (prefers-reduced-motion: reduce) { .kit-progress > span { transition: none; } }
