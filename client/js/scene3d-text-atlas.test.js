@@ -60,6 +60,15 @@ test("atlases draw once, skip blank cells and shrink long labels to fit", () => 
   assert.equal(canvas.ctx.ops.filter(op => op[0] === "strokeText").length, 2, "outlined labels get a stroke");
 });
 
+test("a background fills each labeled cell inside a transparent margin", () => {
+  const h = load();
+  h.api.sceneRegisterTextAtlases({ textAtlases: [Object.assign({}, spec, { texture: "gosx-text-atlas:plates#01", background: "#f2d14b" })] });
+  const rects = h.canvases[0].ctx.ops.filter(op => op[0] === "fillRect");
+  // Cells are 100x50, so the margin is floor(50 / 12) = 4 px; the blank
+  // label 1 gets no fill, so filtering cannot bleed a fill into it.
+  assert.deepEqual(rects.map(op => op.slice(1)), [[4, 4, 92, 42], [4, 54, 92, 42]]);
+});
+
 test("atlas URLs resolve to the drawn image and other URLs pass through", () => {
   const h = load();
   assert.equal(h.api.sceneTextAtlasURL(spec.texture), spec.texture, "an atlas not drawn yet passes through");

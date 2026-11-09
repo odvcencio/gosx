@@ -32,7 +32,10 @@ function sceneTextAtlasDraw(spec: any): any {
     const text = labels[i] == null ? "" : String(labels[i]);
     if (!text) continue; // a blank cell stays transparent
     const x = (i % cols) * cw, y = Math.floor(i / cols) * ch;
-    if (spec.background) { ctx.fillStyle = spec.background; ctx.fillRect(x, y, cw, ch); }
+    // The fill stops short of the cell edge so texture filtering and mipmaps
+    // do not bleed it into a neighboring (possibly blank) cell.
+    const gutter = Math.min(4, Math.floor(Math.min(cw, ch) / 12));
+    if (spec.background) { ctx.fillStyle = spec.background; ctx.fillRect(x + gutter, y + gutter, cw - 2 * gutter, ch - 2 * gutter); }
     // Start at the cell height and shrink until the text fits the width.
     let size = ch * (1 - 2 * pad);
     ctx.font = spec.weight + " " + size + "px " + spec.font;

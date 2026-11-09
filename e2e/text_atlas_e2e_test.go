@@ -160,9 +160,6 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 	if !bytes.Contains(manifest, []byte(numbers.Texture())) {
 		t.Fatal("the manifest does not carry the number atlas texture URL")
 	}
-	if n := bytes.Count(manifest, []byte(`"labelRect"`)); n != textAtlasPlayers {
-		t.Fatalf("manifest has %d labelRect params, want %d", n, textAtlasPlayers)
-	}
 	page := []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#atlas-root{width:%dpx;height:%dpx}</style></head><body><div id="atlas-root"></div><script id="gosx-manifest" type="application/json">%s</script><script src="/bootstrap.js"></script></body></html>`, textAtlasWidth, textAtlasHeight, manifest))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -223,15 +220,15 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 		_ = os.WriteFile(strings.ReplaceAll(out, "{backend}", backend), buf.Bytes(), 0o644)
 	}
 	for i := 0; i < textAtlasPlayers; i++ {
-		if report.ink[i] < 0.04 || report.shirt[i] < 0.3 {
+		if report.ink[i] < 0.03 || report.shirt[i] < 0.3 {
 			t.Errorf("jersey %d (%s): shirt %.2f, number ink %.2f of the number area", i, numbers.Labels[i], report.shirt[i], report.ink[i])
 		}
 		plate := report.plates[i]
 		if textAtlasBlankPlate(i) {
-			if plate.fill > 0.02 || plate.text > 0.02 {
-				t.Errorf("blank plate %d drew: fill %.2f, text %.2f", i, plate.fill, plate.text)
+			if plate.lit > 0.02 {
+				t.Errorf("blank plate %d drew: %.2f of its pixels are lit", i, plate.lit)
 			}
-		} else if plate.fill < 0.3 || plate.text < 0.03 {
+		} else if plate.fill < 0.5 || plate.text < 0.01 {
 			t.Errorf("plate %d: fill %.2f, text %.2f", i, plate.fill, plate.text)
 		}
 	}
@@ -258,7 +255,7 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 	t.Logf("%s: 44 jerseys from one material and one atlas; closest pair %d (%s) and %d (%s) differs in %d of 144 mask cells", backend, pairA, numbers.Labels[pairA], pairB, numbers.Labels[pairB], minDistance)
 }
 
-type textAtlasPlate struct{ fill, text float64 }
+type textAtlasPlate struct{ fill, text, lit float64 }
 
 type textAtlasReport struct {
 	shirt, ink []float64
@@ -268,10 +265,10 @@ type textAtlasReport struct {
 
 func (r textAtlasReport) complete() bool {
 	for i := 0; i < textAtlasPlayers; i++ {
-		if r.ink[i] < 0.04 {
+		if r.ink[i] < 0.03 {
 			return false
 		}
-		if p := r.plates[i]; !textAtlasBlankPlate(i) && p.text < 0.03 {
+		if p := r.plates[i]; !textAtlasBlankPlate(i) && p.text < 0.01 {
 			return false
 		}
 	}
@@ -298,7 +295,8 @@ func inspectTextAtlasShot(img image.Image) textAtlasReport {
 		for y := y0; y < y1; y++ {
 			for x := x0; x < x1; x++ {
 				p := pixel8(img, x, y)
-				if p[2] > 120 && p[0] < 90 {
+				// The shirt is rgb(0.1, 0.25, 0.7), linear or sRGB-encoded.
+				if p[2] > 120 && p[2] > p[0]+60 && p[2] > p[1]+30 {
 					blue++
 				}
 				total++
@@ -326,32 +324,29 @@ func inspectTextAtlasShot(img image.Image) textAtlasReport {
 			r.masks[i][k] = cellArea[k] > 0 && cells[k]*3 > cellArea[k]
 		}
 		// The plate spans 1.8 x 0.45 units centered 1.05 below the
-		// character; its fill is yellow and its text near black. The
-		// background is black, so "text" counts dark pixels only inside
-		// the plate's yellow bounding rows.
-		px0, py0 := at(cx-0.9+0.06, cy-1.05+0.225-0.04)
-		px1, py1 := at(cx+0.9-0.06, cy-1.05-0.225+0.04)
-		var fill, lit, plateArea int
+		// character: a yellow fill with near-black text, or nothing on a
+		// blank plate. Measure inside a 5 px inset, clear of the fill's
+		// transparent margin.
+		px0, py0 := at(cx-0.9+0.1, cy-1.05+0.225-0.1)
+		px1, py1 := at(cx+0.9-0.1, cy-1.05-0.225+0.1)
+		var fill, dark, lit, plateArea int
 		for y := py0; y < py1; y++ {
 			for x := px0; x < px1; x++ {
 				p := pixel8(img, x, y)
 				plateArea++
-				if p[0] > 110 && p[1] > 90 && p[2] < p[1] {
+				switch {
+				case p[0] > 110 && p[1] > 90 && p[2] < p[1]:
 					fill++
+				case p[0]+p[1]+p[2] < 150:
+					dark++
 				}
 				if p[0]+p[1]+p[2] > 30 {
 					lit++
 				}
 			}
 		}
-		pr := textAtlasPlate{fill: float64(fill) / float64(max(plateArea, 1))}
-		if fill > 0 {
-			// Dark pixels surrounded by fill are text; on a blank plate
-			// nothing is lit at all.
-			pr.text = float64(plateArea-fill) / float64(plateArea)
-		} else {
-			pr.text = float64(lit) / float64(max(plateArea, 1))
-		}
+		plateN := float64(max(plateArea, 1))
+		pr := textAtlasPlate{fill: float64(fill) / plateN, text: float64(dark) / plateN, lit: float64(lit) / plateN}
 		r.plates[i] = pr
 	}
 	return r

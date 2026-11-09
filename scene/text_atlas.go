@@ -43,7 +43,9 @@ type TextAtlas struct {
 	Weight string
 	// Color is the text color. Empty means "#ffffff".
 	Color string
-	// Background fills each non-blank cell. Empty means transparent.
+	// Background fills each non-blank cell except a transparent margin of
+	// up to 4 pixels, which keeps texture filtering from bleeding the fill
+	// into the next cell. Empty means transparent.
 	Background string
 	// OutlineColor and OutlineWidth (pixels) draw a stroke around the text.
 	OutlineColor string
