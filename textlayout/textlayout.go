@@ -1296,7 +1296,3 @@ func normalizeNewlines(text string) string {
 func cacheKey(font, text string) string {
 	return font + "\x00" + text
 }
-
-func isCJK(r rune) bool {
-	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul)
-}

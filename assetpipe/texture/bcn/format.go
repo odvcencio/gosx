@@ -146,9 +146,6 @@ func (q Quality) String() string {
 	return "high"
 }
 
-// high reports whether the level runs the expensive search.
-func (q Quality) high() bool { return q != QualityFast }
-
 // BlocksAcross returns how many 4x4 blocks cover one edge. A mip level of one
 // texel still costs one whole block.
 func BlocksAcross(size int) int {

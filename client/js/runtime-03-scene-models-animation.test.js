@@ -1000,6 +1000,69 @@ test("bootstrap uploads skinned GLB joint matrices through WebGL PBR", async () 
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+// A 128-joint rig exceeds the 64-matrix uniform array. The WebGL2 backend must
+// upload its palette to a float texture and switch the shader to read from it.
+test("bootstrap uploads a 128-joint rig through the WebGL joint palette texture", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-skinned-128-root";
+  class PaletteGL extends FakeWebGLContext {
+    constructor(options) {
+      super(options);
+      this.MAX_COMBINED_TEXTURE_IMAGE_UNITS = 0x8B4D;
+      this.MAX_TEXTURE_IMAGE_UNITS = 0x8872;
+      this.MAX_TEXTURE_SIZE = 0x0D33;
+      this.ACTIVE_TEXTURE = 0x84E0;
+      this.UNPACK_FLIP_Y_WEBGL = 0x9240;
+      this.paletteUploads = [];
+    }
+    getParameter(param) {
+      if (param === this.MAX_COMBINED_TEXTURE_IMAGE_UNITS) return 32;
+      if (param === this.MAX_TEXTURE_IMAGE_UNITS) return 16;
+      if (param === this.MAX_TEXTURE_SIZE) return 4096;
+      return super.getParameter(param);
+    }
+    pixelStorei() {}
+    texImage2D(...args) {
+      super.texImage2D(...args);
+      if (args[2] === this.RGBA32F && args[4] === 1) this.paletteUploads.push({ width: args[3], floats: args[8].length });
+    }
+    texSubImage2D(target, level, x, y, width, height, format, type, data) {
+      this.ops.push(["texSubImage2D", width, height]);
+      this.paletteUploads.push({ width, floats: data.length });
+    }
+  }
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    createWebGL2Context: () => new PaletteGL(),
+    fetchRoutes: { "/models/rig128.glb": { bytes: buildSkinnedGLBBytes({ jointCount: 128 }) } },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-model-skinned-128",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-model-skinned-128-root",
+        props: { width: 640, height: 360, autoRotate: false, models: [{ id: "rig", src: "/models/rig128.glb", animation: "bend", loop: true }] },
+      }],
+    },
+  });
+  env.context.WebGL2RenderingContext = PaletteGL;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+  assert.ok(gl.paletteUploads.length > 0, "palette texture was uploaded");
+  assert.ok(gl.paletteUploads.every((u) => u.width === 128 * 4 && u.floats === 128 * 16));
+  assert.ok(gl.ops.some((e) => e[0] === "uniform1i" && e[1] === "u_jointTexCount" && e[2] === 128));
+  assert.ok(gl.ops.some((e) => e[0] === "uniform1i" && e[1] === "u_jointTexture" && e[2] === 31));
+  assert.ok(!gl.ops.some((e) => e[0] === "uniformMatrix4fv" && e[1] === "u_jointMatrices[0]" && e[3] > 64 * 16));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("bootstrap renders a skinned GLB through the Selena material (default flip keystone)", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-model-skinned-selena-webgl-root";
@@ -1083,7 +1146,11 @@ test("scenePBRSelenaSkinAugmentVertex renames position/normal, injects joint-ski
   assert.ok(affineMatch, "the extracted skin augmenter requires the shared affine normal helper");
 
   const fnSrc = "function scenePBRSelenaSkinAugmentVertex(source) {" + match[1] + "\n  }";
-  const augment = new Function("SCENE_GLSL_AFFINE_NORMAL", "return (" + fnSrc + ")")(JSON.parse(affineMatch[1]));
+  const paletteMatch = webgl.match(/const SCENE_GLSL_JOINT_PALETTE = ("(?:\\.|[^"])*");/);
+  assert.ok(paletteMatch, "the extracted skin augmenter requires the shared joint palette snippet");
+  const legacyMatch = webgl.match(/const SCENE_GLSL_JOINT_PALETTE_LEGACY = ("(?:\\.|[^"])*");/);
+  assert.ok(legacyMatch, "GLSL ES 1.00 skinned Selena shaders need the uniform-array-only palette");
+  const augment = new Function("SCENE_GLSL_AFFINE_NORMAL", "SCENE_GLSL_JOINT_PALETTE", "SCENE_GLSL_JOINT_PALETTE_LEGACY", "return (" + fnSrc + ")")(JSON.parse(affineMatch[1]), JSON.parse(paletteMatch[1]), JSON.parse(legacyMatch[1]));
 
   // Non-skinnable shapes (no `position` attribute in the expected form) must
   // return null so the caller safely falls back to the standard PBR path.
@@ -1133,6 +1200,13 @@ test("scenePBRSelenaSkinAugmentVertex renames position/normal, injects joint-ski
       fs.unlinkSync(tmpFile);
     }
   }
+
+  // GLSL ES 3.00 sources get the texture-backed palette for rigs above 64 joints.
+  const es3 = augment("#version 300 es\nin vec3 position;\nvoid main() {\n  gl_Position = vec4(position, 1.0);\n}");
+  assert.ok(es3);
+  assert.match(es3.source, /uniform highp sampler2D u_jointTexture;/);
+  assert.match(es3.source, /texelFetch\(u_jointTexture/);
+  assert.doesNotMatch(out, /u_jointTexture/);
 
   // A position-only material (no normal attribute) must still augment
   // (position skinning is the mandatory half); the normal block is skipped.

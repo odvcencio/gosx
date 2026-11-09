@@ -153,6 +153,39 @@ On a run, `ctx.Delta` holds the game time gathered since the last run.
 `MaxSubsteps` fixed steps; at extreme scales raise `MaxSubsteps` or the step
 size, or game time falls behind the scale.
 
+## Catching up after a slow frame
+
+When a frame gathers more fixed steps than it can run, the clock follows its
+catch-up policy, `Config.CatchUp` (or `LoopConfig.CatchUp` on a bare `Clock`):
+
+| Policy | Runs per frame | Steps it cannot run | Use for |
+|---|---|---|---|
+| `game.CatchUpDrop` (default) | at most `MaxSubsteps` | dropped, reported in `Frame.DroppedDuration` | single-player games: a stall does not fast-forward the world |
+| `game.CatchUpLag` | due steps until the wall-time budget is spent, and at least one | kept, reported in `Frame.Lag`, run first next frame | netplay, replays, server-authoritative clients: every tick runs |
+
+```go
+rt := game.New(game.Config{
+    CatchUp:       game.CatchUpLag,
+    CatchUpBudget: 6 * time.Millisecond, // zero means game.DefaultCatchUpBudget (8 ms); negative means no bound
+})
+frame, _ := rt.Step(delta)
+if frame.Lag > 0 {
+    showLagIndicator(frame.Lag / frame.FixedStep) // whole steps still owed
+}
+```
+
+Under `CatchUpLag` the runtime reads the wall clock before every fixed step
+after the first and stops once the steps have used the budget. `MaxSubsteps`
+does not apply. `MaxDelta` still clamps each frame's real delta, so raise it if
+the client must track wall time through long stalls. `PhaseUpdate` and
+`PhaseFixedUpdate` see the planned frame; `PhaseLateUpdate` and `PhaseRender`
+see the settled one, whose `FixedSteps`, `Steps` and `Time` count only the steps
+that ran. `Snapshot` saves the owed steps (`lagNanos`), so a restored runtime
+runs the same ticks. Tests inject `Config.WallClock` to make budget decisions
+deterministic. A host that drives a bare `Clock` calls `Clock.AdvanceFunc`,
+which runs the step callback within the budget; `Clock.Advance` has no step
+work to time, so under `CatchUpLag` it plans every due step.
+
 Game time is a `time.Duration` in nanoseconds, so it ends after about 292 years
 (`math.MaxInt64` ns). At the scale of 525,600 above, that is about 4.9 hours of
 play. The clock stops there instead of wrapping to a negative time: it runs no

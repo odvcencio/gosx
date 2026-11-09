@@ -170,10 +170,6 @@ func splitStreamTail(html string) (string, string, bool) {
 	return before, after, true
 }
 
-func streamDeferredChunks(w http.ResponseWriter, registry *DeferredRegistry, flusher http.Flusher, nonce string) {
-	streamDeferredChunksWithBasePath(w, registry, flusher, nonce, "")
-}
-
 func streamDeferredChunksWithBasePath(w http.ResponseWriter, registry *DeferredRegistry, flusher http.Flusher, nonce, prefix string) {
 	blocks := registry.snapshot()
 	if len(blocks) == 0 {

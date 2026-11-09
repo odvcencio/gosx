@@ -15,9 +15,6 @@ import (
 // a 2-element JSON array with expected fields for two registered tasks.
 func TestScheduledStatusEndpoint(t *testing.T) {
 	app := New()
-	if err := app.EnablePublicScheduledStatus(); err != nil {
-		t.Fatal(err)
-	}
 
 	// Register two tasks before building: one interval, one with ProgressTimeout.
 	if err := app.Scheduler().Register(scheduled.Task{
@@ -40,7 +37,7 @@ func TestScheduledStatusEndpoint(t *testing.T) {
 		t.Fatalf("register health-check: %v", err)
 	}
 
-	handler := app.Build()
+	handler := app.ScheduledStatusHandler()
 	req := httptest.NewRequest(http.MethodGet, "/_gosx/scheduled", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
