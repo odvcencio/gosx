@@ -367,3 +367,11 @@ The cascade count is data, not part of the compiled shader, so the same
 artifact uses more WebGPU cascades when the renderer provides them. Only
 declared names cost anything: a material that declares no lighting inputs
 binds nothing extra.
+
+Pages download the lighting code only when they use it. GoSX advertises a
+small on-demand chunk, `bootstrap-feature-scene3d-selena-lighting.js` (about
+1.7 KB brotli), only on pages whose Selena materials declare `lights`,
+`lightCount`, a shadow input, `fog` or `cameraForward`. The renderer loads it on
+its first frame and draws without those inputs until it arrives, usually one
+or two frames. Without the chunk, WebGL still supplies `cameraPos`, `sunDir`,
+`sunColor` and `ambient` as before, and WebGPU supplies none of them.

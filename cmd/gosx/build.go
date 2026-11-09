@@ -1537,6 +1537,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DModelPreparation.File)
 	case "/gosx/bootstrap-feature-scene3d-hierarchy.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHierarchy.File)
+	case "/gosx/bootstrap-feature-scene3d-selena-lighting.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DSelenaLighting.File)
 	case "/gosx/bootstrap-feature-scene3d-particle-burst.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
 	case "/gosx/bootstrap-feature-scene3d-zoom.js":

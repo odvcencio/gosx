@@ -48,7 +48,9 @@ type Options struct {
 	// SpecularMRT adds the color/specular fragment variant to mesh materials,
 	// for scenes that use selective (specular) bloom.
 	SpecularMRT bool `json:"specularMRT,omitempty"`
-	// Disabled skips the Selena step in `gosx build`. Check still works.
+	// Disabled skips the Selena step in `gosx build`, for a project that
+	// commits its artifacts or keeps .sel sources it does not want built.
+	// `gosx selena build` and `gosx selena check` still run.
 	Disabled bool `json:"disabled,omitempty"`
 }
 

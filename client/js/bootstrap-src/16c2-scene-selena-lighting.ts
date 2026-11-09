@@ -1,7 +1,8 @@
   // 16c2 — the Selena scene lighting block, shared by both Scene3D renderers.
-  // This file stays in the base scene3d chunk beside 16c-scene-shared-pbr; the
-  // WebGL and WebGPU chunks read these functions through
-  // window.__gosx_scene3d_api (see 26j/26e prefixes). Like 16c, every function
+  // It ships in the gated bootstrap-feature-scene3d-selena-lighting.js chunk
+  // (wrapped by the 26n prefix/suffix), which a page advertises only when one
+  // of its Selena materials reads lights, shadows or fog; the renderer chunks
+  // load it on first use. The full monolith carries it inline. Every function
   // here is plain math or object work and touches no rendering context.
 
   // Both renderers fill one reusable record per frame with the engine inputs a
@@ -176,14 +177,4 @@
     input.slots = slots; input.lightIndices = lightIndices; input.matrices = matrices; input.clip = clip;
     holder._gosxSelenaLighting = sceneSelenaFillLighting(holder._gosxSelenaLighting, input);
     return holder._gosxSelenaLighting;
-  }
-
-  // sceneSelenaWGPUTextureLayout is the WebGPU bind-group-layout texture entry
-  // for a Selena texture descriptor: depth textures (opaqueDepth, the shadow
-  // map arrays) bind as sampleType "depth", cube maps as cube views.
-  function sceneSelenaWGPUTextureLayout(texture) {
-    var dimension = texture && texture.dimension;
-    if (dimension === "depth2d-array") return { sampleType: "depth", viewDimension: "2d-array" };
-    if (dimension === "depth2d") return { sampleType: "depth", viewDimension: "2d" };
-    return { sampleType: "float", viewDimension: dimension === "cube" ? "cube" : "2d" };
   }
