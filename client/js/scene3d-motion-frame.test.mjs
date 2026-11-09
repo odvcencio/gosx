@@ -255,6 +255,9 @@ test("applyMountedMotionFrame reaches sceneUpdateRigidInstanceMotion and writes 
   const end = rendererSource.indexOf("function sceneRigidMembershipModelID(", start);
   assert.ok(start > 0 && end > start);
   vm.runInContext(rendererSource.slice(start, end), context);
+  // A motion writer changes the agent in place, so it tells the crowd partition (10-runtime-scene-core.ts).
+  const touched = [];
+  context.sceneCrowdBatchTouch = (agent) => touched.push(agent);
   const writes = [];
   const clipTable = { count: 2 };
   const atlas = {};
@@ -292,6 +295,7 @@ test("applyMountedMotionFrame reaches sceneUpdateRigidInstanceMotion and writes 
   assert.equal(object._crowdMotion.dirty, true);
   assert.equal(object._crowdMotion.record[20], 1);
   assert.equal(object._crowdMotion.bounds.maxX, 3);
+  assert.deepEqual(touched, [object], "the motion writer touches the agent it changed");
   delete object._crowdMotion;
   clipTable.count = 33;
   assert.throws(() => bridge.applyMountedMotionFrame(state, batches, context.sceneUpdateRigidInstanceMotion, () => {}, {}), /retained-motion-unavailable/);

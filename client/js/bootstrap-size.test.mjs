@@ -1053,7 +1053,9 @@ const budgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured bootstrap.js raw 2187020; only this exhausted target moves (2121247 -> 2121484), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap.js gzip 617105; only this exhausted target moves (600220 -> 600721), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap.js raw 2188256; only this exhausted target moves (2121484 -> 2122720), allowance unchanged.
-    file: "bootstrap.js", raw: 2122720, gzip: 600721,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured bootstrap.js gzip 617809; only this exhausted target moves (600721 -> 601425), allowance unchanged.
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured bootstrap.js raw 2190251; only this exhausted target moves (2122720 -> 2124715), allowance unchanged.
+    file: "bootstrap.js", raw: 2124715, gzip: 601425,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1065,7 +1067,8 @@ const budgets = [
     // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap.js brotli 503399; only this exhausted target moves (485692 -> 487015), allowance unchanged.
     // train 5 (#823 stadium crowd system): measured bootstrap.js brotli 504027; only this exhausted target moves (487015 -> 487643), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap.js brotli 504487; only this exhausted target moves (487643 -> 488103), allowance unchanged.
-    brotli: 488103 },
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured bootstrap.js brotli 504991; only this exhausted target moves (488103 -> 488607), allowance unchanged.
+    brotli: 488607 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1667,7 +1670,9 @@ const budgets = [
     // train 5 (#823 stadium crowd system): measured bootstrap-feature-scene3d.js raw 691819; only this exhausted target moves (658347 -> 658875), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap-feature-scene3d.js gzip 198407; only this exhausted target moves (188858 -> 188959), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap-feature-scene3d.js raw 692025; only this exhausted target moves (658875 -> 659071), allowance unchanged.
-    file: "bootstrap-feature-scene3d.js", raw: 659071, gzip: 188959,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured bootstrap-feature-scene3d.js gzip 199098; only this exhausted target moves (188959 -> 189617), allowance unchanged.
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured bootstrap-feature-scene3d.js raw 694165; only this exhausted target moves (659071 -> 661109), allowance unchanged.
+    file: "bootstrap-feature-scene3d.js", raw: 661109, gzip: 189617,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
@@ -1678,7 +1683,8 @@ const budgets = [
     // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): bootstrap-feature-scene3d.js brotli measures 167872 bytes; only this exhausted target moves (159699 -> 159878), allowance unchanged.
     // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d.js brotli 168412; only this exhausted target moves (160233 -> 160392), allowance unchanged.
     // train 5 (#823 stadium crowd system): measured bootstrap-feature-scene3d.js brotli 168647; only this exhausted target moves (160392 -> 160616), allowance unchanged.
-    brotli: 160616 },
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured bootstrap-feature-scene3d.js brotli 169311; only this exhausted target moves (160616 -> 161248), allowance unchanged.
+    brotli: 161248 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1944,7 +1950,8 @@ const budgets = [
     // train 5 (#823 stadium crowd system): measured bootstrap-feature-scene3d-webgpu.js raw 543242; only this exhausted target moves (517051 -> 517373), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap-feature-scene3d-webgpu.js gzip 146493; only this exhausted target moves (139287 -> 139517), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap-feature-scene3d-webgpu.js raw 543942; only this exhausted target moves (517373 -> 518040), allowance unchanged.
-    raw: 518040, gzip: 139517,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured bootstrap-feature-scene3d-webgpu.js gzip 146550; only this exhausted target moves (139517 -> 139571), allowance unchanged.
+    raw: 518040, gzip: 139571,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -1956,7 +1963,8 @@ const budgets = [
     // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d-webgpu.js brotli 123420; only this exhausted target moves (117422 -> 117542), allowance unchanged.
     // train 5 (#823 stadium crowd system): measured bootstrap-feature-scene3d-webgpu.js brotli 123527; only this exhausted target moves (117542 -> 117644), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap-feature-scene3d-webgpu.js brotli 123687; only this exhausted target moves (117644 -> 117797), allowance unchanged.
-    brotli: 117797 },
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured bootstrap-feature-scene3d-webgpu.js brotli 123753; only this exhausted target moves (117797 -> 117860), allowance unchanged.
+    brotli: 117860 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -2513,7 +2521,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Chromium route (WebGPU, with labels) raw 1593179; only this exhausted target moves (1526751 -> 1527643), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route (WebGPU, with labels) raw 1593414; only this exhausted target moves (1527643 -> 1527878), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route (WebGPU, with labels) raw 1594320; only this exhausted target moves (1527878 -> 1528784), allowance unchanged.
-    raw: 1528784,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Chromium route (WebGPU, with labels) raw 1596338; only this exhausted target moves (1528784 -> 1530802), allowance unchanged.
+    raw: 1530802,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 427783 bytes; only this exhausted target moves (411074 -> 411399), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) gzip 439916; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route (WebGPU, with labels) gzip measures 430169 bytes; only this exhausted target moves (411399 -> 413785), allowance unchanged.
@@ -2527,7 +2536,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Chromium route (WebGPU, with labels) gzip 444799; only this exhausted target moves (428256 -> 428415), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route (WebGPU, with labels) gzip 444888; only this exhausted target moves (428415 -> 428504), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route (WebGPU, with labels) gzip 445235; only this exhausted target moves (428504 -> 428851), allowance unchanged.
-    gzip: 428851,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Chromium route (WebGPU, with labels) gzip 445983; only this exhausted target moves (428851 -> 429599), allowance unchanged.
+    gzip: 429599,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2544,7 +2554,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Chromium route (WebGPU, with labels) brotli 382606; only this exhausted target moves (365880 -> 366222), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route (WebGPU, with labels) brotli 382783; only this exhausted target moves (366222 -> 366399), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route (WebGPU, with labels) brotli 382885; only this exhausted target moves (366399 -> 366501), allowance unchanged.
-    brotli: 366501,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Chromium route (WebGPU, with labels) brotli 383673; only this exhausted target moves (366501 -> 367289), allowance unchanged.
+    brotli: 367289,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2776,7 +2787,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1378741; only this exhausted target moves (1312095 -> 1313205), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1378976; only this exhausted target moves (1313205 -> 1313440), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1379424; only this exhausted target moves (1313440 -> 1313888), allowance unchanged.
-    raw: 1313888,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1381564; only this exhausted target moves (1313888 -> 1316028), allowance unchanged.
+    raw: 1316028,
     // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 385941 bytes; only this exhausted target moves (369041 -> 369557), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 392100; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Safari and Firefox route (WebGL, with labels) gzip measures 388236 bytes; only this exhausted target moves (369557 -> 371852), allowance unchanged.
@@ -2791,7 +2803,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 396954; only this exhausted target moves (380382 -> 380570), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 397043; only this exhausted target moves (380570 -> 380659), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 397125; only this exhausted target moves (380659 -> 380741), allowance unchanged.
-    gzip: 380741,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 397816; only this exhausted target moves (380741 -> 381432), allowance unchanged.
+    gzip: 381432,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
@@ -2809,7 +2822,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 344197; only this exhausted target moves (327521 -> 327813), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 344374; only this exhausted target moves (327813 -> 327990), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 344455; only this exhausted target moves (327990 -> 328071), allowance unchanged.
-    brotli: 328071,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 345177; only this exhausted target moves (328071 -> 328793), allowance unchanged.
+    brotli: 328793,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -3037,7 +3051,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1921983; only this exhausted target moves (1854999 -> 1856447), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1922218; only this exhausted target moves (1856447 -> 1856682), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1923366; only this exhausted target moves (1856682 -> 1857830), allowance unchanged.
-    raw: 1857830,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1925384; only this exhausted target moves (1857830 -> 1859848), allowance unchanged.
+    raw: 1859848,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 517576 bytes; only this exhausted target moves (500351 -> 501192), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 534654; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip measures 522257 bytes; only this exhausted target moves (501192 -> 505873), allowance unchanged.
@@ -3051,7 +3066,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 543206; only this exhausted target moves (526567 -> 526822), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 543295; only this exhausted target moves (526822 -> 526911), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 543618; only this exhausted target moves (526911 -> 527234), allowance unchanged.
-    gzip: 527234,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 544366; only this exhausted target moves (527234 -> 527982), allowance unchanged.
+    gzip: 527982,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -3068,7 +3084,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 467724; only this exhausted target moves (450934 -> 451340), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 467901; only this exhausted target moves (451340 -> 451517), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 468142; only this exhausted target moves (451517 -> 451758), allowance unchanged.
-    brotli: 451758,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 468930; only this exhausted target moves (451758 -> 452546), allowance unchanged.
+    brotli: 452546,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -3264,7 +3281,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1435079; only this exhausted target moves (1368651 -> 1369543), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1435314; only this exhausted target moves (1369543 -> 1369778), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1436220; only this exhausted target moves (1369778 -> 1370684), allowance unchanged.
-    raw: 1370684,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1438238; only this exhausted target moves (1370684 -> 1372702), allowance unchanged.
+    raw: 1372702,
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 383698 bytes; only this exhausted target moves (366989 -> 367314), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395831; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (unshadowed PBR fragment for frames without a shadow slot): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395963; only this exhausted target moves (379447 -> 379579) under the unchanged allowance.
@@ -3279,7 +3297,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 400714; only this exhausted target moves (384171 -> 384330), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 400803; only this exhausted target moves (384330 -> 384419), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 401150; only this exhausted target moves (384419 -> 384766), allowance unchanged.
-    gzip: 384766,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 401898; only this exhausted target moves (384766 -> 385514), allowance unchanged.
+    gzip: 385514,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
@@ -3294,7 +3313,8 @@ const routeBudgets = [
     // train 5 (#823 stadium crowd system): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 342389; only this exhausted target moves (325759 -> 326084), allowance unchanged.
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 342566; only this exhausted target moves (326084 -> 326253), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 342668; only this exhausted target moves (326253 -> 326350), allowance unchanged.
-    brotli: 326350,
+    // 9 November 2026 (Scene3D frame scans: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the frame-end GPU stamp in its own submit): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 343456; only this exhausted target moves (326350 -> 327101), allowance unchanged.
+    brotli: 327101,
   },
 
 ];

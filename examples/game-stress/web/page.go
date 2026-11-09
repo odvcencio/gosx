@@ -50,6 +50,7 @@ type Run struct {
 	Width       int    // canvas CSS pixels (1920)
 	Height      int    // (1080)
 	Cull        bool   // GPU frustum culling for crowds on WebGPU
+	Occlusion   bool   // with Cull, two-phase Hi-Z occlusion culling too
 	Shadows     bool   // a shadow-casting sun
 }
 
@@ -72,7 +73,7 @@ func ParseRun(q map[string][]string) Run {
 		Backend: get("backend"), Thread: get("thread"), Audio: get("audio"),
 		ReplayEvery: num("replayEvery", 3), ReplayTicks: num("replayTicks", 6),
 		Width: num("width", 1920), Height: num("height", 1080),
-		Cull: get("cull") != "0", Shadows: get("shadows") == "1",
+		Cull: get("cull") != "0", Occlusion: get("occlusion") == "1", Shadows: get("shadows") == "1",
 	}
 	if r.Backend != "webgl" {
 		r.Backend = "webgpu"
@@ -231,7 +232,7 @@ func Scene(run Run) scene.Props {
 	} else {
 		props.PreferWebGPU = &yes
 		if run.Cull {
-			props.GPUDriven = &scene.GPUDriven{}
+			props.GPUDriven = &scene.GPUDriven{Occlusion: run.Occlusion}
 		}
 	}
 	return props
