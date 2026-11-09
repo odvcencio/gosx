@@ -311,7 +311,8 @@ test("binary frames reach the Scene3D entry points without copying", async () =>
     dispatchClipFrame: (t, b, o) => { dispatched.push(["clip", t, b, o]); return Promise.resolve(); },
   };
   const applied = [];
-  const mount = { __gosxScene3DHandle: { applyInstanceStream: b => { applied.push(b); return { applied: true }; } } };
+  const textures = [];
+  const mount = { __gosxScene3DHandle: { applyInstanceStream: b => { applied.push(b); return { applied: true }; }, applyDataTexture: b => { textures.push(b); return { applied: true }; } } };
   page.document.getElementById = id => (id === "arena" ? mount : null);
   const { worker } = await mounted(page);
   const pose = new Uint8Array([1, 2, 3]).buffer;
@@ -326,9 +327,12 @@ test("binary frames reach the Scene3D entry points without copying", async () =>
   assert.equal(dispatched[0][2].buffer, pose, "the page view must share the transferred buffer");
   assert.equal(dispatched[1][3].fallbackPoseFrame.buffer, fb);
   assert.deepEqual(Array.from(applied[0]), [7, 7]);
+  worker.say({ t: "frame", kind: "data-texture", target: "arena", buf: new Uint8Array([8, 8, 8]).buffer });
+  assert.deepEqual(Array.from(textures[0]), [8, 8, 8], "a data-texture frame reaches handle.applyDataTexture");
+  assert.equal(applied.length, 1, "and not the instance stream");
   const stats = page.host.get(ENTRY.id).stats();
-  assert.equal(stats.framesIn, 4);
-  assert.equal(stats.frameBytes, 3 + 2 + 1 + 2);
+  assert.equal(stats.framesIn, 5);
+  assert.equal(stats.frameBytes, 3 + 2 + 1 + 2 + 3);
 });
 
 test("a rejected frame dispatch is reported as an engine event", async () => {
@@ -618,6 +622,10 @@ test("worker: frame dispatch shims transfer owned buffers and copy views", async
   const r = api.applyInstanceStream("arena", new Uint8Array([5]));
   assert.equal(w.of("frame")[3].msg.kind, "instance");
   assert.equal(r.applied, true);
+  const texture = api.applyDataTexture("arena", new Uint8Array([6]));
+  assert.equal(w.of("frame")[4].msg.kind, "data-texture");
+  assert.equal(w.of("frame")[4].msg.target, "arena");
+  assert.deepEqual(plain(texture), { applied: true, queued: true });
 });
 
 test("worker: visibility updates hidden and notifies listeners", async () => {

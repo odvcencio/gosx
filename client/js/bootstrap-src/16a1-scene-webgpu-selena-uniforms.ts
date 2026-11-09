@@ -115,7 +115,7 @@
     return 0;
   }
 
-  function sceneSelenaWGPUTextureLayout(t) { var d = t && t.dimension; return { sampleType: d === "depth2d" || d === "depth2d-array" ? "depth" : "float", viewDimension: d === "depth2d-array" ? "2d-array" : d === "cube" ? "cube" : "2d" }; }
+  function sceneSelenaWGPUTextureLayout(t) { var d = t && t.dimension; return { sampleType: d === "depth2d" || d === "depth2d-array" ? "depth" : t && (t.format === "r32float" || t.format === "rgba32float") ? "unfilterable-float" : "float", viewDimension: d === "depth2d-array" ? "2d-array" : d === "cube" ? "cube" : "2d" }; }
   // sceneSelenaShadowMapView binds a Selena shadowMap0/1 engine texture: the
   // slot's shadow map as a 2d-array view (one layer per cascade), or a 1x1
   // placeholder array while the slot is empty. Other textures return null.

@@ -7524,6 +7524,7 @@
       // Shadow maps bind the slot's depth array, or a lit placeholder array.
       const shadowSlot = sceneSelenaShadowMapSlot(textureCache._gosxSelenaLighting, tex);
       if (shadowSlot !== undefined) { scenePBRBindTexture(gl, unit, shadowSlot ? shadowSlot.depthTexture : scenePBRPlaceholderShadow(gl, textureCache), gl.TEXTURE_2D_ARRAY); gl.uniform1i(loc, unit); continue; }
+      if (sceneDataTextureBind(gl, info, unit, loc, material, tex, selenaPlaceholderTexture)) continue;
       const environmentSlot = sceneWebGLSelenaEnvironmentSlot(material, tex);
       if (environmentSlot) {
         const environment = textureCache._gosxSelenaEnvironment;

@@ -375,3 +375,106 @@ small on-demand chunk, `bootstrap-feature-scene3d-selena-lighting.js` (about
 its first frame and draws without those inputs until it arrives, usually one
 or two frames. Without the chunk, WebGL still supplies `cameraPos`, `sunDir`,
 `sunColor` and `ambient` as before, and WebGPU supplies none of them.
+
+## Data textures
+
+A Selena `texture2d` param can hold numbers instead of an image: a spectrum row
+per audio frame, a scope trace, a lookup table. The shader reads exact texels
+with `load(tex, x, y)`; see the Data Textures section of the Selena language
+guide. GoSX lets a Go/WASM engine own the texels and update them while the
+scene runs.
+
+```selena
+material SpectrogramBand {
+    param spectrum : texture2d format r16float
+    surface(geo) -> color {
+        let sz = size(spectrum)
+        let mag = load(spectrum, int(geo.uv.x * sz.x), int(geo.uv.y * sz.y)).r
+        return rgb(mag, mag * 0.6, 1.0 - mag)
+    }
+}
+```
+
+**Bind the texture by key.** Set the texture param's uniform to
+`scene.DataTextureRef(key)`, which is the string `gosx:data:<key>`:
+
+```go
+material, _, err := scene.CompileSelenaMaterial(source, scene.SelenaMaterialOptions{
+	Uniforms: map[string]any{"spectrum": scene.DataTextureRef("spectrum")},
+})
+```
+
+Material creation fails if the param is not a 2D texture or the key is empty,
+too long or contains whitespace. Until the engine writes the key, the shader
+reads a 1x1 placeholder.
+
+**Write texels from the engine.** `scene.TextureWriter` (js/wasm) sends binary
+frames to the Scene3D mount with the given element id:
+
+```go
+tw := scene.NewTextureWriter("studio-scene")
+if !tw.Prepare() { return } // loads the chunk; call each frame until true
+
+tw.Create("spectrum", 128, 16, scene.TextureR16Float) // 128 wide, 16 tall, zeroed
+row := scene.AppendFloat16(nil, magnitudes)           // 128 half floats
+applied, err := tw.WriteTexture("spectrum", 128, 1, scene.TextureR16Float, row, 0, 3)
+```
+
+- `Create(key, width, height, format)` declares the texture. Creating a key
+  again clears it, and replaces it if the size or format changed.
+- `WriteTexture(key, width, height, format, bytes, originX, originY)` copies a
+  `width` x `height` rectangle whose top-left texel lands at
+  `(originX, originY)`. `format` must match the texture. `bytes` holds
+  `width*height` texels, top row first, little-endian. Texel `(0,0)` is the one
+  `load(tex, 0, 0)` reads.
+- `Delete(key)` releases the texture.
+- `Prepare` returns false until the renderer can take writes. `Err` says why the
+  chunk failed to load, for example because no material on the page names a data
+  texture.
+- A write returns `(false, nil)` while the renderer is not ready, and an error
+  for bad arguments (size, format, byte length, rectangle outside the texture)
+  or a frame the renderer rejects.
+
+| Format | Bytes per texel | Pack from `[]float32` |
+|---|---|---|
+| `TextureRGBA8Unorm` | 4 | write the bytes directly |
+| `TextureRGBA16Float` | 8 | `scene.AppendFloat16` |
+| `TextureRGBA32Float` | 16 | `scene.AppendFloat32` |
+| `TextureR16Float` | 2 | `scene.AppendFloat16` |
+| `TextureR32Float` | 4 | `scene.AppendFloat32` |
+
+A texture is at most 8192 x 8192 texels and 256 MiB. Keys are page-wide: two
+Scene3D mounts that write the same key share one texture, so give each mount its
+own prefix. The material's declared `format` must equal the texture's format
+(a param with no `format` means `rgba8unorm`); on a mismatch the renderer logs
+the error, fires `gosx:scene3d:data-texture-error` and binds the placeholder.
+
+Call `Prepare` and the writes from the frame callback that also writes poses
+(see [engine frame loop](engine-frame-loop.md)): a write applies synchronously
+and the renderer draws it in that frame.
+
+**How texels reach the GPU.** Every call becomes one binary `GSXT` frame (not
+JSON), copied once into a reused JavaScript buffer and applied synchronously, the
+same path `StreamWriter` uses for instance transforms. In an engine worker the
+frame is transferred to the page. The renderer keeps one CPU copy per key, then
+uploads only the changed rectangle:
+
+| | WebGPU | WebGL2 |
+|---|---|---|
+| Create | `createTexture` in the matching format | `texImage2D` with `RGBA8`, `RGBA16F`, `RGBA32F`, `R16F` or `R32F` |
+| Update | `queue.writeTexture` | `texSubImage2D` with `UNPACK_ROW_LENGTH` |
+| Filter | nearest sampler for `sampleMode: "load"` and for 32-bit formats | `NEAREST`, `CLAMP_TO_EDGE` |
+| Extensions | none | none (WebGL2 core) |
+
+For a 32-bit float texture the WebGPU bind-group entry is `unfilterable-float`
+with a `non-filtering` sampler, as the Selena descriptor requires. A WebGL
+context that lacks WebGL2 formats fails visibly instead of drawing wrong
+values. `requires.glTexSizeUniforms` (GLSL ES 1.00) is honored when a program
+declares the `_texSize_<name>` uniform; the WebGL2 renderer uses the GLES 3.00
+target, which reads the size from the texture. Data textures in a custom
+post-processing pass are not bound yet.
+
+Pages download the upload code only when they use it. GoSX advertises the
+on-demand chunk `bootstrap-feature-scene3d-data-texture.js` (about 2.7 KB
+brotli) only on pages with a Selena material that has `sampleMode` `load` or
+`both`, an explicit float `format`, or a `gosx:data:` uniform.

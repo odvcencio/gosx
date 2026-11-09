@@ -53,6 +53,7 @@
         "../runtime/scene3d/ocean-waves.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
         "bootstrap-src/16c2-scene-selena-lighting.ts",
+        "bootstrap-src/16c3-scene-data-texture-shims.ts",
         "bootstrap-src/16c1-scene-detail.ts",
         "bootstrap-src/16d-scene-atmosphere.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
@@ -346,6 +347,7 @@
         "bootstrap-src/26j-feature-scene3d-webgl-prefix.ts",
         "bootstrap-src/15a1-scene-texture-budget.ts",
         "bootstrap-src/16b-scene-hdr.ts",
+        "bootstrap-src/16c3-scene-data-texture-shims.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl-brdf.ts",
         "../runtime/scene3d/webgl-transmission.ts",
@@ -398,6 +400,7 @@
       "sources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
+        "bootstrap-src/16c3-scene-data-texture-shims.ts",
         "../runtime/scene3d/webgpu-brdf.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
@@ -477,6 +480,12 @@
         "bootstrap-src/26n-feature-scene3d-selena-lighting-prefix.ts",
         "bootstrap-src/16c2-scene-selena-lighting.ts",
         "bootstrap-src/26n-feature-scene3d-selena-lighting-suffix.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-data-texture.js",
+      "sources": [
+        "../runtime/scene3d/data-texture.ts"
       ]
     },
     {

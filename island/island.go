@@ -104,6 +104,7 @@ type Renderer struct {
 	bootstrapFeatureScene3dOceanQueryPath       string
 	bootstrapFeatureScene3dHierarchyPath        string
 	bootstrapFeatureScene3dSelenaLightingPath   string
+	bootstrapFeatureScene3dDataTexturePath      string
 	bootstrapFeatureScene3dOceanFFTPath         string
 	bootstrapFeatureScene3dParticleBurstPath    string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
@@ -287,6 +288,7 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
 	renderer.bootstrapFeatureScene3dHierarchyPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hierarchy.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHierarchy.Hash))
 	renderer.bootstrapFeatureScene3dSelenaLightingPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-selena-lighting.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DSelenaLighting.Hash))
+	renderer.bootstrapFeatureScene3dDataTexturePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-data-texture.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDataTexture.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
@@ -770,6 +772,15 @@ func (r *Renderer) SetBootstrapFeatureScene3DSelenaLightingPath(path string) {
 	r.bootstrapFeatureScene3dSelenaLightingPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DDataTexturePath overrides the content-gated
+// Selena data-texture upload URL.
+func (r *Renderer) SetBootstrapFeatureScene3DDataTexturePath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dDataTexturePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DParticleBurstPath overrides the demand-loaded burst URL.
 func (r *Renderer) SetBootstrapFeatureScene3DParticleBurstPath(path string) {
 	if r == nil {
@@ -913,6 +924,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DHierarchy, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-selena-lighting.js", r.bootstrapFeatureScene3dSelenaLightingPath, r.runtimeAssets.BootstrapFeatureScene3DSelenaLighting):
 		return r.runtimeAssets.BootstrapFeatureScene3DSelenaLighting, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-data-texture.js", r.bootstrapFeatureScene3dDataTexturePath, r.runtimeAssets.BootstrapFeatureScene3DDataTexture):
+		return r.runtimeAssets.BootstrapFeatureScene3DDataTexture, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
 		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
@@ -1114,6 +1127,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
 	r.SetBootstrapFeatureScene3DHierarchyPath(runtime.BootstrapFeatureScene3DHierarchy)
 	r.SetBootstrapFeatureScene3DSelenaLightingPath(runtime.BootstrapFeatureScene3DSelenaLighting)
+	r.SetBootstrapFeatureScene3DDataTexturePath(runtime.BootstrapFeatureScene3DDataTexture)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
@@ -2334,6 +2348,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"instance-stream", r.bootstrapFeatureScene3dInstanceStreamPath, true},
 		{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath, true},
 		{"selena-lighting", r.bootstrapFeatureScene3dSelenaLightingPath, r.scene3DNeedsSelenaLightingChunk()},
+		{"data-texture", r.bootstrapFeatureScene3dDataTexturePath, r.scene3DNeedsSelenaDataTextureChunk()},
 		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
 		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
 		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
@@ -2835,6 +2850,19 @@ func (r *Renderer) scene3DNeedsSelenaLightingChunk() bool {
 	for i := range r.manifest.Engines {
 		entry := &r.manifest.Engines[i]
 		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).NeedsSelenaLighting() {
+			return true
+		}
+	}
+	return false
+}
+
+// The Selena data-texture chunk is advertised only when a Selena material on
+// the page reads a data texture (load or float format) or references a
+// host-written one ("gosx:data:<key>").
+func (r *Renderer) scene3DNeedsSelenaDataTextureChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).NeedsSelenaDataTexture() {
 			return true
 		}
 	}

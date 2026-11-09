@@ -8452,7 +8452,7 @@
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
           /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
-          sampler: { type: "filtering" },
+          sampler: { type: texLayout.sampleType === "unfilterable-float" ? "non-filtering" : "filtering" },
         });
       }
       var storageBuffers = sceneSelenaStorageBufferDescriptors(layout);
