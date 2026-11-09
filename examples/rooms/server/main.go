@@ -6,12 +6,14 @@
 //
 // Every flag also reads an environment variable (ROOMS_ADDR, ROOMS_ORIGINS,
 // ...), which is how the container in ../deploy is configured. GET /healthz
-// reports that the process is up; GET /readyz that it accepts players.
+// reports that the process is up; GET /readyz that it accepts players; GET
+// /whoami echoes the caller's peer address and X-Forwarded-For chain.
 package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -63,6 +65,12 @@ func main() {
 			return
 		}
 		_, _ = w.Write([]byte("ready\n"))
+	})
+	// GET /whoami echoes the caller's own peer address and X-Forwarded-For
+	// chain, to check what a proxy passes on (rate limits key on it).
+	mux.HandleFunc("GET /whoami", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = fmt.Fprintf(w, "remote=%s forwarded=%q\n", r.RemoteAddr, r.Header.Values("X-Forwarded-For"))
 	})
 	if *static != "" {
 		mux.Handle("/", http.FileServer(http.Dir(*static)))
