@@ -1,0 +1,24 @@
+// Test material for the artifact path: a lit base, a derived tint (the file
+// default), and a post pass.
+material Glow {
+    context {
+        sunDir   : vec3
+        sunColor : vec3
+        ambient  : vec3
+    }
+    param baseColor : color = rgb(0.8, 0.5, 0.3)
+    param gain      : float = 1.0
+
+    surface(geo) -> color {
+        let n = normalize(geo.worldNormal)
+        return baseColor * gain * (ambient + sunColor * max(dot(n, sunDir), 0.0))
+    }
+}
+
+material GlowTinted extends Glow {
+    param tint : color = rgb(0.4, 0.9, 1.0)
+
+    surface(geo) -> color {
+        return super.surface(geo) * tint
+    }
+}

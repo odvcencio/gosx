@@ -750,15 +750,6 @@ func fileRouteSegment(part string) (segment string, param string, include bool) 
 	}
 }
 
-func isRouteFile(name string) bool {
-	ext := filepath.Ext(name)
-	if !slices.Contains(defaultFileExtensions, ext) {
-		return false
-	}
-	_, ok := routeFileKind(name)
-	return ok
-}
-
 func routeFileKind(name string) (string, bool) {
 	ext := filepath.Ext(name)
 	if !slices.Contains(defaultFileExtensions, ext) {

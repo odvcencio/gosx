@@ -128,6 +128,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/05a-audio-mixer.ts"),
 			sourceFile("bootstrap-src/06-motion-core.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile("../runtime/host/document-lifecycle.ts"),
@@ -172,6 +173,7 @@ var outputs = []output{
 			// it, so both files ship here and neither declares a name twice.
 			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
 			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
@@ -240,6 +242,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
+			sourceFile("../runtime/scene3d/frame-owner.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/hydrate-input.ts"),
 			sourceFile("../runtime/scene3d/mount-input.ts"),
@@ -275,6 +278,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/00-textlayout.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/05a-audio-mixer.ts"),
 			sourceFile("bootstrap-src/06-motion-core.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile("../runtime/host/document-lifecycle.ts"),
@@ -295,6 +299,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/00-textlayout.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/05a-audio-mixer.ts"),
 			sourceFile("bootstrap-src/06-motion-core.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile("../runtime/host/document-lifecycle.ts"),
@@ -541,6 +546,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
+			sourceFile("../runtime/scene3d/frame-owner.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/mount-input.ts"),
 			sourceFile("../runtime/scene3d/geometry-assets.ts"),
@@ -695,6 +701,14 @@ var outputs = []output{
 	{
 		name:    "bootstrap-feature-scene3d-hierarchy.js",
 		sources: []source{sourceFile("../runtime/scene3d/hierarchy.ts")},
+	},
+	{
+		name: "bootstrap-feature-scene3d-selena-lighting.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26n-feature-scene3d-selena-lighting-prefix.ts"),
+			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
+			sourceFile("bootstrap-src/26n-feature-scene3d-selena-lighting-suffix.ts"),
+		},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",

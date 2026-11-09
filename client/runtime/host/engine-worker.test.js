@@ -899,6 +899,34 @@ test("worker: input arrives as JSON stamped with the event time and arrival time
   assert.equal(seen.length, 2);
 });
 
+// The binary record is the contract game/host decodes (forwarded.go,
+// TestInputRecordGolden decodes these same bytes).
+const INPUT_RECORD_GOLDEN_KEY = "0101010000000000000000000000000000000000000000000000000000000000000000000004b5400000000000c077400000000000007940000000000400010000000000000000004b65794161";
+test("worker: forwarded input as binary records", () => {
+  const w = bootWorker();
+  const records = [];
+  w.scope.__gosx.worker.onInputBytes(bytes => records.push(Buffer.from(bytes).toString("hex")));
+  w.setClock(400);
+  w.send({ t: "input", ev: { k: "key", code: "KeyA", key: "a", down: true, ts: 5380 } });
+  assert.equal(records.length, 1);
+  assert.equal(records[0], INPUT_RECORD_GOLDEN_KEY);
+  w.send({ t: "input", ev: { k: "pad", index: 2, id: "Pad", mapping: "standard", connected: true, buttons: [1, 0.5], axes: [-1], ts: 5390 } });
+  const pad = Buffer.from(records[1], "hex");
+  assert.equal(pad[1], 3);
+  assert.equal(pad[2], 2, "connected flag");
+  assert.equal(pad.readInt32LE(12), 2);
+  assert.equal(pad.readUInt16LE(56), 2);
+  assert.equal(pad.readUInt16LE(58), 1);
+  assert.equal(pad.readDoubleLE(72 + 8), 0.5);
+  assert.equal(pad.readDoubleLE(72 + 16), -1);
+  assert.equal(pad.subarray(72 + 24).toString("utf8"), "Padstandard");
+  // A long string grows the reused buffer instead of truncating.
+  w.send({ t: "input", ev: { k: "key", code: "K".repeat(600), ts: 5400 } });
+  assert.equal(Buffer.from(records[2], "hex").readUInt16LE(60), 600);
+  w.send({ t: "input", ev: { k: "unknown", ts: 5410 } });
+  assert.equal(records.length, 3, "an unknown kind sends no record");
+});
+
 // ---------------------------------------------------------------------------
 // Netplay bridge
 // ---------------------------------------------------------------------------

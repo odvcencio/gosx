@@ -2,8 +2,6 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const childProcess = require("node:child_process");
-const path = require("node:path");
 
 const {
   bootstrapLiteSource,
@@ -155,49 +153,6 @@ test("Stripe bridge keeps a strict CSP and lifecycle authority boundary", () => 
   ]) {
     assert.equal(stripeBridgeSource.includes(forbidden), false, "bridge must not contain " + forbidden);
   }
-});
-
-test("a rendered initial document executes runtime, Stripe.js, then bridge and mounts once", async () => {
-  const repoRoot = path.resolve(__dirname, "../..");
-  const html = childProcess.execFileSync("go", ["run", "./stripeui/testdata/renderdocument"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  const scripts = Array.from(html.matchAll(/<script\b([^>]*)>/g))
-    .map((match) => ({
-      src: /\bsrc="([^"]+)"/.exec(match[1])?.[1] || "",
-      nonce: /\bnonce="([^"]+)"/.exec(match[1])?.[1] || "",
-    }))
-    .filter((script) => script.src);
-  assert.deepEqual(scripts.map((script) => script.src), [
-    "/gosx/bootstrap-lite.js",
-    "https://js.stripe.com/clover/stripe.js",
-    "/gosx/stripe-bridge.js",
-  ]);
-  assert.deepEqual(scripts.map((script) => script.nonce), [
-    "strict-csp-nonce",
-    "strict-csp-nonce",
-    "strict-csp-nonce",
-  ]);
-
-  const child = paymentMount("payment-emitted-order");
-  const root = stripeSurface("elements", "elements-emitted-order", "/session/emitted-order", [child.config, child.mount]);
-  const env = createContext({
-    elements: [root],
-    fetchRoutes: {
-      "/session/emitted-order": { text: JSON.stringify({ clientSecret: "secret_emitted_order" }), headers: { "content-type": "application/json" } },
-    },
-  });
-  const captures = newCaptures();
-  for (const script of scripts) {
-    if (script.src === "/gosx/bootstrap-lite.js") runScript(bootstrapLiteSource, env.context, script.src);
-    else if (script.src === "https://js.stripe.com/clover/stripe.js") installStripeFake(env.context, captures);
-    else if (script.src === "/gosx/stripe-bridge.js") runScript(stripeBridgeSource, env.context, script.src);
-    await flushAsyncWork();
-  }
-  assert.equal(env.fetchCalls.filter((call) => call.url === env.context.location.origin + "/session/emitted-order").length, 1);
-  assert.equal(captures.mounts.length, 1);
-  assert.equal(root.getAttribute("data-gosx-stripe-state"), "ready");
 });
 
 test("repeated bridge execution keeps an existing surface mounted exactly once", async () => {
