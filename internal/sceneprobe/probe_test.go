@@ -70,3 +70,24 @@ func TestProbePreservesLegacyNormalization(t *testing.T) {
 		t.Fatalf("texture descriptor case/empty fallback changed: %q", textures)
 	}
 }
+
+func TestProbeNeedsDepthFX(t *testing.T) {
+	cases := map[string]bool{
+		`{}`:                                  false,
+		`{"postEffects":[{"kind":"bloom"}]}`:  false,
+		`{"postEffects":[{"kind":"decals"}]}`: true,
+		`{"postFX":[{"kind":"motionBlur"}]}`:  true,
+		`{"scene":{"postEffects":[{"kind":"bloom"},{"kind":"decals"}]}}`: true,
+		`{"postFX":{"effects":[{"kind":"decals"}]}}`:                     false,
+		`{"postEffects":[null,7,{"kind":3}]}`:                            false,
+	}
+	for raw, want := range cases {
+		p := Decode(json.RawMessage(raw))
+		if p.Err != nil {
+			t.Fatalf("%s: decode: %v", raw, p.Err)
+		}
+		if got := p.NeedsDepthFX(); got != want {
+			t.Errorf("%s: NeedsDepthFX = %v, want %v", raw, got, want)
+		}
+	}
+}

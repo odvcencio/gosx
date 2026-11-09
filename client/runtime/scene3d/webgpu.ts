@@ -4559,7 +4559,7 @@
     var pingPongB = null, pingPongBView = null;
     var pingPongWidth = 0, pingPongHeight = 0;
     var depthTex = null, depthTexView: any = null, depthResolvePipeline: any = null, depthResolveLayout: any = null;
-    var currentWidth = 0, currentHeight = 0;
+    var currentWidth = 0, currentHeight = 0, depthFx: any = { device: device }; // decals and motion blur: see depthfx.ts
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
     var atmospherePost = createSceneAtmospherePostWebGPU({ device, format: targetFormat, sampler: linearSampler, getPipeline, getParamBuffer, fullscreenPass });
     var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
@@ -4916,7 +4916,7 @@
 
     // Resolve covered MSAA depth before a depth-reading post pass.
     function prepareSceneDepth(effects: any[], samples: number) {
-      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST].includes(effect.kind))) return false;
+      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST, "decals", "motionBlur"].includes(effect.kind))) return false;
       if (!depthResolvePipeline) {
         depthResolveLayout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: true } }] });
         var module = device.createShaderModule({ label: "post-depth-resolve", code: `@group(0) @binding(0) var source: texture_depth_multisampled_2d;
@@ -5268,8 +5268,7 @@
               currentTexView = outputView;
               break;
             }
-            default:
-              break;
+            default: if (window.__gosx_scene3d_depthfx_api?.webgpuRun(depthFx, effect, i, encoder, currentTexView, outputView, outputFormat, depthTexView, scaledW, scaledH, atmosphereContext)) { currentTexView = outputView; if (postChain) truth.mark(postChain, i, "ok", 1); } break;
           }
         }
 
@@ -5290,7 +5289,7 @@
       },
 
       dispose: function() {
-        mipBloom.dispose(); atmospherePost.dispose();
+        mipBloom.dispose(); atmospherePost.dispose(); window.__gosx_scene3d_depthfx_api?.dispose(depthFx);
         disposed = true;
         for (const texture of [sceneTex, auxTex, depthTex, pingPongA, pingPongB]) if (texture) texture.destroy();
         for (var key in postParamBuffers) {

@@ -89,6 +89,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureScene3DHierarchy        HashedAsset `json:"bootstrapFeatureScene3dHierarchy,omitzero"`
 	BootstrapFeatureScene3DOceanFFT         HashedAsset `json:"bootstrapFeatureScene3dOceanFft,omitzero"`
 	BootstrapFeatureScene3DParticleBurst    HashedAsset `json:"bootstrapFeatureScene3dParticleBurst,omitzero"`
+	BootstrapFeatureScene3DDepthFX          HashedAsset `json:"bootstrapFeatureScene3dDepthfx,omitzero"`
 	// BootstrapFeatureScene3DInstanceStream is the opt-in binary
 	// instance-transform fast path (see client/runtime/scene3d/
 	// instance-stream.ts and scene/instance_stream.go). It is opt-in in the
@@ -235,6 +236,7 @@ type RuntimePaths struct {
 	BootstrapFeatureScene3DZoom             string
 	BootstrapFeatureScene3DHierarchy        string
 	BootstrapFeatureScene3DParticleBurst    string
+	BootstrapFeatureScene3DDepthFX          string
 	BootstrapFeatureScene3DTimeline         string
 	BootstrapFeatureScene3DVessel           string
 	BootstrapFeatureScene3DOceanQuery       string
@@ -314,6 +316,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureScene3DZoom:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DZoom.File),
 		BootstrapFeatureScene3DHierarchy:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DHierarchy.File),
 		BootstrapFeatureScene3DParticleBurst:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DParticleBurst.File),
+		BootstrapFeatureScene3DDepthFX:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DDepthFX.File),
 		BootstrapFeatureScene3DTimeline:         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DTimeline.File),
 		BootstrapFeatureScene3DVessel:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DVessel.File),
 		BootstrapFeatureScene3DOceanQuery:       AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DOceanQuery.File),

@@ -200,6 +200,7 @@ declare var scenePBRViewMatrix: any;
 declare var sceneParseRadianceHDR: any;
 declare var scenePickSignalNamespace: any;
 declare var scenePointInPolygon: any;
+declare var scenePostEffects: any;
 declare var scenePointStyleCode: any;
 declare var scenePointerCanStartDrag: any;
 declare var scenePostDOMRegionPixelBounds: any;

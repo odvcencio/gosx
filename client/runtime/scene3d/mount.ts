@@ -32,10 +32,10 @@
     }
     // A spectral ocean needs the FFT chunk; if it cannot load, the renderer keeps the Gerstner ocean.
     if ((props.scene || props).environment?.ocean?.spectrum) { try { await ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; }
+    // Decals and motion blur live in their own chunk, loaded before the first frame; without it the renderers skip those effects.
+    if (scenePostEffects(props).some((effect: any) => effect.kind === "decals" || effect.kind === "motionBlur")) { try { await ensureSceneGatedFeatureLoaded("depthfx", "gosxScene3dDepthfxUrl", ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
-    function scene3DFactoryCurrent() {
-      return !ctx.isCurrent || ctx.isCurrent();
-    }
+    function scene3DFactoryCurrent() { return !ctx.isCurrent || ctx.isCurrent(); }
     let initialRuntimeCommands = null;
     if (runtimeScene) {
       ctx._ssr = true;

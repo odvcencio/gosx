@@ -4498,7 +4498,7 @@
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     function postFrameContext(projection, view, lights) { return projection && projection.projection ? projection : { projection: projection, view: view, lights: lights }; }
     var currentLinearInput = true;
-    var currentWidth = 0;
+    var currentWidth = 0, depthFx: any = { gl: gl };
     var currentHeight = 0;
     var hdrDegradationReported = false;
     // Lazily compiled shader programs, keyed by effect name.
@@ -5040,12 +5040,8 @@
               }
               break;
             }
-            default:
-              // Unknown effect — skip. A kind that reaches here NEVER draws;
-              // the chain record stays at pipeline="missing", dispatched=0,
-              // which is precisely how a case-sensitivity mismatch on the
-              // effect kind (the customPost defect) becomes visible instead of
-              // being masked by a healthy-looking postEffects count.
+            default: // Decals and motion blur draw from the depthfx chunk. Any other kind never draws, so its chain record stays pipeline="missing".
+              if (window.__gosx_scene3d_depthfx_api?.webglRun(depthFx, effect, i, currentTexture, targetFBO, passW, passH, sceneFBO.depthTex, atmosphereContext)) currentTexture = targetFBO ? targetFBO.colorTex : null;
               break;
           }
 
@@ -5074,7 +5070,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
-        mipBloom.dispose(); atmospherePost.dispose();
+        mipBloom.dispose(); atmospherePost.dispose(); window.__gosx_scene3d_depthfx_api?.dispose(depthFx);
         if (temporal) temporal.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);

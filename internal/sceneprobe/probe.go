@@ -155,6 +155,7 @@ type Probe struct {
 
 	Scene                                                                                                                *Probe
 	ParticleBursts, Timelines, ControlZoom, ModelPreparation                                                             bool
+	PostEffects, PostFX                                                                                                  json.RawMessage
 	ForceWebGL, RequireWebGL, PreferCanvas                                                                               bool
 	PreferWebGL                                                                                                          *bool
 	BackendCaps                                                                                                          *struct{ Capable []string }
@@ -173,6 +174,29 @@ type Probe struct {
 	PosterAlt                       string
 	Err                             error `json:"-"`
 	ChunkErr, PreloadErr, PosterErr error `json:"-"`
+}
+
+// NeedsDepthFX reports whether the scene declares a decals or motionBlur post
+// effect in either accepted props shape. Those passes live in
+// bootstrap-feature-scene3d-depthfx.js. An effect entry that cannot be read as
+// an object counts as absent.
+func (p *Probe) NeedsDepthFX() bool {
+	if p == nil {
+		return false
+	}
+	for _, field := range []json.RawMessage{p.PostEffects, p.PostFX} {
+		var list []json.RawMessage
+		if json.Unmarshal(field, &list) != nil {
+			continue
+		}
+		for _, raw := range list {
+			var effect struct{ Kind string }
+			if json.Unmarshal(raw, &effect) == nil && (effect.Kind == "decals" || effect.Kind == "motionBlur") {
+				return true
+			}
+		}
+	}
+	return p.Scene.NeedsDepthFX()
 }
 
 // NeedsOceanFFT reports whether the scene's ocean carries a wave spectrum, in
