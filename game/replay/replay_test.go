@@ -228,6 +228,12 @@ func TestMemoryPerMinute(t *testing.T) {
 	rec, _ := play(t, 60*60, replay.Config{Interval: 120})
 	t.Logf("1 minute at %d Hz, %d bodies, keyframe every 120 ticks: %d bytes (%d keyframes)",
 		rate, seats+props, rec.Bytes(), len(rec.Recording().Keyframes()))
+	// 16 bodies snapshot to 332 bytes, so 30 keyframes are about 12 KB. The rest
+	// is 3600 ticks of four seats' inputs plus a 4-byte offset per tick. Fail if
+	// the cost drifts past 100 KiB.
+	if rec.Bytes() > 100<<10 {
+		t.Fatalf("one minute costs %d bytes, budget 102400", rec.Bytes())
+	}
 }
 
 func BenchmarkSeek(b *testing.B) {
@@ -277,4 +283,33 @@ func itoa(n int) string {
 		b = append([]byte{byte('0' + n%10)}, b...)
 	}
 	return string(b)
+}
+
+// nullSim isolates the replay machinery's own allocations from the game's.
+type nullSim struct{ n uint64 }
+
+func (s *nullSim) Tick(map[string]simcore.Input) { s.n++ }
+func (s *nullSim) Snapshot() []byte              { return []byte{byte(s.n), byte(s.n >> 8)} }
+func (s *nullSim) Restore(b []byte)              { s.n = uint64(b[0]) | uint64(b[1])<<8 }
+func (s *nullSim) State() []byte                 { return nil }
+
+func TestPlaybackDoesNotAllocate(t *testing.T) {
+	rec := replay.NewRecorder(&nullSim{}, replay.Config{Interval: 50})
+	in := map[string]simcore.Input{"p0": {Data: []byte{1}}, "p1": {Data: []byte{2}}}
+	for i := 0; i < 500; i++ {
+		rec.Tick(in)
+	}
+	p, err := replay.NewPlayer(&nullSim{}, rec.Recording())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.StepForward(1) // warm the ID cache
+	if a := testing.AllocsPerRun(100, func() {
+		p.StepForward(1)
+	}); a != 0 {
+		t.Errorf("StepForward allocates %v times per tick", a)
+	}
+	if a := testing.AllocsPerRun(100, func() { _ = p.Seek(321); _ = p.Seek(10) }); a != 0 {
+		t.Errorf("Seek allocates %v times per call pair", a)
+	}
 }

@@ -11,6 +11,7 @@ The game kit is the layer above `game/*` that every browser game ends up writing
 | `game/camera` | Follow and multi-target framing, trauma shake, bookmarks and sequences, one director with control handoff. |
 | `game` (`slots.go`) | Two-copy save slots that survive a torn write, autosave, versioned migration. |
 | `game/kitui` | Pause, settings, rebinding and loading screens as GoSX nodes styled by `--kit-*` CSS variables. |
+| `game/replay` | Record, scrub and re-watch a deterministic game with free and broadcast cameras; see [game-replay.md](game-replay.md). |
 
 ## Example
 
