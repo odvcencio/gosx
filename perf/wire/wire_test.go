@@ -419,3 +419,35 @@ func withLimit(rb RouteBudget, metric string, v int64) RouteBudget {
 	rb.Limits = limits
 	return rb
 }
+
+// Prerendered and exported pages write on-demand chunk URLs relative to the
+// page; they must count the same as root-absolute ones.
+func TestOnDemandURLsResolveAgainstThePage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<!doctype html><script data-gosx-a-url="/gosx/a.js" data-gosx-b-url="gosx/b.js" data-gosx-x-url="http://other.invalid/gosx/x.js" data-gosx-y-url="assets/y.js"></script>`))
+	})
+	mux.HandleFunc("/demos/scene3d/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<!doctype html><script data-gosx-c-url="../../gosx/c.js"></script>`))
+	})
+	for _, name := range []string{"a", "b", "c"} {
+		body := strings.Repeat(name, 10+len(name))
+		mux.HandleFunc("/gosx/"+name+".js", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(body)) })
+	}
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	for route, want := range map[string]int64{"/": 22, "/demos/scene3d/": 11} {
+		r, err := Crawl(context.Background(), Options{}, "app", srv.URL, route)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.LazyWireBytes != want || r.Requests != 1 {
+			t.Errorf("%s: lazy=%d requests=%d, want lazy %d from the /gosx/ chunks only and 1 request", route, r.LazyWireBytes, r.Requests, want)
+		}
+		for _, res := range r.Resources {
+			if res.Kind != KindLazyScript || !strings.HasPrefix(res.URL, "/gosx/") {
+				t.Errorf("%s: unexpected resource %+v", route, res)
+			}
+		}
+	}
+}
