@@ -182,8 +182,16 @@ function timedSetup(graphEdit) {
   const resolved = [], copies = [];
   const create = s.fake.device.createCommandEncoder.bind(s.fake.device);
   s.stamps = [0n, 0n];
-  s.fake.device.createCommandEncoder = () => {
-    const encoder = create();
+  s.encoders = []; s.submitted = [];
+  const submit = s.fake.device.queue.submit.bind(s.fake.device.queue);
+  s.fake.device.queue.submit = (buffers) => { s.submitted.push(...buffers); submit(buffers); };
+  s.fake.device.createCommandEncoder = (descriptor) => {
+    const encoder = create(descriptor);
+    encoder.label = descriptor && descriptor.label; encoder.passes = []; s.encoders.push(encoder);
+    const begin = encoder.beginComputePass.bind(encoder);
+    encoder.beginComputePass = (d) => { const pass = begin(d); encoder.passes.push(pass); return pass; };
+    const finish = encoder.finish.bind(encoder);
+    encoder.finish = () => { const buffer = finish(); buffer.encoder = encoder; return buffer; };
     encoder.resolveQuerySet = (querySet, first, count, buffer, offset) => resolved.push({ querySet, first, count, buffer, offset });
     encoder.copyBufferToBuffer = (source, so, destination, doff, size) => { copies.push({ source, destination, size }); new BigUint64Array(destination._backing).set(s.stamps); };
     return encoder;
@@ -193,34 +201,51 @@ function timedSetup(graphEdit) {
 }
 const settledTick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-test("timing: the graph's first executed compute pass writes the begin stamp and its last the end stamp, in one query set", () => {
+test("timing: the graph's passes run in their own command buffer, unstamped; the begin stamp is submitted ahead of it and the end stamp rides in the frame's encoder", () => {
   const s = timedSetup();
   s.settle();
-  s.step();
-  const passes = s.fake.state.computePasses;
-  const writes = passes.map((p) => p.descriptor.timestampWrites);
-  assert.equal(writes[0].beginningOfPassWriteIndex, 0);
-  assert.equal(writes[0].endOfPassWriteIndex, undefined);
-  assert.equal(writes[writes.length - 1].endOfPassWriteIndex, 1);
-  assert.ok(writes.slice(1, -1).every((w) => !w), "middle passes carry no stamp");
-  assert.equal(new Set(writes.filter(Boolean).map((w) => w.querySet)).size, 1);
+  const frame = s.encoder();
+  s.step(frame);
+  const [begin, graph] = s.submitted.map((b) => b.encoder);
+  assert.equal(s.submitted.length, 2, "the frame's own encoder is the renderer's to submit");
+  assert.ok(begin !== frame && graph !== frame && begin !== graph);
+  assert.equal(begin.passes.length, 1);
+  assert.equal(begin.passes[0].descriptor.timestampWrites.beginningOfPassWriteIndex, 0);
+  assert.equal(begin.passes[0].dispatches.length, 0, "the begin stamp is on an empty pass");
+  assert.ok(graph.passes.length > 1);
+  assert.ok(graph.passes.every((p) => !p.descriptor.timestampWrites && p.dispatches.length === 1), "no stamp on a pass that dispatches: with ~400 passes it loses the device on Metal");
+  assert.equal(frame.passes.length, 1);
+  assert.equal(frame.passes[0].descriptor.timestampWrites.endOfPassWriteIndex, 1);
+  assert.equal(frame.passes[0].dispatches.length, 0, "the end stamp is on an empty pass");
+  assert.equal(new Set([begin, frame].map((e) => e.passes[0].descriptor.timestampWrites.querySet)).size, 1, "one query set");
   assert.equal(s.resolved.length, 1);
   assert.deepEqual([s.resolved[0].first, s.resolved[0].count, s.resolved[0].offset], [0, 2, 0]);
-  // Frame 2 skips the evolve pass (its changed: condition did not fire): the first pass that runs carries the begin stamp.
-  const before = passes.length;
+  // Frame 2 skips the evolve pass (its changed: condition did not fire): fewer passes, the same layout.
+  const before = graph.passes.length;
   s.step();
-  const second = s.fake.state.computePasses.slice(before);
-  assert.ok(second.length < passes.length);
-  assert.equal(second[0].descriptor.timestampWrites.beginningOfPassWriteIndex, 0);
-  assert.equal(second[second.length - 1].descriptor.timestampWrites.endOfPassWriteIndex, 1);
+  const second = s.submitted.slice(2).map((b) => b.encoder)[1];
+  assert.ok(second.passes.length < before);
 });
 
-test("timing: a one-pass frame writes both stamps on that pass", () => {
+test("timing: a one-pass frame is bracketed by the begin and end stamps on two empty passes", () => {
   const s = timedSetup((g) => { g.passes = [g.passes.find((p) => p.name === "assemble")]; });
   s.settle();
+  const frame = s.encoder();
+  s.step(frame);
+  const [begin, graph] = s.submitted.map((b) => b.encoder);
+  assert.equal(begin.passes[0].descriptor.timestampWrites.beginningOfPassWriteIndex, 0);
+  assert.equal(graph.passes.length, 1);
+  assert.equal(graph.passes[0].descriptor.timestampWrites, undefined);
+  assert.equal(frame.passes[0].descriptor.timestampWrites.endOfPassWriteIndex, 1);
+});
+
+test("timing: a frame in which no pass runs stamps nothing", () => {
+  const s = timedSetup((g) => { g.passes.forEach((p) => { p.when = "never"; }); });
+  s.settle();
   s.step();
-  const w = s.fake.state.computePasses[0].descriptor.timestampWrites;
-  assert.deepEqual([w.beginningOfPassWriteIndex, w.endOfPassWriteIndex], [0, 1]);
+  assert.equal(s.fake.state.computePasses.length, 0);
+  assert.equal(s.submitted.length, 0, "no command buffer is submitted for an empty frame");
+  assert.equal(s.resolved.length, 0);
 });
 
 test("timing: the stamps are copied to a ring of three staging buffers, polled on later frames, and reported in milliseconds", async () => {
@@ -253,6 +278,20 @@ test("timing: with every staging buffer still mapping, the frame skips its copy 
   s.settle();
   for (let i = 0; i < 6; i++) runner.run({ time: i / 60, dt: 1 / 60, cameraX: 0, cameraY: 0, cameraZ: 0, encoder: s.encoder() });
   assert.ok(s.copies.length <= 3, "at most three copies in flight: " + s.copies.length);
+});
+
+test("timing: without GPU timing the graph's passes stay in the frame's encoder and nothing is submitted", () => {
+  const s = setup();
+  s.settle();
+  const frame = s.encoder();
+  const own = [];
+  const create = s.fake.device.createCommandEncoder.bind(s.fake.device);
+  s.fake.device.createCommandEncoder = (d) => { own.push(d); return create(d); };
+  const submits = s.fake.state.submitCount;
+  s.step(frame);
+  assert.equal(own.length, 0, "no encoder of its own");
+  assert.equal(s.fake.state.submitCount, submits);
+  assert.ok(s.fake.state.computePasses.length > 1);
 });
 
 test("timing: without the timestamp-query feature nothing is created and gpuTiming is null", () => {
