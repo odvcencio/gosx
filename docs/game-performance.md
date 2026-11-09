@@ -140,7 +140,7 @@ GOSX_STRESS_BENCH=1 GOSX_STRESS_OUT=/tmp/stress \
 | `GOSX_STRESS_PROFILE=1` | Also write a main-thread CPU profile (`.cpuprofile`, opens in Chrome DevTools) |
 | `GOSX_CICADA_FIXTURE` | A directory with Cicada's `fixture.json` and `kernel.wasm`, for live music |
 
-`TestGameStressSmoke` is the small version that CI runs: 800 crowd figures,
+`TestGameStressSmoke` is the small version that CI runs: 300 crowd figures,
 both threads, loose budgets, and a check that the simulation reaches the same
 state hash in a worker, on the main thread and in a native Go build.
 
