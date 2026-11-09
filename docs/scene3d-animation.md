@@ -423,6 +423,15 @@ browser decoder test reads the same bytes.
   motion is removed and your simulation moves the character; set
   `scene.Model.RootMotion` to keep it. The graph does not report root-motion
   deltas to Go.
+- **Morph targets.** Clip channels that animate morph weights (facial
+  shapes) do not play through the graph; skeletal channels do. A model with
+  morph targets keeps its default weights.
+- **Hand orientation.** Two-bone IK places the hand or foot; it does not
+  rotate the hand to match a target orientation (feet do align to the ground
+  normal).
+- **Curves come from Go.** glTF has no standard float tracks, so declare
+  `Clip.Curves` in the graph (for example IK weights keyed at the frames a
+  foot is planted).
 - **Same-thread game loop.** `Dispatch` and `Feedback` call the page directly,
   so the Go code must run on the page's main thread. A game hosted in a Web
   Worker can still encode frames, but it has no synchronous feedback.
