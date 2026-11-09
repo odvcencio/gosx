@@ -11,7 +11,7 @@ require (
 	github.com/tdewolff/minify/v2 v2.24.13
 	github.com/tdewolff/parse/v2 v2.8.12
 	m31labs.dev/gosx v0.25.2
-	m31labs.dev/selena v0.5.3-0.20261109051420-a768f4b9a4c0
+	m31labs.dev/selena v0.5.3-0.20261109065633-112e7ec05072
 )
 
 require (
