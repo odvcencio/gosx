@@ -608,6 +608,16 @@
     return typed;
   }
 
+  // Material fields that name the UV set an occlusion or emissive map reads.
+  // Only the second set (1) is carried; the default stays absent so materials
+  // that never use it keep their exact shape.
+  function sceneMaterialUVSets(occlusion, emissive) {
+    const out: any = {};
+    if (occlusion === 1) out.occlusionTexCoord = 1;
+    if (emissive === 1) out.emissiveTexCoord = 1;
+    return out;
+  }
+
   function sceneNormalizeMeshFloatArray(value, tupleSize) {
     const typed = sceneTypedFloatArray(value);
     const safeTupleSize = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
@@ -730,6 +740,8 @@
       positions: count * 3 === positions.length ? positions : positions.slice(0, count * 3),
       normals: sceneMeshSnapshotAttribute(normals, count, [0, 1, 0], snapshot),
       uvs: sceneMeshSnapshotAttribute(uvs, count, [0, 0], snapshot),
+      // Optional second UV set (TEXCOORD_1) for occlusion and emissive maps.
+      uvs1: item.uvs1 && item.uvs1.length >= count * 2 ? sceneNormalizeMeshFloatArray(item.uvs1, 2).slice(0, count * 2) : null,
       tangents: sceneMeshSnapshotAttribute(tangents, count, [1, 0, 0, 1], snapshot),
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
@@ -926,6 +938,7 @@
       normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
       normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(item, "normalUVScale"), current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(item, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(item, "emissiveTexCoord") ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -1677,6 +1690,7 @@
         : (Object.prototype.hasOwnProperty.call(current, "occlusionStrength")
           ? clamp01(sceneNumber(current.occlusionStrength, 1))
           : undefined),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(raw, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(raw, "emissiveTexCoord") ?? current.emissiveTexCoord),
       blendMode: normalizeSceneMaterialBlendMode(
         sceneObjectMaterialHasValue(raw, "blendMode") ? sceneObjectMaterialValue(raw, "blendMode") : current.blendMode,
         materialKind || current.materialKind || "flat",
@@ -2261,6 +2275,7 @@
       normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
       normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(item, "normalUVScale"), current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(item, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(item, "emissiveTexCoord") ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -2722,6 +2737,7 @@
       normalScale: sceneFallbackNumber(item, current, "normalScale", 1),
       normalUVScale: sceneNormalUVScale(item.normalUVScale, current.normalUVScale),
       occlusionStrength: clamp01(sceneFallbackNumber(item, current, "occlusionStrength", 1)),
+      ...sceneMaterialUVSets(item.occlusionTexCoord ?? current.occlusionTexCoord, item.emissiveTexCoord ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -7344,7 +7360,8 @@
   }
 
   function sceneMeshCanCacheWorldBakedGeometry(bundle, object, material, vertices, emitWireSegments, timeSeconds) {
-    return sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) &&
+    // A second UV stream is baked per object below, outside the geometry cache.
+    return !vertices.uvs1 && sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) &&
       sceneMaterialUsesAuthoredMeshShader(material) &&
       !sceneMeshObjectSupportsRetainedBackend(object, material, timeSeconds);
   }
@@ -7562,6 +7579,10 @@
       (!vertices.attributes || Object.keys(vertices.attributes).length === 0);
     if (!cachedView) sceneReserveWorldMeshAttributes(bundle, bakedVertexCount);
     if (!cacheEligible) sceneDropWorldBakedGeometryCache(object);
+    // Occlusion and emissive maps on TEXCOORD_1 read this per-object stream. It
+    // follows the same corner order as the world stream: index dereference and
+    // the mirrored-winding swap. The renderers bind it with the object.
+    const uvs1Out = !cachedGeometry && vertices.uvs1 ? new Float32Array(bakedVertexCount * 2) : null;
     if (cachedGeometry) {
       // Cached attributes already have the final Float32 representation.
       // Backends without direct world views receive their own aggregate copy.
@@ -7653,6 +7674,13 @@
         sceneMeshVertexUVInto(uvs[0], vertices, source0);
         sceneMeshVertexUVInto(uvs[1], vertices, source1);
         sceneMeshVertexUVInto(uvs[2], vertices, source2);
+        if (uvs1Out) {
+          const u1 = vertices.uvs1;
+          const o1 = meshVertexCount * 2;
+          uvs1Out[o1] = u1[source0 * 2]; uvs1Out[o1 + 1] = u1[source0 * 2 + 1];
+          uvs1Out[o1 + 2] = u1[source1 * 2]; uvs1Out[o1 + 3] = u1[source1 * 2 + 1];
+          uvs1Out[o1 + 4] = u1[source2 * 2]; uvs1Out[o1 + 5] = u1[source2 * 2 + 1];
+        }
 
         for (let index = 0; index < 3; index += 1) {
           const point = points[index];
@@ -7748,6 +7776,7 @@
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,
     });
+    if (uvs1Out) meshRecord.uvs1 = meshVertexCount * 2 === uvs1Out.length ? uvs1Out : uvs1Out.subarray(0, meshVertexCount * 2);
     if (cachedView) {
       // These vertices already include the authored transform, index expansion
       // and mirrored winding. Use the ordinary direct draw contract with an

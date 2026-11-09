@@ -226,6 +226,7 @@ var outputs = []output{
 			// variant.
 			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
 			sourceFile("../runtime/scene3d/gltf.ts"),
+			sourceFile("../runtime/scene3d/asset-ext.ts"),
 			sourceFile("../runtime/scene3d/animation.ts"),
 			sourceFile("bootstrap-src/19b-scene-control-forms.ts"),
 			// 16d publishes the base symbols the lazy WebGL chunk reads through
@@ -761,6 +762,7 @@ var outputs = []output{
 			// it, and a second copy would be a second download.
 			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
 			sourceFile("../runtime/scene3d/gltf.ts"),
+			sourceFile("../runtime/scene3d/asset-ext.ts"),
 			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"),
 		},
 	},

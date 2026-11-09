@@ -650,7 +650,7 @@
   const sceneSharedMaterialProfiles = new Map();
   const sceneObjectMaterialInputKeys = [
     "detail", "materialKind", "opacity", "color", "texture", "wireframe", "unlit", "alphaCutoff", "blendMode",
-    "emissive", "emissiveColor", "normalScale", "normalUVScale", "occlusionStrength", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
+    "emissive", "emissiveColor", "normalScale", "normalUVScale", "occlusionStrength", "occlusionTexCoord", "emissiveTexCoord", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
     "clearcoat", "sheen", "thickness", "thicknessMap", "specularAA", "attenuationDistance", "attenuationColor", "transmission", "iridescence", "anisotropy", "lineDash",
     "dashSize", "gapSize", "customVertex", "customFragment", "customVertexWGSL",
     "customFragmentWGSL", "specularFragmentGLSL", "specularFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout",
@@ -741,6 +741,7 @@
       normalScale: sceneNumber(object && object.normalScale, 1),
       normalUVScale: sceneNormalUVScale(object && object.normalUVScale, null),
       occlusionStrength: clamp01(sceneNumber(object && object.occlusionStrength, 1)),
+      ...sceneMaterialUVSets(object && object.occlusionTexCoord, object && object.emissiveTexCoord),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
       ior: sceneNormalizeMaterialIor(object && object.ior, 1.5),
@@ -845,6 +846,7 @@
       String(sceneNumber(profile && profile.normalScale, 1)),
       JSON.stringify(sceneNormalUVScale(profile && profile.normalUVScale, null)),
       String(clamp01(sceneNumber(profile && profile.occlusionStrength, 1))),
+      String(profile && profile.occlusionTexCoord === 1) + String(profile && profile.emissiveTexCoord === 1),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
       // Authored ior keys at full precision — no toFixed quantization — so

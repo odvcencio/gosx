@@ -1392,7 +1392,7 @@
         count: vertexCount,
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
-        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs), uvs1: vertices.uvs1 instanceof Float32Array ? new Float32Array(vertices.uvs1) : null,
         tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
@@ -1408,7 +1408,7 @@
           return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
         }),
         normals: transformedNormals,
-        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs), uvs1: vertices.uvs1 instanceof Float32Array ? new Float32Array(vertices.uvs1) : null,
         tangents: sceneModelTransformTangents(vertices.tangents, transformedNormals, model, modelOrientation),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),

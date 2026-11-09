@@ -25,6 +25,7 @@
     "scene3d/model-pose-data.ts",
     "scene3d/mount-webgl.ts",
     "scene3d/gltf.ts",
+    "scene3d/asset-ext.ts",
     "scene3d/mount-lifecycle.ts",
     "scene3d/mount.ts",
     "scene3d/mount-presentation.ts",

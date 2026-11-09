@@ -2382,6 +2382,11 @@
         ? node.weights
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ : mesh.weights;
       var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node, material.uvSet, material.uvSet1);
+      if (!geometry.uvs1) {
+        // The material names a second UV set but this primitive carries none.
+        delete (material as any).occlusionTexCoord;
+        delete (material as any).emissiveTexCoord;
+      }
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
