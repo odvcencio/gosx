@@ -1,0 +1,310 @@
+{
+  "schema": "selena.artifact.v1",
+  "compiler": "devel",
+  "languageVersion": "selena.lang.v1",
+  "source": {
+    "path": "glow.sel",
+    "sha256": "fc8c8c5c2d11356af7eddfb9f2c0252185522cb3e8c7d84702bcb342f1601500"
+  },
+  "options": {
+    "targets": [
+      "wgsl",
+      "gles"
+    ],
+    "specularMRT": true
+  },
+  "default": "GlowTinted",
+  "materials": [
+    {
+      "name": "Glow",
+      "layout": {
+        "specularOutput": {
+          "semantic": "specular",
+          "location": 1,
+          "type": "vec4",
+          "colorSpace": "linear",
+          "authored": false,
+          "glExtensions": [
+            "WEBGL_draw_buffers"
+          ]
+        },
+        "schemaVersion": "selena.descriptor.v1",
+        "languageVersion": "selena.lang.v1",
+        "material": "Glow",
+        "kind": "mesh",
+        "entryPoints": {
+          "fragmentSpecular": "fragmentMainSpecular",
+          "vertex": "vertexMain",
+          "fragment": "fragmentMain"
+        },
+        "uniformBlock": {
+          "size": 176,
+          "fields": [
+            {
+              "name": "mvp",
+              "type": "mat4",
+              "offset": 0,
+              "size": 64
+            },
+            {
+              "name": "normalMatrix",
+              "type": "mat3",
+              "offset": 64,
+              "size": 48
+            },
+            {
+              "name": "baseColor",
+              "type": "vec3",
+              "offset": 112,
+              "size": 12
+            },
+            {
+              "name": "gain",
+              "type": "float",
+              "offset": 124,
+              "size": 4
+            },
+            {
+              "name": "sunDir",
+              "type": "vec3",
+              "offset": 128,
+              "size": 12,
+              "class": "context",
+              "source": "engine"
+            },
+            {
+              "name": "sunColor",
+              "type": "vec3",
+              "offset": 144,
+              "size": 12,
+              "class": "context",
+              "source": "engine"
+            },
+            {
+              "name": "ambient",
+              "type": "vec3",
+              "offset": 160,
+              "size": 12,
+              "class": "context",
+              "source": "engine"
+            }
+          ],
+          "defaults": [
+            {
+              "name": "baseColor",
+              "type": "vec3",
+              "values": [
+                0.8,
+                0.5,
+                0.3
+              ]
+            },
+            {
+              "name": "gain",
+              "type": "float",
+              "values": [
+                1
+              ]
+            }
+          ]
+        },
+        "attributes": [
+          {
+            "name": "position",
+            "location": 0,
+            "type": "vec3"
+          },
+          {
+            "name": "normal",
+            "location": 1,
+            "type": "vec3"
+          }
+        ],
+        "textures": [],
+        "wgsl": {
+          "group": 0,
+          "binding": 0
+        },
+        "metal": {
+          "buffer": 0
+        },
+        "context": [
+          "sunDir",
+          "sunColor",
+          "ambient"
+        ],
+        "engineVersion": "selena.engine.v1"
+      },
+      "shaders": [
+        {
+          "target": "wgsl",
+          "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  baseColor : vec3<f32>,\n  gain : f32,\n  sunDir : vec3<f32>,\n  sunColor : vec3<f32>,\n  ambient : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vWorldNormal : vec3<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vWorldNormal = normalize((u.normalMatrix * in.normal));\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let n = normalize(in.vWorldNormal);\n  return vec4<f32>(((u.baseColor * u.gain) * (u.ambient + (u.sunColor * max(dot(n, u.sunDir), 0.0)))), 1.0);\n}\n",
+          "specularMRT": {
+            "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  baseColor : vec3<f32>,\n  gain : f32,\n  sunDir : vec3<f32>,\n  sunColor : vec3<f32>,\n  ambient : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vWorldNormal : vec3<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vWorldNormal = normalize((u.normalMatrix * in.normal));\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\nfn selenaSurface(in : VertexOutput) -> vec4<f32> {\n  let n = normalize(in.vWorldNormal);\n  return vec4<f32>(((u.baseColor * u.gain) * (u.ambient + (u.sunColor * max(dot(n, u.sunDir), 0.0)))), 1.0);\n}\n\nstruct SelenaFragmentOutput {\n  @location(0) color : vec4<f32>,\n  @location(1) specular : vec4<f32>,\n};\n\n@fragment\nfn fragmentMainSpecular(in : VertexOutput) -> SelenaFragmentOutput {\n  let color = selenaSurface(in);\n  let specular = vec3<f32>(0.0);\n  return SelenaFragmentOutput(color, vec4<f32>(specular, color.a));\n}\n"
+          }
+        },
+        {
+          "target": "gles",
+          "vertex": "#version 300 es\nin vec3 position;\nin vec3 normal;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 baseColor;\nuniform float gain;\nuniform vec3 sunDir;\nuniform vec3 sunColor;\nuniform vec3 ambient;\nout vec3 vWorldNormal;\n\nvoid main() {\n  vWorldNormal = normalize((normalMatrix * normal));\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
+          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 baseColor;\nuniform float gain;\nuniform vec3 sunDir;\nuniform vec3 sunColor;\nuniform vec3 ambient;\nin vec3 vWorldNormal;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vWorldNormal);\n  fragColor = vec4(((baseColor * gain) * (ambient + (sunColor * max(dot(n, sunDir), 0.0)))), 1.0);\n}\n",
+          "specularMRT": {
+            "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 baseColor;\nuniform float gain;\nuniform vec3 sunDir;\nuniform vec3 sunColor;\nuniform vec3 ambient;\nin vec3 vWorldNormal;\nlayout(location = 0) out vec4 fragColor;\nlayout(location = 1) out vec4 specularColor;\n\nvec4 selenaSurface() {\n  vec3 n = normalize(vWorldNormal);\n  return vec4(((baseColor * gain) * (ambient + (sunColor * max(dot(n, sunDir), 0.0)))), 1.0);\n}\n\nvoid main() {\n  vec4 color = selenaSurface();\n  vec3 specular = vec3(0.0);\n  fragColor = color;\n  specularColor = vec4(specular, color.a);\n}\n"
+          }
+        }
+      ]
+    },
+    {
+      "name": "GlowTinted",
+      "layout": {
+        "specularOutput": {
+          "semantic": "specular",
+          "location": 1,
+          "type": "vec4",
+          "colorSpace": "linear",
+          "authored": false,
+          "glExtensions": [
+            "WEBGL_draw_buffers"
+          ]
+        },
+        "schemaVersion": "selena.descriptor.v1",
+        "languageVersion": "selena.lang.v1",
+        "material": "GlowTinted",
+        "kind": "mesh",
+        "entryPoints": {
+          "fragmentSpecular": "fragmentMainSpecular",
+          "vertex": "vertexMain",
+          "fragment": "fragmentMain"
+        },
+        "uniformBlock": {
+          "size": 192,
+          "fields": [
+            {
+              "name": "mvp",
+              "type": "mat4",
+              "offset": 0,
+              "size": 64
+            },
+            {
+              "name": "normalMatrix",
+              "type": "mat3",
+              "offset": 64,
+              "size": 48
+            },
+            {
+              "name": "baseColor",
+              "type": "vec3",
+              "offset": 112,
+              "size": 12
+            },
+            {
+              "name": "gain",
+              "type": "float",
+              "offset": 124,
+              "size": 4
+            },
+            {
+              "name": "tint",
+              "type": "vec3",
+              "offset": 128,
+              "size": 12
+            },
+            {
+              "name": "sunDir",
+              "type": "vec3",
+              "offset": 144,
+              "size": 12,
+              "class": "context",
+              "source": "engine"
+            },
+            {
+              "name": "sunColor",
+              "type": "vec3",
+              "offset": 160,
+              "size": 12,
+              "class": "context",
+              "source": "engine"
+            },
+            {
+              "name": "ambient",
+              "type": "vec3",
+              "offset": 176,
+              "size": 12,
+              "class": "context",
+              "source": "engine"
+            }
+          ],
+          "defaults": [
+            {
+              "name": "baseColor",
+              "type": "vec3",
+              "values": [
+                0.8,
+                0.5,
+                0.3
+              ]
+            },
+            {
+              "name": "gain",
+              "type": "float",
+              "values": [
+                1
+              ]
+            },
+            {
+              "name": "tint",
+              "type": "vec3",
+              "values": [
+                0.4,
+                0.9,
+                1
+              ]
+            }
+          ]
+        },
+        "attributes": [
+          {
+            "name": "position",
+            "location": 0,
+            "type": "vec3"
+          },
+          {
+            "name": "normal",
+            "location": 1,
+            "type": "vec3"
+          }
+        ],
+        "textures": [],
+        "wgsl": {
+          "group": 0,
+          "binding": 0
+        },
+        "metal": {
+          "buffer": 0
+        },
+        "context": [
+          "sunDir",
+          "sunColor",
+          "ambient"
+        ],
+        "engineVersion": "selena.engine.v1"
+      },
+      "shaders": [
+        {
+          "target": "wgsl",
+          "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  baseColor : vec3<f32>,\n  gain : f32,\n  tint : vec3<f32>,\n  sunDir : vec3<f32>,\n  sunColor : vec3<f32>,\n  ambient : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vWorldNormal : vec3<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vWorldNormal = normalize((u.normalMatrix * in.normal));\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  return vec4<f32>((((u.baseColor * u.gain) * (u.ambient + (u.sunColor * max(dot(normalize(in.vWorldNormal), u.sunDir), 0.0)))) * u.tint), 1.0);\n}\n",
+          "specularMRT": {
+            "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  baseColor : vec3<f32>,\n  gain : f32,\n  tint : vec3<f32>,\n  sunDir : vec3<f32>,\n  sunColor : vec3<f32>,\n  ambient : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vWorldNormal : vec3<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vWorldNormal = normalize((u.normalMatrix * in.normal));\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\nfn selenaSurface(in : VertexOutput) -> vec4<f32> {\n  return vec4<f32>((((u.baseColor * u.gain) * (u.ambient + (u.sunColor * max(dot(normalize(in.vWorldNormal), u.sunDir), 0.0)))) * u.tint), 1.0);\n}\n\nstruct SelenaFragmentOutput {\n  @location(0) color : vec4<f32>,\n  @location(1) specular : vec4<f32>,\n};\n\n@fragment\nfn fragmentMainSpecular(in : VertexOutput) -> SelenaFragmentOutput {\n  let color = selenaSurface(in);\n  let specular = vec3<f32>(0.0);\n  return SelenaFragmentOutput(color, vec4<f32>(specular, color.a));\n}\n"
+          }
+        },
+        {
+          "target": "gles",
+          "vertex": "#version 300 es\nin vec3 position;\nin vec3 normal;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 baseColor;\nuniform float gain;\nuniform vec3 tint;\nuniform vec3 sunDir;\nuniform vec3 sunColor;\nuniform vec3 ambient;\nout vec3 vWorldNormal;\n\nvoid main() {\n  vWorldNormal = normalize((normalMatrix * normal));\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
+          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 baseColor;\nuniform float gain;\nuniform vec3 tint;\nuniform vec3 sunDir;\nuniform vec3 sunColor;\nuniform vec3 ambient;\nin vec3 vWorldNormal;\nout vec4 fragColor;\n\nvoid main() {\n  fragColor = vec4((((baseColor * gain) * (ambient + (sunColor * max(dot(normalize(vWorldNormal), sunDir), 0.0)))) * tint), 1.0);\n}\n",
+          "specularMRT": {
+            "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 baseColor;\nuniform float gain;\nuniform vec3 tint;\nuniform vec3 sunDir;\nuniform vec3 sunColor;\nuniform vec3 ambient;\nin vec3 vWorldNormal;\nlayout(location = 0) out vec4 fragColor;\nlayout(location = 1) out vec4 specularColor;\n\nvec4 selenaSurface() {\n  return vec4((((baseColor * gain) * (ambient + (sunColor * max(dot(normalize(vWorldNormal), sunDir), 0.0)))) * tint), 1.0);\n}\n\nvoid main() {\n  vec4 color = selenaSurface();\n  vec3 specular = vec3(0.0);\n  fragColor = color;\n  specularColor = vec4(specular, color.a);\n}\n"
+          }
+        }
+      ]
+    }
+  ]
+}
