@@ -510,6 +510,7 @@ type IRLight struct {
 	ShadowSize     int         `json:"shadowSize,omitempty"`
 	ShadowCascades int         `json:"shadowCascades,omitempty"`
 	ShadowSoftness float64     `json:"shadowSoftness,omitempty"`
+	ShadowDistance float64     `json:"shadowDistance,omitempty"`
 }
 
 // IRPostEffect describes one post-processing pass.
@@ -637,6 +638,7 @@ func validateIRLight(index int, light IRLight) []string {
 		{"range", light.Range}, {"decay", light.Decay},
 		{"width", light.Width}, {"height", light.Height},
 		{"shadowBias", light.ShadowBias}, {"shadowSoftness", light.ShadowSoftness},
+		{"shadowDistance", light.ShadowDistance},
 	}
 	for _, field := range numeric {
 		if math.IsNaN(field.value) || math.IsInf(field.value, 0) {
@@ -651,6 +653,7 @@ func validateIRLight(index int, light IRLight) []string {
 		{"penumbra", light.Penumbra}, {"range", light.Range},
 		{"decay", light.Decay}, {"width", light.Width},
 		{"height", light.Height}, {"shadowSoftness", light.ShadowSoftness},
+		{"shadowDistance", light.ShadowDistance},
 	}
 	for _, field := range nonNegative {
 		if field.value < 0 {
@@ -1088,6 +1091,7 @@ func lightsToIR(items []LightIR) []IRLight {
 			ShadowSize:     item.ShadowSize,
 			ShadowCascades: item.ShadowCascades,
 			ShadowSoftness: item.ShadowSoftness,
+			ShadowDistance: item.ShadowDistance,
 		})
 	}
 	return out

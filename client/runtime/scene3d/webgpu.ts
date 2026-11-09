@@ -404,18 +404,7 @@
     "    _pad3: u32,",
     "};",
     "",
-    "struct ShadowUniforms {",
-    "    lightSpaceMatrix0: mat4x4f,",
-    "    lightSpaceMatrix1: mat4x4f,",
-    "    hasShadow0: u32,",
-    "    hasShadow1: u32,",
-    "    shadowBias0: f32,",
-    "    shadowBias1: f32,",
-    "    shadowLightIndex0: i32,",
-    "    shadowLightIndex1: i32,",
-    "    _pad0: u32,",
-    "    _pad1: u32,",
-    "};",
+    WGSL_SHADOW_UNIFORMS_STRUCT,
   ].join("\n");
 
   // -- PBR material uniform structure --
@@ -1831,9 +1820,9 @@
     "@group(0) @binding(1) var<storage, read> lights: array<Light>;",
     "@group(0) @binding(2) var<uniform> fog: FogUniforms;",
     "@group(0) @binding(3) var<uniform> env: EnvUniforms;",
-    "@group(0) @binding(4) var shadowMap0: texture_depth_2d;",
+    "@group(0) @binding(4) var shadowMap0: texture_depth_2d_array;",
     "@group(0) @binding(5) var shadowSampler0: sampler_comparison;",
-    "@group(0) @binding(6) var shadowMap1: texture_depth_2d;",
+    "@group(0) @binding(6) var shadowMap1: texture_depth_2d_array;",
     "@group(0) @binding(7) var shadowSampler1: sampler_comparison;",
     "@group(0) @binding(8) var<uniform> shadow: ShadowUniforms;",
     "@group(0) @binding(9) var iblIrradiance: texture_cube<f32>;",
@@ -1873,63 +1862,8 @@
       "@group(1) @binding(17) var thicknessTex: texture_2d<f32>;",
       "@group(1) @binding(18) var thicknessSamp: sampler;",
       "",
-    "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
-    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
-    "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
-    "    return vec3f(projCoords3.x * 0.5 + 0.5, 0.5 - projCoords3.y * 0.5, projCoords3.z);",
-    "}",
-    "",
-    // 4-tap Poisson disk PCF shadow sampling for shadow slot 0.
-    "fn shadowFactor0(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
-    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
-    "    if (lightSpacePos.w <= 0.0) { return 1.0; }",
-    "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
-    "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
-    "    if (!inside) { return 1.0; }",
-    "    let poissonDisk = array<vec2f, 4>(",
-    "        vec2f(-0.94201624, -0.39906216),",
-    "        vec2f(0.94558609, -0.76890725),",
-    "        vec2f(-0.094184101, -0.92938870),",
-    "        vec2f(0.34495938, 0.29387760),",
-    "    );",
-    "",
-    "    var shadowVal: f32 = 0.0;",
-    "    let texDim = textureDimensions(shadowMap0);",
-    "    let texelSize = 1.0 / f32(texDim.x);",
-    "",
-    "    for (var i = 0u; i < 4u; i = i + 1u) {",
-    "        let sampleUV = clamp(projCoords.xy + poissonDisk[i] * texelSize, vec2f(0.0), vec2f(1.0));",
-    "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
-    "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap0, shadowSampler0, sampleUV, refDepth);",
-    "    }",
-    "    return shadowVal / 4.0;",
-    "}",
-    "",
-    // 4-tap Poisson disk PCF shadow sampling for shadow slot 1.
-    "fn shadowFactor1(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
-    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
-    "    if (lightSpacePos.w <= 0.0) { return 1.0; }",
-    "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
-    "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
-    "    if (!inside) { return 1.0; }",
-    "    let poissonDisk = array<vec2f, 4>(",
-    "        vec2f(-0.94201624, -0.39906216),",
-    "        vec2f(0.94558609, -0.76890725),",
-    "        vec2f(-0.094184101, -0.92938870),",
-    "        vec2f(0.34495938, 0.29387760),",
-    "    );",
-    "",
-    "    var shadowVal: f32 = 0.0;",
-    "    let texDim = textureDimensions(shadowMap1);",
-    "    let texelSize = 1.0 / f32(texDim.x);",
-    "",
-    "    for (var i = 0u; i < 4u; i = i + 1u) {",
-    "        let sampleUV = clamp(projCoords.xy + poissonDisk[i] * texelSize, vec2f(0.0), vec2f(1.0));",
-    "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
-    "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap1, shadowSampler1, sampleUV, refDepth);",
-    "    }",
-    "    return shadowVal / 4.0;",
-    "}",
+    // Cascaded shadow sampling (webgpu-shadows module).
+    WGSL_SHADOW_CASCADE_FNS,
     "",
     // GGX/Trowbridge-Reitz normal distribution function.
     "fn distributionGGX(N: vec3f, H: vec3f, roughness: f32) -> f32 {",
@@ -2335,10 +2269,10 @@
     // Shadow attenuation follows the light associated with each slot.
     "        var shadowAtten: f32 = 1.0;",
     "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {",
-    "            if (shadow.hasShadow0 != 0u && i32(i) == shadow.shadowLightIndex0) {",
-    "                shadowAtten = shadowFactor0(in.worldPos, shadow.lightSpaceMatrix0, shadow.shadowBias0);",
-    "            } else if (shadow.hasShadow1 != 0u && i32(i) == shadow.shadowLightIndex1) {",
-    "                shadowAtten = shadowFactor1(in.worldPos, shadow.lightSpaceMatrix1, shadow.shadowBias1);",
+    "            if (i32(i) == shadow.lightIndex.x) {",
+    "                shadowAtten = shadowSlotFactor(shadowMap0, shadowSampler0, shadow.slot0, in.worldPos);",
+    "            } else if (i32(i) == shadow.lightIndex.y) {",
+    "                shadowAtten = shadowSlotFactor(shadowMap1, shadowSampler1, shadow.slot1, in.worldPos);",
     "            }",
     "        }",
     "",
@@ -3693,9 +3627,9 @@
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", viewDimension: "2d-array" } },
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", viewDimension: "2d-array" } },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
         { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
@@ -4189,15 +4123,6 @@
   // -----------------------------------------------------------------------
   // Shadow Resources
   // -----------------------------------------------------------------------
-
-  function wgpuCreateShadowMap(device, size) {
-    var texture = device.createTexture({
-      size: [size, size, 1],
-      format: "depth24plus",
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    return { texture: texture, view: texture.createView(), size: size };
-  }
 
   // -----------------------------------------------------------------------
   // Post-Processing Manager (WebGPU)
@@ -7626,7 +7551,7 @@
 
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
-    var dummyShadowView = null;
+    var dummyShadowView = null, dummyShadowArrayView = null;
 
     // Default sampler for materials.
     var linearSampler = null;
@@ -7773,7 +7698,7 @@
     var _fogUniformF   = new Float32Array(_fogUniformBuf);
     var _fogUniformU   = new Uint32Array(_fogUniformBuf);
 
-    var _shadowUniformBuf = new ArrayBuffer(160);
+    var _shadowUniformBuf = new ArrayBuffer(SCENE_WEBGPU_SHADOW_UNIFORM_BYTES);
     var _shadowUniformF   = new Float32Array(_shadowUniformBuf);
     var _shadowUniformU   = new Uint32Array(_shadowUniformBuf);
     var _shadowUniformI   = new Int32Array(_shadowUniformBuf);
@@ -8220,7 +8145,7 @@
         });
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        shadowUniformBuffer = device.createBuffer({ size: SCENE_WEBGPU_SHADOW_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBufferStride = Math.max(
           256,
           Math.floor(sceneNumber(device && device.limits && device.limits.minUniformBufferOffsetAlignment, 256))
@@ -8265,7 +8190,7 @@
           format: "depth24plus",
           usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
-        dummyShadowView = dummyShadowTex.createView();
+        dummyShadowView = dummyShadowTex.createView(); dummyShadowArrayView = dummyShadowTex.createView({ dimension: "2d-array" });
 
         // Clear the dummy shadow texture to depth 1.0.
         var initEncoder = device.createCommandEncoder();
@@ -14733,45 +14658,11 @@
       words[18] = 0; words[19] = 0;
       device.queue.writeBuffer(envUniformBuffer, 0, data);
     }
+    // uploadShadowUniforms packs every slot's cascades (webgpu-shadows module).
+    // shadowLightMatrices is kept for callers that read the one-map matrices.
     function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
-      var lightArray = Array.isArray(lights) ? lights : [];
-      // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + pad(8) = 160. Round up to 256.
-      var f = _shadowUniformF;
-      var u = _shadowUniformU;
-      var i = _shadowUniformI;
-
-      if (shadowLightMatrices[0]) {
-        f.set(shadowLightMatrices[0], 0);   // lightSpaceMatrix0 @ offset 0
-      } else {
-        f.fill(0, 0, 16);                   // zero out slot 0 (no stale matrix)
-      }
-      if (shadowLightMatrices[1]) {
-        f.set(shadowLightMatrices[1], 16);  // lightSpaceMatrix1 @ offset 64
-      } else {
-        f.fill(0, 16, 32);                  // zero out slot 1 (no stale matrix)
-      }
-
-      u[32] = shadowLightMatrices[0] ? 1 : 0;  // hasShadow0
-      u[33] = shadowLightMatrices[1] ? 1 : 0;  // hasShadow1
-
-      var bias0 = 0.005;
-      if (shadowLightIndices[0] >= 0 && lightArray[shadowLightIndices[0]]) {
-        bias0 = sceneNumber(lightArray[shadowLightIndices[0]].shadowBias, 0.005);
-      }
-      f[34] = bias0;  // shadowBias0
-
-      var bias1 = 0.005;
-      if (shadowLightIndices[1] >= 0 && lightArray[shadowLightIndices[1]]) {
-        bias1 = sceneNumber(lightArray[shadowLightIndices[1]].shadowBias, 0.005);
-      }
-      f[35] = bias1;  // shadowBias1
-
-      i[36] = shadowLightIndices[0];  // shadowLightIndex0
-      i[37] = shadowLightIndices[1];  // shadowLightIndex1
-      u[38] = 0; // pad
-      u[39] = 0; // pad
-
-      device.queue.writeBuffer(shadowUniformBuffer, 0, f);
+      wgpuPackShadowUniforms(_shadowUniformF, _shadowUniformI, shadowSlots, shadowLightIndices, Array.isArray(lights) ? lights : []);
+      device.queue.writeBuffer(shadowUniformBuffer, 0, _shadowUniformF);
     }
 
     // Normal-incidence dielectric Fresnel for an authored material IOR:
@@ -15074,8 +14965,8 @@
     var transmissionResources = JSON.parse("null"), transmissionView = JSON.parse("null");
 
     function createFrameBindGroup(shadowView0, shadowView1) {
-      var view0 = shadowView0 || dummyShadowView;
-      var view1 = shadowView1 || dummyShadowView;
+      var view0 = shadowView0 || dummyShadowArrayView;
+      var view1 = shadowView1 || dummyShadowArrayView;
       var iblIrradianceView = iblResources.active && iblResources.irradiance ? iblResources.irradiance.view : placeholderCubeView;
       var iblRadianceView = iblResources.active && iblResources.radiance ? iblResources.radiance.view : placeholderCubeView;
       var iblBRDFView = iblResources.active && iblResources.brdfLUT ? iblResources.brdfLUT.view : placeholderView;
@@ -15134,9 +15025,9 @@
           { binding: 1, resource: { buffer: lightStorageBuffer } },
           { binding: 2, resource: { buffer: fogUniformBuffer } },
           { binding: 3, resource: { buffer: envUniformBuffer } },
-          { binding: 4, resource: shadowView0 || dummyShadowView },
+          { binding: 4, resource: shadowView0 || dummyShadowArrayView },
           { binding: 5, resource: comparisonSampler },
-          { binding: 6, resource: shadowView1 || dummyShadowView },
+          { binding: 6, resource: shadowView1 || dummyShadowArrayView },
           { binding: 7, resource: comparisonSampler },
           { binding: 8, resource: { buffer: shadowUniformBuffer } },
           { binding: 9, resource: iblIrradianceView || placeholderCubeView },
@@ -16076,6 +15967,27 @@
 
     var shadowFrameBindGroups = [];
 
+    // renderLightShadowCascades fills one shadow slot (webgpu-shadows module)
+    // and renders every cascade layer. Casters cull once per light against its
+    // full-scene fit, a superset of every cascade; each cascade writes its own
+    // shadow-matrix arena slot, so no pass overwrites another's matrix.
+    function renderLightShadowCascades(encoder: any, light: any, lightIndex: number, slot: number, rawLightMatrix: any, bounds: any, frame: any) {
+      var cascades = sceneWebGPUShadowCascadeCount(light, frame.camera);
+      var size = Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024)));
+      // The authored memory cap covers every cascade layer of the light.
+      size = resolveShadowSize(size, frame.maxPixels > 0 ? frame.maxPixels / cascades : frame.maxPixels);
+      var shadowSlot = shadowSlots[slot] = wgpuFitShadowSlot(wgpuEnsureShadowSlot(device, shadowSlots[slot], size, cascades, destroyRendererGPUResource), light, rawLightMatrix,
+        { view: scratchViewMatrix, camera: frame.camera, aspect: frame.aspect, bounds: bounds });
+      var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
+      frame.matrices[slot] = lightMatrix;
+      frame.indices[slot] = lightIndex;
+      frame.gpuDriven.lightView(encoder, lightMatrix, slot);
+      frame.crowd.lightView(encoder, lightMatrix, slot);
+      for (var c = 0; c < cascades; c++) {
+        renderShadowPass(encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
+      }
+    }
+
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
       var sp = getShadowPipeline();
       if (!sp) return;
@@ -16083,9 +15995,9 @@
       // Each light owns a base matrix followed by its retained caster matrices.
       // Reserve both regions before encoding so the second light cannot grow
       // or destroy the shared arena before this frame's single submission.
-      var baseSlot = Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))) * (objects.length + 1);
+      var baseSlot = Math.max(0, Math.floor(sceneNumber(shadowResource.arenaSlot, sceneNumber(shadowResource.lightSlot, 0)))) * (objects.length + 1);
       var baseMatrixOffset = baseSlot * shadowFrameBufferStride;
-      if (!ensureShadowFrameBufferCapacity(Math.max(2 * (objects.length + 1), baseSlot + objects.length + 1))) return;
+      if (!ensureShadowFrameBufferCapacity(Math.max(sceneNumber(shadowResource.arenaSlots, 2) * (objects.length + 1), baseSlot + objects.length + 1))) return;
       device.queue.writeBuffer(shadowFrameBuffer, baseMatrixOffset, lightMatrix, 0, 16);
       var shadowBG = wgpuShadowFrameBindGroup(device, shadowFrameBindGroups, shadowBindGroupLayout, shadowFrameBuffer);
       var shadowPassDescriptor = {
@@ -18534,6 +18446,7 @@
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
       var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
+      var shadowFrame = { bundle: bundle, camera: cam, maxPixels: shadowMaxPixels, gpuDriven: gpuDriven, crowd: crowd, aspect: scaledW / scaledH, buffers: pbrSceneBuffers, matrices: shadowLightMatrices, indices: shadowLightIndices };
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
@@ -18549,23 +18462,7 @@
         var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
         if (!rawLightMatrix) continue;
 
-        var slot = activeShadowCount;
-        var shadowSize = sceneNumber(light.shadowSize, 1024);
-        shadowSize = Math.max(256, Math.min(4096, shadowSize));
-        shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
-
-        if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
-          if (shadowSlots[slot]) destroyRendererGPUResource(shadowSlots[slot].texture);
-          shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
-        }
-
-        var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
-        shadowLightMatrices[slot] = lightMatrix;
-        shadowLightIndices[slot] = li;
-
-        gpuDriven.lightView(encoder, lightMatrix, slot);
-        crowd.lightView(encoder, lightMatrix, slot);
-        renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots[slot].view, lightSlot: slot }, pbrSceneBuffers);
+        renderLightShadowCascades(encoder, light, li, activeShadowCount, rawLightMatrix, sceneBounds, shadowFrame);
         activeShadowCount++;
       }
 
@@ -19188,7 +19085,7 @@
       mainMSAAView = null;
       destroyRendererGPUResource(dummyShadowTex);
       dummyShadowTex = null;
-      dummyShadowView = null;
+      dummyShadowView = dummyShadowArrayView = null;
       destroyRendererGPUResource(placeholderTex);
       placeholderTex = null;
       placeholderView = null;

@@ -1324,6 +1324,10 @@ type DirectionalLight struct {
 	ShadowSize     int
 	ShadowCascades int
 	ShadowSoftness float64
+	// ShadowDistance limits how far from the camera the shadow cascades
+	// reach, in world units. Zero uses the camera far plane. A shorter
+	// distance spends every cascade's texels on the visible play area.
+	ShadowDistance float64
 	Transition     Transition
 	InState        *LightProps
 	OutState       *LightProps
@@ -3984,6 +3988,7 @@ func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worl
 		ShadowSize:     light.ShadowSize,
 		ShadowCascades: normalizeShadowCascades(light.ShadowCascades),
 		ShadowSoftness: normalizeShadowSoftness(light.ShadowSoftness),
+		ShadowDistance: light.ShadowDistance,
 		Transition:     lowerTransition(light.Transition),
 		InState:        light.InState.legacyProps(),
 		OutState:       light.OutState.legacyProps(),

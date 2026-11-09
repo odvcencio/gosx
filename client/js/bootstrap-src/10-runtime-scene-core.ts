@@ -1125,6 +1125,7 @@
           ? Math.max(0, Math.min(1, Math.floor(sceneFallbackNumber(item, current, "shadowCascades", 0))))
           : 0),
       shadowSoftness: Math.max(0, sceneFallbackNumber(item, current, "shadowSoftness", 0)),
+      shadowDistance: Math.max(0, sceneFallbackNumber(item, current, "shadowDistance", 0)),
       ...lifecycle,
     };
     if (normalized.kind === "directional" && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {

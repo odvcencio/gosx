@@ -571,6 +571,7 @@ type LightIR struct {
 	ShadowSize     int            `json:"shadowSize,omitempty"`
 	ShadowCascades int            `json:"shadowCascades,omitempty"`
 	ShadowSoftness float64        `json:"shadowSoftness,omitempty"`
+	ShadowDistance float64        `json:"shadowDistance,omitempty"`
 	Transition     TransitionIR   `json:"transition,omitzero"`
 	InState        map[string]any `json:"inState,omitempty"`
 	OutState       map[string]any `json:"outState,omitempty"`
@@ -3339,6 +3340,7 @@ func (item LightIR) legacyProps() map[string]any {
 	setInt(record, "shadowSize", item.ShadowSize)
 	setInt(record, "shadowCascades", item.ShadowCascades)
 	setNumeric(record, "shadowSoftness", item.ShadowSoftness)
+	setNumeric(record, "shadowDistance", item.ShadowDistance)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	setString(record, "parentNode", item.ParentNode)
 	return record

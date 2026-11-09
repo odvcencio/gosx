@@ -476,6 +476,7 @@
       validateSceneStrictOptionalInteger(diagnostics, light.shadowSize, path + ".shadowSize", "scene.shadow.invalid_size", "Light shadowSize must be a non-negative integer", light.id, true);
       validateSceneStrictOptionalInteger(diagnostics, light.shadowCascades, path + ".shadowCascades", "scene.shadow.invalid_size", "Light shadowCascades must be a non-negative integer", light.id, true);
       validateSceneStrictOptionalNumber(diagnostics, light.shadowSoftness, path + ".shadowSoftness", light.id, "scene.shadow.invalid_size", "Light shadowSoftness must be finite", "scene.shadow.invalid_size", "Light shadowSoftness must not be negative");
+      validateSceneStrictOptionalNumber(diagnostics, light.shadowDistance, path + ".shadowDistance", light.id, "scene.shadow.invalid_size", "Light shadowDistance must be finite", "scene.shadow.invalid_size", "Light shadowDistance must not be negative");
       validateSceneStrictLiveFields(diagnostics, light.live, path, light.id);
     }
 

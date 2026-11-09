@@ -1188,8 +1188,8 @@
       return;
     }
 
-    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5);
-    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, camFar || 100, n, lambda);
+    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5), reach = sceneNumber(light.shadowDistance, 0);
+    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, reach > 0 ? Math.min(reach, camFar || reach) : camFar || 100, n, lambda);
 
     // Light direction (normalized) — matches sceneShadowLightSpaceMatrix.
     var dx = sceneNumber(light.directionX, 0);

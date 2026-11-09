@@ -150,9 +150,10 @@ for (const kinds of lightPairs) {
       assert.equal(harness.fake.state.submitCount - submitStart, 1, "both lights share one submitted frame");
       assert.equal(frames.length, 1);
       assert.equal(frames[0].length, 2, "unsupported light consumes no shadow slot");
-      const receiver = harness.fake.state.writeBufferCalls.filter((call) => call.data?.length === 40).at(-1);
+      // ShadowUniforms: slot 0 cascade 0 at float 0, slot 1 cascade 0 at 80.
+      const receiver = harness.fake.state.writeBufferCalls.filter((call) => call.data?.length === 164).at(-1);
       assert.ok(receiver, "frame uploads both receiver light matrices");
-      const matrices = [Array.from(receiver.data.slice(0, 16)), Array.from(receiver.data.slice(16, 32))];
+      const matrices = [Array.from(receiver.data.slice(0, 16)), Array.from(receiver.data.slice(80, 96))];
       assert.notDeepEqual(matrices[0], matrices[1], "fixture lights produce distinct matrices");
       const slotsPerLight = bundle.meshObjects.length + 1;
       const arenas = new Set();
