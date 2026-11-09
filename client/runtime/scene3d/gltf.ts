@@ -204,16 +204,38 @@
     return out;
   }
 
-  // Compression extensions rewrite the bytes a bufferView or primitive points
-  // at. The loader has no decoder for them, so reading the raw bytes would
-  // build a corrupt mesh. Throw instead, with the extension named.
-  function gltfRejectCompressedBufferView(bufferView) {
-    if (gltfExtension(bufferView, "EXT_meshopt_compression")) {
-      throw new Error(
-        "glTF uses EXT_meshopt_compression, which this loader cannot decode. " +
-        "Re-export the asset without meshopt compression, or run gltfpack without -cc."
-      );
+  // EXT_meshopt_compression stores a bufferView's bytes compressed in another
+  // buffer range. The decoder ships beside this loader (asset-meshopt.ts) and
+  // returns the plain bytes, which the rest of the loader reads as an ordinary
+  // bufferView. The result is cached per bufferView record, so an accessor pair
+  // sharing a view decodes it once.
+  var gltfMeshoptViews: WeakMap<any, any> = new WeakMap();
+
+  function gltfDecodeMeshoptBufferView(gltf: any, source: any, bufferView: any, index: number, owner: string) {
+    var ext = gltfExtension(bufferView, "EXT_meshopt_compression");
+    if (!ext) {
+      return null;
     }
+    var cached = gltfMeshoptViews.get(bufferView);
+    if (cached) {
+      return cached;
+    }
+    var api = (window as any).__gosx_scene3d_asset_ext && (window as any).__gosx_scene3d_asset_ext.meshopt;
+    if (!api) {
+      throw new Error("glTF bufferView " + index + " uses EXT_meshopt_compression but the decoder is not loaded");
+    }
+    var resolved = gltfResolveBuffer(gltf, source, ext.buffer == null ? 0 : ext.buffer, owner + " meshopt bufferView " + index);
+    var offset = ext.byteOffset == null ? 0 : ext.byteOffset;
+    var length = ext.byteLength;
+    if (!gltfNonnegativeInteger(offset) || !gltfNonnegativeInteger(length) || offset + length > resolved.byteLength) {
+      throw new Error("glTF bufferView " + index + " meshopt range exceeds its buffer");
+    }
+    if (!gltfNonnegativeInteger(ext.count) || !gltfNonnegativeInteger(ext.byteStride) || ext.byteStride < 1) {
+      throw new Error("glTF bufferView " + index + " has an invalid meshopt count or byteStride");
+    }
+    var decoded = api.decode(ext.count, ext.byteStride, resolved.bytes.subarray(offset, offset + length), ext.mode, ext.filter || "NONE");
+    gltfMeshoptViews.set(bufferView, decoded);
+    return decoded;
   }
 
   function gltfRejectCompressedPrimitive(primitive) {
@@ -267,7 +289,10 @@
       throw new Error("glTF " + owner + " references unavailable bufferView " + index);
     }
     var bufferView = gltf.bufferViews[index];
-    gltfRejectCompressedBufferView(bufferView);
+    var meshopt = gltfDecodeMeshoptBufferView(gltf, source, bufferView, index, owner);
+    if (meshopt) {
+      return { record: bufferView, bytes: meshopt, bufferByteLength: meshopt.byteLength, offset: 0, byteLength: meshopt.byteLength };
+    }
     var bufferIndex = bufferView.buffer == null ? 0 : bufferView.buffer;
     var resolved = gltfResolveBuffer(gltf, source, bufferIndex, owner + " bufferView " + index);
     var offset = bufferView.byteOffset == null ? 0 : bufferView.byteOffset;
@@ -2382,6 +2407,11 @@
         ? node.weights
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ : mesh.weights;
       var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node, material.uvSet, material.uvSet1);
+      if (!geometry.uvs1) {
+        // The material names a second UV set but this primitive carries none.
+        delete (material as any).occlusionTexCoord;
+        delete (material as any).emissiveTexCoord;
+      }
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
@@ -2759,6 +2789,7 @@
     "KHR_texture_transform",
     "KHR_lights_punctual",
     "GOSX_texture_variants",
+    "EXT_meshopt_compression",
   ];
 
   // Warn once per load about required extensions the loader ignores. A required
@@ -3018,6 +3049,12 @@
           throw new Error("glTF buffer 0 embedded BIN has more than 3 padding bytes");
         }
         buffers.push(embeddedBuffer);
+        continue;
+      }
+      var meshoptFallback = declaration.extensions && declaration.extensions.EXT_meshopt_compression;
+      if (!uri && meshoptFallback && meshoptFallback.fallback === true) {
+        // An uncompressed fallback copy; the decoder replaces every view that reads it.
+        buffers.push(null);
         continue;
       }
       if (!uri) {

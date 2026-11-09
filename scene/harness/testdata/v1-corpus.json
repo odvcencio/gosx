@@ -71,13 +71,13 @@
     {
       "id": "gltf-meshopt-rejection",
       "state": "enforced",
-      "requirement": "Meshopt-compressed buffer views fail closed with a named diagnostic.",
+      "requirement": "Meshopt-compressed buffer views decode, and fail closed with a named diagnostic when the decoder is absent.",
       "targetBackends": ["webgpu", "webgl2"],
       "ciOwners": [
         {"label": "js-tests-b", "job": "js-tests-b", "step": "JavaScript runtime contract tests (other suites)", "command": "make test-js-node NODE_TEST_GROUP=other"}
       ],
       "evidence": [
-        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "EXT_meshopt_compression raises a named error instead of reading garbage", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests-b"}
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "EXT_meshopt_compression names the extension when its decoder is not loaded", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests-b"}
       ]
     },
     {

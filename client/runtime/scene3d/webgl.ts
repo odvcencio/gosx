@@ -5629,13 +5629,13 @@
   // Compile PBR vertex + fragment shaders and return a program object with
   // cached uniform locations. Returns null on compile/link failure so the
   // caller can fall back to the legacy renderer.
-  function createScenePBRProgram(gl, detail = false) {
-    const warmed = detail ? null : scenePBRTakeInitialProgram(gl, "base");
+  function createScenePBRProgram(gl, detail = false, variant: any = null) {
+    const warmed = detail || variant ? null : scenePBRTakeInitialProgram(gl, "base");
     if (warmed === false) return null;
     if (warmed) {
       return scenePBRFinalizeBaseProgram(gl, warmed);
     }
-    const compiled = scenePBRBuildProgram(gl, SCENE_PBR_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "PBR shader");
+    const compiled = scenePBRBuildProgram(gl, variant ? variant.vertex(SCENE_PBR_VERTEX_SOURCE) : SCENE_PBR_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : variant ? variant.fragment(SCENE_PBR_FRAGMENT_SOURCE) : SCENE_PBR_FRAGMENT_SOURCE), "PBR shader");
     if (!compiled) return null;
     const { program, vertexShader, fragmentShader } = compiled;
 
@@ -5987,8 +5987,8 @@
   // Compile the skinned PBR vertex shader with the same PBR fragment shader.
   // Returns a program object with cached attribute/uniform locations including
   // the joint matrix array and skin flag, or null on failure.
-  function createScenePBRSkinnedProgram(gl, detail = false) {
-    return scenePBRCreateProgramInfo(gl, SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader", function(program: any) {
+  function createScenePBRSkinnedProgram(gl, detail = false, variant: any = null) {
+    return scenePBRCreateProgramInfo(gl, variant ? variant.vertex(SCENE_PBR_SKINNED_VERTEX_SOURCE) : SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : variant ? variant.fragment(SCENE_PBR_FRAGMENT_SOURCE) : SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader", function(program: any) {
 
       // Cache attribute locations.
       var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights");
@@ -6122,7 +6122,7 @@
   // Joint palette texture shared by every skinned draw on this context.
   // Rigs above SCENE_UNIFORM_SKIN_JOINTS joints upload their matrices here
   // (4 RGBA32F texels per matrix on one row) instead of the uniform array.
-  var sceneJointPalettes = new WeakMap();
+  var sceneJointPalettes = new WeakMap(); if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = window.__gosx_scene3d_asset_ext.uv1 || { use() { return null; }, bind() {}, dispose() {} }; }
   function sceneUploadJointPalette(gl, locs, matrices, jointCount) {
     var jointPalette = sceneJointPalettes.get(gl);
     if (!locs.jointTexture || !locs.jointTexCount) return false;
@@ -9168,8 +9168,8 @@
 	      return skinnedProgram;
 	    }
 
-    function ensureCustomProgram(material) {
-      return scenePBREnsureCustomProgram(gl, customProgramCache, material);
+    function ensureCustomProgram(material, skinned = false) {
+      return skinned ? null : scenePBREnsureCustomProgram(gl, customProgramCache, material);
     }
 
     function ensureSelenaProgram(material, skinned) {
@@ -9963,7 +9963,7 @@
           continue;
         }
 
-        var customProgram = sceneWebGLAuthoredProgram(gl, selenaSurfacePrograms, mat, isSkinned, ensureCustomProgram);
+        var customProgram = sceneWebGLAuthoredProgram(gl, selenaSurfacePrograms, mat, isSkinned, ensureCustomProgram, obj, { base: createScenePBRProgram, skinned: createScenePBRSkinnedProgram, usable: scenePBRUsableProgramInfo });
         if (customProgram === false) continue;
 
         // Reaching this line means the object is about to draw with the
@@ -10091,7 +10091,7 @@
           gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
         }
 
-        // Joints and weights (skinned meshes only).
+        window.__gosx_scene3d_asset_ext.uv1.bind(gl, currentProgram, obj, mat);
         if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
           var joints = obj.vertices.joints;
           var weights = obj.vertices.weights;
@@ -10838,7 +10838,7 @@
       instancedStreamRecords.clear();
       rigidBatchRecords.clear();
       disposeCrowdResources();
-      sceneDisposeJointPalette(gl);
+      sceneDisposeJointPalette(gl); window.__gosx_scene3d_asset_ext.uv1.dispose(gl);
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
       disposeOwnedProgram(rigidShadowProgram);

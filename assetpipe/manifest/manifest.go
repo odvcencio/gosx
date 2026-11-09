@@ -31,8 +31,11 @@ type Model struct {
 	Bytes int64  `json:"bytes"`
 	// Radius is the radius of the model's world-space bounding sphere around
 	// its bounds center, in model units. Zero means the bounds were unknown.
-	Radius   float64   `json:"radius"`
-	Stats    Stats     `json:"stats"`
+	Radius float64 `json:"radius"`
+	Stats  Stats   `json:"stats"`
+	// Meshopt is set when the GLBs use EXT_meshopt_compression. It describes the
+	// full-detail level.
+	Meshopt  *Meshopt  `json:"meshopt,omitempty"`
 	LODs     []LOD     `json:"lods"`
 	Textures []Texture `json:"textures,omitempty"`
 }
@@ -50,6 +53,17 @@ type Stats struct {
 	// TextureBytes estimates GPU memory for the model's images decoded to
 	// RGBA8 with a full mip chain.
 	TextureBytes int64 `json:"textureBytes"`
+}
+
+// Meshopt records the effect of mesh compression on the full-detail GLB.
+type Meshopt struct {
+	// Views counts the compressed buffer views; Skipped counts mesh views that
+	// kept their bytes because no codec could hold them.
+	Views   int `json:"views"`
+	Skipped int `json:"skipped,omitempty"`
+	// ViewBytesBefore and ViewBytesAfter are the bytes of the compressed views.
+	ViewBytesBefore int `json:"viewBytesBefore"`
+	ViewBytesAfter  int `json:"viewBytesAfter"`
 }
 
 // LOD is one level of detail. Level 0 is the full-detail model.

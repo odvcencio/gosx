@@ -120,13 +120,13 @@ function sceneWebGLSelenaSurfaceProgram(gl: WebGL2RenderingContext, cache: Map<s
   return scenePBRProgramReady(gl, record.program.program) ? record.program : false;
 }
 
-// sceneWebGLAuthoredProgram picks the authored PBR program variant for a
-// draw: the Selena surface program (false while compiling), else the
-// CustomMaterial hook program for a static mesh, else null.
-function sceneWebGLAuthoredProgram(gl: WebGL2RenderingContext, cache: Map<string, any>, material: any, skinned: boolean, ensureCustom: (material: any) => any) {
+// sceneWebGLAuthoredProgram picks the authored PBR program for a draw: the Selena surface
+// program (false while compiling), else the glTF second-UV variant when creators are given
+// (standard materials only), else the CustomMaterial hook program for a static mesh, else null.
+function sceneWebGLAuthoredProgram(gl: WebGL2RenderingContext, cache: Map<string, any>, material: any, skinned: boolean, ensureCustom: (material: any) => any, obj: any = null, creators: any = null) {
   const surface = sceneWebGLSelenaSurfaceProgram(gl, cache, material, skinned);
   if (surface !== null) return surface;
-  return skinned ? null : ensureCustom(material);
+  return (creators && window.__gosx_scene3d_asset_ext.uv1.use(gl, obj, material, skinned, creators)) || (skinned ? null : ensureCustom(material));
 }
 
 // sceneWebGLUploadSelenaSurface writes a surface program's params for one

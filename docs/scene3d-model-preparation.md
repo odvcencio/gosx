@@ -181,16 +181,17 @@ picks it from the material:
    wins.
 3. Occlusion and emissive maps may use a second set. The loader reads that
    set as `vertices.uvs1` and marks the material with `occlusionTexCoord` and
-   `emissiveTexCoord`. **The WebGPU and WebGL2 renderers do not sample the
-   second stream yet**: those maps still sample the winning set. Both renderers
-   need a second vertex stream first.
+   `emissiveTexCoord`. Both renderers sample those two maps from the second
+   stream. Base color, normal and metallic-roughness still use the winning
+   set.
 4. If other maps (normal, metallic-roughness) use a different set, the console
    warns once per material: `reads maps from different UV sets`.
 
-So a model whose base color, normal, and occlusion maps all use UV1 renders
-correctly. A model with base color on UV0 and a baked AO or lightmap on UV1
-shows the AO map through UV0 until the renderer change lands. Until then, bake
-the AO into the packed occlusion-roughness-metalness map on UV0.
+So a model with base color on UV0 and a baked AO or lightmap on UV1 renders
+correctly on WebGPU and WebGL2. The second stream applies to world-baked
+meshes (static models). Skinned, morphing and retained meshes, models whose
+material carries a Selena shader or a detail layer, and instanced models still
+sample every map from the first set.
 
 ### Joint limits
 
@@ -225,7 +226,7 @@ against the unit conversions Blender's exporter applies in each lighting mode.
 | `KHR_mesh_quantization` | Supported. `gosx assets build` writes it. |
 | `EXT_mesh_gpu_instancing` | Supported. |
 | `KHR_texture_transform` | Supported, one transform per material (base color). |
-| `EXT_meshopt_compression` | Rejected at load. Not supported yet. |
+| `EXT_meshopt_compression` | Supported: vertex attributes (version 0 codec), triangle lists (index codec 0 and 1), and the octahedral and exponential filters. The quaternion filter and the `INDICES` mode throw a named error. Run `gosx assets build --meshopt` to write it. |
 | Draco (`KHR_draco_mesh_compression`) | Rejected at load. |
 | `KHR_texture_basisu` | Maps are dropped with a warning. Use the KTX2 files from `gosx assets build` through variants instead. |
 
@@ -323,10 +324,27 @@ group := scene.ModelLODGroup(hero, "/assets/", scene.Model{
 Add `group` to the scene like any other node. `manifest` imports the standard
 library only, so a js/wasm game build can use it.
 
+### Mesh compression
+
+`--meshopt` compresses the vertex and index buffers of every built GLB (and its
+LODs) with `EXT_meshopt_compression`. The scene loader decodes it in its glTF
+chunk, so no extra download. Measured on a generated 132,000-triangle sphere
+(4 mesh buffer views, no textures): the GLB goes from 2,437,580 to 733,428
+bytes (30%), and from 1,143,697 to 388,239 bytes after gzip. Decoding all four
+views takes about 7 ms in Node 26 on the build machine. Real assets compress
+differently, so treat these as an upper bound on the saving for smooth meshes.
+
+The encoder keeps triangle and vertex order. It may rotate the corners of a
+triangle, which keeps its winding. Views that no codec can hold (a vertex view
+whose accessors do not start at the front, an index view that is not a plain
+triangle list) keep their bytes, and the manifest counts them as skipped.
+Output is larger than gltfpack's because the encoder skips its search;
+`gltfpack` reads these files without error.
+
 ### What the build does not do yet
 
 - It does not use `KHR_texture_basisu`. See "KTX2 textures in the GLB" below.
-- It does not compress meshes with meshopt or Draco.
+- It does not compress meshes with Draco.
 - It does not simplify primitives that carry morph targets or compression
   extensions, so such a model may have an empty LOD chain. The build prints a
   warning that names the reason.

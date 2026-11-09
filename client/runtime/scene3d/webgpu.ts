@@ -3615,7 +3615,7 @@
       vertex: {
         module: vertexModule,
         entryPoint: "vertexMain",
-        buffers: WGPU_PBR_VERTEX_LAYOUT,
+        buffers: vertexModule.gosxVertexLayout || WGPU_PBR_VERTEX_LAYOUT,
       },
       fragment: sceneWebGPUColorFragment(fragmentModule, targetFormat, wgpuBlendState(blendMode)),
       primitive: { topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 ? "cw" : "ccw" },
@@ -6672,7 +6672,7 @@
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
     var pbrInstancedCullVertexModule = null;
-    var pbrFragmentModule = null, pbrUnshadowedFragmentModule = null, pbrShadowsActive = false;
+    var pbrFragmentModule = null, pbrUnshadowedFragmentModule = null, pbrShadowsActive = false; if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = Object.assign({ gpuWanted() { return ""; }, gpuModules() { return null; }, gpuDraw() {}, gpuDispose() {} }, window.__gosx_scene3d_asset_ext.uv1); }
     var elioSkinShaderModule: any = null;
     var elioSkinPipeline: any = null;
     var computedMorphShaderModule: any = null;
@@ -8232,11 +8232,11 @@
     // Get or create a PBR pipeline for the given blend mode.
     // PBR variant: true for detail, a Selena surface variant, else false.
     function pbrVariant(material: any) { return material && material.detail ? true : sceneWebGPUSelenaSurfaceVariant(device, selenaSurfaces, material, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT) || false; }
-    function getPBRPipeline(blendMode, depthWrite, frontFace, detail: any = false) {
+    function getPBRPipeline(blendMode, depthWrite, frontFace, detail: any = false, uv1 = "") {
       var reflected = frontFace === "cw", variant = detail === true ? detailResources : detail || null, kind = sceneWebGPUPipelineKind(reflected, "pbr");
-      var key = pbrKeyPrefix(!!variant) + wgpuPipelineKey(detail === true ? sceneDetailVariantKey(kind, true) : variant ? variant.key + ":" + kind : kind, blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = pbrKeyPrefix(!!variant) + wgpuPipelineKey((detail === true ? sceneDetailVariantKey(kind, true) : variant ? variant.key + ":" + kind : kind) + (uv1 ? ":uv1" + uv1 : ""), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, variant ? variant.pipelineLayout : pbrPipelineLayout, pbrVertexModule, variant ? variant.fragment : pbrFragment(false), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
+      var uv1Modules = uv1 ? window.__gosx_scene3d_asset_ext.uv1.gpuModules(device, WGSL_PBR_VERTEX, WGSL_PBR_FRAGMENT, uv1) : null; var pipeline = wgpuCreatePBRPipeline(device, variant ? variant.pipelineLayout : pbrPipelineLayout, uv1Modules ? uv1Modules.vertex : pbrVertexModule, variant ? variant.fragment : uv1Modules ? uv1Modules.fragment : pbrFragment(false), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -15913,13 +15913,13 @@
         }
         return false;
       }
-      function bindPBRPipeline(reflected, material = Object.create(null)) {
+      function bindPBRPipeline(reflected, material = Object.create(null), uv1 = "") {
         var hasDetail = Boolean(material && material.detail), variant = pbrVariant(material), surface = variant === true ? null : variant;
         var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : (surface ? surface.key + ":" : "") + sceneWebGPUPipelineKind(reflected, "pbr");
-        kind += ":" + objectDepthWrite;
+        kind += ":" + objectDepthWrite + uv1;
         if (surface && surface.groupLayout) pass.setBindGroup(2, sceneWebGPUSelenaSurfaceGroup(device, selenaSurfaces, material, surface, selenaFrame));
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", variant)));
+        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", variant, uv1)));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -16039,7 +16039,7 @@
           }
           continue;
         }
-        bindPBRPipeline(reflectedDirect, mat);
+        bindPBRPipeline(reflectedDirect, mat, window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat));
 
         var matBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
         var modelOffset = webGPUCutawayOffset(materialFrame, obj);
@@ -16078,7 +16078,7 @@
         }
         if (!worldBuffersBound) worldBuffersBound = wgpuBindWorldMeshBuffers(pass, pbrBuffers);
         if (!worldBuffersBound) continue;
-        pass.draw(count, 1, offset);
+        window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat) ? (worldBuffersBound = false, window.__gosx_scene3d_asset_ext.uv1.gpuDraw(device, pass, obj, offset, count, webGPUBindSceneMeshVertexBuffer, pbrBuffers)) : pass.draw(count, 1, offset);
         if (frameRequest) frameRequest.record(obj.id);
         if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
       }
