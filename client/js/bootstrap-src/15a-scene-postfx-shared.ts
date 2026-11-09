@@ -600,4 +600,3 @@ function sceneSpecularBloomEffects(bundle: any, effects: any[], backend: string,
   if (mount && mount.setAttribute) mount.setAttribute("data-gosx-scene3d-specular-bloom", reason || "supported");
   return reason ? effects.filter(effect => !(effect.kind === "bloom" && effect.source === "specular")) : effects;
 }
-
