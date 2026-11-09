@@ -14,9 +14,9 @@ gosx export --zip=game.zip # archive at a path you choose
 `gosx export` runs the same production pipeline as `gosx build --prod`: the
 TinyGo runtime, content-hashed asset names, and `wasm-opt` when it is installed.
 It keeps `dist/static`, so the two commands write the same static folder.
-Export needs TinyGo on `PATH`. If `wasm-opt` is missing the build prints an
-install hint (`apt install binaryen` or `brew install binaryen`) and ships a
-larger runtime.
+Export needs TinyGo on `PATH`. The build runs `wasm-opt` from `PATH`, or the
+copy that ships inside TinyGo. If neither exists it prints an install hint
+(`apt install binaryen` or `brew install binaryen`) and ships a larger runtime.
 
 The zip holds `index.html` at its root, plus every page, script, WASM file, and
 public asset. It leaves out the `.gz` and `.br` copies, because a host can
@@ -39,8 +39,9 @@ writes `../gosx/assets/...`. The same folder therefore works at
 flag. If you do know the mount, `server.SetBasePath` still works: the exporter
 writes the files under that prefix and the URLs stay relative.
 
-Not rewritten: URLs inside CSS files (`url(/img/a.png)`) and in your own
-scripts. Use relative URLs there (`url(../img/a.png)`).
+Your stylesheets get the same treatment: root-absolute `url(/img/a.png)` and
+`@import "/x.css"` that name a file in the bundle become paths relative to the
+stylesheet. Not rewritten: URLs in your own scripts. Use relative URLs there.
 
 ## No server calls
 
@@ -89,18 +90,19 @@ The page's own scripts need `script-src` to allow the host origin and
 ## Size
 
 Measured on a one-island, one-Scene3D-box app (`gosx init`, reduced), built with
-TinyGo and no `wasm-opt`. Bytes; gzip is `gzip -9`, brotli is `brotli -q 11`.
+TinyGo. Bytes; gzip is `gzip -9`, brotli is `brotli -q 11`.
 
 | Build | Files | Raw | gzip -9 | brotli -q 11 |
 |---|---|---|---|---|
 | `gosx build --prod` static output before this change | 21 | 4,930,437 | 1,753,332 | 1,372,057 |
-| `gosx export` now | 20 | 2,713,277 | 875,352 | 724,476 |
+| `gosx export`, no `wasm-opt` | 20 | 2,713,277 | 875,352 | 724,476 |
+| `gosx export`, TinyGo's bundled `wasm-opt` (v116) | 20 | 2,675,456 | 866,567 | 716,861 |
 
 The drop is the full runtime `gosx-runtime.wasm` (2.2 MB raw) that the old
 output staged for the 404 and about pages, which never fetch it. The largest
 files that remain are the Scene3D chunk (681 KB), the core runtime WASM
-(695 KB), and the WebGPU renderer (495 KB). Installing `wasm-opt` shrinks the
-WASM further; the numbers above are without it.
+(695 KB), and the WebGPU renderer (495 KB). The build uses `wasm-opt` from `PATH`, or the copy
+that TinyGo bundles, and saves about 8 KB (brotli) on the core runtime WASM.
 
 Check your own bundle: `gosx export --zip`, then `unzip -l dist/static.zip`.
 Get the platform's size limit before you add models and audio, because

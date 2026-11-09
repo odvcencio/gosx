@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"golang.org/x/net/html"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -291,4 +293,63 @@ func writeStaticZip(dir, zipPath string) (int, error) {
 		return 0, err
 	}
 	return len(files), out.Close()
+}
+
+var cssRootURLPattern = regexp.MustCompile(`(url\(\s*|@import\s+)(["']?)(/[^"')\s]*)(["']?)`)
+
+// rewriteStaticCSS makes root-absolute url(...) and @import references in one
+// stylesheet resolve against the stylesheet itself. cssRel is the file's path
+// under the mount ("css/app.css"); prefix is the build-time mount or "".
+func rewriteStaticCSS(cssRel, source string, opts staticRewriteOptions) string {
+	dir := path.Dir("/" + filepath.ToSlash(cssRel))
+	return cssRootURLPattern.ReplaceAllStringFunc(source, func(match string) string {
+		m := cssRootURLPattern.FindStringSubmatch(match)
+		value := m[3]
+		if strings.HasPrefix(value, "//") || !opts.rewritesJSONString(value) {
+			return match
+		}
+		target, query := value, ""
+		if i := strings.IndexAny(target, "?#"); i >= 0 {
+			target, query = target[:i], target[i:]
+		}
+		if opts.Prefix != "" && strings.HasPrefix(target, opts.Prefix+"/") {
+			target = strings.TrimPrefix(target, opts.Prefix)
+		}
+		rel, err := filepath.Rel(filepath.FromSlash(dir), filepath.FromSlash(target))
+		if err != nil {
+			return match
+		}
+		return m[1] + m[2] + filepath.ToSlash(rel) + query + m[4]
+	})
+}
+
+// rewriteStaticCSSTree rewrites every .css file under contentDir and drops the
+// stale compressed copies of the ones it changed.
+func rewriteStaticCSSTree(contentDir string, opts staticRewriteOptions) error {
+	return filepath.Walk(contentDir, func(p string, info os.FileInfo, err error) error {
+		if os.IsNotExist(err) {
+			return nil // a sidecar this walk removed
+		}
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".css") {
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(contentDir, p)
+		out := rewriteStaticCSS(rel, string(data), opts)
+		if out == string(data) {
+			return nil
+		}
+		if err := os.WriteFile(p, []byte(out), info.Mode().Perm()); err != nil {
+			return err
+		}
+		for _, ext := range []string{".gz", ".br"} {
+			if err := os.Remove(p + ext); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		return nil
+	})
 }

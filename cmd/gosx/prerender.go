@@ -315,6 +315,16 @@ func completeStaticExport(opts staticExportOptions, outputDir string, manifest e
 			return exportManifest{}, err
 		}
 	}
+	{
+		contentDir := filepath.Join(outputDir, filepath.FromSlash(strings.TrimPrefix(manifest.BasePath, "/")))
+		cssOpts := staticRewriteOptions{Prefix: manifest.BasePath, AssetExists: func(rel string) bool {
+			info, err := os.Stat(filepath.Join(contentDir, filepath.FromSlash(strings.TrimPrefix(rel, "/"))))
+			return err == nil && info.Mode().IsRegular()
+		}}
+		if err := rewriteStaticCSSTree(contentDir, cssOpts); err != nil {
+			return exportManifest{}, fmt.Errorf("rewrite static stylesheets: %w", err)
+		}
+	}
 	if err := writeTextSidecars(outputDir, opts.BundlePolicy); err != nil {
 		return exportManifest{}, fmt.Errorf("compress static export: %w", err)
 	}

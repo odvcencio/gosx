@@ -1119,11 +1119,42 @@ type optionalWASMOptimizer struct {
 }
 
 func newOptionalWASMOptimizer(diagnostics io.Writer) *optionalWASMOptimizer {
-	tool, err := exec.LookPath("wasm-opt")
-	if err != nil {
-		tool = ""
+	return &optionalWASMOptimizer{tool: resolveWASMOpt(exec.LookPath, tinygoEnvRoot), diagnostics: diagnostics}
+}
+
+// resolveWASMOpt finds the optimizer: wasm-opt on PATH first, then the copy
+// that TinyGo bundles (<TINYGOROOT>/bin/wasm-opt, or ../lib/tinygo/bin beside
+// the tinygo binary). It returns "" when neither exists.
+func resolveWASMOpt(lookPath func(string) (string, error), tinygoRoot func(tinygo string) string) string {
+	if tool, err := lookPath("wasm-opt"); err == nil {
+		return tool
 	}
-	return &optionalWASMOptimizer{tool: tool, diagnostics: diagnostics}
+	tinygo, err := lookPath("tinygo")
+	if err != nil {
+		return ""
+	}
+	var candidates []string
+	if root := tinygoRoot(tinygo); root != "" {
+		candidates = append(candidates, filepath.Join(root, "bin", "wasm-opt"))
+	}
+	if real, err := filepath.EvalSymlinks(tinygo); err == nil {
+		tinygo = real
+	}
+	candidates = append(candidates, filepath.Join(filepath.Dir(tinygo), "..", "lib", "tinygo", "bin", "wasm-opt"))
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+			return c
+		}
+	}
+	return ""
+}
+
+func tinygoEnvRoot(tinygo string) string {
+	out, err := exec.Command(tinygo, "env", "TINYGOROOT").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func optimizeWASMWithWasmOptDiagnostics(path string, diagnostics io.Writer) (bool, error) {
@@ -1144,7 +1175,7 @@ func (optimizer *optionalWASMOptimizer) optimize(path string) (bool, error) {
 	}
 	if optimizer.tool == "" {
 		optimizer.missing.Do(func() {
-			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH; keeping compiled WASM (the runtime ships larger). Install Binaryen to shrink it: apt install binaryen, brew install binaryen, or https://github.com/WebAssembly/binaryen/releases. Match your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
+			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH (TinyGo's bundled copy was not found either); keeping compiled WASM (the runtime ships larger). Install Binaryen to shrink it: apt install binaryen, brew install binaryen, or https://github.com/WebAssembly/binaryen/releases. Match your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
 		})
 		return false, nil
 	}

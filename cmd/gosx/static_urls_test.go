@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -187,5 +188,74 @@ func TestStaticOnlyReportsSkippedPagesInsteadOfDroppingThem(t *testing.T) {
 	}
 	if len(skipped) != 1 || !strings.Contains(skipped[0], "route parameters") {
 		t.Fatalf("skipped = %v", skipped)
+	}
+}
+
+func TestResolveWASMOptFallsBackToTinyGoBundle(t *testing.T) {
+	root := t.TempDir()
+	bundled := filepath.Join(root, "bin", "wasm-opt")
+	mustWriteFile(t, bundled, "#!/bin/sh\n")
+	if err := os.Chmod(bundled, 0755); err != nil {
+		t.Fatal(err)
+	}
+	missing := func(string) (string, error) { return "", os.ErrNotExist }
+	withTinyGo := func(name string) (string, error) {
+		if name == "tinygo" {
+			return filepath.Join(root, "nowhere", "tinygo"), nil
+		}
+		return "", os.ErrNotExist
+	}
+	rootOf := func(string) string { return root }
+	if got := resolveWASMOpt(func(n string) (string, error) { return "/usr/bin/" + n, nil }, rootOf); got != "/usr/bin/wasm-opt" {
+		t.Fatalf("PATH wasm-opt must win, got %q", got)
+	}
+	if got := resolveWASMOpt(withTinyGo, rootOf); got != bundled {
+		t.Fatalf("bundled = %q, want %q", got, bundled)
+	}
+	if got := resolveWASMOpt(withTinyGo, func(string) string { return "" }); got != "" {
+		t.Fatalf("no root, no sibling lib dir: got %q", got)
+	}
+	if got := resolveWASMOpt(missing, rootOf); got != "" {
+		t.Fatalf("no tinygo: got %q", got)
+	}
+}
+
+func TestRewriteStaticCSSMakesURLsRelativeToTheStylesheet(t *testing.T) {
+	files := map[string]bool{"/img/bg.png": true, "/fonts/a.woff2": true}
+	opts := staticRewriteOptions{AssetExists: func(rel string) bool { return files[rel] }}
+	src := `a{background:url(/img/bg.png)} b{background:url( "/img/bg.png?v=2#x" )} @font-face{src:url('/fonts/a.woff2')} c{background:url(/gosx/assets/css/x.png)} d{background:url(/missing.png)} e{background:url(//cdn.example/x.png)} f{background:url(data:image/png;base64,AAAA)} @import "/gosx/assets/css/base.css";`
+	root := rewriteStaticCSS("styles.css", src, opts)
+	for _, want := range []string{`url(img/bg.png)`, `url( "img/bg.png?v=2#x" )`, `url('fonts/a.woff2')`, `url(gosx/assets/css/x.png)`, `url(/missing.png)`, `url(//cdn.example/x.png)`, `url(data:image/png;base64,AAAA)`, `@import "gosx/assets/css/base.css"`} {
+		if !strings.Contains(root, want) {
+			t.Fatalf("missing %q in %s", want, root)
+		}
+	}
+	nested := rewriteStaticCSS("gosx/assets/css/app.css", `a{background:url(/img/bg.png)}`, opts)
+	if nested != `a{background:url(../../../img/bg.png)}` {
+		t.Fatalf("nested = %s", nested)
+	}
+	prefixed := rewriteStaticCSS("styles.css", `a{background:url(/games/x/img/bg.png)}`, staticRewriteOptions{Prefix: "/games/x", AssetExists: opts.AssetExists})
+	if prefixed != `a{background:url(img/bg.png)}` {
+		t.Fatalf("prefixed = %s", prefixed)
+	}
+}
+
+func TestRewriteStaticCSSTreeDropsStaleSidecars(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "css", "a.css"), `a{background:url(/gosx/x.png)}`)
+	mustWriteFile(t, filepath.Join(dir, "css", "a.css.gz"), "stale")
+	mustWriteFile(t, filepath.Join(dir, "css", "b.css"), `b{color:red}`)
+	mustWriteFile(t, filepath.Join(dir, "css", "b.css.gz"), "keep")
+	if err := rewriteStaticCSSTree(dir, staticRewriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(dir, "css", "a.css")); got != `a{background:url(../gosx/x.png)}` {
+		t.Fatalf("a.css = %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "css", "a.css.gz")); !os.IsNotExist(err) {
+		t.Fatal("stale sidecar kept")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "css", "b.css.gz")); err != nil {
+		t.Fatal("untouched sidecar removed")
 	}
 }
