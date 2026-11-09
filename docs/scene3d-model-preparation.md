@@ -191,8 +191,7 @@ So a model with base color on UV0 and a baked AO or lightmap on UV1 renders
 correctly on WebGPU and WebGL2. The second stream applies to world-baked
 meshes (static models). Skinned, morphing and retained meshes, models whose
 material carries a Selena shader or a detail layer, and instanced models still
-sample every map from the first set. WebGL2 also supports the skinned case; the
-WebGPU path does not.
+sample every map from the first set.
 
 ### Joint limits
 
