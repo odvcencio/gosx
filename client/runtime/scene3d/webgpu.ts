@@ -7343,6 +7343,10 @@
     var pointsUniformScratchF = new Float32Array(pointsUniformScratch);
     var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
+    var softParticles = wgpuCreateSoftParticles(function() {
+      return { device: device, frame: frameBindGroupLayout, material: materialBindGroupLayout, points: pointsBindGroupLayout,
+        vertex: pointsVertexModule, fragmentSource: WGSL_POINTS_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS };
+    });
     var waterSystems = new Map();
     var waterSystemRetireSerial = 0;
     var instancedCullSystems = new Map(); // meshId → { system, signature }
@@ -17524,7 +17528,9 @@
       return stats;
     }
 
-    function drawComputeParticleEntries(pass, records, environment, timeSeconds) {
+    // softMode: 0 draws every system hard, 1 skips soft systems for the soft
+    // continuation pass, 2 draws only soft systems inside that pass.
+    function drawComputeParticleEntries(pass: any, records: any[], environment: any, timeSeconds: number, softMode: number = 0, softDepthView: any = null) {
       var stats = {
         computeParticleDrawEntries: 0,
         computeParticleDrawInstances: 0,
@@ -17628,8 +17634,6 @@
         puF[30] = fogColorRGBA[2];
         puF[31] = sceneNumber(material.minPixelSize, 0);
 
-        var pointsUniformBuffer = ensurePointsUniformGPUBuffer(system, puF);
-
         var blendMode = typeof material.blendMode === "string" ? material.blendMode.toLowerCase() : "";
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
         var depthWrite = entry.depthWrite === true || (validBlend === "opaque" && entry.depthWrite !== false);
@@ -17639,6 +17643,11 @@
         // validates once, memoized on the entry.
         var hasAuthoredRender = (typeof entry.renderVertexWGSL === "string" && entry.renderVertexWGSL) &&
                                 (typeof entry.renderFragmentWGSL === "string" && entry.renderFragmentWGSL);
+        var softInverse = softMode ? wgpuSoftParticleInverseDistance(entry) : 0;
+        if (softMode === 1 ? softInverse > 0 : softMode === 2 && !(softInverse > 0)) continue;
+        var pointsUniformBuffer = softMode === 2
+          ? wgpuCachedTrackedBuffer(system, "_gosxWGPUSoftPointsUniformBuffer", softParticles.uniforms(puF, softInverse), GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true)
+          : ensurePointsUniformGPUBuffer(system, puF);
         var cpSystemID = (entry && typeof entry.id === "string") ? entry.id : ("cp-" + i);
         if (hasAuthoredRender) {
           stats.computeParticleAuthoredCandidateEntries += 1;
@@ -17671,14 +17680,15 @@
           pass.setBindGroup(2, pointsBG);
         } else {
           // Builtin render path.
-          pointsBG = wgpuCachedBindGroup(system, "_gosxWGPUCPPointsBG", pointsBindGroupLayout, [
+          pointsBG = wgpuCachedBindGroup(system, softMode === 2 ? "_gosxWGPUCPSoftPointsBG" : "_gosxWGPUCPPointsBG", pointsBindGroupLayout, [
             { binding: 0, resource: { buffer: pointsUniformBuffer } },
             { binding: 1, resource: { buffer: system.renderBuffer } },
           ]);
-          pipeline = getPointsPipeline(validBlend, depthWrite);
+          pipeline = softMode === 2 ? softParticles.pipeline(validBlend, targetFormat, activeSampleCount) : getPointsPipeline(validBlend, depthWrite);
           pass.setPipeline(wgpuRequirePipeline(pipeline));
           pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner), [0]);
           pass.setBindGroup(2, pointsBG);
+          if (softMode === 2) pass.setBindGroup(3, softParticles.depthGroup(softDepthView, activeSampleCount));
         }
         pass.draw(6, system.count);
         stats.computeParticleDrawEntries += 1;
@@ -19329,7 +19339,13 @@
         var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG, [0]);
         Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, selenaFrame.time));
-        Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds));
+        var softParticlePass = softParticles.plan(computeParticleRecords, mainDepthTargetView);
+        Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds, softParticlePass ? 1 : 0));
+        if (softParticlePass) {
+          mainPass = softParticles.beginPass(encoder, mainPass, mainPassDescriptor);
+          mainPass.setBindGroup(0, frameBindGroup);
+          wgpuSoftParticleMergeStats(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds, 2, mainDepthTargetView));
+        }
       }
 
       mainPass.end();
@@ -19461,6 +19477,7 @@
       boardGlyphAtlases.clear();
       boardTextOwners.clear();
       disposeComputeParticleSystems();
+      softParticles.reset();
       disposeWaterSystems();
       for (const record of instancedCullSystems.values()) {
         if (record && record.system && typeof record.system.dispose === "function") {

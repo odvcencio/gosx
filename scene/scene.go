@@ -1070,6 +1070,14 @@ type ParticleMaterial struct {
 	// MaxPixelSize caps sprite growth as particles approach the camera,
 	// matching Points.MaxPixelSize. Zero leaves the size uncapped.
 	MaxPixelSize float64
+	// SoftDistance fades a sprite over this many world units as it nears
+	// the opaque surface behind it, so spray and smoke meet the ground or a
+	// shoreline without a hard rectangle. Zero keeps hard sprites. Only
+	// blended ("alpha" or "additive") builtin sprites soften; authored render
+	// shaders and depth-writing sprites draw unchanged. WebGPU always reads
+	// scene depth; WebGL2 softens only when the scene renders through the
+	// post chain, and draws hard sprites otherwise.
+	SoftDistance float64
 }
 
 // Label lowers into one legacy scene label.
@@ -3438,6 +3446,7 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 			Attenuation:  cp.Material.Attenuation,
 			MinPixelSize: cp.Material.MinPixelSize,
 			MaxPixelSize: cp.Material.MaxPixelSize,
+			SoftDistance: cp.Material.SoftDistance,
 		},
 		Bounds:         cp.Bounds,
 		Transition:     lowerTransition(cp.Transition),

@@ -1106,6 +1106,7 @@ type ParticleMaterialIR struct {
 	Attenuation  bool    `json:"attenuation,omitempty"`
 	MinPixelSize float64 `json:"minPixelSize,omitempty"`
 	MaxPixelSize float64 `json:"maxPixelSize,omitempty"`
+	SoftDistance float64 `json:"softDistance,omitempty"`
 }
 
 // AnimationClipIR is the typed compatibility record for one procedural

@@ -104,7 +104,8 @@ test('initial and changed reduced motion suppress decorative effects and remove 
 test('malformed replacements leave playback intact and caller mutation cannot affect a burst', async () => {
   const r = runtime(), plan = clone(fixture), effect = r.play(plan);
   plan.particles.count = 10000;
-  for (const change of [p => p.duration = 0, p => p.particles.count = 0, p => p.particles.emitter.once = false, p => p.particles.material.size = NaN]) {
+  for (const change of [p => p.duration = 0, p => p.particles.count = 0, p => p.particles.emitter.once = false, p => p.particles.material.size = NaN,
+    p => p.particles.material.softDistance = -1, p => p.particles.material.softDistance = Infinity]) {
     const bad = clone(fixture); change(bad); assert.throws(() => r.play(bad));
   }
   r.frame(); r.frame(100); r.frame(100); assert.equal(r.state.computeParticles[1].count, 6);

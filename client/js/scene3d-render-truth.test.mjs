@@ -187,6 +187,24 @@ test("render truth: implementation identity separates Dawn/Tint from wgpu/naga",
   assert.equal(edge.api.implementation({}), "dawn");
 });
 
+test("render truth: headless Chromium is Blink, and iOS Chrome stays WebKit", () => {
+  // "HeadlessChrome/" has no word boundary before "Chrome", so a bare
+  // \bChrome\/ test missed it and the trailing "Safari/" token labelled every
+  // headless CI run as WebKit.
+  const cases = [
+    ["Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36", "blink", "dawn"],
+    ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36 HeadlessEdg/141.0", "blink-edge", "dawn"],
+    ["Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "blink", "dawn"],
+    ["Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1", "webkit", "webkit-webgpu"],
+    ["Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15", "webkit", "webkit-webgpu"],
+  ];
+  for (const [userAgent, engine, implementation] of cases) {
+    const { api } = loadRenderTruth({ navigator: { userAgent } });
+    assert.equal(api.browserEngine(), engine, userAgent);
+    assert.equal(api.implementation({}), implementation, userAgent);
+  }
+});
+
 test("render truth: the event journal is an ordered timeline, not a final state", () => {
   // A device that mounts healthy and dies eight seconds later is
   // indistinguishable from "never had WebGPU" in any single sample. Only an

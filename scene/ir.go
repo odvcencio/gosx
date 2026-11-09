@@ -410,6 +410,7 @@ type IRParticleMaterial struct {
 	Attenuation  bool    `json:"attenuation,omitempty"`
 	MinPixelSize float64 `json:"minPixelSize,omitempty"`
 	MaxPixelSize float64 `json:"maxPixelSize,omitempty"`
+	SoftDistance float64 `json:"softDistance,omitempty"`
 }
 
 type IRSpriteNode struct {
@@ -1578,6 +1579,7 @@ func particleMaterialToIR(material ParticleMaterialIR) IRParticleMaterial {
 		Attenuation:  material.Attenuation,
 		MinPixelSize: material.MinPixelSize,
 		MaxPixelSize: material.MaxPixelSize,
+		SoftDistance: material.SoftDistance,
 	}
 }
 

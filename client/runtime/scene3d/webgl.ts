@@ -8083,6 +8083,7 @@
     const activeStaticPointKeys = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
+    var softParticles = createSceneWebGLSoftParticles(gl);
     var lastPreparedScene = null;
     var webglComputeParticleDrawStats = {
       drawEntries: 0,
@@ -8091,6 +8092,7 @@
       authoredDrawEntries: 0,
       authoredDrawInstances: 0,
       authoredDrawCalls: 0,
+      softDrawCalls: 0,
     };
     // Last string this renderer wrote per compute-particle-stats attribute,
     // so an unchanged 0-valued scene stops re-calling setAttribute every
@@ -9265,6 +9267,7 @@
       activeStaticPointEntries.clear();
       activeStaticPointKeys.clear();
       drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, sceneSelenaFrameTime, renderH);
+      softParticles.beginFrame(renderTarget, renderW, renderH);
       drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
@@ -10531,6 +10534,7 @@
         // stops that scintillation without giving up the depth cue.
         computeEntry.minPixelSize = sceneNumber(material.minPixelSize, 0);
         computeEntry.maxPixelSize = sceneNumber(material.maxPixelSize, 0);
+        computeEntry.softDistance = sceneNumber(material.softDistance, 0);
         computeEntry.customVertex = typeof sourceEntry.renderVertex === "string" ? sourceEntry.renderVertex : "";
         computeEntry.customFragment = typeof sourceEntry.renderFragment === "string" ? sourceEntry.renderFragment : "";
         computeEntry.customUniforms = sourceEntry.renderUniforms && typeof sourceEntry.renderUniforms === "object"
@@ -10589,7 +10593,8 @@
         var layerID = (typeof entry.id === "string" && entry.id) ? entry.id : ("points-" + i);
         var pp = ensurePointsAuthoredGLProgram(entry, layerID);
         var usedAuthored = !!pp;
-        if (!pp) pp = ensurePointsProgram();
+        var softPP = usedAuthored ? null : softParticles.program(entry);
+        if (!pp) pp = softPP || ensurePointsProgram();
         // Neither an authored program nor the builtin fallback compiled for
         // this layer (e.g. the builtin failed to compile in this
         // environment) — skip only this entry rather than aborting the rest
@@ -10653,7 +10658,7 @@
         }
 
         // Depth write control.
-        var depthWrite = entry.depthWrite !== false;
+        var depthWrite = entry.depthWrite !== false && !softPP;
         gl.depthMask(depthWrite);
         gl.depthFunc(gl.LEQUAL);
 
@@ -10667,6 +10672,7 @@
         gl.uniform1i(pp.uniforms.pointStyle, scenePointStyleCode(entry.style));
         gl.uniform1f(pp.uniforms.minPixelSize, Math.max(0, sceneNumber(entry.minPixelSize, 0)));
         gl.uniform1f(pp.uniforms.maxPixelSize, Math.max(0, sceneNumber(entry.maxPixelSize, 0)));
+        if (softPP) softParticles.bind(softPP, entry);
 
         // Cache typed arrays on first use — positions/sizes/colors are static.
         var rawPositions = entry.positions;
@@ -10751,6 +10757,7 @@
           webglComputeParticleDrawStats.drawEntries += 1;
           webglComputeParticleDrawStats.drawInstances += count;
           webglComputeParticleDrawStats.drawCalls += 1;
+          if (softPP) webglComputeParticleDrawStats.softDrawCalls += 1;
           if (usedAuthored) {
             webglComputeParticleDrawStats.authoredDrawEntries += 1;
             webglComputeParticleDrawStats.authoredDrawInstances += count;
@@ -10762,6 +10769,7 @@
       // Restore state.
       gl.depthMask(true);
       gl.disable(gl.BLEND);
+      if (softParticles.used()) textureCache._sceneTextureEpoch++;
 
       // Switch back to PBR program.
       gl.useProgram(program);
@@ -10999,6 +11007,7 @@
       if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       transmissionResources.dispose();
+      softParticles.dispose();
       scenePBRDisposeProgramQueue(gl);
 
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls

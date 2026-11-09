@@ -2383,6 +2383,7 @@
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
       minPixelSize: sceneClampNumberOrCSSVar(item.minPixelSize, sceneNumber(current.minPixelSize, 0), 0, Number.POSITIVE_INFINITY),
       maxPixelSize: sceneClampNumberOrCSSVar(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0), 0, Number.POSITIVE_INFINITY),
+      softDistance: sceneClampNumberOrCSSVar(item.softDistance, sceneNumber(current.softDistance, 0), 0, Number.POSITIVE_INFINITY),
     };
   }
 

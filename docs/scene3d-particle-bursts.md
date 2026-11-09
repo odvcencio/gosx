@@ -53,6 +53,26 @@ cannot resurrect an effect after disposal or authoritative replacement.
 
 The existing `ParticleEmitter` controls shape, radius, scatter, and lifetime;
 `ParticleForce` and `ParticleMaterial` control motion and sprite appearance.
+
+## Soft edges where sprites meet the scene
+
+Set `ParticleMaterial.SoftDistance` to fade each sprite as it nears the opaque
+surface behind it. The value is in world units: dust that settles on a floor
+with `SoftDistance: 0.3` fades over the last 0.3 units instead of cutting a hard
+rectangle into the ground. It applies to bursts and to `ComputeParticles`.
+
+```go
+Material: scene.ParticleMaterial{
+    Color: "#d8e4ee", Size: 0.4, Opacity: 0.5, OpacityEnd: 0,
+    BlendMode: scene.BlendAlpha, SoftDistance: 0.3,
+}
+```
+
+Only blended builtin sprites soften (`BlendAlpha` or `BlendAdditive`, no depth
+writes, no authored render shader). WebGPU always reads the scene depth. WebGL2
+softens when the scene renders through the post chain (any post effect), and
+draws hard sprites when it renders straight to the canvas. Zero, the default,
+keeps hard sprites. Bursts reject negative or non-finite values.
 `Once` is always enabled. Lifetimes must be positive and at most 10 seconds;
 delay is at most 60 seconds. The deadline includes the existing emitter's
 emission jitter and randomized lifetime. Background gaps advance at most
