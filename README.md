@@ -831,16 +831,19 @@ listeners, carets and timers. Authorization, document storage and conflict polic
 remain server responsibilities. The demo uses last-write-wins snapshots; the
 separate editor package supplies the richer CRDT editing surface.
 
-## Collaboration: CRDT + Workspace
+## Collaboration: CRDT
 
 The `crdt` package implements a conflict-free replicated document model with a bloom-filter-based sync protocol, delta-encoded changes, and vector-clock causality tracking. Documents serialize to a compact binary snapshot — interned actor and object tables, zigzag varint deltas, run-length tombstones, and change hashes recomputed on load rather than stored — which costs about 5 bytes per character of text. The chunk framing follows Automerge's shape (magic bytes, ULEB128 length, truncated checksum) but the body is GoSX's own encoding, so treat it as protocol-compatible in structure, not byte-compatible with Automerge. Older JSON snapshots still load. Its convergence contract is covered by partitioned concurrent text edits, large partitioned histories, tombstone save/load merge tests, and sync recovery tests. It's independent of the transport — you can drive it over a `hub`, over Redis, or over raw bytes in a file.
 
 ```go
 doc := crdt.NewDoc()
-doc.Apply(change)               // apply a local or remote change
-bytes, _ := doc.Save()          // serialize the full doc state
-sync := crdtsync.NewState()    // start a sync session
-msg := sync.Generate(doc)      // produce the next sync message to send
+text, _ := doc.MakeText(crdt.Root, "body") // edit with Put, SpliceText, ...
+doc.SpliceText(text, 0, 0, "hello")
+doc.Commit("edit")                  // seal local edits into a change
+bytes, _ := doc.Save()              // serialize the full doc state
+state := crdtsync.NewState()        // start a sync session
+msg, ok := doc.GenerateSyncMessage(state) // next message to send, if any
+// on the peer: err := other.ReceiveSyncMessage(state, msg)
 ```
 
 
@@ -1338,7 +1341,7 @@ those chunks with matching source maps.
 Three tiers:
 
 1. **Static** — `gosx export` pre-renders HTML. No server needed.
-2. **Server** — Go binary. SSR, actions, hubs, ISR, Scene3D, sim, workspace.
+2. **Server** — Go binary. SSR, actions, hubs, ISR, Scene3D, sim.
 3. **Edge** — Prerendered routes at the edge, dynamic requests fall back to origin.
 
 ## Packages
@@ -1369,7 +1372,7 @@ Three tiers:
 | `client/bridge` | WASM bridge for island/engine lifecycle |
 | `client/wasm` | WASM entry point |
 | `client/js` | Authored TypeScript browser runtime and generated bundles: bootstrap, patch applier, and feature chunks (islands, hubs, engines, Scene3D WebGL/WebGPU/glTF/animation) |
-| `render` | Server-side HTML rendering from IR |
+| `render` | Render bundles for Scene3D and 2D canvases (`render/bundle`, `render/bundle2d`, `render/boardgpu`) |
 | `css` | Component-scoped CSS with `:where()` selectors |
 | `textlayout` | Text measurement, line breaking, ellipsis |
 | `format` | Source formatter for `.gsx` files |
@@ -1449,7 +1452,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 GoSX is pre-1.0. The current release is **v0.59.1**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, and `sim` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
-If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
+If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The sim layer has production users but is newer.
 
 ## License
 

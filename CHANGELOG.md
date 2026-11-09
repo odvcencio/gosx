@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+## v0.60.0
+
+### Breaking changes and migration
+
+- Removed 12 packages that no repository under the maintainer's workspace imported (#800): `apptest`, `components`, `embed`, `embed/model`, `machine`, `polaradapter`, `polarui`, `semantic`, `stripeui`, `ui`, `vecdb` and `workspace`. The generated `modules/modules.go` stub, `docs/polar.md` and `docs/stripe.md` went with them. `transpile` no longer special-cases `m31labs.dev/gosx/ui` tags. Migration: delete the imports. Pin `v0.59.1` if you still need one of them.
+- `game.NewRunner`, `game.EngineMount` and `Runtime.Mount` moved to the new package `game/serve` as `serve.NewRunner`, `serve.EngineMount` and `serve.Mount(runtime, target, fallback)` (#793). The `game` package now links no `hub`, `net/http`, `crypto/tls` or root `gosx` in a js/wasm build. Migration: replace `rt.Mount(target, fb)` with `serve.Mount(rt, target, fb)` and import `m31labs.dev/gosx/game/serve` in server code.
+- The `sim` server types (`sim.New`, `sim.Options`, `sim.Runner` and the broadcasters) no longer build for js/wasm (#793). The hub-free contract (`Input`, `Simulation`, `CheckedRestorer`, `SortedPlayerIDs`, `EachInput`) is in the new `sim/simcore`; `sim` re-exports it. Migration: in code that also builds for the browser, import `sim/simcore`; keep `sim.New` and `sim.Runner` in server-only files (tag them `!js || !wasm`).
+- Removed deprecated registrars and options (#800): the `MustRegisterHere` and `MustRegisterCaller` methods on `route.FileModuleRegistry` and `route.DirModuleRegistry`, the function `route.MustRegisterDirModuleCaller`, `server.MustRegisterImageResolver` and `App.EnablePublicScheduledStatus`. The public `/_gosx/scheduled` route can no longer be switched on by option. Migration: call the registries' `RegisterHere` and `RegisterCaller` methods, `route.RegisterDirModuleCaller`, and `server.RegisterImageResolver`; to expose task status, mount `server.ScheduledStatusHandler(s)` yourself behind your own access check. The package functions `MustRegisterFileModule*` and `MustRegisterDirModule*` (`Here`, plain) remain.
+- `scene.CompileSelenaMaterial`, `CompileSelenaBundle`, `CompileSelenaPoints`, `CompileSelenaParticleRender` and `CompileSelenaPost` no longer exist in js/wasm builds unless you build with `-tags gosx_selena_compiler` (#801). `.sel` sources now compile at build time into embedded `.sel.json` artifacts (`scene/selenabuild`, run by `gosx build`), and browser code loads them with `MaterialFromSelenaArtifact`. Migration: ship artifacts, or add the tag and accept about 0.9 MB of extra WASM. CI checks the artifacts for drift.
+- `gosx export` now fails when a page cannot be exported, instead of dropping it (#797). A page with actions, route parameters, a private or cookie-setting response, or a reference to a `/_gosx/` server endpoint stops the export with a message. Migration: set `{"prerender":false}` on the page, or serve it from a server. Export also now runs the `gosx build --prod` pipeline, rewrites URLs to be document-relative, marks pages `<meta name="gosx-telemetry" content="off">`, and writes a single zip with `--zip`.
+- Look change: the standard Scene3D BRDF is now energy-conserving (#806). Rough metals get up to about 3x brighter under image light, and the clear coat is a layered lobe instead of an additive highlight. Smooth materials barely change. Review screenshots of scenes that use rough metal or clear coat.
+- Look change: directional shadows were drawing nothing for a plain `StandardMaterial` because of a flipped light view (`sceneShadowLightSpaceMatrix`); that is fixed, and each cascade now scales `ShadowBias` relative to the one-map fit (#802). A scene that raised `ShadowBias` to hide the problem may need the value lowered.
+- `physics.ColliderConfig` gained `Heights`, `Columns` and `Rows` (#804), so spec digests in physics parity files changed. State digests did not.
+- `m31labs.dev/selena` is pinned to the tagged release `v0.5.3` (it was a pseudo-version of the same commit). Consumers that import Selena move to `v0.5.3`.
+
+### Game runtime
+
+- Run a game frame without allocating, and choose what a slow frame does (#793). `game.LoopConfig` and `game.Config` take `CatchUp`: `CatchUpDrop` (default, same as before) drops steps beyond `MaxSubsteps`; `CatchUpLag` keeps owed steps, runs them within `CatchUpBudget` (default 8 ms, at least one per frame), reports them as `Frame.Lag` and stores them in snapshots. `Runtime.Step` allocates nothing in steady state (`BenchmarkRuntimeStep80Nodes`: 0.53 to 0.78 ms and 507 allocations before, 145 to 202 ns and 0 after). Scene3D owns the engine frame through one callback in its animation frame. The Go WASM engine fixture shrinks from 10.3 MB to 7.6 MB raw.
+- Add `game/flow` (state-stack flow controller that keeps the pause flag and input contexts in sync) and `game/actions` (named actions over keyboard, mouse and gamepad, with stacked contexts, rebinding, persistence and per-player routers) (#794). Add `game/kitui.SideSelect`, a side-select screen with device seats, a settings row, start gating and an HTML panel (#817).
+- Add online rooms (#798): `room` (authoritative server with lobby, countdown, running and results phases, bots, reconnect tokens, rate limits), `room/wire` (binary protocol with fuzzed decoders), `room/mode`, and `game/netsync` (client prediction, reconciliation, clock steering, interpolation). A client that cannot reach a server plays locally. `hub` gains `DisconnectWithCode` and `CheckOrigin` with `OriginAllowlist`. See `docs/rooms.md` and `docs/netplay.md`.
+- Add `room/store` (durable key-value and append-log store with a write-ahead log and snapshots) and `room/group` (persistent named groups); `room/server.Config.Store` is optional and, when unset, live rooms behave as before (#816).
+- Add `game/replay`: deterministic recording with keyframes, seeking, speed control and step back (#814); `game/teamai`: deterministic team and squad AI from JSON data (#818); `game/audio/speech`: phrase-grammar commentary stitched from recorded fragments (#815); and `physics` shape casts, overlap queries, collision layers, trigger events and a kinematic capsule character controller (#807).
+- Unify audio under one page mixer with five buses; Scene3D feeds the camera pose to the listener; add `game/audio.Mixer`, `SFX` and `game/audio/kernel` (WASM reactor in an AudioWorklet) (#799).
+- Add `motion/animgraph`: layered animation graphs with state machines, blend spaces, IK and look-at, driven from Go, plus the opt-in `scene3d-animation-graph` renderer chunk (#810).
+- Add `examples/game-stress`, page-side interpolation of clock-stamped pose frames, and `scene.DispatchTimedPoseFrame` so a Web Worker engine can drive a Scene3D mount (#821). See `docs/game-performance.md`.
+
+### Scene3D and Selena
+
+- Selena materials receive full scene lighting (lights, fog, camera forward, two shadow slots with cascades) on both backends through a lazy chunk (`bootstrap-feature-scene3d-selena-lighting.js`, 1,650 B brotli) that loads only when a material reads those inputs (#801).
+- A Selena material can return a typed `Surface` record that the standard PBR fragment shades (#806), and a host can stream texel data into a Selena texture with `scene.TextureWriter` (js/wasm) and the `gosx:data:<key>` texture binding (#822).
+- WebGPU gets cascaded shadow maps, TAA with motion vectors, auto exposure (`Environment.AutoExposure`), a shared depth-of-field gather and soft particles; both backends get graphics-reset recovery and one adaptive-quality cadence model (#802).
+- Add projected decals (`scene.Decals`, `ProjectedDecal`, `DecalPool`) and depth-driven motion blur, in the on-demand `scene3d-depthfx` chunk (#809). Add heightmap terrain with continuous LOD, seeded vegetation scatter, a shared wind field, ocean shorelines and a physics heightfield collider (#804). Add GPU-animated stadium and arena crowds with a `CrowdDirector` (#823). Read occlusion and emissive maps from `TEXCOORD_1` (#812).
+- Add opt-in shader warm-up (`Props.ShaderWarmup`) and runtime text atlases (`Props.TextAtlases`) as separate chunks, and fix a WebGPU bug that drew one triangle per quad for world-baked indexed meshes (#811).
+- Move GPU timing stamps off the ocean graph's compute passes so Metal no longer loses the WebGPU device (#805).
+- Add `gosx assets build` (Blender export to optimized GLBs, LOD chain, KTX2 textures and a manifest), `scene.ModelLODGroup`, glTF `KHR_lights_punctual` import, dominant UV-set selection, and rigs up to 256 joints on WebGL2 (#796).
+
+### Tooling and CI
+
+- `gosx export` builds a server-less static bundle or a single zip (#797); see the breaking-changes list for the new failure behaviour. Pages that need no WASM no longer stage the full runtime.
+- Add the consumer corpus runner (`scripts/corpus/run.sh`, `.github/workflows/corpus.yml`) as a release gate, and `AGENTS.md` (#795).
+- Recognize an empty `.git` placeholder above a linked worktree in the installer build guard (#792).
+- Make the CI toolchain downloads retry with exponential backoff for up to 600 s (#820), and run every `game/...` package under js/wasm tests (#813).
+- Merged by the jam trains: #803, #808, #819, #824 and #825 (they carry the pull requests listed above).
+
+### Pending before tag
+
+Replace this list with the merged pull request numbers at tag time, then add a bullet for each that changes behaviour.
+
+- `fix/server-redirect-scaffold-cookies-20261109`
+- `fix/room-hardening-20261109`
+- `fix/scene3d-chunk-loading-20261109`
+- `fix/kit-browser-deps-20261109`
+- `fix/ci-timing-gates-20261109`
+
 ## v0.59.1
 
 - Fix downloadable release binaries incorrectly rejecting projects pinned to
