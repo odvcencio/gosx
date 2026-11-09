@@ -92,10 +92,21 @@ func NewGame(seats, props int, seed uint64, tickRate int) *Game {
 	return g
 }
 
-// Of returns the Game inside a simulation built by this package, or nil.
+// Of returns the Game inside a simulation built by this package, or nil. It
+// looks through wrappers that implement Unwrap() sim.Simulation, such as a
+// test recorder.
 func Of(s sim.Simulation) *Game {
-	g, _ := s.(*Game)
-	return g
+	for s != nil {
+		if g, ok := s.(*Game); ok {
+			return g
+		}
+		u, ok := s.(interface{ Unwrap() sim.Simulation })
+		if !ok {
+			return nil
+		}
+		s = u.Unwrap()
+	}
+	return nil
 }
 
 // Step advances the world one tick with the seats' inputs, keyed by

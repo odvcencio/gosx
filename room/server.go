@@ -102,6 +102,9 @@ type Config struct {
 	Manual bool
 	// Now reads the server's monotonic clock. Nil uses the process clock.
 	Now func() time.Duration
+	// NewSeed picks each new room's simulation seed. Nil draws from
+	// crypto/rand. Tests set it to reproduce a match.
+	NewSeed func() uint64
 	// Logf receives diagnostics. Nil uses log.Printf; use a no-op to silence.
 	Logf func(format string, args ...any)
 }
@@ -163,6 +166,9 @@ func (c Config) normalized() (Config, error) {
 	}
 	if c.Logf == nil {
 		c.Logf = log.Printf
+	}
+	if c.NewSeed == nil {
+		c.NewSeed = randomUint64
 	}
 	return c, nil
 }
@@ -388,7 +394,7 @@ func (s *Server) Create(modeName string, public bool) (*Room, error) {
 
 func (s *Server) createLocked(m mode.Mode, public bool, now time.Duration) *Room {
 	code := s.newCodeLocked()
-	r := newRoom(s, m, code, public, randomUint64(), now)
+	r := newRoom(s, m, code, public, s.cfg.NewSeed(), now)
 	s.rooms[code] = r
 	if !s.cfg.Manual {
 		s.wg.Add(1)

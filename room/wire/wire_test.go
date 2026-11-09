@@ -265,23 +265,27 @@ func TestWireAllocations(t *testing.T) {
 	var e DeltaEncoder
 	e.SetBase(base)
 	decoded := make([]byte, 0, len(target))
-	checks := map[string]func(){
-		"Input.Append": func() { frame = in.Append(buf[:0]) },
-		"Input.Decode": func() { _ = out.Decode(frame) },
-		"Snapshot encode": func() {
+	// In order: each check reads what the one before it wrote.
+	checks := []struct {
+		name string
+		fn   func()
+	}{
+		{"Input.Append", func() { frame = in.Append(buf[:0]) }},
+		{"Input.Decode", func() { _ = out.Decode(frame) }},
+		{"Snapshot encode", func() {
 			snapBuf = AppendSnapshotHeader(snapBuf[:0], false, 1, 2, seats)
 			snapBuf = e.Append(snapBuf, target)
-		},
-		"Snapshot.Decode": func() { _ = snap.Decode(snapBuf) },
-		"ApplyDelta": func() {
+		}},
+		{"Snapshot.Decode", func() { _ = snap.Decode(snapBuf) }},
+		{"ApplyDelta", func() {
 			_ = snap.Decode(snapBuf)
 			decoded, _ = ApplyDelta(decoded, base, snap.Body, 0)
-		},
+		}},
 	}
-	for name, fn := range checks {
-		fn()
-		if n := testing.AllocsPerRun(100, fn); n != 0 {
-			t.Errorf("%s: %v allocations per run, want 0", name, n)
+	for _, c := range checks {
+		c.fn()
+		if n := testing.AllocsPerRun(100, c.fn); n != 0 {
+			t.Errorf("%s: %v allocations per run, want 0", c.name, n)
 		}
 	}
 	if !bytes.Equal(decoded, target) {

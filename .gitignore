@@ -9,6 +9,7 @@ build/
 !/docs/docs-site-spec.md
 !/docs/polar.md
 !/docs/netplay.md
+!/docs/rooms.md
 !/docs/engine-worker.md
 !/docs/scene3d-group-spin.md
 !/docs/scene3d-v1-support.md
