@@ -159,10 +159,10 @@ func (p *Player) ScheduleAt(playback game.AudioPlayback, at float64) (string, er
 	gain := p.host.CreateGain()
 	gain.SetGain(firstNonZero(playback.Volume, clip.Volume, 1))
 
-	var dest Node = p.graph.Master()
+	dest := p.graph.MasterInput()
 	if busID := firstNonEmpty(playback.Bus, clip.Bus); busID != "" {
 		if bus := p.graph.Bus(busID); bus != nil {
-			dest = bus.gain
+			dest = bus.Input()
 		}
 	}
 	source.Connect(gain)

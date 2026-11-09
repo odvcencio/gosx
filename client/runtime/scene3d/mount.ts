@@ -2700,7 +2700,7 @@
       if (!arcadeAudio) {
         return;
       }
-      const synthOptions = { intensity: cue.intensity, pan: cue.pan, depth: cue.depth, rate: cue.rate };
+      const synthOptions = { intensity: cue.intensity, pan: cue.pan, depth: cue.depth, rate: cue.rate, bus: cue.bus };
       if (cue.patch && typeof cue.patch === "object" && typeof arcadeAudio.playPatch === "function") {
         arcadeAudio.playPatch(cue.patch, synthOptions);
         return;
