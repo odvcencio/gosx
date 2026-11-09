@@ -484,7 +484,7 @@ func TestSelenaSurfaceReceivesDirectionalShadow(t *testing.T) {
 			t.Logf("%s %s: shadowed pixel %d, lit pixel %d", backend, name, shadow, lit)
 		}
 		std, srf := readings["standard"], readings["selena-surface"]
-		if abs(std[0]-srf[0]) > 2 || abs(std[1]-srf[1]) > 2 {
+		if absInt(std[0]-srf[0]) > 2 || absInt(std[1]-srf[1]) > 2 {
 			t.Fatalf("%s: surface material shadow %v differs from StandardMaterial %v", backend, srf, std)
 		}
 		// The ambient fill keeps the shadow above black: about 87 shadowed
@@ -493,11 +493,4 @@ func TestSelenaSurfaceReceivesDirectionalShadow(t *testing.T) {
 			t.Fatalf("webgl drew no directional shadow: shadowed %d, lit %d", std[0], std[1])
 		}
 	}
-}
-
-func abs(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
