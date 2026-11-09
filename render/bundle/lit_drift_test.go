@@ -199,7 +199,7 @@ var litSharedTerms = []sharedTerm{
 	{
 		// The browser reads transmission through surfaceTransmission, which
 		// is material.transmission unless a Selena surface material replaces
-		// it (webgpu-selena-surface.ts). The pattern pins both halves.
+		// it (sceneWebGPUSelenaSurfaceFragment). The pattern pins both halves.
 		id:     "transmission-metal-gate",
 		effect: "A metal becomes translucent on one backend.",
 		goPat:  `clamp\(material\.physicalParams\.z, 0\.0, 1\.0\) \* \(1\.0 - metalness\)`,
@@ -219,7 +219,7 @@ var litSharedTerms = []sharedTerm{
 	},
 	{
 		// The browser sums diffuse and specular inside gosxDirectBRDF
-		// (webgpu-brdf.ts: let base = kD * albedo * (1.0 - transmission) / PI
+		// (WGSL_BRDF: let base = kD * albedo * (1.0 - transmission) / PI
 		// + specular), and the light loop scales that sum.
 		id:     "direct-light-composition",
 		effect: "Direct light stops scaling by the cosine term or by the shadow factor.",
@@ -838,7 +838,7 @@ var litDivergentTerms = []divergentTerm{
 	},
 	{
 		// Opened 2026-11-09, when both browser renderers moved their standard
-		// lighting into webgl-brdf.ts and webgpu-brdf.ts and added multiple
+		// lighting into the GLSL_BRDF and WGSL_BRDF modules and added multiple
 		// scattering. The native copy kept single scattering.
 		id:      "specular-multiple-scattering",
 		effect:  "Rough surfaces, rough metals most, read brighter in the browser than under server side rendering. Single scattering GGX loses the light that bounces between microfacets; the browser adds it back.",
@@ -852,7 +852,7 @@ var litDivergentTerms = []divergentTerm{
 		// its range (12 to 96) and its gain (0.28).
 		id:      "clearcoat-lobe",
 		effect:  "A clear coat highlight sits in a different place. The browser coat follows the light; the native coat is brightest wherever the surface faces the camera.",
-		verdict: "Keep the browser form. Its coat is a second GGX lobe with F0 0.04 (IOR 1.5) and its own roughness, evaluated per light and per image light. The native lobe pow(NdotV, mix(12, 96, 1 - roughness)) ignores the light direction and reads the base roughness. Port gosxDirectBRDF and gosxCoatOver from webgpu-brdf.ts into litWGSL to close this row and the next.",
+		verdict: "Keep the browser form. Its coat is a second GGX lobe with F0 0.04 (IOR 1.5) and its own roughness, evaluated per light and per image light. The native lobe pow(NdotV, mix(12, 96, 1 - roughness)) ignores the light direction and reads the base roughness. Port gosxDirectBRDF and gosxCoatOver from WGSL_BRDF into litWGSL to close this row and the next.",
 		goLine:  "let clearcoatPower = mix(12.0, 96.0, 1.0 - roughness);",
 		jsLine:  "let Fc = (0.04 + 0.96 * pow(1.0 - VdotH, 5.0)) * layer.coat;",
 	},

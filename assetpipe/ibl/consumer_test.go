@@ -56,7 +56,7 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 // the exact, backend-specific F90 split-sum convention in both runtime
 // backends. The old unweighted-B form (F0 * dfg.x + dfg.y) must not appear.
 //
-// The split sum lives in gosxImageLight (webgl-brdf.ts, webgpu-brdf.ts) since
+// The split sum lives in gosxImageLight (GLSL_BRDF and WGSL_BRDF) since
 // 2026-11-09: the single-scattering term FssEss lights the prefiltered
 // radiance, and the multiple-scattering term (Fdez-Aguera 2019) lights the
 // irradiance, so the diffuse weight kD is one minus both.
