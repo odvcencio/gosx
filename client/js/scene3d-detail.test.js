@@ -63,7 +63,9 @@ test("WebGL detail is a cached compile variant with nil source unchanged", () =>
   // (scripts/scene3d-vessel-cutaway.mjs checks the pixels).
   // Reviewed cascaded-shadow base: u_shadowBias0/1 are per-cascade arrays scaled to each cascade's texels
   // (scene3d-shadow-cascade-bias.test.js; e2e TestBeaconTowerShadowBand checks the pixels).
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "55dcbd9b4f496c7cccd1ab9d6c51a0b27456bafcd39a536ff45f525a9ef137bf");
+  // Reviewed shared BRDF base: multiscatter energy, the layered clear coat and the surface inputs a Selena
+  // surface hook replaces (scene3d-selena-surface.test.js and the white-furnace e2e cover behavior).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "c3e8cd68541e9d493f60a0eb6e73b361f45694c6b3c645f1075b9f0244945c61");
   const shader = c.sceneWebGLDetailFragment(base, true);
   const glWithUnits = units => ({ MAX_TEXTURE_IMAGE_UNITS: 1, getParameter: () => units });
   assert.match(c.scenePBRFragmentSourceForContext(glWithUnits(16), base), /#define GOSX_HDR_IBL 1/);
@@ -103,7 +105,9 @@ test("WebGPU detail preserves the nil shader and uses a separate array binding",
   // Reviewed cascaded-shadow base: shadow maps are depth arrays sampled through
   // shadowSlotFactor (webgpu-shadows module); the detail splice points are unchanged.
   // Reviewed shadow hoist: each slot's factor is computed once before the light loop.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "65a49e7789ebe9749e138a81c86263cdd621dfd3065949ee03df557011427598");
+  // Reviewed shared BRDF base: multiscatter energy, the layered clear coat and the surface inputs a Selena
+  // surface hook replaces (scene3d-selena-surface.test.js and the white-furnace e2e cover behavior).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "b7260a6c9dc62e40aabdf6d07f4c49c14b0dcb7b664c035923f6acdba1940edf");
   const shader = c.sceneWebGPUDetailFragment(base, true);
   assert.match(shader, /textureSampleGrad\(detailAtlas/);
   assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);

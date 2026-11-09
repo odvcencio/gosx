@@ -171,13 +171,6 @@ var litSharedTerms = []sharedTerm{
 		jsPat:  `kD \* albedo \* \(1\.0 - transmission\) / PI`,
 	},
 	{
-		id:     "clearcoat-power-range",
-		effect: "The clear coat sheen tightens or spreads on one backend.",
-		goPat:  `mix\((12\.0), (96\.0), 1\.0 - roughness\)`,
-		jsPat:  `mix\((12\.0), (96\.0), 1\.0 - roughness\)`,
-		want:   "12.0|96.0",
-	},
-	{
 		// The Go copy used to inline this as baseColor * pow(1.0 - NdotV, 3.0).
 		// The sheen-composition fix gave it the same velvet local the browser
 		// uses, so the pinned pattern now names that local on both sides. The
@@ -204,10 +197,13 @@ var litSharedTerms = []sharedTerm{
 		want:   "2.0",
 	},
 	{
+		// The browser reads transmission through surfaceTransmission, which
+		// is material.transmission unless a Selena surface material replaces
+		// it (sceneWebGPUSelenaSurfaceFragment). The pattern pins both halves.
 		id:     "transmission-metal-gate",
 		effect: "A metal becomes translucent on one backend.",
 		goPat:  `clamp\(material\.physicalParams\.z, 0\.0, 1\.0\) \* \(1\.0 - metalness\)`,
-		jsPat:  `clamp\(material\.transmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)`,
+		jsPat:  `let surfaceTransmission = material\.transmission;[\s\S]*clamp\(surfaceTransmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)`,
 	},
 	{
 		id:     "hemisphere-normal-blend",
@@ -222,10 +218,13 @@ var litSharedTerms = []sharedTerm{
 		jsPat:  `textureSampleCompareLevel\(`,
 	},
 	{
+		// The browser sums diffuse and specular inside gosxDirectBRDF
+		// (WGSL_BRDF: let base = kD * albedo * (1.0 - transmission) / PI
+		// + specular), and the light loop scales that sum.
 		id:     "direct-light-composition",
 		effect: "Direct light stops scaling by the cosine term or by the shadow factor.",
 		goPat:  `\(diffuse \+ specular\) \* radiance \* NdotL \* shadow`,
-		jsPat:  `\+ specular\) \* radiance \* NdotL \* shadowAtten`,
+		jsPat:  `Lo = Lo \+ lit\.color \* radiance \* NdotL \* shadowAtten;`,
 	},
 
 	// The rows below arrived from litDivergentTerms. Each one records a
@@ -249,15 +248,6 @@ var litSharedTerms = []sharedTerm{
 		goPat:  `let metalSample = textureSample\(metalnessMapTex, baseColorSampler, in\.uv\)\.([rgba]);`,
 		jsPat:  `metalness = metalness \* textureSample\(metalnessTex, metalnessSamp, in\.uv\)\.([rgba]);`,
 		want:   "b",
-	},
-	{
-		// The native copy used a gain of 1.0, which is 1/0.28, about 3.6 times
-		// the browser gain.
-		id:     "clearcoat-gain",
-		effect: "A coated highlight reads about 3.6 times too bright on the backend that drops the gain.",
-		goPat:  `pow\(NdotV, clearcoatPower\) \* clearcoat \* ([0-9.]+)\)`,
-		jsPat:  `color = color \+ vec3f\(cc \* ([0-9.]+)\);`,
-		want:   "0.28",
 	},
 	{
 		// Both copies now add the velvet term. The native copy used to blend
@@ -316,10 +306,12 @@ var litSharedTerms = []sharedTerm{
 		jsPat:  `let envDiffuse = env\.ambientColor \* env\.ambientIntensity\n\+ env\.skyColor \* env\.skyIntensity \* hemi\n\+ env\.groundColor \* env\.groundIntensity \* \(1\.0 - hemi\);`,
 	},
 	{
+		// The browser passes the hemisphere ambient through gosxCoatOver, so
+		// a clear coat can dim it; the coat itself is a ledger row.
 		id:     "ambient-scaled-by-base-colour",
 		effect: "Ambient light stops taking the surface colour, so every shadowed face turns grey.",
 		goPat:  `let ambient = envDiffuse \* baseColor;`,
-		jsPat:  `ambient = envDiffuse \* albedo \* \(1\.0 - transmission\);`,
+		jsPat:  `GosxLit\(envDiffuse \* albedo \* \(1\.0 - transmission\), vec3f\(0\.0\)\)`,
 	},
 
 	// The rows below arrived with the scene light array. The native copy read
@@ -842,7 +834,34 @@ var litDivergentTerms = []divergentTerm{
 		effect:  "Follows from the geometry term above. Listed so both halves stay pinned.",
 		verdict: "Go carries no explicit divide because its visibility term already contains it. The browser divides. Each copy is consistent with itself and inconsistent with the other. This row closes when the browser copies adopt the correlated visibility term and drop their divide.",
 		goLine:  "let specular = D * G * F;",
-		jsLine:  "let denominator = 4.0 * NoV * NdotL + 0.0001;",
+		jsLine:  "let denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
+	},
+	{
+		// Opened 2026-11-09, when both browser renderers moved their standard
+		// lighting into the GLSL_BRDF and WGSL_BRDF modules and added multiple
+		// scattering. The native copy kept single scattering.
+		id:      "specular-multiple-scattering",
+		effect:  "Rough surfaces, rough metals most, read brighter in the browser than under server side rendering. Single scattering GGX loses the light that bounces between microfacets; the browser adds it back.",
+		verdict: "Keep the browser form. It follows Fdez-Aguera 2019: image light adds Fms * Ems lit by irradiance, and direct light scales the lobe by 1 + F0 * (1 / Ess - 1). The white-furnace test in e2e/selena_surface_e2e_test.go reads one uniform value across every roughness on both browser backends. Port gosxLayerSetup and gosxMultiscatter into litWGSL to close this row; the native copy has no lookup table, so it would use gosxDFGApprox.",
+		goLine:  "let specular = D * G * F;",
+		jsLine:  "let specular = distributionGGX(N, H, roughness) * geometrySmith(N, V, L, roughness) * fresnelSchlick(VdotH, F0, F90) / denominator * layer.energy;",
+	},
+	{
+		// Opened 2026-11-09 together with the row above. Until then both
+		// copies added a view-facing power lobe, and litSharedTerms pinned
+		// its range (12 to 96) and its gain (0.28).
+		id:      "clearcoat-lobe",
+		effect:  "A clear coat highlight sits in a different place. The browser coat follows the light; the native coat is brightest wherever the surface faces the camera.",
+		verdict: "Keep the browser form. Its coat is a second GGX lobe with F0 0.04 (IOR 1.5) and its own roughness, evaluated per light and per image light. The native lobe pow(NdotV, mix(12, 96, 1 - roughness)) ignores the light direction and reads the base roughness. Port gosxDirectBRDF and gosxCoatOver from WGSL_BRDF into litWGSL to close this row and the next.",
+		goLine:  "let clearcoatPower = mix(12.0, 96.0, 1.0 - roughness);",
+		jsLine:  "let Fc = (0.04 + 0.96 * pow(1.0 - VdotH, 5.0)) * layer.coat;",
+	},
+	{
+		id:      "clearcoat-energy",
+		effect:  "A coated surface reflects more light than arrives under server side rendering. The browser dims the base by the light the coat reflects; the native copy adds the coat on top.",
+		verdict: "Keep the browser form: base * (1 - Fc) + coat conserves energy. The native gain of 0.28 was tuned to look right, not derived. This row closes with the row above.",
+		goLine:  "color = color + vec3f(pow(NdotV, clearcoatPower) * clearcoat * 0.28);",
+		jsLine:  "return GosxLit(base * (1.0 - Fc) + coat, specular * (1.0 - Fc) + coat);",
 	},
 	{
 		// Not a shader defect. The native lit vertex format has no per instance
@@ -867,7 +886,7 @@ var litDivergentTerms = []divergentTerm{
 		effect:  "The native renderer consumes the authored raw environment cube while browser WebGPU consumes only generated split-sum IBL products, so the two surfaces can light differently.",
 		verdict: "Keep both honest paths and record the remaining carrier gap. Browser WebGPU now consumes assetpipe split-sum products, but it still does not consume the raw EnvironmentMap field that the native renderer samples.",
 		goLine:  "let cubeIBL = (cubeDiffuse + envSpecular) * scene.envParams.x * scene.envParams.z;",
-		jsLine:  "ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
+		jsLine:  "ambient = ibl.color * env.envIntensity;",
 	},
 	{
 		// This row records the same underived factor from the other side. The
@@ -1079,7 +1098,7 @@ var litSharedGuardMutations = []litGuardMutation{
 	{
 		name:    "browser reverts the scalar diffuse weight to the componentwise form",
 		side:    "js",
-		from:    "let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);\nlet kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
+		from:    "let Fdiel = fresnelSchlick(VdotH, specF0, specF90);\nlet kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
 		to:      "let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
 		wantRow: "diffuse-weight-scalar-dielectric",
 	},
@@ -1091,13 +1110,6 @@ var litSharedGuardMutations = []litGuardMutation{
 		wantRow: "diffuse-weight-scalar-dielectric",
 	},
 	{
-		name:    "browser widens the clear coat power range",
-		side:    "js",
-		from:    "mix(12.0, 96.0, 1.0 - roughness)",
-		to:      "mix(12.0, 128.0, 1.0 - roughness)",
-		wantRow: "clearcoat-power-range",
-	},
-	{
 		name:    "native renderer drops the pi normalization from the diffuse lobe",
 		side:    "go",
 		from:    "kD * baseColor / 3.141592653589793",
@@ -1107,13 +1119,15 @@ var litSharedGuardMutations = []litGuardMutation{
 	{
 		name:    "browser drops the shadow factor from the direct light term",
 		side:    "js",
-		from:    "* radiance * NdotL * shadowAtten",
-		to:      "* radiance * NdotL",
+		from:    "Lo = Lo + lit.color * radiance * NdotL * shadowAtten;",
+		to:      "Lo = Lo + lit.color * radiance * NdotL;",
 		wantRow: "direct-light-composition",
 	},
 
 	// The mutations below revert one of the seven terms the audit of 2026-07-26
-	// moved into litSharedTerms. Each one restores the exact value the native
+	// moved into litSharedTerms. The clear coat gain left that table on
+	// 2026-11-09 for the clearcoat-energy ledger row, and its mutation moved
+	// with it. Each one restores the exact value the native
 	// copy carried before that audit. A passing run here is therefore the
 	// evidence that nobody can undo one of those fixes in silence.
 	{
@@ -1136,13 +1150,6 @@ var litSharedGuardMutations = []litGuardMutation{
 		from:    "let metalSample = textureSample(metalnessMapTex, baseColorSampler, in.uv).b;",
 		to:      "let metalSample = textureSample(metalnessMapTex, baseColorSampler, in.uv).r;",
 		wantRow: "metalness-map-channel",
-	},
-	{
-		name:    "native renderer reverts the clear coat gain to 1.0",
-		side:    "go",
-		from:    "color = color + vec3f(pow(NdotV, clearcoatPower) * clearcoat * 0.28);",
-		to:      "color = color + vec3f(pow(NdotV, clearcoatPower) * clearcoat);",
-		wantRow: "clearcoat-gain",
 	},
 	{
 		name:    "native renderer reverts the sheen term to a blend",
@@ -1331,9 +1338,51 @@ var litDivergentGuardMutations = []litGuardMutation{
 	{
 		name:    "browser drops generated split-sum IBL without updating the ledger",
 		side:    "js",
-		from:    "ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
-		to:      "ambient = diffuseIBL * env.envIntensity;",
+		from:    "ambient = ibl.color * env.envIntensity;",
+		to:      "ambient = ibl.specular * env.envIntensity;",
 		wantRow: "environment-map",
+	},
+	{
+		name:    "browser drops the multiple-scattering energy without updating the ledger",
+		side:    "js",
+		from:    "/ denominator * layer.energy;",
+		to:      "/ denominator;",
+		wantRow: "specular-multiple-scattering",
+	},
+	{
+		name:    "native renderer adds the multiple-scattering energy without updating the ledger",
+		side:    "go",
+		from:    "let specular = D * G * F;",
+		to:      "let specular = D * G * F * energy;",
+		wantRow: "specular-multiple-scattering",
+	},
+	{
+		name:    "browser reverts the clear coat to a view-facing power lobe without updating the ledger",
+		side:    "js",
+		from:    "let Fc = (0.04 + 0.96 * pow(1.0 - VdotH, 5.0)) * layer.coat;",
+		to:      "let Fc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * layer.coat;",
+		wantRow: "clearcoat-lobe",
+	},
+	{
+		name:    "native renderer widens the clear coat power range without updating the ledger",
+		side:    "go",
+		from:    "let clearcoatPower = mix(12.0, 96.0, 1.0 - roughness);",
+		to:      "let clearcoatPower = mix(12.0, 128.0, 1.0 - roughness);",
+		wantRow: "clearcoat-lobe",
+	},
+	{
+		name:    "browser adds the clear coat on top of the base without updating the ledger",
+		side:    "js",
+		from:    "return GosxLit(base * (1.0 - Fc) + coat, specular * (1.0 - Fc) + coat);",
+		to:      "return GosxLit(base + coat, specular + coat);",
+		wantRow: "clearcoat-energy",
+	},
+	{
+		name:    "native renderer reverts the clear coat gain to 1.0 without updating the ledger",
+		side:    "go",
+		from:    "color = color + vec3f(pow(NdotV, clearcoatPower) * clearcoat * 0.28);",
+		to:      "color = color + vec3f(pow(NdotV, clearcoatPower) * clearcoat);",
+		wantRow: "clearcoat-energy",
 	},
 	{
 		name:    "native renderer replaces the underived roughness factor without updating the ledger",

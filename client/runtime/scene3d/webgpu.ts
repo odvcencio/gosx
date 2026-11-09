@@ -1865,41 +1865,6 @@
     // Cascaded shadow sampling (webgpu-shadows module).
     WGSL_SHADOW_CASCADE_FNS,
     "",
-    // GGX/Trowbridge-Reitz normal distribution function.
-    "fn distributionGGX(N: vec3f, H: vec3f, roughness: f32) -> f32 {",
-    "    let a = roughness * roughness;",
-    "    let a2 = a * a;",
-    "    let NdotH = max(dot(N, H), 0.0);",
-    "    let NdotH2 = NdotH * NdotH;",
-    "    let denom = NdotH2 * (a2 - 1.0) + 1.0;",
-    "    return a2 / max(PI * denom * denom, 0.0000001);",
-    "}",
-    "",
-    // Smith geometry function (GGX variant) -- single direction.
-    "fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {",
-    "    let r = roughness + 1.0;",
-    "    let k = (r * r) / 8.0;",
-    "    return NdotV / (NdotV * (1.0 - k) + k);",
-    "}",
-    "",
-    // Smith geometry function -- combined for view and light directions.
-    "fn geometrySmith(N: vec3f, V: vec3f, L: vec3f, roughness: f32) -> f32 {",
-    "    let NdotV = max(dot(N, V), 0.0);",
-    "    let NdotL = max(dot(N, L), 0.0);",
-    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
-    "}",
-    "",
-    // Schlick fresnel approximation. F90 is the authored specular intensity:
-    // the grazing reflectance the KHR specular extension scales, so an
-    // intensity below 1 dims the whole lobe, not just the F0 floor.
-    "fn fresnelSchlick(cosTheta: f32, F0: vec3f, F90: f32) -> vec3f {",
-    "    return F0 + (vec3f(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
-    "fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3f, F90: f32, roughness: f32) -> vec3f {",
-    "    return F0 + (max(vec3f(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
     "fn rotateEnvY(dir: vec3f, radians: f32) -> vec3f {",
     "    let c = cos(radians);",
     "    let s = sin(radians);",
@@ -1935,133 +1900,13 @@
     "    return clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0);",
     "}",
     "",
-    // -- Rect-area light: polygon form factor --------------------------------
-    //
-    // The next three functions reproduce the diffuse half of three.js
-    // RE_Direct_RectArea_Physical. three.js evaluates the diffuse term with
-    // LTC_Evaluate and an IDENTITY matrix, which reduces to the analytic polygon
-    // form factor and needs no lookup table. The diffuse response of a
-    // RectAreaLight is therefore exact here, not an approximation.
-    //
-    // The specular half of three.js reads two fitted 64x64 LTC tables. This
-    // renderer uploads no such tables, so rectAreaLightRadiance approximates
-    // specular with a representative point. See the rect-area-specular cell in
-    // scene/capability/capability.go for the recorded gap.
-
-    // Edge integral of the polygon form factor.
-    "fn ltcEdgeVectorFormFactor(v1: vec3f, v2: vec3f) -> vec3f {",
-    "    let x = dot(v1, v2);",
-    "    let y = abs(x);",
-    "    let a = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;",
-    "    let b = 3.4175940 + (4.1616724 + y) * y;",
-    "    let v = a / b;",
-    "    var thetaSinTheta = 0.5 * inverseSqrt(max(1.0 - x * x, 0.0000001)) - v;",
-    "    if (x > 0.0) {",
-    "        thetaSinTheta = v;",
-    "    }",
-    "    return cross(v1, v2) * thetaSinTheta;",
-    "}",
-    "",
-    // Clipped sphere form factor of the accumulated edge vector.
-    "fn ltcClippedSphereFormFactor(f: vec3f) -> f32 {",
-    "    let l = length(f);",
-    "    return max((l * l + f.z) / (l + 1.0), 0.0);",
-    "}",
-    "",
-    // Diffuse form factor of a rectangle at a shaded point. Returns 0 when the
-    // point sits behind the emitter, so a rect-area light only lights the side
-    // its direction points at.
-    //
-    // The tangent basis: with the identity matrix the form factor depends only
-    // on N, so any basis around N gives the same answer. Pick a stable one.
-    "fn rectAreaFormFactor(N: vec3f, P: vec3f, halfWidth: vec3f, halfHeight: vec3f, center: vec3f) -> f32 {",
-    "    let rect0 = center + halfWidth - halfHeight;",
-    "    let rect1 = center - halfWidth - halfHeight;",
-    "    let rect2 = center - halfWidth + halfHeight;",
-    "    let rect3 = center + halfWidth + halfHeight;",
-    "    let lightNormal = cross(rect1 - rect0, rect3 - rect0);",
-    "    if (dot(lightNormal, P - rect0) < 0.0) {",
-    "        return 0.0;",
-    "    }",
-    "    var helper = vec3f(0.0, 0.0, 1.0);",
-    "    if (abs(N.z) > 0.999) {",
-    "        helper = vec3f(1.0, 0.0, 0.0);",
-    "    }",
-    "    let T1 = normalize(cross(helper, N));",
-    "    let T2 = cross(N, T1);",
-    "    let basis = transpose(mat3x3f(T1, T2, N));",
-    "    let c0 = normalize(basis * (rect0 - P));",
-    "    let c1 = normalize(basis * (rect1 - P));",
-    "    let c2 = normalize(basis * (rect2 - P));",
-    "    let c3 = normalize(basis * (rect3 - P));",
-    "    var edges = ltcEdgeVectorFormFactor(c0, c1);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c1, c2);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c2, c3);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c3, c0);",
-    "    return ltcClippedSphereFormFactor(edges);",
-    "}",
-    "",
-    // Closest point on the rectangle to the mirror direction. This is the
-    // representative-point stand-in for the LTC specular table.
-    "fn rectAreaRepresentativePoint(P: vec3f, N: vec3f, V: vec3f, center: vec3f, halfWidth: vec3f, halfHeight: vec3f, planeNormal: vec3f) -> vec3f {",
-    "    let R = reflect(-V, N);",
-    "    var hit = center;",
-    "    let denom = dot(planeNormal, R);",
-    "    if (abs(denom) > 0.00001) {",
-    "        let t = dot(planeNormal, center - P) / denom;",
-    "        if (t > 0.0) {",
-    "            hit = P + R * t;",
-    "        }",
-    "    }",
-    "    let wLen = max(length(halfWidth), 0.00001);",
-    "    let hLen = max(length(halfHeight), 0.00001);",
-    "    let wDir = halfWidth / wLen;",
-    "    let hDir = halfHeight / hLen;",
-    "    let offset = hit - center;",
-    "    let u = clamp(dot(offset, wDir), -wLen, wLen);",
-    "    let v = clamp(dot(offset, hDir), -hLen, hLen);",
-    "    return center + wDir * u + hDir * v;",
-    "}",
-    "",
-    // Full rect-area contribution: exact diffuse form factor plus a
-    // representative-point specular lobe.
-    //
-    // three.js multiplies the diffuse term by diffuseColor, which already folds
-    // in metalness. The form factor carries the cosine and the solid angle, so
-    // there is no separate NdotL or 1/PI in the diffuse line.
-    "fn rectAreaLightRadiance(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, F90: f32, NoV: f32) -> vec3f {",
-    "    let center = light.position.xyz;",
-    "    let halfWidth = light.areaHalfWidth.xyz;",
-    "    let halfHeight = light.areaHalfHeight.xyz;",
-    "    let formFactor = rectAreaFormFactor(N, P, halfWidth, halfHeight, center);",
-    "    if (formFactor <= 0.0) {",
-    "        return vec3f(0.0);",
-    "    }",
-    "    let radiance = light.color.rgb * light.direction.w;",
-    "    var out = albedo * (1.0 - metalness) * radiance * formFactor;",
-    "    let repPoint = rectAreaRepresentativePoint(P, N, V, center, halfWidth, halfHeight, light.direction.xyz);",
-    "    let toRep = repPoint - P;",
-    "    let repDist = length(toRep);",
-    "    let L = toRep / max(repDist, 0.0001);",
-    "    let NdotL = max(dot(N, L), 0.0);",
-    "    if (NdotL > 0.0) {",
-    "        let H = normalize(V + L);",
-    "        let D = distributionGGX(N, H, roughness);",
-    "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "        let brdf = (D * G * F) / (4.0 * NoV * NdotL + 0.0001);",
-    "        out = out + radiance * brdf * formFactor;",
-    "        gosxSpecularRadiance += radiance * brdf * formFactor;",
-    "    }",
-    "    return out;",
-    "}",
-    "",
     "fn gsxSpecularRoughness(n: vec3f, r: f32, aa: vec2f) -> f32 {",
     "    let dx = dpdx(n); let dy = dpdy(n);",
     "    let kernel = min(2.0 * aa.x * (dot(dx, dx) + dot(dy, dy)), aa.y);",
     "    if (kernel > 0.0) { return sqrt(sqrt(min(r*r*r*r + kernel, 1.0))); }",
     "    return r;",
     "}",
+    WGSL_BRDF,
     WGSL_TRANSMISSION,
     "fn gosxPBRColor(in: VertexOutput) -> vec4f {",
     SCENE_WEBGPU_CUTAWAY_DISCARD_WGSL,
@@ -2142,7 +1987,7 @@
     "        mapNormal = vec3f(mapNormal.xy * material.normalScale, mapNormal.z);",
     "        N = normalize(TBN * mapNormal);",
     "    }",
-    "",
+    "    let surfaceClearcoat = material.clearcoat; let surfaceClearcoatRoughness = 0.04; let surfaceSheen = material.sheen; let surfaceTransmission = material.transmission;",
     "    let V = normalize(frame.cameraPos - in.worldPos);",
     "    let NoV = max(dot(N, V), 0.0);",
       "",
@@ -2188,7 +2033,8 @@
       "    }",
     "",
     // Accumulate direct lighting.
-    "    let transmission = clamp(material.transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    let transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    let gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
     "    var Lo = vec3f(0.0);",
     "",
     // arrayLength bounds the loop against the storage buffer the JS side sized
@@ -2251,25 +2097,10 @@
     "            attenuation = pointLightAttenuation(dist, range, decay);",
     "        }",
     "",
-    "        let H = normalize(V + L);",
     "        let NdotL = max(dot(N, L), 0.0);",
-    "",
-    // Cook-Torrance specular BRDF.
-    "        let D = distributionGGX(N, H, roughness);",
-    "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "",
-    "        let numerator = D * G * F;",
-    "        let denominator = 4.0 * NoV * NdotL + 0.0001;",
-    "        let specular = numerator / denominator;",
-    "",
-    // Energy conservation: diffuse complement of the dielectric specular.
-    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
-    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
-    // the Fresnel colour and never borrows the metallic Fresnel.
-    "        let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
-    "        let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
-    "",
+    // Cook-Torrance GGX with multiscatter energy and the clear-coat layer;
+    // the diffuse weight is (1 - maxRGB(dielectric Fresnel)) * (1 - metalness).
+    "        let lit = gosxDirectBRDF(N, V, L, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer);",
     // Shadow attenuation follows the light associated with each slot.
     "        var shadowAtten: f32 = 1.0;",
     "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {",
@@ -2277,26 +2108,17 @@
     "        }",
     "",
     "        let radiance = lightColor * intensity * attenuation;",
-    "        Lo = Lo + (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadowAtten;",
-    "        gosxSpecularRadiance += specular * radiance * NdotL * shadowAtten;",
+    "        Lo = Lo + lit.color * radiance * NdotL * shadowAtten;",
+    "        gosxSpecularRadiance += lit.specular * radiance * NdotL * shadowAtten;",
     "    }",
     "",
     "    // Assetpipe split-sum IBL, with hemisphere fallback while products load.",
     "    var ambient: vec3f;",
     "    var specularEnvironment = vec3f(0.0);",
     "    if (env.hasIBL != 0u) {",
-    "        let Nr = rotateEnvY(N, env.envRotation);",
-    "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
-    "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        let irradiance = textureSample(iblIrradiance, iblSampler, Nr).rgb;",
-    "        let maxLod = f32(max(env.radianceMipLevels, 1u) - 1u);",
-    "        let prefiltered = textureSampleLevel(iblRadiance, iblSampler, Rr, roughness * maxLod).rgb;",
-    "        let brdf = textureSample(iblBRDFLUT, iblSampler, vec2f(NoV, roughness)).rg;",
-    "        let diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
-    "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
-    "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
-    "        specularEnvironment = specularIBL * env.envIntensity;",
+    "        let ibl = gosxImageLight(N, V, NoV, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer);",
+    "        ambient = ibl.color * env.envIntensity;",
+    "        specularEnvironment = ibl.specular * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
     // Explicit LOD avoids seam/pole derivative blur and matches WebGL2.
     "        let Nr = rotateEnvY(N, env.envRotation);",
@@ -2307,14 +2129,17 @@
     "        let Fenv = fresnelSchlickRoughness(NoV, F0, F90, roughness);",
     "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
-    "        specularEnvironment = envSpecular * Fenv * (1.0 - roughness * 0.65) * env.envIntensity;",
+    "        let envLit = gosxCoatOver(GosxLit((kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity, envSpecular * Fenv * (1.0 - roughness * 0.65) * env.envIntensity), textureSampleLevel(envMapTex, envMapSampler, envEquirectUV(Rr), gosxLayer.coatRoughness * maxLod).rgb * env.envIntensity, NoV, gosxLayer);",
+    "        ambient = envLit.color;",
+    "        specularEnvironment = envLit.specular;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
     "                       + env.skyColor * env.skyIntensity * hemi",
     "                       + env.groundColor * env.groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "        let hemiLit = gosxCoatOver(GosxLit(envDiffuse * albedo * (1.0 - transmission), vec3f(0.0)), envDiffuse, NoV, gosxLayer);",
+    "        ambient = hemiLit.color;",
+    "        specularEnvironment = hemiLit.specular;",
     "    }",
     "    if (env.hasIBL == 0u && env.hasEnvMap == 0u) {",
     "        let reflectedTransmission = transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
@@ -2337,13 +2162,7 @@
     "        color = color + material.rimColor * rim;",
     "    }",
     "",
-    "    let clearcoat = clamp(material.clearcoat, 0.0, 1.0);",
-    "    if (clearcoat > 0.0001) {",
-    "        let cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
-    "        color = color + vec3f(cc * 0.28);",
-    "    }",
-    "",
-    "    let sheen = clamp(material.sheen, 0.0, 1.0);",
+    "    let sheen = clamp(surfaceSheen, 0.0, 1.0);",
     "    if (sheen > 0.0001) {",
     "        let velvet = pow(1.0 - NoV, 3.0) * sheen;",
     "        color = color + albedo * velvet * 0.55;",
@@ -6899,7 +6718,7 @@
     var pointsFragmentModule = null;
 
     // Pipeline cache.
-    var detailResources = new Map().get("active");
+    var detailResources = new Map().get("active"), selenaSurfaces = sceneWebGPUSelenaSurfaceResources();
     var detailEnabled = true;
     var pipelineCache = {};
     var activeSampleCount = 1;
@@ -8375,7 +8194,7 @@
         for (var object of objects) {
           var material = materials[object.materialIndex];
           var reflected = sceneWebGPUObjectReflected(object);
-          if (!getObjectSelenaPipeline(object, material, blend, depth)) getPBRPipeline(blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", Boolean(material && material.detail));
+          if (!getObjectSelenaPipeline(object, material, blend, depth)) getPBRPipeline(blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", pbrVariant(material));
           if (shadows && object.castShadow) getShadowPipeline(reflected);
           if (webGPUObjectIsSkinned(object)) ensureElioSkinPipeline();
           if (object.computedMorph) ensureComputedMorphPipeline();
@@ -8411,11 +8230,13 @@
     function pbrKeyPrefix(detail: boolean) { return (selectiveBloom ? "specular|" : "") + (detail || pbrShadowsActive ? "" : "unshadowed|"); }
 
     // Get or create a PBR pipeline for the given blend mode.
-    function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
-      var reflected = frontFace === "cw";
-      var key = pbrKeyPrefix(detail) + wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    // PBR variant: true for detail, a Selena surface variant, else false.
+    function pbrVariant(material: any) { return material && material.detail ? true : sceneWebGPUSelenaSurfaceVariant(device, selenaSurfaces, material, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT) || false; }
+    function getPBRPipeline(blendMode, depthWrite, frontFace, detail: any = false) {
+      var reflected = frontFace === "cw", variant = detail === true ? detailResources : detail || null, kind = sceneWebGPUPipelineKind(reflected, "pbr");
+      var key = pbrKeyPrefix(!!variant) + wgpuPipelineKey(detail === true ? sceneDetailVariantKey(kind, true) : variant ? variant.key + ":" + kind : kind, blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, pbrFragment(detail), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
+      var pipeline = wgpuCreatePBRPipeline(device, variant ? variant.pipelineLayout : pbrPipelineLayout, pbrVertexModule, variant ? variant.fragment : pbrFragment(false), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -16093,11 +15914,12 @@
         return false;
       }
       function bindPBRPipeline(reflected, material = Object.create(null)) {
-        var hasDetail = Boolean(material && material.detail);
-        var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr");
+        var hasDetail = Boolean(material && material.detail), variant = pbrVariant(material), surface = variant === true ? null : variant;
+        var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : (surface ? surface.key + ":" : "") + sceneWebGPUPipelineKind(reflected, "pbr");
         kind += ":" + objectDepthWrite;
+        if (surface && surface.groupLayout) pass.setBindGroup(2, sceneWebGPUSelenaSurfaceGroup(device, selenaSurfaces, material, surface, selenaFrame));
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail)));
+        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", variant)));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -18353,6 +18175,7 @@
       beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
+      sceneWebGPUSelenaSurfaceFrame(selenaSurfaces);
       detailResources = sceneWebGPUPrepareDetailFrame(device, detailResources, bundle.materials, textureCache, {
         placeholderView: placeholderView, enabled: detailEnabled,
       });
@@ -19073,7 +18896,7 @@
           destroyRendererGPUResource(record.texture);
         }
       }
-      sceneWebGPUDisposeDetail(detailResources); detailResources = null;
+      sceneWebGPUDisposeDetail(detailResources); detailResources = null; sceneWebGPUDisposeSelenaSurfaces(selenaSurfaces);
       textureCache.clear();
       selenaPipelineCache.clear();
       selenaComputePipelineCache.clear();
@@ -19462,7 +19285,7 @@
     return groups[shadow] = record.bg;
   }
   function sceneWebGPUIsSelenaMaterial(material: any) {
-    return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) &&
+    return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) && !sceneWebGPUSelenaSurfaceHook(material) &&
       ((typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
        (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())));
   }

@@ -425,42 +425,6 @@
     "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1[c], u_shadowSoftness1);",
     "}",
     "",
-    // GGX/Trowbridge-Reitz normal distribution function.
-    "float distributionGGX(vec3 N, vec3 H, float roughness) {",
-    "    float a = roughness * roughness;",
-    "    float a2 = a * a;",
-    "    float NdotH = max(dot(N, H), 0.0);",
-    "    float NdotH2 = NdotH * NdotH;",
-    "    float denom = NdotH2 * (a2 - 1.0) + 1.0;",
-    "    denom = PI * denom * denom;",
-    "    return a2 / max(denom, 0.0000001);",
-    "}",
-    "",
-    // Smith geometry function (GGX variant) — single direction.
-    "float geometrySchlickGGX(float NdotV, float roughness) {",
-    "    float r = roughness + 1.0;",
-    "    float k = (r * r) / 8.0;",
-    "    return NdotV / (NdotV * (1.0 - k) + k);",
-    "}",
-    "",
-    // Smith geometry function — combined for view and light directions.
-    "float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {",
-    "    float NdotV = max(dot(N, V), 0.0);",
-    "    float NdotL = max(dot(N, L), 0.0);",
-    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
-    "}",
-    "",
-    // Schlick fresnel approximation. F90 is the authored specular intensity:
-    // the grazing reflectance the KHR specular extension scales, so an
-    // intensity below 1 dims the whole lobe, not just the F0 floor.
-    "vec3 fresnelSchlick(float cosTheta, vec3 F0, float F90) {",
-    "    return F0 + (vec3(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
-    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float F90, float roughness) {",
-    "    return F0 + (max(vec3(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
     "vec3 rotateEnvY(vec3 dir, float radians) {",
     "    float c = cos(radians);",
     "    float s = sin(radians);",
@@ -486,6 +450,7 @@
     "    float kernel = min(2.0 * aa.x * (dot(dx, dx) + dot(dy, dy)), aa.y);",
     "    return kernel > 0.0 ? sqrt(sqrt(min(r*r*r*r + kernel, 1.0))) : r;",
     "}",
+    GLSL_BRDF,
     GLSL_TRANSMISSION,
     "void main() {",
     "    if (dot(u_cut[1].xyz, v_worldPosition) + u_cut[1].w > 0.0) discard;",
@@ -580,7 +545,7 @@
     "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
-    "",
+    "    float surfaceClearcoat = u_clearcoat, surfaceClearcoatRoughness = 0.04, surfaceSheen = u_sheen, surfaceTransmission = u_transmission;",
     "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
     "    float NoV = max(dot(N, V), 0.0);",
     "",
@@ -630,7 +595,8 @@
     "    }",
     "",
     // Accumulate direct lighting.
-    "    float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    float transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    GosxLayer gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
     "    vec3 Lo = vec3(0.0);",
     "    vec3 specularRadiance = vec3(0.0);",
     "    vec3 specularEnvironment = vec3(0.0);",
@@ -690,25 +656,11 @@
     "            attenuation = pointLightAttenuation(dist, u_lightRanges[i], u_lightDecays[i]);",
     "        }",
     "",
-    "        vec3 H = normalize(V + L);",
     "        float NdotL = max(dot(N, L), 0.0);",
-    "",
-    // Cook-Torrance specular BRDF.
-    "        float D = distributionGGX(N, H, roughness);",
-    "        float G = geometrySmith(N, V, L, roughness);",
-    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "",
-    "        vec3 numerator = D * G * F;",
-    "        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
-    "        vec3 specular = numerator / denominator;",
-    "",
-    // Energy conservation: diffuse complement of the dielectric specular.
-    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
-    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
-    // the Fresnel colour and never borrows the metallic Fresnel.
-    "        vec3 Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
-    "        float kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
-    "",
+    // Cook-Torrance GGX with multiscatter energy and the clear-coat layer;
+    // the diffuse weight is (1 - maxRGB(dielectric Fresnel)) * (1 - metalness).
+    "        vec3 specular;",
+    "        vec3 brdf = gosxDirectBRDF(N, V, L, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer, specular);",
     // Shadow attenuation follows the light associated with each slot.
     "        float shadow = 1.0;",
     "        if (u_receiveShadow && (lightType == 1 || lightType == 3)) {",
@@ -720,7 +672,7 @@
     "        }",
     "",
     "        vec3 radiance = lightColor * intensity * attenuation;",
-    "        Lo += (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadow;",
+    "        Lo += brdf * radiance * NdotL * shadow;",
     "        specularRadiance += specular * radiance * NdotL * shadow;",
     "    }",
     "",
@@ -730,17 +682,8 @@
     "    vec3 ambient;",
     "#if GOSX_HDR_IBL",
     "    if (u_hasIBL) {",
-    "        vec3 Nr = rotateEnvY(N, u_envRotation);",
-    "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
-    "        vec3 FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        vec3 irradiance = texture(u_iblIrradiance, Nr).rgb;",
-    "        vec3 prefiltered = textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod).rgb;",
-    "        vec2 brdf = texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg;",
-    "        vec3 diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
-    "        vec3 specularIBL = prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y);",
-    "        ambient = (diffuseIBL + specularIBL) * u_envIntensity;",
-    "        specularEnvironment = specularIBL * u_envIntensity;",
+    "        ambient = gosxImageLight(N, V, NoV, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer, specularEnvironment) * u_envIntensity;",
+    "        specularEnvironment *= u_envIntensity;",
     "    } else",
     "#endif",
     "    if (u_hasEnvMap) {",
@@ -757,14 +700,14 @@
     "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, F90, roughness);",
     "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
     "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
     "        specularEnvironment = envSpecular * Fenv * (1.0 - roughness * 0.65) * u_envIntensity;",
+    "        ambient = gosxCoatOver(kDenv * envDiffuse * (1.0 - transmission) * u_envIntensity + specularEnvironment, textureLod(u_envMap, envEquirectUV(Rr), gosxLayer.coatRoughness * u_envMapMaxLod).rgb * u_envIntensity, NoV, gosxLayer, specularEnvironment);",
     "    } else {",
     "        float hemi = N.y * 0.5 + 0.5;",
     "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
     "                        + u_skyColor * u_skyIntensity * hemi",
     "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "        ambient = gosxCoatOver(envDiffuse * albedo * (1.0 - transmission), envDiffuse, NoV, gosxLayer, specularEnvironment);",
     "    }",
     "    if (!u_hasEnvMap) {",
     "#if GOSX_HDR_IBL",
@@ -797,13 +740,7 @@
     "        color += u_rimColor * rim;",
     "    }",
     "",
-    "    float clearcoat = clamp(u_clearcoat, 0.0, 1.0);",
-    "    if (clearcoat > 0.0001) {",
-    "        float cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
-    "        color += vec3(cc * 0.28);",
-    "    }",
-    "",
-    "    float sheen = clamp(u_sheen, 0.0, 1.0);",
+    "    float sheen = clamp(surfaceSheen, 0.0, 1.0);",
     "    if (sheen > 0.0001) {",
     "        float velvet = pow(1.0 - NoV, 3.0) * sheen;",
     "        color += albedo * velvet * 0.55;",
@@ -7644,7 +7581,7 @@
 	    var skinnedProgramFailed = false;
     var detailResources = { programs: new Map(), atlases: new Map(), materials: new Map(), bake: null };
     var detailEnabled = true;
-    var customProgramCache = new Map();
+    var customProgramCache = new Map(), selenaSurfacePrograms = new Map();
     var selenaProgramCache = new Map();
 
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Shadow program (depth-only shader for shadow pass).
@@ -9697,7 +9634,7 @@
           meshColorVisibility.set(obj, count > 0);
           if (count > 0 && obj.directVertices && obj.retainedGeometry && obj.vertices &&
               obj.vertexCount > 0 && scenePBRObjectRenderPass(obj, mat) === "opaque" &&
-              !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat)) {
+              !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat) && !sceneWebGLSelenaSurfaceHook(mat)) {
             if (count === 1) obj.modelMatrix = batch.transforms.subarray(0, 16);
             rigidObjectBatches.set(obj, batch);
           }
@@ -9720,7 +9657,7 @@
             objectIsSkinned(obj) ||
             !obj.modelMatrix || !(sceneAffineDeterminant(obj.modelMatrix, 0) > 0.000001) ||
             scenePBRObjectRenderPass(obj, mat) !== "opaque" ||
-            sceneSelenaIsMaterial(mat) || scenePBRHasCustomHooks(mat)) continue;
+            sceneSelenaIsMaterial(mat) || scenePBRHasCustomHooks(mat) || sceneWebGLSelenaSurfaceHook(mat)) continue;
         let groups = rigidBatchRecords.get(obj.vertices);
         if (!groups) {
           groups = new Map();
@@ -10025,7 +9962,8 @@
           continue;
         }
 
-        var customProgram = !isSkinned ? ensureCustomProgram(mat) : null;
+        var customProgram = sceneWebGLAuthoredProgram(gl, selenaSurfacePrograms, mat, isSkinned, ensureCustomProgram);
+        if (customProgram === false) continue;
 
         // Reaching this line means the object is about to draw with the
         // built-in PBR shader. If it authored a Selena or CustomMaterial
@@ -10080,6 +10018,7 @@
         }
 
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, currentUniforms, mat, detailEnabled);
+        sceneWebGLUploadSelenaSurface(gl, customProgram, mat, selenaUniformValue);
 
         // Per-object shadow receive control.
         gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
@@ -10967,6 +10906,7 @@
         disposeOwnedProgram(cp);
       }
       customProgramCache.clear();
+      sceneWebGLDisposeSelenaSurfaces(selenaSurfacePrograms, disposeOwnedProgram);
       scenePBRAuthoredProgramKeys.delete(customProgramCache);
 
       for (const record of selenaProgramCache.values()) {

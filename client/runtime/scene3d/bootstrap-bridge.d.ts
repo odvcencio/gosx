@@ -216,7 +216,7 @@ declare var sceneViewportCamera: any;
 declare var sceneResolveMaterialUniforms: any;
 declare var sceneRotatePoint: any;
 declare var sceneSelenaMaterialValue: any;
-declare var sceneSelenaUniformData: any;
+declare var sceneSelenaUniformData: any, sceneSelenaUniformValue: any, sceneSelenaWriteUniformField: any;
 declare var sceneShadowCascadeBiasScale: any;
 declare var sceneShadowComputeBounds: any;
 declare var sceneShadowLightSpaceMatrix: any;
