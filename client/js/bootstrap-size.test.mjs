@@ -1833,6 +1833,12 @@ const budgets = [
   // three caps raised with narrow rounding headroom. The merged build
   // measures 17_457 / 6_841 / 6_055.
   { file: "bootstrap-feature-scene3d-animation.js", raw: 25634, gzip: 9326, brotli: 8452 },
+  // Animation graph chunk (new, opt-in): GSA1 decoding, layered clip
+  // sampling with bone masks and additive layers, humanoid rig mapping and
+  // retargeting, two-bone and look-at IK. It loads only on pages that require
+  // the "scene3d-animation-graph" feature, and no renderer set includes it.
+  // Measured 39_500 / 14_413 / 13_344; targets are the next 100 bytes.
+  { file: "bootstrap-feature-scene3d-animation-graph.js", raw: 39500, gzip: 14500, brotli: 13400 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.

@@ -768,6 +768,21 @@ var outputs = []output{
 		},
 	},
 	{
+		// Animation graph evaluation for models driven by motion/animgraph:
+		// layered clip sampling with bone masks and additive layers, humanoid
+		// rig mapping and retargeting, and IK. A page loads it by requiring the
+		// "scene3d-animation-graph" feature; it wraps the animation chunk's
+		// sampled-clip hooks at run time, so no renderer chunk grows.
+		name: "bootstrap-feature-scene3d-animation-graph.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26n-feature-scene3d-animation-graph-prefix.ts"),
+			sourceFile("../runtime/scene3d/animation-rig.ts"),
+			sourceFile("../runtime/scene3d/ik.ts"),
+			sourceFile("../runtime/scene3d/animation-graph.ts"),
+			sourceFile("bootstrap-src/26n-feature-scene3d-animation-graph-suffix.ts"),
+		},
+	},
+	{
 		// Standalone host authorities are part of the build graph now, but their
 		// committed JS/map/compressed artifacts remain a deliberate Stack 07
 		// cutover. Until then --check reports them stale.
