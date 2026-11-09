@@ -26,6 +26,7 @@ function loadCSM() {
     "function sceneNumber(v, f) { const n = Number(v); return Number.isFinite(n) ? n : f; }",
     extract("bootstrap-src/11-scene-math.ts", "sceneMat4MultiplyInto"),
     extract("../runtime/scene3d/webgpu.ts", "sceneWebGPUShadowDepthMatrix"),
+    ts.transpileModule(extract("bootstrap-src/16c-scene-shared-pbr.ts", "sceneShadowCascadeBiasScale"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
     ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
     "globalThis.csm = { sceneWebGPUShadowCascadeSplits, sceneWebGPUShadowSphere, wgpuFitShadowSlot, wgpuPackShadowUniforms,",
     "  sceneWebGPUShadowCascadeCount, wgpuEnsureShadowSlot, WGSL_SHADOW_UNIFORMS_STRUCT, WGSL_SHADOW_CASCADE_FNS, SCENE_WEBGPU_SHADOW_UNIFORM_BYTES };",
@@ -143,6 +144,16 @@ test("lights that cannot cascade keep the one-map full-scene fit", () => {
   assert.equal(csm.sceneWebGPUShadowCascadeCount({ kind: "directional", shadowCascades: 3 }, { kind: "orthographic" }), 1);
   const slot = csm.wgpuFitShadowSlot(fakeSlot(512, 1), light, raw, { view: lookAt([0, 0, 5], [0, 0, 0]), camera, aspect: 1, bounds });
   assert.deepEqual(Array.from(slot.cascades[0].lightMatrix.slice(8, 12)), [0, 0, (raw[10] + raw[11]) * 0.5, 0]);
+});
+
+test("each cascade scales the authored bias to its texels", () => {
+  // raw is the one-map fit: 100 m wide, 200 m deep. Near cascades are finer.
+  const scales = Array.from(fit([0, 6, 20], [0, 2, 0]).cascades.map((c) => c.biasScale));
+  assert.ok(scales[0] < scales[1] && scales[1] < scales[2] && scales[2] < scales[3], `scales rise with cascade size: ${scales}`);
+  assert.ok(scales[0] > 0 && scales[0] < 1, `the nearest cascade is finer than the one-map fit: ${scales}`);
+  const f = new Float32Array(csm.SCENE_WEBGPU_SHADOW_UNIFORM_BYTES / 4), i32 = new Int32Array(f.buffer);
+  csm.wgpuPackShadowUniforms(f, i32, [fit([0, 6, 20], [0, 2, 0]), null], [0, -1], [light]);
+  assert.deepEqual(Array.from(f.slice(72, 76)).map((v) => Math.round(v * 1e4)), scales.map((v) => Math.round(v * 1e4)), "the scales reach the shader");
 });
 
 test("shadow uniforms pack both slots at the documented offsets", () => {

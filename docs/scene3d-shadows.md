@@ -27,7 +27,7 @@ scene.DirectionalLight{
 | `ShadowDistance` | How far from the camera the cascades reach, in world units. Zero uses the camera's far plane. Set it to the size of the play area: a 1,000-unit far plane with no limit spreads four cascades thinly. Shadows fade out over the last part of this distance. |
 | `ShadowSize` | Texels per side of each cascade, 256 to 4096. `Props.ShadowMaxPixels` caps the total across all of a light's cascades. |
 | `ShadowSoftness` | 0 gives a crisp, filtered edge. Above 0, both backends search for blockers and widen the filter with the distance between caster and receiver (percentage-closer soft shadows), so contact points stay sharp. |
-| `ShadowBias` | Depth offset that prevents surface acne. Raise it if lit surfaces show stripes; lower it if shadows detach from their casters. |
+| `ShadowBias` | Depth offset that prevents surface acne. Raise it if lit surfaces show stripes; lower it if shadows detach from their casters. Tune it with one shadow map: each cascade scales it to its own texel size, so the same value works at any `ShadowCascades` and `ShadowDistance`. A negative value pulls the comparison toward back faces; keep it small, because thin parts then shadow themselves. |
 
 ## Stable edges
 

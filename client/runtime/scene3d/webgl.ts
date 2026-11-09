@@ -282,7 +282,7 @@
     "uniform float u_shadowCascadeSplits0[4];",
     "uniform int u_shadowCascades0;",
     "uniform bool u_hasShadow0;",
-    "uniform float u_shadowBias0;",
+    "uniform float u_shadowBias0[4];",
     "uniform float u_shadowSoftness0;",
     "",
     "uniform highp sampler2DArray u_shadowMap1;",
@@ -290,7 +290,7 @@
     "uniform float u_shadowCascadeSplits1[4];",
     "uniform int u_shadowCascades1;",
     "uniform bool u_hasShadow1;",
-    "uniform float u_shadowBias1;",
+    "uniform float u_shadowBias1[4];",
     "uniform float u_shadowSoftness1;",
     "",
     // Per-object shadow receive control
@@ -404,7 +404,7 @@
     "    if (u_shadowCascades0 >= 3 && viewDepth >= u_shadowCascadeSplits0[1]) c = 2;",
     "    if (u_shadowCascades0 >= 4 && viewDepth >= u_shadowCascadeSplits0[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices0[c];",
-    "    return shadowFactor(u_shadowMap0, c, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    return shadowFactor(u_shadowMap0, c, ls, u_shadowBias0[c], u_shadowSoftness0);",
     "}",
     "",
     "float shadowFactorSlot1(float viewDepth) {",
@@ -413,7 +413,7 @@
     "    if (u_shadowCascades1 >= 3 && viewDepth >= u_shadowCascadeSplits1[1]) c = 2;",
     "    if (u_shadowCascades1 >= 4 && viewDepth >= u_shadowCascadeSplits1[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices1[c];",
-    "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1[c], u_shadowSoftness1);",
     "}",
     "",
     // GGX/Trowbridge-Reitz normal distribution function.
@@ -1184,7 +1184,7 @@
       var m = sceneShadowLightSpaceMatrix(light, sceneBounds);
       slot.cascades[0].lightMatrix = m;
       slot.cascades[0].splitNear = 0;
-      slot.cascades[0].splitFar = camFar || 100;
+      slot.cascades[0].splitFar = camFar || 100; slot.cascades[0].biasScale = 1;
       return;
     }
 
@@ -1206,12 +1206,12 @@
     var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
     var sceneRadius = Math.sqrt(ex * ex + ey * ey + ez * ez);
 
-    var prevSplit = camNear || 0.1;
+    var prevSplit = camNear || 0.1, reference = sceneShadowLightSpaceMatrix(light, sceneBounds); // bias reference: the one-map fit
     for (var i = 0; i < n; i++) {
       var splitFar = splits[i];
       var corners = sceneShadowFrustumSubCorners(viewMatrix, fovDeg, aspect, prevSplit, splitFar);
       var matrix = sceneShadowFitLightSpaceOrtho([dx, dy, dz], corners, sceneRadius, slot.size);
-      slot.cascades[i].lightMatrix = matrix;
+      slot.cascades[i].lightMatrix = matrix; slot.cascades[i].biasScale = sceneShadowCascadeBiasScale(reference, matrix);
       slot.cascades[i].splitNear = prevSplit;
       slot.cascades[i].splitFar = splitFar;
       prevSplit = splitFar;
@@ -7140,9 +7140,9 @@
 
     gl.uniformMatrix4fv(uniforms[matricesKey], false, _scenePBRCascadeMatScratch);
     gl.uniform1fv(uniforms[splitsKey], _scenePBRCascadeSplitScratch);
+    for (var bi = 0; bi < 4; bi++) _scenePBRCascadeSplitScratch[bi] = sceneNumber(light.shadowBias, 0.005) * sceneNumber(slot.cascades[bi < numCascades ? bi : 0].biasScale, 1); gl.uniform1fv(uniforms[biasKey], _scenePBRCascadeSplitScratch); // per-cascade bias, reusing the uploaded split scratch
     gl.uniform1i(uniforms[cascadesKey], numCascades);
     gl.uniform1i(uniforms[hasKey], 1);
-    gl.uniform1f(uniforms[biasKey], sceneNumber(light.shadowBias, 0.005));
     gl.uniform1f(uniforms[softKey], Math.max(0, sceneNumber(light.shadowSoftness, 0)));
     gl.uniform1i(uniforms[indexKey], lightIndex);
   }

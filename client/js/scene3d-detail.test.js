@@ -61,7 +61,9 @@ test("WebGL detail is a cached compile variant with nil source unchanged", () =>
   // The browser optics oracle covers behavior; nil detail must keep this base exact.
   // Reviewed vessel cutaway base: two u_cut clip planes discard before shading; all-zero planes cut nothing
   // (scripts/scene3d-vessel-cutaway.mjs checks the pixels).
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "ba5119d2f1e7d21615e685e8cc757367ac048e774ad9893ed3d0f807efdf2411");
+  // Reviewed cascaded-shadow base: u_shadowBias0/1 are per-cascade arrays scaled to each cascade's texels
+  // (scene3d-shadow-cascade-bias.test.js; e2e TestBeaconTowerShadowBand checks the pixels).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "55dcbd9b4f496c7cccd1ab9d6c51a0b27456bafcd39a536ff45f525a9ef137bf");
   const shader = c.sceneWebGLDetailFragment(base, true);
   const glWithUnits = units => ({ MAX_TEXTURE_IMAGE_UNITS: 1, getParameter: () => units });
   assert.match(c.scenePBRFragmentSourceForContext(glWithUnits(16), base), /#define GOSX_HDR_IBL 1/);

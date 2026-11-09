@@ -264,9 +264,9 @@ function wgpuFitShadowSlot(slot: any, light: any, rawMatrix: Float32Array, frame
     var matrix = sceneWebGPUShadowCascadeMatrix(basis, center, sphere.radius, slot.size, sceneCenter, sceneRadius);
     slot.cascades[c].lightMatrix = sceneWebGPUShadowDepthMatrix(matrix);
     slot.cascades[c].splitFar = splits[c];
-    // Each cascade's depth range spans the scene, as the one-map fit does, so
-    // the authored bias already covers its texels. The scale stays at 1.
-    slot.cascades[c].biasScale = 1;
+    // The authored bias is tuned for the one-map fit; scale it to this
+    // cascade's texel size and depth range (sceneShadowCascadeBiasScale).
+    slot.cascades[c].biasScale = sceneShadowCascadeBiasScale(rawMatrix, matrix);
     previous = splits[c];
   }
   return slot;

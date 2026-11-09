@@ -8343,6 +8343,7 @@
     scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
+    sceneShadowCascadeBiasScale: typeof sceneShadowCascadeBiasScale === "function" ? sceneShadowCascadeBiasScale : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
     generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
     normalizeInstancedGeometryKind: typeof normalizeInstancedGeometryKind === "function" ? normalizeInstancedGeometryKind : undefined,

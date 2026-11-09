@@ -671,6 +671,21 @@
     return sceneMat4Multiply(proj, view);
   }
 
+  // sceneShadowCascadeBiasScale scales a light's depth bias for one cascade.
+  // The authored bias is tuned for the one-map fit (reference). A cascade with
+  // smaller texels needs proportionally less bias, and the same world offset
+  // is a larger depth value when the cascade's depth range is shorter, so the
+  // scale is (cascade texel / reference texel) * (reference range / cascade
+  // range). Without it a fine cascade inherits a world-sized bias several
+  // texels deep, and a negative bias self-shadows lit surfaces in a band.
+  // Both matrices are orthographic GL clip matrices (column-major).
+  function sceneShadowCascadeBiasScale(reference, cascade) {
+    var refX = Math.hypot(reference[0], reference[4], reference[8]), refZ = Math.hypot(reference[2], reference[6], reference[10]);
+    var casX = Math.hypot(cascade[0], cascade[4], cascade[8]), casZ = Math.hypot(cascade[2], cascade[6], cascade[10]);
+    if (!(refX > 0 && refZ > 0 && casX > 0 && casZ > 0)) return 1;
+    return Math.max(0.001, Math.min(4, (refX / casX) * (casZ / refZ)));
+  }
+
   // Compute the AABB of all objects in the bundle.
   function sceneShadowComputeBounds(bundle) {
     var minX = Infinity, minY = Infinity, minZ = Infinity;
