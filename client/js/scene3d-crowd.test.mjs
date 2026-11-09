@@ -140,6 +140,21 @@ test("packing writes one record per fan and blocks that tile each section", () =
     next = first + count;
   }
   assert.equal(next, seats.length);
+  // Prop holders: the same records in the same order, tiled by propBlocks.
+  const holders = seats.filter((s) => s.prop);
+  assert.equal(packed.props, holders.length);
+  assert.ok(holders.length > seats.length * 0.05 && holders.length < seats.length * 0.15, "prop share " + holders.length / seats.length);
+  let propNext = 0;
+  for (let b = 0; b < packed.blocks.length / 3; b++) {
+    const first = packed.blocks[b * 3], count = packed.blocks[b * 3 + 1], pf = packed.propBlocks[b * 2], pc = packed.propBlocks[b * 2 + 1];
+    assert.equal(pf, propNext);
+    assert.equal(pc, seats.slice(first, first + count).filter((s) => s.prop).length);
+    propNext = pf + pc;
+  }
+  assert.equal(propNext, holders.length);
+  const p32 = new Float32Array(packed.propRecords.buffer, packed.propRecords.byteOffset, holders.length * 8);
+  assert.equal(p32[0], Math.fround(holders[0].x));
+  assert.equal(packed.propRecords[(holders.length - 1) * 32 + 26], holders[holders.length - 1].prop);
   let fans = 0;
   for (const n of packed.sectionFans) fans += n;
   assert.equal(fans, seats.length);
@@ -320,6 +335,9 @@ test("selection culls blocks outside the view and grades the rest by height on s
   const visible = wide.fans[0] + wide.fans[1] + wide.fans[2];
   assert.ok(visible > packed.count * 0.4 && visible < packed.count, "a broadcast view culls the stand behind it: " + visible + " of " + packed.count);
   assert.ok(wide.fans[2] > wide.fans[0], "most fans are impostors from far away");
+  // Prop ranges cover only holders of visible blocks.
+  const propFans = wide.propRanges.reduce((n, list) => n + list.reduce((m, v, i) => m + (i % 2 ? v : 0), 0), 0);
+  assert.ok(propFans > 0 && propFans < visible * 0.25, "prop fans drawn " + propFans);
   // Ranges merge neighbours: far fewer draws than blocks.
   const draws = wide.ranges.reduce((n, list) => n + list.length / 2, 0);
   assert.ok(draws < packed.blocks.length / 3 / 2, "draws " + draws);

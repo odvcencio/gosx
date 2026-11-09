@@ -216,8 +216,8 @@ const budgets = [
   // Announcing the + and - zoom keys as navigation, so they end a camera move, changes this chunk by +12
   // raw / +0 gzip / -6 Brotli bytes; only exhausted minimums move.
   { file: "bootstrap-feature-scene3d-zoom.js", raw: 6287, gzip: 2480, brotli: 2196 },
-  // Environment.Crowds (seat layout, fan rig, both backend passes, crowd frames, fan and prop materials) loads only for a scene that declares a crowd; measured 55749 raw / 17464 gzip / 16107 Brotli, targets rounded up to 100 bytes.
-  { file: "bootstrap-feature-scene3d-crowd.js", raw: 55800, gzip: 17500, brotli: 16200 },
+  // Environment.Crowds (seat layout, fan rig, both backend passes, crowd frames, fan and prop materials) loads only for a scene that declares a crowd; measured 56767 raw / 17719 gzip / 16356 Brotli, targets rounded up to 100 bytes.
+  { file: "bootstrap-feature-scene3d-crowd.js", raw: 56800, gzip: 17800, brotli: 16400 },
   { file: "bootstrap-feature-scene3d-particle-burst.js", raw: 5_600, gzip: 2_400, brotli: 2_200 },
   // Ocean-driven heel, cloth normals, rig sway, impact spray and reduced-motion
   // deck bob remain lazy. Dormant-wake guards avoid unnecessary ocean queries.

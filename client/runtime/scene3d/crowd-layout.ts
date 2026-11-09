@@ -259,7 +259,10 @@ function sceneCrowdLayout(ir: any, emit: (seat: SceneCrowdSeat) => void): number
 // sceneCrowdPack expands the crowd into its GPU instance records and culling
 // blocks. A block is at most SCENE_CROWD_BLOCK_SEATS consecutive fans of one
 // section; blocks stores (first, count, section) and spheres the block's
-// bounding sphere in the crowd frame (x, y, z, radius).
+// bounding sphere in the crowd frame (x, y, z, radius). The fans that hold a
+// prop are also copied, in the same order, into propRecords, and propBlocks
+// gives each block's (first, count) in that list, so the prop pass runs the
+// vertex shader only for holders.
 function sceneCrowdPack(ir: any): any {
   const sections = Array.isArray(ir.sections) ? ir.sections.length : 0;
   if (sections < 1 || sections > SCENE_CROWD_MAX_SECTIONS) return { error: "crowd has " + sections + " sections" };
@@ -267,12 +270,14 @@ function sceneCrowdPack(ir: any): any {
   let capacity = Math.max(1, expected);
   let bytes = new ArrayBuffer(capacity * SCENE_CROWD_RECORD_BYTES);
   let f32 = new Float32Array(bytes), u16 = new Uint16Array(bytes), u8 = new Uint8Array(bytes);
-  const blocks: number[] = [], spheres: number[] = [];
+  const blocks: number[] = [], spheres: number[] = [], propBlocks: number[] = [];
+  let propCapacity = Math.max(1, expected >> 2), propBytes = new Uint8Array(propCapacity * SCENE_CROWD_RECORD_BYTES), props = 0, blockProps = 0;
   const sectionFans = new Uint32Array(sections);
   let blockFirst = 0, blockSection = -1, minX = 0, minY = 0, minZ = 0, maxX = 0, maxY = 0, maxZ = 0;
   function closeBlock(end: number): void {
     if (blockSection < 0 || end <= blockFirst) return;
     blocks.push(blockFirst, end - blockFirst, blockSection);
+    propBlocks.push(blockProps, props - blockProps);
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
     // Pad by a fan's height so raised arms and jumps stay inside.
     spheres.push(cx, cy + 0.9, cz, Math.hypot(maxX - cx, maxY - cy, maxZ - cz) + 1.4);
@@ -287,7 +292,7 @@ function sceneCrowdPack(ir: any): any {
     }
     if (seat.section !== blockSection || i - blockFirst >= SCENE_CROWD_BLOCK_SEATS) {
       closeBlock(i);
-      blockFirst = i; blockSection = seat.section;
+      blockFirst = i; blockSection = seat.section; blockProps = props;
       minX = maxX = seat.x; minY = maxY = seat.y; minZ = maxZ = seat.z;
     } else {
       if (seat.x < minX) minX = seat.x; if (seat.x > maxX) maxX = seat.x;
@@ -300,6 +305,15 @@ function sceneCrowdPack(ir: any): any {
     const b = i * SCENE_CROWD_RECORD_BYTES;
     u8[b + 24] = seat.color; u8[b + 25] = seat.accent; u8[b + 26] = seat.prop; u8[b + 27] = seat.variant;
     u8[b + 28] = seat.eagerness; u8[b + 29] = 0; u8[b + 30] = 0; u8[b + 31] = 0;
+    if (seat.prop) {
+      if (props >= propCapacity) {
+        propCapacity *= 2;
+        const grown = new Uint8Array(propCapacity * SCENE_CROWD_RECORD_BYTES);
+        grown.set(propBytes); propBytes = grown;
+      }
+      propBytes.set(u8.subarray(b, b + SCENE_CROWD_RECORD_BYTES), props * SCENE_CROWD_RECORD_BYTES);
+      props++;
+    }
     sectionFans[seat.section]++;
   });
   if (count < 0) return { error: "crowd passes " + SCENE_CROWD_MAX_SEATS + " seats" };
@@ -309,6 +323,9 @@ function sceneCrowdPack(ir: any): any {
     records: new Uint8Array(bytes, 0, count * SCENE_CROWD_RECORD_BYTES),
     blocks: new Uint32Array(blocks),
     spheres: new Float32Array(spheres),
+    propRecords: propBytes.slice(0, props * SCENE_CROWD_RECORD_BYTES),
+    propBlocks: new Uint32Array(propBlocks),
+    props,
     sectionFans,
     mismatch: expected !== count,
   };

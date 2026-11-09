@@ -4,9 +4,12 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
 	"image/png"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -71,24 +74,24 @@ func crowdStadiumProps(backend string, withCrowd bool) scene.Props {
 }
 
 type crowdFrameTimes struct {
-	Backend    string    `json:"backend"`
-	Crowd      string    `json:"crowd"`
-	Fans       string    `json:"fans"`
-	Tiers      string    `json:"tiers"`
-	Draws      string    `json:"draws"`
-	Error      string    `json:"error"`
-	Frames     int       `json:"frames"`
-	Mean       float64   `json:"mean"`
-	P50        float64   `json:"p50"`
-	P95        float64   `json:"p95"`
-	P99        float64   `json:"p99"`
-	CrowdCPU   float64   `json:"crowdCPU"`
-	SubmitCPU  float64   `json:"submitCPU"`
-	GPU        []float64 `json:"gpu"`
-	GPUSource  string    `json:"gpuSource"`
-	GPUStatus  string    `json:"gpuStatus"`
-	Adapter    string    `json:"adapter"`
-	WaveRaised int       `json:"waveRaised"`
+	Backend   string    `json:"backend"`
+	Crowd     string    `json:"crowd"`
+	Fans      string    `json:"fans"`
+	Tiers     string    `json:"tiers"`
+	Draws     string    `json:"draws"`
+	Error     string    `json:"error"`
+	Frames    int       `json:"frames"`
+	Mean      float64   `json:"mean"`
+	P50       float64   `json:"p50"`
+	P95       float64   `json:"p95"`
+	P99       float64   `json:"p99"`
+	CrowdCPU  float64   `json:"crowdCPU"`
+	SubmitCPU float64   `json:"submitCPU"`
+	GPU       []float64 `json:"gpu"`
+	GPUSource string    `json:"gpuSource"`
+	GPUStatus string    `json:"gpuStatus"`
+	Adapter   string    `json:"adapter"`
+	WaveMoved bool      `json:"waveMoved"`
 }
 
 // crowdMeasureJS records requestAnimationFrame intervals for ms
@@ -164,8 +167,8 @@ func crowdServe(t *testing.T, root string, bootstrap []byte, props scene.Props) 
 	return server.URL
 }
 
-// crowdPixels counts red-dominant and blue-dominant pixels in the canvas.
-func crowdPixels(t *testing.T, browser *browserPage) (red, blue int) {
+// crowdShot captures the canvas as an image.
+func crowdShot(t *testing.T, browser *browserPage) image.Image {
 	t.Helper()
 	var shot []byte
 	if err := chromedp.Run(browser.ctx, chromedp.Screenshot("canvas", &shot, chromedp.ByQuery)); err != nil {
@@ -175,6 +178,11 @@ func crowdPixels(t *testing.T, browser *browserPage) (red, blue int) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return img
+}
+
+// crowdPixels counts red-dominant and blue-dominant pixels.
+func crowdPixels(img image.Image) (red, blue int) {
 	b := img.Bounds()
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
@@ -190,12 +198,70 @@ func crowdPixels(t *testing.T, browser *browserPage) (red, blue int) {
 	return red, blue
 }
 
-// TestCrowdStadiumOnTheGPU renders a 30,000-seat bowl through WebGPU and
-// WebGL2 on a real GPU, checks that fans of both palettes draw at three
-// levels of detail, and records frame times with and without the crowd.
+// crowdChangeCentroid returns the mean x of pixels in the top half of the
+// frame (the far stand) that differ strongly between a and b, and how many
+// there are.
+func crowdChangeCentroid(a, b image.Image) (float64, int) {
+	bounds := a.Bounds()
+	sum, n := 0.0, 0
+	for y := bounds.Min.Y; y < bounds.Min.Y+bounds.Dy()/2; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r0, g0, b0, _ := a.At(x, y).RGBA()
+			r1, g1, b1, _ := b.At(x, y).RGBA()
+			d := absDiff(r0, r1) + absDiff(g0, g1) + absDiff(b0, b1)
+			if d > 40000 {
+				sum += float64(x)
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		return 0, 0
+	}
+	return sum / float64(n), n
+}
+
+func absDiff(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+// crowdDispatch sends a director frame to the page.
+func crowdDispatch(t *testing.T, browser *browserPage, frame scene.CrowdFrame) {
+	t.Helper()
+	data, err := scene.EncodeCrowdFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ok bool
+	browser.eval(t, `window.__gosx.scene3d.dispatchCrowdFrame("crowd-root", Uint8Array.from(atob("`+base64.StdEncoding.EncodeToString(data)+`"), (c) => c.charCodeAt(0)))`, &ok)
+}
+
+type crowdView struct {
+	name   string
+	camera scene.PerspectiveCamera
+}
+
+// The broadcast view looks across the field at the far stand from high on
+// the near side; the close view stands on the field 12 m from the near
+// stand and faces it, so its front rows draw the full mesh.
+var crowdViews = []crowdView{
+	{"broadcast", scene.PerspectiveCamera{Position: scene.Vector3{Y: 46, Z: 118}, Rotation: scene.Euler{X: -0.34}, FOV: 50, Near: 0.5, Far: 600}},
+	{"close", scene.PerspectiveCamera{Position: scene.Vector3{Y: 5, Z: 30}, Rotation: scene.Euler{X: 0.18, Y: math.Pi}, FOV: 60, Near: 0.3, Far: 600}},
+}
+
+// TestCrowdStadiumOnTheGPU renders a 29,760-seat bowl through WebGPU and
+// WebGL2 on a real GPU while a CrowdDirector drives it: cheering, a
+// synchronized clap, raised props and a travelling wave. It checks that fans
+// of both palettes draw at three levels of detail, that the wave moves round
+// the bowl, and records frame times with and without the crowd from a
+// broadcast view and a close view. GOSX_CROWD_E2E_REPORT names a JSON file
+// for the measurements.
 //
-//	gpu-chrome.sh run -- go test -tags e2e -run CrowdStadium -timeout 15m ./e2e
-//	mac-gpu-run <worktree> go test -tags e2e -run CrowdStadium -timeout 15m ./e2e
+//	gpu-chrome.sh run -- go test -tags e2e -run CrowdStadium -timeout 20m ./e2e
+//	mac-gpu-run <worktree> go test -tags e2e -run CrowdStadium -timeout 20m ./e2e
 func TestCrowdStadiumOnTheGPU(t *testing.T) {
 	if !gpuRunnerAvailable() {
 		t.Skip("needs a real GPU: use gpu-chrome.sh run -- or mac-gpu-run")
@@ -208,47 +274,113 @@ func TestCrowdStadiumOnTheGPU(t *testing.T) {
 	}
 	report := map[string]crowdFrameTimes{}
 	for _, backend := range []string{"webgpu", "webgl"} {
-		for _, withCrowd := range []bool{true, false} {
-			label := backend + map[bool]string{true: "+crowd", false: "-empty"}[withCrowd]
-			t.Run(label, func(t *testing.T) {
-				url := crowdServe(t, root, bootstrap, crowdStadiumProps(backend, withCrowd))
-				browser := newBrowserPage(t, chrome, map[string]any{"enable-unsafe-webgpu": true}, 1300, 760, ``, 240*time.Second)
-				browser.navigate(t, url+"/")
-				ready := `(() => { const m = document.getElementById("crowd-root"); return !!m && m.getAttribute("data-gosx-scene3d-backend") === "` + backend + `"` +
-					map[bool]string{true: ` && m.getAttribute("data-gosx-scene3d-crowd") === "ready"`, false: ``}[withCrowd] + ` })()`
-				if !browser.pollFor(ready, 90*time.Second) {
-					var attrs map[string]string
-					browser.eval(t, `(() => { const m = document.getElementById("crowd-root"); const o = {}; for (const a of m.getAttributeNames()) if (/crowd|backend|webgpu-last-error|fallback|failure/.test(a)) o[a] = m.getAttribute(a); return o; })()`, &attrs)
-					t.Fatalf("%s did not become ready: %v\nConsole:\n%s", label, attrs, browser.Console())
-				}
-				time.Sleep(1500 * time.Millisecond) // pipelines and first uploads settle
-				var times crowdFrameTimes
-				browser.eval(t, crowdMeasureJS+`(5000)`, &times)
-				report[label] = times
-				t.Logf("%s: %+v", label, times)
-				if errs := browser.PageErrors(); len(errs) != 0 {
-					t.Fatalf("page errors: %v", errs)
-				}
-				if !withCrowd {
-					return
-				}
-				if times.Error != "" || times.Fans != "29760" {
-					t.Fatalf("crowd state %q fans %q error %q", times.Crowd, times.Fans, times.Error)
-				}
-				var full, low, impostor int
-				if _, err := fmt.Sscanf(times.Tiers, "%d/%d/%d", &full, &low, &impostor); err != nil || impostor == 0 || full+low == 0 {
-					t.Fatalf("expected near and far detail levels, tiers %q", times.Tiers)
-				}
-				red, blue := crowdPixels(t, browser)
-				if red < 2000 || blue < 2000 {
-					t.Fatalf("expected both palettes on screen: red %d blue %d pixels", red, blue)
-				}
-				t.Logf("%s pixels: red %d blue %d", label, red, blue)
-			})
+		for _, view := range crowdViews {
+			for _, withCrowd := range []bool{true, false} {
+				label := backend + "/" + view.name + map[bool]string{true: "+crowd", false: "-empty"}[withCrowd]
+				t.Run(label, func(t *testing.T) {
+					props := crowdStadiumProps(backend, withCrowd)
+					props.Camera = view.camera
+					url := crowdServe(t, root, bootstrap, props)
+					browser := newBrowserPage(t, chrome, map[string]any{"enable-unsafe-webgpu": true}, 1300, 760, ``, 240*time.Second)
+					browser.navigate(t, url+"/")
+					ready := `(() => { const m = document.getElementById("crowd-root"); return !!m && m.getAttribute("data-gosx-scene3d-backend") === "` + backend + `"` +
+						map[bool]string{true: ` && m.getAttribute("data-gosx-scene3d-crowd") === "ready"`, false: ``}[withCrowd] + ` })()`
+					if !browser.pollFor(ready, 90*time.Second) {
+						var attrs map[string]string
+						browser.eval(t, `(() => { const m = document.getElementById("crowd-root"); const o = {}; for (const a of m.getAttributeNames()) if (/crowd|backend|webgpu-last-error|fallback|failure/.test(a)) o[a] = m.getAttribute(a); return o; })()`, &attrs)
+						t.Fatalf("%s did not become ready: %v\nConsole:\n%s", label, attrs, browser.Console())
+					}
+					time.Sleep(1500 * time.Millisecond) // pipelines and first uploads settle
+					var wave crowdWaveCheck
+					if withCrowd {
+						wave = crowdDriveAndWatch(t, browser, view.name == "broadcast")
+					}
+					var times crowdFrameTimes
+					browser.eval(t, crowdMeasureJS+`(5000)`, &times)
+					times.WaveMoved = wave.moved
+					report[label] = times
+					t.Logf("%s: %+v", label, times)
+					if errs := browser.PageErrors(); len(errs) != 0 {
+						t.Fatalf("page errors: %v", errs)
+					}
+					if !withCrowd {
+						return
+					}
+					if times.Error != "" || times.Fans != "29760" {
+						t.Fatalf("crowd state %q fans %q error %q", times.Crowd, times.Fans, times.Error)
+					}
+					var full, low, impostor int
+					if _, err := fmt.Sscanf(times.Tiers, "%d/%d/%d", &full, &low, &impostor); err != nil {
+						t.Fatalf("tiers %q", times.Tiers)
+					}
+					if view.name == "broadcast" && (impostor == 0 || full+low == 0) {
+						t.Fatalf("the broadcast view should mix detail levels, tiers %q", times.Tiers)
+					}
+					if view.name == "close" && full == 0 {
+						t.Fatalf("the close view should draw full-detail fans, tiers %q", times.Tiers)
+					}
+					red, blue := crowdPixels(crowdShot(t, browser))
+					if red < 2000 || blue < 2000 {
+						t.Fatalf("expected both palettes on screen: red %d blue %d pixels", red, blue)
+					}
+					t.Logf("%s pixels: red %d blue %d; wave %+v", label, red, blue, wave)
+				})
+			}
 		}
 	}
 	if out := os.Getenv("GOSX_CROWD_E2E_REPORT"); out != "" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		_ = os.WriteFile(out, data, 0o644)
 	}
+}
+
+type crowdWaveCheck struct {
+	early, late   float64
+	earlyN, lateN int
+	moved         bool
+}
+
+// crowdDriveAndWatch puts a third of the lower tier on its feet cheering,
+// a block on a shared 120 bpm clap, raises the props, and sends a wave from
+// azimuth 0.45 at 0.1 turns per second. On the broadcast view it checks that
+// the wave's changes move left to right across the far stand.
+func crowdDriveAndWatch(t *testing.T, browser *browserPage, watch bool) crowdWaveCheck {
+	t.Helper()
+	director, err := scene.NewCrowdDirector(crowdTestBowl())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var check crowdWaveCheck
+	var before image.Image
+	if watch {
+		before = crowdShot(t, browser)
+	}
+	start := time.Now()
+	now := func() float64 { return time.Since(start).Seconds() }
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(director.SetExcitement(now(), 1, 0.5, "lower-0", "lower-1", "lower-2", "lower-3", "lower-4", "lower-5", "lower-6", "lower-7"))
+	must(director.SetAction(now(), scene.CrowdCheer, "lower-0", "lower-1", "lower-2", "lower-3"))
+	must(director.Sync(now(), scene.CrowdClap, 120, "lower-4", "lower-5", "lower-6", "lower-7"))
+	must(director.RaiseProps(now(), true))
+	director.StartWave(now()+0.1, scene.CrowdWave{Origin: 0.45, Speed: 0.1, Laps: 3})
+	crowdDispatch(t, browser, director.Frame(now()))
+	if !watch {
+		time.Sleep(1500 * time.Millisecond)
+		return check
+	}
+	time.Sleep(1700 * time.Millisecond)
+	early := crowdShot(t, browser)
+	time.Sleep(2000 * time.Millisecond)
+	late := crowdShot(t, browser)
+	check.early, check.earlyN = crowdChangeCentroid(before, early)
+	check.late, check.lateN = crowdChangeCentroid(before, late)
+	check.moved = check.earlyN > 300 && check.lateN > 300 && check.late > check.early+60
+	if !check.moved {
+		t.Fatalf("the wave did not travel left to right across the far stand: %+v", check)
+	}
+	return check
 }

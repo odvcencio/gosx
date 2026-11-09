@@ -203,7 +203,7 @@ function sceneCrowdGPUStatic(device: any, height: number): any {
 }
 
 function sceneCrowdGPUDisposeCrowd(gpu: any): void {
-  for (const key of ["instances", "uniform", "sections"]) { if (gpu[key]) gpu[key].destroy(); gpu[key] = null; }
+  for (const key of ["instances", "propInstances", "uniform", "sections"]) { if (gpu[key]) gpu[key].destroy(); gpu[key] = null; }
   for (const side of gpu.sides || []) if (side.buffer) side.buffer.destroy();
   gpu.sides = [];
 }
@@ -249,6 +249,8 @@ function sceneCrowdGPUCrowd(res: any, device: any, ir: any, store: any, o: any):
     gpu = { ir, packed, model: sceneCrowdModel(ir), version: -1, uniforms: new Float32Array(SCENE_CROWD_UNIFORM_VEC4S * 4) };
     gpu.instances = device.createBuffer({ label: "gosx-crowd-fans", size: Math.max(32, packed.records.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(gpu.instances, 0, packed.records);
+    gpu.propInstances = device.createBuffer({ label: "gosx-crowd-props", size: Math.max(32, packed.propRecords.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    if (packed.propRecords.byteLength) device.queue.writeBuffer(gpu.propInstances, 0, packed.propRecords);
     gpu.uniform = device.createBuffer({ label: "gosx-crowd-uniform", size: gpu.uniforms.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     gpu.sections = device.createTexture({ label: "gosx-crowd-sections", size: [SCENE_CROWD_SECTION_TEXELS, ir.sections.length, 1], format: "rgba32float", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     gpu.group = device.createBindGroup({ label: "gosx-crowd", layout: res.layout, entries: [
@@ -339,8 +341,10 @@ function sceneCrowdGPUDraw(pass: any, o: any): string {
         const ranges = pick.ranges[tier];
         if (!ranges.length) continue;
         const mesh = res.meshes[tier];
-        // Bodies with the fan material, then props with the prop material.
-        for (const [material, group, first, count] of [[materials.fan, gpu.fanGroup, 0, mesh.bodyIndexCount], [materials.props, gpu.propsGroup, mesh.bodyIndexCount, mesh.indexCount - mesh.bodyIndexCount]]) {
+        // Bodies with the fan material over every fan, then props with the
+        // prop material over the prop holders only.
+        for (const [material, group, first, count, buffer, list] of [[materials.fan, gpu.fanGroup, 0, mesh.bodyIndexCount, gpu.instances, ranges], [materials.props, gpu.propsGroup, mesh.bodyIndexCount, mesh.indexCount - mesh.bodyIndexCount, gpu.propInstances, pick.propRanges[tier]]]) {
+          if (!list.length) continue;
           const pipeline = sceneCrowdGPUPipeline(res, o, tier, material);
           const validation = o.validation && o.validation.get(pipeline);
           if (validation && !validation.ready) { stats.state = "pending"; continue; }
@@ -349,9 +353,9 @@ function sceneCrowdGPUDraw(pass: any, o: any): string {
           pass.setBindGroup(1, group, [0]);
           pass.setBindGroup(2, gpu.group);
           pass.setVertexBuffer(0, mesh.vbo);
-          pass.setVertexBuffer(1, gpu.instances);
+          pass.setVertexBuffer(1, buffer);
           pass.setIndexBuffer(mesh.ibo, "uint16");
-          for (let r = 0; r < ranges.length; r += 2) { pass.drawIndexed(count, ranges[r + 1], first, 0, ranges[r]); stats.draws++; }
+          for (let r = 0; r < list.length; r += 2) { pass.drawIndexed(count, list[r + 1], first, 0, list[r]); stats.draws++; }
         }
       }
     }

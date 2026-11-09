@@ -259,6 +259,9 @@ function sceneCrowdGLCrowd(res: any, gl: any, ir: any, store: any): any {
     gpu.instances = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, gpu.instances);
     gl.bufferData(gl.ARRAY_BUFFER, packed.records, gl.STATIC_DRAW);
+    gpu.propInstances = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, gpu.propInstances);
+    gl.bufferData(gl.ARRAY_BUFFER, packed.propRecords.byteLength ? packed.propRecords : new Uint8Array(32), gl.STATIC_DRAW);
     gpu.sections = sceneCrowdGLTexture(gl, SCENE_CROWD_SECTION_TEXELS, ir.sections.length, store.sections);
     gpu.version = store.version;
     store.fans = packed.sectionFans;
@@ -274,6 +277,7 @@ function sceneCrowdGLCrowd(res: any, gl: any, ir: any, store: any): any {
 
 function sceneCrowdGLDisposeCrowd(gl: any, gpu: any): void {
   if (gpu.instances) gl.deleteBuffer(gpu.instances);
+  if (gpu.propInstances) gl.deleteBuffer(gpu.propInstances);
   if (gpu.sections) gl.deleteTexture(gpu.sections);
   gpu.instances = gpu.sections = null;
 }
@@ -329,11 +333,13 @@ function sceneCrowdGLDraw(gl: any, o: any): string {
         if (!ranges.length) continue;
         const mesh = res.meshes[tier];
         gl.bindVertexArray(mesh.vao);
-        gl.bindBuffer(gl.ARRAY_BUFFER, gpu.instances);
         for (let a = 5; a < 10; a++) { gl.enableVertexAttribArray(a); gl.vertexAttribDivisor(a, 1); }
-        if (res.ext) sceneCrowdGLInstanceAttributes(gl, 0);
-        // Bodies with the fan material, then props with the prop material.
-        for (const [material, first, count] of [[materials.fan, 0, mesh.bodyIndexCount], [materials.props, mesh.bodyIndexCount, mesh.indexCount - mesh.bodyIndexCount]]) {
+        // Bodies with the fan material over every fan, then props with the
+        // prop material over the prop holders only.
+        for (const [material, first, count, buffer, list] of [[materials.fan, 0, mesh.bodyIndexCount, gpu.instances, ranges], [materials.props, mesh.bodyIndexCount, mesh.indexCount - mesh.bodyIndexCount, gpu.propInstances, pick.propRanges[tier]]]) {
+          if (!list.length) continue;
+          gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+          if (res.ext) sceneCrowdGLInstanceAttributes(gl, 0);
           const program = sceneCrowdGLProgram(res, gl, o, tier, material), u = program.uniforms;
           gl.useProgram(program.program);
           if (typeof o.prepare === "function") o.prepare(u, material);
@@ -344,9 +350,9 @@ function sceneCrowdGLDraw(gl: any, o: any): string {
           gl.activeTexture(gl.TEXTURE0 + res.units[1]); gl.bindTexture(gl.TEXTURE_2D, gpu.sections); gl.uniform1i(u.crowdSections, res.units[1]);
           gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL);
           gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
-          for (let r = 0; r < ranges.length; r += 2) {
-            if (res.ext) res.ext.drawElementsInstancedBaseVertexBaseInstanceWEBGL(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, first * 2, ranges[r + 1], 0, ranges[r]);
-            else { sceneCrowdGLInstanceAttributes(gl, ranges[r] * 32); gl.drawElementsInstanced(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, first * 2, ranges[r + 1]); }
+          for (let r = 0; r < list.length; r += 2) {
+            if (res.ext) res.ext.drawElementsInstancedBaseVertexBaseInstanceWEBGL(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, first * 2, list[r + 1], 0, list[r]);
+            else { sceneCrowdGLInstanceAttributes(gl, list[r] * 32); gl.drawElementsInstanced(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, first * 2, list[r + 1]); }
             stats.draws++;
           }
         }

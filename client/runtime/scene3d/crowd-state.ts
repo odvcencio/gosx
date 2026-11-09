@@ -315,16 +315,21 @@ function sceneCrowdSelect(gpu: any, packed: any, ir: any, o: any): any {
       else kept += blocks[b * 3 + 1];
     }
   }
-  const ranges: number[][] = [[], [], []], fans = [0, 0, 0];
+  // Body ranges index the fan records, prop ranges the prop holders' records.
+  const ranges: number[][] = [[], [], []], propRanges: number[][] = [[], [], []], fans = [0, 0, 0];
+  const merge = function(list: number[], first: number, count: number) {
+    if (count <= 0) return;
+    if (list.length && list[list.length - 2] + list[list.length - 1] === first) list[list.length - 1] += count;
+    else list.push(first, count);
+  };
   for (let b = 0; b < nBlocks; b++) {
     const tier = sel.tiers[b];
     if (tier < 0) continue;
-    const first = blocks[b * 3], count = blocks[b * 3 + 1], list = ranges[tier];
-    fans[tier] += count;
-    if (list.length && list[list.length - 2] + list[list.length - 1] === first) list[list.length - 1] += count;
-    else list.push(first, count);
+    fans[tier] += blocks[b * 3 + 1];
+    merge(ranges[tier], blocks[b * 3], blocks[b * 3 + 1]);
+    if (packed.propBlocks) merge(propRanges[tier], packed.propBlocks[b * 2], packed.propBlocks[b * 2 + 1]);
   }
-  return { ranges, fans };
+  return { ranges, propRanges, fans };
 }
 
 // sceneCrowdLevels reports what a crowd is doing at the scene clock: each
