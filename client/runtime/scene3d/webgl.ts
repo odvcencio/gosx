@@ -5309,7 +5309,7 @@
   function scenePBRTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
     var descriptor = raw && typeof raw === "object" ? raw : {}; const wrap = (value: any) => [33071, 33648, 10497].indexOf(value) >= 0 ? value : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071);
     return {
-      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
+      uri: sceneTextAtlasURL(typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim()),
       role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
       colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
         ? descriptor.colorSpace.trim().toLowerCase()
