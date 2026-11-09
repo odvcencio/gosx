@@ -126,7 +126,7 @@ func (w *World) ApplyState(state WorldState) {
 			continue
 		}
 		body.Position = item.Position
-		body.Rotation = item.Rotation.Normalize()
+		body.Rotation = restoredRotation(item.Rotation)
 		body.Velocity = item.Velocity
 		body.AngularVelocity = item.AngularVelocity
 		body.Wake()
@@ -168,4 +168,17 @@ func (w *World) characterFor(item CharacterState) *Character {
 		}
 	}
 	return nil
+}
+
+// restoredRotation keeps a snapshot rotation bit for bit. Normalizing a
+// quaternion that is already unit length changes its last bit about one time
+// in thirty, which would make a restored world drift from the one that wrote
+// the snapshot. Only a rotation visibly off unit length, such as one typed by
+// hand, is normalized.
+func restoredRotation(q Quat) Quat {
+	length2 := float64(q.X*q.X) + float64(q.Y*q.Y) + float64(q.Z*q.Z) + float64(q.W*q.W)
+	if length2 > 1-1e-9 && length2 < 1+1e-9 {
+		return q
+	}
+	return q.Normalize()
 }
