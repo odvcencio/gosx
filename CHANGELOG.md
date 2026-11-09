@@ -43,6 +43,7 @@
 - `gosx export` builds a server-less static bundle or a single zip (#797); see the breaking-changes list for the new failure behaviour. Pages that need no WASM no longer stage the full runtime.
 - Add the consumer corpus runner (`scripts/corpus/run.sh`, `.github/workflows/corpus.yml`) as a release gate, and `AGENTS.md` (#795).
 - Recognize an empty `.git` placeholder above a linked worktree in the installer build guard (#792).
+- Split the Scene3D renderer test lane in two (`js-tests-scene3d` and `js-tests-scene3d-b`) so each finishes under 10 minutes, and speed up a production-build test in `cmd/gosx` by stubbing the prebuilt runtime (#826).
 - Make the CI toolchain downloads retry with exponential backoff for up to 600 s (#820), and run every `game/...` package under js/wasm tests (#813).
 - Merged by the jam trains: #803, #808, #819, #824 and #825 (they carry the pull requests listed above).
 
