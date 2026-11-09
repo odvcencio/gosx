@@ -8725,7 +8725,8 @@
     function instancedMeshUsesCull(mesh: any) {
       return Boolean(typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) || webGPUBuiltinCullEligible(mesh);
     }
-    function prepareBundlePipelines(bundle: any, prepared: any, effects: any[], post: boolean) {
+    function prepareBundlePipelines(bundle: any, prepared: any, effects: any[], post: boolean, warmup?: any) {
+      if (warmup) prepareBundlePipelines(warmup, warmup.prepared, [], false); // Props.ShaderWarmup variants (pipeline-warmup.ts)
       var materials = bundle.materials || [];
       var instancedVariants = (bundle.instancedMeshes || []).map(function(mesh: any) {
         var material = instancedMeshMaterial(mesh, materials), blend = scenePBRObjectRenderPass(mesh, material);
@@ -18735,8 +18736,7 @@
       detailEnabled = frameMeta?.detailEnabled !== false;
       if (detailEnabled && detailResources) sceneWebGPUDetailBakeResources(device, detailResources, placeholderView);
       if (scenePicker && scenePicker.hasPending()) scenePicker.preparePipelines();
-      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing);
-      if (frameMeta?.warmup) prepareBundlePipelines(frameMeta.warmup, frameMeta.warmup.prepared, [], false);
+      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing, frameMeta?.warmup);
       if (pipelineGuard.coreError) return "failed";
       if (pipelineGuard.pending) return "pending";
       // The standard mesh, shadow and post variants are prepared above. Other
