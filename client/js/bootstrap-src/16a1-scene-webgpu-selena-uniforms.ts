@@ -1,25 +1,12 @@
-// 16a1 — Selena uniform packing for the WebGPU backend.
-//
-// These functions turn a Selena material's declared uniform block into a
-// std140 Float32Array. They were declared inside createSceneWebGPURenderer, an
-// 11_600-line function, so module-scope code could not call them. The custom
-// post-effect path in wgpuCreatePostProcessor (16a) did call
-// sceneSelenaUniformData from module scope and threw ReferenceError every time
-// a page ran a custom post effect with a shader layout.
-//
-// Dependency direction: this file reads the scene core helper sceneNumber and
-// nothing inside the renderer. The renderer reads this file. The renderer owns
-// the per-frame state and passes it in as `frame`, an object with:
-//
-//   frame.viewProjection  Float32Array(16), the current view-projection matrix
-//   frame.time            number, seconds, the clock for `param time`
-//   frame.cameraProximity number in [0,1], smoothed scroll-camera proximity
-//
-// A caller with no frame, such as the post-effect path, passes nothing. The
-// reserved auto-uniforms then fall back to identity and zero.
-//
-// This file joins the chunk inside the same IIFE as 16a-scene-webgpu.js, so it
-// carries no wrapper of its own.
+// 16a1 — Selena uniform packing for the WebGPU backend, at module scope so the
+// custom post-effect path in wgpuCreatePostProcessor (16a) can call
+// sceneSelenaUniformData too; inside createSceneWebGPURenderer it could not.
+// It reads scene-core helpers and nothing inside the renderer. The renderer
+// passes per-frame state as `frame`: viewProjection (Float32Array(16)), time
+// (seconds, the `param time` clock), cameraProximity (0..1) and
+// _gosxSelenaLighting (the scene lighting record from 16c2). Without a frame, as
+// on the post path, reserved auto-uniforms fall back to identity and zero. This
+// file joins the chunk inside the same IIFE as 16a-scene-webgpu.js.
 
   // Shared read-only identity matrix. Every caller copies out of it.
   var selenaIdentityMatrix4 = new Float32Array([
@@ -113,6 +100,8 @@
     if (name === "cameraProximity") {
       return Math.max(0, Math.min(1, sceneNumber(frame && frame.cameraProximity, 0)));
     }
+    var lightingValue = sceneSelenaLightingValue(frame && frame._gosxSelenaLighting, field);
+    if (lightingValue !== undefined) return lightingValue;
     if (field && field.class === "context" && name === "environmentInfo") {
       return (frame && frame.environmentInfo) || [0, 0, 0, 0];
     }
@@ -124,6 +113,16 @@
     if (count === 16) return selenaIdentityMatrix4;
     if (count === 9) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
     return 0;
+  }
+
+  // sceneSelenaShadowMapView binds a Selena shadowMap0/1 engine texture: the
+  // slot's shadow map as a 2d-array view (one layer per cascade), or a 1x1
+  // placeholder array while the slot is empty. Other textures return null.
+  function sceneSelenaShadowMapView(context, texture) {
+    var slot = sceneSelenaShadowMapSlot(context && context.frame && context.frame._gosxSelenaLighting, texture);
+    if (slot === undefined) return null;
+    if (slot && slot.texture) return slot.selenaArrayView || (slot.selenaArrayView = slot.texture.createView({ dimension: "2d-array" }));
+    return context.placeholderDepthArrayView || (context.placeholderDepthArrayView = context.device.createTexture({ size: [1, 1, 1], format: "depth32float", usage: GPUTextureUsage.TEXTURE_BINDING }).createView({ dimension: "2d-array" }));
   }
 
   function sceneSelenaScalar(value) {

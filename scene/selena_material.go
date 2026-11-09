@@ -25,6 +25,10 @@ type SelenaMaterialOptions struct {
 	// Targets adds artifacts to transport alongside the browser programs.
 	// Use result.AllTargets() to retain all programs for native adapters.
 	Targets []result.Target
+	// Modules lists Selena material library modules (for example "lighting")
+	// that run-time compilation links before compiling. The artifact path
+	// ignores it: an artifact file records the modules it was built with.
+	Modules []string
 }
 
 // SelenaCompiledMaterial is one Scene3D material produced from a Selena source

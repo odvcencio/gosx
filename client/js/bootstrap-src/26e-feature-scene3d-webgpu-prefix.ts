@@ -101,6 +101,11 @@
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
+  var sceneSelenaFillLighting = sceneApi.sceneSelenaFillLighting;
+  var sceneSelenaLightingValue = sceneApi.sceneSelenaLightingValue;
+  var sceneSelenaShadowMapSlot = sceneApi.sceneSelenaShadowMapSlot;
+  var sceneSelenaFrameLighting = sceneApi.sceneSelenaFrameLighting;
+  var sceneSelenaWGPUTextureLayout = sceneApi.sceneSelenaWGPUTextureLayout;
   var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
   var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
   var sceneAtmosphereQuality = sceneApi.sceneAtmosphereQuality;

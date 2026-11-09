@@ -4,10 +4,12 @@ package scene
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"m31labs.dev/selena"
 	"m31labs.dev/selena/bindings"
+	"m31labs.dev/selena/materiallib"
 	"m31labs.dev/selena/parse"
 )
 
@@ -26,7 +28,7 @@ func CompileSelenaMaterial(source []byte, opts SelenaMaterialOptions) (CustomMat
 		Material:    opts.Material,
 		SpecularMRT: opts.SpecularMRT,
 		Targets:     selenaMaterialTargets(opts),
-	})
+	}, opts.Modules)
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
@@ -50,6 +52,21 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 	}
 	if len(materials) == 0 {
 		materials = []SelenaMaterialOptions{{}}
+	}
+	// Link every module any material asks for; a helper no material calls
+	// changes no output.
+	var modules []string
+	for _, opts := range materials {
+		for _, m := range opts.Modules {
+			if !slices.Contains(modules, m) {
+				modules = append(modules, m)
+			}
+		}
+	}
+	if len(modules) > 0 {
+		if program, err = materiallib.Link(program, selenaLibraryModules(modules)...); err != nil {
+			return nil, err
+		}
 	}
 
 	out := make([]SelenaCompiledMaterial, 0, len(materials))
@@ -86,11 +103,11 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 // is not "points", or if the linked Selena bindings are too old to expose
 // surface-kind metadata.
 func CompileSelenaPoints(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
-	result, err := selena.Compile(source, selena.CompileOptions{
+	result, err := selenaCompile(source, selena.CompileOptions{
 		Material:    opts.Material,
 		SpecularMRT: opts.SpecularMRT,
 		Targets:     selenaMaterialTargets(opts),
-	})
+	}, opts.Modules)
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
@@ -136,11 +153,11 @@ func CompileSelenaParticleRender(source []byte, opts SelenaMaterialOptions) (Cus
 // An error is returned if the compiled material's kind is not "post", or if the
 // linked Selena bindings are too old to expose surface-kind metadata.
 func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
-	result, err := selena.Compile(source, selena.CompileOptions{
+	result, err := selenaCompile(source, selena.CompileOptions{
 		Material:    opts.Material,
 		SpecularMRT: opts.SpecularMRT,
 		Targets:     selenaMaterialTargets(opts),
-	})
+	}, opts.Modules)
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
@@ -152,4 +169,21 @@ func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMateria
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
 	return material, selenaWebGL2Layout(result.Layout), nil
+}
+
+// selenaCompile compiles source, first linking the named material library
+// modules when there are any.
+func selenaCompile(source []byte, opts selena.CompileOptions, modules []string) (selena.Result, error) {
+	if len(modules) == 0 {
+		return selena.Compile(source, opts)
+	}
+	return materiallib.Compile(source, opts, selenaLibraryModules(modules)...)
+}
+
+func selenaLibraryModules(names []string) []materiallib.Module {
+	out := make([]materiallib.Module, len(names))
+	for i, name := range names {
+		out[i] = materiallib.Module(strings.TrimSpace(name))
+	}
+	return out
 }
