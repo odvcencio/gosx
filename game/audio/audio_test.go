@@ -2,8 +2,6 @@ package audio
 
 import (
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"m31labs.dev/gosx/game"
@@ -192,33 +190,34 @@ func TestBusSetVolumeAndSetMutedInteract(t *testing.T) {
 	}
 }
 
-func TestPlayerLoadManifestPreloadsAndDecodesOnce(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		_, _ = w.Write([]byte("clip-bytes"))
-	}))
-	defer server.Close()
+type countingLoader struct{ requests int }
 
+func (l *countingLoader) Load(string) ([]byte, error) {
+	l.requests++
+	return []byte("clip-bytes"), nil
+}
+
+func TestPlayerLoadManifestPreloadsAndDecodesOnce(t *testing.T) {
+	loader := &countingLoader{}
 	host := newFakeHost()
 	graph := NewBusGraph(host, game.AudioManifest{})
-	player := NewPlayer(host, graph, HTTPLoader{})
+	player := NewPlayer(host, graph, loader)
 
 	manifest := game.AudioManifest{Clips: []game.AudioClip{
-		{ID: "boom", URI: server.URL, Preload: true},
+		{ID: "boom", URI: "/boom.ogg", Preload: true},
 	}}
 	if err := player.LoadManifest(manifest); err != nil {
 		t.Fatalf("LoadManifest: %v", err)
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want 1", requests)
+	if loader.requests != 1 {
+		t.Fatalf("requests = %d, want 1", loader.requests)
 	}
 
 	if _, err := player.Play(game.AudioPlayback{Clip: "boom"}); err != nil {
 		t.Fatalf("Play: %v", err)
 	}
-	if requests != 1 {
-		t.Fatalf("requests after Play = %d, want 1 (buffer should be cached)", requests)
+	if loader.requests != 1 {
+		t.Fatalf("requests after Play = %d, want 1 (buffer should be cached)", loader.requests)
 	}
 }
 
@@ -361,15 +360,5 @@ func TestPlaybackVolumeAndRateFallBackToClipDefaults(t *testing.T) {
 	}
 	if host.lastSource.rate != 2 {
 		t.Fatalf("rate = %v, want 2 (playback override)", host.lastSource.rate)
-	}
-}
-
-func TestHTTPLoaderNonOKStatusErrors(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-	if _, err := (HTTPLoader{}).Load(server.URL); err == nil {
-		t.Fatal("expected a non-200 status to error")
 	}
 }
