@@ -73,6 +73,15 @@ func TestStaticRewriteMakesJSONContractsAndDataURLsDocumentRelative(t *testing.T
 	}
 }
 
+func TestStaticRewriteLeavesJSONKeysAndTextureVariantsAlone(t *testing.T) {
+	opts := staticRewriteOptions{AssetExists: func(rel string) bool { return rel == "/models/ship.png" || rel == "/models/ship.ktx2" }}
+	got := rewriteStaticJSON("/", `{"textureVariants": {"/models/ship.png":[{"uri":"/models/ship.ktx2"}]},"model":"/models/ship.png"}`, opts)
+	want := `{"textureVariants": {"/models/ship.png":[{"uri":"/models/ship.ktx2"}]},"model":"models/ship.png"}`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 func TestStaticRewriteKeepsExplicitBasePathWorking(t *testing.T) {
 	input := strings.NewReplacer("/gosx/", "/games/x/gosx/", `"/models/`, `"/games/x/models/`).Replace(staticFixture)
 	out, err := rewriteStaticExportHTMLWith("/games/x/play", input, fixtureOpts("/games/x"))
@@ -90,14 +99,18 @@ func TestStaticRewriteKeepsExplicitBasePathWorking(t *testing.T) {
 }
 
 func TestStaticRewriteDisablesTelemetryByDefault(t *testing.T) {
-	out, err := rewriteStaticExportHTML("/", staticFixture)
+	if plain, _ := rewriteStaticExportHTML("/", staticFixture); strings.Contains(plain, "gosx-telemetry") {
+		t.Fatal("a hybrid build keeps telemetry on")
+	}
+	off := staticRewriteOptions{TelemetryOff: true}
+	out, err := rewriteStaticExportHTMLWith("/", staticFixture, off)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, `<meta name="gosx-telemetry" content="off"/>`) {
 		t.Fatalf("missing telemetry-off meta in\n%s", out)
 	}
-	again, _ := rewriteStaticExportHTML("/", out)
+	again, _ := rewriteStaticExportHTMLWith("/", out, off)
 	if strings.Count(again, `name="gosx-telemetry"`) != 1 {
 		t.Fatal("telemetry meta was duplicated")
 	}

@@ -187,7 +187,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	fileCSSAssets := map[string]bool{}
 	exportedRoutes := make([]exportRoute, 0, len(routes))
 	var unexportable []string
-	rewriteOpts := staticRewriteOptions{Prefix: mount.prefix, AssetExists: func(rel string) bool {
+	rewriteOpts := staticRewriteOptions{Prefix: mount.prefix, TelemetryOff: opts.StaticOnly, AssetExists: func(rel string) bool {
 		info, err := os.Stat(filepath.Join(contentDir, filepath.FromSlash(strings.TrimPrefix(rel, "/"))))
 		return err == nil && info.Mode().IsRegular()
 	}}
@@ -677,7 +677,7 @@ func rewriteStaticExportHTMLWith(routePath, input string, opts staticRewriteOpti
 		}
 	}
 	walk(root)
-	if head != nil && !hasStaticTelemetryMeta(head) {
+	if head != nil && opts.TelemetryOff && !hasStaticTelemetryMeta(head) {
 		meta := &html.Node{Type: html.ElementNode, Data: "meta", DataAtom: 0, Attr: []html.Attribute{
 			{Key: "name", Val: "gosx-telemetry"}, {Key: "content", Val: "off"},
 		}}

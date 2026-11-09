@@ -25,6 +25,9 @@ type staticRewriteOptions struct {
 	// file in the output. Strings in JSON contracts that name such a file are
 	// rewritten; route paths and prose are not.
 	AssetExists func(rel string) bool
+	// TelemetryOff marks pages so the client sends no events. Set it for a
+	// bundle that ships without a server (gosx export).
+	TelemetryOff bool
 }
 
 func (o staticRewriteOptions) rewritesJSONString(s string) bool {
@@ -50,7 +53,15 @@ func (o staticRewriteOptions) rewritesJSONString(s string) bool {
 // literals in place, so key order and number formatting stay as rendered.
 func rewriteStaticJSON(routePath, text string, opts staticRewriteOptions) string {
 	var out strings.Builder
+	protectedStart, protectedEnd := jsonValueSpan(text, "textureVariants")
 	for i := 0; i < len(text); {
+		if i >= protectedStart && i < protectedEnd {
+			// The glTF loader resolves these URIs against the model URL, not the
+			// document, so a document-relative rewrite would point at the wrong file.
+			out.WriteString(text[i:protectedEnd])
+			i = protectedEnd
+			continue
+		}
 		if text[i] != '"' {
 			out.WriteByte(text[i])
 			i++
@@ -69,7 +80,10 @@ func rewriteStaticJSON(routePath, text string, opts staticRewriteOptions) string
 		}
 		literal := text[i : j+1]
 		var value string
-		if err := json.Unmarshal([]byte(literal), &value); err == nil && opts.rewritesJSONString(value) {
+		// A string followed by ":" is an object key. Keys such as the texture
+		// variant table's source paths are lookup names, not fetch URLs.
+		isKey := strings.HasPrefix(strings.TrimLeft(text[j+1:], " \t\r\n"), ":")
+		if err := json.Unmarshal([]byte(literal), &value); err == nil && !isKey && opts.rewritesJSONString(value) {
 			target := value
 			if opts.Prefix != "" && !strings.HasPrefix(value, opts.Prefix+"/") {
 				target = opts.Prefix + value
@@ -87,6 +101,41 @@ func rewriteStaticJSON(routePath, text string, opts staticRewriteOptions) string
 		i = j + 1
 	}
 	return out.String()
+}
+
+// jsonValueSpan returns the byte span of the object or array value of the first
+// "key": in text, or (0, 0) when it is absent or not a container.
+func jsonValueSpan(text, key string) (int, int) {
+	marker := strings.Index(text, `"`+key+`"`)
+	if marker < 0 {
+		return 0, 0
+	}
+	i := marker + len(key) + 2
+	for i < len(text) && strings.ContainsRune(" \t\r\n:", rune(text[i])) {
+		i++
+	}
+	if i >= len(text) || (text[i] != '{' && text[i] != '[') {
+		return 0, 0
+	}
+	start, depth := i, 0
+	for ; i < len(text); i++ {
+		switch text[i] {
+		case '"':
+			for i++; i < len(text) && text[i] != '"'; i++ {
+				if text[i] == '\\' {
+					i++
+				}
+			}
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				return start, i + 1
+			}
+		}
+	}
+	return 0, 0
 }
 
 // dropDormantRuntimeBundles empties the manifest "bundles" map of a page whose

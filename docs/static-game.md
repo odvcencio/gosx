@@ -39,6 +39,14 @@ writes `../gosx/assets/...`. The same folder therefore works at
 flag. If you do know the mount, `server.SetBasePath` still works: the exporter
 writes the files under that prefix and the URLs stay relative.
 
+Object keys in those JSON blocks are lookup names and stay as written. The
+texture-variant table (`textureVariants`) is left untouched too: its keys are
+the source paths the app was built with, and the glTF loader resolves its URIs
+against the model, not the page. Compressed-texture variants therefore match
+only when the bundle is served from the mount it was built for (the root by
+default). At another path the game falls back to the original texture. Build
+with `SetBasePath` for a fixed subpath when you ship variants.
+
 Your stylesheets get the same treatment: root-absolute `url(/img/a.png)` and
 `@import "/x.css"` that name a file in the bundle become paths relative to the
 stylesheet. Not rewritten: URLs in your own scripts. Use relative URLs there.
@@ -47,7 +55,7 @@ stylesheet. Not rewritten: URLs in your own scripts. Use relative URLs there.
 
 A static export:
 
-- turns browser telemetry off (`<meta name="gosx-telemetry" content="off">`),
+- turns browser telemetry off in `gosx export` output (`<meta name="gosx-telemetry" content="off">`),
   so the page does not POST to `/_gosx/client-events`. An app can switch it
   back on with `window.__gosx_telemetry_config = {enabled: true, endpoint: "https://..."}`.
 - fails if a page still names a `/_gosx/` endpoint,
