@@ -6337,7 +6337,7 @@
   // Joint palette texture shared by every skinned draw on this context.
   // Rigs above SCENE_UNIFORM_SKIN_JOINTS joints upload their matrices here
   // (4 RGBA32F texels per matrix on one row) instead of the uniform array.
-  var sceneJointPalettes = new WeakMap(); window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = window.__gosx_scene3d_asset_ext.uv1 || { use() { return null; }, bind() {}, dispose() {} };
+  var sceneJointPalettes = new WeakMap(); if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = window.__gosx_scene3d_asset_ext.uv1 || { use() { return null; }, bind() {}, dispose() {} }; }
   function sceneUploadJointPalette(gl, locs, matrices, jointCount) {
     var jointPalette = sceneJointPalettes.get(gl);
     if (!locs.jointTexture || !locs.jointTexCount) return false;
