@@ -24,6 +24,16 @@
 //	World.Step(elapsed)   advance by real elapsed time; returns the number of
 //	                      fixed steps consumed
 //	World.Raycast         query the world along a ray
+//	World.ShapeCast       sweep a sphere, capsule or box; SphereCast,
+//	                      CapsuleCast and BoxCast are shorthands
+//	World.Overlap         list the colliders a shape touches
+//	World.AddCharacter    add a kinematic capsule character controller
+//
+// Queries take a QueryFilter; colliders carry collision layers (Layer and Mask
+// on ColliderConfig); trigger colliders report enter, stay and exit events
+// through World.TriggerEvents and World.SetTriggerHandler. See
+// docs/physics-character.md, and game/physicsys for the game.Runtime systems
+// that drive characters and deliver trigger events.
 //
 // BuildWorld and BuildWorldChecked construct a whole world from a declarative
 // WorldSpec instead, which is the path to use when the layout is data rather
@@ -52,6 +62,9 @@
 // State is the smaller one and is what a server sends to clients each tick.
 // Snapshot captures enough to resume the solver exactly, which is what rollback
 // needs. StateSnapshot returns the same content as State without the JSON.
+// Both carry the character controllers' state and the touching trigger pairs.
+// Neither carries the warm-start contact cache, so a stack of dynamic bodies
+// restores bit for bit only with WorldConfig.DisableWarmStart set.
 //
 // None of these take a lock. World carries no mutex — the package has none — so
 // a snapshot taken while another goroutine steps the world is a data race, not
