@@ -223,6 +223,10 @@ the first frame anyway, so list what is not on screen at boot: spawned and
 hidden objects, material swaps, and the skinned, double-sided, shadow-casting
 or instanced copies of a material that already shows.
 
+The warm-up code ships in its own small script, which a page fetches only when
+a scene sets `ShaderWarmup`. The mount loads it before the first frame, so
+pages without a warm-up download nothing extra.
+
 The mount reports progress while it compiles, for a loading screen:
 
 | Attribute or event | Value |
@@ -403,6 +407,10 @@ Things to know:
 - `InstancedMesh` has no per-instance UV region, so instanced copies cannot
   pick different cells. Use one `Mesh` per character; the meshes still share
   one shader and one texture.
+- The drawing code ships in its own small script, which a page fetches only
+  when a scene declares `TextAtlases`; the mount loads it before the first
+  frame. Atlases added by a later update load it then and appear a moment
+  later.
 
 `TestTextAtlasDrawsDistinctNumbersOnCharacters` in `e2e/` draws 44 characters
 this way and checks that every jersey shows a different number.

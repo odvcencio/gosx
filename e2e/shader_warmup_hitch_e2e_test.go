@@ -202,7 +202,7 @@ func runWarmupHitch(t *testing.T, chrome string, bootstrap []byte, root, backend
 		}
 		page = []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#warmup-root{width:480px;height:320px}</style></head><body><div id="warmup-root"></div><script id="hitch-steps" type="application/json">%s</script>
 <script src="/gosx/bootstrap-runtime.js"></script>
-<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js" data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js" data-gosx-scene3d-selena-lighting-url="/gosx/bootstrap-feature-scene3d-selena-lighting.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
+<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js" data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js" data-gosx-scene3d-selena-lighting-url="/gosx/bootstrap-feature-scene3d-selena-lighting.js" data-gosx-scene3d-warmup-url="/gosx/bootstrap-feature-scene3d-warmup.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
 <script>window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('warmup-root'),emit(){},props:%s}).catch(error=>{window.mountError=String(error);});</script></body></html>`, stepJSON, propsJSON))
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +263,12 @@ new PerformanceObserver(list => { for (const e of list.getEntries()) if (e.name 
 		t.Fatalf("warm-up did not finish: %+v", state)
 	}
 	run.FirstFrameMS, run.ShadersReady, run.ShadersTotal = state.First, state.Shaders, state.Total
+	// The split page loads the warm-up from its own chunk; the monolith
+	// carries it inline and fetches nothing.
+	warmChunk := browser.anyRequest(func(url string) bool { return strings.Contains(url, "bootstrap-feature-scene3d-warmup") })
+	if chunked && warm && !warmChunk || !chunked && warmChunk {
+		t.Fatalf("warm-up chunk requested = %v on the %s page", warmChunk, map[bool]string{true: "split", false: "monolith"}[chunked])
+	}
 	if chunked {
 		if total, _ := strconv.Atoi(state.Total); total == 0 {
 			t.Fatalf("the split page reported no warm-up programs: %+v", state)

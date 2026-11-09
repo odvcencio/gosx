@@ -136,29 +136,38 @@ func TestTextAtlasDrawsDistinctNumbersOnCharacters(t *testing.T) {
 	if os.Getenv("GPU_CHROME_ENDPOINT") != "" || os.Getenv("GPU_CHROME_STATE") != "" || os.Getenv("GOSX_TEXT_ATLAS_WEBGPU") == "1" {
 		backends = append(backends, "webgpu")
 	}
-	for _, backend := range backends {
-		t.Run(backend, func(t *testing.T) {
-			yes := true
-			props := scene.Props{
-				Width: textAtlasWidth, Height: textAtlasHeight, Background: "#000000",
-				OrthographicCamera: &scene.OrthographicCamera{Position: scene.Vector3{Z: 10}, Left: -12, Right: 12, Top: 6.11, Bottom: -6.11, Zoom: 1, Near: 0.1, Far: 50},
-				Environment:        scene.Environment{AmbientColor: "#ffffff", AmbientIntensity: 0.8},
-				TextAtlases:        []scene.TextAtlas{numbers, plates},
-				Graph:              scene.NewGraph(nodes...),
+	// The monolith bootstrap.js carries the text atlas module inline; the split
+	// page loads it from its opt-in chunk.
+	for _, run := range backends {
+		for _, chunked := range []bool{false, true} {
+			backend, chunked := run, chunked
+			name := backend
+			if chunked {
+				name += "/split"
 			}
-			if backend == "webgl" {
-				props.ForceWebGL, props.RequireWebGL = &yes, &yes
-			} else {
-				props.PreferWebGPU = &yes
-			}
-			runTextAtlasScene(t, chrome, bootstrap, root, backend, props, numbers)
-		})
+			t.Run(name, func(t *testing.T) {
+				yes := true
+				props := scene.Props{
+					Width: textAtlasWidth, Height: textAtlasHeight, Background: "#000000",
+					OrthographicCamera: &scene.OrthographicCamera{Position: scene.Vector3{Z: 10}, Left: -12, Right: 12, Top: 6.11, Bottom: -6.11, Zoom: 1, Near: 0.1, Far: 50},
+					Environment:        scene.Environment{AmbientColor: "#ffffff", AmbientIntensity: 0.8},
+					TextAtlases:        []scene.TextAtlas{numbers, plates},
+					Graph:              scene.NewGraph(nodes...),
+				}
+				if backend == "webgl" {
+					props.ForceWebGL, props.RequireWebGL = &yes, &yes
+				} else {
+					props.PreferWebGPU = &yes
+				}
+				runTextAtlasScene(t, chrome, bootstrap, root, backend, chunked, props, numbers)
+			})
+		}
 	}
 }
 
 func textAtlasBlankPlate(i int) bool { return i%9 == 4 }
 
-func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, backend string, props scene.Props, numbers scene.TextAtlas) {
+func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, backend string, chunked bool, props scene.Props, numbers scene.TextAtlas) {
 	t.Helper()
 	manifest, err := json.Marshal(map[string]any{"engines": []any{map[string]any{
 		"id": "text-atlas", "component": "GoSXScene3D", "kind": "surface", "mountId": "atlas-root", "props": props,
@@ -170,6 +179,16 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 		t.Fatal("the manifest does not carry the number atlas texture URL")
 	}
 	page := []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#atlas-root{width:%dpx;height:%dpx}</style></head><body><div id="atlas-root"></div><script id="gosx-manifest" type="application/json">%s</script><script src="/bootstrap.js"></script></body></html>`, textAtlasWidth, textAtlasHeight, manifest))
+	if chunked {
+		propsJSON, err := json.Marshal(props)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page = []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#atlas-root{width:%dpx;height:%dpx}</style></head><body><div id="atlas-root"></div>
+<script src="/gosx/bootstrap-runtime.js"></script>
+<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js" data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js" data-gosx-scene3d-text-atlas-url="/gosx/bootstrap-feature-scene3d-text-atlas.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
+<script>window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('atlas-root'),emit(){},props:%s}).catch(error=>{window.mountError=String(error);});</script></body></html>`, textAtlasWidth, textAtlasHeight, propsJSON))
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/":
@@ -228,6 +247,10 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 	if img == nil {
 		t.Fatalf("the scene never became ready on %s; errors=%v console=%s", backend, browser.PageErrors(), browser.Console())
 	}
+	atlasChunk := browser.anyRequest(func(url string) bool { return strings.Contains(url, "bootstrap-feature-scene3d-text-atlas") })
+	if atlasChunk != chunked {
+		t.Fatalf("text atlas chunk requested = %v, want %v (split page: %v)", atlasChunk, chunked, chunked)
+	}
 	if out := os.Getenv("GOSX_TEXT_ATLAS_SHOT"); out != "" {
 		var buf bytes.Buffer
 		_ = png.Encode(&buf, img)
@@ -283,7 +306,11 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 	if errs := browser.PageErrors(); len(errs) != 0 {
 		t.Fatalf("page errors: %v", errs)
 	}
-	t.Logf("%s: 44 jerseys share one material and one atlas texture; each matches its own number; the closest call (jersey %d, %s) is %.2fx nearer its own label than any other", backend, worst, numbers.Labels[worst], worstRatio)
+	shape := "monolith"
+	if chunked {
+		shape = "split page, atlas chunk loaded on demand"
+	}
+	t.Logf("%s (%s): 44 jerseys share one material and one atlas texture; each matches its own number; the closest call (jersey %d, %s) is %.2fx nearer its own label than any other", backend, shape, worst, numbers.Labels[worst], worstRatio)
 }
 
 // textAtlasCell is one atlas cell's alpha, 0..1, row by row.
