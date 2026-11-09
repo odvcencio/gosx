@@ -792,6 +792,20 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/timeline.ts")},
 	},
 	{
+		// Environment.Crowds: seat layout, the fan rig and both backend
+		// passes. Fetched only when a scene declares environment.crowds; the
+		// renderers call it through window.__gosx_scene3d_crowd_api.
+		name: "bootstrap-feature-scene3d-crowd.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/crowd-layout.ts"),
+			sourceFile("../runtime/scene3d/crowd-rig.ts"),
+			sourceFile("../runtime/scene3d/crowd-state.ts"),
+			sourceFile("../runtime/scene3d/crowd-glsl.ts"),
+			sourceFile("../runtime/scene3d/crowd-wgsl.ts"),
+			sourceFile("../runtime/scene3d/crowd.ts"),
+		},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-zoom.js",
 		sources: []source{sourceFile("../runtime/scene3d/mount-pan.ts"), sourceFile("../runtime/scene3d/mount-zoom.ts")},
 	},

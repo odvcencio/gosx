@@ -108,10 +108,13 @@ type Environment struct {
 	ToneMapping  string // "aces", "reinhard", "linear", "" (default = aces)
 	FogColor     string
 	FogDensity   float64 // for exponential fog (0 = no fog)
-	Transition   Transition
-	InState      *EnvironmentProps
-	OutState     *EnvironmentProps
-	Live         []string
+	// Crowds are stadium, arena and concert audiences. See crowd.go and
+	// docs/scene3d-crowd.md.
+	Crowds     []Crowd
+	Transition Transition
+	InState    *EnvironmentProps
+	OutState   *EnvironmentProps
+	Live       []string
 }
 
 // Props is the typed Go-side Scene3D surface. It lowers into the current

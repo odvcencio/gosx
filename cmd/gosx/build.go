@@ -73,6 +73,9 @@ var runtimeFeatureChunks = []struct{ name, role string }{
 	// The Scene3D mount fetches /gosx/bootstrap-feature-scene3d-terrain.js
 	// itself when a scene declares either.
 	{"scene3d-terrain", "scene3d"},
+	// Environment.Crowds (scene/crowd.go). The Scene3D mount fetches
+	// /gosx/bootstrap-feature-scene3d-crowd.js itself when a scene declares one.
+	{"scene3d-crowd", "scene3d"},
 }
 
 type wasmCompiler string

@@ -9073,7 +9073,7 @@
       scenePBRCompositePass(gl, frameMeta, renderTarget);
       // The ocean owns a program and texture unit zero. Restore the PBR pass
       // and invalidate material bindings before drawing glass against it.
-      gl.useProgram(program);
+      gl.useProgram(program); window.__gosx_scene3d_crowd_api?.webgl(gl, { environment: bundle.environment, camera: cam, proj: projMatrix, viewProj: sceneMat4Multiply(projMatrix, viewMatrix), height: renderH, time: bundle.timeSeconds, uniforms: scenePBRCacheBaseUniforms, fragment: () => scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), program: program, mount: canvas.parentNode, textureCache: textureCache, prepare: (u: any, m: any) => { gl.uniformMatrix4fv(u.viewMatrix, false, viewMatrix); gl.uniformMatrix4fv(u.projectionMatrix, false, projMatrix); gl.uniform3f(u.cameraPosition, cam.x, cam.y, cam.z); scenePBRUploadExposure(gl, u, bundle.environment, frameLinear); scenePBRUploadLights(gl, u, bundle.lights, bundle.environment, _frameLightsHash); scenePBRUploadEnvironmentMap(gl, u, bundle.environment, textureCache, shadowSlots, shadowLightIndices); scenePBRUploadShadowUniforms(gl, u, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache); uploadMaterial(gl, u, m, textureCache); } }); // Environment.Crowds (crowd-glsl.ts)
       if (bundle.environment && bundle.environment.ocean || scenePBRHasComposite(frameMeta)) textureCache._sceneTextureEpoch++;
 
       if (transmissionSettings.screen) transmissionResources.capture(renderTarget);
@@ -10802,7 +10802,7 @@
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources);
       if (oceanResources.renderer) oceanResources.renderer.dispose(); terrainResources.dispose?.(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
-      transmissionResources.dispose();
+      transmissionResources.dispose(); window.__gosx_scene3d_crowd_api?.dispose(gl);
       softParticles.dispose(); exposureGL.dispose();
       scenePBRDisposeProgramQueue(gl);
 

@@ -510,7 +510,9 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		"__gosx_scene3d_animation_graph_api", "__gosx_scene3d_animation_graph_loaded",
 		"__gosx_scene3d_terrain_api", // Opt-in terrain, wind and scatter-band API in the lazy terrain chunk.
 		// Optional glTF asset features in the glTF chunk: the second UV stream and meshopt decoding.
-		"__gosx_scene3d_asset_ext"))
+		"__gosx_scene3d_asset_ext",
+		// Opt-in stadium and arena crowds (Environment.Crowds) in the lazy crowd chunk.
+		"__gosx_scene3d_crowd_api"))
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}

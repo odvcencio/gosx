@@ -101,6 +101,12 @@
     "scene3d/vessel-instruments.ts",
     "scene3d/terrain.ts",
     "scene3d/terrain-wgsl.ts",
-    "scene3d/terrain-glsl.ts"
+    "scene3d/terrain-glsl.ts",
+    "scene3d/crowd-layout.ts",
+    "scene3d/crowd-rig.ts",
+    "scene3d/crowd-state.ts",
+    "scene3d/crowd-glsl.ts",
+    "scene3d/crowd-wgsl.ts",
+    "scene3d/crowd.ts"
   ]
 }

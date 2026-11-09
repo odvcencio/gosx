@@ -1188,6 +1188,7 @@ type EnvironmentIR struct {
 	ToneMapping      string         `json:"toneMapping,omitempty"`
 	FogColor         string         `json:"fogColor,omitempty"`
 	FogDensity       float64        `json:"fogDensity,omitempty"`
+	Crowds           []CrowdIR      `json:"crowds,omitempty"`
 	Transition       TransitionIR   `json:"transition,omitzero"`
 	InState          map[string]any `json:"inState,omitempty"`
 	OutState         map[string]any `json:"outState,omitempty"`
@@ -3403,6 +3404,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.ToneMapping == "" &&
 		item.FogColor == "" &&
 		item.FogDensity == 0 &&
+		len(item.Crowds) == 0 &&
 		item.Transition.IsZero() &&
 		len(item.InState) == 0 &&
 		len(item.OutState) == 0 &&
@@ -3448,6 +3450,9 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	setString(record, "toneMapping", item.ToneMapping)
 	setString(record, "fogColor", item.FogColor)
 	setNumeric(record, "fogDensity", item.FogDensity)
+	if len(item.Crowds) > 0 {
+		record["crowds"] = item.Crowds
+	}
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }
@@ -3474,6 +3479,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		ToneMapping:      strings.TrimSpace(environment.ToneMapping),
 		FogColor:         strings.TrimSpace(environment.FogColor),
 		FogDensity:       environment.FogDensity,
+		Crowds:           normalizeCrowds(environment.Crowds),
 		Transition:       lowerTransition(environment.Transition),
 		InState:          environment.InState.legacyProps(),
 		OutState:         environment.OutState.legacyProps(),
