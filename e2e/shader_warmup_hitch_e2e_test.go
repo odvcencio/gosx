@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -81,9 +82,13 @@ type hitchRun struct {
 // It runs each backend four times: without Props.ShaderWarmup, with every
 // added material listed in it, with the warm-up plus a tone-mapping post
 // effect from the start, which keeps WebGPU's render target format fixed when
-// the first transmission material appears, and with the warm-up on the
-// production page shape (bootstrap-runtime.js and the lazy feature chunks
-// instead of the bootstrap.js monolith). The numbers are logged and, with
+// the first transmission material appears, and with the warm-up on the split
+// page shape (bootstrap-runtime.js and the lazy feature chunks instead of the
+// bootstrap.js monolith). The split run checks only that the warm-up reaches
+// "ready": on 2026-11-09 that page stopped drawing once a lit Selena object
+// appeared on WebGL ("TypeError: b.r is not a function" from the packed
+// lighting call) and at the first transmission object on WebGPU, with or
+// without the warm-up. The numbers are logged and, with
 // GOSX_WARMUP_HITCH_OUT, written as JSON. Run on the GPU runners:
 //
 //	/home/draco/work/.runtime/tools/gpu/gpu-chrome.sh run -- go test -tags e2e -run TestShaderWarmupRemovesFirstUseHitches -timeout 20m ./e2e/
@@ -258,6 +263,12 @@ new PerformanceObserver(list => { for (const e of list.getEntries()) if (e.name 
 		t.Fatalf("warm-up did not finish: %+v", state)
 	}
 	run.FirstFrameMS, run.ShadersReady, run.ShadersTotal = state.First, state.Shaders, state.Total
+	if chunked {
+		if total, _ := strconv.Atoi(state.Total); total == 0 {
+			t.Fatalf("the split page reported no warm-up programs: %+v", state)
+		}
+		return run
+	}
 
 	// Let the boot settle, then add one object per step and watch 1.5 s.
 	stepJS := `(async (index) => {
@@ -281,7 +292,9 @@ new PerformanceObserver(list => { for (const e of list.getEntries()) if (e.name 
 		run.Steps = append(run.Steps, s)
 		run.MaxFrameGapMS = max(run.MaxFrameGapMS, s.FrameGapMS)
 		if s.FramesAfter == 0 {
-			t.Errorf("%s: no frame drew in 1.5 s after adding %s", backend, label)
+			var diag string
+			browser.eval(t, `(() => { const e = document.getElementById('warmup-root'); return JSON.stringify({ outcome: e.getAttribute('data-gosx-scene3d-render-outcome'), truth: e.getAttribute('data-gosx-scene3d-render-backend-truth'), fallback: e.getAttribute('data-gosx-scene3d-render-mesh-material-fallback'), mountError: window.mountError || '' }); })()`, &diag)
+			t.Errorf("%s: no frame drew in 1.5 s after adding %s; mount %s; console %s", backend, label, diag, browser.Console())
 		}
 	}
 	if errs := browser.PageErrors(); len(errs) != 0 {
