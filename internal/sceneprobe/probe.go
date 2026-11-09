@@ -46,6 +46,9 @@ type Record struct {
 	ShaderLayout *ShaderLayout `json:"shaderLayout"`
 	// CustomUniforms is read only to find "gosx:data:<key>" texture references.
 	CustomUniforms map[string]json.RawMessage `json:"customUniforms"`
+	// LODGroup marks an instanced mesh in a scatter level-of-detail band,
+	// which the terrain chunk selects.
+	LODGroup Presence `json:"lodGroup"`
 
 	Generator            Presence `json:"generator"`
 	CompressedPositions  Presence `json:"compressedPositions"`
@@ -172,6 +175,9 @@ type Probe struct {
 		EnvMap string
 		IBL    struct{ Radiance, Irradiance, BRDFLUT Texture }
 		Ocean  struct{ Spectrum Presence }
+		// Terrain, Wind and Crowds gate the terrain and crowd chunks.
+		Terrain, Wind Presence
+		Crowds        Items
 	}
 	Walk                            map[string]json.RawMessage
 	Vessel                          *struct{ NodeID string }
@@ -314,6 +320,32 @@ func (p *Probe) NeedsDepthFX() bool {
 	return p.Scene.NeedsDepthFX()
 }
 
+// NeedsTerrain reports whether the scene reaches
+// bootstrap-feature-scene3d-terrain.js, in either accepted props shape. The
+// mount fetches that chunk for Environment.Terrain, for Environment.Wind, and
+// for an instanced mesh in a scatter level-of-detail band (lodGroup).
+func (p *Probe) NeedsTerrain() bool {
+	if p == nil {
+		return false
+	}
+	if p.Environment.Terrain.Truthy || p.Environment.Wind.Truthy {
+		return true
+	}
+	for i := range p.InstancedMeshes {
+		if p.InstancedMeshes[i].LODGroup.Truthy {
+			return true
+		}
+	}
+	return p.Scene.NeedsTerrain()
+}
+
+// NeedsCrowds reports whether the scene declares at least one
+// Environment.Crowds entry, in either accepted props shape. Only such a scene
+// fetches bootstrap-feature-scene3d-crowd.js.
+func (p *Probe) NeedsCrowds() bool {
+	return p != nil && (p.Environment.Crowds.Any || p.Scene.NeedsCrowds())
+}
+
 // NeedsOceanFFT reports whether the scene's ocean carries a wave spectrum, in
 // either accepted props shape. Only such a scene fetches the spectral ocean chunk.
 func (p *Probe) NeedsOceanFFT() bool {
@@ -400,5 +432,15 @@ func (p *Presence) UnmarshalJSON(raw []byte) error {
 	p.Present = true
 	p.NonNull = !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 	p.Truthy = TruthyJSON(raw)
+	return nil
+}
+
+// Items records whether a JSON value is an array with at least one element,
+// without decoding the elements.
+type Items struct{ Any bool }
+
+func (i *Items) UnmarshalJSON(raw []byte) error {
+	raw = bytes.TrimSpace(raw)
+	i.Any = len(raw) > 2 && raw[0] == '[' && len(bytes.TrimSpace(raw[1:len(raw)-1])) > 0
 	return nil
 }

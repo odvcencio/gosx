@@ -2404,6 +2404,9 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"vessel", r.bootstrapFeatureScene3dVesselPath, r.scene3DNeedsVesselChunk()},
 		{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath, r.scene3DNeedsVesselChunk()},
 		{"ocean-fft", r.bootstrapFeatureScene3dOceanFFTPath, r.scene3DNeedsOceanFFTChunk()},
+		// Terrain and crowds ship as runtime feature chunks (build.json runtime.features).
+		{"terrain", r.requiredFeaturePath("scene3d-terrain"), r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsTerrain)},
+		{"crowd", r.requiredFeaturePath("scene3d-crowd"), r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsCrowds)},
 		{"compute", r.bootstrapFeatureScene3dComputePath, needsCompute},
 		{"decompress", r.bootstrapFeatureScene3dDecompressPath, needsDecompress},
 	} {

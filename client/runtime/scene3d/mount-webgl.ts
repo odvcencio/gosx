@@ -2098,7 +2098,7 @@
 
   // A scene command can add a wave spectrum after mount. Ask for the FFT chunk once; until it lands the renderer keeps
   // drawing Gerstner waves, and a failed fetch is not retried on every schedule.
-  var sceneOceanFFTRequested = false; function sceneTerrainFeature(state) { /* terrain, wind and scatter bands (terrain.ts) */ return (state?.environment?.terrain || state?.environment?.wind || state?.instancedMeshes?.some((mesh) => mesh?.lodGroup)) && !window.__gosx_scene3d_terrain_api ? ensureSceneGatedFeatureLoaded("terrain", "gosxScene3dTerrainUrl", "/gosx/bootstrap-feature-scene3d-terrain.js").catch(() => null) : null; }
+  var sceneOceanFFTRequested = false, sceneTerrainLoad = null; function sceneTerrainFeature(state) { /* terrain, wind and scatter bands (terrain.ts); one load per page, so a failed fetch is reported once and not retried on every schedule */ return (state?.environment?.terrain || state?.environment?.wind || state?.instancedMeshes?.some((mesh) => mesh?.lodGroup)) && !window.__gosx_scene3d_terrain_api ? (sceneTerrainLoad = sceneTerrainLoad || ensureSceneGatedFeatureLoaded("terrain", "gosxScene3dTerrainUrl", "", true).catch(() => null)) : null; }
   function requestSceneOceanFFTIfNeeded(state) {
     sceneTerrainFeature(state); if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
     sceneOceanFFTRequested = true;

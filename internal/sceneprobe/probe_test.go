@@ -154,3 +154,33 @@ func TestProbeNeedsDepthFX(t *testing.T) {
 		}
 	}
 }
+
+// The terrain chunk serves Environment.Terrain, Environment.Wind and scatter
+// level-of-detail bands; the crowd chunk serves a non-empty Environment.Crowds.
+// Both props shapes count, and empty or null values do not.
+func TestNeedsTerrainAndCrowdsReadBothShapes(t *testing.T) {
+	for raw, want := range map[string][2]bool{
+		`{}`: {false, false},
+		`{"environment":{"terrain":null,"wind":null,"crowds":null}}`:          {false, false},
+		`{"environment":{"crowds":[]},"instancedMeshes":[{"lodGroup":""}]}`:   {false, false},
+		`{"environment":{"crowds":{"id":"a"}}}`:                               {false, false},
+		`{"environment":{"terrain":{"size":64}}}`:                             {true, false},
+		`{"scene":{"environment":{"wind":{"speed":2}}}}`:                      {true, false},
+		`{"scene":{"instancedMeshes":[{"id":"grass","lodGroup":"meadow"}]}}`:  {true, false},
+		`{"scene":{"environment":{"crowds":[{"id":"north"}]}}}`:               {false, true},
+		`{"environment":{"terrain":{"size":64},"crowds":[ {"id":"stand"} ]}}`: {true, true},
+		`{"scene":{"objects":[{"id":"box","kind":"box","lodGroup":"x"}]}}`:    {false, false},
+	} {
+		probe := Decode(json.RawMessage(raw))
+		if probe.Err != nil {
+			t.Fatalf("%s: decode: %v", raw, probe.Err)
+		}
+		if got := [2]bool{probe.NeedsTerrain(), probe.NeedsCrowds()}; got != want {
+			t.Errorf("%s: terrain, crowds = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsTerrain() || nilProbe.NeedsCrowds() {
+		t.Fatal("a nil probe needs no terrain or crowd chunk")
+	}
+}
