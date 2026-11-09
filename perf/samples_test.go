@@ -2,9 +2,11 @@ package perf
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func timedPage(lcp, tbt float64, bytes int64) PageReport {
@@ -128,5 +130,31 @@ func TestIsTimingMetric(t *testing.T) {
 		if IsTimingMetric(m) {
 			t.Errorf("%s must stay single-sample and strict", m)
 		}
+	}
+}
+
+func TestWaitForNetworkQuietWaitsForLateResource(t *testing.T) {
+	calls := 0
+	count := func() (int, error) {
+		calls++
+		if calls < 4 {
+			return calls, nil // resources keep arriving
+		}
+		return 4, nil
+	}
+	_, quiet, err := waitForNetworkQuiet(context.Background(), count, 30*time.Millisecond, 2*time.Second, 5*time.Millisecond)
+	if err != nil || !quiet {
+		t.Fatalf("quiet=%v err=%v", quiet, err)
+	}
+	if calls < 4 {
+		t.Fatalf("returned before the late resources arrived (%d polls)", calls)
+	}
+}
+
+func TestWaitForNetworkQuietGivesUpOnBusyPage(t *testing.T) {
+	n := 0
+	_, quiet, err := waitForNetworkQuiet(context.Background(), func() (int, error) { n++; return n, nil }, 30*time.Millisecond, 60*time.Millisecond, 5*time.Millisecond)
+	if err != nil || quiet {
+		t.Fatalf("a page that never settles must time out, quiet=%v err=%v", quiet, err)
 	}
 }
