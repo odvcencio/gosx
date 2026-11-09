@@ -291,7 +291,7 @@
     "uniform float u_shadowCascadeSplits0[4];",
     "uniform int u_shadowCascades0;",
     "uniform bool u_hasShadow0;",
-    "uniform float u_shadowBias0;",
+    "uniform float u_shadowBias0[4];",
     "uniform float u_shadowSoftness0;",
     "",
     "uniform highp sampler2DArray u_shadowMap1;",
@@ -299,7 +299,7 @@
     "uniform float u_shadowCascadeSplits1[4];",
     "uniform int u_shadowCascades1;",
     "uniform bool u_hasShadow1;",
-    "uniform float u_shadowBias1;",
+    "uniform float u_shadowBias1[4];",
     "uniform float u_shadowSoftness1;",
     "",
     // Per-object shadow receive control
@@ -413,7 +413,7 @@
     "    if (u_shadowCascades0 >= 3 && viewDepth >= u_shadowCascadeSplits0[1]) c = 2;",
     "    if (u_shadowCascades0 >= 4 && viewDepth >= u_shadowCascadeSplits0[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices0[c];",
-    "    return shadowFactor(u_shadowMap0, c, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    return shadowFactor(u_shadowMap0, c, ls, u_shadowBias0[c], u_shadowSoftness0);",
     "}",
     "",
     "float shadowFactorSlot1(float viewDepth) {",
@@ -422,7 +422,7 @@
     "    if (u_shadowCascades1 >= 3 && viewDepth >= u_shadowCascadeSplits1[1]) c = 2;",
     "    if (u_shadowCascades1 >= 4 && viewDepth >= u_shadowCascadeSplits1[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices1[c];",
-    "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1, u_shadowSoftness1);",
+    "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1[c], u_shadowSoftness1);",
     "}",
     "",
     // GGX/Trowbridge-Reitz normal distribution function.
@@ -897,123 +897,6 @@
     "void main() {}",
   ].join("\n");
 
-  // --- Points Shader Sources ---
-
-  const SCENE_POINTS_VERTEX_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "precision highp int;",
-    "",
-    "in vec3 a_position;",
-    "in float a_size;",
-    "in vec4 a_color;",
-    "",
-    "uniform mat4 u_viewMatrix;",
-    "uniform mat4 u_projectionMatrix;",
-    "uniform mat4 u_modelMatrix;",
-    "uniform float u_defaultSize;",
-    "uniform vec4 u_defaultColor;",
-    "uniform bool u_hasPerVertexColor;",
-    "uniform bool u_hasPerVertexSize;",
-    "uniform bool u_sizeAttenuation;",
-    "uniform int u_pointStyle;",
-    "uniform float u_viewportHeight;",
-    "uniform float u_minPixelSize;",
-    "uniform float u_maxPixelSize;",
-    "",
-    // Fog
-    "uniform int u_hasFog;",
-    "uniform float u_fogDensity;",
-    "",
-    "out vec4 v_color;",
-    "out float v_fogFactor;",
-    "out float v_pointSize;",
-    "",
-    "void main() {",
-    "    vec4 worldPos = u_modelMatrix * vec4(a_position, 1.0);",
-    "    vec4 viewPos = u_viewMatrix * worldPos;",
-    "    gl_Position = u_projectionMatrix * viewPos;",
-    "",
-    "    float size = u_hasPerVertexSize ? a_size : u_defaultSize;",
-    "    float pixelSize;",
-    "    if (u_sizeAttenuation) {",
-    "        pixelSize = max(size * (u_viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
-    "    } else {",
-    "        pixelSize = max(size, 1.0);",
-    "    }",
-    "    float minPixelSize = max(u_minPixelSize, 0.0);",
-    "    if (minPixelSize > 0.0) {",
-    "        pixelSize = max(pixelSize, minPixelSize);",
-    "    }",
-    "    if (u_maxPixelSize > 0.0) {",
-    "        pixelSize = min(pixelSize, u_maxPixelSize);",
-    "    }",
-    "    gl_PointSize = pixelSize;",
-    "    v_pointSize = gl_PointSize;",
-    "",
-    "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
-    "",
-    // Exponential fog
-    "    if (u_hasFog != 0) {",
-    "        float dist = length(viewPos.xyz);",
-    "        v_fogFactor = exp(-u_fogDensity * u_fogDensity * dist * dist);",
-    "        v_fogFactor = clamp(v_fogFactor, 0.0, 1.0);",
-    "    } else {",
-    "        v_fogFactor = 1.0;",
-    "    }",
-    "}",
-  ].join("\n");
-
-  const SCENE_POINTS_FRAGMENT_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "precision highp int;",
-    "",
-    "in vec4 v_color;",
-    "in float v_fogFactor;",
-    "in float v_pointSize;",
-    "",
-    "uniform float u_opacity;",
-    "uniform vec3 u_fogColor;",
-    "uniform int u_hasFog;",
-    "uniform int u_pointStyle;",
-    "",
-    "out vec4 fragColor;",
-    "",
-    "void main() {",
-    "    float alpha = 1.0;",
-    "    vec3 color = v_color.rgb;",
-    "    if (u_pointStyle == 1) {",
-    "        vec2 centered = gl_PointCoord - vec2(0.5);",
-    "        float radial = length(centered);",
-    "        float square = max(abs(centered.x), abs(centered.y));",
-    "        float focus = clamp((v_pointSize - 1.0) / 10.0, 0.0, 1.0);",
-    "        float coreRadius = mix(0.49, 0.18, focus);",
-    "        float core = 1.0 - smoothstep(coreRadius, coreRadius + 0.05, square);",
-    "        float halo = (1.0 - smoothstep(0.12, 0.72, radial)) * focus;",
-    "        float streakX = 1.0 - smoothstep(0.02, 0.16, abs(centered.x));",
-    "        float streakY = 1.0 - smoothstep(0.02, 0.16, abs(centered.y));",
-    "        float streak = max(streakX, streakY) * focus;",
-    "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0);",
-    "        color = mix(color, vec3(1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
-    "    } else if (u_pointStyle == 2) {",
-    // glow: pure radial gaussian falloff — soft gas cloud, no core, no streaks
-    "        vec2 centered = gl_PointCoord - vec2(0.5);",
-    "        float radial = length(centered) * 2.0;",
-    "        if (radial > 1.0) discard;",
-    "        float g = exp(-radial * radial * 3.5);",
-    "        alpha = g;",
-    "    }",
-    "",
-    // Apply fog
-    "    if (u_hasFog != 0) {",
-    "        color = mix(u_fogColor, color, v_fogFactor);",
-    "    }",
-    "",
-    "    fragColor = vec4(color, alpha * v_color.a * u_opacity);",
-    "}",
-  ].join("\n");
-
   // --- Instanced PBR Vertex Shader ---
   //
   // Variant of the PBR vertex shader for instanced rendering.
@@ -1310,12 +1193,12 @@
       var m = sceneShadowLightSpaceMatrix(light, sceneBounds);
       slot.cascades[0].lightMatrix = m;
       slot.cascades[0].splitNear = 0;
-      slot.cascades[0].splitFar = camFar || 100;
+      slot.cascades[0].splitFar = camFar || 100; slot.cascades[0].biasScale = 1;
       return;
     }
 
-    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5);
-    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, camFar || 100, n, lambda);
+    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5), reach = sceneNumber(light.shadowDistance, 0);
+    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, reach > 0 ? Math.min(reach, camFar || reach) : camFar || 100, n, lambda);
 
     // Light direction (normalized) — matches sceneShadowLightSpaceMatrix.
     var dx = sceneNumber(light.directionX, 0);
@@ -1332,12 +1215,12 @@
     var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
     var sceneRadius = Math.sqrt(ex * ex + ey * ey + ez * ez);
 
-    var prevSplit = camNear || 0.1;
+    var prevSplit = camNear || 0.1, reference = sceneShadowLightSpaceMatrix(light, sceneBounds); // bias reference: the one-map fit
     for (var i = 0; i < n; i++) {
       var splitFar = splits[i];
       var corners = sceneShadowFrustumSubCorners(viewMatrix, fovDeg, aspect, prevSplit, splitFar);
       var matrix = sceneShadowFitLightSpaceOrtho([dx, dy, dz], corners, sceneRadius, slot.size);
-      slot.cascades[i].lightMatrix = matrix;
+      slot.cascades[i].lightMatrix = matrix; slot.cascades[i].biasScale = sceneShadowCascadeBiasScale(reference, matrix);
       slot.cascades[i].splitNear = prevSplit;
       slot.cascades[i].splitFar = splitFar;
       prevSplit = splitFar;
@@ -1953,41 +1836,6 @@
     "    float dist = length(center);",
     "    float vignette = 1.0 - smoothstep(0.3, 0.7, dist * u_intensity);",
     "    fragColor = vec4(color * vignette, 1.0);",
-    "}",
-  ].join("\n");
-
-  const SCENE_POST_DOF_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "in vec2 v_uv;",
-    "uniform sampler2D u_texture;",
-    "uniform sampler2D u_depthTexture;",
-    "uniform float u_focusDistance;",
-    "uniform float u_aperture;",
-    "uniform float u_maxBlur;",
-    "uniform float u_near;",
-    "uniform float u_far;",
-    "out vec4 fragColor;",
-    "",
-    "float linearDepth(float depth) {",
-    "    float z = depth * 2.0 - 1.0;",
-    "    return (2.0 * u_near * u_far) / max(0.0001, u_far + u_near - z * (u_far - u_near));",
-    "}",
-    "",
-    "void main() {",
-    "    vec2 texel = 1.0 / vec2(textureSize(u_texture, 0));",
-    "    float depth = linearDepth(texture(u_depthTexture, v_uv).r);",
-    "    float blur = clamp(abs(depth - u_focusDistance) * u_aperture * u_maxBlur, 0.0, u_maxBlur);",
-    "    vec3 color = texture(u_texture, v_uv).rgb * 0.22;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur,  0.0)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  0.0)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(0.0,  blur)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(0.0, -blur)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur,  blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur, -blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur, -blur)).rgb * 0.095;",
-    "    fragColor = vec4(color, 1.0);",
     "}",
   ].join("\n");
 
@@ -4886,7 +4734,7 @@
 	        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
             gl.drawBuffers(sceneFBO.specularTex ? [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1] : [gl.COLOR_ATTACHMENT0]);
 	        return {
-            framebuffer: sceneFBO.fbo, width: sw,
+            framebuffer: sceneFBO.fbo, colorTexture: sceneFBO.colorTex, width: sw,
             height: sh,
             factor: factor,
             hdrSupported: sceneFBO.hdrSupported,
@@ -4902,7 +4750,7 @@
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
         return temporalEnabled;
       },
-      resetTemporal: function() { if (temporal) { temporal.dispose(); temporal = null; } temporalEnabled = false; },
+      resetTemporal: function() { if (temporal) { temporal.dispose(); temporal = null; } temporalEnabled = false; }, temporalMotion: function(bundle: any, helpers: any) { temporal.motion(bundle, helpers); },
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
@@ -7358,9 +7206,9 @@
 
     gl.uniformMatrix4fv(uniforms[matricesKey], false, _scenePBRCascadeMatScratch);
     gl.uniform1fv(uniforms[splitsKey], _scenePBRCascadeSplitScratch);
+    for (var bi = 0; bi < 4; bi++) _scenePBRCascadeSplitScratch[bi] = sceneNumber(light.shadowBias, 0.005) * sceneNumber(slot.cascades[bi < numCascades ? bi : 0].biasScale, 1); gl.uniform1fv(uniforms[biasKey], _scenePBRCascadeSplitScratch); // per-cascade bias, reusing the uploaded split scratch
     gl.uniform1i(uniforms[cascadesKey], numCascades);
     gl.uniform1i(uniforms[hasKey], 1);
-    gl.uniform1f(uniforms[biasKey], sceneNumber(light.shadowBias, 0.005));
     gl.uniform1f(uniforms[softKey], Math.max(0, sceneNumber(light.shadowSoftness, 0)));
     gl.uniform1i(uniforms[indexKey], lightIndex);
   }
@@ -8187,6 +8035,7 @@
     const activeStaticPointKeys = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
+    var softParticles = createSceneWebGLSoftParticles(gl), exposureGL = createSceneWebGLAutoExposure(gl), motionHelpers = { attribute: bindScenePBRDirectAttribute, data: scenePBRDirectAttribute, indices: bindScenePBRDirectIndexBuffer };
     var lastPreparedScene = null;
     var webglComputeParticleDrawStats = {
       drawEntries: 0,
@@ -8195,6 +8044,7 @@
       authoredDrawEntries: 0,
       authoredDrawInstances: 0,
       authoredDrawCalls: 0,
+      softDrawCalls: 0,
     };
     // Last string this renderer wrote per compute-particle-stats attribute,
     // so an unchanged 0-valued scene stops re-calling setAttribute every
@@ -9325,7 +9175,7 @@
       activeStaticPointEntries.clear();
       activeStaticPointKeys.clear();
       drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, sceneSelenaFrameTime, renderH);
-      drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
+      softParticles.beginFrame(renderTarget, renderW, renderH); drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
 
@@ -9333,7 +9183,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
+        if (temporalActive) postProcessor.temporalMotion(bundle, motionHelpers); exposureGL.apply(renderTarget, renderW, renderH, bundle.environment, cam); var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
         // Post passes replace material texture bindings, including unit zero.
         textureCache._sceneTextureEpoch++;
         if (postResult && postResult.postChain) {
@@ -10571,6 +10421,7 @@
         // stops that scintillation without giving up the depth cue.
         computeEntry.minPixelSize = sceneNumber(material.minPixelSize, 0);
         computeEntry.maxPixelSize = sceneNumber(material.maxPixelSize, 0);
+        computeEntry.softDistance = sceneNumber(material.softDistance, 0);
         computeEntry.customVertex = typeof sourceEntry.renderVertex === "string" ? sourceEntry.renderVertex : "";
         computeEntry.customFragment = typeof sourceEntry.renderFragment === "string" ? sourceEntry.renderFragment : "";
         computeEntry.customUniforms = sourceEntry.renderUniforms && typeof sourceEntry.renderUniforms === "object"
@@ -10629,7 +10480,8 @@
         var layerID = (typeof entry.id === "string" && entry.id) ? entry.id : ("points-" + i);
         var pp = ensurePointsAuthoredGLProgram(entry, layerID);
         var usedAuthored = !!pp;
-        if (!pp) pp = ensurePointsProgram();
+        var softPP = usedAuthored ? null : softParticles.program(entry);
+        if (!pp) pp = softPP || ensurePointsProgram();
         // Neither an authored program nor the builtin fallback compiled for
         // this layer (e.g. the builtin failed to compile in this
         // environment) — skip only this entry rather than aborting the rest
@@ -10693,7 +10545,7 @@
         }
 
         // Depth write control.
-        var depthWrite = entry.depthWrite !== false;
+        var depthWrite = entry.depthWrite !== false && !softPP;
         gl.depthMask(depthWrite);
         gl.depthFunc(gl.LEQUAL);
 
@@ -10707,39 +10559,9 @@
         gl.uniform1i(pp.uniforms.pointStyle, scenePointStyleCode(entry.style));
         gl.uniform1f(pp.uniforms.minPixelSize, Math.max(0, sceneNumber(entry.minPixelSize, 0)));
         gl.uniform1f(pp.uniforms.maxPixelSize, Math.max(0, sceneNumber(entry.maxPixelSize, 0)));
+        if (softPP) softParticles.bind(softPP, entry);
 
-        // Cache typed arrays on first use — positions/sizes/colors are static.
-        var rawPositions = entry.positions;
-        if (!entry._cachedPos && rawPositions && (Array.isArray(rawPositions) || sceneIsNumericTypedArray(rawPositions)) && rawPositions.length >= count * 3) {
-          entry._cachedPos = rawPositions instanceof Float32Array ? rawPositions : new Float32Array(rawPositions);
-        }
-        var rawSizes = entry.sizes;
-        if (!entry._cachedSizes && rawSizes && (Array.isArray(rawSizes) || sceneIsNumericTypedArray(rawSizes)) && rawSizes.length >= count) {
-          entry._cachedSizes = rawSizes instanceof Float32Array ? rawSizes : new Float32Array(rawSizes);
-        }
-        var rawColors = entry.colors;
-        if (!entry._cachedColors && rawColors && (Array.isArray(rawColors) || sceneIsNumericTypedArray(rawColors)) && rawColors.length >= count) {
-          if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-            entry._cachedColors = new Float32Array(count * 4);
-            for (var ci = 0; ci < count; ci++) {
-              var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
-              entry._cachedColors[ci * 4] = crgba[0];
-              entry._cachedColors[ci * 4 + 1] = crgba[1];
-              entry._cachedColors[ci * 4 + 2] = crgba[2];
-              entry._cachedColors[ci * 4 + 3] = crgba[3];
-            }
-          } else if (rawColors.length >= count * 4) {
-            entry._cachedColors = new Float32Array(rawColors);
-          } else if (rawColors.length >= count * 3) {
-            entry._cachedColors = new Float32Array(count * 4);
-            for (var ci2 = 0; ci2 < count; ci2++) {
-              entry._cachedColors[ci2 * 4] = rawColors[ci2 * 3];
-              entry._cachedColors[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
-              entry._cachedColors[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
-              entry._cachedColors[ci2 * 4 + 3] = 1;
-            }
-          }
-        }
+        sceneWebGLCachePointArrays(entry, count);
         // Positions (vec3) — bind the entry's cached VBO (uploaded once
         // per typed-array lifetime for static points, updated in-place
         // via bufferSubData for dynamic compute particle systems).
@@ -10791,6 +10613,7 @@
           webglComputeParticleDrawStats.drawEntries += 1;
           webglComputeParticleDrawStats.drawInstances += count;
           webglComputeParticleDrawStats.drawCalls += 1;
+          if (softPP) webglComputeParticleDrawStats.softDrawCalls += 1;
           if (usedAuthored) {
             webglComputeParticleDrawStats.authoredDrawEntries += 1;
             webglComputeParticleDrawStats.authoredDrawInstances += count;
@@ -10802,6 +10625,7 @@
       // Restore state.
       gl.depthMask(true);
       gl.disable(gl.BLEND);
+      if (softParticles.used()) textureCache._sceneTextureEpoch++;
 
       // Switch back to PBR program.
       gl.useProgram(program);
@@ -11039,6 +10863,7 @@
       if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       transmissionResources.dispose();
+      softParticles.dispose(); exposureGL.dispose();
       scenePBRDisposeProgramQueue(gl);
 
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls

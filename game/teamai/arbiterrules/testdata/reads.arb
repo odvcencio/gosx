@@ -1,0 +1,29 @@
+// Test rules for package arbiterrules. Every variable is a teamai fact name.
+// Rebuild reads.bundle with: go test -run TestBundlesAreCurrent -update
+
+tag "pick"
+
+rule LaneOpen {
+    when { nearest_opponent.dist > 6 and self.y < 30 }
+    then Read { branch: "deep" }
+}
+
+rule Crowded {
+    when { nearest_opponent.dist <= 6 }
+    then Read { branch: "short" }
+}
+
+rule Late {
+    when { signal.clock < 10 }
+    then Read { branch: "short" }
+}
+
+rule PickDeep tag "pick" {
+    when { true }
+    then Pick { branch: "deep", score: nearest_opponent.dist, weight: 1 }
+}
+
+rule PickShort tag "pick" {
+    when { true }
+    then Pick { branch: "short", score: 8 - nearest_opponent.dist, weight: 3 }
+}

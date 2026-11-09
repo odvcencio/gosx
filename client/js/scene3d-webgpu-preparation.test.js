@@ -96,6 +96,7 @@ test("preparation selects drawn reflection, Selena, skin+morph and instanced cul
     instancedMeshUsesCull: mesh => !!mesh.cull,
     getPBRInstancedPipeline: (...args) => calls.push(["instanced", ...args]), getPBRInstancedCullPipeline: (...args) => calls.push(["cull", ...args]),
     getShadowInstancedPipeline: () => calls.push(["shadow-instanced"]), pipelineGuard: { pending: 0 },
+    wgpuShadowCaster: light => !!light.castShadow, pbrShadowsActive: false,
   });
   const bundle = { materials: [{}, { selena: true }], lights: [{ castShadow: true }], instancedMeshes: [{ materialIndex: 0, cull: true, depthWrite: true }] };
   const prepared = { pipelineVariantHash: "variants", materialsHash: "materials", shadowPassHash: "shadow", pbrPasses: {

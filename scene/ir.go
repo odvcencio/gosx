@@ -122,6 +122,7 @@ type IREnvironment struct {
 	Sky              *Sky           `json:"sky,omitempty"`
 	Ocean            *Ocean         `json:"ocean,omitempty"`
 	Haze             *Haze          `json:"haze,omitempty"`
+	AutoExposure     *AutoExposure  `json:"autoExposure,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Background       string         `json:"background,omitempty"`
@@ -410,6 +411,7 @@ type IRParticleMaterial struct {
 	Attenuation  bool    `json:"attenuation,omitempty"`
 	MinPixelSize float64 `json:"minPixelSize,omitempty"`
 	MaxPixelSize float64 `json:"maxPixelSize,omitempty"`
+	SoftDistance float64 `json:"softDistance,omitempty"`
 }
 
 type IRSpriteNode struct {
@@ -509,6 +511,7 @@ type IRLight struct {
 	ShadowSize     int         `json:"shadowSize,omitempty"`
 	ShadowCascades int         `json:"shadowCascades,omitempty"`
 	ShadowSoftness float64     `json:"shadowSoftness,omitempty"`
+	ShadowDistance float64     `json:"shadowDistance,omitempty"`
 }
 
 // IRPostEffect describes one post-processing pass.
@@ -636,6 +639,7 @@ func validateIRLight(index int, light IRLight) []string {
 		{"range", light.Range}, {"decay", light.Decay},
 		{"width", light.Width}, {"height", light.Height},
 		{"shadowBias", light.ShadowBias}, {"shadowSoftness", light.ShadowSoftness},
+		{"shadowDistance", light.ShadowDistance},
 	}
 	for _, field := range numeric {
 		if math.IsNaN(field.value) || math.IsInf(field.value, 0) {
@@ -650,6 +654,7 @@ func validateIRLight(index int, light IRLight) []string {
 		{"penumbra", light.Penumbra}, {"range", light.Range},
 		{"decay", light.Decay}, {"width", light.Width},
 		{"height", light.Height}, {"shadowSoftness", light.ShadowSoftness},
+		{"shadowDistance", light.ShadowDistance},
 	}
 	for _, field := range nonNegative {
 		if field.value < 0 {
@@ -1046,6 +1051,7 @@ func environmentToIR(background string, environment EnvironmentIR) IREnvironment
 		Sky:              normalizeSky(environment.Sky),
 		Ocean:            normalizeOcean(environment.Ocean),
 		Haze:             normalizeHaze(environment.Haze),
+		AutoExposure:     normalizeAutoExposure(environment.AutoExposure),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Background:       strings.TrimSpace(background),
@@ -1087,6 +1093,7 @@ func lightsToIR(items []LightIR) []IRLight {
 			ShadowSize:     item.ShadowSize,
 			ShadowCascades: item.ShadowCascades,
 			ShadowSoftness: item.ShadowSoftness,
+			ShadowDistance: item.ShadowDistance,
 		})
 	}
 	return out
@@ -1578,6 +1585,7 @@ func particleMaterialToIR(material ParticleMaterialIR) IRParticleMaterial {
 		Attenuation:  material.Attenuation,
 		MinPixelSize: material.MinPixelSize,
 		MaxPixelSize: material.MaxPixelSize,
+		SoftDistance: material.SoftDistance,
 	}
 }
 

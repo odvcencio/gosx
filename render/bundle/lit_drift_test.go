@@ -409,7 +409,7 @@ var litSharedTerms = []sharedTerm{
 		id:     "shadow-follows-one-directional-light",
 		effect: "The shadow map lands on a light it was never fitted to, or on every light at once.",
 		goPat:  `if \(kind == 1u && i32\(i\) == shadowLightIndex\)`,
-		jsPat:  `if \(shadow\.hasShadow0 != 0u && i32\(i\) == shadow\.shadowLightIndex0\)`,
+		jsPat:  `if \(i32\(i\) == shadow\.lightIndex\.x\)`,
 	},
 }
 

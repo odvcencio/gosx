@@ -82,8 +82,20 @@
     }
   }
 
-  // A WebGL slot carries numCascades and cascades[c].{lightMatrix, splitFar};
-  // a WebGPU slot is one map whose matrix the caller passes in matrices[s].
+  // sceneSelenaCascadeBias makes the one bias Selena shaders subtract
+  // (shadow0.y) act as bias * cascade.biasScale, the per-cascade bias both
+  // renderers apply: it adds bias * (1 - biasScale) to the cascade's depth.
+  function sceneSelenaCascadeBias(out, offset, light, cascade) {
+    var scale = cascade ? sceneNumber(cascade.biasScale, 1) : 1;
+    if (scale === 1) return;
+    var delta = sceneNumber(light && light.shadowBias, 0.005) * (1 - scale);
+    for (var col = 0; col < 4; col++) out[offset + col * 4 + 2] += delta * out[offset + col * 4 + 3];
+  }
+
+  // A slot carries numCascades and cascades[c].{lightMatrix, splitFar,
+  // biasScale} on both backends (the WebGPU cascaded shadow module documents
+  // its layout); a slot without cascades is one map whose matrix the caller
+  // passes in matrices[s].
   function sceneSelenaFillShadowSlot(out, s, slot, matrix, light, packedIndex, clip) {
     var info = s === 0 ? out.shadow0 : out.shadow1;
     var splits = s === 0 ? out.shadowSplits0 : out.shadowSplits1;
@@ -97,6 +109,7 @@
       var m = cascade ? cascade.lightMatrix : matrix;
       if (!m) { cascades = c; break; }
       sceneSelenaClipToShadowUV(matrices, c * 16, m, clip);
+      sceneSelenaCascadeBias(matrices, c * 16, light, cascade);
       if (cascade && c < cascades - 1) splits[c] = sceneNumber(cascade.splitFar, SCENE_SELENA_FAR_SPLIT);
     }
     var size = Math.max(1, sceneNumber(slot && slot.size, 1024));
@@ -177,4 +190,13 @@
     input.slots = slots; input.lightIndices = lightIndices; input.matrices = matrices; input.clip = clip;
     holder._gosxSelenaLighting = sceneSelenaFillLighting(holder._gosxSelenaLighting, input);
     return holder._gosxSelenaLighting;
+  }
+
+  // The full monolith inlines this file, but its WebGPU renderer still arrives
+  // as the gated WebGPU chunk, whose shims read this API object. Publish it
+  // here too (the gated lighting chunk's suffix sets the same functions), so a
+  // monolith page lights Selena materials on WebGPU without advertising the
+  // lighting chunk.
+  if (typeof window !== "undefined" && window && !window.__gosx_scene3d_selena_lighting_api) {
+    window.__gosx_scene3d_selena_lighting_api = { frame: sceneSelenaFrameLighting, value: sceneSelenaLightingValue, shadowSlot: sceneSelenaShadowMapSlot };
   }

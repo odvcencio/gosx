@@ -31,6 +31,7 @@ on:
       - 'internal/sceneaffine/**'
       - 'physics/**'
       - 'vessel/**'
+      - 'game/teamai/**'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
@@ -46,6 +47,7 @@ on:
       - 'internal/sceneaffine/**'
       - 'physics/**'
       - 'vessel/**'
+      - 'game/teamai/**'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
@@ -87,4 +89,4 @@ jobs:
         run: make lint-deterministic
 
       - name: Deterministic goldens on arm64
-        run: go test -count=1 -p 4 ./det/... ./motion/... ./oceanspec ./scene/... ./render/gpu/headless ./render/bundle ./internal/sceneaffine ./physics ./vessel
+        run: go test -count=1 -p 4 ./det/... ./motion/... ./oceanspec ./scene/... ./render/gpu/headless ./render/bundle ./internal/sceneaffine ./physics ./vessel ./game/teamai

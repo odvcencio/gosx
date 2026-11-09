@@ -98,6 +98,9 @@ type Environment struct {
 	EnvIntensity float64
 	EnvRotation  float64
 	Exposure     float64
+	// AutoExposure adapts exposure to the scene's brightness over time. Nil
+	// keeps Exposure fixed. See exposure.go.
+	AutoExposure *AutoExposure
 	ToneMapping  string // "aces", "reinhard", "linear", "" (default = aces)
 	FogColor     string
 	FogDensity   float64 // for exponential fog (0 = no fog)
@@ -1070,6 +1073,14 @@ type ParticleMaterial struct {
 	// MaxPixelSize caps sprite growth as particles approach the camera,
 	// matching Points.MaxPixelSize. Zero leaves the size uncapped.
 	MaxPixelSize float64
+	// SoftDistance fades a sprite over this many world units as it nears
+	// the opaque surface behind it, so spray and smoke meet the ground or a
+	// shoreline without a hard rectangle. Zero keeps hard sprites. Only
+	// blended ("alpha" or "additive") builtin sprites soften; authored render
+	// shaders and depth-writing sprites draw unchanged. WebGPU always reads
+	// scene depth; WebGL2 softens only when the scene renders through the
+	// post chain, and draws hard sprites otherwise.
+	SoftDistance float64
 }
 
 // Label lowers into one legacy scene label.
@@ -1316,6 +1327,10 @@ type DirectionalLight struct {
 	ShadowSize     int
 	ShadowCascades int
 	ShadowSoftness float64
+	// ShadowDistance limits how far from the camera the shadow cascades
+	// reach, in world units. Zero uses the camera far plane. A shorter
+	// distance spends every cascade's texels on the visible play area.
+	ShadowDistance float64
 	Transition     Transition
 	InState        *LightProps
 	OutState       *LightProps
@@ -3438,6 +3453,7 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 			Attenuation:  cp.Material.Attenuation,
 			MinPixelSize: cp.Material.MinPixelSize,
 			MaxPixelSize: cp.Material.MaxPixelSize,
+			SoftDistance: cp.Material.SoftDistance,
 		},
 		Bounds:         cp.Bounds,
 		Transition:     lowerTransition(cp.Transition),
@@ -3975,6 +3991,7 @@ func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worl
 		ShadowSize:     light.ShadowSize,
 		ShadowCascades: normalizeShadowCascades(light.ShadowCascades),
 		ShadowSoftness: normalizeShadowSoftness(light.ShadowSoftness),
+		ShadowDistance: light.ShadowDistance,
 		Transition:     lowerTransition(light.Transition),
 		InState:        light.InState.legacyProps(),
 		OutState:       light.OutState.legacyProps(),

@@ -299,7 +299,31 @@ const notFound = [];
 const networkFailures = [];
 const clientEventCompletions = [];
 const clientEventResponses = [];
+// Diagnostics only: the case, category, level and message of every telemetry
+// event the server accepted (never the event body), so a count mismatch names
+// the extra event.
+const clientEventNames = [];
 const networkRequests = new Map();
+function recordClientEventNames(body) {
+  let batch = null;
+  try { batch = JSON.parse(body.toString('utf8')); } catch (_e) {
+    clientEventNames.push({ caseName: '', cat: '', lvl: '', msg: 'unparsable batch' });
+    return;
+  }
+  for (const event of Array.isArray(batch && batch.events) ? batch.events : []) {
+    let caseName = '';
+    try { caseName = new URL(String(event.url || ''), BASE).pathname.replace(/^\/case\//, ''); } catch (_e) {}
+    // A quality transition also names why it fired and the timing it judged.
+    const fields = event.fields && typeof event.fields === 'object' ? event.fields : {};
+    const detail = String(event.msg || '') === 'adaptive-quality-transition'
+      ? ['reason', 'activeTier', 'frameMS', 'ewmaFrameMS', 'p95FrameMS', 'targetFrameMS', 'measurement']
+        .filter((key) => fields[key] !== undefined)
+        .map((key) => key + '=' + (typeof fields[key] === 'number' ? Math.round(fields[key] * 10) / 10 : String(fields[key]).slice(0, 40))).join(',')
+      : '';
+    clientEventNames.push({ caseName, cat: String(event.cat || ''), lvl: String(event.lvl || ''), msg: String(event.msg || '') + (detail ? '(' + detail + ')' : '') });
+  }
+}
+
 const server = http.createServer((req, res) => {
   const method = String(req.method || 'GET').toUpperCase();
   const parsed = new URL(req.url || '/', 'http://127.0.0.1');
@@ -323,8 +347,11 @@ const server = http.createServer((req, res) => {
       fail('client-events request failed: ' + detail);
       if (!res.headersSent) send(500, Buffer.from('client-events request failed'), 'text/plain');
     });
+    const bodyChunks = [];
+    req.on('data', (chunk) => bodyChunks.push(chunk));
     req.once('end', () => {
       if (res.headersSent) return;
+      recordClientEventNames(Buffer.concat(bodyChunks));
       clientEventResponses.push({ method, path: parsed.pathname, status: 204 });
       res.writeHead(204);
       res.end();
@@ -2417,7 +2444,7 @@ function scanChromeDiagnostics() {
 function writeReport(extra) {
   const report = Object.assign({
     errors, warnings, notFound, unexpectedRequests, networkFailures, clientEventCompletions,
-    clientEventResponses,
+    clientEventResponses, clientEventNames,
     sourceCommit: SOURCE_COMMIT,
     selectedBrowser: SELECTED_BROWSER,
     webgpuProofTarget: PROOF_TARGET,

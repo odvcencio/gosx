@@ -28,6 +28,8 @@
 //	gosx scene check             Check Scene3D feature support and budgets
 //	gosx scene inspect           Inspect Scene3D feature use and budgets
 //	gosx scene validate          Validate SceneIR JSON files
+//	gosx voice render|estimate|booth|import|coverage|fragments
+//	                              Build game commentary voice clips
 //	gosx selena build|check      Compile .sel sources into artifacts / check them
 //	gosx size [--json] <dist|build.json>
 //	                              Report runtime bundle sizes
@@ -116,6 +118,8 @@ func main() {
 		cmdScene()
 	case "selena":
 		cmdSelena()
+	case "voice":
+		cmdVoice()
 	case "version":
 		fmt.Printf("gosx v%s\n", gosx.Version)
 	case "help", "-h", "--help":
@@ -259,6 +263,8 @@ Usage:
 		sceneUsage(w)
 	case "selena":
 		selenaUsage(w)
+	case "voice":
+		voiceUsage(w)
 	case "version":
 		fmt.Fprintf(w, `gosx version - Print version
 
@@ -297,6 +303,7 @@ Commands:
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
+  voice <subcommand>   Record or render commentary voice clips (gosx voice help)
   budget derive        Derive performance allocations
   budget explain       Explain performance allocations
   perf [--budget file] <url>

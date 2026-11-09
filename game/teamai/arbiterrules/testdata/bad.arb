@@ -1,0 +1,7 @@
+// A rule that reads a name teamai does not know.
+// Rebuild bad.bundle with: go test -run TestBundlesAreCurrent -update
+
+rule Bad {
+    when { self.altitude > 1 }
+    then Read { branch: "x" }
+}
