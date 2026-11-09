@@ -11,13 +11,22 @@
 // Progress is published on the mount for loading screens and game/boot:
 // data-gosx-scene3d-shaders (compiling | ready), -shaders-done, -shaders-total,
 // and the "gosx:scene3d:shader-progress" event with {done, total, failed, ready}.
+//
+// This module ships in the opt-in bootstrap-feature-scene3d-warmup.js chunk,
+// which a page advertises only for scenes that set Props.shaderWarmup (the
+// monolith carries it inline). The mount loads it before the first frame and
+// reaches it through the shims in optional-chunks.ts.
+(function() {
 const sceneShaderWarmups = new WeakMap<any, any>();
 const SCENE_WARMUP_IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 // sceneShaderWarmupBundle lowers the authored list into the bundle shape both
 // prepare passes read. Records have three vertices so backend predicates that
 // require geometry (skinning, direct attributes) accept them; nothing draws them.
-function sceneShaderWarmupBundle(spec: any): any {
+function sceneShaderWarmupBundle(spec: any, sceneObjectMaterialProfile: any): any {
+  const sceneApi: any = (window as any).__gosx_scene3d_api || {};
+  const sceneWorldObjectRenderPass = sceneApi.sceneWorldObjectRenderPass;
+  const scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
   const entries = Array.isArray(spec && spec.materials) ? spec.materials : [];
   const bundle: any = { materials: [], meshObjects: [], instancedMeshes: [], lights: [] };
   const passes: any = { opaque: [], alpha: [], additive: [] };
@@ -71,15 +80,15 @@ function sceneShaderWarmupCounts(renderer: any): any {
   return { total: counts.total | 0, pending: counts.pending | 0, failed: counts.failed | 0 };
 }
 
-// sceneShaderWarmupFrame returns the warm-up bundle for this frame, or null.
-// A scene without Props.shaderWarmup pays one property read. A replacement
-// renderer (WebGPU device loss, WebGL fallback) restarts the warm-up.
-function sceneShaderWarmupFrame(mount: any, props: any, renderer: any): any {
+// sceneShaderWarmupStep returns the warm-up bundle for this frame, or null.
+// A replacement renderer (WebGPU device loss, WebGL fallback) restarts the
+// warm-up.
+function sceneShaderWarmupStep(mount: any, props: any, renderer: any, profile: any): any {
   const spec = props && props.shaderWarmup;
   if (!spec || !mount || !renderer) return null;
   let state = sceneShaderWarmups.get(mount);
   if (!state || state.renderer !== renderer) {
-    state = { renderer, phase: "compiling", published: "", backend: String(renderer.kind || ""), bundle: sceneShaderWarmupBundle(spec), mount, started: Date.now() };
+    state = { renderer, phase: "compiling", published: "", backend: String(renderer.kind || ""), bundle: sceneShaderWarmupBundle(spec, profile), mount, started: Date.now() };
     state.bundle.warmupState = state;
     sceneShaderWarmups.set(mount, state);
   }
@@ -88,12 +97,12 @@ function sceneShaderWarmupFrame(mount: any, props: any, renderer: any): any {
   return state.bundle;
 }
 
-// sceneShaderWarmupSettle runs after render. A submitted frame that carried the
+// sceneShaderWarmupFinish runs after render. A submitted frame that carried the
 // warm-up bundle proves every program it requested is linked, because both
 // backends return "pending" while any program is still compiling. Until then,
 // a poll publishes progress each animation frame: the mount itself waits for
 // the backend's ready event and starts no frames while programs link.
-function sceneShaderWarmupSettle(meta: any, outcome: any): any {
+function sceneShaderWarmupFinish(meta: any, outcome: any): any {
   const state = meta && meta.warmup && meta.warmup.warmupState;
   if (!state || state.phase === "ready") return outcome;
   const counts = sceneShaderWarmupCounts(state.renderer);
@@ -121,3 +130,6 @@ function sceneShaderWarmupPoll(state: any) {
     sceneShaderWarmupPoll(state);
   });
 }
+
+(window as any).__gosx_scene3d_warmup_api = { frame: sceneShaderWarmupStep, settle: sceneShaderWarmupFinish };
+})();

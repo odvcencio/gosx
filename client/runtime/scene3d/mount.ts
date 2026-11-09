@@ -32,6 +32,7 @@
     }
     // A spectral ocean needs the FFT chunk; if it cannot load, the renderer keeps the Gerstner ocean.
     if ((props.scene || props).environment?.ocean?.spectrum) { try { await ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; }
+    for (const [on, kind, key] of [[props.shaderWarmup, "warmup", "gosxScene3dWarmupUrl"], [props.textAtlases, "text-atlas", "gosxScene3dTextAtlasUrl"]]) if (on) { try { await ensureSceneGatedFeatureLoaded(kind, key, ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; } // opt-in chunks (optional-chunks.ts); a scene draws without them
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     function scene3DFactoryCurrent() {
       return !ctx.isCurrent || ctx.isCurrent();
@@ -582,7 +583,7 @@
         nowMS: nowMS,
         // Declarative scene seconds; telemetry retains the separate wall clock.
         sceneTime: clockSeconds,
-        oceanTier: sceneLowHardware() ? "low" : "high", warmup: sceneShaderWarmupFrame(mount, props, renderer), textAtlases: sceneRegisterTextAtlases(props),
+        oceanTier: sceneLowHardware() ? "low" : "high", warmup: sceneShaderWarmupFrame(mount, props, renderer), textAtlases: sceneRegisterTextAtlases(props, mount),
         clockRevision: clockSubmission.requested,
         displayDeltaMS: displayDeltaMS,
         active: active,

@@ -1,6 +1,7 @@
 "use strict";
 // text-atlas.ts draws Props.TextAtlases with the canvas 2D API and resolves
-// "gosx-text-atlas:" texture URLs to the drawn image for both renderers.
+// "gosx-text-atlas:" texture URLs to the drawn image for both renderers. It
+// ships in an opt-in chunk; optional-chunks.ts holds the base-side shims.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -8,8 +9,12 @@ const path = require("node:path");
 const vm = require("node:vm");
 const ts = require("../runtime/node_modules/typescript");
 
-const source = fs.readFileSync(path.join(__dirname, "../runtime/scene3d/text-atlas.ts"), "utf8");
-const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+function transpile(file) {
+  const source = fs.readFileSync(path.join(__dirname, "../runtime/scene3d", file), "utf8");
+  return ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+}
+const code = transpile("text-atlas.ts");
+const shimCode = transpile("optional-chunks.ts");
 
 function load() {
   const canvases = [];
@@ -30,9 +35,9 @@ function load() {
     return canvas;
   } };
   const window = {};
-  const context = vm.createContext({ window, document, sceneNumber: (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d) });
-  vm.runInContext(code + "\n;globalThis.__t = { sceneRegisterTextAtlases, sceneTextAtlasURL, sceneTextAtlasCanvas };", context);
-  return { api: context.__t, window, canvases };
+  const context = vm.createContext({ window, document });
+  vm.runInContext(code, context);
+  return { api: window.__gosx_scene3d_text_atlas_api, window, canvases };
 }
 
 const spec = {
@@ -43,8 +48,8 @@ const spec = {
 
 test("atlases draw once, skip blank cells and shrink long labels to fit", () => {
   const h = load();
-  h.api.sceneRegisterTextAtlases({ textAtlases: [spec] });
-  h.api.sceneRegisterTextAtlases({ textAtlases: [spec] });
+  h.api.register([spec]);
+  h.api.register([spec]);
   assert.equal(h.canvases.length, 1, "one draw per texture URL");
   const canvas = h.canvases[0];
   assert.equal(canvas.width, 200);
@@ -62,7 +67,7 @@ test("atlases draw once, skip blank cells and shrink long labels to fit", () => 
 
 test("a background fills each labeled cell inside a transparent margin", () => {
   const h = load();
-  h.api.sceneRegisterTextAtlases({ textAtlases: [Object.assign({}, spec, { texture: "gosx-text-atlas:plates#01", background: "#f2d14b" })] });
+  h.api.register([Object.assign({}, spec, { texture: "gosx-text-atlas:plates#01", background: "#f2d14b" })]);
   const rects = h.canvases[0].ctx.ops.filter(op => op[0] === "fillRect");
   // Cells are 100x50, so the margin is floor(50 / 12) = 4 px; the blank
   // label 1 gets no fill, so filtering cannot bleed a fill into it.
@@ -71,16 +76,49 @@ test("a background fills each labeled cell inside a transparent margin", () => {
 
 test("atlas URLs resolve to the drawn image and other URLs pass through", () => {
   const h = load();
-  assert.equal(h.api.sceneTextAtlasURL(spec.texture), spec.texture, "an atlas not drawn yet passes through");
-  h.api.sceneRegisterTextAtlases({ textAtlases: [spec] });
-  assert.equal(h.api.sceneTextAtlasURL(spec.texture), "data:image/png;base64,ATLAS1");
-  assert.equal(h.api.sceneTextAtlasURL("/textures/wood.png"), "/textures/wood.png");
-  assert.equal(h.api.sceneTextAtlasURL(""), "");
-  assert.equal(h.api.sceneTextAtlasCanvas(spec.texture), h.canvases[0], "the canvas stays available for a direct upload");
-  assert.equal(h.window.__gosx_scene3d_api.sceneTextAtlasURL, h.api.sceneTextAtlasURL, "lazy renderer chunks import it from the scene API");
+  assert.equal(h.api.url(spec.texture), "", "an atlas not drawn yet resolves to no image, so nothing fetches the scheme URL");
+  h.api.register([spec]);
+  assert.equal(h.api.url(spec.texture), "data:image/png;base64,ATLAS1");
+  assert.equal(h.api.url("/textures/wood.png"), "/textures/wood.png");
+  assert.equal(h.api.canvas(spec.texture), h.canvases[0], "the canvas stays available for a direct upload");
   // A new label set is a new URL and a new drawing.
-  h.api.sceneRegisterTextAtlases({ textAtlases: [Object.assign({}, spec, { texture: "gosx-text-atlas:numbers#0100", labels: ["8"] })] });
+  h.api.register([Object.assign({}, spec, { texture: "gosx-text-atlas:numbers#0100", labels: ["8"] })]);
   assert.equal(h.canvases.length, 2);
-  h.api.sceneRegisterTextAtlases({});
-  h.api.sceneRegisterTextAtlases(null);
+  h.api.register(null);
+});
+
+// The base chunk keeps only optional-chunks.ts: it loads the text atlas chunk
+// when a later prop update brings atlases, resolves atlas URLs through the
+// chunk once it is there, and delegates warm-up frames to the warm-up chunk.
+test("base shims load the opt-in chunks and delegate to them", async () => {
+  const loads = [];
+  const events = [];
+  const window = { __gosx_scene3d_api: {} };
+  const helpers = { sceneObjectMaterialProfile() {}, sceneWorldObjectRenderPass() {}, scenePBRObjectRenderPass() {} };
+  const context = vm.createContext(Object.assign({ window, CustomEvent: class { constructor(type) { this.type = type; } },
+    ensureSceneGatedFeatureLoaded(kind, key, fallback) { loads.push([kind, key, fallback]); return Promise.resolve({}); } }, helpers));
+  vm.runInContext(shimCode + "\n;globalThis.__s = { sceneTextAtlasURL, sceneRegisterTextAtlases, sceneShaderWarmupFrame, sceneShaderWarmupSettle };", context);
+  const s = context.__s;
+  const mount = { dispatchEvent(event) { events.push(event.type); } };
+  assert.equal(s.sceneTextAtlasURL(spec.texture), "", "no chunk yet: no image");
+  assert.equal(s.sceneTextAtlasURL("/a.png"), "/a.png");
+  s.sceneRegisterTextAtlases({}, mount);
+  assert.equal(loads.length, 0, "a scene without atlases loads nothing");
+  s.sceneRegisterTextAtlases({ textAtlases: [spec] }, mount);
+  assert.deepEqual(loads, [["text-atlas", "gosxScene3dTextAtlasUrl", ""]]);
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(events, ["gosx:scene3d:program-ready"], "the mount redraws when the chunk lands");
+  const registered = [];
+  window.__gosx_scene3d_text_atlas_api = { register: list => registered.push(list), url: () => "data:x" };
+  s.sceneRegisterTextAtlases({ textAtlases: [spec] }, mount);
+  assert.deepEqual(registered, [[spec]]);
+  assert.equal(s.sceneTextAtlasURL(spec.texture), "data:x");
+  assert.equal(window.__gosx_scene3d_api.sceneTextAtlasURL, s.sceneTextAtlasURL, "renderer chunks import the resolver from the scene API");
+  assert.equal(s.sceneShaderWarmupFrame({}, { shaderWarmup: {} }, {}), null, "no warm-up chunk: no warm-up bundle");
+  assert.equal(s.sceneShaderWarmupSettle({ warmup: {} }, "pending"), "pending");
+  window.__gosx_scene3d_warmup_api = { frame: (_m, _p, _r, profile) => (profile === helpers.sceneObjectMaterialProfile ? "bundle" : "no profile"), settle: (_meta, outcome) => outcome + "!" };
+  assert.equal(s.sceneShaderWarmupFrame({}, {}, {}), null, "a scene without Props.shaderWarmup pays one property read");
+  assert.equal(s.sceneShaderWarmupFrame({}, { shaderWarmup: {} }, {}), "bundle");
+  assert.equal(s.sceneShaderWarmupSettle({ warmup: {} }, "submitted"), "submitted!");
+  assert.equal(s.sceneShaderWarmupSettle({}, "submitted"), "submitted");
 });

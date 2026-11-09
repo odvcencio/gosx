@@ -243,6 +243,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/frame-owner.ts"),
+			sourceFile("../runtime/scene3d/optional-chunks.ts"),
 			sourceFile("../runtime/scene3d/pipeline-warmup.ts"),
 			sourceFile("../runtime/scene3d/text-atlas.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
@@ -549,8 +550,9 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/frame-owner.ts"),
-			sourceFile("../runtime/scene3d/pipeline-warmup.ts"),
-			sourceFile("../runtime/scene3d/text-atlas.ts"),
+			// Shader warm-up and text atlases load from their own opt-in
+			// chunks; the base keeps only these shims.
+			sourceFile("../runtime/scene3d/optional-chunks.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/mount-input.ts"),
 			sourceFile("../runtime/scene3d/geometry-assets.ts"),
@@ -713,6 +715,14 @@ var outputs = []output{
 			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
 			sourceFile("bootstrap-src/26n-feature-scene3d-selena-lighting-suffix.ts"),
 		},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-warmup.js",
+		sources: []source{sourceFile("../runtime/scene3d/pipeline-warmup.ts")},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-text-atlas.js",
+		sources: []source{sourceFile("../runtime/scene3d/text-atlas.ts")},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",

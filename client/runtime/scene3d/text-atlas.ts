@@ -1,16 +1,21 @@
 // text-atlas.ts — label textures drawn with the canvas 2D API (Props.TextAtlases).
 //
 // A text atlas is a grid of short labels (jersey numbers, nameplates) that
-// many materials share; each material picks its cell with a UV region. The
-// mount registers the atlases from props before each frame. Drawing happens
-// once per distinct texture URL ("gosx-text-atlas:<id>#<hash>"): the canvas is
-// encoded as a PNG data URL, and both renderers' texture descriptors resolve
-// the atlas URL to it through sceneTextAtlasURL, so standard maps and Selena
-// texture params load it like any image. sceneTextAtlasCanvas keeps the canvas
-// for a direct upload path (a WriteTexture-style API) to use instead.
+// many materials share; each material picks its cell with a UV region. This
+// module ships in the opt-in bootstrap-feature-scene3d-text-atlas.js chunk,
+// which a page advertises only for scenes that declare text atlases (the
+// monolith carries it inline). The mount registers the atlases before each
+// frame through optional-chunks.ts. Drawing happens once per distinct texture
+// URL ("gosx-text-atlas:<id>#<hash>"): the canvas is encoded as a PNG data URL,
+// and both renderers' texture descriptors resolve the atlas URL to it through
+// sceneTextAtlasURL, so standard maps and Selena texture params load it like
+// any image. The API's canvas() keeps the canvas for a direct upload path (a
+// WriteTexture-style API) to use instead.
+(function() {
 const sceneTextAtlasImages = new Map<string, string>();
 const sceneTextAtlasCanvases = new Map<string, any>();
 const SCENE_TEXT_ATLAS_SCHEME = "gosx-text-atlas:";
+const num = function(value: any, fallback: number): number { const n = Number(value); return value == null || value === "" || !Number.isFinite(n) ? fallback : n; };
 
 function sceneTextAtlasDraw(spec: any): any {
   if (typeof document === "undefined" || typeof document.createElement !== "function") return null;
@@ -22,8 +27,8 @@ function sceneTextAtlasDraw(spec: any): any {
   canvas.height = rows * ch;
   const ctx = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
   if (!ctx) return null;
-  const pad = Math.min(0.45, Math.max(0, sceneNumber(spec.padding, 0.08)));
-  const outline = sceneNumber(spec.outlineWidth, 0);
+  const pad = Math.min(0.45, Math.max(0, num(spec.padding, 0.08)));
+  const outline = num(spec.outlineWidth, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -55,11 +60,8 @@ function sceneTextAtlasDraw(spec: any): any {
   return canvas;
 }
 
-// sceneRegisterTextAtlases draws the atlases in props that are not drawn yet.
-// The mount calls it before every frame; a scene without atlases pays one
-// property read.
-function sceneRegisterTextAtlases(props: any): void {
-  const list = props && props.textAtlases;
+// sceneTextAtlasRegister draws the listed atlases that are not drawn yet.
+function sceneTextAtlasRegister(list: any): void {
   if (!Array.isArray(list)) return;
   for (const spec of list) {
     const key = spec && typeof spec.texture === "string" ? spec.texture : "";
@@ -72,19 +74,15 @@ function sceneRegisterTextAtlases(props: any): void {
   }
 }
 
-// sceneTextAtlasURL resolves an atlas texture URL to its drawn image. Other
-// URLs, and atlases not drawn yet, pass through unchanged.
-function sceneTextAtlasURL(url: any): any {
-  if (typeof url !== "string" || url.charCodeAt(0) !== 103 || !url.startsWith(SCENE_TEXT_ATLAS_SCHEME)) return url;
-  return sceneTextAtlasImages.get(url) || url;
+// sceneTextAtlasResolve returns the drawn image of an atlas URL, or "" when the
+// atlas is not drawn (or the browser could not draw it).
+function sceneTextAtlasResolve(url: string): string {
+  return url.indexOf(SCENE_TEXT_ATLAS_SCHEME) === 0 ? sceneTextAtlasImages.get(url) || "" : url;
 }
 
-function sceneTextAtlasCanvas(url: string): any {
-  return sceneTextAtlasCanvases.get(url) || null;
-}
-
-if (typeof window !== "undefined") {
-  const sceneTextAtlasApi = window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {});
-  sceneTextAtlasApi.sceneTextAtlasURL = sceneTextAtlasURL;
-  sceneTextAtlasApi.sceneTextAtlasCanvas = sceneTextAtlasCanvas;
-}
+(window as any).__gosx_scene3d_text_atlas_api = {
+  register: sceneTextAtlasRegister,
+  url: sceneTextAtlasResolve,
+  canvas: function(url: string): any { return sceneTextAtlasCanvases.get(url) || null; },
+};
+})();
