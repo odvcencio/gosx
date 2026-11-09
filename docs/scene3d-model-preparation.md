@@ -179,15 +179,18 @@ picks it from the material:
    `TEXCOORD_1`). A `KHR_texture_transform` `texCoord` overrides it.
 2. If the base color is textured, its set wins. Otherwise the most-used set
    wins.
-3. If the maps use different sets, every map samples the winning set and the
-   console warns once per material:
-   `reads maps from different UV sets`.
+3. Occlusion and emissive maps may use a second set. The loader reads that
+   set as `vertices.uvs1` and marks the material with `occlusionTexCoord` and
+   `emissiveTexCoord`. **The WebGPU and WebGL2 renderers do not sample the
+   second stream yet**: those maps still sample the winning set. Both renderers
+   need a second vertex stream first.
+4. If other maps (normal, metallic-roughness) use a different set, the console
+   warns once per material: `reads maps from different UV sets`.
 
 So a model whose base color, normal, and occlusion maps all use UV1 renders
 correctly. A model with base color on UV0 and a baked AO or lightmap on UV1
-does not: bake the AO into the base UV set, or into the packed
-occlusion-roughness-metalness map on UV0. Mixed sets in one material need a
-second UV stream in both renderers; that is not built yet.
+shows the AO map through UV0 until the renderer change lands. Until then, bake
+the AO into the packed occlusion-roughness-metalness map on UV0.
 
 ### Joint limits
 
