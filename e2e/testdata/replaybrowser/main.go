@@ -12,7 +12,6 @@ import (
 	"syscall/js"
 	"time"
 
-	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/game/actions"
 	"m31labs.dev/gosx/game/camera"
 	"m31labs.dev/gosx/game/kitui"
@@ -148,6 +147,5 @@ func main() {
 		return (perf.Call("now").Float() - t0) / float64(n)
 	}))
 	g.Set("replay", api)
-	_ = gosx.Text
 	select {}
 }
