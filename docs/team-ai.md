@@ -202,8 +202,10 @@ the seed, tick, agent and decision. A registered `chooser` replaces both.
 The agent first tests a decision `Body.Reaction` ticks after reaching it, then
 every tick for `window` seconds, and takes `otherwise` (default: the next entry)
 when nothing fires. A decision with no window is tested once. Raise
-`Reaction` to make an agent read slower; a slow reader with a short window
-falls back to the default more often.
+`Reaction` to make an agent read later; the world it reads has moved on by
+then. Reaction never shortens the window. While a decision waits, an agent on a
+path coasts on its last velocity, and an agent in a decide step holds where the
+step began.
 
 ## Assignments and steps
 
