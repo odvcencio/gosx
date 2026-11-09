@@ -612,7 +612,7 @@
   // Only the second set (1) is carried; the default stays absent so materials
   // that never use it keep their exact shape.
   function sceneMaterialUVSets(occlusion, emissive) {
-    const out: any = {};
+    const out = {};
     if (occlusion === 1) out.occlusionTexCoord = 1;
     if (emissive === 1) out.emissiveTexCoord = 1;
     return out;
