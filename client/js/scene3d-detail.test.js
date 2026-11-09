@@ -61,7 +61,9 @@ test("WebGL detail is a cached compile variant with nil source unchanged", () =>
   // The browser optics oracle covers behavior; nil detail must keep this base exact.
   // Reviewed vessel cutaway base: two u_cut clip planes discard before shading; all-zero planes cut nothing
   // (scripts/scene3d-vessel-cutaway.mjs checks the pixels).
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "ba5119d2f1e7d21615e685e8cc757367ac048e774ad9893ed3d0f807efdf2411");
+  // Reviewed shared BRDF base: multiscatter energy, the layered clear coat and the surface inputs a Selena
+  // surface hook replaces (scene3d-selena-surface.test.js and the white-furnace e2e cover behavior).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "300576e87366766109edf4d3b73d11f310b5bcc63e7d91661cb8e738cc7c52c6");
   const shader = c.sceneWebGLDetailFragment(base, true);
   const glWithUnits = units => ({ MAX_TEXTURE_IMAGE_UNITS: 1, getParameter: () => units });
   assert.match(c.scenePBRFragmentSourceForContext(glWithUnits(16), base), /#define GOSX_HDR_IBL 1/);
@@ -98,7 +100,9 @@ test("WebGPU detail preserves the nil shader and uses a separate array binding",
   // The browser optics oracle covers behavior; nil detail must keep this base exact.
   // Reviewed vessel cutaway base: the fragment reads two planes from its model slot and discards before shading;
   // all-zero planes cut nothing.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "c36e68d8d98ee29f9ac4116d838e35e7bc9d35df4996a2e6c8d793faaebd6738");
+  // Reviewed shared BRDF base: multiscatter energy, the layered clear coat and the surface inputs a Selena
+  // surface hook replaces (scene3d-selena-surface.test.js and the white-furnace e2e cover behavior).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "4915dcc594ef96617688630f43e002fe947bb4e20174d0d8cbe6aa0038a5925e");
   const shader = c.sceneWebGPUDetailFragment(base, true);
   assert.match(shader, /textureSampleGrad\(detailAtlas/);
   assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);
