@@ -35,9 +35,11 @@ Measured costs:
 
 | What | Cost | How it was measured |
 |---|---|---|
-| `Step` plus frame encoding, one character | 215 ns, 0 allocations | `go test -run x -bench BenchmarkStep ./motion/animgraph` on an Apple M4 Pro |
+| `Step` plus frame encoding, one character | 173 to 215 ns, 0 allocations | `go test -run x -bench BenchmarkStep ./motion/animgraph` on an Apple M4 Pro |
 | Pose evaluation, one 60-joint character | 7.0 to 7.4 µs (Apple M4 Pro), 12.9 to 14.8 µs (NVIDIA RTX 5070 Ti host) | in-page loop in `TestAnimationGraphCharacterOnTheGPU`, Chrome, WebGPU and WebGL2 |
-| Frame size, one character | about 145 bytes | GSA1 frame with 3 clip samples, 2 IK chains, 1 look-at |
+| Frame size, one character | about 146 bytes | GSA2 frame with 3 clip samples, 2 IK chains, 1 look-at |
+| 22 characters per frame with level of detail | 57 to 60 µs (Apple M4 Pro), 89 to 92 µs (NVIDIA RTX 5070 Ti host) | `TestAnimationPairedLODMascotOnTheGPU`: in-page full-evaluation and re-skin timings weighted by each character's measured update share |
+| The same 22 re-evaluated every frame | 127 to 134 µs (M4 Pro), 208 to 219 µs (NVIDIA host) | same test, at each character's level of detail |
 
 The pose case is a walk/run blend plus an additive upper-body layer (3 clip
 samples in 2 layers), two foot IK chains with ground and pelvis drop, and a
