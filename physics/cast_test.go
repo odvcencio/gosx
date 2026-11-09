@@ -462,10 +462,20 @@ func checkCastAgainstReference(t *testing.T, seed int64) {
 	hit, ok := target.ShapeCast(shape, origin, rotation, direction, maxDistance)
 	want, wantOK := referenceCast(target, shape, origin, rotation, direction, maxDistance)
 	if ok && wantOK {
-		if math.Abs(hit.Distance-want) > 5e-4 {
-			t.Fatalf("seed %d (%v vs %v): distance %.7f, reference %.7f", seed, shape.Shape, target.Shape, hit.Distance, want)
+		diff := hit.Distance - want
+		if math.Abs(diff) <= 5e-4 {
+			return
 		}
-		return
+		// The boolean GJK reference can miss an overlap shallower than about
+		// 0.3 mm on a grazing pass, and then reports the touch late. A cast
+		// that comes earlier is still right when the shapes are within 1 mm of
+		// touching where it stopped. A cast that comes later than the
+		// reference would let a shape tunnel, and always fails.
+		end := origin.Add(direction.Normalize().Mul(hit.Distance))
+		if diff < 0 && referenceOverlap(target, grownShape(shape, 1e-3), end, rotation) {
+			return
+		}
+		t.Fatalf("seed %d (%v vs %v): distance %.7f, reference %.7f", seed, shape.Shape, target.Shape, hit.Distance, want)
 	}
 	if ok != wantOK {
 		// A grazing pass can touch within the reference's resolution: accept
