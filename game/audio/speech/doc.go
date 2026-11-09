@@ -21,7 +21,7 @@
 //     to PCM (the reference implementation the browser path is checked
 //     against) and VoicePlayer schedules it on the mixer's voice bus.
 //
-// Everything on the event path (Planner.Submit, Sequencer.Play, Sequencer.Poll)
+// Everything on the event path (Planner.Submit, Planner.Poll, Sequencer.Play, Sequencer.Interrupt)
 // allocates nothing in steady state: scratch space is sized when the Planner
 // and Sequencer are built.
 //
