@@ -210,8 +210,8 @@ a directional light, and candela becomes W/sr for a point or spot light. A point
 light of I W/sr lights a surface 1 m away like a sun of I W/m2, so one scale
 serves all three kinds. A sun exported as 2049 lux loads as intensity 3. The
 scene clamps intensity to 0 to 6. If a light reads dark or bright, set
-`extras.gosx.intensityScale` on the light in Blender (Custom Properties, a
-`gosx` object with `intensityScale`) and the loader multiplies the converted
+the custom property `gosxIntensityScale` (a number) on the light in Blender and
+the loader multiplies the converted
 value by it. The mapping is a documented convention. I did not verify it
 against the unit conversions Blender's exporter applies in each lighting mode.
 

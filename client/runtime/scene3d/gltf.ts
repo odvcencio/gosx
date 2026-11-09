@@ -2524,10 +2524,10 @@
     // a point light of I W/sr lights a surface 1 m away like a sun of I W/m2.
     // The scene intensity scale is that W/m2 value. The default intensity is 1
     // in glTF, so an unset intensity stays at 1/683 of a unit, as authored.
-    // extras.gosx.intensityScale multiplies the result for lights that read dark.
+    // extras.gosxIntensityScale multiplies the result for lights that read dark.
     var rawIntensity = def.intensity != null && isFinite(Number(def.intensity)) ? Number(def.intensity) : 1;
-    var extra = def.extras && def.extras.gosx;
-    var scale = extra && isFinite(Number(extra.intensityScale)) && Number(extra.intensityScale) > 0 ? Number(extra.intensityScale) : 1;
+    var scale = Number(def.extras && def.extras.gosxIntensityScale);
+    if (!(scale > 0) || !isFinite(scale)) scale = 1;
     var intensity = rawIntensity / 683 * scale;
     var light = {
       id: "gltf-light-" + (def.name || ref.light) + "-n" + nodeIndex,

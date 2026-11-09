@@ -45,7 +45,7 @@ function lightDoc() {
       KHR_lights_punctual: {
         lights: [
           { name: "sun", type: "directional", color: [1, 0.5, 0], intensity: 2049 },
-          { name: "lamp", type: "point", intensity: 683, range: 12, extras: { gosx: { intensityScale: 2 } } },
+          { name: "lamp", type: "point", intensity: 683, range: 12, extras: { gosxIntensityScale: 2 } },
           { name: "beam", type: "spot", intensity: 1366, spot: { innerConeAngle: 0.2, outerConeAngle: 0.8 } },
           { name: "open", type: "point" },
         ],
