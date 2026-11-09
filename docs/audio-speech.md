@@ -298,7 +298,7 @@ gosx voice estimate --manifest voices.json --provider elevenlabs --cache .voice-
 ```text
 voice      provider    requests unique characters cached billable
 announcer  elevenlabs        22     22        185      0      185
-total                        25     25        224      0      224
+total                        25     25        224      0      224   (excerpt: the colour voice row is omitted)
 ```
 
 Characters are Unicode code points of the text sent, after the variant
