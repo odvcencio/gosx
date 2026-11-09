@@ -188,3 +188,131 @@ small on-demand chunk, `bootstrap-feature-scene3d-selena-lighting.js` (about
 its first frame and draws without those inputs until it arrives, usually one
 or two frames. Without the chunk, WebGL still supplies `cameraPos`, `sunDir`,
 `sunColor` and `ambient` as before, and WebGPU supplies none of them.
+
+## Compile shaders before the first frame
+
+A browser compiles a shader program the first time something draws with it.
+Both renderers compile in the background (WebGL2 with
+`KHR_parallel_shader_compile`, WebGPU with `createRenderPipelineAsync`), but a
+frame still waits until every program it needs is ready. So an object that
+appears mid-game with a material no earlier frame used stops the scene from
+drawing while its program links. A lit Selena material held the scene for
+115 to 242 ms that way on an RTX 5070 Ti and on an Apple M4 Pro, in both
+backends.
+
+`Props.ShaderWarmup` moves that work to boot. List the materials and draw
+variants the scene uses after its first frame; the first frame then waits
+until all of them are compiled, and later first uses find their programs
+ready:
+
+```go
+props := scene.Props{
+    Graph: scene.NewGraph(ground, player),
+    ShaderWarmup: &scene.ShaderWarmup{Materials: []scene.WarmupMaterial{
+        {Material: lava, CastShadow: true},                 // spawns later
+        {Material: hologram},                               // material swap
+        {Material: skin, Skinned: true, DoubleSided: true}, // rigged enemies
+        {Material: grass, Instances: 4096},                 // instanced scatter
+    }},
+}
+```
+
+Each entry is one material in one variant; a material drawn both static and
+skinned needs two entries. Materials already on visible objects compile for
+the first frame anyway, so list what is not on screen at boot: spawned and
+hidden objects, material swaps, and the skinned, double-sided, shadow-casting
+or instanced copies of a material that already shows.
+
+The mount reports progress while it compiles, for a loading screen:
+
+| Attribute or event | Value |
+|---|---|
+| `data-gosx-scene3d-shaders` | `compiling`, then `ready` |
+| `data-gosx-scene3d-shaders-done` | programs compiled so far |
+| `data-gosx-scene3d-shaders-total` | programs requested so far |
+| `gosx:scene3d:shader-progress` | bubbling event, detail `{done, total, failed, ready, backend}` |
+
+`total` grows while the first frame discovers programs, so show the phase
+("preparing shaders") with the ratio as a hint. In a Go game, add the
+warm-up to the boot gate; the task finishes when a frame has drawn with every
+listed variant:
+
+```go
+surface := scene.NewSurface("arena")
+gate.Add(boot.CountTask("shaders", 1, surface.ShaderWarmupProgress))
+```
+
+With the four lit materials and two standard ones of
+`e2e/shader_warmup_hitch_e2e_test.go` listed, each lit material's first use
+drew within 18 to 28 ms (one or two frames) on both GPUs and both backends,
+down from 115 to 242 ms. The first frame came up to 160 ms later than
+without the warm-up, because the compiling moved into boot.
+
+The first transmission material is a special case: it adds a screen-space
+pass and switches the renderer to an HDR target, and on WebGPU every pipeline
+then compiles again for that format. With the warm-up alone it still took
+about 100 ms on WebGPU and 120 ms on WebGL on the Apple M4 Pro (23 and 31 ms on
+the RTX 5070 Ti). Give the scene a post effect from the start, such as tone
+mapping, so the post chain and target format exist before the first
+transmission object appears; with that, it drew within 21 to 33 ms on both GPUs:
+
+```go
+props.PostFX = scene.PostFX{Effects: []scene.PostEffect{scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1}}}
+```
+
+A scene without `ShaderWarmup` pays one property read per frame and publishes
+nothing. If the renderer is replaced (a WebGPU device loss, or a fallback to
+WebGL2), the warm-up runs again on the new renderer.
+
+## Hot reload in gosx dev
+
+`gosx dev` watches `.sel` sources. When you save one, it rebuilds the
+artifacts with the `build.selena` options from `gosx.config.json` and swaps
+the new shaders into the open page: every Scene3D object whose Selena
+material has the rebuilt name gets the new program, and keeps its uniform
+values, camera and game state. Nothing reloads and the app does not restart.
+
+- A compile error prints in the terminal and in the browser console, for
+  example `[gosx dev] build failed: selena materials/lava.sel: SEL2001 at
+  3:16: unknown name "missing"`. The page keeps drawing the last good
+  shaders.
+- The running app still embeds the artifacts it started with. The next full
+  page load through the dev proxy rebuilds and restarts it first, so a
+  refresh never shows old shaders.
+- A save that changes `.sel` files together with Go or `.gsx` files takes the
+  usual path: rebuild, restart and reload.
+- `gosx dev` also runs the Selena build step when it starts, like `gosx
+  build`. `build.selena.disabled` turns both off, and `.sel` saves then
+  reload the page.
+
+Materials match by name (`material Lava` in the source and
+`shaderLayout.material` in the scene), so keep material names unique across
+the project's `.sel` files.
+
+## Editor support
+
+`gosx lsp` serves `.sel` files with the Selena language server, and `selena
+lsp` runs it on its own for editors outside a GoSX project. It provides:
+
+- diagnostics from the Selena compiler as you type, with codes such as
+  `SEL2001` and the compiler's hint;
+- hover with the type of params, context fields, locals and `geo` fields,
+  the registry entry of engine inputs such as `sunDir` or `shadowMap0`, and
+  the signature and documentation of builtins and material library helpers;
+- completion of builtins, material library helpers, the file's own
+  functions, params and locals, `geo.` fields for the material kind, engine
+  inputs inside a `context` block, and type names after `:`;
+- go-to-definition for locals, params, functions, materials, and material
+  library helpers, whose sources it writes to the user cache directory.
+
+A file that calls a material library helper links that helper's module
+automatically, so `mlFog` resolves without configuration.
+
+To use it, register the `.sel` extension with your editor's LSP client and
+point it at `gosx lsp` (or `selena lsp`). For example, in Neovim:
+
+```lua
+vim.filetype.add({ extension = { sel = "selena" } })
+vim.lsp.config("selena", { cmd = { "gosx", "lsp" }, filetypes = { "selena" } })
+vim.lsp.enable("selena")
+```
