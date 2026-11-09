@@ -71,6 +71,27 @@ test("browser seats match scene.Crowd.Layout from the Go fixture", () => {
   }
 });
 
+test("a crowd frame Go encoded decodes to the same fields", () => {
+  const { c } = runtime();
+  const bytes = Uint8Array.from(Buffer.from(fixture.frame, "base64"));
+  const got = c.sceneCrowdDecode(bytes), want = fixture.frameFields;
+  assert.equal(got.crowd, want.Crowd);
+  assert.equal(got.now, want.Now);
+  assert.equal(got.sections.length, want.Sections.length);
+  const names = c.SCENE_CROWD_ACTIONS.map((a) => a[0]);
+  want.Sections.forEach((w, i) => {
+    const g = got.sections[i];
+    assert.equal(g.section, w.Section);
+    assert.equal(names[g.from], w.From); assert.equal(names[g.to], w.To);
+    for (const [a, b] of [["blendStart", "BlendStart"], ["blend", "Blend"], ["excitementFrom", "ExcitementFrom"], ["excitementTo", "ExcitementTo"], ["rate", "Rate"], ["epoch", "Epoch"], ["jitter", "Jitter"], ["excitementStart", "ExcitementStart"], ["excitementRamp", "ExcitementRamp"]]) {
+      assert.ok(Math.abs(g[a] - w[b]) < 1e-5, `section ${w.Section} ${a}: ${g[a]} vs ${w[b]}`);
+    }
+    assert.equal(Boolean(g.flags & 1), w.Synced); assert.equal(Boolean(g.flags & 4), w.Props);
+  });
+  assert.equal(got.waves.length, 1);
+  assert.ok(Math.abs(got.waves[0].start - want.Waves[0].Start) < 1e-5 && Math.abs(got.waves[0].speed - want.Waves[0].Speed) < 1e-6);
+});
+
 test("hash and action table match the Go side", () => {
   const { c } = runtime();
   for (const [input, want] of Object.entries(fixture.hashes)) assert.equal(c.sceneCrowdHash(Number(input)), want, "hash " + input);

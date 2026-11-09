@@ -330,6 +330,9 @@ type crowdFixture struct {
 	Crowds   []crowdFixtureCrowd  `json:"crowds"`
 	Hashes   map[string]uint32    `json:"hashes"`
 	Sections []CrowdSectionLayout `json:"sections"`
+	// Frame is a GSC1 frame Go encoded, and FrameFields what it holds.
+	Frame       []byte     `json:"frame"`
+	FrameFields CrowdFrame `json:"frameFields"`
 }
 
 type crowdFixtureCrowd struct {
@@ -391,6 +394,24 @@ func crowdFixtureData(t *testing.T) []byte {
 		if crowd.ID == "bowl" {
 			fixture.Sections = layout.Sections
 		}
+	}
+	director, err := NewCrowdDirector(testCrowdBowl(99))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := director.SetExcitement(40, 0.75, 2, "lower-5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := director.Sync(41, CrowdClap, 96, "lower-5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := director.RaiseProps(41, false, "upper-2"); err != nil {
+		t.Fatal(err)
+	}
+	director.StartWave(42, CrowdWave{Origin: 0.6, Speed: -0.09, Laps: 2})
+	fixture.FrameFields = director.Frame(42.5)
+	if fixture.Frame, err = EncodeCrowdFrame(fixture.FrameFields); err != nil {
+		t.Fatal(err)
 	}
 	for _, x := range []uint32{0, 1, 2, 0x9e3779b9, 0xffffffff, 123456789} {
 		fixture.Hashes[strings.TrimSpace(jsonUint(x))] = crowdHash(x)
