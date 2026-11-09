@@ -32,6 +32,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"m31labs.dev/gosx/scene"
 )
@@ -39,6 +41,10 @@ import (
 // motionBlurScene is a row of white boxes, optionally with one box circling the origin, and an optional
 // MotionBlur effect. Ambient light keeps the flat boxes visible on both backends.
 func motionBlurScene(t *testing.T, blur bool, orbiter bool) string {
+	return motionBlurSceneQuality(t, blur, orbiter, scene.MotionBlurMedium)
+}
+
+func motionBlurSceneQuality(t *testing.T, blur bool, orbiter bool, quality scene.MotionBlurQuality) string {
 	t.Helper()
 	nodes := []scene.Node{}
 	for i := 0; i < 70; i++ {
@@ -51,7 +57,7 @@ func motionBlurScene(t *testing.T, blur bool, orbiter bool) string {
 	}
 	effects := []scene.PostEffect{}
 	if blur {
-		effects = append(effects, scene.MotionBlur{Quality: scene.MotionBlurMedium, Strength: 1, MaxBlur: 128})
+		effects = append(effects, scene.MotionBlur{Quality: quality, Strength: 1, MaxBlur: 128})
 	}
 	effects = append(effects, scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1})
 	props := scene.Props{
@@ -66,7 +72,7 @@ func motionBlurScene(t *testing.T, blur bool, orbiter bool) string {
 	return string(data)
 }
 
-const motionBlurPage = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000;overflow:hidden}#s{width:800px;height:450px}</style></head><body>
+const motionBlurPage = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000;overflow:hidden}#s{width:%dpx;height:%dpx}</style></head><body>
 <div id="s"></div>
 <script src="/gosx/bootstrap-runtime.js"></script>
 <script data-gosx-script="feature-scene3d"
@@ -96,11 +102,15 @@ window.sweep = function(speed) {
 </script></body></html>`
 
 func motionBlurServer(t *testing.T, blur, orbiter bool) (string, func()) {
+	return motionBlurServerSized(t, blur, orbiter, scene.MotionBlurMedium, decalShotW, decalShotH)
+}
+
+func motionBlurServerSized(t *testing.T, blur, orbiter bool, quality scene.MotionBlurQuality, width, height int) (string, func()) {
 	t.Helper()
 	root := e2eRepoRoot(t)
-	markup := fmt.Sprintf(motionBlurPage, mustJSON(t, map[string]any{
-		"width": decalShotW, "height": decalShotH, "responsive": false, "maxDevicePixelRatio": 1, "controls": "none",
-		"shaded": true, "background": "#05070a", "scene": json.RawMessage(motionBlurScene(t, blur, orbiter)),
+	markup := fmt.Sprintf(motionBlurPage, width, height, mustJSON(t, map[string]any{
+		"width": width, "height": height, "responsive": false, "maxDevicePixelRatio": 1, "controls": "none",
+		"shaded": true, "background": "#05070a", "scene": json.RawMessage(motionBlurSceneQuality(t, blur, orbiter, quality)),
 	}))
 	mux := http.NewServeMux()
 	mux.Handle("/gosx/", http.StripPrefix("/gosx/", http.FileServer(http.Dir(filepath.Join(root, "client", "js")))))
@@ -239,5 +249,78 @@ func TestMotionBlurMovingObjectOnWebGPU(t *testing.T) {
 	}
 	if blurred < sharp*2 || blurred < 0.05 {
 		t.Errorf("moving bar: partial share %.3f with blur against %.3f without; blur along the bar's motion should at least double it", blurred, sharp)
+	}
+}
+
+// TestMotionBlurFrameCost measures what MotionBlur adds to a frame at 1920 x 1080 while the camera sweeps, for
+// each quality preset. WebGPU reports whole-frame GPU time from timestamp queries (the no-blur run is the
+// baseline). WebGL2 sums EXT_disjoint_timer_query_webgl2 time over drawArrays calls, which in this scene are the
+// post passes only (the boxes draw with drawElements), so the difference between runs is the blur.
+func TestMotionBlurFrameCost(t *testing.T) {
+	const width, height = 1920, 1080
+	for _, backend := range decalBackends(t) {
+		t.Run(backend, func(t *testing.T) {
+			type reading struct{ Median, GPU, PostGPU float64 }
+			measure := func(blur bool, quality scene.MotionBlurQuality) reading {
+				ctx, closeBrowser := decalBrowser(t, backend)
+				defer closeBrowser()
+				url, stop := motionBlurServerSized(t, blur, false, quality, width, height)
+				defer stop()
+				decalNavigate(t, ctx, url, backend)
+				if err := chromedp.Run(ctx, emulation.SetDeviceMetricsOverride(width, height, 1, false), chromedp.Evaluate(`window.sweep(0.35)`, nil)); err != nil {
+					t.Fatal(err)
+				}
+				if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => {
+ const canvas = document.querySelector('#s canvas'); const gl = canvas && canvas.getContext('webgl2');
+ const ext = gl && gl.getExtension('EXT_disjoint_timer_query_webgl2');
+ window.__glTimer = { supported: !!ext, frame: 0, queries: [], done: [] };
+ if (!ext) return;
+ const draw = gl.drawArrays.bind(gl);
+ gl.drawArrays = function(...args) {
+  const q = gl.createQuery(); gl.beginQuery(ext.TIME_ELAPSED_EXT, q); draw(...args); gl.endQuery(ext.TIME_ELAPSED_EXT);
+  window.__glTimer.queries.push({ q, frame: window.__glTimer.frame });
+ };
+ (function tick() {
+  window.__glTimer.frame++;
+  const t = window.__glTimer; const keep = [];
+  for (const item of t.queries) {
+   if (gl.getQueryParameter(item.q, gl.QUERY_RESULT_AVAILABLE)) { if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) t.done.push({ frame: item.frame, ns: gl.getQueryParameter(item.q, gl.QUERY_RESULT) }); gl.deleteQuery(item.q); } else keep.push(item);
+  }
+  t.queries = keep; requestAnimationFrame(tick);
+ })();
+})()`, nil)); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(1500 * time.Millisecond)
+				const sample = `(async () => {
+ const frames = []; let last = performance.now();
+ await new Promise(resolve => { function tick(now) { frames.push(now - last); last = now; if (frames.length < 240) requestAnimationFrame(tick); else resolve(); } requestAnimationFrame(tick); });
+ await new Promise(resolve => setTimeout(resolve, 300));
+ frames.shift(); frames.sort((a, b) => a - b);
+ const gpu = Number(document.getElementById('s').getAttribute('data-gosx-scene3d-webgpu-gpu-ms')) || 0;
+ const t = window.__glTimer; let post = 0;
+ if (t.supported && t.done.length) { const per = new Map(); for (const d of t.done) per.set(d.frame, (per.get(d.frame) || 0) + d.ns); post = [...per.values()].reduce((a, b) => a + b, 0) / per.size / 1e6; }
+ return JSON.stringify({median: frames[frames.length >> 1], gpu, post});
+})()`
+				var raw string
+				if err := chromedp.Run(ctx, chromedp.Evaluate(sample, &raw, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil {
+					t.Fatal(err)
+				}
+				var r struct{ Median, Gpu, Post float64 }
+				if err := json.Unmarshal([]byte(raw), &r); err != nil {
+					t.Fatalf("%s: %v", raw, err)
+				}
+				return reading{Median: r.Median, GPU: r.Gpu, PostGPU: r.Post}
+			}
+			base := measure(false, scene.MotionBlurMedium)
+			t.Logf("%s @%dx%d, no blur:       median frame %6.2f ms, WebGPU frame GPU %6.3f ms, WebGL2 post-pass GPU %6.3f ms", backend, width, height, base.Median, base.GPU, base.PostGPU)
+			for _, quality := range []scene.MotionBlurQuality{scene.MotionBlurLow, scene.MotionBlurMedium, scene.MotionBlurHigh} {
+				r := measure(true, quality)
+				t.Logf("%s @%dx%d, blur %-8s: median frame %6.2f ms, WebGPU frame GPU %6.3f ms (+%.3f), WebGL2 post-pass GPU %6.3f ms (+%.3f)", backend, width, height, quality, r.Median, r.GPU, r.GPU-base.GPU, r.PostGPU, r.PostGPU-base.PostGPU)
+				if r.Median > math.Max(base.Median*1.5, 20) {
+					t.Errorf("%s blur %s: median frame %.2f ms against %.2f ms without", backend, quality, r.Median, base.Median)
+				}
+			}
+		})
 	}
 }
