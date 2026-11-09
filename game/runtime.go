@@ -8,9 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"m31labs.dev/gosx/hub"
 	"m31labs.dev/gosx/physics"
-	"m31labs.dev/gosx/sim"
+	"m31labs.dev/gosx/sim/simcore"
 )
 
 // Phase is a runtime system phase.
@@ -494,7 +493,7 @@ type Context struct {
 	// 1-based count of fixed steps since the clock started; in other phases it
 	// is the frame index. See Every and EveryInterval.
 	Tick          uint64
-	NetworkInputs map[string]sim.Input
+	NetworkInputs map[string]simcore.Input
 }
 
 // Emit records a runtime event for this frame.
@@ -553,16 +552,19 @@ type Runtime struct {
 	frame         Frame
 	ctx           Context // reused by every Step
 	events        []Event
-	networkInputs map[string]sim.Input // this Step's inputs, or nil
-	netInputs     map[string]sim.Input // reused storage behind networkInputs
-	netBytes      []byte               // reused storage behind the Data of netInputs
+	networkInputs map[string]simcore.Input // this Step's inputs, or nil
+	netInputs     map[string]simcore.Input // reused storage behind networkInputs
+	netBytes      []byte                   // reused storage behind the Data of netInputs
 	latestScene   latestScene
 	sceneDirty    bool
 }
 
-// Runtime implements sim.CheckedRestorer, so Runner.RestoreSnapshot sees why it
-// refuses a snapshot.
-var _ sim.CheckedRestorer = (*Runtime)(nil)
+// Runtime implements simcore.CheckedRestorer (sim.CheckedRestorer on a
+// server), so Runner.RestoreSnapshot sees why it refuses a snapshot.
+var (
+	_ simcore.Simulation      = (*Runtime)(nil)
+	_ simcore.CheckedRestorer = (*Runtime)(nil)
+)
 
 // New creates a runtime from cfg.
 func New(cfg Config) *Runtime {
@@ -703,7 +705,7 @@ func (r *Runtime) runPhase(ctx *Context, phase Phase, delta time.Duration, fixed
 
 // Tick lets Runtime satisfy sim.Simulation. It applies collected network input
 // and advances exactly one fixed simulation step.
-func (r *Runtime) Tick(inputs map[string]sim.Input) {
+func (r *Runtime) Tick(inputs map[string]simcore.Input) {
 	if r == nil {
 		return
 	}
@@ -713,14 +715,14 @@ func (r *Runtime) Tick(inputs map[string]sim.Input) {
 
 // ApplyNetworkInputs stores inputs for systems and maps JSON InputEvent payloads
 // into the frame input state when possible.
-func (r *Runtime) ApplyNetworkInputs(inputs map[string]sim.Input) {
+func (r *Runtime) ApplyNetworkInputs(inputs map[string]simcore.Input) {
 	if r == nil || len(inputs) == 0 {
 		return
 	}
 	r.networkInputs = r.copyNetworkInputs(inputs)
 	// Ascending player order keeps event order and last-writer fields
 	// (pointer position) identical across runs and replays.
-	sim.EachInput(inputs, func(playerID string, input sim.Input) {
+	simcore.EachInput(inputs, func(playerID string, input simcore.Input) {
 		if len(input.Data) == 0 {
 			return
 		}
@@ -832,20 +834,6 @@ func (r *Runtime) Events() []Event {
 	out := make([]Event, len(r.events))
 	copy(out, r.events)
 	return out
-}
-
-// NewRunner wires runtime into the existing server-authoritative sim runner.
-func NewRunner(h *hub.Hub, runtime *Runtime, opts sim.Options) *sim.Runner {
-	if runtime == nil {
-		runtime = New(Config{})
-	}
-	if opts.TickRate <= 0 {
-		opts.TickRate = int(math.Round(float64(time.Second) / float64(runtime.FixedStep())))
-		if opts.TickRate <= 0 {
-			opts.TickRate = 60
-		}
-	}
-	return sim.New(h, runtime, opts)
 }
 
 // SnapshotCodec customizes runtime snapshot/state serialization. A codec whose
@@ -1175,9 +1163,9 @@ func (r *Runtime) runtimeState(restorable bool) RuntimeState {
 // copyNetworkInputs copies inputs into storage the runtime reuses from Step to
 // Step, so the caller may reuse its map and buffers once
 // ApplyNetworkInputs returns.
-func (r *Runtime) copyNetworkInputs(inputs map[string]sim.Input) map[string]sim.Input {
+func (r *Runtime) copyNetworkInputs(inputs map[string]simcore.Input) map[string]simcore.Input {
 	if r.netInputs == nil {
-		r.netInputs = make(map[string]sim.Input, len(inputs))
+		r.netInputs = make(map[string]simcore.Input, len(inputs))
 	}
 	clear(r.netInputs)
 	size := 0

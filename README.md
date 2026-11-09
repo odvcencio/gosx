@@ -859,7 +859,7 @@ rt := game.New(game.Config{
         }
     },
 })
-node := rt.Mount(ctx, gosx.Text("Loading simulation"))
+node := serve.Mount(rt, ctx, gosx.Text("Loading simulation")) // m31labs.dev/gosx/game/serve
 ```
 
 Together these packages (`field`, `game`, `sim`, `hub`) give you a complete server-authoritative interactive simulation stack in pure Go, with no third-party real-time engine.

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/physics"
 	"m31labs.dev/gosx/scene"
@@ -23,11 +22,6 @@ type latestScene struct {
 	props       scene.Props
 	physicsHash string
 	ok          bool
-}
-
-// EngineMount is implemented by server.PageState and server.PageRuntime.
-type EngineMount interface {
-	Engine(engine.Config, gosx.Node) gosx.Node
 }
 
 // Scene returns the latest Scene3D props produced by the runtime.
@@ -222,12 +216,4 @@ func (r *Runtime) withRuntimeProps(cfg engine.Config) engine.Config {
 		cfg.Props = raw
 	}
 	return cfg
-}
-
-// Mount registers the runtime's engine config with a page/runtime mount target.
-func (r *Runtime) Mount(target EngineMount, fallback gosx.Node) gosx.Node {
-	if target == nil {
-		return fallback
-	}
-	return target.Engine(r.EngineConfig(), fallback)
 }

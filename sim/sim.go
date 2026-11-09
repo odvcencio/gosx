@@ -15,36 +15,21 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/sim/simcore"
 )
 
-// Input holds raw per-client input data for a single tick.
-type Input struct {
-	Data []byte
-}
+// Input holds raw per-client input data for a single tick. It is
+// simcore.Input, which browser builds use without linking the hub.
+type Input = simcore.Input
 
 // Simulation is the interface a game must implement to be driven by a Runner.
-type Simulation interface {
-	// Tick advances the simulation one step with the collected inputs. The
-	// inputs map has random iteration order: use SortedPlayerIDs or EachInput
-	// when order can affect state. The Runner never calls Tick, Snapshot,
-	// Restore or State concurrently with one another.
-	Tick(inputs map[string]Input)
-	// Snapshot returns an opaque checkpoint for rollback or replay.
-	Snapshot() []byte
-	// Restore resets the simulation to a previous snapshot.
-	Restore(snapshot []byte)
-	// State returns the current authoritative state for broadcast.
-	State() []byte
-}
+// It is simcore.Simulation; see that type for the method contract.
+type Simulation = simcore.Simulation
 
 // CheckedRestorer is the optional part of a Simulation that reports a snapshot
-// it cannot apply and, when it does, leaves the simulation unchanged. Restore
-// has no result, so a Runner that is told to load a save cannot see a refusal
-// unless the simulation implements this. Runner.RestoreSnapshot calls it in place
-// of Restore. game.Runtime implements it.
-type CheckedRestorer interface {
-	RestoreSnapshot(snapshot []byte) error
-}
+// it cannot apply. It is simcore.CheckedRestorer. Runner.RestoreSnapshot calls
+// it in place of Restore. game.Runtime implements it.
+type CheckedRestorer = simcore.CheckedRestorer
 
 // StateEncoding controls how Runner places Simulation state bytes into hub
 // payloads.

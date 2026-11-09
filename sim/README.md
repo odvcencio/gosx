@@ -60,7 +60,7 @@ meter.Close()
 `Options.Clock` accepts the same clock interface as telemetry, including its
 deterministic test clock. Lag is elapsed start time minus the ticker's scheduled
 deadline, clamped at zero. Slow work may drop periods; by default the runner executes no
-catch-up ticks (see `CatchUpBudget` below). A nil observer skips timing reads. `game.NewRunner` forwards
+catch-up ticks (see `CatchUpBudget` below). A nil observer skips timing reads. `game/serve.NewRunner` forwards
 these options unchanged. Metering that runner covers its authoritative runtime;
 do not also meter the runtime's internal `Step`.
 

@@ -12,6 +12,17 @@ The package composes existing GoSX primitives instead of replacing them:
 - `hub` and `sim` still own realtime transport and server-authoritative ticks.
 - `game` owns fixed-step orchestration, ECS-style state, input actions, assets,
   and the bridge between those packages.
+- `game/serve` owns the server-only helpers: `serve.NewRunner` drives a
+  runtime from a `sim.Runner` over a hub, and `serve.Mount` mounts its engine in
+  a server-rendered page.
+
+A browser (js/wasm) build of `game` links no `hub`, `net/http`, `crypto/tls`
+or root `gosx` package: `game` reaches the simulation contract through
+`sim/simcore` (whose `Input` and `Simulation` are `sim.Input` and
+`sim.Simulation`), and the server helpers live in `game/serve`.
+`TestBrowserBuildsLinkNoServerPackages` fails if one returns. Moving them cut
+the Go WASM engine fixture (`engine/wasm/internal/browserworker/fixture`) from
+10.30 MB to 7.59 MB raw, and from 2.02 MB to 1.46 MB with brotli -q 11.
 
 Browser engines that only present server snapshots can use `game/host` for
 typed gamepad snapshots and animation-frame scheduling. This small leaf package
@@ -63,7 +74,7 @@ surface: route data, hubs, and shared signals stay in the GoSX page runtime,
 while the compute island runs headless island VM code without a DOM root.
 
 For deterministic versus games, start from `game.FightingProfile()` and wire the
-runtime through `game.NewRunner`. If the simulation state is already JSON,
+runtime through `serve.NewRunner` (package `game/serve`). If the simulation state is already JSON,
 `sim.Options{StateEncoding: sim.StateEncodingJSON}` streams it without base64
 expansion.
 
@@ -121,7 +132,7 @@ var transforms []game.ComponentRef[game.Transform]
 transforms = game.QueryInto(ctx.World, transforms[:0])
 ```
 
-Use `rt.Mount(ctx, fallback)` from a server page state/runtime, or
+Use `serve.Mount(rt, ctx, fallback)` from a server page state/runtime, or
 `ctx.Engine(rt.EngineConfig(), fallback)` directly.
 
 ## Time control and multi-rate systems
@@ -267,7 +278,7 @@ also starts the clock remainder and the wrappers from zero.
 While a `sim.Runner` drives the runtime, load a save through the runner:
 
 ```go
-runner := game.NewRunner(matchHub, rt, sim.Options{})
+runner := serve.NewRunner(matchHub, rt, sim.Options{})
 runner.Start()
 // later, from any goroutine:
 if err := runner.RestoreSnapshot(frame, saved); err != nil {
