@@ -2486,6 +2486,73 @@
     return out;
   }
 
+  // KHR_lights_punctual: the document declares lights under
+  // extensions.KHR_lights_punctual.lights; a node references one through
+  // extensions.KHR_lights_punctual.light. A glTF light shines down its node's
+  // -Z axis. The scene light takes world position and direction from the node
+  // world matrix. Intensity passes through as authored (lux for directional,
+  // candela for point and spot); the scene clamps it to its 0..6 range.
+  function gltfLightHex(color) {
+    var rgb = Array.isArray(color) && color.length >= 3 ? color : [1, 1, 1];
+    var out = "#";
+    for (var i = 0; i < 3; i++) {
+      var v = Number(rgb[i]);
+      var byte = Math.round(Math.max(0, Math.min(1, isFinite(v) ? v : 1)) * 255);
+      out += (byte < 16 ? "0" : "") + byte.toString(16);
+    }
+    return out;
+  }
+
+  function gltfExtractNodeLight(gltf, node, nodeIndex, worldTransform, result) {
+    var ref = gltfExtension(node, "KHR_lights_punctual");
+    var doc = gltfExtension(gltf, "KHR_lights_punctual");
+    if (!ref || !doc || !Array.isArray(doc.lights) || ref.light == null) {
+      return;
+    }
+    var def = doc.lights[ref.light];
+    if (!def || typeof def !== "object") {
+      return;
+    }
+    var type = def.type;
+    if (type !== "directional" && type !== "point" && type !== "spot") {
+      return;
+    }
+    var dir = gltfTransformDirection(worldTransform, 0, 0, -1);
+    var len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z) || 1;
+    var pos = gltfTransformPoint(worldTransform, 0, 0, 0);
+    var intensity = def.intensity != null && isFinite(Number(def.intensity)) ? Number(def.intensity) : 1;
+    var light = {
+      id: "gltf-light-" + (def.name || ref.light) + "-n" + nodeIndex,
+      kind: type,
+      color: gltfLightHex(def.color),
+      intensity: intensity,
+    };
+    if (type === "directional" || type === "spot") {
+      light.directionX = dir.x / len;
+      light.directionY = dir.y / len;
+      light.directionZ = dir.z / len;
+    }
+    if (type !== "directional") {
+      light.x = pos.x;
+      light.y = pos.y;
+      light.z = pos.z;
+      // glTF range 0/absent means unbounded; the scene reads 0 the same way.
+      light.range = def.range != null && isFinite(Number(def.range)) && Number(def.range) > 0 ? Number(def.range) : 0;
+      light.decay = 2;
+    }
+    if (type === "spot") {
+      var spot = def.spot || {};
+      var outer = spot.outerConeAngle != null && isFinite(Number(spot.outerConeAngle)) ? Number(spot.outerConeAngle) : Math.PI / 4;
+      var inner = spot.innerConeAngle != null && isFinite(Number(spot.innerConeAngle)) ? Number(spot.innerConeAngle) : 0;
+      outer = Math.max(0.001, Math.min(Math.PI / 2, outer));
+      inner = Math.max(0, Math.min(outer, inner));
+      light.angle = outer;
+      // The scene cone fades from cos(angle * (1 - penumbra)) to cos(angle).
+      light.penumbra = 1 - inner / outer;
+    }
+    result.lights.push(light);
+  }
+
   function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result, animatedTRS, inheritedAnimated, sharedMeshes) {
     var node = gltf.nodes[nodeIndex];
     if (!node) {
@@ -2524,6 +2591,8 @@
         gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, nodeSuffix, nodeIndex, null, animated);
       }
     }
+
+    gltfExtractNodeLight(gltf, node, nodeIndex, worldTransform, result);
 
     var children = node.children || [];
     for (var i = 0; i < children.length; i++) {
@@ -2645,6 +2714,7 @@
     "KHR_materials_anisotropy",
     "KHR_materials_unlit",
     "KHR_texture_transform",
+    "KHR_lights_punctual",
   ];
 
   // Warn once per load about required extensions the loader ignores. A required
