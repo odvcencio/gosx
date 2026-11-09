@@ -316,3 +316,30 @@ vim.filetype.add({ extension = { sel = "selena" } })
 vim.lsp.config("selena", { cmd = { "gosx", "lsp" }, filetypes = { "selena" } })
 vim.lsp.enable("selena")
 ```
+
+## Game materials
+
+Selena's material library has a `game` module with helpers and example
+materials for common game looks: foliage that sways in the wind, toon shading
+with outlines, dissolve, hologram, force field, ice, a water surface and
+subsurface skin. Link it with the lighting module:
+
+```json
+{ "build": { "selena": { "modules": ["game", "lighting"] } } }
+```
+
+The examples live in Selena's `examples/material-library` and the helpers are
+listed in Selena's `docs/material-library/game.md`. Some need a draw setting on
+the GoSX side:
+
+| Example | Set on the material or mesh |
+|---|---|
+| `foliage.sel` | draw both faces: export the leaves from Blender with Backface Culling off (glTF `doubleSided`); a `scene.Mesh` built in Go has no double-sided switch yet |
+| `hologram.sel`, `force-field.sel` | `Standard: scene.StandardMaterial{BlendMode: scene.BlendAdditive}` in `SelenaMaterialOptions`; for the force field also `DepthWrite: scene.Bool(false)` on the mesh |
+| `dissolve.sel` | animate the `progress` uniform from Go |
+
+Foliage reads the scene wind through the `wind` and `windGust` engine inputs,
+in the encoding of `scene.Wind`. The renderers do not fill those two inputs
+for Selena materials yet, so plants stand still until they do; the shaders
+compile and draw either way. Add every game material that appears after the
+first frame to `ShaderWarmup`.
