@@ -14,7 +14,9 @@
   // nothing allocated per frame once a model is bound.
 
   const AG_MAX_LAYERS = 8, AG_MAX_SAMPLES = 16, AG_MAX_IK = 8, AG_MAX_LOOK = 4;
-  const AG_FEEDBACK_FLOATS = 3 + 6 * AG_MAX_IK + 6 * AG_MAX_LOOK + 4;
+  const AG_FEEDBACK_FLOATS = 3 + 9 * AG_MAX_IK + 6 * AG_MAX_LOOK + 4;
+  // Joint-detail fades (level of detail) last this long, in seconds.
+  const AG_DETAIL_FADE = 0.25;
   const AG_MARKER = "__gosxAnimationGraph";
 
   // ---------------------------------------------------------------------------
@@ -285,13 +287,13 @@
     function model(i: number) {
       let m = frame.models[i];
       if (!m) {
-        m = { id: "", rigHash: 0, dt: 0, layerCount: 0, layers: [] as any[], ikCount: 0, ik: [] as any[], lookCount: 0, look: [] as any[] };
+        m = { id: "", rigHash: 0, dt: 0, detail: 0, layerCount: 0, layers: [] as any[], ikCount: 0, ik: [] as any[], lookCount: 0, look: [] as any[] };
         for (let l = 0; l < AG_MAX_LAYERS; l++) {
           const layer = { weight: 0, count: 0, samples: [] as any[] };
           for (let s = 0; s < AG_MAX_SAMPLES; s++) layer.samples.push({ name: "", time: 0, weight: 0, loop: false });
           m.layers.push(layer);
         }
-        for (let k = 0; k < AG_MAX_IK; k++) m.ik.push({ chain: 0, flags: 0, weight: 0, target: new Float64Array(3), pole: new Float64Array(3), height: 0, normal: new Float64Array(3) });
+        for (let k = 0; k < AG_MAX_IK; k++) m.ik.push({ chain: 0, flags: 0, weight: 0, target: new Float64Array(3), pole: new Float64Array(3), height: 0, normal: new Float64Array(3), other: 0, bone: 0, offset: new Float64Array(3) });
         for (let k = 0; k < AG_MAX_LOOK; k++) m.look.push({ chain: 0, weight: 0, target: new Float64Array(3) });
         frame.models[i] = m;
       }
@@ -306,7 +308,7 @@
       else throw new TypeError("animation graph frame must be an ArrayBuffer or Uint8Array");
       at = 0;
       need(8);
-      if (bytes[0] !== 71 || bytes[1] !== 83 || bytes[2] !== 65 || bytes[3] !== 49) throw new TypeError("unsupported animation graph frame version");
+      if (bytes[0] !== 71 || bytes[1] !== 83 || bytes[2] !== 65 || bytes[3] !== 50) throw new TypeError("unsupported animation graph frame version");
       at = 4;
       const nameCount = u16();
       if (nameCount > 0x8000) throw new RangeError("too many animation graph clip names");
@@ -319,6 +321,9 @@
         m.rigHash = u32();
         m.dt = f();
         if (m.dt < 0) throw new RangeError("negative animation graph frame dt");
+        const modelFlags = u8();
+        if (modelFlags > 3) throw new RangeError("invalid animation graph model flags");
+        m.detail = modelFlags & 3;
         m.layerCount = u8();
         if (m.layerCount > AG_MAX_LAYERS) throw new RangeError("too many animation graph layers");
         for (let l = 0; l < m.layerCount; l++) {
@@ -344,10 +349,17 @@
         for (let k = 0; k < m.ikCount; k++) {
           const ik = m.ik[k];
           ik.chain = u8(); ik.flags = u8(); ik.weight = f();
-          if (ik.chain >= AG_MAX_IK || ik.flags > 7 || ik.weight < 0) throw new RangeError("invalid animation graph IK entry");
+          if (ik.chain >= AG_MAX_IK || ik.flags > 15 || ik.weight < 0) throw new RangeError("invalid animation graph IK entry");
           if (ik.flags & 1) { ik.target[0] = f(); ik.target[1] = f(); ik.target[2] = f(); }
           if (ik.flags & 2) { ik.pole[0] = f(); ik.pole[1] = f(); ik.pole[2] = f(); }
           if (ik.flags & 4) { ik.height = f(); ik.normal[0] = f(); ik.normal[1] = f(); ik.normal[2] = f(); }
+          if (ik.flags & 8) {
+            // A bone of another model in this frame: checked against the
+            // model count once the whole frame is read.
+            ik.other = u16(); ik.bone = u8();
+            ik.offset[0] = f(); ik.offset[1] = f(); ik.offset[2] = f();
+            if (ik.bone >= RIG_BONES.length) throw new RangeError("unknown animation graph target bone");
+          }
         }
         m.lookCount = u8();
         if (m.lookCount > AG_MAX_LOOK) throw new RangeError("too many animation graph look-at entries");
@@ -359,6 +371,12 @@
         }
       }
       if (at !== bytes.length) throw new RangeError("trailing animation graph frame data");
+      for (let i = 0; i < count; i++) {
+        const m = frame.models[i];
+        for (let k = 0; k < m.ikCount; k++) {
+          if ((m.ik[k].flags & 8) && (m.ik[k].other >= count || m.ik[k].other === i)) throw new RangeError("invalid animation graph target model");
+        }
+      }
       frame.count = count;
       return frame;
     };
@@ -370,24 +388,25 @@
     const holders = state._animGraphHolders || (state._animGraphHolders = new Map());
     let holder = holders.get(id);
     if (!holder) {
-      holder = { id, serial: 0, data: null as any, feedback: new Float64Array(AG_FEEDBACK_FLOATS), feedbackCount: 0 };
+      holder = { id, serial: 0, data: null as any, state, feedback: new Float64Array(AG_FEEDBACK_FLOATS), feedbackCount: 0 };
       holders.set(id, holder);
     }
     return holder;
   }
 
-  function agCopyModel(dst: any, src: any) {
+  // frame, when given, resolves bone targets' model indexes to model IDs.
+  function agCopyModel(dst: any, src: any, frame?: any) {
     if (!dst) {
-      dst = { rigHash: 0, dt: 0, layerCount: 0, layers: [] as any[], ikCount: 0, ik: [] as any[], lookCount: 0, look: [] as any[] };
+      dst = { rigHash: 0, dt: 0, detail: 0, layerCount: 0, layers: [] as any[], ikCount: 0, ik: [] as any[], lookCount: 0, look: [] as any[] };
       for (let l = 0; l < AG_MAX_LAYERS; l++) {
         const layer = { weight: 0, count: 0, samples: [] as any[] };
         for (let s = 0; s < AG_MAX_SAMPLES; s++) layer.samples.push({ name: "", time: 0, weight: 0, loop: false, clip: -1 });
         dst.layers.push(layer);
       }
-      for (let k = 0; k < AG_MAX_IK; k++) dst.ik.push({ chain: 0, flags: 0, weight: 0, target: new Float64Array(3), pole: new Float64Array(3), height: 0, normal: new Float64Array(3) });
+      for (let k = 0; k < AG_MAX_IK; k++) dst.ik.push({ chain: 0, flags: 0, weight: 0, target: new Float64Array(3), pole: new Float64Array(3), height: 0, normal: new Float64Array(3), otherID: "", bone: 0, offset: new Float64Array(3) });
       for (let k = 0; k < AG_MAX_LOOK; k++) dst.look.push({ chain: 0, weight: 0, target: new Float64Array(3) });
     }
-    dst.rigHash = src.rigHash; dst.dt = src.dt;
+    dst.rigHash = src.rigHash; dst.dt = src.dt; dst.detail = src.detail || 0;
     dst.layerCount = src.layerCount;
     for (let l = 0; l < src.layerCount; l++) {
       const a = src.layers[l], b = dst.layers[l];
@@ -403,6 +422,9 @@
       const a = src.ik[k], b = dst.ik[k];
       b.chain = a.chain; b.flags = a.flags; b.weight = a.weight; b.height = a.height;
       b.target.set(a.target); b.pole.set(a.pole); b.normal.set(a.normal);
+      b.otherID = (a.flags & 8) && frame ? frame.models[a.other].id : "";
+      b.bone = a.bone || 0;
+      if (a.offset) b.offset.set(a.offset);
     }
     dst.lookCount = src.lookCount;
     for (let k = 0; k < src.lookCount; k++) {
@@ -470,6 +492,8 @@
       rig: null as any, rigHash: -1,
       entries: [] as any[],
       evalMicros: 0,
+      nodeClass: new Uint8Array(n), detailW: Float64Array.of(1, 1, 1), detailSerial: -1, rootInv: new Float32Array(16),
+      posed: false, posedSerial: -1, posedRig: -1,
     };
     for (let i = 0; i < n; i++) {
       const node = nodes[i] || {};
@@ -489,7 +513,7 @@
       const ibmSrc = skin && skin.inverseBindMatrices && typeof skin.inverseBindMatrices.length === "number" ? skin.inverseBindMatrices : null;
       const ibm = new Float32Array(joints.length * 16);
       for (let j = 0; j < joints.length; j++) ibm.set(ibmSrc && j * 16 + 16 <= ibmSrc.length ? ibmSrc.subarray(j * 16, j * 16 + 16) : AG_IDENTITY, j * 16);
-      m.skins.push({ skin, joints: Int32Array.from(joints.map((v: any) => (Number.isInteger(v) && v >= 0 && v < n ? v : -1))), ibm, buffer });
+      m.skins.push({ skin, joints: Int32Array.from(joints.map((v: any) => (Number.isInteger(v) && v >= 0 && v < n ? v : -1))), ibm, buffer, model: new Float32Array(joints.length * 16) });
     }
     return m;
   }
@@ -607,15 +631,30 @@
 
   // agEvaluate poses model m from held frame data. It is a pure function of
   // the data, the clips, the rig and record.rootTransform, except for the IK
-  // smoothing state, which advances only when holder.serial changes.
-  function agEvaluate(m: any, holder: any) {
+  // smoothing and joint-detail fades, which advance only when holder.serial
+  // changes. Without a new frame (the model moved, or level of detail skipped
+  // this frame) it keeps the last local pose and only re-skins, unless force
+  // is set.
+  function agEvaluate(m: any, holder: any, force?: boolean) {
     const start = typeof performance !== "undefined" ? performance.now() : 0;
     const data = holder.data;
+    const root = m.record.rootTransform || null;
+    m.root = root;
+    if (!force && m.posed && m.posedSerial === holder.serial && m.posedRig === data.rigHash) {
+      // Same pose, new placement: joint = root * (model-space joint), one
+      // multiply per joint. World matrices and feedback keep the last full
+      // evaluation.
+      agReskin(m, root);
+      m.evalMicros = typeof performance !== "undefined" ? (performance.now() - start) * 1000 : 0;
+      return;
+    }
     const n = m.n;
     m.t.set(m.authT); m.r.set(m.authR); m.s.set(m.authS);
     m.flags.fill(0);
     const rig = agBindRig(m, data.rigHash);
     agResolveSamples(m, data);
+    agDetailWeights(m, holder, data);
+    const classOf = m.nodeClass, classW = m.detailW;
     const layers = Math.min(data.layerCount, AG_MAX_LAYERS);
     for (let l = 0; l < layers; l++) {
       const layer = data.layers[l];
@@ -631,12 +670,15 @@
         const time = agSampleTime(sample.time, clip.duration, sample.loop);
         const channels = clip.channels;
         for (let c = 0; c < channels.length; c++) {
+          // Joints a level of detail has faded out are not sampled at all.
+          if (!(classW[classOf[channels[c].node]] > 0)) continue;
           agEvalChannel(channels[c], time, m.v);
           agLayerAccumulate(m, channels[c], sample.weight, additive, refPose);
         }
       }
       agLayerApply(m, Math.min(1, layer.weight), cfg ? cfg.mask : null, additive);
     }
+    if (classW[1] < 1 || classW[2] < 1) agBlendDetail(m);
     if (!(m.record.model && m.record.model.rootMotion === true)) {
       for (let node = 0; node < n; node++) {
         if ((m.flags[node] & 1) && m.rootSet[node]) {
@@ -645,20 +687,100 @@
         }
       }
     }
-    const root = m.record.rootTransform || null;
-    m.root = root;
+    if (rig && rig.boneScale.length) {
+      for (let i = 0; i < rig.boneScale.length; i += 2) {
+        const node = rig.boneScale[i], f = rig.boneScale[i + 1], o = node * 3;
+        m.s[o] *= f; m.s[o + 1] *= f; m.s[o + 2] *= f;
+        m.flags[node] |= 4;
+      }
+    }
     agWorldRange(m, 0, m.order.length, root);
     agSolveIK(m, holder, rig);
+    agSkin(m, root);
+    m.posed = true;
+    m.posedSerial = holder.serial;
+    m.posedRig = data.rigHash;
+    m.evalMicros = typeof performance !== "undefined" ? (performance.now() - start) * 1000 : 0;
+    agWriteFeedback(m, holder, rig);
+  }
+
+  // agSkin writes joint matrices (world * inverse bind) and keeps a
+  // model-space copy (root^-1 * joint) for agReskin.
+  function agSkin(m: any, root: any) {
+    const inv = root ? agInvertAffine(m.rootInv, root) : null;
     for (let s = 0; s < m.skins.length; s++) {
       const ent = m.skins[s];
       for (let j = 0; j < ent.joints.length; j++) {
         const jn = ent.joints[j];
         agMul(ent.buffer, j * 16, jn >= 0 && m.reached[jn] ? m.world : AG_IDENTITY, jn >= 0 && m.reached[jn] ? jn * 16 : 0, ent.ibm, j * 16);
+        if (inv) agMul(ent.model, j * 16, inv, 0, ent.buffer, j * 16);
       }
+      if (!inv) ent.model.set(ent.buffer);
       if (ent.skin) ent.skin.jointMatrices = ent.buffer;
     }
-    m.evalMicros = typeof performance !== "undefined" ? (performance.now() - start) * 1000 : 0;
-    agWriteFeedback(m, holder, rig);
+  }
+
+  function agReskin(m: any, root: any) {
+    for (let s = 0; s < m.skins.length; s++) {
+      const ent = m.skins[s];
+      if (root) for (let j = 0; j < ent.joints.length; j++) agMul(ent.buffer, j * 16, root, 0, ent.model, j * 16);
+      else ent.buffer.set(ent.model);
+      if (ent.skin) ent.skin.jointMatrices = ent.buffer;
+    }
+  }
+
+  // Inverse of an affine 4x4 (rotation, scale, translation), column-major.
+  function agInvertAffine(out: Float32Array, a: ArrayLike<number>) {
+    const a00 = a[0], a01 = a[1], a02 = a[2], a10 = a[4], a11 = a[5], a12 = a[6], a20 = a[8], a21 = a[9], a22 = a[10];
+    const b01 = a22 * a11 - a12 * a21, b11 = -a22 * a10 + a12 * a20, b21 = a21 * a10 - a11 * a20;
+    const det = a00 * b01 + a01 * b11 + a02 * b21;
+    if (Math.abs(det) < 1e-20) { out.set(AG_IDENTITY); return out; }
+    const id = 1 / det;
+    out[0] = b01 * id; out[1] = (-a22 * a01 + a02 * a21) * id; out[2] = (a12 * a01 - a02 * a11) * id; out[3] = 0;
+    out[4] = b11 * id; out[5] = (a22 * a00 - a02 * a20) * id; out[6] = (-a12 * a00 + a02 * a10) * id; out[7] = 0;
+    out[8] = b21 * id; out[9] = (-a21 * a00 + a01 * a20) * id; out[10] = (a11 * a00 - a01 * a10) * id; out[11] = 0;
+    const tx = a[12], ty = a[13], tz = a[14];
+    out[12] = -(out[0] * tx + out[4] * ty + out[8] * tz);
+    out[13] = -(out[1] * tx + out[5] * ty + out[9] * tz);
+    out[14] = -(out[2] * tx + out[6] * ty + out[10] * tz);
+    out[15] = 1;
+    return out;
+  }
+
+  // Level of detail: class 1 joints (fingers, eyes, jaw) animate at detail
+  // 0; class 2 joints (toes, unmapped leaf bones) at detail 0 and 1. Each
+  // class weight eases toward on or off over AG_DETAIL_FADE seconds of frame
+  // time, so a joint never snaps to its rest pose.
+  function agDetailWeights(m: any, holder: any, data: any) {
+    const w = m.detailW;
+    const fresh = m.detailSerial !== holder.serial;
+    const first = m.detailSerial < 0;
+    m.detailSerial = holder.serial;
+    for (let c = 1; c <= 2; c++) {
+      const target = data.detail >= c ? 0 : 1;
+      if (first) w[c] = target;
+      else if (fresh) {
+        const step = data.dt / AG_DETAIL_FADE;
+        w[c] = w[c] < target ? Math.min(target, w[c] + step) : Math.max(target, w[c] - step);
+      }
+    }
+  }
+
+  // Pull partly faded detail joints toward their rest pose.
+  function agBlendDetail(m: any) {
+    const classOf = m.nodeClass, w = m.detailW;
+    for (let node = 0; node < m.n; node++) {
+      const c = classOf[node];
+      if (c === 0 || !m.flags[node]) continue;
+      const k = w[c];
+      if (k >= 1) continue;
+      const o3 = node * 3, o4 = node * 4;
+      for (let a = 0; a < 3; a++) {
+        m.t[o3 + a] = m.authT[o3 + a] + (m.t[o3 + a] - m.authT[o3 + a]) * k;
+        m.s[o3 + a] = m.authS[o3 + a] + (m.s[o3 + a] - m.authS[o3 + a]) * k;
+      }
+      agNlerp(m.r, o4, m.authR, o4, m.r, o4, k);
+    }
   }
 
   // A layer's reference pose for additive blending when the layer names a
@@ -690,8 +812,8 @@
     let at = 3;
     for (let i = 0; i < chains; i++) {
       const c = rig.ik[i];
-      for (let k = 0; k < 6; k++) fb[at + k] = c.feedback[k];
-      at += 6;
+      for (let k = 0; k < 9; k++) fb[at + k] = c.feedback[k];
+      at += 9;
     }
     for (let i = 0; i < looks; i++) {
       const c = rig.lookAt[i];
@@ -795,18 +917,49 @@
       const record = index.byID.get(frame.models[i].id);
       if (!record && !pending) return { applied: false, reason: "unknown-model", id: frame.models[i].id };
     }
-    for (let i = 0; i < frame.count; i++) {
-      const src = frame.models[i];
-      const holder = agHolder(state, src.id);
-      holder.data = agCopyModel(holder.data, src);
-      holder.serial++;
-      const record = index.byID.get(src.id);
-      if (!record) continue;
-      agInstallSampler(state, record, holder);
-      applyPose(record, 0, false);
+    // Models whose IK reaches another model's bones pose after the models
+    // that do not, so their targets come from this frame's poses.
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < frame.count; i++) {
+        const src = frame.models[i];
+        if (agReachesOthers(src) !== (pass === 1)) continue;
+        const holder = agHolder(state, src.id);
+        holder.data = agCopyModel(holder.data, src, frame);
+        holder.state = state;
+        holder.serial++;
+        const record = index.byID.get(src.id);
+        if (!record) continue;
+        agInstallSampler(state, record, holder);
+        applyPose(record, 0, false);
+      }
     }
     return AG_APPLIED[pending ? 1 : 0];
   }
+
+  function agReachesOthers(model: any) {
+    for (let k = 0; k < model.ikCount; k++) if (model.ik[k].flags & 8) return true;
+    return false;
+  }
+
+  // agBoneTarget writes the world position of another model's canonical bone
+  // plus an offset in that bone's frame into out, or returns false when the
+  // model, its rig or the bone is not available.
+  function agBoneTarget(holder: any, entry: any, out: Float64Array) {
+    const state = holder.state;
+    if (!state || !entry.otherID) return false;
+    const record = agRecordIndex(state).byID.get(entry.otherID);
+    const sampler = record && record.clipSampler;
+    const other = sampler && sampler.__animGraph ? sampler.model : null;
+    if (!other || !other.rig || !other.posed) return false;
+    const node = other.rig.map.bone.get(RIG_BONES[entry.bone]);
+    if (node === undefined || !other.reached[node]) return false;
+    const q = agBoneQuat;
+    ikWorldRot(other.world, node * 16, q, 0);
+    ikRotateVec(out, q[0], q[1], q[2], q[3], entry.offset[0], entry.offset[1], entry.offset[2]);
+    out[0] += other.world[node * 16 + 12]; out[1] += other.world[node * 16 + 13]; out[2] += other.world[node * 16 + 14];
+    return true;
+  }
+  const agBoneQuat = new Float64Array(4);
 
   // Wrap the animation API once it exists: capture each sampled record's
   // clips, install the graph sampler on records that already have frame data,
@@ -925,8 +1078,9 @@
     return count;
   }
 
-  // agMeasure re-evaluates a posed model `iterations` times and returns the
-  // mean microseconds per evaluation, or -1. Browsers coarsen
+  // agMeasure fully re-evaluates a posed model (or every graph model of the
+  // mount, for id "*") `iterations` times and returns the mean microseconds
+  // per iteration, or -1. Browsers coarsen
   // performance.now() on pages that are not cross-origin isolated (Chrome to
   // 100 us), so the per-frame EvalMicros feedback is only meaningful as a
   // long average; this loop gives tools and tests a stable figure. The IK
@@ -934,13 +1088,18 @@
   function agMeasure(target: any, id: any, iterations: any) {
     const handle = agHandle(target);
     const state = handle ? agStates.get(handle) : null;
-    const record = state ? agRecordIndex(state).byID.get(String(id)) : null;
-    const sampler = record && record.clipSampler;
-    const m = sampler && sampler.__animGraph ? sampler.model : null;
-    if (!m || !sampler.holder.data) return -1;
+    if (!state) return -1;
+    const samplers: any[] = [];
+    agRecordIndex(state).byID.forEach(function(record: any, key: string) {
+      const sampler = record && record.clipSampler;
+      if (sampler && sampler.__animGraph && sampler.model && sampler.holder.data && (id === "*" || key === String(id))) samplers.push(sampler);
+    });
+    if (!samplers.length) return -1;
     const n = Math.max(1, Math.min(100000, Math.floor(Number(iterations) || 1)));
     const start = performance.now();
-    for (let i = 0; i < n; i++) agEvaluate(m, sampler.holder);
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < samplers.length; k++) agEvaluate(samplers[k].model, samplers[k].holder, true);
+    }
     return ((performance.now() - start) * 1000) / n;
   }
 

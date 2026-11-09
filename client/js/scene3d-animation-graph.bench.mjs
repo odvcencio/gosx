@@ -100,15 +100,15 @@ const rig = {
 };
 api.defineRig(9, JSON.stringify(rig));
 
-// GSA1 frame bytes, as motion/animgraph.FrameEncoder writes them.
+// GSA2 frame bytes, as motion/animgraph.FrameEncoder writes them.
 function frame(t) {
   const bytes = [];
   const u8 = (v) => bytes.push(v & 255), u16 = (v) => { u8(v); u8(v >> 8); }, u32 = (v) => { u16(v & 0xffff); u16(v >>> 16); };
   const f32 = (v) => { for (const x of new Uint8Array(new Float32Array([v]).buffer)) u8(x); };
   const str = (s) => { u16(s.length); for (const c of s) u8(c.charCodeAt(0)); };
-  for (const c of "GSA1") u8(c.charCodeAt(0));
+  for (const c of "GSA2") u8(c.charCodeAt(0));
   u16(3); ["Walk", "Run", "Aim"].forEach(str);
-  u16(1); str("hero"); u32(9); f32(1 / 60);
+  u16(1); str("hero"); u32(9); f32(1 / 60); u8(0);
   u8(2);
   f32(1); u8(2);
   u16(0); f32(t % 1); f32(0.5); u8(1);
@@ -152,3 +152,62 @@ for (let i = 0; i < N; i++) {
 console.log(`${jointCount} joints, ${clips.length} clips x ${joints.length + 1} channels, 3 samples in 2 layers, 2 foot IK + 4-bone look-at, ${N} frames, ${frames[0].length} bytes/frame`);
 console.log("evaluate        " + stats(evalOnly));
 console.log("decode+evaluate " + stats(full));
+
+// --- 22 characters per frame: full detail vs a level-of-detail mix ---------
+// Each character is its own model on the same rig and clips, and moves every
+// frame (a new root transform), as players on a field do. Full: all 22 run a
+// full evaluation every frame. LOD mix (the DefaultLOD levels for a broadcast
+// camera): 4 characters at level 0 (60 Hz, all joints), 8 at level 1 (30 Hz,
+// no fingers/eyes/jaw), 10 at level 2 (20 Hz, base layer only, no IK, no
+// toes or unmapped bones). Characters skipped in a frame are only re-skinned
+// for their new position.
+function teamFrame(level) {
+  const bytes = [];
+  const u8 = (v) => bytes.push(v & 255), u16 = (v) => { u8(v); u8(v >> 8); }, u32 = (v) => { u16(v & 0xffff); u16(v >>> 16); };
+  const f32 = (v) => { for (const x of new Uint8Array(new Float32Array([v]).buffer)) u8(x); };
+  const str = (s) => { u16(s.length); for (const c of s) u8(c.charCodeAt(0)); };
+  for (const c of "GSA2") u8(c.charCodeAt(0));
+  u16(3); ["Walk", "Run", "Aim"].forEach(str);
+  u16(1); str("hero"); u32(9); f32(1 / 60); u8([0, 1, 2][level]);
+  u8(level === 2 ? 1 : 2);
+  f32(1); u8(2);
+  u16(0); f32(0.3); f32(0.5); u8(1);
+  u16(1); f32(0.18); f32(0.5); u8(1);
+  if (level !== 2) { f32(0.8); u8(1); u16(2); f32(0.3); f32(1); u8(1); }
+  if (level === 2) { u8(0); u8(0); }
+  else {
+    u8(2);
+    for (const chain of [0, 1]) { u8(chain); u8(4); f32(1); f32(0.02 * chain); f32(0); f32(1); f32(0); }
+    u8(1); u8(0); f32(1); f32(1); f32(1.6); f32(4);
+  }
+  return U8.from(bytes);
+}
+const team = [];
+for (let i = 0; i < 22; i++) {
+  const level = i < 4 ? 0 : i < 12 ? 1 : 2;
+  const rec = { id: "p" + i, nodes, rootNodes: [0], skins: [{ joints, inverseBindMatrices: ibm }], model: {}, rootTransform: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, i, 0, 0, 1]) };
+  const m = api.createModel(rec, clips);
+  const h = api.holder({}, rec.id);
+  const bytesFull = teamFrame(0), bytesLod = teamFrame(level);
+  team.push({ m, h, rec, level, period: [1, 2, 3][level], phase: i % [1, 2, 3][level], bytesFull, bytesLod });
+}
+function runTeam(lod, frames) {
+  const samples = [];
+  for (let f = 0; f < frames; f++) {
+    const t0 = performance.now();
+    for (const p of team) {
+      p.rec.rootTransform[12] += 0.01;
+      const due = !lod || (f + p.phase) % p.period === 0;
+      if (due) {
+        p.h.data = api.copyModel(p.h.data, decode(lod ? p.bytesLod : p.bytesFull).models[0]);
+        p.h.serial++;
+      }
+      api.evaluate(p.m, p.h);
+    }
+    samples.push((performance.now() - t0) * 1000);
+  }
+  return samples;
+}
+runTeam(false, 300); runTeam(true, 300);
+console.log("22 characters, full detail every frame  " + stats(runTeam(false, 3000)));
+console.log("22 characters, LOD mix (4/8/10)         " + stats(runTeam(true, 3000)));

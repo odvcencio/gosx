@@ -389,7 +389,7 @@
     for (const chain of Array.isArray(rig.ik) ? rig.ik : []) {
       const a = node(chain.root), b = node(chain.mid), c = node(chain.end);
       const valid = a >= 0 && b >= 0 && c >= 0 && m.parent[c] >= 0 && m.reached[a] && m.reached[b] && m.reached[c];
-      out.ik.push({ name: chain.name, a, b, c, foot: chain.foot === true, align: chain.align === true, valid, offset: 0, feedback: new Float64Array(6), input: null });
+      out.ik.push({ name: chain.name, a, b, c, foot: chain.foot === true, align: chain.align === true, valid, offset: 0, feedback: new Float64Array(9), input: null });
     }
     for (const chain of Array.isArray(rig.lookAt) ? rig.lookAt : []) {
       const bones = (chain.bones || []).map(node);
@@ -416,6 +416,14 @@
         path: Int32Array.from(path), pathStart: Int32Array.from(pathStart), feedback: new Float64Array(6), input: null,
       });
     }
+    agDetailClasses(m, map);
+    out.boneScale = [] as number[];
+    const scales = rig.boneScale || {};
+    for (const name of Object.keys(scales)) {
+      const i = node(name), f = Number(scales[name]);
+      if (i >= 0 && f > 0) out.boneScale.push(i, f);
+    }
+    if (rig.keepProportions === true) agKeepProportions(m);
     const pelvis = rig.pelvis || {};
     out.hips = node(pelvis.bone || "hips");
     out.maxDrop = Number(pelvis.maxDrop) > 0 ? Number(pelvis.maxDrop) : 0;
@@ -425,6 +433,49 @@
     }
     if (Array.isArray(rig.sources) && rig.sources.length) agAttachSources(m, rig.sources, map);
     return out;
+  }
+
+  // Level-of-detail classes: 1 for fingers, eyes and jaw; 2 for toes and for
+  // unmapped bones with no mapped descendant (twist, accessory and end
+  // bones); 0 for everything else. Without a humanoid map every joint stays
+  // class 0.
+  function agDetailClasses(m: any, map: any) {
+    const cls = m.nodeClass;
+    cls.fill(0);
+    if (!map || map.bone.size === 0) return;
+    const mappedBelow = new Uint8Array(m.n);
+    for (let k = m.order.length - 1; k >= 0; k--) {
+      const node = m.order[k];
+      if (map.nodeBone[node] >= 0) mappedBelow[node] = 1;
+      const p = m.parent[node];
+      if (p >= 0 && mappedBelow[node]) mappedBelow[p] = 1;
+    }
+    for (let k = 0; k < m.order.length; k++) {
+      const node = m.order[k];
+      const bone = map.nodeBone[node] >= 0 ? RIG_BONES[map.nodeBone[node]] : "";
+      if (bone) {
+        if (/Eye$|^jaw$|Thumb|Index|Middle|Ring|Little/.test(bone)) cls[node] = 1;
+        else if (/Toes$/.test(bone)) cls[node] = 2;
+      } else if (!mappedBelow[node]) {
+        // Under the skeleton (some ancestor is mapped) and not holding a
+        // mapped bone up: a twist, accessory or end bone. Under a class 1
+        // joint (a finger tip) it follows that joint.
+        let p = m.parent[node];
+        while (p >= 0 && map.nodeBone[p] < 0) p = m.parent[p];
+        if (p >= 0) cls[node] = cls[p] === 1 ? 1 : 2;
+      }
+    }
+  }
+
+  // Drop translation channels on every node except root nodes from the
+  // model's own clips, keeping this rig's bone lengths. The clip list is
+  // replaced so held samples re-resolve.
+  function agKeepProportions(m: any) {
+    const next = { list: [] as any[], byName: m.clips.byName };
+    for (const clip of m.clips.list) {
+      next.list.push({ name: clip.name, duration: clip.duration, channels: clip.channels.filter((ch: any) => ch.code !== 0 || m.rootSet[ch.node]) });
+    }
+    m.clips = next;
   }
 
   // Clip sources load once per URL per page.

@@ -21,6 +21,7 @@
   const ikV = new Float64Array(16);
   const ikQ = new Float64Array(8);
   const ikP = new Float64Array(4);
+  const ikTarget = new Float64Array(3);
 
   function ikRotateVec(out: Float64Array, qx: number, qy: number, qz: number, qw: number, x: number, y: number, z: number) {
     const tx = 2 * (qy * z - qz * y), ty = 2 * (qz * x - qx * z), tz = 2 * (qx * y - qy * x);
@@ -245,7 +246,7 @@
       const c = chains[i];
       if (!c.valid) continue;
       ikPos(m, c.c, c.feedback, 0);
-      c.feedback[3] = c.feedback[0]; c.feedback[4] = c.feedback[1]; c.feedback[5] = c.feedback[2];
+      for (let k = 0; k < 3; k++) c.feedback[3 + k] = c.feedback[6 + k] = c.feedback[k];
     }
     // Foot offsets: the animation assumes flat ground at the model origin;
     // each planted foot moves by (ground height - origin height), weighted.
@@ -304,8 +305,16 @@
     }
     for (let i = 0; i < chains.length; i++) {
       const c = chains[i], e = c.input;
-      if (!c.valid || !e || !(e.flags & 1) || (c.foot && (e.flags & 4))) continue;
-      ikTwoBone(m, c.a, c.b, c.c, e.target[0], e.target[1], e.target[2], e.flags & 2 ? e.pole : null, e.weight);
+      if (!c.valid || !e || !(e.flags & 9) || (c.foot && (e.flags & 4))) continue;
+      const t = ikTarget;
+      if (e.flags & 8) {
+        // A bone of another model: resolved from its pose this frame.
+        if (!agBoneTarget(holder, e, t)) continue;
+      } else {
+        t[0] = e.target[0]; t[1] = e.target[1]; t[2] = e.target[2];
+      }
+      c.feedback[6] = t[0]; c.feedback[7] = t[1]; c.feedback[8] = t[2];
+      ikTwoBone(m, c.a, c.b, c.c, t[0], t[1], t[2], e.flags & 2 ? e.pole : null, e.weight);
     }
     for (let i = 0; i < looks.length; i++) {
       const c = looks[i];
