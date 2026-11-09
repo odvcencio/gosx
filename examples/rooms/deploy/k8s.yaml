@@ -1,0 +1,201 @@
+# Runtime for the generic GoSX room server (examples/rooms) at
+# https://rooms.draco.quest. Render it to an immutable digest with render.sh.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gosx-rooms
+  namespace: gosx-rooms
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  # Rooms live in process memory: one replica owns them. A new pod starts with
+  # no rooms; clients fall back to local play and quick-match again.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gosx-rooms
+  template:
+    metadata:
+      labels:
+        app: gosx-rooms
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: harbor.draco.quest/orchard/gosx-rooms:bootstrap
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: ROOMS_ADDR
+              value: ":8090"
+            - name: ROOMS_STATIC
+              value: /app/static
+            # Browser origins that may open a socket, besides
+            # https://rooms.draco.quest itself (same origin, always allowed):
+            #   https://opengame.io, https://*.opengame.io
+            #       the jam portal and the subdomains that host game iframes;
+            #   https://*.draco.quest
+            #       our own test pages on other draco.quest hosts;
+            #   http://127.0.0.1:47831, http://localhost:47831
+            #       the live browser e2e test page (e2e/rooms_netsync_e2e_test.go,
+            #       GOSX_ROOMS_E2E_PAGE_PORT). Browsers send these only from a
+            #       page on the visitor's own machine.
+            # A sandboxed iframe without allow-same-origin sends "null"; add
+            # it only if the portal needs it, since every such iframe sends it.
+            - name: ROOMS_ORIGINS
+              value: https://opengame.io,https://*.opengame.io,https://*.draco.quest,http://127.0.0.1:47831,http://localhost:47831
+            # Browsers always send Origin; refuse clients that omit it.
+            - name: ROOMS_REQUIRE_ORIGIN
+              value: "true"
+            # Traefik appends the peer address (externalTrafficPolicy Local
+            # keeps it the real client), so rate limits are per client.
+            - name: ROOMS_TRUST_FORWARDED_FOR
+              value: "true"
+            - name: ROOMS_MAX_ROOMS
+              value: "64"
+            - name: ROOMS_CONNECTS_PER_MINUTE
+              value: "30"
+            - name: ROOMS_CREATES_PER_MINUTE
+              value: "10"
+            - name: GOMEMLIMIT
+              value: 200MiB
+            - name: GOMAXPROCS
+              value: "2"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+              ephemeral-storage: 16Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+              ephemeral-storage: 64Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gosx-rooms
+  namespace: gosx-rooms
+  annotations:
+    # Backend timeouts for WebSocket upgrades; see the ServersTransport below.
+    traefik.ingress.kubernetes.io/service.serverstransport: gosx-rooms-websocket@kubernetescrd
+spec:
+  selector:
+    app: gosx-rooms
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Traefik's connection to the pod. An upgraded WebSocket is a long-lived
+# exchange, not a pooled idle connection, so these do not cut live sockets:
+# they bound only connecting to the pod and waiting for its upgrade response.
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: websocket
+  namespace: gosx-rooms
+spec:
+  forwardingTimeouts:
+    dialTimeout: 5s
+    responseHeaderTimeout: 15s
+    idleConnTimeout: 90s
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gosx-rooms
+  namespace: gosx-rooms
+  annotations:
+    cert-manager.io/cluster-issuer: cloudflare-issuer
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [rooms.draco.quest]
+      secretName: gosx-rooms-tls
+  rules:
+    - host: rooms.draco.quest
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gosx-rooms
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gosx-rooms
+  namespace: gosx-rooms
+spec:
+  podSelector:
+    matchLabels:
+      app: gosx-rooms
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8090
+  # The server makes no outbound calls; only cluster DNS is open.
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

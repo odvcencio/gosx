@@ -94,8 +94,10 @@ type Config struct {
 	ConnectsPerMinute int
 	// CreatesPerMinute bounds new rooms per client address. Default 10.
 	CreatesPerMinute int
-	// TrustForwardedFor keys rate limits by the first X-Forwarded-For address.
-	// Enable it only behind a proxy that sets the header.
+	// TrustForwardedFor keys rate limits by the last X-Forwarded-For address:
+	// the one your proxy appended for the peer it saw. Earlier entries come
+	// from the client and can be forged. Enable it only behind one proxy that
+	// sets the header (Traefik, nginx).
 	TrustForwardedFor bool
 	// Manual stops rooms from running their own goroutines. The caller drives
 	// time with Server.Advance or Room.AdvanceTo. For tests and custom loops.
@@ -589,9 +591,15 @@ func (s *Server) HandleLobby(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) clientKey(r *http.Request) string {
 	if s.cfg.TrustForwardedFor {
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			first, _, _ := strings.Cut(fwd, ",")
-			return strings.TrimSpace(first)
+		// Every X-Forwarded-For header, in order; the proxy appends last.
+		if values := r.Header.Values("X-Forwarded-For"); len(values) > 0 {
+			last := values[len(values)-1]
+			if i := strings.LastIndexByte(last, ','); i >= 0 {
+				last = last[i+1:]
+			}
+			if last = strings.TrimSpace(last); last != "" {
+				return last
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

@@ -22,7 +22,8 @@ go run ./examples/rooms/server -addr :8090 -origins http://localhost:8000
 cd examples/rooms/static && python3 -m http.server 8000
 ```
 
-Open <http://localhost:8000/>. Alone, you play against a bot at once. Open a
+Open <http://localhost:8000/?server=ws://localhost:8090/play/ws>. Alone, you
+play against a bot at once. Open a
 second tab to join the same quick-match room; the second person takes over the
 bot's seat. Stop the server and the clients keep playing offline.
 
@@ -31,4 +32,11 @@ server, `&mode=party` for the six-seat mode, `&private=1` to create a private
 room, and `&code=ABCDE` to join one.
 
 To serve the client from the room server itself (same origin), pass
-`-static examples/rooms/static` and open <http://localhost:8090/>.
+`-static examples/rooms/static` and open <http://localhost:8090/>; without
+`?server=` the page connects to its own host.
+
+Every server flag also reads an environment variable (`ROOMS_ADDR`,
+`ROOMS_ORIGINS`, `ROOMS_STATIC`, `ROOMS_REQUIRE_ORIGIN`,
+`ROOMS_TRUST_FORWARDED_FOR`, `ROOMS_MAX_ROOMS`, `ROOMS_CONNECTS_PER_MINUTE`,
+`ROOMS_CREATES_PER_MINUTE`). `GET /healthz` reports that the process is up and
+`GET /readyz` that it accepts players. [deploy/](deploy/) runs it on Kubernetes.

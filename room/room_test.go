@@ -650,3 +650,23 @@ func TestLobbyListsPublicRoomsWithCORS(t *testing.T) {
 		t.Fatalf("unknown origin lobby status %d", resp2.StatusCode)
 	}
 }
+
+func TestClientKeyUsesProxyAppendedAddress(t *testing.T) {
+	s, _ := manualServer(t, Config{TrustForwardedFor: true})
+	r := httptest.NewRequest(http.MethodGet, "http://rooms.test/ws", nil)
+	r.RemoteAddr = "10.42.0.7:51234"                    // the proxy
+	r.Header.Add("X-Forwarded-For", "6.6.6.6, 1.2.3.4") // client forged 6.6.6.6
+	r.Header.Add("X-Forwarded-For", "203.0.113.9")      // appended by the proxy
+	if got := s.clientKey(r); got != "203.0.113.9" {
+		t.Fatalf("key %q, want the proxy-appended address", got)
+	}
+	r.Header.Del("X-Forwarded-For")
+	if got := s.clientKey(r); got != "10.42.0.7" {
+		t.Fatalf("key without the header %q, want the peer", got)
+	}
+	plain, _ := manualServer(t, Config{})
+	r.Header.Set("X-Forwarded-For", "203.0.113.9")
+	if got := plain.clientKey(r); got != "10.42.0.7" {
+		t.Fatalf("untrusted header used: %q", got)
+	}
+}

@@ -25,7 +25,13 @@ func main() {
 		}
 		return def
 	}
-	server := get("server", "ws://localhost:8090/play/ws")
+	// Default: the room server on the page's own host (same-origin hosting).
+	loc := js.Global().Get("location")
+	scheme := "ws://"
+	if loc.Get("protocol").String() == "https:" {
+		scheme = "wss://"
+	}
+	server := get("server", scheme+loc.Get("host").String()+"/play/ws")
 	duration := func(k string) time.Duration { d, _ := time.ParseDuration(get(k, "")); return d }
 	modeName := get("mode", "duel")
 	m := roomtest.Mode(roomtest.Options{Name: "duel", Seats: 2, Props: 6, Duration: 2 * time.Minute})

@@ -4,6 +4,8 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +23,32 @@ import (
 	"m31labs.dev/gosx/room/mode"
 	"m31labs.dev/gosx/room/roomtest"
 )
+
+// The rooms tests run the examples/rooms js/wasm client in Chrome, served from
+// one origin, against a room server on another.
+//
+// By default they start the room server themselves. Set
+// GOSX_ROOMS_E2E_SERVER=wss://rooms.example.com/play/ws to test a deployed
+// server instead; the page is then served from 127.0.0.1 (or localhost through
+// the Windows relay) on GOSX_ROOMS_E2E_PAGE_PORT, default 47831, so the
+// deployment can allowlist that origin. Live runs skip the steps that need
+// control of the server (cutting sockets, killing it). GOSX_ROOMS_E2E_HOLD
+// sets how long the two-browser test holds its room (default 70 s live, 15 s
+// local).
+
+const defaultRoomsPagePort = 47831
+
+func roomsRemote() string { return os.Getenv("GOSX_ROOMS_E2E_SERVER") }
+
+func roomsRunner() string {
+	if e2eWindowsRelay() {
+		return "nvidia"
+	}
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return "runner"
+}
 
 // trackedListener records accepted connections so the test can cut them at
 // the TCP level, the way a dropped network or a crashed server does.
@@ -67,114 +96,198 @@ type roomsState struct {
 	Seats    []string `json:"seats"`
 }
 
-// TestRoomsNetsyncCrossOriginBrowser runs the examples/rooms js/wasm client in
-// Chrome, served from one origin, against a room server on another. It plays
-// at once (locally, then in the room against a bot), survives a forced
-// disconnect by resuming its seat, and falls back to offline play when the
-// server dies.
-func TestRoomsNetsyncCrossOriginBrowser(t *testing.T) {
-	chrome := e2eChromePath(t)
+func (s roomsState) count(kind string) int {
+	n := 0
+	for _, k := range s.Seats {
+		if k == kind {
+			n++
+		}
+	}
+	return n
+}
+
+// roomsSite is the static client and, in local mode, the room server.
+type roomsSite struct {
+	pageURL string // origin A
+	wsURL   string // the room server's WebSocket endpoint (origin B)
+	server  *room.Server
+	ln      *trackedListener
+	hs      *http.Server
+	killed  bool
+}
+
+func startRoomsSite(t *testing.T) *roomsSite {
+	t.Helper()
 	root := e2eRepoRoot(t)
 	static := buildRoomsClient(t, root)
+	site := &roomsSite{}
 
 	// Origin A: the static client.
-	page := httptest.NewServer(http.FileServer(http.Dir(static)))
-	defer page.Close()
-	pageURL := page.URL
+	files := http.FileServer(http.Dir(static))
+	if remote := roomsRemote(); remote != "" {
+		port := defaultRoomsPagePort
+		if v, err := strconv.Atoi(os.Getenv("GOSX_ROOMS_E2E_PAGE_PORT")); err == nil && v > 0 {
+			port = v
+		}
+		site.pageURL = serveOnPort(t, files, port)
+		site.wsURL = remote
+		return site
+	}
+	page := httptest.NewServer(files)
+	t.Cleanup(page.Close)
+	site.pageURL = page.URL
 	if e2eWindowsRelay() {
-		pageURL = e2eExposeToWindows(t, page.URL)
+		site.pageURL = e2eExposeToWindows(t, page.URL)
 	}
 
-	// Origin B: the room server, on its own listener.
+	// Origin B: the room server, on its own tracked listener.
 	raw, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln := &trackedListener{Listener: raw}
+	site.ln = &trackedListener{Listener: raw}
 	serverURL := "http://" + raw.Addr().String()
 	if e2eWindowsRelay() {
 		serverURL = e2eExposeToWindows(t, serverURL)
 	}
 	srv, err := room.NewServer(room.Config{
-		// Same name and seats as the client's "duel" mode; a short countdown
-		// keeps the test quick.
-		Modes:          []mode.Mode{roomtest.Mode(roomtest.Options{Name: "duel", Seats: 2, Props: 6, Countdown: 500 * time.Millisecond, Duration: 2 * time.Minute})},
-		AllowedOrigins: []string{pageURL},
+		// Same names and seats as the client's modes; short countdowns keep the
+		// test quick.
+		Modes: []mode.Mode{
+			roomtest.Mode(roomtest.Options{Name: "duel", Seats: 2, Props: 6, Countdown: 500 * time.Millisecond, Duration: 2 * time.Minute}),
+			roomtest.Mode(roomtest.Options{Name: "party", Seats: 6, Props: 12, Countdown: 500 * time.Millisecond, Duration: 3 * time.Minute, LobbyWait: time.Second}),
+		},
+		AllowedOrigins: []string{site.pageURL},
 		RequireOrigin:  true,
 		Logf:           t.Logf,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	site.server = srv
 	mux := http.NewServeMux()
 	mux.Handle("/play/", http.StripPrefix("/play", srv))
-	hs := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = hs.Serve(ln) }()
-	killed := false
-	defer func() {
-		if !killed {
+	site.hs = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = site.hs.Serve(site.ln) }()
+	site.wsURL = "ws" + strings.TrimPrefix(serverURL, "http") + "/play/ws"
+	t.Cleanup(func() {
+		if !site.killed {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = srv.Close(ctx)
-			_ = hs.Close()
+			_ = site.hs.Close()
 		}
-	}()
+	})
+	return site
+}
 
-	wsURL := "ws" + strings.TrimPrefix(serverURL, "http") + "/play/ws"
-	q := url.Values{"server": {wsURL}, "name": {"judge"}, "connectTimeout": {"5s"}, "reconnectTimeout": {"3s"}, "stallTimeout": {"2s"}}
-	p := newBrowserPage(t, chrome, nil, 1280, 900, "", 3*time.Minute)
-	if status := p.navigate(t, pageURL+"/?"+q.Encode()); status != http.StatusOK {
+// kill stops the local room server abruptly: no close frames.
+func (s *roomsSite) kill() {
+	s.killed = true
+	_ = s.ln.Listener.Close()
+	s.ln.drop()
+	_ = s.hs.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_ = s.server.Close(ctx)
+	cancel()
+}
+
+// roomsPage is one browser running the client.
+type roomsPage struct {
+	t *testing.T
+	p *browserPage
+}
+
+func openRoomsPage(t *testing.T, site *roomsSite, params url.Values) *roomsPage {
+	t.Helper()
+	params.Set("server", site.wsURL)
+	if params.Get("connectTimeout") == "" {
+		params.Set("connectTimeout", "5s")
+	}
+	params.Set("reconnectTimeout", "3s")
+	params.Set("stallTimeout", "2s")
+	p := newBrowserPage(t, e2eChromePath(t), nil, 1280, 900, "", 5*time.Minute)
+	if status := p.navigate(t, site.pageURL+"/?"+params.Encode()); status != http.StatusOK {
 		t.Fatalf("page status %d", status)
 	}
-	state := func() roomsState {
-		var s roomsState
-		if err := p.tryEval(`typeof gosxRoomsState === "function" ? gosxRoomsState() : null`, &s); err != nil {
-			t.Fatalf("read client state: %v\n%s", err, p.Console())
-		}
-		return s
+	return &roomsPage{t: t, p: p}
+}
+
+func (r *roomsPage) state() roomsState {
+	r.t.Helper()
+	var s roomsState
+	if err := r.p.tryEval(`typeof gosxRoomsState === "function" ? gosxRoomsState() : null`, &s); err != nil {
+		r.t.Fatalf("read client state: %v\n%s", err, r.p.Console())
 	}
-	waitState := func(what string, timeout time.Duration, ok func(roomsState) bool) roomsState {
-		t.Helper()
-		deadline := time.Now().Add(timeout)
-		var s roomsState
-		for time.Now().Before(deadline) {
-			s = state()
-			if ok(s) {
-				return s
-			}
-			time.Sleep(50 * time.Millisecond)
+	return s
+}
+
+func (r *roomsPage) wait(what string, timeout time.Duration, ok func(roomsState) bool) roomsState {
+	r.t.Helper()
+	deadline := time.Now().Add(timeout)
+	var s roomsState
+	for time.Now().Before(deadline) {
+		s = r.state()
+		if ok(s) {
+			return s
 		}
-		t.Fatalf("timed out after %v waiting for %s; last state %+v\nconsole:\n%s", timeout, what, s, p.Console())
-		return s
+		time.Sleep(50 * time.Millisecond)
 	}
+	r.t.Fatalf("timed out after %v waiting for %s; last state %+v\nconsole:\n%s", timeout, what, s, r.p.Console())
+	return s
+}
+
+func (r *roomsPage) noPageErrors() {
+	r.t.Helper()
+	if errs := r.p.PageErrors(); len(errs) != 0 {
+		r.t.Fatalf("page errors: %v\nconsole:\n%s", errs, r.p.Console())
+	}
+}
+
+// TestRoomsNetsyncCrossOriginBrowser plays at once (locally, then in a room
+// against a bot), survives a forced disconnect by resuming its seat, and falls
+// back to offline play when the server dies. Live runs stop after the first
+// part.
+func TestRoomsNetsyncCrossOriginBrowser(t *testing.T) {
+	site := startRoomsSite(t)
+	q := url.Values{"name": {"judge-" + roomsRunner()}}
+	if roomsRemote() != "" {
+		q.Set("private", "1") // keep concurrent runs and visitors out of this room
+	}
+	page := openRoomsPage(t, site, q)
 
 	// 1. Play starts at once: the first state already ticks a match.
-	first := waitState("the client to start", 60*time.Second, func(s roomsState) bool { return s.Status != "" && s.Tick > 0 })
+	first := page.wait("the client to start", 60*time.Second, func(s roomsState) bool { return s.Status != "" && s.Tick > 0 })
 	t.Logf("first state: %+v", first)
 
 	// 2. The client hands over to the room and plays against a bot.
-	online := waitState("an online match", 30*time.Second, func(s roomsState) bool {
+	online := page.wait("an online match", 30*time.Second, func(s roomsState) bool {
 		return s.Status == "online" && !s.Local && s.Phase == "running" && s.AuthTick > 60
 	})
-	if online.Seat < 0 || len(online.Code) != 5 || len(online.Seats) != 2 {
-		t.Fatalf("online state %+v", online)
+	if online.Seat < 0 || len(online.Code) != 5 || len(online.Seats) != 2 || online.count("human") != 1 || online.count("bot") != 1 {
+		t.Fatalf("online state %+v, want one person and one bot", online)
 	}
-	r, ok := srv.Room(online.Code)
+	t.Logf("online via %s: rtt %.0f ms, lead %d, state %+v", site.wsURL, online.RTTMs, online.Lead, online)
+
+	if site.server == nil {
+		t.Logf("live server %s: RTT %.0f ms from %s; skipping the disconnect and kill steps", site.wsURL, online.RTTMs, roomsRunner())
+		page.noPageErrors()
+		return
+	}
+	r, ok := site.server.Room(online.Code)
 	if !ok {
 		t.Fatalf("server has no room %s", online.Code)
 	}
-	info := r.Info()
-	if info.Humans != 1 || info.Bots != 1 || info.SeatList[online.Seat].Name != "judge" || !info.SeatList[online.Seat].Connected {
+	if info := r.Info(); info.Humans != 1 || info.Bots != 1 || !info.SeatList[online.Seat].Connected {
 		t.Fatalf("server room %+v", info)
 	}
-	t.Logf("online: %+v", online)
 
 	// 3. Cut the socket at the TCP level. The client redials with its token
 	// and gets the same seat back.
-	if n := ln.drop(); n == 0 {
+	if n := site.ln.drop(); n == 0 {
 		t.Fatal("no connection to drop")
 	}
-	resumed := waitState("the seat to be resumed", 20*time.Second, func(s roomsState) bool {
+	resumed := page.wait("the seat to be resumed", 20*time.Second, func(s roomsState) bool {
 		return s.Status == "online" && !s.Local && s.Dials > online.Dials && s.AuthTick > online.AuthTick+30
 	})
 	if resumed.Seat != online.Seat || resumed.Code != online.Code {
@@ -186,16 +299,10 @@ func TestRoomsNetsyncCrossOriginBrowser(t *testing.T) {
 	t.Logf("resumed: %+v", resumed)
 
 	// 4. Kill the server: no close frames, the listener is gone.
-	killed = true
-	_ = ln.Listener.Close()
-	ln.drop()
-	_ = hs.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_ = srv.Close(ctx)
-	cancel()
-	offline := waitState("offline play", 20*time.Second, func(s roomsState) bool { return s.Status == "offline" && s.Local && s.Offline })
+	site.kill()
+	offline := page.wait("offline play", 20*time.Second, func(s roomsState) bool { return s.Status == "offline" && s.Local && s.Offline })
 	time.Sleep(time.Second)
-	later := state()
+	later := page.state()
 	if later.Status != "offline" || later.Tick < offline.Tick+20 {
 		t.Fatalf("offline play did not keep ticking: %+v then %+v", offline, later)
 	}
@@ -203,9 +310,103 @@ func TestRoomsNetsyncCrossOriginBrowser(t *testing.T) {
 		t.Fatalf("offline continuation changed seat %d -> %d", resumed.Seat, later.Seat)
 	}
 	t.Logf("offline: %+v", later)
-	if errs := p.PageErrors(); len(errs) != 0 {
-		t.Fatalf("page errors: %v\nconsole:\n%s", errs, p.Console())
+	page.noPageErrors()
+}
+
+// TestRoomsNetsyncTwoBrowsers puts two browsers in one six-seat room (two
+// people, four bots) and holds it, checking that neither reconnects and both
+// keep receiving the server's ticks. A live hold of 70 s crosses the 60 s read
+// timeout that Traefik v3 applies by default.
+func TestRoomsNetsyncTwoBrowsers(t *testing.T) {
+	site := startRoomsSite(t)
+	hold := 15 * time.Second
+	if roomsRemote() != "" {
+		hold = 70 * time.Second
 	}
+	if d, err := time.ParseDuration(os.Getenv("GOSX_ROOMS_E2E_HOLD")); err == nil && d > 0 {
+		hold = d
+	}
+	runner := roomsRunner()
+	a := openRoomsPage(t, site, url.Values{"mode": {"party"}, "private": {"1"}, "name": {"a-" + runner}})
+	sa := a.wait("the first browser to join a room", 60*time.Second, func(s roomsState) bool { return s.Status == "online" && s.Code != "" })
+	b := openRoomsPage(t, site, url.Values{"mode": {"party"}, "code": {sa.Code}, "name": {"b-" + runner}})
+	full := func(s roomsState) bool {
+		return s.Status == "online" && !s.Local && s.Phase == "running" && s.Code == sa.Code &&
+			s.count("human") == 2 && s.count("bot") == 4 && s.AuthTick > 30
+	}
+	sa = a.wait("the first browser in the full room", 60*time.Second, full)
+	sb := b.wait("the second browser in the full room", 60*time.Second, full)
+	if sa.Seat == sb.Seat {
+		t.Fatalf("both browsers hold seat %d", sa.Seat)
+	}
+	t.Logf("room %s: a seat %d, b seat %d, seats %v; holding %v", sa.Code, sa.Seat, sb.Seat, sa.Seats, hold)
+
+	type rtt struct{ min, max, sum, n float64 }
+	var ra, rb rtt
+	sample := func(r *rtt, s roomsState) {
+		if s.RTTMs <= 0 {
+			return
+		}
+		if r.n == 0 || s.RTTMs < r.min {
+			r.min = s.RTTMs
+		}
+		r.max = max(r.max, s.RTTMs)
+		r.sum += s.RTTMs
+		r.n++
+	}
+	startA, startB := sa, sb
+	end := time.Now().Add(hold)
+	for time.Now().Before(end) {
+		time.Sleep(time.Second)
+		for _, c := range []struct {
+			name  string
+			page  *roomsPage
+			start roomsState
+			r     *rtt
+		}{{"a", a, startA, &ra}, {"b", b, startB, &rb}} {
+			s := c.page.state()
+			if s.Status != "online" || s.Local || s.Dials != c.start.Dials || s.Code != c.start.Code || s.Seat != c.start.Seat {
+				t.Fatalf("browser %s left the room during the hold: %+v (started %+v)", c.name, s, c.start)
+			}
+			if s.count("human") != 2 {
+				t.Fatalf("browser %s sees %d people: %v", c.name, s.count("human"), s.Seats)
+			}
+			sample(c.r, s)
+		}
+	}
+	endA, endB := a.state(), b.state()
+	want := hold.Seconds() * 30 * 0.9 // 30 Hz, allow 10%
+	for name, d := range map[string]float64{"a": endA.AuthTick - startA.AuthTick, "b": endB.AuthTick - startB.AuthTick} {
+		if d < want {
+			t.Fatalf("browser %s received %.0f server ticks in %v, want at least %.0f", name, d, hold, want)
+		}
+	}
+	t.Logf("held %v via %s from %s: a rtt %.0f/%.0f/%.0f ms (min/avg/max), b rtt %.0f/%.0f/%.0f ms; ticks a %.0f b %.0f",
+		hold, site.wsURL, runner, ra.min, ra.sum/max(ra.n, 1), ra.max, rb.min, rb.sum/max(rb.n, 1), rb.max,
+		endA.AuthTick-startA.AuthTick, endB.AuthTick-startB.AuthTick)
+	a.noPageErrors()
+	b.noPageErrors()
+}
+
+// serveOnPort serves h on a fixed loopback port (localhost through the
+// Windows relay) and returns the page origin.
+func serveOnPort(t *testing.T, h http.Handler, port int) string {
+	t.Helper()
+	host := "127.0.0.1"
+	if e2eWindowsRelay() {
+		host = "0.0.0.0" // Windows Chrome reaches WSL on localhost:<port> through every interface
+	}
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
+	if err != nil {
+		t.Fatalf("listen on the page port %d: %v", port, err)
+	}
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	if e2eWindowsRelay() {
+		return fmt.Sprintf("http://localhost:%d", port)
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
 // buildRoomsClient builds examples/rooms/client for js/wasm into a fresh
@@ -238,13 +439,19 @@ func buildRoomsClient(t *testing.T, root string) string {
 		wasmExec: "wasm_exec.js",
 		filepath.Join(root, "examples", "rooms", "static", "index.html"): "index.html",
 	} {
-		data, err := os.ReadFile(src)
+		in, err := os.Open(src)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, dst), data, 0o644); err != nil {
+		out, err := os.Create(filepath.Join(dir, dst))
+		if err != nil {
 			t.Fatal(err)
 		}
+		if _, err := io.Copy(out, in); err != nil {
+			t.Fatal(err)
+		}
+		in.Close()
+		out.Close()
 	}
 	return dir
 }
