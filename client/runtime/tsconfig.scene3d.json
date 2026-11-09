@@ -75,6 +75,7 @@
     "scene3d/webgpu-contact-shadows.ts",
     "scene3d/webgpu-points.ts",
     "scene3d/webgpu-soft-particles.ts",
+    "scene3d/webgpu-taa.ts",
     "scene3d/webgpu-crowd.ts",
     "scene3d/mount-input.ts",
     "scene3d/webgl-specular-bloom.ts",
