@@ -22,6 +22,10 @@ type OscillatorNode = audiohost.OscillatorNode
 type StereoPannerNode = audiohost.StereoPannerNode
 type DelayNode = audiohost.DelayNode
 type Voice = audiohost.Voice
+type MixerBus = audiohost.MixerBus
+type SharedMixer = audiohost.SharedMixer
+type PannerNode = audiohost.PannerNode
+type SpatialHost = audiohost.SpatialHost
 
 func NewVoice(source ScheduledSource, onEnded func(), nodes ...Node) *Voice {
 	return audiohost.NewVoice(source, onEnded, nodes...)

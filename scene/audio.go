@@ -504,8 +504,8 @@ type AudioCue struct {
 	// uses to bias playback (no direct WebAudio parameter; purely a
 	// gameplay-computed hint), clamped client-side.
 	Depth float64
-	// Bus optionally names an AudioBus for Clip playback (gosxAudio).
-	// Ignored by arcadeAudio, which has no bus routing.
+	// Bus optionally names a mixer bus (master, music, sfx, voice, ui, or a
+	// manifest bus). Clips default to master; synth cues default to sfx.
 	Bus string
 
 	// Clip optionally names an AudioClip ID (or a bare URL, resolved the
