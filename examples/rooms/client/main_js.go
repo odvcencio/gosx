@@ -26,6 +26,7 @@ func main() {
 		return def
 	}
 	server := get("server", "ws://localhost:8090/play/ws")
+	duration := func(k string) time.Duration { d, _ := time.ParseDuration(get(k, "")); return d }
 	modeName := get("mode", "duel")
 	m := roomtest.Mode(roomtest.Options{Name: "duel", Seats: 2, Props: 6, Duration: 2 * time.Minute})
 	if modeName == "party" {
@@ -59,6 +60,10 @@ func main() {
 		Join:  netsync.Join{Code: get("code", ""), Private: get("private", "") == "1", Name: get("name", "")},
 		Input: func(_ uint64, dst []byte) []byte { return append(dst, held) },
 		Store: storage.New("rooms-example", storage.Session()), // per tab: two tabs are two players
+		// Optional tuning from the page URL, for example ?reconnectTimeout=3s.
+		ConnectTimeout:   duration("connectTimeout"),
+		ReconnectTimeout: duration("reconnectTimeout"),
+		StallTimeout:     duration("stallTimeout"),
 		OnSnapshot: func(tick uint64, s sim.Simulation) {
 			ip.Begin(tick)
 			for i, b := range roomtest.Of(s).World.Bodies {
@@ -69,6 +74,21 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// window.gosxRoomsState() reports the client for overlays and tests.
+	js.Global().Set("gosxRoomsState", js.FuncOf(func(js.Value, []js.Value) any {
+		st, room := client.Stats(), client.Room()
+		kinds := make([]any, len(room.Seats))
+		for i, seat := range room.Seats {
+			kinds[i] = seat.Kind.String()
+		}
+		return js.ValueOf(map[string]any{
+			"status": client.Status().String(), "reason": client.Reason(), "local": client.Local(),
+			"offline": room.Offline, "seat": client.Seat(), "code": room.Code, "phase": room.Phase.String(),
+			"tick": float64(client.Tick()), "authTick": float64(st.AuthTick), "lead": st.Lead,
+			"rttMs": float64(st.RTT.Milliseconds()), "dials": float64(st.Dials), "seats": kinds,
+		})
+	}))
 
 	doc := js.Global().Get("document")
 	canvas := doc.Call("getElementById", "stage")
