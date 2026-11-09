@@ -19,6 +19,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/target"
+	"github.com/chromedp/chromedp"
 	"m31labs.dev/gosx/room"
 	"m31labs.dev/gosx/room/mode"
 	"m31labs.dev/gosx/room/roomtest"
@@ -198,7 +202,11 @@ type roomsPage struct {
 	p *browserPage
 }
 
-func openRoomsPage(t *testing.T, site *roomsSite, params url.Values) *roomsPage {
+// openRoomsPage opens the client in a new browser. With beside set, it opens
+// a new window in beside's browser instead: the GPU runners hand every test
+// the same running Chrome, and a second tab in one window would sit in the
+// background, where Chrome stops animation frames and so the client's loop.
+func openRoomsPage(t *testing.T, site *roomsSite, params url.Values, beside *roomsPage) *roomsPage {
 	t.Helper()
 	params.Set("server", site.wsURL)
 	if params.Get("connectTimeout") == "" {
@@ -206,7 +214,29 @@ func openRoomsPage(t *testing.T, site *roomsSite, params url.Values) *roomsPage 
 	}
 	params.Set("reconnectTimeout", "3s")
 	params.Set("stallTimeout", "2s")
-	p := newBrowserPage(t, e2eChromePath(t), nil, 1280, 900, "", 5*time.Minute)
+	var p *browserPage
+	if beside == nil {
+		p = newBrowserPage(t, e2eChromePath(t), nil, 1280, 900, "", 5*time.Minute)
+	} else {
+		// A new window in the same browser. sessionStorage is per window, so
+		// the two clients keep separate resume tokens.
+		var id target.ID
+		if err := chromedp.Run(beside.p.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			c := chromedp.FromContext(ctx)
+			var err error
+			id, err = target.CreateTarget("about:blank").WithNewWindow(true).Do(cdp.WithExecutor(ctx, c.Browser))
+			return err
+		})); err != nil {
+			t.Fatalf("open a second window: %v", err)
+		}
+		ctx, cancel := chromedp.NewContext(beside.p.ctx, chromedp.WithTargetID(id))
+		t.Cleanup(cancel)
+		p = &browserPage{ctx: ctx}
+		attachPageListeners(ctx, p)
+		if err := chromedp.Run(ctx, network.Enable()); err != nil {
+			t.Fatalf("open a second window: %v", err)
+		}
+	}
 	if status := p.navigate(t, site.pageURL+"/?"+params.Encode()); status != http.StatusOK {
 		t.Fatalf("page status %d", status)
 	}
@@ -254,7 +284,7 @@ func TestRoomsNetsyncCrossOriginBrowser(t *testing.T) {
 	if roomsRemote() != "" {
 		q.Set("private", "1") // keep concurrent runs and visitors out of this room
 	}
-	page := openRoomsPage(t, site, q)
+	page := openRoomsPage(t, site, q, nil)
 
 	// 1. Play starts at once: the first state already ticks a match.
 	first := page.wait("the client to start", 60*time.Second, func(s roomsState) bool { return s.Status != "" && s.Tick > 0 })
@@ -327,9 +357,16 @@ func TestRoomsNetsyncTwoBrowsers(t *testing.T) {
 		hold = d
 	}
 	runner := roomsRunner()
-	a := openRoomsPage(t, site, url.Values{"mode": {"party"}, "private": {"1"}, "name": {"a-" + runner}})
+	a := openRoomsPage(t, site, url.Values{"mode": {"party"}, "private": {"1"}, "name": {"a-" + runner}}, nil)
 	sa := a.wait("the first browser to join a room", 60*time.Second, func(s roomsState) bool { return s.Status == "online" && s.Code != "" })
-	b := openRoomsPage(t, site, url.Values{"mode": {"party"}, "code": {sa.Code}, "name": {"b-" + runner}})
+	b := openRoomsPage(t, site, url.Values{"mode": {"party"}, "code": {sa.Code}, "name": {"b-" + runner}}, a)
+	for name, page := range map[string]*roomsPage{"a": a, "b": b} {
+		var visible string
+		page.p.eval(t, `document.visibilityState`, &visible)
+		if visible != "visible" {
+			t.Fatalf("browser %s is %q: a hidden page gets no animation frames, so its client stops", name, visible)
+		}
+	}
 	full := func(s roomsState) bool {
 		return s.Status == "online" && !s.Local && s.Phase == "running" && s.Code == sa.Code &&
 			s.count("human") == 2 && s.count("bot") == 4 && s.AuthTick > 30
