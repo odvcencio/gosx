@@ -105,7 +105,7 @@ func skinnedRigGLB(t *testing.T) []byte {
 			"samplers": []map[string]any{{"input": times, "output": lift, "interpolation": "LINEAR"}},
 			"channels": []map[string]any{
 				{"sampler": 0, "target": map[string]any{"node": joints[5], "path": "translation"}},
-				{"sampler": 0, "target": map[string]any{"node": joints[120], "path": "translation"}},
+				{"sampler": 0, "target": map[string]any{"node": joints[liftedJoint(t)], "path": "translation"}},
 			}}},
 		"accessors":   accessors,
 		"bufferViews": views,
@@ -135,6 +135,17 @@ func skinnedRigGLB(t *testing.T) []byte {
 	return out.Bytes()
 }
 
+// liftedJoint names the joint the second channel lifts. GOSX_RIG_CONTROL=joint5
+// lifts joint 5 twice instead, which leaves the joint-120 quad on the ground:
+// the control run that proves the test fails when joint 120 does not skin.
+func liftedJoint(t *testing.T) int {
+	t.Helper()
+	if os.Getenv("GOSX_RIG_CONTROL") == "joint5" {
+		return 5
+	}
+	return 120
+}
+
 // views is shared by the closures above; declared here to keep the helper flat.
 var views []map[string]any
 
@@ -146,7 +157,7 @@ type rigReading struct {
 }
 
 func gpuRunnerAvailable() bool {
-	return os.Getenv("GOSX_WATER_E2E_REQUIRE_WEBGPU") == "1" || os.Getenv("GPU_CHROME_ENDPOINT") != ""
+	return os.Getenv("GOSX_WATER_E2E_REQUIRE_WEBGPU") == "1" || os.Getenv("GPU_CHROME_ENDPOINT") != "" || e2eWindowsRelay()
 }
 
 // TestSkinnedRigBeyond64JointsOnTheGPU renders a 128-joint rig through WebGPU
@@ -216,7 +227,7 @@ func TestSkinnedRigBeyond64JointsOnTheGPU(t *testing.T) {
 			browser.navigate(t, url+"/")
 
 			var reading rigReading
-			deadline := time.Now().Add(90 * time.Second)
+			deadline := time.Now().Add(rigDeadline())
 			for time.Now().Before(deadline) {
 				browser.eval(t, `(() => {const e=document.querySelector('[data-gosx-scene3d-mounted]');return {backend:e?.getAttribute('data-gosx-scene3d-backend')||'',fallback:e?.getAttribute('data-gosx-scene3d-render-mesh-material-fallback')||''}})()`, &reading)
 				if reading.Backend == backend {
@@ -271,4 +282,11 @@ func abs(v float64) float64 {
 		return -v
 	}
 	return v
+}
+
+func rigDeadline() time.Duration {
+	if os.Getenv("GOSX_RIG_CONTROL") != "" {
+		return 12 * time.Second
+	}
+	return 90 * time.Second
 }
