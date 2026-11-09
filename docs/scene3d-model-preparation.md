@@ -153,3 +153,148 @@ readiness continues to schedule retries. An imported-model request fails closed
 on a fallback that cannot actually color-draw that model; Canvas2D's line/point
 representation is not acknowledged as an imported mesh. Validate actual
 first-visible pixels separately when presentation matters.
+
+## Export from Blender
+
+GoSX loads glTF 2.0 and GLB. Export with File > Export > glTF 2.0 and the
+settings below. Retopologize and bake normals in Blender first; GoSX reads the
+baked normal map and the exported vertex normals as they are.
+
+| Blender setting | Value | Why |
+|---|---|---|
+| Format | glTF Binary (.glb) | One file per model. `.gltf` with separate files also works. |
+| Mesh > Apply Modifiers | on | The loader never sees Blender modifiers. |
+| Mesh > Normals, Tangents | on | Tangents come from your bake. Without them GoSX computes tangents from the UVs. |
+| Mesh > Compression (Draco) | off | The loader rejects Draco. See "Compression". |
+| Material > Images | Automatic | Embedded PNG or JPEG goes through `gosx assets build`. |
+| Animation > Sampling, Always Sample | on | Keeps cubic-spline and constraint results exact. |
+| Animation > Optimize Animation Size | on | Fewer keyframes load faster. `gosx assets build` also drops redundant keyframes. |
+
+### UV sets
+
+The renderer samples every texture of a material with one UV set. The loader
+picks it from the material:
+
+1. Each map's `texCoord` selects its set (`0` is `TEXCOORD_0`, `1` is
+   `TEXCOORD_1`). A `KHR_texture_transform` `texCoord` overrides it.
+2. If the base color is textured, its set wins. Otherwise the most-used set
+   wins.
+3. If the maps use different sets, every map samples the winning set and the
+   console warns once per material:
+   `reads maps from different UV sets`.
+
+So a model whose base color, normal, and occlusion maps all use UV1 renders
+correctly. A model with base color on UV0 and a baked AO or lightmap on UV1
+does not: bake the AO into the base UV set, or into the packed
+occlusion-roughness-metalness map on UV0. Mixed sets in one material need a
+second UV stream in both renderers; that is not built yet.
+
+### Joint limits
+
+A skin may have up to 256 joints. WebGPU reads the joints from a storage
+buffer. WebGL2 reads rigs up to 64 joints from a uniform array and larger rigs
+from a float texture. A skin above 256 joints fails the load with
+`glTF skin "<name>" has N joints; the maximum supported is 256`. Cap rigs at
+128 joints or fewer for phones: every joint costs a matrix multiply per
+skinned vertex. Instanced crowd batches still cap at 64 joints.
+
+### Lights
+
+`KHR_lights_punctual` lights import as scene lights: directional, point (with
+`range`), and spot (with `innerConeAngle` and `outerConeAngle`). A light shines
+down its node's -Z axis, so aim lights in Blender and export. Intensity is
+passed through as authored (lux for directional, candela for point and spot)
+and the scene clamps it to its 0 to 6 range. Blender exports sun strength and
+point power in physical units, so expect to lower the Blender values or
+re-tune intensity on the imported light.
+
+### Compression
+
+| Feature | Status |
+|---|---|
+| `KHR_mesh_quantization` | Supported. `gosx assets build` writes it. |
+| `EXT_mesh_gpu_instancing` | Supported. |
+| `KHR_texture_transform` | Supported, one transform per material (base color). |
+| `EXT_meshopt_compression` | Rejected at load. Not supported yet. |
+| Draco (`KHR_draco_mesh_compression`) | Rejected at load. |
+| `KHR_texture_basisu` | Maps are dropped with a warning. Use the KTX2 files from `gosx assets build` through variants instead. |
+
+## Build exports with `gosx assets build`
+
+Run the build on every export. It reads each `.glb` and `.gltf` below the paths
+you give, then writes to `--out`:
+
+- `<name>.glb`: welded, reordered, and quantized, as a single file. A `.gltf`
+  with external buffers becomes a GLB.
+- `<name>.lod1.glb`, `<name>.lod2.glb`, ...: the LOD chain from quadric-error
+  simplification.
+- `<name>.textures/<image>.<tier>.<format>.ktx2`: KTX2 files with mip chains
+  built in linear light, including BC7 (or BC5 for normal maps), for each
+  embedded image.
+- `assets.manifest.json`: per-model triangles, draw calls, joints, texture
+  bytes, bounding radius, LOD switch distances, and texture variants.
+
+```sh
+gosx assets build --out public/assets \
+  --max-triangles 30000 --max-draw-calls 40 --max-joints 128 --max-texture-mb 48 \
+  art/exports
+```
+
+The command exits 1 when a model exceeds a budget. It still writes every file
+and the manifest, so you can inspect the failure. `textureBytes` is the GPU
+size of the images decoded to RGBA8 with mips, which is what the browser
+uploads today. The KTX2 files are smaller on the GPU; the budget does not
+count that saving until you serve them.
+
+To list models and per-model budgets, pass a spec file:
+
+```json
+{
+  "models": [
+    {"src": "hero.glb", "name": "hero", "budget": {"maxTriangles": 60000}},
+    {"src": "props/crate.glb"}
+  ],
+  "budget": {"maxTriangles": 20000, "maxJoints": 128},
+  "lodRatios": [0.5, 0.25]
+}
+```
+
+`gosx assets build art/assets.json` resolves `src` against the spec's
+directory. The spec's top-level `budget` and `lodRatios` apply only when you pass no budget flags and no `--lods`.
+
+### LOD switch distances
+
+Level 0 is the full model. For each reduced level the build writes the
+distance at which it takes over: `scale * radius / sqrt(ratio)`, where
+`radius` is the bounding radius of the model in world units, `ratio` is the
+fraction of triangles that level kept, and `scale` is `--lod-distance-scale`
+(default 4). This is a starting point, not a measured error bound. Tune the
+scale until the swap is invisible in your game.
+
+### Use the manifest in a scene
+
+`scene.ModelLODGroup` turns a manifest entry into a `scene.LODGroup`:
+
+```go
+data, _ := os.ReadFile("public/assets/assets.manifest.json")
+built, _ := manifest.Parse(data) // m31labs.dev/gosx/assetpipe/manifest
+hero, _ := built.Model("hero")
+
+group := scene.ModelLODGroup(hero, "/assets/", scene.Model{
+    ID:         "hero",
+    Position:   scene.Vector3{X: 2},
+    CastShadow: true,
+})
+```
+
+Add `group` to the scene like any other node. `manifest` imports the standard
+library only, so a js/wasm game build can use it.
+
+### What the build does not do yet
+
+- It does not rewrite the GLB to point at the KTX2 files. The renderer picks
+  KTX2 through texture variants, not through `KHR_texture_basisu`.
+- It does not compress meshes with meshopt or Draco.
+- It does not simplify primitives that carry morph targets or compression
+  extensions, so such a model may have an empty LOD chain. The build prints a
+  warning that names the reason.
