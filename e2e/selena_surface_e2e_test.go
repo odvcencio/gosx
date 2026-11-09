@@ -140,10 +140,11 @@ func renderScene3DStable(t *testing.T, backend string, props scene.Props, files 
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtime := `<script src="/gosx/bootstrap-runtime.js"></script>
+<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" src="/gosx/bootstrap-feature-scene3d.js"></script>`
 	page := []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#scene{width:%dpx;height:%dpx}</style></head><body><div id="scene"></div>
-<script src="/gosx/bootstrap-runtime.js"></script>
-<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
-<script>window.ready=(async()=>{window.handle=await window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('scene'),emit(){},props:%s});window.mounted=true;})().catch(error=>{window.mountError=String(error);});</script></body></html>`, int(props.Width), int(props.Height), payload))
+%s
+<script>window.ready=(async()=>{window.handle=await window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('scene'),emit(){},props:%s});window.mounted=true;})().catch(error=>{window.mountError=String(error);});</script></body></html>`, int(props.Width), int(props.Height), runtime, payload))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/":
@@ -233,7 +234,11 @@ func renderScene3DStable(t *testing.T, backend string, props scene.Props, files 
 const surfaceDiagnosticsScript = `window.__gosx_scene3d_render_truth=true;
 (() => {
   if (typeof WebGL2RenderingContext === "undefined") return;
-  const p = WebGL2RenderingContext.prototype, link = p.linkProgram;
+  const p = WebGL2RenderingContext.prototype, link = p.linkProgram, source = p.shaderSource;
+  p.shaderSource = function(shader, text) {
+    if (String(text).includes("SelenaSurface gosxS")) (window.__gosxShaderDiag = window.__gosxShaderDiag || []).push("surface fragment compiled");
+    return source.call(this, shader, text);
+  };
   p.linkProgram = function(program) {
     link.call(this, program);
     if (this.getProgramParameter(program, this.LINK_STATUS)) return;
@@ -430,4 +435,69 @@ func TestStandardLightingWhiteFurnace(t *testing.T) {
 			})
 		}
 	}
+}
+
+const shadowProbeSurfaceSource = `material ShadowProbe {
+    param tint : color = rgb(1, 1, 1)
+    surface(geo) -> Surface { return pbr(tint, 0.7, 0.0) }
+}`
+
+// The directional shadow reaches a surface material exactly as it reaches a
+// StandardMaterial. The camera looks straight down at the ground from 6 m; a
+// bar 3 m up at x -2.5..-1.5 casts its shadow, along a light travelling down
+// at 45 degrees toward +x, onto x 0.5..1.5 (pixel 195 of 320); x = +4 (pixel
+// 299) stays lit (hazel's lighting-probe geometry). WebGL2 must draw the
+// shadow. WebGPU's value is recorded, not required: on 2026-11-08 the WebGPU
+// renderer drew no directional shadow in this scene for StandardMaterial
+// either, and a separate lane is adding WebGPU cascaded shadows.
+func TestSelenaSurfaceReceivesDirectionalShadow(t *testing.T) {
+	tint := [3]float64{srgbToLinear(0xd0), srgbToLinear(0xd0), srgbToLinear(0xd0)}
+	surface, _, err := scene.CompileSelenaMaterial([]byte(shadowProbeSurfaceSource), scene.SelenaMaterialOptions{Uniforms: map[string]any{"tint": tint[:]}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	materials := map[string]scene.Material{"standard": scene.StandardMaterial{Color: "#d0d0d0", Roughness: 0.7}, "selena-surface": surface}
+	for _, backend := range e2eSceneBackends() {
+		readings := map[string][2]int{}
+		for _, name := range []string{"standard", "selena-surface"} {
+			props := scene.Props{
+				Width: 320, Height: 240, Background: "#000000",
+				// Z is 0.001, not 0: the camera normalizer treats z = 0 as unset.
+				Camera:      scene.PerspectiveCamera{Position: scene.Vector3{Y: 6, Z: 0.001}, Rotation: scene.Euler{X: -math.Pi / 2}, FOV: 60, Near: 0.1, Far: 30},
+				Environment: scene.Environment{ToneMapping: "linear"},
+				Graph: scene.NewGraph(
+					scene.Mesh{ID: "ground", Geometry: scene.BoxGeometry{Width: 20, Height: 0.1, Depth: 20}, Position: scene.Vector3{Y: -0.05}, Material: materials[name], ReceiveShadow: true},
+					scene.Mesh{ID: "occluder", Geometry: scene.BoxGeometry{Width: 1, Height: 0.2, Depth: 6}, Position: scene.Vector3{X: -2, Y: 3}, Material: scene.StandardMaterial{Color: "#808080"}, CastShadow: true},
+					scene.DirectionalLight{ID: "sun", Color: "#ffffff", Intensity: 1, Direction: scene.Vector3{X: 1, Y: -1}, CastShadow: true, ShadowSize: 1024, ShadowBias: 0.002, ShadowCascades: 2},
+					scene.AmbientLight{ID: "fill", Color: "#ffffff", Intensity: 0.15},
+				),
+			}
+			img := renderScene3DStable(t, backend, props, nil, func(img image.Image) bool {
+				b := img.Bounds()
+				return pixel8(img, b.Min.X+b.Dx()*299/320, b.Min.Y+b.Dy()/2)[0] > 60
+			})
+			saveSurfaceShot(t, "shadow-"+backend+"-"+name, img)
+			b := img.Bounds()
+			shadow := pixel8(img, b.Min.X+b.Dx()*195/320, b.Min.Y+b.Dy()/2)[0]
+			lit := pixel8(img, b.Min.X+b.Dx()*299/320, b.Min.Y+b.Dy()/2)[0]
+			readings[name] = [2]int{shadow, lit}
+			t.Logf("%s %s: shadowed pixel %d, lit pixel %d", backend, name, shadow, lit)
+		}
+		std, srf := readings["standard"], readings["selena-surface"]
+		if abs(std[0]-srf[0]) > 2 || abs(std[1]-srf[1]) > 2 {
+			t.Fatalf("%s: surface material shadow %v differs from StandardMaterial %v", backend, srf, std)
+		}
+		// The ambient fill keeps the shadow above black: about 87 shadowed
+		// against 132 lit on the reference GPUs.
+		if backend == "webgl" && std[1]-std[0] < 30 {
+			t.Fatalf("webgl drew no directional shadow: shadowed %d, lit %d", std[0], std[1])
+		}
+	}
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
