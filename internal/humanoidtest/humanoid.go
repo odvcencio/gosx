@@ -1,9 +1,12 @@
 // Package humanoidtest builds a small rigged humanoid as a binary glTF (GLB)
 // for tests: 60 joints in a T-pose, Y up, facing +Z, about 1.8 m tall, a box
 // skinned rigidly to each bone, and looping Idle, Walk and Run clips, an Aim
-// pose and a one-shot Jump. Bone names follow a chosen naming scheme
-// (Mixamo, Rigify, Unreal, Meshy), so tests can exercise humanoid mapping and
-// retargeting without third-party assets.
+// pose, a one-shot Jump, a two-character pair (PairA lunges in and reaches,
+// PairB braces and is pushed back; both with root motion), and additive
+// Waddle and Bounce style clips. Bone names follow a chosen naming scheme
+// (Mixamo, Rigify, Unreal, Meshy), and proportions can change (short legs, a
+// long neck, a big head), so tests can exercise humanoid mapping,
+// retargeting, paired moves and stylized mascots without third-party assets.
 package humanoidtest
 
 import (
@@ -35,6 +38,10 @@ type Options struct {
 	NoMesh bool
 	// NoClips omits the animations, for a model that plays retargeted clips.
 	NoClips bool
+	// LegScale, NeckScale and HeadScale change proportions (zero means 1):
+	// leg bone lengths with the hips lowered to keep the feet on the ground,
+	// the neck length, and the head box size.
+	LegScale, NeckScale, HeadScale float64
 	// Color is the mesh base color (linear RGBA). Zero means orange.
 	Color [4]float64
 }
@@ -46,6 +53,19 @@ const (
 	RunDuration  = 0.6
 	AimDuration  = 1.0
 	JumpDuration = 0.8
+	PairDuration = 1.2
+	// PairContact is the clip time at which PairA's hands reach PairB.
+	PairContact   = 0.5
+	StyleDuration = 1.0
+)
+
+// PairA's root moves 1.1 m forward (+Z) by contact and 0.5 m more by the
+// end; PairB holds its ground until contact, then is pushed 0.6 m back.
+// Authored together, PairA's character origin stood 1.5 m behind the
+// alignment root facing +Z, and PairB's 0.4 m ahead of it facing -Z.
+var (
+	PairAPlacement = [3]float64{0, -1.5, 0} // x, z, yaw
+	PairBPlacement = [3]float64{0, 0.4, math.Pi}
 )
 
 // Footsteps lists the clip times (seconds) at which a foot is furthest
@@ -61,8 +81,10 @@ type bone struct {
 
 // skeleton returns the 60 bones in parent-first order. Canonical names follow
 // VRM 1.0; "*End" bones are leaf end markers like Mixamo's HeadTop_End.
-func skeleton() []bone {
-	b := []bone{{"hips", -1, [3]float64{0, 0.95, 0}, 0.11}}
+func skeleton(opts Options) []bone {
+	leg, neckScale, headScale := scaleOr1(opts.LegScale), scaleOr1(opts.NeckScale), scaleOr1(opts.HeadScale)
+	// The ankle stays 0.08 m above the ground: hips = 0.08 + 0.05 + 0.82 leg.
+	b := []bone{{"hips", -1, [3]float64{0, 0.13 + 0.82*leg, 0}, 0.11}}
 	add := func(name string, parent int, off [3]float64, thick float64) int {
 		b = append(b, bone{name, parent, off, thick})
 		return len(b) - 1
@@ -71,7 +93,7 @@ func skeleton() []bone {
 	chest := add("chest", spine, [3]float64{0, 0.12, 0}, 0.12)
 	upper := add("upperChest", chest, [3]float64{0, 0.12, 0}, 0.12)
 	neck := add("neck", upper, [3]float64{0, 0.14, 0}, 0.04)
-	head := add("head", neck, [3]float64{0, 0.08, 0.01}, 0.09)
+	head := add("head", neck, [3]float64{0, 0.08 * neckScale, 0.01}, 0.09*headScale)
 	add("headEnd", head, [3]float64{0, 0.2, 0}, 0)
 	add("leftEye", head, [3]float64{0.03, 0.07, 0.08}, 0)
 	add("rightEye", head, [3]float64{-0.03, 0.07, 0.08}, 0)
@@ -108,8 +130,8 @@ func skeleton() []bone {
 			}
 		}
 		up := add(side.name+"UpperLeg", 0, [3]float64{0.09 * s, -0.05, 0}, 0.06)
-		low := add(side.name+"LowerLeg", up, [3]float64{0, -0.42, 0.01}, 0.05)
-		foot := add(side.name+"Foot", low, [3]float64{0, -0.4, -0.01}, 0.045)
+		low := add(side.name+"LowerLeg", up, [3]float64{0, -0.42 * leg, 0.01}, 0.05)
+		foot := add(side.name+"Foot", low, [3]float64{0, -0.4 * leg, -0.01}, 0.045)
 		toes := add(side.name+"Toes", foot, [3]float64{0, -0.06, 0.12}, 0.03)
 		add(side.name+"ToesEnd", toes, [3]float64{0, 0, 0.05}, 0)
 	}
@@ -119,8 +141,15 @@ func skeleton() []bone {
 // JointCount is the number of skin joints Build writes.
 const JointCount = 60
 
+func scaleOr1(v float64) float64 {
+	if v > 0 {
+		return v
+	}
+	return 1
+}
+
 func init() {
-	if n := len(skeleton()); n != JointCount {
+	if n := len(skeleton(Options{})); n != JointCount {
 		panic(fmt.Sprintf("humanoidtest: skeleton has %d bones, want %d", n, JointCount))
 	}
 }
@@ -292,6 +321,37 @@ func pose(bones []bone, index map[string]int, name string, t float64) ([]quat, [
 		set("chest", axisAngle(0, 1, 0, 15*deg))
 		set("rightUpperArm", axisAngle(0, 1, 0, -80*deg))
 		set("leftUpperArm", axisAngle(0, 1, 0, 60*deg).mul(axisAngle(0, 0, 1, -20*deg)))
+	case "PairA":
+		u := smooth01(t / PairContact)
+		z := 1.1 * u
+		if t > PairContact {
+			z = 1.1 + 0.5*(t-PairContact)/(PairDuration-PairContact)
+		}
+		hips[2] += z
+		hips[1] -= 0.1 * u
+		set("spine", axisAngle(1, 0, 0, 25*deg*u))
+		set("leftUpperArm", axisAngle(0, 1, 0, -80*deg*u))
+		set("rightUpperArm", axisAngle(0, 1, 0, 80*deg*u))
+		set("leftUpperLeg", axisAngle(1, 0, 0, -30*deg*u))
+		set("leftLowerLeg", axisAngle(1, 0, 0, 30*deg*u))
+	case "PairB":
+		brace := smooth01(t / PairContact)
+		push := 0.0
+		if t > PairContact {
+			push = (t - PairContact) / (PairDuration - PairContact)
+		}
+		hips[2] -= 0.6 * push
+		set("spine", axisAngle(1, 0, 0, 10*deg*brace-25*deg*push))
+		set("leftUpperArm", axisAngle(0, 1, 0, -40*deg*brace).mul(axisAngle(0, 0, 1, -30*deg*brace)))
+		set("rightUpperArm", axisAngle(0, 1, 0, 40*deg*brace).mul(axisAngle(0, 0, 1, 30*deg*brace)))
+	case "Waddle":
+		// Additive: the first frame is the rest pose, so the offsets are
+		// the side-to-side hip roll and the spine's counter-roll.
+		a := math.Sin(2 * math.Pi * t / StyleDuration)
+		set("hips", axisAngle(0, 0, 1, 10*deg*a))
+		set("spine", axisAngle(0, 0, 1, -6*deg*a))
+	case "Bounce":
+		hips[1] += 0.06 * math.Abs(math.Sin(2*math.Pi*t/StyleDuration))
 	case "Jump":
 		u := t / JumpDuration
 		crouch := math.Max(0, math.Cos(math.Pi*u*2)) * 0.6
@@ -304,14 +364,27 @@ func pose(bones []bone, index map[string]int, name string, t float64) ([]quat, [
 	return rot, hips
 }
 
-// Clip lists the clip names Build writes, in order.
-var Clips = []string{"Idle", "Walk", "Run", "Aim", "Jump"}
+// Clips lists the clip names Build writes, in order.
+var Clips = []string{"Idle", "Walk", "Run", "Aim", "Jump", "PairA", "PairB", "Waddle", "Bounce"}
 
-var durations = map[string]float64{"Idle": IdleDuration, "Walk": WalkDuration, "Run": RunDuration, "Aim": AimDuration, "Jump": JumpDuration}
+var durations = map[string]float64{
+	"Idle": IdleDuration, "Walk": WalkDuration, "Run": RunDuration, "Aim": AimDuration, "Jump": JumpDuration,
+	"PairA": PairDuration, "PairB": PairDuration, "Waddle": StyleDuration, "Bounce": StyleDuration,
+}
+
+func smooth01(u float64) float64 {
+	if u <= 0 {
+		return 0
+	}
+	if u >= 1 {
+		return 1
+	}
+	return u * u * (3 - 2*u)
+}
 
 // Build writes the humanoid as GLB bytes.
 func Build(opts Options) ([]byte, error) {
-	bones := skeleton()
+	bones := skeleton(opts)
 	index := map[string]int{}
 	for i, b := range bones {
 		index[b.canonical] = i

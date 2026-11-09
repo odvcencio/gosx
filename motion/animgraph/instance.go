@@ -53,9 +53,16 @@ type StateInfo struct {
 // IKInput is the per-frame input for one two-bone chain. Positions and
 // normals are in world space.
 type IKInput struct {
-	Weight       float64
-	Target       [3]float64
-	HasTarget    bool
+	Weight    float64
+	Target    [3]float64
+	HasTarget bool
+	// BoneTarget, when set, makes the chain reach a bone of another
+	// character (TargetBone indexes HumanoidBones) plus TargetOffset in that
+	// bone's frame. The renderer resolves it from the other character's pose
+	// in the same frame, so both must go in one Dispatch.
+	BoneTarget   *Instance
+	TargetBone   int
+	TargetOffset [3]float64
 	Pole         [3]float64
 	HasPole      bool
 	GroundHeight float64
@@ -90,6 +97,7 @@ type layerState struct {
 	samples       [MaxLayerSamples]Sample
 	sampleCount   int
 	weight        float64
+	playing       float64
 	runtimeWeight float64
 }
 
@@ -111,6 +119,12 @@ type Instance struct {
 	steps     uint64
 	feedback  Feedback
 	rigOnPage bool
+	actions   []actionState
+	lod       lodState
+	// sinceEncode is the time stepped since this instance was last encoded:
+	// the frame dt the renderer uses for smoothing, also across frames that
+	// LOD skips.
+	sinceEncode float64
 }
 
 // New creates an Instance for the Scene3D model with the given ID. The model
@@ -127,7 +141,9 @@ func (p *Program) New(modelID string) *Instance {
 		curveHas: make([]bool, len(p.curveNames)),
 		ik:       make([]IKInput, len(p.ik)),
 		look:     make([]LookInput, len(p.look)),
+		actions:  make([]actionState, len(p.layers)),
 	}
+	in.lod = newLODState(len(p.layers))
 	points := p.maxPoints
 	if points < 1 {
 		points = 1
@@ -166,6 +182,7 @@ func (in *Instance) Reset() {
 		ls.n = 0
 		ls.fading = false
 		ls.sampleCount = 0
+		in.actions[li] = actionState{}
 		in.push(li, in.prog.layers[li].machine.entry, 0)
 		ls.stack[0].weight = 1
 		in.buildSamples(li)
@@ -246,12 +263,14 @@ func (in *Instance) Step(dt float64) {
 		dt = 0
 	}
 	in.dt = dt
+	in.sinceEncode += dt
 	in.steps++
 	in.events = in.events[:0]
 	for li := range in.layers {
 		in.stepLayer(li, dt)
 	}
 	in.updateCurves()
+	in.advanceLOD(dt)
 }
 
 // Events returns the events the last Step raised. The slice is reused by the
@@ -309,11 +328,38 @@ func (in *Instance) SetIKTarget(chain int, pos [3]float64) {
 	}
 }
 
-// ClearIKTarget stops target reaching for a chain.
+// ClearIKTarget stops target reaching for a chain, for a position or a
+// bone target.
 func (in *Instance) ClearIKTarget(chain int) {
 	if chain >= 0 && chain < len(in.ik) {
 		in.ik[chain].HasTarget = false
+		in.ik[chain].BoneTarget = nil
 	}
+}
+
+// SetIKTargetBone makes a chain reach a canonical bone of another character
+// (for example a hand to the other's shoulder), offset in that bone's frame.
+// Send both instances in the same Dispatch. It reports false for an unknown
+// bone or chain.
+func (in *Instance) SetIKTargetBone(chain int, other *Instance, bone string, offset [3]float64) bool {
+	index := HumanoidBoneID(bone)
+	if chain < 0 || chain >= len(in.ik) || other == nil || other == in || index < 0 || !finite3(offset) {
+		return false
+	}
+	ik := &in.ik[chain]
+	ik.BoneTarget, ik.TargetBone, ik.TargetOffset = other, index, offset
+	ik.HasTarget = false
+	return true
+}
+
+// HumanoidBoneID returns a canonical bone's index in HumanoidBones, or -1.
+func HumanoidBoneID(name string) int {
+	for i, bone := range HumanoidBones {
+		if bone == name {
+			return i
+		}
+	}
+	return -1
 }
 
 // SetIKPole sets the world position the knee or elbow bends toward. Without
@@ -362,12 +408,12 @@ func (in *Instance) IK(chain int) IKInput {
 }
 
 // IKWeight returns the weight sent for a chain: SetIKWeight times its weight
-// curve, if it has one.
+// curve, if it has one, times the level-of-detail IK fade.
 func (in *Instance) IKWeight(chain int) float64 {
 	if chain < 0 || chain >= len(in.ik) {
 		return 0
 	}
-	w := in.ik[chain].Weight
+	w := in.ik[chain].Weight * in.lod.ik
 	if curve := in.prog.ik[chain].weightCurve; curve >= 0 {
 		w *= clamp01(in.curves[curve])
 	}
@@ -400,6 +446,9 @@ func (in *Instance) stepLayer(li int, dt float64) {
 			si.phase += dt * in.stateSpeed(sd, si) / d
 		}
 	}
+	if leader := in.prog.layers[li].syncLayer; leader >= 0 {
+		in.syncToLayer(li, leader)
+	}
 	in.updateStackWeights(ls)
 	in.fireEvents(li)
 	for k := 0; k < ls.n; k++ {
@@ -410,6 +459,45 @@ func (in *Instance) stepLayer(li int, dt float64) {
 		in.updateStackWeights(ls)
 	}
 	in.buildSamples(li)
+	in.advanceAction(li, dt)
+	in.mergeAction(li)
+}
+
+// syncToLayer gives this layer's playing states the normalized time of the
+// leader layer's dominant state, so follower clips stay in phase with it.
+func (in *Instance) syncToLayer(li, leader int) {
+	ll := &in.layers[leader]
+	lm := &in.prog.layers[leader].machine
+	best := -1
+	for k := 0; k < ll.n; k++ {
+		if lm.states[ll.stack[k].state].kind == motionNone {
+			continue
+		}
+		if best < 0 || ll.stack[k].weight >= ll.stack[best].weight {
+			best = k
+		}
+	}
+	if best < 0 {
+		return
+	}
+	lead := &ll.stack[best]
+	ls := &in.layers[li]
+	for k := 0; k < ls.n; k++ {
+		si := &ls.stack[k]
+		if in.prog.layers[li].machine.states[si.state].kind == motionNone {
+			continue
+		}
+		si.prev, si.phase = lead.prev, lead.phase
+	}
+}
+
+// layerScale is a layer's run-time weight times its weight parameter.
+func (in *Instance) layerScale(li int) float64 {
+	w := in.layers[li].runtimeWeight
+	if param := in.prog.layers[li].weightParam; param >= 0 {
+		w *= clamp01(in.params[param])
+	}
+	return w
 }
 
 func (in *Instance) push(li, state int, offset float64) *stateInst {
@@ -788,11 +876,8 @@ func (in *Instance) buildSamples(li int) {
 			}
 		}
 	}
-	w := ls.runtimeWeight * playing
-	if param := in.prog.layers[li].weightParam; param >= 0 {
-		w *= clamp01(in.params[param])
-	}
-	ls.weight = clamp01(w)
+	ls.playing = playing
+	ls.weight = clamp01(in.layerScale(li) * playing)
 }
 
 func clipTime(phase, duration float64, loop bool) float64 {

@@ -525,6 +525,7 @@ type decodedModel struct {
 	ID      string
 	RigHash uint32
 	DT      float32
+	Flags   byte
 	Layers  []decodedLayer
 	IK      []decodedIK
 	Look    []decodedLook
@@ -546,6 +547,9 @@ type decodedIK struct {
 	Flags  byte
 	Weight float32
 	Values []float32
+	Other  int
+	Bone   int
+	Offset [3]float32
 }
 
 type decodedLook struct {
@@ -572,7 +576,7 @@ func decodeFrame(t *testing.T, b []byte) decodedFrame {
 	}
 	var f decodedFrame
 	for m := u16(); m > 0; m-- {
-		model := decodedModel{ID: str(), RigHash: u32(), DT: f32()}
+		model := decodedModel{ID: str(), RigHash: u32(), DT: f32(), Flags: u8()}
 		for l := u8(); l > 0; l-- {
 			layer := decodedLayer{Weight: f32()}
 			for s := u8(); s > 0; s-- {
@@ -595,6 +599,10 @@ func decodeFrame(t *testing.T, b []byte) decodedFrame {
 			}
 			for ; n > 0; n-- {
 				ik.Values = append(ik.Values, f32())
+			}
+			if ik.Flags&8 != 0 {
+				ik.Other, ik.Bone = u16(), int(u8())
+				ik.Offset = [3]float32{f32(), f32(), f32()}
 			}
 			model.IK = append(model.IK, ik)
 		}
@@ -689,12 +697,12 @@ func TestStepAndEncodeDoNotAllocate(t *testing.T) {
 }
 
 func TestFeedbackDecoding(t *testing.T) {
-	vals := []float64{7, 1, 1, 1, 2, 3, 4, 5, 6, 0, 1.6, 0, 0, 0, 1, 9, 9, 9, 42}
+	vals := []float64{7, 1, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1.6, 0, 0, 0, 1, 9, 9, 9, 42}
 	var f Feedback
 	if !f.DecodeFeedback(vals) {
 		t.Fatal("valid feedback rejected")
 	}
-	if f.RigHash != 7 || f.Animated[0] != [3]float64{1, 2, 3} || f.Solved[0] != [3]float64{4, 5, 6} ||
+	if f.RigHash != 7 || f.Animated[0] != [3]float64{1, 2, 3} || f.Solved[0] != [3]float64{4, 5, 6} || f.Target[0] != [3]float64{7, 8, 9} ||
 		f.LookForward[0] != [3]float64{0, 0, 1} || f.Root != [3]float64{9, 9, 9} || f.EvalMicros != 42 {
 		t.Fatalf("feedback = %+v", f)
 	}

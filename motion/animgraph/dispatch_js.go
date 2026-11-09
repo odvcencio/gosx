@@ -28,7 +28,7 @@ var (
 	dispatch   dispatcher
 )
 
-const feedbackFloats = 3 + 6*MaxIK + 6*MaxLookAt + 4
+const feedbackFloats = 3 + 9*MaxIK + 6*MaxLookAt + 4
 
 // Dispatch sends the instances' current poses to the mounted Scene3D engine
 // named target (its engine ID or mount element ID), then reads each model's

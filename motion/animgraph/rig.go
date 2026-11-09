@@ -62,6 +62,18 @@ func rigJSON(g Graph) []byte {
 	b = appendJSONString(b, humanoid)
 	b = append(b, `,"bones":`...)
 	b = appendJSONStringMap(b, g.Rig.Bones)
+	b = append(b, `,"keepProportions":`...)
+	b = strconv.AppendBool(b, g.Rig.KeepProportions)
+	b = append(b, `,"boneScale":{`...)
+	for i, key := range sortedKeys(g.Rig.BoneScale) {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = appendJSONString(b, key)
+		b = append(b, ':')
+		b = appendJSONNumber(b, g.Rig.BoneScale[key])
+	}
+	b = append(b, '}')
 	maskIndex := map[string]int{}
 	b = append(b, `,"masks":[`...)
 	for i, mask := range g.Masks {

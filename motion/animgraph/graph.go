@@ -124,7 +124,11 @@ type Layer struct {
 	// WeightParam names a Float parameter (clamped to [0, 1]) that scales the
 	// layer. Instance.SetLayerWeight also scales it.
 	WeightParam string
-	Machine     StateMachine
+	// SyncLayer names an earlier layer whose playing state sets this layer's
+	// normalized time, so a style clip (a waddle sway, a bounce) stays in step
+	// with the locomotion cycle under it.
+	SyncLayer string
+	Machine   StateMachine
 }
 
 // StateMachine is a set of states with transitions between them.
@@ -318,6 +322,15 @@ type Rig struct {
 	// Sources lists extra glTF files whose clips retarget onto this model by
 	// canonical bone name.
 	Sources []ClipSource
+	// KeepProportions drops translation keys on every bone except the root
+	// bones from the model's own clips, so clips exported from a rig with
+	// other bone lengths (a shared animation set on a mascot with a long neck)
+	// keep this rig's proportions. Retargeted Sources always do this.
+	KeepProportions bool
+	// BoneScale multiplies the scale of single bones (canonical or node
+	// names) after animation, for stylized proportions such as an oversized
+	// head. The scale carries to the bone's children.
+	BoneScale map[string]float64
 }
 
 // ClipSource is a glTF file whose animations play on this model.
@@ -380,6 +393,7 @@ type layerDef struct {
 	name        string
 	weightParam int
 	additive    bool
+	syncLayer   int
 	machine     machineDef
 }
 
@@ -511,7 +525,17 @@ func (g Graph) Compile() (*Program, error) {
 		if !finite(layer.RefTime) || layer.RefTime < 0 {
 			return nil, fmt.Errorf("animgraph: layer %d reference time must be finite and nonnegative", i)
 		}
-		def := layerDef{name: layer.Name, weightParam: -1, additive: layer.Additive}
+		def := layerDef{name: layer.Name, weightParam: -1, additive: layer.Additive, syncLayer: -1}
+		if layer.SyncLayer != "" {
+			for j := 0; j < i; j++ {
+				if g.Layers[j].Name == layer.SyncLayer {
+					def.syncLayer = j
+				}
+			}
+			if def.syncLayer < 0 {
+				return nil, fmt.Errorf("animgraph: layer %d syncs to %q, which is not an earlier layer", i, layer.SyncLayer)
+			}
+		}
 		if layer.WeightParam != "" {
 			index, err := p.param(layer.WeightParam, Float)
 			if err != nil {
@@ -563,6 +587,11 @@ func (g Graph) Compile() (*Program, error) {
 	}
 	if !finite(g.Pelvis.MaxDrop) || g.Pelvis.MaxDrop < 0 {
 		return nil, errors.New("animgraph: Pelvis.MaxDrop must be finite and nonnegative")
+	}
+	for name, scale := range g.Rig.BoneScale {
+		if name == "" || !finite(scale) || scale <= 0 || scale > 10 {
+			return nil, fmt.Errorf("animgraph: bone scale %q must be in (0, 10]", name)
+		}
 	}
 	switch g.Rig.Humanoid {
 	case "", "auto", "mixamo", "rigify", "unreal", "meshy", "biped", "none":
@@ -833,6 +862,24 @@ func (p *Program) compileTransition(t Transition, states map[string]int) (transD
 // or -1 when the name is unknown.
 func (p *Program) ParamID(name string) int {
 	if index, ok := p.paramIndex[name]; ok {
+		return index
+	}
+	return -1
+}
+
+// LayerID returns the index of a layer by name, or -1.
+func (p *Program) LayerID(name string) int {
+	for i, layer := range p.layers {
+		if layer.name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// ClipID returns the index of a declared clip, or -1.
+func (p *Program) ClipID(name string) int {
+	if index, ok := p.clipIndex[name]; ok {
 		return index
 	}
 	return -1

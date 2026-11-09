@@ -34,7 +34,13 @@ func goldenFrame(t *testing.T) []byte {
 	in.SetIKTarget(p.IKID("rightHand"), [3]float64{0.5, 1.25, 0.75})
 	in.SetIKPole(p.IKID("rightHand"), [3]float64{0.5, 1, -1})
 	in.SetLookAt(p.LookAtID("head"), [3]float64{0, 1.5, 4}, 0.5)
-	data, err := EncodeFrame(in)
+	// A second character the hero's left hand reaches (contact IK), at
+	// joint detail level 1.
+	other := p.New("rival")
+	other.lod.detail = 1
+	in.SetIKWeight(p.IKID("leftHand"), 0.75)
+	in.SetIKTargetBone(p.IKID("leftHand"), other, "rightShoulder", [3]float64{0, 0.05, 0.1})
+	data, err := EncodeFrame(other, in)
 	if err != nil {
 		t.Fatal(err)
 	}

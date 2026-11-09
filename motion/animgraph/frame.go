@@ -8,7 +8,7 @@ import (
 )
 
 // FrameMagic opens every animation graph frame.
-const FrameMagic = "GSA1"
+const FrameMagic = "GSA2"
 
 // FrameEncoder writes animation graph frames. It reuses its buffers, so
 // steady-state encoding does not allocate. It is not safe for concurrent use,
@@ -16,19 +16,22 @@ const FrameMagic = "GSA1"
 //
 // Wire format, little-endian:
 //
-//	"GSA1"
+//	"GSA2"
 //	u16 clip name count, then each name as u16 length + UTF-8 bytes
 //	u16 model count, then per model:
 //	    u16 length + UTF-8 model ID
 //	    u32 rig hash (Program.RigHash; 0 means no rig)
-//	    f32 frame dt in seconds (drives IK smoothing)
+//	    f32 seconds since this model's previous frame (drives smoothing)
+//	    u8  flags: bits 0-1 joint detail level (LODLevel.Detail)
 //	    u8  layer count, then per layer:
 //	        f32 layer weight
 //	        u8  sample count, then per sample (11 bytes):
 //	            u16 clip name index, f32 time, f32 weight, u8 flags (bit 0 loop)
 //	    u8  IK count, then per chain:
-//	        u8 chain index, u8 flags (bit 0 target, 1 pole, 2 ground), f32 weight
+//	        u8 chain index, u8 flags (bit 0 target, 1 pole, 2 ground,
+//	        3 bone of another model), f32 weight
 //	        [f32 x3 target] [f32 x3 pole] [f32 height, f32 x3 normal]
+//	        [u16 model index in this frame, u8 HumanoidBones index, f32 x3 offset]
 //	    u8  look-at count, then per chain:
 //	        u8 chain index, f32 weight, f32 x3 target
 type FrameEncoder struct {
@@ -66,7 +69,7 @@ func (e *FrameEncoder) Encode(models ...*Instance) ([]byte, error) {
 			return nil, errors.New("animgraph: duplicate model ID in frame")
 		}
 		e.seen[in.id] = struct{}{}
-		size += 2 + len(in.id) + 4 + 4 + 3
+		size += 2 + len(in.id) + 4 + 4 + 4
 		for li := range in.layers {
 			ls := &in.layers[li]
 			size += 5 + ls.sampleCount*11
@@ -81,7 +84,7 @@ func (e *FrameEncoder) Encode(models ...*Instance) ([]byte, error) {
 				}
 			}
 		}
-		size += len(in.ik)*(6+12+12+16) + len(in.look)*17
+		size += len(in.ik)*(6+12+12+16+15) + len(in.look)*17
 	}
 	if cap(e.out) < size {
 		e.out = make([]byte, 0, size)
@@ -94,21 +97,34 @@ func (e *FrameEncoder) Encode(models ...*Instance) ([]byte, error) {
 	}
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(models)))
 	for _, in := range models {
-		out = e.appendModel(out, in)
+		out = e.appendModel(out, in, models)
 	}
 	e.out = out
 	return out, nil
 }
 
-func (e *FrameEncoder) appendModel(out []byte, in *Instance) []byte {
+// modelIndex finds an instance in the frame. The variadic slice is passed
+// down rather than stored, so it stays on the caller's stack.
+func modelIndex(models []*Instance, in *Instance) int {
+	for i, m := range models {
+		if m == in {
+			return i
+		}
+	}
+	return -1
+}
+
+func (e *FrameEncoder) appendModel(out []byte, in *Instance, models []*Instance) []byte {
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(in.id)))
 	out = append(out, in.id...)
 	out = binary.LittleEndian.AppendUint32(out, in.prog.rigHash)
-	out = appendF32(out, in.dt)
+	out = appendF32(out, in.sinceEncode)
+	in.sinceEncode = 0
+	out = append(out, in.lod.detail&3)
 	out = append(out, byte(len(in.layers)))
 	for li := range in.layers {
 		ls := &in.layers[li]
-		out = appendF32(out, ls.weight)
+		out = appendF32(out, ls.weight*in.lod.layerScale[li])
 		out = append(out, byte(ls.sampleCount))
 		for i := 0; i < ls.sampleCount; i++ {
 			s := &ls.samples[i]
@@ -128,10 +144,17 @@ func (e *FrameEncoder) appendModel(out []byte, in *Instance) []byte {
 	for chain := range in.ik {
 		ik := &in.ik[chain]
 		w := in.IKWeight(chain)
-		if w <= 0 || !(ik.HasTarget || ik.HasGround) {
+		other := -1
+		if ik.BoneTarget != nil {
+			other = modelIndex(models, ik.BoneTarget)
+		}
+		if w <= 0 || !(ik.HasTarget || ik.HasGround || other >= 0) {
 			continue
 		}
 		var flags byte
+		if other >= 0 {
+			flags |= 8
+		}
 		if ik.HasTarget {
 			flags |= 1
 		}
@@ -152,6 +175,11 @@ func (e *FrameEncoder) appendModel(out []byte, in *Instance) []byte {
 		if ik.HasGround {
 			out = appendF32(out, ik.GroundHeight)
 			out = appendVec3(out, ik.GroundNormal)
+		}
+		if other >= 0 {
+			out = binary.LittleEndian.AppendUint16(out, uint16(other))
+			out = append(out, byte(ik.TargetBone))
+			out = appendVec3(out, ik.TargetOffset)
 		}
 		count++
 	}
@@ -200,8 +228,10 @@ type Feedback struct {
 	// Chains and Looks count the entries below.
 	Chains, Looks int
 	// Animated is each IK chain's end-bone position before IK: the point to
-	// raycast below for SetGround. Solved is the position after IK.
-	Animated, Solved [MaxIK][3]float64
+	// raycast below for SetGround. Solved is the position after IK. Target
+	// is the position the chain reached for (a bone target resolved from the
+	// other model's pose), or Animated when it had none.
+	Animated, Solved, Target [MaxIK][3]float64
 	// LookPivot and LookForward are each look-at pivot's position and forward
 	// direction after solving.
 	LookPivot, LookForward [MaxLookAt][3]float64
@@ -226,7 +256,7 @@ func (f *Feedback) AnimatedEnd(chain int) ([3]float64, bool) {
 // DecodeFeedback fills f from the renderer's feedback layout:
 //
 //	[rig hash, chain count N, look count M,
-//	 N x (animated xyz, solved xyz), M x (pivot xyz, forward xyz),
+//	 N x (animated xyz, solved xyz, target xyz), M x (pivot xyz, forward xyz),
 //	 root xyz, eval microseconds]
 //
 // It reports false and leaves f invalid when vals is too short.
@@ -236,7 +266,7 @@ func (f *Feedback) DecodeFeedback(vals []float64) bool {
 		return false
 	}
 	n, m := int(vals[1]), int(vals[2])
-	if n < 0 || n > MaxIK || m < 0 || m > MaxLookAt || len(vals) < 3+6*n+6*m+4 {
+	if n < 0 || n > MaxIK || m < 0 || m > MaxLookAt || len(vals) < 3+9*n+6*m+4 {
 		return false
 	}
 	f.RigHash = uint32(vals[0])
@@ -245,7 +275,8 @@ func (f *Feedback) DecodeFeedback(vals []float64) bool {
 	for i := 0; i < n; i++ {
 		copy(f.Animated[i][:], vals[at:at+3])
 		copy(f.Solved[i][:], vals[at+3:at+6])
-		at += 6
+		copy(f.Target[i][:], vals[at+6:at+9])
+		at += 9
 	}
 	for i := 0; i < m; i++ {
 		copy(f.LookPivot[i][:], vals[at:at+3])
