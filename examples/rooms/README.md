@@ -40,3 +40,13 @@ Every server flag also reads an environment variable (`ROOMS_ADDR`,
 `ROOMS_TRUST_FORWARDED_FOR`, `ROOMS_MAX_ROOMS`, `ROOMS_CONNECTS_PER_MINUTE`,
 `ROOMS_CREATES_PER_MINUTE`). `GET /healthz` reports that the process is up and
 `GET /readyz` that it accepts players. [deploy/](deploy/) runs it on Kubernetes.
+
+## League: persistent groups, invites, scheduled rounds
+
+`league/` is a second, small service built on `room/store`, `room/group`,
+`room/identity` and `room/advance`: an organiser creates a group, players join
+with a short invite code and get a device token, and a round advances when every
+seat has reported or the deadline passes. Run it with
+`go run ./examples/rooms/league/cmd` (see the file header for the environment
+variables) and read "Persistent groups and identities" in
+[docs/rooms.md](../../docs/rooms.md).

@@ -259,6 +259,10 @@ if (window.GPUAdapter) { const request = GPUAdapter.prototype.requestDevice; GPU
 			if r.Err != "" {
 				t.Fatalf("%s: %s\nGPU textures: %v", backend, r.Err, r.Labels)
 			}
+			// A lost WebGPU device makes the renderer fall back to WebGL; the "webgpu" subtest must not pass on that.
+			if want := map[string]string{"webgpu": "webgpu", "webgl2": "webgl"}[backend]; r.Backend != want {
+				t.Fatalf("%s subtest drew on %q, want %q", backend, r.Backend, want)
+			}
 			results[backend] = r
 			if dir := os.Getenv("OCEAN_PROBE_EVIDENCE"); dir != "" {
 				var shot []byte
