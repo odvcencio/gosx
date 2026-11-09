@@ -2715,6 +2715,7 @@
     "KHR_materials_unlit",
     "KHR_texture_transform",
     "KHR_lights_punctual",
+    "GOSX_texture_variants",
   ];
 
   // Warn once per load about required extensions the loader ignores. A required
@@ -3228,6 +3229,16 @@
     return new URL(baseURL).pathname + "#image=" + index;
   }
 
+  // GOSX_texture_variants lives on an image and lists the KTX2 files the asset
+  // build wrote for it: {"variants": [{uri, quality, bytes, format, channels,
+  // role, colorSpace, requiredCapabilities}]}. Each entry has the shape of a
+  // page-manifest texture variant, so one eligibility rule covers both. URIs
+  // resolve against the GLB.
+  function gltfEmbeddedImageVariants(image) {
+    var ext = gltfExtension(image, "GOSX_texture_variants");
+    return ext && Array.isArray(ext.variants) ? ext.variants : null;
+  }
+
   function gltfResolveExternalImageURIs(gltf, baseURL, variantContext) {
     if (!gltf || !gltf.images || !gltf.images.length) {
       return;
@@ -3246,9 +3257,6 @@
     // profiles must not claim readiness with an authored full-size fallback.
     var strict = profile === "low" || profile === "standard";
     var usages = gltfImageUsages(gltf);
-    if (!table) {
-      tokens = null;
-    }
     for (var i = 0; i < gltf.images.length; i += 1) {
       var image = gltf.images[i];
       if (!image) {
@@ -3265,8 +3273,20 @@
       }
       var keys = embedded ? [gltfEmbeddedImageKey(baseURL, i)] : gltfVariantTableKeys(image.uri, authored);
       var selected = false;
+      // Variants written into the GLB by `gosx assets build` come first: they
+      // travel with the model, so no page manifest has to list them. The page
+      // table is the fallback for assets built without the extension. An image
+      // with no eligible variant keeps its authored bytes.
+      var embeddedVariants = gltfEmbeddedImageVariants(image);
+      var candidateSets = [];
+      if (tokens && embeddedVariants) {
+        candidateSets.push(embeddedVariants);
+      }
       for (var k = 0; table && tokens && k < keys.length; k++) {
-        var winner = gltfSelectTextureVariant(table[keys[k]], tokens, profile, usages[i]);
+        candidateSets.push(table[keys[k]]);
+      }
+      for (var c = 0; c < candidateSets.length; c++) {
+        var winner = gltfSelectTextureVariant(candidateSets[c], tokens, profile, usages[i]);
         if (!winner) {
           continue;
         }

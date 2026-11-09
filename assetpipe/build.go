@@ -232,9 +232,6 @@ func buildModel(opts BuildOptions, input BuildInput, outDir string) (manifest.Mo
 		return manifest.Model{}, nil, err
 	}
 	mainURI := input.Name + ".glb"
-	if err := writeFileUnder(outDir, mainURI, mainBytes); err != nil {
-		return manifest.Model{}, nil, err
-	}
 	mainStats, err := analyzeGLB(mainBytes, resolve)
 	if err != nil {
 		return manifest.Model{}, nil, fmt.Errorf("analyze output: %w", err)
@@ -255,6 +252,8 @@ func buildModel(opts BuildOptions, input BuildInput, outDir string) (manifest.Mo
 		}
 	}
 
+	// GLBs are written last: the texture stage adds KTX2 variants to each one.
+	glbs := []pendingGLB{{uri: mainURI, data: mainBytes, lod: 0}}
 	model := manifest.Model{
 		Name:   input.Name,
 		Source: filepath.ToSlash(input.Path),
@@ -322,9 +321,7 @@ func buildModel(opts BuildOptions, input BuildInput, outDir string) (manifest.Mo
 			prior = stats.stats.Triangles
 			level := len(model.LODs)
 			uri := fmt.Sprintf("%s.lod%d.glb", input.Name, level)
-			if err := writeFileUnder(outDir, uri, encoded); err != nil {
-				return manifest.Model{}, nil, err
-			}
+			glbs = append(glbs, pendingGLB{uri: uri, data: encoded, lod: level})
 			achieved := float64(stats.stats.Triangles) / float64(math.Max(1, float64(mainStats.stats.Triangles)))
 			model.LODs = append(model.LODs, manifest.LOD{
 				Level:     level,
@@ -337,6 +334,7 @@ func buildModel(opts BuildOptions, input BuildInput, outDir string) (manifest.Mo
 		}
 	}
 
+	builtVariants := map[int][]Variant{}
 	if !opts.NoTextures {
 		textureOpts := DefaultTextureOptions()
 		if opts.Texture != nil {
@@ -368,6 +366,26 @@ func buildModel(opts BuildOptions, input BuildInput, outDir string) (manifest.Mo
 				})
 			}
 			model.Textures = append(model.Textures, entry)
+			builtVariants[index] = variants
+		}
+	}
+	dir := path.Dir(input.Name)
+	for _, glb := range glbs {
+		data := glb.data
+		if len(builtVariants) > 0 {
+			patched, err := injectImageVariants(data, builtVariants, dir)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: %s keeps its original textures: %v", input.Name, glb.uri, err))
+			} else {
+				data = patched
+			}
+		}
+		if err := writeFileUnder(outDir, glb.uri, data); err != nil {
+			return manifest.Model{}, nil, err
+		}
+		model.LODs[glb.lod].Bytes = int64(len(data))
+		if glb.lod == 0 {
+			model.Bytes = int64(len(data))
 		}
 	}
 	return model, warnings, nil
@@ -734,4 +752,113 @@ func mippedRGBA8Bytes(w, h int) int64 {
 			h /= 2
 		}
 	}
+}
+
+// pendingGLB is an output GLB waiting for its texture variants.
+type pendingGLB struct {
+	uri  string
+	data []byte
+	lod  int
+}
+
+// ImageVariantsExtension is the glTF extension `gosx assets build` writes on
+// each image it built KTX2 files for. The scene loader reads it and swaps the
+// image for the best variant the device can upload. A device that can use none
+// keeps the original image, which stays in the GLB.
+const ImageVariantsExtension = "GOSX_texture_variants"
+
+// injectImageVariants adds ImageVariantsExtension to the images of a GLB.
+// variants maps an image index to its built variants. Variant URIs in the build
+// are relative to the output root; dir is the GLB's directory under that root,
+// and each URI becomes relative to the GLB.
+func injectImageVariants(glb []byte, variants map[int][]Variant, dir string) ([]byte, error) {
+	jsonChunk, bin, err := splitGLBChunks(glb)
+	if err != nil {
+		return nil, err
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(jsonChunk, &root); err != nil {
+		return nil, err
+	}
+	var images []map[string]json.RawMessage
+	if err := json.Unmarshal(root["images"], &images); err != nil {
+		return nil, fmt.Errorf("images: %w", err)
+	}
+	prefix := ""
+	if dir != "." && dir != "" {
+		prefix = dir + "/"
+	}
+	changed := false
+	for index, list := range variants {
+		if index < 0 || index >= len(images) || len(list) == 0 {
+			continue
+		}
+		entries := make([]Variant, 0, len(list))
+		for _, v := range list {
+			v.URI = strings.TrimPrefix(v.URI, prefix)
+			entries = append(entries, v)
+		}
+		ext := map[string]json.RawMessage{}
+		if raw, ok := images[index]["extensions"]; ok {
+			if err := json.Unmarshal(raw, &ext); err != nil {
+				return nil, fmt.Errorf("image %d extensions: %w", index, err)
+			}
+		}
+		payload, err := json.Marshal(map[string]any{"variants": entries})
+		if err != nil {
+			return nil, err
+		}
+		ext[ImageVariantsExtension] = payload
+		raw, err := json.Marshal(ext)
+		if err != nil {
+			return nil, err
+		}
+		images[index]["extensions"] = raw
+		changed = true
+	}
+	if !changed {
+		return glb, nil
+	}
+	if root["images"], err = json.Marshal(images); err != nil {
+		return nil, err
+	}
+	var used []string
+	if raw, ok := root["extensionsUsed"]; ok {
+		_ = json.Unmarshal(raw, &used)
+	}
+	have := false
+	for _, name := range used {
+		have = have || name == ImageVariantsExtension
+	}
+	if !have {
+		used = append(used, ImageVariantsExtension)
+		root["extensionsUsed"], _ = json.Marshal(used)
+	}
+	newJSON, err := json.Marshal(root)
+	if err != nil {
+		return nil, err
+	}
+	for len(newJSON)%4 != 0 {
+		newJSON = append(newJSON, ' ')
+	}
+	for len(bin)%4 != 0 {
+		bin = append(append([]byte(nil), bin...), 0)
+	}
+	total := 12 + 8 + len(newJSON)
+	if len(bin) > 0 {
+		total += 8 + len(bin)
+	}
+	out := make([]byte, 0, total)
+	out = append(out, 'g', 'l', 'T', 'F')
+	out = binary.LittleEndian.AppendUint32(out, 2)
+	out = binary.LittleEndian.AppendUint32(out, uint32(total))
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(newJSON)))
+	out = binary.LittleEndian.AppendUint32(out, 0x4E4F534A)
+	out = append(out, newJSON...)
+	if len(bin) > 0 {
+		out = binary.LittleEndian.AppendUint32(out, uint32(len(bin)))
+		out = binary.LittleEndian.AppendUint32(out, 0x004E4942)
+		out = append(out, bin...)
+	}
+	return out, nil
 }

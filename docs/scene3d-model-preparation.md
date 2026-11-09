@@ -262,6 +262,29 @@ To list models and per-model budgets, pass a spec file:
 `gosx assets build art/assets.json` resolves `src` against the spec's
 directory. The spec's top-level `budget` and `lodRatios` apply only when you pass no budget flags and no `--lods`.
 
+### KTX2 textures in the GLB
+
+Every built GLB (the main file and each LOD) lists its KTX2 files on the image
+it came from, under the `GOSX_texture_variants` extension:
+
+```json
+"images": [{
+  "bufferView": 4, "mimeType": "image/png",
+  "extensions": {"GOSX_texture_variants": {"variants": [
+    {"uri": "hero.textures/albedo-0.high.bc7-rgba-unorm-srgb.ktx2",
+     "quality": "high", "format": "bc7-rgba-unorm-srgb",
+     "requiredCapabilities": ["container:ktx2", "device-feature:texture-compression-bc", "..."]}
+  ]}}
+}]
+```
+
+The scene loader applies the same rule it uses for page-manifest texture
+variants: a device that proved BC support loads the BC7 file, which takes a
+quarter of the GPU memory. Any other device loads the original image, which
+stays embedded in the GLB. URIs are relative to the GLB. No page manifest entry
+is needed. Normal maps keep their original image, because the material shaders
+read all three channels and BC5 stores two.
+
 ### LOD switch distances
 
 Level 0 is the full model. For each reduced level the build writes the
@@ -292,8 +315,7 @@ library only, so a js/wasm game build can use it.
 
 ### What the build does not do yet
 
-- It does not rewrite the GLB to point at the KTX2 files. The renderer picks
-  KTX2 through texture variants, not through `KHR_texture_basisu`.
+- It does not use `KHR_texture_basisu`. See "KTX2 textures in the GLB" below.
 - It does not compress meshes with meshopt or Draco.
 - It does not simplify primitives that carry morph targets or compression
   extensions, so such a model may have an empty LOD chain. The build prints a

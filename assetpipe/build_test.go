@@ -380,3 +380,97 @@ func TestBuildModelsRejectsDuplicateNames(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+var updateKTX2Fixture = flag.Bool("update-ktx2-fixture", false, "rewrite client/js/testdata/blender-ktx2/ for the loader end-to-end test")
+
+func TestBuildModelsReferencesKTX2FromEveryGLB(t *testing.T) {
+	src, out := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "props"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSphere(t, src, "props/crate.glb", sphereFixture{rings: 24, segments: 32})
+	got, err := BuildModels(BuildOptions{Inputs: []string{src}, OutputDir: out, LODRatios: []float64{0.5}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := got.Models[0]
+	if len(model.LODs) != 2 || len(model.Textures) != 1 {
+		t.Fatalf("model = %+v", model)
+	}
+	for _, lod := range model.LODs {
+		data, err := os.ReadFile(filepath.Join(out, lod.URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if int64(len(data)) != lod.Bytes {
+			t.Fatalf("%s: manifest says %d bytes, file has %d", lod.URI, lod.Bytes, len(data))
+		}
+		jsonChunk, _, err := splitGLBChunks(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			ExtensionsUsed []string `json:"extensionsUsed"`
+			Images         []struct {
+				BufferView *int `json:"bufferView"`
+				Extensions map[string]struct {
+					Variants []Variant `json:"variants"`
+				} `json:"extensions"`
+			} `json:"images"`
+		}
+		if err := json.Unmarshal(jsonChunk, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if len(doc.Images) != 1 || doc.Images[0].BufferView == nil {
+			t.Fatalf("%s must keep the original embedded image as the fallback: %+v", lod.URI, doc.Images)
+		}
+		ext := doc.Images[0].Extensions[ImageVariantsExtension]
+		if len(ext.Variants) == 0 || !strings.Contains(strings.Join(doc.ExtensionsUsed, ","), ImageVariantsExtension) {
+			t.Fatalf("%s lacks %s: %+v", lod.URI, ImageVariantsExtension, doc)
+		}
+		sawBC := false
+		for _, v := range ext.Variants {
+			// URIs are relative to the GLB, which sits in props/.
+			if strings.HasPrefix(v.URI, "props/") || !strings.HasPrefix(v.URI, "crate.textures/") {
+				t.Fatalf("variant URI %q is not relative to the GLB", v.URI)
+			}
+			if _, err := os.Stat(filepath.Join(out, "props", v.URI)); err != nil {
+				t.Fatalf("variant file missing: %v", err)
+			}
+			sawBC = sawBC || strings.HasPrefix(v.Format, "bc")
+		}
+		if !sawBC {
+			t.Fatalf("no BC variant in %+v", ext.Variants)
+		}
+		if _, err := analyzeGLB(data, nil); err != nil {
+			t.Fatalf("%s no longer analyzes: %v", lod.URI, err)
+		}
+	}
+
+	if *updateKTX2Fixture {
+		// The loader test in client/js reads this build. Copy only the files it needs.
+		dest := filepath.Join("..", "client", "js", "testdata", "blender-ktx2")
+		_ = os.RemoveAll(dest)
+		for _, rel := range []string{"props/crate.glb", "props/crate.lod1.glb"} {
+			data, err := os.ReadFile(filepath.Join(out, rel))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(dest, filepath.Dir(rel)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dest, rel), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		textures, _ := filepath.Glob(filepath.Join(out, "props", "crate.textures", "*.ktx2"))
+		for _, p := range textures {
+			data, _ := os.ReadFile(p)
+			d := filepath.Join(dest, "props", "crate.textures", filepath.Base(p))
+			_ = os.MkdirAll(filepath.Dir(d), 0o755)
+			if err := os.WriteFile(d, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
