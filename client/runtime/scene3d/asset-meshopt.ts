@@ -54,13 +54,14 @@
 
   function decodeVertexBuffer(count: number, stride: number, src: Uint8Array): Uint8Array {
     if (stride <= 0 || stride > 256 || stride % 4) fail("vertex stride " + stride + " is not a multiple of 4 up to 256");
-    if (src.length < 1 + stride) fail("vertex buffer is too short");
+    var tail = Math.max(stride, 32);
+    if (src.length < 1 + tail) fail("vertex buffer is too short");
     if ((src[0] & 0xf0) !== 0xa0) fail("bad vertex buffer header");
     if ((src[0] & 0x0f) !== 0) fail("vertex codec version " + (src[0] & 0x0f) + " is not supported");
     var out = new Uint8Array(count * stride);
     var last = src.slice(src.length - stride);
     var block = Math.min(BLOCK_MAX_VERTICES, ((BLOCK_BYTES / stride) | 0) & ~(GROUP - 1));
-    var end = src.length - stride;
+    var end = src.length - tail;
     var pos = 1;
     var column = new Uint8Array(BLOCK_MAX_VERTICES);
     for (var start = 0; start < count; start += block) {

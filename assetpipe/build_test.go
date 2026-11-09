@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx/assetpipe/manifest"
+	"m31labs.dev/gosx/assetpipe/meshopt"
 )
 
 var updateBuildGolden = flag.Bool("update-build-golden", false, "rewrite assetpipe/testdata/build_sphere.golden.json")
@@ -473,4 +474,185 @@ func TestBuildModelsReferencesKTX2FromEveryGLB(t *testing.T) {
 			}
 		}
 	}
+}
+
+var updateMeshoptFixture = flag.Bool("update-meshopt-fixture", false, "rewrite client/js/testdata/blender-meshopt/ for the loader test")
+
+// meshoptViews decodes every EXT_meshopt_compression view of a GLB.
+func meshoptViews(t *testing.T, glb []byte) map[int]decodedView {
+	t.Helper()
+	jsonChunk, bin, err := splitGLBChunks(glb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		BufferViews []struct {
+			Extensions map[string]struct {
+				Buffer, ByteOffset, ByteLength, ByteStride, Count int
+				Mode                                              string
+			} `json:"extensions"`
+		} `json:"bufferViews"`
+	}
+	if err := json.Unmarshal(jsonChunk, &doc); err != nil {
+		t.Fatal(err)
+	}
+	out := map[int]decodedView{}
+	for i, v := range doc.BufferViews {
+		ext, ok := v.Extensions[MeshoptExtension]
+		if !ok {
+			continue
+		}
+		src := bin[ext.ByteOffset : ext.ByteOffset+ext.ByteLength]
+		switch ext.Mode {
+		case "ATTRIBUTES":
+			data, err := meshopt.DecodeVertexBuffer(src, ext.Count, ext.ByteStride)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out[i] = decodedView{data: data, count: ext.Count, stride: ext.ByteStride}
+		case "TRIANGLES":
+			idx, err := meshopt.DecodeIndexBuffer(src, ext.Count)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := make([]byte, 0, len(idx)*ext.ByteStride)
+			for _, x := range idx {
+				if ext.ByteStride == 2 {
+					data = binary.LittleEndian.AppendUint16(data, uint16(x))
+				} else {
+					data = binary.LittleEndian.AppendUint32(data, x)
+				}
+			}
+			out[i] = decodedView{data: data, count: ext.Count, stride: ext.ByteStride}
+		}
+	}
+	return out
+}
+
+type decodedView struct {
+	data          []byte
+	count, stride int
+}
+
+func TestBuildModelsMeshoptCompressesMeshViews(t *testing.T) {
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "props"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSphere(t, src, "props/crate.glb", sphereFixture{rings: 24, segments: 32})
+	plainOut, packedOut := t.TempDir(), t.TempDir()
+	plain, err := BuildModels(BuildOptions{Inputs: []string{src}, OutputDir: plainOut, LODRatios: []float64{0.5}, NoTextures: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	packed, err := BuildModels(BuildOptions{Inputs: []string{src}, OutputDir: packedOut, LODRatios: []float64{0.5}, NoTextures: true, Meshopt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pm, cm := plain.Models[0], packed.Models[0]
+	if cm.Meshopt == nil || cm.Meshopt.Views != 4 {
+		t.Fatalf("meshopt info = %+v, want position, normal, uv and index views", cm.Meshopt)
+	}
+	if cm.Meshopt.ViewBytesAfter*100 > cm.Meshopt.ViewBytesBefore*65 {
+		t.Fatalf("mesh views shrank from %d to %d bytes, want at least a third smaller", cm.Meshopt.ViewBytesBefore, cm.Meshopt.ViewBytesAfter)
+	}
+	if cm.Bytes >= pm.Bytes {
+		t.Fatalf("compressed GLB is %d bytes, uncompressed %d", cm.Bytes, pm.Bytes)
+	}
+	if cm.Stats.Triangles != pm.Stats.Triangles || len(cm.LODs) != len(pm.LODs) {
+		t.Fatalf("compression changed the model: %+v vs %+v", cm.Stats, pm.Stats)
+	}
+	t.Logf("full detail GLB %d -> %d bytes; mesh views %d -> %d bytes", pm.Bytes, cm.Bytes, cm.Meshopt.ViewBytesBefore, cm.Meshopt.ViewBytesAfter)
+
+	for level := range cm.LODs {
+		want, err := os.ReadFile(filepath.Join(plainOut, pm.LODs[level].URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(packedOut, cm.LODs[level].URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, wantBin, _ := splitGLBChunks(want)
+		wantJSON, _, _ := splitGLBChunks(want)
+		var wantDoc struct {
+			BufferViews []struct{ ByteOffset, ByteLength int } `json:"bufferViews"`
+		}
+		if err := json.Unmarshal(wantJSON, &wantDoc); err != nil {
+			t.Fatal(err)
+		}
+		views := meshoptViews(t, got)
+		if len(views) != 4 {
+			t.Fatalf("LOD %d decodes %d views, want 4", level, len(views))
+		}
+		for index, view := range views {
+			raw := wantBin[wantDoc.BufferViews[index].ByteOffset : wantDoc.BufferViews[index].ByteOffset+wantDoc.BufferViews[index].ByteLength]
+			if isIndexView(t, want, index) {
+				if len(view.data) != len(raw) {
+					t.Fatalf("LOD %d index view %d decodes to %d bytes, want %d", level, index, len(view.data), len(raw))
+				}
+				for k := 0; k < len(raw); k += 6 {
+					if !rotatedTriangle(view.data[k:k+6], raw[k:k+6]) {
+						t.Fatalf("LOD %d index view %d triangle %d differs", level, index, k/6)
+					}
+				}
+				continue
+			}
+			// A vertex view may be padded to a stride of 4 bytes per element.
+			elem := len(raw) / view.count
+			for v := 0; v < view.count; v++ {
+				if !bytes.Equal(view.data[v*view.stride:v*view.stride+elem], raw[v*elem:(v+1)*elem]) {
+					t.Fatalf("LOD %d vertex view %d differs at vertex %d", level, index, v)
+				}
+			}
+		}
+		if _, err := analyzeGLB(got, nil); err != nil {
+			t.Fatalf("LOD %d no longer analyzes: %v", level, err)
+		}
+	}
+
+	if *updateMeshoptFixture {
+		dest := filepath.Join("..", "client", "js", "testdata", "blender-meshopt")
+		_ = os.RemoveAll(dest)
+		if err := os.MkdirAll(dest, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, dir := range map[string]string{"plain.glb": plainOut, "packed.glb": packedOut} {
+			data, err := os.ReadFile(filepath.Join(dir, "props", "crate.glb"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dest, name), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func isIndexView(t *testing.T, glb []byte, view int) bool {
+	t.Helper()
+	jsonChunk, _, _ := splitGLBChunks(glb)
+	var doc struct {
+		BufferViews []struct {
+			Target int `json:"target"`
+		} `json:"bufferViews"`
+	}
+	if err := json.Unmarshal(jsonChunk, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc.BufferViews[view].Target == 34963
+}
+
+// rotatedTriangle reports whether two uint16 triangles are the same up to rotation.
+func rotatedTriangle(a, b []byte) bool {
+	tri := func(x []byte) [3]uint16 {
+		return [3]uint16{binary.LittleEndian.Uint16(x), binary.LittleEndian.Uint16(x[2:]), binary.LittleEndian.Uint16(x[4:])}
+	}
+	x, y := tri(a), tri(b)
+	for r := 0; r < 3; r++ {
+		if x == [3]uint16{y[r], y[(r+1)%3], y[(r+2)%3]} {
+			return true
+		}
+	}
+	return false
 }

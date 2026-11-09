@@ -160,3 +160,25 @@ func TestRunAssetsBuildRejectsBadLODRatio(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestRunAssetsBuildMeshoptShrinksTheGLB(t *testing.T) {
+	src, plain, packed := t.TempDir(), t.TempDir(), t.TempDir()
+	gridGLB(t, filepath.Join(src, "terrain.glb"), 40)
+	var out bytes.Buffer
+	if err := runAssetsCommand([]string{"build", "--out", plain, "--no-lod", src}, &out); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := runAssetsCommand([]string{"build", "--out", packed, "--no-lod", "--meshopt", src}, &out); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "meshopt: ") {
+		t.Fatalf("summary lacks the meshopt line:\n%s", out.String())
+	}
+	before, after := readBuiltManifest(t, plain), readBuiltManifest(t, packed)
+	a, _ := before.Model("terrain")
+	b, _ := after.Model("terrain")
+	if b.Meshopt == nil || b.Bytes >= a.Bytes || b.Stats.Triangles != a.Stats.Triangles {
+		t.Fatalf("plain %+v, packed %+v meshopt=%+v", a.Stats, b.Stats, b.Meshopt)
+	}
+}

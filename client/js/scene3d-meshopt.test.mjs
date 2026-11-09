@@ -15,6 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const ts = require("../runtime/node_modules/typescript");
 const fixtures = path.join(__dirname, "testdata", "meshopt");
+const assetBuild = path.join(__dirname, "testdata", "blender-meshopt");
 const transpile = (file) => ts.transpileModule(fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", file), "utf8"), {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -110,7 +111,7 @@ test("malformed input fails with a named error", () => {
   assert.throws(() => api.decode(4, 12, v1, "ATTRIBUTES", "NONE"), /version 1 is not supported/);
   assert.throws(() => api.decode(4, 12, new Uint8Array(40).fill(0xa0), "INDICES", "NONE"), /unknown mode INDICES/);
   assert.throws(() => api.decode(3, 2, new Uint8Array(40), "TRIANGLES", "NONE"), /bad index buffer header/);
-  assert.throws(() => api.decode(0, 16, new Uint8Array(17).fill(0).map((_, i) => (i ? 0 : 0xa0)), "ATTRIBUTES", "QUATERNION"), /QUATERNION/);
+  assert.throws(() => api.decode(0, 16, new Uint8Array(33).fill(0).map((_, i) => (i ? 0 : 0xa0)), "ATTRIBUTES", "QUATERNION"), /QUATERNION/);
   assert.throws(() => api.decode(4, 6, new Uint8Array(40), "ATTRIBUTES", "NONE"), /multiple of 4/);
 });
 
@@ -118,7 +119,8 @@ test("malformed input fails with a named error", () => {
 function loader() {
   const window = { location: { href: "https://example.test/" } };
   const fetch = async (url) => {
-    const bytes = fs.readFileSync(path.join(fixtures, path.basename(new URL(url).pathname)));
+    const name = path.basename(new URL(url).pathname);
+    const bytes = fs.readFileSync(path.join(name.startsWith("asset-") ? assetBuild : fixtures, name.replace(/^asset-/, "")));
     return { ok: true, status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
   };
   const console = { warn: () => {}, error: () => {}, log: () => {} };
@@ -155,4 +157,36 @@ test("the loader supports a quantized, filtered GLB", async () => {
   const scene = await loader().sceneLoadGLTFModel("https://example.test/out_cc.glb");
   assert.equal(scene.objects[0].vertices.count, 4608);
   for (const n of scene.objects[0].vertices.normals) assert.ok(Math.abs(n) <= 1.0001);
+});
+
+// The same loader reading what `gosx assets build --meshopt` writes (the Go
+// encoders, regenerated with go test ./assetpipe -run Meshopt -update-meshopt-fixture).
+test("the loader reads a GLB written by the Go meshopt encoder as the uncompressed build", async () => {
+  const packed = await loader().sceneLoadGLTFModel("https://example.test/asset-packed.glb");
+  const plain = await loader().sceneLoadGLTFModel("https://example.test/asset-plain.glb");
+  const a = packed.objects[0].vertices, b = plain.objects[0].vertices;
+  assert.equal(a.count, b.count);
+  assert.equal(a.count, 4608);
+  const triangles = (v) => {
+    const out = [];
+    for (let t = 0; t < v.count; t += 3) {
+      const corners = [0, 1, 2].map((k) => [
+        ...Array.from(v.positions.slice((t + k) * 3, (t + k) * 3 + 3)),
+        ...Array.from(v.uvs.slice((t + k) * 2, (t + k) * 2 + 2)),
+      ].map((x) => x.toFixed(5)).join(","));
+      out.push(corners.sort().join("|"));
+    }
+    return out.sort();
+  };
+  assert.deepEqual(triangles(a), triangles(b));
+});
+
+test("decoding is fast enough to run at load time", () => {
+  const glb = load("cmp.glb");
+  const index = glb.json.bufferViews.findIndex((v) => v.extensions && v.extensions.EXT_meshopt_compression.mode === "ATTRIBUTES");
+  const start = performance.now();
+  for (let i = 0; i < 200; i++) decodeView(glb, index);
+  const perDecode = (performance.now() - start) / 200;
+  // 825 vertices of 12 bytes. The bound is loose; it catches a quadratic mistake, not a regression of a few percent.
+  assert.ok(perDecode < 5, "one view took " + perDecode.toFixed(3) + " ms");
 });

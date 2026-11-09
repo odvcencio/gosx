@@ -41,6 +41,7 @@ func runAssetBuildCommand(args []string, stdout io.Writer) error {
 	noLOD := fs.Bool("no-lod", false, "skip the LOD chain")
 	noTextures := fs.Bool("no-textures", false, "skip KTX2 texture generation")
 	noOptimize := fs.Bool("no-optimize", false, "skip weld, reorder, and quantize")
+	meshoptFlag := fs.Bool("meshopt", false, "compress mesh data with EXT_meshopt_compression (the scene loader decodes it)")
 	distanceScale := fs.Float64("lod-distance-scale", assetpipe.DefaultLODDistanceScale, "scale for LOD switch distances")
 	maxTriangles := fs.Int64("max-triangles", 0, "budget: triangles per model (0 = unlimited)")
 	maxTextureMB := fs.Float64("max-texture-mb", 0, "budget: GPU texture MiB per model, RGBA8 with mips (0 = unlimited)")
@@ -55,6 +56,7 @@ func runAssetBuildCommand(args []string, stdout io.Writer) error {
 		NoLOD:            *noLOD,
 		NoTextures:       *noTextures,
 		NoOptimize:       *noOptimize,
+		Meshopt:          *meshoptFlag,
 		LODDistanceScale: *distanceScale,
 		Budget: assetpipe.Budget{
 			MaxTriangles:    *maxTriangles,
@@ -156,6 +158,9 @@ func printAssetBuild(w io.Writer, m manifest.Manifest, manifestPath string) {
 		fmt.Fprintf(w, "\n%s -> %s (%d bytes)\n", model.Name, model.URI, model.Bytes)
 		fmt.Fprintf(w, "  %d triangles, %d draw calls, %d joints, %.1f MiB texture memory\n",
 			model.Stats.Triangles, model.Stats.DrawCalls, model.Stats.Joints, float64(model.Stats.TextureBytes)/(1<<20))
+		if mo := model.Meshopt; mo != nil {
+			fmt.Fprintf(w, "  meshopt: %d view(s), %d -> %d bytes\n", mo.Views, mo.ViewBytesBefore, mo.ViewBytesAfter)
+		}
 		for _, lod := range model.LODs[min(1, len(model.LODs)):] {
 			fmt.Fprintf(w, "  lod%d: %s, %d triangles, from %.2f units\n", lod.Level, lod.URI, lod.Triangles, lod.Distance)
 		}
@@ -193,6 +198,7 @@ Flags:
   --out dir               output directory (default dist/assets)
   --lods 0.5,0.25         triangle fractions of the LOD chain
   --no-lod --no-textures --no-optimize
+  --meshopt               compress mesh data (EXT_meshopt_compression)
   --lod-distance-scale n  scale for switch distances (default %g)
   --max-triangles n       --max-texture-mb n
   --max-joints n          --max-draw-calls n
