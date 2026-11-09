@@ -190,27 +190,7 @@ func TestAnimationGraphCharacterOnTheGPU(t *testing.T) {
 			defer server.Close()
 			pageURL := fmt.Sprintf("http://localhost:%d/", listener.Addr().(*net.TCPAddr).Port)
 
-			args := []string{"--no-sandbox", "--mute-audio", "--window-size=700,480"}
-			if !animGPURunner() {
-				args = append(args, "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-features=WebGPU")
-			}
-			browser, err := chrometest.Start(t.Context(), chrome, args...)
-			if err != nil {
-				t.Skipf("chrome unavailable: %v", err)
-			}
-			defer browser.Close()
-			ctx, cancel := context.WithTimeout(browser.Context, 240*time.Second)
-			defer cancel()
-			init := `window.__gosx_scene3d_render_truth = true;`
-			if backend == "webgl" {
-				init += `window.__gosx_scene3d_force_webgl = true;`
-			}
-			if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-				_, err := cdppage.AddScriptToEvaluateOnNewDocument(init).Do(ctx)
-				return err
-			})); err != nil {
-				t.Fatal(err)
-			}
+			ctx := animBrowser(t, chrome, backend)
 			err = chromedp.Run(ctx, chromedp.Navigate(pageURL))
 			for i := 0; err != nil && strings.Contains(err.Error(), "ERR_CONNECTION_REFUSED") && i < 20; i++ {
 				time.Sleep(500 * time.Millisecond)
@@ -223,6 +203,36 @@ func TestAnimationGraphCharacterOnTheGPU(t *testing.T) {
 		})
 	}
 }
+
+// animBrowser starts Chrome for one backend: GPU flags come from the runner;
+// elsewhere WebGL2 runs on SwiftShader. The browser closes with the test.
+func animBrowser(t *testing.T, chrome, backend string) context.Context {
+	t.Helper()
+	args := []string{"--no-sandbox", "--mute-audio", "--window-size=700,480"}
+	if !animGPURunner() {
+		args = append(args, "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-features=WebGPU")
+	}
+	browser, err := chrometest.Start(t.Context(), chrome, args...)
+	if err != nil {
+		t.Skipf("chrome unavailable: %v", err)
+	}
+	t.Cleanup(browser.Close)
+	ctx, cancel := context.WithTimeout(browser.Context, 240*time.Second)
+	t.Cleanup(cancel)
+	init := `window.__gosx_scene3d_render_truth = true;`
+	if backend == "webgl" {
+		init += `window.__gosx_scene3d_force_webgl = true;`
+	}
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		_, err := cdppage.AddScriptToEvaluateOnNewDocument(init).Do(ctx)
+		return err
+	})); err != nil {
+		t.Fatal(err)
+	}
+	return ctx
+}
+
+func animDecode(shot []byte) (image.Image, error) { return png.Decode(bytes.NewReader(shot)) }
 
 // groundAt is the test's stand-in for a game raycast: the step top inside
 // its X range, the floor elsewhere.

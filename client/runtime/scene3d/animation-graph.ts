@@ -1080,12 +1080,13 @@
 
   // agMeasure fully re-evaluates a posed model (or every graph model of the
   // mount, for id "*") `iterations` times and returns the mean microseconds
-  // per iteration, or -1. Browsers coarsen
+  // per iteration, or -1. Mode "reskin" times only the re-skin a skipped,
+  // moving model pays instead. Browsers coarsen
   // performance.now() on pages that are not cross-origin isolated (Chrome to
   // 100 us), so the per-frame EvalMicros feedback is only meaningful as a
   // long average; this loop gives tools and tests a stable figure. The IK
   // smoothing state does not advance (the frame serial is unchanged).
-  function agMeasure(target: any, id: any, iterations: any) {
+  function agMeasure(target: any, id: any, iterations: any, mode?: any) {
     const handle = agHandle(target);
     const state = handle ? agStates.get(handle) : null;
     if (!state) return -1;
@@ -1097,8 +1098,13 @@
     if (!samplers.length) return -1;
     const n = Math.max(1, Math.min(100000, Math.floor(Number(iterations) || 1)));
     const start = performance.now();
+    const reskin = mode === "reskin";
     for (let i = 0; i < n; i++) {
-      for (let k = 0; k < samplers.length; k++) agEvaluate(samplers[k].model, samplers[k].holder, true);
+      for (let k = 0; k < samplers.length; k++) {
+        const m = samplers[k].model;
+        if (reskin) agReskin(m, m.record.rootTransform || null);
+        else agEvaluate(m, samplers[k].holder, true);
+      }
     }
     return ((performance.now() - start) * 1000) / n;
   }

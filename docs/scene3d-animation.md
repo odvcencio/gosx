@@ -5,7 +5,10 @@ machine with crossfades, 1D and 2D blend spaces, bone-masked and additive
 layers, footstep events, two-bone IK with foot placement on uneven ground, and
 head or aim look-at. It works with characters rigged in Blender and with
 auto-rigged humanoids (Mixamo, Meshy), and it retargets clips between
-humanoid rigs that share a skeleton shape.
+humanoid rigs that share a skeleton shape. For team games it adds paired
+two-character moves (tackles, grapples, handoffs, contested catches) that
+meet at a point and time your simulation decides, level of detail for
+dozens of characters on screen, and stylized mascot layers.
 
 You declare the graph in Go (package `m31labs.dev/gosx/motion/animgraph`).
 Each frame your game sets parameters such as speed and aim, calls `Step`,
@@ -307,6 +310,26 @@ An `Additive` layer adds its clips as offsets from a reference pose: each
 clip's own first frame, or `RefClip` at `RefTime`. Rotation offsets multiply,
 translation offsets add, and scale offsets multiply.
 
+`SyncLayer` names an earlier layer whose playing state sets this layer's
+normalized time, so a style clip stays in step with the locomotion under it
+(see [Stylized characters](#stylized-characters-mascots)).
+
+### Actions
+
+`PlayAction` plays one clip over a layer without touching its state
+machine: a hit reaction, an emote, a celebration, or one side of a paired
+move. The machine keeps running underneath, so when the action ends the
+layer returns to whatever the machine plays by then.
+
+```go
+player.PlayAction("Celebrate", animgraph.ActionOptions{Layer: 0, BlendIn: 0.15, BlendOut: 0.3})
+player.SetActionRate(0, 1.2) // change the rate at any frame
+player.StopAction(0, 0.2)    // or let a non-looping clip end by itself
+```
+
+The action's clip events fire like a state's. `Action(layer)` reports its
+clip, time and weight.
+
 ### IK
 
 All positions are world space. Feedback reports the same frame's results.
@@ -387,6 +410,129 @@ Limits of retargeting:
 - Fingers transfer only when both rigs have the same finger segments.
 - Rigs must face the same way (+Z for glTF exports).
 
+### Paired moves
+
+A paired move is one clip per character, authored together in Blender (one
+scene, both characters, one shared origin: the alignment root). The
+simulation decides the outcome (who wins the contest), where the two meet and
+when; `PairedMove` makes the animation show exactly that:
+
+- **Time warp.** Both clips play at a rate that lands the authored contact
+  frame on the decided contact time (bounded by `MinRate` and `MaxRate`,
+  0.5 and 2 by default), then at rate 1.
+- **Root warp.** Each character's root follows its authored path, carried by
+  a frame that moves (with an ease in and out) from where the character
+  actually is to the decided alignment root, arriving exactly at contact.
+- **Contact IK.** A hand (or any two-bone chain) reaches a bone of the other
+  character, resolved from that character's pose in the same frame, with a
+  weight that ramps in and out over clip times.
+
+```go
+// At load: the authored root paths, from the GLB.
+attackerPath, _ := gltfclip.RootPath(glb, "TackleA", "", 30)
+defenderPath, _ := gltfclip.RootPath(glb, "TackleB", "", 30)
+library := animgraph.PairedLibrary{Clips: []animgraph.PairedClip{{
+    Name: "frontStop", Outcome: "stop", Approach: 0, Contact: 0.5, BlendIn: 0.1, BlendOut: 0.2,
+    Roles: [2]animgraph.PairRole{
+        // Where each character stood in the authoring scene, relative to the alignment root.
+        animgraph.PairRole{Name: "attacker", Clip: "TackleA", Path: attackerPath}.Placed(animgraph.Pose{Z: -1.3}),
+        animgraph.PairRole{Name: "defender", Clip: "TackleB", Path: defenderPath}.Placed(animgraph.Pose{Z: 0.4, Yaw: math.Pi}),
+    },
+    IK: []animgraph.ContactIK{
+        {Role: 0, Chain: "leftHand", Bone: "rightShoulder", In: 0.3, Full: 0.45, Out: 0.7, End: 0.9},
+        {Role: 0, Chain: "rightHand", Bone: "leftShoulder", In: 0.3, Full: 0.45, Out: 0.7, End: 0.9},
+    },
+}}}
+
+// When the simulation resolves a contest:
+clip, ok := library.Pick(result.Outcome, result.Approach, result.Seed)
+move, err := animgraph.StartPaired(clip, attacker, defender, animgraph.PairStart{
+    Poses: [2]animgraph.Pose{attackerNow, defenderNow}, // world root poses now
+    Align: result.ContactPose,                          // alignment root at contact
+    In:    result.SecondsToContact,
+})
+
+// Every frame until move.Done():
+move.Step(dt) // before the instances' Step: sets rates and contact IK
+attacker.Step(dt)
+defender.Step(dt)
+setModelPose("attacker", move.Root(0)) // your scene update: position and yaw
+setModelPose("defender", move.Root(1))
+_ = animgraph.Dispatch("scene", attacker, defender) // together, for contact IK
+```
+
+`Pick` chooses among the clips for an outcome the one whose authored
+`Approach` (the direction role 1 comes from, relative to role 0's facing) is
+closest to the actual one, and breaks ties within 0.1 radians by the seed, so
+every client picks the same clip from the same simulation state. Keep
+`scene.Model.RootMotion` off on these models: the renderer removes the
+clip's horizontal root motion and `Root` carries the character instead.
+`Contacted` reports that the contact frame was reached, and the clip's own
+events (a "contact" event, for example) fire as usual. `Cancel` blends both
+characters out early.
+
+The renderer resolves a bone target from the other character's pose in the
+same frame, so dispatch both partners together, and set `Pinned` on both
+partners' `LODTarget` during the move so they update every frame at full
+detail.
+
+### Level of detail
+
+`LODScheduler` keeps dozens of skinned characters within a frame budget. It
+projects each character's height onto the screen and picks a level:
+
+| Level (`DefaultLOD`) | Projected height | Pose updates | Joints | IK | Layers |
+|---|---|---|---|---|---|
+| 0 | 220 px and up | every frame | all | yes | all |
+| 1 | 90 px and up | 30 Hz | no fingers, eyes or jaw | yes | all |
+| 2 | 35 px and up | 20 Hz | also no toes or unmapped bones | no | base only |
+| 3 | below 35 px | 10 Hz | as level 2 | no | base only |
+
+```go
+sched := &animgraph.LODScheduler{FullBudget: 6} // at most 6 characters at level 0
+// every frame, after stepping every instance:
+due := sched.Update(dt, animgraph.LODCamera{Position: camPos, FOVY: fovY, ViewportHeight: canvasHeight}, targets)
+_ = animgraph.Dispatch("scene", due...)
+```
+
+Nothing pops: a level changes only once the character is 15% past the
+threshold (`Hysteresis`); IK, upper layers and joint detail fade over 0.25 s
+(`FadeSeconds`); characters that share a reduced rate update on staggered
+frames; and the renderer re-skins a skipped character when it moves, with
+one matrix multiply per joint. Graph logic (`Step`, events) still runs every
+frame for every character, at about 0.2 µs each.
+
+### Stylized characters (mascots)
+
+Three pieces cover mascot-style animation over a shared animation set:
+
+- **Style layers.** An additive layer playing a waddle (side-to-side hip
+  roll) or a bounce, with `SyncLayer` naming the locomotion layer so the
+  style cycle follows the steps. Switch styles with the layer's state
+  machine, scale them with `WeightParam`.
+- **Proportions.** Retargeted clips (`Rig.Sources`) keep the target rig's
+  bone lengths and scale the hips' motion by hip height, so a short-legged
+  mascot walks with its feet on the ground. For a mascot rig that shares the
+  animation set's bone names, `Rig.KeepProportions` drops the clips'
+  non-root translation keys instead.
+- **Exaggeration.** `Rig.BoneScale` enlarges single bones after animation,
+  for example `{"head": 1.4}` for an oversized head; the scale carries to
+  the bone's children.
+
+```go
+graph.Layers = append(graph.Layers, animgraph.Layer{
+    Name: "style", Additive: true, SyncLayer: "locomotion", WeightParam: "styleWeight",
+    Machine: animgraph.StateMachine{States: []animgraph.State{
+        {Name: "Waddle", Clip: "Waddle"},
+        {Name: "Bounce", Clip: "Bounce"},
+    }},
+})
+graph.Rig = animgraph.Rig{
+    Sources:   []animgraph.ClipSource{{Src: "/anim/shared-set.glb"}},
+    BoneScale: map[string]float64{"head": 1.4},
+}
+```
+
 ### Clip names and durations
 
 `gltfclip.Read(glb)` returns each animation's name and duration from the
@@ -407,6 +553,10 @@ matches either form: a clip named `Walk` plays the glTF animation
 | `defineAnimationRig(hash, json)` | `true` when the rig parses |
 | `dispatchAnimationFrame(target, bytes)` | `{applied, pending}`, or `{applied: false, reason}`; `"not-ready"` means send the next frame |
 | `animationFeedback(target, modelID, float64Array)` | the number of values written, or 0 |
+
+For tools and tests, `window.__gosx_scene3d_animation_graph_api.measure(target, id, n, mode)`
+times `n` full evaluations of a posed model (`id` `"*"` for all of them), or
+with mode `"reskin"` the re-skin a skipped, moving model pays.
 
 `target` is the Scene3D engine ID or mount element ID. Frames apply
 synchronously and re-skin the named models; a model the frame does not name
@@ -432,6 +582,12 @@ browser decoder test reads the same bytes.
 - **Curves come from Go.** glTF has no standard float tracks, so declare
   `Clip.Curves` in the graph (for example IK weights keyed at the frames a
   foot is planted).
+- **Paired root paths are ground-plane only.** `RootPath` keeps the root's
+  X and Z; vertical root motion stays in the clip. The root warp assumes the
+  character's rest hips sit over its origin.
+- **Skipped frames keep the last pose.** At reduced update rates a distant
+  character's pose steps at that rate; its feedback updates only when its
+  pose does.
 - **Same-thread game loop.** `Dispatch` and `Feedback` call the page directly,
   so the Go code must run on the page's main thread. A game hosted in a Web
   Worker can still encode frames, but it has no synchronous feedback.

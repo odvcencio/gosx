@@ -59,6 +59,10 @@ type LODTarget struct {
 	// Height is the character's height in world units (about 1.8 for an
 	// adult human).
 	Height float64
+	// Pinned keeps the character at level 0, updating every frame, for
+	// example both partners of a paired move. Pinned characters do not count
+	// against FullBudget.
+	Pinned bool
 }
 
 // LODScheduler assigns levels and decides which characters update each
@@ -181,7 +185,9 @@ func (s *LODScheduler) Update(dt float64, cam LODCamera, chars []LODTarget) []*I
 		st := &in.lod
 		st.fade = fade
 		want := levelFor(levels, st.pixels)
-		if st.set && want != st.level {
+		if chars[i].Pinned {
+			want = 0
+		} else if st.set && want != st.level {
 			// Hysteresis: move up only once well above the better level's
 			// threshold, down only once well below the current one.
 			if want < st.level && st.pixels < levels[want].MinPixels*(1+hysteresis) {
@@ -190,7 +196,7 @@ func (s *LODScheduler) Update(dt float64, cam LODCamera, chars []LODTarget) []*I
 				want = st.level
 			}
 		}
-		if want == 0 && s.FullBudget > 0 {
+		if want == 0 && s.FullBudget > 0 && !chars[i].Pinned {
 			if full >= s.FullBudget && len(levels) > 1 {
 				want = 1
 			} else {

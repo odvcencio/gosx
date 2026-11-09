@@ -271,6 +271,17 @@ func TestLODSchedulerLevelsRatesAndFades(t *testing.T) {
 	if ly, _ := both[1].Inst.LOD(); ly != 0 {
 		t.Fatalf("budget demoted the largest character to level %d", ly)
 	}
+	// A pinned character far away stays at level 0 and updates every frame.
+	pinned := []LODTarget{{Inst: p.New("pin"), Position: [3]float64{0, 0, 200}, Height: 1.8, Pinned: true}}
+	pinSched := &LODScheduler{FullBudget: 1}
+	for i := 0; i < 10; i++ {
+		if due := pinSched.Update(frameDT, cam, pinned); len(due) != 1 {
+			t.Fatalf("pinned character skipped frame %d", i)
+		}
+	}
+	if level, _ := pinned[0].Inst.LOD(); level != 0 {
+		t.Fatalf("pinned character at level %d", level)
+	}
 }
 
 func TestFrameCarriesDetailBoneTargetsAndSkippedTime(t *testing.T) {
