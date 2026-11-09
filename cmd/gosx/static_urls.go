@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/net/html"
 	"os"
 	"path/filepath"
 	"sort"
@@ -116,34 +117,93 @@ func dropDormantRuntimeBundles(manifestJSON string) string {
 	return manifestJSON
 }
 
-// staticServerEndpoints lists root-absolute `/_gosx/` references left in a
-// static page. A static bundle has no server to answer them.
-func staticServerEndpoints(page string) []string {
+// staticServerEndpoints lists root-absolute `/_gosx/` references in the URL
+// positions of a static page: attribute values and the string values of the
+// GoSX JSON scripts. Page text that merely mentions an endpoint does not count.
+// A reference that names a file the export staged (for example generated CSS
+// under /_gosx/docs-css/) is not a server call, so exists reports those.
+func staticServerEndpoints(page string, exists func(path string) bool) []string {
 	seen := map[string]bool{}
-	rest := page
+	note := func(value string) {
+		value = strings.TrimSpace(value)
+		if !strings.HasPrefix(value, "/_gosx/") {
+			return
+		}
+		p := value
+		if i := strings.IndexAny(p, "?#"); i >= 0 {
+			p = p[:i]
+		}
+		if exists != nil && exists(p) {
+			return
+		}
+		seen[value] = true
+	}
+	z := html.NewTokenizer(strings.NewReader(page))
+	inJSON := false
 	for {
-		i := strings.Index(rest, "/_gosx/")
-		if i < 0 {
-			break
+		switch z.Next() {
+		case html.ErrorToken:
+			out := make([]string, 0, len(seen))
+			for v := range seen {
+				out = append(out, v)
+			}
+			sort.Strings(out)
+			return out
+		case html.StartTagToken, html.SelfClosingTagToken:
+			tok := z.Token()
+			inJSON = false
+			for _, a := range tok.Attr {
+				if tok.Data == "script" && a.Key == "id" && (a.Val == "gosx-manifest" || a.Val == "gosx-document") {
+					inJSON = true
+				}
+				if a.Key == "srcset" {
+					for _, part := range strings.Split(a.Val, ",") {
+						if f := strings.Fields(part); len(f) > 0 {
+							note(f[0])
+						}
+					}
+					continue
+				}
+				note(a.Val)
+			}
+		case html.TextToken:
+			if !inJSON {
+				continue
+			}
+			text := string(z.Text())
+			for i := 0; i < len(text); i++ {
+				if text[i] != '"' {
+					continue
+				}
+				j := i + 1
+				for j < len(text) && text[j] != '"' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+				if j >= len(text) {
+					break
+				}
+				var v string
+				if json.Unmarshal([]byte(text[i:j+1]), &v) == nil {
+					note(v)
+				}
+				i = j
+			}
+		case html.EndTagToken:
+			inJSON = false
 		}
-		end := i
-		for end < len(rest) && !strings.ContainsRune("\"'<> \t\r\n\\)", rune(rest[end])) {
-			end++
-		}
-		seen[rest[i:end]] = true
-		rest = rest[end:]
 	}
-	out := make([]string, 0, len(seen))
-	for s := range seen {
-		out = append(out, s)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // auditStaticServerEndpoints walks the static tree and reports every HTML file
 // that still names a `/_gosx/` endpoint.
 func auditStaticServerEndpoints(root string) ([]string, error) {
+	exists := func(p string) bool {
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(p, "/"))))
+		return err == nil && info.Mode().IsRegular()
+	}
 	var findings []string
 	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".html") {
@@ -153,7 +213,7 @@ func auditStaticServerEndpoints(root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if hits := staticServerEndpoints(string(data)); len(hits) > 0 {
+		if hits := staticServerEndpoints(string(data), exists); len(hits) > 0 {
 			rel, _ := filepath.Rel(root, p)
 			findings = append(findings, fmt.Sprintf("%s: %s", filepath.ToSlash(rel), strings.Join(hits, ", ")))
 		}

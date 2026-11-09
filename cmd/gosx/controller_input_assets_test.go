@@ -101,7 +101,12 @@ func main() {
 			if err := json.Unmarshal(match[1], &inputPath); err != nil {
 				t.Fatal(err)
 			}
-			for _, path := range []string{inputPath, "/gosx/bootstrap-controller-input.js"} {
+			paths := []string{inputPath, "/gosx/bootstrap-controller-input.js"}
+			if mode == "export" {
+				// Export ships hashed names only; the unhashed dev alias is not staged.
+				paths = paths[:1]
+			}
+			for _, path := range paths {
 				if got := get(path); !bytes.Equal(got, want) {
 					t.Fatalf("GET %s did not serve the built input chunk", path)
 				}

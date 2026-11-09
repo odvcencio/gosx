@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestRunExportSkipsLoadAndActionsUnlessOptedIn(t *testing.T) {
+func TestRunBuildProdSkipsLoadAndActionsUnlessOptedIn(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "safe-export")
 	if err := RunInit(dir, "example.com/safe-export", ""); err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestRunExportSkipsLoadAndActionsUnlessOptedIn(t *testing.T) {
 	oldStderr := os.Stderr
 	os.Stderr = warnings
 	defer func() { os.Stderr = oldStderr; warnings.Close() }()
-	if err := RunExport(dir); err != nil {
+	if err := RunBuildWithOptions(dir, BuildOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	os.Stderr = oldStderr
@@ -95,5 +95,26 @@ func TestPrerenderEmptyRoutesDoesNotStartAuthenticatedServer(t *testing.T) {
 	}
 	if got := readFile(t, filepath.Join(output, "style.css")); got != "body {}" {
 		t.Fatal(got)
+	}
+}
+
+func TestRunExportFailsOnPagesItCannotShip(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "loud-export")
+	if err := RunInit(dir, "example.com/loud-export", ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "save", "page.gsx"), "package app\n\nfunc Page() Node {\n\treturn <p>save</p>\n}\n")
+	mustWriteFile(t, filepath.Join(dir, "app", "save", "page.server.go"), "package app\nimport (\"m31labs.dev/gosx/route\"; \"m31labs.dev/gosx/action\")\nfunc init() { if err := route.RegisterFileModuleHere(route.FileModuleOptions{Actions: route.FileActions{\"save\": func(*action.Context) error { return nil }}}); err != nil { panic(err) } }\n")
+	mustWriteFile(t, filepath.Join(dir, "app", "[slug]", "page.gsx"), "package app\n\nfunc Page() Node {\n\treturn <p>slug</p>\n}\n")
+	tidyModule(t, dir)
+	err := RunExport(dir)
+	if err == nil {
+		t.Fatal("export dropped pages that a static host cannot serve")
+	}
+	for _, want := range []string{"/save: ", "actions", "route parameters"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error does not mention %q:\n%v", want, err)
+		}
 	}
 }

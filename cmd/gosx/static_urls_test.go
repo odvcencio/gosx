@@ -108,11 +108,21 @@ func TestStaticHTMLHasNoServerEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hits := staticServerEndpoints(out); len(hits) != 0 {
+	if hits := staticServerEndpoints(out, nil); len(hits) != 0 {
 		t.Fatalf("static page references server endpoints: %v\n%s", hits, out)
 	}
-	if hits := staticServerEndpoints(`<form action="/_gosx/csrf"></form>`); len(hits) != 1 {
+	if hits := staticServerEndpoints(`<form action="/_gosx/csrf"></form>`, nil); len(hits) != 1 {
 		t.Fatalf("audit missed endpoint: %v", hits)
+	}
+	if hits := staticServerEndpoints(`<p>the optimizer lives at <code>/_gosx/image</code></p>`, nil); len(hits) != 0 {
+		t.Fatalf("page text is not a server call: %v", hits)
+	}
+	staged := func(p string) bool { return p == "/_gosx/docs-css/a.css" }
+	if hits := staticServerEndpoints(`<link href="../_gosx/docs-css/a.css"><b data-gosx-css-source="/_gosx/docs-css/a.css?scope=1">x</b>`, staged); len(hits) != 0 {
+		t.Fatalf("staged file flagged: %v", hits)
+	}
+	if hits := staticServerEndpoints(`<script id="gosx-manifest" type="application/json">{"a":"/_gosx/live"}</script>`, nil); len(hits) != 1 {
+		t.Fatalf("JSON contract endpoint missed: %v", hits)
 	}
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "index.html"), `<a href="/_gosx/live">x</a>`)
