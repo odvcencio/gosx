@@ -55,6 +55,7 @@ function materialPackingHarness() {
     sceneWaterObjectKind: () => 0, sceneWaterObjectSubtype: () => 0,
     sceneWaterPoolShapeRounded: () => false,
     sceneWaterLightVector: () => ({ x: 1, y: 1, z: 1 }),
+    sceneSelenaLightingValue: () => undefined,
     selenaFrame: {},
   };
   for (const name of [

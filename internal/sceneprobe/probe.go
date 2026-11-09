@@ -41,6 +41,9 @@ type Record struct {
 	OcclusionMap, EmissiveMap, SpecularIntensityMap, SpecularColorMap string
 	TileTexture, CubeMap                                              string
 	TextureDescriptors                                                map[string]Texture
+	// ShaderLayout is the Selena binding descriptor of a custom material;
+	// only the parts that gate the Selena lighting chunk are decoded.
+	ShaderLayout *ShaderLayout `json:"shaderLayout"`
 
 	Generator            Presence `json:"generator"`
 	CompressedPositions  Presence `json:"compressedPositions"`
@@ -174,6 +177,55 @@ type Probe struct {
 	PosterAlt                       string
 	Err                             error `json:"-"`
 	ChunkErr, PreloadErr, PosterErr error `json:"-"`
+}
+
+// ShaderLayout holds the Selena descriptor fields a page needs to decide
+// whether to advertise the Selena scene lighting chunk.
+type ShaderLayout struct {
+	Context  []string
+	Textures []struct{ Engine string }
+}
+
+// selenaLightingInputs are the Selena engine inputs only the lighting chunk
+// supplies. The classic cameraPos, sunDir, sunColor and ambient are not here:
+// the WebGL renderer supplies those without the chunk.
+var selenaLightingInputs = map[string]bool{
+	"cameraForward": true, "fog": true, "lightCount": true, "lights": true,
+	"shadow0": true, "shadow1": true, "shadowSplits0": true, "shadowSplits1": true,
+	"shadowMatrices0": true, "shadowMatrices1": true, "shadowMap0": true, "shadowMap1": true,
+}
+
+// NeedsSelenaLighting reports whether any Selena material in the scene, in
+// either accepted props shape, reads the scene lighting block.
+func (p *Probe) NeedsSelenaLighting() bool {
+	if p == nil {
+		return false
+	}
+	for _, records := range [][]Record{p.Objects, p.InstancedMeshes, p.Points, p.InstancedGLBMeshes, p.Models, p.Sprites} {
+		for _, record := range records {
+			if record.ShaderLayout.readsSelenaLighting() {
+				return true
+			}
+		}
+	}
+	return p.Scene.NeedsSelenaLighting()
+}
+
+func (l *ShaderLayout) readsSelenaLighting() bool {
+	if l == nil {
+		return false
+	}
+	for _, name := range l.Context {
+		if selenaLightingInputs[name] {
+			return true
+		}
+	}
+	for _, texture := range l.Textures {
+		if selenaLightingInputs[texture.Engine] {
+			return true
+		}
+	}
+	return false
 }
 
 // NeedsDepthFX reports whether the scene declares a decals or motionBlur post

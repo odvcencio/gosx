@@ -40,6 +40,7 @@ build/
 !/docs/shutdown-hooks.md
 !/docs/hub-snapshots.md
 !/docs/deterministic-simulation.md
+!/docs/scene3d-selena.md
 /gosx
 node_modules/
 

@@ -343,6 +343,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err != nil {
 		return err
 	}
+	// Selena artifacts are embedded by Go packages, so write them before any
+	// Go compilation.
+	if err := runSelenaBuildStep(dir, cfg.Build.Selena, os.Stdout); err != nil {
+		return err
+	}
 	islandProgs, gsxFiles := discovery.Programs, discovery.GSXFiles
 	backend := opts.IslandsBackend
 	if backend == "" {
@@ -1532,6 +1537,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DModelPreparation.File)
 	case "/gosx/bootstrap-feature-scene3d-hierarchy.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHierarchy.File)
+	case "/gosx/bootstrap-feature-scene3d-selena-lighting.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DSelenaLighting.File)
 	case "/gosx/bootstrap-feature-scene3d-particle-burst.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
 	case "/gosx/bootstrap-feature-scene3d-depthfx.js":
