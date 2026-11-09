@@ -3,8 +3,8 @@
 // This file is backend-neutral. It decodes the heightmap from scene.TerrainIR,
 // builds the CDLOD quadtree (per-node height bounds), picks patches each frame
 // so the projected geometric error stays under the authored pixel budget, and
-// packs the uniform block both backends read. terrain-gpu.ts (WebGPU) and
-// terrain-gl.ts (WebGL2) draw the selection with the renderer's own PBR
+// packs the uniform block both backends read. terrain-wgsl.ts (WebGPU) and
+// terrain-glsl.ts (WebGL2) draw the selection with the renderer's own PBR
 // fragment, so terrain receives the scene's shadows, fog and image lighting.
 //
 // Grid layout: level 0 is the finest; its vertex spacing is ir.spacing and
@@ -392,4 +392,44 @@ function sceneTerrainFrame(res: any, model: any, camera: any, viewProj: ArrayLik
 
 function sceneTerrainTint(): boolean {
   return typeof window !== "undefined" && (window as any).__gosx_scene3d_terrain_lod_tint === true;
+}
+
+// Environment.Wind (scene/wind.go). The chunk keeps one shared state the
+// renderers read: window.__gosx_scene3d_wind holds wind = (dirX, dirZ, speed,
+// time) and windGust = (gust, gustScale, gustSpeed, frequency). WebGPU copies
+// it to byte 160 of the frame uniforms and into the material block of every
+// batch with a sway; WebGL2 uploads sceneWindFor(batch.wind) as u_wind[3].
+const SCENE_WIND_STATE = new Float32Array(8);
+const SCENE_WIND_BATCH = new Float32Array(12);
+
+function sceneWindUpdate(environment: any, time: number): Float32Array {
+  const wind = environment && environment.wind;
+  const state = SCENE_WIND_STATE;
+  if (!wind) { state.fill(0); state[5] = 1; }
+  else {
+    state[0] = sceneTerrainNumber(wind.directionX, 0); state[1] = sceneTerrainNumber(wind.directionZ, 1);
+    state[2] = sceneTerrainNumber(wind.speed, 4); state[3] = sceneTerrainNumber(time, 0);
+    state[4] = sceneTerrainNumber(wind.gust, 0.35); state[5] = Math.max(1, sceneTerrainNumber(wind.gustScale, 24));
+    state[6] = sceneTerrainNumber(wind.gustSpeed, state[2]); state[7] = sceneTerrainNumber(wind.frequency, 1.3);
+  }
+  if (typeof window !== "undefined") (window as any).__gosx_scene3d_wind = state;
+  return state;
+}
+
+// sceneWindFor returns the 12 floats one swaying batch reads: the shared
+// state followed by (sway, height, 0, 0). No wind or no sway gives zero sway.
+function sceneWindFor(batch: any): Float32Array {
+  SCENE_WIND_BATCH.set(SCENE_WIND_STATE, 0);
+  SCENE_WIND_BATCH[8] = batch && SCENE_WIND_STATE[2] > 0 ? sceneTerrainNumber(batch.sway, 0) : 0;
+  SCENE_WIND_BATCH[9] = Math.max(1e-3, sceneTerrainNumber(batch && batch.height, 1));
+  SCENE_WIND_BATCH[10] = 0; SCENE_WIND_BATCH[11] = 0;
+  return SCENE_WIND_BATCH;
+}
+
+// sceneWindGust mirrors scene.WindIR.gustFactor; the shaders evaluate the same
+// expression per batch vertex.
+function sceneWindGust(state: ArrayLike<number>, x: number, z: number, t: number): number {
+  const along = x * state[0] + z * state[1], across = x * state[1] - z * state[0];
+  const phase = (along - state[6] * t) * (2 * Math.PI) / state[5] + 0.35 * Math.sin(across * (2 * Math.PI) / (state[5] * 1.7));
+  return 1 + state[4] * Math.sin(phase);
 }

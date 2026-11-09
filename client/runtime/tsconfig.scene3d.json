@@ -77,7 +77,7 @@
     "scene3d/model-preparation.ts",
     "scene3d/vessel-instruments.ts",
     "scene3d/terrain.ts",
-    "scene3d/terrain-gpu.ts",
-    "scene3d/terrain-gl.ts"
+    "scene3d/terrain-wgsl.ts",
+    "scene3d/terrain-glsl.ts"
   ]
 }

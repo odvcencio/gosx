@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 const read = (name) => fs.readFileSync(new URL("../runtime/scene3d/" + name, import.meta.url), "utf8");
 const transpile = (source) => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-const code = ["terrain.ts", "terrain-gpu.ts", "terrain-gl.ts"].map((name) => transpile(read(name))).join("\n");
+const code = ["terrain.ts", "terrain-wgsl.ts", "terrain-glsl.ts"].map((name) => transpile(read(name))).join("\n");
 const fixture = JSON.parse(fs.readFileSync(new URL("./testdata/scene3d-terrain-fixture.json", import.meta.url), "utf8"));
 
 function runtime() {
@@ -17,7 +17,8 @@ function runtime() {
   vm.runInContext(code + `
     globalThis.t = { sceneTerrainBuild, sceneTerrainSamples, sceneTerrainBytes, sceneTerrainHeight, sceneTerrainSelect,
       sceneTerrainRanges, sceneTerrainUniforms, sceneTerrainIndices, sceneTerrainPlanes, sceneTerrainFragmentWGSL,
-      sceneTerrainFragmentGLSL, sceneTerrainVertexWGSL, SCENE_TERRAIN_VERTEX_GLSL, sceneTerrainModelFor };`, context);
+      sceneTerrainFragmentGLSL, sceneTerrainVertexWGSL, SCENE_TERRAIN_VERTEX_GLSL, sceneTerrainModelFor,
+      sceneWindUpdate, sceneWindFor, sceneWindGust };`, context);
   return context;
 }
 
@@ -70,7 +71,7 @@ test("node bounds enclose every sample", () => {
   assert.equal(model.normals.at(-1).width, 1);
 });
 
-// patchVertex mirrors vertexMain in terrain-gpu.ts and terrain-gl.ts.
+// patchVertex mirrors vertexMain in terrain-wgsl.ts and terrain-glsl.ts.
 function patchVertex(t, model, uniforms, eye, patch, i, j) {
   const s = uniforms[8], loX = uniforms[0], loZ = uniforms[1], hiX = loX + uniforms[2], hiZ = loZ + uniforms[3];
   let ix = patch[0] + i * patch[2], iz = patch[1] + j * patch[2];
@@ -235,4 +236,40 @@ test("a src terrain fetches its samples once and reports pending until they land
   const model = t.sceneTerrainModelFor(res, ir);
   assert.ok(model && model.columns === ir.columns);
   assert.equal(calls, 1);
+});
+
+test("wind gusts match scene.Wind.Sample from the Go fixture", () => {
+  const { t } = runtime();
+  const state = t.sceneWindUpdate({ wind: fixture.wind }, 0);
+  for (const g of fixture.gusts) {
+    const speed = state[2] * t.sceneWindGust(state, g.X, g.Z, g.T);
+    // The browser state is float32, as the GPU reads it: agree to 1e-5 m/s.
+    assert.ok(Math.abs(speed * state[0] - g.VX) < 1e-5 && Math.abs(speed * state[1] - g.VZ) < 1e-5, `wind at ${g.X},${g.Z},${g.T}`);
+  }
+});
+
+test("wind state packs direction, speed, time and per-batch sway", () => {
+  const context = runtime();
+  const { t } = context;
+  const state = t.sceneWindUpdate({ wind: { directionX: 1, directionZ: 0, speed: 8, gust: 0.2, gustScale: 30, gustSpeed: 6, frequency: 2 } }, 12.5);
+  assert.deepEqual(Array.from(state), [1, 0, 8, 12.5, 0.2, 30, 6, 2].map(Math.fround));
+  assert.equal(context.window.__gosx_scene3d_wind, state);
+  const batch = t.sceneWindFor({ sway: 0.8, height: 0.6 });
+  assert.equal(batch[8], Math.fround(0.8)); assert.equal(batch[9], Math.fround(0.6));
+  assert.equal(t.sceneWindFor(undefined)[8], 0, "an unswayed batch reads zero sway");
+  t.sceneWindUpdate({}, 1);
+  assert.equal(t.sceneWindFor({ sway: 1, height: 1 })[8], 0, "no Environment.Wind means no sway");
+});
+
+test("both renderers sway instanced batches from the shared wind without breaking derived shaders", () => {
+  const gpu = read("webgpu.ts"), gl = read("webgl.ts");
+  assert.match(gpu, /"    let world = gosxWindSway\(model, in\.position\);"/);
+  assert.match(gpu, /@group\(1\) @binding\(0\) var<uniform> material: MaterialUniforms;", "fn gosxWindSway/);
+  assert.match(gpu, /f\.set\(window\.__gosx_scene3d_terrain_api\.windFor\(mat\.wind\), 20\)/);
+  assert.match(gpu, /createMaterialBindGroup\(mesh\.wind \? Object\.assign\(\{\}, mat, \{ wind: mesh\.wind \}\) : mat/);
+  // The GPU-driven variant still finds its model and colour anchors.
+  assert.match(gpu, /"    let model = mat4x4f\(in\.instanceMatrix0, in\.instanceMatrix1, in\.instanceMatrix2, in\.instanceMatrix3\);"/);
+  // The crowd variant still finds its world-position anchor.
+  assert.match(gl, /vec4 worldPos = a_instanceMatrix \* vec4\(a_position, 1\.0\); worldPos\.xyz \+= gosxWindOffset\(a_instanceMatrix, a_position\);/);
+  assert.match(gl, /gl\.uniform4fv\(ip\.uniforms\.wind, window\.__gosx_scene3d_terrain_api\?\.windFor\(mesh\.wind\) \|\| SCENE_NO_CUT\)/);
 });

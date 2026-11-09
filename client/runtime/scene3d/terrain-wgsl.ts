@@ -281,6 +281,8 @@ function sceneTerrainGPUDraw(res: any, pass: any, o: any): string {
   const ir = o.environment && o.environment.terrain;
   let state = "none";
   try {
+    const wind = sceneWindUpdate(o.environment, o.time);
+    if (o.frameBuffer) o.device.queue.writeBuffer(o.frameBuffer, 160, wind);
     if (!ir) { if (res.kind) sceneTerrainGPUDispose(res); return state; }
     sceneTerrainGPUStatic(res, o.device);
     const model = sceneTerrainModelFor(res, ir);

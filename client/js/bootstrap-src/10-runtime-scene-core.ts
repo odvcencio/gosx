@@ -2308,6 +2308,7 @@
         : (Object.prototype.hasOwnProperty.call(current, "pickable") ? sceneBool(current.pickable, true) : undefined),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
+      ...sceneInstancedScatter(item.lodGroup || item.wind ? item : current),
       ...lifecycle,
     };
     // Carry the cached Float32Array view of transforms forward when the
@@ -3233,7 +3234,7 @@
       envMap: text("envMap"),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(has("sky") ? source.sky : base.sky),
-      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null), terrain: has("terrain") ? source.terrain || null : (base.terrain || null),
+      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null), terrain: has("terrain") ? source.terrain || null : (base.terrain || null), wind: has("wind") ? source.wind || null : (base.wind || null),
       haze: sceneIsPlainObject(haze) ? sceneHaze(haze) : null,
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
@@ -3283,7 +3284,7 @@
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
-        ocean: environment.ocean || null, terrain: environment.terrain || null,
+        ocean: environment.ocean || null, terrain: environment.terrain || null, wind: environment.wind || null,
         haze: environment.haze || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
@@ -5136,6 +5137,24 @@
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
+  // Scatter batches (scene/scatter.go) carry a distance band, a cell centre
+  // and an optional wind sway. A banded batch draws while the camera distance
+  // to its centre lies in [lodMinDistance, lodMaxDistance); zero has no limit.
+  function sceneInstancedScatter(item) {
+    const out = item && item.wind ? { wind: { sway: sceneNumber(item.wind.sway, 0), height: sceneNumber(item.wind.height, 1) } } : {};
+    return item && item.lodGroup ? Object.assign(out, { lodGroup: item.lodGroup, lodLevel: item.lodLevel || 0,
+      lodMinDistance: item.lodMinDistance || 0, lodMaxDistance: item.lodMaxDistance || 0, x: item.x || 0, y: item.y || 0, z: item.z || 0 }) : out;
+  }
+
+  function sceneSelectLODInstanced(meshes, camera) {
+    if (!Array.isArray(meshes) || !meshes.some(function(mesh) { return mesh && mesh.lodGroup; })) return meshes;
+    return meshes.filter(function(mesh) {
+      if (!mesh || !mesh.lodGroup) return true;
+      const distance = sceneLODDistance(mesh, camera);
+      return distance + 0.0001 >= mesh.lodMinDistance && (!(mesh.lodMaxDistance > 0) || distance < mesh.lodMaxDistance);
+    });
+  }
+
   function sceneLODLevelActive(entries, distance) {
     let best = null;
     let bestMin = -1;
@@ -5448,7 +5467,7 @@
     for (const entry of html || []) {
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
-    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy);
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, sceneSelectLODInstanced(instancedMeshes, renderCamera), objects, timeSeconds, hierarchy);
     bundle.positions = new Float32Array(bundle.positions);
     bundle.colors = new Float32Array(bundle.colors);
     bundle.vertexCount = bundle.positions.length / 2;

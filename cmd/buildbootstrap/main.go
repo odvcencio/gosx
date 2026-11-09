@@ -735,8 +735,8 @@ var outputs = []output{
 		name: "bootstrap-feature-scene3d-terrain.js",
 		sources: []source{
 			sourceFile("../runtime/scene3d/terrain.ts"),
-			sourceFile("../runtime/scene3d/terrain-gpu.ts"),
-			sourceFile("../runtime/scene3d/terrain-gl.ts"),
+			sourceFile("../runtime/scene3d/terrain-wgsl.ts"),
+			sourceFile("../runtime/scene3d/terrain-glsl.ts"),
 		},
 	},
 	{

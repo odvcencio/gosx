@@ -335,10 +335,21 @@ func TestTerrainBrowserFixture(t *testing.T) {
 		X, Z, Height float64
 		Normal       Vector3
 	}
+	type gust struct {
+		X, Z, T, VX, VZ float64
+	}
+	wind := &Wind{Direction: 30, Speed: 6, Gust: 0.4, GustScale: 20}
 	fixture := struct {
 		Terrain *TerrainIR `json:"terrain"`
 		Queries []query    `json:"queries"`
-	}{Terrain: terrain.SceneIR()}
+		Wind    *WindIR    `json:"wind"`
+		Gusts   []gust     `json:"gusts"`
+	}{Terrain: terrain.SceneIR(), Wind: wind.SceneIR()}
+	for i := 0; i < 12; i++ {
+		x, z, t := float64(i)*7.3-30, float64(i%5)*11.1-20, float64(i)*0.37
+		v := wind.Sample(x, z, t)
+		fixture.Gusts = append(fixture.Gusts, gust{X: x, Z: z, T: t, VX: v.X, VZ: v.Z})
+	}
 	for i := 0; i < 40; i++ {
 		x := -44 + float64(i%8)*12.9 + float64(i)*0.37
 		z := -39 + float64(i/8)*17.3 + float64(i%3)*0.71

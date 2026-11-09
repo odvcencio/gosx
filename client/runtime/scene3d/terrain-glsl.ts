@@ -1,6 +1,6 @@
 // WebGL2 Environment.Terrain pass (lazy chunk bootstrap-feature-scene3d-terrain.js).
 //
-// The twin of terrain-gpu.ts. The renderer calls
+// The twin of terrain-wgsl.ts. The renderer calls
 // window.__gosx_scene3d_terrain_api.webgl once per frame after its opaque
 // meshes. The program pairs the terrain vertex shader with the renderer's own
 // PBR fragment (opts.fragment), patched to read the terrain surface, and the
@@ -261,6 +261,7 @@ function sceneTerrainGLDraw(res: any, gl: any, o: any): string {
   const ir = o.environment && o.environment.terrain;
   let state = "none";
   try {
+    sceneWindUpdate(o.environment, o.time);
     if (!ir) { if (res.kind) sceneTerrainGLDispose(res); return state; }
     sceneTerrainGLStatic(res, gl);
     const model = sceneTerrainModelFor(res, ir);
@@ -328,5 +329,8 @@ if (typeof window !== "undefined") {
     ranges: sceneTerrainRanges,
     samples: sceneTerrainSamples,
     bytes: sceneTerrainBytes,
+    windFor: sceneWindFor,
+    windUpdate: sceneWindUpdate,
+    windGust: sceneWindGust,
   };
 }
