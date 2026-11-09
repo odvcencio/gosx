@@ -102,6 +102,10 @@ const (
 	CloseShutdown = 4009
 	// CloseRateLimited: too many connections from this address.
 	CloseRateLimited = 4029
+	// CloseInternalError (1011, the standard WebSocket code): the room's game
+	// code panicked, so the server closed that room. It is retryable: a
+	// resume finds no room and a quick match starts a new one.
+	CloseInternalError = 1011
 )
 
 // Retryable reports whether a client should try to reconnect after code.

@@ -123,8 +123,13 @@ func TestInviteExpiryAndUses(t *testing.T) {
 
 	exp, _ := svc.CreateInvite(InviteSpec{Group: "g", TTL: time.Minute})
 	clk.Advance(2 * time.Minute)
-	if _, err := svc.Redeem(exp.Code, RedeemOptions{Seat: "t3"}); !errors.Is(err, ErrInviteExpired) {
-		t.Fatalf("err = %v", err)
+	// A guesser cannot tell an expired code from an unknown one; a caller
+	// with a valid device token can.
+	if _, err := svc.Redeem(exp.Code, RedeemOptions{Seat: "t3"}); !errors.Is(err, ErrBadInvite) {
+		t.Fatalf("expired invite, no token: err = %v, want ErrBadInvite", err)
+	}
+	if _, err := svc.Redeem(exp.Code, RedeemOptions{Seat: "t3", Token: a.Token}); !errors.Is(err, ErrInviteExpired) {
+		t.Fatalf("expired invite, valid token: err = %v, want ErrInviteExpired", err)
 	}
 	if n, _ := svc.PurgeExpired(); n != 1 {
 		t.Fatalf("purged %d", n)

@@ -8,6 +8,10 @@
 // LEAGUE_KEYS is the signing ring, newest first: "id:base64secret,id2:...".
 // Add a new key at the front to rotate; keep the old one until clients have
 // refreshed their tokens.
+//
+// Behind a proxy or ingress, set LEAGUE_TRUSTED_PROXIES (or
+// -trusted-proxies) to the proxies' addresses or CIDRs, so the per-address
+// limit on POST /join keys by each player's address instead of the proxy's.
 package main
 
 import (
@@ -17,17 +21,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"m31labs.dev/gosx/examples/rooms/league"
 	"m31labs.dev/gosx/room/identity"
 	"m31labs.dev/gosx/room/store"
+	"m31labs.dev/gosx/server"
 )
 
 func main() {
 	dir := flag.String("dir", envOr("LEAGUE_DIR", "league-data"), "data directory (a persistent volume in Kubernetes)")
 	addr := flag.String("addr", envOr("LEAGUE_ADDR", ":8091"), "listen address")
+	proxies := flag.String("trusted-proxies", envOr("LEAGUE_TRUSTED_PROXIES", ""), "comma-separated proxy addresses or CIDRs whose X-Forwarded-For names the client")
 	flag.Parse()
 
 	keys, err := identity.ParseKeys(os.Getenv("LEAGUE_KEYS"))
@@ -49,7 +56,14 @@ func main() {
 	if err := l.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
-	hs := &http.Server{Addr: *addr, Handler: l, ReadHeaderTimeout: 10 * time.Second}
+	// The gosx App resolves client addresses (server.ClientIP) under the
+	// trusted-proxy policy; with no proxies it uses the TCP peer.
+	app := server.New()
+	if err := app.SetTrustedProxies(server.TrustedProxyPolicy{Proxies: splitList(*proxies)}); err != nil {
+		log.Fatalf("trusted proxies: %v", err)
+	}
+	app.Mount("/", l)
+	hs := &http.Server{Addr: *addr, Handler: app.Build(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -63,6 +77,16 @@ func main() {
 	if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func envOr(k, d string) string {
