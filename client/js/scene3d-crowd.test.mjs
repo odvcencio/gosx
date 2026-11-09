@@ -90,6 +90,12 @@ test("a crowd frame Go encoded decodes to the same fields", () => {
   });
   assert.equal(got.waves.length, 1);
   assert.ok(Math.abs(got.waves[0].start - want.Waves[0].Start) < 1e-5 && Math.abs(got.waves[0].speed - want.Waves[0].Speed) < 1e-6);
+  assert.equal(got.palettes.length, want.Palettes.length);
+  want.Palettes.forEach((p, i) => {
+    assert.equal(got.palettes[i].section, p.Section);
+    assert.deepEqual(Array.from(got.palettes[i].colors), p.Colors);
+    assert.deepEqual(got.palettes[i].accents ? Array.from(got.palettes[i].accents) : null, p.Accents || null);
+  });
 });
 
 test("hash and action table match the Go side", () => {
@@ -166,6 +172,18 @@ test("the palette bakes every action as a closed loop of finite matrices", () =>
   assert.ok(hand(2, 0) > 1.9, "cheer raises the fists");
 });
 
+test("meshes put body triangles before prop triangles", () => {
+  const { c } = runtime();
+  for (const mesh of c.sceneCrowdMeshes(1.75)) {
+    assert.ok(mesh.bodyIndexCount > 0 && mesh.bodyIndexCount < mesh.indexCount && mesh.bodyIndexCount % 3 === 0);
+    for (let i = 0; i < mesh.indexCount; i++) {
+      const kind = mesh.vertices[mesh.indices[i] * 36 + 33];
+      if (i < mesh.bodyIndexCount) assert.ok(kind === 0 || kind === 5, "body index " + i + " kind " + kind);
+      else assert.ok(kind >= 1 && kind <= 4, "prop index " + i + " kind " + kind);
+    }
+  }
+});
+
 test("meshes are closed, outward-wound and use the 11-joint skeleton", () => {
   const { c } = runtime();
   const meshes = c.sceneCrowdMeshes(1.75);
@@ -191,9 +209,10 @@ test("meshes are closed, outward-wound and use the 11-joint skeleton", () => {
   }
 });
 
-function crowdFrame({ crowd = "bowl", now = 0, sections = [], waves = [], replace = false }) {
+function crowdFrame({ crowd = "bowl", now = 0, sections = [], waves = [], replace = false, palettes = [] }) {
   const id = new TextEncoder().encode(crowd);
-  const size = 4 + 2 + id.length + 8 + 2 + sections.length * 42 + 2 + waves.length * 20;
+  const paletteBytes = palettes.reduce((n, p) => n + 2 + 2 + 3 * ((p.colors || []).length + (p.accents || []).length), 0);
+  const size = 4 + 2 + id.length + 8 + 2 + sections.length * 42 + 2 + waves.length * 20 + 2 + paletteBytes;
   const buf = new ArrayBuffer(size), view = new DataView(buf), bytes = new Uint8Array(buf);
   bytes.set([71, 83, 67, 49]); let at = 4;
   view.setUint16(at, id.length, true); at += 2; bytes.set(id, at); at += id.length;
@@ -205,6 +224,14 @@ function crowdFrame({ crowd = "bowl", now = 0, sections = [], waves = [], replac
   }
   bytes[at] = waves.length; bytes[at + 1] = replace ? 1 : 0; at += 2;
   for (const w of waves) { [w.start - now, w.origin, w.speed, w.width, w.laps].forEach((v, k) => view.setFloat32(at + k * 4, v, true)); at += 20; }
+  view.setUint16(at, palettes.length, true); at += 2;
+  for (const p of palettes) {
+    view.setUint16(at, p.section, true); at += 2;
+    for (const list of [p.colors || [], p.accents || []]) {
+      bytes[at++] = list.length;
+      for (const hex of list) { const v = parseInt(hex.slice(1), 16); bytes.set([v >> 16, (v >> 8) & 255, v & 255], at); at += 3; }
+    }
+  }
   return bytes;
 }
 
@@ -233,6 +260,11 @@ test("crowd frames decode strictly and map the sender clock onto the scene clock
   c.sceneCrowdNoteClock(mount, 110);
   c.sceneCrowdApply(mount, crowdFrame({ now: 15.1, sections: [{ section: 2, from: 3, to: 2, blendStart: 15.1, blend: 0.3, excitementFrom: 0.9, excitementTo: 1, rate: 1, epoch: 0, jitter: 0, flags: 4 }] }));
   assert.ok(Math.abs(d[o + 2] - 110.1) < 1e-4, "offset kept: " + d[o + 2]);
+  // A palette frame recolours the named slots and keeps the rest.
+  const accentBefore = Array.from(d.slice(o + 28, o + 31));
+  c.sceneCrowdApply(mount, crowdFrame({ now: 16, palettes: [{ section: 2, colors: ["#ff0000"] }] }));
+  assert.deepEqual(Array.from(d.slice(o + 12, o + 15)).map((v) => Math.round(v * 1000) / 1000), [1, 0, 0], "shirt slot 0 is linear red");
+  assert.deepEqual(Array.from(d.slice(o + 28, o + 31)), accentBefore, "accents kept");
   // The standing flag from the declaration survives frames.
   const standing = ir.sections.findIndex((s) => s.standing);
   assert.ok(standing >= 0);

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 )
 
 // CrowdFrame carries section changes and travelling waves for one mounted
@@ -28,6 +30,18 @@ type CrowdFrame struct {
 	Waves []CrowdWaveFrame
 	// ReplaceWaves stops every running wave before Waves start.
 	ReplaceWaves bool
+	// Palettes recolour sections.
+	Palettes []CrowdPaletteFrame
+}
+
+// CrowdPaletteFrame recolours one section: the i-th colour replaces palette
+// slot i of the section's shirts (Colors) or accents (Accents). Which fans
+// wear which slot stays as the declared weights chose, so a recolour never
+// moves a colour from one fan to another. Nil keeps that palette.
+type CrowdPaletteFrame struct {
+	Section int
+	Colors  []string
+	Accents []string
 }
 
 // CrowdSectionFrame is one section's state: the GPU blends every fan from
@@ -96,6 +110,9 @@ const (
 //	    u8 flags (1 synced, 4 props), u8 0
 //	u8 wave count (at most 4), u8 replace waves (0 or 1),
 //	then per wave (20 bytes): f32 start - now, f32 origin, f32 speed, f32 width, f32 laps
+//	u16 palette count, then per palette: u16 section,
+//	    u8 shirt colour count (0 keeps them, at most 4), 3 sRGB bytes each,
+//	    u8 accent colour count (0 keeps them, at most 4), 3 sRGB bytes each
 //
 // All values are little-endian. Times travel as offsets from now, so a large
 // sender clock keeps millisecond precision.
@@ -170,7 +187,50 @@ func EncodeCrowdFrame(f CrowdFrame) ([]byte, error) {
 		f32(w.Width)
 		f32(w.Laps)
 	}
+	if len(f.Palettes) > CrowdMaxSections {
+		return nil, errors.New("scene: crowd frame has too many palettes")
+	}
+	out = binary.LittleEndian.AppendUint16(out, uint16(len(f.Palettes)))
+	for _, p := range f.Palettes {
+		if p.Section < 0 || p.Section >= CrowdMaxSections {
+			return nil, fmt.Errorf("scene: crowd frame palette section %d out of range", p.Section)
+		}
+		out = binary.LittleEndian.AppendUint16(out, uint16(p.Section))
+		for _, list := range [][]string{p.Colors, p.Accents} {
+			if len(list) > CrowdMaxColors {
+				return nil, fmt.Errorf("scene: crowd frame palette for section %d has more than %d colours", p.Section, CrowdMaxColors)
+			}
+			out = append(out, byte(len(list)))
+			for _, color := range list {
+				rgb, ok := crowdHexRGB(color)
+				if !ok {
+					return nil, fmt.Errorf("scene: crowd frame colour %q is not a hex colour", color)
+				}
+				out = append(out, rgb[0], rgb[1], rgb[2])
+			}
+		}
+	}
 	return out, nil
+}
+
+// crowdHexRGB parses "#rgb" or "#rrggbb".
+func crowdHexRGB(color string) ([3]byte, bool) {
+	hex := strings.TrimPrefix(strings.TrimSpace(color), "#")
+	if len(hex) == 3 {
+		hex = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+	}
+	if len(hex) != 6 {
+		return [3]byte{}, false
+	}
+	var out [3]byte
+	for i := 0; i < 3; i++ {
+		v, err := strconv.ParseUint(hex[i*2:i*2+2], 16, 8)
+		if err != nil {
+			return [3]byte{}, false
+		}
+		out[i] = byte(v)
+	}
+	return out, true
 }
 
 // DecodeCrowdFrame parses a GSC1 frame. Times come back on the sender's
@@ -251,6 +311,36 @@ func DecodeCrowdFrame(data []byte) (CrowdFrame, error) {
 		w.Width = f32()
 		w.Laps = f32()
 		f.Waves = append(f.Waves, w)
+	}
+	if err := need(2); err != nil {
+		return f, err
+	}
+	palettes := int(binary.LittleEndian.Uint16(data[at:]))
+	at += 2
+	for i := 0; i < palettes; i++ {
+		if err := need(2); err != nil {
+			return f, err
+		}
+		p := CrowdPaletteFrame{Section: int(binary.LittleEndian.Uint16(data[at:]))}
+		at += 2
+		for _, list := range []*[]string{&p.Colors, &p.Accents} {
+			if err := need(1); err != nil {
+				return f, err
+			}
+			n := int(data[at])
+			at++
+			if n > CrowdMaxColors {
+				return f, errors.New("scene: crowd frame palette has more than four colours")
+			}
+			if err := need(3 * n); err != nil {
+				return f, err
+			}
+			for k := 0; k < n; k++ {
+				*list = append(*list, fmt.Sprintf("#%02x%02x%02x", data[at], data[at+1], data[at+2]))
+				at += 3
+			}
+		}
+		f.Palettes = append(f.Palettes, p)
 	}
 	if at != len(data) {
 		return f, errors.New("scene: crowd frame has trailing bytes")

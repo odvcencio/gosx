@@ -257,7 +257,7 @@ func crowdBowlLoop(s CrowdStandIR) ([]crowdPiece, float64) {
 		{px: s.CenterX - a, pz: s.CenterZ + bz, tx: 0, tz: -1, nx: -1, nz: 0, length: 2 * bz},
 		{corner: true, cx: s.CenterX - ax, cz: s.CenterZ - bz, radius: c, angle: det.Pi, sign: 1, length: crowdMul(half, c)},
 		{px: s.CenterX - ax, pz: s.CenterZ - b, tx: 1, tz: 0, nx: 0, nz: -1, length: 2 * ax},
-		{corner: true, cx: s.CenterX + ax, cz: s.CenterZ - bz, radius: c, angle: 3 * half, sign: 1, length: crowdMul(half, c)},
+		{corner: true, cx: s.CenterX + ax, cz: s.CenterZ - bz, radius: c, angle: crowdMul(3, half), sign: 1, length: crowdMul(half, c)},
 		{px: s.CenterX + a, pz: s.CenterZ - bz, tx: 0, tz: 1, nx: 1, nz: 0, length: bz},
 	}
 	out := make([]crowdPiece, 0, len(raw))

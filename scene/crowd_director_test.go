@@ -18,12 +18,13 @@ func TestCrowdFrameRoundTrip(t *testing.T) {
 	in := CrowdFrame{Crowd: "bowl", Now: 3600.25, ReplaceWaves: true,
 		Sections: []CrowdSectionFrame{{Section: 7, From: CrowdIdle, To: CrowdClap, BlendStart: 3600.5, Blend: 0.4, ExcitementFrom: 0.2, ExcitementTo: 0.8, Rate: 1.5, Synced: true, Epoch: 3599, Jitter: 0.04, Props: true}},
 		Waves:    []CrowdWaveFrame{{Start: 3601, Origin: 0.25, Speed: -0.08, Width: 0.035, Laps: 2}},
+		Palettes: []CrowdPaletteFrame{{Section: 3, Colors: []string{"#c8102e", "#fff"}}},
 	}
 	data, err := EncodeCrowdFrame(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := 4 + 2 + 4 + 8 + 2 + 42 + 2 + 20; len(data) != want {
+	if want := 4 + 2 + 4 + 8 + 2 + 42 + 2 + 20 + 2 + 2 + 1 + 6 + 1; len(data) != want {
 		t.Fatalf("frame is %d bytes, want %d", len(data), want)
 	}
 	out, err := DecodeCrowdFrame(data)
@@ -36,6 +37,12 @@ func TestCrowdFrameRoundTrip(t *testing.T) {
 	if out.Crowd != "bowl" || out.Now != in.Now || !out.ReplaceWaves || s.Section != 7 || s.From != CrowdIdle || s.To != CrowdClap ||
 		math.Abs(s.BlendStart-3600.5) > 1e-6 || math.Abs(s.Epoch-3599) > 1e-6 || !s.Synced || !s.Props || math.Abs(s.Rate-1.5) > 1e-6 {
 		t.Fatalf("section round trip: %+v", s)
+	}
+	if p := out.Palettes; len(p) != 1 || p[0].Section != 3 || len(p[0].Colors) != 2 || p[0].Colors[0] != "#c8102e" || p[0].Colors[1] != "#ffffff" || p[0].Accents != nil {
+		t.Fatalf("palette round trip: %+v", p)
+	}
+	if _, err := EncodeCrowdFrame(CrowdFrame{Crowd: "x", Palettes: []CrowdPaletteFrame{{Colors: []string{"red"}}}}); err == nil {
+		t.Fatal("encoded a named colour")
 	}
 	w := out.Waves[0]
 	if math.Abs(w.Start-3601) > 1e-6 || math.Abs(w.Speed+0.08) > 1e-6 || w.Laps != 2 {
@@ -168,5 +175,29 @@ func TestCrowdWavesAndProps(t *testing.T) {
 	}
 	if s := d.Frame(202).Sections[0]; s.Section != 3 || s.Props {
 		t.Fatalf("props frame: %+v", s)
+	}
+}
+
+func TestCrowdPaletteRecolorsSections(t *testing.T) {
+	d := mustDirector(t)
+	if err := d.SetPalette(5, []string{"#002147", "#a3c1ad"}, nil, "lower"); err != nil {
+		t.Fatal(err)
+	}
+	f := d.Frame(5)
+	if len(f.Palettes) != 24 || f.Palettes[0].Colors[0] != "#002147" || f.Palettes[0].Accents[0] != "#f2c14e" {
+		t.Fatalf("palette frame: %d palettes, first %+v", len(f.Palettes), f.Palettes[0])
+	}
+	if len(d.Frame(6).Palettes) != 0 {
+		t.Fatal("a palette was sent twice")
+	}
+	full := d.FullFrame(7)
+	if len(full.Palettes) != 44 || full.Palettes[0].Colors[0] != "#002147" || full.Palettes[30].Colors[0] != "#c8102e" {
+		t.Fatalf("full frame palettes: %+v / %+v", full.Palettes[0], full.Palettes[30])
+	}
+	if err := d.SetPalette(8, []string{"#1", "#2", "#3", "#4", "#5"}, nil); err == nil {
+		t.Fatal("five colours were accepted")
+	}
+	if err := d.SetPalette(8, []string{"blue"}, nil); err == nil {
+		t.Fatal("a named colour was accepted")
 	}
 }

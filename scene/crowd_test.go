@@ -409,6 +409,9 @@ func crowdFixtureData(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	director.StartWave(42, CrowdWave{Origin: 0.6, Speed: -0.09, Laps: 2})
+	if err := director.SetPalette(42, []string{"#0a1b2c", "#d4e5f6"}, nil, "upper-7"); err != nil {
+		t.Fatal(err)
+	}
 	fixture.FrameFields = director.Frame(42.5)
 	if fixture.Frame, err = EncodeCrowdFrame(fixture.FrameFields); err != nil {
 		t.Fatal(err)
@@ -458,5 +461,28 @@ func TestCrowdHashMatchesReference(t *testing.T) {
 	}
 	if crowdHash(0) != 0 {
 		t.Fatalf("crowdHash(0) = %#x, want 0", crowdHash(0))
+	}
+}
+
+func TestCrowdMaterialsLowerLikeMeshMaterials(t *testing.T) {
+	plain, err := testCrowdBowl(1).IR()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Material.Fan["color"] != "#ffffff" || plain.Material.Fan["roughness"] != 0.85 || plain.Material.Props["roughness"] != 0.7 || plain.Material.LightGlow != 1.5 {
+		t.Fatalf("default materials: %+v", plain.Material)
+	}
+	crowd := testCrowdBowl(1)
+	selena := instancedGLBSelenaMaterial()
+	crowd.Material = CrowdMaterial{Fan: selena, Props: StandardMaterial{Color: "#eeeeee", Roughness: 0.4, Sheen: 0.6}, LightGlow: 3}
+	ir, err := crowd.IR()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ir.Material.Fan["shaderBackend"] != "selena" || ir.Material.Fan["customFragment"] != selena.FragmentGLSL {
+		t.Fatalf("the Selena fan material lost its shader record: %v", ir.Material.Fan["shaderBackend"])
+	}
+	if ir.Material.Props["sheen"] != 0.6 || ir.Material.LightGlow != 3 {
+		t.Fatalf("prop material: %+v", ir.Material.Props)
 	}
 }

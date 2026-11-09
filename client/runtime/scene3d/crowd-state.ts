@@ -156,8 +156,26 @@ function sceneCrowdDecode(input: any): any {
     waves.push({ start: now + view.getFloat32(at, true), origin: view.getFloat32(at + 4, true), speed: view.getFloat32(at + 8, true), width: view.getFloat32(at + 12, true), laps: view.getFloat32(at + 16, true) });
     at += 20;
   }
+  need(2);
+  const paletteCount = view.getUint16(at, true); at += 2;
+  const palettes = [];
+  function colors(): string[] | null {
+    need(1);
+    const n = bytes[at]; at += 1;
+    if (n > 4) throw new Error("crowd frame palette has more than four colours");
+    need(3 * n);
+    const out = [];
+    for (let k = 0; k < n; k++, at += 3) out.push("#" + [bytes[at], bytes[at + 1], bytes[at + 2]].map(function(c: number) { return (c < 16 ? "0" : "") + c.toString(16); }).join(""));
+    return n ? out : null;
+  }
+  for (let i = 0; i < paletteCount; i++) {
+    need(2);
+    const section = view.getUint16(at, true); at += 2;
+    const shirts = colors(), accents = colors();
+    palettes.push({ section, colors: shirts, accents });
+  }
   if (at !== bytes.length) throw new Error("crowd frame has trailing bytes");
-  return { crowd, now, sections, waves, replaceWaves: replace };
+  return { crowd, now, sections, waves, replaceWaves: replace, palettes };
 }
 
 // sceneCrowdOffset maps a sender time to the mount's scene clock.
@@ -182,6 +200,12 @@ function sceneCrowdApplyDecoded(mount: any, frame: any): boolean {
     d[o + 4] = e.excitementFrom; d[o + 5] = e.excitementTo; d[o + 6] = e.rate > 0 ? e.rate : 1;
     d[o + 7] = declared | (e.flags & (SCENE_CROWD_FLAG_SYNC | SCENE_CROWD_FLAG_PROPS));
     d[o + 8] = e.epoch + offset; d[o + 9] = e.jitter; d[o + 10] = e.excitementStart + offset; d[o + 11] = Math.max(0.001, e.excitementRamp);
+  }
+  for (const p of frame.palettes || []) {
+    if (p.section >= n) continue;
+    const o = p.section * SCENE_CROWD_SECTION_TEXELS * 4;
+    if (p.colors) p.colors.forEach(function(color: string, k: number) { store.sections.set(sceneCrowdLinear(color).concat(1), o + (3 + k) * 4); });
+    if (p.accents) p.accents.forEach(function(color: string, k: number) { store.sections.set(sceneCrowdLinear(color).concat(1), o + (7 + k) * 4); });
   }
   if (frame.replaceWaves) store.waves.fill(0);
   for (const w of frame.waves) {

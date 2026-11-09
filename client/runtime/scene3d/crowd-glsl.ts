@@ -172,9 +172,14 @@ function sceneCrowdGLShader(gl: any, type: number, source: string): any {
   return shader;
 }
 
-function sceneCrowdGLProgram(res: any, gl: any, o: any, tier: number): any {
-  if (res.programs[tier]) return res.programs[tier];
-  const pbr = typeof o.fragment === "function" ? o.fragment() : o.fragment;
+// sceneCrowdGLProgram builds one program per level of detail and fragment
+// source. The renderer's hook answers o.fragment(material) with the PBR
+// fragment that material needs (a Selena surface material splices its
+// surface in), so fans and props share a program when their materials do.
+function sceneCrowdGLProgram(res: any, gl: any, o: any, tier: number, material: any): any {
+  const pbr = typeof o.fragment === "function" ? o.fragment(material) : o.fragment;
+  const key = tier + "|" + String(pbr || "");
+  if (res.programs.has(key)) return res.programs.get(key);
   const vertex = sceneCrowdGLShader(gl, gl.VERTEX_SHADER, SCENE_CROWD_GLSL_VERTEX.replace("precision highp int;", "precision highp int;\n#define CROWD_TIER " + tier));
   const fragment = sceneCrowdGLShader(gl, gl.FRAGMENT_SHADER, sceneCrowdFragmentGLSL(String(pbr || "")));
   const program = gl.createProgram();
@@ -190,8 +195,9 @@ function sceneCrowdGLProgram(res: any, gl: any, o: any, tier: number): any {
   uniforms.crowd = gl.getUniformLocation(program, "u_crowd[0]") || gl.getUniformLocation(program, "u_crowd");
   uniforms.crowdPalette = gl.getUniformLocation(program, "u_crowdPalette");
   uniforms.crowdSections = gl.getUniformLocation(program, "u_crowdSections");
-  res.programs[tier] = { program, uniforms };
-  return res.programs[tier];
+  const entry = { program, uniforms };
+  res.programs.set(key, entry);
+  return entry;
 }
 
 function sceneCrowdGLTexture(gl: any, width: number, height: number, data: Float32Array): any {
@@ -277,7 +283,7 @@ function sceneCrowdGLDispose(gl: any): void {
   if (!res) return;
   sceneCrowdGLResources.delete(gl);
   for (const gpu of res.crowds.values()) sceneCrowdGLDisposeCrowd(gl, gpu);
-  for (const entry of res.programs) if (entry) gl.deleteProgram(entry.program);
+  for (const entry of res.programs.values()) gl.deleteProgram(entry.program);
   if (res.meshes) for (const mesh of res.meshes) { gl.deleteBuffer(mesh.vbo); gl.deleteBuffer(mesh.ibo); gl.deleteVertexArray(mesh.vao); }
   if (res.palette) gl.deleteTexture(res.palette);
 }
@@ -297,7 +303,7 @@ function sceneCrowdGLDraw(gl: any, o: any): string {
   }
   let res = sceneCrowdGLResources.get(gl);
   if (!res) {
-    res = { crowds: new Map(), programs: [null, null, null], ext: gl.getExtension("WEBGL_draw_instanced_base_vertex_base_instance") };
+    res = { crowds: new Map(), programs: new Map(), ext: gl.getExtension("WEBGL_draw_instanced_base_vertex_base_instance") };
     const combined = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS), fragmentUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
     res.units = combined - 4 >= fragmentUnits ? [combined - 4, combined - 3] : [fragmentUnits - 2, fragmentUnits - 1];
     sceneCrowdGLResources.set(gl, res);
@@ -317,26 +323,32 @@ function sceneCrowdGLDraw(gl: any, o: any): string {
       const pick = sceneCrowdSelect(gpu, gpu.packed, ir, o);
       stats.fans += gpu.packed.count; stats.full += pick.fans[0]; stats.low += pick.fans[1]; stats.impostor += pick.fans[2];
       sceneCrowdUniforms(ir, store, res.bake, gpu.model, now, gpu.uniforms);
+      const materials = sceneCrowdMaterials(ir);
       for (let tier = 0; tier < 3; tier++) {
         const ranges = pick.ranges[tier];
         if (!ranges.length) continue;
-        const program = sceneCrowdGLProgram(res, gl, o, tier), u = program.uniforms, mesh = res.meshes[tier];
-        gl.useProgram(program.program);
-        if (typeof o.prepare === "function") o.prepare(u, { color: "#ffffff", roughness: Number(ir.material && ir.material.roughness) || 0.85, metalness: 0 });
-        if (u.receiveShadow) gl.uniform1i(u.receiveShadow, ir.receiveShadow === false ? 0 : 1);
-        gl.uniform4fv(u.crowd, gpu.uniforms);
-        gl.activeTexture(gl.TEXTURE0 + res.units[0]); gl.bindTexture(gl.TEXTURE_2D, res.palette); gl.uniform1i(u.crowdPalette, res.units[0]);
-        gl.activeTexture(gl.TEXTURE0 + res.units[1]); gl.bindTexture(gl.TEXTURE_2D, gpu.sections); gl.uniform1i(u.crowdSections, res.units[1]);
-        gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL);
-        gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
+        const mesh = res.meshes[tier];
         gl.bindVertexArray(mesh.vao);
         gl.bindBuffer(gl.ARRAY_BUFFER, gpu.instances);
         for (let a = 5; a < 10; a++) { gl.enableVertexAttribArray(a); gl.vertexAttribDivisor(a, 1); }
         if (res.ext) sceneCrowdGLInstanceAttributes(gl, 0);
-        for (let r = 0; r < ranges.length; r += 2) {
-          if (res.ext) res.ext.drawElementsInstancedBaseVertexBaseInstanceWEBGL(gl.TRIANGLES, mesh.indexCount, gl.UNSIGNED_SHORT, 0, ranges[r + 1], 0, ranges[r]);
-          else { sceneCrowdGLInstanceAttributes(gl, ranges[r] * 32); gl.drawElementsInstanced(gl.TRIANGLES, mesh.indexCount, gl.UNSIGNED_SHORT, 0, ranges[r + 1]); }
-          stats.draws++;
+        // Bodies with the fan material, then props with the prop material.
+        for (const [material, first, count] of [[materials.fan, 0, mesh.bodyIndexCount], [materials.props, mesh.bodyIndexCount, mesh.indexCount - mesh.bodyIndexCount]]) {
+          const program = sceneCrowdGLProgram(res, gl, o, tier, material), u = program.uniforms;
+          gl.useProgram(program.program);
+          if (typeof o.prepare === "function") o.prepare(u, material);
+          if (typeof o.surface === "function") o.surface(program, material);
+          if (u.receiveShadow) gl.uniform1i(u.receiveShadow, ir.receiveShadow === false ? 0 : 1);
+          gl.uniform4fv(u.crowd, gpu.uniforms);
+          gl.activeTexture(gl.TEXTURE0 + res.units[0]); gl.bindTexture(gl.TEXTURE_2D, res.palette); gl.uniform1i(u.crowdPalette, res.units[0]);
+          gl.activeTexture(gl.TEXTURE0 + res.units[1]); gl.bindTexture(gl.TEXTURE_2D, gpu.sections); gl.uniform1i(u.crowdSections, res.units[1]);
+          gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL);
+          gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
+          for (let r = 0; r < ranges.length; r += 2) {
+            if (res.ext) res.ext.drawElementsInstancedBaseVertexBaseInstanceWEBGL(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, first * 2, ranges[r + 1], 0, ranges[r]);
+            else { sceneCrowdGLInstanceAttributes(gl, ranges[r] * 32); gl.drawElementsInstanced(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, first * 2, ranges[r + 1]); }
+            stats.draws++;
+          }
         }
       }
     }

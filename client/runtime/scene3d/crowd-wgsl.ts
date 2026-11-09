@@ -203,7 +203,32 @@ function sceneCrowdGPUStatic(device: any, height: number): any {
 }
 
 function sceneCrowdGPUDisposeCrowd(gpu: any): void {
-  for (const key of ["instances", "uniform", "sections", "material"]) { if (gpu[key]) gpu[key].destroy(); gpu[key] = null; }
+  for (const key of ["instances", "uniform", "sections"]) { if (gpu[key]) gpu[key].destroy(); gpu[key] = null; }
+  for (const side of gpu.sides || []) if (side.buffer) side.buffer.destroy();
+  gpu.sides = [];
+}
+
+// sceneCrowdGPUMaterial uploads one material (fans or props) and returns its
+// bind group on the renderer's material layout.
+function sceneCrowdGPUMaterial(res: any, device: any, gpu: any, o: any, index: number, material: any, receiveShadow: boolean): any {
+  gpu.sides = gpu.sides || [];
+  const side = gpu.sides[index] || (gpu.sides[index] = {});
+  const uniform = o.material(material, receiveShadow);
+  const data = uniform && uniform.data;
+  if (!side.buffer || side.size !== data.byteLength) {
+    if (side.buffer) side.buffer.destroy();
+    side.buffer = device.createBuffer({ label: "gosx-crowd-material", size: Math.max(256, data.byteLength), usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    side.size = data.byteLength; side.group = null;
+  }
+  device.queue.writeBuffer(side.buffer, 0, data);
+  if (!side.group || side.layout !== o.materialLayout) {
+    const entries: any[] = [{ binding: 0, resource: { buffer: side.buffer } }];
+    for (let i = 0; i < 9; i++) entries.push({ binding: 2 * i + 1, resource: res.whiteView }, { binding: 2 * i + 2, resource: res.sampler });
+    entries.push({ binding: 19, resource: { buffer: res.slot, size: 112 } });
+    side.group = device.createBindGroup({ label: "gosx-crowd-material", layout: o.materialLayout, entries });
+    side.layout = o.materialLayout;
+  }
+  return side.group;
 }
 
 function sceneCrowdGPUDispose(device: any): void {
@@ -236,26 +261,21 @@ function sceneCrowdGPUCrowd(res: any, device: any, ir: any, store: any, o: any):
     device.queue.writeTexture({ texture: gpu.sections }, store.sections, { bytesPerRow: SCENE_CROWD_SECTION_TEXELS * 16, rowsPerImage: ir.sections.length }, [SCENE_CROWD_SECTION_TEXELS, ir.sections.length, 1]);
     gpu.version = store.version;
   }
-  const material = o.material({ color: "#ffffff", roughness: Number(ir.material && ir.material.roughness) || 0.85, metalness: 0 }, ir.receiveShadow !== false);
-  const data = material && material.data;
-  if (!gpu.material || gpu.materialSize !== data.byteLength) {
-    if (gpu.material) gpu.material.destroy();
-    gpu.material = device.createBuffer({ label: "gosx-crowd-material", size: Math.max(256, data.byteLength), usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    gpu.materialSize = data.byteLength; gpu.materialGroup = null;
-  }
-  device.queue.writeBuffer(gpu.material, 0, data);
-  if (!gpu.materialGroup || gpu.materialLayout !== o.materialLayout) {
-    const entries: any[] = [{ binding: 0, resource: { buffer: gpu.material } }];
-    for (let i = 0; i < 9; i++) entries.push({ binding: 2 * i + 1, resource: res.whiteView }, { binding: 2 * i + 2, resource: res.sampler });
-    entries.push({ binding: 19, resource: { buffer: res.slot, size: 112 } });
-    gpu.materialGroup = device.createBindGroup({ label: "gosx-crowd-material", layout: o.materialLayout, entries });
-    gpu.materialLayout = o.materialLayout;
-  }
+  const materials = sceneCrowdMaterials(ir);
+  gpu.fanGroup = sceneCrowdGPUMaterial(res, device, gpu, o, 0, materials.fan, ir.receiveShadow !== false);
+  gpu.propsGroup = sceneCrowdGPUMaterial(res, device, gpu, o, 1, materials.props, ir.receiveShadow !== false);
   return gpu;
 }
 
-function sceneCrowdGPUPipeline(res: any, o: any, tier: number): any {
-  const key = tier + "|" + o.format + "|" + o.samples + "|" + (o.specular ? 1 : 0);
+// sceneCrowdGPUPipeline keys pipelines by level of detail, target and the
+// fragment the hook gives for the material (o.fragment may be a string, or a
+// function of the material for Selena surface materials).
+function sceneCrowdGPUPipeline(res: any, o: any, tier: number, material: any): any {
+  const fragment = String((typeof o.fragment === "function" ? o.fragment(material) : o.fragment) || "");
+  if (!res.fragmentIDs) { res.fragmentIDs = new Map(); res.fragmentModules = new Map(); }
+  let fragmentID = res.fragmentIDs.get(fragment);
+  if (fragmentID === undefined) { fragmentID = res.fragmentIDs.size; res.fragmentIDs.set(fragment, fragmentID); }
+  const key = tier + "|" + fragmentID + "|" + o.format + "|" + o.samples + "|" + (o.specular ? 1 : 0);
   let pipeline = res.pipelines.get(key);
   if (pipeline) return pipeline;
   const device = o.device;
@@ -263,9 +283,10 @@ function sceneCrowdGPUPipeline(res: any, o: any, tier: number): any {
     res.vertexModule = device.createShaderModule({ label: "gosx-crowd-vert", code: sceneCrowdVertexWGSL(o.frameStructs) });
     res.vertexSource = o.frameStructs;
   }
-  if (!res.fragmentModule || res.fragmentSource !== o.fragment) {
-    res.fragmentModule = device.createShaderModule({ label: "gosx-crowd-frag", code: sceneCrowdFragmentWGSL(o.fragment) });
-    res.fragmentSource = o.fragment;
+  let fragmentModule = res.fragmentModules.get(fragmentID);
+  if (!fragmentModule) {
+    fragmentModule = device.createShaderModule({ label: "gosx-crowd-frag", code: sceneCrowdFragmentWGSL(fragment) });
+    res.fragmentModules.set(fragmentID, fragmentModule);
   }
   const targets = o.specular ? [{ format: o.format }, { format: "rgba16float" }] : [{ format: o.format }];
   const descriptor = {
@@ -281,7 +302,7 @@ function sceneCrowdGPUPipeline(res: any, o: any, tier: number): any {
         { shaderLocation: 7, offset: 20, format: "uint16x2" }, { shaderLocation: 8, offset: 24, format: "uint8x4" },
         { shaderLocation: 9, offset: 28, format: "uint8x4" }] },
     ] },
-    fragment: { module: res.fragmentModule, entryPoint: o.specular ? "fragmentMainSpecular" : "fragmentMain", targets },
+    fragment: { module: fragmentModule, entryPoint: o.specular ? "fragmentMainSpecular" : "fragmentMain", targets },
     primitive: { topology: "triangle-list", cullMode: "back", frontFace: "ccw" },
     multisample: { count: Math.max(1, o.samples | 0) },
     depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
@@ -313,21 +334,25 @@ function sceneCrowdGPUDraw(pass: any, o: any): string {
       const pick = sceneCrowdSelect(gpu, gpu.packed, ir, o);
       stats.fans += gpu.packed.count; stats.full += pick.fans[0]; stats.low += pick.fans[1]; stats.impostor += pick.fans[2];
       o.device.queue.writeBuffer(gpu.uniform, 0, sceneCrowdUniforms(ir, store, res.bake, gpu.model, now, gpu.uniforms));
+      const materials = sceneCrowdMaterials(ir);
       for (let tier = 0; tier < 3; tier++) {
         const ranges = pick.ranges[tier];
         if (!ranges.length) continue;
-        const pipeline = sceneCrowdGPUPipeline(res, o, tier);
-        const validation = o.validation && o.validation.get(pipeline);
-        if (validation && !validation.ready) { stats.state = "pending"; continue; }
         const mesh = res.meshes[tier];
-        pass.setPipeline(validation && validation.pipeline || pipeline);
-        pass.setBindGroup(0, o.frameGroup);
-        pass.setBindGroup(1, gpu.materialGroup, [0]);
-        pass.setBindGroup(2, gpu.group);
-        pass.setVertexBuffer(0, mesh.vbo);
-        pass.setVertexBuffer(1, gpu.instances);
-        pass.setIndexBuffer(mesh.ibo, "uint16");
-        for (let r = 0; r < ranges.length; r += 2) { pass.drawIndexed(mesh.indexCount, ranges[r + 1], 0, 0, ranges[r]); stats.draws++; }
+        // Bodies with the fan material, then props with the prop material.
+        for (const [material, group, first, count] of [[materials.fan, gpu.fanGroup, 0, mesh.bodyIndexCount], [materials.props, gpu.propsGroup, mesh.bodyIndexCount, mesh.indexCount - mesh.bodyIndexCount]]) {
+          const pipeline = sceneCrowdGPUPipeline(res, o, tier, material);
+          const validation = o.validation && o.validation.get(pipeline);
+          if (validation && !validation.ready) { stats.state = "pending"; continue; }
+          pass.setPipeline(validation && validation.pipeline || pipeline);
+          pass.setBindGroup(0, o.frameGroup);
+          pass.setBindGroup(1, group, [0]);
+          pass.setBindGroup(2, gpu.group);
+          pass.setVertexBuffer(0, mesh.vbo);
+          pass.setVertexBuffer(1, gpu.instances);
+          pass.setIndexBuffer(mesh.ibo, "uint16");
+          for (let r = 0; r < ranges.length; r += 2) { pass.drawIndexed(count, ranges[r + 1], first, 0, ranges[r]); stats.draws++; }
+        }
       }
     }
     const res = sceneCrowdGPUResources.get(o.device);

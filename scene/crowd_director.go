@@ -31,6 +31,8 @@ type CrowdDirector struct {
 	waves    []CrowdWaveFrame
 	pending  []CrowdWaveFrame
 	replace  bool
+	palettes []CrowdPaletteFrame
+	recolor  []bool
 	// Blend is the seconds an action change takes. Zero means 0.4.
 	Blend float64
 }
@@ -81,8 +83,11 @@ func NewCrowdDirector(crowd Crowd) (*CrowdDirector, error) {
 		sections: make([]crowdSectionState, len(ir.Sections)),
 		layout:   layout.Sections,
 		dirty:    make([]bool, len(ir.Sections)),
+		palettes: make([]CrowdPaletteFrame, len(ir.Sections)),
+		recolor:  make([]bool, len(ir.Sections)),
 	}
 	for i, s := range ir.Sections {
+		d.palettes[i] = CrowdPaletteFrame{Section: i, Colors: append([]string(nil), s.Colors...), Accents: append([]string(nil), s.Accents...)}
 		d.ids[s.ID] = i
 		stand := ir.Stands[s.Stand].ID
 		d.stands[stand] = append(d.stands[stand], i)
@@ -222,6 +227,36 @@ func (d *CrowdDirector) RaiseProps(t float64, raised bool, selectors ...string) 
 	return d.each(selectors, func(s *crowdSectionState) { s.props = raised })
 }
 
+// SetPalette recolours the selected sections from the next frame: the i-th
+// colour replaces palette slot i (see CrowdPaletteFrame). Nil keeps a
+// palette. Use it to dress one bowl in the colours of whoever plays.
+func (d *CrowdDirector) SetPalette(t float64, colors, accents []string, selectors ...string) error {
+	for _, list := range [][]string{colors, accents} {
+		if len(list) > CrowdMaxColors {
+			return fmt.Errorf("scene: crowd palettes hold at most %d colours", CrowdMaxColors)
+		}
+		for _, color := range list {
+			if _, ok := crowdHexRGB(color); !ok {
+				return fmt.Errorf("scene: crowd colour %q is not a hex colour", color)
+			}
+		}
+	}
+	indices, err := d.resolve(selectors)
+	if err != nil {
+		return err
+	}
+	for _, i := range indices {
+		if colors != nil {
+			d.palettes[i].Colors = append([]string(nil), colors...)
+		}
+		if accents != nil {
+			d.palettes[i].Accents = append([]string(nil), accents...)
+		}
+		d.recolor[i] = true
+	}
+	return nil
+}
+
 // StartWave sends a travelling wave round the crowd from t. Sections declared
 // NoWave stay seated. A page runs at most four waves at once.
 func (d *CrowdDirector) StartWave(t float64, wave CrowdWave) {
@@ -299,6 +334,12 @@ func (d *CrowdDirector) Frame(t float64) CrowdFrame {
 		}
 	}
 	f.Waves, d.pending, d.replace = d.pending, nil, false
+	for i, changed := range d.recolor {
+		if changed {
+			f.Palettes = append(f.Palettes, d.palettes[i])
+			d.recolor[i] = false
+		}
+	}
 	return f
 }
 
@@ -310,6 +351,7 @@ func (d *CrowdDirector) FullFrame(t float64) CrowdFrame {
 	for i := range d.sections {
 		f.Sections = append(f.Sections, d.sectionFrame(i))
 	}
+	f.Palettes = append([]CrowdPaletteFrame(nil), d.palettes...)
 	return f
 }
 
@@ -318,8 +360,8 @@ func (d *CrowdDirector) Changed() bool {
 	if len(d.pending) > 0 || d.replace {
 		return true
 	}
-	for _, dirty := range d.dirty {
-		if dirty {
+	for i, dirty := range d.dirty {
+		if dirty || d.recolor[i] {
 			return true
 		}
 	}

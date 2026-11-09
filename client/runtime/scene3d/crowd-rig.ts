@@ -266,7 +266,10 @@ function sceneCrowdProps(b: SceneCrowdMeshBuilder, flat: boolean): void {
   sceneCrowdBox(b, [-0.41, 1.45, 0.03], [0.36, 0.24, 0.015], [6], 3, 4, flat);
 }
 
-function sceneCrowdFinish(b: SceneCrowdMeshBuilder, height: number): any {
+// sceneCrowdFinish packs a mesh. bodyIndexCount splits its indices: body
+// triangles first (drawn with the fan material), then props (the prop
+// material).
+function sceneCrowdFinish(b: SceneCrowdMeshBuilder, height: number, bodyIndexCount: number): any {
   const k = height / 1.75, count = b.v.length / 12;
   const bytes = new ArrayBuffer(count * SCENE_CROWD_VERTEX_BYTES);
   const f32 = new Float32Array(bytes), u8 = new Uint8Array(bytes);
@@ -278,7 +281,7 @@ function sceneCrowdFinish(b: SceneCrowdMeshBuilder, height: number): any {
     u8[u + 28] = 255; u8[u + 29] = 0; u8[u + 30] = 0; u8[u + 31] = 0;
     u8[u + 32] = b.v[s + 8]; u8[u + 33] = b.v[s + 9]; u8[u + 34] = 0; u8[u + 35] = 0;
   }
-  return { vertices: new Uint8Array(bytes), indices: new Uint16Array(b.i), vertexCount: count, indexCount: b.i.length };
+  return { vertices: new Uint8Array(bytes), indices: new Uint16Array(b.i), vertexCount: count, indexCount: b.i.length, bodyIndexCount };
 }
 
 // sceneCrowdMeshes builds the full, low and impostor meshes for a fan of the
@@ -296,19 +299,38 @@ function sceneCrowdMeshes(height: number): any[] {
     sceneCrowdBox(full, [0.1 * side, 0.27, 0], [0.13, 0.46, 0.14], [shin], 2, 0, true);
     sceneCrowdBox(full, [0.1 * side, 0.03, 0.05], [0.12, 0.06, 0.24], [shin], 2, 0, true);
   }
+  const fullBody = full.i.length;
   sceneCrowdProps(full, true);
   const low: SceneCrowdMeshBuilder = { v: [], i: [] };
   sceneCrowdBox(low, [0, 1.2, 0], [0.38, 0.5, 0.22], [1], 0, 0, false);
   sceneCrowdBox(low, [0, 1.62, 0.01], [0.21, 0.27, 0.23], [2], 1, 0, false);
   for (const side of [1, -1]) sceneCrowdBox(low, [0.22 * side, 1.14, 0], [0.1, 0.58, 0.1], side > 0 ? [3, 4] : [5, 6], 0, 0, false);
   sceneCrowdBox(low, [0, 0.49, 0], [0.32, 0.9, 0.16], [7, 8], 2, 0, false);
+  const lowBody = low.i.length;
   sceneCrowdProps(low, false);
   const imp: SceneCrowdMeshBuilder = { v: [], i: [] };
   sceneCrowdQuad(imp, -0.2, 0.05, 0.2, 1.45, 0, [1, 8], 0, 0);
   sceneCrowdQuad(imp, -0.11, 1.47, 0.11, 1.75, 0.01, [2], 1, 0);
   sceneCrowdQuad(imp, 0.17, 0.86, 0.27, 1.43, 0.005, [3, 4], 0, 0);
   sceneCrowdQuad(imp, -0.27, 0.86, -0.17, 1.43, 0.005, [5, 6], 0, 0);
+  const impBody = imp.i.length;
   sceneCrowdQuad(imp, -0.6, 1.33, -0.2, 1.6, 0.02, [6], 3, 4);
   sceneCrowdQuad(imp, -0.3, 0.76, -0.12, 0.94, 0.02, [6], 4, 1);
-  return [sceneCrowdFinish(full, height), sceneCrowdFinish(low, height), sceneCrowdFinish(imp, height)];
+  return [sceneCrowdFinish(full, height, fullBody), sceneCrowdFinish(low, height, lowBody), sceneCrowdFinish(imp, height, impBody)];
+}
+
+// sceneCrowdMaterials returns the fan and prop material records the renderer
+// hooks upload, with the crowd defaults under the authored fields.
+const sceneCrowdMaterialCache = new WeakMap<object, any>();
+function sceneCrowdMaterials(ir: any): any {
+  let cached = sceneCrowdMaterialCache.get(ir);
+  if (!cached) {
+    const m = ir.material || {};
+    cached = {
+      fan: Object.assign({ materialKind: "standard", color: "#ffffff", roughness: 0.85, metalness: 0 }, m.fan || {}),
+      props: Object.assign({ materialKind: "standard", color: "#ffffff", roughness: 0.7, metalness: 0 }, m.props || {}),
+    };
+    sceneCrowdMaterialCache.set(ir, cached);
+  }
+  return cached;
 }

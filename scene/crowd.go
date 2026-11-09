@@ -227,20 +227,21 @@ type CrowdLOD struct {
 	MaxFull int
 }
 
-// CrowdMaterial sets the surfaces of fans and props. Both draw with the
-// renderer's standard lighting: scene lights, received shadows, fog, exposure
-// and tone mapping. Fan colours multiply the base colour.
+// CrowdMaterial sets the surfaces of fans and of their props. Both draw
+// through the renderer's standard PBR shading: scene lights, received
+// shadows, fog, image light, exposure and tone mapping. Each fan's palette
+// colour reaches the material as its instance colour, which multiplies the
+// base colour, so a white material shows the palette as written.
 type CrowdMaterial struct {
-	// Roughness of skin and clothing. Zero means 0.85.
-	Roughness float64
-	// PropRoughness of scarves, towels and banners. Zero means 0.7.
-	PropRoughness float64
+	// Fan shades bodies, Props shades scarves, towels, banners and lights.
+	// Either is a StandardMaterial or a Selena surface material (from
+	// MaterialFromSelenaArtifact, whose material returns a Surface; it reads
+	// the fan's colour as geo.color). Nil Fan is white with roughness 0.85;
+	// nil Props is white with roughness 0.7. See docs/scene3d-crowd.md for
+	// where Selena surface materials apply today.
+	Fan, Props Material
 	// LightGlow is the emissive strength of handheld lights. Zero means 1.5.
 	LightGlow float64
-	// Surface optionally names a Selena surface material (a CustomMaterial
-	// whose material returns a Surface) that shades fan bodies through the
-	// renderer's material hook; see docs/scene3d-crowd.md for its status.
-	Surface *CustomMaterial
 }
 
 // Crowd limits. The browser enforces the same limits.
@@ -337,13 +338,12 @@ type CrowdLODIR struct {
 	MaxFull    int     `json:"maxFull"`
 }
 
-// CrowdMaterialIR is the normalized material.
+// CrowdMaterialIR is the normalized material: each side is the material's
+// browser record, as a Mesh's material is lowered.
 type CrowdMaterialIR struct {
-	Roughness     float64         `json:"roughness"`
-	PropRoughness float64         `json:"propRoughness"`
-	LightGlow     float64         `json:"lightGlow"`
-	Surface       *CustomMaterial `json:"-"`
-	SurfaceProps  map[string]any  `json:"surface,omitempty"`
+	Fan       map[string]any `json:"fan"`
+	Props     map[string]any `json:"props"`
+	LightGlow float64        `json:"lightGlow"`
 }
 
 const crowdThresholdOne = 1 << 24
@@ -447,16 +447,13 @@ func normalizeCrowdLOD(lod CrowdLOD) CrowdLODIR {
 }
 
 func normalizeCrowdMaterial(m CrowdMaterial) CrowdMaterialIR {
-	out := CrowdMaterialIR{
-		Roughness:     clampUnit(positiveOr(m.Roughness, 0.85)),
-		PropRoughness: clampUnit(positiveOr(m.PropRoughness, 0.7)),
-		LightGlow:     positiveOr(m.LightGlow, 1.5),
-		Surface:       m.Surface,
+	side := func(material Material, roughness float64) map[string]any {
+		if material == nil {
+			material = StandardMaterial{Color: "#ffffff", Roughness: roughness}
+		}
+		return material.legacyMaterial()
 	}
-	if m.Surface != nil {
-		out.SurfaceProps = m.Surface.legacyMaterial()
-	}
-	return out
+	return CrowdMaterialIR{Fan: side(m.Fan, 0.85), Props: side(m.Props, 0.7), LightGlow: positiveOr(m.LightGlow, 1.5)}
 }
 
 func normalizeCrowdStand(index int, s CrowdStand) (CrowdStandIR, error) {
@@ -505,7 +502,7 @@ func normalizeCrowdStand(index int, s CrowdStand) (CrowdStandIR, error) {
 	case CrowdShapeArc:
 		out.CenterX, out.CenterZ = s.Center.X, s.Center.Z
 		out.Radius, out.StartAngle, out.EndAngle = s.Radius, s.StartAngle, s.EndAngle
-		if out.Radius <= 0 || det.Abs(float64(out.EndAngle-out.StartAngle)*out.Radius) < out.SeatWidth {
+		if out.Radius <= 0 || det.Abs(crowdMul(out.EndAngle-out.StartAngle, out.Radius)) < out.SeatWidth {
 			return CrowdStandIR{}, fmt.Errorf("scene: crowd arc stand %q needs a radius and an angle span", out.ID)
 		}
 	case CrowdShapeBowl:
