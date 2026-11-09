@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 // Package serve holds the server-side helpers of package game: driving a
 // game.Runtime from a sim.Runner over a hub, and mounting a runtime's engine
 // in a server-rendered page.
