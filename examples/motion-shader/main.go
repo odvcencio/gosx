@@ -17,14 +17,21 @@ import (
 	"m31labs.dev/gosx/server"
 )
 
-//go:embed tide.sel
-var shader []byte
+// tide.sel.json is built from tide.sel at build time (gosx selena build
+// examples/motion-shader), so this program links no Selena compiler.
+//
+//go:embed tide.sel.json
+var tideArtifact []byte
 
 //go:embed style.css
 var style string
 
 func main() {
-	material, _, err := scene.CompileSelenaMaterial(shader, scene.SelenaMaterialOptions{})
+	artifact, err := scene.DecodeSelenaArtifact(tideArtifact)
+	if err != nil {
+		log.Fatal(err)
+	}
+	material, _, err := scene.MaterialFromSelenaArtifact(artifact, scene.SelenaMaterialOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -2021,20 +2021,16 @@ test("P1 hub outbound binding: signal publishes to socket and in-binding still w
 test("Selena context-class fields resolve to live per-frame scene state on WebGL", () => {
   const webgl = readSceneRendererBackendSrc("webgl");
 
-  // The per-frame updater exists and derives every reserved name from real
-  // scene state: camera, the
-  // first directional light (negated into toward-light form), its
-  // color x intensity, and environment ambient color x intensity.
-  assert.match(webgl, /function sceneSelenaFrameContextUpdate\(cam, lights, environment\)/);
-  assert.match(webgl, /cameraPos: \[[\s\S]{0,140}sceneNumber\(cam && cam\.z, 0\)/);
-  assert.doesNotMatch(webgl, /-sceneNumber\(cam && cam\.z, 0\)/);
-  assert.match(webgl, /if \(String\(light\.kind \|\| ""\)\.toLowerCase\(\) !== "directional"\) continue;/);
-  assert.match(webgl, /sunDir = \[-dx \/ len, -dy \/ len, -dz \/ len\];/);
-  assert.match(webgl, /ambientRGBA\[0\] \* ambientIntensity/);
+  // The per-frame updater fills the shared Selena lighting record from real
+  // scene state: the camera, every light, both shadow slots (with WebGL's
+  // clip-to-texture mapping) and the environment. The record's values are
+  // tested in scene3d-selena-lighting.test.js.
+  assert.match(webgl, /function sceneSelenaFrameContextUpdate\(cam, bundle, view\)/);
+  assert.match(webgl, /sceneSelenaFrameLighting\(textureCache, cam, view, bundle, shadowSlots, shadowLightIndices, null, "gl"\)/);
 
   // It refreshes once per frame in the lights block, OUTSIDE hasPBRData —
   // Selena-only scenes still get live context.
-  assert.match(webgl, /sceneSelenaFrameContextUpdate\(cam, bundle\.lights, bundle\.environment\);/);
+  assert.match(webgl, /sceneSelenaFrameContextUpdate\(cam, bundle, viewMatrix\);/);
 
   // selenaUniformValue consults it for context-class fields AFTER the
   // reserved auto-uniforms (time keeps winning) and BEFORE customUniforms
@@ -2042,13 +2038,10 @@ test("Selena context-class fields resolve to live per-frame scene state on WebGL
   // context names falling through.
   const uniformFn = webgl.slice(webgl.indexOf("function selenaUniformValue"));
   const timeAt = uniformFn.indexOf("sceneSelenaAutoUniformValue(name, sceneSelenaFrameTime, sceneSelenaFrameProximity)");
-  const contextAt = uniformFn.indexOf('field.class === "context"');
+  const contextAt = uniformFn.indexOf("sceneSelenaLightingValue(sceneSelenaFrameContext, field)");
   const customAt = uniformFn.indexOf("material.customUniforms");
   assert.ok(timeAt >= 0 && contextAt > timeAt && customAt > contextAt,
     "context branch must sit between the time auto-uniform and customUniforms");
-  for (const name of ["cameraPos", "sunDir", "sunColor", "ambient"]) {
-    assert.match(uniformFn, new RegExp(`if \\(name === "${name}"\\) return sceneSelenaFrameContext\\.${name};`));
-  }
 });
 
 // Regression guard: cylinder, cone and pyramid drew as wireframes.

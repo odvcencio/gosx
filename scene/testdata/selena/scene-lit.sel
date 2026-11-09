@@ -1,0 +1,41 @@
+// A mesh material lit by the renderer's scene lights: every light in the scene,
+// both directional shadow slots with their cascades, and fog. Build it with the
+// lighting module linked:
+//
+//     selena artifact -modules lighting examples/scene-lit.sel
+//
+// In GoSX, list "lighting" in build.selena.modules (gosx.config.json).
+material SceneLit {
+    context {
+        cameraPos       : vec3
+        cameraForward   : vec3
+        ambient         : vec3
+        fog             : vec4
+        lightCount      : float
+        lights          : array<vec4, 32>
+        shadow0         : vec4
+        shadow1         : vec4
+        shadowSplits0   : vec4
+        shadowSplits1   : vec4
+        shadowMatrices0 : array<vec4, 16>
+        shadowMatrices1 : array<vec4, 16>
+        shadowMap0      : textureDepth2dArray
+        shadowMap1      : textureDepth2dArray
+    }
+    param albedo    : color = rgb(0.72, 0.64, 0.52)
+    param shininess : float = 48.0
+    param specular  : float = 0.25
+
+    surface(geo) -> color {
+        let n = normalize(geo.worldNormal)
+        let v = normalize(cameraPos - geo.worldPos)
+        let s0 = mlShadow0(geo.worldPos)
+        let s1 = mlShadow1(geo.worldPos)
+        var lit = ambient * albedo
+        for (var i = 0i; i < 8i; i = i + 1i) {
+            let shadow = mlLightShadow(i, s0, s1)
+            lit = lit + (albedo * mlLightDiffuse(i, n, geo.worldPos) + specular * mlLightSpecular(i, n, v, geo.worldPos, shininess)) * shadow
+        }
+        return mlFog(lit, geo.worldPos)
+    }
+}
