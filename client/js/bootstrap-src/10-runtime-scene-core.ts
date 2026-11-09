@@ -3233,7 +3233,7 @@
       envMap: text("envMap"),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(has("sky") ? source.sky : base.sky),
-      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null),
+      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null), terrain: has("terrain") ? source.terrain || null : (base.terrain || null),
       haze: sceneIsPlainObject(haze) ? sceneHaze(haze) : null,
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
@@ -3283,7 +3283,7 @@
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
-        ocean: environment.ocean || null,
+        ocean: environment.ocean || null, terrain: environment.terrain || null,
         haze: environment.haze || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),

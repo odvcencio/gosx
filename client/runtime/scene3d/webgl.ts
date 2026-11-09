@@ -7705,7 +7705,7 @@
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
     var transmissionResources = sceneCreateTransmissionWebGL(gl);
     var frameLinear = false;
     const programPreparation: ScenePBRPreparationHooks = { ensureSelenaProgram, ensureSkinnedProgram, ensureCustomProgram,
@@ -8948,7 +8948,7 @@
           return surface && !(surface.sourceKind === "html" && !surface.textureReady);
         }));
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         retireInstancedStreams();
         return "empty";
@@ -9217,7 +9217,7 @@
       applyDepthMode(gl, "opaque");
       drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta?.frameRequest);
       } // end if (hasPBRData)
-      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque"); window.__gosx_scene3d_terrain_api?.webgl(terrainResources, gl, { environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix, viewMatrix), height: renderH, textureCache: textureCache, load: scenePBRLoadTexture, uniforms: scenePBRCacheBaseUniforms, fragment: () => scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), program: program, mount: canvas.parentNode, prepare: (u, m) => { gl.uniformMatrix4fv(u.viewMatrix, false, viewMatrix); gl.uniformMatrix4fv(u.projectionMatrix, false, projMatrix); gl.uniform3f(u.cameraPosition, cam.x, cam.y, cam.z); scenePBRUploadExposure(gl, u, bundle.environment, frameLinear); scenePBRUploadLights(gl, u, bundle.lights, bundle.environment, _frameLightsHash); scenePBRUploadEnvironmentMap(gl, u, bundle.environment, textureCache, shadowSlots, shadowLightIndices); scenePBRUploadShadowUniforms(gl, u, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache); uploadMaterial(gl, u, m, textureCache); } });
       const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
       sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: sceneSelenaFrameTime, quality: frameMeta?.oceanTier,
         meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
@@ -10996,7 +10996,7 @@
     function dispose() {
       sceneWebGLDisposeDetail(gl, detailResources);
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources);
-      if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
+      if (oceanResources.renderer) oceanResources.renderer.dispose(); terrainResources.dispose?.(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       transmissionResources.dispose();
       scenePBRDisposeProgramQueue(gl);

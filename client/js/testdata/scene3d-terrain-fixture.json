@@ -1,0 +1,451 @@
+{
+ "terrain": {
+  "id": "terrain",
+  "columns": 33,
+  "rows": 25,
+  "heights": "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",
+  "minX": -44,
+  "minZ": -39,
+  "sizeX": 96,
+  "sizeZ": 72,
+  "baseY": -6,
+  "heightScale": 30,
+  "minHeight": -6,
+  "maxHeight": 24,
+  "levels": 1,
+  "spacing": 3,
+  "lodErrors": [
+   0
+  ],
+  "pixelError": 1,
+  "triplanarSlope": 35,
+  "layers": [
+   {
+    "color": "#556b2f",
+    "roughness": 0.9,
+    "scale": 4,
+    "minHeight": -1000000,
+    "maxHeight": 1000000,
+    "minSlope": 0,
+    "maxSlope": 90,
+    "heightBlend": 2,
+    "slopeBlend": 6
+   },
+   {
+    "color": "#8a8a8a",
+    "roughness": 0.9,
+    "scale": 4,
+    "minHeight": -1000000,
+    "maxHeight": 1000000,
+    "minSlope": 30,
+    "maxSlope": 90,
+    "heightBlend": 2,
+    "slopeBlend": 6
+   }
+  ],
+  "castShadow": true,
+  "receiveShadow": true
+ },
+ "queries": [
+  {
+   "X": -44,
+   "Z": -39,
+   "Height": 14.258182650492106,
+   "Normal": {
+    "x": -0.2670103705681515,
+    "y": 0.4920844948026951,
+    "z": -0.8285881437625298
+   }
+  },
+  {
+   "X": -30.73,
+   "Z": -38.29,
+   "Height": 17.934172579537655,
+   "Normal": {
+    "x": 0.1967946178917449,
+    "y": 0.9635099419416174,
+    "z": -0.18143999048859952
+   }
+  },
+  {
+   "X": -17.46,
+   "Z": -37.58,
+   "Height": 16.645136186770433,
+   "Normal": {
+    "x": -0.007989269865192428,
+    "y": 0.6797494526426975,
+    "z": -0.7334008816458938
+   }
+  },
+  {
+   "X": -4.189999999999998,
+   "Z": -39,
+   "Height": 21.901309224078727,
+   "Normal": {
+    "x": 0.7262581044323422,
+    "y": 0.6777426355376079,
+    "z": 0.11495253681793229
+   }
+  },
+  {
+   "X": 9.080000000000002,
+   "Z": -38.29,
+   "Height": 3.533342488746463,
+   "Normal": {
+    "x": -0.5970594854275137,
+    "y": 0.6495324310368794,
+    "z": -0.4707733976047861
+   }
+  },
+  {
+   "X": 22.35,
+   "Z": -37.58,
+   "Height": 3.563303578240628,
+   "Normal": {
+    "x": -0.35468684185636384,
+    "y": 0.8515820436499497,
+    "z": -0.3860120038896894
+   }
+  },
+  {
+   "X": 35.620000000000005,
+   "Z": -39,
+   "Height": 8.856113527122913,
+   "Normal": {
+    "x": -0.22433421614021956,
+    "y": 0.9389114223311915,
+    "z": -0.2609971273496548
+   }
+  },
+  {
+   "X": 48.89,
+   "Z": -38.29,
+   "Height": 13.45999237048905,
+   "Normal": {
+    "x": 0.08292496436850462,
+    "y": 0.7552685575855387,
+    "z": -0.6501483340032043
+   }
+  },
+  {
+   "X": -41.04,
+   "Z": -20.28,
+   "Height": -1.9906187533379098,
+   "Normal": {
+    "x": 0.21423697588560797,
+    "y": 0.859421372116392,
+    "z": 0.46421700024123125
+   }
+  },
+  {
+   "X": -27.770000000000003,
+   "Z": -21.7,
+   "Height": 1.254493018997482,
+   "Normal": {
+    "x": -0.13187919093987854,
+    "y": 0.8958829211105128,
+    "z": 0.424266037598507
+   }
+  },
+  {
+   "X": -14.5,
+   "Z": -20.99,
+   "Height": 6.836964980544746,
+   "Normal": {
+    "x": 0.12431164965394488,
+    "y": 0.8346032868646619,
+    "z": 0.5366413768197694
+   }
+  },
+  {
+   "X": -1.2299999999999969,
+   "Z": -20.28,
+   "Height": 8.362377355611507,
+   "Normal": {
+    "x": -0.5235253414744949,
+    "y": 0.8506133941461324,
+    "z": -0.04876546455443574
+   }
+  },
+  {
+   "X": 12.040000000000001,
+   "Z": -21.7,
+   "Height": 15.490806439307239,
+   "Normal": {
+    "x": -0.4487751112085137,
+    "y": 0.6059863004480726,
+    "z": -0.6567963940438808
+   }
+  },
+  {
+   "X": 25.31,
+   "Z": -20.99,
+   "Height": 19.50032959487296,
+   "Normal": {
+    "x": 0.5547280436164383,
+    "y": 0.7935009758615409,
+    "z": -0.2502658565051594
+   }
+  },
+  {
+   "X": 38.580000000000005,
+   "Z": -20.28,
+   "Height": 10.114445716029614,
+   "Normal": {
+    "x": -0.26864608735498313,
+    "y": 0.6780905283253231,
+    "z": -0.6841217107681519
+   }
+  },
+  {
+   "X": 51.849999999999994,
+   "Z": -21.7,
+   "Height": 9.765110246433201,
+   "Normal": {
+    "x": 0.2597534734245147,
+    "y": 0.9652403137167802,
+    "z": 0.028970153949049303
+   }
+  },
+  {
+   "X": -38.08,
+   "Z": -3.6899999999999986,
+   "Height": 5.217492942702377,
+   "Normal": {
+    "x": -0.6208513762381206,
+    "y": 0.5447389838876914,
+    "z": -0.5637401955300307
+   }
+  },
+  {
+   "X": -24.810000000000002,
+   "Z": -2.9799999999999986,
+   "Height": 3.0103089951934034,
+   "Normal": {
+    "x": -0.47451476447078517,
+    "y": 0.7253303935892341,
+    "z": -0.49872994539622534
+   }
+  },
+  {
+   "X": -11.54,
+   "Z": -4.399999999999999,
+   "Height": 8.918785381857022,
+   "Normal": {
+    "x": 0.35753619917559876,
+    "y": 0.9336413767883459,
+    "z": -0.021946430867646475
+   }
+  },
+  {
+   "X": 1.730000000000003,
+   "Z": -3.6899999999999986,
+   "Height": 5.211192492561228,
+   "Normal": {
+    "x": -0.21640542739568577,
+    "y": 0.7518107433240819,
+    "z": -0.6228557595592915
+   }
+  },
+  {
+   "X": 15.000000000000002,
+   "Z": -2.9799999999999986,
+   "Height": 15.195129320210576,
+   "Normal": {
+    "x": -0.3969264298882862,
+    "y": 0.9134260546269951,
+    "z": 0.09001251015665132
+   }
+  },
+  {
+   "X": 28.27,
+   "Z": -4.399999999999999,
+   "Height": 15.890002288853289,
+   "Normal": {
+    "x": -0.2037964772659334,
+    "y": 0.8864164505858114,
+    "z": 0.41561144352008345
+   }
+  },
+  {
+   "X": 41.540000000000006,
+   "Z": -3.6899999999999986,
+   "Height": 11.707058823529408,
+   "Normal": {
+    "x": 0.558274129842799,
+    "y": 0.54419923975167,
+    "z": -0.6262405156183765
+   }
+  },
+  {
+   "X": 54.809999999999995,
+   "Z": -2.9799999999999986,
+   "Height": 10.939375906004425,
+   "Normal": {
+    "x": -0.23509590799176447,
+    "y": 0.7582538606064054,
+    "z": -0.6080962069615381
+   }
+  },
+  {
+   "X": -35.120000000000005,
+   "Z": 12.900000000000006,
+   "Height": 22.702421606774994,
+   "Normal": {
+    "x": 0.5419325142227975,
+    "y": 0.8345054083060761,
+    "z": -0.09954834773147526
+   }
+  },
+  {
+   "X": -21.85,
+   "Z": 13.610000000000007,
+   "Height": 1.6993942168307026,
+   "Normal": {
+    "x": 0.6237893819846525,
+    "y": 0.7585022303723984,
+    "z": -0.18857670440248542
+   }
+  },
+  {
+   "X": -8.58,
+   "Z": 14.320000000000006,
+   "Height": -1.166533913176175,
+   "Normal": {
+    "x": -0.7614638699401364,
+    "y": 0.6001932112957045,
+    "z": 0.24482827428698062
+   }
+  },
+  {
+   "X": 4.690000000000003,
+   "Z": 12.900000000000006,
+   "Height": 16.22255436026551,
+   "Normal": {
+    "x": 0.5708835883504572,
+    "y": 0.8163918301556279,
+    "z": 0.08715680241524508
+   }
+  },
+  {
+   "X": 17.96,
+   "Z": 13.610000000000007,
+   "Height": 9.795912108033875,
+   "Normal": {
+    "x": 0.12255336291959305,
+    "y": 0.9331898589549689,
+    "z": -0.33784221225404
+   }
+  },
+  {
+   "X": 31.23,
+   "Z": 14.320000000000006,
+   "Height": 13.074288548104079,
+   "Normal": {
+    "x": 0.28588155375656255,
+    "y": 0.950541738799018,
+    "z": -0.12141721468833395
+   }
+  },
+  {
+   "X": 44.50000000000001,
+   "Z": 12.900000000000006,
+   "Height": 18.39661249713893,
+   "Normal": {
+    "x": -0.07417108432420914,
+    "y": 0.9501768268041726,
+    "z": -0.30275839881748023
+   }
+  },
+  {
+   "X": 57.769999999999996,
+   "Z": 13.610000000000007,
+   "Height": 17.414239719233997,
+   "Normal": {
+    "x": 0.09303806436166276,
+    "y": 0.8529208583871734,
+    "z": 0.5136827113188865
+   }
+  },
+  {
+   "X": -32.16,
+   "Z": 31.620000000000005,
+   "Height": 9.03046005951019,
+   "Normal": {
+    "x": -0.0368447764978063,
+    "y": 0.9502615311488644,
+    "z": -0.30926604220871473
+   }
+  },
+  {
+   "X": -18.89,
+   "Z": 30.200000000000003,
+   "Height": 1.1257007705806092,
+   "Normal": {
+    "x": 0.8117151990517538,
+    "y": 0.4959303139506505,
+    "z": -0.3084988806028002
+   }
+  },
+  {
+   "X": -5.619999999999999,
+   "Z": 30.910000000000004,
+   "Height": -0.45978637369343023,
+   "Normal": {
+    "x": -0.7991450804952153,
+    "y": 0.586285549209715,
+    "z": 0.13280208999921128
+   }
+  },
+  {
+   "X": 7.650000000000002,
+   "Z": 31.620000000000005,
+   "Height": 18.000918593118186,
+   "Normal": {
+    "x": -0.5617229512456356,
+    "y": 0.6907003569890968,
+    "z": -0.45541227794057937
+   }
+  },
+  {
+   "X": 20.92,
+   "Z": 30.200000000000003,
+   "Height": 14.330479896238653,
+   "Normal": {
+    "x": 0.05764283697937616,
+    "y": 0.9548593587187728,
+    "z": 0.29141192222032214
+   }
+  },
+  {
+   "X": 34.19,
+   "Z": 30.910000000000004,
+   "Height": 7.281966887922488,
+   "Normal": {
+    "x": 0.3671052751438144,
+    "y": 0.6679241034423155,
+    "z": 0.6473879123078862
+   }
+  },
+  {
+   "X": 47.46000000000001,
+   "Z": 31.620000000000005,
+   "Height": 6.536317998016319,
+   "Normal": {
+    "x": -0.10595737823096141,
+    "y": 0.8375961072274406,
+    "z": 0.535915847084091
+   }
+  },
+  {
+   "X": 60.73,
+   "Z": 30.200000000000003,
+   "Height": 6.729900053406578,
+   "Normal": {
+    "x": 0.08452176317400625,
+    "y": 0.9500858970659772,
+    "z": 0.3003212608962187
+   }
+  }
+ ]
+}

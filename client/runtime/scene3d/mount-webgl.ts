@@ -2100,7 +2100,7 @@
   // drawing Gerstner waves, and a failed fetch is not retried on every schedule.
   var sceneOceanFFTRequested = false;
   function requestSceneOceanFFTIfNeeded(state) {
-    if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
+    if (state?.environment?.terrain && !window.__gosx_scene3d_terrain_api) ensureSceneGatedFeatureLoaded("terrain", "gosxScene3dTerrainUrl", "/gosx/bootstrap-feature-scene3d-terrain.js").catch(function() {}); if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
     sceneOceanFFTRequested = true;
     ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", "").catch(function() {});
   }
@@ -2121,7 +2121,7 @@
   // settleSceneComputeFeature awaits the compute chunk before the first
   // render when the scene needs it. Await it next to settlePreferredWebGLBackend
   // so the first frame draws the particles instead of skipping them.
-  async function settleSceneComputeFeature(state) {
+  async function settleSceneComputeFeature(state) { if (state?.environment?.terrain && !window.__gosx_scene3d_terrain_api) await ensureSceneGatedFeatureLoaded("terrain", "gosxScene3dTerrainUrl", "/gosx/bootstrap-feature-scene3d-terrain.js").catch(function() {});
     if (!sceneNeedsComputeFeature(state)) {
       return false;
     }

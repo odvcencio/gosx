@@ -75,6 +75,9 @@
     "scene3d/webgl-specular-bloom.ts",
     "scene3d/webgpu-specular-bloom.ts",
     "scene3d/model-preparation.ts",
-    "scene3d/vessel-instruments.ts"
+    "scene3d/vessel-instruments.ts",
+    "scene3d/terrain.ts",
+    "scene3d/terrain-gpu.ts",
+    "scene3d/terrain-gl.ts"
   ]
 }

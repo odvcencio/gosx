@@ -729,6 +729,17 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/mount-pan.ts"), sourceFile("../runtime/scene3d/mount-zoom.ts")},
 	},
 	{
+		// Environment.Terrain: the CDLOD selection and both backend passes.
+		// Fetched only when a scene declares environment.terrain; the
+		// renderers call it through window.__gosx_scene3d_terrain_api.
+		name: "bootstrap-feature-scene3d-terrain.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/terrain.ts"),
+			sourceFile("../runtime/scene3d/terrain-gpu.ts"),
+			sourceFile("../runtime/scene3d/terrain-gl.ts"),
+		},
+	},
+	{
 		// Grounded controls ship only for scenes with an authored Walk contract.
 		name:    "bootstrap-feature-scene3d-walk.js",
 		sources: []source{sourceFile("../runtime/scene3d/walk-surfaces.ts"), sourceFile("../runtime/scene3d/walk-input.ts"), sourceFile("../runtime/scene3d/mount-walk.ts")},
