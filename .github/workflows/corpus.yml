@@ -1,0 +1,54 @@
+name: corpus
+
+# Builds, vets and tests the public GoSX consumers (gridiron-2000, cicada)
+# against this checkout. Private consumers need a token hosted CI does not
+# have; the integrator runs them locally before each release with
+# scripts/corpus/run.sh (see scripts/corpus/README.md).
+
+on:
+  pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'client/**'
+      - 'scripts/corpus/**'
+      - '.github/workflows/corpus.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: corpus-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  public-consumers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out GoSX
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run corpus (public consumers, with baseline)
+        env:
+          CORPUS_ROOT: ${{ runner.temp }}/gosx-corpus
+          TMPDIR: ${{ runner.temp }}
+          CORPUS_BUDGET: '3000'
+        run: scripts/corpus/run.sh -g "$GITHUB_WORKSPACE" -c gridiron-2000,cicada -b
+
+      - name: Upload matrix and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-matrix
+          path: ${{ runner.temp }}/gosx-corpus/*/
+          if-no-files-found: ignore

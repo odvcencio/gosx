@@ -881,7 +881,7 @@ func (c *plainCodec) State(*Runtime) []byte           { return nil }
 // describe a state that the runtime never reached.
 func TestRunnerRestoreKeepsFrameWhenRuntimeRefuses(t *testing.T) {
 	rt := midRun(t)
-	runner := NewRunner(hub.New("refused"), rt, sim.Options{})
+	runner := sim.New(hub.New("refused"), rt, sim.Options{})
 	runner.Restore(7, rt.Snapshot())
 	if runner.Frame() != 7 {
 		t.Fatalf("a good snapshot left the runner at frame %d", runner.Frame())
@@ -902,7 +902,7 @@ func TestRunnerRestoreKeepsFrameWhenRuntimeRefuses(t *testing.T) {
 func TestRunnerRestoreSnapshotReportsRefusal(t *testing.T) {
 	rt := midRun(t)
 	good := rt.Snapshot()
-	runner := NewRunner(hub.New("checked"), rt, sim.Options{})
+	runner := sim.New(hub.New("checked"), rt, sim.Options{})
 	if err := runner.RestoreSnapshot(7, good); err != nil {
 		t.Fatal(err)
 	}
@@ -929,7 +929,7 @@ func TestRunnerRestoreSnapshotReportsRefusal(t *testing.T) {
 func TestRunnerRestoreSnapshotWhileRunning(t *testing.T) {
 	rt := midRun(t)
 	snapshot := rt.Snapshot()
-	runner := NewRunner(hub.New("running"), rt, sim.Options{TickRate: 1000})
+	runner := sim.New(hub.New("running"), rt, sim.Options{TickRate: 1000})
 	runner.Start()
 	defer runner.Stop()
 	deadline := time.Now().Add(150 * time.Millisecond)

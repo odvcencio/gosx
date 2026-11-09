@@ -1,0 +1,3 @@
+# consumer	check	reason (a failing check listed here does not fail the run; remove the row once the consumer is fixed)
+gridiron-2000	test	app/admin tests GET "/" and expect a session cookie; GoSX v0.57.2 (#430) sets none for anonymous reads. Consumer must create the session first.
+caribbean-dominoes	test	cache tests run in development mode; GoSX serves hashed Go WASM no-cache outside production. Consumer tests must set APP_ENV=production.
