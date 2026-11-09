@@ -21,6 +21,7 @@ import (
 	"time"
 
 	cdppage "github.com/chromedp/cdproto/page"
+	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"m31labs.dev/gosx/internal/chrometest"
 	"m31labs.dev/gosx/internal/humanoidtest"
@@ -461,11 +462,29 @@ func poseDiff(a, b *animgraph.Feedback) float64 {
 	return worst
 }
 
+// animScreenshot captures the scene after two animation frames, so the
+// capture shows a presented frame of the current pose. A capture with no
+// character pixels is retried a few times without sending new frames: on
+// the Windows GPU relay an occasional capture comes back blank while the
+// page keeps rendering. A scene that never renders still fails afterwards.
 func animScreenshot(t *testing.T, ctx context.Context) []byte {
 	t.Helper()
 	var shot []byte
-	if err := chromedp.Run(ctx, chromedp.Screenshot("#anim-root", &shot, chromedp.ByQuery)); err != nil {
-		t.Fatal(err)
+	for attempt := 0; attempt < 5; attempt++ {
+		var ok bool
+		if err := chromedp.Run(ctx,
+			chromedp.Evaluate(`new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`, &ok, func(p *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams { return p.WithAwaitPromise(true) }),
+			chromedp.Screenshot("#anim-root", &shot, chromedp.ByQuery),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if characterPixels(t, shot).count >= 300 {
+			return shot
+		}
+		if attempt < 4 {
+			t.Logf("capture %d showed no character; retrying", attempt+1)
+			time.Sleep(200 * time.Millisecond)
+		}
 	}
 	return shot
 }
