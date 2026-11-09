@@ -845,3 +845,37 @@ func TestRestoreReadsLegacyTimeSeconds(t *testing.T) {
 		t.Fatalf("frame %+v", rt.Frame())
 	}
 }
+
+func TestGameProfilesDefaultToVsyncDivisorPacing(t *testing.T) {
+	read := func(cfg engine.Config) map[string]any {
+		t.Helper()
+		var props map[string]any
+		if err := json.Unmarshal(cfg.Props, &props); err != nil {
+			t.Fatal(err)
+		}
+		return props
+	}
+	sceneBuilder := func(*Context) scene.Props {
+		return scene.Props{Graph: scene.NewGraph(scene.Mesh{ID: "a", Geometry: scene.BoxGeometry{Width: 1, Height: 1, Depth: 1}})}
+	}
+	for _, profile := range []Profile{InteractiveProfile(), FightingProfile(), FirstPersonProfile()} {
+		props := read(New(Config{Profile: profile, Scene: sceneBuilder}).EngineConfig())
+		if props["framePacing"] != FramePacingVsyncDivisor {
+			t.Errorf("%s: framePacing = %v, want %q", profile.Name, props["framePacing"], FramePacingVsyncDivisor)
+		}
+	}
+	for _, profile := range []Profile{Web3DProfile(), ScientificProfile()} {
+		if props := read(New(Config{Profile: profile, Scene: sceneBuilder}).EngineConfig()); props["framePacing"] != nil {
+			t.Errorf("%s: framePacing = %v, want the renderer default", profile.Name, props["framePacing"])
+		}
+	}
+	// An authored pacing wins over the profile default.
+	authored := New(Config{Scene: func(*Context) scene.Props {
+		props := sceneBuilder(nil)
+		props.FramePacing = "fixed"
+		return props
+	}})
+	if props := read(authored.EngineConfig()); props["framePacing"] != "fixed" {
+		t.Fatalf("authored framePacing = %v, want fixed", props["framePacing"])
+	}
+}

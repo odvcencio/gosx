@@ -499,6 +499,43 @@ func TestMainThreadFallbackDrivesTheSameScene(t *testing.T) {
 	runSceneScenario(t, "/?noworker=1", "", true)
 }
 
+// A main-thread Go engine steps a game.Runtime inside the Scene3D renderer's
+// own animation frame (host.SceneFrameSource): every frame of the run comes
+// from the renderer's frame hook, none from a second requestAnimationFrame
+// loop, and the poses the engine streams in the hook move the box on screen.
+func TestSceneFrameSourceRidesTheRendererFrame(t *testing.T) {
+	dir := assets(t)
+	ts := serve(t, dir, func(*http.Request) string {
+		owner := workerEngine(`{"scenario":"frameowner","target":"arena"}`)
+		return page(t, pageOptions{engines: []engine.Config{sceneEngine(), owner}})
+	})
+	shots := `[{"name":"early","selector":"#arena","when":"(window.__reports||[]).some(r => r.kind === 'frameowner-progress' && r.rev >= 30)"},
+	           {"name":"late","selector":"#arena","when":"(window.__reports||[]).some(r => r.kind === 'frameowner-done')"}]`
+	state := drive(t, ts.URL+"/?noworker=1", `(window.__reports||[]).some(r => r.kind === 'frameowner-done' || r.kind === 'frameowner-error')`, 60*time.Second, shots)
+	if e := state.find("frameowner-error"); e != nil {
+		t.Fatalf("frame owner error: %v\nlog: %v", e, state.Log)
+	}
+	done := state.find("frameowner-done")
+	if done == nil {
+		t.Fatalf("no frameowner-done report\nlog: %v", state.Log)
+	}
+	t.Logf("frame owner: %v", done)
+	if num(done, "attached") != 180 || num(done, "fallback") != 0 || num(done, "applied") != 180 {
+		t.Fatalf("frames attached %v, on the fallback clock %v, applied %v: want all 180 from the renderer's frame", done["attached"], done["fallback"], done["applied"])
+	}
+	if done["hookActive"] != true || done["loop"] != "active" {
+		t.Fatalf("renderer telemetry %v: the mount must report an active loop with its frame hook registered", done)
+	}
+	if len(state.Shots) != 2 || state.Shots[0].MeanX == nil || state.Shots[1].MeanX == nil {
+		t.Fatalf("no foreground pixels found in the canvas: %+v\nlog: %v", state.Shots, state.Log)
+	}
+	early, late := *state.Shots[0].MeanX, *state.Shots[1].MeanX
+	t.Logf("instanced box foreground mean x: %.1f px at frame>=30, %.1f px at frame 180", early, late)
+	if late-early < 60 {
+		t.Fatalf("the box moved %.1f px, want at least 60: poses written in the frame hook did not draw", late-early)
+	}
+}
+
 func runSceneScenario(t *testing.T, path, wantThread string, mainThread bool) {
 	dir := assets(t)
 	ts := serve(t, dir, scenePage(t, engine.ThreadWorker))
