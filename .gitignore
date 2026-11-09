@@ -9,6 +9,7 @@ build/
 !/docs/netplay.md
 !/docs/rooms.md
 !/docs/audio.md
+!/docs/audio-speech.md
 !/docs/game-kit.md
 !/docs/team-ai.md
 !/docs/engine-worker.md
