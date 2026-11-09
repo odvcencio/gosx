@@ -3180,6 +3180,8 @@
       if (src && maxX > minX && maxZ > minZ && maxHeight > minHeight) {
         const encoding = typeof source.encoding === "string" && source.encoding.trim().toLowerCase() === "signed-sqrt" ? "signed-sqrt" : "linear";
         bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
+        // The baked shoreline (scene.OceanShoreline) also fills G with the signed waterline distance.
+        if (sceneNumber(source.shoreDistance, 0) > 0) Object.assign(bathymetry, { shoreDistance: sceneNumber(source.shoreDistance, 0), shoreFoam: sceneNumber(source.shoreFoam, 3), shoreTurbidity: sceneNumber(source.shoreTurbidity, 0.35) });
       }
     }
     const out = {

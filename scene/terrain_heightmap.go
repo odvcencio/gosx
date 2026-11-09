@@ -26,8 +26,9 @@ type Heightmap struct {
 	Rows    int
 	Data    []uint16
 
-	mu    sync.Mutex
-	cache *heightmapCache
+	mu         sync.Mutex
+	cache      *heightmapCache
+	shorelines map[shorelineKey]*OceanBathymetry
 }
 
 // MaxHeightmapSamples bounds Columns*Rows. 4097x4097 is the largest grid a

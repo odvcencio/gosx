@@ -188,7 +188,10 @@
   //   7  camera.xyz, output linear (1) or sRGB (0)
   //   8  rings, segments, inner radius, ring growth
   //   9..20  six Gerstner waves: (dir.x, dir.z, k, omega), (amplitude, Q*a, phase, 0)
-  //   21..31 the sky block from sceneSkyUniformData (mode in [26].w)
+  //   21..31 the sky block from sceneSkyUniformData (mode in [26].w); the
+  //          ocean never reads 21, 22, 23 or 27, so 23 carries the baked
+  //          shoreline (scene.OceanShoreline): distance m, foam width m,
+  //          surf-zone clarity factor, 0. A zero distance means no shoreline.
   //   32 ambient sky light rgb            33 sun radiance rgb at the surface
   //   34 direction toward the sun xyz
   // Colors are converted to linear light. Wave amplitudes follow a significant
@@ -262,6 +265,9 @@
     sceneSkyUniformData(sceneOceanSkyScratch, skyEnv, sceneOceanViewScratch, { fov: 60 }, 1, true);
     if (sky && sky.mode !== "physical") sceneOceanSkyScratch[23] = 0; // Reflect the gradient stops for image skies.
     out.set(sceneOceanSkyScratch, 84);
+    var shore = b && b.src && b.shoreDistance > 0 ? b : null;
+    out[92] = shore ? shore.shoreDistance : 0; out[93] = shore ? sceneNumber(shore.shoreFoam, 3) : 0;
+    out[94] = shore ? sceneNumber(shore.shoreTurbidity, 0.35) : 1; out[95] = 0;
     var intensity = sceneOceanSkyScratch[15];
     if (sky && sky.mode === "physical") {
       var sp = sceneOceanSkyScratch.subarray(28, 44);

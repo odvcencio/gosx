@@ -3456,7 +3456,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		EnvMap:           strings.TrimSpace(environment.EnvironmentMap),
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
 		Sky:              normalizeSky(environment.Sky),
-		Ocean:            normalizeOcean(environment.Ocean),
+		Ocean:            shorelineOcean(normalizeOcean(environment.Ocean), environment.Terrain),
 		Haze:             normalizeHaze(environment.Haze),
 		Terrain:          environment.Terrain.SceneIR(),
 		Wind:             environment.Wind.SceneIR(),
