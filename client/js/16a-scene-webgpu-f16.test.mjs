@@ -121,10 +121,12 @@ test("the stages where half precision bites are still f32", () => {
   // Tone mapping multiplies by exposure before clamping, so it handles values
   // above 1 by design. SSAO and DOF reconstruct view-space depth. None of the
   // three may carry the f16 aliases.
-  for (const name of ["WGSL_POST_TONEMAPPING_FRAGMENT", "WGSL_POST_SSAO_FRAGMENT", "WGSL_POST_DOF_FRAGMENT"]) {
-    const start = webgpuSource.indexOf("var " + name + " = [");
+  // DOF ships in the on-demand WebGPU post-effects chunk (dof-wgpu.ts).
+  const dofSource = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "runtime", "scene3d", "dof-wgpu.ts"), "utf8");
+  for (const [name, source] of [["WGSL_POST_TONEMAPPING_FRAGMENT", webgpuSource], ["WGSL_POST_SSAO_FRAGMENT", webgpuSource], ["WGSL_POST_DOF_FRAGMENT", dofSource]]) {
+    const start = source.indexOf("var " + name + " = [");
     assert.notEqual(start, -1, `${name} must still exist`);
-    const body = webgpuSource.slice(start, webgpuSource.indexOf("].join(\"\\n\");", start));
+    const body = source.slice(start, source.indexOf("].join(\"\\n\");", start));
     assert.ok(!body.includes("pf3("), `${name} must stay f32`);
     assert.ok(!body.includes("enable f16"), `${name} must stay f32`);
   }

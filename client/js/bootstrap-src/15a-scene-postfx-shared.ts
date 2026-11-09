@@ -601,17 +601,3 @@ function sceneSpecularBloomEffects(bundle: any, effects: any[], backend: string,
   return reason ? effects.filter(effect => !(effect.kind === "bloom" && effect.source === "specular")) : effects;
 }
 
-// sceneNormalizeAutoExposure returns the auto-exposure settings both renderers
-// read, with defaults filled in, or null when the scene did not ask for it.
-// Exposure values are linear multipliers on the HDR scene before tone mapping.
-function sceneNormalizeAutoExposure(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  var positive = function(value, fallback) { var n = Number(value); return isFinite(n) && n > 0 ? n : fallback; };
-  var minimum = positive(raw.minExposure, 0.1), maximum = positive(raw.maxExposure, 8);
-  var compensation = Number(raw.compensation);
-  return {
-    minExposure: Math.min(minimum, maximum), maxExposure: Math.max(minimum, maximum),
-    key: positive(raw.key, 0.18), speedUp: positive(raw.speedUp, 3), speedDown: positive(raw.speedDown, 1),
-    compensation: isFinite(compensation) ? Math.max(-8, Math.min(8, compensation)) : 0,
-  };
-}
