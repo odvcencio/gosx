@@ -77,4 +77,3 @@ only where its own blur reaches back to the pixel. A sharp subject therefore
 keeps a hard edge against a blurred background, and the blurred background
 does not smear onto it. WebGL2 and WebGPU run the same gather, so one setting
 looks the same on both.
-
