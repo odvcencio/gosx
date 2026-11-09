@@ -139,6 +139,7 @@ var draftFastNeeds = []string{
 	"js-tests",
 	"js-tests-b",
 	"js-tests-scene3d",
+	"js-tests-scene3d-b",
 }
 
 var baseAggregateNeeds = []string{
@@ -152,6 +153,7 @@ var baseAggregateNeeds = []string{
 	"js-tests",
 	"js-tests-b",
 	"js-tests-scene3d",
+	"js-tests-scene3d-b",
 	"wire-gates",
 	"wasm-tests",
 	"browser-tests",
@@ -165,16 +167,18 @@ var baseAggregateNeeds = []string{
 var cliShardJobs = []string{"go-cli-tests", "go-cli-tests-b", "go-cli-tests-c"}
 
 // jsShardJobs are the Node suite lanes. js-tests runs the runtime-NN suites
-// after its other checks, js-tests-scene3d runs renderer contracts, and
-// js-tests-b runs the remaining files (NODE_TEST_GROUP in the Makefile). Each runs exactly one group, so a lane that is missing,
+// after its other checks, js-tests-scene3d and js-tests-scene3d-b run the
+// renderer contracts in two halves split by file name, and js-tests-b runs the
+// remaining files (NODE_TEST_GROUP in the Makefile). Each runs exactly one group, so a lane that is missing,
 // renamed, or pointed at another group silently drops JavaScript tests from
 // CI. All run on draft pull requests too: they are part of the draft fast
-// check. timeout pins each lane's timeout-minutes: the scene3d group takes
-// about 9 minutes on hosted runners, so its lane has 15 until it is split.
+// check. timeout pins each lane's timeout-minutes; every lane has 10, and the
+// scene3d split exists so that each half stays well under that.
 var jsShardJobs = []struct{ name, step, run, timeout string }{
 	{"js-tests", "JavaScript runtime contract tests", "make test-js NODE_TEST_GROUP=runtime", "10"},
 	{"js-tests-b", "JavaScript runtime contract tests (other suites)", "make test-js-node NODE_TEST_GROUP=other", "10"},
-	{"js-tests-scene3d", "Scene3D renderer contract tests", "make test-js-node NODE_TEST_GROUP=scene3d", "15"},
+	{"js-tests-scene3d", "Scene3D renderer contract tests", "make test-js-node NODE_TEST_GROUP=scene3d", "10"},
+	{"js-tests-scene3d-b", "Scene3D renderer contract tests (second half)", "make test-js-node NODE_TEST_GROUP=scene3d-b", "10"},
 }
 
 // browserShardJobs are the e2e browser lanes in citest shard order. The first
