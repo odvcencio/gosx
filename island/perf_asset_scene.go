@@ -169,6 +169,8 @@ func (r *Renderer) perfSceneStartupGates() (map[string]bool, bool, error) {
 		gates["ocean-query"] = gates["vessel"]
 		gates["ocean-fft"] = gates["ocean-fft"] || p.NeedsOceanFFT()
 		gates["selena-lighting"] = gates["selena-lighting"] || p.NeedsSelenaLighting()
+		gates["warmup"] = gates["warmup"] || p.NeedsShaderWarmup()
+		gates["text-atlas"] = gates["text-atlas"] || p.NeedsTextAtlases()
 		particles, meshes := p.ComputeParticles, p.InstancedMeshes
 		points, animations := p.Points, p.Animations
 		regular, crowds := p.Models, p.InstancedGLBMeshes
