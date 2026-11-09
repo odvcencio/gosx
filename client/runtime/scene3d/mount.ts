@@ -1134,7 +1134,7 @@
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const failureReason = rendererReportsWebGPUFailure(diagnostics);
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (failureReason) {
-        recoverSceneWebGPURenderer(failureReason, 0, true);
+        if (!sceneWebGPULossAwaitsReprobe(graphicsRecovery, failureReason, now, SCENE_RENDER_STALL_MS)) recoverSceneWebGPURenderer(failureReason, 0, true);
         return;
       }
       if (checkSceneWebGPUFrameErrorResilience(diagnostics)) {

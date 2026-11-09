@@ -590,6 +590,156 @@ test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", a
   assert.equal(events.some((event) => event.msg === "webgl-fallback-chunk-unusable"), false);
 });
 
+// A genuine WebGPU device loss on a WebGPU page. The shared probe re-probes,
+// and the render watchdog polls every 2 s. Before the watchdog waited for the
+// re-probe, a tick that landed first forced a WebGL step (and a 329 KB chunk
+// fetch) that a probe that finished first skipped. reprobe returns the second
+// adapter request, which the test settles.
+async function mountWebGPUSceneForDeviceLoss(reprobe) {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-reprobe";
+  let now = 0;
+  let resolveLost = null;
+  let adapterRequests = 0;
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: () => {
+        adapterRequests += 1;
+        const device = {
+          lost: adapterRequests === 1 ? new Promise((resolve) => { resolveLost = resolve; }) : new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        };
+        const adapter = { requestDevice: async () => device };
+        return adapterRequests === 1 ? Promise.resolve(adapter) : reprobe(adapter);
+      },
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__testReprobeCreated = 0;
+          window.__testReprobeLost = 0;
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              const id = ++window.__testReprobeCreated;
+              canvas.__webgpuClaimed = true;
+              return {
+                kind: "webgpu",
+                diagnostics: function() {
+                  // Like the real renderer, read the shared probe, which retries a failed probe.
+                  if (typeof window.__gosx_scene3d_webgpu_diagnostics === "function") window.__gosx_scene3d_webgpu_diagnostics();
+                  const lost = window.__testReprobeLost === id;
+                  return { ready: !lost, deviceLost: lost, deviceLostInfo: lost ? { reason: "unknown", message: "A valid external Instance reference no longer exists." } : null };
+                },
+                render: function() {},
+                dispose: function() {}
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [{
+        id: "gosx-engine-webgpu-reprobe", component: "GoSXScene3D", kind: "surface", mountId: "scene-webgpu-reprobe", jsExport: "GoSXScene3D",
+        props: { width: 320, height: 180, preferWebGPU: true, autoRotate: true, scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] } },
+      }],
+    },
+  });
+  const originalCreateElement = env.document.createElement.bind(env.document);
+  env.document.createElement = function(tagName) {
+    const element = originalCreateElement(tagName);
+    if (String(tagName || "").toLowerCase() === "canvas") {
+      const originalGetContext = element.getContext.bind(element);
+      element.getContext = function(kind, options) {
+        if (this.__webgpuClaimed && /^(2d|webgl|webgl2|experimental-webgl)$/.test(String(kind || ""))) return null;
+        return originalGetContext(kind, options);
+      };
+    }
+    return element;
+  };
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => { events.push({ level, cat, msg, fields: fields || {} }); };
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  // The device is lost: the renderer reports it and the probe starts re-probing.
+  env.context.__testReprobeLost = 1;
+  resolveLost({ reason: "unknown", message: "A valid external Instance reference no longer exists." });
+  await flushAsyncWork();
+  assert.equal(adapterRequests, 2, "the probe re-probes after the loss");
+  const webglFetches = () => env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js").length;
+  return { env, mount, timers, raf, events, webglFetches, setNow: (ms) => { now = ms; } };
+}
+
+test("Scene3D WebGPU device loss returns to WebGPU through the re-probe without fetching the WebGL chunk", async () => {
+  let settleReprobe = null;
+  const page = await mountWebGPUSceneForDeviceLoss((adapter) => new Promise((resolve) => { settleReprobe = () => resolve(adapter); }));
+  page.setNow(4000);
+  assert.equal(page.timers.runInterval(2000), 1);
+  await flushAsyncWork();
+  assert.equal(page.webglFetches(), 0, "the watchdog waits for the pending re-probe");
+  assert.equal(page.mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+
+  settleReprobe();
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.equal(page.env.context.__testReprobeCreated, 2, "the re-probed device gets a new WebGPU renderer");
+  assert.equal(page.mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  page.setNow(6000);
+  page.timers.runInterval(2000);
+  await flushAsyncWork();
+  assert.equal(page.webglFetches(), 0, "a WebGPU page that returns to WebGPU never downloads the WebGL chunk");
+  assert.equal(page.events.some((event) => event.msg === "webgl-fallback-chunk-fetch"), false);
+});
+
+test("Scene3D WebGPU device loss falls back to WebGL at once when the re-probe finds no adapter", async () => {
+  // The renderer's diagnostics retry a failed probe every second, so "no device
+  // yet" is not enough to wait on: only the re-probe the loss started counts.
+  const page = await mountWebGPUSceneForDeviceLoss(() => Promise.resolve(null));
+  page.setNow(4000);
+  page.timers.runInterval(2000);
+  await flushAsyncWork();
+  page.raf.flush(64);
+  await flushAsyncWork();
+  assert.equal(page.webglFetches(), 1, "a failed re-probe steps down to WebGL on the first watchdog tick");
+  assert.equal(page.mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+});
+
+test("Scene3D WebGPU device loss falls back to WebGL when the re-probe stalls past the limit", async () => {
+  const page = await mountWebGPUSceneForDeviceLoss(() => new Promise(() => {}));
+  page.setNow(4000);
+  page.timers.runInterval(2000);
+  await flushAsyncWork();
+  assert.equal(page.webglFetches(), 0);
+  page.setNow(10499);
+  page.timers.runInterval(2000);
+  await flushAsyncWork();
+  assert.equal(page.webglFetches(), 0, "the wait lasts the 6.5 s stall limit");
+  page.setNow(10500);
+  page.timers.runInterval(2000);
+  await flushAsyncWork();
+  page.raf.flush(64);
+  await flushAsyncWork();
+  assert.equal(page.webglFetches(), 1, "a stalled re-probe steps down to WebGL");
+  assert.equal(page.mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(page.mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
+});
+
 test("Scene3D WebGPU probe-ready device loss forces typed device-lost fallback", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgpu-probe-ready-device-lost";

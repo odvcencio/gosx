@@ -1055,7 +1055,9 @@ const budgets = [
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap.js raw 2188256; only this exhausted target moves (2121484 -> 2122720), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured bootstrap.js gzip 617212; only this exhausted target moves (600721 -> 600828), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured bootstrap.js raw 2188497; only this exhausted target moves (2122720 -> 2122961), allowance unchanged.
-    file: "bootstrap.js", raw: 2122961, gzip: 600828,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured bootstrap.js gzip 617335; only this exhausted target moves (600828 -> 600951), allowance unchanged.
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured bootstrap.js raw 2188887; only this exhausted target moves (2122961 -> 2123351), allowance unchanged.
+    file: "bootstrap.js", raw: 2123351, gzip: 600951,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1675,7 +1677,9 @@ const budgets = [
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap-feature-scene3d.js raw 692025; only this exhausted target moves (658875 -> 659071), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured bootstrap-feature-scene3d.js gzip 198473; only this exhausted target moves (188959 -> 189021), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured bootstrap-feature-scene3d.js raw 692263; only this exhausted target moves (659071 -> 659298), allowance unchanged.
-    file: "bootstrap-feature-scene3d.js", raw: 659298, gzip: 189021,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured bootstrap-feature-scene3d.js gzip 198613; only this exhausted target moves (189021 -> 189155), allowance unchanged.
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured bootstrap-feature-scene3d.js raw 692649; only this exhausted target moves (659298 -> 659665), allowance unchanged.
+    file: "bootstrap-feature-scene3d.js", raw: 659665, gzip: 189155,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
@@ -1686,7 +1690,8 @@ const budgets = [
     // 2026-11-09 shader warm-up and text atlases (base shims for their opt-in chunks, renderer hooks, WebGPU Selena indexed-draw fix): bootstrap-feature-scene3d.js brotli measures 167872 bytes; only this exhausted target moves (159699 -> 159878), allowance unchanged.
     // train 5 (merge of main with #811 Selena warm-up and text atlas chunks): measured bootstrap-feature-scene3d.js brotli 168412; only this exhausted target moves (160233 -> 160392), allowance unchanged.
     // train 5 (#823 stadium crowd system): measured bootstrap-feature-scene3d.js brotli 168647; only this exhausted target moves (160392 -> 160616), allowance unchanged.
-    brotli: 160616 },
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured bootstrap-feature-scene3d.js brotli 168811; only this exhausted target moves (160616 -> 160772), allowance unchanged.
+    brotli: 160772 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -2525,7 +2530,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route (WebGPU, with labels) raw 1593414; only this exhausted target moves (1527643 -> 1527878), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route (WebGPU, with labels) raw 1594320; only this exhausted target moves (1527878 -> 1528784), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Chromium route (WebGPU, with labels) raw 1595430; only this exhausted target moves (1528784 -> 1529894), allowance unchanged.
-    raw: 1529894,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Chromium route (WebGPU, with labels) raw 1595816; only this exhausted target moves (1529894 -> 1530280), allowance unchanged.
+    raw: 1530280,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 427783 bytes; only this exhausted target moves (411074 -> 411399), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) gzip 439916; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route (WebGPU, with labels) gzip measures 430169 bytes; only this exhausted target moves (411399 -> 413785), allowance unchanged.
@@ -2540,7 +2546,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route (WebGPU, with labels) gzip 444888; only this exhausted target moves (428415 -> 428504), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route (WebGPU, with labels) gzip 445235; only this exhausted target moves (428504 -> 428851), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Chromium route (WebGPU, with labels) gzip 445551; only this exhausted target moves (428851 -> 429167), allowance unchanged.
-    gzip: 429167,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Chromium route (WebGPU, with labels) gzip 445691; only this exhausted target moves (429167 -> 429307), allowance unchanged.
+    gzip: 429307,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2558,7 +2565,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route (WebGPU, with labels) brotli 382783; only this exhausted target moves (366222 -> 366399), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route (WebGPU, with labels) brotli 382885; only this exhausted target moves (366399 -> 366501), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Chromium route (WebGPU, with labels) brotli 382968; only this exhausted target moves (366501 -> 366584), allowance unchanged.
-    brotli: 366584,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Chromium route (WebGPU, with labels) brotli 383216; only this exhausted target moves (366584 -> 366832), allowance unchanged.
+    brotli: 366832,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2791,7 +2799,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1378976; only this exhausted target moves (1313205 -> 1313440), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1379424; only this exhausted target moves (1313440 -> 1313888), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1380534; only this exhausted target moves (1313888 -> 1314998), allowance unchanged.
-    raw: 1314998,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1380920; only this exhausted target moves (1314998 -> 1315384), allowance unchanged.
+    raw: 1315384,
     // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 385941 bytes; only this exhausted target moves (369041 -> 369557), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 392100; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Safari and Firefox route (WebGL, with labels) gzip measures 388236 bytes; only this exhausted target moves (369557 -> 371852), allowance unchanged.
@@ -2807,7 +2816,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 397043; only this exhausted target moves (380570 -> 380659), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 397125; only this exhausted target moves (380659 -> 380741), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 397441; only this exhausted target moves (380741 -> 381057), allowance unchanged.
-    gzip: 381057,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 397581; only this exhausted target moves (381057 -> 381197), allowance unchanged.
+    gzip: 381197,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
@@ -2826,7 +2836,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 344374; only this exhausted target moves (327813 -> 327990), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 344455; only this exhausted target moves (327990 -> 328071), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 344538; only this exhausted target moves (328071 -> 328154), allowance unchanged.
-    brotli: 328154,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 344786; only this exhausted target moves (328154 -> 328402), allowance unchanged.
+    brotli: 328402,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -3055,7 +3066,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1922218; only this exhausted target moves (1856447 -> 1856682), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1923366; only this exhausted target moves (1856682 -> 1857830), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1924476; only this exhausted target moves (1857830 -> 1858940), allowance unchanged.
-    raw: 1858940,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1924862; only this exhausted target moves (1858940 -> 1859326), allowance unchanged.
+    raw: 1859326,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 517576 bytes; only this exhausted target moves (500351 -> 501192), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 534654; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip measures 522257 bytes; only this exhausted target moves (501192 -> 505873), allowance unchanged.
@@ -3070,7 +3082,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 543295; only this exhausted target moves (526822 -> 526911), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 543618; only this exhausted target moves (526911 -> 527234), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 543934; only this exhausted target moves (527234 -> 527550), allowance unchanged.
-    gzip: 527550,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 544074; only this exhausted target moves (527550 -> 527690), allowance unchanged.
+    gzip: 527690,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -3088,7 +3101,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 467901; only this exhausted target moves (451340 -> 451517), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 468142; only this exhausted target moves (451517 -> 451758), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 468225; only this exhausted target moves (451758 -> 451841), allowance unchanged.
-    brotli: 451841,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 468473; only this exhausted target moves (451841 -> 452089), allowance unchanged.
+    brotli: 452089,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -3285,7 +3299,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1435314; only this exhausted target moves (1369543 -> 1369778), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1436220; only this exhausted target moves (1369778 -> 1370684), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1437330; only this exhausted target moves (1370684 -> 1371794), allowance unchanged.
-    raw: 1371794,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1437716; only this exhausted target moves (1371794 -> 1372180), allowance unchanged.
+    raw: 1372180,
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 383698 bytes; only this exhausted target moves (366989 -> 367314), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395831; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (unshadowed PBR fragment for frames without a shadow slot): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395963; only this exhausted target moves (379447 -> 379579) under the unchanged allowance.
@@ -3301,7 +3316,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 400803; only this exhausted target moves (384330 -> 384419), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 401150; only this exhausted target moves (384419 -> 384766), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 401466; only this exhausted target moves (384766 -> 385082), allowance unchanged.
-    gzip: 385082,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 401606; only this exhausted target moves (385082 -> 385222), allowance unchanged.
+    gzip: 385222,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
@@ -3317,7 +3333,8 @@ const routeBudgets = [
     // train 5 (#797 gosx export static bundle telemetry check): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 342566; only this exhausted target moves (326084 -> 326253), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 342668; only this exhausted target moves (326253 -> 326350), allowance unchanged.
     // 9 November 2026 (Scene3D chunk loading: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report and terrain/crowd fallback removal in the Scene3D loader): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 342751; only this exhausted target moves (326350 -> 326429), allowance unchanged.
-    brotli: 326429,
+    // 9 November 2026 (WebGPU device loss: the render watchdog waits for the probe's re-probe instead of racing it into a WebGL fallback): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 342999; only this exhausted target moves (326429 -> 326665), allowance unchanged.
+    brotli: 326665,
   },
 
 ];
