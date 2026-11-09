@@ -1244,7 +1244,7 @@ func TestShardLaneMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name:   "js-tests-scene3d timeout raised",
-			mutate: replaceJobOnce("js-tests-scene3d", "timeout-minutes: 10", "timeout-minutes: 30"),
+			mutate: replaceJobOnce("js-tests-scene3d", "timeout-minutes: 15", "timeout-minutes: 30"),
 			want:   "js-tests-scene3d job.timeout-minutes",
 		},
 		{

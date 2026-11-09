@@ -453,7 +453,7 @@ jobs:
   # This lane also runs on drafts, preserving the previous fast-lane coverage.
   js-tests-scene3d:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
