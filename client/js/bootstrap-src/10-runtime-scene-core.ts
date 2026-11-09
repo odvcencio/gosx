@@ -3211,6 +3211,17 @@
     return out;
   }
 
+  // Environment.Crowds (scene/crowd.go) pass through unchanged; the crowd chunk
+  // (crowd*.ts) expands and draws them, and is fetched the first time a scene
+  // declares one. Until it arrives the renderers draw no crowd.
+  function sceneEnvironmentCrowds(list) {
+    if (!Array.isArray(list) || list.length === 0) return null;
+    if (typeof window !== "undefined" && !window.__gosx_scene3d_crowd_api && typeof ensureSceneGatedFeatureLoaded === "function") {
+      ensureSceneGatedFeatureLoaded("crowd", "gosxScene3dCrowdUrl", "/gosx/bootstrap-feature-scene3d-crowd.js").catch(function() {});
+    }
+    return list;
+  }
+
   function sceneEnvironmentText(source, key) {
     return typeof source[key] === "string" ? source[key] : "";
   }
@@ -3241,6 +3252,7 @@
       toneMapping: text("toneMapping"),
       fogColor: text("fogColor"),
       fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),
+      crowds: sceneEnvironmentCrowds(has("crowds") ? source.crowds : base.crowds),
       ...lifecycle,
       specified: false,
     };
@@ -3291,6 +3303,7 @@
         toneMapping: sceneEnvironmentText(environment, "toneMapping"),
         fogColor: sceneEnvironmentText(environment, "fogColor"),
         fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
+        crowds: environment.crowds || null,
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);

@@ -75,6 +75,12 @@
     "scene3d/webgl-specular-bloom.ts",
     "scene3d/webgpu-specular-bloom.ts",
     "scene3d/model-preparation.ts",
-    "scene3d/vessel-instruments.ts"
+    "scene3d/vessel-instruments.ts",
+    "scene3d/crowd-layout.ts",
+    "scene3d/crowd-rig.ts",
+    "scene3d/crowd-state.ts",
+    "scene3d/crowd-glsl.ts",
+    "scene3d/crowd-wgsl.ts",
+    "scene3d/crowd.ts"
   ]
 }

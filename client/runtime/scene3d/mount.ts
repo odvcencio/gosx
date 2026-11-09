@@ -209,6 +209,7 @@
         return { wants: true, reason: "compute-particles" };
       }
       if (sceneState.environment && sceneState.environment.ocean) return { wants: true, reason: "ocean" };
+      if (sceneState.environment?.crowds?.length) return { wants: true, reason: "crowd" }; // crowd fans animate on the scene clock (crowd*.ts)
       if (Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length > 0) {
         if (sceneWaterSystemsPaused(sceneState)) {
           return { wants: false, reason: "water-paused" };

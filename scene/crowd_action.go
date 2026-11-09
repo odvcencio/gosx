@@ -24,10 +24,10 @@ const (
 	CrowdTwirl CrowdAction = "twirl"
 	// CrowdHoldUp stands and holds both hands up, for lights and scarves.
 	CrowdHoldUp CrowdAction = "hold-up"
-	// CrowdWave is the travelling-wave motion: rise with arms up, then sit. A
+	// CrowdRideWave is the travelling-wave motion: rise with arms up, then sit. A
 	// section never plays it as its action; CrowdDirector.StartWave drives
 	// it fan by fan as the wave front passes.
-	CrowdWave CrowdAction = "wave"
+	CrowdRideWave CrowdAction = "wave"
 )
 
 // CrowdActionInfo describes one library action.
@@ -57,7 +57,7 @@ var crowdActions = [...]CrowdActionInfo{
 	{CrowdJump, 5, 0.7, 0.92, 0.9},
 	{CrowdTwirl, 6, 0.6, -1, 0.7},
 	{CrowdHoldUp, 7, 2.4, -1, 0.45},
-	{CrowdWave, 8, 1.0, 0.5, 0.85},
+	{CrowdRideWave, 8, 1.0, 0.5, 0.85},
 }
 
 // CrowdActions lists the action library in index order.

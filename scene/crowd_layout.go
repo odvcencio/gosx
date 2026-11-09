@@ -38,7 +38,7 @@ type CrowdSeat struct {
 	// Phase offsets the fan's free-running animation, out of 65536 cycles.
 	Phase uint16
 	// Eagerness orders how readily the fan joins an action: a section at
-	// excitement e has every fan with Eagerness < 64 + 191*e joining in.
+	// excitement e has every fan with Eagerness < 64 + 192*e joining in.
 	Eagerness uint8
 }
 
