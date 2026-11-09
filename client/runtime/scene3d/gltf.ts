@@ -1092,7 +1092,7 @@
     }
     return out;
   }
-  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node, uvSet, uvSet1) {
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node, uvSet: any, uvSet1: any) {
     // One named-attribute read: absent names hand back null exactly like the
     // inline guards they replace.
     function attrValues(name) {
@@ -1868,10 +1868,10 @@
   }
 
   // Texture slots whose texCoord selects a UV set. Each entry is a textureInfo.
-  function gltfMaterialTextureInfos(mat) {
+  function gltfMaterialTextureInfos(mat: any) {
     var pbr = mat.pbrMetallicRoughness || {};
     var specular = gltfExtension(mat, "KHR_materials_specular") || {};
-    var infos = {
+    var infos: any = {
       baseColor: pbr.baseColorTexture,
       metallicRoughness: pbr.metallicRoughnessTexture,
       normal: mat.normalTexture,
@@ -1889,9 +1889,9 @@
   // sample every map with: the base colour's set when it is textured, else the
   // most used set (lowest index on ties). mixed is true when textured maps
   // disagree; those maps sample uvSet, which is the documented limit.
-  function gltfResolveUVSet(mat) {
+  function gltfResolveUVSet(mat: any) {
     var infos = gltfMaterialTextureInfos(mat);
-    var sets = {};
+    var sets: any = {};
     var counts = [0, 0, 0, 0, 0, 0, 0, 0];
     var used = 0;
     for (var slot in infos) {
@@ -2162,12 +2162,13 @@
     }
 
     var uvInfo = gltfResolveUVSet(mat);
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.uvSet = uvInfo.uvSet;
-    /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.texCoords = uvInfo.sets;
+    var recordUV: any = record;
+    recordUV.uvSet = uvInfo.uvSet;
+    recordUV.texCoords = uvInfo.sets;
     if (uvInfo.secondary >= 0) {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.uvSet1 = uvInfo.secondary;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.occlusionTexCoord = uvInfo.sets.occlusion === uvInfo.secondary ? 1 : 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ record.emissiveTexCoord = uvInfo.sets.emissive === uvInfo.secondary ? 1 : 0;
+      recordUV.uvSet1 = uvInfo.secondary;
+      recordUV.occlusionTexCoord = uvInfo.sets.occlusion === uvInfo.secondary ? 1 : 0;
+      recordUV.emissiveTexCoord = uvInfo.sets.emissive === uvInfo.secondary ? 1 : 0;
     }
     if (uvInfo.mixed && !mat.__gosxUVWarned) {
       Object.defineProperty(mat, "__gosxUVWarned", { value: true, enumerable: false });
@@ -2414,7 +2415,7 @@
         count: vertCount,
       };
       if (geometry.uvs1) {
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction */ vertices.uvs1 = geometry.uvs1;
+        (vertices as any).uvs1 = geometry.uvs1;
       }
 
       var object = {
@@ -2525,7 +2526,7 @@
   // extensions.KHR_lights_punctual.light. A glTF light shines down its node's
   // -Z axis. The scene light takes world position and direction from the node
   // world matrix. Intensity converts from lux or candela (see below).
-  function gltfLightHex(color) {
+  function gltfLightHex(color: any) {
     var rgb = Array.isArray(color) && color.length >= 3 ? color : [1, 1, 1];
     var out = "#";
     for (var i = 0; i < 3; i++) {
@@ -2536,7 +2537,7 @@
     return out;
   }
 
-  function gltfExtractNodeLight(gltf, node, nodeIndex, worldTransform, result) {
+  function gltfExtractNodeLight(gltf: any, node: any, nodeIndex: any, worldTransform: any, result: any) {
     var ref = gltfExtension(node, "KHR_lights_punctual");
     var doc = gltfExtension(gltf, "KHR_lights_punctual");
     if (!ref || !doc || !Array.isArray(doc.lights) || ref.light == null) {
@@ -2563,7 +2564,7 @@
     var scale = Number(def.extras && def.extras.gosxIntensityScale);
     if (!(scale > 0) || !isFinite(scale)) scale = 1;
     var intensity = rawIntensity / 683 * scale;
-    var light = {
+    var light: any = {
       id: "gltf-light-" + (def.name || ref.light) + "-n" + nodeIndex,
       kind: type,
       color: gltfLightHex(def.color),
@@ -3276,7 +3277,7 @@
   // role, colorSpace, requiredCapabilities}]}. Each entry has the shape of a
   // page-manifest texture variant, so one eligibility rule covers both. URIs
   // resolve against the GLB.
-  function gltfEmbeddedImageVariants(image) {
+  function gltfEmbeddedImageVariants(image: any) {
     var ext = gltfExtension(image, "GOSX_texture_variants");
     return ext && Array.isArray(ext.variants) ? ext.variants : null;
   }
