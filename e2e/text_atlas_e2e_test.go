@@ -180,6 +180,9 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 	}
 	page := []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#atlas-root{width:%dpx;height:%dpx}</style></head><body><div id="atlas-root"></div><script id="gosx-manifest" type="application/json">%s</script><script src="/bootstrap.js"></script></body></html>`, textAtlasWidth, textAtlasHeight, manifest))
 	if chunked {
+		// The island runtime inflates the scene's shared shader library
+		// (scene.shaderLib) when it loads a manifest; this page mounts the
+		// factory directly, so it inflates the references itself.
 		propsJSON, err := json.Marshal(props)
 		if err != nil {
 			t.Fatal(err)
@@ -187,7 +190,9 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 		page = []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#atlas-root{width:%dpx;height:%dpx}</style></head><body><div id="atlas-root"></div>
 <script src="/gosx/bootstrap-runtime.js"></script>
 <script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js" data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js" data-gosx-scene3d-text-atlas-url="/gosx/bootstrap-feature-scene3d-text-atlas.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
-<script>window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('atlas-root'),emit(){},props:%s}).catch(error=>{window.mountError=String(error);});</script></body></html>`, textAtlasWidth, textAtlasHeight, propsJSON))
+<script>const props=%s, scene=props.scene, lib=scene&&scene.shaderLib;
+if (lib) { for (const c of ["objects","models","instancedGLBMeshes","points","materials"]) for (const n of scene[c]||[]) for (const k of Object.keys(n)) if (k.endsWith("Ref") && typeof lib[n[k]]==="string") { n[k.slice(0,-3)]=lib[n[k]]; delete n[k]; } delete scene.shaderLib; }
+window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('atlas-root'),emit(){},props}).catch(error=>{window.mountError=String(error);});</script></body></html>`, textAtlasWidth, textAtlasHeight, propsJSON))
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -257,7 +262,9 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 		_ = os.WriteFile(strings.ReplaceAll(out, "{backend}", backend), buf.Bytes(), 0o644)
 	}
 	if report.found != textAtlasPlayers {
-		t.Fatalf("found %d jerseys on screen, want %d", report.found, textAtlasPlayers)
+		var mountError string
+		browser.eval(t, `String(window.mountError || "")`, &mountError)
+		t.Fatalf("found %d jerseys on screen, want %d; mount error %q; page errors %v; console %s", report.found, textAtlasPlayers, mountError, browser.PageErrors(), browser.Console())
 	}
 	for i := 0; i < textAtlasPlayers; i++ {
 		if report.ink[i] < 0.03 || report.shirt[i] < 0.3 {
