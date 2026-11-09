@@ -166,6 +166,6 @@ func Example() {
 	// 2.40s red1 reached break
 	// 2.60s red2 reached break
 	// 6.53s red0 takes the flag
-	// 8.10s blue1 tags red0: win (p=0.86)
-	// flag at (0.0, 50.0), state hash d129e4c4ed6b3bd6
+	// 8.17s blue2 tags red0: win (p=0.86)
+	// flag at (0.0, 50.0), state hash 3b4e5944bed2cf5a
 }

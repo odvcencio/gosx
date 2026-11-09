@@ -21,11 +21,11 @@ func ctfSpec(perTeam int) *Spec {
 		Roles:   []string{"runner", "chaser", "keeper"},
 		Bands:   []string{"left", "middle", "right"},
 		Objects: []string{"flag"},
-		Signals: []string{"go"},
+		Signals: []string{"go", "carried"},
 		TeamSignals: []string{
 			"score",
 		},
-		AgentSignals: []string{"stamina"},
+		AgentSignals: []string{"stamina", "carrying"},
 		Landmarks: []LandmarkSpec{
 			{Name: "home", Host: true},
 			{Name: "midfield", At: V2(0, 20)},
@@ -39,6 +39,10 @@ func ctfSpec(perTeam int) *Spec {
 			{Name: "press", All: []string{"go", "rested"}},
 			{Name: "flag_loose", Fact: "object.flag.speed", Op: "<", Value: f64(0.01)},
 			{Name: "grabbed", Fact: "mark.grab", Op: "==", Value: f64(1)},
+			{Name: "flag_held", Fact: "signal.carried", Op: ">=", Value: f64(1)},
+			{Name: "flag_free", Not: "flag_held"},
+			{Name: "not_carrying", Fact: "self.carrying", Op: "<", Value: f64(1)},
+			{Name: "escort_now", All: []string{"flag_held", "not_carrying"}},
 		},
 		Paths: []PathSpec{{
 			Name: "post",
@@ -59,10 +63,11 @@ func ctfSpec(perTeam int) *Spec {
 			{Name: "raid", Steps: []StepSpec{
 				{Do: "slot", Until: "go"},
 				{Do: "path", Path: "post"},
-				{Do: "pursue", Target: "object:flag", Radius: 0.6, Mark: "grab"},
+				{Label: "chase_flag", Do: "pursue", Target: "object:flag", Radius: 0.6, Mark: "grab"},
 				{Label: "run_home", Do: "move", Landmark: "midfield", Speed: 0.9},
-				{Do: "hold", Duration: 0.5, Next: "run_home"},
-			}},
+				{Do: "hold", Duration: 0.5, Next: "chase_flag"},
+				{Label: "escort", Do: "mirror", Target: "object:flag", Offset: V2(2, -2), Until: "flag_free", Next: "chase_flag"},
+			}, Interrupts: []InterruptSpec{{When: "escort_now", Goto: "escort"}}},
 			{Name: "keep", Steps: []StepSpec{
 				{Do: "guard", Landmark: "home", Radius: 10, Target: "nearest_opponent", Gap: 1.5},
 			}},
@@ -150,9 +155,9 @@ func newDrillBook(t testing.TB, b *Book, perTeam int, seed uint64) *drill {
 		Agents:       make([]Body, n),
 		Objects:      []Body{{Pos: V2(0, 50)}},
 		Landmarks:    []Vec2{V2(0, 50), {}},
-		Signals:      []float64{0},
+		Signals:      []float64{0, 0},
 		TeamSignals:  []float64{0, 0},
-		AgentSignals: make([]float64, n),
+		AgentSignals: make([]float64, 2*n),
 	}
 	r := NewRand(seed)
 	for i := 0; i < perTeam; i++ {
@@ -165,8 +170,8 @@ func newDrillBook(t testing.TB, b *Book, perTeam int, seed uint64) *drill {
 		d.w.Agents[perTeam+i] = Body{Team: 1, Role: role, Pos: V2(r.Range(-15, 15), r.Range(52, 58)),
 			MaxSpeed: 6.5 + r.Range(0, 1), MaxAccel: 10, Reaction: uint16(2 + i%2)}
 	}
-	for i := range d.w.AgentSignals {
-		d.w.AgentSignals[i] = 0.4 + float64(i%3)*0.2
+	for i := 0; i < n; i++ {
+		d.w.AgentSignals[2*i] = 0.4 + float64(i%3)*0.2 // stamina
 	}
 	ex.Reset(n, 2)
 	red, _ := b.PlanID("red_raid")
@@ -196,8 +201,8 @@ func (d *drill) step() []Command {
 			// A tag is a contest between the chaser and the carrier.
 			ch, ca := &d.w.Agents[ev.Agent], &d.w.Agents[d.carrier]
 			c := Contest{
-				Attacker: 100 * d.w.AgentSignals[ev.Agent],
-				Defender: 100 * d.w.AgentSignals[d.carrier],
+				Attacker: 100 * d.w.AgentSignals[2*ev.Agent],
+				Defender: 100 * d.w.AgentSignals[2*d.carrier],
 				Angle:    ApproachAngle(ch.Vel, ca.Pos.Sub(ch.Pos)),
 				RelSpeed: ch.Vel.Len() - ca.Vel.Len(),
 			}
@@ -218,6 +223,14 @@ func (d *drill) step() []Command {
 	if d.carrier >= 0 {
 		c := &d.w.Agents[d.carrier]
 		d.w.Objects[0].Pos, d.w.Objects[0].Vel = c.Pos, c.Vel
+	}
+	d.w.Signals[1] = 0
+	for i := range d.w.Agents {
+		d.w.AgentSignals[2*i+1] = 0
+	}
+	if d.carrier >= 0 {
+		d.w.Signals[1] = 1
+		d.w.AgentSignals[2*d.carrier+1] = 1
 	}
 	d.w.Tick++
 	return cmds

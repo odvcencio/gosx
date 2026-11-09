@@ -62,7 +62,7 @@ func TestDrillRunsAndRaidersReachTheFlag(t *testing.T) {
 	if d.grabs == 0 {
 		t.Error("no raider reached the flag in 30 s")
 	}
-	for _, k := range []StepKind{StepSlot, StepPath, StepGuard, StepMove} {
+	for _, k := range []StepKind{StepSlot, StepPath, StepGuard, StepMove, StepMirror, StepPursue, StepEngage} {
 		if !steps[k] {
 			t.Errorf("no agent ran a %v step", k)
 		}
@@ -369,7 +369,7 @@ func TestFacts(t *testing.T) {
 		"object.ball.y":            20,
 		"landmark.spot.x":          -5,
 		"landmark.goal.y":          30,
-		"self.step_time":           elapsed(1, testDT),
+		"self.step_time":           1.0 / 30,
 	}
 	for name, want := range cases {
 		f, err := b.ParseFact(name)
@@ -615,5 +615,53 @@ func BenchmarkHash22Agents(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = d.ex.Hash()
+	}
+}
+
+// A reaction delay postpones a decision; it must not make the agent skip its
+// branches and take the default.
+func TestReactionDelaysButDoesNotSkipDecisions(t *testing.T) {
+	b := miniBook(t, nil, func(s *Spec) {
+		s.Assignments = []AssignmentSpec{{Name: "pick", Steps: []StepSpec{
+			{Do: "decide", DecisionSpec: DecisionSpec{
+				Branches:  []BranchSpec{{When: "flag_up", Goto: "yes"}},
+				Otherwise: "no",
+				Window:    0.1, // 3 ticks at 30 Hz
+			}},
+			{Label: "yes", Do: "hold", Duration: 5},
+			{Label: "no", Do: "hold", Duration: 5},
+		}}}
+	})
+	pick, _ := b.AssignmentID("pick")
+	for _, c := range []struct {
+		name       string
+		flagAt     int // tick the rule turns true, or -1
+		wantStep   int
+		wantChosen int // tick the agent leaves the decision
+	}{
+		{"holds at once", 0, 1, 4},
+		{"holds late in the window", 6, 1, 6},
+		{"never holds", -1, 2, 7},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ex, _ := NewExecutor(b, Options{Step: testDT})
+			w := oneAgentWorld(b, Body{MaxSpeed: 1, Reaction: 4})
+			ex.Reset(1, 2)
+			ex.Assign(0, pick)
+			left := -1
+			for tick := 0; tick < 20 && left < 0; tick++ {
+				if tick == c.flagAt {
+					w.Signals[0] = 1
+				}
+				ex.Step(w)
+				if ex.Agent(0).Step != 0 {
+					left = tick
+				}
+				w.Tick++
+			}
+			if got := ex.Agent(0).Step; got != c.wantStep || left != c.wantChosen {
+				t.Fatalf("took step %d on tick %d, want step %d on tick %d", got, left, c.wantStep, c.wantChosen)
+			}
+		})
 	}
 }

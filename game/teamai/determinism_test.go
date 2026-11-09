@@ -19,16 +19,16 @@ import (
 // drillCheckpoints are the drill state hashes (executor state, every body,
 // the flag) after ticks 100, 200, ..., 1000 of the 22-agent drill.
 var drillCheckpoints = [10]uint64{
-	0x86ca2b56919c3d,
-	0x8ebf7b7ad6fd0240,
-	0xd66da41e74c65048,
-	0xe8217d8381c71787,
-	0x52d6eedfc68dcb06,
-	0x93055e635a6a1bc3,
-	0xafdf60ca93a70f85,
-	0x355de26e6d60513b,
-	0xaf50bf81bf64de19,
-	0xdd29d1efc98caf98,
+	0x6675df1c0f689f26,
+	0x2ea4d2b47679f1a3,
+	0xb804b737c0a0f694,
+	0xc401f99ded4ee714,
+	0xca3c45d4aca00494,
+	0xf027c1068621c888,
+	0x4f5f6bf597ca52b3,
+	0xb8f5bd4b89ac205b,
+	0x45077a02aacc0457,
+	0x67bef9ec8b64863b,
 }
 
 func TestDeterministicDrill1000Ticks(t *testing.T) {

@@ -625,10 +625,10 @@ func (e *Executor) act(q *Query, s *step) (cmd Command, natural bool, jump int16
 			}
 		}
 	case StepDecide:
-		if k := q.decide(&s.decision, st.stepTicks); k >= 0 {
+		switch k := q.decide(&s.decision, st.stepTicks); {
+		case k >= 0:
 			return cmd, false, s.decision.branches[k].target
-		}
-		if elapsed(st.stepTicks, e.dt) >= s.decision.window {
+		case k == decideExpired:
 			return cmd, false, s.decision.otherwise
 		}
 		cmd.Vel = Arrive(b.Pos, st.point, b.MaxSpeed, b.MaxAccel, e.tol)
@@ -653,18 +653,27 @@ func (e *Executor) finishCommand(q *Query, cmd Command) Command {
 	return cmd
 }
 
-// decide picks a branch of d, or -1 to keep waiting. It is the pathEnv
+// Results of Query.decide besides a branch index.
+const (
+	decideWait    = -1
+	decideExpired = -2
+)
+
+// decide picks a branch of d, decideWait, or decideExpired. The agent first
+// tests the decision Reaction ticks after reaching it, then every tick for
+// Window seconds; a decision with no window is tested once. It is the pathEnv
 // method too, so path decisions and decide steps share it.
 func (q *Query) decide(d *Decision, waited uint32) int {
-	if waited < uint32(q.body.Reaction) {
-		return -1
+	reaction := uint32(q.body.Reaction)
+	if waited < reaction {
+		return decideWait
 	}
-	k := -1
+	k := decideWait
 	switch {
 	case d.chooser >= 0:
 		k = q.ex.book.choosers[d.chooser].Choose(q, d)
-		if k >= len(d.branches) {
-			k = -1
+		if k < 0 || k >= len(d.branches) {
+			k = decideWait
 		}
 	case !d.weighted:
 		for i := range d.branches {
@@ -698,8 +707,12 @@ func (q *Query) decide(d *Decision, waited uint32) int {
 	}
 	if k >= 0 {
 		q.ex.emit(q.self, EventBranch, k, q.target)
+		return k
 	}
-	return k
+	if elapsed(waited-reaction, q.ex.dt) >= d.window {
+		return decideExpired
+	}
+	return decideWait
 }
 
 // marked records a mark. It is the pathEnv method too.

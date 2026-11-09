@@ -109,8 +109,9 @@ type pathState struct {
 // pathEnv is what a running path needs from the executor.
 type pathEnv interface {
 	landmarkPos(id LandmarkID) Vec2
-	// decide returns the branch to take at d, -1 to keep waiting. waited is
-	// the number of ticks already spent at d.
+	// decide returns the branch to take at d, decideWait to keep waiting,
+	// or decideExpired when the window is over and d takes its default.
+	// waited is the number of ticks already spent at d.
 	decide(d *Decision, waited uint32) int
 	marked(mark int16)
 }
@@ -181,11 +182,11 @@ func (p *Path) step(st *pathState, b *Body, env pathEnv, dt, tol float64) pathOu
 			return pathOutcome{vel: Arrive(b.Pos, st.start, b.MaxSpeed, b.MaxAccel, tol)}
 
 		case SegmentDecide:
-			if i := env.decide(&s.decision, st.segTicks); i >= 0 {
+			switch i := env.decide(&s.decision, st.segTicks); {
+			case i >= 0:
 				st.enter(s.decision.branches[i].target)
 				continue
-			}
-			if elapsed(st.segTicks, dt) >= s.decision.window {
+			case i == decideExpired:
 				st.enter(s.decision.otherwise)
 				continue
 			}
@@ -253,8 +254,11 @@ func lookAhead(v, dt, tol float64) float64 {
 	return look
 }
 
-// elapsed converts ticks to seconds, with a guard against 1/30-style steps
-// landing a hair short of a whole second.
+// seconds converts ticks to seconds.
+func seconds(ticks uint32, dt float64) float64 { return float64(float64(ticks) * dt) }
+
+// elapsed converts ticks to seconds for comparison with a duration, with a
+// guard against 1/30-style steps landing a hair short of a whole second.
 func elapsed(ticks uint32, dt float64) float64 {
 	t := float64(float64(ticks) * dt)
 	return t + float64(dt*1e-6)

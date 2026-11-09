@@ -8,8 +8,10 @@ const maxBranches = 16
 // whose rule holds is taken; in "weighted" mode one of the branches whose rule
 // holds is drawn with probability proportional to its weight, from a seeded
 // hash, so the draw is the same on every platform. A Chooser, when set,
-// replaces both. If no branch is taken within Window seconds, the decision
-// moves on to its default.
+// replaces both. The agent first tests a decision Body.Reaction ticks after
+// reaching it, then every tick for Window seconds; when no branch is taken by
+// then, the decision moves on to its default. A decision with no window is
+// tested once.
 type Decision struct {
 	branches  []branch
 	window    float64

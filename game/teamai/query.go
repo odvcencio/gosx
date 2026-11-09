@@ -222,7 +222,7 @@ func (q *Query) Assignment() (AssignmentID, int) {
 }
 
 // StepTime returns the seconds spent in the current step.
-func (q *Query) StepTime() float64 { return elapsed(q.st.stepTicks, q.ex.dt) }
+func (q *Query) StepTime() float64 { return seconds(q.st.stepTicks, q.ex.dt) }
 
 // Marked reports whether the agent reached mark i in its assignment.
 func (q *Query) Marked(i int) bool { return i >= 0 && i < 32 && q.st.marks&(1<<uint(i)) != 0 }
@@ -334,11 +334,11 @@ func (q *Query) Fact(f Fact) float64 {
 	if f.subj == subjSelf {
 		switch f.prop {
 		case propStepTime:
-			return elapsed(q.st.stepTicks, q.ex.dt)
+			return seconds(q.st.stepTicks, q.ex.dt)
 		case propAssignTime:
-			return elapsed(q.st.assignTicks, q.ex.dt)
+			return seconds(q.st.assignTicks, q.ex.dt)
 		case propPathTime:
-			return elapsed(q.st.path.ticks, q.ex.dt)
+			return seconds(q.st.path.ticks, q.ex.dt)
 		case propContact:
 			if q.st.contact {
 				return 1

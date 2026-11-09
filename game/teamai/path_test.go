@@ -15,10 +15,15 @@ type stubEnv struct {
 
 func (e *stubEnv) landmarkPos(id LandmarkID) Vec2 { return e.landmarks[id] }
 func (e *stubEnv) decide(d *Decision, waited uint32) int {
-	if e.choose == nil {
-		return -1
+	if e.choose != nil {
+		if i := e.choose(d, waited); i >= 0 {
+			return i
+		}
 	}
-	return e.choose(d, waited)
+	if elapsed(waited, testDT) >= d.window {
+		return decideExpired
+	}
+	return decideWait
 }
 func (e *stubEnv) marked(m int16) { e.marks = append(e.marks, m) }
 
