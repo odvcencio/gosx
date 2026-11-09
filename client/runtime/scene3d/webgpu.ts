@@ -16560,7 +16560,7 @@
             // Fail closed: skip the whole object (and its draw-call stat)
             // when any declared attribute could not be bound.
             if (!allBound) continue;
-            var selenaIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            var selenaIndexCount = obj.directVertices ? webGPUBindRetainedMeshIndexBuffer(pass, obj) : 0; // world-baked streams are already index-expanded
             if (selenaIndexCount > 0) pass.drawIndexed(selenaIndexCount);
             else pass.draw(count);
             if (frameRequest) frameRequest.record(obj.id);
