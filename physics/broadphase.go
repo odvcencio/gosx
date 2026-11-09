@@ -413,6 +413,11 @@ func comparePairsByIndex(x, y ColliderPair) int {
 // sides are immovable, and a bounded pair whose boxes do not overlap. A
 // surviving pair's packed side IDs, ordered low to high, are appended to
 // pairKeys for the sort-and-dedupe pass.
+//
+// One immovable pair survives: a trigger against a collider on a kinematic
+// body, or a trigger on a kinematic body. That is how a trigger volume sees a
+// kinematic character or a moving platform. Such a pair only ever produces
+// trigger events; the solver skips trigger manifolds.
 func (s *SpatialHash) appendCandidate(sideA uint32, a *Collider, aabbA AABB, sideB uint32, b *Collider, aabbB AABB) {
 	if a == nil || b == nil || a == b {
 		return
@@ -423,7 +428,7 @@ func (s *SpatialHash) appendCandidate(sideA uint32, a *Collider, aabbA AABB, sid
 	if !collidersInteract(a, b) {
 		return
 	}
-	if immovableCollider(a) && immovableCollider(b) {
+	if immovableCollider(a) && immovableCollider(b) && !kinematicTriggerPair(a, b) {
 		return
 	}
 	if aabbA.IsFinite() && aabbB.IsFinite() && !aabbA.Overlaps(aabbB) {
@@ -521,6 +526,21 @@ func (s *SpatialHash) cellRange(aabb AABB) (cellKey, cellKey, bool) {
 
 func immovableCollider(c *Collider) bool {
 	return c == nil || c.Body == nil || !c.Body.IsDynamic()
+}
+
+// kinematicTriggerPair reports whether two immovable colliders still need a
+// trigger test: at least one is a trigger and at least one rides a kinematic
+// body. Two static colliders never need one, because neither can move into
+// the other.
+func kinematicTriggerPair(a, b *Collider) bool {
+	if !a.IsTrigger && !b.IsTrigger {
+		return false
+	}
+	return kinematicCollider(a) || kinematicCollider(b)
+}
+
+func kinematicCollider(c *Collider) bool {
+	return c != nil && c.Body != nil && c.Body.IsKinematic
 }
 
 // orderedColliderIndexes returns the two collider indexes in ascending order.

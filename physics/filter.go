@@ -10,8 +10,8 @@ package physics
 //
 // The rule holds everywhere a pair can meet: the broadphase drops a pair that
 // fails it before any narrowphase work, Collide and CollideAll return no
-// manifold for it, and the continuous collision pass ignores it. Queries
-// (raycasts, shape casts and overlaps) take a
+// manifold for it, the continuous collision pass ignores it, and so does the
+// trigger pass. Queries (raycasts, shape casts and overlaps) take a
 // QueryFilter instead, which names the layers the query hits.
 //
 // The zero ColliderConfig keeps the behaviour colliders had before layers

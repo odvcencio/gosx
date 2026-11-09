@@ -13,8 +13,12 @@ type BodyState struct {
 }
 
 // WorldState is the compact authoritative state a transport layer broadcasts.
+//
+// Triggers lists the trigger pairs that touched in the last step, which is
+// what decides whether the next step reports a pair as entering or staying.
 type WorldState struct {
-	Bodies []BodyState `json:"bodies,omitempty"`
+	Bodies   []BodyState        `json:"bodies,omitempty"`
+	Triggers []TriggerPairState `json:"triggers,omitempty"`
 }
 
 // Snapshot returns a restorable physics checkpoint for rollback or replay.
@@ -58,12 +62,16 @@ func (w *World) State() []byte {
 	return data
 }
 
-// StateSnapshot returns a typed copy of the world's dynamic body state.
+// StateSnapshot returns a typed copy of the world's dynamic body state and
+// its trigger overlaps.
 func (w *World) StateSnapshot() WorldState {
 	if w == nil || len(w.bodies) == 0 {
 		return WorldState{}
 	}
 	state := WorldState{Bodies: make([]BodyState, 0, len(w.bodies))}
+	if len(w.triggerPairs) > 0 {
+		state.Triggers = w.TriggerOverlaps(make([]TriggerPairState, 0, len(w.triggerPairs)))
+	}
 	for _, body := range w.bodies {
 		if body == nil {
 			continue
@@ -80,11 +88,15 @@ func (w *World) StateSnapshot() WorldState {
 	return state
 }
 
-// ApplyState restores matching body transforms and velocities from a snapshot.
+// ApplyState restores matching body transforms and velocities from a
+// snapshot and replaces the trigger overlaps with the snapshot's list. Bodies
+// match by index, then by ID; bodies the snapshot does not name keep their
+// state. A snapshot that names no body changes nothing.
 func (w *World) ApplyState(state WorldState) {
 	if w == nil || len(state.Bodies) == 0 {
 		return
 	}
+	defer w.applyTriggerState(state)
 	byIndex := make(map[int]*RigidBody, len(w.bodies))
 	byID := make(map[string]*RigidBody, len(w.bodies))
 	for _, body := range w.bodies {
@@ -110,4 +122,15 @@ func (w *World) ApplyState(state WorldState) {
 		body.AngularVelocity = item.AngularVelocity
 		body.Wake()
 	}
+}
+
+// applyTriggerState restores the trigger overlaps of a snapshot.
+func (w *World) applyTriggerState(state WorldState) {
+	byIndex := make(map[int]*Collider, len(w.colliders))
+	for _, collider := range w.colliders {
+		if collider != nil && collider.index != 0 {
+			byIndex[collider.index] = collider
+		}
+	}
+	w.restoreTriggers(state.Triggers, byIndex)
 }
