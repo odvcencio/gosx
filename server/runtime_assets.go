@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"m31labs.dev/gosx/internal/filepolicy"
 	"mime"
 	"net/http"
 	"os"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"m31labs.dev/gosx/internal/filepolicy"
 
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
@@ -99,17 +100,6 @@ func (a *App) effectiveRuntimeRoot() string {
 		}
 	}
 	return ResolveAppRoot("")
-}
-
-func (a *App) hasCompatRuntimeAssets() bool {
-	root := a.effectiveRuntimeRoot()
-	if root == "" {
-		return false
-	}
-	if isFile(filepath.Join(root, "build", "bootstrap.js")) {
-		return true
-	}
-	return isFile(filepath.Join(root, "build.json")) && isDir(filepath.Join(root, "assets"))
 }
 
 func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
@@ -282,10 +272,6 @@ func serveImmutableRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath st
 	}
 	httpcache.MarkImmutableAsset(w, r)
 	serveRuntimeFileWithCompression(w, r, fsPath, compression)
-}
-
-func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {
-	serveRuntimeFileWithCompression(w, r, fsPath, true)
 }
 
 func serveRuntimeFileWithCompression(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {

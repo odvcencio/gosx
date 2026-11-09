@@ -1,12 +1,13 @@
 package route
 
 import (
-	"m31labs.dev/gosx/internal/filepolicy"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+
+	"m31labs.dev/gosx/internal/filepolicy"
 
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
@@ -67,19 +68,6 @@ func addRouteFileCSSHead(ctx *RouteContext, page FilePage) {
 		order++
 	}
 	if node, ok := fileCSSNode(page.Root, sidecarCSSFile(page.FilePath), server.CSSLayerPage, order, page.cssAssets); ok && !node.IsZero() {
-		ctx.AddHead(node)
-	}
-}
-
-func addFileCSSHead(ctx *RouteContext, files ...string) {
-	if ctx == nil {
-		return
-	}
-	for _, file := range files {
-		node, ok := fileCSSNode("", sidecarCSSFile(file), server.CSSLayerPage, 0)
-		if !ok || node.IsZero() {
-			continue
-		}
 		ctx.AddHead(node)
 	}
 }

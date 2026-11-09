@@ -957,15 +957,6 @@ func containsBroaderGosxName(inv *Inventory, name, family string) bool {
 	return false
 }
 
-func containsAuditString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
 func findRepoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

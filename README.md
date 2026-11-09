@@ -229,7 +229,7 @@ GoSX is opinionated about a small number of things and flexible about everything
 - **The browser is a render target.** Server components are the baseline. Client-side JavaScript is something you opt into, feature by feature, not a default ambient runtime.
 - **One language, explicit browser compiler.** You write Go. `go build` produces the server and CLI, and `gosx dev` uses standard Go WASM for local iteration. Production builds use TinyGo or, for eligible pinned releases, a verified prebuilt runtime. There is no app-side Node, npm, webpack, or bundler config.
 - **No JavaScript toolchain is not zero browser cost.** GoSX still ships a measured browser bootstrap, feature chunks, and WASM runtime only when a route needs them. The performance contract is that the compiler and build pipeline justify every shipped runtime slice.
-- **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
+- **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
 - **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
 - **You pay for what you use.** Static pages are static. Islands ship only when a page has an island. Production manifests choose among capability-linked `core`, `engine`, `collab`, and `full` WASM profiles; the legacy `islands` name remains a read-compatible alias. An app with no islands has no client VM; an app with no engines has no engine bundle.
 - **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure, and the island VM, patch applier, and feature chunks are source you can read. Build manifests report the exact bytes each route ships.
@@ -474,7 +474,7 @@ the classified routes and response checks.
 
 **Routing and Edge** — Server middleware can be annotated with `app.UseEdge`, and `app.UseI18n` adds locale-prefix routing that composes with both `server.App` and file routing.
 
-**Content and Components** — `content` uses mdpp as the canonical Markdown++ content-source layer for `.md`, `.mdx`, and `.mdpp` collections, with typed frontmatter, diagnostics, renderer hooks, and slug indexes. `components` provides a registry for reusable server component libraries and file-route bindings, and `ui` seeds GoSX UI: layout, typography, form, card, tab, table, badge, and stylesheet primitives users can copy from or compose directly.
+**Content and Components** — `content` uses mdpp as the canonical Markdown++ content-source layer for `.md`, `.mdx`, and `.mdpp` collections, with typed frontmatter, diagnostics, renderer hooks, and slug indexes.
 
 **Text Layout** — `TextBlock` supports a deterministic approximate server
 layout and bootstrap-managed refinement with browser font metrics. Font,
@@ -491,9 +491,7 @@ contract without pretending the approximate first pass is exact.
 
 **Embedded apps** — Opt into iframe framing allowlists, a public base path for routes and runtime URLs, and partitioned session cookies for Discord Activities. Defaults retain same-origin framing and SameSite=Lax cookies. See [the embedded apps guide](./docs/embedded-apps.md).
 
-**Stripe** — Hosted Checkout is server-first: `stripeui.HostedCheckoutForm` posts to an app-owned Go endpoint that calls Stripe's API and returns a native 303, with no Stripe.js or GoSX browser runtime. Elements and embedded Checkout are explicit runtime surfaces whose HTML contains only a publishable key, typed allowlisted display options, and a fixed same-origin session-action path; client secrets are fetched through scoped CSRF-aware transport and never serialized into the page or forwarded in events. `stripeui.Require` emits the nonced bootstrap, direct Stripe.js loader, and local bridge in lifecycle order. See [the Stripe integration guide](./docs/stripe.md).
 
-**Polar** — Hosted Checkout stays entirely server-first: `polarui.CheckoutForm` submits only an opaque offer ID and CSRF token to `polaradapter`, which resolves typed server-owned checkout inputs, calls Polar through a bounded private-OAT client, and returns an empty 303 to an exact configured HTTPS checkout origin. It adds no browser runtime or provider data to SSR. See [the Polar integration guide](./docs/polar.md).
 
 ## Engines
 
@@ -843,7 +841,6 @@ sync := crdtsync.NewState()    // start a sync session
 msg := sync.Generate(doc)      // produce the next sync message to send
 ```
 
-The `workspace` package layers a distributed semantic collaboration space on top of `crdt` + `hub` + `vecdb`: agents join a workspace, write findings with vector embeddings, query across peers, and persist state. It's used in GoSX's multi-agent tooling and is also the substrate for any app that wants "multiple clients editing shared state with presence and similarity search" without building it from scratch.
 
 ## Volumetric Data & Simulation
 
@@ -872,19 +869,6 @@ node := rt.Mount(ctx, gosx.Text("Loading simulation"))
 ```
 
 Together these packages (`field`, `game`, `sim`, `hub`) give you a complete server-authoritative interactive simulation stack in pure Go, with no third-party real-time engine.
-
-## Semantic Layer
-
-GoSX ships a vector-native semantic layer for content routing, similarity search, and LLM-adjacent workflows:
-
-- **`vecdb`** — in-memory vector database with k-NN search, cosine / inner-product / L2 metrics, and TurboQuant-backed compression. Safe for concurrent reads and writes.
-- **`embed`** — embedding provider abstraction. Implement `Provider` to plug in OpenAI, Cohere, a local model, or a deterministic test encoder.
-- **`semantic`** — built on `vecdb` + `embed`, with three production-ready primitives:
-  - `semantic.Router` — route a request to the most semantically similar handler
-  - `semantic.Cache` — cache responses by embedding similarity rather than exact key match
-  - `semantic.ContentIndex` — similarity-driven content discovery and ranking
-
-The math for MSE-optimal quantization lives in [TurboQuant](https://github.com/odvcencio/turboquant), a standalone pure-Go module that GoSX consumes as a dependency. You get the compression ratio of an engineered quantizer without taking on a C library.
 
 ## Editor
 
@@ -1366,10 +1350,6 @@ Three tiers:
 | `server` | HTTP server, page rendering, caching, streaming, i18n, edge annotations, assets |
 | `route` | File-based routing, layouts, data loaders, modules. Includes an EXPERIMENTAL render-profile hook (`RenderProfile`, gosx#185): pin an exact gosx version if you depend on it directly. |
 | `content` | mdpp-backed Markdown/MDX/Markdown++ collection loading with typed metadata, diagnostics, and renderer hooks |
-| `components` | Registry and binding adapters for server component libraries |
-| `ui` | GoSX UI primitives and registry-backed component library seed |
-| `polarui` | Zero-runtime native Polar hosted-checkout form |
-| `polaradapter` | Typed server-only Polar Checkout API and POST/303 adapter |
 | `action` | Named mutation handlers with validation |
 | `session` | Signed cookie sessions, CSRF, flash state |
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |
@@ -1379,10 +1359,6 @@ Three tiers:
 | `field` | 3D vector fields, trilinear sampling, operators, per-component compression, hub streaming |
 | `sim` | Server-authoritative game simulation: tick loop, snapshots, replay, spectator sync |
 | `crdt` | Conflict-free replicated documents with bloom-filter sync protocol |
-| `workspace` | Distributed semantic collaboration (CRDT + hub + vecdb) |
-| `vecdb` | In-memory vector database with k-NN search and quantized storage |
-| `embed` | Embedding provider abstraction |
-| `semantic` | Semantic router, similarity cache, content index |
 | `engine` | Worker/surface model with capability declarations |
 | `engine/wasm` | Standard-Go WASM engine registration, browser context, and instance lifecycle |
 | `editor` | Go-native text editor building blocks (textmodel, input, highlight, toolbar, vscode shim) |
@@ -1396,7 +1372,6 @@ Three tiers:
 | `textlayout` | Text measurement, line breaking, ellipsis |
 | `format` | Source formatter for `.gsx` files |
 | `lsp` | Language server protocol for editor integration |
-| `apptest` | HTTP testing helpers for pages, APIs, and forms |
 | `islandtest` | Island program testing helpers |
 | `dev` | Development server with file watching |
 | `desktop` | Native desktop host backed by Windows WebView2, shell integration, native UI, crash reports, and update feed helpers |
@@ -1447,7 +1422,7 @@ The discipline is real, but it is per-package rather than per-module, and the di
 The six libraries the framework's runtime paths use:
 
 - [gotreesitter](https://github.com/odvcencio/gotreesitter) — pure-Go tree-sitter runtime with grammar composition
-- [turboquant](https://github.com/odvcencio/turboquant) — pure-Go MSE-optimal vector quantizer powering `vecdb`
+- [turboquant](https://github.com/odvcencio/turboquant) — pure-Go MSE-optimal vector quantizer powering `crdt` vector quantization
 - [gorilla/websocket](https://github.com/gorilla/websocket) — WebSocket support for hubs
 - [rivo/uniseg](https://github.com/rivo/uniseg) — Unicode segmentation for text layout
 - [golang.org/x/image](https://pkg.go.dev/golang.org/x/image) — image optimization
@@ -1470,7 +1445,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.59.1**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.59.1**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, and `sim` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

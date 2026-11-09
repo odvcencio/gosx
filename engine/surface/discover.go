@@ -11,15 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	gosx "m31labs.dev/gosx"
 	"m31labs.dev/gosx/ir"
 )
-
-// defaultNow is the seam currentTimeFn delegates to by default. Tests
-// override currentTimeFn directly to pin a specific moment.
-func defaultNow() time.Time { return time.Now() }
 
 // surfaceManifestEntry is the per-component record written to the JSON manifest.
 //
@@ -306,7 +301,3 @@ func discoverComponentBytecode(sp *ir.SurfaceProgram, gszPath, cacheDir string, 
 	})
 	manifest.Surfaces = append(manifest.Surfaces, entry)
 }
-
-// currentTimeFn is a small seam tests can override; retained for
-// parity with prior call sites that pinned "now".
-var currentTimeFn = defaultNow
