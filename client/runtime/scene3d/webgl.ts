@@ -868,7 +868,7 @@
   // --- Shadow Depth Shader Sources ---
 
   // Cutaway planes are off when every value is zero.
-  const SCENE_NO_CUT = new Float32Array(12);
+  const SCENE_NO_CUT = new Float32Array(12); function sceneWebGLWindUpload(gl: any, ip: any, wind: any) { if (ip.uniforms.wind === undefined) ip.uniforms.wind = gl.getUniformLocation(ip.program, "u_wind[0]"); if (ip.uniforms.wind) gl.uniform4fv(ip.uniforms.wind, wind && window.__gosx_scene3d_terrain_api ? window.__gosx_scene3d_terrain_api.windFor(wind) : SCENE_NO_CUT); } // Environment.Wind sway for instanced batches (terrain.ts sceneWindFor)
   const SCENE_SHADOW_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -9970,7 +9970,7 @@
       uploadMaterial(gl, ip.uniforms, mat, textureCache);
       if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
       gl.uniform1i(ip.uniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
-      gl.uniform1i(ip.uniforms.hasInstanceColor, 0); if (ip.uniforms.wind) gl.uniform4fv(ip.uniforms.wind, SCENE_NO_CUT);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 0); sceneWebGLWindUpload(gl, ip, null);
       gl.depthMask(sceneTransmissionDepthWrite(obj, mat, scenePBRObjectRenderPass(obj, mat) === "opaque"));
       const allowed = {};
       for (const [name, size, fallback] of [
@@ -10883,7 +10883,7 @@
         if (!ip) continue;
         gl.useProgram(ip.program); uploadInstancedFrame(ip);
         gl.depthMask(sceneTransmissionDepthWrite(mesh, mat, renderPass === "opaque"));
-        uploadMaterial(gl, ip.uniforms, mat, textureCache); if (ip.uniforms.wind === undefined) ip.uniforms.wind = gl.getUniformLocation(ip.program, "u_wind[0]"); if (ip.uniforms.wind) gl.uniform4fv(ip.uniforms.wind, window.__gosx_scene3d_terrain_api?.windFor(mesh.wind) || SCENE_NO_CUT);
+        uploadMaterial(gl, ip.uniforms, mat, textureCache); sceneWebGLWindUpload(gl, ip, mesh.wind);
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.

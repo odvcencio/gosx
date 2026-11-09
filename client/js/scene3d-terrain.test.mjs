@@ -272,5 +272,6 @@ test("both renderers sway instanced batches from the shared wind without breakin
   assert.match(gpu, /"    let model = mat4x4f\(in\.instanceMatrix0, in\.instanceMatrix1, in\.instanceMatrix2, in\.instanceMatrix3\);"/);
   // The crowd variant still finds its world-position anchor.
   assert.match(gl, /vec4 worldPos = a_instanceMatrix \* vec4\(a_position, 1\.0\); worldPos\.xyz \+= gosxWindOffset\(a_instanceMatrix, a_position\);/);
-  assert.match(gl, /gl\.uniform4fv\(ip\.uniforms\.wind, window\.__gosx_scene3d_terrain_api\?\.windFor\(mesh\.wind\) \|\| SCENE_NO_CUT\)/);
+  assert.match(gl, /function sceneWebGLWindUpload\(gl[^)]*\)/);
+  assert.match(gl, /uploadMaterial\(gl, ip\.uniforms, mat, textureCache\); sceneWebGLWindUpload\(gl, ip, mesh\.wind\);/);
 });
