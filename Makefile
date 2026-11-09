@@ -387,7 +387,7 @@ test-wasm:
 	# break the browser build of game unnoticed.
 	GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/...
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/browser ./internal/browserdom ./internal/jsreentry ./hub/socket ./engine/wasm ./netplay/client
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|Surface|FrameRejection)'
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|Surface|FrameRejection|DecalPoolPublish)'
 
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm

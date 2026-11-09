@@ -337,6 +337,36 @@ Use `scene.Tonemap{Mode: scene.TonemapAgX, Exposure: 0.7}` for a fitted AgX log-
 
 A restrained coastal chain is GodRays, mip Bloom (`Threshold: 1.2, Strength: 0.12, Radius: 3, Scale: 0.5`), AgX, Grain and FXAA. Keeping bloom above diffuse daylight and its strength low avoids broad halos. Estimated additional 1440p desktop cost for shafts, haze and grade: 0.4–0.9 ms, unmeasured. Combined atmosphere estimates are 1.5–3.4 ms; planar geometry can dominate. Hardware frame-time and Chrome/Edge/Firefox visual acceptance remain required.
 
+### Motion blur
+
+`scene.MotionBlur{Quality: scene.MotionBlurMedium, Strength: 0.5, MaxBlur: 32}` blurs the frame along each pixel's
+motion. Add it to `PostFX.Effects` to opt in; a scene without it pays nothing, and its code downloads only for scenes
+that list it. Put it after `scene.Decals` and before `Tonemap`, `Bloom`, TAA and FXAA, so it blurs linear HDR color.
+Do not make it the last effect on WebGL2 when `PostFX.MaxPixels` scales the chain below the canvas size.
+
+The pass follows McGuire et al. (2012). It builds a velocity buffer, takes the largest velocity in each screen tile,
+spreads that to the neighboring tiles, then gathers samples along the dominant velocity. Each tap is weighted by
+depth and by how far its own velocity reaches, so a sharp object that moves across a blurred background keeps its
+edge and a fast object does not smear over a still one in front of it.
+
+- `Quality`: `low` (6 taps, 32 px tiles), `medium` (10 taps, 24 px, default) or `high` (16 taps, 16 px).
+- `Strength`: the fraction of a frame the shutter is open, 0..1. Default 0.5, a 180 degree shutter.
+- `MaxBlur`: the longest blur in pixels at 1080p, 1..128, and never more than the tile size. Default 32.
+
+**Backends.** WebGPU blurs camera motion, rigid bodies and skinned meshes, using the motion vectors the renderer
+already draws for TAA (static geometry reprojects through the depth buffer and the previous view-projection; moving
+meshes write their own velocity). WebGL2 has no per-object velocity target, so it blurs camera motion only: a turning
+or moving camera blurs the view, while an object that moves in front of a still camera does not blur there. The
+effect needs `EXT_color_buffer_float` on WebGL2 and does nothing without it.
+
+**Adaptive quality.** The pass reads the active quality tier. The `survival`, `minimal` and `low` tiers skip it. The
+`reduced`, `balanced` and `medium` tiers draw the `low` preset whatever `Quality` says. Adaptive post-FX suppression
+removes it with the other costly effects, so list `"motionBlur"` in the `PostEffects` of each quality ladder rung that
+should keep it.
+
+**History.** The pass keeps the previous frame's view-projection. It draws nothing for the first frame, after a gap of
+more than 250 ms, and after a camera cut of more than 10 world units in one frame.
+
 ### Controlling the Scene3D animation clock
 
 Mounted Scene3D handles expose `getAnimationClock()` and

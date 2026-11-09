@@ -4279,6 +4279,8 @@
     return typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api || SCENE_WEBGL_RENDER_TRUTH_NOOP;
   }
 
+  function sceneWebGLDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webglRun(state, effect, i, ...rest) : rest[0]; }
+  function sceneWebGLDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
   function createScenePostProcessor(gl, resolveSelenaUniform) {
 
     var quad = createSceneFullscreenQuad(gl);
@@ -4292,7 +4294,7 @@
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     function postFrameContext(projection, view, lights) { return projection && projection.projection ? projection : { projection: projection, view: view, lights: lights }; }
     var currentLinearInput = true;
-    var currentWidth = 0;
+    var currentWidth = 0, depthFx: any = { gl: gl };
     var currentHeight = 0;
     var hdrDegradationReported = false;
     // Lazily compiled shader programs, keyed by effect name.
@@ -4834,13 +4836,7 @@
               }
               break;
             }
-            default:
-              // Unknown effect — skip. A kind that reaches here NEVER draws;
-              // the chain record stays at pipeline="missing", dispatched=0,
-              // which is precisely how a case-sensitivity mismatch on the
-              // effect kind (the customPost defect) becomes visible instead of
-              // being masked by a healthy-looking postEffects count.
-              break;
+            default: currentTexture = sceneWebGLDepthFxPass(depthFx, effect, i, currentTexture, targetFBO, passW, passH, sceneFBO.depthTex, atmosphereContext); break; // decals and motion blur; any other kind never draws
           }
 
           if (postChain) {
@@ -4868,7 +4864,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
-        mipBloom.dispose(); atmospherePost.dispose();
+        mipBloom.dispose(); atmospherePost.dispose(); sceneWebGLDepthFxDispose(depthFx);
         if (temporal) temporal.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);

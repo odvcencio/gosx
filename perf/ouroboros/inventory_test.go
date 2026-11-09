@@ -514,7 +514,8 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		// Optional glTF asset features in the glTF chunk: the second UV stream and meshopt decoding.
 		"__gosx_scene3d_asset_ext",
 		// Opt-in stadium and arena crowds (Environment.Crowds) in the lazy crowd chunk.
-		"__gosx_scene3d_crowd_api"))
+		"__gosx_scene3d_crowd_api",
+		"__gosx_scene3d_depthfx_api")) // Decals and motion blur, in the on-demand depthfx chunk.
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}

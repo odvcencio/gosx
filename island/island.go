@@ -109,6 +109,7 @@ type Renderer struct {
 	bootstrapFeatureScene3dTextAtlasPath        string
 	bootstrapFeatureScene3dOceanFFTPath         string
 	bootstrapFeatureScene3dParticleBurstPath    string
+	bootstrapFeatureScene3dDepthFXPath          string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -294,6 +295,7 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapFeatureScene3dWarmupPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-warmup.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWarmup.Hash))
 	renderer.bootstrapFeatureScene3dTextAtlasPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-text-atlas.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTextAtlas.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
+	renderer.bootstrapFeatureScene3dDepthFXPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-depthfx.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDepthFX.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
 	renderer.bootstrapFeatureScene3dOceanQueryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-query.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanQuery.Hash))
@@ -811,6 +813,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DParticleBurstPath(path string) {
 	r.bootstrapFeatureScene3dParticleBurstPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DDepthFXPath overrides the demand-loaded depth-effects URL (decals, motion blur).
+func (r *Renderer) SetBootstrapFeatureScene3DDepthFXPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dDepthFXPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DTimelinePath overrides the demand-loaded timeline chunk URL.
 func (r *Renderer) SetBootstrapFeatureScene3DTimelinePath(path string) {
 	if r == nil {
@@ -954,6 +964,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DTextAtlas, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
 		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-depthfx.js", r.bootstrapFeatureScene3dDepthFXPath, r.runtimeAssets.BootstrapFeatureScene3DDepthFX):
+		return r.runtimeAssets.BootstrapFeatureScene3DDepthFX, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
 		return r.runtimeAssets.BootstrapFeatureScene3DTimeline, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-vessel.js", r.bootstrapFeatureScene3dVesselPath, r.runtimeAssets.BootstrapFeatureScene3DVessel):
@@ -1157,6 +1169,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DWarmupPath(runtime.BootstrapFeatureScene3DWarmup)
 	r.SetBootstrapFeatureScene3DTextAtlasPath(runtime.BootstrapFeatureScene3DTextAtlas)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
+	r.SetBootstrapFeatureScene3DDepthFXPath(runtime.BootstrapFeatureScene3DDepthFX)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
 	r.SetBootstrapFeatureScene3DOceanQueryPath(runtime.BootstrapFeatureScene3DOceanQuery)
@@ -2380,6 +2393,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"warmup", r.bootstrapFeatureScene3dWarmupPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsShaderWarmup)},
 		{"text-atlas", r.bootstrapFeatureScene3dTextAtlasPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsTextAtlases)},
 		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
+		{"depthfx", r.bootstrapFeatureScene3dDepthFXPath, r.scene3DNeedsDepthFXChunk()},
 		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
 		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
 		{"webgpu", r.bootstrapFeatureScene3dWebGPUPath, true},
@@ -2868,6 +2882,21 @@ func (r *Renderer) scene3DNeedsParticleBurstChunk() bool {
 		}
 		props := sceneProbe(entry)
 		if props.ParticleBursts {
+			return true
+		}
+	}
+	return false
+}
+
+// Decals and motion blur load only for scenes that declare them.
+func (r *Renderer) scene3DNeedsDepthFXChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		props := sceneProbe(entry)
+		if props.NeedsDepthFX() {
 			return true
 		}
 	}

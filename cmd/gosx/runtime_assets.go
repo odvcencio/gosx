@@ -49,6 +49,7 @@ func runtimeJSAssetSpecs(gosxRoot string, assets *RuntimeAssets) []runtimeJSAsse
 		{"bootstrap-feature-scene3d-warmup", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-warmup.js"), &assets.BootstrapFeatureScene3DWarmup, "scene3d"},
 		{"bootstrap-feature-scene3d-text-atlas", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-text-atlas.js"), &assets.BootstrapFeatureScene3DTextAtlas, "scene3d"},
 		{"bootstrap-feature-scene3d-particle-burst", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-particle-burst.js"), &assets.BootstrapFeatureScene3DParticleBurst, "scene3d"},
+		{"bootstrap-feature-scene3d-depthfx", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-depthfx.js"), &assets.BootstrapFeatureScene3DDepthFX, "scene3d"},
 		{"bootstrap-feature-scene3d-zoom", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-zoom.js"), &assets.BootstrapFeatureScene3DZoom, "scene3d"},
 		{"bootstrap-feature-scene3d-timeline", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-timeline.js"), &assets.BootstrapFeatureScene3DTimeline, "scene3d"},
 		{"bootstrap-feature-scene3d-vessel", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-vessel.js"), &assets.BootstrapFeatureScene3DVessel, "scene3d"},

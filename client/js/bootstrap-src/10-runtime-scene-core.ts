@@ -2845,6 +2845,8 @@
     fxaa: "fxaa",
     godrays: "godRays",
     grain: "grain",
+    decals: "decals",
+    motionblur: "motionBlur",
     taa: "taa",
     custompost: "customPost",
     "custom-post": "customPost",

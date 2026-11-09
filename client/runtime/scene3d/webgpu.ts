@@ -3989,6 +3989,8 @@
   }
 
   function wgpuPostOutput(direct: boolean, canvasOutput: any, intermediateOutput: any) { return direct ? canvasOutput : intermediateOutput; }
+  function wgpuDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webgpuRun(state, effect, i, ...rest) : rest[1]; }
+  function wgpuDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
   function wgpuPostPipelineName(name: string, canvasVariant: boolean) { return canvasVariant && name !== "present" ? "canvas-" + name : name; }
 
   function wgpuWarmPostOutputs(name: string, source: string, layout: any, canvasVariant: boolean, presentation: string, target: string, getPipeline: any) {
@@ -4012,7 +4014,7 @@
     var pingPongB = null, pingPongBView = null;
     var pingPongWidth = 0, pingPongHeight = 0;
     var depthTex = null, depthTexView: any = null, depthResolvePipeline: any = null, depthResolveLayout: any = null;
-    var currentWidth = 0, currentHeight = 0;
+    var currentWidth = 0, currentHeight = 0, depthFx: any = { device: device }; // decals and motion blur: see depthfx.ts
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
     var atmospherePost = createSceneAtmospherePostWebGPU({ device, format: targetFormat, sampler: linearSampler, getPipeline, getParamBuffer, fullscreenPass });
     var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
@@ -4362,7 +4364,7 @@
 
     // Resolve covered MSAA depth before a depth-reading post pass.
     function prepareSceneDepth(effects: any[], samples: number) {
-      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST].includes(effect.kind))) return false;
+      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST, "decals", "motionBlur"].includes(effect.kind))) return false;
       if (!depthResolvePipeline) {
         depthResolveLayout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: true } }] });
         var module = device.createShaderModule({ label: "post-depth-resolve", code: `@group(0) @binding(0) var source: texture_depth_multisampled_2d;
@@ -4705,8 +4707,7 @@
               currentTexView = outputView;
               break;
             }
-            default:
-              break;
+            default: currentTexView = wgpuDepthFxPass(depthFx, effect, i, encoder, currentTexView, outputView, outputFormat, depthTexView, scaledW, scaledH, atmosphereContext, postChain); break;
           }
         }
 
@@ -4727,12 +4728,10 @@
       },
 
       dispose: function() {
-        mipBloom.dispose(); atmospherePost.dispose();
+        mipBloom.dispose(); atmospherePost.dispose(); wgpuDepthFxDispose(depthFx);
         disposed = true;
         for (const texture of [sceneTex, auxTex, depthTex, pingPongA, pingPongB]) if (texture) texture.destroy();
-        for (var key in postParamBuffers) {
-          if (postParamBuffers[key]) postParamBuffers[key].destroy();
-        }
+        for (var key in postParamBuffers) { if (postParamBuffers[key]) postParamBuffers[key].destroy(); }
         customPostUniformBuffers.forEach(function(buf) { if (buf) buf.destroy(); });
         customPostUniformBuffers.clear();
         customPostPipelineCache.clear();
@@ -18739,7 +18738,7 @@
       if (usePostProcessing && postProcessor) {
         var screenView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
         var chain = temporalAA.resolve(encoder, postEffects, { colorView: postTarget.colorView, colorFormat: targetFormat, depthView: mainDepthTargetView, samples: sampleCount, objects: bundle.meshObjects, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle }); autoExposure.apply(encoder, bundle.environment, postTarget, cam, frameNowMS);
-        Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }), temporalAA.stats(), autoExposure.stats());
+        Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: temporalAA.velocityView() } }), temporalAA.stats(), autoExposure.stats());
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);

@@ -769,6 +769,20 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/particle-burst.ts")},
 	},
 	{
+		// Depth-driven post passes (projected decals, motion blur). Loaded only
+		// for scenes that declare one of those effects.
+		name: "bootstrap-feature-scene3d-depthfx.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/depthfx.ts"),
+			sourceFile("../runtime/scene3d/decal-data.ts"),
+			sourceFile("../runtime/scene3d/decal-wgpu.ts"),
+			sourceFile("../runtime/scene3d/decal-gl.ts"),
+			sourceFile("../runtime/scene3d/motion-blur.ts"),
+			sourceFile("../runtime/scene3d/motion-blur-wgpu.ts"),
+			sourceFile("../runtime/scene3d/motion-blur-gl.ts"),
+		},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-model-preparation.js",
 		sources: []source{sourceFile("../runtime/scene3d/model-preparation.ts")},
 	},

@@ -514,6 +514,18 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-depthfx.js",
+      "sources": [
+        "../runtime/scene3d/depthfx.ts",
+        "../runtime/scene3d/decal-data.ts",
+        "../runtime/scene3d/decal-wgpu.ts",
+        "../runtime/scene3d/decal-gl.ts",
+        "../runtime/scene3d/motion-blur.ts",
+        "../runtime/scene3d/motion-blur-wgpu.ts",
+        "../runtime/scene3d/motion-blur-gl.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-model-preparation.js",
       "sources": [
         "../runtime/scene3d/model-preparation.ts"
