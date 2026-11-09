@@ -1542,10 +1542,15 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
   assert.match(webgpu, /f\[10\] = clamp01\(sceneNumber\(mat\.iridescence, 0\)\)/);
   assert.match(webgpu, /f\[11\] = Math\.max\(-1, Math\.min\(1, sceneNumber\(mat\.anisotropy, 0\)\)\)/);
   assert.match(webgpu, /roughness = clamp\(roughness \* \(1\.0 - abs\(material\.anisotropy\) \* 0\.28\), 0\.04, 1\.0\)/);
-  assert.match(webgpu, /let clearcoat = clamp\(material\.clearcoat, 0\.0, 1\.0\)/);
-  assert.match(webgpu, /let sheen = clamp\(material\.sheen, 0\.0, 1\.0\)/);
+  // The material's coat, sheen and transmission become surface inputs the
+  // shared BRDF reads (a Selena surface hook supplies them instead).
+  assert.match(webgpu, /let surfaceClearcoat = material\.clearcoat;/);
+  assert.match(webgpu, /clamp\(coat, 0\.0, 1\.0\)/);
+  assert.match(webgpu, /let surfaceSheen = material\.sheen;/);
+  assert.match(webgpu, /let sheen = clamp\(surfaceSheen, 0\.0, 1\.0\)/);
   assert.match(webgpu, /let iridescence = clamp\(material\.iridescence, 0\.0, 1\.0\)/);
-  assert.match(webgpu, /let transmission = clamp\(material\.transmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)/);
+  assert.match(webgpu, /let surfaceTransmission = material\.transmission;/);
+  assert.match(webgpu, /let transmission = clamp\(surfaceTransmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)/);
 });
 
 test("Scene3D WebGPU reports custom material fallback diagnostics", () => {
