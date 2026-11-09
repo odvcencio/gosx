@@ -805,7 +805,6 @@
     buses: new Map([["master", { id: "master", volume: 1, muted: false }]]),
     handles: new Map(),
     nextHandle: 0,
-    context: null,
   };
 
   function gosxAudioClamp01(value, fallback) {
@@ -817,18 +816,7 @@
   }
 
   function gosxAudioEnsureContext() {
-    const Ctor = gosxAudioContextConstructor();
-    if (!Ctor) {
-      return null;
-    }
-    if (!gosxAudioState.context) {
-      try {
-        gosxAudioState.context = new Ctor();
-      } catch (_error) {
-        gosxAudioState.context = null;
-      }
-    }
-    return gosxAudioState.context;
+    return gosxMixerContext();
   }
 
   function gosxAudioNormalizeBus(raw) {
@@ -872,6 +860,11 @@
       return null;
     }
     gosxAudioState.buses.set(bus.id, bus);
+    const mixerBus = gosxMixerBus(bus.id, bus.parent || "master");
+    mixerBus.volume = bus.volume;
+    mixerBus.muted = bus.muted;
+    gosxMixerApply(mixerBus);
+    gosxMixerNotify(mixerBus);
     return bus;
   }
 
@@ -916,21 +909,30 @@
     return gosxAudioRegisterClip(Object.assign({}, options || {}, { id: key, src: key }), gosxAudioState.clips.size);
   }
 
+  // gosxAudioBusName names the bus a playback uses. The mixer applies that
+  // bus's volume, mute and duck state; playbacks only carry their own gain.
+  function gosxAudioBusName(clip, options) {
+    const opts = options && typeof options === "object" ? options : {};
+    return gosxMixerBusID(opts.bus || (clip && clip.bus) || "master");
+  }
+
+  // gosxAudioBusVolume is the effective bus gain, for playbacks that cannot
+  // route through the mixer (a plain <audio> element on a page without WebAudio).
   function gosxAudioBusVolume(busID) {
-    const bus = gosxAudioState.buses.get(String(busID || "master").trim() || "master") || gosxAudioState.buses.get("master");
-    const master = gosxAudioState.buses.get("master") || { volume: 1, muted: false };
-    if ((bus && bus.muted) || master.muted) {
-      return 0;
+    let gain = 1;
+    let bus = gosxMixerBus(busID);
+    for (let depth = 0; bus && depth < 8; depth += 1) {
+      gain *= gosxMixerEffective(bus);
+      bus = bus.parent ? gosxMixerState.buses.get(bus.parent) : null;
     }
-    const busVolume = bus ? gosxAudioClamp01(bus.volume, 1) : 1;
-    return busVolume * gosxAudioClamp01(master.volume, 1);
+    return gain;
   }
 
   function gosxAudioPlaybackVolume(clip, options) {
     const opts = options && typeof options === "object" ? options : {};
     const clipVolume = gosxAudioClamp01(clip && clip.volume, 1);
     const requested = Object.prototype.hasOwnProperty.call(opts, "volume") ? gosxAudioClamp01(opts.volume, 1) : 1;
-    return clipVolume * requested * gosxAudioBusVolume(opts.bus || (clip && clip.bus) || "master");
+    return clipVolume * requested;
   }
 
   function gosxAudioVector3(raw) {
@@ -1046,7 +1048,7 @@
         tail.connect(panner);
         tail = panner;
       }
-      tail.connect(audioContext.destination);
+      tail.connect(gosxMixerInput(gosxAudioBusName(clip, options)) || audioContext.destination);
       source.start(0);
       gosxAudioState.handles.set(handleID, { kind: "webaudio", clip: clip.id, source, gain, panner: spatialPanner, options: Object.assign({}, options || {}) });
       source.onended = function() {
@@ -1063,10 +1065,11 @@
     const audio = document.createElement("audio");
     audio.src = clip.src;
     audio.loop = Boolean((options && options.loop) || clip.loop);
-    audio.volume = gosxAudioPlaybackVolume(clip, options);
+    const routed = gosxMixerRouteElement(audio, gosxAudioBusName(clip, options));
+    audio.volume = routed ? gosxAudioPlaybackVolume(clip, options) : gosxAudioPlaybackVolume(clip, options) * gosxAudioBusVolume(gosxAudioBusName(clip, options));
     audio.playbackRate = Math.max(0.05, gosxNumber(options && options.rate, clip.rate || 1));
     audio.preload = "auto";
-    gosxAudioState.handles.set(handleID, { kind: "element", clip: clip.id, element: audio, options: Object.assign({}, options || {}) });
+    gosxAudioState.handles.set(handleID, { kind: "element", clip: clip.id, element: audio, routed, options: Object.assign({}, options || {}) });
     if (typeof audio.addEventListener === "function") {
       audio.addEventListener("ended", function() {
         gosxAudioState.handles.delete(handleID);
@@ -1118,14 +1121,15 @@
   }
 
   function gosxAudioSetBusVolume(busID, volume) {
-    const bus = gosxAudioRegisterBus({ id: busID || "master", volume: volume });
+    const id = gosxMixerBusID(busID);
+    const mixerBus = gosxMixerBus(id, "master");
+    gosxMixerSetVolume(id, volume);
+    const bus = { id, parent: mixerBus.parent, volume: mixerBus.volume, muted: mixerBus.muted };
+    gosxAudioState.buses.set(id, bus);
     for (const handle of gosxAudioState.handles.values()) {
       const clip = gosxAudioState.clips.get(handle.clip);
-      if (handle.element) {
-        handle.element.volume = gosxAudioPlaybackVolume(clip, handle.options);
-      }
-      if (handle.gain && handle.gain.gain) {
-        handle.gain.gain.value = gosxAudioPlaybackVolume(clip, handle.options);
+      if (handle.element && !handle.routed) {
+        handle.element.volume = gosxAudioPlaybackVolume(clip, handle.options) * gosxAudioBusVolume(gosxAudioBusName(clip, handle.options));
       }
     }
     return bus;
@@ -1171,6 +1175,9 @@
     play: gosxAudioPlay,
     stop: gosxAudioStop,
     setBusVolume: gosxAudioSetBusVolume,
+    get mixer() {
+      return gosxMixerAPI;
+    },
     registerManifest: gosxAudioRegisterManifest,
     unlock: gosxAudioUnlock,
     snapshot: gosxAudioSnapshot,
