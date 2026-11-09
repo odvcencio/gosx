@@ -17,6 +17,10 @@ func (*Surface) Update(SurfaceOptions) error              { return errSurfaceBro
 func (*Surface) Resize(int, int) (bool, error)            { return false, errSurfaceBrowser }
 func (*Surface) Dispose()                                 {}
 
+// ShaderWarmupProgress needs the browser mount; outside js/wasm it reports
+// (0, 1), an unfinished task.
+func (*Surface) ShaderWarmupProgress() (done, total int) { return 0, 1 }
+
 type ContextLoss struct{}
 
 func (*Surface) LoseContext() (*ContextLoss, error) { return nil, errSurfaceBrowser }

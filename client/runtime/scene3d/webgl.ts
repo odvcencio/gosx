@@ -5157,7 +5157,7 @@
   function scenePBRTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
     var descriptor = raw && typeof raw === "object" ? raw : {}; const wrap = (value: any) => [33071, 33648, 10497].indexOf(value) >= 0 ? value : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071);
     return {
-      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
+      uri: (typeof sceneTextAtlasURL === "function" ? sceneTextAtlasURL : String)(typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim()),
       role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
       colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
         ? descriptor.colorSpace.trim().toLowerCase()
@@ -6732,7 +6732,7 @@
     let extension = null;
     try { extension = gl.getExtension("KHR_parallel_shader_compile"); } catch (_error) {}
     state = { extension: extension && typeof extension.COMPLETION_STATUS_KHR === "number" ? extension : null,
-      pending: new Set(), frame: null, disposed: false };
+      pending: new Set(), frame: null, disposed: false, total: 0, failed: 0 };
     scenePBRCompileContexts.set(gl, state);
     return state;
   }
@@ -6780,7 +6780,7 @@
     for (const record of state.pending) {
       try {
         if (!lost && !gl.getProgramParameter(record.program, state.extension.COMPLETION_STATUS_KHR)) continue;
-        record.status = !lost && gl.getProgramParameter(record.program, gl.LINK_STATUS) ? "ready" : "failed";
+        record.status = !lost && gl.getProgramParameter(record.program, gl.LINK_STATUS) ? "ready" : "failed"; if (record.status === "failed") state.failed++;
         if (record.status === "ready") {
           for (const initialize of record.initialize) initialize();
         } else {
@@ -6879,7 +6879,7 @@
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
-    const queue = scenePBRCompileContext(gl);
+    const queue = scenePBRCompileContext(gl); queue.total++; // shaderPrograms() counts every link
     if (queue.extension) {
       const record = { program, vertexShader, fragmentShader, label, status: "pending", initialize: [] as Array<() => void> };
       scenePBRProgramStates.set(program, record);
@@ -6888,7 +6888,7 @@
       return program;
     }
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.warn("[gosx] " + label + " program link failed:", gl.getProgramInfoLog(program));
+      queue.failed++; console.warn("[gosx] " + label + " program link failed:", gl.getProgramInfoLog(program));
       gl.deleteProgram(program);
       gl.deleteShader(vertexShader);
       gl.deleteShader(fragmentShader);
@@ -8827,7 +8827,7 @@
       sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
-      scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode), programPreparation);
+      scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode), programPreparation); if (frameMeta?.warmup) scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(frameMeta.warmup, frameMeta, canvas.parentNode), programPreparation);
       postProcessor = programPreparation.postProcessor;
       if (!scenePBRFrameProgramsReady(gl, program)) return "pending";
 
@@ -11081,7 +11081,7 @@
       drawnPostEffects: function() { return lastPostEffects; },
       renderSurfaces: renderSurfaces,
       dispose: function() { frameTimer.dispose(); dispose(); },
-      diagnostics: diagnostics,
+      diagnostics: diagnostics, shaderPrograms: function() { const q = scenePBRCompileContext(gl); return { total: q.total, pending: q.pending.size, failed: q.failed }; },
       type: "webgl-pbr",
       textureVariantContext: textureVariantContext,
     };

@@ -41,6 +41,7 @@
   // and fall back to webgl — that's the intended failure mode.
   var sceneBool = sceneApi.sceneBool || function(v, d) { return v == null ? d : !!v; };
   var sceneNumber = sceneApi.sceneNumber || function(v, d) { var n = Number(v); return Number.isFinite(n) ? n : d; };
+  var sceneTextAtlasURL = sceneApi.sceneTextAtlasURL || function(url) { return url; };
   // Shared material alpha-cutoff normalization used by the WebGPU pack path.
   var sceneNormalizeMaterialAlphaCutoff = sceneApi.sceneNormalizeMaterialAlphaCutoff;
   var scenePostDOMRegionPixelBounds = sceneApi.scenePostDOMRegionPixelBounds || function() { return { mode: "off", bounds: null }; };

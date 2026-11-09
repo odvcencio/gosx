@@ -162,6 +162,7 @@ type Probe struct {
 	PreferWebGL                                                                                                          *bool
 	BackendCaps                                                                                                          *struct{ Capable []string }
 	Compression                                                                                                          Presence
+	ShaderWarmup, TextAtlases                                                                                            Presence // gate the opt-in warm-up and text atlas chunks
 	Groups, ComputeParticles, InstancedMeshes, Points, Models, InstancedGLBMeshes, Objects, Sprites, WaterSystems, Nodes []Record
 	Animations                                                                                                           []Clip
 	Environment                                                                                                          struct {
@@ -225,6 +226,18 @@ func (l *ShaderLayout) readsSelenaLighting() bool {
 		}
 	}
 	return false
+}
+
+// NeedsShaderWarmup reports whether the scene sets Props.ShaderWarmup, which
+// bootstrap-feature-scene3d-warmup.js serves.
+func (p *Probe) NeedsShaderWarmup() bool {
+	return p != nil && (p.ShaderWarmup.Truthy || p.Scene.NeedsShaderWarmup())
+}
+
+// NeedsTextAtlases reports whether the scene declares Props.TextAtlases, which
+// bootstrap-feature-scene3d-text-atlas.js draws.
+func (p *Probe) NeedsTextAtlases() bool {
+	return p != nil && (p.TextAtlases.Truthy || p.Scene.NeedsTextAtlases())
 }
 
 // NeedsOceanFFT reports whether the scene's ocean carries a wave spectrum, in

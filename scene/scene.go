@@ -225,6 +225,12 @@ type Props struct {
 	FrameIntervalMS float64 `json:"frameIntervalMS,omitempty"`
 	// ModelPreparation advertises the opt-in Surface.PrepareModels authority.
 	ModelPreparation *bool `json:"modelPreparation,omitempty"`
+	// ShaderWarmup compiles the listed materials and draw variants before the
+	// first frame and reports progress. See ShaderWarmup.
+	ShaderWarmup *ShaderWarmup `json:"-"`
+	// TextAtlases are label textures (numbers, nameplates) drawn in the
+	// browser at mount. Materials use TextAtlas.Texture and TextAtlas.Region.
+	TextAtlases []TextAtlas `json:"-"`
 	// TextureDeliveryProfile selects model-map variants for this mount.
 	// "auto" follows device hints; "low", "standard", and "high" set a
 	// delivery ceiling. Empty preserves the legacy capability-only policy.
@@ -2114,6 +2120,12 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
 	setBool(out, "renderBeforeModels", p.RenderBeforeModels)
 	setBool(out, "modelPreparation", p.ModelPreparation)
+	if warmup := p.ShaderWarmup.legacyProps(); warmup != nil {
+		out["shaderWarmup"] = warmup
+	}
+	if atlases := textAtlasProps(p.TextAtlases); atlases != nil {
+		out["textAtlases"] = atlases
+	}
 	setString(out, "textureDeliveryProfile", string(p.TextureDeliveryProfile))
 	setString(out, "framePacing", p.FramePacing)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
