@@ -5882,8 +5882,9 @@
   // walk when all of these hold, and then re-walks only the groups whose agents
   // changed in place:
   //   - the object list holds the same objects in the same order (one identity
-  //     test per entry, after every list transform: materials, quality groups,
-  //     hierarchy views);
+  //     test per entry). Transforms that keep identity pass (quality groups,
+  //     cached hierarchy views); a named material wraps each object that uses
+  //     it anew every bundle, so a scene with one walks in full, as before;
   //   - the scene state's object table (sceneObjectTable) is unwritten since;
   //   - no other walk entered the groups since (groups are shared by key);
   //   - every in-place change since went through sceneCrowdBatchTouch.
