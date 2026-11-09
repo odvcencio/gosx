@@ -1706,18 +1706,6 @@ func passFailCompatibilitySets(anchor, current []string) string {
 	return "fail-closed"
 }
 
-func writeFixtureSizeEvidence(t *testing.T, root string, source SourceIdentity, routes []RouteAssetEvidence) {
-	t.Helper()
-	writeFixtureJSON(t, filepath.Join(root, "size", "route-assets.json"), SizeEvidence{
-		SchemaVersion: SchemaVersion,
-		Contract:      ContractO02,
-		Source:        source,
-		BuildInput:    BuildInputEvidence{ManifestSHA256: "sha256:manifest"},
-		Routes:        routes,
-		Assets:        []TransferredAsset{},
-	})
-}
-
 func compareMetrics() map[string]float64 {
 	return map[string]float64{
 		"transferBytes":       100,

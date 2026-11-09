@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"strconv"
 	"strings"
 
 	"m31labs.dev/gosx"
@@ -290,21 +289,6 @@ func marshalVideoProps(props VideoProps) json.RawMessage {
 	return data
 }
 
-func videoPropsFromValue(value any) (VideoProps, bool) {
-	if value == nil {
-		return VideoProps{}, false
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return VideoProps{}, false
-	}
-	var props VideoProps
-	if err := json.Unmarshal(data, &props); err != nil {
-		return VideoProps{}, false
-	}
-	return normalizeVideoProps(props), true
-}
-
 func normalizeVideoProps(props VideoProps) VideoProps {
 	props.Src = AssetURL(props.Src)
 	props.Poster = AssetURL(props.Poster)
@@ -457,8 +441,4 @@ func firstNonEmptyVideoString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func formatVideoFloat(value float64) string {
-	return strconv.FormatFloat(value, 'f', -1, 64)
 }

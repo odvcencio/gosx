@@ -1903,7 +1903,8 @@ function buildPointLineGLBBytes() {
   return Array.from(glb);
 }
 
-function buildSkinnedGLBBytes() {
+function buildSkinnedGLBBytes(options = {}) {
+  const jointCount = Math.max(2, Math.floor(options.jointCount || 2));
   const chunks = [];
   const bufferViews = [];
   let byteOffset = 0;
@@ -1940,10 +1941,11 @@ function buildSkinnedGLBBytes() {
     0, 0, 1,
     0, 0, 1,
   ]);
+  const lastJoint = jointCount - 1;
   const joints = new Uint8Array([
-    0, 1, 0, 0,
-    0, 1, 0, 0,
-    0, 1, 0, 0,
+    0, lastJoint, 0, 0,
+    0, lastJoint, 0, 0,
+    0, lastJoint, 0, 0,
   ]);
   const weights = new Float32Array([
     0.75, 0.25, 0, 0,
@@ -1951,15 +1953,13 @@ function buildSkinnedGLBBytes() {
     1, 0, 0, 0,
   ]);
   const indices = new Uint16Array([2, 0, 1]);
-  const inverseBindMatrices = new Float32Array(32);
-  inverseBindMatrices[0] = 1;
-  inverseBindMatrices[5] = 1;
-  inverseBindMatrices[10] = 1;
-  inverseBindMatrices[15] = 1;
-  inverseBindMatrices[16] = 1;
-  inverseBindMatrices[21] = 1;
-  inverseBindMatrices[26] = 1;
-  inverseBindMatrices[31] = 1;
+  const inverseBindMatrices = new Float32Array(jointCount * 16);
+  for (let j = 0; j < jointCount; j++) {
+    inverseBindMatrices[j * 16] = 1;
+    inverseBindMatrices[j * 16 + 5] = 1;
+    inverseBindMatrices[j * 16 + 10] = 1;
+    inverseBindMatrices[j * 16 + 15] = 1;
+  }
   const times = new Float32Array([0, 1]);
   const translations = new Float32Array([
     0, 0, 0,
@@ -1983,8 +1983,9 @@ function buildSkinnedGLBBytes() {
     scenes: [{ nodes: [0, 1] }],
     nodes: [
       { name: "skinned-mesh", mesh: 0, skin: 0, translation: [2, 0, 0] },
-      { name: "root-joint", children: [2] },
-      { name: "tip-joint" },
+      ...Array.from({ length: jointCount }, (_, k) => k === 0
+        ? { name: "root-joint", children: [2] }
+        : (k === jointCount - 1 ? { name: "tip-joint" } : { name: "joint-" + k, children: [k + 2] })),
     ],
     meshes: [{
       name: "rig",
@@ -2001,7 +2002,7 @@ function buildSkinnedGLBBytes() {
     }],
     skins: [{
       name: "rig-skin",
-      joints: [1, 2],
+      joints: Array.from({ length: jointCount }, (_, k) => k + 1),
       inverseBindMatrices: 5,
       skeleton: 1,
     }],
@@ -2030,7 +2031,7 @@ function buildSkinnedGLBBytes() {
       { bufferView: jointView, componentType: 5121, count: 3, type: "VEC4" },
       { bufferView: weightView, componentType: 5126, count: 3, type: "VEC4" },
       { bufferView: indexView, componentType: 5123, count: 3, type: "SCALAR" },
-      { bufferView: inverseBindView, componentType: 5126, count: 2, type: "MAT4" },
+      { bufferView: inverseBindView, componentType: 5126, count: jointCount, type: "MAT4" },
       { bufferView: timeView, componentType: 5126, count: 2, type: "SCALAR" },
       { bufferView: translationView, componentType: 5126, count: 2, type: "VEC3" },
     ],
