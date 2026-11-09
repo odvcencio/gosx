@@ -355,7 +355,7 @@ material, not 44 textures. Each label gets one cell of a grid; a material picks
 its player's cell by UV region.
 
 ```go
-numbers := scene.TextAtlas{ID: "numbers", CellWidth: 96, CellHeight: 96}
+numbers := scene.TextAtlas{ID: "numbers", CellWidth: 128, CellHeight: 96}
 plates := scene.TextAtlas{ID: "plates", CellWidth: 192, CellHeight: 48,
     Background: "#f2d14b", Color: "#111111"}
 for _, p := range roster {
@@ -392,7 +392,8 @@ that convention too.
 Things to know:
 
 - Each label shrinks to fit its cell inside `Padding`. An empty label leaves
-  its cell transparent.
+  its cell transparent. Give the cells the aspect ratio of the area that
+  shows them, or the label is stretched and loses detail.
 - An atlas may be at most 4096 pixels on a side; `Validate` reports a larger
   one, and `Props` drops it. Use smaller cells or a second atlas.
 - The texture URL carries a hash of the labels and style, so changing a label

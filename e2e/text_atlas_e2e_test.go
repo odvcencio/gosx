@@ -4,14 +4,19 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
+	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,7 +33,7 @@ import (
 const textAtlasJerseyMaterial = `material AtlasJersey {
     param labels     : texture2d
     param labelRect  : vec4 = vec4(0.0, 0.0, 1.0, 1.0)
-    param numberRect : vec4 = vec4(0.2, 0.15, 0.8, 0.85)
+    param numberRect : vec4 = vec4(0.1, 0.1, 0.9, 0.9)
     surface(geo) -> color {
         let glyph = sample(labels, mlAtlasUV(mlRectLocal(geo.uv, numberRect), labelRect))
         let ink = glyph.a * mlRectMask(geo.uv, numberRect)
@@ -39,9 +44,8 @@ const textAtlasJerseyMaterial = `material AtlasJersey {
 const (
 	textAtlasPlayers = 44
 	textAtlasColumns = 11
-	textAtlasWidth   = 1100 // canvas pixels; the camera shows 22 x 11.2 world units, 50 px each
+	textAtlasWidth   = 1100 // canvas pixels; the camera shows 24 x 12.2 world units, a margin around the 22 x 11.2 grid
 	textAtlasHeight  = 560
-	textAtlasPPU     = 50.0
 )
 
 // textAtlasQuad is a w by h rectangle facing +Z whose UVs run from (0, 0) at
@@ -67,9 +71,12 @@ func textAtlasCenter(i int) (x, y float64) {
 // labelRect param (TextAtlas.RegionUniform); every nameplate uses one
 // standard material with the nameplate atlas and differs only in its quad's
 // UVs (TextAtlas.Quad). Five nameplates are blank. The test reads the canvas
-// and checks that every jersey shows a number, that the 44 numbers are
-// pairwise different shapes, that the named plates show text on their fill
-// and that the blank plates show nothing. Run on both GPU runners:
+// and checks that every jersey shows its own number (its ink pattern is
+// closest to its own cell of the atlas the browser drew, so the 44 numbers on
+// screen are 44 different shapes), that the named plates show text on their
+// fill and that the blank plates show nothing. The characters are separate
+// meshes, not one InstancedMesh, because instanced draws have no
+// per-instance UV region. Run on both GPU runners:
 //
 //	/home/draco/work/.runtime/tools/gpu/gpu-chrome.sh run -- go test -tags e2e -run TestTextAtlasDrawsDistinctNumbersOnCharacters -timeout 10m ./e2e/
 //	/home/draco/.local/bin/mac-gpu-run <worktree> go test -tags e2e -run TestTextAtlasDrawsDistinctNumbersOnCharacters -timeout 10m ./e2e/
@@ -84,7 +91,9 @@ func TestTextAtlasDrawsDistinctNumbersOnCharacters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	numbers := scene.TextAtlas{ID: "numbers", CellWidth: 96, CellHeight: 96, Padding: 0.1}
+	// The number cells match the aspect of the shirt's number area (1.44 x
+	// 1.04 units), so two-digit numbers shrink less and keep more pixels.
+	numbers := scene.TextAtlas{ID: "numbers", CellWidth: 128, CellHeight: 96, Padding: 0.1}
 	plates := scene.TextAtlas{ID: "plates", CellWidth: 192, CellHeight: 48, Background: "#f2d14b", Color: "#111111", Padding: 0.12}
 	for i := 0; i < textAtlasPlayers; i++ {
 		// 37 and 100 are coprime, so 44 steps give 44 different numbers.
@@ -104,15 +113,15 @@ func TestTextAtlasDrawsDistinctNumbersOnCharacters(t *testing.T) {
 	nodes := []scene.Node{
 		scene.DirectionalLight{ID: "key", Color: "#ffffff", Intensity: 0.6, Direction: scene.Vector3{Z: -1}},
 	}
-	jerseyGeometry := textAtlasQuad(1.6, 1.3)
+	jerseyGeometry := textAtlasQuad(1.8, 1.3)
 	head := scene.SphereGeometry{Radius: 0.28, Segments: 16}
 	plateMaterial := scene.StandardMaterial{Color: "#ffffff", Texture: plates.Texture(), Roughness: 1, BlendMode: scene.BlendAlpha, Opacity: scene.Float(1)}
 	for i := 0; i < textAtlasPlayers; i++ {
 		x, y := textAtlasCenter(i)
 		shirt := jersey
-		shirt.Uniforms = map[string]any{}
-		for k, v := range jersey.Uniforms {
-			shirt.Uniforms[k] = v
+		shirt.Uniforms = maps.Clone(jersey.Uniforms)
+		if shirt.Uniforms == nil {
+			shirt.Uniforms = map[string]any{}
 		}
 		shirt.Uniforms["labels"] = numbers.Texture()
 		shirt.Uniforms["labelRect"] = numbers.RegionUniform(i)
@@ -132,7 +141,7 @@ func TestTextAtlasDrawsDistinctNumbersOnCharacters(t *testing.T) {
 			yes := true
 			props := scene.Props{
 				Width: textAtlasWidth, Height: textAtlasHeight, Background: "#000000",
-				OrthographicCamera: &scene.OrthographicCamera{Position: scene.Vector3{Z: 10}, Left: -11, Right: 11, Top: 5.6, Bottom: -5.6, Zoom: 1, Near: 0.1, Far: 50},
+				OrthographicCamera: &scene.OrthographicCamera{Position: scene.Vector3{Z: 10}, Left: -12, Right: 12, Top: 6.11, Bottom: -6.11, Zoom: 1, Near: 0.1, Far: 50},
 				Environment:        scene.Environment{AmbientColor: "#ffffff", AmbientIntensity: 0.8},
 				TextAtlases:        []scene.TextAtlas{numbers, plates},
 				Graph:              scene.NewGraph(nodes...),
@@ -187,6 +196,11 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 		flags["enable-unsafe-webgpu"] = true
 	}
 	browser := newBrowserPage(t, chrome, flags, textAtlasWidth+80, textAtlasHeight+80, "", 180*time.Second)
+	// The GPU runners attach to a browser with its own window size; fix the
+	// viewport so the canvas keeps its full size.
+	if err := chromedp.Run(browser.ctx, chromedp.EmulateViewport(textAtlasWidth+80, textAtlasHeight+80)); err != nil {
+		t.Fatal(err)
+	}
 	browser.navigate(t, url+"/")
 
 	var report textAtlasReport
@@ -219,6 +233,9 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 		_ = png.Encode(&buf, img)
 		_ = os.WriteFile(strings.ReplaceAll(out, "{backend}", backend), buf.Bytes(), 0o644)
 	}
+	if report.found != textAtlasPlayers {
+		t.Fatalf("found %d jerseys on screen, want %d", report.found, textAtlasPlayers)
+	}
 	for i := 0; i < textAtlasPlayers; i++ {
 		if report.ink[i] < 0.03 || report.shirt[i] < 0.3 {
 			t.Errorf("jersey %d (%s): shirt %.2f, number ink %.2f of the number area", i, numbers.Labels[i], report.shirt[i], report.ink[i])
@@ -228,38 +245,142 @@ func runTextAtlasScene(t *testing.T, chrome string, bootstrap []byte, root, back
 			if plate.lit > 0.02 {
 				t.Errorf("blank plate %d drew: %.2f of its pixels are lit", i, plate.lit)
 			}
-		} else if plate.fill < 0.5 || plate.text < 0.01 {
+		} else if plate.fill < 0.5 || plate.text < 0.03 {
 			t.Errorf("plate %d: fill %.2f, text %.2f", i, plate.fill, plate.text)
 		}
 	}
-	minDistance, pairA, pairB := 1<<30, 0, 0
-	for a := 0; a < textAtlasPlayers; a++ {
-		for b := a + 1; b < textAtlasPlayers; b++ {
-			d := 0
-			for k := range report.masks[a] {
-				if report.masks[a][k] != report.masks[b][k] {
-					d++
-				}
+	// Identify each jersey's number: compare the glyph alpha recovered from
+	// its pixels with every cell of the atlas the browser drew, scaled to
+	// the jersey's number area. Each jersey must be closest to its own
+	// label, which also shows the 44 numbers on screen are 44 different
+	// shapes.
+	var atlasURL string
+	browser.eval(t, fmt.Sprintf(`window.__gosx_scene3d_api.sceneTextAtlasURL(%q)`, numbers.Texture()), &atlasURL)
+	refs := textAtlasReferenceCells(t, atlasURL, numbers)
+	if out := os.Getenv("GOSX_TEXT_ATLAS_SHOT"); out != "" {
+		data, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(atlasURL, "data:image/png;base64,"))
+		_ = os.WriteFile(strings.ReplaceAll(out, "{backend}", backend+"-atlas"), data, 0o644)
+	}
+	worstRatio, worst := math.Inf(1), 0
+	for i, number := range report.numbers {
+		own := textAtlasMatchDistance(number, refs[i].resample(number.w, number.h))
+		best, bestJ := math.Inf(1), -1
+		for j := range refs {
+			if j == i {
+				continue
 			}
-			if d < minDistance {
-				minDistance, pairA, pairB = d, a, b
+			if d := textAtlasMatchDistance(number, refs[j].resample(number.w, number.h)); d < best {
+				best, bestJ = d, j
 			}
 		}
-	}
-	if minDistance < 4 {
-		t.Errorf("jerseys %d (%s) and %d (%s) look alike: their 12x12 ink masks differ in %d cells", pairA, numbers.Labels[pairA], pairB, numbers.Labels[pairB], minDistance)
+		if own >= best {
+			t.Errorf("jersey %d should show %s but looks closer to %s (mean alpha error %.3f vs %.3f)", i, numbers.Labels[i], numbers.Labels[bestJ], own, best)
+		}
+		if ratio := best / math.Max(own, 1e-6); ratio < worstRatio {
+			worstRatio, worst = ratio, i
+		}
 	}
 	if errs := browser.PageErrors(); len(errs) != 0 {
 		t.Fatalf("page errors: %v", errs)
 	}
-	t.Logf("%s: 44 jerseys from one material and one atlas; closest pair %d (%s) and %d (%s) differs in %d of 144 mask cells", backend, pairA, numbers.Labels[pairA], pairB, numbers.Labels[pairB], minDistance)
+	t.Logf("%s: 44 jerseys share one material and one atlas texture; each matches its own number; the closest call (jersey %d, %s) is %.2fx nearer its own label than any other", backend, worst, numbers.Labels[worst], worstRatio)
+}
+
+// textAtlasCell is one atlas cell's alpha, 0..1, row by row.
+type textAtlasCell struct {
+	w, h  int
+	alpha []float64
+}
+
+// resample box-filters the cell to w by h pixels.
+func (c textAtlasCell) resample(w, h int) []float64 {
+	out := make([]float64, w*h)
+	for ty := 0; ty < h; ty++ {
+		y0, y1 := ty*c.h/h, max((ty+1)*c.h/h, ty*c.h/h+1)
+		for tx := 0; tx < w; tx++ {
+			x0, x1 := tx*c.w/w, max((tx+1)*c.w/w, tx*c.w/w+1)
+			sum := 0.0
+			for y := y0; y < y1; y++ {
+				for x := x0; x < x1; x++ {
+					sum += c.alpha[y*c.w+x]
+				}
+			}
+			out[ty*w+tx] = sum / float64((y1-y0)*(x1-x0))
+		}
+	}
+	return out
+}
+
+// textAtlasReferenceCells decodes the atlas image the browser drew and
+// returns each label's cell.
+func textAtlasReferenceCells(t *testing.T, dataURL string, atlas scene.TextAtlas) []textAtlasCell {
+	t.Helper()
+	const prefix = "data:image/png;base64,"
+	if !strings.HasPrefix(dataURL, prefix) {
+		t.Fatalf("the atlas did not resolve to a PNG data URL: %.60q", dataURL)
+	}
+	data, err := base64.StdEncoding.DecodeString(dataURL[len(prefix):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := img.Bounds()
+	if w, h := atlas.Size(); b.Dx() != w || b.Dy() != h {
+		t.Fatalf("atlas image is %dx%d, want %dx%d", b.Dx(), b.Dy(), w, h)
+	}
+	out := make([]textAtlasCell, len(atlas.Labels))
+	for i := range atlas.Labels {
+		r := atlas.Region(i)
+		x0, y0 := int(r[0]*float64(b.Dx())), int(r[1]*float64(b.Dy()))
+		x1, y1 := int(r[2]*float64(b.Dx())), int(r[3]*float64(b.Dy()))
+		cell := textAtlasCell{w: x1 - x0, h: y1 - y0, alpha: make([]float64, (x1-x0)*(y1-y0))}
+		for y := y0; y < y1; y++ {
+			for x := x0; x < x1; x++ {
+				cell.alpha[(y-y0)*cell.w+x-x0] = float64(color.NRGBAModel.Convert(img.At(b.Min.X+x, b.Min.Y+y)).(color.NRGBA).A) / 255
+			}
+		}
+		out[i] = cell
+	}
+	return out
+}
+
+// textAtlasNumber is the glyph alpha recovered from a jersey's number area,
+// w by h pixels, stored with one extra pixel on every side so the match can
+// try the area shifted by a pixel (its edges come from a detected box).
+type textAtlasNumber struct {
+	w, h  int
+	alpha []float64 // (w+2) * (h+2)
+}
+
+// textAtlasMatchDistance is the mean absolute alpha error between a jersey's
+// number and a reference resampled to its size, at the best of the nine
+// one-pixel shifts.
+func textAtlasMatchDistance(n textAtlasNumber, ref []float64) float64 {
+	best := math.Inf(1)
+	for dy := 0; dy <= 2; dy++ {
+		for dx := 0; dx <= 2; dx++ {
+			sum := 0.0
+			for y := 0; y < n.h; y++ {
+				row := n.alpha[(y+dy)*(n.w+2)+dx:]
+				for x := 0; x < n.w; x++ {
+					sum += math.Abs(row[x] - ref[y*n.w+x])
+				}
+			}
+			best = math.Min(best, sum/float64(max(n.w*n.h, 1)))
+		}
+	}
+	return best
 }
 
 type textAtlasPlate struct{ fill, text, lit float64 }
 
 type textAtlasReport struct {
 	shirt, ink []float64
-	masks      [][144]bool
+	numbers    []textAtlasNumber
+	found      int // jerseys found on screen
 	plates     []textAtlasPlate
 }
 
@@ -268,76 +389,79 @@ func (r textAtlasReport) complete() bool {
 		if r.ink[i] < 0.03 {
 			return false
 		}
-		if p := r.plates[i]; !textAtlasBlankPlate(i) && p.text < 0.01 {
+		if p := r.plates[i]; !textAtlasBlankPlate(i) && p.text < 0.03 {
 			return false
 		}
 	}
 	return true
 }
 
-// inspectTextAtlasShot measures every character in the canvas screenshot.
-// World (x, y) maps to canvas pixel ((x+11)*50, (5.6-y)*50).
+// inspectTextAtlasShot measures every character in the canvas screenshot. It
+// finds the jerseys as the 44 connected regions of shirt-blue pixels, orders
+// them by row and column, then places the number area and the nameplate
+// relative to each jersey's box, so the check does not depend on the
+// camera's exact pixel mapping.
 func inspectTextAtlasShot(img image.Image) textAtlasReport {
-	b := img.Bounds()
-	scale := float64(b.Dx()) / textAtlasWidth
-	at := func(x, y float64) (int, int) {
-		return b.Min.X + int((x+11)*textAtlasPPU*scale), b.Min.Y + int((5.6-y)*textAtlasPPU*scale)
-	}
 	r := textAtlasReport{shirt: make([]float64, textAtlasPlayers), ink: make([]float64, textAtlasPlayers),
-		masks: make([][144]bool, textAtlasPlayers), plates: make([]textAtlasPlate, textAtlasPlayers)}
-	for i := 0; i < textAtlasPlayers; i++ {
-		cx, cy := textAtlasCenter(i)
-		// The jersey spans 1.6 x 1.3 units; its number area is UV
-		// (0.2, 0.15)-(0.8, 0.85). Measure inside a 2 px inset.
-		x0, y0 := at(cx-0.8+0.04, cy+0.65-0.04)
-		x1, y1 := at(cx+0.8-0.04, cy-0.65+0.04)
+		numbers: make([]textAtlasNumber, textAtlasPlayers), plates: make([]textAtlasPlate, textAtlasPlayers)}
+	boxes := textAtlasJerseyBoxes(img)
+	if r.found = len(boxes); r.found != textAtlasPlayers {
+		return r
+	}
+	for i, jersey := range boxes {
+		jx0, jy0 := jersey.Min.X, jersey.Min.Y
+		// The jersey is 1.8 x 1.3 units; box fractions map onto it.
+		jw, jh := float64(jersey.Dx()), float64(jersey.Dy())
+		box := func(fx0, fy0, fx1, fy1 float64) (int, int, int, int) {
+			return jx0 + int(fx0*jw), jy0 + int(fy0*jh), jx0 + int(fx1*jw), jy0 + int(fy1*jh)
+		}
 		var blue, total int
+		var shirtRG float64 // mean red plus green of the shirt pixels
+		x0, y0, x1, y1 := box(0.03, 0.03, 0.97, 0.97)
 		for y := y0; y < y1; y++ {
 			for x := x0; x < x1; x++ {
-				p := pixel8(img, x, y)
-				// The shirt is rgb(0.1, 0.25, 0.7), linear or sRGB-encoded.
-				if p[2] > 120 && p[2] > p[0]+60 && p[2] > p[1]+30 {
+				if p := pixel8(img, x, y); textAtlasIsShirt(p) {
 					blue++
+					shirtRG += float64(p[0] + p[1])
 				}
 				total++
 			}
 		}
 		r.shirt[i] = float64(blue) / float64(max(total, 1))
-		nx0, ny0 := at(cx-0.8+1.6*0.2, cy+0.65-1.3*0.15)
-		nx1, ny1 := at(cx-0.8+1.6*0.8, cy+0.65-1.3*0.85)
-		var inkCount, area int
-		var cells, cellArea [144]int
-		for y := ny0; y < ny1; y++ {
-			for x := nx0; x < nx1; x++ {
-				k := (y-ny0)*12/max(ny1-ny0, 1)*12 + (x-nx0)*12/max(nx1-nx0, 1)
-				p := pixel8(img, x, y)
-				cellArea[k]++
-				area++
-				if p[0] > 170 && p[1] > 170 && p[2] > 170 {
+		shirtRG /= float64(max(blue, 1))
+		// The number area is the shirt's UV rect numberRect. The shader
+		// mixes shirt and white by the glyph's alpha, so red plus green
+		// recovers that alpha per pixel.
+		nx0, ny0, nx1, ny1 := box(0.1, 0.1, 0.9, 0.9)
+		number := textAtlasNumber{w: nx1 - nx0, h: ny1 - ny0, alpha: make([]float64, (nx1-nx0+2)*(ny1-ny0+2))}
+		var inkCount int
+		for y := -1; y <= number.h; y++ {
+			for x := -1; x <= number.w; x++ {
+				p := pixel8(img, nx0+x, ny0+y)
+				number.alpha[(y+1)*(number.w+2)+x+1] = math.Max(0, math.Min(1, (float64(p[0]+p[1])-shirtRG)/(510-shirtRG)))
+				if x >= 0 && y >= 0 && x < number.w && y < number.h && p[0] > 170 && p[1] > 170 && p[2] > 170 {
 					inkCount++
-					cells[k]++
 				}
 			}
 		}
-		r.ink[i] = float64(inkCount) / float64(max(area, 1))
-		for k := range cells {
-			r.masks[i][k] = cellArea[k] > 0 && cells[k]*3 > cellArea[k]
-		}
-		// The plate spans 1.8 x 0.45 units centered 1.05 below the
-		// character: a yellow fill with near-black text, or nothing on a
-		// blank plate. Measure inside a 5 px inset, clear of the fill's
-		// transparent margin.
-		px0, py0 := at(cx-0.9+0.1, cy-1.05+0.225-0.1)
-		px1, py1 := at(cx+0.9-0.1, cy-1.05-0.225+0.1)
+		r.numbers[i] = number
+		r.ink[i] = float64(inkCount) / float64(max(number.w*number.h, 1))
+		// The plate is 1.8 x 0.45 units, centered 1.05 units below the
+		// jersey's center: a yellow fill with near-black text, or nothing on
+		// a blank plate. Measure 0.1 units inside its edges, clear of the
+		// fill's transparent margin: x -0.8..0.8 and y -0.925..-1.175 from
+		// the jersey center, which is 0.65 units below the jersey's top.
+		px0, py0, px1, py1 := box(0.1/1.8, (0.65+0.925)/1.3, 1.7/1.8, (0.65+1.175)/1.3)
 		var fill, dark, lit, plateArea int
-		for y := py0; y < py1; y++ {
+		for y := py0; y < min(py1, img.Bounds().Max.Y); y++ {
 			for x := px0; x < px1; x++ {
 				p := pixel8(img, x, y)
 				plateArea++
-				switch {
-				case p[0] > 110 && p[1] > 90 && p[2] < p[1]:
+				// Bright yellow is fill; anything darker inside the
+				// plate is text or its anti-aliased edge.
+				if p[0] > 110 && p[1] > 90 && p[2] < p[1] && p[0]+p[1]+p[2] > 400 {
 					fill++
-				case p[0]+p[1]+p[2] < 150:
+				} else {
 					dark++
 				}
 				if p[0]+p[1]+p[2] > 30 {
@@ -346,8 +470,75 @@ func inspectTextAtlasShot(img image.Image) textAtlasReport {
 			}
 		}
 		plateN := float64(max(plateArea, 1))
-		pr := textAtlasPlate{fill: float64(fill) / plateN, text: float64(dark) / plateN, lit: float64(lit) / plateN}
-		r.plates[i] = pr
+		r.plates[i] = textAtlasPlate{fill: float64(fill) / plateN, text: float64(dark) / plateN, lit: float64(lit) / plateN}
 	}
 	return r
+}
+
+// textAtlasIsShirt reports the jersey color, rgb(0.1, 0.25, 0.7), linear or
+// sRGB-encoded.
+func textAtlasIsShirt(p [3]int) bool { return p[2] > 120 && p[2] > p[0]+60 && p[2] > p[1]+30 }
+
+// textAtlasJerseyBoxes returns the bounding boxes of the shirt-blue regions
+// larger than 100 pixels that no other region's box contains, in reading
+// order: four rows of 11, top to bottom and left to right.
+func textAtlasJerseyBoxes(img image.Image) []image.Rectangle {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	seen := make([]bool, w*h)
+	var boxes []image.Rectangle
+	var queue []int
+	for start := range seen {
+		if seen[start] || !textAtlasIsShirt(pixel8(img, b.Min.X+start%w, b.Min.Y+start/w)) {
+			continue
+		}
+		seen[start] = true
+		queue = append(queue[:0], start)
+		box, n := image.Rect(start%w, start/w, start%w+1, start/w+1), 0
+		for len(queue) > 0 {
+			at := queue[len(queue)-1]
+			queue = queue[:len(queue)-1]
+			x, y := at%w, at/w
+			box, n = box.Union(image.Rect(x, y, x+1, y+1)), n+1
+			for _, d := range [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+				nx, ny := x+d[0], y+d[1]
+				if nx < 0 || ny < 0 || nx >= w || ny >= h || seen[ny*w+nx] {
+					continue
+				}
+				if textAtlasIsShirt(pixel8(img, b.Min.X+nx, b.Min.Y+ny)) {
+					seen[ny*w+nx] = true
+					queue = append(queue, ny*w+nx)
+				}
+			}
+		}
+		if n > 100 {
+			boxes = append(boxes, box.Add(b.Min))
+		}
+	}
+	// Shirt showing through a digit's loop (0, 4, 6, 8, 9) is its own
+	// region inside a jersey's box; drop those.
+	jerseys := boxes[:0]
+	for i, inner := range boxes {
+		nested := false
+		for j, outer := range boxes {
+			if i != j && inner.In(outer) && inner != outer {
+				nested = true
+				break
+			}
+		}
+		if !nested {
+			jerseys = append(jerseys, inner)
+		}
+	}
+	boxes = jerseys
+	if len(boxes) != textAtlasPlayers {
+		return boxes
+	}
+	center := func(r image.Rectangle) (int, int) { return r.Min.X + r.Dx()/2, r.Min.Y + r.Dy()/2 }
+	sort.Slice(boxes, func(i, j int) bool { _, yi := center(boxes[i]); _, yj := center(boxes[j]); return yi < yj })
+	for row := 0; row < textAtlasPlayers; row += textAtlasColumns {
+		line := boxes[row : row+textAtlasColumns]
+		sort.Slice(line, func(i, j int) bool { xi, _ := center(line[i]); xj, _ := center(line[j]); return xi < xj })
+	}
+	return boxes
 }
