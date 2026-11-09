@@ -93,6 +93,13 @@ func TestSelenaBuildStepRespectsDisabledAndEmptyProjects(t *testing.T) {
 	if err := runSelenaBuildStep(t.TempDir(), cfg.Build.Selena, &out); err != nil || out.Len() != 0 {
 		t.Fatalf("empty project: %v %q", err, out.String())
 	}
+	// An explicit `gosx selena build` ignores disabled.
+	if err := runSelenaCommand([]string{"build", dir}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "materials", "panel.sel.json")); err != nil {
+		t.Fatalf("explicit build skipped a disabled project: %v", err)
+	}
 }
 
 func TestSelenaCommandRejectsBadUsage(t *testing.T) {

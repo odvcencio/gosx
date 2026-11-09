@@ -29,7 +29,7 @@ function decl(source, name) {
 const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c2-scene-selena-lighting.ts"), "utf8");
 const lightingFunctions = ["sceneSelenaLightingRecord", "sceneSelenaLightKind", "sceneSelenaPackLight", "sceneSelenaClipToShadowUV",
   "sceneSelenaFillShadowSlot", "sceneSelenaFillLighting", "sceneSelenaLightingValue", "sceneSelenaShadowMapSlot",
-  "sceneSelenaFrameLighting", "sceneSelenaWGPUTextureLayout"];
+  "sceneSelenaFrameLighting"];
 
 function lightingContext(extra = {}) {
   const context = vm.createContext(Object.assign({
@@ -173,10 +173,6 @@ test("only engine context fields read the lighting record", () => {
   assert.equal(ctx.sceneSelenaShadowMapSlot(lighting, {engine: "shadowMap0"}), null);
   assert.equal(ctx.sceneSelenaShadowMapSlot(null, {engine: "shadowMap0"}), null);
   assert.equal(ctx.sceneSelenaShadowMapSlot(lighting, {engine: "opaqueDepth"}), undefined);
-  assert.deepEqual(plain(ctx.sceneSelenaWGPUTextureLayout({dimension: "depth2d-array"})), {sampleType: "depth", viewDimension: "2d-array"});
-  assert.deepEqual(plain(ctx.sceneSelenaWGPUTextureLayout({dimension: "depth2d"})), {sampleType: "depth", viewDimension: "2d"});
-  assert.deepEqual(plain(ctx.sceneSelenaWGPUTextureLayout({dimension: "cube"})), {sampleType: "float", viewDimension: "cube"});
-  assert.deepEqual(plain(ctx.sceneSelenaWGPUTextureLayout({})), {sampleType: "float", viewDimension: "2d"});
 });
 
 test("WebGL uploads array fields whole and binds shadow maps as depth arrays", () => {
@@ -247,22 +243,79 @@ test("WebGPU resolves lighting uniforms and shadow-map array views", () => {
   assert.equal(ctx.sceneSelenaShadowMapView(context, {name: "albedo"}), null);
 });
 
-test("renderer chunks bridge the shared lighting helpers", () => {
-  const prefixes = {
-    webgl: fs.readFileSync(path.join(__dirname, "bootstrap-src", "26j-feature-scene3d-webgl-prefix.ts"), "utf8"),
-    webgpu: fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.ts"), "utf8"),
-  };
+test("the lighting module ships in a gated chunk, not the eager scene3d chunk", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "bootstrap-src", "chunks.json"), "utf8"));
+  const chunk = (name) => manifest.chunks.find((c) => c.name === name);
+  const module = "bootstrap-src/16c2-scene-selena-lighting.ts";
+  assert.ok(chunk("bootstrap.js").sources.includes(module), "the monolith carries the module inline");
+  assert.ok(!chunk("bootstrap-feature-scene3d.js").sources.includes(module), "the eager scene3d chunk must not carry it");
+  assert.deepEqual(chunk("bootstrap-feature-scene3d-selena-lighting.js").sources, [
+    "bootstrap-src/26n-feature-scene3d-selena-lighting-prefix.ts", module,
+    "bootstrap-src/26n-feature-scene3d-selena-lighting-suffix.ts"]);
+  const suffix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26n-feature-scene3d-selena-lighting-suffix.ts"), "utf8");
+  assert.match(suffix, /window\.__gosx_scene3d_selena_lighting_api = \{\s*frame: sceneSelenaFrameLighting,\s*value: sceneSelenaLightingValue,\s*shadowSlot: sceneSelenaShadowMapSlot,/);
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
-  const used = {
-    webgl: ["sceneSelenaFrameLighting", "sceneSelenaLightingValue", "sceneSelenaShadowMapSlot"],
-    webgpu: ["sceneSelenaFrameLighting", "sceneSelenaLightingValue", "sceneSelenaShadowMapSlot", "sceneSelenaWGPUTextureLayout"],
-  };
-  for (const [backend, names] of Object.entries(used)) {
-    const renderer = readSceneRendererBackendSrc(backend);
-    for (const name of names) {
-      assert.ok(renderer.includes(name + "("), `${backend} renderer calls ${name}`);
-      assert.ok(prefixes[backend].includes(`var ${name} = sceneApi.${name};`), `${backend} prefix bridges ${name}`);
-      assert.ok(core.includes(`${name}: typeof ${name} === "function" ? ${name} : undefined`), `core API exports ${name}`);
-    }
+  assert.ok(!/sceneSelena/.test(core), "the base chunk exports no lighting helpers");
+});
+
+function prefixShims(file, extra) {
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", file), "utf8");
+  const loads = [];
+  const ctx = vm.createContext(Object.assign({
+    Math, Array, String, Object,
+    window: {},
+    sceneApi: { loadPresentation: (...args) => { loads.push(args); return Promise.reject(new Error("not advertised")); } },
+    sceneNumber: (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== "" ? Number(v) : d),
+    sceneColorRGBA: (value, fallback) => Array.isArray(value) ? value : fallback,
+  }, extra));
+  const names = ["sceneSelenaFrameLighting", "sceneSelenaLightingValue", "sceneSelenaShadowMapSlot"];
+  if (source.includes("function sceneSelenaLightingAPI(")) names.unshift("sceneSelenaLightingAPI");
+  vm.runInContext("var sceneSelenaLightingRequested = false;\n" + names.map((n) => fn(source, n)).join("\n"), ctx);
+  return { ctx, loads, source };
+}
+
+test("WebGL keeps the classic context inputs until the lighting chunk loads, then forwards", () => {
+  const { ctx, loads } = prefixShims("26j-feature-scene3d-webgl-prefix.ts");
+  const holder = { _gosxSelenaLighting: { stale: true } };
+  const bundle = { lights: [{ kind: "point" }, { kind: "directional", directionY: -2, color: [1, 0.5, 0.25, 1], intensity: 2 }],
+    environment: { ambientColor: [1, 1, 1, 1], ambientIntensity: 0.25 } };
+  const record = ctx.sceneSelenaFrameLighting(holder, { x: 1, y: 2, z: 3 }, null, bundle, [], [], null, "gl");
+  assert.deepEqual(plain(record), { cameraPos: [1, 2, 3], sunDir: [-0, 1, -0].map((v) => v + 0), sunColor: [2, 1, 0.5], ambient: [0.25, 0.25, 0.25] });
+  assert.equal(holder._gosxSelenaLighting, null, "no lighting record while the chunk is absent");
+  ctx.sceneSelenaFrameLighting(holder, {}, null, bundle, [], [], null, "gl");
+  assert.equal(loads.length, 1, "the chunk is requested once");
+  assert.deepEqual(plain(loads[0]), ["selena-lighting", "gosxScene3dSelenaLightingUrl", ""]);
+  assert.equal(ctx.sceneSelenaLightingValue(record, { name: "sunDir", class: "context" }), record.sunDir);
+  assert.equal(ctx.sceneSelenaLightingValue(record, { name: "lights", class: "context" }), undefined);
+  assert.equal(ctx.sceneSelenaLightingValue(record, { name: "sunDir" }), undefined, "author params keep their values");
+  assert.equal(ctx.sceneSelenaShadowMapSlot(null, { engine: "shadowMap0" }), null, "a shadow map binds the lit placeholder");
+  assert.equal(ctx.sceneSelenaShadowMapSlot(null, { engine: "opaqueDepth" }), undefined);
+  ctx.window.__gosx_scene3d_selena_lighting_api = { frame: () => "frame", value: () => "value", shadowSlot: () => "slot" };
+  assert.equal(ctx.sceneSelenaFrameLighting(holder, {}, null, bundle, [], [], null, "gl"), "frame");
+  assert.equal(ctx.sceneSelenaLightingValue(record, { name: "lights", class: "context" }), "value");
+  assert.equal(ctx.sceneSelenaShadowMapSlot(null, { engine: "shadowMap0" }), "slot");
+});
+
+test("WebGPU supplies no lighting until the chunk loads, then forwards", () => {
+  const { ctx, loads } = prefixShims("26e-feature-scene3d-webgpu-prefix.ts");
+  assert.equal(ctx.sceneSelenaFrameLighting({}, {}, null, { lights: [] }, [], [], [], "gpu"), null);
+  ctx.sceneSelenaFrameLighting({}, {}, null, { lights: [] }, [], [], [], "gpu");
+  assert.equal(loads.length, 1);
+  assert.equal(ctx.sceneSelenaLightingValue({}, { name: "cameraPos", class: "context" }), undefined);
+  assert.equal(ctx.sceneSelenaShadowMapSlot(null, { engine: "shadowMap1" }), null);
+  ctx.window.__gosx_scene3d_selena_lighting_api = { frame: () => "frame", value: () => "value", shadowSlot: () => "slot" };
+  assert.equal(ctx.sceneSelenaFrameLighting({}, {}, null, {}, [], [], [], "gpu"), "frame");
+  assert.equal(ctx.sceneSelenaLightingValue({}, { name: "lights", class: "context" }), "value");
+  // Depth textures bind as sampleType "depth"; cube maps as cube views.
+  vm.runInContext(fn(readSceneRendererBackendSrc("webgpu"), "sceneSelenaWGPUTextureLayout"), ctx);
+  for (const [dimension, want] of [["depth2d-array", { sampleType: "depth", viewDimension: "2d-array" }], ["depth2d", { sampleType: "depth", viewDimension: "2d" }],
+    ["cube", { sampleType: "float", viewDimension: "cube" }], [undefined, { sampleType: "float", viewDimension: "2d" }]]) {
+    assert.deepEqual(plain(ctx.sceneSelenaWGPUTextureLayout({ dimension })), want);
+  }
+  for (const name of ["sceneSelenaFrameLighting", "sceneSelenaLightingValue", "sceneSelenaShadowMapSlot", "sceneSelenaWGPUTextureLayout"]) {
+    assert.ok(readSceneRendererBackendSrc("webgpu").includes(name + "("), `the WebGPU renderer calls ${name}`);
+  }
+  for (const name of ["sceneSelenaFrameLighting", "sceneSelenaLightingValue", "sceneSelenaShadowMapSlot"]) {
+    assert.ok(readSceneRendererBackendSrc("webgl").includes(name + "("), `the WebGL renderer calls ${name}`);
   }
 });

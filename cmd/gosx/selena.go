@@ -51,7 +51,11 @@ func runSelenaCommand(args []string, stdout io.Writer) error {
 	}
 	switch args[0] {
 	case "build":
-		return runSelenaBuildStep(dir, cfg.Build.Selena, stdout)
+		// An explicit build runs even when build.selena.disabled keeps the
+		// step out of gosx build.
+		opts := cfg.Build.Selena
+		opts.Disabled = false
+		return runSelenaBuildStep(dir, opts, stdout)
 	case "check":
 		if err := selenabuild.Check(dir, cfg.Build.Selena); err != nil {
 			return err

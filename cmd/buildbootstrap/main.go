@@ -512,7 +512,6 @@ var outputs = []output{
 			// the tiny stub + adapter probe.
 			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
-			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
 			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			sourceFile("bootstrap-src/16z-scene-webgpu-probe.ts"),
@@ -697,6 +696,14 @@ var outputs = []output{
 	{
 		name:    "bootstrap-feature-scene3d-hierarchy.js",
 		sources: []source{sourceFile("../runtime/scene3d/hierarchy.ts")},
+	},
+	{
+		name: "bootstrap-feature-scene3d-selena-lighting.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26n-feature-scene3d-selena-lighting-prefix.ts"),
+			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
+			sourceFile("bootstrap-src/26n-feature-scene3d-selena-lighting-suffix.ts"),
+		},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",

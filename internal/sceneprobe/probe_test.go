@@ -70,3 +70,23 @@ func TestProbePreservesLegacyNormalization(t *testing.T) {
 		t.Fatalf("texture descriptor case/empty fallback changed: %q", textures)
 	}
 }
+
+func TestNeedsSelenaLightingReadsMaterialLayouts(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{}`: false,
+		`{"scene":{"objects":[{"shaderLayout":{"context":["cameraPos","sunDir","sunColor","ambient"]}}]}}`: false,
+		`{"scene":{"objects":[{"shaderLayout":{"context":["resolution","spheres"]}}]}}`:                    false,
+		`{"scene":{"objects":[{"shaderLayout":{"context":["cameraPos","lights","lightCount"]}}]}}`:         true,
+		`{"scene":{"points":[{"shaderLayout":{"context":["fog"]}}]}}`:                                      true,
+		`{"objects":[{"shaderLayout":{"textures":[{"name":"shadowMap1","engine":"shadowMap1"}]}}]}`:        true,
+		`{"scene":{"instancedMeshes":[{"shaderLayout":{"textures":[{"name":"albedo"}]}}]}}`:                false,
+	} {
+		if got := Decode(json.RawMessage(raw)).NeedsSelenaLighting(); got != want {
+			t.Errorf("%s: NeedsSelenaLighting = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsSelenaLighting() {
+		t.Fatal("nil probe needs lighting")
+	}
+}

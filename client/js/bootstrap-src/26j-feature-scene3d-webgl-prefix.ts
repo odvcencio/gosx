@@ -176,10 +176,51 @@
   var SCENE_POST_FXAA = sceneApi.SCENE_POST_FXAA || "fxaa";
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
-  var sceneSelenaFillLighting = sceneApi.sceneSelenaFillLighting;
-  var sceneSelenaLightingValue = sceneApi.sceneSelenaLightingValue;
-  var sceneSelenaShadowMapSlot = sceneApi.sceneSelenaShadowMapSlot;
-  var sceneSelenaFrameLighting = sceneApi.sceneSelenaFrameLighting;
+  // Selena scene lighting (16c2-scene-selena-lighting) ships in the gated
+  // scene3d-selena-lighting chunk, advertised only when a Selena material
+  // reads lights, shadows or fog. Until it loads, and on every other page,
+  // WebGL keeps supplying the classic context inputs itself: cameraPos, sunDir
+  // (toward the first directional light), its color times intensity, ambient.
+  var sceneSelenaLightingRequested = false;
+  function sceneSelenaLightingAPI() {
+    var api = window.__gosx_scene3d_selena_lighting_api;
+    if (!api && !sceneSelenaLightingRequested && typeof sceneApi.loadPresentation === "function") {
+      sceneSelenaLightingRequested = true;
+      sceneApi.loadPresentation("selena-lighting", "gosxScene3dSelenaLightingUrl", "").catch(function() {});
+    }
+    return api;
+  }
+  function sceneSelenaFrameLighting(holder, cam, view, bundle, slots, lightIndices, matrices, clip) {
+    var api = sceneSelenaLightingAPI();
+    if (api) return api.frame(holder, cam, view, bundle, slots, lightIndices, matrices, clip);
+    var out = holder._gosxSelenaClassic || (holder._gosxSelenaClassic = { cameraPos: [0, 0, 0], sunDir: [0, 1, 0], sunColor: [1, 1, 1], ambient: [0, 0, 0] });
+    var lights = bundle && Array.isArray(bundle.lights) ? bundle.lights : [], env = (bundle && bundle.environment) || {};
+    out.cameraPos[0] = sceneNumber(cam && cam.x, 0); out.cameraPos[1] = sceneNumber(cam && cam.y, 0); out.cameraPos[2] = sceneNumber(cam && cam.z, 0);
+    out.sunDir[0] = 0; out.sunDir[1] = 1; out.sunDir[2] = 0; out.sunColor[0] = 1; out.sunColor[1] = 1; out.sunColor[2] = 1;
+    for (var i = 0; i < lights.length; i++) {
+      var light = lights[i] || {};
+      if (String(light.kind || "").toLowerCase() !== "directional") continue;
+      var dx = sceneNumber(light.directionX, 0), dy = sceneNumber(light.directionY, -1), dz = sceneNumber(light.directionZ, 0);
+      var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1, rgba = sceneColorRGBA(light.color, [1, 1, 1, 1]), intensity = sceneNumber(light.intensity, 1);
+      out.sunDir[0] = -dx / len; out.sunDir[1] = -dy / len; out.sunDir[2] = -dz / len;
+      out.sunColor[0] = rgba[0] * intensity; out.sunColor[1] = rgba[1] * intensity; out.sunColor[2] = rgba[2] * intensity;
+      break;
+    }
+    var ambient = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]), ambientIntensity = sceneNumber(env.ambientIntensity, 0);
+    out.ambient[0] = ambient[0] * ambientIntensity; out.ambient[1] = ambient[1] * ambientIntensity; out.ambient[2] = ambient[2] * ambientIntensity;
+    holder._gosxSelenaLighting = null;
+    return out;
+  }
+  function sceneSelenaLightingValue(lighting, field) {
+    var api = window.__gosx_scene3d_selena_lighting_api, name = field && field.name;
+    if (api) return api.value(lighting, field);
+    return lighting && field.class === "context" && (name === "cameraPos" || name === "sunDir" || name === "sunColor" || name === "ambient") ? lighting[name] : undefined;
+  }
+  function sceneSelenaShadowMapSlot(lighting, texture) {
+    var api = window.__gosx_scene3d_selena_lighting_api, engine = texture && texture.engine;
+    if (api) return api.shadowSlot(lighting, texture);
+    return engine === "shadowMap0" || engine === "shadowMap1" ? null : undefined;
+  }
   var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
   var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
   var sceneAtmosphereQuality = sceneApi.sceneAtmosphereQuality;
