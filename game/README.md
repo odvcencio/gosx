@@ -19,7 +19,9 @@ The package composes existing GoSX primitives instead of replacing them:
 A browser (js/wasm) build of `game` links no `hub`, `net/http`, `crypto/tls`
 or root `gosx` package: `game` reaches the simulation contract through
 `sim/simcore` (whose `Input` and `Simulation` are `sim.Input` and
-`sim.Simulation`), and the server helpers live in `game/serve`.
+`sim.Simulation`), and the server helpers live in `game/serve`. A js/wasm build
+of `sim` itself is hub-free too: it keeps the simulation contract, the replay
+log types and `DecodeBinarySnapshot`, and leaves out the `Runner`.
 `TestBrowserBuildsLinkNoServerPackages` fails if one returns. Moving them cut
 the Go WASM engine fixture (`engine/wasm/internal/browserworker/fixture`) from
 10.30 MB to 7.59 MB raw, and from 2.02 MB to 1.46 MB with brotli -q 11.

@@ -20,6 +20,7 @@ var browserPackages = []string{
 	"m31labs.dev/gosx/game/audio",
 	"m31labs.dev/gosx/game/audio/host",
 	"m31labs.dev/gosx/game/audio/worklet",
+	"m31labs.dev/gosx/sim",
 	"m31labs.dev/gosx/sim/simcore",
 	"m31labs.dev/gosx/engine/wasm/internal/browserworker/fixture",
 }
@@ -30,7 +31,6 @@ var browserPackages = []string{
 var forbiddenInBrowser = map[string]string{
 	"m31labs.dev/gosx":            "the GoSX compiler; mount helpers live in game/serve",
 	"m31labs.dev/gosx/hub":        "the hub server; game/serve.NewRunner wires a hub",
-	"m31labs.dev/gosx/sim":        "sim.Runner links the hub; browser code uses sim/simcore",
 	"m31labs.dev/gosx/game/serve": "server-only helpers",
 	"net/http":                    "HTTP server and client",
 	"crypto/tls":                  "TLS",
