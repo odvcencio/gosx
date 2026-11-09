@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -98,10 +97,6 @@ func applyFileRouteConfig(ctx *RouteContext, config FileRouteConfig) error {
 		}
 	}
 	return nil
-}
-
-func routeConfigPath(dir string) string {
-	return filepath.Join(dir, "route.config.json")
 }
 
 func mergeFileRouteConfig(base, next FileRouteConfig) FileRouteConfig {

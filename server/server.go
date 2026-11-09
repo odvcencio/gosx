@@ -1126,10 +1126,6 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 	a.renderPage(w, ctx, "", node, "Not Found")
 }
 
-func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
-	a.renderErrorPattern(w, r, err, "")
-}
-
 func (a *App) renderErrorPattern(w http.ResponseWriter, r *http.Request, err error, pattern string) {
 	MarkObservedRequest(r, "error", pattern)
 	if WriteDevelopmentError(w, r, err) {

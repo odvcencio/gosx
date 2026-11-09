@@ -1781,10 +1781,6 @@ func (t *transpiler) emitAttrs(n *gotreesitter.Node) []string {
 	return t.emitAttrsWithMode(n, false, false)
 }
 
-func (t *transpiler) emitTypedAttrs(n *gotreesitter.Node) []string {
-	return t.emitAttrsWithMode(n, true, false)
-}
-
 func (t *transpiler) emitHTMLAttrs(n *gotreesitter.Node) []string {
 	return t.emitAttrsWithMode(n, false, true)
 }
@@ -1897,10 +1893,6 @@ func (t *transpiler) emitAttrsWithMode(n *gotreesitter.Node, typed, htmlElement 
 		}
 	}
 	return attrs
-}
-
-func (t *transpiler) emitAttr(n *gotreesitter.Node) string {
-	return t.emitAttrWithMode(n, false, false)
 }
 
 func (t *transpiler) emitAttrWithMode(n *gotreesitter.Node, typed, htmlElement bool) string {
