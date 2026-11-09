@@ -88,6 +88,7 @@
         "bootstrap-src/19a-scene-ktx2.ts",
         "../runtime/scene3d/gltf.ts",
         "../runtime/scene3d/asset-ext.ts",
+        "../runtime/scene3d/asset-meshopt.ts",
         "../runtime/scene3d/animation.ts",
         "bootstrap-src/19b-scene-control-forms.ts",
         "bootstrap-src/16d-scene-webgl-bridge.ts",
@@ -516,6 +517,7 @@
         "bootstrap-src/19a-scene-ktx2.ts",
         "../runtime/scene3d/gltf.ts",
         "../runtime/scene3d/asset-ext.ts",
+        "../runtime/scene3d/asset-meshopt.ts",
         "bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"
       ]
     },
