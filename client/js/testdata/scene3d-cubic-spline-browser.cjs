@@ -323,13 +323,16 @@ const server = http.createServer((req, res) => {
       fail('client-events request failed: ' + detail);
       if (!res.headersSent) send(500, Buffer.from('client-events request failed'), 'text/plain');
     });
+    const eventChunks = [];
+    req.on('data', (chunk) => eventChunks.push(chunk));
     req.once('end', () => {
+      // Keep each telemetry batch beside the report: an unexpected extra event is unreadable otherwise.
+      try { fs.appendFileSync(path.join(ART, 'client-events.log'), Buffer.concat(eventChunks).toString('utf8') + '\n'); } catch (_e) {}
       if (res.headersSent) return;
       clientEventResponses.push({ method, path: parsed.pathname, status: 204 });
       res.writeHead(204);
       res.end();
     });
-    req.resume();
     return;
   }
   if (parsed.pathname === '/') {
