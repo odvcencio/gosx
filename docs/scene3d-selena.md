@@ -197,7 +197,7 @@ Both renderers compile in the background (WebGL2 with
 frame still waits until every program it needs is ready. So an object that
 appears mid-game with a material no earlier frame used stops the scene from
 drawing while its program links. A lit Selena material held the scene for
-115 to 242 ms that way on an RTX 5070 Ti and on an Apple M4 Pro, in both
+115 to 273 ms that way on an RTX 5070 Ti and on an Apple M4 Pro, in both
 backends.
 
 `Props.ShaderWarmup` moves that work to boot. List the materials and draw
@@ -244,15 +244,15 @@ gate.Add(boot.CountTask("shaders", 1, surface.ShaderWarmupProgress))
 
 With the four lit materials and two standard ones of
 `e2e/shader_warmup_hitch_e2e_test.go` listed, each lit material's first use
-drew within 18 to 28 ms (one or two frames) on both GPUs and both backends,
-down from 115 to 242 ms. The first frame came up to 160 ms later than
+drew within 18 to 32 ms (one or two frames) on both GPUs and both backends,
+down from 115 to 273 ms. The first frame came up to about 220 ms later than
 without the warm-up, because the compiling moved into boot.
 
 The first transmission material is a special case: it adds a screen-space
 pass and switches the renderer to an HDR target, and on WebGPU every pipeline
 then compiles again for that format. With the warm-up alone it still took
-about 100 ms on WebGPU and 120 ms on WebGL on the Apple M4 Pro (23 and 31 ms on
-the RTX 5070 Ti). Give the scene a post effect from the start, such as tone
+about 100 ms on WebGPU and 110 to 120 ms on WebGL on the Apple M4 Pro (20 to
+31 ms on the RTX 5070 Ti). Give the scene a post effect from the start, such as tone
 mapping, so the post chain and target format exist before the first
 transmission object appears; with that, it drew within 21 to 33 ms on both GPUs:
 
