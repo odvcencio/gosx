@@ -20,7 +20,7 @@ const extSource = ts.transpileModule(
 
 function loadExt() {
   const window = {};
-  vm.runInNewContext(extSource, { window, WeakMap, Object });
+  vm.runInNewContext(extSource, { window, WeakMap, Object, Map, GPUBufferUsage: { VERTEX: 32, COPY_DST: 8 } });
   return window.__gosx_scene3d_asset_ext;
 }
 
@@ -180,4 +180,88 @@ test("a variant that fails to build stops being wanted", () => {
   const mat = { occlusionTexCoord: 1 };
   assert.equal(uv1.use(gl, obj, mat, false, { base: () => null, skinned: () => null, usable: (x) => x }), null);
   assert.equal(uv1.wanted(obj, mat), false);
+});
+
+// --- WebGPU ---------------------------------------------------------------
+
+function wgslConstants(names) {
+  const source = readSceneRendererBackendSrc("webgpu");
+  const context = vm.createContext({});
+  const loaded = new Set();
+  function load(name) {
+    if (loaded.has(name)) return;
+    loaded.add(name);
+    const m = new RegExp("\\b(?:var|const) " + name + " = ").exec(source);
+    assert.ok(m, name);
+    const valueStart = m.index + m[0].length;
+    let end;
+    if (source[valueStart] === "[") end = source.indexOf('].join("\\n");', valueStart) + '].join("\\n");'.length;
+    else if (source[valueStart] === "`") end = source.indexOf("`;", valueStart + 1) + 2;
+    else end = source.indexOf(";\n", valueStart) + 1;
+    const text = source.slice(m.index, end);
+    for (const ref of new Set(text.match(/\b(?:WGSL|SCENE)_[A-Z0-9_]+\b/g) || [])) if (ref !== name && new RegExp("\\b(?:var|const) " + ref + " = ").test(source)) load(ref);
+    vm.runInContext(text, context);
+  }
+  for (const name of names) load(name);
+  return (name) => vm.runInContext(name, context);
+}
+
+test("the WGSL variants add the second UV set to the vertex input and the stage interface", () => {
+  const { uv1 } = loadExt();
+  const wgsl = wgslConstants(["WGSL_PBR_VERTEX", "WGSL_PBR_FRAGMENT"]);
+  const vertex = uv1.wgslVertex(wgsl("WGSL_PBR_VERTEX"));
+  assert.equal(vertex.split("@location(9) uv1: vec2f").length, 2);
+  assert.equal(vertex.split("@location(6) uv1: vec2f").length, 2);
+  assert.match(vertex, /out\.uv = in\.uv;\n    out\.uv1 = in\.uv1;/);
+  const fragment = uv1.wgslFragment(wgsl("WGSL_PBR_FRAGMENT"), "o");
+  assert.equal(fragment.split("@location(6) uv1: vec2f").length, 2);
+  assert.match(fragment, /textureSample\(occlusionTex, occlusionSamp, in\.uv1\)/);
+  assert.match(fragment, /textureSample\(emissiveTex, emissiveSamp, in\.uv\)/, "emissive stays on the first set");
+  assert.match(fragment, /textureSample\(albedoTex, albedoSamp, in\.uv\)/, "base color stays on the first set");
+  const both = uv1.wgslFragment(wgsl("WGSL_PBR_FRAGMENT"), "oe");
+  assert.doesNotMatch(both, /emissiveSamp, in\.uv\)/);
+  assert.doesNotMatch(both, /occlusionSamp, in\.uv\)/);
+});
+
+test("gpuWanted names the maps and refuses paths that cannot bind the fifth slot", () => {
+  const { uv1 } = loadExt();
+  const stream = new Float32Array(6);
+  assert.equal(uv1.gpuWanted({ uvs1: stream }, { occlusionTexCoord: 1 }), "o");
+  assert.equal(uv1.gpuWanted({ uvs1: stream }, { emissiveTexCoord: 1 }), "e");
+  assert.equal(uv1.gpuWanted({ uvs1: stream }, { occlusionTexCoord: 1, emissiveTexCoord: 1 }), "oe");
+  assert.equal(uv1.gpuWanted({ uvs1: stream }, {}), "");
+  for (const extra of [{ directVertices: true }, { retainedGeometry: true }, { computedMorph: {} }, { skin: {} }]) {
+    assert.equal(uv1.gpuWanted({ uvs1: stream, ...extra }, { occlusionTexCoord: 1 }), "", JSON.stringify(Object.keys(extra)));
+  }
+  assert.equal(uv1.gpuWanted({ uvs1: stream }, { occlusionTexCoord: 1, customFragmentWGSL: "x" }), "");
+});
+
+test("gpuModules builds each variant once and gives the vertex module a five slot layout", () => {
+  const { uv1 } = loadExt();
+  const created = [];
+  const device = { createShaderModule: (d) => (created.push(d.label), { label: d.label }) };
+  const a = uv1.gpuModules(device, "vertex", "fragment", "o");
+  assert.equal(uv1.gpuModules(device, "vertex", "fragment", "o"), a);
+  uv1.gpuModules(device, "vertex", "fragment", "e");
+  assert.deepEqual(created, ["pbr-vert-uv1o", "pbr-frag-uv1o", "pbr-vert-uv1e", "pbr-frag-uv1e"]);
+  assert.equal(a.vertex.gosxVertexLayout.length, 5);
+  assert.equal(JSON.stringify(a.vertex.gosxVertexLayout[4].attributes[0]), JSON.stringify({ format: "float32x2", offset: 0, shaderLocation: 9 }));
+});
+
+test("gpuDraw binds four sub-ranges, uploads UV1 and draws once", () => {
+  const { uv1 } = loadExt();
+  const calls = [];
+  const device = {
+    createBuffer: (d) => (calls.push(["createBuffer", d.size]), { destroy() {} }),
+    queue: { writeBuffer: (_b, off, data) => calls.push(["write", off, data.length]) },
+  };
+  const pass = { setVertexBuffer: (slot, _b, off, size) => calls.push(["slot", slot, off, size]), draw: (n) => calls.push(["draw", n]) };
+  const bindRange = (_p, slot, rec, offset, count) => (calls.push(["range", slot, offset, count]), !!rec);
+  const buffers = { positions: {}, normals: {}, uvs: {}, tangents: {} };
+  const ok = uv1.gpuDraw(device, pass, { id: "m", uvs1: new Float32Array(12) }, 30, 6, bindRange, buffers);
+  assert.equal(ok, true);
+  assert.deepEqual(calls, [
+    ["range", 0, 30, 6], ["range", 1, 30, 6], ["range", 2, 30, 6], ["range", 3, 30, 6],
+    ["createBuffer", 48], ["write", 0, 12], ["slot", 4, 0, 48], ["draw", 6],
+  ]);
 });

@@ -4153,7 +4153,7 @@
       vertex: {
         module: vertexModule,
         entryPoint: "vertexMain",
-        buffers: WGPU_PBR_VERTEX_LAYOUT,
+        buffers: vertexModule.gosxVertexLayout || WGPU_PBR_VERTEX_LAYOUT,
       },
       fragment: sceneWebGPUColorFragment(fragmentModule, targetFormat, wgpuBlendState(blendMode)),
       primitive: { topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 ? "cw" : "ccw" },
@@ -7235,7 +7235,7 @@
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
     var pbrInstancedCullVertexModule = null;
-    var pbrFragmentModule = null;
+    var pbrFragmentModule = null; window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = Object.assign({ gpuWanted() { return ""; }, gpuModules() { return null; }, gpuDraw() {}, gpuDispose() {} }, window.__gosx_scene3d_asset_ext.uv1);
     var elioSkinShaderModule: any = null;
     var elioSkinPipeline: any = null;
     var computedMorphShaderModule: any = null;
@@ -8768,11 +8768,11 @@
     }
 
     // Get or create a PBR pipeline for the given blend mode.
-    function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
+    function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false, uv1 = "") {
       var reflected = frontFace === "cw";
-      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey((detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr")) + (uv1 ? ":uv1" + uv1 : ""), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
+      var uv1Modules = uv1 ? window.__gosx_scene3d_asset_ext.uv1.gpuModules(device, WGSL_PBR_VERTEX, WGSL_PBR_FRAGMENT, uv1) : null; var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, uv1Modules ? uv1Modules.vertex : pbrVertexModule, detail ? detailResources.fragment : uv1Modules ? uv1Modules.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -16464,12 +16464,12 @@
         }
         return false;
       }
-      function bindPBRPipeline(reflected, material = Object.create(null)) {
+      function bindPBRPipeline(reflected, material = Object.create(null), uv1 = "") {
         var hasDetail = Boolean(material && material.detail);
         var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr");
-        kind += ":" + objectDepthWrite;
+        kind += ":" + objectDepthWrite + uv1;
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail)));
+        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail, uv1)));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -16589,7 +16589,7 @@
           }
           continue;
         }
-        bindPBRPipeline(reflectedDirect, mat);
+        bindPBRPipeline(reflectedDirect, mat, window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat));
 
         var matBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
         var modelOffset = webGPUCutawayOffset(materialFrame, obj);
@@ -16628,7 +16628,7 @@
         }
         if (!worldBuffersBound) worldBuffersBound = wgpuBindWorldMeshBuffers(pass, pbrBuffers);
         if (!worldBuffersBound) continue;
-        pass.draw(count, 1, offset);
+        window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat) ? (worldBuffersBound = false, window.__gosx_scene3d_asset_ext.uv1.gpuDraw(device, pass, obj, offset, count, webGPUBindSceneMeshVertexBuffer, pbrBuffers)) : pass.draw(count, 1, offset);
         if (frameRequest) frameRequest.record(obj.id);
         if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
       }
