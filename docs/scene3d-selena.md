@@ -345,3 +345,63 @@ in the encoding of `scene.Wind`. The renderers do not fill those two inputs
 for Selena materials yet, so plants stand still until they do; the shaders
 compile and draw either way. Add every game material that appears after the
 first frame to `ShaderWarmup`.
+
+## Jersey numbers and nameplates from one texture
+
+A `scene.TextAtlas` is one texture that holds many short labels, such as
+jersey numbers, player names or unit tags. The browser draws it with the canvas
+2D API when the scene mounts, so a team of 44 players needs one texture and one
+material, not 44 textures. Each label gets one cell of a grid; a material picks
+its player's cell by UV region.
+
+```go
+numbers := scene.TextAtlas{ID: "numbers", CellWidth: 96, CellHeight: 96}
+plates := scene.TextAtlas{ID: "plates", CellWidth: 192, CellHeight: 48,
+    Background: "#f2d14b", Color: "#111111"}
+for _, p := range roster {
+    numbers.Labels = append(numbers.Labels, strconv.Itoa(p.Number))
+    plates.Labels = append(plates.Labels, p.Name) // "" leaves the plate blank
+}
+props.TextAtlases = []scene.TextAtlas{numbers, plates}
+```
+
+Use `Texture()` as the texture URL and choose the cell per player:
+
+- **Selena materials.** Pass `Texture()` as the `texture2d` param and
+  `RegionUniform(i)` as a `vec4` param. The `game` module's `mlAtlasUV`,
+  `mlRectLocal` and `mlRectMask` map a part of the mesh's UVs onto the cell;
+  Selena's `examples/material-library/jersey.sel` puts a number on a shirt
+  this way:
+
+  ```go
+  shirt := jersey // one compiled Jersey material
+  shirt.Uniforms = maps.Clone(jersey.Uniforms)
+  shirt.Uniforms["labels"] = numbers.Texture()
+  shirt.Uniforms["labelRect"] = numbers.RegionUniform(i)
+  ```
+
+- **Standard materials.** Set `Texture: plates.Texture()` and draw the label on
+  `plates.Quad(i, width, height)`, a rectangle whose UVs cover cell `i`. Use
+  `BlendMode: scene.BlendAlpha` so a blank cell stays see-through.
+
+Regions use the image convention: (0, 0) is the texture's top-left corner and
+v grows downward. glTF models follow it, so `numberRect` in `jersey.sel` is in
+the same UV space a Blender export writes. A mesh you build in Go needs UVs in
+that convention too.
+
+Things to know:
+
+- Each label shrinks to fit its cell inside `Padding`. An empty label leaves
+  its cell transparent.
+- An atlas may be at most 4096 pixels on a side; `Validate` reports a larger
+  one, and `Props` drops it. Use smaller cells or a second atlas.
+- The texture URL carries a hash of the labels and style, so changing a label
+  makes a new texture, which the renderer loads like a new image.
+- The browser draws with the fonts it has when the scene mounts. Load a web
+  font before mounting, or the labels use the fallback font.
+- `InstancedMesh` has no per-instance UV region, so instanced copies cannot
+  pick different cells. Use one `Mesh` per character; the meshes still share
+  one shader and one texture.
+
+`TestTextAtlasDrawsDistinctNumbersOnCharacters` in `e2e/` draws 44 characters
+this way and checks that every jersey shows a different number.
