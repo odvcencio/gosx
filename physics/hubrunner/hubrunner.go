@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 // Package hubrunner drives a physics world from a gosx hub through the
 // server-authoritative sim runner.
 //

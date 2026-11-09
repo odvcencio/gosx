@@ -1128,6 +1128,7 @@
     var appHandlers = new Set();
     var visibilityHandlers = new Set();
     var inputHandlers = new Set();
+    var inputByteHandlers = new Set();
     var mountListeners = new Map();   // lid -> callback(json)
     var nextLID = 1;
     var hidden = false;
@@ -1142,6 +1143,54 @@
 
     function fatal(code, error) {
       post({ t: "fatal", code: code, message: String(error && error.message || error), stack: String(error && error.stack || "") });
+    }
+
+    // ---- binary input records -------------------------------------------
+    //
+    // One record per forwarded event, so Go (game/host.ForwardedInput) reads
+    // it with one copy instead of parsing JSON. Little endian. Layout, shared
+    // with game/host/forwarded.go:
+    //   0 u8 version 1 | 1 u8 kind (1 key, 2 pointer, 3 pad, 4 blur)
+    //   2 u8 flags (1 down, 2 connected) | 3 u8 reserved
+    //   4 i32 mask | 8 i32 pointer id | 12 i32 pad index
+    //   16 f64 x | 24 f64 y | 32 f64 ts | 40 f64 at | 48 f64 recv
+    //   56 u16 buttons | 58 u16 axes
+    //   60 u16 x5 byte lengths: code, key, pad id, mapping, pointer type
+    //   70 u16 reserved | 72 f64 buttons, f64 axes, then the UTF-8 strings
+    var INPUT_KINDS = { key: 1, pointer: 2, pad: 3, blur: 4 };
+    var inputRecordBuf = new ArrayBuffer(512);
+    var inputRecordView = new DataView(inputRecordBuf);
+    var inputRecordBytes = new Uint8Array(inputRecordBuf);
+
+    function encodeInputRecord(ev) {
+      var kind = INPUT_KINDS[ev.k];
+      if (!kind) return null;
+      var buttons = Array.isArray(ev.buttons) ? ev.buttons : [];
+      var axes = Array.isArray(ev.axes) ? ev.axes : [];
+      var texts = [ev.code, ev.key, ev.id, ev.mapping, ev.type].map(function(v) { return v == null ? "" : String(v); });
+      var need = 72 + 8 * (buttons.length + axes.length);
+      for (var t = 0; t < texts.length; t++) need += 3 * texts[t].length;
+      if (need > inputRecordBuf.byteLength) {
+        inputRecordBuf = new ArrayBuffer(Math.max(need, 2 * inputRecordBuf.byteLength));
+        inputRecordView = new DataView(inputRecordBuf);
+        inputRecordBytes = new Uint8Array(inputRecordBuf);
+      }
+      var v = inputRecordView;
+      v.setUint8(0, 1); v.setUint8(1, kind);
+      v.setUint8(2, (ev.down ? 1 : 0) | (ev.connected ? 2 : 0)); v.setUint8(3, 0);
+      v.setInt32(4, ev.mask | 0, true); v.setInt32(8, ev.pid | 0, true); v.setInt32(12, ev.index | 0, true);
+      v.setFloat64(16, Number(ev.x) || 0, true); v.setFloat64(24, Number(ev.y) || 0, true);
+      v.setFloat64(32, Number(ev.ts) || 0, true); v.setFloat64(40, Number(ev.at) || 0, true); v.setFloat64(48, Number(ev.recv) || 0, true);
+      v.setUint16(56, buttons.length, true); v.setUint16(58, axes.length, true); v.setUint16(70, 0, true);
+      var at = 72;
+      for (var b = 0; b < buttons.length; b++, at += 8) v.setFloat64(at, Number(buttons[b]) || 0, true);
+      for (var a = 0; a < axes.length; a++, at += 8) v.setFloat64(at, Number(axes[a]) || 0, true);
+      for (var i = 0; i < texts.length; i++) {
+        var written = texts[i] ? encoder.encodeInto(texts[i], inputRecordBytes.subarray(at)).written : 0;
+        v.setUint16(60 + 2 * i, written, true);
+        at += written;
+      }
+      return inputRecordBytes.subarray(0, at);
     }
 
     // ---- requests to the page ---------------------------------------------
@@ -1200,6 +1249,9 @@
       // "at" is when the event happened and "recv" when the worker got it, both
       // in this worker's performance.now() milliseconds.
       onInput: function(fn) { inputHandlers.add(fn); return function() { inputHandlers.delete(fn); }; },
+      // Page input as binary records, one Uint8Array per event (layout in
+      // encodeInputRecord). The view is reused: copy it before returning.
+      onInputBytes: function(fn) { inputByteHandlers.add(fn); return function() { inputByteHandlers.delete(fn); }; },
       request: request,
       postFrame: postFrame,
       // Scene3D mount access without a document (see the page handlers).
@@ -1450,6 +1502,10 @@
         if (!ev || typeof ev !== "object") return;
         ev.at = workerAPI.toLocalTime(ev.ts);
         ev.recv = scope.performance.now();
+        if (inputByteHandlers.size > 0) {
+          var record = encodeInputRecord(ev);
+          if (record) inputByteHandlers.forEach(function(fn) { try { fn(record); } catch (error) { logToPage("error", error); } });
+        }
         if (inputHandlers.size === 0) return;
         var json = JSON.stringify(ev);
         for (var fn of Array.from(inputHandlers)) { try { fn(json); } catch (error) { logToPage("error", error); } }

@@ -53,6 +53,8 @@ type Poller struct {
 	connectedID map[int]string
 	buttons     map[int][]float64
 	axes        map[int][]float64
+	seen        map[int]bool
+	scratch     []float64
 }
 
 // NewPoller creates a Poller with cfg. cfg's zero value is a single local
@@ -63,6 +65,7 @@ func NewPoller(cfg Config) *Poller {
 		connectedID: make(map[int]string),
 		buttons:     make(map[int][]float64),
 		axes:        make(map[int][]float64),
+		seen:        make(map[int]bool),
 	}
 }
 
@@ -72,7 +75,11 @@ func (p *Poller) Poll(source Source, input *game.Input) {
 	if p == nil || source == nil || input == nil {
 		return
 	}
-	seen := make(map[int]bool)
+	if p.seen == nil {
+		p.seen = make(map[int]bool)
+	}
+	seen := p.seen
+	clear(seen)
 	for _, pad := range source.Gamepads() {
 		if !p.cfg.AllowNonStandard && pad.Mapping != "standard" {
 			continue
@@ -102,8 +109,6 @@ func (p *Poller) Poll(source Source, input *game.Input) {
 
 func (p *Poller) pollButtons(pad State, input *game.Input) {
 	prev := p.buttons[pad.Index]
-	next := make([]float64, len(pad.Buttons))
-	copy(next, pad.Buttons)
 	for i, value := range pad.Buttons {
 		old := 0.0
 		if i < len(prev) {
@@ -114,17 +119,27 @@ func (p *Poller) pollButtons(pad State, input *game.Input) {
 		}
 		input.Apply(game.InputEvent{
 			Kind:     game.EventGamepad,
-			Code:     fmt.Sprintf("button%d", i),
+			Code:     buttonCode(i),
 			Value:    value,
 			PlayerID: p.cfg.PlayerID,
 			DeviceID: pad.ID,
 		})
 	}
-	p.buttons[pad.Index] = next
+	// Keep this poll's values in the pad's buffer, reused from poll to poll.
+	if cap(prev) < len(pad.Buttons) {
+		prev = make([]float64, len(pad.Buttons))
+	}
+	prev = prev[:len(pad.Buttons)]
+	copy(prev, pad.Buttons)
+	p.buttons[pad.Index] = prev
 }
 
 func (p *Poller) pollAxes(pad State, input *game.Input) {
-	adjusted := make([]float64, len(pad.Axes))
+	adjusted := p.scratch
+	if cap(adjusted) < len(pad.Axes) {
+		adjusted = make([]float64, len(pad.Axes))
+	}
+	adjusted = adjusted[:len(pad.Axes)]
 	copy(adjusted, pad.Axes)
 	for i := 0; i+1 < len(adjusted); i += 2 {
 		adjusted[i], adjusted[i+1] = applyRadialDeadzone(adjusted[i], adjusted[i+1], p.cfg.Deadzone)
@@ -145,13 +160,46 @@ func (p *Poller) pollAxes(pad State, input *game.Input) {
 		}
 		input.Apply(game.InputEvent{
 			Kind:     game.EventGamepad,
-			Code:     fmt.Sprintf("axis%d", i),
+			Code:     axisCode(i),
 			Value:    value,
 			PlayerID: p.cfg.PlayerID,
 			DeviceID: pad.ID,
 		})
 	}
+	// The adjusted values become the pad's previous values; the old buffer
+	// becomes the scratch for the next pad.
 	p.axes[pad.Index] = adjusted
+	p.scratch = prev[:0]
+}
+
+// codeCache holds the "buttonN" and "axisN" codes for the indices a standard
+// pad uses, so Poll does not format a string for every changed value.
+const codeCache = 32
+
+var (
+	buttonCodes [codeCache]string
+	axisCodes   [codeCache]string
+)
+
+func init() {
+	for i := range codeCache {
+		buttonCodes[i] = fmt.Sprintf("button%d", i)
+		axisCodes[i] = fmt.Sprintf("axis%d", i)
+	}
+}
+
+func buttonCode(i int) string {
+	if i >= 0 && i < codeCache {
+		return buttonCodes[i]
+	}
+	return fmt.Sprintf("button%d", i)
+}
+
+func axisCode(i int) string {
+	if i >= 0 && i < codeCache {
+		return axisCodes[i]
+	}
+	return fmt.Sprintf("axis%d", i)
 }
 
 // applyRadialDeadzone rescales a stick's (x,y) pair so the dead zone reads as
