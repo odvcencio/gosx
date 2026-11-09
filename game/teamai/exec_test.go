@@ -593,3 +593,27 @@ func TestAssignmentValidation(t *testing.T) {
 		})
 	}
 }
+
+// BenchmarkDrillTick22Agents is one whole host tick of the 22-agent drill:
+// Executor.Step, event handling, contests and integration.
+func BenchmarkDrillTick22Agents(b *testing.B) {
+	d := newDrill(b, 11, 5)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d.step()
+	}
+}
+
+// BenchmarkHash22Agents is the executor state hash used by determinism checks.
+func BenchmarkHash22Agents(b *testing.B) {
+	d := newDrill(b, 11, 5)
+	for i := 0; i < 300; i++ {
+		d.step()
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = d.ex.Hash()
+	}
+}

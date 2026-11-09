@@ -13,7 +13,7 @@ import (
 
 func f64(v float64) *float64 { return &v }
 
-// drillSpec2 returns the drill for perTeam agents a side (at least 3).
+// ctfSpec returns the drill for perTeam agents a side (at least 3).
 func ctfSpec(perTeam int) *Spec {
 	s := &Spec{
 		Format:  Format,
@@ -113,7 +113,9 @@ type drill struct {
 	w       World
 	carrier int // agent holding the flag, or -1
 	tags    int
+	escapes int
 	grabs   int
+	contest ContestModel
 }
 
 func newDrill(t testing.TB, perTeam int, seed uint64) *drill {
@@ -122,6 +124,13 @@ func newDrill(t testing.TB, perTeam int, seed uint64) *drill {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
+	return newDrillBook(t, b, perTeam, seed)
+}
+
+// newDrillBook runs the drill from b, which must be ctfSpec(perTeam) compiled
+// some way.
+func newDrillBook(t testing.TB, b *Book, perTeam int, seed uint64) *drill {
+	t.Helper()
 	ex, err := NewExecutor(b, Options{Step: testDT, Separation: 1.2})
 	if err != nil {
 		t.Fatal(err)
@@ -184,6 +193,18 @@ func (d *drill) step() []Command {
 			d.carrier = ev.Agent
 			d.grabs++
 		case ev.Kind == EventContact && ev.Target.Kind == RefAgent && int(ev.Target.Index) == d.carrier:
+			// A tag is a contest between the chaser and the carrier.
+			ch, ca := &d.w.Agents[ev.Agent], &d.w.Agents[d.carrier]
+			c := Contest{
+				Attacker: 100 * d.w.AgentSignals[ev.Agent],
+				Defender: 100 * d.w.AgentSignals[d.carrier],
+				Angle:    ApproachAngle(ch.Vel, ca.Pos.Sub(ch.Pos)),
+				RelSpeed: ch.Vel.Len() - ca.Vel.Len(),
+			}
+			if d.contest.Resolve(c, d.w.Seed, d.w.Tick, uint64(ev.Agent), uint64(d.carrier)).Result != Win {
+				d.escapes++
+				continue
+			}
 			d.carrier = -1
 			d.tags++
 			d.w.Objects[0].Pos = d.w.Landmarks[0]
