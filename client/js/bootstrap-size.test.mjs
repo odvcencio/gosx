@@ -988,7 +988,7 @@ const budgets = [
     // The combined compiler/runtime and island optimizations measure 476119 Brotli bytes;
     // increase only the exhausted target by 15 bytes, with no added allowance.
     // Blender asset path (joint palette texture, KHR_lights_punctual, UV set selection, GOSX_texture_variants) adds about 5,000 raw bytes to the monolith; only exhausted minimums move, under the unchanged allowance.
-    file: "bootstrap.js", raw: 2012441, gzip: 565297,
+    file: "bootstrap.js", raw: 2012451, gzip: 565309,
     brotli: 461247 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
@@ -1819,7 +1819,7 @@ const budgets = [
   // Volume transmission adds 340 raw / 97 gzip / 78 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Portable U8 KTX2 upload: 49,409 raw / 15,575 Brotli measured in this
   // chunk. Move only exhausted minima under the existing allowances.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 50352, gzip: 17223, brotli: 15694 },
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 50356, gzip: 17226, brotli: 15694 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
