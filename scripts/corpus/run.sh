@@ -210,4 +210,7 @@ cat "$MD"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$MD" >>"$GITHUB_STEP_SUMMARY"; fi
 
 # Exit 1 when a check fails and (with -b) its baseline passed, or (without -b) it failed at all.
-awk -F'\t' -v b="$BASELINE" 'NR>1 && ($3=="FAIL"||$3=="TIMEOUT") && (b==0 || $4=="PASS") { bad=1 } END { exit bad }' "$TSV" || exit 1
+awk -F'\t' -v b="$BASELINE" -v known="$HERE/known.tsv" '
+  BEGIN { while ((getline l < known) > 0) { if (l !~ /^#/) { split(l, f, "\t"); k[f[1] SUBSEP f[2]] = 1 } } }
+  NR>1 && ($3=="FAIL"||$3=="TIMEOUT") && (b==0 || $4=="PASS") && !(($1 SUBSEP $2) in k) { bad=1 }
+  END { exit bad }' "$TSV" || exit 1

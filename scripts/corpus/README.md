@@ -20,7 +20,7 @@ The integrator runs this before each release, from a GoSX checkout:
 - `-R HOST` runs every check on a tailnet host through `tailnet-run --host HOST` instead of the local machine (no local heavy lock needed; the host's slots cap the load). The runner copies the GoSX checkout into the consumer copy so the host can see it. Use `buildbox` for the private consumers: chitin-choir carries a large art pack, so never send it to the macOS hosts. A step may wait for a free slot first; `CORPUS_SLOT_WAIT` (default 30) minutes are added to each step timeout for that.
 - `-a` keeps the existing matrix for this GoSX sha and replaces only the `-c` consumers (use it to rerun one consumer).
 - `-c a,b` limits the consumers. `-k` keeps the consumer copies. `-B SEC` sets the run-time budget.
-- Exit status is 1 when a check regressed (with `-b`) or failed (without it).
+- Exit status is 1 when a check regressed (with `-b`) or failed (without it), except checks listed in `known.tsv` (known consumer-side breaks, with the reason).
 
 ## What it does
 
