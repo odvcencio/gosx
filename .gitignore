@@ -10,6 +10,7 @@ build/
 !/docs/polar.md
 !/docs/netplay.md
 !/docs/audio.md
+!/docs/game-kit.md
 !/docs/engine-worker.md
 !/docs/scene3d-group-spin.md
 !/docs/scene3d-v1-support.md
