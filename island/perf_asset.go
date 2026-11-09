@@ -301,6 +301,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath},
 				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath}, {"ocean-fft", r.bootstrapFeatureScene3dOceanFFTPath},
 				{"compute", r.bootstrapFeatureScene3dComputePath}, {"decompress", r.bootstrapFeatureScene3dDecompressPath},
+				{"selena-lighting", r.bootstrapFeatureScene3dSelenaLightingPath},
 				{"gltf", r.bootstrapFeatureScene3dGLTFPath},
 			} {
 				if gates[entry.name] {

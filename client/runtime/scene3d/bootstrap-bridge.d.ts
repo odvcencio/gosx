@@ -249,6 +249,12 @@ declare var sceneFocusPointerHandler: any;
 declare var webGPUObjectModelMatrix: any;
 
 declare var sceneSkyUniformData: any;
+declare var sceneSelenaFillLighting: any;
+declare var sceneSelenaLightingValue: any;
+declare var sceneSelenaShadowMapSlot: any;
+declare var sceneSelenaFrameLighting: any;
+declare var sceneSelenaWGPUTextureLayout: any;
+declare var sceneSelenaShadowMapView: any;
 declare var sceneSkyPhysicalParams: any;
 declare var sceneSkyPhysicalShaderSource: any;
 declare var sceneSkyPhysicalSource: any;

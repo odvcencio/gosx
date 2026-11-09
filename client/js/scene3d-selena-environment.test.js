@@ -69,6 +69,7 @@ test("WebGL Selena shares validated IBL textures and uses cube-safe pending fall
     scenePBRPlaceholderCube:()=>({texture:cube}),
     scenePBRBindTexture:(gl,unit,value,target)=>bound.push({unit,value,target}),
     scenePBRLoadTexture:(gl,url)=>{fetched.push(url); return null;},
+    sceneSelenaShadowMapSlot:()=>undefined,
   });
   vm.runInContext(["sceneWebGLSelenaEnvironmentSlot","sceneSelenaTextureURL","sceneWebGLBindSelenaTextures"].map(n=>fn(source,n)).join("\n"),context);
   const gl = {TEXTURE_CUBE_MAP:34067,TEXTURE_2D:3553,getUniformLocation:()=>({}),uniform1i:()=>{}};
@@ -102,7 +103,7 @@ test("WebGPU Selena reuses IBL views, updates bind groups on readiness/replaceme
     sceneWaterMainSelenaContext:()=>undefined,
     wgpuCachedTrackedBuffer:()=>buffer,sceneSelenaTextureDescriptors:l=>l.textures,
     sceneSelenaStorageBufferDescriptors:()=>[],sceneSelenaStateDescriptors:()=>[],
-    sceneSelenaLiveTextureView:()=>null,
+    sceneSelenaLiveTextureView:()=>null, sceneSelenaShadowMapView:()=>null,
     sceneSelenaTextureURL:()=>{throw Error("IBL resource passed to URL loader");},
   });
   vm.runInContext(["sceneWebGPUSelenaEnvironmentSlot","sceneWebGPUAppendSelenaTextures","createSelenaBindGroup"].map(n=>fn(source,n)).join("\n"),context);
@@ -138,7 +139,7 @@ test("environment metadata is renderer-owned only for declared context fields", 
   const context=vm.createContext({
     sceneSelenaRenderContextUniformValue:()=>undefined,
     sceneSelenaMaterialValue:(m,n)=>m.customUniforms[n],sceneSelenaUniformDefault:()=>undefined,
-    sceneSelenaFloatCount:()=>4,
+    sceneSelenaFloatCount:()=>4, sceneSelenaLightingValue:()=>undefined,
   });
   vm.runInContext(fn(gpu,"sceneSelenaUniformValue"),context);
   const m={customUniforms:{environmentInfo:[9,9,9,9]}}, frame={environmentInfo:[1,.5,.2,7]};

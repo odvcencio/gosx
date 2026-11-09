@@ -1,0 +1,131 @@
+{
+  "schema": "selena.artifact.v1",
+  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "languageVersion": "selena.lang.v1",
+  "source": {
+    "path": "sources/midnight-lacquer.sel",
+    "sha256": "b7171bdc6d59d94106199147fc27f32b6fee525f47be77bf66d738bb6f74b1af"
+  },
+  "options": {
+    "targets": [
+      "wgsl",
+      "gles"
+    ]
+  },
+  "default": "MidnightLacquer",
+  "materials": [
+    {
+      "name": "MidnightLacquer",
+      "layout": {
+        "schemaVersion": "selena.descriptor.v1",
+        "languageVersion": "selena.lang.v1",
+        "material": "MidnightLacquer",
+        "kind": "mesh",
+        "entryPoints": {
+          "vertex": "vertexMain",
+          "fragment": "fragmentMain"
+        },
+        "uniformBlock": {
+          "size": 160,
+          "fields": [
+            {
+              "name": "mvp",
+              "type": "mat4",
+              "offset": 0,
+              "size": 64
+            },
+            {
+              "name": "normalMatrix",
+              "type": "mat3",
+              "offset": 64,
+              "size": 48
+            },
+            {
+              "name": "lacquerBlack",
+              "type": "vec3",
+              "offset": 112,
+              "size": 12
+            },
+            {
+              "name": "cinnabar",
+              "type": "vec3",
+              "offset": 128,
+              "size": 12
+            },
+            {
+              "name": "goldLeaf",
+              "type": "vec3",
+              "offset": 144,
+              "size": 12
+            }
+          ],
+          "defaults": [
+            {
+              "name": "lacquerBlack",
+              "type": "vec3",
+              "values": [
+                0.025,
+                0.018,
+                0.024
+              ]
+            },
+            {
+              "name": "cinnabar",
+              "type": "vec3",
+              "values": [
+                0.42,
+                0.035,
+                0.028
+              ]
+            },
+            {
+              "name": "goldLeaf",
+              "type": "vec3",
+              "values": [
+                0.95,
+                0.66,
+                0.2
+              ]
+            }
+          ]
+        },
+        "attributes": [
+          {
+            "name": "position",
+            "location": 0,
+            "type": "vec3"
+          },
+          {
+            "name": "normal",
+            "location": 1,
+            "type": "vec3"
+          },
+          {
+            "name": "uv",
+            "location": 2,
+            "type": "vec2"
+          }
+        ],
+        "textures": [],
+        "wgsl": {
+          "group": 0,
+          "binding": 0
+        },
+        "metal": {
+          "buffer": 0
+        }
+      },
+      "shaders": [
+        {
+          "target": "wgsl",
+          "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  lacquerBlack : vec3<f32>,\n  cinnabar : vec3<f32>,\n  goldLeaf : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n  @location(2) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vNormal : vec3<f32>,\n  @location(1) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vNormal = in.normal;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let n = normalize(in.vNormal);\n  let cloudA = sin(((in.vUv.x * 31.0) + (sin((in.vUv.y * 9.0)) * 3.0)));\n  let cloudB = sin(((in.vUv.y * 47.0) + (sin((in.vUv.x * 13.0)) * 2.0)));\n  let cloud = clamp((((cloudA + cloudB) * 0.18) + 0.34), 0.0, 1.0);\n  let flake = smoothstep(0.985, 0.94, abs((sin((in.vUv.x * 173.0)) * sin((in.vUv.y * 149.0)))));\n  let body = mix(u.lacquerBlack.rgb, u.cinnabar.rgb, cloud);\n  let gilded = mix(body, u.goldLeaf.rgb, (flake * 0.38));\n  let clear = (pow((1.0 - abs(n.z)), 4.0) * 0.16);\n  return vec4<f32>((gilded + vec3<f32>(clear, clear, clear)), 1.0);\n}\n"
+        },
+        {
+          "target": "gles",
+          "vertex": "#version 300 es\nin vec3 position;\nin vec3 normal;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 lacquerBlack;\nuniform vec3 cinnabar;\nuniform vec3 goldLeaf;\nout vec3 vNormal;\nout vec2 vUv;\n\nvoid main() {\n  vNormal = normal;\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
+          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 lacquerBlack;\nuniform vec3 cinnabar;\nuniform vec3 goldLeaf;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float cloudA = sin(((vUv.x * 31.0) + (sin((vUv.y * 9.0)) * 3.0)));\n  float cloudB = sin(((vUv.y * 47.0) + (sin((vUv.x * 13.0)) * 2.0)));\n  float cloud = clamp((((cloudA + cloudB) * 0.18) + 0.34), 0.0, 1.0);\n  float flake = smoothstep(0.985, 0.94, abs((sin((vUv.x * 173.0)) * sin((vUv.y * 149.0)))));\n  vec3 body = mix(lacquerBlack.rgb, cinnabar.rgb, cloud);\n  vec3 gilded = mix(body, goldLeaf.rgb, (flake * 0.38));\n  float clear = (pow((1.0 - abs(n.z)), 4.0) * 0.16);\n  fragColor = vec4((gilded + vec3(clear, clear, clear)), 1.0);\n}\n"
+        }
+      ]
+    }
+  ]
+}
