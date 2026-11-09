@@ -884,7 +884,7 @@
       return null;
     }
     const joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
-    if (!joints.length || joints.length > 64) {
+    if (!joints.length || joints.length > 256) {
       return null;
     }
     let inverseBindMatrices = skin.inverseBindMatrices instanceof Float32Array
