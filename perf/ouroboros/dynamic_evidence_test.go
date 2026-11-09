@@ -578,15 +578,6 @@ func firstKeptProbeSample(manifest RuntimeJSONDynamicEvidenceManifest, routeID, 
 	return RuntimeJSONDynamicSample{}
 }
 
-func firstProbeOverheadSample(manifest RuntimeJSONDynamicEvidenceManifest, routeID, cacheMode string) RuntimeJSONDynamicSample {
-	for _, sample := range manifest.Samples {
-		if sample.Lane == RuntimeJSONDynamicLaneProbeOverhead && sample.RouteID == routeID && sample.CacheMode == cacheMode {
-			return sample
-		}
-	}
-	return RuntimeJSONDynamicSample{}
-}
-
 func firstProbeOverheadSamplePtr(manifest *RuntimeJSONDynamicEvidenceManifest, routeID, cacheMode string) *RuntimeJSONDynamicSample {
 	for i := range manifest.Samples {
 		if manifest.Samples[i].Lane == RuntimeJSONDynamicLaneProbeOverhead && manifest.Samples[i].RouteID == routeID && manifest.Samples[i].CacheMode == cacheMode {

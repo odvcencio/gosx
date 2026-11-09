@@ -15,9 +15,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"m31labs.dev/gosx/internal/filepolicy"
-	"m31labs.dev/gosx/internal/htmlattr"
-	"m31labs.dev/gosx/internal/sceneprobe"
 	"maps"
 	neturl "net/url"
 	"os"
@@ -28,6 +25,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"m31labs.dev/gosx/internal/filepolicy"
+	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/sceneprobe"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
@@ -102,6 +103,7 @@ type Renderer struct {
 	bootstrapFeatureScene3dVesselPath           string
 	bootstrapFeatureScene3dOceanQueryPath       string
 	bootstrapFeatureScene3dHierarchyPath        string
+	bootstrapFeatureScene3dSelenaLightingPath   string
 	bootstrapFeatureScene3dOceanFFTPath         string
 	bootstrapFeatureScene3dParticleBurstPath    string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
@@ -284,6 +286,7 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapFeatureScene3dModelPreparationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-model-preparation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DModelPreparation.Hash))
 	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
 	renderer.bootstrapFeatureScene3dHierarchyPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hierarchy.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHierarchy.Hash))
+	renderer.bootstrapFeatureScene3dSelenaLightingPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-selena-lighting.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DSelenaLighting.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
@@ -758,6 +761,15 @@ func (r *Renderer) SetBootstrapFeatureScene3DHierarchyPath(path string) {
 	r.bootstrapFeatureScene3dHierarchyPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DSelenaLightingPath overrides the content-gated
+// Selena scene lighting URL.
+func (r *Renderer) SetBootstrapFeatureScene3DSelenaLightingPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dSelenaLightingPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DParticleBurstPath overrides the demand-loaded burst URL.
 func (r *Renderer) SetBootstrapFeatureScene3DParticleBurstPath(path string) {
 	if r == nil {
@@ -899,6 +911,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DZoom, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-hierarchy.js", r.bootstrapFeatureScene3dHierarchyPath, r.runtimeAssets.BootstrapFeatureScene3DHierarchy):
 		return r.runtimeAssets.BootstrapFeatureScene3DHierarchy, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-selena-lighting.js", r.bootstrapFeatureScene3dSelenaLightingPath, r.runtimeAssets.BootstrapFeatureScene3DSelenaLighting):
+		return r.runtimeAssets.BootstrapFeatureScene3DSelenaLighting, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
 		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
@@ -1099,6 +1113,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DModelPreparationPath(runtime.BootstrapFeatureScene3DModelPreparation)
 	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
 	r.SetBootstrapFeatureScene3DHierarchyPath(runtime.BootstrapFeatureScene3DHierarchy)
+	r.SetBootstrapFeatureScene3DSelenaLightingPath(runtime.BootstrapFeatureScene3DSelenaLighting)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
@@ -1480,21 +1495,6 @@ func cspNonceAttr(nonce string) string {
 		return ""
 	}
 	return ` nonce="` + html.EscapeString(nonce) + `"`
-}
-
-// htmlJSStringLiteral returns a JS string literal (including surrounding
-// quotes) safe to embed inside an inline <script> tag. Uses JSON encoding
-// plus a </script> guard so the result can sit inside an HTML context
-// without being terminated early by a literal </script> in the payload.
-func htmlJSStringLiteral(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return `""`
-	}
-	// HTML spec forbids the literal string "</" inside a script element
-	// if it starts a closing tag; escape the forward slash to be safe.
-	out := strings.ReplaceAll(string(b), "</", `<\/`)
-	return out
 }
 
 // RenderEngine registers an engine instance in the hydration manifest and,
@@ -2333,6 +2333,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"experience", r.bootstrapFeatureScene3dExperiencePath, r.scene3DNeedsExperienceChunk()},
 		{"instance-stream", r.bootstrapFeatureScene3dInstanceStreamPath, true},
 		{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath, true},
+		{"selena-lighting", r.bootstrapFeatureScene3dSelenaLightingPath, r.scene3DNeedsSelenaLightingChunk()},
 		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
 		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
 		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
@@ -2822,6 +2823,18 @@ func (r *Renderer) scene3DNeedsParticleBurstChunk() bool {
 		}
 		props := sceneProbe(entry)
 		if props.ParticleBursts {
+			return true
+		}
+	}
+	return false
+}
+
+// Selena scene lighting is advertised only when a Selena material on the page
+// reads the lighting block (lights, shadows, fog or the camera forward vector).
+func (r *Renderer) scene3DNeedsSelenaLightingChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).NeedsSelenaLighting() {
 			return true
 		}
 	}

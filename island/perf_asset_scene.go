@@ -168,6 +168,7 @@ func (r *Renderer) perfSceneStartupGates() (map[string]bool, bool, error) {
 		gates["vessel"] = gates["vessel"] || p.Vessel != nil && p.Vessel.NodeID != ""
 		gates["ocean-query"] = gates["vessel"]
 		gates["ocean-fft"] = gates["ocean-fft"] || p.NeedsOceanFFT()
+		gates["selena-lighting"] = gates["selena-lighting"] || p.NeedsSelenaLighting()
 		particles, meshes := p.ComputeParticles, p.InstancedMeshes
 		points, animations := p.Points, p.Animations
 		regular, crowds := p.Models, p.InstancedGLBMeshes

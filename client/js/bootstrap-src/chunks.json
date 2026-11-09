@@ -10,6 +10,7 @@
         "bootstrap-src/01b-textlayout-inline-suffix.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
+        "bootstrap-src/05a-audio-mixer.ts",
         "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/host/document-lifecycle.ts",
@@ -51,6 +52,7 @@
         "bootstrap-src/16b-scene-hdr.ts",
         "../runtime/scene3d/ocean-waves.ts",
         "bootstrap-src/16c-scene-shared-pbr.ts",
+        "bootstrap-src/16c2-scene-selena-lighting.ts",
         "bootstrap-src/16c1-scene-detail.ts",
         "bootstrap-src/16d-scene-atmosphere.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
@@ -98,6 +100,7 @@
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
         "../runtime/scene3d/mount-scene-focus.ts",
+        "../runtime/scene3d/frame-owner.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount-input.ts",
@@ -128,6 +131,7 @@
         "bootstrap-src/00-textlayout.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
+        "bootstrap-src/05a-audio-mixer.ts",
         "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/host/document-lifecycle.ts",
@@ -148,6 +152,7 @@
         "bootstrap-src/00-textlayout.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
+        "bootstrap-src/05a-audio-mixer.ts",
         "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/host/document-lifecycle.ts",
@@ -310,6 +315,7 @@
         "../runtime/scene3d/overlay-dom.ts",
         "../runtime/scene3d/mount-controls.ts",
         "../runtime/scene3d/mount-scene-focus.ts",
+        "../runtime/scene3d/frame-owner.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount-input.ts",
         "../runtime/scene3d/geometry-assets.ts",
@@ -433,6 +439,14 @@
       "name": "bootstrap-feature-scene3d-hierarchy.js",
       "sources": [
         "../runtime/scene3d/hierarchy.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-selena-lighting.js",
+      "sources": [
+        "bootstrap-src/26n-feature-scene3d-selena-lighting-prefix.ts",
+        "bootstrap-src/16c2-scene-selena-lighting.ts",
+        "bootstrap-src/26n-feature-scene3d-selena-lighting-suffix.ts"
       ]
     },
     {

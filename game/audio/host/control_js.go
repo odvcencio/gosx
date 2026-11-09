@@ -76,7 +76,8 @@ func (h *HostJS) Close() (err error) {
 		source.Disconnect()
 		delete(h.sources, source)
 	}
-	if h.ctx.Get("state").String() == "closed" {
+	if h.shared || h.ctx.Get("state").String() == "closed" {
+		// The shared context belongs to the page, not to this host.
 		return nil
 	}
 	_, err = jsutil.AwaitPromise(h.ctx.Call("close"))

@@ -65,6 +65,8 @@ func main() {
 			stop = startRemount(ctx)
 		case "stall":
 			stop = startStall(ctx)
+		case "frameowner":
+			stop = startFrameOwner(ctx, props.Target)
 		}
 		return wasm.HandleFunc(func() {
 			if stop != nil {
@@ -210,6 +212,72 @@ func startScene(ctx wasm.Context, target string) (stop func()) {
 	return func() {
 		close(done)
 		source.CancelFrame(handle)
+		stream.Dispose()
+	}
+}
+
+// startFrameOwner drives the instanced box from inside the Scene3D renderer's
+// frame: a game.Runtime on loop.Driver over host.SceneFrameSource writes one
+// GSXI frame per render callback, and the renderer draws it in that frame. It
+// reports how many frames ran while the source rode the renderer and how many
+// ran on the fallback clock, and what the renderer recorded about the hook.
+// It needs the main thread: a worker cannot run inside the page's frame.
+func startFrameOwner(ctx wasm.Context, target string) (stop func()) {
+	const totalFrames = 180
+	if !js.Global().Get("document").Truthy() {
+		report(ctx, "frameowner-error", map[string]any{"error": "the frame owner needs the main thread"})
+		return nil
+	}
+	stream := scene.NewStreamWriter(target)
+	frames := host.NewSceneFrameSource(target)
+	rt := game.New(game.Config{FixedStep: time.Second / 60, CatchUp: game.CatchUpLag})
+	driver := loop.New(rt, frames)
+	go func() {
+		readyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := ctx.Scene3DByID(target).Ready(readyCtx); err != nil {
+			report(ctx, "frameowner-error", map[string]any{"error": err.Error()})
+			return
+		}
+		for deadline := time.Now().Add(10 * time.Second); !stream.Prepare(); time.Sleep(50 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				report(ctx, "frameowner-error", map[string]any{"error": "stream writer not ready"})
+				return
+			}
+		}
+		rev, applied, attached, fallback := uint64(0), 0, 0, 0
+		driver.Start(func(alpha float64, frame game.Frame) {
+			if frames.Attached() {
+				attached++
+			} else {
+				fallback++
+			}
+			rev++
+			x := float32(-3 + 6*float64(rev)/totalFrames)
+			if ok, err := stream.Apply(scene.InstanceStreamFrame{
+				BatchID: "crowd", Revision: rev, Kind: scene.InstanceStreamTransform, Count: 1,
+				Data: []float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1},
+			}); ok && err == nil {
+				applied++
+			}
+			data := map[string]any{"rev": rev, "applied": applied, "attached": attached, "fallback": fallback, "steps": frame.Steps, "lag": frame.Lag.Seconds()}
+			if rev%30 == 0 && rev < totalFrames {
+				report(ctx, "frameowner-progress", data)
+			}
+			if rev >= totalFrames {
+				mount := js.Global().Get("document").Call("getElementById", target)
+				telemetry := mount.Get("__gosxScene3DHandle").Call("getTelemetry")
+				data["hookActive"] = telemetry.Get("frameHook").Truthy()
+				data["bundleBuilds"] = telemetry.Get("bundle").Get("builds").Int()
+				data["loop"] = mount.Call("getAttribute", "data-gosx-scene3d-render-loop").String()
+				report(ctx, "frameowner-done", data)
+				driver.Stop()
+			}
+		})
+	}()
+	return func() {
+		driver.Stop()
+		frames.Release()
 		stream.Dispose()
 	}
 }

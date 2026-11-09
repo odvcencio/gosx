@@ -22,7 +22,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
     this.gapLimit = this.latencyMS + this.durationLimit;
     this.messageBuffer = new ArrayBuffer(this.b.messageBytes * this.b.messageCapacity);
     this.messageView = new Uint8Array(this.messageBuffer);
-    this.message = {t: 'm', bytes: this.messageBuffer, n: 0};
+    this.message = {t: 'm', bytes: this.messageBuffer, n: 0, f: 0};
     this.transfer = [this.messageBuffer];
     this.messageReady = true;
     // While the page holds the buffer one drained batch waits here, so a fault is still seen at once.
@@ -185,7 +185,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
       case 'q':
         this.latencyMS = Number.isFinite(data.l) && data.l >= 0 ? data.l : 0;
         this.gapLimit = this.latencyMS + this.durationLimit;
-        this.post({t: 'q', u: this.underruns, dl: this.durationLimit, gl: this.gapLimit,
+        this.post({t: 'q', f: this.engineSample, u: this.underruns, dl: this.durationLimit, gl: this.gapLimit,
           m: this.active?.x.memory.buffer.byteLength || 0, d: this.histogram.slice()});
         break;
     }
@@ -287,6 +287,7 @@ class WASMAudioProcessor extends AudioWorkletProcessor {
   deliver(from, length) {
     for (let i = 0; i < length; i++) this.messageView[i] = from[i];
     this.message.n = length;
+    this.message.f = this.engineSample;
     this.messageReady = false;
     this.post(this.message, this.transfer);
   }
