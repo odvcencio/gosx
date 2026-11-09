@@ -243,7 +243,7 @@ function sceneCrowdGLStatic(res: any, gl: any, height: number): void {
     const ibo = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
-    return { vao, vbo, ibo, indexCount: mesh.indexCount };
+    return { vao, vbo, ibo, indexCount: mesh.indexCount, bodyIndexCount: mesh.bodyIndexCount };
   });
   gl.bindVertexArray(previous);
 }

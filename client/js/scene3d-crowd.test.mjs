@@ -172,6 +172,15 @@ test("the palette bakes every action as a closed loop of finite matrices", () =>
   assert.ok(hand(2, 0) > 1.9, "cheer raises the fists");
 });
 
+test("GPU mesh records keep the index split the draws read", () => {
+  // Both passes copy the CPU meshes into GPU records; a field the copy drops
+  // is undefined in drawIndexed and drawElementsInstanced.
+  for (const name of ["crowd-glsl.ts", "crowd-wgsl.ts"]) {
+    const source = read(name);
+    assert.match(source, /indexCount: mesh\.indexCount, bodyIndexCount: mesh\.bodyIndexCount/, name);
+  }
+});
+
 test("meshes put body triangles before prop triangles", () => {
   const { c } = runtime();
   for (const mesh of c.sceneCrowdMeshes(1.75)) {

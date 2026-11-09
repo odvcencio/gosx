@@ -186,7 +186,7 @@ function sceneCrowdGPUStatic(device: any, height: number): any {
     const indices = mesh.indices.length % 2 ? Uint16Array.from(Array.from(mesh.indices).concat([0])) : mesh.indices;
     const ibo = device.createBuffer({ label: "gosx-crowd-index", size: indices.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(ibo, 0, indices);
-    return { vbo, ibo, indexCount: mesh.indexCount };
+    return { vbo, ibo, indexCount: mesh.indexCount, bodyIndexCount: mesh.bodyIndexCount };
   });
   res.white = device.createTexture({ label: "gosx-crowd-white", size: [1, 1, 1], format: "rgba8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
   device.queue.writeTexture({ texture: res.white }, new Uint8Array([255, 255, 255, 255]), { bytesPerRow: 4 }, [1, 1, 1]);
