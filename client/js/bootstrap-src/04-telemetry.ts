@@ -16,8 +16,8 @@
   // Static exports mark pages with <meta name="gosx-telemetry" content="off">:
   // no server receives events, so telemetry stays off unless the app opts in.
   function gosxTelemetryStaticOff() {
-    const meta = document.querySelector?.('meta[name="gosx-telemetry"]');
-    return meta?.getAttribute("content") === "off";
+    const meta = typeof document !== "undefined" && document.querySelector?.('meta[name="gosx-telemetry"]');
+    return Boolean(meta) && meta.getAttribute("content") === "off";
   }
 
   function gosxTelemetryConfig() {
