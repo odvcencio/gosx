@@ -648,6 +648,8 @@ func validateDocs(node *yaml.Node, shard int) error {
 	return exactStringMap(step["env"], label+".env", map[string]string{
 		"GOSX_E2E_CHROME":    latestChromePath,
 		"GOSX_E2E_PROOF_DIR": docsProofDir,
+		// A browser that fails to start must fail the job, not skip its tests.
+		"GOSX_REQUIRE_CHROME": "1",
 	})
 }
 

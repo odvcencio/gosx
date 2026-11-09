@@ -1420,6 +1420,8 @@ func TestBrowserEvidenceMutationsFailClosed(t *testing.T) {
 			tests := []struct{ name, old, replacement, want string }{
 				{"proof directory absent", "          GOSX_E2E_PROOF_DIR: ${{ runner.temp }}/gosx-e2e-proof\n", "", "browser docs E2E gate.env"},
 				{"proof directory redirected", "GOSX_E2E_PROOF_DIR: ${{ runner.temp }}/gosx-e2e-proof", "GOSX_E2E_PROOF_DIR: /other-proof", "browser docs E2E gate.env.GOSX_E2E_PROOF_DIR"},
+				{"browser requirement dropped", "          GOSX_REQUIRE_CHROME: \"1\"\n", "", "browser docs E2E gate.env"},
+				{"browser requirement weakened", "GOSX_REQUIRE_CHROME: \"1\"", "GOSX_REQUIRE_CHROME: \"0\"", "browser docs E2E gate.env.GOSX_REQUIRE_CHROME"},
 				{"upload skips successful evidence", "        if: always()", "        if: failure()", "browser behavior evidence upload.if"},
 				{"upload action changed", "if: always()\n        uses: actions/upload-artifact@v4", "if: always()\n        uses: actions/upload-artifact@v5", "browser behavior evidence upload.uses"},
 				{"artifact shard changed", "name: " + artifactName, "name: wrong-shard", "browser behavior evidence upload.with.name"},
