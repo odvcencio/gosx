@@ -85,7 +85,7 @@ func (w *Wind) Sample(x, z, t float64) Vector3 {
 	if ir == nil {
 		return Vector3{}
 	}
-	speed := ir.Speed * ir.gustFactor(x, z, t)
+	speed := float64(ir.Speed * ir.gustFactor(x, z, t))
 	return Vector3{X: float64(ir.DirectionX * speed), Z: float64(ir.DirectionZ * speed)}
 }
 

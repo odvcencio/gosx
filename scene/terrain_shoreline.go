@@ -125,15 +125,15 @@ func BakeShoreline(t *Terrain, level float64, shoreline OceanShoreline) (*OceanB
 			k := j*n + i
 			// Positive on land, negative at sea; half a texel puts the zero on
 			// the boundary between a land and a water texel.
-			d := -math.Sqrt(toLand[k]) + 0.5*math.Min(stepX, stepZ)
+			d := -math.Sqrt(toLand[k]) + float64(0.5*math.Min(stepX, stepZ))
 			if land[k] {
-				d = math.Sqrt(toWater[k]) - 0.5*math.Min(stepX, stepZ)
+				d = math.Sqrt(toWater[k]) - float64(0.5*math.Min(stepX, stepZ))
 			}
 			g := clampFloat(0.5+d/(2*s.Distance), 0, 1)
 			sq := math.Copysign(math.Sqrt(math.Abs(heights[k])/rangeY), heights[k])
 			img.SetNRGBA(i, j, color.NRGBA{
-				R: uint8(math.Round(clampFloat((sq+1)/2, 0, 1) * 255)),
-				G: uint8(math.Round(g * 255)),
+				R: uint8(math.Round(float64(clampFloat((sq+1)/2, 0, 1) * 255))),
+				G: uint8(math.Round(float64(g * 255))),
 				A: 255,
 			})
 		}
@@ -206,9 +206,9 @@ func squaredDistanceField(land []bool, n int, stepX, stepZ float64, target bool)
 // sample positions q * step.
 func distanceTransform1D(f, out []float64, v []int, z []float64, step float64) {
 	n := len(f)
-	pos := func(q int) float64 { return float64(q) * step }
+	pos := func(q int) float64 { return float64(float64(q) * step) }
 	intersect := func(q, r int) float64 {
-		return ((f[q] + pos(q)*pos(q)) - (f[r] + pos(r)*pos(r))) / (2 * (pos(q) - pos(r)))
+		return ((f[q] + float64(pos(q)*pos(q))) - (f[r] + float64(pos(r)*pos(r)))) / (2 * (pos(q) - pos(r)))
 	}
 	k := 0
 	v[0] = 0
@@ -230,6 +230,6 @@ func distanceTransform1D(f, out []float64, v []int, z []float64, step float64) {
 			k++
 		}
 		d := pos(q) - pos(v[k])
-		out[q] = d*d + f[v[k]]
+		out[q] = float64(d*d) + f[v[k]]
 	}
 }

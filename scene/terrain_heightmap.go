@@ -11,6 +11,8 @@ import (
 	"io"
 	"math"
 	"sync"
+
+	"m31labs.dev/gosx/det"
 )
 
 // Heightmap is a grid of 16-bit height samples. Sample value 0 is the lowest
@@ -127,8 +129,8 @@ func (h *Heightmap) sampleNormal(column, row int, spacingX, spacingZ, heightScal
 	if up >= h.Rows {
 		up = h.Rows - 1
 	}
-	dx := float64(right-left) * spacingX
-	dz := float64(up-down) * spacingZ
+	dx := float64(float64(right-left) * spacingX)
+	dz := float64(float64(up-down) * spacingZ)
 	dhdx := float64((h.At(right, row)-h.At(left, row))*heightScale) / dx
 	dhdz := float64((h.At(column, up)-h.At(column, down))*heightScale) / dz
 	return terrainNormalize(Vector3{X: -dhdx, Y: 1, Z: -dhdz})
@@ -160,7 +162,7 @@ func quantizeHeight(value float64) uint16 {
 	if value >= 1 {
 		return 65535
 	}
-	return uint16(math.Round(value * 65535))
+	return uint16(math.Round(float64(value * 65535)))
 }
 
 // HeightmapFromRaw reads a headerless 16-bit heightmap (the ".r16" / ".raw"
@@ -326,7 +328,7 @@ func GenerateHeightmap(n TerrainNoise) *Heightmap {
 			normalized = (value - low) / span
 		}
 		if exponent != 1 {
-			normalized = math.Pow(normalized, exponent)
+			normalized = det.Pow(normalized, exponent)
 		}
 		h.Data[i] = quantizeHeight(normalized)
 	}
@@ -339,8 +341,8 @@ func valueNoise2D(seed, salt uint64, x, z float64) float64 {
 	iz := math.Floor(z)
 	fx := x - ix
 	fz := z - iz
-	ux := float64(fx*fx) * (3 - float64(2*fx))
-	uz := float64(fz*fz) * (3 - float64(2*fz))
+	ux := float64(float64(fx*fx) * (3 - float64(2*fx)))
+	uz := float64(float64(fz*fz) * (3 - float64(2*fz)))
 	cx, cz := int64(ix), int64(iz)
 	a := latticeValue(seed, salt, cx, cz)
 	b := latticeValue(seed, salt, cx+1, cz)
@@ -387,7 +389,7 @@ func smoothstepFloat(edge0, edge1, x float64) float64 {
 		return 1
 	}
 	t := clampFloat((x-edge0)/(edge1-edge0), 0, 1)
-	return float64(t*t) * (3 - float64(2*t))
+	return float64(float64(t*t) * (3 - float64(2*t)))
 }
 
 // terrainNormalize returns v with unit length, or straight up for a zero

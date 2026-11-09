@@ -395,8 +395,8 @@ func (l *graphLowerer) lowerScatter(s Scatter) {
 		bands := scatterBands(species)
 		members := cells[key]
 		// The cell centre the browser measures LOD distance to.
-		centerX := minX + (float64(key.cx)+0.5)*cellSize
-		centerZ := minZ + (float64(key.cz)+0.5)*cellSize
+		centerX := minX + float64((float64(key.cx)+0.5)*cellSize)
+		centerZ := minZ + float64((float64(key.cz)+0.5)*cellSize)
 		centerY := f.height(centerX, centerZ)
 		staticSpecies := unbanded[key.species]
 		group := id + "/" + name + "/" + intString(key.cx) + "," + intString(key.cz)

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"math"
 	"strings"
+
+	"m31labs.dev/gosx/det"
 )
 
 // Terrain is a heightmap ground surface for large outdoor scenes. Set it on
@@ -299,7 +301,7 @@ func (f terrainFrame) normal(x, z float64) Vector3 {
 }
 
 func slopeDegrees(normal Vector3) float64 {
-	return math.Acos(clampFloat(normal.Y, -1, 1)) * 180 / math.Pi
+	return float64(det.Acos(clampFloat(normal.Y, -1, 1))*180) / math.Pi
 }
 
 // TerrainIR is the wire form of Terrain under environment.terrain. Heights
@@ -381,7 +383,7 @@ func (t *Terrain) SceneIR() *TerrainIR {
 	}
 	errorsMeters := make([]float64, len(derived.lod.errors))
 	for i, value := range derived.lod.errors {
-		errorsMeters[i] = value * f.scale
+		errorsMeters[i] = float64(value * f.scale)
 	}
 	out := &TerrainIR{
 		ID:             id,
@@ -393,8 +395,8 @@ func (t *Terrain) SceneIR() *TerrainIR {
 		SizeZ:          f.sizeZ,
 		BaseY:          f.baseY,
 		HeightScale:    f.scale,
-		MinHeight:      f.baseY + float64(derived.minimum)/65535*f.scale,
-		MaxHeight:      f.baseY + float64(derived.maximum)/65535*f.scale,
+		MinHeight:      f.baseY + float64(float64(derived.minimum)/65535*f.scale),
+		MaxHeight:      f.baseY + float64(float64(derived.maximum)/65535*f.scale),
 		Levels:         derived.lod.levels,
 		Spacing:        derived.lod.spacing,
 		LODErrors:      errorsMeters,
@@ -508,23 +510,23 @@ func computeTerrainLOD(h *Heightmap, sizeX, sizeZ float64) terrainLODTable {
 		return h.interpolate(x/texelX, z/texelZ)
 	}
 	for level := 0; level < levels; level++ {
-		step := spacing * math.Ldexp(1, level)
+		step := float64(spacing * math.Ldexp(1, level))
 		nx := int(math.Ceil(sizeX/step)) + 1
 		nz := int(math.Ceil(sizeZ/step)) + 1
 		grid := make([]float64, nx*nz)
 		for b := 0; b < nz; b++ {
 			for a := 0; a < nx; a++ {
-				grid[b*nx+a] = surface(float64(a)*step, float64(b)*step)
+				grid[b*nx+a] = surface(float64(float64(a)*step), float64(float64(b)*step))
 			}
 		}
 		worst := 0.0
 		for row := 0; row < h.Rows; row++ {
-			z := float64(row) * texelZ
+			z := float64(float64(row) * texelZ)
 			gz := z / step
 			b := min(int(math.Floor(gz)), nz-2)
 			fz := gz - float64(b)
 			for column := 0; column < h.Columns; column++ {
-				x := float64(column) * texelX
+				x := float64(float64(column) * texelX)
 				gx := x / step
 				a := min(int(math.Floor(gx)), nx-2)
 				fx := gx - float64(a)
