@@ -1,3 +1,8 @@
+//go:build !js || !wasm
+
+// These tests need a native host: one runs a real WebSocket server, the
+// other runs the go tool.
+
 package netsync_test
 
 import (
