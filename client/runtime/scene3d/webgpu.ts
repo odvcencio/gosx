@@ -3059,44 +3059,6 @@
     "}",
   ].join("\n");
 
-  var WGSL_POST_DOF_FRAGMENT = [
-    "struct DOFParams {",
-    "    focusDepth: f32,",
-    "    aperture: f32,",
-    "    maxBlur: f32,",
-    "    _pad0: f32,",
-    "    texelSize: vec2f,",
-    "    _pad1: vec2f,",
-    "};",
-    "",
-    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
-    "@group(0) @binding(1) var inputSamp: sampler;",
-    "@group(0) @binding(2) var depthTex: texture_depth_2d;",
-    "@group(0) @binding(3) var<uniform> params: DOFParams;",
-    "",
-    "fn depthAt(uv: vec2f) -> f32 {",
-    "    let dims = vec2f(textureDimensions(depthTex));",
-    "    let p = vec2i(clamp(uv * dims, vec2f(0.0), dims - vec2f(1.0)));",
-    "    return textureLoad(depthTex, p, 0);",
-    "}",
-    "",
-    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
-    "    let center = textureSample(inputTex, inputSamp, uv).rgb;",
-    "    let depth = depthAt(uv);",
-    "    let coc = clamp(abs(depth - params.focusDepth) * max(params.aperture, 0.0) * 80.0, 0.0, 1.0);",
-    "    let radius = clamp(params.maxBlur, 0.0, 48.0) * coc;",
-    "    let offsets = array<vec2f, 8>(",
-    "        vec2f(1.0, 0.0), vec2f(-1.0, 0.0), vec2f(0.0, 1.0), vec2f(0.0, -1.0),",
-    "        vec2f(0.707, 0.707), vec2f(-0.707, 0.707), vec2f(0.707, -0.707), vec2f(-0.707, -0.707)",
-    "    );",
-    "    var blur = center * 0.28;",
-    "    for (var i = 0u; i < 8u; i = i + 1u) {",
-    "        blur = blur + textureSample(inputTex, inputSamp, uv + offsets[i] * params.texelSize * radius).rgb * 0.09;",
-    "    }",
-    "    return vec4f(mix(center, blur, coc), 1.0);",
-    "}",
-  ].join("\n");
-
   // -----------------------------------------------------------------------
   // Buffer / Uniform Helpers
   // -----------------------------------------------------------------------
@@ -4462,13 +4424,6 @@
       return postParamBuffers[name];
     }
 
-    function focusDepthForEffect(effect, camera) {
-      var focus = Math.max(0, sceneNumber(effect && effect.focusDistance, 8));
-      var near = Math.max(0.0001, sceneNumber(camera && camera.near, 0.1));
-      var far = Math.max(near + 0.0001, sceneNumber(camera && camera.far, 1000));
-      return clamp01((focus - near) / (far - near));
-    }
-
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
       // Destroy old.
@@ -4808,16 +4763,7 @@
             case SCENE_POST_DOF: {
               var dofPipeline = getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout());
               var dofBuf = getParamBuffer("dof", 32);
-              device.queue.writeBuffer(dofBuf, 0, new Float32Array([
-                focusDepthForEffect(effect, camera),
-                sceneNumber(effect.aperture, 0.04),
-                sceneNumber(effect.maxBlur, 8.0),
-                0,
-                1 / Math.max(1, scaledW),
-                1 / Math.max(1, scaledH),
-                0,
-                0,
-              ]));
+              device.queue.writeBuffer(dofBuf, 0, wgpuDOFParams(effect, camera, scaledW, scaledH));
               var dofBG = device.createBindGroup({
                 layout: getSSAOLayout(),
                 entries: [

@@ -1,4 +1,4 @@
-# Scene3D temporal anti-aliasing and auto exposure
+# Scene3D temporal anti-aliasing, auto exposure and depth of field
 
 ## Temporal anti-aliasing
 
@@ -52,3 +52,29 @@ end. WebGPU measures with a compute pass and WebGL2 with a mip-chain reduction;
 neither reads the value back to the CPU, so adaptation never stalls a frame.
 WebGL2 needs float render targets (`EXT_color_buffer_float`); without them the
 scene keeps its authored exposure.
+
+## Depth of field
+
+Add a `DOF` post effect to blur what sits in front of or behind a focus
+distance, the way a camera lens does:
+
+```go
+props.PostFX = scene.PostFX{Effects: []scene.PostEffect{
+    scene.DOF{FocusDistance: 6, Aperture: 0.05, MaxBlur: 12},
+}}
+```
+
+| Field | Meaning |
+|---|---|
+| `FocusDistance` | Distance from the camera, in metres, that stays sharp (default 8). |
+| `Aperture` | How fast blur grows away from the focus distance (default 0.04). |
+| `MaxBlur` | Largest blur radius in pixels (default 8, at most 64). |
+
+Each pixel's blur radius is `|depth - FocusDistance| * Aperture * MaxBlur`,
+capped at `MaxBlur`, where depth is the distance from the camera. Both
+backends gather 48 samples on a spiral out to that radius and keep a sample
+only where its own blur reaches back to the pixel. A sharp subject therefore
+keeps a hard edge against a blurred background, and the blurred background
+does not smear onto it. WebGL2 and WebGPU run the same gather, so one setting
+looks the same on both.
+

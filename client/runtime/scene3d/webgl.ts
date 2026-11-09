@@ -1839,41 +1839,6 @@
     "}",
   ].join("\n");
 
-  const SCENE_POST_DOF_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "in vec2 v_uv;",
-    "uniform sampler2D u_texture;",
-    "uniform sampler2D u_depthTexture;",
-    "uniform float u_focusDistance;",
-    "uniform float u_aperture;",
-    "uniform float u_maxBlur;",
-    "uniform float u_near;",
-    "uniform float u_far;",
-    "out vec4 fragColor;",
-    "",
-    "float linearDepth(float depth) {",
-    "    float z = depth * 2.0 - 1.0;",
-    "    return (2.0 * u_near * u_far) / max(0.0001, u_far + u_near - z * (u_far - u_near));",
-    "}",
-    "",
-    "void main() {",
-    "    vec2 texel = 1.0 / vec2(textureSize(u_texture, 0));",
-    "    float depth = linearDepth(texture(u_depthTexture, v_uv).r);",
-    "    float blur = clamp(abs(depth - u_focusDistance) * u_aperture * u_maxBlur, 0.0, u_maxBlur);",
-    "    vec3 color = texture(u_texture, v_uv).rgb * 0.22;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur,  0.0)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  0.0)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(0.0,  blur)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(0.0, -blur)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur,  blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur, -blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur, -blur)).rgb * 0.095;",
-    "    fragColor = vec4(color, 1.0);",
-    "}",
-  ].join("\n");
-
   // Color grading — exposure, contrast, and saturation adjustments.
   const SCENE_POST_COLORGRADE_SOURCE = [
     "#version 300 es",
