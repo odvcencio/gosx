@@ -8190,7 +8190,7 @@
 
     const selenaTextureContext = {
       device, textureCache, iblResources, placeholderCubeView, placeholderView,
-      envMapSampler, linearSampler, liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL,
+      envMapSampler, linearSampler, liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL, frame: selenaFrame,
     };
 
     // Ensure main depth texture matches canvas size.
@@ -8608,15 +8608,14 @@
       var textures = sceneSelenaTextureDescriptors(layout);
       for (var i = 0; i < textures.length; i++) {
         var wgsl = textures[i] && textures[i].wgsl || {};
-        // Cube maps require cube views; other material textures use 2D.
-        var texDimension = textures[i] && textures[i].dimension === "cube" ? "cube" : "2d";
+        var texLayout = sceneSelenaWGPUTextureLayout(textures[i]);
         var textureVisibility = textures[i] && textures[i].vertexStage === true
           ? visibility
           : (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2);
         entries.push({
           binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
           /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
-          texture: { sampleType: "float", viewDimension: texDimension },
+          texture: texLayout,
         });
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
@@ -18430,7 +18429,7 @@
         }
       }
 
-      uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights);
+      uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights); sceneSelenaFrameLighting(selenaFrame, cam, scratchViewMatrix, bundle, shadowSlots, shadowLightIndices, shadowLightMatrices, "gpu");
 
       // Create frame bind group.
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
