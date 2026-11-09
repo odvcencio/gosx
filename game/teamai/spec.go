@@ -31,6 +31,8 @@ type Spec struct {
 	Landmarks []LandmarkSpec `json:"landmarks,omitempty"`
 	// Formations are sets of alignment slots.
 	Formations []FormationSpec `json:"formations,omitempty"`
+	// Paths are timed sequences of segments.
+	Paths []PathSpec `json:"paths,omitempty"`
 }
 
 // LandmarkSpec is a named point. A host landmark takes its position from

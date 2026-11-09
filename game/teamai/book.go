@@ -18,6 +18,12 @@ type Book struct {
 	bands      []string
 	landmarks  []landmark
 	formations []Formation
+	paths      []Path
+	marks      []string
+	// predicates and choosers are the rule names decisions use, in order of
+	// first use; Decision branch rule indices point here.
+	predicates []string
+	choosers   []string
 }
 
 type landmark struct {
@@ -47,6 +53,7 @@ func Compile(spec *Spec) (*Book, error) {
 	checkTable(&is, "bands", len(spec.Bands))
 	checkTable(&is, "landmarks", len(spec.Landmarks))
 	checkTable(&is, "formations", len(spec.Formations))
+	checkTable(&is, "paths", len(spec.Paths))
 	if err := is.err(); err != nil {
 		return nil, err
 	}
@@ -72,6 +79,19 @@ func Compile(spec *Spec) (*Book, error) {
 		checkEntryName(&is, p, fs.Name, i, func(j int) string { return spec.Formations[j].Name })
 		b.formations[i] = compileFormation(&is, p, fs, b.roles, b.bands)
 	}
+
+	var marks markTable
+	var rb ruleBinder
+	b.paths = make([]Path, len(spec.Paths))
+	for i := range spec.Paths {
+		ps := &spec.Paths[i]
+		p := at("", "paths", i, ps.Name)
+		checkEntryName(&is, p, ps.Name, i, func(j int) string { return spec.Paths[j].Name })
+		b.paths[i] = compilePath(&is, p, ps, b, &marks, &rb)
+	}
+	b.marks = marks.names
+	b.predicates = rb.preds
+	b.choosers = rb.choosers
 	if err := is.err(); err != nil {
 		return nil, err
 	}
@@ -178,4 +198,42 @@ func (b *Book) Formation(id FormationID) *Formation {
 		return nil
 	}
 	return &b.formations[id]
+}
+
+// NumPaths returns the number of paths.
+func (b *Book) NumPaths() int { return len(b.paths) }
+
+// PathID returns the ID of the named path.
+func (b *Book) PathID(name string) (PathID, bool) {
+	for i := range b.paths {
+		if b.paths[i].name == name {
+			return PathID(i), true
+		}
+	}
+	return NoPath, false
+}
+
+// Path returns path id, or nil when id is out of range.
+func (b *Book) Path(id PathID) *Path {
+	if id < 0 || int(id) >= len(b.paths) {
+		return nil
+	}
+	return &b.paths[id]
+}
+
+// NumMarks returns the number of distinct mark names.
+func (b *Book) NumMarks() int { return len(b.marks) }
+
+// Mark returns the index of the named mark, as reported in EventMark events.
+func (b *Book) Mark(name string) (int, bool) {
+	i := indexOf(b.marks, name)
+	return i, i >= 0
+}
+
+// MarkName returns the name of mark i.
+func (b *Book) MarkName(i int) string {
+	if i < 0 || i >= len(b.marks) {
+		return ""
+	}
+	return b.marks[i]
 }
