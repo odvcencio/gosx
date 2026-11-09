@@ -415,4 +415,3 @@ func kindComponents(kind string) int {
 	}
 	return 0
 }
-
