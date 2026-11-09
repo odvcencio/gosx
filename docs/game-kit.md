@@ -82,6 +82,33 @@ Server side, put `kitui.Styles()`, `kitui.Script()`, `bootpage.Watchdog()` and `
 
 `SlotStore` writes each slot to two copies and always overwrites the one that does not hold the newest valid save. A copy carries a sequence number and a SHA-256 checksum, so a torn or corrupt write falls back to the previous save. A save from a newer build returns `ErrSaveTooNew` and is never overwritten. `Autosaver.Update(dt)` saves on an interval.
 
+## Side select
+
+`kitui.SideSelect` and `kitui.SideSelectPanel` are a controller-select screen for any two-team game. Each connected device (the keyboard, each gamepad) is an icon in one of three columns: side A, the middle (spectate), side B. A player slides the icon with the device's own input, readies up, and can edit an optional settings row under the icons.
+
+```go
+sides := kitui.NewSideSelect(kitui.SideConfig{
+	SideNames: [2]string{"Home", "Away"},
+	Fields: []kitui.Field{{ID: "quarter", Label: "Quarter length", Index: 1,
+		Options: []kitui.Option{{Value: "2", Label: "2 min"}, {Value: "5", Label: "5 min"}}}},
+	Router: router, PlayerSlots: [2][]int{{0, 2}, {1, 3}}, // feeds actions.Router device assignment
+	OnStart:  func(r kitui.Result) { /* r.Sides, r.Spectators, r.Fields */ },
+	OnRender: func() { kitui.Render(root, kitui.SideSelectPanel(kitui.SideSelectProps{Model: sides})) },
+})
+sides.ConnectKeyboard()
+actions.Attach(sides, actions.BrowserConfig{}) // keyboard: arrows or WASD, Enter/Space, Escape
+// each frame: sides.SyncPads(host.NavigatorSource{}); pads.Poll(host.NavigatorSource{}, sides)
+kitui.Bind(body, kitui.Handlers{OnAction: func(n, v string) { sides.HandleAction(n, v) }}) // mouse on the settings row
+```
+
+- `SideSelect` is an `actions.Sink`, so it takes the place of an `actions.Map` behind `actions.Attach` and `actions.PadPoller`. Left/Right slide the icon (clamped at the edges), Confirm toggles ready (Enter, Space, pad A or Start), Cancel un-readies, then returns to the middle, then calls `OnBack`. Down moves that device's cursor into the settings row, where Left/Right change the field and Up/Down move between fields. The left stick works like the d-pad. A device that is unknown shows up on its first press.
+- The match starts (`OnStart`) when every seat on a side is ready and both sides have a seat. `AllowEmptySide` allows one side to be empty for a computer opponent; `MaxPerSide` limits a side. Seats in the middle never hold up the start. A change that makes the screen not startable withdraws the start.
+- With `Router` set, each local seat on a side is assigned to the next player index in `PlayerSlots`; seats in the middle are unassigned. Seat order decides who gets which slot.
+- Online: pass remote players with `SetRemote([]kitui.Seat{...})` (the game supplies them). They show as dashed icons, cannot be moved from this screen, and slide when the data changes. `OnChange` reports each local change so the game can send it; `SetField` applies the host's choice; `SetFieldsReadOnly(true)` locks the settings row for guests; `Set` applies a server correction.
+- The panel is plain HTML with data attributes (`data-device`, `data-slot`, `data-ready`), so it works in a static export. The icon that moved slides from its old column with a CSS animation (off under `prefers-reduced-motion`). Colors come from `--kit-*` variables, plus `--kit-side-a` and `--kit-side-b`. Screen readers get each icon's name, side and ready state in its `aria-label`, and changes in a live region.
+
+`e2e/side_select_e2e_test.go` runs this in Chrome with the keyboard and two simulated gamepads (`navigator.getGamepads` stubbed): sliding, ready-up, router assignment, the settings row, the online variant.
+
 ## Browser tests
 
 `e2e/game_kit_e2e_test.go` (build tag `e2e`) builds `e2e/testdata/kitbrowser` for js/wasm, serves it from a local server and drives it with Chrome:
