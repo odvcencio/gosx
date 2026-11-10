@@ -198,7 +198,7 @@ func TestCicadaKernelAndMixerInRealBrowser(t *testing.T) {
 	browser, err := chrometest.Start(t.Context(), e2eChromePath(t), "--no-sandbox", "--autoplay-policy=no-user-gesture-required")
 	if err != nil {
 		if browserUnavailable(err) {
-			t.Skipf("chrome could not start: %v", err)
+			skipOrFailChrome(t, chromeRequired(), "chrome could not start: %v", err)
 		}
 		t.Fatalf("start Chrome: %v", err)
 	}
