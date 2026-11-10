@@ -51,6 +51,9 @@ type BudgetPageResult struct {
 	// fails, the page is Inconclusive instead of failed.
 	Recovery     string `json:"recovery,omitempty"`
 	Inconclusive bool   `json:"inconclusive,omitempty"`
+	// StallReason is set when the page has no metrics because collection timed
+	// out while the renderer was stalled (PageReport.CollectionStall).
+	StallReason string `json:"stallReason,omitempty"`
 	// Samples holds each timing sample when the page was measured more than
 	// once; timing assertions were judged on their median.
 	Samples []TimingSample `json:"samples,omitempty"`
@@ -70,6 +73,10 @@ type BudgetAssertionResult struct {
 	// Inconclusive marks a failed measurement taken while the renderer
 	// recovered; it does not fail the page (see exemptRecoveredMeasurements).
 	Inconclusive bool `json:"inconclusive,omitempty"`
+	// Adjusted marks a network_kb assertion judged on the page's bytes minus
+	// the fallback renderer chunk (FallbackBytes). It stays strict.
+	Adjusted      bool  `json:"adjusted,omitempty"`
+	FallbackBytes int64 `json:"fallbackBytes,omitempty"`
 }
 
 // LoadBudgetFile reads a JSON perf budget file.
@@ -110,6 +117,9 @@ func EvaluateBudget(report *Report, budget *BudgetFile, forceProfile string) (Bu
 		pageResult := evalBudgetPage(page, profileName, expressions)
 		pageResult.Renderer, pageResult.Backend = pageRenderer(page)
 		pageResult.Recovery = RendererRecovery(page)
+		if pageResult.Recovery != "" {
+			applyFallbackByteAdjustment(&pageResult, page)
+		}
 		pageResult.Samples = page.TimingSamples
 		if !pageResult.Passed && pageResult.Recovery != "" {
 			exemptRecoveredMeasurements(&pageResult)
@@ -145,7 +155,9 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 		if page.Renderer != "" || page.Backend != "" || page.Recovery != "" {
 			b.WriteString(fmt.Sprintf("    renderer %q backend=%s recovery=%s\n", page.Renderer, orNone(page.Backend), orNone(page.Recovery)))
 		}
-		if page.Inconclusive {
+		if page.Inconclusive && page.StallReason != "" {
+			b.WriteString(fmt.Sprintf("    inconclusive: collection timed out while the renderer was stalled (%s), so this page has no measurements\n", page.StallReason))
+		} else if page.Inconclusive {
 			b.WriteString(fmt.Sprintf("    inconclusive: the renderer recovered (%s) while this page was measured, so its measurements describe the recovery; assertions marked inc do not fail the gate\n", page.Recovery))
 		}
 		writeTimingSampleLines(&b, page)
@@ -165,6 +177,10 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 				b.WriteString(fmt.Sprintf("    %-4s %-28s metric not found\n", mark, assertion.Expression))
 				continue
 			}
+			if assertion.Adjusted {
+				b.WriteString(fmt.Sprintf("    %-4s %-28s actual %.2f (after subtracting %d fallback chunk bytes; strict)\n", mark, assertion.Expression, assertion.Actual, assertion.FallbackBytes))
+				continue
+			}
 			b.WriteString(fmt.Sprintf("    %-4s %-28s actual %.2f\n", mark, assertion.Expression, assertion.Actual))
 		}
 	}
@@ -177,6 +193,9 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 // swapping to WebGL mid-load. A fallback chosen before the first frame (for
 // example "webgpu-unavailable") is the page's normal path and returns "".
 func RendererRecovery(page PageReport) string {
+	if page.CollectionStall != "" {
+		return "collection-stall"
+	}
 	if page.Scene == nil {
 		return ""
 	}
@@ -192,6 +211,56 @@ func RendererRecovery(page PageReport) string {
 		return "render-watchdog-fallback"
 	}
 	return ""
+}
+
+// fallbackChunkName is the renderer chunk a recovery swaps to. Scene3D starts
+// on WebGPU and a recovery lands on WebGL, so the fallback chunk is the WebGL
+// one. A page that never fetched it has nothing to subtract.
+const fallbackChunkName = "/gosx/bootstrap-feature-scene3d-webgl.js"
+
+// fallbackChunkBytes sums the transfer size of the fallback renderer chunk.
+func fallbackChunkBytes(page PageReport) int64 {
+	var total int64
+	for _, r := range page.Resources {
+		name := r.Name
+		if i := strings.IndexAny(name, "?#"); i >= 0 {
+			name = name[:i]
+		}
+		if strings.HasSuffix(name, fallbackChunkName) {
+			total += int64(r.TransferSize)
+		}
+	}
+	return total
+}
+
+// applyFallbackByteAdjustment re-judges network_kb assertions of a recovered
+// page on its bytes minus the fallback chunk. The recovery adds that chunk and
+// nothing else a renderer choice changes, so the remainder is the page's own
+// weight: over the limit it is real growth and fails; under it the assertion
+// passes whether or not the chunk was fetched. A stalled collection has no
+// bytes and is handled as inconclusive elsewhere.
+func applyFallbackByteAdjustment(result *BudgetPageResult, page PageReport) {
+	if page.CollectionStall != "" {
+		result.StallReason = page.CollectionStall
+		return
+	}
+	fallback := fallbackChunkBytes(page)
+	for i := range result.Assertions {
+		a := &result.Assertions[i]
+		if a.Metric != "network_kb" || !a.Found {
+			continue
+		}
+		a.Adjusted = true
+		a.FallbackBytes = fallback
+		a.Actual = float64(page.TotalBytesTransferred-fallback) / 1024
+		a.Passed = compare(a.Actual, a.Op, a.Value)
+	}
+	result.Passed = true
+	for _, a := range result.Assertions {
+		if !a.Passed {
+			result.Passed = false
+		}
+	}
 }
 
 func pageRenderer(page PageReport) (renderer, backend string) {
@@ -328,6 +397,17 @@ func exemptRecoveredMeasurements(page *BudgetPageResult) {
 	for i := range page.Assertions {
 		a := &page.Assertions[i]
 		if a.Passed {
+			continue
+		}
+		if a.Metric == "network_kb" && a.Adjusted {
+			// Bytes are judged without the fallback chunk, so a failure is
+			// real growth, not the recovery.
+			passed = false
+			continue
+		}
+		if page.StallReason != "" && a.Metric != "" {
+			a.Inconclusive = true
+			page.Inconclusive = true
 			continue
 		}
 		if a.Metric != "" && a.Found {

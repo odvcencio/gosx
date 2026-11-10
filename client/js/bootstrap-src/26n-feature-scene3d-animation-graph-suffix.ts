@@ -16,4 +16,6 @@
     measure: agMeasure,
   };
   window.__gosx_scene3d_animation_graph_loaded = true;
+  // RequireFeature("scene3d-animation-graph") loads this chunk by name and needs a factory.
+  if (window.__gosx_register_bootstrap_feature) window.__gosx_register_bootstrap_feature("scene3d-animation-graph", () => ({}));
 })();

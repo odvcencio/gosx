@@ -45,7 +45,7 @@
   // target and frame are read through arguments.
   api.dispatchCrowdFrame = function() {
     const args = arguments;
-    return ensureSceneGatedFeatureLoaded("crowd", "gosxScene3dCrowdUrl", "/gosx/bootstrap-feature-scene3d-crowd.js").then(() => window.__gosx_scene3d_crowd_api.apply(args[0], args[1]));
+    return ensureSceneGatedFeatureLoaded("crowd", "gosxScene3dCrowdUrl", "", true).then(() => window.__gosx_scene3d_crowd_api.apply(args[0], args[1]));
   };
   api.getCamera = function(target) {
     return window.__gosx_scene3d_command_bridge?.getCamera(target) || null;
