@@ -2,8 +2,10 @@
 // key rebinding, loading, error) as GoSX nodes.
 //
 // The output is plain HTML with data attributes and ARIA roles, so it works
-// in a static export: render it at build time, or call gosx.RenderHTML in the
-// browser. It has no hidden state. Colors, sizes and fonts come from CSS
+// in a static export: render it at build time, or call markup.RenderHTML (or
+// Render) in the browser. The nodes come from package markup, not package
+// gosx, so a js/wasm build does not link the .gsx compiler; gosx.Node is the
+// same type. It has no hidden state. Colors, sizes and fonts come from CSS
 // variables (--kit-*); see Styles.
 //
 // Interaction uses one DOM event. The small script from Script() turns clicks
@@ -17,10 +19,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/game/actions"
 	"m31labs.dev/gosx/game/boot"
 	"m31labs.dev/gosx/game/settings"
+	"m31labs.dev/gosx/markup"
 )
 
 //go:embed kit.css
@@ -36,35 +38,35 @@ func CSS() string { return css }
 func ScriptSource() string { return script }
 
 // Styles returns a <style> element with the kit stylesheet.
-func Styles() gosx.Node {
-	return gosx.El("style", gosx.Attrs(gosx.Attr("id", "gosx-kit-style")), gosx.RawHTML(css))
+func Styles() markup.Node {
+	return markup.El("style", markup.Attrs(markup.Attr("id", "gosx-kit-style")), markup.RawHTML(css))
 }
 
 // Script returns the <script> element with the event script.
-func Script() gosx.Node {
-	return gosx.El("script", gosx.Attrs(gosx.Attr("id", "gosx-kit-events")), gosx.RawHTML(script))
+func Script() markup.Node {
+	return markup.El("script", markup.Attrs(markup.Attr("id", "gosx-kit-events")), markup.RawHTML(script))
 }
 
-func button(label, action string, attrs ...any) gosx.Node {
-	args := []any{gosx.Attrs(append([]any{gosx.Attr("type", "button"), gosx.Attr("class", "kit-button"), gosx.Attr("data-kit-action", action)}, attrs...)...), gosx.Text(label)}
-	return gosx.El("button", args...)
+func button(label, action string, attrs ...any) markup.Node {
+	args := []any{markup.Attrs(append([]any{markup.Attr("type", "button"), markup.Attr("class", "kit-button"), markup.Attr("data-kit-action", action)}, attrs...)...), markup.Text(label)}
+	return markup.El("button", args...)
 }
 
-func overlay(id, titleID string, hidden bool, children ...gosx.Node) gosx.Node {
-	panel := []any{gosx.Attrs(gosx.Attr("class", "kit-panel"), gosx.Attr("role", "dialog"), gosx.Attr("aria-modal", "true"),
-		gosx.Attr("aria-labelledby", titleID), gosx.Attr("data-kit-modal", "true"))}
+func overlay(id, titleID string, hidden bool, children ...markup.Node) markup.Node {
+	panel := []any{markup.Attrs(markup.Attr("class", "kit-panel"), markup.Attr("role", "dialog"), markup.Attr("aria-modal", "true"),
+		markup.Attr("aria-labelledby", titleID), markup.Attr("data-kit-modal", "true"))}
 	for _, c := range children {
 		panel = append(panel, c)
 	}
-	attrs := []any{gosx.Attr("class", "kit-overlay"), gosx.Attr("id", id)}
+	attrs := []any{markup.Attr("class", "kit-overlay"), markup.Attr("id", id)}
 	if hidden {
-		attrs = append(attrs, gosx.Attr("hidden", true))
+		attrs = append(attrs, markup.Attr("hidden", true))
 	}
-	return gosx.El("div", gosx.Attrs(attrs...), gosx.El("div", panel...))
+	return markup.El("div", markup.Attrs(attrs...), markup.El("div", panel...))
 }
 
-func title(id, text string) gosx.Node {
-	return gosx.El("h2", gosx.Attrs(gosx.Attr("class", "kit-title"), gosx.Attr("id", id)), gosx.Text(text))
+func title(id, text string) markup.Node {
+	return markup.El("h2", markup.Attrs(markup.Attr("class", "kit-title"), markup.Attr("id", id)), markup.Text(text))
 }
 
 // MenuItem is one button of a menu. Selecting it sends action ID.
@@ -89,35 +91,35 @@ type PauseProps struct {
 }
 
 // PauseMenu renders a modal pause menu.
-func PauseMenu(p PauseProps) gosx.Node {
+func PauseMenu(p PauseProps) markup.Node {
 	if p.Title == "" {
 		p.Title = "Paused"
 	}
 	if len(p.Items) == 0 {
 		p.Items = []MenuItem{{ID: "resume", Label: "Resume", Primary: true}, {ID: "settings", Label: "Settings"}, {ID: "quit", Label: "Quit", Danger: true}}
 	}
-	lis := make([]gosx.Node, 0, len(p.Items))
+	lis := make([]markup.Node, 0, len(p.Items))
 	for i, it := range p.Items {
 		var attrs []any
 		if it.Disabled {
-			attrs = append(attrs, gosx.Attr("disabled", true))
+			attrs = append(attrs, markup.Attr("disabled", true))
 		}
 		if it.Primary {
-			attrs = append(attrs, gosx.Attr("data-kit-primary", true))
+			attrs = append(attrs, markup.Attr("data-kit-primary", true))
 		}
 		if it.Danger {
-			attrs = append(attrs, gosx.Attr("data-kit-danger", true))
+			attrs = append(attrs, markup.Attr("data-kit-danger", true))
 		}
 		if i == 0 {
-			attrs = append(attrs, gosx.Attr("autofocus", true))
+			attrs = append(attrs, markup.Attr("autofocus", true))
 		}
-		lis = append(lis, gosx.El("li", button(it.Label, it.ID, attrs...)))
+		lis = append(lis, markup.El("li", button(it.Label, it.ID, attrs...)))
 	}
-	menu := []any{gosx.Attrs(gosx.Attr("class", "kit-menu"))}
+	menu := []any{markup.Attrs(markup.Attr("class", "kit-menu"))}
 	for _, l := range lis {
 		menu = append(menu, l)
 	}
-	return overlay("kit-pause", "kit-pause-title", p.Hidden, title("kit-pause-title", p.Title), gosx.El("ul", menu...))
+	return overlay("kit-pause", "kit-pause-title", p.Hidden, title("kit-pause-title", p.Title), markup.El("ul", menu...))
 }
 
 // Option is a choice in a select.
@@ -150,35 +152,35 @@ func label(labels map[string]string, key string) string {
 	return defaultLabels[key]
 }
 
-func rangeField(l map[string]string, key string, min, max, step, value int, unit string) gosx.Node {
+func rangeField(l map[string]string, key string, min, max, step, value int, unit string) markup.Node {
 	id := "kit-" + key
-	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-field")),
-		gosx.El("label", gosx.Attrs(gosx.Attr("for", id)), gosx.Text(label(l, key))),
-		gosx.El("input", gosx.Attrs(gosx.Attr("type", "range"), gosx.Attr("id", id), gosx.Attr("min", min), gosx.Attr("max", max),
-			gosx.Attr("step", step), gosx.Attr("value", value), gosx.Attr("data-kit-setting", key), gosx.Attr("data-kit-unit", unit))),
-		gosx.El("span", gosx.Attrs(gosx.Attr("class", "kit-value"), gosx.Attr("aria-hidden", "true")), gosx.Text(strconv.Itoa(value)+unit)),
+	return markup.El("div", markup.Attrs(markup.Attr("class", "kit-field")),
+		markup.El("label", markup.Attrs(markup.Attr("for", id)), markup.Text(label(l, key))),
+		markup.El("input", markup.Attrs(markup.Attr("type", "range"), markup.Attr("id", id), markup.Attr("min", min), markup.Attr("max", max),
+			markup.Attr("step", step), markup.Attr("value", value), markup.Attr("data-kit-setting", key), markup.Attr("data-kit-unit", unit))),
+		markup.El("span", markup.Attrs(markup.Attr("class", "kit-value"), markup.Attr("aria-hidden", "true")), markup.Text(strconv.Itoa(value)+unit)),
 	)
 }
 
-func selectField(l map[string]string, key string, opts []Option, current string) gosx.Node {
+func selectField(l map[string]string, key string, opts []Option, current string) markup.Node {
 	id := "kit-" + key
-	sel := []any{gosx.Attrs(gosx.Attr("id", id), gosx.Attr("data-kit-setting", key))}
+	sel := []any{markup.Attrs(markup.Attr("id", id), markup.Attr("data-kit-setting", key))}
 	for _, o := range opts {
-		a := []any{gosx.Attrs(gosx.Attr("value", o.Value))}
+		a := []any{markup.Attrs(markup.Attr("value", o.Value))}
 		if o.Value == current {
-			a = []any{gosx.Attrs(gosx.Attr("value", o.Value), gosx.Attr("selected", true))}
+			a = []any{markup.Attrs(markup.Attr("value", o.Value), markup.Attr("selected", true))}
 		}
-		sel = append(sel, gosx.El("option", append(a, gosx.Text(o.Label))...))
+		sel = append(sel, markup.El("option", append(a, markup.Text(o.Label))...))
 	}
-	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-field")),
-		gosx.El("label", gosx.Attrs(gosx.Attr("for", id)), gosx.Text(label(l, key))),
-		gosx.El("span"), // keeps the grid columns aligned
-		gosx.El("select", sel...),
+	return markup.El("div", markup.Attrs(markup.Attr("class", "kit-field")),
+		markup.El("label", markup.Attrs(markup.Attr("for", id)), markup.Text(label(l, key))),
+		markup.El("span"), // keeps the grid columns aligned
+		markup.El("select", sel...),
 	)
 }
 
-func section(l map[string]string, key string) gosx.Node {
-	return gosx.El("h3", gosx.Attrs(gosx.Attr("class", "kit-section")), gosx.Text(label(l, key)))
+func section(l map[string]string, key string) markup.Node {
+	return markup.El("h3", markup.Attrs(markup.Attr("class", "kit-section")), markup.Text(label(l, key)))
 }
 
 func pct(v float64) int { return int(v*100 + 0.5) }
@@ -194,9 +196,9 @@ var MotionChoices = []Option{{"system", "Follow system"}, {"reduce", "On"}, {"fu
 
 // SettingsPanel renders sliders and selects for the settings. Each control
 // carries data-kit-setting="<key>"; pass the key and value to ApplySetting.
-func SettingsPanel(p SettingsProps) gosx.Node {
+func SettingsPanel(p SettingsProps) markup.Node {
 	s, l := p.Settings, p.Labels
-	body := []gosx.Node{title("kit-settings-title", label(l, "title"))}
+	body := []markup.Node{title("kit-settings-title", label(l, "title"))}
 	if !p.NoAudio {
 		body = append(body, section(l, "audio"))
 		for _, bus := range settings.Buses {
@@ -222,8 +224,8 @@ func SettingsPanel(p SettingsProps) gosx.Node {
 		body = append(body, section(l, "language"), selectField(l, "language", langs, s.Language))
 	}
 	body = append(body,
-		button(label(l, "reset"), "settings-reset", gosx.Attr("data-kit-danger", true)),
-		button(label(l, "close"), "settings-close", gosx.Attr("data-kit-primary", true)))
+		button(label(l, "reset"), "settings-reset", markup.Attr("data-kit-danger", true)),
+		button(label(l, "close"), "settings-close", markup.Attr("data-kit-primary", true)))
 	return overlay("kit-settings", "kit-settings-title", false, body...)
 }
 
@@ -302,17 +304,17 @@ func RebindID(ctx, action string, slot int) string {
 // Selecting a slot sends a "rebind" event named RebindID; the game then calls
 // Map.Capture and, with the captured source, Map.Rebind. The last button of a
 // row ("+") has slot number len(bindings) and adds a binding.
-func RebindPanel(p RebindProps) gosx.Node {
+func RebindPanel(p RebindProps) markup.Node {
 	if p.Class == 0 {
 		p.Class = actions.ClassKeyboardMouse
 	}
-	rows := []any{gosx.Attrs(gosx.Attr("class", "kit-binds"))}
+	rows := []any{markup.Attrs(markup.Attr("class", "kit-binds"))}
 	for _, action := range p.Map.Actions(p.Context) {
 		name := action
 		if n, ok := p.Names[action]; ok {
 			name = n
 		}
-		row := []any{gosx.Attrs(gosx.Attr("class", "kit-bind-row")), gosx.El("span", gosx.Text(name))}
+		row := []any{markup.Attrs(markup.Attr("class", "kit-bind-row")), markup.El("span", markup.Text(name))}
 		bindings := p.Map.Bindings(p.Context, action)
 		for slot, b := range bindings {
 			if !b.Source.Zero() && b.Source.Class() != p.Class {
@@ -323,10 +325,10 @@ func RebindPanel(p RebindProps) gosx.Node {
 			if listening {
 				text = "Press a key..."
 			}
-			row = append(row, gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("class", "kit-button"),
-				gosx.Attr("data-kit-rebind", RebindID(p.Context, action, slot)),
-				gosx.Attr("aria-pressed", strconv.FormatBool(listening)),
-				gosx.Attr("aria-label", name+": "+text)), gosx.Text(text)))
+			row = append(row, markup.El("button", markup.Attrs(markup.Attr("type", "button"), markup.Attr("class", "kit-button"),
+				markup.Attr("data-kit-rebind", RebindID(p.Context, action, slot)),
+				markup.Attr("aria-pressed", strconv.FormatBool(listening)),
+				markup.Attr("aria-label", name+": "+text)), markup.Text(text)))
 		}
 		if p.Map.CanAddSlot(p.Context, action) {
 			slot := len(bindings)
@@ -335,19 +337,19 @@ func RebindPanel(p RebindProps) gosx.Node {
 			if listening {
 				text = "Press a key..."
 			}
-			row = append(row, gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("class", "kit-button"),
-				gosx.Attr("data-kit-rebind", RebindID(p.Context, action, slot)),
-				gosx.Attr("aria-pressed", strconv.FormatBool(listening)),
-				gosx.Attr("aria-label", "Add binding for "+name)), gosx.Text(text)))
+			row = append(row, markup.El("button", markup.Attrs(markup.Attr("type", "button"), markup.Attr("class", "kit-button"),
+				markup.Attr("data-kit-rebind", RebindID(p.Context, action, slot)),
+				markup.Attr("aria-pressed", strconv.FormatBool(listening)),
+				markup.Attr("aria-label", "Add binding for "+name)), markup.Text(text)))
 		}
-		rows = append(rows, gosx.El("div", row...))
+		rows = append(rows, markup.El("div", row...))
 	}
 	return overlay("kit-rebind", "kit-rebind-title", false,
 		title("kit-rebind-title", "Controls"),
-		gosx.El("div", rows...),
-		gosx.El("p", gosx.Attrs(gosx.Attr("class", "kit-message"), gosx.Attr("role", "status"), gosx.Attr("aria-live", "polite")), gosx.Text(p.Message)),
-		button("Reset controls", "rebind-reset", gosx.Attr("data-kit-danger", true)),
-		button("Back", "rebind-close", gosx.Attr("data-kit-primary", true)),
+		markup.El("div", rows...),
+		markup.El("p", markup.Attrs(markup.Attr("class", "kit-message"), markup.Attr("role", "status"), markup.Attr("aria-live", "polite")), markup.Text(p.Message)),
+		button("Reset controls", "rebind-reset", markup.Attr("data-kit-danger", true)),
+		button("Back", "rebind-close", markup.Attr("data-kit-primary", true)),
 	)
 }
 
@@ -391,7 +393,7 @@ type LoadingProps struct {
 // Put your game canvas and this node in the same page; the gate hides the
 // screen when it reaches "ready". The element works without any script: its
 // initial state is "loading".
-func BootRoot(p LoadingProps, game ...gosx.Node) gosx.Node {
+func BootRoot(p LoadingProps, game ...markup.Node) markup.Node {
 	if p.Title == "" {
 		p.Title = "Loading"
 	}
@@ -413,25 +415,25 @@ func BootRoot(p LoadingProps, game ...gosx.Node) gosx.Node {
 		copyText = p.FailedText
 	}
 	progress := strconv.FormatFloat(p.Snapshot.Progress, 'f', 3, 64)
-	screen := gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-overlay kit-overlay--boot"), gosx.Attr("role", "status"), gosx.Attr("aria-live", "polite")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-panel")),
-			gosx.El("h2", gosx.Attrs(gosx.Attr("class", "kit-title"), gosx.Attr("data-boot-title", true)), gosx.Text(p.Title)),
-			gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-progress"), gosx.Attr("role", "progressbar"), gosx.Attr("aria-valuemin", 0),
-				gosx.Attr("aria-valuemax", 100), gosx.Attr("aria-valuenow", pct(p.Snapshot.Progress))), gosx.El("span")),
-			gosx.El("p", gosx.Attrs(gosx.Attr("class", "kit-copy"), gosx.Attr("data-boot-copy", true)), gosx.Text(copyText)),
-			gosx.El("button", gosx.Attrs(gosx.Attr("type", "button"), gosx.Attr("class", "kit-button"), gosx.Attr("data-boot-retry", true),
-				gosx.Attr("data-kit-action", "boot-retry"), gosx.Attr("data-kit-primary", true)), gosx.Text(p.RetryLabel)),
+	screen := markup.El("div", markup.Attrs(markup.Attr("class", "kit-overlay kit-overlay--boot"), markup.Attr("role", "status"), markup.Attr("aria-live", "polite")),
+		markup.El("div", markup.Attrs(markup.Attr("class", "kit-panel")),
+			markup.El("h2", markup.Attrs(markup.Attr("class", "kit-title"), markup.Attr("data-boot-title", true)), markup.Text(p.Title)),
+			markup.El("div", markup.Attrs(markup.Attr("class", "kit-progress"), markup.Attr("role", "progressbar"), markup.Attr("aria-valuemin", 0),
+				markup.Attr("aria-valuemax", 100), markup.Attr("aria-valuenow", pct(p.Snapshot.Progress))), markup.El("span")),
+			markup.El("p", markup.Attrs(markup.Attr("class", "kit-copy"), markup.Attr("data-boot-copy", true)), markup.Text(copyText)),
+			markup.El("button", markup.Attrs(markup.Attr("type", "button"), markup.Attr("class", "kit-button"), markup.Attr("data-boot-retry", true),
+				markup.Attr("data-kit-action", "boot-retry"), markup.Attr("data-kit-primary", true)), markup.Text(p.RetryLabel)),
 		))
 	budget := []any{}
 	if p.BudgetMS > 0 {
-		budget = append(budget, gosx.Attr("data-boot-budget-ms", p.BudgetMS))
+		budget = append(budget, markup.Attr("data-boot-budget-ms", p.BudgetMS))
 	}
-	args := []any{gosx.Attrs(append(budget, gosx.Attr("data-boot-root", true), gosx.Attr("data-boot", phase), gosx.Attr("aria-busy", strconv.FormatBool(p.Snapshot.Phase != boot.PhaseReady)),
-		gosx.Attr("style", "--boot-progress:"+progress),
-		gosx.Attr("data-boot-recovering-title", "Reconnecting"), gosx.Attr("data-boot-recovering-copy", p.RecoveringText),
-		gosx.Attr("data-boot-failed-title", "Could not start"), gosx.Attr("data-boot-failed-copy", p.FailedText))...), screen}
+	args := []any{markup.Attrs(append(budget, markup.Attr("data-boot-root", true), markup.Attr("data-boot", phase), markup.Attr("aria-busy", strconv.FormatBool(p.Snapshot.Phase != boot.PhaseReady)),
+		markup.Attr("style", "--boot-progress:"+progress),
+		markup.Attr("data-boot-recovering-title", "Reconnecting"), markup.Attr("data-boot-recovering-copy", p.RecoveringText),
+		markup.Attr("data-boot-failed-title", "Could not start"), markup.Attr("data-boot-failed-copy", p.FailedText))...), screen}
 	for _, g := range game {
 		args = append(args, g)
 	}
-	return gosx.El("div", args...)
+	return markup.El("div", args...)
 }

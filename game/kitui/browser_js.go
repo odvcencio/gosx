@@ -5,7 +5,7 @@ package kitui
 import (
 	"syscall/js"
 
-	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/markup"
 )
 
 // Handlers receive the events of kit elements.
@@ -53,6 +53,6 @@ func Bind(root js.Value, h Handlers) (stop func()) {
 // Render replaces root's content with the HTML of node. Use it to refresh a
 // panel after its state changes. Focus inside root is lost; call it only on
 // state changes, not every frame.
-func Render(root js.Value, node gosx.Node) {
-	root.Set("innerHTML", gosx.RenderHTML(node))
+func Render(root js.Value, node markup.Node) {
+	root.Set("innerHTML", markup.RenderHTML(node))
 }

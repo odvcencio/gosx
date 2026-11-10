@@ -15,6 +15,8 @@
 // Tick numbering: tick N is the state after N calls to Tick since the
 // recording began, plus Config.StartTick.
 //
-// The package imports only sim/simcore, so it builds for js/wasm without the
-// hub or net/http.
+// The package imports sim/simcore for snapshots, and game/camera and scene
+// for the replay camera rig (Rig). It builds for js/wasm without the hub,
+// net/http or the .gsx compiler; the browser dependency test in
+// game/deps_test.go checks that.
 package replay
