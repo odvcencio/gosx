@@ -35,6 +35,13 @@ type PageReport struct {
 	// then hold the median (see SampleTimings).
 	TimingSamples []TimingSample `json:"timingSamples,omitempty"`
 
+	// CollectionStall is set on a stub page whose collection timed out while
+	// the main thread was stalled (the frame sample window ran out with almost
+	// no frames). The page carries no metrics; a budget reports it as
+	// inconclusive with this reason. A timeout with no such evidence is a
+	// hard error and never produces a stub.
+	CollectionStall string `json:"collectionStall,omitempty"`
+
 	// Network resource waterfall (top-N slowest or largest)
 	Resources             []ResourceEntry `json:"resources,omitempty"`
 	TotalBytesTransferred int64           `json:"totalBytesTransferred"`
