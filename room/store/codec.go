@@ -16,9 +16,14 @@ const (
 
 	frameHeader = 8
 	// maxFrame bounds the payload a decoder will believe, so a corrupt length
-	// cannot ask for gigabytes.
-	maxFrame = 64 << 20
+	// cannot ask for gigabytes. Commit refuses a batch whose frame would be
+	// larger (ErrBatchTooLarge): recovery reads such a frame as a torn tail.
+	maxFrame = MaxBatchBytes
 )
+
+// MaxBatchBytes is the largest encoded batch one commit accepts: one WAL
+// frame. A batch encodes as its keys and values plus up to 21 bytes per op.
+const MaxBatchBytes = 64 << 20
 
 var crcTable = crc32.MakeTable(crc32.Castagnoli)
 
@@ -50,6 +55,21 @@ func appendFrame(dst []byte, ops []op) []byte {
 	binary.LittleEndian.PutUint32(dst[start:], uint32(len(payload)))
 	binary.LittleEndian.PutUint32(dst[start+4:], crc32.Checksum(payload, crcTable))
 	return dst
+}
+
+// opBytes is the encoded size of o inside a frame payload, as appendFrame
+// writes it.
+func opBytes(o op) int {
+	return 1 + uvarintLen(uint64(len(o.key))) + len(o.key) + uvarintLen(uint64(len(o.val))) + len(o.val)
+}
+
+func uvarintLen(v uint64) int {
+	n := 1
+	for v >= 0x80 {
+		v >>= 7
+		n++
+	}
+	return n
 }
 
 // nextFrame returns the payload of the frame at the start of b and the number

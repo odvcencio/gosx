@@ -35,6 +35,7 @@ func RunDev(dir string) error {
 // RunDevWithOptions stages local runtime assets, runs the target app on an
 // internal port, and fronts it with the GoSX dev proxy for live reload.
 func RunDevWithOptions(dir string, options DevOptions) error {
+	stage := newDevStageLog(os.Stderr)
 	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
@@ -43,6 +44,7 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	if err != nil {
 		return err
 	}
+	stage.done("discovered islands")
 	if err := checkVersionSkew(absDir); err != nil {
 		return err
 	}
@@ -60,6 +62,7 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	if err := ensureModuleDependencies(absDir); err != nil {
 		return err
 	}
+	stage.done("checked module dependencies")
 
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
@@ -70,9 +73,11 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	if err := checkProjectRuntimeCompatibility(absDir); err != nil {
 		return err
 	}
+	stage.done("checked strict components and runtime compatibility")
 	if err := prepareDevAssetsWithPrograms(absDir, discovery.Programs); err != nil {
 		return err
 	}
+	stage.done("staged assets (Selena artifacts, runtime wasm, runtime scripts)")
 
 	internalPort, err := pickFreePort()
 	if err != nil {
@@ -85,11 +90,13 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 		return err
 	}
 	defer runner.stop()
+	stage.done("started the app with go run (compiles it on a cold cache)")
 
 	if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
 		_ = runner.stop()
 		return fmt.Errorf("wait for app ready: %w", err)
 	}
+	stage.done("app answered readiness")
 
 	publicAddr := publicListenAddr()
 	publicURL := displayListenURL(publicAddr)
@@ -147,6 +154,28 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	}
 }
 
+// devStageLog prints one line per start-up stage with the stage's duration and
+// the total since gosx dev began. Cold starts compile Go for a while before
+// the first byte is served, and without these lines a slow start looks hung.
+type devStageLog struct {
+	w     io.Writer
+	begin time.Time
+	last  time.Time
+}
+
+func newDevStageLog(w io.Writer) *devStageLog {
+	now := time.Now()
+	fmt.Fprintln(w, "gosx dev: starting")
+	return &devStageLog{w: w, begin: now, last: now}
+}
+
+func (l *devStageLog) done(name string) {
+	now := time.Now()
+	fmt.Fprintf(l.w, "gosx dev: %s (%s, %s since start)\n", name,
+		now.Sub(l.last).Round(time.Millisecond), now.Sub(l.begin).Round(time.Millisecond))
+	l.last = now
+}
+
 type devProcessStopper interface {
 	stop() error
 }
@@ -202,9 +231,11 @@ func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) er
 	if err := validateUniqueIslandProgramNames(islands); err != nil {
 		return err
 	}
+	selenaStart := time.Now()
 	if err := devSelenaBuild(dir, os.Stderr); err != nil {
 		return fmt.Errorf("build selena artifacts: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "gosx dev: Selena artifacts checked (%s)\n", time.Since(selenaStart).Round(time.Millisecond))
 	buildDir := filepath.Join(dir, "build")
 	islandDir := filepath.Join(buildDir, "islands")
 	cssDir := filepath.Join(buildDir, "css")

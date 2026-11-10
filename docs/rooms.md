@@ -277,6 +277,14 @@ lobby ──first person connected (+ LobbyWait)──► countdown ──► ru
 - **closed**: after `ResultsHold`, or when nobody has been connected for
   `IdleTimeout`. Clients get close code 4000.
 
+If the game's code panics in a room (the simulation's `Tick` or `Snapshot`,
+a bot's `Input`, or a `Mode` function such as `NewSim`, `Over` or `Results`),
+the server recovers. It closes that room with close code 1011
+(`wire.CloseInternalError`), forgets the room and its reconnect tokens, and
+reports the panic value and stack to `Config.Logf` and `Config.OnPanic`.
+Other rooms and the HTTP server keep running. Player input reaches that code,
+so treat a panic report as a bug to fix, not noise.
+
 A person who drops keeps their seat for `ReconnectGrace`; a bot plays it
 meanwhile. After the grace, the seat stays a bot for the rest of the match
 (in the lobby it empties) and the token stops working.
@@ -319,6 +327,7 @@ Close codes a client can read from `CloseEvent.code`:
 | 4008 | room closed: nobody connected | offline |
 | 4009 | server shutting down | reconnect, then offline |
 | 4029 | too many connections | offline |
+| 1011 | the room's game code panicked; the server closed that room | reconnect, then offline |
 
 ## 7. Bandwidth
 
@@ -412,6 +421,10 @@ How it stays safe:
   ends the log; the store truncates the file there and reports the dropped bytes
   in `Stats().TruncatedBytes`. A snapshot that fails to load is disk corruption,
   and `Open` returns `ErrCorrupt` rather than start from less data.
+- A commit is one WAL frame of at most 64 MiB (`store.MaxBatchBytes`); a
+  larger batch fails with `ErrBatchTooLarge` before anything is written.
+  `MaxValueBytes` is capped at 32 MiB and `MaxKeyBytes` at 64 KiB, so every
+  frame the store writes, snapshot chunks included, is one `Open` reads back.
 - Disk use is bounded: values are at most 1 MiB, each append log keeps its newest
   10000 records (sequence numbers keep counting), live data is capped by
   `MaxDataBytes` (256 MiB, `ErrFull` beyond it), and the WAL is compacted at
@@ -428,13 +441,13 @@ The store keeps all data in memory, so it suits state measured in megabytes
 
 ```go
 ids, _ := identity.New(st, identity.Config{
-    Keys:         keys,                  // from identity.ParseKeys(os.Getenv("LEAGUE_KEYS"))
-    ValidateSeat: srv.Groups().HasMember,
+    Keys:   keys,         // from identity.ParseKeys(os.Getenv("LEAGUE_KEYS"))
+    Groups: srv.Groups(), // a seat is a member; removing the member frees the seat
 })
 inv, _ := ids.CreateInvite(identity.InviteSpec{Group: "spring", Seat: "red"})
 // inv.Code is "7KQ2-MXD9": 8 characters from an alphabet without 0 1 I L O U.
 
-sess, _ := ids.Redeem(typedCode, identity.RedeemOptions{Name: "Ada"})
+sess, _ := ids.Redeem(typedCode, identity.RedeemOptions{Name: "Ada", Caller: clientAddr})
 // sess.Token goes to the browser's local storage; sess.Seat is "red".
 
 sess, err := ids.Authenticate(token, "spring") // on every request
@@ -448,6 +461,12 @@ sess, err := ids.Authenticate(token, "spring") // on every request
   device ID, a generation number, and the issue time. There are no passwords,
   email addresses, or third-party logins. A person who loses a token asks the
   organiser for a new invite to the same seat (`Unbind` or `Revoke` frees it).
+- With `Config.Groups`, removing a member (`RemoveMember`) or deleting the
+  group frees its seats in the same commit. The old device stops
+  authenticating at once and does not get the seat back if the member is
+  added again: send that seat a new invite. `Authenticate` also re-checks the
+  seat on every call (`ValidateSeat`, which `Groups` fills in), so a binding
+  left behind by any other path cannot authenticate.
 - `Config.Keys` is a ring, newest first. The first key signs; the others only
   verify. To rotate: put the new key first and keep the old one; clients call
   `Refresh(token)` to get a token signed by the new key; drop the old key when
@@ -455,8 +474,31 @@ sess, err := ids.Authenticate(token, "spring") // on every request
   `Config.MaxTokenAge` expires tokens by age if you want that.
 - `Rotate(deviceID)` invalidates every earlier token of one device and returns a
   new one. `Revoke(deviceID)` disables the device and frees its seats.
-- Guessing: a code has about 39 bits. Put `ratelimit` in front of the endpoint
-  that calls `Redeem`, as the room server does for connections.
+- Guessing is limited in two layers. Inside the service, `Redeem` keeps
+  failed-attempt budgets: `Config.RedeemBudget` (default 100 failures per
+  minute, shared by every caller) and `Config.CallerRedeemBudget` (default 10
+  per 10 minutes for each `RedeemOptions.Caller`, such as the client address).
+  While a budget is spent, `Redeem` refuses every code, valid or not, with
+  `ErrTooManyAttempts` and does not look it up. In front of that, limit the
+  endpoint itself with `ratelimit.Keyed`, keyed by the client address from
+  `server.ClientIP` (an IPv6 /64). The league example allows 10 joins per
+  address per minute (`Config.JoinsPerMinute`) and passes the same key as
+  `Caller`.
+- Why the shared budget: a code is 8 characters from 30 (about 6.6 × 10^11
+  codes). At 100 failures per minute (144,000 a day), an attacker with any
+  number of addresses expects one hit after about 30^8 ÷ (live invites ×
+  144,000) days: about 12 years with 1,000 live invites. The cost is that an
+  attacker who keeps spending the shared budget delays everyone's
+  redemptions until they stop. No invite is spent or locked, and there is no
+  per-invite counter to target. The per-caller budget stops one address from
+  spending the shared budget alone; its 4096 slots are chosen by a keyed
+  hash, so memory is fixed and an attacker cannot aim at another caller's
+  slot. Lower `RedeemBudget` if you keep many more live invites.
+- Failed redemptions look alike: an unknown, expired or used-up code all
+  return `ErrBadInvite`. Only a caller with a valid device token
+  (`RedeemOptions.Token`) gets `ErrInviteExpired` or `ErrInviteUsedUp`.
+  `Invite(code)` tells them apart for organiser tools; do not expose it to
+  players.
 - A display name is at most 24 printable characters (`SetName`). Names are labels,
   not unique.
 
@@ -541,6 +583,9 @@ spec:
   `Recreate`; I did not test `RollingUpdate`.
 - **Shutdown**: on SIGTERM call `runner.Stop`, then `Server.Close`, then
   `store.Close` (which fsyncs). `terminationGracePeriodSeconds: 20` is enough.
+- **Client addresses**: behind an ingress, set `LEAGUE_TRUSTED_PROXIES` to
+  the ingress addresses or CIDR, so the join limit keys by each player's
+  address instead of the ingress's.
 - **Signing keys** come from a Secret, not the image. Rotate as described above;
   a rollout picks up the new ring.
 - **Backups**: snapshot the volume (CSI VolumeSnapshot). Copying the directory

@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	docsapp "__MODULE__/app"
@@ -55,14 +54,15 @@ func main() {
 	})
 	port := getenv("PORT", "8080")
 	publicBase := getenv("PUBLIC_URL", "http://localhost:"+port)
-	// Local development serves plain HTTP. A Secure cookie never reaches the
-	// server there. Point PUBLIC_URL at an https origin to restore Secure.
+	// Only development (GOSX_ENV=development, or gosx dev) may drop the Secure
+	// cookie flag, because it serves plain HTTP. Production keeps Secure even
+	// when PUBLIC_URL is unset or http://; set PUBLIC_URL to your https origin.
 	secret, err := sessionSecret()
 	if err != nil {
 		log.Fatal(err)
 	}
 	sessions, err := session.New(secret, session.Options{
-		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
+		AllowInsecure: allowInsecureCookies(publicBase),
 	})
 	if err != nil {
 		log.Fatal(err)

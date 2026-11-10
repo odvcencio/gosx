@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -45,7 +46,7 @@ func TestChromedpWebGLShaderPixelSmoke(t *testing.T) {
 			// a DevTools endpoint. That's an environment limitation, not a
 			// regression in the render path — skip, consistent with the
 			// no-Chrome and no-WebGL skips elsewhere in this test.
-			t.Skipf("chrome could not start in this environment: %v", err)
+			skipOrFailChrome(t, chromeRequired(), "chrome could not start in this environment: %v", err)
 		}
 		t.Fatalf("navigate render smoke page: %v", err)
 	}
@@ -105,6 +106,41 @@ func browserUnavailable(err error) bool {
 		errors.Is(err, context.DeadlineExceeded)
 }
 
+// requireChromeEnv names the variable that turns a missing or unstartable
+// browser from a skip into a failure. The hosted browser jobs set it; a
+// developer machine without Chrome leaves it unset and keeps the skip.
+const requireChromeEnv = "GOSX_REQUIRE_CHROME"
+
+// chromeRequired reports whether the environment promises a working browser.
+// An empty value, "0" and "false" mean not required.
+func chromeRequired() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(requireChromeEnv))) {
+	case "", "0", "false":
+		return false
+	}
+	return true
+}
+
+// chromeSkipper is the part of testing.TB that skipOrFailChrome uses, so a
+// test can check the decision without ending itself.
+type chromeSkipper interface {
+	Helper()
+	Fatalf(format string, args ...any)
+	Skipf(format string, args ...any)
+}
+
+// skipOrFailChrome is the one decision for "Chrome is missing or could not
+// start": fail when a browser is required, skip otherwise. A browser test that
+// skips on a loaded hosted runner would let the job pass without running it.
+func skipOrFailChrome(t chromeSkipper, required bool, format string, args ...any) {
+	t.Helper()
+	if required {
+		t.Fatalf(requireChromeEnv+" is set, so a browser is required here: "+format, args...)
+		return
+	}
+	t.Skipf(format, args...)
+}
+
 func findChrome(t *testing.T) string {
 	t.Helper()
 	for _, name := range []string{
@@ -119,7 +155,7 @@ func findChrome(t *testing.T) string {
 			return path
 		}
 	}
-	t.Skip("no Chrome/Chromium executable found")
+	skipOrFailChrome(t, chromeRequired(), "no Chrome/Chromium executable found")
 	return ""
 }
 

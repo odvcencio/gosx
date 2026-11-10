@@ -4609,7 +4609,7 @@
     function applyDOF(inputTex, effect, targetFBO, w, h, camera) {
 
       if (!sceneFBO || !sceneFBO.depthTex) return inputTex;
-      var prog = getProgram("dof", SCENE_POST_DOF_SOURCE);
+      var prog = getProgram("dof", sceneWebGLPostfxDOFSource());
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.activeTexture(gl.TEXTURE1);
@@ -4684,7 +4684,7 @@
       releaseSpecular: function() { if (sceneFBO) sceneWebGLSpecularTarget(gl, sceneFBO, false); },
       prepareTemporal: function(effects: any[], projection: Float32Array, view: Float32Array, canJitter: boolean, lights: any) {
         if (!canJitter) { if (temporal) temporal.reset(); temporalEnabled = false; return false; }
-        if (!temporal) temporal = createSceneTemporalHistory(gl, quad);
+        if (!temporal) temporal = sceneWebGLPostfxTemporal(gl, quad);
         temporalEnabled = temporal.prepare(effects, { width: currentWidth, height: currentHeight }, projection, view, canJitter, lights);
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
         return temporalEnabled;
@@ -6601,7 +6601,7 @@
         case SCENE_POST_VIGNETTE: scenePBRGetPostProgram(gl, programs, "vignette", SCENE_POST_VIGNETTE_SOURCE); break;
         case SCENE_POST_COLOR_GRADE: scenePBRGetPostProgram(gl, programs, "colorGrade", SCENE_POST_COLORGRADE_SOURCE); break;
         case SCENE_POST_SSAO: scenePBRGetPostProgram(gl, programs, "ssao", SCENE_POST_SSAO_SOURCE); break;
-        case SCENE_POST_DOF: scenePBRGetPostProgram(gl, programs, "dof", SCENE_POST_DOF_SOURCE); break;
+        case SCENE_POST_DOF: scenePBRGetPostProgram(gl, programs, "dof", sceneWebGLPostfxDOFSource()); break;
         case SCENE_POST_FXAA: scenePBRGetPostProgram(gl, programs, "fxaa", SCENE_POST_FXAA_SOURCE); break;
         case SCENE_POST_CUSTOM_POST: {
           const name = effect.name || "custom";
@@ -7969,7 +7969,7 @@
     const activeStaticPointKeys = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
-    var softParticles = createSceneWebGLSoftParticles(gl), exposureGL = createSceneWebGLAutoExposure(gl), motionHelpers = { attribute: bindScenePBRDirectAttribute, data: scenePBRDirectAttribute, indices: bindScenePBRDirectIndexBuffer };
+    var softParticles = createSceneWebGLSoftParticles(gl), exposureGL = sceneWebGLPostfxAutoExposure(gl), motionHelpers = { attribute: bindScenePBRDirectAttribute, data: scenePBRDirectAttribute, indices: bindScenePBRDirectIndexBuffer };
     var lastPreparedScene = null;
     var webglComputeParticleDrawStats = {
       drawEntries: 0,

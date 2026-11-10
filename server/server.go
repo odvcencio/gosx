@@ -714,7 +714,12 @@ func (a *App) registerRedirectRoutes(mux *http.ServeMux) {
 		status := route.status
 		mux.HandleFunc(matchPattern, func(w http.ResponseWriter, r *http.Request) {
 			MarkObservedRequest(r, "redirect", pattern)
-			http.Redirect(w, r, expandPatternValues(r, destination), status)
+			target := expandPatternValues(r, destination)
+			if redirectLeavesSite(destination, target) {
+				http.Error(w, "bad redirect target", http.StatusBadRequest)
+				return
+			}
+			http.Redirect(w, r, target, status)
 		})
 	}
 }
@@ -1505,23 +1510,98 @@ func normalizedRootPattern(fields []string) (string, bool) {
 	return "", false
 }
 
-var pathParamPattern = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
+// pathParamPattern matches {name} and the multi-segment wildcard {name...}.
+var pathParamPattern = regexp.MustCompile(`\{([a-zA-Z0-9_]+)(\.\.\.)?\}`)
 
+// expandPatternValues substitutes request path values into a redirect or
+// rewrite destination. r.PathValue returns the unescaped segment, so every
+// value is escaped for the part of the URL it lands in: the host, the path
+// (each segment of a {name...} wildcard is escaped separately and the slashes
+// between them are kept), or the query and fragment. An escaped value cannot
+// add a path separator, query, or host to the destination.
 func expandPatternValues(r *http.Request, target string) string {
 	if r == nil || target == "" {
 		return target
 	}
-	return pathParamPattern.ReplaceAllStringFunc(target, func(match string) string {
-		submatch := pathParamPattern.FindStringSubmatch(match)
-		if len(submatch) != 2 {
-			return match
-		}
-		value := r.PathValue(submatch[1])
+	hostStart, hostEnd := destinationHostSpan(target)
+	queryStart := strings.IndexAny(target, "?#")
+	var out strings.Builder
+	last := 0
+	for _, loc := range pathParamPattern.FindAllStringSubmatchIndex(target, -1) {
+		start, end := loc[0], loc[1]
+		name := target[loc[2]:loc[3]]
+		// A name is multi-segment when the matched route pattern declares it
+		// as {name...}; the destination may write it as {name} or {name...}.
+		wildcard := loc[4] >= 0 || strings.Contains(r.Pattern, "{"+name+"...}")
+		value := r.PathValue(name)
 		if value == "" {
-			return match
+			continue
 		}
-		return value
-	})
+		out.WriteString(target[last:start])
+		last = end
+		switch {
+		case start >= hostStart && start < hostEnd:
+			out.WriteString(url.QueryEscape(value))
+		case queryStart >= 0 && start > queryStart:
+			out.WriteString(url.QueryEscape(value))
+		case wildcard:
+			parts := strings.Split(value, "/")
+			for i, part := range parts {
+				parts[i] = url.PathEscape(part)
+			}
+			out.WriteString(strings.Join(parts, "/"))
+		default:
+			out.WriteString(url.PathEscape(value))
+		}
+	}
+	out.WriteString(target[last:])
+	return out.String()
+}
+
+// destinationHostSpan returns the byte range of the authority in a
+// destination such as "https://example.com/x", or an empty range.
+func destinationHostSpan(target string) (int, int) {
+	idx := strings.Index(target, "://")
+	if idx <= 0 {
+		return 0, 0
+	}
+	for _, c := range target[:idx] {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.') {
+			return 0, 0
+		}
+	}
+	start := idx + 3
+	end := len(target)
+	if i := strings.IndexAny(target[start:], "/?#"); i >= 0 {
+		end = start + i
+	}
+	return start, end
+}
+
+// redirectLeavesSite reports whether a destination the app wrote as a local
+// path (one slash, not "//" or "/\") became a protocol-relative URL after
+// substitution. Browsers read "//host" and "/\host" as another host.
+func redirectLeavesSite(written, expanded string) bool {
+	if !strings.HasPrefix(written, "/") || startsWithAuthorityMarker(written) {
+		return false
+	}
+	return startsWithAuthorityMarker(expanded)
+}
+
+func startsWithAuthorityMarker(s string) bool {
+	if len(s) < 2 || s[0] != '/' {
+		return false
+	}
+	if s[1] == '/' || s[1] == '\\' {
+		return true
+	}
+	if len(s) >= 4 && s[1] == '%' {
+		switch strings.ToLower(s[2:4]) {
+		case "2f", "5c":
+			return true
+		}
+	}
+	return false
 }
 
 func rewriteRequest(r *http.Request, destination string) *http.Request {

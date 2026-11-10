@@ -1,5 +1,17 @@
 # Scene3D temporal anti-aliasing, auto exposure and depth of field
 
+These three effects ship in a separate script for each renderer, which the
+page fetches together with the renderer, so the first frame already uses them.
+A page downloads that script only when one of its scenes declares `TAA`, `DOF`
+or `Environment.AutoExposure`. `MotionBlur` also pulls in the WebGPU script,
+because WebGPU motion blur reads the TAA motion vectors. Scenes without these
+effects download none of this code.
+
+The page decides from each scene's initial props. An effect that a later
+`SetPostEffectsCommand` adds to a scene that started without it falls back:
+`taa` draws as FXAA, `dof` passes the image through and auto exposure stays
+off. Declare the effect in the initial props to get it.
+
 ## Temporal anti-aliasing
 
 Add a `taa` post effect to smooth thin edges, foliage and specular sparkle that

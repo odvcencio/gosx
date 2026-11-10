@@ -94,7 +94,7 @@ test("the resolve masks water with the ocean band and pool boxes", () => {
 });
 
 test("the resolve shader uses a mover's offset only on its own surface and skips depth rejection there", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl-taa-motion.ts"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "taa-motion-gl.ts"), "utf8");
   assert.match(source, /velocity\.a > 0\.5 && abs\(velocity\.b \+ viewPosition\.z\) <= 0\.02 \* abs\(viewPosition\.z\) \+ 0\.02\) \{ uv = v_uv \+ velocity\.xy; mover = true; \}/);
   assert.match(source, /if \(!mover\) \{\s*float oldDepth/);
   assert.match(source, /float reactive = waterAt\(world\.xyz\) \? 0\.75 : 0\.0;/);
