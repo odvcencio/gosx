@@ -199,26 +199,37 @@ func TestExp9VirtualTime(t *testing.T) {
 			return
 		}
 		v.eval(`startWorker()`, nil)
-		time.Sleep(1000 * time.Millisecond)
+		// The worker's start and the page's message delivery are paused too, so
+		// let the worker start with a small budget, hold virtual time for 1.5 s
+		// of real time, then grant 10 ms so the page can receive what the
+		// worker posted meanwhile. Worker timer messages with worker
+		// performance.now() far beyond the granted virtual time mean the
+		// worker ran on the real clock.
+		_, ok := v.advance(20)
+		time.Sleep(300 * time.Millisecond)
+		_, _ = v.advance(10)
 		var log []wmsg
 		v.eval(`wlog`, &log)
-		var kinds []string
-		for _, m := range log {
-			kinds = append(kinds, m.Kind)
-		}
-		res.check("paused: worker timers do not run in 1 s of real time", len(log) <= 1, "messages=%v", kinds)
-		_, ok := v.advance(300)
+		started := len(log) > 0
+		time.Sleep(1500 * time.Millisecond)
+		_, ok2 := v.advance(10)
 		time.Sleep(200 * time.Millisecond)
 		v.eval(`wlog`, &log)
-		kinds = kinds[:0]
+		var kinds []string
+		var perfs []float64
 		for _, m := range log {
 			kinds = append(kinds, m.Kind)
+			perfs = append(perfs, m.Perf)
 		}
-		t.Logf("RESULT exp=9/%s/worker browser=%s check=%q INFO budgetExpired=%v messages after advance(300)=%v", mode, browserLabel(), "worker under a budget", ok, kinds)
-		if len(log) > 1 {
-			f := log[0].First
-			last := log[len(log)-1]
-			t.Logf("worker first=%s last=%s", jsonString(f), jsonString(last))
+		var pageV float64
+		v.eval(`performance.now()`, &pageV)
+		t.Logf("RESULT exp=9/%s/worker browser=%s check=%q INFO started=%v budgets=%v,%v page performance.now=%.1f worker messages=%v worker perf=%v", mode, browserLabel(), "worker under virtual time", started, ok, ok2, pageV, kinds, perfs)
+		ranReal := false
+		for _, m := range log {
+			if m.Kind == "t250" {
+				ranReal = true
+			}
 		}
+		res.check("worker timers are paused with the page (no t250 after 40 ms of virtual time and 2 s of real time)", started && !ranReal, "messages=%v perfs=%v", kinds, perfs)
 	})
 }
