@@ -36,6 +36,7 @@
 - Unify audio under one page mixer with five buses; Scene3D feeds the camera pose to the listener; add `game/audio.Mixer`, `SFX` and `game/audio/kernel` (WASM reactor in an AudioWorklet) (#799).
 - Add `motion/animgraph`: layered animation graphs with state machines, blend spaces, IK and look-at, driven from Go, plus the opt-in `scene3d-animation-graph` renderer chunk (#810).
 - Add `examples/game-stress`, page-side interpolation of clock-stamped pose frames, and `scene.DispatchTimedPoseFrame` so a Web Worker engine can drive a Scene3D mount (#821). See `docs/game-performance.md`.
+- `engine/surface` builds its nodes with `markup` instead of the root package (#837), so a standard-Go js/wasm build that imports it, including `client/wasm` and `client/bridge`, no longer links the `.gsx` compiler, `net/http` or TLS. Measured: the standard-Go `client/wasm` runtime drops from 2,240,432 B to 1,765,377 B Brotli (21%), and the TinyGo engine runtime from 511,077 B to 488,114 B. The browser dependency guard now covers those packages.
 
 ### Scene3D and Selena
 
@@ -59,6 +60,8 @@
 - Split the Scene3D renderer test lane in two (`js-tests-scene3d` and `js-tests-scene3d-b`) so each finishes under 10 minutes, and speed up a production-build test in `cmd/gosx` by stubbing the prebuilt runtime (#826).
 - Make the CI toolchain downloads retry with exponential backoff for up to 600 s (#820), and run every `game/...` package under js/wasm tests (#813).
 - Merged by the jam trains: #803, #808, #819, #824 and #825 (they carry the pull requests listed above).
+- The perf budget keeps `network_kb` strict when the renderer recovered during the measurement (#836): the page is judged on its bytes minus the fallback WebGL renderer chunk, when that chunk was fetched. A collection timeout is reported as inconclusive only when the page drew under 10% of its target frames; a timeout with a healthy frame rate still fails.
+- The hosted `wasm-tests` job no longer builds the TinyGo runtimes twice, and its time limit is 30 minutes (#836, #838).
 
 ## v0.59.1
 
