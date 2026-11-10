@@ -231,5 +231,22 @@ func TestExp9VirtualTime(t *testing.T) {
 			}
 		}
 		res.check("worker timers are paused with the page (no t250 after 40 ms of virtual time and 2 s of real time)", started && !ranReal, "messages=%v perfs=%v", kinds, perfs)
+		_, ok3 := v.advance(300)
+		time.Sleep(200 * time.Millisecond)
+		_, _ = v.advance(10)
+		v.eval(`wlog`, &log)
+		kinds, perfs = kinds[:0], perfs[:0]
+		got := map[string]float64{}
+		for _, m := range log {
+			kinds = append(kinds, m.Kind)
+			perfs = append(perfs, m.Perf)
+			if _, seen := got[m.Kind]; !seen {
+				got[m.Kind] = m.Perf
+			}
+		}
+		_, has100 := got["t100"]
+		_, has250 := got["t250"]
+		res.check("advance 300: worker timers t100 and t250 run at their virtual due times", ok3 && has100 && has250 && near(got["t100"], 100, 15) && near(got["t250"], 250, 15),
+			"messages=%v worker perf=%v", kinds, perfs)
 	})
 }
