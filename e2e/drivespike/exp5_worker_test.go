@@ -318,8 +318,15 @@ func TestExp5EngineWorker(t *testing.T) {
 		Frames int
 		Errors []map[string]any
 	}
+	idleTimeouts := 0
+	stuck := map[string]int{}
 	for bootFrames < 3000 && time.Since(bootStart) < 3*time.Minute {
-		tb.waitNetIdle(5 * time.Second)
+		if !tb.waitNetIdle(5 * time.Second) {
+			idleTimeouts++
+			for _, u := range tb.Inflight() {
+				stuck[u]++
+			}
+		}
 		hub.lockstep(t, 1)
 		bootFrames++
 		if bootFrames%10 == 0 {
@@ -335,7 +342,7 @@ func TestExp5EngineWorker(t *testing.T) {
 	if !run.Ready {
 		return
 	}
-	t.Logf("boot: %d lockstep frames, %s real", bootFrames, time.Since(bootStart).Round(time.Millisecond))
+	t.Logf("boot: %d lockstep frames, %s real; network-idle waits that hit the 5 s bound: %d; requests seen in flight then: %s", bootFrames, time.Since(bootStart).Round(time.Millisecond), idleTimeouts, jsonString(stuck))
 	type rec struct{ Frame, TimeMS, SimTick, HashTick float64 }
 	records := func() []rec {
 		var raw [][]float64

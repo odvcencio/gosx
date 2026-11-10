@@ -115,7 +115,7 @@ func TestExp3CSS(t *testing.T) {
 				time.Sleep(500 * time.Millisecond)
 				var s5 cssState
 				tb.eval(`cssState()`, &s5)
-				res.check("after a reload the timeline is still frozen", s5.KF == 0, "kf=%v timeline=%v", s5.KF, s5.Timeline)
+				res.check("after a reload the timeline is still frozen", s5.KF == 0, "kf=%v timeline=%s", s5.KF, jsonString(s5.Timeline))
 				tb.step(250)
 				tb.eval(`cssState()`, &s5)
 				res.check("after a reload stepping 250 ms moves the keyframes 250 px", near(s5.KF, 250, 0.5), "kf=%v", s5.KF)
