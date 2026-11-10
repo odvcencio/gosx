@@ -25,6 +25,8 @@
 - `physics.ColliderConfig` gained `Heights`, `Columns` and `Rows` (#804), so spec digests in physics parity files changed. State digests did not.
 - `m31labs.dev/selena` is pinned to the tagged release `v0.5.3` (it was a pseudo-version of the same commit). Consumers that import Selena move to `v0.5.3`.
 - A hand-written page that fetched the terrain or crowd chunk from the unversioned `/gosx/bootstrap-feature-scene3d-terrain.js` or `-crowd.js` URL no longer gets that fallback (#834). The runtime reports "chunk URL was not advertised" instead. Migration: render the scene through the island renderer, which now writes both chunk URLs with a content hash and integrity, or set the chunk URL attributes yourself.
+- The `scene` package now imports `m31labs.dev/gosx/assetpipe/manifest`, a small types-only package, to read LOD manifests (#796). It links nothing else from `assetpipe`. Migration: an app whose browser dependency guard forbids the whole `assetpipe` prefix must allow this one subpackage.
+- GoSX now requires Selena v0.5.3 (#828), so an app that also imports Selena is moved to that version. Migration: an app that commits generated Selena output, such as binding descriptors or `.sel.json` artifacts, must regenerate it after upgrading; a test that compares the committed files with the compiler fails until it does.
 
 ### Game runtime
 
