@@ -26,14 +26,19 @@
 //
 //	r := surface.NewRenderer("Graph")
 //	node := r.Mount(props)
+//
+// Nodes come from package markup (gosx.Node is the same type), so a js/wasm
+// build of this package, such as the client runtime in client/wasm, does not
+// link the .gsx compiler. The compiler-side files (discover.go, lowering.go,
+// runtime_handler.go) build only outside js.
 package surface
 
 import (
 	"encoding/json"
 	"fmt"
 
-	gosx "m31labs.dev/gosx"
 	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/markup"
 )
 
 // Modifier is a bitfield of keyboard modifier keys active during an event.
@@ -280,7 +285,7 @@ func NewRenderer(component string) *Renderer {
 
 // Mount emits the <canvas> placeholder node that the client-side bootstrap
 // uses to hydrate the surface through the shared-VM bytecode reconciler.
-// The returned gosx.Node includes:
+// The returned markup.Node includes:
 //
 //   - data-gosx-engine-component — the component name
 //   - data-gosx-engine-bytecode — absolute URL to the shared-VM program JSON
@@ -293,11 +298,11 @@ func NewRenderer(component string) *Renderer {
 // name and data-gosx-engine-status="missing" is returned so the bootstrap
 // can paint a "surface unavailable" placeholder without losing the layout
 // slot.
-func (r *Renderer) Mount(props any) gosx.Node {
+func (r *Renderer) Mount(props any) markup.Node {
 	entry, ok := registry.lookup(r.component)
 
 	attrPairs := []any{
-		gosx.Attr("data-gosx-engine-component", r.component),
+		markup.Attr("data-gosx-engine-component", r.component),
 	}
 
 	// Forward any static mount attributes (id, tabindex, …) from the .gsx
@@ -306,45 +311,45 @@ func (r *Renderer) Mount(props any) gosx.Node {
 	// hyphae-viz CSS).
 	if ok {
 		for k, v := range entry.mountAttrs {
-			attrPairs = append(attrPairs, gosx.Attr(k, v))
+			attrPairs = append(attrPairs, markup.Attr(k, v))
 		}
 	}
 
 	if !ok || entry.bytecodeURL == "" {
-		attrPairs = append(attrPairs, gosx.Attr("data-gosx-engine-status", "missing"))
-		return gosx.El("canvas", gosx.Attrs(attrPairs...))
+		attrPairs = append(attrPairs, markup.Attr("data-gosx-engine-status", "missing"))
+		return markup.El("canvas", markup.Attrs(attrPairs...))
 	}
 
 	propsJSON := encodeProps(props)
 	attrPairs = append(attrPairs,
-		gosx.Attr("data-gosx-engine-bytecode", entry.bytecodeURL),
-		gosx.Attr("data-gosx-engine-surface-kind", entry.surfaceKind.String()),
-		gosx.Attr("data-gosx-engine-props", propsJSON),
+		markup.Attr("data-gosx-engine-bytecode", entry.bytecodeURL),
+		markup.Attr("data-gosx-engine-surface-kind", entry.surfaceKind.String()),
+		markup.Attr("data-gosx-engine-props", propsJSON),
 	)
 	if len(entry.capabilities) > 0 {
 		attrPairs = append(attrPairs,
-			gosx.Attr("data-gosx-engine-caps", joinStrings(entry.capabilities, ",")),
+			markup.Attr("data-gosx-engine-caps", joinStrings(entry.capabilities, ",")),
 		)
 	}
 
-	return gosx.El("canvas", gosx.Attrs(attrPairs...))
+	return markup.El("canvas", markup.Attrs(attrPairs...))
 }
 
 // PageHead returns an optional <link rel="preload"> node for the surface
 // bytecode program. Compose into the page <head> to start the fetch
 // before the bootstrap runs. Returns an empty fragment if the component
 // has not been discovered.
-func (r *Renderer) PageHead() gosx.Node {
+func (r *Renderer) PageHead() markup.Node {
 	entry, ok := registry.lookup(r.component)
 	if !ok || entry.bytecodeURL == "" {
-		return gosx.Fragment()
+		return markup.Fragment()
 	}
-	return gosx.El("link",
-		gosx.Attrs(
-			gosx.Attr("rel", "preload"),
-			gosx.Attr("href", entry.bytecodeURL),
-			gosx.Attr("as", "fetch"),
-			gosx.Attr("crossorigin", "anonymous"),
+	return markup.El("link",
+		markup.Attrs(
+			markup.Attr("rel", "preload"),
+			markup.Attr("href", entry.bytecodeURL),
+			markup.Attr("as", "fetch"),
+			markup.Attr("crossorigin", "anonymous"),
 		),
 	)
 }
