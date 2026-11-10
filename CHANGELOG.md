@@ -24,6 +24,7 @@
 - Look change: directional shadows were drawing nothing for a plain `StandardMaterial` because of a flipped light view (`sceneShadowLightSpaceMatrix`); that is fixed, and each cascade now scales `ShadowBias` relative to the one-map fit (#802). A scene that raised `ShadowBias` to hide the problem may need the value lowered.
 - `physics.ColliderConfig` gained `Heights`, `Columns` and `Rows` (#804), so spec digests in physics parity files changed. State digests did not.
 - `m31labs.dev/selena` is pinned to the tagged release `v0.5.3` (it was a pseudo-version of the same commit). Consumers that import Selena move to `v0.5.3`.
+- A hand-written page that fetched the terrain or crowd chunk from the unversioned `/gosx/bootstrap-feature-scene3d-terrain.js` or `-crowd.js` URL no longer gets that fallback (#834). The runtime reports "chunk URL was not advertised" instead. Migration: render the scene through the island renderer, which now writes both chunk URLs with a content hash and integrity, or set the chunk URL attributes yourself.
 
 ### Game runtime
 
@@ -45,6 +46,9 @@
 - Add opt-in shader warm-up (`Props.ShaderWarmup`) and runtime text atlases (`Props.TextAtlases`) as separate chunks, and fix a WebGPU bug that drew one triangle per quad for world-baked indexed meshes (#811).
 - Move GPU timing stamps off the ocean graph's compute passes so Metal no longer loses the WebGPU device (#805).
 - Add `gosx assets build` (Blender export to optimized GLBs, LOD chain, KTX2 textures and a manifest), `scene.ModelLODGroup`, glTF `KHR_lights_punctual` import, dominant UV-set selection, and rigs up to 256 joints on WebGL2 (#796).
+- A Scene3D base chunk that fails to load no longer leaves every island on the page unhydrated (#834). The runtime's wait now ends on the script's `error` event, on a chunk that loads without signalling readiness, and after `__gosx_runtime_ready_timeout_ms` (default 10 s). Islands still hydrate, `gosx:ready` still fires, and each failed feature chunk is reported by name through the runtime's issue list and a `gosx:error` event.
+- Terrain and crowd chunks are advertised with hashed URLs (#834), so scenes that use `Terrain`, `Scatter`, `Wind` or `Environment.Crowds` load under a base path and inside `gosx export` bundles. Before, both chunks were fetched from a hard-coded root URL that a static export did not ship.
+- After a lost WebGPU device, the render watchdog waits up to 3 s for the WebGPU re-probe before it falls back to WebGL (#834). A recoverable loss no longer downloads the WebGL renderer chunk and swaps the canvas twice. A device with no WebGPU is unaffected.
 
 ### Tooling and CI
 
@@ -55,11 +59,6 @@
 - Split the Scene3D renderer test lane in two (`js-tests-scene3d` and `js-tests-scene3d-b`) so each finishes under 10 minutes, and speed up a production-build test in `cmd/gosx` by stubbing the prebuilt runtime (#826).
 - Make the CI toolchain downloads retry with exponential backoff for up to 600 s (#820), and run every `game/...` package under js/wasm tests (#813).
 - Merged by the jam trains: #803, #808, #819, #824 and #825 (they carry the pull requests listed above).
-
-### Pending before tag
-
-- #834 (Scene3D chunk loading)
-- Follow-up that takes `engine/surface` off the root package
 
 ## v0.59.1
 
