@@ -275,7 +275,9 @@ WebGPU run holds 60.0 fps at 2.6 / 5.6 ms with it on, and 59.8 fps at
 5.9 / 11.0 ms at 4x. Before, a Metal command buffer that held the crowd's cull
 pass and the renderer's frame-end GPU timestamp failed ("Insufficient Memory",
 `kIOGPUCommandBufferCallbackErrorOutOfMemory`) and lost the device within a
-second; the timestamp now goes in a command buffer of its own.
+second. The crowd's frustum culls (camera and shadow lights) now go in a
+command buffer of their own, submitted before the frame's; the occlusion cull,
+which reads the frame's depth, stays in the frame.
 
 ### Known problems
 

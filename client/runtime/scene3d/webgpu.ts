@@ -7069,19 +7069,14 @@
       return null;
     }
 
-    // Runs after the frame's submit: the end stamp goes in a command buffer of its own. Dawn records each queue.submit as one
-    // Metal command buffer, and on Metal (Apple M4 Pro, Chrome 157) one that holds the crowd's GPU culling pass and this
-    // stamp fails with "Insufficient Memory" and loses the device.
-    function endGPUFrameTiming(token) {
+    function endGPUFrameTiming(encoder, token) {
       if (!token) return;
       try {
-        var encoder = device.createCommandEncoder({ label: "gosx-frame-timer-end" });
         encoder.beginComputePass({ label: "gosx-frame-timer-end", timestampWrites: {
           querySet: token.timing.querySet, endOfPassWriteIndex: token.slotIndex * 2 + 1,
         } }).end();
         encoder.resolveQuerySet(token.timing.querySet, token.slotIndex * 2, 2, token.slot.resolve, 0);
         encoder.copyBufferToBuffer(token.slot.resolve, 0, token.slot.readback, 0, 16);
-        device.queue.submit([encoder.finish()]);
         token.slot.pending = true;
         token.slot.frameSeq = gpuTimingFrameSeq;
       } catch (_timestampEndError) {
@@ -15759,7 +15754,7 @@
       frame.matrices[slot] = lightMatrix;
       frame.indices[slot] = lightIndex;
       frame.gpuDriven.lightView(encoder, lightMatrix, slot);
-      frame.crowd.lightView(encoder, lightMatrix, slot);
+      frame.crowd.lightView(frame.crowdEncoder, lightMatrix, slot);
       for (var c = 0; c < cascades; c++) {
         renderShadowPass(encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
       }
@@ -18158,14 +18153,14 @@
       var shadowLightIndices = [-1, -1];
       var activeShadowCount = 0;
 
-      var encoder = device.createCommandEncoder({ label: "gosx-frame" });
+      var encoder = device.createCommandEncoder({ label: "gosx-frame" }), crowdEncoder = encoder;
       gpuTimingFrameSeq += 1;
       drainDeferredGPUResources(false);
       var gpuTimingToken = beginGPUFrameTiming(encoder);
       // Per-pass stamps ride on the render-pass descriptors, so the slot must be
       // chosen before the shadow pass opens.
       pollGPUPassTimingReadback();
-      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
+      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
       sceneWebGPUSelenaSurfaceFrame(selenaSurfaces);
@@ -18219,14 +18214,18 @@
         return !material || !material.detail;
       }) : instancedDrawList.opaque });
       var crowd = webGPUCrowdHost();
-      crowd.beginFrame(bundle, encoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
+      // The crowd's frustum cull passes (the camera's and each light's) go in a command buffer of their own, submitted before the
+      // frame's: on Metal (Apple M4 Pro, Chrome 157) a command buffer that holds them and the frame-end timestamp fails with "Insufficient
+      // Memory" and loses the device. Dawn records each submit as one Metal command buffer. The occlusion cull reads this frame's depth.
+      crowdEncoder = bundle.gpuDriven ? device.createCommandEncoder({ label: "gosx-crowd-cull" }) : encoder;
+      crowd.beginFrame(bundle, crowdEncoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
       var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
-      var shadowFrame = { bundle: bundle, camera: cam, maxPixels: shadowMaxPixels, gpuDriven: gpuDriven, crowd: crowd, aspect: scaledW / scaledH, buffers: pbrSceneBuffers, matrices: shadowLightMatrices, indices: shadowLightIndices };
+      var shadowFrame = { bundle: bundle, camera: cam, maxPixels: shadowMaxPixels, gpuDriven: gpuDriven, crowd: crowd, crowdEncoder: crowdEncoder, aspect: scaledW / scaledH, buffers: pbrSceneBuffers, matrices: shadowLightMatrices, indices: shadowLightIndices };
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
@@ -18735,11 +18734,12 @@
         Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: temporalAA.velocityView() } }), temporalAA.stats(), autoExposure.stats());
       }
 
+      endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
       gpuDriven.finishEncoding(encoder);
       crowd.finishEncoding(encoder);
+      if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; }
       device.queue.submit([encoder.finish()]);
-      endGPUFrameTiming(gpuTimingToken);
       Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink), crowd.endFrame());
       pollGPUTimingReadback();
       // Pick readback starts after submit and does not wait in this frame.
