@@ -14,9 +14,15 @@ import (
 
 // browserPackages are the packages a browser (js/wasm) game build imports: the
 // game runtime and kit, the simulation, the animation graph, the markup
-// package the kit screens build their HTML with, and the Go WASM engine
-// fixture that the size numbers in the README come from.
+// package the kit screens build their HTML with, the standard-Go client
+// runtime (client/wasm, default tags) with the engine-surface packages it
+// links, and the Go WASM engine fixture that the size numbers in the README
+// come from.
 var browserPackages = []string{
+	"m31labs.dev/gosx/client/bridge",
+	"m31labs.dev/gosx/client/wasm",
+	"m31labs.dev/gosx/engine/surface",
+	"m31labs.dev/gosx/engine/surface/runtime",
 	"m31labs.dev/gosx/game",
 	"m31labs.dev/gosx/game/actions",
 	"m31labs.dev/gosx/game/audio",
