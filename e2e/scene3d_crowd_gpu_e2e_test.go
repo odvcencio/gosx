@@ -139,13 +139,17 @@ const crowdMeasureJS = `(async (ms) => {
 
 func crowdServe(t *testing.T, root string, bootstrap []byte, props scene.Props) string {
 	t.Helper()
+	propsJSON, err := json.Marshal(props)
+	if err != nil {
+		t.Fatal(err)
+	}
 	manifest, err := json.Marshal(map[string]any{"engines": []any{map[string]any{
-		"id": "crowd", "component": "GoSXScene3D", "kind": "surface", "mountId": "crowd-root", "props": props,
+		"id": "crowd", "component": "GoSXScene3D", "kind": "surface", "mountId": "crowd-root", "props": json.RawMessage(propsJSON),
 	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	page := fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#crowd-root{width:1280px;height:720px}</style></head><body><div id="crowd-root"></div><script id="gosx-manifest" type="application/json">%s</script><script src="/bootstrap.js"></script></body></html>`, manifest)
+	page := fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#crowd-root{width:1280px;height:720px}</style></head><body><div id="crowd-root"></div><script id="gosx-manifest" type="application/json">%s</script><script data-gosx-script="bootstrap"%s src="/bootstrap.js"></script></body></html>`, manifest, scene3DChunkAttrs(t, propsJSON))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/bootstrap.js":
