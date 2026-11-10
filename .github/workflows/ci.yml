@@ -585,8 +585,17 @@ jobs:
       - name: Production water bundle smoke test
         run: make test-water-prod
 
-      - name: Build WASM runtime
-        run: make build-runtime
+      # `make build-runtime` ran the same `gosx build-runtime` as the size
+      # budget gate (4.5 minutes or more again). The size gate already built every
+      # production runtime into this directory, and nothing in this job reads
+      # ./build, so check the artifacts instead of building them twice.
+      - name: Production WASM runtime artifacts exist
+        run: |
+          dir="${TMPDIR:-/tmp}/gosx-wasm-size"
+          for f in gosx-runtime.wasm gosx-runtime-islands.wasm gosx-runtime-core.wasm wasm_exec.js; do
+            test -s "${dir}/${f}" || { echo "missing ${dir}/${f}"; exit 1; }
+          done
+          ls -l "${dir}"
 
   # wire-gates: deterministic per-route network budgets. It builds a fresh
   # `gosx init` app with one counter island and the docs site for production,

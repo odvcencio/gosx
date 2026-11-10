@@ -153,6 +153,7 @@ func RunScenario(s *Scenario) (*Report, error) {
 				fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s phase=%s done elapsed=%s\n", i+1, total, url, name, elapsed.Round(time.Millisecond))
 				return nil
 			}
+			stall := ""
 			runSceneFrameSamplePhase := func(name string) error {
 				return runPhase(name, func() error {
 					sample, err := waitForSceneFrames(routeD, frames, sceneFrameSampleWindow, sceneFramePollInterval)
@@ -160,6 +161,9 @@ func RunScenario(s *Scenario) (*Report, error) {
 						return err
 					}
 					if sample.Exhausted {
+						if stall == "" {
+							stall = frameStallReason(sample)
+						}
 						fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s phase=%s sample-window-exhausted target=%d observed=%d window=%s action=continue-with-partial-metrics\n", i+1, total, url, name, sample.Target, sample.Observed, sceneFrameSampleWindow)
 					}
 					return nil
@@ -276,6 +280,10 @@ func RunScenario(s *Scenario) (*Report, error) {
 				page, err = collectPageReportWithQueryRunner(routeD, url, runCollectQuery)
 				return err
 			}); err != nil {
+				if stub := collectionStallPage(url, stall, err); stub != nil {
+					fmt.Fprintf(diagnostics, "gosx perf: route %d/%d %s collection timed out with a stalled renderer (%s); reporting the page as inconclusive\n", i+1, total, url, stall)
+					return stub, nil
+				}
 				return nil, fmt.Errorf("phase %s: %w", routePhase, err)
 			}
 
@@ -612,4 +620,26 @@ func runInteraction(d *Driver, inter Interaction) (*InteractionMetric, error) {
 		}
 	}
 	return metric, nil
+}
+
+// frameStallReason returns a reason when the frame sample window ran out with
+// under a tenth of the target frames: the main thread (or a software
+// renderer) was too busy to draw, which is also what makes later browser
+// calls time out. It returns "" for a window that ran out with a healthy
+// frame rate.
+func frameStallReason(sample sceneFrameSampleResult) string {
+	if sample.Target <= 0 || sample.Observed*10 >= sample.Target {
+		return ""
+	}
+	return fmt.Sprintf("scene3d-frames-stalled: %d of %d frames in the sample window", sample.Observed, sample.Target)
+}
+
+// collectionStallPage turns a collection timeout into a metric-less stub page
+// when the route showed a renderer stall. Any other error, or a timeout with a
+// healthy renderer, returns nil and stays a hard failure.
+func collectionStallPage(url, stall string, err error) *PageReport {
+	if stall == "" || !errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	return &PageReport{URL: url, CollectionStall: stall}
 }
