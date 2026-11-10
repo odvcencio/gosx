@@ -1824,7 +1824,14 @@
     if (!sceneHasNavigatorWebGPU()) {
       return Promise.resolve(null);
     }
-    return ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
+    return sceneWithPostFXChunk(ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js"), "postfx-webgpu", "gosxScene3dPostfxWebgpuUrl");
+  }
+
+  // TAA, depth of field and auto exposure ship per backend in a chunk the page
+  // advertises only for scenes that declare them. It loads with the renderer
+  // chunk; with no URL it settles at once and the renderer skips those passes.
+  function sceneWithPostFXChunk(renderer: Promise<any>, kind: string, key: string) {
+    return Promise.all([renderer, ensureSceneGatedFeatureLoaded(kind, key, "").catch((): any => null)]).then((loaded: any[]) => loaded[0]);
   }
 
   async function ensurePreferredWebGPUBackend(props, capability) {
@@ -1859,18 +1866,14 @@
   // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
 
   function ensureWebGLFeatureLoaded() {
-    // The monolith keeps 16-scene-webgl.js inline, so nothing to fetch.
-    if (typeof createScenePBRRendererOrFallback === "function") {
-      return Promise.resolve(sceneWebGLChunkAPI() || { inline: true });
-    }
-    if (window.__gosx_scene3d_webgl_api) {
-      return Promise.resolve(window.__gosx_scene3d_webgl_api);
-    }
-    if (window.__gosx_scene3d_webgl_feature_promise) {
+    // The monolith keeps 16-scene-webgl.js inline, and a loaded chunk stays
+    // loaded; then only the post-effect chunk can be left to fetch.
+    const ready = typeof createScenePBRRendererOrFallback === "function" ? sceneWebGLChunkAPI() || { inline: true } : window.__gosx_scene3d_webgl_api;
+    if (!ready && window.__gosx_scene3d_webgl_feature_promise) {
       return window.__gosx_scene3d_webgl_feature_promise;
     }
-    const promise = ensureSceneGatedFeatureLoaded("webgl", "gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js");
-    window.__gosx_scene3d_webgl_feature_promise = promise;
+    const promise = sceneWithPostFXChunk(ready ? Promise.resolve(ready) : ensureSceneGatedFeatureLoaded("webgl", "gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js"), "postfx-webgl", "gosxScene3dPostfxWebglUrl");
+    if (!ready) window.__gosx_scene3d_webgl_feature_promise = promise;
     return promise;
   }
 
@@ -1939,12 +1942,11 @@
   //
   // A WebGPU page does NOT wait here. It reaches WebGL only through a device
   // loss, and deferSceneWebGLFallback below fetches the chunk at that point.
+  // A WebGL mount waits here even when the renderer is in place (the monolith,
+  // or an earlier mount), for the post-effect chunk its page advertises.
   async function settlePreferredWebGLBackend(props, capability) {
-    if (sceneWebGLRendererFactory()) {
-      return true;
-    }
     if (!sceneMountWantsWebGLFirst(props, capability)) {
-      return false;
+      return !!sceneWebGLRendererFactory();
     }
     try {
       return !!(await ensureWebGLFeatureLoaded());

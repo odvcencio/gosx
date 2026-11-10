@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/game"
 	"m31labs.dev/gosx/game/actions"
 	"m31labs.dev/gosx/game/boot"
@@ -13,6 +12,7 @@ import (
 	"m31labs.dev/gosx/game/kitui"
 	"m31labs.dev/gosx/game/settings"
 	"m31labs.dev/gosx/game/storage"
+	"m31labs.dev/gosx/markup"
 )
 
 // Example wires the whole game kit: settings, bindings, loading gate, state
@@ -50,6 +50,6 @@ func Example() {
 	frame(16 * time.Millisecond)
 	in.Feed(actions.Event{Device: actions.PadDevice(0), Source: actions.PadButton(actions.PadStart), Value: 1})
 	frame(16 * time.Millisecond)
-	fmt.Println(fl.Stack(), rt.Paused(), len(gosx.RenderHTML(kitui.PauseMenu(kitui.PauseProps{}))) > 0)
+	fmt.Println(fl.Stack(), rt.Paused(), len(markup.RenderHTML(kitui.PauseMenu(kitui.PauseProps{}))) > 0)
 	// Output: [play pause] true true
 }

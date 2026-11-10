@@ -4,6 +4,7 @@ package sceneprobe
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -169,9 +170,10 @@ type Probe struct {
 	Groups, ComputeParticles, InstancedMeshes, Points, Models, InstancedGLBMeshes, Objects, Sprites, WaterSystems, Nodes []Record
 	Animations                                                                                                           []Clip
 	Environment                                                                                                          struct {
-		EnvMap string
-		IBL    struct{ Radiance, Irradiance, BRDFLUT Texture }
-		Ocean  struct{ Spectrum Presence }
+		EnvMap       string
+		IBL          struct{ Radiance, Irradiance, BRDFLUT Texture }
+		Ocean        struct{ Spectrum Presence }
+		AutoExposure Presence
 	}
 	Walk                            map[string]json.RawMessage
 	Vessel                          *struct{ NodeID string }
@@ -296,9 +298,26 @@ func (p *Probe) NeedsTextAtlases() bool {
 // bootstrap-feature-scene3d-depthfx.js. An effect entry that cannot be read as
 // an object counts as absent.
 func (p *Probe) NeedsDepthFX() bool {
-	if p == nil {
-		return false
-	}
+	return p != nil && (p.hasPostEffect("decals", "motionBlur") || p.Scene.NeedsDepthFX())
+}
+
+// NeedsPostFX reports whether the scene declares a taa or dof post effect, or
+// environment.autoExposure, in either accepted props shape. Both renderers run
+// those passes from their bootstrap-feature-scene3d-postfx-<backend>.js chunk.
+func (p *Probe) NeedsPostFX() bool {
+	return p != nil && (p.Environment.AutoExposure.Truthy || p.hasPostEffect("taa", "dof") || p.Scene.NeedsPostFX())
+}
+
+// NeedsWebGPUPostFX adds a motionBlur post effect to NeedsPostFX: WebGPU motion
+// blur reads the velocity pass in the WebGPU post-effects chunk. WebGL2 motion
+// blur follows the camera only and needs no post-effects chunk.
+func (p *Probe) NeedsWebGPUPostFX() bool {
+	return p != nil && (p.NeedsPostFX() || p.hasPostEffect("motionBlur") || p.Scene.NeedsWebGPUPostFX())
+}
+
+// hasPostEffect reports whether this level's postEffects or postFX lists an
+// effect of one of kinds.
+func (p *Probe) hasPostEffect(kinds ...string) bool {
 	for _, field := range []json.RawMessage{p.PostEffects, p.PostFX} {
 		var list []json.RawMessage
 		if json.Unmarshal(field, &list) != nil {
@@ -306,12 +325,12 @@ func (p *Probe) NeedsDepthFX() bool {
 		}
 		for _, raw := range list {
 			var effect struct{ Kind string }
-			if json.Unmarshal(raw, &effect) == nil && (effect.Kind == "decals" || effect.Kind == "motionBlur") {
+			if json.Unmarshal(raw, &effect) == nil && slices.Contains(kinds, effect.Kind) {
 				return true
 			}
 		}
 	}
-	return p.Scene.NeedsDepthFX()
+	return false
 }
 
 // NeedsOceanFFT reports whether the scene's ocean carries a wave spectrum, in

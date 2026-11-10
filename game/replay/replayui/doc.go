@@ -2,6 +2,8 @@
 // keyboard, mouse and gamepad actions (package game/actions) into player and
 // camera commands, and a Bar that renders the scrubber, speed picker, camera
 // picker and marker list as GoSX nodes in the look of package game/kitui.
+// The nodes come from package markup, so a js/wasm build does not link the
+// .gsx compiler.
 //
 // The Controller and Bar are separate on purpose. The Controller holds no
 // markup and runs every frame; the Bar is a pure function of a View, and a

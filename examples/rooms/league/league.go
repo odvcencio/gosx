@@ -12,14 +12,17 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 
+	"m31labs.dev/gosx/ratelimit"
 	"m31labs.dev/gosx/room/advance"
 	"m31labs.dev/gosx/room/group"
 	"m31labs.dev/gosx/room/identity"
 	"m31labs.dev/gosx/room/store"
+	"m31labs.dev/gosx/server"
 )
 
 const jobName = "round"
@@ -32,6 +35,10 @@ type Config struct {
 	AdminToken string
 	Now        func() time.Time
 	Poll       time.Duration
+	// JoinsPerMinute bounds POST /join per client address (see clientKey),
+	// in front of the identity service's own failed-attempt budgets.
+	// Default 10.
+	JoinsPerMinute int
 }
 
 // League wires the packages together and serves the HTTP API.
@@ -41,6 +48,7 @@ type League struct {
 	IDs    *identity.Service
 	Runner *advance.Runner
 	mux    *http.ServeMux
+	joins  *ratelimit.Keyed
 }
 
 // New builds a League. Call Start to run scheduled advances.
@@ -51,9 +59,13 @@ func New(cfg Config) (*League, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	l := &League{cfg: cfg}
+	if cfg.JoinsPerMinute <= 0 {
+		cfg.JoinsPerMinute = 10
+	}
+	l := &League{cfg: cfg, joins: ratelimit.NewKeyed(1<<14, cfg.Now)}
 	l.Groups = group.New(cfg.Store, group.Options{Now: cfg.Now})
-	ids, err := identity.New(cfg.Store, identity.Config{Keys: cfg.Keys, Now: cfg.Now, ValidateSeat: l.Groups.HasMember})
+	// Groups ties seats to members: removing a member frees its seat.
+	ids, err := identity.New(cfg.Store, identity.Config{Keys: cfg.Keys, Now: cfg.Now, Groups: l.Groups})
 	if err != nil {
 		return nil, err
 	}
@@ -205,12 +217,21 @@ func (l *League) getGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// join redeems an invite. Two layers limit code guessing: this per-address
+// limit on every request, and identity's failed-attempt budgets inside
+// Redeem (per address through Caller, and shared), which hold even without
+// this one.
 func (l *League) join(w http.ResponseWriter, r *http.Request) {
+	key := clientKey(r)
+	if !l.joins.Allow(key, l.cfg.JoinsPerMinute, time.Minute) {
+		http.Error(w, "too many join attempts; try again later", http.StatusTooManyRequests)
+		return
+	}
 	var req struct{ Code, Name, Seat, Token string }
 	if !decode(w, r, &req) {
 		return
 	}
-	s, err := l.IDs.Redeem(req.Code, identity.RedeemOptions{Name: req.Name, Seat: req.Seat, Token: req.Token})
+	s, err := l.IDs.Redeem(req.Code, identity.RedeemOptions{Name: req.Name, Seat: req.Seat, Token: req.Token, Caller: key})
 	if err != nil {
 		fail(w, err)
 		return
@@ -239,6 +260,22 @@ func (l *League) finished(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"round": j.Round + 1, "seat": s.Seat})
 }
 
+// clientKey names the caller for rate limits. server.ClientIP applies the
+// gosx App's trusted-proxy policy when the league is mounted in an App
+// (see cmd/main.go) and is the TCP peer otherwise, so a client cannot forge
+// it with a header. An IPv6 address is cut to its /64, the block one
+// subscriber usually holds.
+func clientKey(r *http.Request) string {
+	addr := server.ClientIP(r)
+	switch {
+	case !addr.IsValid():
+		return "invalid"
+	case addr.Is6():
+		return netip.PrefixFrom(addr, 64).Masked().String()
+	}
+	return addr.String()
+}
+
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(v); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -263,6 +300,8 @@ func orNull(b []byte) []byte {
 func fail(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
+	case errors.Is(err, identity.ErrTooManyAttempts):
+		status = http.StatusTooManyRequests
 	case errors.Is(err, group.ErrNotFound), errors.Is(err, advance.ErrNotFound), errors.Is(err, identity.ErrBadInvite):
 		status = http.StatusNotFound
 	case errors.Is(err, identity.ErrBadToken), errors.Is(err, identity.ErrRevoked), errors.Is(err, identity.ErrNotBound):

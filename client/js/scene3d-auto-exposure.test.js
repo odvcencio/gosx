@@ -13,21 +13,27 @@ const {
   createBoardWebGPUHarness, makePointsBundle, createWebGLRendererForPost, makeWebGLBundleWithCustomPost, flushAsyncWork,
 } = require("./runtime-test-harness.js");
 
-function loadNormalizer() {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15a-scene-postfx-shared.ts"), "utf8");
-  const start = source.indexOf("function sceneNormalizeAutoExposure(");
+// The base chunk keeps the authored object; each renderer's post-effect chunk
+// fills the defaults where it reads them (exposure-wgpu.ts, exposure-gl.ts).
+function loadNormalizer(file, name) {
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", file), "utf8");
+  const start = source.indexOf("function " + name + "(");
+  const end = source.indexOf("\n}\n", start) + 3;
   const context = {};
   vm.createContext(context);
-  vm.runInContext(ts.transpileModule(source.slice(start), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + "\nglobalThis.normalize = sceneNormalizeAutoExposure;", context);
+  vm.runInContext(ts.transpileModule(source.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText + "\nglobalThis.normalize = " + name + ";", context);
   return context.normalize;
 }
 
-test("the shared normalizer fills defaults and orders the bounds", () => {
-  const normalize = loadNormalizer();
-  assert.equal(normalize(null), null);
-  assert.deepEqual(JSON.parse(JSON.stringify(normalize({}))), { minExposure: 0.1, maxExposure: 8, key: 0.18, speedUp: 3, speedDown: 1, compensation: 0 });
-  const swapped = normalize({ minExposure: 6, maxExposure: 2, compensation: 40, key: -1 });
-  assert.deepEqual([swapped.minExposure, swapped.maxExposure, swapped.compensation, swapped.key], [2, 6, 8, 0.18]);
+test("both renderers' normalizers fill defaults and order the bounds", () => {
+  for (const [file, name] of [["exposure-wgpu.ts", "wgpuAutoExposureSettings"], ["exposure-gl.ts", "sceneWebGLAutoExposureSettings"]]) {
+    const normalize = loadNormalizer(file, name);
+    assert.equal(normalize(null), null, file);
+    assert.equal(normalize(true), null, file);
+    assert.deepEqual(JSON.parse(JSON.stringify(normalize({}))), { minExposure: 0.1, maxExposure: 8, key: 0.18, speedUp: 3, speedDown: 1, compensation: 0 }, file);
+    const swapped = normalize({ minExposure: 6, maxExposure: 2, compensation: 40, key: -1 });
+    assert.deepEqual([swapped.minExposure, swapped.maxExposure, swapped.compensation, swapped.key], [2, 6, 8, 0.18], file);
+  }
 });
 
 async function renderWebGPU(environment, frames = 3) {

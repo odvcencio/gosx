@@ -27,26 +27,34 @@ import (
 	"time"
 	"unicode"
 
+	"m31labs.dev/gosx/room/group"
 	"m31labs.dev/gosx/room/store"
 )
 
 // Errors returned by the service.
 var (
-	ErrBadToken       = errors.New("identity: invalid token")
-	ErrRevoked        = errors.New("identity: device revoked")
-	ErrUnknownDevice  = errors.New("identity: unknown device")
-	ErrBadInvite      = errors.New("identity: invalid invite code")
-	ErrInviteExpired  = errors.New("identity: invite expired")
-	ErrInviteUsedUp   = errors.New("identity: invite already used")
-	ErrSeatTaken      = errors.New("identity: seat already bound to another device")
-	ErrAlreadyBound   = errors.New("identity: device already has a seat in this group")
-	ErrNoSuchSeat     = errors.New("identity: no such seat in group")
-	ErrSeatRequired   = errors.New("identity: a seat is required")
-	ErrBadSpec        = errors.New("identity: invalid invite spec")
-	ErrNoKeys         = errors.New("identity: at least one signing key is required")
-	ErrTokenTooOld    = errors.New("identity: token too old")
-	ErrNotBound       = errors.New("identity: device has no seat in this group")
-	ErrTooManyDevices = errors.New("identity: device limit reached")
+	ErrBadToken      = errors.New("identity: invalid token")
+	ErrRevoked       = errors.New("identity: device revoked")
+	ErrUnknownDevice = errors.New("identity: unknown device")
+	// ErrBadInvite is Redeem's one answer for a code that is unknown,
+	// expired or used up, so a guesser cannot tell them apart.
+	ErrBadInvite = errors.New("identity: invalid invite code")
+	// ErrInviteExpired and ErrInviteUsedUp tell those cases apart only for a
+	// caller who passes a valid RedeemOptions.Token.
+	ErrInviteExpired = errors.New("identity: invite expired")
+	ErrInviteUsedUp  = errors.New("identity: invite already used")
+	// ErrTooManyAttempts refuses a redemption, valid code or not, while a
+	// failed-attempt budget is spent. Try again after it refills.
+	ErrTooManyAttempts = errors.New("identity: too many failed invite attempts; try again later")
+	ErrSeatTaken       = errors.New("identity: seat already bound to another device")
+	ErrAlreadyBound    = errors.New("identity: device already has a seat in this group")
+	ErrNoSuchSeat      = errors.New("identity: no such seat in group")
+	ErrSeatRequired    = errors.New("identity: a seat is required")
+	ErrBadSpec         = errors.New("identity: invalid invite spec")
+	ErrNoKeys          = errors.New("identity: at least one signing key is required")
+	ErrTokenTooOld     = errors.New("identity: token too old")
+	ErrNotBound        = errors.New("identity: device has no seat in this group")
+	ErrTooManyDevices  = errors.New("identity: device limit reached")
 )
 
 const (
@@ -101,9 +109,25 @@ type Config struct {
 	Keys []Key
 	// Now returns the current time. Default time.Now.
 	Now func() time.Time
-	// ValidateSeat reports whether seat exists in group. Nil accepts any seat
-	// name. Wire it to group.Registry.HasMember.
+	// Groups, when set, ties seats to the registry's members: a seat must be
+	// a member (unless ValidateSeat says otherwise), and removing a member or
+	// deleting a group frees its seats in the same commit. The registry must
+	// use the same store. This is the recommended wiring.
+	Groups *group.Registry
+	// ValidateSeat reports whether seat exists in group. It is checked when a
+	// seat is bound and again on every Authenticate. Nil accepts any seat
+	// name, or uses Groups.HasMember when Groups is set.
 	ValidateSeat func(group, seat string) bool
+	// RedeemBudget limits failed redemptions (unknown, expired or used-up
+	// codes) across all callers. While it is spent, Redeem refuses every
+	// code, valid or not, with ErrTooManyAttempts, so guessing stays slow
+	// even from many addresses. Default 100 failures per minute.
+	RedeemBudget Budget
+	// CallerRedeemBudget limits failed redemptions per RedeemOptions.Caller,
+	// so one noisy caller is refused before it spends the shared budget.
+	// Default 10 failures per 10 minutes. Memory is fixed: callers share a
+	// table of 4096 slots by keyed hash.
+	CallerRedeemBudget Budget
 	// MaxInviteUses caps Uses on one invite. Default 100.
 	MaxInviteUses int
 	// MaxInviteTTL caps an invite's lifetime. Default 30 days.
@@ -155,6 +179,10 @@ type RedeemOptions struct {
 	// Token, when set, binds the invite to the device it names instead of
 	// creating a new device. A returning player uses it to join another group.
 	Token string
+	// Caller identifies who is redeeming, for Config.CallerRedeemBudget: the
+	// client address (an IPv6 /64 rather than one address), or an account.
+	// Empty applies only the shared Config.RedeemBudget.
+	Caller string
 }
 
 // Session is the result of a redemption or authentication.
@@ -167,9 +195,10 @@ type Session struct {
 
 // Service creates, signs, and checks identities. It is safe for concurrent use.
 type Service struct {
-	st  *store.Store
-	cfg Config
-	mu  sync.Mutex
+	st       *store.Store
+	cfg      Config
+	mu       sync.Mutex
+	attempts *attempts
 }
 
 // New returns a service over st.
@@ -197,7 +226,21 @@ func New(st *store.Store, cfg Config) (*Service, error) {
 	if cfg.MaxDevices <= 0 {
 		cfg.MaxDevices = 100000
 	}
-	return &Service{st: st, cfg: cfg}, nil
+	if cfg.Groups != nil {
+		if cfg.Groups.Store() != st {
+			return nil, errors.New("identity: Config.Groups must use the service's store")
+		}
+		if cfg.ValidateSeat == nil {
+			cfg.ValidateSeat = cfg.Groups.HasMember
+		}
+	}
+	cfg.RedeemBudget = cfg.RedeemBudget.withDefault(100, time.Minute)
+	cfg.CallerRedeemBudget = cfg.CallerRedeemBudget.withDefault(10, 10*time.Minute)
+	svc := &Service{st: st, cfg: cfg, attempts: newAttempts(cfg.RedeemBudget, cfg.CallerRedeemBudget, cfg.Now())}
+	if cfg.Groups != nil {
+		cfg.Groups.SetUnbinder(svc)
+	}
+	return svc, nil
 }
 
 func validToken(s string) bool {
@@ -292,7 +335,9 @@ func (s *Service) CreateInvite(spec InviteSpec) (Invite, error) {
 	return Invite{}, errors.New("identity: could not find a free invite code")
 }
 
-// Invite returns the invite for a code, expired or not.
+// Invite returns the invite for a code, expired or not. It is for organiser
+// tools: unlike Redeem it tells unknown codes from expired ones and spends no
+// budget, so do not expose it to players.
 func (s *Service) Invite(code string) (Invite, error) {
 	norm := NormalizeCode(code)
 	if norm == "" {
@@ -362,52 +407,82 @@ func (s *Service) PurgeExpired() (int, error) {
 // Redeem spends one use of an invite. It creates a device (or uses the one
 // named by opts.Token), binds it to a seat, and returns a signed token. The
 // whole change commits as one batch.
+//
+// Guessing is limited inside Redeem, so a caller without its own rate limit
+// is still protected. A code that is unknown, expired or used up returns
+// ErrBadInvite (the same error for all three; a caller with a valid
+// opts.Token gets ErrInviteExpired or ErrInviteUsedUp) and spends one attempt
+// of Config.RedeemBudget and of opts.Caller's Config.CallerRedeemBudget.
+// While either is spent, Redeem refuses every code with ErrTooManyAttempts
+// without looking it up. Other outcomes spend nothing.
 func (s *Service) Redeem(code string, opts RedeemOptions) (Session, error) {
 	norm := NormalizeCode(code)
 	if norm == "" {
-		return Session{}, ErrBadInvite
+		return Session{}, ErrBadInvite // malformed: names no code, tests nothing
+	}
+	now := s.cfg.Now().UTC()
+	slot, ok := s.attempts.reserve(opts.Caller, now)
+	if !ok {
+		return Session{}, ErrTooManyAttempts
+	}
+	sess, missed, err := s.redeem(norm, opts, now)
+	if !missed {
+		s.attempts.refund(slot)
+	}
+	return sess, err
+}
+
+// redeem does the work of Redeem. missed reports a failed guess: no live
+// invite has the code.
+func (s *Service) redeem(norm string, opts RedeemOptions, now time.Time) (_ Session, missed bool, _ error) {
+	detail := false
+	if opts.Token != "" {
+		if _, err := s.verifyLocked(opts.Token); err != nil {
+			return Session{}, false, err
+		}
+		detail = true
+	}
+	// Look the code up before taking the service lock: a guess costs a store
+	// read and never queues in front of real redemptions.
+	if _, err := s.liveInvite(norm, now, detail); err != nil {
+		return Session{}, true, err
 	}
 	name := SanitizeName(opts.Name)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	inv, err := s.Invite(norm)
+	// Read it again under the lock: a concurrent redemption may have spent it.
+	inv, err := s.liveInvite(norm, now, detail)
 	if err != nil {
-		return Session{}, err
-	}
-	now := s.cfg.Now().UTC()
-	if !now.Before(inv.Expires) {
-		return Session{}, ErrInviteExpired
-	}
-	if inv.Uses <= 0 {
-		return Session{}, ErrInviteUsedUp
+		return Session{}, false, err
 	}
 	seat := inv.Seat
 	if seat == "" {
 		seat = opts.Seat
 	}
 	if seat == "" {
-		return Session{}, ErrSeatRequired
+		return Session{}, false, ErrSeatRequired
 	}
 	if !validName(seat) {
-		return Session{}, ErrBadSpec
+		return Session{}, false, ErrBadSpec
 	}
 	if s.cfg.ValidateSeat != nil && !s.cfg.ValidateSeat(inv.Group, seat) {
-		return Session{}, ErrNoSuchSeat
+		return Session{}, false, ErrNoSuchSeat
 	}
 	if _, taken := s.st.Get(seatKey(inv.Group, seat)); taken {
-		return Session{}, ErrSeatTaken
+		return Session{}, false, ErrSeatTaken
 	}
 
 	var dev Device
 	b := &store.Batch{}
 	if opts.Token != "" {
+		// Verify again under the lock, so a concurrent Rotate or Revoke wins.
 		dev, err = s.verifyLocked(opts.Token)
 		if err != nil {
-			return Session{}, err
+			return Session{}, false, err
 		}
 		if _, has := s.st.Get(devSeatKey(dev.ID, inv.Group)); has {
-			return Session{}, ErrAlreadyBound
+			return Session{}, false, ErrAlreadyBound
 		}
 		if name != "" && name != dev.Name {
 			dev.Name = name
@@ -415,7 +490,7 @@ func (s *Service) Redeem(code string, opts RedeemOptions) (Session, error) {
 		}
 	} else {
 		if len(s.st.Keys(keyDevice)) >= s.cfg.MaxDevices {
-			return Session{}, ErrTooManyDevices
+			return Session{}, false, ErrTooManyDevices
 		}
 		dev = Device{ID: newDeviceID(), Name: name, Created: now}
 		b.Put(keyDevice+dev.ID, mustJSON(dev))
@@ -429,9 +504,32 @@ func (s *Service) Redeem(code string, opts RedeemOptions) (Session, error) {
 	b.Put(seatKey(inv.Group, seat), []byte(dev.ID))
 	b.Put(devSeatKey(dev.ID, inv.Group), []byte(seat))
 	if err := s.st.Commit(b); err != nil {
-		return Session{}, err
+		return Session{}, false, err
 	}
-	return Session{Device: dev, Token: s.sign(dev, now), Group: inv.Group, Seat: seat}, nil
+	return Session{Device: dev, Token: s.sign(dev, now), Group: inv.Group, Seat: seat}, false, nil
+}
+
+// liveInvite returns the invite for norm if it can be redeemed at now.
+// Unknown, expired and used-up codes all return ErrBadInvite unless detail
+// is set.
+func (s *Service) liveInvite(norm string, now time.Time, detail bool) (Invite, error) {
+	inv, err := s.Invite(norm)
+	if err != nil {
+		return Invite{}, err
+	}
+	switch {
+	case !now.Before(inv.Expires):
+		if detail {
+			return Invite{}, ErrInviteExpired
+		}
+		return Invite{}, ErrBadInvite
+	case inv.Uses <= 0:
+		if detail {
+			return Invite{}, ErrInviteUsedUp
+		}
+		return Invite{}, ErrBadInvite
+	}
+	return inv, nil
 }
 
 // ---- tokens -----------------------------------------------------------
@@ -515,7 +613,10 @@ func (s *Service) Verify(token string) (Device, error) {
 	return s.verifyLocked(token)
 }
 
-// Authenticate verifies a token and returns the seat it holds in group.
+// Authenticate verifies a token and returns the seat it holds in group. The
+// seat must still be bound to the device and still pass ValidateSeat (with
+// Config.Groups: still be a member), so a removed member's device fails with
+// ErrNotBound even if its binding was never freed.
 func (s *Service) Authenticate(token, group string) (Session, error) {
 	dev, err := s.Verify(token)
 	if err != nil {
@@ -523,6 +624,12 @@ func (s *Service) Authenticate(token, group string) (Session, error) {
 	}
 	seat, ok := s.SeatOf(dev.ID, group)
 	if !ok {
+		return Session{}, ErrNotBound
+	}
+	if holder, bound := s.DeviceAt(group, seat); !bound || holder != dev.ID {
+		return Session{}, ErrNotBound
+	}
+	if s.cfg.ValidateSeat != nil && !s.cfg.ValidateSeat(group, seat) {
 		return Session{}, ErrNotBound
 	}
 	return Session{Device: dev, Group: group, Seat: seat}, nil
@@ -644,6 +751,28 @@ func (s *Service) Unbind(group, seat string) error {
 		return ErrNotBound
 	}
 	return s.st.Commit((&store.Batch{}).Delete(seatKey(group, seat)).Delete(devSeatKey(string(cur), group)))
+}
+
+// CommitUnbind implements group.Unbinder: it adds to b the deletes that free
+// the seats members hold in group (every seat in group when members is nil)
+// and commits b. It holds the service's lock through the commit, so no
+// redemption or Bind can take one of those seats in between.
+func (s *Service) CommitUnbind(b *store.Batch, group string, members []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if members == nil {
+		prefix := keySeat + group + "/"
+		s.st.Scan(prefix, func(k string, v []byte) bool {
+			b.Delete(k).Delete(devSeatKey(string(v), group))
+			return true
+		})
+	}
+	for _, seat := range members {
+		if dev, ok := s.st.Get(seatKey(group, seat)); ok {
+			b.Delete(seatKey(group, seat)).Delete(devSeatKey(string(dev), group))
+		}
+	}
+	return s.st.Commit(b)
 }
 
 // SeatOf returns the seat a device holds in group.

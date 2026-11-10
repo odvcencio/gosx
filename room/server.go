@@ -113,8 +113,25 @@ type Config struct {
 	// caller opens the store, owns it, and closes it after Server.Close. Nil
 	// disables persistent groups; live rooms never touch the store.
 	Store *store.Store
-	// Logf receives diagnostics. Nil uses log.Printf; use a no-op to silence.
+	// Logf receives diagnostics, including a recovered panic with its stack.
+	// Nil uses log.Printf; use a no-op to silence.
 	Logf func(format string, args ...any)
+	// OnPanic, when set, is called after a room whose game code panicked was
+	// closed (see Room.AdvanceTo), for metrics and alerts. It runs on the
+	// goroutine that advanced the room (the room's own, or the caller of
+	// Server.Advance with Manual set), with no room lock held.
+	OnPanic func(Panic)
+}
+
+// Panic describes a panic recovered from a room's game code: the
+// simulation, a bot, or a Mode callback. The server closed the room with
+// wire.CloseInternalError and forgot it before reporting.
+type Panic struct {
+	Room  string // room code
+	Mode  string // mode name
+	Tick  uint64 // the match tick being run when it panicked
+	Value any    // the value passed to panic
+	Stack []byte // the panicking goroutine's stack
 }
 
 func (c Config) normalized() (Config, error) {
@@ -464,6 +481,22 @@ func (s *Server) Advance() {
 	now := s.now()
 	for _, r := range rooms {
 		r.AdvanceTo(now)
+	}
+}
+
+// reportPanic logs a recovered room panic and calls Config.OnPanic. A panic
+// in either of those (app code) is logged and dropped, so it cannot escape
+// onto the room goroutine.
+func (s *Server) reportPanic(p Panic) {
+	defer func() {
+		if v := recover(); v != nil {
+			log.Printf("room: panic in Config.Logf or Config.OnPanic while reporting room %s: %v", p.Room, v)
+		}
+	}()
+	s.cfg.Logf("room: room %s (mode %s) panicked at tick %d and was closed with code %d: %v\n%s",
+		p.Room, p.Mode, p.Tick, wire.CloseInternalError, p.Value, p.Stack)
+	if s.cfg.OnPanic != nil {
+		s.cfg.OnPanic(p)
 	}
 }
 

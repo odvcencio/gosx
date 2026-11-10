@@ -52,7 +52,7 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		`env.LoadDir(root, "")`,
 		`secret, err := sessionSecret()`,
 		`sessions, err := session.New(secret, session.Options{`,
-		`AllowInsecure: strings.HasPrefix(publicBase, "http://"),`,
+		`AllowInsecure: allowInsecureCookies(publicBase),`,
 		`router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{})`,
 		`app.EnableNavigation()`,
 		`app.Use(sessions.Middleware)`,
@@ -67,6 +67,12 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		if !strings.Contains(mainGo, snippet) {
 			t.Fatalf("expected scaffold to contain %q", snippet)
 		}
+	}
+	if strings.Contains(mainGo, `strings.HasPrefix(publicBase, "http://")`) {
+		t.Fatal("scaffold must not derive AllowInsecure from PUBLIC_URL alone")
+	}
+	if secretGo := readFile(t, filepath.Join(dir, "session_secret.go")); !strings.Contains(secretGo, "func insecureCookiesAllowed(dev bool, publicBase string) bool") {
+		t.Fatal("scaffold must gate insecure cookies on the development environment")
 	}
 
 	modulesGo := readFile(t, filepath.Join(dir, "modules", "modules.go"))
@@ -196,7 +202,7 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		`root := server.ResolveAppRoot(thisFile)`,
 		`secret, err := sessionSecret()`,
 		`sessions, err := session.New(secret, session.Options{`,
-		`AllowInsecure: strings.HasPrefix(publicBase, "http://"),`,
+		`AllowInsecure: allowInsecureCookies(publicBase),`,
 		`docsapp.BindAuth(authn)`,
 		`route.FileLayout(filepath.Join(root, "app", "layout.gsx"))`,
 		`ctx.SetLanguage("en")`,
@@ -217,6 +223,9 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		if !strings.Contains(mainGo, snippet) {
 			t.Fatalf("expected docs scaffold to contain %q", snippet)
 		}
+	}
+	if strings.Contains(mainGo, `strings.HasPrefix(publicBase, "http://")`) {
+		t.Fatal("docs scaffold must not derive AllowInsecure from PUBLIC_URL alone")
 	}
 
 	assertAllGSXCompile(t, dir)

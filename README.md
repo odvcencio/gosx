@@ -289,9 +289,13 @@ refuse to start without a non-placeholder secret of at least 16 bytes.
 Short secrets are rejected in every mode. The docs example uses the same
 policy. `session.New` keeps its existing API and validation.
 
-Before deploying, set `GOSX_ENV=production` and supply a random secret through
-your deployment environment, for example one
-generated with `openssl rand -hex 32`.
+Before deploying, set `GOSX_ENV=production`, set `PUBLIC_URL` to your public
+`https://` origin, and supply a random secret through your deployment
+environment, for example one generated with `openssl rand -hex 32`. Only
+development (`GOSX_ENV=development` or `gosx dev`) may drop the `Secure` flag
+from session cookies. Outside development the scaffolds keep `Secure` even when
+`PUBLIC_URL` is unset or `http://`, and log a warning; browsers then send the
+cookie only over HTTPS.
 Keep it stable across restarts and replicas to preserve sessions. The known
 placeholders are `change-me-in-production`, `gosx-app-session-secret`, and
 `gosx-docs-session-secret`.

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/game/replay"
+	"m31labs.dev/gosx/markup"
 )
 
 //go:embed replay.css
@@ -18,8 +18,8 @@ func CSS() string { return css }
 
 // Styles returns a <style> element with the replay stylesheet. Put it after
 // kitui.Styles().
-func Styles() gosx.Node {
-	return gosx.El("style", gosx.Attrs(gosx.Attr("id", "gosx-replay-style")), gosx.RawHTML(css))
+func Styles() markup.Node {
+	return markup.El("style", markup.Attrs(markup.Attr("id", "gosx-replay-style")), markup.RawHTML(css))
 }
 
 // CameraOption is one choice in the camera picker.
@@ -92,26 +92,26 @@ func (c *Controller) View() View {
 	return v
 }
 
-func btn(label, action, value string, extra ...any) gosx.Node {
-	a := []any{gosx.Attr("type", "button"), gosx.Attr("class", "kit-button"), gosx.Attr("data-kit-action", action)}
+func btn(label, action, value string, extra ...any) markup.Node {
+	a := []any{markup.Attr("type", "button"), markup.Attr("class", "kit-button"), markup.Attr("data-kit-action", action)}
 	if value != "" {
-		a = append(a, gosx.Attr("data-kit-value", value))
+		a = append(a, markup.Attr("data-kit-value", value))
 	}
 	a = append(a, extra...)
-	return gosx.El("button", gosx.Attrs(a...), gosx.Text(label))
+	return markup.El("button", markup.Attrs(a...), markup.Text(label))
 }
 
-func group(label, class string, children ...gosx.Node) gosx.Node {
-	args := []any{gosx.Attrs(gosx.Attr("class", "kit-replay-group "+class), gosx.Attr("role", "radiogroup"), gosx.Attr("aria-label", label))}
+func group(label, class string, children ...markup.Node) markup.Node {
+	args := []any{markup.Attrs(markup.Attr("class", "kit-replay-group "+class), markup.Attr("role", "radiogroup"), markup.Attr("aria-label", label))}
 	for _, c := range children {
 		args = append(args, c)
 	}
-	return gosx.El("div", args...)
+	return markup.El("div", args...)
 }
 
-func choice(label, action, value string, on bool) gosx.Node {
-	return btn(label, action, value, gosx.Attr("role", "radio"), gosx.Attr("aria-checked", strconv.FormatBool(on)),
-		gosx.Attr("data-kit-selected", on))
+func choice(label, action, value string, on bool) markup.Node {
+	return btn(label, action, value, markup.Attr("role", "radio"), markup.Attr("aria-checked", strconv.FormatBool(on)),
+		markup.Attr("data-kit-selected", on))
 }
 
 // speedLabel formats 0.25 as "0.25x" and 2 as "2x".
@@ -120,44 +120,44 @@ func speedLabel(s float64) string { return strconv.FormatFloat(s, 'f', -1, 64) +
 // Bar renders the replay controls: transport buttons, scrubber, speed picker,
 // camera picker and marker list. It is not modal and traps no focus. Replace
 // the bar's container HTML with kitui.Render when View changes.
-func Bar(v View) gosx.Node {
+func Bar(v View) markup.Node {
 	play := "Play"
 	if !v.Paused {
 		play = "Pause"
 	}
-	transport := gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-replay-transport")),
-		btn("|<", "replay.restart", "", gosx.Attr("aria-label", "Restart")),
-		btn("<", "replay.step_back", "", gosx.Attr("aria-label", "Step back one tick")),
-		btn(play, "replay.toggle", "", gosx.Attr("data-kit-primary", true), gosx.Attr("aria-label", play)),
-		btn(">", "replay.step_forward", "", gosx.Attr("aria-label", "Step forward one tick")),
+	transport := markup.El("div", markup.Attrs(markup.Attr("class", "kit-replay-transport")),
+		btn("|<", "replay.restart", "", markup.Attr("aria-label", "Restart")),
+		btn("<", "replay.step_back", "", markup.Attr("aria-label", "Step back one tick")),
+		btn(play, "replay.toggle", "", markup.Attr("data-kit-primary", true), markup.Attr("aria-label", play)),
+		btn(">", "replay.step_forward", "", markup.Attr("aria-label", "Step forward one tick")),
 	)
-	scrub := gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-replay-scrub")),
-		gosx.El("input", gosx.Attrs(gosx.Attr("type", "range"), gosx.Attr("id", "kit-replay-scrub"), gosx.Attr("min", v.Start),
-			gosx.Attr("max", v.End), gosx.Attr("step", 1), gosx.Attr("value", v.Tick),
-			gosx.Attr("aria-label", "Replay position"),
-			gosx.Attr("aria-valuetext", v.Time+" of "+v.Length),
-			gosx.Attr("data-kit-setting", "replay.scrub"))),
-		gosx.El("span", gosx.Attrs(gosx.Attr("class", "kit-replay-time"), gosx.Attr("aria-hidden", "true")), gosx.Text(v.Time+" / "+v.Length)),
+	scrub := markup.El("div", markup.Attrs(markup.Attr("class", "kit-replay-scrub")),
+		markup.El("input", markup.Attrs(markup.Attr("type", "range"), markup.Attr("id", "kit-replay-scrub"), markup.Attr("min", v.Start),
+			markup.Attr("max", v.End), markup.Attr("step", 1), markup.Attr("value", v.Tick),
+			markup.Attr("aria-label", "Replay position"),
+			markup.Attr("aria-valuetext", v.Time+" of "+v.Length),
+			markup.Attr("data-kit-setting", "replay.scrub"))),
+		markup.El("span", markup.Attrs(markup.Attr("class", "kit-replay-time"), markup.Attr("aria-hidden", "true")), markup.Text(v.Time+" / "+v.Length)),
 	)
-	var speeds []gosx.Node
+	var speeds []markup.Node
 	for _, s := range replay.Speeds {
 		speeds = append(speeds, choice(speedLabel(s), "replay.speed", strconv.FormatFloat(s, 'f', -1, 64), s == v.Speed))
 	}
-	var cams []gosx.Node
+	var cams []markup.Node
 	for _, c := range v.Cameras {
 		cams = append(cams, choice(c.Label, "replay.camera", c.ID, c.Active))
 	}
-	root := []any{gosx.Attrs(gosx.Attr("class", "kit-replay"), gosx.Attr("id", "kit-replay"), gosx.Attr("role", "group"),
-		gosx.Attr("aria-label", "Replay controls")), transport, scrub, group("Playback speed", "kit-replay-speed", speeds...)}
+	root := []any{markup.Attrs(markup.Attr("class", "kit-replay"), markup.Attr("id", "kit-replay"), markup.Attr("role", "group"),
+		markup.Attr("aria-label", "Replay controls")), transport, scrub, group("Playback speed", "kit-replay-speed", speeds...)}
 	if len(cams) > 0 {
 		root = append(root, group("Camera", "kit-replay-cams", cams...))
 	}
 	if len(v.Markers) > 0 {
-		items := []any{gosx.Attrs(gosx.Attr("class", "kit-replay-markers"), gosx.Attr("aria-label", "Highlights"))}
+		items := []any{markup.Attrs(markup.Attr("class", "kit-replay-markers"), markup.Attr("aria-label", "Highlights"))}
 		for _, m := range v.Markers {
-			items = append(items, gosx.El("li", btn(m.Time+"  "+m.Label, "replay.marker", strconv.FormatUint(m.Tick, 10))))
+			items = append(items, markup.El("li", btn(m.Time+"  "+m.Label, "replay.marker", strconv.FormatUint(m.Tick, 10))))
 		}
-		root = append(root, gosx.El("ol", items...))
+		root = append(root, markup.El("ol", items...))
 	}
-	return gosx.El("section", root...)
+	return markup.El("section", root...)
 }

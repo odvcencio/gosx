@@ -195,11 +195,10 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
-			sourceFile("../runtime/scene3d/webgl-dof.ts"),
-			sourceFile("../runtime/scene3d/webgl-taa-motion.ts"),
-			sourceFile("../runtime/scene3d/webgl-taa.ts"),
 			sourceFile("../runtime/scene3d/webgl-soft-particles.ts"),
-			sourceFile("../runtime/scene3d/webgl-exposure.ts"),
+			// TAA, depth of field and auto exposure ship only in the per-backend
+			// postfx chunks; the monolith keeps the stand-ins that load them.
+			sourceFile("../runtime/scene3d/webgl-postfx.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
 			// legacy monolithic bootstrap.js throws ReferenceError the first
@@ -229,9 +228,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
 			sourceFile("../runtime/scene3d/webgpu-points.ts"),
 			sourceFile("../runtime/scene3d/webgpu-soft-particles.ts"),
-			sourceFile("../runtime/scene3d/webgpu-taa.ts"),
-			sourceFile("../runtime/scene3d/webgpu-dof.ts"),
-			sourceFile("../runtime/scene3d/webgpu-exposure.ts"),
+			sourceFile("../runtime/scene3d/webgpu-postfx.ts"),
 			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
@@ -616,11 +613,8 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
-			sourceFile("../runtime/scene3d/webgl-dof.ts"),
-			sourceFile("../runtime/scene3d/webgl-taa-motion.ts"),
-			sourceFile("../runtime/scene3d/webgl-taa.ts"),
 			sourceFile("../runtime/scene3d/webgl-soft-particles.ts"),
-			sourceFile("../runtime/scene3d/webgl-exposure.ts"),
+			sourceFile("../runtime/scene3d/webgl-postfx.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
 	},
@@ -685,9 +679,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
 			sourceFile("../runtime/scene3d/webgpu-points.ts"),
 			sourceFile("../runtime/scene3d/webgpu-soft-particles.ts"),
-			sourceFile("../runtime/scene3d/webgpu-taa.ts"),
-			sourceFile("../runtime/scene3d/webgpu-dof.ts"),
-			sourceFile("../runtime/scene3d/webgpu-exposure.ts"),
+			sourceFile("../runtime/scene3d/webgpu-postfx.ts"),
 			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
@@ -767,6 +759,32 @@ var outputs = []output{
 	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",
 		sources: []source{sourceFile("../runtime/scene3d/particle-burst.ts")},
+	},
+	{
+		// Post effects only some scenes declare: temporal anti-aliasing (with the
+		// motion vectors motion blur also reads), depth of field and auto
+		// exposure, one chunk per backend. The mount fetches a backend's
+		// chunk with its renderer chunk when the page advertises it; the
+		// renderers call it through window.__gosx_scene3d_postfx_<backend>_api.
+		name: "bootstrap-feature-scene3d-postfx-webgpu.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26o-feature-scene3d-postfx-webgpu-prefix.ts"),
+			sourceFile("../runtime/scene3d/taa-wgpu.ts"),
+			sourceFile("../runtime/scene3d/dof-wgpu.ts"),
+			sourceFile("../runtime/scene3d/exposure-wgpu.ts"),
+			sourceFile("bootstrap-src/26o-feature-scene3d-postfx-webgpu-api.ts"),
+		},
+	},
+	{
+		name: "bootstrap-feature-scene3d-postfx-webgl.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26o-feature-scene3d-postfx-webgl-prefix.ts"),
+			sourceFile("../runtime/scene3d/taa-motion-gl.ts"),
+			sourceFile("../runtime/scene3d/taa-gl.ts"),
+			sourceFile("../runtime/scene3d/dof-gl.ts"),
+			sourceFile("../runtime/scene3d/exposure-gl.ts"),
+			sourceFile("bootstrap-src/26o-feature-scene3d-postfx-webgl-api.ts"),
+		},
 	},
 	{
 		// Depth-driven post passes (projected decals, motion blur). Loaded only
