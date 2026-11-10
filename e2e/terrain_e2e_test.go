@@ -24,11 +24,37 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/scene"
 )
+
+var scene3DChunkAttrPattern = regexp.MustCompile(` data-gosx-scene3d-[a-z0-9-]+-(?:url|integrity)="[^"]*"`)
+
+// scene3DChunkAttrs returns the data-gosx-scene3d-*-url (and -integrity)
+// attributes the island renderer advertises for a scene with these props.
+// A hand-built test page puts them on its Scene3D or bootstrap script tag, so
+// the chunks load through the same advertising path a served page uses.
+func scene3DChunkAttrs(t *testing.T, props []byte) string {
+	t.Helper()
+	r := island.NewRenderer("e2e")
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: props}, gosx.Text(""))
+	seen := map[string]bool{}
+	var attrs strings.Builder
+	for _, attr := range scene3DChunkAttrPattern.FindAllString(gosx.RenderHTML(r.BootstrapScript()), -1) {
+		if !seen[attr] {
+			seen[attr] = true
+			attrs.WriteString(attr)
+		}
+	}
+	return attrs.String()
+}
 
 func terrainTestTexture(seed uint64, base color.NRGBA, contrast float64) []byte {
 	const size = 128
@@ -163,8 +189,8 @@ func TestTerrainOnTheGPU(t *testing.T) {
 				tint := map[bool]string{true: "window.__gosx_scene3d_terrain_lod_tint=true;", false: ""}[variant == "lod"]
 				markup := fmt.Sprintf(`<!doctype html><html><body style="margin:0;background:#000"><div id="scene" style="width:%dpx;height:%dpx"></div>
 <script src="/gosx/bootstrap-runtime.js"></script>
-<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js" data-gosx-scene3d-terrain-url="/gosx/bootstrap-feature-scene3d-terrain.js" data-gosx-scene3d-compute-url="/gosx/bootstrap-feature-scene3d-compute.js" data-gosx-scene3d-decompress-url="/gosx/bootstrap-feature-scene3d-decompress.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
-<script>%swindow.ready=(async()=>{window.handle=await window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('scene'),emit(){},props:%s});window.mounted=true;})().catch(error=>{window.mountError=String(error);});</script></body></html>`, width, height, tint, payload)
+<script data-gosx-script="feature-scene3d"%s src="/gosx/bootstrap-feature-scene3d.js"></script>
+<script>%swindow.ready=(async()=>{window.handle=await window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('scene'),emit(){},props:%s});window.mounted=true;})().catch(error=>{window.mountError=String(error);});</script></body></html>`, width, height, scene3DChunkAttrs(t, payload), tint, payload)
 				mux := http.NewServeMux()
 				mux.Handle("/gosx/", http.StripPrefix("/gosx/", http.FileServer(http.Dir(filepath.Join(root, "client", "js")))))
 				mux.HandleFunc("/tex/rock.png", func(w http.ResponseWriter, r *http.Request) {

@@ -304,6 +304,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				{"selena-lighting", r.bootstrapFeatureScene3dSelenaLightingPath},
 				{"data-texture", r.bootstrapFeatureScene3dDataTexturePath},
 				{"warmup", r.bootstrapFeatureScene3dWarmupPath}, {"text-atlas", r.bootstrapFeatureScene3dTextAtlasPath},
+				{"terrain", r.requiredFeaturePath("scene3d-terrain")}, {"crowd", r.requiredFeaturePath("scene3d-crowd")},
 				{"gltf", r.bootstrapFeatureScene3dGLTFPath},
 			} {
 				if gates[entry.name] {

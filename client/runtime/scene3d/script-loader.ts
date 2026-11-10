@@ -1,5 +1,5 @@
 // Shared Scene3D chunk loading: versioned URLs, CSP policy, coalescing and retry.
-var sceneGatedFeaturePromises = Object.create(null);
+var sceneGatedFeaturePromises = Object.create(null), sceneGatedFeatureReported = Object.create(null);
 
 function resolveSceneSubFeatureURL(datasetKey: string, fallback: string) {
   try {
@@ -18,12 +18,28 @@ function sceneGatedFeatureAPI(kind: string) {
   return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : kind === "zoom" ? window.__gosx_runtime_api.scene3DZoom : window["__gosx_scene3d_" + kind.replace(/-/g, "_") + "_api"];
 }
 
-function ensureSceneGatedFeatureLoaded(kind: string, datasetKey: string, fallback: string) {
+// A chunk the scene needs but cannot get is reported once per chunk, by name,
+// through the runtime issue list: always for a failed fetch or integrity check
+// or a missing API, and for a missing URL when the caller passes required
+// (it checked the scene content first). Some callers ask speculatively and
+// read "not advertised" as "not needed". Callers that draw without the chunk
+// still catch the rejection, so the report is what makes the failure visible.
+function sceneGatedFeatureFailed(name: string, url: string, error: any) {
+  if (!sceneGatedFeatureReported[name]) {
+    sceneGatedFeatureReported[name] = true;
+    const message = String(error && error.message || error);
+    console.error("[gosx] " + message + (url ? " (" + url + ")" : ""));
+    window.__gosx?.reportIssue?.({ scope: "scene3d", type: "chunk", component: "GoSXScene3D", ref: name, source: url, message, error, fallback: "none" });
+  }
+  return Promise.reject(error);
+}
+
+function ensureSceneGatedFeatureLoaded(kind: string, datasetKey: string, fallback: string, required?: boolean) {
   const api = sceneGatedFeatureAPI(kind);
   if (api) return Promise.resolve(api);
   if (sceneGatedFeaturePromises[kind]) return sceneGatedFeaturePromises[kind];
   const name = "scene3d-" + kind, url = resolveSceneSubFeatureURL(datasetKey, fallback || "");
-  if (!url) return Promise.reject(new Error(name + " chunk URL was not advertised"));
+  if (!url) { const missing = new Error(name + " chunk URL was not advertised"); return required ? sceneGatedFeatureFailed(name, "", missing) : Promise.reject(missing); }
   const promise = new Promise<any>(function(resolve, reject) {
     const script = document.createElement("script"); script.async = false;
     script.type = "text/javascript";
@@ -45,7 +61,7 @@ function ensureSceneGatedFeatureLoaded(kind: string, datasetKey: string, fallbac
   sceneGatedFeaturePromises[kind] = promise.catch(function(error) {
     delete sceneGatedFeaturePromises[kind];
     if (kind === "webgl" || kind === "webgpu") window["__gosx_scene3d_" + kind + "_feature_promise"] = null;
-    throw error;
+    return sceneGatedFeatureFailed(name, url, error);
   });
   return sceneGatedFeaturePromises[kind];
 }

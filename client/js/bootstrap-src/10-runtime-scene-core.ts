@@ -3241,7 +3241,7 @@
   function sceneEnvironmentCrowds(list) {
     if (!Array.isArray(list) || list.length === 0) return null;
     if (typeof window !== "undefined" && !window.__gosx_scene3d_crowd_api && typeof ensureSceneGatedFeatureLoaded === "function") {
-      ensureSceneGatedFeatureLoaded("crowd", "gosxScene3dCrowdUrl", "/gosx/bootstrap-feature-scene3d-crowd.js").catch(function() {});
+      ensureSceneGatedFeatureLoaded("crowd", "gosxScene3dCrowdUrl", "", true).catch(function() {}); // the loader reports a failure
     }
     return list;
   }
