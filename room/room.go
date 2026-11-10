@@ -2,6 +2,7 @@ package room
 
 import (
 	"context"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -252,10 +253,37 @@ func (r *Room) Close(code int, reason string) {
 // AdvanceTo runs the room's lifecycle and every tick due by now, the time on
 // the server's clock (Config.Now). With Config.Manual set, call it (or
 // Server.Advance) to drive the room; otherwise the room's goroutine does.
+//
+// If the game's code panics (the simulation, a bot, or a Mode callback),
+// AdvanceTo recovers, closes this room with wire.CloseInternalError (1011),
+// and reports the panic to Config.Logf and Config.OnPanic. Other rooms and
+// the server keep running.
 func (r *Room) AdvanceTo(now time.Duration) {
 	r.mu.Lock()
-	r.advanceLocked(now)
+	r.advanceRecoverLocked(now)
 	r.unlock()
+}
+
+// advanceRecoverLocked is advanceLocked behind a recover. Room.mu stays held
+// through the panic, so the deferred close runs with the lock it expects.
+func (r *Room) advanceRecoverLocked(now time.Duration) {
+	defer func() {
+		if v := recover(); v != nil {
+			r.failLocked(v, debug.Stack())
+		}
+	}()
+	r.advanceLocked(now)
+}
+
+// failLocked closes a room whose game code panicked. Its state may be half
+// updated, so nothing of it is kept: clients get 1011 and the server forgets
+// the room. The report runs after Room.mu is released, because Logf and
+// OnPanic are the app's code.
+func (r *Room) failLocked(v any, stack []byte) {
+	p := Panic{Room: r.code, Mode: r.mode.Name, Tick: r.tick, Value: v, Stack: stack}
+	r.closeLocked(wire.CloseInternalError, "internal error")
+	srv := r.srv
+	r.after = append(r.after, func() { srv.reportPanic(p) })
 }
 
 // unlock releases Room.mu, then runs the work deferred while it was held.
@@ -648,7 +676,9 @@ func (r *Room) detach(id string) {
 }
 
 // onFrame handles one client frame: inputs and pings. Anything else is
-// ignored. It runs on the client's read goroutine.
+// ignored. It runs on the client's read goroutine, whose hub pump recovers
+// panics; the handlers below unlock with defer so a panic there cannot leave
+// Room.mu held and stall the room and the server.
 func (r *Room) onFrame(id string, frame []byte) {
 	kind, ok := wire.KindOf(frame)
 	if !ok {
@@ -660,30 +690,39 @@ func (r *Room) onFrame(id string, frame []byte) {
 		if in.Decode(frame) != nil {
 			return
 		}
-		r.mu.Lock()
-		r.receiveInputLocked(id, &in)
-		r.mu.Unlock()
+		r.receiveInput(id, &in)
 	case wire.KindPing:
 		var ping wire.Ping
 		if ping.Decode(frame) != nil {
 			return
 		}
-		r.mu.Lock()
-		a, ok := r.links[id]
-		if ok {
-			pong := wire.Pong{Seq: ping.Seq, Sent: ping.Sent}
-			if r.phase == PhaseRunning {
-				elapsed := r.srv.now() - r.runStart
-				if elapsed > 0 {
-					pong.Tick = uint64(elapsed / r.period)
-					pong.Frac = uint16(min(65535, (elapsed%r.period)*65536/r.period))
-				}
-			}
-			var buf [48]byte
-			a.link.sendReliable(pong.Append(buf[:0]))
-		}
-		r.mu.Unlock()
+		r.answerPing(id, &ping)
 	}
+}
+
+func (r *Room) answerPing(id string, ping *wire.Ping) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	a, ok := r.links[id]
+	if !ok {
+		return
+	}
+	pong := wire.Pong{Seq: ping.Seq, Sent: ping.Sent}
+	if r.phase == PhaseRunning {
+		elapsed := r.srv.now() - r.runStart
+		if elapsed > 0 {
+			pong.Tick = uint64(elapsed / r.period)
+			pong.Frac = uint16(min(65535, (elapsed%r.period)*65536/r.period))
+		}
+	}
+	var buf [48]byte
+	a.link.sendReliable(pong.Append(buf[:0]))
+}
+
+func (r *Room) receiveInput(id string, in *wire.Input) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.receiveInputLocked(id, in)
 }
 
 func (r *Room) receiveInputLocked(id string, in *wire.Input) {

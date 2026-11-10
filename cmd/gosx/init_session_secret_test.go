@@ -176,4 +176,44 @@ func TestConfiguredSecretIsPreserved(t *testing.T) {
 	got, err := sessionSecret()
 	if err != nil || got != configured { t.Fatalf("configured secret changed: %v", err) }
 }
+
+func TestInsecureCookiesAllowedTruthTable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dev  bool
+		base string
+		want bool
+	}{
+		{"dev http", true, "http://localhost:8080", true},
+		{"dev https", true, "https://example.com", false},
+		{"production http", false, "http://localhost:8080", false},
+		{"production https", false, "https://example.com", false},
+		{"production unset", false, "", false},
+		{"dev unset", true, "", false},
+	} {
+		if got := insecureCookiesAllowed(tc.dev, tc.base); got != tc.want {
+			t.Errorf("%s: got %t want %t", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestAllowInsecureCookiesFollowsEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		env, dev string
+		want     bool
+	}{
+		{"development", "", true},
+		{"", "1", true},
+		{"", "", false},
+		{"production", "", false},
+		{"production", "1", false},
+		{"staging", "", false},
+	} {
+		t.Setenv("GOSX_ENV", tc.env)
+		t.Setenv("GOSX_DEV", tc.dev)
+		if got := allowInsecureCookies("http://localhost:8080"); got != tc.want {
+			t.Errorf("GOSX_ENV=%q GOSX_DEV=%q: got %t want %t", tc.env, tc.dev, got, tc.want)
+		}
+	}
+}
 `

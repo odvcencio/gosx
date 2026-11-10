@@ -59,9 +59,37 @@ type Options struct {
 
 // Registry reads and writes groups in a store. It is safe for concurrent use.
 type Registry struct {
-	st   *store.Store
-	opts Options
-	mu   sync.Mutex
+	st       *store.Store
+	opts     Options
+	mu       sync.Mutex
+	unbinder Unbinder
+}
+
+// Unbinder frees the identity seats of removed members in the same commit
+// that removes them, so a removed seat neither authenticates nor stays taken.
+// identity.Service implements it, and identity.New registers itself when its
+// Config.Groups is set.
+type Unbinder interface {
+	// CommitUnbind adds to b the deletes that free the seats members hold in
+	// group (every seat in group when members is nil), then commits b.
+	CommitUnbind(b *store.Batch, group string, members []string) error
+}
+
+// SetUnbinder makes RemoveMember and Delete commit through u. Nil restores
+// plain commits. u must use the registry's store.
+func (r *Registry) SetUnbinder(u Unbinder) {
+	r.mu.Lock()
+	r.unbinder = u
+	r.mu.Unlock()
+}
+
+// commitRemovalLocked commits a batch that removes members (members nil:
+// the whole group). Caller holds r.mu.
+func (r *Registry) commitRemovalLocked(b *store.Batch, groupID string, members []string) error {
+	if r.unbinder != nil {
+		return r.unbinder.CommitUnbind(b, groupID, members)
+	}
+	return r.st.Commit(b)
 }
 
 // New returns a registry over st.
@@ -132,7 +160,8 @@ func (r *Registry) List() []Group {
 	return out
 }
 
-// Delete removes a group, its members, state, and event log in one commit.
+// Delete removes a group, its members, state, and event log in one commit,
+// together with every identity seat in the group when an Unbinder is set.
 func (r *Registry) Delete(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -144,7 +173,7 @@ func (r *Registry) Delete(id string) error {
 	for _, k := range r.st.Keys(keyMember + id + "/") {
 		b.Delete(k)
 	}
-	return r.st.Commit(b)
+	return r.commitRemovalLocked(b, id, nil)
 }
 
 // AddMember adds a member. The member's Joined time is set when zero.
@@ -174,7 +203,9 @@ func (r *Registry) AddMember(groupID string, m Member) (Member, error) {
 	return m, nil
 }
 
-// RemoveMember removes a member.
+// RemoveMember removes a member, and in the same commit frees the identity
+// seat bound to it when an Unbinder is set. A member added again later needs
+// a new invite or binding.
 func (r *Registry) RemoveMember(groupID, memberID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -182,7 +213,7 @@ func (r *Registry) RemoveMember(groupID, memberID string) error {
 	if _, ok := r.st.Get(key); !ok {
 		return ErrNoMember
 	}
-	return r.st.Delete(key)
+	return r.commitRemovalLocked((&store.Batch{}).Delete(key), groupID, []string{memberID})
 }
 
 // Member returns one member.

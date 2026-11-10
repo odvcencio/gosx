@@ -62,3 +62,51 @@ func TestDevSelenaChangeDisabledFallsBackToReload(t *testing.T) {
 		t.Fatal("build.selena.disabled must leave .sel saves to the reload path")
 	}
 }
+
+// A cold gosx dev start must not pay for Selena when the app has no .sel
+// files: the step finds no sources, writes nothing and prints nothing.
+func TestDevSelenaBuildIsInertWithoutSelSources(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := listTree(t, dir)
+	var out strings.Builder
+	if err := devSelenaBuild(dir, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("Selena printed for an app with no .sel files: %q", out.String())
+	}
+	if after := listTree(t, dir); strings.Join(after, "\n") != strings.Join(before, "\n") {
+		t.Fatalf("Selena changed the tree of an app with no .sel files:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+func listTree(t *testing.T, dir string) []string {
+	t.Helper()
+	var names []string
+	err := filepath.WalkDir(dir, func(path string, _ os.DirEntry, err error) error {
+		if err == nil {
+			names = append(names, path)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return names
+}
+
+func TestDevStageLogReportsEachStage(t *testing.T) {
+	var out strings.Builder
+	log := newDevStageLog(&out)
+	log.done("first")
+	log.done("second")
+	text := out.String()
+	for _, want := range []string{"gosx dev: starting", "gosx dev: first (", "gosx dev: second (", "since start)"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("stage log lacks %q:\n%s", want, text)
+		}
+	}
+}

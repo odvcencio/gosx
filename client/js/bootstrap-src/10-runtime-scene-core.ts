@@ -3258,6 +3258,9 @@
     const text = key => sceneEnvironmentText(source, key) || sceneEnvironmentText(base, key);
     const scalar = (key, minimum, maximum) => sceneClampNumberOrCSSVar(source[key], sceneNumber(base[key], 0), minimum, maximum);
     const haze = Object.prototype.hasOwnProperty.call(source, "haze") ? source.haze : base.haze;
+    // Auto exposure stays the authored object; the renderers' post-effect
+    // chunks fill its defaults where they use it.
+    const autoExposure = has("autoExposure") ? source.autoExposure : base.autoExposure;
     const environment = {
       ambientColor: text("ambientColor"),
       ambientIntensity: scalar("ambientIntensity", 0, 4),
@@ -3273,7 +3276,7 @@
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(has("exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
-      autoExposure: typeof sceneNormalizeAutoExposure === "function" ? sceneNormalizeAutoExposure(has("autoExposure") ? source.autoExposure : base.autoExposure) : null,
+      autoExposure: autoExposure && typeof autoExposure === "object" ? autoExposure : null,
       toneMapping: text("toneMapping"),
       fogColor: text("fogColor"),
       fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),

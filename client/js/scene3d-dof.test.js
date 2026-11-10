@@ -11,7 +11,7 @@ const { createBoardWebGPUHarness, makePointsBundle, createWebGLRendererForPost, 
 const read = (name) => fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
 
 test("both DOF shaders gather over a fixed golden-angle spiral with the same circle of confusion", () => {
-  for (const name of ["webgl-dof.ts", "webgpu-dof.ts"]) {
+  for (const name of ["dof-gl.ts", "dof-wgpu.ts"]) {
     const source = read(name);
     assert.match(source, /GOLDEN_ANGLE[^=]*= 2\.39996323/, name);
     assert.match(source, /DOF_TAPS[^=]*= 48/, name);

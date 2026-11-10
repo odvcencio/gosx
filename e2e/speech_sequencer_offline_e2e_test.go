@@ -182,7 +182,7 @@ func TestSpeechTimelineMatchesOfflineAudioContext(t *testing.T) {
 	defer cancel()
 	if err := chromedp.Run(ctx, chromedp.Navigate(server.URL), chromedp.WaitReady("body")); err != nil {
 		if browserUnavailable(err) {
-			t.Skipf("chrome could not start in this environment: %v", err)
+			skipOrFailChrome(t, chromeRequired(), "chrome could not start in this environment: %v", err)
 		}
 		t.Fatalf("navigate: %v", err)
 	}

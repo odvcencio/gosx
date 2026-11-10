@@ -51,6 +51,9 @@ type BudgetPageResult struct {
 	// fails, the page is Inconclusive instead of failed.
 	Recovery     string `json:"recovery,omitempty"`
 	Inconclusive bool   `json:"inconclusive,omitempty"`
+	// Samples holds each timing sample when the page was measured more than
+	// once; timing assertions were judged on their median.
+	Samples []TimingSample `json:"samples,omitempty"`
 }
 
 // BudgetAssertionResult is one evaluated assertion from a budget profile.
@@ -107,6 +110,7 @@ func EvaluateBudget(report *Report, budget *BudgetFile, forceProfile string) (Bu
 		pageResult := evalBudgetPage(page, profileName, expressions)
 		pageResult.Renderer, pageResult.Backend = pageRenderer(page)
 		pageResult.Recovery = RendererRecovery(page)
+		pageResult.Samples = page.TimingSamples
 		if !pageResult.Passed && pageResult.Recovery != "" {
 			exemptRecoveredMeasurements(&pageResult)
 		}
@@ -144,6 +148,7 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 		if page.Inconclusive {
 			b.WriteString(fmt.Sprintf("    inconclusive: the renderer recovered (%s) while this page was measured, so its measurements describe the recovery; assertions marked inc do not fail the gate\n", page.Recovery))
 		}
+		writeTimingSampleLines(&b, page)
 		for _, assertion := range page.Assertions {
 			mark := "ok"
 			if !assertion.Passed {

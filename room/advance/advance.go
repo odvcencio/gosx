@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -345,7 +346,7 @@ func (r *Runner) runJob(ctx context.Context, j Job) (bool, error) {
 		case !now.Before(j.Deadline):
 			reason = ReasonDeadline
 		case h.Ready != nil:
-			ready, err := h.Ready(ctx, View{Group: j.Group, Job: j.Name, Round: j.Round, Deadline: j.Deadline, Params: j.Params, Now: now})
+			ready, err := r.callReady(h.Ready, ctx, View{Group: j.Group, Job: j.Name, Round: j.Round, Deadline: j.Deadline, Params: j.Params, Now: now})
 			if err != nil {
 				r.opts.Logf("advance: %s/%s ready: %v", j.Group, j.Name, err)
 				return false, nil
@@ -364,12 +365,16 @@ func (r *Runner) runJob(ctx context.Context, j Job) (bool, error) {
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, r.opts.AdvanceTimeout)
-	res, err := h.Advance(callCtx, Advance{
+	res, err := r.callAdvance(h.Advance, callCtx, Advance{
 		Group: j.Group, Job: j.Name, Round: j.Pending.Round, Reason: j.Pending.Reason,
 		Key:      fmt.Sprintf("%s/%s/%d", j.Group, j.Name, j.Pending.Round),
 		Deadline: j.Deadline, Params: j.Params, Now: now,
 	})
 	cancel()
+	b := &store.Batch{}
+	if err == nil && res.Apply != nil {
+		err = r.callApply(res.Apply, b, j.Group, j.Name)
+	}
 	if err != nil {
 		j.Attempts++
 		j.LastError = truncate(err.Error(), maxJobErr)
@@ -399,10 +404,6 @@ func (r *Runner) runJob(ctx context.Context, j Job) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	b := &store.Batch{}
-	if res.Apply != nil {
-		res.Apply(b)
-	}
 	b.Put(jobKey(j.Group, j.Name), jb)
 	if r.groups != nil {
 		ev, _ := json.Marshal(struct {
@@ -418,6 +419,33 @@ func (r *Runner) runJob(ctx context.Context, j Job) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// The handler calls below turn a panic in the game's code into an error, so
+// a buggy job is recorded and retried with backoff like a failing one, and
+// the jobs after it in the same scan still run. The stack goes to Logf.
+
+func (r *Runner) callReady(fn func(context.Context, View) (bool, error), ctx context.Context, v View) (ready bool, err error) {
+	defer r.recoverHandler("ready", v.Group, v.Job, &err)
+	return fn(ctx, v)
+}
+
+func (r *Runner) callAdvance(fn func(context.Context, Advance) (Result, error), ctx context.Context, a Advance) (res Result, err error) {
+	defer r.recoverHandler("advance", a.Group, a.Job, &err)
+	return fn(ctx, a)
+}
+
+func (r *Runner) callApply(fn func(*store.Batch), b *store.Batch, group, job string) (err error) {
+	defer r.recoverHandler("apply", group, job, &err)
+	fn(b)
+	return nil
+}
+
+func (r *Runner) recoverHandler(call, group, job string, err *error) {
+	if v := recover(); v != nil {
+		*err = fmt.Errorf("advance: %s handler panicked: %v", call, v)
+		r.opts.Logf("advance: %s/%s %s handler panicked: %v\n%s", group, job, call, v, debug.Stack())
+	}
 }
 
 func rawOrNil(b []byte) json.RawMessage {

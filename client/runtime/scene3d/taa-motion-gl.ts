@@ -7,10 +7,10 @@
 // the visible surface (its w matches the scene depth), and then skips the
 // depth-change rejection, so a moving mesh keeps its own history instead of
 // restarting every frame. Pixels near an ocean or pool surface keep less
-// history, because the water moves without depth. Objects without a record
-// from the previous frame, CPU-baked world meshes and particles keep camera
-// reprojection.
-const SCENE_POST_TAA_SOURCE = `#version 300 es
+// history, because the water moves without depth. Objects with no previous
+// record, CPU-baked world meshes and particles keep camera reprojection. The
+// source is built on first use: its view-position helper is the renderer's.
+function sceneWebGLTAAResolveSource() { return `#version 300 es
 precision highp float;
 precision highp sampler2D;
 in vec2 v_uv;
@@ -91,7 +91,7 @@ void main() {
     float reactive = waterAt(world.xyz) ? 0.75 : 0.0;
     float weight = u_temporalParams.x * exp(-motion * 0.05) / (coverageEdge ? 1.0 : 1.0 + change * 8.0) * (1.0 - reactive * 0.85);
     fragColor = vec4(mix(current.rgb, history, weight), mix(current.a, bounded.a, weight));
-}`;
+}`; }
 
 // The velocity pass. GOSX_SKINNED adds the current and previous joint palettes
 // (the same u_modelMatrix * skin order as SCENE_PBR_SKINNED_VERTEX_SOURCE).
