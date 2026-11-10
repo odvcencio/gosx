@@ -7,6 +7,12 @@ import "sync"
 // MaxSize is the largest datagram a Queue holds. It equals netplay.MaxPacketSize.
 const MaxSize = 1200
 
+// FrameTag is the first byte of every netplay datagram frame on a hub
+// WebSocket. The hub reserves prefixes 1 to 255 for CRDT sync, so application
+// frames start with 0x00. It lives here, not in netplay/hubnet, so a browser
+// client can use it without linking the hub server.
+const FrameTag byte = 0
+
 // Queue is a bounded FIFO of datagrams. Push and Pop are safe for concurrent
 // use and do not allocate. A full Queue drops new datagrams, as a lossy link
 // would.

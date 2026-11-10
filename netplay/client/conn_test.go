@@ -388,3 +388,18 @@ func TestSteadyStateSendRecvAllocatesNothingOnWebSocketPath(t *testing.T) {
 		t.Fatalf("Recv allocates %v per call", a)
 	}
 }
+
+func TestHelloIsSentAgainAfterHubReconnect(t *testing.T) {
+	r := newRelayRig(t)
+	c, _ := dial(t, r, nil, nil)
+	waitFor(t, "first hello", func() bool { r.mu.Lock(); defer r.mu.Unlock(); return r.hellos == 1 })
+	first := r.clientID()
+	if !r.hub.Disconnect(first, "test drop") {
+		t.Fatal("hub did not know the client")
+	}
+	waitFor(t, "second hello after reconnect", func() bool { r.mu.Lock(); defer r.mu.Unlock(); return r.hellos >= 2 })
+	if id := r.clientID(); id == first || id == "" {
+		t.Fatalf("client id after reconnect = %q, first %q", id, first)
+	}
+	_ = c
+}

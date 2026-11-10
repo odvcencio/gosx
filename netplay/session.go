@@ -19,8 +19,11 @@ var (
 	ErrIdentityMismatch = errors.New("netplay: simulation identity differs")
 	ErrDesync           = errors.New("netplay: desync")
 	ErrRemoteEnded      = errors.New("netplay: match ended by relay")
-	ErrCatchUpTimeout   = errors.New("netplay: desync catch-up exceeded its deadline")
-	ErrBadResync        = errors.New("netplay: unusable resync blob")
+	// ErrMatchOver is the normal end: the relay confirmed the app finished
+	// the match (EndMatchOver). It is not a failure.
+	ErrMatchOver      = errors.New("netplay: match over")
+	ErrCatchUpTimeout = errors.New("netplay: desync catch-up exceeded its deadline")
+	ErrBadResync      = errors.New("netplay: unusable resync blob")
 )
 
 // DesyncError describes a checksum mismatch on a confirmed frame.
@@ -82,6 +85,25 @@ type Config[I any] struct {
 	ChecksumInterval int          // K, default 30
 	PredictionWindow int          // default 8
 	StallTimeout     time.Duration
+	// HandshakeTimeout is how long the handshake may last before the session
+	// ends with ErrDisconnect (default 30 s, at least StallTimeout). It is
+	// separate from StallTimeout so that a peer whose scene loads late does
+	// not force a restart.
+	HandshakeTimeout time.Duration
+	// RTTSamples is how many round-trip samples AutoDelay collects before it
+	// picks a delay from their minimum (default 4). RTTWait is how long after
+	// the first packet from the peer it waits for them (default 1 s); then it
+	// uses the samples it has, or DelayFallback if it has none. RTTCap is the
+	// largest sample AutoDelay believes (default 500 ms): a larger one is
+	// ignored and counted in Stats.RTTIgnored. DelayFallback is the delay
+	// used when there is no believable sample (default 1, at most
+	// MaxInputDelay). A peer that never echoes, or that fakes its echoes,
+	// can then not hold the handshake open or force the maximum delay by
+	// more than the cap allows.
+	RTTSamples    int
+	RTTWait       time.Duration
+	RTTCap        time.Duration
+	DelayFallback int
 	// SyncInterval is N: a peer ahead by more than one frame waits one
 	// frame at most every N ticks (default 4).
 	SyncInterval  int
@@ -116,6 +138,19 @@ type Stats struct {
 	CatchUpTicks       int
 	CatchUpFrames      int
 	MaxCatchUpPerTick  int
+	// FutureInputs counts remote inputs dropped for being further ahead than
+	// the prediction window, the delay and a small slack allow. ImpossibleAcks
+	// counts acks for frames this session has not produced yet.
+	FutureInputs   int
+	ImpossibleAcks int
+	// StaleEchoes counts RTT samples ignored because the echoed timestamp
+	// predates this session's first packet.
+	StaleEchoes int
+	// RTTIgnored counts round-trip samples above RTTCap, ignored when AutoDelay
+	// picks the delay. DelayFallbacks is 1 if AutoDelay used DelayFallback
+	// because no believable sample arrived within RTTWait.
+	RTTIgnored     int
+	DelayFallbacks int
 }
 
 const (
@@ -203,6 +238,12 @@ type Session[I any] struct {
 	rbuf      [MaxPacketSize]byte
 
 	// stall
+	endReason  uint8
+	sentAny    bool
+	hsSamples  int
+	hsMin      time.Duration
+	firstPeer  time.Duration
+	firstSend  uint32
 	stalling   bool
 	stallSince time.Duration
 
@@ -257,6 +298,27 @@ func NewSession[I any](cfg Config[I]) (*Session[I], error) {
 	}
 	if cfg.StallTimeout == 0 {
 		cfg.StallTimeout = 5 * time.Second
+	}
+	if cfg.RTTSamples == 0 {
+		cfg.RTTSamples = 4
+	}
+	if cfg.RTTWait == 0 {
+		cfg.RTTWait = time.Second
+	}
+	if cfg.RTTCap == 0 {
+		cfg.RTTCap = 500 * time.Millisecond
+	}
+	if cfg.DelayFallback == 0 {
+		cfg.DelayFallback = 1
+	}
+	if cfg.DelayFallback > cfg.MaxInputDelay {
+		cfg.DelayFallback = cfg.MaxInputDelay
+	}
+	if cfg.HandshakeTimeout == 0 {
+		cfg.HandshakeTimeout = 30 * time.Second
+		if cfg.StallTimeout > cfg.HandshakeTimeout {
+			cfg.HandshakeTimeout = cfg.StallTimeout
+		}
 	}
 	if cfg.SyncInterval == 0 {
 		cfg.SyncInterval = 4
@@ -317,8 +379,15 @@ func (s *Session[I]) Frame() int64 { return s.frame }
 // Status reports the lifecycle state.
 func (s *Session[I]) Status() Status { return s.status }
 
-// Err is why the session ended, or nil.
+// Err is why the session ended, or nil. ErrMatchOver is a normal end.
 func (s *Session[I]) Err() error { return s.err }
+
+// MatchOver reports whether the session ended because the relay confirmed
+// the match was over (Err is ErrMatchOver).
+func (s *Session[I]) MatchOver() bool { return errors.Is(s.err, ErrMatchOver) }
+
+// EndReason is the End reason (EndDesync, EndMatchOver) the relay sent, or 0.
+func (s *Session[I]) EndReason() uint8 { return s.endReason }
 
 // RTT is the smoothed round trip, from echoed timestamps.
 func (s *Session[I]) RTT() time.Duration { return s.rtt }
@@ -389,10 +458,11 @@ func (s *Session[I]) Advance(now time.Duration, local I) Outcome {
 		if !s.hsStarted {
 			s.hsStarted, s.hsStart = true, now
 		}
-		if now-s.hsStart > s.cfg.StallTimeout {
+		if now-s.hsStart > s.cfg.HandshakeTimeout {
 			s.end(ErrDisconnect)
 			return OutcomeEnded
 		}
+		s.maybeStart(now) // the wait for round-trip samples may have run out
 		s.sendHello(now)
 		return OutcomeHandshake
 	}
@@ -552,8 +622,13 @@ func (s *Session[I]) handle(now time.Duration, b []byte) {
 	case ptResync:
 		s.handleResync(now, b)
 	case ptEnd:
-		if tag, _, _, ok := parseSmall(b, ptEnd); ok && tag == s.tag && s.cfg.Relay {
-			s.end(ErrRemoteEnded)
+		if tag, reason, _, ok := parseSmall(b, ptEnd); ok && tag == s.tag && s.cfg.Relay {
+			s.endReason = reason
+			if reason == EndMatchOver {
+				s.end(ErrMatchOver)
+			} else {
+				s.end(ErrRemoteEnded)
+			}
 		} else {
 			s.stats.BadPackets++
 		}
@@ -589,8 +664,22 @@ func (s *Session[I]) noteHeader(now time.Duration, h *header) bool {
 	}
 	if h.hasEcho {
 		d := micros(now) - h.echoUs - h.holdUs // wraps correctly
-		if d < 1<<30 {
+		if !s.sentAny || int32(h.echoUs-s.firstSend) < 0 {
+			// The peer echoes a timestamp from before this session sent its
+			// first packet (a restarted session): not a sample of this link.
+			s.stats.StaleEchoes++
+		} else if d < 1<<30 {
 			sample := time.Duration(d) * time.Microsecond
+			if s.status == StatusHandshake && !s.delayKnown {
+				if sample > s.cfg.RTTCap {
+					s.stats.RTTIgnored++
+				} else {
+					if s.hsSamples == 0 || sample < s.hsMin {
+						s.hsMin = sample
+					}
+					s.hsSamples++
+				}
+			}
 			if !s.haveRTT {
 				s.rtt, s.haveRTT = sample, true
 			} else {
@@ -606,10 +695,21 @@ func (s *Session[I]) maybeStart(now time.Duration) {
 		return
 	}
 	if !s.delayKnown {
-		if !s.haveRTT {
+		if s.firstPeer == 0 {
+			s.firstPeer = now + 1 // never zero once set
+		}
+		waited := now - (s.firstPeer - 1)
+		switch {
+		case s.hsSamples >= s.cfg.RTTSamples || (s.hsSamples > 0 && waited >= s.cfg.RTTWait):
+			// The minimum of several samples: queueing and a peer that
+			// inflates some echoes only raise samples.
+			s.delay = SuggestDelay(s.hsMin, s.cfg.FrameDuration, s.cfg.MaxRollback, s.cfg.MaxInputDelay)
+		case waited >= s.cfg.RTTWait:
+			s.delay = s.cfg.DelayFallback
+			s.stats.DelayFallbacks++
+		default:
 			return
 		}
-		s.delay = SuggestDelay(s.rtt, s.cfg.FrameDuration, s.cfg.MaxRollback, s.cfg.MaxInputDelay)
 		s.delayKnown = true
 	}
 	s.status = StatusRunning
@@ -640,9 +740,13 @@ func (s *Session[I]) handleInput(now time.Duration, b []byte) {
 			s.adv += (sample - s.adv) * 0.25
 		}
 	}
-	if a := int64(p.ack); a > s.peerAck {
+	if a := int64(p.ack); a > s.localNext {
+		s.stats.ImpossibleAcks++ // acks frames we have not produced: ignore
+	} else if a > s.peerAck {
 		s.peerAck = a
 	}
+	futureLimit := s.localNext + s.window + int64(s.cfg.MaxInputDelay) + 4
+inputs:
 	for i := 0; i < p.count; i++ {
 		f := int64(p.start) + int64(i)
 		raw := p.entries[i*s.isz : (i+1)*s.isz]
@@ -654,6 +758,12 @@ func (s *Session[I]) handleInput(now time.Duration, b []byte) {
 				s.stats.ConflictingEntries++
 			}
 		case f == s.rc:
+			if f >= futureLimit {
+				// An honest peer is never this far ahead; accepting it would
+				// wrap the history ring.
+				s.stats.FutureInputs++
+				break inputs
+			}
 			in := s.codec.Get(raw)
 			s.remote[f%historyFrames] = in
 			if f < s.frame {
@@ -812,6 +922,9 @@ func (s *Session[I]) sendResyncAck() {
 
 func (s *Session[I]) header(typ byte, now time.Duration) header {
 	s.seq++
+	if !s.sentAny {
+		s.sentAny, s.firstSend = true, micros(now)
+	}
 	h := header{typ: typ, seq: s.seq, sendUs: micros(now)}
 	if s.cfg.InputDelay == AutoDelay && !s.delayKnown {
 		h.delay = delayAuto

@@ -5,7 +5,6 @@ package hubclient
 import (
 	"context"
 	"net"
-	"net/http"
 	"sync"
 	"time"
 
@@ -32,7 +31,7 @@ type nativeDialer struct {
 	enableCompression bool
 }
 
-func (d nativeDialer) Dial(ctx context.Context, rawURL string, header http.Header) (conn, error) {
+func (d nativeDialer) Dial(ctx context.Context, rawURL string, header Header) (conn, error) {
 	dialer := *websocket.DefaultDialer
 	dialer.EnableCompression = d.enableCompression
 	// Gorilla observes cancellation while dialing TCP/TLS, but proxy CONNECT

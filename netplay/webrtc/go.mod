@@ -6,7 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/ice/v4 v4.4.8
 	github.com/pion/webrtc/v4 v4.2.25
-	m31labs.dev/gosx v0.25.2
+	m31labs.dev/gosx v0.60.0
 )
 
 require (

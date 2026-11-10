@@ -29,6 +29,76 @@ type RelayConfig[I any] struct {
 	// LateSlack (default 2 frames) after their due time plus input delay.
 	LateSlack     time.Duration
 	LateFlagCount int
+	// PredictionWindow and MaxInputDelay are the values the sessions use
+	// (defaults 8 and 3). They must be at least as large as the sessions':
+	// the relay rejects input packets that run further ahead than they allow,
+	// and flags a player whose acknowledgement trails by more than
+	// PredictionWindow + MaxInputDelay + AckLagSlack frames.
+	PredictionWindow int
+	MaxInputDelay    int
+	// AckLagSlack is the extra frames of ack lag tolerated for network delay
+	// and loss (default 30). Set AckLagSlackNone for exactly 0.
+	AckLagSlack int
+	// AckLagGrace is how old a forwarded frame must be before it counts
+	// toward ack lag (default 1 s), so a burst of early inputs from the other
+	// player cannot flag an honest one.
+	AckLagGrace time.Duration
+	// InputSlack is the extra frames an input packet may run past
+	// the other player's log + PredictionWindow + the sender's delay before
+	// the relay rejects it (default 8).
+	InputSlack int
+	// CrawlAfter is the gap between two growths of a player's log, while
+	// the other player's log kept growing, that counts as a slow gap
+	// (default 1.5 s). CrawlGaps slow gaps set CrawlFlagged (default 3).
+	CrawlAfter time.Duration
+	CrawlGaps  int
+	// EndRepeatEvery and EndRepeats pace the End packets sent after the
+	// match ends (defaults 100 ms and 20), by relay time, one per Tick at most.
+	EndRepeatEvery time.Duration
+	EndRepeats     int
+}
+
+// AckLagSlackNone, in RelayConfig.AckLagSlack, means no slack at all.
+const AckLagSlackNone = -1
+
+// ViolationKind says what a player's malformed or impossible packet did.
+type ViolationKind uint8
+
+const (
+	ViolationNone ViolationKind = iota
+	// ViolationBadPacket: an Input packet with the wrong tag or length.
+	// The relay drops it and trusts nothing in it.
+	ViolationBadPacket
+	// ViolationNoResend: the packet starts above the highest ack the relay
+	// has forwarded from the other player. An honest sender resends from that
+	// ack. The relay drops its ack but logs entries that extend the log.
+	ViolationNoResend
+	// ViolationFuture: the packet carries frames beyond the other player's
+	// log + prediction window + the sender's delay + slack. Dropped whole.
+	ViolationFuture
+	// ViolationImpossibleAck: the ack is above the frames the relay has
+	// logged for the other player. The ack is ignored.
+	ViolationImpossibleAck
+	// ViolationConflict: an entry for a frame already logged has other bytes.
+	ViolationConflict
+	// NumViolationKinds is the length of PlayerReport.ViolationCounts.
+	NumViolationKinds
+)
+
+func (k ViolationKind) String() string {
+	switch k {
+	case ViolationBadPacket:
+		return "bad packet"
+	case ViolationNoResend:
+		return "no resend"
+	case ViolationFuture:
+		return "future frames"
+	case ViolationImpossibleAck:
+		return "impossible ack"
+	case ViolationConflict:
+		return "conflicting entry"
+	}
+	return "none"
 }
 
 // PlayerReport is the relay's view of one player.
@@ -40,6 +110,79 @@ type PlayerReport struct {
 	Flagged            bool
 	DuplicateEntries   int
 	ConflictingEntries int
+
+	// Desyncs counts checksum frames where this player's checksum disagreed
+	// with the relay's native copy; each started a resync to this player.
+	// Resyncs counts resyncs this player acknowledged. FirstDesyncFrame is
+	// the first such checksum frame, or 0 if none (frame 0 is never judged).
+	//
+	// Desyncs alone do not say whose build diverged: an input the relay
+	// forwarded is always the one it logged, but a player who sent
+	// conflicting inputs (ConflictingEntries, Violations) is the suspect
+	// whatever the Desyncs counts say.
+	Desyncs          int
+	Resyncs          int
+	FirstDesyncFrame int64
+
+	// Violations counts this player's rejected or distrusted Input packets.
+	// ViolationCounts splits them by ViolationKind. FirstViolation is the
+	// kind of the first one, FirstViolationFrame the start frame of that
+	// packet (the ack value for ViolationImpossibleAck, 0 for a bad packet),
+	// and FirstViolationAt and FirstViolationTick the relay clock and Tick
+	// count. ImpossibleAcks counts acks above what the relay had logged.
+	// ConflictingEntries (above) is attributed to the sender.
+	Violations          int
+	ViolationCounts     [NumViolationKinds]int
+	FirstViolation      ViolationKind
+	FirstViolationFrame int64
+	FirstViolationAt    time.Duration
+	FirstViolationTick  int64
+	ImpossibleAcks      int
+
+	// AckedFrame is the highest ack seen in this player's packets that passed
+	// validation: the number of the other player's frames it holds.
+	// ForwardedAck is the ack the relay put in the last packet it sent to the
+	// other player: the ack that player acts on (it never exceeds the frames
+	// the relay logged for that player).
+	AckedFrame   int64
+	ForwardedAck int64
+
+	// AckLag is the most recent distance, in frames, between the other
+	// player's frames that the relay forwarded at least AckLagGrace ago and
+	// the frames this player acknowledged. MaxAckLag is its largest value.
+	// AckLagFlagged is set once the lag exceeds the limit
+	// (Relay.AckLagLimit). It is measured when this player's valid packets
+	// arrive, so a silent player shows up in LastPacketAt and LastLogAt.
+	AckLag        int
+	MaxAckLag     int
+	AckLagFlagged bool
+
+	// LogGap is how long ago this player's log last grew, at the last
+	// Tick, counted only while the other player's log is longer (this
+	// player holds the match back; a player waiting for the other has the
+	// longer log). MaxLogGap is the longest such gap, open or
+	// closed. SlowGaps counts closed gaps longer than CrawlAfter, and
+	// CrawlFlagged is set after CrawlGaps of them. A client that crawls, one
+	// tick every 2 s, never goes silent long enough for a stall timeout, but
+	// it collects slow gaps. One long gap alone (an outage that hit both
+	// players) does not set the flag.
+	LogGap       time.Duration
+	MaxLogGap    time.Duration
+	SlowGaps     int
+	CrawlFlagged bool
+
+	// LastLogAt is the relay clock (the `now` given to Tick) when this
+	// player's log last grew, and LastLogTick is the Tick count then. Both
+	// are meaningful only when FramesLogged > 0. The player whose log
+	// stopped growing first stalled first. These are wall-clock facts for
+	// the app; never feed them to the simulation.
+	LastLogAt   time.Duration
+	LastLogTick int64
+	// LastPacketAt is the relay clock when any valid packet from this player
+	// last arrived, and LastPacketTick the Tick count then (0 until one
+	// arrives).
+	LastPacketAt   time.Duration
+	LastPacketTick int64
 }
 
 // MatchReport summarizes a match from the relay's side.
@@ -52,6 +195,8 @@ type MatchReport struct {
 	Resyncs         int
 	Ended           bool
 	EndReason       uint8
+	// Ticks is the number of Tick calls so far.
+	Ticks int64
 	// Replay is attached when the match ended in a desync.
 	Replay *Replay
 }
@@ -129,9 +274,16 @@ type Relay[I any] struct {
 	specs   []*relaySpec
 	specVis int64
 
+	ticks int64
+	ack   [2]int64 // highest validated ack seen from each player
+	logAt [2][]time.Duration
+	elig  [2]int64 // frames of each player forwarded at least AckLagGrace ago
+	fbuf  [MaxPacketSize]byte
+
 	ended     bool
 	endReason uint8
-	endRepeat int
+	endLeft   int
+	endNext   time.Duration
 	scratch   []byte
 	rbuf      [MaxPacketSize]byte
 	cmp       []byte
@@ -160,6 +312,35 @@ func NewRelay[I any](cfg RelayConfig[I]) (*Relay[I], error) {
 	if cfg.LateFlagCount == 0 {
 		cfg.LateFlagCount = 10
 	}
+	if cfg.PredictionWindow == 0 {
+		cfg.PredictionWindow = 8
+	}
+	if cfg.MaxInputDelay == 0 {
+		cfg.MaxInputDelay = 3
+	}
+	if cfg.AckLagSlack == 0 {
+		cfg.AckLagSlack = 30
+	} else if cfg.AckLagSlack < 0 {
+		cfg.AckLagSlack = 0
+	}
+	if cfg.AckLagGrace == 0 {
+		cfg.AckLagGrace = time.Second
+	}
+	if cfg.InputSlack == 0 {
+		cfg.InputSlack = 8
+	}
+	if cfg.CrawlAfter == 0 {
+		cfg.CrawlAfter = 1500 * time.Millisecond
+	}
+	if cfg.CrawlGaps == 0 {
+		cfg.CrawlGaps = 3
+	}
+	if cfg.EndRepeatEvery == 0 {
+		cfg.EndRepeatEvery = 100 * time.Millisecond
+	}
+	if cfg.EndRepeats == 0 {
+		cfg.EndRepeats = 20
+	}
 	r := &Relay[I]{
 		cfg: cfg, codec: cfg.Codec, isz: cfg.Codec.Size(), tag: idTag(&cfg.Identity),
 		k: int64(cfg.ChecksumInterval), game: cfg.NewGame(), inputs: make([]I, 2),
@@ -182,9 +363,11 @@ func (r *Relay[I]) SimFrame() int64 { return r.simFrame }
 // often (every few milliseconds); it simulates at most CatchUpPerTick frames.
 func (r *Relay[I]) Tick(now time.Duration) {
 	r.now = now
+	r.ticks++
 	if r.ended {
-		if r.endRepeat > 0 {
-			r.endRepeat--
+		if r.endLeft > 0 && r.now >= r.endNext {
+			r.endLeft--
+			r.endNext = r.now + r.cfg.EndRepeatEvery
 			for p := 0; p < 2; p++ {
 				_ = r.cfg.Peers[p].Send(putSmall(r.pktBuf(), ptEnd, r.tag, r.endReason, 0))
 			}
@@ -206,6 +389,7 @@ func (r *Relay[I]) Tick(now time.Duration) {
 	r.simulate()
 	r.sendResyncs()
 	r.serveSpectators()
+	r.updateGaps()
 }
 
 func (r *Relay[I]) pktBuf() []byte {
@@ -224,26 +408,168 @@ func (r *Relay[I]) handle(p int, b []byte) {
 		if len(b) != helloLen || !bytes.Equal(b[offHelloID:], r.cfg.Identity[:]) {
 			return // a peer with another identity never reaches the other side
 		}
+		r.notePacket(p)
 		_ = r.cfg.Peers[1-p].Send(b)
 	case ptInput:
 		pk, tag, ok := parseInput(b, r.isz)
 		if !ok || tag != r.tag {
+			r.violate(p, ViolationBadPacket, 0) // nothing in it is trusted
 			return
 		}
-		r.logInputs(p, &pk)
-		for i := 0; i < pk.nsums; i++ {
-			r.onReport(p, int64(pk.sums[i].frame), pk.sums[i].sum, pk.sums[i].epoch)
-		}
-		_ = r.cfg.Peers[1-p].Send(b) // whole packet, always: redundancy depends on it
+		r.handleInput(p, &pk)
 	case ptResyncAck:
 		tag, epoch, _, ok := parseSmall(b, ptResyncAck)
 		if ok && tag == r.tag && r.rs[p].active && epoch == r.rs[p].epoch {
 			r.rs[p].active = false
 			r.ackedEpoch[p] = epoch
 			r.resyncs++
+			r.players[p].Resyncs++
+			r.notePacket(p)
 			for i := range r.reported[p] {
 				r.reported[p][i].valid = false
 			}
+		}
+	}
+}
+
+func (r *Relay[I]) notePacket(p int) {
+	r.players[p].LastPacketAt, r.players[p].LastPacketTick = r.now, r.ticks
+}
+
+// violate records one violation by player p. frame says where (see
+// PlayerReport.FirstViolationFrame).
+func (r *Relay[I]) violate(p int, k ViolationKind, frame int64) {
+	pr := &r.players[p]
+	if pr.Violations == 0 {
+		pr.FirstViolation, pr.FirstViolationFrame = k, frame
+		pr.FirstViolationAt, pr.FirstViolationTick = r.now, r.ticks
+	}
+	pr.Violations++
+	pr.ViolationCounts[k]++
+}
+
+// AckLagLimit is the lag, in frames, above which a player is flagged.
+func (r *Relay[I]) AckLagLimit() int {
+	return r.cfg.PredictionWindow + r.cfg.MaxInputDelay + r.cfg.AckLagSlack
+}
+
+// handleInput validates a well-formed Input packet from player p, logs it and
+// forwards a packet built from the relay's own log to the other player. The
+// sender's bytes are never forwarded, so a player cannot change what the
+// other receives after the relay logged it.
+func (r *Relay[I]) handleInput(p int, pk *inputPkt) {
+	q := 1 - p
+	r.notePacket(p)
+	start := int64(pk.start)
+	end := start + int64(pk.count)
+	d := r.delay[p]
+	if pk.delay != delayAuto {
+		d = int(pk.delay)
+	}
+	if end > r.logN[q]+int64(r.cfg.PredictionWindow+d+r.cfg.InputSlack) {
+		// Frames this far ahead cannot come from a session that waits for the
+		// other player; they would also wrap the receiver's history ring.
+		r.violate(p, ViolationFuture, start)
+		return
+	}
+	ack := int64(pk.ack)
+	trust := true
+	if ack > r.logN[q] {
+		r.players[p].ImpossibleAcks++
+		r.violate(p, ViolationImpossibleAck, ack)
+		trust = false
+	}
+	if start > r.ack[q] {
+		// An honest sender resends from the ack it received, which the relay
+		// built from r.ack[q]. The entries still extend the log if they are
+		// contiguous with it, and the relay resends from its own log.
+		r.violate(p, ViolationNoResend, start)
+		trust = false
+	}
+	r.logInputs(p, pk)
+	if trust {
+		r.noteAck(p, ack)
+	}
+	for i := 0; i < pk.nsums; i++ {
+		r.onReport(p, int64(pk.sums[i].frame), pk.sums[i].sum, pk.sums[i].epoch)
+	}
+	r.forward(p, pk)
+}
+
+// noteAck records a validated ack from player p and measures how far it
+// trails the other player's frames that were forwarded at least AckLagGrace
+// ago. ack is at most the frames logged for the other player.
+func (r *Relay[I]) noteAck(p int, ack int64) {
+	q := 1 - p
+	if ack > r.ack[p] {
+		r.ack[p] = ack
+	}
+	pr := &r.players[p]
+	pr.AckedFrame = r.ack[p]
+	for r.elig[q] < r.logN[q] && r.logAt[q][r.elig[q]]+r.cfg.AckLagGrace <= r.now {
+		r.elig[q]++
+	}
+	lag := int(r.elig[q] - r.ack[p])
+	if lag < 0 {
+		lag = 0
+	}
+	pr.AckLag = lag
+	if lag > pr.MaxAckLag {
+		pr.MaxAckLag = lag
+	}
+	if lag > r.AckLagLimit() {
+		pr.AckLagFlagged = true
+	}
+}
+
+// forward sends the other player a packet with player p's header, checksum
+// reports and ack, and p's logged inputs from the other player's validated
+// ack on.
+func (r *Relay[I]) forward(p int, pk *inputPkt) {
+	q := 1 - p
+	start := r.ack[q]
+	count := r.logN[p] - start
+	if m := int64(maxEntries(r.isz)); count > m {
+		count = m
+	}
+	if count < 0 {
+		count = 0
+	}
+	b := r.fbuf[:inputHdr]
+	h := pk.header
+	putHeader(b, ptInput, r.tag, &h)
+	le := binary.LittleEndian
+	le.PutUint32(b[offFrame:], pk.frame)
+	le.PutUint32(b[offAck:], uint32(r.ack[p]))
+	le.PutUint32(b[offStart:], uint32(start))
+	le.PutUint16(b[offCount:], uint16(count))
+	b = b[:inputHdr+int(count)*r.isz]
+	copy(b[inputHdr:], r.log[p][start*int64(r.isz):(start+count)*int64(r.isz)])
+	b[offNSums] = byte(pk.nsums)
+	for i := 0; i < pk.nsums; i++ {
+		o := len(b)
+		b = b[:o+sumLen]
+		le.PutUint32(b[o:], pk.sums[i].frame)
+		le.PutUint64(b[o+4:], pk.sums[i].sum)
+		b[o+12] = pk.sums[i].epoch
+	}
+	r.players[p].ForwardedAck = r.ack[p]
+	_ = r.cfg.Peers[q].Send(b)
+}
+
+// updateGaps measures how long each player's log has been silent while the
+// other player's log grew.
+func (r *Relay[I]) updateGaps() {
+	for p := 0; p < 2; p++ {
+		q := 1 - p
+		pr := &r.players[p]
+		var gap time.Duration
+		if r.hasLog[p] && r.hasLog[q] && r.logN[q] > r.logN[p] {
+			gap = r.now - pr.LastLogAt
+		}
+		pr.LogGap = gap
+		if gap > pr.MaxLogGap {
+			pr.MaxLogGap = gap
 		}
 	}
 }
@@ -264,6 +590,7 @@ func (r *Relay[I]) logInputs(p int, pk *inputPkt) {
 			r.players[p].DuplicateEntries++
 			if !bytes.Equal(r.log[p][f*int64(r.isz):(f+1)*int64(r.isz)], raw) {
 				r.players[p].ConflictingEntries++
+				r.violate(p, ViolationConflict, f)
 			}
 		case f == r.logN[p]:
 			if !r.hasLog[p] {
@@ -271,6 +598,23 @@ func (r *Relay[I]) logInputs(p int, pk *inputPkt) {
 			}
 			r.log[p] = append(r.log[p], raw...)
 			r.logN[p]++
+			r.logAt[p] = append(r.logAt[p], r.now)
+			pr := &r.players[p]
+			if r.logN[p] > 1 && r.hasLog[q] && r.logN[q] > f && r.now > pr.LastLogAt {
+				// The other player was ahead while this log was silent: this
+				// player held the match back.
+				gap := r.now - pr.LastLogAt
+				if gap > pr.MaxLogGap {
+					pr.MaxLogGap = gap
+				}
+				if gap > r.cfg.CrawlAfter {
+					pr.SlowGaps++
+					if pr.SlowGaps >= r.cfg.CrawlGaps {
+						pr.CrawlFlagged = true
+					}
+				}
+			}
+			pr.LastLogAt, pr.LastLogTick = r.now, r.ticks
 			r.noteLateness(p, q, f)
 		}
 	}
@@ -356,6 +700,12 @@ func (r *Relay[I]) judge(p int, f int64) {
 	if rep.sum == c.sum {
 		return
 	}
+	if pr := &r.players[p]; pr.Desyncs == 0 {
+		pr.FirstDesyncFrame = f
+		pr.Desyncs = 1
+	} else {
+		pr.Desyncs++
+	}
 	known := false
 	for _, d := range r.desyncs {
 		if d == f {
@@ -374,13 +724,40 @@ func (r *Relay[I]) judge(p int, f int64) {
 		blob: append(r.rs[p].blob[:0], c.blob...), last: r.now - r.cfg.FrameDuration}
 }
 
+// endBurst is how many End packets go out at once, before the repeats that
+// later Tick calls send. Copies in one burst do not help against a burst of
+// loss, so the app should still keep ticking (see Draining).
+const endBurst = 4
+
 func (r *Relay[I]) endMatch(reason uint8) {
-	r.ended, r.endReason, r.endRepeat = true, reason, 10
+	r.ended, r.endReason = true, reason
+	r.endLeft, r.endNext = r.cfg.EndRepeats, r.now+r.cfg.EndRepeatEvery
 	for p := 0; p < 2; p++ {
 		r.rs[p].active = false
-		_ = r.cfg.Peers[p].Send(putSmall(r.pktBuf(), ptEnd, r.tag, reason, 0))
+		for i := 0; i < endBurst; i++ {
+			_ = r.cfg.Peers[p].Send(putSmall(r.pktBuf(), ptEnd, r.tag, reason, 0))
+		}
 	}
 }
+
+// Finish ends the match as over (EndMatchOver) and sends the End packet to
+// both players at once. The app calls it when its game rules decide the
+// match is finished, so the clients end normally (ErrMatchOver) instead of
+// stalling into ErrDisconnect. It does nothing if the match already ended.
+//
+// Call Finish on the goroutine that calls Tick; the relay is not safe for
+// concurrent use. The relay repeats End by relay time (EndRepeats copies,
+// EndRepeatEvery apart, defaults 20 and 100 ms), one per Tick at most, because
+// a datagram can be lost. Keep calling Tick until Draining reports false.
+func (r *Relay[I]) Finish() {
+	if !r.ended {
+		r.endMatch(EndMatchOver)
+	}
+}
+
+// Draining reports whether the relay still owes End repeats. While it is
+// true, call Tick (at the usual rate) so every client sees the End packet.
+func (r *Relay[I]) Draining() bool { return r.ended && r.endLeft > 0 }
 
 // sendResyncs sends each pending blob in fragments, once per frame time,
 // until the peer acknowledges it.
@@ -446,8 +823,13 @@ func (r *Relay[I]) Report() MatchReport {
 	rep := MatchReport{
 		Identity: r.cfg.Identity, ConfirmedFrames: r.confN, VerifiedFrames: r.simFrame,
 		Players: r.players, DesyncFrames: append([]int64(nil), r.desyncs...),
-		Resyncs: r.resyncs, Ended: r.ended, EndReason: r.endReason,
+		Resyncs: r.resyncs, Ended: r.ended, EndReason: r.endReason, Ticks: r.ticks,
 	}
+	for p := 0; p < 2; p++ {
+		rep.Players[p].FramesLogged = int(r.logN[p])
+	}
+	r.updateGaps()
+	rep.Players = r.players
 	for p := 0; p < 2; p++ {
 		rep.Players[p].FramesLogged = int(r.logN[p])
 	}

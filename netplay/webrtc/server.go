@@ -38,6 +38,12 @@ type Config struct {
 	// ConfigureICE may adjust pion's setting engine: UDP port range,
 	// NAT1To1IPs behind a fixed public address, interface filters. Optional.
 	ConfigureICE func(*pion.SettingEngine)
+	// OnHello, if set, is called for each valid hello a hub client sends,
+	// once per hub connection (the client sends it again after a hub
+	// reconnect, with a new client ID). The app can seat the player that
+	// owns session on clientID, or point an existing seat at the new client.
+	// It runs on the hub's handler goroutine and must return quickly.
+	OnHello func(clientID, session string)
 }
 
 // Server is the relay-side answerer. It turns browser offers into data
@@ -46,12 +52,20 @@ type Server struct {
 	cfg Config
 	api *pion.API
 
-	mu     sync.Mutex
-	conns  map[string]*serverConn
-	links  map[string]*Link
-	fb     *hubnet.Fallback
-	accept chan *Peer
-	closed bool
+	mu    sync.Mutex
+	conns map[string]*serverConn
+	links map[string]*Link
+	// announced maps the session each hub client named in its hello, in both
+	// directions. A later hello for a session replaces the earlier owner.
+	// superseded holds, per session, the previous owner after a newer hello
+	// took the session, so Rebind can still move the seat from it. Only one
+	// per session is kept.
+	byClient   map[string]string
+	bySession  map[string]string
+	superseded map[string]string
+	fb         *hubnet.Fallback
+	accept     chan *Peer
+	closed     bool
 }
 
 type serverConn struct {
@@ -68,6 +82,13 @@ type serverConn struct {
 	candidates int
 	peer       *Peer
 	closed     bool
+}
+
+// ID returns the hub client ID the connection serves. It changes on Rebind.
+func (c *serverConn) ID() string {
+	c.s.mu.Lock()
+	defer c.s.mu.Unlock()
+	return c.id
 }
 
 // maxRemoteCandidates bounds the trickled candidates accepted per connection.
@@ -125,6 +146,10 @@ func (s *Server) Accept(ctx context.Context) (*Peer, error) {
 func (s *Server) Handle(clientID string, m signal.Message, reply func(signal.Message) error) {
 	switch m := m.(type) {
 	case *signal.Hello:
+		s.announce(clientID, m.Session)
+		if s.cfg.OnHello != nil {
+			s.cfg.OnHello(clientID, m.Session)
+		}
 		cfg := &signal.Config{Session: m.Session, ICEServers: s.cfg.ICEServers, FallbackAfterMs: int(s.cfg.FallbackAfter / time.Millisecond)}
 		_ = reply(cfg)
 	case *signal.Offer:
@@ -138,6 +163,62 @@ func (s *Server) Handle(clientID string, m signal.Message, reply func(signal.Mes
 	case *signal.Candidate:
 		s.candidate(clientID, m)
 	}
+}
+
+// maxAnnounced bounds the hello table, so a client that sends many session
+// names cannot grow it without limit. Remove frees an entry.
+const maxAnnounced = 4096
+
+func (s *Server) announce(clientID, session string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	if s.byClient == nil {
+		s.byClient, s.bySession, s.superseded = map[string]string{}, map[string]string{}, map[string]string{}
+	}
+	if old, ok := s.byClient[clientID]; ok && old != session && s.bySession[old] == clientID {
+		delete(s.bySession, old)
+	}
+	if prev, ok := s.bySession[session]; ok && prev != clientID {
+		// The session moved to a new hub client. Keep the previous owner
+		// (one per session) so Rebind can move its seat.
+		if older, ok := s.superseded[session]; ok {
+			delete(s.byClient, older)
+		}
+		s.superseded[session] = prev
+	}
+	// The cap applies to new sessions only: a reconnect, which replaces an
+	// owner above or an entry of this client, is never refused.
+	if _, known := s.byClient[clientID]; !known && len(s.byClient) >= maxAnnounced {
+		if _, seated := s.bySession[session]; !seated {
+			return
+		}
+	}
+	s.byClient[clientID], s.bySession[session] = session, clientID
+}
+
+// ClientBySession returns the hub client that most recently announced session
+// in a hello, and false if none did or that client was removed. After a hub
+// reconnect the same session maps to the new client ID, so a relay can point a
+// seat at it. Treat a session name as a label, not a credential: any client can
+// announce any name, so authenticate the seat in your own join handler.
+func (s *Server) ClientBySession(session string) (clientID string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clientID, ok = s.bySession[session]
+	return clientID, ok
+}
+
+// SessionOf returns the session a hub client named in its latest hello. A
+// client whose session a newer hello took keeps its entry (one per session)
+// until Remove or Rebind, so a seat can still be moved from it.
+func (s *Server) SessionOf(clientID string) (session string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok = s.byClient[clientID]
+	return session, ok
 }
 
 var errBusy = errors.New("netplay/webrtc: too many peers")
@@ -170,7 +251,7 @@ func (s *Server) offer(clientID string, m *signal.Offer, reply func(signal.Messa
 		return err
 	}
 	peer := newPeer(clientID, m.Session, pc, dc, s.cfg.QueueLen)
-	peer.onClose = func() { c.detach(); s.unlinkPeer(clientID, peer) }
+	peer.onClose = func() { c.detach(); s.unlinkPeer(c.ID(), peer) }
 	pc.OnICECandidate(c.onLocalCandidate)
 	pc.OnConnectionStateChange(func(st pion.PeerConnectionState) {
 		if st == pion.PeerConnectionStateFailed || st == pion.PeerConnectionStateClosed {
@@ -245,7 +326,7 @@ func (c *serverConn) opened(p *Peer) {
 	if c.timer != nil {
 		c.timer.Stop()
 	}
-	c.s.Link(c.id).peer.Store(p)
+	c.s.Link(c.ID()).peer.Store(p)
 	select {
 	case c.s.accept <- p:
 	default:
@@ -299,12 +380,92 @@ func (c *serverConn) close(cause error) {
 	_ = c.pc.Close()
 }
 
+// Errors returned by Rebind.
+var (
+	ErrUnknownClient   = errors.New("netplay/webrtc: unknown hub client")
+	ErrSessionMismatch = errors.New("netplay/webrtc: the new client did not announce the same session")
+)
+
+// Rebind moves a seat from the hub client oldID to newID after a hub
+// reconnect: the Link (and with it the relay's transport, the WebRTC data
+// channel and the WebSocket fallback) now serves newID, and the relay keeps
+// using the same Link. Both clients must have said hello with the same
+// session, or Rebind returns ErrSessionMismatch and changes nothing.
+//
+// Call it from OnHello (or after it) with the old ID from ClientBySession
+// taken before the hello, and call it before you ask for Link(newID), which
+// would create a second Link.
+//
+// A session name is only as private as you make it: any client can announce
+// any name, so Rebind is only safe when the name is an unguessable seat
+// token that your matchmaker gave to one player (or you check the new
+// client's authenticated identity before you call it). Do not Remove the old
+// client when the hub reports a leave, until the reconnect grace has ended
+// (at most the session stall timeout, 5 s by default); Remove closes the
+// data channel and drops the Link.
+func (s *Server) Rebind(oldID, newID string) error {
+	if oldID == newID {
+		return nil
+	}
+	s.mu.Lock()
+	so, okOld := s.byClient[oldID]
+	sn, okNew := s.byClient[newID]
+	if !okOld || !okNew {
+		s.mu.Unlock()
+		return ErrUnknownClient
+	}
+	if so != sn || so == "" {
+		s.mu.Unlock()
+		return ErrSessionMismatch
+	}
+	l, c, fb := s.links[oldID], s.conns[oldID], s.fb
+	if l == nil && c == nil {
+		s.mu.Unlock()
+		return ErrUnknownClient
+	}
+	if l != nil {
+		delete(s.links, oldID)
+		l.id.Store(&newID)
+		s.links[newID] = l
+	}
+	if c != nil {
+		delete(s.conns, oldID)
+		c.id = newID
+		s.conns[newID] = c
+		c.mu.Lock()
+		if c.peer != nil {
+			c.peer.id.Store(&newID)
+		}
+		c.mu.Unlock()
+	}
+	delete(s.byClient, oldID)
+	if s.superseded[so] == oldID {
+		delete(s.superseded, so)
+	}
+	s.bySession[so] = newID
+	s.byClient[newID] = so
+	s.mu.Unlock()
+	if fb != nil {
+		fb.Forget(oldID)
+	}
+	return nil
+}
+
 // Remove closes the connection of a hub client that left and forgets its Link.
 func (s *Server) Remove(clientID string) {
 	s.mu.Lock()
 	c := s.conns[clientID]
 	delete(s.conns, clientID)
 	delete(s.links, clientID)
+	if sess, ok := s.byClient[clientID]; ok {
+		delete(s.byClient, clientID)
+		if s.bySession[sess] == clientID {
+			delete(s.bySession, sess)
+		}
+		if s.superseded[sess] == clientID {
+			delete(s.superseded, sess)
+		}
+	}
 	fb := s.fb
 	s.mu.Unlock()
 	if fb != nil {

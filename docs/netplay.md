@@ -103,8 +103,8 @@ relay.AddSpectator(toSpectator)
 relay.Tick(now)
 ```
 
-The relay forwards every input packet whole, so redundancy still works. It
-logs only the first copy of each frame's input. It simulates a native copy of
+The relay logs only the first copy of each frame's input and forwards a packet
+built from that log (see below), so redundancy still works. It simulates a native copy of
 the game, at most 30 frames per tick, and compares each peer's checksum with
 its own. On a mismatch it sends its `Save` blob for that frame in fragments
 until the peer acknowledges; the peer loads it and re-simulates to the present
@@ -114,6 +114,83 @@ replay. `Report()` also lists, per player, the inputs that arrived after their
 due time plus the input delay, and sets `Flagged` after repeated late inputs.
 An input is not counted if the other player had not yet sent that frame, since
 waiting on the other player makes an honest player late too.
+
+### What the relay validates and forwards
+
+The relay never forwards a sender's bytes. After it checks an Input packet, it
+logs the entries and sends the other player a new packet built from its own log,
+starting at the frame that player last acknowledged. So a player cannot change
+what the other receives after the relay logged it, and a sender that never
+resends cannot leave the other player behind a lost packet. The wire format
+is unchanged.
+
+The relay rejects or distrusts an Input packet, and counts a violation for the
+sender (`PlayerReport.Violations`, by `ViolationKind`), when it:
+
+- has the wrong tag or length (dropped; nothing in it is trusted);
+- starts above the highest ack the relay has forwarded from the other player
+  (`ViolationNoResend`; an honest sender resends from that ack. Its ack is
+  ignored, and entries that extend the log are still logged);
+- carries frames beyond the other player's log + `PredictionWindow` + the
+  sender's input delay + `InputSlack` (`ViolationFuture`; dropped whole);
+- acknowledges frames the relay has not logged (`ViolationImpossibleAck`; the
+  ack is ignored); or
+- repeats a logged frame with different bytes (`ViolationConflict`).
+
+`RelayConfig.PredictionWindow` and `MaxInputDelay` must be at least the
+sessions' values. A relay with smaller values rejects honest packets.
+
+### Facts the app uses to judge a match
+
+`Report().Players[i]` is the relay's view of one player. The relay records
+facts; the app decides what they mean. Each fact has a caveat.
+
+| Field | Meaning and caveat |
+|---|---|
+| `Violations`, `ViolationCounts`, `FirstViolation`, `FirstViolationFrame`, `ConflictingEntries`, `ImpossibleAcks` | Protocol violations by this player, attributed to the sender. A player with any of these is the suspect, whatever the `Desyncs` counts say. Packet loss alone does not cause them; a build with a different `PredictionWindow` or `MaxInputDelay` than the relay's does. |
+| `Desyncs`, `Resyncs`, `FirstDesyncFrame` | Checksum frames where this player's checksum disagreed with the relay's native copy, resyncs it acknowledged, and the first such frame (0 if none). They show that a build diverged, not why. Read them together with the violation fields. |
+| `AckedFrame`, `ForwardedAck` | The highest ack in this player's packets that passed validation, and the ack the relay sent to the other player (which never exceeds the frames the relay logged for that player). |
+| `AckLag`, `MaxAckLag`, `AckLagFlagged` | Distance between the other player's frames that the relay forwarded at least `AckLagGrace` ago (default 1 s) and the frames this player acknowledged, measured when its valid packets arrive. `AckLagFlagged` is set above `AckLagLimit()` = `PredictionWindow + MaxInputDelay + AckLagSlack` (defaults 8, 3 and 30; `AckLagSlackNone` for 0). A client that keeps acknowledging frame 0 makes the honest peer stall at 240 unacknowledged frames; this flag lets the app refuse that forfeit. A link that drops everything for longer than the grace and slack also trips it. |
+| `LateInputs`, `MaxLateness`, `Flagged` | Inputs that arrived later than their due time plus the input delay, counted only if the other player had already sent that frame. |
+| `LogGap`, `MaxLogGap`, `SlowGaps`, `CrawlFlagged` | How long ago this player's log last grew at the last `Tick`, counted only if the other player's log has grown since; the longest such gap; the number of closed gaps longer than `CrawlAfter` (default 1.5 s); and a flag set after `CrawlGaps` (default 3) of them. A client that crawls (one tick every 2 s) never goes silent long enough for a stall timeout, but it collects slow gaps. One long gap alone, such as an outage that hit both players, does not set the flag. |
+| `LastLogAt`, `LastLogTick` | The relay clock (the `now` given to `Tick`) and the `Tick` count when this player's log last grew. The player whose log stopped first stalled first. |
+| `LastPacketAt`, `LastPacketTick` | The same for any valid packet from the player. |
+
+The times come from the `now` you pass to `Tick`. They are facts for the app's
+verdict, not simulation state: never feed them to `Game.Step`.
+
+### Ending a match
+
+When your game rules decide the match is over, call `relay.Finish()` on the
+goroutine that calls `Tick`. It sends the End packet (reason `EndMatchOver`) to
+both players at once, four copies, and every `Session` ends with
+`ErrMatchOver` (`s.MatchOver()` is true). That is a normal end, not a failure:
+`ErrDisconnect` and `ErrRemoteEnded` still mean a stall and a desync. A
+datagram can be lost, so the relay repeats End by relay time: 20 more copies,
+at least 100 ms apart (`EndRepeats`, `EndRepeatEvery`), one per `Tick` at most.
+**Keep calling `Tick` until `relay.Draining()` is false.** The relay never
+ticks itself; if you stop at once, a client that lost all four copies ends
+with `ErrDisconnect` after its stall timeout. `Finish` does nothing if the
+match already ended (for example by a desync). Upgrade clients before a relay
+calls `Finish`: an older client treats every End packet as `ErrRemoteEnded`.
+
+### Sessions
+
+A session drops a remote input that runs further ahead than the prediction
+window, its input delay and 4 frames of slack (`Stats().FutureInputs`), and
+ignores an ack for frames it has not produced (`Stats().ImpossibleAcks`).
+The handshake has its own limit, `Config.HandshakeTimeout` (default 30 s, at
+least `StallTimeout`), so a player whose scene loads late does not force a
+restart. With `AutoDelay`, the session takes the minimum of `RTTSamples`
+(default 4) round-trip samples and ignores any sample above `RTTCap` (default
+500 ms, counted in `Stats().RTTIgnored`). If no believable sample arrives within
+`RTTWait` (default 1 s) of the peer's first packet, it uses `DelayFallback`
+(default 1; `Stats().DelayFallbacks`). So a peer that never echoes cannot hold
+the handshake open, and one that fakes its echoes can raise the delay only by
+the cap: a peer that adds less than the cap to every echo still gets a higher
+delay for you, up to the maximum. A round-trip sample whose echoed timestamp predates the session's
+first packet is ignored (`Stats().StaleEchoes`), so a restarted session does
+not start with a half-second round trip and a delay of 3.
 
 Spectators receive confirmed inputs after `SpectatorDelay` (default 3 s).
 `netplay.Spectator` applies the stream to a game.
@@ -209,6 +286,15 @@ filters, and `MaxPeers`, `ConnectTimeout` and `QueueLen` limits. Allow the
 relay's UDP range in your firewall. The hub's `MaxMessagesPerSecond`, if set,
 must allow the fallback path: two players send 60 frames per second each.
 
+### Releasing the nested module
+
+`netplay/webrtc` is its own Go module, so it needs its own tag. After
+tagging the core release `vX.Y.Z`, set `m31labs.dev/gosx vX.Y.Z` in
+`netplay/webrtc/go.mod` (the `replace m31labs.dev/gosx => ../..` stays for
+tests), merge, and tag the same commit `netplay/webrtc/vX.Y.Z`. Without that
+tag a consumer must pin a pseudo-version. The tag is pushed by the releaser,
+not by a feature PR.
+
 ### Page (Go)
 
 ```go
@@ -224,6 +310,14 @@ conn, err := client.Dial(client.Options{
 })
 s, _ := netplay.NewSession(netplay.Config[Pad]{Transport: conn /* ... */})
 ```
+
+`Options.Header` is `hubclient.Header`: `http.Header` in native builds (so
+existing code compiles) and a plain `map[string][]string` in js/wasm builds, so
+a browser client does not link `net/http` or `crypto/tls`. The native build
+sends it on the WebSocket handshake; the browser ignores it.
+`netplay/client` tests fail if a js/wasm build links `net/http`, `crypto/tls`,
+`gorilla/websocket` or the hub server, or if the minimal client is over a size
+budget (4.6 MB raw).
 
 `Dial` returns at once. Until a path is ready, `Send` drops datagrams and
 `Recv` returns nothing, as a lossy network would; the session handshake
@@ -244,8 +338,20 @@ retries. `conn.Mode()` is `ModeConnecting`, `ModeWebRTC` or `ModeWebSocket`.
 - If the channel opens later, `Conn` moves back to WebRTC.
 - The WebSocket is ordered and reliable, so loss becomes delay (head-of-line
   blocking). Rollback still works, but the match feels worse; tell the player.
-- If the hub connection itself drops, hub reconnect gives the client a new ID,
-  and the relay must pair it again. `Conn` does not re-pair for you.
+- If the hub connection itself drops, hub reconnect gives the client a new ID.
+  `Conn` sends its hello again on every hub connection. On the relay,
+  `webrtc.Config.OnHello` is called with `(clientID, session)`, and
+  `Server.Rebind(oldID, newID)` moves the seat: the same `Link`, with its data
+  channel and its WebSocket path, now serves the new ID, so the relay keeps its
+  transport. `Rebind` checks that both clients announced the same session.
+  Do not `Remove` the old client when the hub reports a leave until the
+  reconnect grace has ended (at most the session stall timeout, 5 s by
+  default); `Remove` closes the data channel and drops the `Link`. After a
+  fallback to the WebSocket, `Conn` uses the WebRTC channel again only if the
+  channel opens later; it does not renegotiate.
+- A session name is a label, not a credential: any client can announce any
+  name. Use an unguessable seat token from your matchmaker as the session
+  name, or check the new client's authenticated identity before `Rebind`.
 
 ### Signaling and limits
 
