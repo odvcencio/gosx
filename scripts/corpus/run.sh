@@ -210,7 +210,14 @@ cat "$MD"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$MD" >>"$GITHUB_STEP_SUMMARY"; fi
 
 # Exit 1 when a check fails and (with -b) its baseline passed, or (without -b) it failed at all.
-awk -F'\t' -v b="$BASELINE" -v known="$HERE/known.tsv" '
-  BEGIN { while ((getline l < known) > 0) { if (l !~ /^#/) { split(l, f, "\t"); k[f[1] SUBSEP f[2]] = 1 } } }
-  NR>1 && ($3=="FAIL"||$3=="TIMEOUT") && (b==0 || $4=="PASS") && !(($1 SUBSEP $2) in k) { bad=1 }
-  END { exit bad }' "$TSV" || exit 1
+# A row in known.tsv waives the whole check, or only the named tests (see waived.sh).
+rc=0
+# Fields are split with awk (not read) because the first_error field can be empty.
+while IFS=$'\x1f' read -r c ck st base logrel; do
+  case "$st" in FAIL|TIMEOUT) ;; *) continue;; esac
+  if [ "$BASELINE" = 1 ] && [ "$base" != PASS ]; then continue; fi
+  if "$HERE/waived.sh" "$HERE/known.tsv" "$c" "$ck" "$OUT/$logrel"; then continue; fi
+  echo "not waived: $c $ck $st" >&2
+  rc=1
+done < <(awk -F'\t' -v OFS=$'\x1f' 'NR>1 { print $1, $2, $3, $4, $7 }' "$TSV")
+exit $rc
