@@ -11,6 +11,8 @@ import (
 )
 
 func TestExportStagesExternalFileCSS(t *testing.T) {
+	// The test reads exported HTML and CSS, not runtime bytes.
+	useFakePrebuiltRuntime(t)
 	// `gosx export` and `gosx build --prod` share one pipeline; one full build covers both.
 	for _, mode := range []string{"export"} {
 		t.Run(mode, func(t *testing.T) {

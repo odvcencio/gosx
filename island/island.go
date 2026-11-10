@@ -110,6 +110,8 @@ type Renderer struct {
 	bootstrapFeatureScene3dOceanFFTPath         string
 	bootstrapFeatureScene3dParticleBurstPath    string
 	bootstrapFeatureScene3dDepthFXPath          string
+	bootstrapFeatureScene3dPostFXWebGPUPath     string
+	bootstrapFeatureScene3dPostFXWebGLPath      string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -296,6 +298,8 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapFeatureScene3dTextAtlasPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-text-atlas.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTextAtlas.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
 	renderer.bootstrapFeatureScene3dDepthFXPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-depthfx.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDepthFX.Hash))
+	renderer.bootstrapFeatureScene3dPostFXWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-postfx-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DPostFXWebGPU.Hash))
+	renderer.bootstrapFeatureScene3dPostFXWebGLPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-postfx-webgl.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DPostFXWebGL.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
 	renderer.bootstrapFeatureScene3dOceanQueryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-query.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanQuery.Hash))
@@ -821,6 +825,24 @@ func (r *Renderer) SetBootstrapFeatureScene3DDepthFXPath(path string) {
 	r.bootstrapFeatureScene3dDepthFXPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DPostFXWebGPUPath overrides the demand-loaded WebGPU
+// post-effects URL (temporal anti-aliasing, depth of field, auto exposure).
+func (r *Renderer) SetBootstrapFeatureScene3DPostFXWebGPUPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dPostFXWebGPUPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DPostFXWebGLPath overrides the demand-loaded WebGL
+// post-effects URL (temporal anti-aliasing, depth of field, auto exposure).
+func (r *Renderer) SetBootstrapFeatureScene3DPostFXWebGLPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dPostFXWebGLPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DTimelinePath overrides the demand-loaded timeline chunk URL.
 func (r *Renderer) SetBootstrapFeatureScene3DTimelinePath(path string) {
 	if r == nil {
@@ -966,6 +988,10 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-depthfx.js", r.bootstrapFeatureScene3dDepthFXPath, r.runtimeAssets.BootstrapFeatureScene3DDepthFX):
 		return r.runtimeAssets.BootstrapFeatureScene3DDepthFX, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-postfx-webgpu.js", r.bootstrapFeatureScene3dPostFXWebGPUPath, r.runtimeAssets.BootstrapFeatureScene3DPostFXWebGPU):
+		return r.runtimeAssets.BootstrapFeatureScene3DPostFXWebGPU, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-postfx-webgl.js", r.bootstrapFeatureScene3dPostFXWebGLPath, r.runtimeAssets.BootstrapFeatureScene3DPostFXWebGL):
+		return r.runtimeAssets.BootstrapFeatureScene3DPostFXWebGL, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
 		return r.runtimeAssets.BootstrapFeatureScene3DTimeline, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-vessel.js", r.bootstrapFeatureScene3dVesselPath, r.runtimeAssets.BootstrapFeatureScene3DVessel):
@@ -1170,6 +1196,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DTextAtlasPath(runtime.BootstrapFeatureScene3DTextAtlas)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
 	r.SetBootstrapFeatureScene3DDepthFXPath(runtime.BootstrapFeatureScene3DDepthFX)
+	r.SetBootstrapFeatureScene3DPostFXWebGPUPath(runtime.BootstrapFeatureScene3DPostFXWebGPU)
+	r.SetBootstrapFeatureScene3DPostFXWebGLPath(runtime.BootstrapFeatureScene3DPostFXWebGL)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
 	r.SetBootstrapFeatureScene3DOceanQueryPath(runtime.BootstrapFeatureScene3DOceanQuery)
@@ -2394,6 +2422,8 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"text-atlas", r.bootstrapFeatureScene3dTextAtlasPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsTextAtlases)},
 		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
 		{"depthfx", r.bootstrapFeatureScene3dDepthFXPath, r.scene3DNeedsDepthFXChunk()},
+		{"postfx-webgpu", r.bootstrapFeatureScene3dPostFXWebGPUPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsWebGPUPostFX)},
+		{"postfx-webgl", r.bootstrapFeatureScene3dPostFXWebGLPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsPostFX)},
 		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
 		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
 		{"webgpu", r.bootstrapFeatureScene3dWebGPUPath, true},

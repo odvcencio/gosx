@@ -509,7 +509,9 @@ func httpServer(t *testing.T, cfg Config) (*Server, *httptest.Server, string) {
 	if len(cfg.Modes) == 0 {
 		cfg.Modes = []mode.Mode{sumMode("sum", 2)}
 	}
-	cfg.Logf = func(string, ...any) {}
+	if cfg.Logf == nil {
+		cfg.Logf = func(string, ...any) {}
+	}
 	s, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)

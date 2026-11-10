@@ -184,3 +184,35 @@ func TestNeedsTerrainAndCrowdsReadBothShapes(t *testing.T) {
 		t.Fatal("a nil probe needs no terrain or crowd chunk")
 	}
 }
+
+func TestProbeNeedsPostFX(t *testing.T) {
+	// want: NeedsPostFX (both backends' chunks), NeedsWebGPUPostFX.
+	cases := map[string][2]bool{
+		`{}`:                                                          {false, false},
+		`{"postEffects":[{"kind":"bloom"}]}`:                          {false, false},
+		`{"postEffects":[{"kind":"decals"}]}`:                         {false, false},
+		`{"postEffects":[{"kind":"taa"}]}`:                            {true, true},
+		`{"postFX":[{"kind":"dof"}]}`:                                 {true, true},
+		`{"postEffects":[{"kind":"motionBlur"}]}`:                     {false, true},
+		`{"scene":{"postFX":[{"kind":"motionBlur"}]}}`:                {false, true},
+		`{"environment":{"autoExposure":{}}}`:                         {true, true},
+		`{"environment":{"autoExposure":null}}`:                       {false, false},
+		`{"scene":{"environment":{"autoExposure":{"key":0.2}}}}`:      {true, true},
+		`{"scene":{"postEffects":[{"kind":"bloom"},{"kind":"taa"}]}}`: {true, true},
+		`{"postFX":{"effects":[{"kind":"taa"}]}}`:                     {false, false},
+		`{"postEffects":[null,7,{"kind":3}]}`:                         {false, false},
+	}
+	for raw, want := range cases {
+		p := Decode(json.RawMessage(raw))
+		if p.Err != nil {
+			t.Fatalf("%s: decode: %v", raw, p.Err)
+		}
+		if got := [2]bool{p.NeedsPostFX(), p.NeedsWebGPUPostFX()}; got != want {
+			t.Errorf("%s: NeedsPostFX, NeedsWebGPUPostFX = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsPostFX() || nilProbe.NeedsWebGPUPostFX() || nilProbe.NeedsDepthFX() {
+		t.Fatal("a nil probe needs no post-effect chunk")
+	}
+}

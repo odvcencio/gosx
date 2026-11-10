@@ -20,6 +20,18 @@ var (
 	ErrFull     = errors.New("store: data size limit reached")
 	ErrTooLarge = errors.New("store: key or value too large")
 	ErrBadKey   = errors.New("store: empty key")
+	// ErrBatchTooLarge refuses a batch whose encoded size is over
+	// MaxBatchBytes. Nothing is written; split the batch.
+	ErrBatchTooLarge = errors.New("store: batch too large for one commit")
+)
+
+// Upper bounds for Options.MaxKeyBytes and Options.MaxValueBytes. Together
+// with snapshot chunking they keep every frame the store writes (WAL commits
+// and snapshot chunks) under MaxBatchBytes, so recovery never mistakes a
+// frame for a torn tail.
+const (
+	MaxKeyLimit   = 64 << 10
+	MaxValueLimit = 32 << 20
 )
 
 // SyncMode says when a commit reaches stable storage.
@@ -42,9 +54,11 @@ type Options struct {
 	// MaxLogEntries keeps this many newest entries in each append log; older
 	// entries are dropped. Default 10000.
 	MaxLogEntries int
-	// MaxValueBytes limits one value or log record. Default 1 MiB.
+	// MaxValueBytes limits one value or log record. Default 1 MiB; at most
+	// MaxValueLimit (32 MiB). A whole batch is limited to MaxBatchBytes.
 	MaxValueBytes int
-	// MaxKeyBytes limits one key or log name. Default 512.
+	// MaxKeyBytes limits one key or log name. Default 512; at most
+	// MaxKeyLimit (64 KiB).
 	MaxKeyBytes int
 	// MaxDataBytes limits live data (keys, values, retained log records).
 	// Default 256 MiB.
@@ -69,9 +83,11 @@ func (o *Options) defaults() {
 	if o.MaxValueBytes <= 0 {
 		o.MaxValueBytes = 1 << 20
 	}
+	o.MaxValueBytes = min(o.MaxValueBytes, MaxValueLimit)
 	if o.MaxKeyBytes <= 0 {
 		o.MaxKeyBytes = 512
 	}
+	o.MaxKeyBytes = min(o.MaxKeyBytes, MaxKeyLimit)
 	if o.MaxDataBytes <= 0 {
 		o.MaxDataBytes = 256 << 20
 	}
@@ -487,6 +503,7 @@ func (s *Store) commitLocked(ops []op) (uint64, error) {
 		return 0, s.broken
 	}
 	var delta int64
+	frame := 0
 	seen := map[string]bool{}
 	for _, o := range ops {
 		if o.key == "" {
@@ -494,6 +511,11 @@ func (s *Store) commitLocked(ops []op) (uint64, error) {
 		}
 		if len(o.key) > s.opts.MaxKeyBytes || len(o.val) > s.opts.MaxValueBytes {
 			return 0, ErrTooLarge
+		}
+		// Recovery reads a frame over maxFrame as a torn tail and drops it
+		// with every later commit, so such a batch must never be written.
+		if frame += opBytes(o); frame > maxFrame {
+			return 0, ErrBatchTooLarge
 		}
 		switch o.kind {
 		case opPut:
@@ -666,13 +688,18 @@ func writeSnapshot(path string, st *state, doSync bool) error {
 		}
 		return nil
 	}
+	// A frame holds up to 256 KiB of ops, or one larger op on its own, so no
+	// snapshot frame is bigger than the largest op (at most MaxBatchBytes).
 	add := func(o op) error {
-		chunk = append(chunk, o)
-		chunkBytes += len(o.key) + len(o.val) + 8
-		count++
-		if chunkBytes >= 256<<10 {
-			return flush()
+		n := opBytes(o)
+		if len(chunk) > 0 && chunkBytes+n > 256<<10 {
+			if err := flush(); err != nil {
+				return err
+			}
 		}
+		chunk = append(chunk, o)
+		chunkBytes += n
+		count++
 		return nil
 	}
 	for _, k := range sortedKeys(st.kv) {

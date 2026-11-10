@@ -12,7 +12,6 @@ import (
 	"syscall/js"
 	"time"
 
-	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/game/actions"
 	"m31labs.dev/gosx/game/boot"
 	"m31labs.dev/gosx/game/flow"
@@ -193,7 +192,6 @@ func main() {
 		obj.Set(k, v)
 	}
 	g.Set("kit", obj)
-	_ = gosx.Text // keep the root package linked the way kitui does
 	select {}
 }
 

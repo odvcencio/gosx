@@ -62,6 +62,15 @@ kitui.Bind(root, kitui.Handlers{OnAction: ..., OnSetting: func(k, v string) { ki
 
 Server side, put `kitui.Styles()`, `kitui.Script()`, `bootpage.Watchdog()` and `bootpage.PreloadLinks(manifest, "/gosx/assets", "game", bootpage.PreloadOptions{})` in the page head, and render `kitui.BootRoot(...)` around the canvas. The same markup works in a static export.
 
+The kit screens build their HTML with package `m31labs.dev/gosx/markup`, not the root `gosx` package, so a browser build that uses them does not link the `.gsx` compiler. Build your own browser-side nodes with `markup` too:
+
+```go
+hud := markup.El("p", markup.Attrs(markup.Attr("class", "hud")), markup.Text("Round 2"))
+kitui.Render(root, markup.Fragment(kitui.PauseMenu(kitui.PauseProps{}), hud))
+```
+
+Importing `m31labs.dev/gosx` in browser code links the compiler back in. A minimal program that renders the pause menu is 2.9 MB (633 KB with Brotli) with `markup` and 6.0 MB (1.25 MB with Brotli) with the root package, built with Go 1.26. `gosx.Node` is an alias of `markup.Node`, so server code can mix the two packages.
+
 ## Input actions
 
 - A `Map` holds contexts. `Push("menu")` makes the menu the top context; an `Opaque` context hides the ones below. Inputs held when the stack changes are ignored until released, so the key that opens a menu does not press the menu's buttons.

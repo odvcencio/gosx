@@ -123,13 +123,66 @@ func startDocsApp(t *testing.T, baseURL string) *docsApp {
 	return startDevApp(t, filepath.Join(e2eRepoRoot(t), "examples", "gosx-docs"), baseURL)
 }
 
+// devReadyTimeout is how long a cold gosx dev start may take to answer /readyz.
+// A cold start builds the runtime wasm and compiles the app: 14 s on a loaded
+// Apple laptop with an empty Go build cache, so a hosted two-core runner needs
+// several times that. Building the gosx binary itself is a separate step with
+// its own budget (see gosxDevBinary).
+const devReadyTimeout = 120 * time.Second
+
+var (
+	gosxBinaryOnce sync.Once
+	gosxBinaryPath string
+	gosxBinaryErr  error
+)
+
+// gosxDevBinary builds ./cmd/gosx once per test run and returns its path.
+// `go run ./cmd/gosx dev` compiled the CLI inside the readiness wait and printed
+// nothing meanwhile, so a slow compile looked like a hung dev server (run
+// 42660330228).
+func gosxDevBinary(t *testing.T, root string) string {
+	t.Helper()
+	gosxBinaryOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "gosx-e2e-bin-")
+		if err != nil {
+			gosxBinaryErr = err
+			return
+		}
+		gosxBinaryDir = dir
+		path := filepath.Join(dir, "gosx")
+		started := time.Now()
+		build := exec.Command("go", "build", "-o", path, "./cmd/gosx")
+		build.Dir = root
+		if output, err := build.CombinedOutput(); err != nil {
+			gosxBinaryErr = fmt.Errorf("build gosx CLI: %v\n%s", err, output)
+			return
+		}
+		gosxBinaryPath = path
+		t.Logf("built the gosx CLI in %s", time.Since(started).Round(time.Millisecond))
+	})
+	if gosxBinaryErr != nil {
+		t.Fatal(gosxBinaryErr)
+	}
+	return gosxBinaryPath
+}
+
+var gosxBinaryDir string
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if gosxBinaryDir != "" {
+		_ = os.RemoveAll(gosxBinaryDir)
+	}
+	os.Exit(code)
+}
+
 func startDevApp(t *testing.T, appDir, baseURL string) *docsApp {
 	t.Helper()
 	root := e2eRepoRoot(t)
 	port := baseURL[strings.LastIndex(baseURL, ":")+1:]
 
 	logs := &logBuffer{}
-	cmd := exec.Command("go", "run", "./cmd/gosx", "dev", appDir)
+	cmd := exec.Command(gosxDevBinary(t, root), "dev", appDir)
 	cmd.Dir = root
 	localEnv, err := localapp.Environment(os.Environ(), port)
 	if err != nil {
@@ -162,9 +215,14 @@ func startDevApp(t *testing.T, appDir, baseURL string) *docsApp {
 	})
 
 	app := &docsApp{baseURL: baseURL, logs: logs}
-	if err := waitForHealthy(baseURL+"/readyz", 45*time.Second); err != nil {
-		t.Fatalf("%v\n\nLogs:\n%s", err, logs.String())
+	// The gosx binary is already built, so this budget covers only what gosx dev
+	// does: stage assets (a cold wasm build), compile the app, and start it. Its
+	// stage log lines ("gosx dev: ...") in the failure output show which one ran long.
+	started := time.Now()
+	if err := waitForHealthy(baseURL+"/readyz", devReadyTimeout); err != nil {
+		t.Fatalf("%v (gosx dev started %s ago)\n\nLogs:\n%s", err, time.Since(started).Round(time.Second), logs.String())
 	}
+	t.Logf("gosx dev answered /readyz after %s", time.Since(started).Round(time.Millisecond))
 	if e2eWindowsRelay() {
 		app.baseURL = e2eExposeToWindows(t, baseURL)
 	}
@@ -348,7 +406,7 @@ func newBrowserPage(t *testing.T, chrome string, extraFlags map[string]any, widt
 	}
 	if err := chromedp.Run(ctx, actions...); err != nil {
 		if browserUnavailable(err) {
-			t.Skipf("chrome could not start in this environment: %v", err)
+			skipOrFailChrome(t, chromeRequired(), "chrome could not start in this environment: %v", err)
 		}
 		t.Fatalf("initialize browser: %v", err)
 	}

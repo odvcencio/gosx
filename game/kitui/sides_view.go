@@ -3,7 +3,7 @@ package kitui
 import (
 	"strconv"
 
-	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/markup"
 )
 
 // SideSelectProps configures SideSelectPanel.
@@ -45,7 +45,7 @@ func seatKindName(k SeatKind) string {
 
 func slotIndex(s Slot) int { return int(s) + 1 } // 0 = A, 1 = middle, 2 = B
 
-func seatNode(m *SideSelect, st Seat, l map[string]string) gosx.Node {
+func seatNode(m *SideSelect, st Seat, l map[string]string) markup.Node {
 	glyph := glyphGamepad
 	switch st.Kind {
 	case SeatKeyboard:
@@ -62,25 +62,25 @@ func seatNode(m *SideSelect, st Seat, l map[string]string) gosx.Node {
 		desc += ", " + sideLabel(l, "spectate")
 	}
 	attrs := []any{
-		gosx.Attr("class", "kit-device"), gosx.Attr("role", "listitem"),
-		gosx.Attr("data-device", st.ID), gosx.Attr("data-kind", seatKindName(st.Kind)),
-		gosx.Attr("data-slot", slotIndex(st.Slot)), gosx.Attr("data-from-slot", slotIndex(st.Prev)),
-		gosx.Attr("data-ready", strconv.FormatBool(st.Ready)),
-		gosx.Attr("data-focus", strconv.FormatBool(st.Focus >= 0)),
-		gosx.Attr("style", "--slot:"+strconv.Itoa(slotIndex(st.Slot))+";--from:"+strconv.Itoa(slotIndex(st.Prev))),
-		gosx.Attr("aria-label", desc),
+		markup.Attr("class", "kit-device"), markup.Attr("role", "listitem"),
+		markup.Attr("data-device", st.ID), markup.Attr("data-kind", seatKindName(st.Kind)),
+		markup.Attr("data-slot", slotIndex(st.Slot)), markup.Attr("data-from-slot", slotIndex(st.Prev)),
+		markup.Attr("data-ready", strconv.FormatBool(st.Ready)),
+		markup.Attr("data-focus", strconv.FormatBool(st.Focus >= 0)),
+		markup.Attr("style", "--slot:"+strconv.Itoa(slotIndex(st.Slot))+";--from:"+strconv.Itoa(slotIndex(st.Prev))),
+		markup.Attr("aria-label", desc),
 	}
 	children := []any{
-		gosx.El("span", gosx.Attrs(gosx.Attr("class", "kit-device-icon")), gosx.RawHTML(glyph)),
-		gosx.El("span", gosx.Attrs(gosx.Attr("class", "kit-device-name")), gosx.Text(st.Name)),
+		markup.El("span", markup.Attrs(markup.Attr("class", "kit-device-icon")), markup.RawHTML(glyph)),
+		markup.El("span", markup.Attrs(markup.Attr("class", "kit-device-name")), markup.Text(st.Name)),
 	}
 	if st.Host {
-		children = append(children, gosx.El("span", gosx.Attrs(gosx.Attr("class", "kit-device-tag")), gosx.Text(sideLabel(l, "host"))))
+		children = append(children, markup.El("span", markup.Attrs(markup.Attr("class", "kit-device-tag")), markup.Text(sideLabel(l, "host"))))
 	}
 	if st.Ready {
-		children = append(children, gosx.El("span", gosx.Attrs(gosx.Attr("class", "kit-device-ready")), gosx.Text(sideLabel(l, "ready"))))
+		children = append(children, markup.El("span", markup.Attrs(markup.Attr("class", "kit-device-ready")), markup.Text(sideLabel(l, "ready"))))
 	}
-	return gosx.El("div", append([]any{gosx.Attrs(attrs...)}, children...)...)
+	return markup.El("div", append([]any{markup.Attrs(attrs...)}, children...)...)
 }
 
 // SideSelectPanel renders the side-select screen: each device is an icon in
@@ -94,31 +94,31 @@ func seatNode(m *SideSelect, st Seat, l map[string]string) gosx.Node {
 // The settings row is rendered as plain buttons too, so the mouse works:
 // they send data-kit-action="sides-field" with value "<field>:<+1|-1>";
 // pass that to SideSelect.HandleAction.
-func SideSelectPanel(p SideSelectProps) gosx.Node {
+func SideSelectPanel(p SideSelectProps) markup.Node {
 	m, l := p.Model, p.Labels
 	title := p.Title
 	if title == "" {
 		title = sideLabel(l, "title")
 	}
 	names := m.SideNames()
-	cols := [3][]gosx.Node{}
+	cols := [3][]markup.Node{}
 	for _, st := range m.Seats() {
 		i := slotIndex(st.Slot)
 		cols[i] = append(cols[i], seatNode(m, st, l))
 	}
-	column := func(i int, class, name string) gosx.Node {
-		args := []any{gosx.Attrs(gosx.Attr("class", "kit-side "+class), gosx.Attr("role", "list"), gosx.Attr("aria-label", name), gosx.Attr("data-side", i)),
-			gosx.El("h3", gosx.Attrs(gosx.Attr("class", "kit-side-name")), gosx.Text(name))}
+	column := func(i int, class, name string) markup.Node {
+		args := []any{markup.Attrs(markup.Attr("class", "kit-side "+class), markup.Attr("role", "list"), markup.Attr("aria-label", name), markup.Attr("data-side", i)),
+			markup.El("h3", markup.Attrs(markup.Attr("class", "kit-side-name")), markup.Text(name))}
 		for _, n := range cols[i] {
 			args = append(args, n)
 		}
-		return gosx.El("section", args...)
+		return markup.El("section", args...)
 	}
 	root := []any{
-		gosx.Attrs(gosx.Attr("class", "kit-sides"), gosx.Attr("role", "group"), gosx.Attr("aria-labelledby", "kit-sides-title"),
-			gosx.Attr("data-startable", strconv.FormatBool(m.Startable()))),
-		gosx.El("h2", gosx.Attrs(gosx.Attr("class", "kit-title"), gosx.Attr("id", "kit-sides-title")), gosx.Text(title)),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-sides-track")),
+		markup.Attrs(markup.Attr("class", "kit-sides"), markup.Attr("role", "group"), markup.Attr("aria-labelledby", "kit-sides-title"),
+			markup.Attr("data-startable", strconv.FormatBool(m.Startable()))),
+		markup.El("h2", markup.Attrs(markup.Attr("class", "kit-title"), markup.Attr("id", "kit-sides-title")), markup.Text(title)),
+		markup.El("div", markup.Attrs(markup.Attr("class", "kit-sides-track")),
 			column(0, "kit-side--a", names[0]),
 			column(1, "kit-side--mid", sideLabel(l, "spectate")),
 			column(2, "kit-side--b", names[1])),
@@ -130,36 +130,36 @@ func SideSelectPanel(p SideSelectProps) gosx.Node {
 				focused[st.Focus] = true
 			}
 		}
-		rows := []any{gosx.Attrs(gosx.Attr("class", "kit-sides-settings"), gosx.Attr("role", "list"), gosx.Attr("data-readonly", strconv.FormatBool(m.FieldsReadOnly())))}
+		rows := []any{markup.Attrs(markup.Attr("class", "kit-sides-settings"), markup.Attr("role", "list"), markup.Attr("data-readonly", strconv.FormatBool(m.FieldsReadOnly())))}
 		for i, f := range fields {
 			value := ""
 			if f.Index >= 0 && f.Index < len(f.Options) {
 				value = f.Options[f.Index].Label
 			}
 			dis := m.FieldsReadOnly()
-			btn := func(label, step string) gosx.Node {
-				a := []any{gosx.Attr("type", "button"), gosx.Attr("class", "kit-button"), gosx.Attr("data-kit-action", "sides-field"),
-					gosx.Attr("data-kit-value", f.ID+":"+step), gosx.Attr("aria-label", label+" "+f.Label)}
+			btn := func(label, step string) markup.Node {
+				a := []any{markup.Attr("type", "button"), markup.Attr("class", "kit-button"), markup.Attr("data-kit-action", "sides-field"),
+					markup.Attr("data-kit-value", f.ID+":"+step), markup.Attr("aria-label", label+" "+f.Label)}
 				if dis {
-					a = append(a, gosx.Attr("disabled", true))
+					a = append(a, markup.Attr("disabled", true))
 				}
 				sym := "<"
 				if step == "+1" {
 					sym = ">"
 				}
-				return gosx.El("button", gosx.Attrs(a...), gosx.Text(sym))
+				return markup.El("button", markup.Attrs(a...), markup.Text(sym))
 			}
-			rows = append(rows, gosx.El("div", gosx.Attrs(gosx.Attr("class", "kit-sides-field"), gosx.Attr("role", "listitem"),
-				gosx.Attr("data-field", f.ID), gosx.Attr("data-focus", strconv.FormatBool(focused[i]))),
-				gosx.El("span", gosx.Attrs(gosx.Attr("class", "kit-sides-field-label")), gosx.Text(f.Label)),
+			rows = append(rows, markup.El("div", markup.Attrs(markup.Attr("class", "kit-sides-field"), markup.Attr("role", "listitem"),
+				markup.Attr("data-field", f.ID), markup.Attr("data-focus", strconv.FormatBool(focused[i]))),
+				markup.El("span", markup.Attrs(markup.Attr("class", "kit-sides-field-label")), markup.Text(f.Label)),
 				btn(sideLabel(l, "prev"), "-1"),
-				gosx.El("span", gosx.Attrs(gosx.Attr("class", "kit-value kit-sides-field-value")), gosx.Text(value)),
+				markup.El("span", markup.Attrs(markup.Attr("class", "kit-value kit-sides-field-value")), markup.Text(value)),
 				btn(sideLabel(l, "next"), "+1")))
 		}
-		root = append(root, gosx.El("div", rows...))
+		root = append(root, markup.El("div", rows...))
 	}
 	root = append(root,
-		gosx.El("p", gosx.Attrs(gosx.Attr("class", "kit-copy")), gosx.Text(sideLabel(l, "hint"))),
-		gosx.El("p", gosx.Attrs(gosx.Attr("class", "kit-sr-only"), gosx.Attr("role", "status"), gosx.Attr("aria-live", "polite")), gosx.Text(m.Status())))
-	return gosx.El("div", root...)
+		markup.El("p", markup.Attrs(markup.Attr("class", "kit-copy")), markup.Text(sideLabel(l, "hint"))),
+		markup.El("p", markup.Attrs(markup.Attr("class", "kit-sr-only"), markup.Attr("role", "status"), markup.Attr("aria-live", "polite")), markup.Text(m.Status())))
+	return markup.El("div", root...)
 }

@@ -80,6 +80,8 @@ const motionBlurPage = `<!doctype html><html><head><meta charset="utf-8"><style>
  data-gosx-scene3d-webgpu-url="/gosx/bootstrap-feature-scene3d-webgpu.js"
  data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js"
  data-gosx-scene3d-depthfx-url="/gosx/bootstrap-feature-scene3d-depthfx.js"
+ data-gosx-scene3d-postfx-webgpu-url="/gosx/bootstrap-feature-scene3d-postfx-webgpu.js"
+ data-gosx-scene3d-postfx-webgl-url="/gosx/bootstrap-feature-scene3d-postfx-webgl.js"
  data-gosx-scene3d-hierarchy-url="/gosx/bootstrap-feature-scene3d-hierarchy.js"
  src="/gosx/bootstrap-feature-scene3d.js"></script>
 <script>

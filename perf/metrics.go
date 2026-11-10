@@ -30,6 +30,11 @@ type PageReport struct {
 	Interactions       []InteractionMetric `json:"interactions,omitempty"`
 	MetricAvailability *MetricAvailability `json:"metricAvailability,omitempty"`
 
+	// TimingSamples lists every load-timing sample when a budget gate
+	// measured the page more than once. The timing fields of this report
+	// then hold the median (see SampleTimings).
+	TimingSamples []TimingSample `json:"timingSamples,omitempty"`
+
 	// Network resource waterfall (top-N slowest or largest)
 	Resources             []ResourceEntry `json:"resources,omitempty"`
 	TotalBytesTransferred int64           `json:"totalBytesTransferred"`

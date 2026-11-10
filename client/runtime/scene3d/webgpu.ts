@@ -4397,7 +4397,7 @@
             getPipeline("bloomComposite", WGSL_POST_BLOOM_COMPOSITE_FRAGMENT, getBloomCompositeLayout()); break;
           case "contactShadows": getPipeline("contactShadows", WGSL_POST_CONTACT_SHADOWS_FRAGMENT, getSSAOLayout()); break;
           case SCENE_POST_SSAO: getPipeline("ssao", WGSL_POST_SSAO_FRAGMENT, getSSAOLayout()); break;
-          case SCENE_POST_DOF: getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout()); break;
+          case SCENE_POST_DOF: getPipeline("dof", wgpuPostfxDOFFragment(), getSSAOLayout()); break;
           case "taa":
           case SCENE_POST_FXAA: getPipeline("fxaa", postUsesF16 ? WGSL_POST_FXAA_FRAGMENT_F16 : WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout()); break;
           case SCENE_POST_VIGNETTE: getPipeline("vignette", WGSL_POST_VIGNETTE_FRAGMENT, getPostParamsLayout()); break;
@@ -4582,9 +4582,9 @@
               currentTexView = outputView;
               break;
             case SCENE_POST_DOF: {
-              var dofPipeline = getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout());
+              var dofPipeline = getPipeline("dof", wgpuPostfxDOFFragment(), getSSAOLayout());
               var dofBuf = getParamBuffer("dof", 32);
-              device.queue.writeBuffer(dofBuf, 0, wgpuDOFParams(effect, camera, scaledW, scaledH));
+              device.queue.writeBuffer(dofBuf, 0, wgpuPostfxDOFParams(effect, camera, scaledW, scaledH));
               var dofBG = device.createBindGroup({
                 layout: getSSAOLayout(),
                 entries: [
@@ -6779,14 +6779,14 @@
     var pointsUniformScratchF = new Float32Array(pointsUniformScratch);
     var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
-    var temporalAA = wgpuCreateTemporalAA(function() {
+    var temporalAA = wgpuPostfxTemporalAA(function() {
       return { device: device, linearSampler: linearSampler, frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout, pointsLayout: pointsBindGroupLayout, pointsVertex: pointsVertexModule,
         materialGroup: function() { return createMaterialBindGroup(null, false, defaultMaterialOwner); }, previousSkin: function(obj: any) { return obj._gosxTAAPreviousSkin || null; },
         skinBuffer: function(obj: any) { return webGPUObjectIsSkinned(obj) && obj._gosxWGPUElioSkinOutputBuffer || null; },
         bindPositions: function(pass: any, slot: number, obj: any) { return webGPUBindRetainedMeshAttribute(pass, slot, obj, "positions", 3); },
         bindIndices: function(pass: any, obj: any) { return webGPUBindRetainedMeshIndexBuffer(pass, obj); } };
     });
-    var autoExposure = wgpuCreateAutoExposure(function() { return { device: device }; });
+    var autoExposure = wgpuPostfxAutoExposure(function() { return { device: device }; });
     var softParticles = wgpuCreateSoftParticles(function() {
       return { device: device, frame: frameBindGroupLayout, material: materialBindGroupLayout, points: pointsBindGroupLayout, vertex: pointsVertexModule,
         scratchF: pointsUniformScratchF, scratchU: pointsUniformScratchU, format: targetFormat, samples: activeSampleCount, bindGroup: wgpuCachedBindGroup,

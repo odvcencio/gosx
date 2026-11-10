@@ -888,6 +888,14 @@
   // --------------------------------------------------------------------------
   const SCENE_WEBGPU_LOSS_RETURNS = 2;
   const SCENE_WEBGPU_LOSS_WINDOW_MS = 300000;
+  // SCENE_WEBGPU_REPROBE_WAIT_MS bounds how long the render watchdog waits for
+  // the re-probe a device loss started before it falls back to WebGL. On the
+  // hosted SwiftShader runner a lost device was back on WebGPU about 1.3 s after
+  // the loss (run 42651847893), so 3 s covers a normal re-probe with margin. A
+  // hung re-probe then leaves the canvas blank for at most this wait plus one
+  // 2-second watchdog tick, where the 6.5-second render-stall limit allowed
+  // about 10 s.
+  const SCENE_WEBGPU_REPROBE_WAIT_MS = 3000;
 
   function createSceneGraphicsRecovery() {
     return { resets: 0, active: false, lossReason: "", returns: [] as number[], reprobeLoss: null as any, reprobeSince: 0 };
@@ -908,11 +916,11 @@
   // re-probe that this device loss started in the shared probe (16z) has not
   // settled (probe.reprobePending). A successful re-probe dispatches
   // "gosx:scene3d:webgpu-probe-ready", whose handler applies the policy above.
-  // A failed re-probe, or one still pending after stallMS, lets the watchdog
-  // fall back to WebGL. Without the wait the
-  // 2-second watchdog tick raced the re-probe, so the same loss fetched the
-  // WebGL chunk on some page loads and not on others.
-  function sceneWebGPULossAwaitsReprobe(recovery: any, reason: string, nowMS: number, stallMS: number): boolean {
+  // A failed re-probe, or one still pending after
+  // SCENE_WEBGPU_REPROBE_WAIT_MS, lets the watchdog fall back to WebGL. Without
+  // the wait the 2-second watchdog tick raced the re-probe, so the same loss
+  // fetched the WebGL chunk on some page loads and not on others.
+  function sceneWebGPULossAwaitsReprobe(recovery: any, reason: string, nowMS: number): boolean {
     const probeState = (window as any).__gosx_scene3d_webgpu_probe;
     const probe = reason === "webgpu-device-lost" && typeof probeState === "function" ? probeState() : null;
     if (!probe || !probe.lost || !probe.reprobePending) return false;
@@ -920,7 +928,7 @@
       recovery.reprobeLoss = probe.lost;
       recovery.reprobeSince = nowMS;
     }
-    return nowMS - recovery.reprobeSince < stallMS;
+    return nowMS - recovery.reprobeSince < SCENE_WEBGPU_REPROBE_WAIT_MS;
   }
 
   function sceneFallbackRequiresReplacementCanvas(reason: string) {

@@ -720,22 +720,23 @@ test("Scene3D WebGPU device loss falls back to WebGL at once when the re-probe f
   assert.equal(page.mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
 });
 
-test("Scene3D WebGPU device loss falls back to WebGL when the re-probe stalls past the limit", async () => {
+test("Scene3D WebGPU device loss falls back to WebGL by 3 s plus one watchdog tick when the re-probe stalls", async () => {
   const page = await mountWebGPUSceneForDeviceLoss(() => new Promise(() => {}));
+  // The watchdog polls every 2 s and first sees the loss at 4000 ms.
   page.setNow(4000);
   page.timers.runInterval(2000);
   await flushAsyncWork();
-  assert.equal(page.webglFetches(), 0);
-  page.setNow(10499);
+  assert.equal(page.webglFetches(), 0, "the watchdog waits for the pending re-probe");
+  page.setNow(6000);
   page.timers.runInterval(2000);
   await flushAsyncWork();
-  assert.equal(page.webglFetches(), 0, "the wait lasts the 6.5 s stall limit");
-  page.setNow(10500);
+  assert.equal(page.webglFetches(), 0, "2 s is inside the 3 s wait");
+  page.setNow(8000);
   page.timers.runInterval(2000);
   await flushAsyncWork();
   page.raf.flush(64);
   await flushAsyncWork();
-  assert.equal(page.webglFetches(), 1, "a stalled re-probe steps down to WebGL");
+  assert.equal(page.webglFetches(), 1, "the tick after the 3 s wait steps down to WebGL, 4 s after the watchdog saw the loss");
   assert.equal(page.mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   assert.equal(page.mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
 });
