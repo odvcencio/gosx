@@ -14,8 +14,8 @@ The short version, from the measurements below:
   per-frame scans that grew with the scene were removed (see "Where the render
   time goes"). Against a 4 ms budget it took 2.7 to 3.4 ms (p50) with WebGL2
   at full speed, 7.7 to 10.7 ms with WebGPU, and 9.9 to 49.6 ms on either
-  backend at a 4x CPU slowdown. Without the scans it takes 0.8 to 1.6 ms at
-  full speed and 2.6 to 6.0 ms at 4x, on both backends and both machines.
+  backend at a 4x CPU slowdown. Without the scans it takes 1.0 to 1.6 ms at
+  full speed and 2.6 to 7.1 ms at 4x, on both backends and both machines.
 - At a 4x slowdown, our stand-in for an M1 or Iris Xe laptop, replay frames
   push the simulation and AI over their budgets. Running the simulation in a
   Web Worker takes them off the main thread: 2.5 to 9 ms less main-thread time
@@ -247,18 +247,22 @@ changed:
 3. The focus proxies keep the scene's interactive objects until one is added,
    replaced or removed.
 
-The same scene, before and after, measured back to back on each machine on 9
-November 2026: main-thread runs only, 20 seconds each after the 8-second
-warm-up, GPU crowd culling off on the Mac's WebGPU runs so they compare with
-the table above. Times are p50 / p95 in ms per frame. The headless NVIDIA
-browser is not held to the display rate, so its frame rate can pass 60.
+The same scene, before and after, measured back to back on each machine:
+main-thread runs only, 20 seconds each after the 8-second warm-up. Times are
+p50 / p95 in ms per frame. The NVIDIA rows were measured on 10 November 2026
+against the v0.60.0 release candidate (`1116ad0710`). The Apple rows were
+measured on 9 November against `9feeffc4cb`, with GPU crowd culling off on the
+WebGPU runs so they compare with the table above, and with an earlier version
+of the Metal fix in the "after" build; an after-only run of the final code that
+day measured the same within noise (WebGPU 2.8 / 6.1 ms at full speed, 59.8 fps
+at 4x).
 
 | Machine, backend, speed | fps before → after | Main thread before → after | Render CPU before → after |
 |---|---|---|---|
-| NVIDIA, WebGPU, 1x | 75.2 → 99.7 | 12.5 / 14.3 → 2.0 / 3.4 | 10.4 / 11.5 → 1.2 / 1.5 |
-| NVIDIA, WebGL2, 1x | 99.7 → 99.7 | 3.8 / 5.4 → 1.6 / 2.9 | 2.1 / 2.7 → 0.8 / 1.1 |
-| NVIDIA, WebGPU, 4x | 14.1 → 64.0 | 64.8 / 78.5 → 11.3 / 20.4 | 50.9 / 58.9 → 6.0 / 9.8 |
-| NVIDIA, WebGL2, 4x | 33.7 → 71.0 | 25.8 / 36.2 → 10.2 / 19.6 | 13.5 / 19.7 → 5.0 / 8.7 |
+| NVIDIA, WebGPU, 1x | 59.7 → 59.9 | 15.2 / 17.0 → 2.2 / 3.4 | 12.5 / 13.5 → 1.2 / 1.5 |
+| NVIDIA, WebGL2, 1x | 59.8 → 59.9 | 4.9 / 6.4 → 1.9 / 3.2 | 2.6 / 3.3 → 1.0 / 1.3 |
+| NVIDIA, WebGPU, 4x | 13.9 → 55.1 | 65.0 / 76.7 → 12.6 / 22.1 | 49.7 / 55.0 → 7.1 / 8.9 |
+| NVIDIA, WebGL2, 4x | 31.4 → 55.6 | 27.9 / 36.6 → 12.0 / 23.0 | 15.1 / 20.0 → 6.4 / 8.3 |
 | Apple, WebGPU, 1x | 60.0 → 60.0 | 10.5 / 11.8 → 2.8 / 5.8 | 9.0 / 9.4 → 1.6 / 1.8 |
 | Apple, WebGL2, 1x | 60.0 → 60.0 | 4.3 / 5.4 → 2.8 / 6.0 | 2.7 / 3.0 → 1.6 / 1.9 |
 | Apple, WebGPU, 4x | 20.5 → 59.6 | 45.5 / 52.0 → 5.2 / 10.0 | 37.5 / 41.8 → 2.8 / 3.5 |
@@ -270,9 +274,9 @@ after the change while the render time fell. It did not rise at 4x or on the
 NVIDIA host. We think the lighter main thread lets macOS run it at a lower
 clock, but we did not check.
 
-GPU crowd culling (`scene.GPUDriven`) now works on the Apple M4 Pro too: the
-WebGPU run holds 60.0 fps at 2.6 / 5.6 ms with it on, and 59.8 fps at
-5.9 / 11.0 ms at 4x. Before, a Metal command buffer that held the crowd's cull
+GPU crowd culling (`scene.GPUDriven`) now works on the Apple M4 Pro too: with
+the final code the WebGPU run holds 60.0 fps at 2.9 / 6.4 ms with it on, and
+59.8 fps at 4.3 / 8.6 ms at 4x. Before, a Metal command buffer that held the crowd's cull
 pass and the renderer's frame-end GPU timestamp failed ("Insufficient Memory",
 `kIOGPUCommandBufferCallbackErrorOutOfMemory`) and lost the device within a
 second. The crowd's frustum culls (camera and shadow lights) now go in a
