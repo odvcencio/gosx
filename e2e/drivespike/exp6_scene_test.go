@@ -221,7 +221,14 @@ func TestExp6Scene(t *testing.T) {
 	db := out.Bundle["builds"] + out.Bundle["reuses"] - out.BundleBefore["builds"] - out.BundleBefore["reuses"]
 	t.Logf("bundle telemetry: before=%v after=%v (builds+reuses delta %v)", out.BundleBefore, out.Bundle, db)
 	res.check("governor held its rung for the stepped frames", len(out.RungChanges) == 0, "changes=%v start=%s end=%s", out.RungChanges, firstRung(out), lastRung(out))
-	t.Logf("mount attrs: %s", jsonString(out.Attrs))
+	quality := map[string]string{}
+	for k, v := range out.Attrs {
+		if strings.Contains(k, "quality") || strings.Contains(k, "timing") || strings.Contains(k, "measure") {
+			quality[k] = v
+		}
+	}
+	qb, _ := json.Marshal(quality)
+	t.Logf("quality attrs: %s", qb)
 }
 
 func firstRung(r sceneRunResult) string {

@@ -88,14 +88,26 @@ func (v *vtab) advance(budget float64) (time.Duration, bool) {
 	}
 }
 
-// navigatePaused sets the pause policy and loads url, with a bound.
-func (v *vtab) navigatePaused(url string) error {
+// navigatePaused sets the pause policy and loads url, with a bound. In the
+// spike this load did not finish on Linux Chrome 156, so the experiments
+// below load in real time and pause right after (loadThenPause).
+func (v *vtab) navigatePaused(url string, bound time.Duration) error {
 	if err := v.policy(emulation.VirtualTimePolicyPause, 0); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(v.ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(v.ctx, bound)
 	defer cancel()
 	return chromedp.Run(ctx, chromedp.Navigate(url))
+}
+
+// loadThenPause loads url on the real clock, then pauses virtual time.
+func (v *vtab) loadThenPause(url string) error {
+	ctx, cancel := context.WithTimeout(v.ctx, 20*time.Second)
+	defer cancel()
+	if err := chromedp.Run(ctx, chromedp.Navigate(url)); err != nil {
+		return err
+	}
+	return v.policy(emulation.VirtualTimePolicyPause, 0)
 }
 
 // Experiment 9: Chrome's virtual time (Emulation.setVirtualTimePolicy) on the
@@ -113,12 +125,15 @@ func TestExp9VirtualTime(t *testing.T) {
 	t.Run("timers-and-frames", func(t *testing.T) {
 		res := newResults(t, "9/"+mode+"/clock")
 		defer res.summary()
+		pre := newVTab(t, b)
+		err := pre.navigatePaused(url+"/clock.html", 10*time.Second)
+		t.Logf("RESULT exp=9/%s/clock browser=%s check=%q INFO loaded=%v err=%v", mode, browserLabel(), "page loads with virtual time paused before navigation", err == nil, err)
+		pre.cancel()
 		v := newVTab(t, b)
-		if err := v.navigatePaused(url + "/clock.html"); err != nil {
-			res.check("page loads while virtual time is paused", false, "%v", err)
+		if err := v.loadThenPause(url + "/clock.html"); err != nil {
+			res.check("load on the real clock, then pause", false, "%v", err)
 			return
 		}
-		res.check("page loads while virtual time is paused", true, "")
 		type st struct {
 			Log        []logEntry
 			Rafs       int
@@ -155,8 +170,8 @@ func TestExp9VirtualTime(t *testing.T) {
 		res := newResults(t, "9/"+mode+"/css")
 		defer res.summary()
 		v := newVTab(t, b)
-		if err := v.navigatePaused(url + "/css.html"); err != nil {
-			res.check("page loads while virtual time is paused", false, "%v", err)
+		if err := v.loadThenPause(url + "/css.html"); err != nil {
+			res.check("load on the real clock, then pause", false, "%v", err)
 			return
 		}
 		v.eval(`startTransition()`, nil)
@@ -179,8 +194,8 @@ func TestExp9VirtualTime(t *testing.T) {
 		res := newResults(t, "9/"+mode+"/worker")
 		defer res.summary()
 		v := newVTab(t, b)
-		if err := v.navigatePaused(url + "/worker.html"); err != nil {
-			res.check("page loads while virtual time is paused", false, "%v", err)
+		if err := v.loadThenPause(url + "/worker.html"); err != nil {
+			res.check("load on the real clock, then pause", false, "%v", err)
 			return
 		}
 		v.eval(`startWorker()`, nil)

@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/debugger"
+	"github.com/chromedp/cdproto/network"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
@@ -34,6 +36,8 @@ type workerSession struct {
 	err      error
 	attachMS float64
 	ready    chan struct{}
+	diag     string // the held worker's global before the probe
+	mode     string
 }
 
 type workerHub struct {
@@ -78,10 +82,24 @@ func (tb *tab) autoAttachWorkers(t *testing.T, cfg map[string]any) *workerHub {
 	return h
 }
 
+// workerMode is "hold" (the spec: evaluate the probe while Chrome holds the
+// worker, then resume) or "breakpoint" (the alternative: resume into a
+// Debugger instrumentation breakpoint before the worker's first script, install
+// the probe there, then continue).
+func workerMode() string {
+	if m := os.Getenv("DRIVESPIKE_WORKER_MODE"); m != "" {
+		return m
+	}
+	return "hold"
+}
+
+const workerDiagExpr = `JSON.stringify({setTimeout: typeof globalThis.setTimeout, performance: typeof globalThis.performance, postMessage: typeof globalThis.postMessage, self: typeof self, global: Object.prototype.toString.call(globalThis), names: Object.getOwnPropertyNames(globalThis).length})`
+
 func (h *workerHub) install(ws *workerSession) {
 	defer close(ws.ready)
 	defer func() { h.added <- ws }()
 	start := time.Now()
+	ws.mode = workerMode()
 	_ = h.tb.tryEval(`__drive.now()`, &ws.v0)
 	cfg := map[string]any{}
 	for k, v := range h.cfg {
@@ -90,13 +108,78 @@ func (h *workerHub) install(ws *workerSession) {
 	cfg["v0"] = ws.v0
 	ctx, _ := chromedp.NewContext(h.tb.ctx, chromedp.WithTargetID(ws.ID))
 	ws.ctx = ctx
-	if err := chromedp.Run(ctx, chromedp.Evaluate(probeSource(cfg), nil)); err != nil {
-		ws.err = fmt.Errorf("install probe in worker: %w", err)
-	}
-	if err := chromedp.Run(ctx, cdpruntime.RunIfWaitingForDebugger()); err != nil && ws.err == nil {
-		ws.err = fmt.Errorf("resume worker: %w", err)
+	// Settle rule 1 must see the worker's own requests finish.
+	tb := h.tb
+	chromedp.ListenTarget(ctx, func(ev any) {
+		tb.mu.Lock()
+		defer tb.mu.Unlock()
+		switch ev := ev.(type) {
+		case *network.EventRequestWillBeSent:
+			tb.inflight[ev.RequestID] = ev.Request.URL
+		case *network.EventLoadingFinished:
+			delete(tb.inflight, ev.RequestID)
+		case *network.EventLoadingFailed:
+			delete(tb.inflight, ev.RequestID)
+		}
+	})
+	paused := make(chan *debugger.EventPaused, 4)
+	chromedp.ListenTarget(ctx, func(ev any) {
+		if e, ok := ev.(*debugger.EventPaused); ok {
+			select {
+			case paused <- e:
+			default:
+			}
+		}
+	})
+	_ = chromedp.Run(ctx, chromedp.Evaluate(workerDiagExpr, &ws.diag))
+	if ws.mode == "breakpoint" {
+		var bp debugger.BreakpointID
+		err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+			if _, err := debugger.Enable().Do(c); err != nil {
+				return err
+			}
+			var err error
+			bp, err = debugger.SetInstrumentationBreakpoint(debugger.SetInstrumentationBreakpointInstrumentationBeforeScriptExecution).Do(c)
+			return err
+		}), cdpruntime.RunIfWaitingForDebugger())
+		if err != nil {
+			ws.err = fmt.Errorf("breakpoint setup: %w", err)
+		} else {
+			select {
+			case <-paused:
+				var d2 string
+				_ = chromedp.Run(ctx, chromedp.Evaluate(workerDiagExpr, &d2))
+				ws.diag += " | at breakpoint: " + d2
+				if err := chromedp.Run(ctx, chromedp.Evaluate(probeSource(cfg), nil)); err != nil {
+					ws.err = fmt.Errorf("install probe at breakpoint: %w", err)
+				}
+			case <-time.After(5 * time.Second):
+				ws.err = fmt.Errorf("no Debugger.paused before the first script in 5 s")
+			}
+			_ = chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+				_ = debugger.RemoveBreakpoint(bp).Do(c)
+				_ = debugger.Resume().Do(c)
+				return debugger.Disable().Do(c)
+			}))
+		}
+	} else {
+		if err := chromedp.Run(ctx, chromedp.Evaluate(probeSource(cfg), nil)); err != nil {
+			ws.err = fmt.Errorf("install probe in worker: %w", err)
+		}
+		if err := chromedp.Run(ctx, cdpruntime.RunIfWaitingForDebugger()); err != nil && ws.err == nil {
+			ws.err = fmt.Errorf("resume worker: %w", err)
+		}
 	}
 	ws.attachMS = float64(time.Since(start).Microseconds()) / 1000
+	// The worker's script request started on the page session; when its end
+	// was reported before this session existed, drop it: the worker is running it.
+	tb.mu.Lock()
+	for id, u := range tb.inflight {
+		if u == ws.URL {
+			delete(tb.inflight, id)
+		}
+	}
+	tb.mu.Unlock()
 }
 
 func (h *workerHub) list() []*workerSession {
@@ -220,7 +303,7 @@ func TestExp5Worker(t *testing.T) {
 		res.check("worker attached and held at start", false, "no Target.attachedToTarget for a worker in 10 s")
 		return
 	}
-	res.check("worker attached and held at start (waitingForDebugger)", ws.waiting && ws.err == nil, "waiting=%v err=%v url=%s attach+install+resume=%.1fms", ws.waiting, ws.err, ws.URL, ws.attachMS)
+	res.check("worker attached and held at start (waitingForDebugger)", ws.waiting && ws.err == nil, "mode=%s waiting=%v err=%v url=%s attach+install+resume=%.1fms global=%s", ws.mode, ws.waiting, ws.err, ws.URL, ws.attachMS, ws.diag)
 	if !tb.waitFor(`wlog.some(m => m.kind === "first")`, 10*time.Second) {
 		res.check("worker ran after resume", false, "no first message\n%s", tb.Console())
 		return
@@ -337,7 +420,11 @@ func TestExp5EngineWorker(t *testing.T) {
 		}
 	}
 	workers := hub.list()
-	res.check("the engine worker was attached, given the probe and resumed", len(workers) >= 1 && workers[0].err == nil, "workers=%d err=%v", len(workers), errOf(workers))
+	diag := ""
+	if len(workers) > 0 {
+		diag = workers[0].mode + " " + workers[0].diag
+	}
+	res.check("the engine worker was attached, given the probe and resumed", len(workers) >= 1 && workers[0].err == nil, "workers=%d err=%v global=%s", len(workers), errOf(workers), diag)
 	res.check("the scene became ready and the engine posted frames", run.Ready && run.Frames > 0, "run=%s bootFrames=%d boot=%s\n%s", jsonString(run), bootFrames, time.Since(bootStart).Round(time.Millisecond), tb.Console())
 	if !run.Ready {
 		return
@@ -450,4 +537,3 @@ func nativeHash(players int, tick uint64) string {
 	}
 	return fmt.Sprintf("%#x", s.Hash())
 }
-

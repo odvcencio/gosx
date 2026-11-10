@@ -75,13 +75,13 @@ func TestExp1ProbeClock(t *testing.T) {
 	// Nothing advances until a step.
 	time.Sleep(1000 * time.Millisecond)
 	var idle struct {
-		Log    []logEntry
-		Rafs   []float64
-		Perf   float64
-		Date   float64
-		V      float64
-		Child  int
-		Stamp  any
+		Log   []logEntry
+		Rafs  []float64
+		Perf  float64
+		Date  float64
+		V     float64
+		Child int
+		Stamp any
 	}
 	tb.eval(`({log, rafs, perf: performance.now(), date: Date.now(), v: __drive.now(), child: document.getElementById("same").contentWindow.log.length, stamp: window.stamp || null})`, &idle)
 	res.check("nothing advances for 1 s of real time without a step", len(idle.Log) == 0 && len(idle.Rafs) == 0 && idle.Perf == 0 && idle.Date == wall && idle.V == 0 && idle.Child == 0,
@@ -140,9 +140,9 @@ func TestExp1ProbeClock(t *testing.T) {
 	var re struct {
 		First firstScript
 		Stats struct {
-			Loads       int
+			Loads        int
 			RestoredFrom *float64
-			V           float64
+			V            float64
 		}
 	}
 	tb.eval(`({first, stats: __drive.stats()})`, &re)
