@@ -8,7 +8,8 @@ go func() {
     _ = wasm.EachFrame(ctx, func(f wasm.Frame) error {
         // f.Time is the frame timestamp in ms. f.Delta is the ms since the
         // previous frame, and zero on the first frame and after a hidden page.
-        return scene.SetCamera(ctx, nextCamera(f.Delta/1000))
+        // view is the engine's wasm.Scene3D (see Context.Scene3DByID).
+        return view.SetCamera(ctx, nextCamera(f.Delta/1000))
     })
 }()
 ```

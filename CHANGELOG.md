@@ -1094,7 +1094,7 @@ Wire format: unchanged. Packets keep the same layout and protocol version. A rel
   frame}]` with both players in local mode, to a shared signal that a Go WASM
   engine reads. It uses the same per-frame latch and same-turn edge writes as
   `HeldMode: "absolute"`, and makes a game's own keyboard, touch and pad
-  reading unnecessary. Hub input is unchanged. See `docs/fight-input.md`.
+  reading unnecessary. Hub input is unchanged.
 
 - Add `Scene3D.Live(ctx, event, data)` to `engine/wasm` and
   `window.__gosx.scene3d.live`, which feed a named Live event to a mounted
