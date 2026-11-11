@@ -59,7 +59,7 @@ func postFX() scene.PostFX {
 		MaxPixels: scene.PostFXMaxPixels720p,
 		Effects: []scene.PostEffect{
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.15},
-			scene.Bloom{Threshold: 0.85, Strength: 0.4, Radius: 12, Scale: 0.5},
+			scene.Bloom{Mode: "mip", Threshold: 0.85, Strength: 0.4, Radius: 12, Scale: 0.5},
 			scene.Vignette{Intensity: 0.55},
 			scene.ColorGrade{Exposure: 1.0, Contrast: 1.05, Saturation: 1.08},
 			scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
