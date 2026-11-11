@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type rule struct {
@@ -42,6 +44,7 @@ type listed struct {
 	ImportPath string
 	Doc        string
 	GoFiles    []string
+	Imports    []string
 	Module     *struct{ Path string }
 	Error      *struct{ Err string }
 }
@@ -63,9 +66,17 @@ var tiers = map[string]bool{"stable": true, "experimental": true, "internal-use"
 
 func main() {
 	check := flag.Bool("check", false, "exit 1 if the output file is stale")
+	writeExceptions := flag.Bool("write-exceptions", false, "rewrite layer_exceptions.txt from the current import edges")
 	root := flag.String("root", ".", "module root")
 	out := flag.String("o", "docs/packages.md", "output file, relative to the root")
 	flag.Parse()
+	if *writeExceptions {
+		if err := WriteExceptions(*root); err != nil {
+			fmt.Fprintln(os.Stderr, "pkgmap:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(*root, *out, *check); err != nil {
 		fmt.Fprintln(os.Stderr, "pkgmap:", err)
 		os.Exit(1)
@@ -90,15 +101,15 @@ func run(root, out string, check bool) error {
 
 // Render returns the package map page for the module at root.
 func Render(root string) ([]byte, error) {
-	rules, err := readRules(filepath.Join(root, "scripts", "pkgmap", "layers.txt"))
+	rules, descs, err := readRules(filepath.Join(root, "scripts", "pkgmap", "layers.txt"))
 	if err != nil {
 		return nil, err
 	}
-	native, err := goList(root, nil)
+	native, err := goList(root, nil, false)
 	if err != nil {
 		return nil, err
 	}
-	wasm, err := goList(root, []string{"GOOS=js", "GOARCH=wasm"})
+	wasm, err := goList(root, []string{"GOOS=js", "GOARCH=wasm"}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +127,7 @@ func Render(root string) ([]byte, error) {
 		}
 	}
 	var pkgs []pkg
-	var unassigned []string
+	var unassigned, missingDoc []string
 	for _, p := range native {
 		if p.Error != nil || len(p.GoFiles) == 0 {
 			continue
@@ -133,10 +144,20 @@ func Render(root string) ([]byte, error) {
 			unassigned = append(unassigned, rel)
 			continue
 		}
-		pkgs = append(pkgs, pkg{Rel: rel, Doc: synopsis(p.Doc), Layer: r.layer, Tier: r.tier, WASM: onWASM[p.ImportPath]})
+		doc := synopsis(p.Doc)
+		if doc == "" {
+			doc = descs[rel]
+		}
+		if doc == "" {
+			missingDoc = append(missingDoc, rel)
+		}
+		pkgs = append(pkgs, pkg{Rel: rel, Doc: doc, Layer: r.layer, Tier: r.tier, WASM: onWASM[p.ImportPath]})
 	}
 	if len(unassigned) > 0 {
 		return nil, fmt.Errorf("no row in scripts/pkgmap/layers.txt for: %s", strings.Join(unassigned, ", "))
+	}
+	if len(missingDoc) > 0 {
+		return nil, fmt.Errorf("no package comment and no `desc` row in scripts/pkgmap/layers.txt for: %s", strings.Join(missingDoc, ", "))
 	}
 	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].Rel < pkgs[j].Rel })
 	return page(module, pkgs), nil
@@ -156,7 +177,7 @@ func page(module string, pkgs []pkg) []byte {
 	b.WriteString("# Package map\n\n")
 	b.WriteString("Every importable package in `" + module + "`, grouped by layer. The [guides index](README.md) points to the guide for each topic; [stability tiers](STABILITY.md) explains the tier column.\n\n")
 	b.WriteString("## Layers and import direction\n\n")
-	b.WriteString("Layers run from the bottom up. A package may import its own layer and the layers listed before it in this table, subject to the extra rule in the second column. Browser-side and tool packages are special cases. The rules are the target direction. A test enforces them only for the browser game packages (`game/deps_test.go`); other edges are checked by review.\n\n")
+	b.WriteString("Layers run from the bottom up. A package may import its own layer and the layers listed before it in this table, subject to the extra rule in the second column. Browser-side and tool packages are special cases. A test (`scripts/pkgmap`) enforces the order and that no library imports a tool package, except for the known edges in `scripts/pkgmap/layer_exceptions.txt`; each is a place where the code does not yet follow the rule. The browser-side rule is enforced by `game/deps_test.go`.\n\n")
 	b.WriteString("| Layer | Rule |\n|---|---|\n")
 	for _, l := range layers {
 		fmt.Fprintf(&b, "| %s | %s |\n", l.title, l.rule)
@@ -189,25 +210,28 @@ func synopsis(doc string) string {
 	words := strings.Fields(doc)
 	if len(words) > 2 && (words[0] == "Package" || words[0] == "Command") {
 		words = words[2:]
-		if len(words) > 0 && (words[0] == "is" || words[0] == "provides") {
-			// keep the verb phrase readable: "is a server..." -> "A server..."
-			if words[0] == "is" && len(words) > 1 {
-				words = words[1:]
-			}
+		if len(words) > 1 && words[0] == "is" {
+			words = words[1:]
 		}
 	}
-	doc = strings.Join(words, " ")
+	doc = strings.TrimLeftFunc(strings.Join(words, " "), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '`'
+	})
 	if doc == "" {
 		return ""
 	}
-	doc = strings.ToUpper(doc[:1]) + doc[1:]
+	first, size := utf8.DecodeRuneInString(doc)
+	doc = string(unicode.ToUpper(first)) + doc[size:]
 	return strings.ReplaceAll(doc, "|", "\\|")
 }
 
-func readRules(path string) ([]rule, error) {
+// readRules parses layers.txt: `path layer tier` rows and
+// `desc path text` rows for packages that have no package comment.
+func readRules(path string) ([]rule, map[string]string, error) {
+	descs := map[string]string{}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 	known := map[string]bool{}
@@ -221,9 +245,17 @@ func readRules(path string) ([]rule, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		if strings.HasPrefix(line, "desc ") {
+			parts := strings.SplitN(line, " ", 3)
+			if len(parts) != 3 {
+				return nil, nil, fmt.Errorf("%s:%d: want `desc path text`", path, n)
+			}
+			descs[parts[1]] = strings.TrimSpace(parts[2])
+			continue
+		}
 		fields := strings.Fields(line)
 		if len(fields) != 3 || !known[fields[1]] || !tiers[fields[2]] {
-			return nil, fmt.Errorf("%s:%d: want `path layer tier` with a known layer and tier", path, n)
+			return nil, nil, fmt.Errorf("%s:%d: want `path layer tier` with a known layer and tier", path, n)
 		}
 		r := rule{prefix: fields[0], layer: fields[1], tier: fields[2]}
 		if strings.HasSuffix(r.prefix, "/...") {
@@ -232,7 +264,7 @@ func readRules(path string) ([]rule, error) {
 		}
 		rules = append(rules, r)
 	}
-	return rules, sc.Err()
+	return rules, descs, sc.Err()
 }
 
 func match(rules []rule, rel string) (rule, bool) {
@@ -246,10 +278,15 @@ func match(rules []rule, rel string) (rule, bool) {
 	return best, found
 }
 
-func goList(root string, env []string) ([]listed, error) {
-	cmd := exec.Command("go", "list", "-e", "-json=ImportPath,Doc,GoFiles,Module,Error", "./...")
+func goList(root string, env []string, withImports bool) ([]listed, error) {
+	args := []string{"list", "-e", "-json=ImportPath,Doc,GoFiles,Imports,Module,Error", "./..."}
+	if !withImports {
+		// -find skips resolving dependencies; the map does not need them.
+		args = append([]string{"list", "-e", "-find"}, args[2:]...)
+	}
+	cmd := exec.Command("go", args...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), append([]string{"GOWORK=off"}, env...)...)
+	cmd.Env = append(os.Environ(), append([]string{"GOWORK=off", "GOFLAGS=", "GOPROXY=off"}, env...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -268,4 +305,107 @@ func goList(root string, env []string) ([]listed, error) {
 		pkgs = append(pkgs, p)
 	}
 	return pkgs, nil
+}
+
+// layerIndex orders the layers that follow the import rule: a package may
+// import its own layer and the layers listed before it. The browser and tools
+// layers are outside that order.
+var layerIndex = map[string]int{"foundations": 0, "kernels": 1, "scene": 2, "web": 3, "server": 4, "game": 5}
+
+// Edge is one import between two packages of the module, as "from -> to".
+type Edge string
+
+// Violations returns the import edges that break the layer rules: an import of
+// a higher layer, or an import of a tools package by a library package. It
+// reads non-test imports for the native build only.
+func Violations(root string) ([]Edge, error) {
+	rules, _, err := readRules(filepath.Join(root, "scripts", "pkgmap", "layers.txt"))
+	if err != nil {
+		return nil, err
+	}
+	pkgs, err := goList(root, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	module := ""
+	for _, p := range pkgs {
+		if p.Module != nil {
+			module = p.Module.Path
+			break
+		}
+	}
+	rel := func(importPath string) string {
+		if importPath == module {
+			return "."
+		}
+		return strings.TrimPrefix(importPath, module+"/")
+	}
+	var out []Edge
+	for _, p := range pkgs {
+		from := rel(p.ImportPath)
+		fromRule, ok := match(rules, from)
+		if p.Error != nil || len(p.GoFiles) == 0 || skip(from) || !ok {
+			continue
+		}
+		for _, imp := range p.Imports {
+			if imp != module && !strings.HasPrefix(imp, module+"/") {
+				continue
+			}
+			to := rel(imp)
+			if skip(to) {
+				continue
+			}
+			toRule, ok := match(rules, to)
+			if !ok {
+				continue
+			}
+			bad := false
+			if toRule.layer == "tools" && fromRule.layer != "tools" {
+				bad = true
+			} else if fi, ok1 := layerIndex[fromRule.layer]; ok1 {
+				if ti, ok2 := layerIndex[toRule.layer]; ok2 && ti > fi {
+					bad = true
+				}
+			}
+			if bad {
+				out = append(out, Edge(from+" -> "+to))
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+const exceptionsFile = "layer_exceptions.txt"
+
+// WriteExceptions records the current violations as the allowed set.
+func WriteExceptions(root string) error {
+	edges, err := Violations(root)
+	if err != nil {
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("# Known import edges that break the layer rules in docs/packages.md.\n")
+	b.WriteString("# TestLayerRulesHoldExceptForKnownEdges allows exactly these and fails on any\n")
+	b.WriteString("# other, or on a line here that no longer matches an edge. Remove a line when\n")
+	b.WriteString("# you fix the edge. Format: `importer -> imported`.\n")
+	for _, e := range edges {
+		b.WriteString(string(e) + "\n")
+	}
+	return os.WriteFile(filepath.Join(root, "scripts", "pkgmap", exceptionsFile), []byte(b.String()), 0o644)
+}
+
+func readExceptions(root string) (map[Edge]bool, error) {
+	data, err := os.ReadFile(filepath.Join(root, "scripts", "pkgmap", exceptionsFile))
+	if err != nil {
+		return nil, err
+	}
+	out := map[Edge]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			out[Edge(line)] = true
+		}
+	}
+	return out, nil
 }

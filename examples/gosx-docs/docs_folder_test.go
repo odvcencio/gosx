@@ -84,9 +84,21 @@ func TestCIGatesDocNamesEveryHostedMakeTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range regexp.MustCompile(`run: make ([\w-]+)`).FindAllStringSubmatch(string(workflow), -1) {
-		if !strings.Contains(string(doc), "`"+m[1]) {
-			t.Errorf("ci.yml runs `make %s`, which docs/ci-gates.md does not mention", m[1])
+	invocation := regexp.MustCompile(`(?m)^\s*(?:run:\s*\|?\s*)?make ([a-z][a-z0-9-]*)`)
+	seen := map[string]bool{}
+	for _, m := range invocation.FindAllStringSubmatch(string(workflow), -1) {
+		target := m[1]
+		if seen[target] {
+			continue
 		}
+		seen[target] = true
+		// Match the whole target name: a backtick, the name, then a space,
+		// comma, pipe or closing backtick, so `test` is not satisfied by `test-unit`.
+		if !regexp.MustCompile("`" + regexp.QuoteMeta(target) + "[` ,|]").Match(doc) {
+			t.Errorf("ci.yml runs `make %s`, which docs/ci-gates.md does not mention", target)
+		}
+	}
+	if len(seen) < 20 {
+		t.Errorf("found only %d make targets in ci.yml; the pattern no longer matches the workflow", len(seen))
 	}
 }

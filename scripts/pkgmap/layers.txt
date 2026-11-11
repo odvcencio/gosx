@@ -71,3 +71,32 @@ gameboy/...                    tools        internal-use
 islandtest/...                 tools        internal-use
 scripts/...                    tools        internal-use
 auth/redis                     web          stable
+
+# Descriptions for packages with no package comment: `desc <path> <text>`.
+desc . The GoSX core: components, the .gsx grammar and parser, and the compiler entry points.
+desc crdt Conflict-free replicated documents with a bloom-filter sync protocol.
+desc crdt/encoding Binary encoding of crdt changes and documents.
+desc crdt/sync The crdt sync message, bloom filter and peer state.
+desc textlayout Text measurement, line breaking and ellipsis, with browser-measured and approximate measurers.
+desc ir/golower Lowers Go function bodies in .gsx files to the island program.
+desc render/bundle/anim Evaluates animation clips to bone palettes for render bundles.
+desc scene/inspect Counts and inspects scene geometry and assets, for budgets and tooling.
+desc scene/schema JSON schema and validation for scene data.
+desc auth/redis Redis-backed stores for magic links and WebAuthn.
+desc buildmanifest The gosx build manifest: assets, runtime chunks, Go/WASM and performance records.
+desc content Loads Markdown, MDX and Markdown++ collections with typed metadata and sanitized rendering.
+desc telemetry/schema Telemetry record, envelope and field schemas.
+desc server/redis Redis-backed ISR and revalidation stores and readiness checks for server.
+desc game/camera Camera rigs, poses and a director for game cameras.
+desc client/bridge The WASM bridge for island and engine lifecycle, signals and canvas boards.
+desc client/runtime/host Hashes the navigation runtime asset for the server.
+desc client/vm The expression VM, tree reconciler and patch generation.
+desc client/wasm The WASM entry point: islands, engine host and batched patches.
+desc cmd/gosx/installerhost The Windows installer host for packaged desktop apps.
+desc islandtest A test harness that runs island programs without a browser.
+desc lsp The language server for .gsx files.
+desc perf Performance budgets, Chrome measurement and comparison helpers.
+desc perf/ouroboros Browser and build-size evidence tooling for performance gates.
+desc test/desktop/installer-smoke Smoke test program for the desktop installer.
+desc test/desktop/update-check-fixture Update-feed fixture server for desktop update tests.
+desc test/desktop/update-check-smoke Smoke test program for the desktop update check.

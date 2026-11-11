@@ -23,6 +23,7 @@
 // stay usable from any lowering path (CST-based ir/lower.go today; a
 // future go/ast-based path could reuse ImportTable's Add/Lookup shape
 // too) and impose no TinyGo build-tag cost.
+
 package ir
 
 import (

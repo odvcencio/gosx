@@ -1,5 +1,7 @@
 # Stability tiers
 
+> Draft tiers, pending owner review. Treat them as a guide to current intent, not a promise.
+
 Every package carries one of three tiers. The tier says what you can rely on
 when you upgrade. The per-package labels are in the [package map](packages.md).
 
@@ -14,8 +16,8 @@ tells you how loudly the break is announced, not that it never happens.
 
 ## What is experimental in v0.60.0
 
-These shipped with the v0.60.0 jam work. They are in use, and their APIs are
-still settling:
+These are new in v0.60.0 or still settling. They are in use, and their APIs may
+change:
 
 - the game kit (`game` and its subpackages), `room`, `netplay`, `sim`;
 - `motion/animgraph` and `motion`, `physics`, `vessel`, `det`;
@@ -28,6 +30,6 @@ still settling:
 
 ## Changing a tier
 
-Each package has one row in `scripts/pkgmap/layers.txt`. Edit the row, then run
+Each package matches a row in `scripts/pkgmap/layers.txt`; a row can cover a whole subtree, and the longest match wins. Edit the row, then run
 `go run ./scripts/pkgmap` to refresh the package map. A package with no row
 fails `go test ./scripts/pkgmap`, so a new package has to choose a tier.
