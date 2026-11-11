@@ -48,6 +48,22 @@ build/
 !/docs/deterministic-simulation.md
 !/docs/game-performance.md
 !/docs/scene3d-selena.md
+!/docs/cross-frame-signals.md
+!/docs/engine-frame-loop.md
+!/docs/expressions.md
+!/docs/game-replay.md
+!/docs/hub-observers.md
+!/docs/scene3d-ocean-query.md
+!/docs/scene3d-vessel.md
+!/docs/static-game.md
+!/docs/telemetry-activities.md
+!/docs/telemetry-activity-declarations.md
+!/docs/telemetry-activity-events.md
+!/docs/telemetry-activity-lifecycle.md
+!/docs/telemetry-adapters.md
+!/docs/telemetry-memory-sink.md
+!/docs/telemetry-participants.md
+!/docs/telemetry-records.md
 /gosx
 node_modules/
 

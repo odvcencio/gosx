@@ -1,6 +1,6 @@
-# expressions — Phase 4 expression-language samples
+# expressions — expression-language samples
 
-Demonstrates the `.gsx` expression forms surfaced by Phase 4
+Demonstrates the `.gsx` expression forms supported by the IR parser
 (see `gosx/docs/expressions.md` for the full subset specification).
 
 The samples here are illustrative: each `.gsx` snippet shows a form that
