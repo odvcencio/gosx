@@ -19,7 +19,7 @@ const (
 	// orreryExpandedVertexBudget bounds the renderer-facing expanded geometry,
 	// measured the same way as the Blackglass Coast budget (instanced meshes
 	// count their geometry once).
-	orreryExpandedVertexBudget = 25000
+	orreryExpandedVertexBudget = 45000
 	orreryStarCount            = 220
 	orreryMaxPixels            = scene.PostFXMaxPixels720p
 
@@ -63,14 +63,20 @@ func LodestarMeridianProgram() scene.Props {
 		Environment: scene.Environment{
 			AmbientColor: "#adc5cf", AmbientIntensity: 0.68,
 			FogColor: "#050d18", FogDensity: 0.012,
+			// The transit flare brightens the whole frame for a second; auto
+			// exposure eases the exposure down and back, as an eye would.
+			AutoExposure: &scene.AutoExposure{MinExposure: 0.75, MaxExposure: 1.4, Key: 0.2, SpeedUp: 1.5, SpeedDown: 2.5},
 		},
-		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels540p, Effects: []scene.PostEffect{
-			scene.Bloom{Threshold: 0.8, Strength: 0.42, Radius: 8, Scale: 0.35},
+		// Motion blur streaks the planets along their orbits, and TAA (last)
+		// keeps the thin armatures unbroken as they turn.
+		PostFX: scene.PostFX{MaxPixels: orreryMaxPixels, Effects: []scene.PostEffect{
+			scene.MotionBlur{Strength: 0.35},
+			scene.Bloom{Mode: "mip", Threshold: 0.8, Strength: 0.42, Radius: 10, Scale: 0.5},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.18},
 			scene.Vignette{Intensity: 0.16},
-			scene.FXAA{},
+			scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
 		}},
-		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels512},
+		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
 		Graph:   scene.NewGraph(orreryNodes()...),
 	}
 }
@@ -91,7 +97,7 @@ func orreryNodes() []scene.Node {
 	nodes := []scene.Node{
 		scene.DirectionalLight{
 			ID: "orrery-key", Color: "#fff1db", Intensity: 2.1,
-			Direction: scene.Vec3(-0.5, -1, -0.42), CastShadow: true, ShadowBias: -0.001, ShadowSize: 512,
+			Direction: scene.Vec3(-0.5, -1, -0.42), CastShadow: true, ShadowBias: -0.001, ShadowSize: 1024, ShadowSoftness: 0.1,
 		},
 		scene.PointLight{
 			ID: "orrery-heart-light", Color: "#ccb9ff", Intensity: 4.1,
@@ -104,16 +110,16 @@ func orreryNodes() []scene.Node {
 		// Observatory dais: two stepped iron tiers carrying the engraved
 		// ecliptic band. These anchor the foreground silhouette.
 		scene.Mesh{
-			ID: "orrery-dais-base", Geometry: scene.CylinderGeometry{RadiusTop: 3.7, RadiusBottom: 4.0, Height: 0.5, Segments: 28},
+			ID: "orrery-dais-base", Geometry: scene.CylinderGeometry{RadiusTop: 3.7, RadiusBottom: 4.0, Height: 0.5, Segments: 48},
 			Material: iron, Position: scene.Vec3(0, 0.25, 0), CastShadow: true, ReceiveShadow: true,
 		},
 		scene.Mesh{
-			ID: "orrery-dais-step", Geometry: scene.CylinderGeometry{RadiusTop: 3.0, RadiusBottom: 3.15, Height: 0.45, Segments: 24},
+			ID: "orrery-dais-step", Geometry: scene.CylinderGeometry{RadiusTop: 3.0, RadiusBottom: 3.15, Height: 0.45, Segments: 48},
 			Material: iron, Position: scene.Vec3(0, 0.72, 0), CastShadow: true, ReceiveShadow: true,
 		},
 		scene.Mesh{
 			ID:       "orrery-ecliptic-ring",
-			Geometry: scene.TorusGeometry{Radius: 3.52, Tube: 0.055, RadialSegments: 12, TubularSegments: 96},
+			Geometry: scene.TorusGeometry{Radius: 3.52, Tube: 0.055, RadialSegments: 128, TubularSegments: 12},
 			Material: brass,
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/2, 0, 0),
 			CastShadow: true, ReceiveShadow: true,
@@ -124,7 +130,7 @@ func orreryNodes() []scene.Node {
 		// and orreryHaloEmissiveAnim below.
 		scene.Mesh{
 			ID:            "orrery-heart",
-			Geometry:      scene.SphereGeometry{Radius: 0.62, Segments: 22},
+			Geometry:      scene.SphereGeometry{Radius: 0.62, Segments: 36},
 			Material:      scene.StandardMaterial{Color: "#8773bf", Roughness: 0.38, Metalness: 0.22, Clearcoat: 0.45, Emissive: 0.35, Wireframe: scene.Bool(false)},
 			Position:      scene.Vec3(0, orreryHeartY, 0),
 			CastShadow:    true,
@@ -132,7 +138,7 @@ func orreryNodes() []scene.Node {
 		},
 		scene.Mesh{
 			ID:       "orrery-heart-halo",
-			Geometry: scene.TorusGeometry{Radius: 0.95, Tube: 0.035, RadialSegments: 8, TubularSegments: 56},
+			Geometry: scene.TorusGeometry{Radius: 0.95, Tube: 0.035, RadialSegments: 72, TubularSegments: 8},
 			Material: scene.StandardMaterial{Color: "#554d7d", Roughness: 0.42, Metalness: 0.2, Emissive: 0.24, Wireframe: scene.Bool(false)},
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/2.6, 0.2, 0),
 			CastShadow:    true,
@@ -145,7 +151,7 @@ func orreryNodes() []scene.Node {
 		// keyframe tracks.
 		scene.Mesh{
 			ID:       "orrery-armillary-alpha",
-			Geometry: scene.TorusGeometry{Radius: 1.85, Tube: 0.05, RadialSegments: 10, TubularSegments: 64},
+			Geometry: scene.TorusGeometry{Radius: 1.85, Tube: 0.05, RadialSegments: 96, TubularSegments: 10},
 			Material: glassArmature,
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/3.1, 0.35, 0),
 			Spin:       scene.Rotate(0, 0.24, 0),
@@ -153,7 +159,7 @@ func orreryNodes() []scene.Node {
 		},
 		scene.Mesh{
 			ID:       "orrery-armillary-beta",
-			Geometry: scene.TorusGeometry{Radius: 2.48, Tube: 0.045, RadialSegments: 10, TubularSegments: 60},
+			Geometry: scene.TorusGeometry{Radius: 2.48, Tube: 0.045, RadialSegments: 96, TubularSegments: 10},
 			Material: glassArmature,
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(-math.Pi/2.6, -0.5, math.Pi/5),
 			Spin:       scene.Rotate(-0.02, -0.19, 0.03),
@@ -161,7 +167,7 @@ func orreryNodes() []scene.Node {
 		},
 		scene.Mesh{
 			ID:       "orrery-armillary-gamma",
-			Geometry: scene.TorusGeometry{Radius: 3.06, Tube: 0.04, RadialSegments: 8, TubularSegments: 56},
+			Geometry: scene.TorusGeometry{Radius: 3.06, Tube: 0.04, RadialSegments: 96, TubularSegments: 10},
 			Material: brass,
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/4.2, 1.05, -math.Pi/7),
 			Spin:       scene.Rotate(0.02, 0.14, -0.02),
@@ -171,22 +177,22 @@ func orreryNodes() []scene.Node {
 		// The procession: three planets riding the ecliptic circles. Their
 		// translation channels are generated from closed-form circular keys.
 		scene.Mesh{
-			ID: "orrery-planet-cinder", Geometry: scene.SphereGeometry{Radius: 0.17, Segments: 14},
+			ID: "orrery-planet-cinder", Geometry: scene.SphereGeometry{Radius: 0.17, Segments: 20},
 			Material: copper, Position: scene.Vec3(orreryCinderRadius, orreryHeartY, 0), CastShadow: true,
 		},
 		scene.Mesh{
-			ID: "orrery-planet-porcelain", Geometry: scene.SphereGeometry{Radius: 0.23, Segments: 14},
+			ID: "orrery-planet-porcelain", Geometry: scene.SphereGeometry{Radius: 0.23, Segments: 20},
 			Material: porcelain, Position: scene.Vec3(-orreryPorcelainRadius, orreryHeartY, 0), CastShadow: true,
 		},
 		scene.Mesh{
-			ID: "orrery-planet-verdigris", Geometry: scene.SphereGeometry{Radius: 0.2, Segments: 14},
+			ID: "orrery-planet-verdigris", Geometry: scene.SphereGeometry{Radius: 0.2, Segments: 20},
 			Material: verdigris, Position: scene.Vec3(0, orreryHeartY, orreryVerdigrisRadius), CastShadow: true,
 		},
 
 		// The transit moon parks below the opaque dais outside its window, so
 		// it enters and leaves the frame on declared keyframes only.
 		scene.Mesh{
-			ID: "orrery-transit-moon", Geometry: scene.SphereGeometry{Radius: 0.31, Segments: 14},
+			ID: "orrery-transit-moon", Geometry: scene.SphereGeometry{Radius: 0.31, Segments: 20},
 			Material: darkmoon, Position: orreryMoonPark(), CastShadow: true,
 		},
 

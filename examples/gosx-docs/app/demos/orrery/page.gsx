@@ -12,6 +12,10 @@ func Page() Node {
 				<p class="orrery__copy">
 					Follow three planets around a levitating heart. Pause the clock to inspect any moment.
 				</p>
+				<p class="orrery__shows">
+					What this shows: a whole choreography declared as typed animation data, with no bespoke script. Motion blur, auto exposure, and TAA finish the frame.
+					<a href="https://github.com/odvcencio/gosx/blob/main/docs/scene3d-timeline.md" target="_blank" rel="noopener noreferrer">Scene3D timeline guide</a>
+				</p>
 			</header>
 			<div class="orrery__canvas gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage>
 				<img
@@ -52,11 +56,11 @@ func Page() Node {
 							<li>4 animation channels in 1 clip</li>
 							<li>2 material key tracks</li>
 							<li>220 seeded stars</li>
-							<li>≤25k expanded vertices</li>
+							<li>≤45k expanded vertices</li>
 							<li>60 frames per second (FPS) cap</li>
 							<li>device pixel ratio (DPR) ≤ 1.5</li>
-							<li>720p render · 540p post FX</li>
-							<li>512px shadow</li>
+							<li>720p render and post FX</li>
+							<li>1024px shadow</li>
 						</ul>
 						<p class="orrery__motion-note">
 							This scene animates continuously by design. Pause or resume the clockwork with the control below — the runtime freezes the scene clock exactly and continues from the same pose. Under the reduced-motion preference, GoSX suppresses this canvas's animation loop entirely and renders the composed opening pose as a still.
