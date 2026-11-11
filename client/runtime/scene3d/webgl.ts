@@ -6118,7 +6118,7 @@
   // Joint palette texture shared by every skinned draw on this context.
   // Rigs above SCENE_UNIFORM_SKIN_JOINTS joints upload their matrices here
   // (4 RGBA32F texels per matrix on one row) instead of the uniform array.
-  var sceneJointPalettes = new WeakMap(); if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = Object.assign({ use() { return null; }, bind() {}, dispose() {} }, window.__gosx_scene3d_asset_ext.uv1); }
+  var sceneJointPalettes = new WeakMap(); if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = window.__gosx_scene3d_asset_ext.uv1 || {}; }
   function sceneUploadJointPalette(gl, locs, matrices, jointCount) {
     var jointPalette = sceneJointPalettes.get(gl);
     if (!locs.jointTexture || !locs.jointTexCount) return false;
@@ -10087,7 +10087,7 @@
           gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
         }
 
-        window.__gosx_scene3d_asset_ext.uv1.bind(gl, currentProgram, obj, mat);
+        window.__gosx_scene3d_asset_ext.uv1.bind?.(gl, currentProgram, obj, mat);
         if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
           var joints = obj.vertices.joints;
           var weights = obj.vertices.weights;
@@ -10834,7 +10834,7 @@
       instancedStreamRecords.clear();
       rigidBatchRecords.clear();
       disposeCrowdResources();
-      sceneDisposeJointPalette(gl); window.__gosx_scene3d_asset_ext.uv1.dispose(gl);
+      sceneDisposeJointPalette(gl); window.__gosx_scene3d_asset_ext.uv1.dispose?.(gl);
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
       disposeOwnedProgram(rigidShadowProgram);
