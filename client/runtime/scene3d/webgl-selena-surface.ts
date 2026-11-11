@@ -126,7 +126,7 @@ function sceneWebGLSelenaSurfaceProgram(gl: WebGL2RenderingContext, cache: Map<s
 function sceneWebGLAuthoredProgram(gl: WebGL2RenderingContext, cache: Map<string, any>, material: any, skinned: boolean, ensureCustom: (material: any) => any, obj: any = null, creators: any = null) {
   const surface = sceneWebGLSelenaSurfaceProgram(gl, cache, material, skinned);
   if (surface !== null) return surface;
-  return (creators && window.__gosx_scene3d_asset_ext.uv1.use(gl, obj, material, skinned, creators)) || (skinned ? null : ensureCustom(material));
+  return (creators && window.__gosx_scene3d_asset_ext.uv1.use?.(gl, obj, material, skinned, creators)) || (skinned ? null : ensureCustom(material));
 }
 
 // sceneWebGLUploadSelenaSurface writes a surface program's params for one
