@@ -24,6 +24,8 @@ func demoLayoutBindings(ctx *route.RouteContext, page route.FilePage, _ any) rou
 		"demoLayoutBindingSource": nil,
 		"demoLayoutBindingAttrs":  nil,
 		"currentDemoTitle":        "Demo details",
+		"currentDemoShows":        "",
+		"currentDemoDocHref":      nil,
 		"currentDemoLesson":       "Choose a demo to inspect how it is built.",
 		"currentDemoFacets":       "—",
 		"currentDemoPackages":     "—",
@@ -38,6 +40,8 @@ func demoLayoutBindings(ctx *route.RouteContext, page route.FilePage, _ any) rou
 		values["demoLayoutBindingSource"] = ".demo-dock__link[aria-current='page']"
 		values["demoLayoutBindingAttrs"] = "data-demo-slug:data-demo"
 		values["currentDemoTitle"] = current.Title
+		values["currentDemoShows"] = current.Shows
+		values["currentDemoDocHref"] = current.DocHref
 		values["currentDemoLesson"] = current.Lesson
 		values["currentDemoFacets"] = demoValues(current.Facets)
 		values["currentDemoPackages"] = demoValues(current.Packages)

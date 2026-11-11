@@ -354,6 +354,9 @@ func TestDemoLayoutDirectLoadsRenderCurrentProofMetadata(t *testing.T) {
 			if shellSlug != want.Slug {
 				t.Errorf("server-rendered shell slug = %q, want %q", shellSlug, want.Slug)
 			}
+			if !strings.Contains(rendered, `class="demo-details__shows"`) || !strings.Contains(rendered, `data-demo-doc-href="`+want.DocHref+`"`) {
+				t.Errorf("layout does not carry the what-this-shows line or doc link for %q", want.Slug)
+			}
 			if title != want.Title || lesson != want.Lesson {
 				t.Errorf("server-rendered details = title %q, lesson %q", title, lesson)
 			}

@@ -124,18 +124,16 @@ func TestDemosIndexRendersRelatedGuideLinks(t *testing.T) {
 	}
 	body := response.Body.String()
 	guideLinks := strings.Count(body, `class="demo-card__guide"`)
-	// Water is the only featured card and has no paired guide. The other seven
-	// links come from Playground (three), Collab, CMS, Scene3D, and the bench.
-	if guideLinks != 7 {
-		t.Fatalf("guide links on /demos = %d, want 7", guideLinks)
+	// Each card links its primary doc page as demo-card__doc (checked in
+	// TestEveryDemoHasOrientationAndALiveDocLink). Guide links are the extra
+	// catalog pairings: Playground's Components and Islands, and the bench's
+	// Debugging Scene3D.
+	if guideLinks != 3 {
+		t.Fatalf("guide links on /demos = %d, want 3", guideLinks)
 	}
 	for _, want := range []string{
-		`href="/docs/compiler"`, `href="/docs/components"`, `href="/docs/islands"`,
-		`href="/docs/hubs"`, `href="/docs/forms"`, `href="/docs/scene3d"`,
-		`href="/docs/debugging-scene3d"`,
-		"Compiler guide", "Components guide", "Islands guide",
-		"Hubs &amp; CRDT guide", "Forms &amp; actions guide",
-		"3D engine guide", "Debugging Scene3D guide",
+		`href="/docs/components"`, `href="/docs/islands"`, `href="/docs/debugging-scene3d"`,
+		"Components guide", "Islands guide", "Debugging Scene3D guide",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered /demos is missing %q", want)
@@ -177,5 +175,76 @@ func TestDemosGalleryRendersEveryPosterBackendAndSource(t *testing.T) {
 	}
 	if strings.Contains(body, `<gosx-scene3d`) || strings.Contains(body, `data-gosx-scene3d=`) {
 		t.Error("gallery must not mount a Scene3D before visitors open a demo")
+	}
+}
+
+// TestEveryDemoHasOrientationAndALiveDocLink proves the gallery contract: each
+// demo carries a one-line "what this shows", at least one capability tag, and
+// a doc page that exists in the docs catalog, and the rendered /demos page
+// shows all three for every demo.
+func TestEveryDemoHasOrientationAndALiveDocLink(t *testing.T) {
+	hrefs := map[string]bool{}
+	for _, section := range docsapp.DocsCatalog() {
+		for _, entry := range section.Entries {
+			hrefs[entry.Href] = true
+		}
+	}
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source")
+	}
+	router := route.NewRouter()
+	if err := router.AddDir(filepath.Dir(filepath.Dir(thisFile)), route.FileRoutesOptions{}); err != nil {
+		t.Fatalf("add app routes: %v", err)
+	}
+	response := httptest.NewRecorder()
+	router.Build().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/demos", nil))
+	body := response.Body.String()
+	for _, demo := range Demos() {
+		if demo.Shows == "" || strings.Contains(demo.Shows, "\n") || !strings.HasSuffix(demo.Shows, ".") {
+			t.Errorf("demo %q needs a one-line, one-sentence Shows, got %q", demo.Slug, demo.Shows)
+		}
+		if len(demo.Facets) == 0 {
+			t.Errorf("demo %q has no capability tags", demo.Slug)
+		}
+		if !hrefs[demo.DocHref] || demo.DocTitle == "" {
+			t.Errorf("demo %q doc page %q is not in the docs catalog", demo.Slug, demo.DocHref)
+		}
+		if !strings.Contains(body, `href="`+demo.DocHref+`"`) {
+			t.Errorf("gallery card for %q does not link %s", demo.Slug, demo.DocHref)
+		}
+		if !strings.Contains(body, `id="demo-`+demo.Slug+`"`) {
+			t.Errorf("gallery has no anchor for %q", demo.Slug)
+		}
+	}
+	if strings.Count(body, `class="demo-card__shows"`) != len(Demos()) {
+		t.Errorf("gallery renders %d what-this-shows lines, want %d", strings.Count(body, `class="demo-card__shows"`), len(Demos()))
+	}
+}
+
+func TestCapabilityIndexCoversEveryFacetOnce(t *testing.T) {
+	demos := Demos()
+	index := CapabilityIndex(demos)
+	want := map[string]int{}
+	for _, demo := range demos {
+		for _, facet := range demo.Facets {
+			want[facet]++
+		}
+	}
+	if len(index) != len(want) {
+		t.Fatalf("capability index has %d tags, want %d", len(index), len(want))
+	}
+	slugs := map[string]bool{}
+	for i, tag := range index {
+		if len(tag.Demos) != want[tag.Name] {
+			t.Errorf("tag %q lists %d demos, want %d", tag.Name, len(tag.Demos), want[tag.Name])
+		}
+		if tag.Slug == "" || slugs[tag.Slug] {
+			t.Errorf("tag %q has empty or duplicate slug %q", tag.Name, tag.Slug)
+		}
+		slugs[tag.Slug] = true
+		if i > 0 && len(index[i-1].Demos) < len(tag.Demos) {
+			t.Errorf("tag %q is out of order", tag.Name)
+		}
 	}
 }

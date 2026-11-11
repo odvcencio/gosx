@@ -18,6 +18,8 @@ func init() {
 				return map[string]any{
 					"featured":   FeaturedGalleryDemos(demos),
 					"groups":     GroupedGalleryDemos(demos),
+					"tags":       CapabilityIndex(demos),
+					"total":      len(demos),
 					"showcase":   ShowcaseDemos(),
 					"additional": AdditionalDemos(),
 				}, nil
@@ -32,7 +34,7 @@ func init() {
 					// Resolves the documentation guides that teach the
 					// concepts behind a demo, straight from the shared
 					// catalogs; unmapped demos render no guide links.
-					"demoGuides": RelatedGuides,
+					"demoGuides": ExtraGuides,
 				}}
 			},
 		},

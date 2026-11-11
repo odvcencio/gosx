@@ -32,8 +32,8 @@ func TestDemosIndexRendersCuratedGalleryWithoutMountingScenes(t *testing.T) {
 	if strings.Contains(page, "<script") {
 		t.Error("demos index must not add bespoke script behavior")
 	}
-	if got := strings.Count(page, `data-gosx-link="true"`); got != 8 {
-		t.Errorf("demos index managed-navigation link declarations = %d, want 8", got)
+	if got := strings.Count(page, `data-gosx-link="true"`); got != 10 {
+		t.Errorf("demos index managed-navigation link declarations = %d, want 10", got)
 	}
 	if strings.Contains(page, `target="_blank" data-gosx-link="true"`) {
 		t.Error("external source links must not be intercepted by managed navigation")

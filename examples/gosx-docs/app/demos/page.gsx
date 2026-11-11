@@ -6,7 +6,7 @@ func Page() Node {
 			<p class="demos-gallery__eyebrow">GoSX demos</p>
 			<h1 id="demos-gallery-title">Explore what you can build.</h1>
 			<p>
-				Try interactive scenes, shared systems, and server-rendered applications. Every card links to its source files and names the renderer the demo uses.
+				Every demo on this site is below, with what it shows, the capabilities it covers, the doc page that teaches it, and its source. Open one to try it.
 			</p>
 		</header>
 		<section class="demos-gallery__featured" aria-labelledby="demos-featured-title">
@@ -21,7 +21,7 @@ func Page() Node {
 			</div>
 			<div class="demos-gallery__featured-list">
 				<Each of={data.featured} as="demo">
-					<article class="demo-card demo-card--featured" data-demo={demo.Slug}>
+					<article class="demo-card demo-card--featured" id={"demo-" + demo.Slug} data-demo={demo.Slug}>
 						<a
 							class="demo-card__poster"
 							href={"/demos/" + demo.Slug}
@@ -41,6 +41,7 @@ func Page() Node {
 								>{demo.Title}</a>
 							</h3>
 							<p class="demo-card__summary">{demo.Summary}</p>
+							<p class="demo-card__shows"><span>What this shows</span>{demo.Shows}</p>
 							<ul class="demo-card__facets" aria-label={demo.Title + " capabilities"}>
 								<Each of={demo.Facets} as="facet">
 									<li>{facet}</li>
@@ -57,6 +58,7 @@ func Page() Node {
 									data-gosx-link="true"
 								>Open demo</a>
 								<a href={demoSourceURL(demo.SourcePath)} target="_blank" rel="noopener noreferrer">View source</a>
+								<a class="demo-card__doc" href={demo.DocHref} data-gosx-link="true">{"Read: " + demo.DocTitle}</a>
 								<Each of={demoGuides(demo.Slug)} as="guide">
 									<a class="demo-card__guide" href={guide.Href} data-gosx-link="true">
 										{guide.Title + " guide"}
@@ -91,7 +93,7 @@ func Page() Node {
 				</header>
 				<div class="demos-gallery__grid">
 					<Each of={group.Demos} as="demo">
-						<article class="demo-card" data-demo={demo.Slug}>
+						<article class="demo-card" id={"demo-" + demo.Slug} data-demo={demo.Slug}>
 							<a
 								class="demo-card__poster"
 								href={"/demos/" + demo.Slug}
@@ -111,6 +113,7 @@ func Page() Node {
 									>{demo.Title}</a>
 								</h3>
 								<p class="demo-card__summary">{demo.Summary}</p>
+							<p class="demo-card__shows"><span>What this shows</span>{demo.Shows}</p>
 								<ul class="demo-card__facets" aria-label={demo.Title + " capabilities"}>
 									<Each of={demo.Facets} as="facet">
 										<li>{facet}</li>
@@ -127,7 +130,8 @@ func Page() Node {
 										data-gosx-link="true"
 									>Open demo</a>
 									<a href={demoSourceURL(demo.SourcePath)} target="_blank" rel="noopener noreferrer">View source</a>
-									<Each of={demoGuides(demo.Slug)} as="guide">
+									<a class="demo-card__doc" href={demo.DocHref} data-gosx-link="true">{"Read: " + demo.DocTitle}</a>
+								<Each of={demoGuides(demo.Slug)} as="guide">
 										<a class="demo-card__guide" href={guide.Href} data-gosx-link="true">
 											{guide.Title + " guide"}
 										</a>
@@ -151,5 +155,28 @@ func Page() Node {
 				</div>
 			</section>
 		</Each>
+		<section class="demos-gallery__tags" aria-labelledby="demos-tags-title">
+			<header class="demos-gallery__section-heading">
+				<div>
+					<p class="demos-gallery__eyebrow">Capability index</p>
+					<h2 id="demos-tags-title">Find a demo by what it uses.</h2>
+				</div>
+				<p>{"Every capability tag across all " + data.total + " demos, with the demos that cover it."}</p>
+			</header>
+			<dl class="demos-gallery__tag-list">
+				<Each of={data.tags} as="tag">
+					<div class="demos-gallery__tag" id={"capability-" + tag.Slug}>
+						<dt>{tag.Name}</dt>
+						<dd>
+							<ul>
+								<Each of={tag.Demos} as="tagged">
+									<li><a href={"#demo-" + tagged.Slug}>{tagged.Title}</a></li>
+								</Each>
+							</ul>
+						</dd>
+					</div>
+				</Each>
+			</dl>
+		</section>
 	</section>
 }
