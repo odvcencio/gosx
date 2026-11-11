@@ -40,10 +40,12 @@ type Config struct {
 	ConfigureICE func(*pion.SettingEngine)
 	// OnHello, if set, is called for each valid hello a hub client sends,
 	// once per hub connection (the client sends it again after a hub
-	// reconnect, with a new client ID). The app can seat the player that
-	// owns session on clientID, or point an existing seat at the new client.
+	// reconnect, with a new client ID). previousClientID is the client that
+	// owned session before this hello, or "" if none: the app can seat the
+	// player on clientID, or Rebind the seat from previousClientID once Leave
+	// reported it gone.
 	// It runs on the hub's handler goroutine and must return quickly.
-	OnHello func(clientID, session string)
+	OnHello func(clientID, session, previousClientID string)
 }
 
 // Server is the relay-side answerer. It turns browser offers into data
@@ -63,9 +65,12 @@ type Server struct {
 	byClient   map[string]string
 	bySession  map[string]string
 	superseded map[string]string
-	fb         *hubnet.Fallback
-	accept     chan *Peer
-	closed     bool
+	// left marks hub clients the app reported gone with Leave; only such a
+	// client's seat can be moved by Rebind.
+	left   map[string]bool
+	fb     *hubnet.Fallback
+	accept chan *Peer
+	closed bool
 }
 
 type serverConn struct {
@@ -146,9 +151,9 @@ func (s *Server) Accept(ctx context.Context) (*Peer, error) {
 func (s *Server) Handle(clientID string, m signal.Message, reply func(signal.Message) error) {
 	switch m := m.(type) {
 	case *signal.Hello:
-		s.announce(clientID, m.Session)
+		prev := s.announce(clientID, m.Session)
 		if s.cfg.OnHello != nil {
-			s.cfg.OnHello(clientID, m.Session)
+			s.cfg.OnHello(clientID, m.Session, prev)
 		}
 		cfg := &signal.Config{Session: m.Session, ICEServers: s.cfg.ICEServers, FallbackAfterMs: int(s.cfg.FallbackAfter / time.Millisecond)}
 		_ = reply(cfg)
@@ -169,23 +174,25 @@ func (s *Server) Handle(clientID string, m signal.Message, reply func(signal.Mes
 // names cannot grow it without limit. Remove frees an entry.
 const maxAnnounced = 4096
 
-func (s *Server) announce(clientID, session string) {
+func (s *Server) announce(clientID, session string) (previous string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return
 	}
 	if s.byClient == nil {
-		s.byClient, s.bySession, s.superseded = map[string]string{}, map[string]string{}, map[string]string{}
+		s.byClient, s.bySession, s.superseded, s.left = map[string]string{}, map[string]string{}, map[string]string{}, map[string]bool{}
 	}
 	if old, ok := s.byClient[clientID]; ok && old != session && s.bySession[old] == clientID {
 		delete(s.bySession, old)
 	}
 	if prev, ok := s.bySession[session]; ok && prev != clientID {
+		previous = prev
 		// The session moved to a new hub client. Keep the previous owner
 		// (one per session) so Rebind can move its seat.
 		if older, ok := s.superseded[session]; ok {
 			delete(s.byClient, older)
+			delete(s.left, older)
 		}
 		s.superseded[session] = prev
 	}
@@ -197,6 +204,7 @@ func (s *Server) announce(clientID, session string) {
 		}
 	}
 	s.byClient[clientID], s.bySession[session] = session, clientID
+	return previous
 }
 
 // ClientBySession returns the hub client that most recently announced session
@@ -384,25 +392,64 @@ func (c *serverConn) close(cause error) {
 var (
 	ErrUnknownClient   = errors.New("netplay/webrtc: unknown hub client")
 	ErrSessionMismatch = errors.New("netplay/webrtc: the new client did not announce the same session")
+	// ErrClientLive: the old client has not been reported gone with Leave.
+	ErrClientLive = errors.New("netplay/webrtc: the old client is still on the hub; call Leave when it leaves")
+	// ErrDefaultSession: the session is the default label "netplay", which
+	// many unrelated players share, so it cannot identify a seat.
+	ErrDefaultSession = errors.New("netplay/webrtc: the default session label cannot identify a seat; use a seat token")
+	// ErrSeatTaken: the new client already has a Link or connection.
+	ErrSeatTaken = errors.New("netplay/webrtc: the new client already has a Link or connection")
 )
+
+// DefaultSession is the label netplay/client uses when Options.Session is
+// empty. Rebind refuses it.
+const DefaultSession = "netplay"
+
+// Leave tells the server that a hub client left (call it from your hub
+// "leave" handler instead of Remove) and starts the reconnect grace: the
+// seat stays, with its Link and data channel, until you Rebind it to a
+// client that reconnects with the same session token, or call Remove when
+// the grace ends. Leave returns the newest other client that announced the
+// same session, or "" if none has; if it returns one, call Rebind(oldID,
+// thatID).
+func (s *Server) Leave(oldID string) (newID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.byClient[oldID]
+	if !ok {
+		return ""
+	}
+	if s.left == nil {
+		s.left = map[string]bool{}
+	}
+	s.left[oldID] = true
+	if cur := s.bySession[sess]; cur != oldID {
+		return cur
+	}
+	return ""
+}
 
 // Rebind moves a seat from the hub client oldID to newID after a hub
 // reconnect: the Link (and with it the relay's transport, the WebRTC data
 // channel and the WebSocket fallback) now serves newID, and the relay keeps
-// using the same Link. Both clients must have said hello with the same
-// session, or Rebind returns ErrSessionMismatch and changes nothing.
+// using the same Link.
 //
-// Call it from OnHello (or after it) with the old ID from ClientBySession
-// taken before the hello, and call it before you ask for Link(newID), which
-// would create a second Link.
+// Rebind changes nothing and returns an error unless all of these hold:
+// both clients said hello with the same session (ErrSessionMismatch); the
+// session is not the default label "netplay" (ErrDefaultSession); the app
+// reported the old client gone with Leave (ErrClientLive), so a live client
+// cannot lose its seat to another that names the same session; and newID has
+// no Link or connection yet (ErrSeatTaken), so do not call Link(newID)
+// before Rebind.
+//
+// Use it with OnHello and Leave: in OnHello, try Rebind(oldID, newID) when the
+// session already has an owner; in your hub leave handler, call Leave(id) and,
+// if it returns a client, Rebind(id, thatClient). Remove the seat when the
+// reconnect grace ends (at most the session stall timeout, 5 s by default).
 //
 // A session name is only as private as you make it: any client can announce
-// any name, so Rebind is only safe when the name is an unguessable seat
-// token that your matchmaker gave to one player (or you check the new
-// client's authenticated identity before you call it). Do not Remove the old
-// client when the hub reports a leave, until the reconnect grace has ended
-// (at most the session stall timeout, 5 s by default); Remove closes the
-// data channel and drops the Link.
+// any name. Use an unguessable seat token from your matchmaker as the
+// session, or check the new client's authenticated identity before Rebind.
 func (s *Server) Rebind(oldID, newID string) error {
 	if oldID == newID {
 		return nil
@@ -417,6 +464,18 @@ func (s *Server) Rebind(oldID, newID string) error {
 	if so != sn || so == "" {
 		s.mu.Unlock()
 		return ErrSessionMismatch
+	}
+	if so == DefaultSession {
+		s.mu.Unlock()
+		return ErrDefaultSession
+	}
+	if !s.left[oldID] {
+		s.mu.Unlock()
+		return ErrClientLive
+	}
+	if s.links[newID] != nil || s.conns[newID] != nil {
+		s.mu.Unlock()
+		return ErrSeatTaken
 	}
 	l, c, fb := s.links[oldID], s.conns[oldID], s.fb
 	if l == nil && c == nil {
@@ -439,6 +498,7 @@ func (s *Server) Rebind(oldID, newID string) error {
 		c.mu.Unlock()
 	}
 	delete(s.byClient, oldID)
+	delete(s.left, oldID)
 	if s.superseded[so] == oldID {
 		delete(s.superseded, so)
 	}
@@ -457,6 +517,7 @@ func (s *Server) Remove(clientID string) {
 	c := s.conns[clientID]
 	delete(s.conns, clientID)
 	delete(s.links, clientID)
+	delete(s.left, clientID)
 	if sess, ok := s.byClient[clientID]; ok {
 		delete(s.byClient, clientID)
 		if s.bySession[sess] == clientID {

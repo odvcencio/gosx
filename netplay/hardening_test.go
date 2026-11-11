@@ -41,6 +41,13 @@ func (r *rig) runHook(d time.Duration, before, after func()) {
 	}
 }
 
+// forgedDelay is forged with a declared input delay.
+func forgedDelay(tag uint64, delay byte, ack uint32, start int64, entries []byte) []byte {
+	b := forged(tag, ack, start, entries)
+	b[offDelay] = delay
+	return b
+}
+
 // forged builds an input packet with explicit ack and entries.
 func forged(tag uint64, ack uint32, start int64, entries []byte) []byte {
 	b := make([]byte, inputHdr+len(entries))
@@ -498,5 +505,127 @@ func TestPeerThatFakesEchoesCannotForceTheMaximumDelay(t *testing.T) {
 	m := runHandshake(t, mixed, 3*time.Second)
 	if m.Status() != StatusRunning || m.InputDelay() != 0 || m.Stats().RTTIgnored+m.Stats().StaleEchoes == 0 || m.Stats().DelayFallbacks != 0 {
 		t.Fatalf("mixed: status %v delay %d stats %+v, want delay 0 from the honest samples", m.Status(), m.InputDelay(), m.Stats())
+	}
+}
+
+// r2run is rig.run with a configurable relay tick and optional relay pauses.
+func (r *rig) r2run(d, relayEvery time.Duration, paused func(now time.Duration) bool) {
+	end := r.now + d
+	for r.now < end {
+		k := 0
+		for j := 1; j < 3; j++ {
+			if r.next[j] < r.next[k] {
+				k = j
+			}
+		}
+		r.now = r.next[k]
+		r.setNow()
+		switch k {
+		case 2:
+			r.next[2] += relayEvery
+			if paused == nil || !paused(r.now) {
+				r.relay.Tick(r.now)
+			}
+		default:
+			r.next[k] += frameDur
+			s := r.s[k]
+			var in pad
+			if f := s.Frame(); f < int64(len(r.script)) {
+				in = r.script[f][k]
+			}
+			r.outcomes[k] = append(r.outcomes[k], s.Advance(r.now, in))
+		}
+	}
+}
+
+// Relay-side pauses on clean links say nothing about either player.
+func TestRelayPausesDoNotFlagEitherPlayerAsCrawling(t *testing.T) {
+	r := newRig(t, rigOpts{links: [2]NetConfig{{Seed: 1, Delay: d20()}, {Seed: 2, Delay: d20()}}})
+	paused := func(now time.Duration) bool { return now%(10*time.Second) > 8200*time.Millisecond } // 1.8 s of every 10 s
+	r.r2run(35*time.Second, 4*time.Millisecond, paused)
+	for i, p := range r.relay.Report().Players {
+		if p.CrawlFlagged || p.SlowGaps != 0 {
+			t.Fatalf("player %d: slow gaps %d max gap %v crawl %v", i, p.SlowGaps, p.MaxLogGap, p.CrawlFlagged)
+		}
+		if r.s[i].Err() != nil {
+			t.Fatalf("session %d: %v", i, r.s[i].Err())
+		}
+	}
+}
+
+// Three 1.6 s outages on player 0's own link: only player 0 can be slow.
+func TestOutagesOnOnePlayersLinkDoNotFlagTheOther(t *testing.T) {
+	r := newRig(t, rigOpts{links: [2]NetConfig{{Seed: 1, Delay: d20()}, {Seed: 2, Delay: d20()}}})
+	for k := 0; k < 3; k++ {
+		r.run(5 * time.Second)
+		r.nets[0].SetLoss(1)
+		r.run(1600 * time.Millisecond)
+		r.nets[0].SetLoss(0)
+	}
+	r.run(3 * time.Second)
+	rep := r.relay.Report()
+	if p := rep.Players[1]; p.CrawlFlagged || p.SlowGaps != 0 {
+		t.Fatalf("player 1 flagged for player 0's outages: %+v", p)
+	}
+}
+
+// The delay byte is not trusted beyond MaxInputDelay, and it cannot change.
+func TestDeclaredDelayIsCappedAndCannotChange(t *testing.T) {
+	r := newRig(t, rigOpts{links: [2]NetConfig{{Seed: 1, Delay: d20()}, {Seed: 2, Delay: d20()}}})
+	r.run(2 * time.Second)
+	tag := idTag(&[32]byte{})
+	start := r.relay.logN[1]
+	ents := make([]byte, 150)
+	_ = r.nets[1].Endpoint(0).Send(forgedDelay(tag, 200, uint32(r.relay.ack[1]), start, ents)) // delay 200, 150 frames ahead
+	r.run(2 * time.Second)
+	rep := r.relay.Report()
+	p1 := rep.Players[1]
+	if p1.ViolationCounts[ViolationBadDelay] != 1 || p1.ViolationCounts[ViolationFuture] != 1 {
+		t.Fatalf("p1 violations %v", p1.ViolationCounts)
+	}
+	if p1.InputDelay > 3 || r.relay.delay[1] != 0 {
+		t.Fatalf("delay not clamped or changed: reported %d relay %d", p1.InputDelay, r.relay.delay[1])
+	}
+	if r.s[0].Stats().FutureInputs != 0 || r.s[0].Err() != nil {
+		t.Fatalf("honest session saw the packet: %+v %v", r.s[0].Stats(), r.s[0].Err())
+	}
+	// A different delay once running is a violation of its own kind.
+	_ = r.nets[1].Endpoint(0).Send(forgedDelay(tag, 2, uint32(r.relay.ack[1]), r.relay.ack[0], nil))
+	r.run(100 * time.Millisecond)
+	if got := r.relay.Report().Players[1].ViolationCounts[ViolationDelayChange]; got != 1 {
+		t.Fatalf("delay change violations = %d", got)
+	}
+}
+
+// Ack lag is still measured when a packet's ack is distrusted.
+func TestAckLagIsMeasuredWhenTheAckIsDistrusted(t *testing.T) {
+	r := newRig(t, rigOpts{relay: func(c *RelayConfig[pad]) { c.PredictionWindow = 120; c.AckLagSlack = AckLagSlackNone }})
+	tag := idTag(&[32]byte{})
+	_ = r.nets[0].Endpoint(0).Send(inputPacket(tag, 0, 1, 0, 128, 1))
+	r.now += time.Millisecond
+	r.relay.Tick(r.now)
+	r.now += 2 * time.Second
+	_ = r.nets[1].Endpoint(0).Send(forgedDelay(tag, 0, 1<<30, 0, make([]byte, 5))) // impossible ack
+	r.relay.Tick(r.now)
+	if p := r.relay.Report().Players[1]; !p.AckLagFlagged || p.AckLag != 128 || p.ImpossibleAcks != 1 {
+		t.Fatalf("%+v", p)
+	}
+}
+
+// The round-trip estimate keeps updating past 35.8 minutes of session time.
+func TestRTTKeepsUpdatingAfter36Minutes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("simulates 40 minutes")
+	}
+	r := newRig(t, rigOpts{links: [2]NetConfig{{Seed: 1, Delay: d20()}, {Seed: 2, Delay: d20()}}})
+	r.run(36 * time.Minute)
+	before := r.s[0].RTT()
+	r.nets[0].cfg.Delay = [2]time.Duration{150 * time.Millisecond, 150 * time.Millisecond}
+	r.run(30 * time.Second)
+	if after := r.s[0].RTT(); after < before+150*time.Millisecond {
+		t.Fatalf("rtt froze: %v before the change, %v after", before, after)
+	}
+	if st := r.s[0].Stats(); st.StaleEchoes != 0 {
+		t.Fatalf("stale echoes counted in a healthy session: %d", st.StaleEchoes)
 	}
 }

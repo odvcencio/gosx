@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// staleEchoWindow is how long after its first packet a session discards echoes
+// of timestamps older than that packet.
+const staleEchoWindow = time.Minute
+
 // AutoDelay in Config.InputDelay picks the input delay from the handshake
 // round trip.
 const AutoDelay = -1
@@ -238,14 +242,15 @@ type Session[I any] struct {
 	rbuf      [MaxPacketSize]byte
 
 	// stall
-	endReason  uint8
-	sentAny    bool
-	hsSamples  int
-	hsMin      time.Duration
-	firstPeer  time.Duration
-	firstSend  uint32
-	stalling   bool
-	stallSince time.Duration
+	endReason   uint8
+	sentAny     bool
+	hsSamples   int
+	hsMin       time.Duration
+	firstPeer   time.Duration
+	firstSend   uint32
+	firstSendAt time.Duration
+	stalling    bool
+	stallSince  time.Duration
 
 	// checksums
 	nextCheck int64
@@ -313,6 +318,9 @@ func NewSession[I any](cfg Config[I]) (*Session[I], error) {
 	}
 	if cfg.DelayFallback > cfg.MaxInputDelay {
 		cfg.DelayFallback = cfg.MaxInputDelay
+	}
+	if cfg.StallTimeout < cfg.RTTWait {
+		return nil, errors.New("netplay: StallTimeout must be at least RTTWait")
 	}
 	if cfg.HandshakeTimeout == 0 {
 		cfg.HandshakeTimeout = 30 * time.Second
@@ -664,7 +672,9 @@ func (s *Session[I]) noteHeader(now time.Duration, h *header) bool {
 	}
 	if h.hasEcho {
 		d := micros(now) - h.echoUs - h.holdUs // wraps correctly
-		if !s.sentAny || int32(h.echoUs-s.firstSend) < 0 {
+		// The stale-echo check compares 32-bit microsecond stamps, which wrap
+		// after 35.8 minutes, so it applies only while the session is young.
+		if !s.sentAny || (now-s.firstSendAt < staleEchoWindow && int32(h.echoUs-s.firstSend) < 0) {
 			// The peer echoes a timestamp from before this session sent its
 			// first packet (a restarted session): not a sample of this link.
 			s.stats.StaleEchoes++
@@ -923,7 +933,7 @@ func (s *Session[I]) sendResyncAck() {
 func (s *Session[I]) header(typ byte, now time.Duration) header {
 	s.seq++
 	if !s.sentAny {
-		s.sentAny, s.firstSend = true, micros(now)
+		s.sentAny, s.firstSend, s.firstSendAt = true, micros(now), now
 	}
 	h := header{typ: typ, seq: s.seq, sendUs: micros(now)}
 	if s.cfg.InputDelay == AutoDelay && !s.delayKnown {

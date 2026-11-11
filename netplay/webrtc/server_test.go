@@ -109,7 +109,7 @@ func TestRemoveClosesPeer(t *testing.T) {
 
 func TestClientBySessionFollowsHelloAndReconnect(t *testing.T) {
 	var got [][2]string
-	s, err := NewServer(Config{OnHello: func(id, sess string) { got = append(got, [2]string{id, sess}) }})
+	s, err := NewServer(Config{OnHello: func(id, sess, _ string) { got = append(got, [2]string{id, sess}) }})
 	if err != nil {
 		t.Fatal(err)
 	}

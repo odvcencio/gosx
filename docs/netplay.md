@@ -151,10 +151,19 @@ facts; the app decides what they mean. Each fact has a caveat.
 | `Desyncs`, `Resyncs`, `FirstDesyncFrame` | Checksum frames where this player's checksum disagreed with the relay's native copy, resyncs it acknowledged, and the first such frame (0 if none). They show that a build diverged, not why. Read them together with the violation fields. |
 | `AckedFrame`, `ForwardedAck` | The highest ack in this player's packets that passed validation, and the ack the relay sent to the other player (which never exceeds the frames the relay logged for that player). |
 | `AckLag`, `MaxAckLag`, `AckLagFlagged` | Distance between the other player's frames that the relay forwarded at least `AckLagGrace` ago (default 1 s) and the frames this player acknowledged, measured when its valid packets arrive. `AckLagFlagged` is set above `AckLagLimit()` = `PredictionWindow + MaxInputDelay + AckLagSlack` (defaults 8, 3 and 30; `AckLagSlackNone` for 0). A client that keeps acknowledging frame 0 makes the honest peer stall at 240 unacknowledged frames; this flag lets the app refuse that forfeit. A link that drops everything for longer than the grace and slack also trips it. |
-| `LateInputs`, `MaxLateness`, `Flagged` | Inputs that arrived later than their due time plus the input delay, counted only if the other player had already sent that frame. |
-| `LogGap`, `MaxLogGap`, `SlowGaps`, `CrawlFlagged` | How long ago this player's log last grew at the last `Tick`, counted only if the other player's log has grown since; the longest such gap; the number of closed gaps longer than `CrawlAfter` (default 1.5 s); and a flag set after `CrawlGaps` (default 3) of them. A client that crawls (one tick every 2 s) never goes silent long enough for a stall timeout, but it collects slow gaps. One long gap alone, such as an outage that hit both players, does not set the flag. |
-| `LastLogAt`, `LastLogTick` | The relay clock (the `now` given to `Tick`) and the `Tick` count when this player's log last grew. The player whose log stopped first stalled first. |
+| `LateInputs`, `MaxLateness`, `Flagged` | Inputs that arrived later than their due time plus the input delay, counted only if the other player had already sent that frame. Caveat: honest players on links above about 100 ms one way can set `Flagged` (the due time assumes a short path), so do not forfeit on it alone. |
+| `LogGap`, `MaxLogGap`, `SlowGaps`, `CrawlFlagged` | The time this player has held the match back: the time since the later of its last log growth and the moment the other player's log became longer than its own (the clock starts when the player is behind, not before). `MaxLogGap` is the longest such gap; `SlowGaps` counts gaps longer than `CrawlAfter` (default 1.5 s); `CrawlFlagged` is set after `CrawlGaps` (default 3) of them. A client that crawls (one tick every 2 s) collects slow gaps without ever stalling long enough for a stall timeout. A pause of the relay itself (no `Tick` for over 500 ms) restarts the clocks. A link outage that silences one player is indistinguishable from that player crawling. Check `Violations` first. |
+| `LastLogAt`, `LastLogTick` | The relay clock (the `now` given to `Tick`) and the `Tick` count when this player's log last grew. The player whose log stopped first stalled first. Check `Violations` first: a player with violations is the suspect whatever its log times say. |
 | `LastPacketAt`, `LastPacketTick` | The same for any valid packet from the player. |
+
+The violation, ack and desync facts assume an authenticated transport (DTLS
+for WebRTC, TLS for the WebSocket) and a seat that only its owner can use: on
+an open link, another host can inject packets that the relay attributes to the
+seat.
+
+A packet that declares an input delay above `MaxInputDelay` is clamped and
+counted (`ViolationBadDelay`), and a delay that changes after the first input
+is ignored and counted (`ViolationDelayChange`).
 
 The times come from the `now` you pass to `Tick`. They are facts for the app's
 verdict, not simulation state: never feed them to `Game.Step`.
@@ -264,7 +273,24 @@ srv, err := webrtc.NewServer(webrtc.Config{
 h := hub.New("match")
 srv.AttachHub(h) // signaling events and the WebSocket fallback
 h.On("join", func(ctx *hub.Context) { /* pair players by ctx.Client.ID */ })
-h.On("leave", func(ctx *hub.Context) { srv.Remove(ctx.Client.ID) })
+
+// Seats are named by an unguessable token your matchmaker gave each player,
+// which the client sends as Options.Session. Tell the server about a leave
+// with Leave (not Remove), so the seat survives a hub reconnect.
+rebind := func(old, now string) {
+    if err := srv.Rebind(old, now); errors.Is(err, webrtc.ErrClientLive) {
+        return // the leave handler finishes it
+    }
+}
+srv, _ = webrtc.NewServer(webrtc.Config{
+    OnHello: func(id, session, previous string) {
+        if previous != "" { rebind(previous, id) } // the player reconnected
+    },
+})
+h.On("leave", func(ctx *hub.Context) {
+    if now := srv.Leave(ctx.Client.ID); now != "" { rebind(ctx.Client.ID, now) }
+    // when the reconnect grace ends and nobody came back: srv.Remove(id)
+})
 
 // once two clients are paired:
 relay, _ := netplay.NewRelay(netplay.RelayConfig[Pad]{
@@ -305,7 +331,8 @@ ctx.Runtime().RequireFeature("netplay") // loads bootstrap-feature-netplay.js on
 
 ```go
 conn, err := client.Dial(client.Options{
-    HubURL: "wss://example.com/gosx/hub/match",
+    HubURL:  "wss://example.com/gosx/hub/match",
+    Session: seatToken, // an unguessable token from your matchmaker, not the default "netplay"
     OnMode: func(m client.Mode) { /* ModeWebRTC, or ModeWebSocket: show "degraded" */ },
 })
 s, _ := netplay.NewSession(netplay.Config[Pad]{Transport: conn /* ... */})
@@ -340,17 +367,22 @@ retries. `conn.Mode()` is `ModeConnecting`, `ModeWebRTC` or `ModeWebSocket`.
   blocking). Rollback still works, but the match feels worse; tell the player.
 - If the hub connection itself drops, hub reconnect gives the client a new ID.
   `Conn` sends its hello again on every hub connection. On the relay,
-  `webrtc.Config.OnHello` is called with `(clientID, session)`, and
+  `webrtc.Config.OnHello` is called with `(clientID, session, previousClientID)`.
   `Server.Rebind(oldID, newID)` moves the seat: the same `Link`, with its data
   channel and its WebSocket path, now serves the new ID, so the relay keeps its
-  transport. `Rebind` checks that both clients announced the same session.
-  Do not `Remove` the old client when the hub reports a leave until the
+  transport. `Rebind` refuses (and changes nothing) unless the old client was
+  reported gone with `Server.Leave` (`ErrClientLive`), both clients announced
+  the same session, the session is not the default label `"netplay"`
+  (`ErrDefaultSession`; set `Options.Session`), and the new client has no
+  `Link` yet (`ErrSeatTaken`; call `Link` after `Rebind`). Call `Leave` from
+  your hub leave handler instead of `Remove`, and `Remove` only when the
   reconnect grace has ended (at most the session stall timeout, 5 s by
-  default); `Remove` closes the data channel and drops the `Link`. After a
+  default): `Remove` closes the data channel and drops the `Link`. After a
   fallback to the WebSocket, `Conn` uses the WebRTC channel again only if the
   channel opens later; it does not renegotiate.
 - A session name is a label, not a credential: any client can announce any
-  name. Use an unguessable seat token from your matchmaker as the session
+  name, and a client that knows a seat's token can take the seat once its owner
+  has left. Use an unguessable seat token from your matchmaker as the session
   name, or check the new client's authenticated identity before `Rebind`.
 
 ### Signaling and limits

@@ -81,6 +81,12 @@ const (
 	ViolationImpossibleAck
 	// ViolationConflict: an entry for a frame already logged has other bytes.
 	ViolationConflict
+	// ViolationBadDelay: the packet declares an input delay above
+	// RelayConfig.MaxInputDelay (and not the auto value). The relay clamps it.
+	ViolationBadDelay
+	// ViolationDelayChange: the player declared a different delay after it
+	// had started sending inputs. The relay keeps the first delay.
+	ViolationDelayChange
 	// NumViolationKinds is the length of PlayerReport.ViolationCounts.
 	NumViolationKinds
 )
@@ -97,6 +103,10 @@ func (k ViolationKind) String() string {
 		return "impossible ack"
 	case ViolationConflict:
 		return "conflicting entry"
+	case ViolationBadDelay:
+		return "delay above maximum"
+	case ViolationDelayChange:
+		return "delay changed"
 	}
 	return "none"
 }
@@ -278,7 +288,14 @@ type Relay[I any] struct {
 	ack   [2]int64 // highest validated ack seen from each player
 	logAt [2][]time.Duration
 	elig  [2]int64 // frames of each player forwarded at least AckLagGrace ago
-	fbuf  [MaxPacketSize]byte
+	// behind[p] is true while the other player's log is longer than p's, as
+	// seen at the end of the previous Tick; behindSince[p] is when that
+	// began. prevNow is the previous Tick's time.
+	behind      [2]bool
+	behindSince [2]time.Duration
+	prevNow     time.Duration
+	delaySet    [2]bool
+	fbuf        [MaxPacketSize]byte
 
 	ended     bool
 	endReason uint8
@@ -364,6 +381,15 @@ func (r *Relay[I]) SimFrame() int64 { return r.simFrame }
 func (r *Relay[I]) Tick(now time.Duration) {
 	r.now = now
 	r.ticks++
+	if r.ticks > 1 && now-r.prevNow > relayStallGap {
+		// The relay itself did not run for a while: both players' packets
+		// arrive in one burst, and a gap that spans the pause says nothing
+		// about either player. Start the behind clocks again.
+		for p := 0; p < 2; p++ {
+			r.behindSince[p] = now
+		}
+	}
+	r.prevNow = now
 	if r.ended {
 		if r.endLeft > 0 && r.now >= r.endNext {
 			r.endLeft--
@@ -462,10 +488,7 @@ func (r *Relay[I]) handleInput(p int, pk *inputPkt) {
 	r.notePacket(p)
 	start := int64(pk.start)
 	end := start + int64(pk.count)
-	d := r.delay[p]
-	if pk.delay != delayAuto {
-		d = int(pk.delay)
-	}
+	d := r.resolveDelay(p, pk)
 	if end > r.logN[q]+int64(r.cfg.PredictionWindow+d+r.cfg.InputSlack) {
 		// Frames this far ahead cannot come from a session that waits for the
 		// other player; they would also wrap the receiver's history ring.
@@ -489,6 +512,8 @@ func (r *Relay[I]) handleInput(p int, pk *inputPkt) {
 	r.logInputs(p, pk)
 	if trust {
 		r.noteAck(p, ack)
+	} else {
+		r.measureLag(p) // the lag counts from the stored ack even when this packet's ack is not trusted
 	}
 	for i := 0; i < pk.nsums; i++ {
 		r.onReport(p, int64(pk.sums[i].frame), pk.sums[i].sum, pk.sums[i].epoch)
@@ -496,16 +521,48 @@ func (r *Relay[I]) handleInput(p int, pk *inputPkt) {
 	r.forward(p, pk)
 }
 
+// resolveDelay returns the input delay to use for player p's packet. A
+// declared delay above MaxInputDelay is clamped, and a delay that differs from
+// the one the player started with is ignored; each counts a violation.
+func (r *Relay[I]) resolveDelay(p int, pk *inputPkt) int {
+	if pk.delay == delayAuto {
+		return r.delay[p]
+	}
+	d := int(pk.delay)
+	if d > r.cfg.MaxInputDelay {
+		r.violate(p, ViolationBadDelay, int64(pk.start))
+		if r.delaySet[p] {
+			return r.delay[p] // already counted as a bad delay, not also a change
+		}
+		d = r.cfg.MaxInputDelay
+	}
+	if r.delaySet[p] {
+		if d != r.delay[p] {
+			r.violate(p, ViolationDelayChange, int64(pk.start))
+		}
+		return r.delay[p]
+	}
+	r.delaySet[p] = true
+	r.delay[p] = d
+	r.players[p].InputDelay = d
+	return d
+}
+
 // noteAck records a validated ack from player p and measures how far it
 // trails the other player's frames that were forwarded at least AckLagGrace
 // ago. ack is at most the frames logged for the other player.
 func (r *Relay[I]) noteAck(p int, ack int64) {
-	q := 1 - p
 	if ack > r.ack[p] {
 		r.ack[p] = ack
 	}
+	r.players[p].AckedFrame = r.ack[p]
+	r.measureLag(p)
+}
+
+// measureLag updates player p's ack lag from the stored ack.
+func (r *Relay[I]) measureLag(p int) {
+	q := 1 - p
 	pr := &r.players[p]
-	pr.AckedFrame = r.ack[p]
 	for r.elig[q] < r.logN[q] && r.logAt[q][r.elig[q]]+r.cfg.AckLagGrace <= r.now {
 		r.elig[q]++
 	}
@@ -557,15 +614,26 @@ func (r *Relay[I]) forward(p int, pk *inputPkt) {
 	_ = r.cfg.Peers[q].Send(b)
 }
 
-// updateGaps measures how long each player's log has been silent while the
-// other player's log grew.
+// updateGaps runs at the end of each Tick. It records, from the log lengths
+// now, which player is behind and since when, and the open gap of a player
+// that is behind: the time since the later of the start of being behind and
+// its last log growth.
 func (r *Relay[I]) updateGaps() {
 	for p := 0; p < 2; p++ {
 		q := 1 - p
 		pr := &r.players[p]
+		isBehind := r.hasLog[q] && r.logN[q] > r.logN[p]
+		if isBehind && !r.behind[p] {
+			r.behindSince[p] = r.now
+		}
+		r.behind[p] = isBehind
 		var gap time.Duration
-		if r.hasLog[p] && r.hasLog[q] && r.logN[q] > r.logN[p] {
-			gap = r.now - pr.LastLogAt
+		if isBehind {
+			since := r.behindSince[p]
+			if pr.LastLogAt > since && r.hasLog[p] {
+				since = pr.LastLogAt
+			}
+			gap = r.now - since
 		}
 		pr.LogGap = gap
 		if gap > pr.MaxLogGap {
@@ -577,10 +645,6 @@ func (r *Relay[I]) updateGaps() {
 // logInputs records first-seen entries. Duplicate entries for frames the
 // relay already holds are dropped from the log only, never from forwarding.
 func (r *Relay[I]) logInputs(p int, pk *inputPkt) {
-	if pk.delay != delayAuto {
-		r.delay[p] = int(pk.delay)
-		r.players[p].InputDelay = int(pk.delay)
-	}
 	q := 1 - p
 	for i := 0; i < pk.count; i++ {
 		f := int64(pk.start) + int64(i)
@@ -600,17 +664,24 @@ func (r *Relay[I]) logInputs(p int, pk *inputPkt) {
 			r.logN[p]++
 			r.logAt[p] = append(r.logAt[p], r.now)
 			pr := &r.players[p]
-			if r.logN[p] > 1 && r.hasLog[q] && r.logN[q] > f && r.now > pr.LastLogAt {
-				// The other player was ahead while this log was silent: this
-				// player held the match back.
-				gap := r.now - pr.LastLogAt
-				if gap > pr.MaxLogGap {
-					pr.MaxLogGap = gap
+			if r.behind[p] {
+				// This player was behind at the end of the previous Tick
+				// (the other log was longer), so the time since the later of
+				// that moment and its last log growth is time it held the
+				// match back. Both players are judged on that same snapshot.
+				since := r.behindSince[p]
+				if pr.LastLogAt > since {
+					since = pr.LastLogAt
 				}
-				if gap > r.cfg.CrawlAfter {
-					pr.SlowGaps++
-					if pr.SlowGaps >= r.cfg.CrawlGaps {
-						pr.CrawlFlagged = true
+				if gap := r.now - since; gap > 0 {
+					if gap > pr.MaxLogGap {
+						pr.MaxLogGap = gap
+					}
+					if gap > r.cfg.CrawlAfter {
+						pr.SlowGaps++
+						if pr.SlowGaps >= r.cfg.CrawlGaps {
+							pr.CrawlFlagged = true
+						}
 					}
 				}
 			}
@@ -723,6 +794,10 @@ func (r *Relay[I]) judge(p int, f int64) {
 	r.rs[p] = relayResync{active: true, epoch: r.sentEpoch[p], frame: f, sum: c.sum,
 		blob: append(r.rs[p].blob[:0], c.blob...), last: r.now - r.cfg.FrameDuration}
 }
+
+// relayStallGap is how long the relay may go without a Tick before its own
+// pause is taken into account in crawl measurement.
+const relayStallGap = 500 * time.Millisecond
 
 // endBurst is how many End packets go out at once, before the repeats that
 // later Tick calls send. Copies in one burst do not help against a burst of

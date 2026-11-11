@@ -34,6 +34,13 @@ func TestRebindChecksSessionAndMovesTheLink(t *testing.T) {
 		t.Fatalf("rebind to a client that said no hello: %v", err)
 	}
 	s.Handle("new", &signal.Hello{Session: "tok-a"}, c.reply)
+	// The old client is still on the hub: its seat cannot move.
+	if err := s.Rebind("old", "new"); !errors.Is(err, ErrClientLive) {
+		t.Fatalf("rebind from a live client: %v", err)
+	}
+	if got := s.Leave("old"); got != "new" {
+		t.Fatalf("Leave returned %q, want the newer client", got)
+	}
 	if err := s.Rebind("old", "new"); err != nil {
 		t.Fatal(err)
 	}
@@ -72,21 +79,27 @@ func TestMatchContinuesAfterHubReconnectOnWebSocketFallback(t *testing.T) {
 		t.Skip("real-time match")
 	}
 	var mu sync.Mutex
-	seat := map[string]string{} // session token -> current hub client ID
-	var srv *Server
 	rebinds := 0
+	var srv *Server
 	var err error
-	srv, err = NewServer(Config{OnHello: func(id, session string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if old, ok := seat[session]; ok && old != id {
-			if err := srv.Rebind(old, id); err != nil {
-				t.Errorf("rebind %s -> %s: %v", old, id, err)
-				return
-			}
+	// The documented pattern: OnHello tries to move the seat; a hub leave
+	// handler calls Leave and moves it when the new client got there first.
+	tryRebind := func(old, id string) {
+		switch err := srv.Rebind(old, id); {
+		case err == nil:
+			mu.Lock()
 			rebinds++
+			mu.Unlock()
+		case errors.Is(err, ErrClientLive):
+			// the leave handler will finish it
+		default:
+			t.Errorf("rebind %s -> %s: %v", old, id, err)
 		}
-		seat[session] = id
+	}
+	srv, err = NewServer(Config{OnHello: func(id, session, prev string) {
+		if prev != "" {
+			tryRebind(prev, id)
+		}
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +107,11 @@ func TestMatchContinuesAfterHubReconnectOnWebSocketFallback(t *testing.T) {
 	t.Cleanup(func() { srv.Close() })
 	h := hub.New("rebind")
 	srv.AttachHub(h)
+	h.On("leave", func(ctx *hub.Context) {
+		if newID := srv.Leave(ctx.Client.ID); newID != "" {
+			tryRebind(ctx.Client.ID, newID)
+		}
+	})
 	ts := httptest.NewServer(h)
 	t.Cleanup(ts.Close)
 	url := "ws" + strings.TrimPrefix(ts.URL, "http")
@@ -111,9 +129,8 @@ func TestMatchContinuesAfterHubReconnectOnWebSocketFallback(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var ids [2]string
 	for time.Now().Before(deadline) {
-		mu.Lock()
-		ids = [2]string{seat[tokens[0]], seat[tokens[1]]}
-		mu.Unlock()
+		ids[0], _ = srv.ClientBySession(tokens[0])
+		ids[1], _ = srv.ClientBySession(tokens[1])
 		if ids[0] != "" && ids[1] != "" {
 			break
 		}
@@ -159,7 +176,7 @@ func TestMatchContinuesAfterHubReconnectOnWebSocketFallback(t *testing.T) {
 			next[i] += time.Second / 60
 			sess[i].Advance(now, duel.Input(7, i, sess[i].Frame()))
 			if err := sess[i].Err(); err != nil {
-				t.Fatalf("session %d ended: %v (rebinds %d)", i, err, rebinds)
+				t.Fatalf("session %d ended: %v", i, err)
 			}
 		}
 		if !dropped && sess[0].Frame() >= 120 && conns[0].Mode() == client.ModeWebSocket {
@@ -183,4 +200,58 @@ func TestMatchContinuesAfterHubReconnectOnWebSocketFallback(t *testing.T) {
 		t.Fatalf("relay report %+v", rep)
 	}
 	t.Logf("frames %d / %d after the drop at %d; mode %v", sess[0].Frame(), sess[1].Frame(), frameAtDrop, links[0].Mode())
+}
+
+func TestRebindRefusesDefaultLabelAndTakenSeat(t *testing.T) {
+	s, _ := NewServer(Config{})
+	defer s.Close()
+	var c collector
+	// Two players of different matches both use the default label.
+	s.Handle("m1p1", &signal.Hello{Session: DefaultSession}, c.reply)
+	s.Link("m1p1")
+	s.Handle("m2p1", &signal.Hello{Session: DefaultSession}, c.reply)
+	s.Leave("m1p1")
+	if err := s.Rebind("m1p1", "m2p1"); !errors.Is(err, ErrDefaultSession) {
+		t.Fatalf("default label: %v", err)
+	}
+	if s.Link("m1p1").ID() != "m1p1" {
+		t.Fatal("seat moved")
+	}
+	// A Link for the new client already exists: it is not orphaned.
+	s.Handle("a", &signal.Hello{Session: "tok-z"}, c.reply)
+	la := s.Link("a")
+	lb := s.Link("b")
+	s.Handle("b", &signal.Hello{Session: "tok-z"}, c.reply)
+	s.Leave("a")
+	if err := s.Rebind("a", "b"); !errors.Is(err, ErrSeatTaken) {
+		t.Fatalf("taken seat: %v", err)
+	}
+	if s.Link("b") != lb || la.ID() != "a" {
+		t.Fatal("links changed on a refused rebind")
+	}
+}
+
+// A second, live client that names a seat's token cannot take it.
+func TestLiveSeatCannotBeTaken(t *testing.T) {
+	var mu sync.Mutex
+	var errs []error
+	var srv *Server
+	srv, _ = NewServer(Config{OnHello: func(id, session, prev string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if prev != "" {
+			errs = append(errs, srv.Rebind(prev, id))
+		}
+	}})
+	defer srv.Close()
+	var c collector
+	srv.Handle("victim", &signal.Hello{Session: "tok-a"}, c.reply)
+	link := srv.Link("victim")
+	srv.Handle("intruder", &signal.Hello{Session: "tok-a"}, c.reply)
+	if link.ID() != "victim" {
+		t.Fatalf("seat link now serves %q", link.ID())
+	}
+	if len(errs) != 1 || errs[0] == nil {
+		t.Fatalf("rebind errors %v", errs)
+	}
 }
