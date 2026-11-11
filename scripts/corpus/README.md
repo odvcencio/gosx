@@ -5,19 +5,18 @@ release that breaks a game is caught before it ships.
 
 | Consumer | Visibility | Checked in hosted CI |
 |---|---|---|
-| primalrage, chitin-choir, bon-voyage, caribbean-dominoes | private | no (needs a token) |
-| gridiron-2000, cicada (`workstation` module) | public | yes (`.github/workflows/corpus.yml`) |
+| Consumers listed in `manifest.tsv` with `public` unset | private | no (needs a token) |
+| Consumers listed in `manifest.tsv` with `public` set | public | yes (`.github/workflows/corpus.yml`) |
 
 ## Release gate (private consumers)
 
-The integrator runs this before each release, from a GoSX checkout:
+A maintainer runs this before each release, from a GoSX checkout:
 
-    export TMPDIR=/home/draco/work/.runtime/tmp
-    scripts/corpus/run.sh -r origin/main -b -R buildbox
+    scripts/corpus/run.sh -r origin/main -b -R <host>
 
 - `-r REF` exports REF of this repo into a clean directory. `-g DIR` tests an existing checkout instead.
 - `-b` reruns each failed check against the consumer's own pinned GoSX, so a pre-existing failure is not blamed on the new GoSX. A cell reads `FAIL (base PASS)` for a regression.
-- `-R HOST` runs every check on a tailnet host through `tailnet-run --host HOST` instead of the local machine (no local heavy lock needed; the host's slots cap the load). The runner copies the GoSX checkout into the consumer copy so the host can see it. Use `buildbox` for the private consumers: chitin-choir carries a large art pack, so never send it to the macOS hosts. A step may wait for a free slot first; `CORPUS_SLOT_WAIT` (default 30) minutes are added to each step timeout for that.
+- `-R HOST` runs every check on a tailnet host through `tailnet-run --host HOST` instead of the local machine (no local heavy lock needed; the host's slots cap the load). The runner copies the GoSX checkout into the consumer copy so the host can see it. Pick a host with enough disk for consumers that carry large art packs. A step may wait for a free slot first; `CORPUS_SLOT_WAIT` (default 30) minutes are added to each step timeout for that.
 - `-a` keeps the existing matrix for this GoSX sha and replaces only the `-c` consumers (use it to rerun one consumer).
 - `-c a,b` limits the consumers. `-k` keeps the consumer copies. `-B SEC` sets the run-time budget.
 - Exit status is 1 when a check regressed (with `-b`) or failed (without it), except checks listed in `known.tsv` (known consumer-side breaks, with the reason). A row may name the failing tests in a fourth column (`package:TestName,...`, the package as `go test` prints it). Then only those tests may fail: another failing test, a build failure, a panic or a timeout still fails the run. A row without that column waives the whole check. `waived.sh` makes the decision; `waived_test.sh` is its self-test.
@@ -26,8 +25,8 @@ The integrator runs this before each release, from a GoSX checkout:
 
 For each row of `manifest.tsv`, in order, never in parallel:
 
-1. Shallow-fetches the consumer's `ref` (default `main`; pin a SHA in the manifest to freeze it) into `$CORPUS_ROOT/work/<name>`. The canonical checkouts under `/home/draco/work` are never touched.
-2. Points every `m31labs.dev/gosx[/sub]` module the consumer requires at the GoSX checkout with `go mod edit -replace`, dropping any replace the consumer had (cicada pins a fork).
+1. Shallow-fetches the consumer's `ref` (default `main`; pin a SHA in the manifest to freeze it) into `$CORPUS_ROOT/work/<name>`. Your own checkouts are never touched.
+2. Points every `m31labs.dev/gosx[/sub]` module the consumer requires at the GoSX checkout with `go mod edit -replace`, dropping any replace the consumer had.
 3. Runs five checks with `GOFLAGS=-p=2`, `-mod=mod`, `GOWORK=off`, `GOMEMLIMIT=1500MiB`:
 
 | Check | Command |
@@ -40,11 +39,11 @@ For each row of `manifest.tsv`, in order, never in parallel:
 
 If resolve fails, the other checks are skipped.
 
-Without `-R`, the runner holds `flock /home/draco/work/.runtime/locks/gosx-heavy.lock` (`CORPUS_LOCK` overrides it) while it runs one consumer's checks, and releases it between consumers. Every `go` command runs under `timeout`: 10 minutes per build, vet, resolve and wasm step (`CORPUS_STEP_TIMEOUT`), and the manifest's `test_timeout` (8 minutes) per test run. The whole run stops starting new checks after `CORPUS_BUDGET` seconds of check run time (default 3600; time spent waiting for the lock is not counted); the rest show as SKIP. Measured on buildbox: about 30 minutes of check run time (summed step seconds) for all six consumers with baselines (bon-voyage tests are the longest at about 9 minutes); waiting for a free slot or lock comes on top.
+Without `-R`, the runner holds `flock` on a lock file (`CORPUS_LOCK` sets its path) while it runs one consumer's checks, and releases it between consumers. Every `go` command runs under `timeout`: 10 minutes per build, vet, resolve and wasm step (`CORPUS_STEP_TIMEOUT`), and the manifest's `test_timeout` (8 minutes) per test run. The whole run stops starting new checks after `CORPUS_BUDGET` seconds of check run time (default 3600; time spent waiting for the lock is not counted); the rest show as SKIP. Measured on one build host: about 30 minutes of check run time (summed step seconds) for six consumers with baselines (the longest test step took about 9 minutes); waiting for a free slot or lock comes on top.
 
 ## Output
 
-`$CORPUS_ROOT/<gosx-sha>/` (default `CORPUS_ROOT=/home/draco/work/.runtime/gosx-corpus`):
+`$CORPUS_ROOT/<gosx-sha>/` (`CORPUS_ROOT` sets it; set it and `CORPUS_LOCK` for your machine, the defaults in `run.sh` are maintainer paths):
 
 - `matrix.tsv`: consumer, check, status, baseline, seconds, first error, log path.
 - `matrix.md`: the matrix, the consumer commits and pinned GoSX versions, and the first error of every failing check.

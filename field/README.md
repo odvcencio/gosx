@@ -119,6 +119,7 @@ for f := range ch {
 
 Successive `PublishField` calls automatically delta-encode against the previous publish for that topic. Subscribers must treat received `*Field` values as read-only. Subscriptions are permanent for the lifetime of the process — there is no unsubscribe API yet.
 
-## Status
+## Limits
 
-Phase 1 of the gosx Scene3D + Fields upgrade.
+- Subscriptions last for the lifetime of the process; there is no unsubscribe API.
+- Received `*Field` values are shared; copy before you modify.
