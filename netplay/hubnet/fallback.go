@@ -12,7 +12,8 @@ import (
 // FrameTag is the first byte of every netplay datagram frame on a hub
 // WebSocket. The hub reserves prefixes 1 to 255 for CRDT sync, so application
 // frames start with 0x00.
-const FrameTag byte = 0
+// It equals dgram.FrameTag.
+const FrameTag byte = dgram.FrameTag
 
 // MaxFallbackPeers bounds the peers one Fallback keeps.
 const MaxFallbackPeers = 256

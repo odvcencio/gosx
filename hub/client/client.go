@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"runtime"
 	"strconv"
@@ -31,7 +30,7 @@ type Options struct {
 	// Header carries additional request headers for the native (gorilla)
 	// transport. The browser transport ignores it — the WebSocket API does
 	// not allow custom request headers.
-	Header http.Header
+	Header Header
 	// Backoff controls reconnect timing. The zero value is DefaultBackoff.
 	Backoff Backoff
 	// ResumeParam is the URL query parameter that carries a non-empty resume

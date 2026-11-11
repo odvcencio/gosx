@@ -51,6 +51,9 @@ const (
 // End reasons carried by a ptEnd packet.
 const (
 	EndDesync = 1
+	// EndMatchOver means the app finished the match (Relay.Finish). Sessions
+	// end with ErrMatchOver, a normal end.
+	EndMatchOver = 2
 )
 
 type sumEntry struct {
