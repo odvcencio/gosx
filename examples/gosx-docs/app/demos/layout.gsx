@@ -36,6 +36,9 @@ func Layout() Node {
 									data-demo={demo.Slug}
 									data-demo-title={demo.Title}
 									data-demo-lesson={demo.Lesson}
+									data-demo-shows={demo.Shows}
+									data-demo-doc-href={demo.DocHref}
+									data-demo-doc-title={demo.DocTitle}
 									data-demo-facets={demoValues(demo.Facets)}
 									data-demo-source={demoSourceURL(demo.SourcePath)}
 									data-demo-source-path={demo.SourcePath}
@@ -97,6 +100,7 @@ func Layout() Node {
 						aria-label="Close demo details"
 					>×</button>
 				</header>
+				<p class="demo-details__shows" data-gosx-bind-text="data-demo-shows">{currentDemoShows}</p>
 				<p class="demo-details__lesson" data-gosx-bind-text="data-demo-lesson">
 					{currentDemoLesson}
 				</p>
@@ -118,6 +122,15 @@ func Layout() Node {
 						<dd data-gosx-bind-text="data-demo-limitations">{currentDemoLimitations}</dd>
 					</div>
 				</dl>
+				<a
+					class="demo-details__doc"
+					data-gosx-bind-attr="href:data-demo-doc-href"
+					href={currentDemoDocHref}
+					data-gosx-link="true"
+				>
+					Read the doc page
+					<span aria-hidden="true">→</span>
+				</a>
 				<a
 					class="demo-details__source"
 					data-gosx-bind-attr="href:data-demo-source"

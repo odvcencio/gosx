@@ -14,6 +14,9 @@ type DemoDefinition struct {
 	Title        string
 	Tag          string
 	Summary      string
+	Shows        string // one line: what the demo shows
+	DocHref      string // site doc page that teaches the demo's subject
+	DocTitle     string
 	Group        string
 	PosterPath   string
 	Promise      string
@@ -160,6 +163,11 @@ func Demos() []DemoDefinition {
 	for _, definition := range demoCatalog {
 		demo := definition
 		demo.Summary = demoSummaries[demo.Slug]
+		demo.Shows = demoShows[demo.Slug]
+		if href := demoDocPages[demo.Slug]; href != "" {
+			demo.DocHref = href
+			demo.DocTitle = docTitleForHref(href)
+		}
 		demo.Group = demoGroups[demo.Slug]
 		demo.PosterPath = "/demos/posters/" + demo.Slug + ".webp"
 		demo.SourcePaths = append([]string(nil), demoSources[demo.Slug]...)
@@ -236,6 +244,30 @@ func LiveDemoForGuide(docHref string) (DemoDefinition, bool) {
 		}
 	}
 	return DemoDefinition{}, false
+}
+
+func docTitleForHref(href string) string {
+	for _, section := range docsapp.DocsCatalog() {
+		for _, entry := range section.Entries {
+			if entry.Href == href {
+				return entry.Title
+			}
+		}
+	}
+	return ""
+}
+
+// ExtraGuides returns the related guides of a demo other than its primary doc
+// page, so a card never links the same page twice.
+func ExtraGuides(demoSlug string) []docsapp.DocEntry {
+	primary := demoDocPages[demoSlug]
+	var guides []docsapp.DocEntry
+	for _, guide := range RelatedGuides(demoSlug) {
+		if guide.Href != primary {
+			guides = append(guides, guide)
+		}
+	}
+	return guides
 }
 
 // RelatedGuides returns the documentation guides that teach the concepts a
