@@ -11,7 +11,7 @@ func Layout() Node {
 						id="docs-guide-toggle"
 						class="docs-guide-toggle visually-hidden"
 						aria-label="Show the guide index"
-					/>
+					 />
 					<label for="docs-guide-toggle" class="docs-guide-summary">Guide index</label>
 					<nav class="docs-guide-navigation" aria-label="All documentation guides">
 						<a href="/docs" data-gosx-link="true" class={docsIndexClassName} aria-current={docsIndexCurrent}>
