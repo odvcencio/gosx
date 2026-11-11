@@ -8,12 +8,17 @@ import (
 
 const (
 	showreelNodeBudget = 12
-	showreelMaxPixels  = scene.PostFXMaxPixels540p
+	showreelMaxPixels  = scene.PostFXMaxPixels720p
 )
 
 // DemoShowreelProgram is the bounded Scene3D proof in the demo studio. It is
 // deterministic, asset-free, and intentionally has no autonomous motion so
 // reduced-motion visitors receive the same composition without client logic.
+//
+// It teaches one thing: a still, orbitable composition stays clean because the
+// renderer does the work. Temporal anti-aliasing (TAA) smooths the thin rings,
+// auto exposure keeps the lit plinth readable, and a two-cascade directional
+// shadow keeps the contact shadows crisp at this 8 m scale.
 func DemoShowreelProgram() scene.Props {
 	return scene.Props{
 		Width:                 960,
@@ -33,11 +38,11 @@ func DemoShowreelProgram() scene.Props {
 		ControlTarget:         scene.Vec3(0, 1.2, 0),
 		ControlMinDistance:    4.8,
 		ControlMaxDistance:    11,
-		MaxFPS:                30,
+		MaxFPS:                60,
 		MaxDevicePixelRatio:   1.5,
 		MaxPixels:             showreelMaxPixels,
 		AdaptiveQuality:       scene.Bool(true),
-		AdaptiveTargetFrameMS: 24,
+		AdaptiveTargetFrameMS: 17,
 		AdaptiveWarmupFrames:  12,
 		AdaptivePostFX:        scene.Bool(true),
 		Camera: scene.PerspectiveCamera{
@@ -50,17 +55,19 @@ func DemoShowreelProgram() scene.Props {
 		Environment: scene.Environment{
 			AmbientColor:     "#d6e2de",
 			AmbientIntensity: 0.34,
+			AutoExposure:     &scene.AutoExposure{MinExposure: 0.7, MaxExposure: 1.6, Key: 0.2, SpeedUp: 2, SpeedDown: 1},
 			Sky:              &scene.Sky{Mode: "gradient", TopColor: "#0c1720", HorizonColor: "#263d48", BottomColor: "#304750"},
 		},
 		PostFX: scene.PostFX{
-			MaxPixels: scene.PostFXMaxPixels540p,
+			MaxPixels: showreelMaxPixels,
 			Effects: []scene.PostEffect{
-				scene.Bloom{Threshold: 0.82, Strength: 0.22, Radius: 8, Scale: 0.35},
+				scene.Bloom{Mode: "mip", Threshold: 0.88, Strength: 0.2, Radius: 10, Scale: 0.5},
 				scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.08},
 				scene.Vignette{Intensity: 0.42},
+				scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
 			},
 		},
-		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels512},
+		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
 		Graph:   scene.NewGraph(showreelNodes()...),
 	}
 }
@@ -75,6 +82,10 @@ func showreelNodes() []scene.Node {
 			CastShadow: true,
 			ShadowBias: -0.001,
 			ShadowSize: 1024,
+
+			ShadowCascades: 2,
+			ShadowDistance: 16,
+			ShadowSoftness: 0.15,
 		},
 		scene.PointLight{
 			ID:        "showreel-accent",

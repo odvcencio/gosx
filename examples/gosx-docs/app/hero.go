@@ -6,6 +6,10 @@ import (
 	"m31labs.dev/gosx/scene"
 )
 
+// HeroScene is the home-page hero: gold and silver solids in a field of drifting
+// motes. Its Scene3D work is held by a down-only budget (perf/budgets), so this
+// scene gets its finish from material choices that add no draws or passes: a
+// clearcoat on the gold ring and pyramid.
 func HeroScene() scene.Props {
 	return scene.Props{
 		Width:      1920,
@@ -52,6 +56,7 @@ func HeroScene() scene.Props {
 					Color:     "#D4AF37",
 					Roughness: 0.2,
 					Metalness: 0.9,
+					Clearcoat: 0.4,
 				},
 				Position:      scene.Vec3(2.4, 1.5, 0),
 				Rotation:      scene.Rotate(math.Pi/6, 0, 0),
@@ -88,8 +93,9 @@ func HeroScene() scene.Props {
 				Geometry: scene.PyramidGeometry{},
 				Material: scene.StandardMaterial{
 					Color:     "#c9a227",
-					Roughness: 0.4,
+					Roughness: 0.34,
 					Metalness: 0.7,
+					Clearcoat: 0.3,
 				},
 				Position:      scene.Vec3(0.8, 0.45, 2.2),
 				Spin:          scene.Rotate(0, -0.004, 0),
