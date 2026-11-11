@@ -61,7 +61,7 @@ func DemoShowreelProgram() scene.Props {
 		PostFX: scene.PostFX{
 			MaxPixels: showreelMaxPixels,
 			Effects: []scene.PostEffect{
-				scene.Bloom{Threshold: 0.88, Strength: 0.2, Radius: 10, Scale: 0.5},
+				scene.Bloom{Mode: "mip", Threshold: 0.88, Strength: 0.2, Radius: 10, Scale: 0.5},
 				scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.08},
 				scene.Vignette{Intensity: 0.42},
 				scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
