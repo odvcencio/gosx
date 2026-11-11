@@ -61,7 +61,7 @@ test("WebGPU measures luminance in one compute workgroup and multiplies the scen
     assert.deepEqual([blend.color.srcFactor, blend.color.dstFactor, blend.alpha.dstFactor], ["zero", "src", "one"]);
     const kernel = h.fake.state.shaderModules.find((m) => m.label === "exposure-measure").code;
     assert.match(kernel, /@workgroup_size\(256\)/);
-    assert.match(kernel, /select\(params\.speedDown, params\.speedUp, target > current\)/, "brightening and darkening rates differ");
+    assert.match(kernel, /select\(params\.speedDown, params\.speedUp, wanted > current\)/, "brightening and darkening rates differ");
     assert.match(kernel, /1\.0 - exp\(-max\(params\.dt, 0\.0\) \* rate\)/, "exponential steps never overshoot, so adaptation cannot oscillate");
     // The first frame resets (adapts at once); the next frames carry dt.
     const params = h.fake.state.writeBufferCalls.filter((call) => call.data && call.data.length === 8 && Math.abs(call.data[1] - 0.25) < 1e-6 && Math.abs(call.data[3] - 0.18) < 1e-6);
