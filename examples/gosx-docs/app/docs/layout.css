@@ -41,7 +41,7 @@
 
 .docs-guide-navigation {
   display: grid;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .docs-guide-index {
@@ -89,18 +89,18 @@
 }
 
 .docs-guide-group h2 {
-  margin: 0 0 var(--space-xs);
+  margin: var(--space-xs) 0;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: var(--text-small);
+  font-size: var(--type-label);
   font-weight: 400;
-  letter-spacing: var(--ls-label);
+  letter-spacing: var(--ls-eyebrow);
   text-transform: uppercase;
 }
 
 .docs-guide-link {
   display: block;
-  padding: var(--space-xs) var(--space-sm);
+  padding: 0.3rem var(--space-sm);
   color: var(--text-muted);
   border-left: 1px solid var(--border);
   font-size: var(--text-small);
@@ -125,9 +125,11 @@
 }
 
 .docs-guide-link.is-current {
-  color: #17140b;
-  background: var(--accent);
-  border-left-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
+  padding-left: calc(var(--space-sm) - 1px);
+  font-weight: 600;
 }
 
 .docs-section.light .docs-guide-link.is-current {
@@ -248,6 +250,10 @@
   scroll-margin-top: 6rem;
 }
 
+.docs-content > :not(.docs-header) {
+  max-width: var(--measure-prose);
+}
+
 .prose p {
   margin-bottom: var(--space-md);
   line-height: var(--lh-prose);
@@ -294,6 +300,55 @@
 
 .prose pre {
   margin: var(--space-md) 0;
+}
+
+.docs-guide-body pre {
+  padding: var(--space-md);
+  overflow-x: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: var(--lh-code);
+  tab-size: 4;
+}
+
+.docs-guide-body pre code {
+  font: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+/* Tables rendered from Markdown guides scroll sideways on narrow screens
+   instead of widening the page. */
+.docs-guide-body table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: var(--space-md) 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--type-sm);
+}
+
+.docs-guide-body th,
+.docs-guide-body td {
+  padding: var(--space-xs) var(--space-sm);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.docs-guide-body th {
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.docs-guide-body td {
+  color: var(--text-secondary);
 }
 
 /* ------------------------------------------------------------
@@ -832,5 +887,34 @@
   .docs-404 a,
   .docs-guide-disclosure > summary {
     transition-duration: 0s;
+  }
+}
+
+
+/* ------------------------------------------------------------
+   Phones
+   ------------------------------------------------------------ */
+
+@media (max-width: 48rem) {
+  .docs-grid {
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-sm);
+    padding-top: calc(var(--space-md) + 4rem);
+  }
+
+  .docs-header__title {
+    font-size: clamp(1.9rem, 8vw, 2.4rem);
+  }
+
+  .prose h2 {
+    margin-top: var(--space-xl);
+    padding-top: var(--space-md);
+  }
+
+  .docs-guide-body pre {
+    margin-inline: calc(var(--space-sm) * -1);
+    padding: var(--space-sm);
+    border-radius: 0;
+    border-inline: 0;
   }
 }
