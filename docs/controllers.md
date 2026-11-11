@@ -186,7 +186,7 @@ the document contract supplies its URL.
 
 ## Navigate a fixed Scene3D camera
 
-`scene.Props{Controls: scene.ControlNone, ControlZoom: scene.Bool(true)}`
+`scene.Props{ControlZoom: scene.Bool(true)}` with `Controls` left empty
 keeps the authored camera angle and enables wheel, pinch and focused `+`/`-`
 zoom. `ControlZoomMinFOV` and `ControlZoomMaxFOV` set optical limits; defaults
 remain 30 and 90 degrees. `ControlPan: scene.Bool(true)` adds two-finger pan.

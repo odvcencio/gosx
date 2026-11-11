@@ -6,10 +6,14 @@ func Layout() Node {
 		<section class={docsSectionClassName}>
 			<div class="docs-grid">
 				<aside class="docs-rail" aria-label="Documentation navigation">
-					<nav
-						class="docs-guide-navigation docs-guide-navigation--desktop"
-						aria-label="All documentation guides"
-					>
+					<input
+						type="checkbox"
+						id="docs-guide-toggle"
+						class="docs-guide-toggle visually-hidden"
+						aria-label="Show the guide index"
+					 />
+					<label for="docs-guide-toggle" class="docs-guide-summary">Guide index</label>
+					<nav class="docs-guide-navigation" aria-label="All documentation guides">
 						<a href="/docs" data-gosx-link="true" class={docsIndexClassName} aria-current={docsIndexCurrent}>
 							<span>Search &amp; guide index</span>
 							<small>All documentation</small>
@@ -28,36 +32,6 @@ func Layout() Node {
 							</section>
 						</Each>
 					</nav>
-					<details class="docs-guide-disclosure">
-						<summary>Guide index</summary>
-						<nav
-							class="docs-guide-navigation docs-guide-navigation--mobile"
-							aria-label="All documentation guides"
-						>
-							<a
-								href="/docs"
-								data-gosx-link="true"
-								class={docsIndexClassName}
-								aria-current={docsIndexCurrent}
-							>
-								<span>Search &amp; guide index</span>
-								<small>All documentation</small>
-							</a>
-							<Each of={docsNavigation} as="section">
-								<section class="docs-guide-group" aria-label={section.title}>
-									<h2>{section.title}</h2>
-									<Each of={section.entries} as="entry">
-										<a
-											href={entry.href}
-											data-gosx-link="true"
-											class={entry.className}
-											aria-current={entry.ariaCurrent}
-										>{entry.title}</a>
-									</Each>
-								</section>
-							</Each>
-						</nav>
-					</details>
 					<nav id="toc" class="docs-page-toc" aria-label="On this page">
 						<p>On this page</p>
 						<Each of={data.toc} as="entry">

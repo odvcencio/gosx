@@ -60,6 +60,21 @@ func TestDocsCatalogIsCompleteUniqueAndSourceLinked(t *testing.T) {
 	if entryCount < 20 {
 		t.Fatalf("catalog entries = %d, want full documentation set", entryCount)
 	}
+	for _, id := range []string{"games"} {
+		if !seenSections[id] {
+			t.Fatalf("catalog missing section %q", id)
+		}
+	}
+	for _, routePath := range []string{
+		"/docs/guides/game-kit", "/docs/guides/rooms", "/docs/guides/netplay", "/docs/guides/deterministic-simulation",
+		"/docs/guides/physics", "/docs/guides/audio", "/docs/guides/replay", "/docs/guides/team-ai",
+		"/docs/guides/terrain", "/docs/guides/crowds", "/docs/guides/vessels", "/docs/guides/animation-graph",
+		"/docs/guides/static-game", "/docs/guides/desktop-signing",
+	} {
+		if !seenRoutes[routePath] {
+			t.Fatalf("catalog missing %q", routePath)
+		}
+	}
 	for _, routePath := range []string{"/docs/typed-live", "/docs/site", "/docs/components", "/docs/deployment"} {
 		if !seenRoutes[routePath] {
 			t.Fatalf("catalog missing %q", routePath)
