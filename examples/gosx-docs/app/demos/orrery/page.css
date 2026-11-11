@@ -46,6 +46,20 @@
 	align-self: end;
 }
 
+.orrery__intro .orrery__shows {
+	grid-column: 2;
+	margin: 0;
+	color: var(--color-text-muted, var(--color-text-secondary));
+	font-family: var(--font-body);
+	font-size: var(--type-sm);
+	line-height: 1.5;
+}
+
+.orrery__shows a {
+	color: var(--demo-accent);
+	white-space: nowrap;
+}
+
 .orrery__canvas {
 	position: relative;
 	min-width: 0;
@@ -255,7 +269,8 @@
 		grid-template-columns: minmax(0, 1fr);
 	}
 
-	.orrery__intro .orrery__copy {
+	.orrery__intro .orrery__copy,
+	.orrery__intro .orrery__shows {
 		grid-column: 1;
 		grid-row: auto;
 	}

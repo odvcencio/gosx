@@ -22,7 +22,7 @@ func TestLodestarMeridianStaysWithinDeclaredBudgets(t *testing.T) {
 	if props.MaxFPS != 60 || props.MaxDevicePixelRatio != 1.5 || props.MaxPixels != orreryMaxPixels {
 		t.Errorf("render budget = fps %.0f, dpr %.1f, pixels %d", props.MaxFPS, props.MaxDevicePixelRatio, props.MaxPixels)
 	}
-	if props.PostFX.MaxPixels != scene.PostFXMaxPixels540p || props.Shadows.MaxPixels != scene.ShadowMaxPixels512 {
+	if props.PostFX.MaxPixels != orreryMaxPixels || props.Shadows.MaxPixels != scene.ShadowMaxPixels1024 {
 		t.Errorf("postfx/shadow caps = %d/%d", props.PostFX.MaxPixels, props.Shadows.MaxPixels)
 	}
 	if props.Stats == nil || !*props.Stats {
@@ -299,6 +299,7 @@ func TestLodestarMeridianExpandedGeometryStaysWithinDeclaredBudget(t *testing.T)
 		// Single-instance built-ins upload their expanded geometry once.
 		expandedVertices += vertices
 	}
+	t.Logf("expanded renderer-facing vertices = %d of %d", expandedVertices, orreryExpandedVertexBudget)
 	if expandedVertices <= 0 || expandedVertices > orreryExpandedVertexBudget {
 		t.Fatalf("expanded renderer-facing vertices = %d, budget = %d", expandedVertices, orreryExpandedVertexBudget)
 	}
@@ -317,5 +318,31 @@ func lodestarMeridianPlanetPark(nodeID string) (float64, float64, float64) {
 		return 0, orreryHeartY, orreryVerdigrisRadius
 	default:
 		panic("lodestar meridian: unknown planet park " + nodeID)
+	}
+}
+
+// TestLodestarMeridianDeclaresItsImageQualityChain pins the v0.60.0 effects the
+// page names: motion blur for the orbits, auto exposure for the flare, and TAA
+// as the last effect.
+func TestLodestarMeridianDeclaresItsImageQualityChain(t *testing.T) {
+	props := LodestarMeridianProgram()
+	effects := props.PostFX.Effects
+	if len(effects) == 0 {
+		t.Fatal("no post effects")
+	}
+	if _, ok := effects[len(effects)-1].(scene.TAA); !ok {
+		t.Errorf("last post effect = %T, want scene.TAA", effects[len(effects)-1])
+	}
+	blur := false
+	for _, effect := range effects {
+		if _, ok := effect.(scene.MotionBlur); ok {
+			blur = true
+		}
+	}
+	if !blur {
+		t.Error("orrery should declare scene.MotionBlur")
+	}
+	if props.Environment.AutoExposure == nil {
+		t.Error("orrery should declare Environment.AutoExposure")
 	}
 }
