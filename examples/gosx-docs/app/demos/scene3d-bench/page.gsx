@@ -8,6 +8,10 @@ func Page() Node {
 			<span>
 				Switch workloads and watch render time and frame cadence change.
 			</span>
+			<span class="scene3d-bench__shows">
+				What this shows: how much frame time each renderer feature costs on your machine, including the v0.60.0 terrain, stadium crowd, and image-quality chain.
+				<a href="https://github.com/odvcencio/gosx/blob/main/docs/performance-metrics.md" target="_blank" rel="noopener noreferrer">Performance metrics</a>
+			</span>
 		</header>
 		<div class="scene3d-bench__workspace">
 			<div
@@ -39,6 +43,9 @@ func Page() Node {
 					<a data-gosx-native="true" href="?workload=particles-storm">Particle storm</a>
 					<a data-gosx-native="true" href="?workload=gpu-driven">GPU-driven city</a>
 					<a data-gosx-native="true" href="?workload=instanced-classic">Classic city</a>
+					<a data-gosx-native="true" href="?workload=terrain">Terrain</a>
+					<a data-gosx-native="true" href="?workload=crowd">Stadium crowd</a>
+					<a data-gosx-native="true" href="?workload=image-quality">Image quality</a>
 					<a data-gosx-native="true" href="?workload=mixed">Mixed</a>
 				</nav>
 				<div class="scene3d-bench__row">
