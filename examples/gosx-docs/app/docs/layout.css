@@ -249,7 +249,7 @@
   scroll-margin-top: 6rem;
 }
 
-.docs-content > :not(.docs-header) {
+.docs-guide-body {
   max-width: var(--measure-prose);
 }
 
@@ -320,8 +320,6 @@
   padding: 0;
 }
 
-/* Tables rendered from Markdown guides scroll sideways on narrow screens
-   instead of widening the page. */
 .docs-guide-body table {
   display: block;
   width: 100%;
@@ -898,7 +896,7 @@
    Phones
    ------------------------------------------------------------ */
 
-@media (max-width: 48rem) {
+@media (max-width: 767px) {
   .docs-grid {
     gap: var(--space-md);
     padding: var(--space-md) var(--space-sm);
