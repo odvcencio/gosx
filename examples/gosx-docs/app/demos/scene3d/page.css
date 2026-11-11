@@ -95,6 +95,18 @@
   line-height: 1.5;
 }
 
+.scene3d-showcase__shows {
+  font-family: var(--font-body);
+  font-size: var(--type-xs);
+  color: var(--color-text-muted);
+  margin: var(--space-xs) 0 0;
+  line-height: 1.5;
+}
+
+.scene3d-showcase__shows a {
+  color: var(--demo-accent);
+}
+
 /* Controls hint */
 .scene3d-showcase__controls {
 	font-family: var(--font-body);

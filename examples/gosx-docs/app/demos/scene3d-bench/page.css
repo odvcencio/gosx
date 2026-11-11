@@ -458,6 +458,8 @@
 .scene3d-bench__heading p { margin: 0 0 var(--space-xs); color: var(--demo-accent); font: 700 0.68rem/1.4 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; }
 .scene3d-bench__heading h1 { margin: 0; font: 700 clamp(2.2rem, 4vw, 4rem)/1.05 var(--font-display); letter-spacing: -0.055em; }
 .scene3d-bench__heading span { display: block; margin-top: var(--space-xs); color: var(--color-text-secondary); font-size: 0.94rem; line-height: 1.5; }
+.scene3d-bench__heading .scene3d-bench__shows { color: var(--demo-muted); font-size: 0.84rem; }
+.scene3d-bench__shows a { color: var(--demo-accent); white-space: nowrap; }
 .scene3d-bench__workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(19rem, 23rem); gap: var(--space-sm); flex: 1; min-height: 34rem; }
 .scene3d-bench__scene { position: relative; inset: auto; min-width: 0; min-height: 34rem; overflow: hidden; background: #0b161d; border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
 .scene3d-bench__scene > div { position: absolute !important; inset: 0; width: 100% !important; height: 100% !important; overflow: hidden; }

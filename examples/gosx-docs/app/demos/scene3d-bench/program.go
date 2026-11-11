@@ -39,6 +39,12 @@ func BenchScene(workload string) scene.Props {
 		return BenchGPUDrivenScene()
 	case "instanced-classic":
 		return BenchInstancedClassicScene()
+	case "crowd":
+		return BenchCrowdScene()
+	case "terrain":
+		return BenchTerrainScene()
+	case "image-quality":
+		return BenchImageQualityScene()
 	case "mixed":
 		fallthrough
 	default:

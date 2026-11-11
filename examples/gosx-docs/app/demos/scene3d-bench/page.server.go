@@ -9,7 +9,7 @@ import (
 func init() {
 	docsapp.RegisterStaticDocsPage(
 		"Scene3D Bench",
-		"Live frame-time instrumentation for the Scene3D renderer — histogram, p50/p95/max, GPU info, and nine stress workloads.",
+		"Live frame-time instrumentation for the Scene3D renderer — histogram, p50/p95/max, GPU info, and twelve stress workloads.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				docsapp.AddScenePosterPreload(ctx, "/demos/posters/scene3d-bench.webp")
@@ -45,6 +45,12 @@ func workloadLabel(workload string) string {
 		return "gpu-driven"
 	case "instanced-classic":
 		return "instanced-classic"
+	case "crowd":
+		return "crowd"
+	case "terrain":
+		return "terrain"
+	case "image-quality":
+		return "image-quality"
 	case "mixed", "":
 		return "mixed"
 	default:
