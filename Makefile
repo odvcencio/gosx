@@ -701,7 +701,7 @@ release-gate:
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 
-ci: fmt-check verify-danmuji lint-deterministic test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity test-vm-parity wasm-size-budget wasm-heap-gate test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+ci: release-gate fmt-check verify-danmuji lint-deterministic test-ci-partitions test test-telemetry test-island-aot test-wasmgen test-perf-graph build-wasm-all test-telemetry-wasm test-water-prod wire-gate test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity test-vm-parity wasm-size-budget wasm-heap-gate test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
 
 .PHONY: test-assetmeasure
 test-assetmeasure:
