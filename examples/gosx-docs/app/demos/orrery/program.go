@@ -71,7 +71,7 @@ func LodestarMeridianProgram() scene.Props {
 		// keeps the thin armatures unbroken as they turn.
 		PostFX: scene.PostFX{MaxPixels: orreryMaxPixels, Effects: []scene.PostEffect{
 			scene.MotionBlur{Strength: 0.35},
-			scene.Bloom{Threshold: 0.8, Strength: 0.42, Radius: 10, Scale: 0.5},
+			scene.Bloom{Mode: "mip", Threshold: 0.8, Strength: 0.42, Radius: 10, Scale: 0.5},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.18},
 			scene.Vignette{Intensity: 0.16},
 			scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
