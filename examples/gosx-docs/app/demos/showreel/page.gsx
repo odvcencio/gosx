@@ -25,6 +25,10 @@ func Page() Node {
 			<p>
 				Turn a scene made from typed Go data. Move around its rings, core, and satellites.
 			</p>
+			<p class="orbital-study__shows">
+				What this shows: a still scene made of twelve typed nodes. Temporal anti-aliasing, auto exposure, and a two-cascade shadow keep thin rings and contact shadows clean while you orbit.
+				<a href="https://github.com/odvcencio/gosx/blob/main/docs/scene3d-image-quality.md" target="_blank" rel="noopener noreferrer">Image quality guide</a>
+			</p>
 			<p class="orbital-study__hint">
 				Drag to orbit · scroll or pinch to zoom
 			</p>

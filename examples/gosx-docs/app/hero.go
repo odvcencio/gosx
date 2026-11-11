@@ -6,14 +6,36 @@ import (
 	"m31labs.dev/gosx/scene"
 )
 
+// HeroScene is the home-page hero: gold and silver solids in a field of drifting
+// motes. It uses the renderer's image-quality chain, not geometry, for its
+// finish: ACES tone mapping, a soft bloom on the specular highlights, and
+// temporal anti-aliasing (TAA) so the thin ring stays unbroken while it turns.
 func HeroScene() scene.Props {
 	return scene.Props{
-		Width:      1920,
-		Height:     1080,
-		Background: "#000000",
-		Responsive: scene.Bool(true),
-		FillHeight: scene.Bool(true),
-		Controls:   "orbit",
+		Width:                 1920,
+		Height:                1080,
+		Background:            "#000000",
+		Responsive:            scene.Bool(true),
+		FillHeight:            scene.Bool(true),
+		Controls:              "orbit",
+		PreferWebGPU:          scene.Bool(true),
+		DeferPostFX:           scene.Bool(true),
+		MaxDevicePixelRatio:   1.5,
+		MaxPixels:             scene.PostFXMaxPixels720p,
+		AdaptiveQuality:       scene.Bool(true),
+		AdaptiveTargetFrameMS: 17,
+		AdaptiveWarmupFrames:  12,
+		AdaptivePostFX:        scene.Bool(true),
+		PostFX: scene.PostFX{
+			MaxPixels: scene.PostFXMaxPixels720p,
+			Effects: []scene.PostEffect{
+				scene.Bloom{Threshold: 0.9, Strength: 0.28, Radius: 10, Scale: 0.5},
+				scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.2},
+				scene.Vignette{Intensity: 0.3},
+				scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
+			},
+		},
+		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
 		Camera: scene.PerspectiveCamera{
 			Position: scene.Vec3(0, 1.8, 8.5),
 			FOV:      55,
@@ -34,6 +56,10 @@ func HeroScene() scene.Props {
 				Intensity:  1.2,
 				Direction:  scene.Vec3(0.3, -1, -0.5),
 				CastShadow: true,
+				ShadowSize: 1024,
+				ShadowBias: -0.001,
+
+				ShadowSoftness: 0.2,
 			},
 			scene.PointLight{
 				Color:     "#D4AF37",
