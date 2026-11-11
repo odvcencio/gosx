@@ -56,7 +56,7 @@ func BenchCrowdScene() scene.Props {
 			}},
 		},
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels720p, Effects: []scene.PostEffect{
-			scene.Bloom{Threshold: 0.9, Strength: 0.2, Radius: 8, Scale: 0.5},
+			scene.Bloom{Mode: "mip", Threshold: 0.9, Strength: 0.2, Radius: 8, Scale: 0.5},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
 		}},
 		Graph: scene.NewGraph(
@@ -196,7 +196,7 @@ func BenchImageQualityScene() scene.Props {
 		PostFX: scene.PostFX{MaxPixels: scene.PostFXMaxPixels720p, Effects: []scene.PostEffect{
 			scene.DOF{FocusDistance: 9, Aperture: 0.03, MaxBlur: 8},
 			scene.MotionBlur{Strength: 0.4},
-			scene.Bloom{Threshold: 0.9, Strength: 0.25, Radius: 8, Scale: 0.5},
+			scene.Bloom{Mode: "mip", Threshold: 0.9, Strength: 0.25, Radius: 8, Scale: 0.5},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
 			scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
 		}},
