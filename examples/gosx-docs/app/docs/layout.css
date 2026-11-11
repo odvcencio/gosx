@@ -31,11 +31,10 @@
   scrollbar-width: thin;
 }
 
-.docs-guide-disclosure > summary {
-  display: none;
-}
-
-.docs-guide-disclosure {
+/* One copy of the guide navigation serves every width. On phones a CSS-only
+   checkbox toggle shows or hides it, so no second list is sent. */
+.docs-guide-toggle,
+.docs-guide-summary {
   display: none;
 }
 
@@ -793,12 +792,16 @@
     display: none;
   }
 
-  .docs-guide-navigation--desktop {
+  .docs-guide-navigation {
     display: none;
   }
 
-  .docs-guide-disclosure {
-    display: block;
+  .docs-guide-toggle {
+    display: inline-block;
+  }
+
+  .docs-guide-toggle:checked ~ .docs-guide-navigation {
+    display: grid;
   }
 
   .docs-grid {
@@ -816,8 +819,8 @@
     margin-bottom: var(--space-md);
   }
 
-  .docs-guide-disclosure > summary {
-    display: list-item;
+  .docs-guide-summary {
+    display: block;
     padding: var(--space-sm);
     color: var(--text-primary);
     background: var(--surface);
@@ -832,13 +835,13 @@
       border-color var(--duration-fast) var(--ease-out-expo);
   }
 
-  .docs-guide-disclosure > summary:hover,
-  .docs-guide-disclosure > summary:focus-visible {
+  .docs-guide-summary:hover,
+  .docs-guide-toggle:focus-visible + .docs-guide-summary {
     background: var(--surface-hover);
     border-color: var(--accent-line);
   }
 
-  .docs-guide-disclosure > summary:active {
+  .docs-guide-summary:active {
     border-color: var(--accent);
   }
 
@@ -885,7 +888,7 @@
   .docs-page-toc .toc-link,
   .docs-footer__link,
   .docs-404 a,
-  .docs-guide-disclosure > summary {
+  .docs-guide-summary {
     transition-duration: 0s;
   }
 }

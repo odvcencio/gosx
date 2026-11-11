@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	guidesource "m31labs.dev/gosx/docs"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
@@ -43,7 +45,13 @@ func TestMarkdownGuidesRenderFromTheirSource(t *testing.T) {
 				t.Fatalf("GET %s status = %d", entry.Href, response.Code)
 			}
 			body := response.Body.String()
-			for _, want := range []string{`class="docs-guide-body"`, entry.Title, "<h2 id="} {
+			wants := []string{`class="docs-guide-body"`, html.EscapeString(entry.Title)}
+			if source, err := guidesource.Guides.ReadFile(strings.TrimPrefix(entry.Source, "docs/")); err != nil {
+				t.Fatalf("read %s: %v", entry.Source, err)
+			} else if strings.Contains("\n"+string(source), "\n## ") {
+				wants = append(wants, "<h2 id=")
+			}
+			for _, want := range wants {
 				if !strings.Contains(body, want) {
 					t.Errorf("GET %s missing %q", entry.Href, want)
 				}
@@ -73,9 +81,9 @@ func TestGuideLinksPointAtTheSiteOrTheRepository(t *testing.T) {
 		"https://example.com/x":      "https://example.com/x",
 		"netplay.md":                 "/docs/guides/netplay",
 		"rooms.md#seats":             "/docs/guides/rooms#seats",
-		"docs-site-operations.md":    guideRepoBlob + "docs/docs-site-operations.md",
-		"../game/replay/README.md":   guideRepoBlob + "game/replay/README.md",
-		"../examples/gosx-docs/app/": guideRepoBlob + "examples/gosx-docs/app",
+		"docs-site-operations.md":    guideBlobBase() + "docs/docs-site-operations.md",
+		"../game/replay/README.md":   guideBlobBase() + "game/replay/README.md",
+		"../examples/gosx-docs/app/": guideBlobBase() + "examples/gosx-docs/app",
 	} {
 		if got := guideLink(href); got != want {
 			t.Errorf("guideLink(%q) = %q, want %q", href, got, want)

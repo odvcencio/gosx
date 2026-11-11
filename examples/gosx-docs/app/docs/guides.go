@@ -7,6 +7,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
+	"unicode"
 
 	"github.com/odvcencio/mdpp"
 
@@ -24,7 +26,6 @@ import (
 
 const (
 	guideRoutePrefix = "/docs/guides/"
-	guideRepoBlob    = "https://github.com/odvcencio/gosx/blob/main/"
 )
 
 var (
@@ -32,8 +33,24 @@ var (
 	guideHeading = regexp.MustCompile(`(?s)<(h[23])>(.*?)</h[23]>`)
 	guideTag     = regexp.MustCompile(`<[^>]*>`)
 	guideHref    = regexp.MustCompile(`href="([^"]*)"`)
-	guideSlugBad = regexp.MustCompile(`[^a-z0-9]+`)
+	guideCache   sync.Map // slug -> renderedGuide; the Markdown is embedded, so it never changes
 )
+
+// guideAnchor builds a heading id the way GitHub does, so a link written for
+// the file on GitHub also works on the site: lower case, punctuation dropped,
+// each space becomes a hyphen ("A & B" is "a--b").
+func guideAnchor(text string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(text) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_':
+			b.WriteRune(r)
+		case unicode.IsSpace(r):
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
 
 func init() {
 	docsapp.RegisterDocsPageAt("docs/guides/[slug]/page.gsx", "Guide", "A GoSX guide rendered from its Markdown source.", route.FileModuleOptions{
@@ -42,7 +59,7 @@ func init() {
 			if !ok {
 				return nil, route.NotFound("guide")
 			}
-			guide, err := renderGuide(entry)
+			guide, err := cachedGuide(ctx.Param("slug"), entry)
 			if err != nil {
 				return nil, err
 			}
@@ -94,6 +111,18 @@ func guideTags(entry docsapp.DocEntry) []string {
 	return append([]string(nil), tags...)
 }
 
+func cachedGuide(slug string, entry docsapp.DocEntry) (renderedGuide, error) {
+	if cached, ok := guideCache.Load(slug); ok {
+		return cached.(renderedGuide), nil
+	}
+	guide, err := renderGuide(entry)
+	if err != nil {
+		return renderedGuide{}, err
+	}
+	guideCache.Store(slug, guide)
+	return guide, nil
+}
+
 // renderGuide renders a catalog entry's Markdown source to sanitized HTML,
 // adds heading ids and a table of contents, and points relative links at the
 // site or the repository.
@@ -116,16 +145,15 @@ func renderGuide(entry docsapp.DocEntry) (renderedGuide, error) {
 		parts := guideHeading.FindStringSubmatch(match)
 		level, inner := parts[1], parts[2]
 		text := html.UnescapeString(guideTag.ReplaceAllString(inner, ""))
-		id := strings.Trim(guideSlugBad.ReplaceAllString(strings.ToLower(text), "-"), "-")
+		id := guideAnchor(text)
 		if id == "" {
 			id = "section"
 		}
-		if n := seen[id]; n > 0 {
-			seen[id] = n + 1
-			id = fmt.Sprintf("%s-%d", id, n+1)
-		} else {
-			seen[id] = 1
+		base := id
+		if n := seen[base]; n > 0 {
+			id = fmt.Sprintf("%s-%d", base, n)
 		}
+		seen[base]++
 		if level == "h2" {
 			toc = append(toc, map[string]string{"href": "#" + id, "label": text})
 		}
@@ -162,9 +190,19 @@ func guideLink(href string) string {
 			}
 		}
 	}
-	out := guideRepoBlob + resolved
+	out := guideBlobBase() + resolved
 	if fragment != "" {
 		out += "#" + fragment
 	}
 	return out
+}
+
+// guideBlobBase links repository files at the deployed revision when the build
+// knows it, so a link matches the code the page describes.
+func guideBlobBase() string {
+	ref := docsapp.SiteBuildInfo()["revision"]
+	if ref == "" || ref == "unknown" {
+		ref = "main"
+	}
+	return "https://github.com/odvcencio/gosx/blob/" + ref + "/"
 }

@@ -6,7 +6,7 @@ Every importable package in `m31labs.dev/gosx`, grouped by layer. The [guides in
 
 ## Layers and import direction
 
-Layers run from the bottom up. A package may import its own layer and the layers listed before it in this table, subject to the extra rule in the second column. Browser-side and tool packages are special cases. The rules are the target direction. A test enforces them only for the browser game packages (`game/deps_test.go`); other edges are checked by review.
+Layers run from the bottom up. A package may import its own layer and the layers listed before it in this table, subject to the extra rule in the second column. Browser-side and tool packages are special cases. A test (`scripts/pkgmap`) enforces the order and that no library imports a tool package, except for the known edges in `scripts/pkgmap/layer_exceptions.txt`; each is a place where the code does not yet follow the rule. The browser-side rule is enforced by `game/deps_test.go`.
 
 | Layer | Rule |
 |---|---|
@@ -27,9 +27,9 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 |---|---|---|---|
 | `command` | internal-use | yes | Defines page commands: named actions with keyboard chords that the opt-in workbench runtime dispatches and mirrors into aria-keyshortcuts. |
 | `controller` | internal-use | yes | Defines GoSX's declarative headless browser controller contract. |
-| `crdt` | experimental | yes |  |
-| `crdt/encoding` | experimental | yes |  |
-| `crdt/sync` | experimental | yes |  |
+| `crdt` | experimental | yes | Conflict-free replicated documents with a bloom-filter sync protocol. |
+| `crdt/encoding` | experimental | yes | Binary encoding of crdt changes and documents. |
+| `crdt/sync` | experimental | yes | The crdt sync message, bloom filter and peer state. |
 | `css` | stable | yes | Provides lightweight CSS scoping for GoSX components. |
 | `det` | experimental | yes | Provides floating-point math that gives the same bits on every platform GoSX targets: js/wasm in the browser, amd64 on a server, and arm64 on Apple Silicon. |
 | `det/lint` | experimental | yes | The GoSX deterministic-code analyzer. |
@@ -41,7 +41,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `query` | internal-use | yes | Provides type-safe binding between URL query parameters and Go structs â€” the "URL as a first-class, typed state container" pattern. |
 | `ratelimit` | internal-use | yes | Provides bounded admission shared by HTTP and realtime handlers. |
 | `signal` | stable | yes | Provides reactive state primitives for GoSX island components. |
-| `textlayout` | stable | yes |  |
+| `textlayout` | stable | yes | Text measurement, line breaking and ellipsis, with browser-measured and approximate measurers. |
 
 ## Kernels
 
@@ -77,13 +77,13 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 | Package | Tier | js/wasm | What it is |
 |---|---|---|---|
-| `.` | stable | yes |  |
+| `.` | stable | yes | The GoSX core: components, the .gsx grammar and parser, and the compiler entry points. |
 | `format` | stable | yes | Provides a canonical formatter for GoSX source files. |
-| `ir` | experimental | yes | ï¿½€” import-binding layer. |
-| `ir/golower` | experimental | yes |  |
+| `ir` | experimental | yes | Defines the intermediate representation for GoSX components. |
+| `ir/golower` | experimental | yes | Lowers Go function bodies in .gsx files to the island program. |
 | `render/boardgpu` | experimental | yes | Turns a Canvas2D board RenderBundle into GPU-drawable form: rect/line/sprite quads in the bundle's World* vertex streams (+ per-object RenderObjects in painter z-order) and the BoardFill Selena material on the flat fills. |
 | `render/bundle` | experimental | yes | GoSX's high-level renderer. |
-| `render/bundle/anim` | experimental | yes |  |
+| `render/bundle/anim` | experimental | yes | Evaluates animation clips to bone palettes for render bundles. |
 | `render/bundle/ktx2` | experimental | yes | Implements a KTX2 container parser and writer for texture assets in GoSX's render/bundle.Renderer. |
 | `render/bundle2d` | experimental | yes | Computes the Canvas2D RenderBundle for a static gosx.CanvasBoard entirely in plain server Go â€” no syscall/js, builds under normal GOOS=linux. |
 | `render/compute` | experimental | yes | The render-coupled-compute extension surface for the GoSX renderer: the GPU Resource Bus (a typed descriptor over render/gpu buffer and texture handles) plus the ExternalComputePass hook (see pass.go) that lets out-of-tree systems â€” Elio-generated kernels today, in-frame Eos inference later â€” record compute passes onto the frame's command encoder and publish their outputs as render inputs. |
@@ -97,9 +97,9 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `scene/geom` | stable | yes | Generates the triangles of every built-in GoSX geometry. |
 | `scene/harness` | stable | yes | Provides an interactive, browser-free Scene3D test session. |
 | `scene/imagediff` | stable | yes | Compares two rendered frames and reports where they differ. |
-| `scene/inspect` | stable | yes |  |
+| `scene/inspect` | stable | yes | Counts and inspects scene geometry and assets, for budgets and tooling. |
 | `scene/preview` | stable | yes | Renders typed GoSX Scene3D scenes without a browser, WebGPU, or a platform graphics driver. |
-| `scene/schema` | stable | yes |  |
+| `scene/schema` | stable | yes | JSON schema and validation for scene data. |
 | `scene/selenabuild` | stable | yes | Compiles an application's Selena (.sel) sources into artifact files at build time and checks shipped artifact files against their sources. |
 | `strictcheck` | internal-use | yes | Performs package-aware Go type checking for strict .gsx components by projecting only renderer-supported declarations to ordinary Go. |
 | `transpile` | internal-use | yes | Converts GoSX source files into standard Go code. |
@@ -110,9 +110,9 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 |---|---|---|---|
 | `action` | stable | yes | Defines the event and action model for GoSX components. |
 | `auth` | stable | yes | Identifies the current user and guards handlers behind that identity. |
-| `auth/redis` | stable | yes |  |
-| `buildmanifest` | internal-use | yes |  |
-| `content` | stable | yes |  |
+| `auth/redis` | stable | yes | Redis-backed stores for magic links and WebAuthn. |
+| `buildmanifest` | internal-use | yes | The gosx build manifest: assets, runtime chunks, Go/WASM and performance records. |
+| `content` | stable | yes | Loads Markdown, MDX and Markdown++ collections with typed metadata and sanitized rendering. |
 | `hub` | stable | yes | Provides long-lived server-side stateful coordinators for realtime features: chat, presence, multiplayer, subscriptions, fanout. |
 | `hub/scene3d` | stable | yes | Replicates one Scene3D scene across peers through a single CRDT document, and keeps the server authoritative over every write. |
 | `hydrate` | internal-use | yes | Defines the hydration manifest and island metadata that connects server-rendered HTML to client-side WASM islands. |
@@ -124,7 +124,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `session` | stable | yes | Stores per-visitor state in a signed cookie. |
 | `telemetry` | experimental | yes | Provides optional, bounded application telemetry. |
 | `telemetry/metric` | experimental | yes | Provides a bounded, finite-domain telemetry registry. |
-| `telemetry/schema` | experimental | yes |  |
+| `telemetry/schema` | experimental | yes | Telemetry record, envelope and field schemas. |
 | `telemetry/telemetrytest` | experimental | yes | Supplies portable, deterministic telemetry helpers. |
 
 ## App server
@@ -134,7 +134,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `dev` | stable | yes | Provides the GoSX development proxy and live-reload server. |
 | `route` | stable | yes | Provides declarative server routing with layouts for GoSX apps. |
 | `server` | stable | yes | Provides the GoSX HTTP server runtime. |
-| `server/redis` | stable | yes |  |
+| `server/redis` | stable | yes | Redis-backed ISR and revalidation stores and readiness checks for server. |
 
 ## Game stack
 
@@ -153,7 +153,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `game/audio/worklet` | experimental | yes | Supplies GoSX's browser processor for WASM audio reactors. |
 | `game/boot` | experimental | yes | The loading and readiness gate of a game. |
 | `game/boot/bootpage` | experimental | yes | Renders the server-side parts of the boot gate: preload links for the Go WASM module and its wasm_exec script, and a small JavaScript watchdog that runs before the framework scripts. |
-| `game/camera` | experimental | yes |  |
+| `game/camera` | experimental | yes | Camera rigs, poses and a director for game cameras. |
 | `game/flow` | experimental | yes | Runs a game's top-level states (boot, title, lobby, play, pause, results) as a stack, and ties the stack to the simulation pause flag and to the input context stack. |
 | `game/gamepad` | experimental | yes | Polls the browser Gamepad API and feeds the result into a game.Input's existing bindings. |
 | `game/host` | experimental | yes | Provides typed browser gamepad snapshots and animation-frame ownership without depending on game.Runtime, server hubs, or the compiler. |
@@ -188,14 +188,14 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 | Package | Tier | js/wasm | What it is |
 |---|---|---|---|
-| `client/bridge` | internal-use | yes |  |
+| `client/bridge` | internal-use | yes | The WASM bridge for island and engine lifecycle, signals and canvas boards. |
 | `client/browser` | internal-use | yes | Provides typed browser services for Go-WASM engines. |
 | `client/jsutil` | internal-use | yes | Provides shared syscall/js helpers used across the client renderer, bridge, and engine runtimes. |
-| `client/runtime/host` | internal-use | yes |  |
+| `client/runtime/host` | internal-use | yes | Hashes the navigation runtime asset for the server. |
 | `client/runtime/wasm` | internal-use | yes | Contains the versioned browser/WASM wire contract. |
-| `client/videosync` | internal-use | yes | ï¿½€” binary sync codec, byte-identical to goetrope's wire format. |
-| `client/vm` | internal-use | yes |  |
-| `client/wasm` | internal-use | yes |  |
+| `client/videosync` | internal-use | yes | Binary sync codec, byte-identical to goetrope's wire format. |
+| `client/vm` | internal-use | yes | The expression VM, tree reconciler and patch generation. |
+| `client/wasm` | internal-use | yes | The WASM entry point: islands, engine host and batched patches. |
 | `engine/wasm` | stable | yes | Lets a standard Go WebAssembly module register a GoSX engine component with the browser bootstrap. |
 | `hub/client` | stable | yes | A Go/WASM client for a gosx hub connection. |
 | `hub/socket` | stable | yes | Provides a browser WebSocket transport without application envelopes, reconnect policy, queues, or HTTP dependencies. |
@@ -208,7 +208,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `cmd/gosx` | stable | yes | The GoSX compiler and development tool. |
 | `cmd/gosx-detlint` | internal-use | yes | Reports code that can give different bits on js/wasm, amd64 and arm64, in packages marked //gosx:deterministic. |
 | `cmd/gosx-grammar-blob` | internal-use | yes | Regenerates the embedded GSX grammar blob. |
-| `cmd/gosx/installerhost` | internal-use | yes |  |
+| `cmd/gosx/installerhost` | internal-use | yes | The Windows installer host for packaged desktop apps. |
 | `desktop` | experimental | yes | Hosts GoSX applications in native desktop windows. |
 | `desktop/applog` | experimental | yes | Provides a small rotating file logger for desktop apps. |
 | `desktop/bridge` | experimental | yes | Carries typed IPC between a GoSX desktop host and the page it hosts inside a native webview. |
@@ -216,17 +216,17 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `desktop/sidecar` | experimental | yes | Runs a helper process next to a desktop app: a local game server, a language server, or an audio engine such as `cicada studio`. |
 | `docs` | internal-use | yes | Embeds the Markdown guides in this folder so the docs site can render them from one source. |
 | `gameboy` | internal-use | yes | Provides an optional cartridge engine for GoSX experiences. |
-| `islandtest` | internal-use | yes |  |
-| `lsp` | experimental | yes |  |
-| `perf` | internal-use | yes |  |
+| `islandtest` | internal-use | yes | A test harness that runs island programs without a browser. |
+| `lsp` | experimental | yes | The language server for .gsx files. |
+| `perf` | internal-use | yes | Performance budgets, Chrome measurement and comparison helpers. |
 | `perf/budget` | internal-use | yes | Loads the versioned inputs for performance allocations. |
-| `perf/ouroboros` | internal-use | yes |  |
+| `perf/ouroboros` | internal-use | yes | Browser and build-size evidence tooling for performance gates. |
 | `perf/perftest` | internal-use | yes | Provides testing.T-integrated browser profiling helpers for use in .dmj test blocks and Go test functions. |
 | `perf/wire` | internal-use | yes | Measures what a page costs over the network before any script runs: the document, every resource the HTML asks the browser to load, and every runtime asset the GoSX manifest tells the bootstrap to fetch. |
 | `perf/wire/cmd/wiregate` | internal-use | yes | Measures GoSX routes over the network and checks them against perf/budgets/wire.json. |
 | `scripts` | internal-use | yes | Verifies the generated client bundle artifacts promised by client/js/bootstrap-src/chunks.json. |
 | `scripts/pkgmap` | internal-use | yes | Writes docs/packages.md, the map of every importable GoSX package: its layer, its stability tier, what it does and whether it builds for js/wasm. |
-| `test/desktop/installer-smoke` | internal-use | yes |  |
-| `test/desktop/update-check-fixture` | internal-use | yes |  |
-| `test/desktop/update-check-smoke` | internal-use | yes |  |
+| `test/desktop/installer-smoke` | internal-use | yes | Smoke test program for the desktop installer. |
+| `test/desktop/update-check-fixture` | internal-use | yes | Update-feed fixture server for desktop update tests. |
+| `test/desktop/update-check-smoke` | internal-use | yes | Smoke test program for the desktop update check. |
 | `visual` | internal-use | yes | Provides pixel-level visual regression testing for GoSX pages and arbitrary URLs via headless Chrome. |
