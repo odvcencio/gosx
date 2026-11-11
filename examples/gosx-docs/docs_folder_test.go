@@ -36,6 +36,8 @@ func TestDocsFolderHoldsOnlyIndexedUserGuides(t *testing.T) {
 		switch {
 		case e.IsDir():
 			t.Errorf("docs/%s/: docs/ holds flat user guides only; specs and plans live in Hyphae", name)
+		case name == "embed.go":
+			// embeds the guides for the docs site; see docs/embed.go
 		case !strings.HasSuffix(name, ".md"):
 			t.Errorf("docs/%s: only Markdown user guides belong in docs/", name)
 		case name == "README.md":

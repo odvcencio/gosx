@@ -214,6 +214,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `desktop/bridge` | experimental | yes | Carries typed IPC between a GoSX desktop host and the page it hosts inside a native webview. |
 | `desktop/enginehost` | experimental | yes | Runs a GoSX engine natively in a desktop host process and connects it to the page over desktop IPC (desktop/bridge). |
 | `desktop/sidecar` | experimental | yes | Runs a helper process next to a desktop app: a local game server, a language server, or an audio engine such as `cicada studio`. |
+| `docs` | internal-use | yes | Embeds the Markdown guides in this folder so the docs site can render them from one source. |
 | `gameboy` | internal-use | yes | Provides an optional cartridge engine for GoSX experiences. |
 | `islandtest` | internal-use | yes |  |
 | `lsp` | experimental | yes |  |

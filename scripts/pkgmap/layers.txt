@@ -70,4 +70,5 @@ browser/...                    tools        internal-use
 gameboy/...                    tools        internal-use
 islandtest/...                 tools        internal-use
 scripts/...                    tools        internal-use
+docs/...                       tools        internal-use
 auth/redis                     web          stable
