@@ -119,7 +119,7 @@ func orreryNodes() []scene.Node {
 		},
 		scene.Mesh{
 			ID:       "orrery-ecliptic-ring",
-			Geometry: scene.TorusGeometry{Radius: 3.52, Tube: 0.055, RadialSegments: 12, TubularSegments: 128},
+			Geometry: scene.TorusGeometry{Radius: 3.52, Tube: 0.055, RadialSegments: 128, TubularSegments: 12},
 			Material: brass,
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/2, 0, 0),
 			CastShadow: true, ReceiveShadow: true,
@@ -138,7 +138,7 @@ func orreryNodes() []scene.Node {
 		},
 		scene.Mesh{
 			ID:       "orrery-heart-halo",
-			Geometry: scene.TorusGeometry{Radius: 0.95, Tube: 0.035, RadialSegments: 8, TubularSegments: 72},
+			Geometry: scene.TorusGeometry{Radius: 0.95, Tube: 0.035, RadialSegments: 72, TubularSegments: 8},
 			Material: scene.StandardMaterial{Color: "#554d7d", Roughness: 0.42, Metalness: 0.2, Emissive: 0.24, Wireframe: scene.Bool(false)},
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/2.6, 0.2, 0),
 			CastShadow:    true,
@@ -151,7 +151,7 @@ func orreryNodes() []scene.Node {
 		// keyframe tracks.
 		scene.Mesh{
 			ID:       "orrery-armillary-alpha",
-			Geometry: scene.TorusGeometry{Radius: 1.85, Tube: 0.05, RadialSegments: 10, TubularSegments: 96},
+			Geometry: scene.TorusGeometry{Radius: 1.85, Tube: 0.05, RadialSegments: 96, TubularSegments: 10},
 			Material: glassArmature,
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/3.1, 0.35, 0),
 			Spin:       scene.Rotate(0, 0.24, 0),
@@ -159,7 +159,7 @@ func orreryNodes() []scene.Node {
 		},
 		scene.Mesh{
 			ID:       "orrery-armillary-beta",
-			Geometry: scene.TorusGeometry{Radius: 2.48, Tube: 0.045, RadialSegments: 10, TubularSegments: 96},
+			Geometry: scene.TorusGeometry{Radius: 2.48, Tube: 0.045, RadialSegments: 96, TubularSegments: 10},
 			Material: glassArmature,
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(-math.Pi/2.6, -0.5, math.Pi/5),
 			Spin:       scene.Rotate(-0.02, -0.19, 0.03),
@@ -167,7 +167,7 @@ func orreryNodes() []scene.Node {
 		},
 		scene.Mesh{
 			ID:       "orrery-armillary-gamma",
-			Geometry: scene.TorusGeometry{Radius: 3.06, Tube: 0.04, RadialSegments: 10, TubularSegments: 96},
+			Geometry: scene.TorusGeometry{Radius: 3.06, Tube: 0.04, RadialSegments: 96, TubularSegments: 10},
 			Material: brass,
 			Position: scene.Vec3(0, orreryHeartY, 0), Rotation: scene.Rotate(math.Pi/4.2, 1.05, -math.Pi/7),
 			Spin:       scene.Rotate(0.02, 0.14, -0.02),
