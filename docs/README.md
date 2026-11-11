@@ -1,20 +1,9 @@
 # GoSX guides
 
-Where things live, from the bottom layer up, and the guide for each. The
+These are the guides, by topic. The
 [root README](../README.md) covers the framework itself (components, routing,
-islands, the CLI). The [package table](../README.md#packages) lists every package.
+islands, the CLI). The [package table](../README.md#packages) lists the main packages.
 The hosted docs site is gosx.m31labs.dev.
-
-## Layers
-
-| Layer | Packages | What it is for |
-|-------|----------|----------------|
-| Core | `gosx`, `ir`, `island`, `signal`, `server`, `route`, `action`, `session`, `auth`, `content`, `hub`, `crdt` | Components, compiler, reactive state, server, routing, hubs. |
-| Browser runtime | `client/js`, `client/vm`, `client/bridge`, `client/wasm`, `engine`, `engine/wasm` | The browser side: bootstrap, islands, and Go WASM engines. |
-| Scene3D | `scene`, `render`, `field`, `physics`, `motion`, `motion/animgraph`, `assetpipe` | 3D scenes, effects, assets, animation and physics. |
-| Simulation | `sim`, `det`, `netplay`, `room`, `vessel` | Deterministic, server-authoritative and rollback simulation. |
-| Game kit | `game` and its subpackages (`actions`, `audio`, `boot`, `flow`, `loop`, `replay`, `settings`, `teamai`, `kitui`, ...) | Everything a game needs that is not gameplay. |
-| Tooling | `cmd/gosx`, `dev`, `lsp`, `format`, `desktop`, `telemetry` | CLI, dev server, editor support, desktop host, telemetry. |
 
 ## Guides by topic
 
