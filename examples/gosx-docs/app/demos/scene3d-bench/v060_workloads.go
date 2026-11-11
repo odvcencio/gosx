@@ -40,8 +40,8 @@ func BenchCrowdScene() scene.Props {
 		PreferWebGPU:        scene.Bool(true),
 		MaxDevicePixelRatio: 1.5,
 		MaxPixels:           scene.PostFXMaxPixels720p,
-		ControlTarget:       scene.Vec3(0, 2, 0),
-		Camera:              scene.PerspectiveCamera{Position: scene.Vec3(0, 16, 38), FOV: 50, Near: 0.5, Far: 220},
+		ControlTarget:       scene.Vec3(0, 4, 0),
+		Camera:              scene.PerspectiveCamera{Position: scene.Vec3(0, 34, 52), FOV: 50, Near: 0.5, Far: 260},
 		Environment: scene.Environment{
 			AmbientColor:     "#ffffff",
 			AmbientIntensity: 0.3,
@@ -154,11 +154,11 @@ func BenchTerrainScene() scene.Props {
 func BenchImageQualityScene() scene.Props {
 	const count = 16
 	nodes := []scene.Node{
-		scene.DirectionalLight{ID: "bench-iq-key", Color: "#fff1d6", Intensity: 1.4, Direction: scene.Vec3(0.3, -1, -0.5), CastShadow: true, ShadowSize: 2048, ShadowSoftness: 0.1, ShadowBias: 0.002},
+		scene.DirectionalLight{ID: "bench-iq-key", Color: "#fff1d6", Intensity: 2.2, Direction: scene.Vec3(0.3, -1, -0.5), CastShadow: true, ShadowSize: 2048, ShadowSoftness: 0.1, ShadowBias: 0.002},
 		scene.PointLight{ID: "bench-iq-fill", Color: "#5fa3ff", Intensity: 1.2, Position: scene.Vec3(0, 4, 0), Range: 16},
 		scene.Mesh{
 			ID: "bench-iq-floor", Geometry: scene.PlaneGeometry{Width: 30, Height: 30},
-			Material: scene.StandardMaterial{Color: "#202428", Roughness: 0.5, Metalness: 0.1},
+			Material: scene.StandardMaterial{Color: "#4a5563", Roughness: 0.6, Metalness: 0.05},
 			Rotation: scene.Rotate(-math.Pi/2, 0, 0), ReceiveShadow: true,
 		},
 	}
@@ -187,7 +187,7 @@ func BenchImageQualityScene() scene.Props {
 		MaxDevicePixelRatio: 1.5,
 		MaxPixels:           scene.PostFXMaxPixels720p,
 		ControlTarget:       scene.Vec3(0, 0.8, 0),
-		Camera:              scene.PerspectiveCamera{Position: scene.Vec3(0, 3.2, 9), FOV: 50, Near: 0.1, Far: 80},
+		Camera:              scene.PerspectiveCamera{Position: scene.Vec3(0, 5, 10), FOV: 50, Near: 0.1, Far: 80},
 		Environment: scene.Environment{
 			AmbientColor:     "#ffffff",
 			AmbientIntensity: 0.2,
