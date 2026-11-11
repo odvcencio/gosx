@@ -12,7 +12,7 @@ import (
 // TestDocsFolderHoldsOnlyIndexedUserGuides keeps specs, plans, roadmaps and
 // reports out of docs/. docs/ holds user guides and references only, and
 // docs/README.md is the list of them: every Markdown file in docs/ must be
-// linked from that index, and nothing else may live there.
+// linked from that index. Only an images/ folder may sit beside the guides.
 func TestDocsFolderHoldsOnlyIndexedUserGuides(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	docs := filepath.Join(filepath.Dir(thisFile), "..", "..", "docs")
@@ -26,7 +26,11 @@ func TestDocsFolderHoldsOnlyIndexedUserGuides(t *testing.T) {
 		linked[m[1]] = true
 	}
 
-	banned := regexp.MustCompile(`(?i)(^|[-_])(spec|specs|plan|plans|roadmap|design|research|status|qa|report|handoff|adr)([-_.]|$)`)
+	// Names that mark an intent or history document. "design", "status",
+	// "plan" and "report" are allowed: they name real features and guides.
+	banned := regexp.MustCompile(`(?i)^\d{4}-\d{2}-\d{2}-|(^|[-_])(spec|specs|roadmap|research|handoff|adr|proposal|rfc|phase|notes)([-_.]|$)`)
+	statusBanner := regexp.MustCompile(`(?im)^>?\s*\**(status|phase)\**\s*:\s*[^=\s]`)
+	taskList := regexp.MustCompile(`(?m)^\s*- \[ \] `)
 	entries, err := os.ReadDir(docs)
 	if err != nil {
 		t.Fatal(err)
@@ -34,6 +38,7 @@ func TestDocsFolderHoldsOnlyIndexedUserGuides(t *testing.T) {
 	for _, e := range entries {
 		name := e.Name()
 		switch {
+		case e.IsDir() && name == "images":
 		case e.IsDir():
 			t.Errorf("docs/%s/: docs/ holds flat user guides only; specs and plans live in Hyphae", name)
 		case name == "embed.go":
@@ -42,9 +47,20 @@ func TestDocsFolderHoldsOnlyIndexedUserGuides(t *testing.T) {
 			t.Errorf("docs/%s: only Markdown user guides belong in docs/", name)
 		case name == "README.md":
 		case banned.MatchString(name):
-			t.Errorf("docs/%s looks like a spec, plan or report; those live in Hyphae, not in the repo", name)
+			t.Errorf("docs/%s looks like a spec, plan or history document; those live in Hyphae, not in the repo", name)
 		case !linked[name]:
 			t.Errorf("docs/%s is not linked from docs/README.md; add it to the index if it is a user guide", name)
+		default:
+			body, err := os.ReadFile(filepath.Join(docs, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if statusBanner.Match(body) {
+				t.Errorf("docs/%s has a Status: banner; guides describe what works now, not project status", name)
+			}
+			if taskList.Match(body) {
+				t.Errorf("docs/%s has an open task list (- [ ]); task lists are plans and live in Hyphae", name)
+			}
 		}
 	}
 	for name := range linked {
@@ -68,9 +84,21 @@ func TestCIGatesDocNamesEveryHostedMakeTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range regexp.MustCompile(`run: make ([\w-]+)`).FindAllStringSubmatch(string(workflow), -1) {
-		if !strings.Contains(string(doc), "`"+m[1]) {
-			t.Errorf("ci.yml runs `make %s`, which docs/ci-gates.md does not mention", m[1])
+	invocation := regexp.MustCompile(`(?m)^\s*(?:run:\s*\|?\s*)?make ([a-z][a-z0-9-]*)`)
+	seen := map[string]bool{}
+	for _, m := range invocation.FindAllStringSubmatch(string(workflow), -1) {
+		target := m[1]
+		if seen[target] {
+			continue
 		}
+		seen[target] = true
+		// Match the whole target name: a backtick, the name, then a space,
+		// comma, pipe or closing backtick, so `test` is not satisfied by `test-unit`.
+		if !regexp.MustCompile("`" + regexp.QuoteMeta(target) + "[` ,|]").Match(doc) {
+			t.Errorf("ci.yml runs `make %s`, which docs/ci-gates.md does not mention", target)
+		}
+	}
+	if len(seen) < 20 {
+		t.Errorf("found only %d make targets in ci.yml; the pattern no longer matches the workflow", len(seen))
 	}
 }

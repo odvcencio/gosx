@@ -1444,7 +1444,7 @@ make build-desktop-macos    # macOS CLI binaries, including the native WKWebView
 make build-runtime # TinyGo production capability-profile WASM runtime builds
 make canopy-index  # Memory-bounded structural index in .canopy/index.json
 make canopy-stats  # Inspect the cached structural index
-make ci            # Every hosted CI gate except the shards; see docs/ci-gates.md
+make ci            # Most hosted CI gates, unsharded; docs/ci-gates.md lists what it skips
 ```
 
 Use the Make targets for repo-wide canopy work. They apply `.canopyignore`,
@@ -1486,7 +1486,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.60.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, and `sim`, and the newer game, room, netplay, animation-graph and telemetry packages, are still under active development and may take breaking changes ([stability tiers](docs/STABILITY.md)); each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.60.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. `scene` is stable for the contract in [docs/scene3d-v1-support.md](docs/scene3d-v1-support.md); newer Scene3D features may change. Subsystems like `ir`, `desktop`, `field`, and `sim`, and the newer game, room, netplay, animation-graph and telemetry packages, are still under active development and may take breaking changes ([stability tiers](docs/STABILITY.md)); each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The sim layer has production users but is newer.
 

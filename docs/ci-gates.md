@@ -9,8 +9,11 @@ reads as red until you mark the pull request ready for review.
 
 ## Hosted jobs and their Make targets
 
-Run a gate locally with `make <target>`. Targets that need TinyGo, Binaryen or
-Chrome say so in `AGENTS.md` and `docs/docs-site-operations.md`.
+Run a gate locally with `make <target>`. Between them the gates need TinyGo,
+Binaryen, Chrome, Node, `jq`, `curl`, `python3` and `openssl`. The size gates
+(`wasm-size-budget`, `wire-gate`) can also fail on your machine only because
+your Go patch version differs from the one CI uses; compare against the CI
+version before you chase the number.
 
 | Job (`.github/workflows/ci.yml`) | Make targets | What it proves |
 |---|---|---|
@@ -39,7 +42,9 @@ Chrome say so in `AGENTS.md` and `docs/docs-site-operations.md`.
 ## Running everything locally
 
 `make ci` runs every Make target in the table above except `test-unit` and
-`test-race-pr`, which are subsets of `test` and `test-race`. It runs the
+`test-race-pr`, which are subsets of `test` and `test-race`. It does not run
+the native macOS desktop job, the Scene3D v1 proofs, the water WebGPU
+certification or the docs tutorial end-to-end test. It runs the
 unsharded forms: `test` covers the CLI tests, and one `test-e2e` and one
 `test-js` run instead of the shards. It needs TinyGo,
 Binaryen, Chrome and Node, and it takes a long time; run the targets for the

@@ -33,7 +33,7 @@ round-trip tests:
 | `title.replace("a", "b")`                                    | `OpReplace`                          |
 | `title.substring(0, 4)`                                      | `OpSubstring`                        |
 
-Closure-only forms (Phase 4 additions) bind the parameter name to the
+Closure-only forms bind the parameter name to the
 existing `_item` magic prop so the lowered ops are identical to the
 legacy bare-expression form `items.map(_item * 2)`.
 
