@@ -765,8 +765,8 @@ separate release-pinned hardware certification obligation in that contract.
 
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadow maps on directional lights, with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap; spot lights render their cone and penumbra but do not yet cast shadows on either browser backend
 - **Cameras** — perspective and orthographic cameras with orbit, first-person, fly, drag, pointer-lock, and transition hints plus picking and projection-aware sprites/labels
-- **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
-- **Build-time asset planning** — `gosx assets plan public` and `gosx build` inventory GLB/glTF, KTX2, HDR/EXR, raster textures, audio, USDZ, and WGSL assets into a low-memory `scene-assets.json` contract. It reads real structure: glTF mesh, material and animation counts, KTX2 headers, and WGSL entry points and bind groups. It then records the optimizations each asset *would* benefit from — KTX2 transcodes, GGX IBL prefiltering, split-sum LUT generation, meshopt or Draco compression, LOD stacks, vertex and animation stream compression — as `candidate` or `planned` actions. **Planning is all it does today. GoSX ships no encoder for any of them.** The runtime glTF loader rejects Draco and meshopt with named errors and degrades `KHR_texture_basisu` to a warned missing texture; renderer-level KTX2 block upload is a separate capability
+- **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime loader (`client/runtime/scene3d/gltf.ts`), including animations
+- **Build-time asset planning** — `gosx assets plan public` and `gosx build` inventory GLB/glTF, KTX2, HDR/EXR, raster textures, audio, USDZ, and WGSL assets into a low-memory `scene-assets.json` contract. It reads real structure: glTF mesh, material and animation counts, KTX2 headers, and WGSL entry points and bind groups. It then records the optimizations each asset *would* benefit from — KTX2 transcodes, GGX IBL prefiltering, split-sum LUT generation, meshopt or Draco compression, LOD stacks, vertex and animation stream compression — as `candidate` or `planned` actions. **`gosx assets plan` only plans; `gosx assets build` runs the parts GoSX can do in pure Go:** GGX IBL prefiltering, the split-sum LUT, LOD stacks, mesh reordering, KTX2 texture variants with mip chains and BC1/BC3/BC4/BC5/BC7 block compression (`assetpipe/texture`, `bc7`, `bcn`). A meshopt encoder exists (`assetpipe/meshopt`), but the build step does not run `meshopt-compress` yet because the browser decoder does not fit the bootstrap byte budget. ASTC, ETC2, BC6H and Draco have no encoder. The runtime glTF loader rejects Draco and meshopt with named errors and degrades `KHR_texture_basisu` to a warned missing texture; renderer-level KTX2 block upload is a separate capability
 - **Server-driven scene diffs** — `scene.DiffCommands(prev.SceneIR(), next.SceneIR())` emits the browser command protocol for live object, label, sprite, and light replacement, so a Go server can mutate typed scene state and stream compact Scene3D commands over a hub instead of shipping a new page payload
 - **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF `LINEAR`, `STEP`, and `CUBICSPLINE` playback for TRS and morph weights, with loop, speed, blend weight, fade-in/fade-out, and replay-sequence controls; scene-level `autoRotate` is opt-in and static scenes do not keep a RAF loop alive by default
 - **Instancing** — `InstancedMesh` renders repeated geometry through WebGPU instance-rate vertex buffers and WebGL2 `drawArraysInstanced`, with per-instance transforms, colors, material passes, receive shadows, and WebGPU instanced shadow casters
@@ -1316,7 +1316,7 @@ no Stripe checkout, no cross-frame preview, and no demand-loaded text layout.
 `sourceMaps: false` also drops every remaining `.js.map` sidecar.
 
 Valid `exclude` roles: `islands`, `engines`, `hubs`, `controllers`,
-`textlayout`, `scene3d` (all eight Scene3D chunks), `video` (the HLS
+`textlayout`, `scene3d` (all 30 Scene3D chunks), `video` (the HLS
 runtime), `payments` (the Stripe bridge), and `relay` (the cross-frame
 preview relay). An unknown role fails the build with a clear error naming
 the valid set.
@@ -1350,6 +1350,8 @@ Three tiers:
 
 ## Packages
 
+The full list, with a layer, a [stability tier](docs/STABILITY.md) and a js/wasm flag for each package, is the generated [package map](docs/packages.md). [docs/README.md](docs/README.md) indexes the guides by topic.
+
 | Package | Purpose |
 |---------|---------|
 | `gosx` | Node API, grammar, parser, compiler |
@@ -1364,9 +1366,39 @@ Three tiers:
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |
 | `hub` | WebSocket presence, fanout, shared state |
 | `scene` | Scene3D: typed scene graph, PBR, shadows, glTF, particles, PostFX, WebGL + WebGPU runtimes |
-| `physics` | Warm-started rigid body contacts, constraints, raycasts, conservative CCD, and Scene3D bridge |
+| `physics` | Deterministic rigid bodies: warm-started contacts, constraints, raycasts, shape casts, conservative CCD, character controller, and Scene3D bridge. Guide: [docs/physics-character.md](docs/physics-character.md) |
 | `field` | 3D vector fields, trilinear sampling, operators, per-component compression, hub streaming |
 | `sim` | Server-authoritative game simulation: tick loop, snapshots, replay, spectator sync |
+| `netplay` | Rollback netcode and relay for deterministic two-player games. Guide: [docs/netplay.md](docs/netplay.md) |
+| `netplay/webrtc` | WebRTC transport for netplay (separate Go module). Guide: [docs/netplay.md](docs/netplay.md) |
+| `det` | Floating-point math that gives identical bits on wasm, amd64 and arm64. Guide: [docs/deterministic-simulation.md](docs/deterministic-simulation.md) |
+| `vessel` | Deterministic model of a large powered ship. Guide: [docs/scene3d-vessel.md](docs/scene3d-vessel.md) |
+| `room` | Server-authoritative multiplayer rooms over hubs. Guide: [docs/rooms.md](docs/rooms.md) |
+| `game` | Game kit: runtime, input, loop, flow, settings, boot gate and kit UI. Guide: [docs/game-kit.md](docs/game-kit.md) |
+| `game/audio` | WebAudio bus graph and one-shot player; `game/audio/speech` adds voice timelines. Guide: [docs/audio.md](docs/audio.md), [docs/audio-speech.md](docs/audio-speech.md) |
+| `game/replay` | Record a deterministic game cheaply and play it back with scrub, pause and step. Guide: [docs/game-replay.md](docs/game-replay.md) |
+| `game/teamai` | Deterministic team and squad AI: formations, paths, steering, assignments. Guide: [docs/team-ai.md](docs/team-ai.md) |
+| `game/netsync`, `game/serve`, `game/physicsys` | Client room sync with prediction, server helpers, and the physics bridge for the game runtime. Guides: [docs/rooms.md](docs/rooms.md), [docs/physics-character.md](docs/physics-character.md) |
+| `motion` | Unified animation evaluator (TinyGo-clean). Guide: [docs/motion-transport.md](docs/motion-transport.md) |
+| `motion/animgraph` | Skeletal animation graph: parameters, layered state machines, blend spaces. Guide: [docs/scene3d-animation.md](docs/scene3d-animation.md) |
+| `markup` | Build and render node trees to HTML without the GoSX compiler. |
+| `telemetry` | Optional, bounded application telemetry: typed activities, adapters, memory sink. Guide: [docs/telemetry-activities.md](docs/telemetry-activities.md) |
+| `assetpipe` | Asset inventory, plan and build: KTX2 textures, IBL, LODs, meshopt. Guide: [docs/scene3d-model-preparation.md](docs/scene3d-model-preparation.md) |
+| `browser` | Marker that tags island handlers as browser-owned effects |
+| `buildmanifest` | The `gosx build` manifest: assets, images, runtime chunks |
+| `command` | Page commands: named actions with keyboard chords. Guide: [docs/commands.md](docs/commands.md) |
+| `controller` | Declarative headless browser controllers. Guide: [docs/controllers.md](docs/controllers.md) |
+| `gameboy` | Optional cartridge engine for GoSX experiences |
+| `hydrate` | Hydration manifest and island metadata linking server HTML to WASM islands |
+| `imagepipe` | Responsive image variants written by `gosx build` |
+| `oceanspec` | Swell waves of the Scene3D spectral ocean. Guide: [docs/scene3d-ocean-query.md](docs/scene3d-ocean-query.md) |
+| `perf` | Performance budgets, wire-size gates and browser evidence tooling. Guide: [docs/performance-metrics.md](docs/performance-metrics.md) |
+| `query` | Typed binding between URL query parameters and Go structs |
+| `ratelimit` | Bounded admission shared by HTTP and realtime handlers |
+| `scheduled` | Background work primitives |
+| `strictcheck` | Package-aware type checking for strict `.gsx` components |
+| `transpile` | Converts `.gsx` source to standard Go |
+| `visual` | Pixel-level visual regression testing with headless Chrome |
 | `crdt` | Conflict-free replicated documents with bloom-filter sync protocol |
 | `engine` | Worker/surface model with capability declarations |
 | `engine/wasm` | Standard-Go WASM engine registration, browser context, and instance lifecycle |
@@ -1383,7 +1415,7 @@ Three tiers:
 | `lsp` | Language server protocol for editor integration |
 | `islandtest` | Island program testing helpers |
 | `dev` | Development server with file watching |
-| `desktop` | Native desktop host backed by Windows WebView2, shell integration, native UI, crash reports, and update feed helpers |
+| `desktop` | Native desktop host backed by Windows WebView2 and macOS WKWebView, shell integration, native UI, crash reports, and update feed helpers |
 | `env` | `.env` file loading with mode support |
 | `cmd/gosx` | CLI tool |
 
@@ -1408,11 +1440,11 @@ make test-e2e      # chromedp browser tests against gosx dev (go test -tags e2e 
 make test-desktop  # Desktop package tests plus Windows cross-compile guards
 make test-desktop-macos # macOS desktop/cmd cross-compile guardrails
 make build-desktop-windows  # Windows desktop-capable CLI binaries
-make build-desktop-macos    # macOS CLI binaries; native backend still unsupported
+make build-desktop-macos    # macOS CLI binaries, including the native WKWebView backend (since v0.57.17)
 make build-runtime # TinyGo production capability-profile WASM runtime builds
 make canopy-index  # Memory-bounded structural index in .canopy/index.json
 make canopy-stats  # Inspect the cached structural index
-make ci            # All of the above + build verification
+make ci            # Every hosted CI gate except the shards; see docs/ci-gates.md
 ```
 
 Use the Make targets for repo-wide canopy work. They apply `.canopyignore`,
@@ -1454,7 +1486,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.60.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, and `sim` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.60.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, and `sim`, and the newer game, room, netplay, animation-graph and telemetry packages, are still under active development and may take breaking changes ([stability tiers](docs/STABILITY.md)); each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The sim layer has production users but is newer.
 

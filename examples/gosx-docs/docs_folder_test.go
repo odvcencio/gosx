@@ -51,3 +51,24 @@ func TestDocsFolderHoldsOnlyIndexedUserGuides(t *testing.T) {
 		}
 	}
 }
+
+// TestCIGatesDocNamesEveryHostedMakeTarget keeps docs/ci-gates.md in step with
+// the workflow: each `run: make <target>` in ci.yml must appear in the gate
+// table.
+func TestCIGatesDocNamesEveryHostedMakeTarget(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Skipf("workflow not available: %v", err)
+	}
+	doc, err := os.ReadFile(filepath.Join(root, "docs", "ci-gates.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range regexp.MustCompile(`run: make ([\w-]+)`).FindAllStringSubmatch(string(workflow), -1) {
+		if !strings.Contains(string(doc), "`"+m[1]) {
+			t.Errorf("ci.yml runs `make %s`, which docs/ci-gates.md does not mention", m[1])
+		}
+	}
+}

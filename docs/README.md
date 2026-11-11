@@ -5,7 +5,13 @@ Where things live, from the bottom layer up, and the guide for each. The
 islands, the CLI). The [package table](../README.md#packages) lists every package.
 The hosted docs site is gosx.m31labs.dev.
 
+- [Package map](packages.md): every importable package, with its layer, stability tier and js/wasm support. Generated from the tree.
+- [Stability tiers](STABILITY.md): what stable, experimental and internal-use mean.
+- [CI gates](ci-gates.md): what each check proves and how to run it.
+
 ## Layers
+
+The [package map](packages.md) lists every package in each layer and the import rule for the layer.
 
 | Layer | Packages | What it is for |
 |-------|----------|----------------|
@@ -44,6 +50,7 @@ The hosted docs site is gosx.m31labs.dev.
 
 ### Operations and measurement
 
+- [CI gates](ci-gates.md)
 - [Docs site operations](docs-site-operations.md), [Performance measurement availability](performance-metrics.md), [Signing Windows desktop packages](desktop-code-signing.md)
 - Telemetry: [typed activities](telemetry-activities.md), [declarations](telemetry-activity-declarations.md), [events](telemetry-activity-events.md), [lifecycle](telemetry-activity-lifecycle.md), [participants](telemetry-participants.md), [records](telemetry-records.md), [memory sink](telemetry-memory-sink.md), [adapters](telemetry-adapters.md)
 

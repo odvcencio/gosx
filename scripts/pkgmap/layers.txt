@@ -1,0 +1,73 @@
+# Package map input. Each row assigns a layer and a stability tier to a
+# package path (relative to the module root; "." is the root package).
+# A trailing /... covers the package and everything below it. The longest
+# matching row wins. `go run ./scripts/pkgmap` fails on a package with no row,
+# so a new package has to pick a layer and a tier.
+#
+# layers: foundations kernels scene web server game browser tools
+# tiers:  stable experimental internal-use
+#
+# path                         layer        tier
+.                              scene        stable
+det/...                        foundations  experimental
+markup/...                     foundations  stable
+signal/...                     foundations  stable
+env/...                        foundations  stable
+css/...                        foundations  stable
+textlayout/...                 foundations  stable
+highlight/...                  foundations  stable
+query/...                      foundations  internal-use
+command/...                    foundations  internal-use
+controller/...                 foundations  internal-use
+ratelimit/...                  foundations  internal-use
+oceanspec/...                  foundations  experimental
+crdt/...                       foundations  experimental
+motion/...                     kernels      experimental
+physics/...                    kernels      experimental
+vessel/...                     kernels      experimental
+field/...                      kernels      experimental
+engine/...                     kernels      stable
+assetpipe/...                  kernels      experimental
+island/program/...             kernels      stable
+scene/...                      scene        stable
+render/...                     scene        experimental
+ir/...                         scene        experimental
+transpile/...                  scene        internal-use
+format/...                     scene        stable
+strictcheck/...                scene        internal-use
+session/...                    web          stable
+action/...                     web          stable
+auth/...                       web          stable
+hub/...                        web          stable
+island/...                     web          stable
+hydrate/...                    web          internal-use
+buildmanifest/...              web          internal-use
+scheduled/...                  web          experimental
+content/...                    web          stable
+imagepipe/...                  web          internal-use
+telemetry/...                  web          experimental
+server/...                     server       stable
+route/...                      server       stable
+dev/...                        server       stable
+sim/...                        game         experimental
+room/...                       game         experimental
+netplay/...                    game         experimental
+game/...                       game         experimental
+client/...                     browser      internal-use
+engine/wasm/...                browser      stable
+hub/client/...                 browser      stable
+hub/socket/...                 browser      stable
+cmd/...                        tools        internal-use
+cmd/gosx                       tools        stable
+desktop/...                    tools        experimental
+editor/...                     tools        experimental
+lsp/...                        tools        experimental
+perf/...                       tools        internal-use
+visual/...                     tools        internal-use
+test/...                       tools        internal-use
+e2e/...                        tools        internal-use
+browser/...                    tools        internal-use
+gameboy/...                    tools        internal-use
+islandtest/...                 tools        internal-use
+scripts/...                    tools        internal-use
+auth/redis                     web          stable
