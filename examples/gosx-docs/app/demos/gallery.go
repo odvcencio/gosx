@@ -2,6 +2,8 @@ package docs
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	beaconDemo "m31labs.dev/gosx/examples/gosx-docs/app/demos/beacon"
 	checkersDemo "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
@@ -27,6 +29,42 @@ var demoSummaries = map[string]string{
 	"html-surface":  "Orbit HTML panels textured onto geometry inside a 3D scene.",
 	"cms":           "Build a block page, inspect its live preview, and publish a validated draft.",
 	"orrery":        "Pause a 24-second star-system animation and orbit its keyframed scene.",
+}
+
+// demoShows is the one-line "what this shows" on every gallery card. It names
+// the capability, not the interaction (demoSummaries covers the interaction).
+var demoShows = map[string]string{
+	"showreel":      "Typed Go scene data becomes a lit, post-processed 3D scene with no asset files.",
+	"checkers":      "A hub that owns the turn order, with Go-checked rules, bounded CPU search, and replay.",
+	"beacon":        "One Go program generates a whole outdoor scene: terrain, physical sky, and open ocean.",
+	"water":         "Water optics written once in Selena and drawn on WebGPU or WebGL2.",
+	"playground":    "The GoSX compiler running on demand, with the result hydrated beside the source.",
+	"fluid":         "A server-computed 3D field streamed to the browser as six-bit deltas.",
+	"livesim":       "One authoritative simulation timeline shared by every open browser tab.",
+	"collab":        "A shared document and live presence synchronized through a hub.",
+	"scene3d":       "Lights, materials, and geometry declared as typed Go and rendered as PBR.",
+	"scene3d-bench": "Renderer workloads you select by URL and compare with measured frame times.",
+	"html-surface":  "Live HTML and CSS rendered as a textured quad inside a 3D scene.",
+	"cms":           "A client-side block editor and a CSRF-protected server action on one page.",
+	"orrery":        "Animation channels and material keyframes declared as deterministic data.",
+}
+
+// demoDocPages names the site doc page that teaches each demo's subject. A
+// test checks every href against the docs catalog.
+var demoDocPages = map[string]string{
+	"showreel":      "/docs/scene3d",
+	"checkers":      "/docs/hubs",
+	"beacon":        "/docs/scene3d",
+	"water":         "/docs/scene3d",
+	"playground":    "/docs/compiler",
+	"fluid":         "/docs/hubs",
+	"livesim":       "/docs/hubs",
+	"collab":        "/docs/hubs",
+	"scene3d":       "/docs/scene3d",
+	"scene3d-bench": "/docs/scene3d-performance",
+	"html-surface":  "/docs/scene3d",
+	"cms":           "/docs/forms",
+	"orrery":        "/docs/scene3d",
 }
 
 var demoGroups = map[string]string{
@@ -229,6 +267,59 @@ func GalleryDemos() ([]DemoDefinition, error) {
 		}
 	}
 	return demos, nil
+}
+
+// CapabilityTag is one capability facet and every demo that covers it.
+type CapabilityTag struct {
+	Name  string
+	Slug  string
+	Demos []DemoDefinition
+}
+
+// CapabilityIndex inverts the demos' Facets into a catalog of capabilities.
+// Tags are ordered by how many demos cover them, then by name, so the index is
+// stable and the broad tags come first.
+func CapabilityIndex(demos []DemoDefinition) []CapabilityTag {
+	byName := map[string]*CapabilityTag{}
+	var order []string
+	for _, demo := range demos {
+		for _, facet := range demo.Facets {
+			tag, ok := byName[facet]
+			if !ok {
+				tag = &CapabilityTag{Name: facet, Slug: capabilitySlug(facet)}
+				byName[facet] = tag
+				order = append(order, facet)
+			}
+			tag.Demos = append(tag.Demos, demo)
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := byName[order[i]], byName[order[j]]
+		if len(a.Demos) != len(b.Demos) {
+			return len(a.Demos) > len(b.Demos)
+		}
+		return a.Name < b.Name
+	})
+	tags := make([]CapabilityTag, 0, len(order))
+	for _, name := range order {
+		tags = append(tags, *byName[name])
+	}
+	return tags
+}
+
+func capabilitySlug(name string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			dash = false
+		} else if !dash && b.Len() > 0 {
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	return strings.TrimSuffix(b.String(), "-")
 }
 
 func FeaturedGalleryDemos(demos []DemoDefinition) []DemoDefinition {
