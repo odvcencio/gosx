@@ -6656,7 +6656,7 @@
     // data-prop/entry-field WGSL resolution tier has been retired in favor of
     // Selena-primary -> builtin-fallback (see getWaterPoolPipeline /
     // getWaterRenderPipeline / renderWaterCausticsPass / etc.).
-    var waterManifestShaderSourcesByID = null;
+    var waterManifestShaderSourcesByID = null, waterManifestScanKey: any[] = [];
     var activeWaterShaderSourcesByID = null;
     // waterAuthoredCausticsPipelineLastError/waterAuthoredSurfacePipelineLastError
     // are kept (always "") as stable no-op reads for the
@@ -10188,9 +10188,27 @@
     // dispatchWaterComputeStage below).
     function sceneWaterManifestShaderSources() {
       if (waterManifestShaderSourcesByID && waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
-      waterManifestShaderSourcesByID = new Map();
       var mountSources = canvas && (canvas.__gosxScene3DWaterShaderSources || (canvas.parentNode && canvas.parentNode.__gosxScene3DWaterShaderSources));
       var published = mountSources || (typeof window !== "undefined" ? window.__gosx_scene3d_water_shader_sources_by_id : null);
+      var doc = canvas && canvas.ownerDocument
+        ? canvas.ownerDocument
+        : (typeof window !== "undefined" && window.document
+          ? window.document
+          : (typeof document !== "undefined" ? document : null));
+      var scan = doc && doc.querySelectorAll;
+      var manifestScript = scan && doc.getElementById ? doc.getElementById("gosx-manifest") : null;
+      // The bootstrap runtime publishes its manifest parse; reusing it skips a
+      // re-parse, and on a page that opted into data-gosx-release the DOM text
+      // is empty and the published parse is the only remaining copy.
+      var manifestMemo = typeof window !== "undefined" ? window.__gosx_manifest : null;
+      var scripts = scan ? (doc.scripts || doc.querySelectorAll("script")) : null;
+      // The scan reads the manifest text (megabytes with a large crowd), so an empty result is kept too, until the
+      // published map or its size, the manifest element or its parse, or the page's script count changes.
+      var key = waterManifestScanKey, size = published && typeof published === "object" ? Object.keys(published).length : 0;
+      var memoValue = manifestMemo && manifestMemo.value, scriptCount = scripts ? scripts.length : -1;
+      if (waterManifestShaderSourcesByID && key[0] === published && key[1] === size && key[2] === manifestScript && key[3] === memoValue && key[4] === scriptCount) return waterManifestShaderSourcesByID;
+      key[0] = published; key[1] = size; key[2] = manifestScript; key[3] = memoValue; key[4] = scriptCount;
+      waterManifestShaderSourcesByID = new Map();
       if (published && typeof published === "object") {
         var ids = Object.keys(published);
         for (var pi = 0; pi < ids.length; pi += 1) {
@@ -10201,12 +10219,7 @@
         }
         if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
       }
-      var doc = canvas && canvas.ownerDocument
-        ? canvas.ownerDocument
-        : (typeof window !== "undefined" && window.document
-          ? window.document
-          : (typeof document !== "undefined" ? document : null));
-      if (!doc || !doc.querySelectorAll) return waterManifestShaderSourcesByID;
+      if (!scan) return waterManifestShaderSourcesByID;
       var fields = [
         "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
         "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
@@ -10234,38 +10247,14 @@
       }
       function ingestManifestText(text) {
         if (!text || text.indexOf("waterSystems") < 0 || text.indexOf("WGSL") < 0) return;
-        try {
-          var manifest = JSON.parse(text);
-          var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
-          for (var ei = 0; ei < engines.length; ei += 1) {
-            var scene = engines[ei] && engines[ei].props && engines[ei].props.scene;
-            var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : [];
-            for (var wi = 0; wi < systems.length; wi += 1) {
-              var water = systems[wi];
-              if (!water || typeof water !== "object") continue;
-              var id = typeof water.id === "string" && water.id ? water.id : ("scene-water-" + wi);
-              var record = waterManifestShaderSourcesByID.get(id) || {};
-              for (var fi = 0; fi < fields.length; fi += 1) {
-                var name = fields[fi];
-                if (typeof water[name] === "string" && water[name].trim()) record[name] = water[name];
-              }
-              waterManifestShaderSourcesByID.set(id, record);
-            }
-          }
-        } catch (_err) {}
+        try { ingestManifestValue(JSON.parse(text)); } catch (_err) {}
       }
-      var manifestScript = doc.getElementById ? doc.getElementById("gosx-manifest") : null;
-      // The bootstrap runtime publishes its manifest parse; reusing it skips a
-      // re-parse, and on a page that opted into data-gosx-release the DOM text
-      // is empty and the published parse is the only remaining copy.
-      var manifestMemo = typeof window !== "undefined" ? window.__gosx_manifest : null;
       if (manifestScript && manifestMemo && manifestMemo.element === manifestScript && manifestMemo.value) {
         ingestManifestValue(manifestMemo.value);
         if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
       }
       ingestManifestText(manifestScript && manifestScript.textContent || "");
       if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
-      var scripts = doc.scripts || doc.querySelectorAll("script");
       for (var si = 0; si < scripts.length; si += 1) {
         ingestManifestText(scripts[si] && scripts[si].textContent || "");
       }
@@ -15765,7 +15754,7 @@
       frame.matrices[slot] = lightMatrix;
       frame.indices[slot] = lightIndex;
       frame.gpuDriven.lightView(encoder, lightMatrix, slot);
-      frame.crowd.lightView(encoder, lightMatrix, slot);
+      frame.crowd.lightView(frame.crowdEncoder, lightMatrix, slot);
       for (var c = 0; c < cascades; c++) {
         renderShadowPass(encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
       }
@@ -18164,14 +18153,14 @@
       var shadowLightIndices = [-1, -1];
       var activeShadowCount = 0;
 
-      var encoder = device.createCommandEncoder({ label: "gosx-frame" });
+      var encoder = device.createCommandEncoder({ label: "gosx-frame" }), crowdEncoder = encoder;
       gpuTimingFrameSeq += 1;
       drainDeferredGPUResources(false);
       var gpuTimingToken = beginGPUFrameTiming(encoder);
       // Per-pass stamps ride on the render-pass descriptors, so the slot must be
       // chosen before the shadow pass opens.
       pollGPUPassTimingReadback();
-      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
+      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
       sceneWebGPUSelenaSurfaceFrame(selenaSurfaces);
@@ -18225,14 +18214,18 @@
         return !material || !material.detail;
       }) : instancedDrawList.opaque });
       var crowd = webGPUCrowdHost();
-      crowd.beginFrame(bundle, encoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
+      // The crowd's frustum cull passes (the camera's and each light's) go in a command buffer of their own, submitted before the
+      // frame's: on Metal (Apple M4 Pro, Chrome 157) a command buffer that holds them and the frame-end timestamp fails with "Insufficient
+      // Memory" and loses the device. Dawn records each submit as one Metal command buffer. The occlusion cull reads this frame's depth.
+      crowdEncoder = bundle.gpuDriven ? device.createCommandEncoder({ label: "gosx-crowd-cull" }) : encoder;
+      crowd.beginFrame(bundle, crowdEncoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
       var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
-      var shadowFrame = { bundle: bundle, camera: cam, maxPixels: shadowMaxPixels, gpuDriven: gpuDriven, crowd: crowd, aspect: scaledW / scaledH, buffers: pbrSceneBuffers, matrices: shadowLightMatrices, indices: shadowLightIndices };
+      var shadowFrame = { bundle: bundle, camera: cam, maxPixels: shadowMaxPixels, gpuDriven: gpuDriven, crowd: crowd, crowdEncoder: crowdEncoder, aspect: scaledW / scaledH, buffers: pbrSceneBuffers, matrices: shadowLightMatrices, indices: shadowLightIndices };
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
@@ -18745,6 +18738,7 @@
       endGPUPassTimingFrame(encoder);
       gpuDriven.finishEncoding(encoder);
       crowd.finishEncoding(encoder);
+      if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; }
       device.queue.submit([encoder.finish()]);
       Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink), crowd.endFrame());
       pollGPUTimingReadback();

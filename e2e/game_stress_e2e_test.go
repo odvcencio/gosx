@@ -530,10 +530,10 @@ func TestGameStressSmoke(t *testing.T) {
 	}
 	var runs []stressSummary
 	for _, thread := range []string{"main", "worker"} {
-		// NoCull: GPU crowd culling loses the Metal device on Apple GPUs
-		// (docs/game-performance.md); this test covers the worker path.
+		// On a GPU runner the crowd is culled on the GPU (scene.GPUDriven), as
+		// in the benchmark; CI's WebGL2 run ignores it.
 		spec := stressSpec{Backend: backend, Thread: thread, Players: 22, Crowd: 300, Sections: 4, Width: 320, Height: 180,
-			Seconds: 6, Warmup: 6, Audio: "worklet", Probes: 3, NoCull: true}
+			Seconds: 6, Warmup: 6, Audio: "worklet", Probes: 3}
 		s, raw := runStress(t, base, spec)
 		runs = append(runs, s)
 		writeStressJSON(t, os.Getenv("GOSX_STRESS_OUT"), s, raw)

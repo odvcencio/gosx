@@ -10,11 +10,12 @@ The short version, from the measurements below:
 - The Go side fits. At full speed on both test machines, simulation, AI and
   animation stay under 1.4, 1.0 and 0.3 ms at the 99th percentile (budgets
   3, 2 and 2 ms), and the Go collector did no work in any 30-second run.
-- Render submission is the part that does not fit with a 40,000-figure crowd.
-  Against a 4 ms budget it takes 2.7 to 3.4 ms (p50) with WebGL2 at full
-  speed, 7.7 to 10.7 ms with WebGPU, and 9.9 to 49.6 ms on either backend at
-  a 4x CPU slowdown. Three per-frame scans that grow with the scene cause most
-  of it (see "Where the render time goes").
+- Render submission did not fit with a 40,000-figure crowd until three
+  per-frame scans that grew with the scene were removed (see "Where the render
+  time goes"). Against a 4 ms budget it took 2.7 to 3.4 ms (p50) with WebGL2
+  at full speed, 7.7 to 10.7 ms with WebGPU, and 9.9 to 49.6 ms on either
+  backend at a 4x CPU slowdown. Without the scans it takes 1.0 to 1.6 ms at
+  full speed and 2.6 to 7.1 ms at 4x, on both backends and both machines.
 - At a 4x slowdown, our stand-in for an M1 or Iris Xe laptop, replay frames
   push the simulation and AI over their budgets. Running the simulation in a
   Web Worker takes them off the main thread: 2.5 to 9 ms less main-thread time
@@ -138,6 +139,8 @@ GOSX_STRESS_BENCH=1 GOSX_STRESS_OUT=/tmp/stress \
 | `GOSX_STRESS_CROWD` | Crowd size (40000) |
 | `GOSX_STRESS_OUT` | Directory for the JSON and a screenshot of each run |
 | `GOSX_STRESS_PROFILE=1` | Also write a main-thread CPU profile (`.cpuprofile`, opens in Chrome DevTools) |
+| `GOSX_STRESS_CULL=0` | Turn off GPU crowd culling (`scene.GPUDriven`) on the WebGPU runs |
+| `GOSX_STRESS_CLIENT_ROOT` | A directory whose `client/js` holds the browser runtime to serve, for example another build's bundles to compare |
 | `GOSX_CICADA_FIXTURE` | A directory with Cicada's `fixture.json` and `kernel.wasm`, for live music |
 
 `TestGameStressSmoke` is the small version that CI runs: 300 crowd figures,
@@ -171,8 +174,8 @@ draws its effect, over 10 presses, so treat it as a rough figure.
 | WebGL2, worker, 4x | 31.8 | 27.8 / 31.6 / 34.8 | – | – | 0.2 / 0.3 / 0.3 | 18.7 / 21.4 / 23.5 | 0.2 / 2.0 | 5.9 / 9.7 / 9.8 | 88 / 98 / 98 |
 
 **Apple M4 Pro** (macOS, Metal). The WebGPU runs turn off GPU crowd culling,
-because with it the Metal device is lost (see "Known problems"); the GPU time
-column is empty where the browser offered no timer.
+because with it the Metal device was lost (fixed since; see "After the
+fixes"); the GPU time column is empty where the browser offered no timer.
 
 | Backend, thread | fps | Main thread | Sim (3) | AI (2) | Animation (2) | Render CPU (4) | Worker sim + AI | GPU | Input latency |
 |---|---|---|---|---|---|---|---|---|---|
@@ -228,21 +231,60 @@ and grow with the scene:
    changed, even when none did.
 3. The focus proxies scan every scene object each frame for interactive nodes.
 
-Skipping the first when there is no water, and limiting the third to the
-render bundle's records, was tried in a scratch build (not in GoSX): on the
-NVIDIA host, WebGPU's main-thread time went from 13.1 / 14.7 / 15.4 to
-7.0 / 8.7 / 9.1 ms at full speed, and from 65.0 / 74.8 / 80.4 ms (13.9 fps) to
-27.7 / 36.7 / 47.6 ms (29.8 fps) at 4x; with the simulation in a worker,
-24.6 / 29.3 / 32.8 ms (35.3 fps) at 4x.
+### After the fixes
+
+GoSX no longer does any of the three scans in a frame where nothing they read
+changed:
+
+1. WebGPU keeps the manifest scan's result, empty or not, until the published
+   water-source map, the manifest element or its parse, or the page's script
+   count changes.
+2. The crowd batcher reuses its last walk while the scene's object list holds
+   the same objects in the same order and nothing changed an agent, and then
+   re-walks only the batches whose agents a pose or motion write changed. The
+   list itself still costs one identity test per entry, about 0.3 ms per
+   frame for 40,000 agents in a CPU profile.
+3. The focus proxies keep the scene's interactive objects until one is added,
+   replaced or removed.
+
+The same scene, before and after, measured back to back on each machine:
+main-thread runs only, 20 seconds each after the 8-second warm-up. Times are
+p50 / p95 in ms per frame. The NVIDIA rows were measured on 10 November 2026
+against the v0.60.0 release candidate (`1116ad0710`). The Apple rows were
+measured on 9 November against `9feeffc4cb`, with GPU crowd culling off on the
+WebGPU runs so they compare with the table above, and with an earlier version
+of the Metal fix in the "after" build; an after-only run of the final code that
+day measured the same within noise (WebGPU 2.8 / 6.1 ms at full speed, 59.8 fps
+at 4x).
+
+| Machine, backend, speed | fps before → after | Main thread before → after | Render CPU before → after |
+|---|---|---|---|
+| NVIDIA, WebGPU, 1x | 59.7 → 59.9 | 15.2 / 17.0 → 2.2 / 3.4 | 12.5 / 13.5 → 1.2 / 1.5 |
+| NVIDIA, WebGL2, 1x | 59.8 → 59.9 | 4.9 / 6.4 → 1.9 / 3.2 | 2.6 / 3.3 → 1.0 / 1.3 |
+| NVIDIA, WebGPU, 4x | 13.9 → 55.1 | 65.0 / 76.7 → 12.6 / 22.1 | 49.7 / 55.0 → 7.1 / 8.9 |
+| NVIDIA, WebGL2, 4x | 31.4 → 55.6 | 27.9 / 36.6 → 12.0 / 23.0 | 15.1 / 20.0 → 6.4 / 8.3 |
+| Apple, WebGPU, 1x | 60.0 → 60.0 | 10.5 / 11.8 → 2.8 / 5.8 | 9.0 / 9.4 → 1.6 / 1.8 |
+| Apple, WebGL2, 1x | 60.0 → 60.0 | 4.3 / 5.4 → 2.8 / 6.0 | 2.7 / 3.0 → 1.6 / 1.9 |
+| Apple, WebGPU, 4x | 20.5 → 59.6 | 45.5 / 52.0 → 5.2 / 10.0 | 37.5 / 41.8 → 2.8 / 3.5 |
+| Apple, WebGL2, 4x | 51.2 → 59.8 | 17.1 / 22.2 → 4.7 / 9.9 | 10.9 / 12.1 → 2.6 / 3.3 |
+
+At full speed on the Mac, the main thread's 95th percentile is now set by the
+simulation and AI, whose p95 rose from about 1 to about 2.7 ms in every run
+after the change while the render time fell. It did not rise at 4x or on the
+NVIDIA host. We think the lighter main thread lets macOS run it at a lower
+clock, but we did not check.
+
+GPU crowd culling (`scene.GPUDriven`) now works on the Apple M4 Pro too: with
+the final code the WebGPU run holds 60.0 fps at 2.9 / 6.4 ms with it on, and
+59.8 fps at 4.3 / 8.6 ms at 4x. Before, a Metal command buffer that held the crowd's cull
+pass and the renderer's frame-end GPU timestamp failed ("Insufficient Memory",
+`kIOGPUCommandBufferCallbackErrorOutOfMemory`) and lost the device within a
+second. The crowd's frustum culls (camera and shadow lights) now go in a
+command buffer of their own, submitted before the frame's; the occlusion cull,
+which reads the frame's depth, stays in the frame.
 
 ### Known problems
 
-- With `scene.GPUDriven` crowd culling, WebGPU on the Apple M4 Pro loses its
-  device about 1.4 s after the first frame ("Metal command buffer failed:
-  Insufficient Memory", `kIOGPUCommandBufferCallbackErrorOutOfMemory`), at
-  10,000 and at 40,000 crowd figures, and the mount falls back to WebGL. The
-  same scene without `GPUDriven` runs at 60 fps. The RTX 5070 Ti is not
-  affected.
 - Declaring 40,000 crowd figures as `InstancedGLBMesh` instances puts several
   megabytes of JSON in the page manifest, which the page parses at load.
 
