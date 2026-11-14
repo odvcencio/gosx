@@ -182,6 +182,9 @@ type EngineEntry struct {
 	// MountID is the DOM element ID the engine should attach to.
 	MountID string `json:"mountId,omitempty"`
 
+	// DeferUntilOpen delays mounting until all ancestor details elements open.
+	DeferUntilOpen bool `json:"deferUntilOpen,omitempty"`
+
 	// Runtime selects the GoSX client runtime for this engine.
 	Runtime string `json:"runtime,omitempty"`
 

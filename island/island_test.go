@@ -2056,3 +2056,16 @@ func TestRenderEngineWorkerModeWithoutWorkerThreadIsRejected(t *testing.T) {
 		t.Fatalf("a worker policy without a worker thread must not register: %+v", r.Manifest().Engines)
 	}
 }
+
+func TestRenderEngineDefersUntilOpenInManifest(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{Name: "Visual", Kind: engine.KindSurface, DeferUntilOpen: true}, gosx.Text("fallback"))
+	entries := r.Manifest().Engines
+	if len(entries) != 1 || !entries[0].DeferUntilOpen {
+		t.Fatalf("deferred engine missing from manifest: %#v", entries)
+	}
+	data, err := json.Marshal(entries[0])
+	if err != nil || !strings.Contains(string(data), `"deferUntilOpen":true`) {
+		t.Fatalf("deferred field missing: %s (%v)", data, err)
+	}
+}
