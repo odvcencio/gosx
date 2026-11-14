@@ -363,3 +363,14 @@ test("duplicate invalid engine cannot leak a deferred listener", async () => {
   a.open = b.open = true; a.dispatchEvent({type:"toggle"}); b.dispatchEvent({type:"toggle"}); await flushAsyncWork();
   assert.equal(count, 0); assert.equal(a.listenerCount("toggle"), 0); assert.equal(b.listenerCount("toggle"), 0);
 });
+
+test("all deferred Scene3D entries do not request the scene feature at startup", async () => {
+  const details = new FakeElement("details", null), mount = new FakeElement("div", null);
+  mount.id = "scene-root"; details.appendChild(mount); details.open = false;
+  const env = createContext({ elements: [details], fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: [{id:"scene", component:"GoSXScene3D", kind:"surface", mountId:"scene-root", deferUntilOpen:true}] } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.context.__gosx.engines.has("scene"), false);
+  assert.equal(env.context.__gosx.listIssues().filter(issue => issue.ref === "scene3d").length, 0);
+});

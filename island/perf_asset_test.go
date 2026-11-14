@@ -744,3 +744,13 @@ func TestPerfAssetNavigationTransferTransition(t *testing.T) {
 		t.Fatal("external navigation counted more than once")
 	}
 }
+
+func TestPerfAssetRendererRefusesUnknownDeferredScenePhase(t *testing.T) {
+	r, _ := perfAssetRendererFixture(t)
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, DeferUntilOpen: true}, gosx.Text(""))
+	_, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu"})
+	var detail *buildmanifest.PerfAssetError
+	if !errors.As(err, &detail) || detail.Code != "unknown-reachability" || detail.Pointer != "/deferredScene3D" {
+		t.Fatalf("expected conservative deferred phase refusal, got %v", err)
+	}
+}
