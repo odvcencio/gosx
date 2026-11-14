@@ -2313,6 +2313,11 @@ func childProgramPath(parent string, idx int) string {
 // during HTML parsing, BEFORE the scripts execute — eliminating the
 // serial dependency of HTML → JS → fetch WASM.
 func (r *Renderer) PreloadHints() gosx.Node {
+	return r.PreloadHintsWithNonce("")
+}
+
+// PreloadHintsWithNonce attaches the request nonce to script preload hints.
+func (r *Renderer) PreloadHintsWithNonce(nonce string) gosx.Node {
 	if !r.needsClientBootstrap() {
 		return gosx.Text("")
 	}
@@ -2383,7 +2388,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
 				continue
 			}
-			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer"%s>`, path, preloadNonceAttr(nonce)))
 			b.WriteByte('\n')
 		}
 		// Required opt-in chunks are fetched by the loader, never by a script
@@ -2393,12 +2398,12 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
 				continue
 			}
-			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer"%s>`, path, preloadNonceAttr(nonce)))
 			b.WriteByte('\n')
 		}
 	}
 
-	r.writeScene3DPreloads(&b)
+	r.writeScene3DPreloads(&b, nonce)
 	return gosx.RawHTML(b.String())
 }
 

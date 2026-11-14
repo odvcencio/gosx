@@ -317,7 +317,7 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		env.renderEngine = ctx.Engine
 		env.renderIsland = ctx.Runtime().Island
 		env.enableBootstrap = ctx.Runtime().EnableBootstrap
-		env.islandPreloadHints = ctx.Runtime().PreloadHints
+		env.islandPreloadHints = func() gosx.Node { return ctx.Runtime().PreloadHintsWithNonce(ctx.Nonce()) }
 		env.islandPageHead = func() gosx.Node { return ctx.Runtime().PageHeadWithNonce(ctx.Nonce()) }
 		env.funcs["actionPath"] = func(name string) string {
 			return ctx.ActionPath(name)
