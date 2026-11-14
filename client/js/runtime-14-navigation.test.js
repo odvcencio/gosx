@@ -692,6 +692,138 @@ test("managed action hash redirects revalidate, replace history, and scroll to t
   assert.equal(env.document.activeElement, env.document.getElementById("board-pool"));
 });
 
+test("managed links retain the current page on pre-apply failures and can retry", async () => {
+  for (const failure of ["network", "http", "parse"]) {
+    const url = "http://localhost:3000/target";
+    const original = "http://localhost:3000/source";
+    const link = new FakeElement("a", null);
+    link.setAttribute("href", "/target");
+    link.setAttribute("data-gosx-link", "");
+    const draft = new FakeElement("input", null);
+    draft.id = "draft";
+    draft.value = "unsaved work";
+    let attempts = 0, disposed = 0;
+    const env = createContext({
+      elements: [link, draft],
+      fetchRoutes: { [url]: () => {
+        attempts += 1;
+        if (attempts === 1 && failure === "network") throw new TypeError("network offline");
+        if (attempts === 1 && failure === "http") return {ok: false, status: 503, text: "unavailable", url};
+        return {text: attempts === 1 && failure === "parse" ? "__BAD__" : "__OK__", url};
+      }},
+      parseHTML(html) {
+        if (html === "__BAD__") throw new Error("invalid page");
+        const main = new FakeElement("main", null);
+        main.id = "target-page";
+        return buildNavigatedDocument({title: "Target", bodyNodes: [main]});
+      },
+    });
+    const alerts = [];
+    env.context.alert = message => alerts.push(message);
+    env.context.location.href = original;
+    env.context.__gosx_dispose_page = async function() { disposed += 1; };
+    env.context.__gosx_bootstrap_page = async function() {};
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    draft.focus();
+    const click = () => env.document.eventListeners.get("click")[0]({
+      type: "click", button: 0, target: link, defaultPrevented: false,
+      metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+      preventDefault() { this.defaultPrevented = true; },
+    });
+    click();
+    await flushAsyncWork();
+    assert.equal(env.context.location.href, original, failure);
+    assert.equal(env.document.getElementById("draft"), draft, failure);
+    assert.equal(draft.value, "unsaved work", failure);
+    assert.equal(env.document.activeElement, draft, failure);
+    assert.equal(disposed, 0, failure);
+    assert.equal(env.context.__gosx.navigation.getState().phase, "idle", failure);
+    assert.equal(alerts.length, 1, failure + " must show an error without an opt-in toast host");
+    assert.match(alerts[0], /try the link again/i);
+    click();
+    await flushAsyncWork();
+    assert.equal(attempts, 2, failure + " retry must fetch again");
+    assert.equal(env.context.location.href, url, failure);
+    assert.ok(env.document.getElementById("target-page"), failure);
+  }
+});
+
+test("hostless navigation errors replace older alerts and can be dismissed", async () => {
+  const url = "http://localhost:3000/unavailable";
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/unavailable");
+  link.setAttribute("data-gosx-link", "");
+  const env = createContext({elements: [link], fetchRoutes: {[url]: {ok: false, status: 503, text: "unavailable", url}}});
+  const createElement = env.document.createElement.bind(env.document);
+  env.document.createElement = function(tag) {
+    const element = createElement(tag);
+    if (tag === "div") element.showPopover = function() {};
+    return element;
+  };
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const click = target => env.document.eventListeners.get("click")[0]({
+    type: "click", button: 0, target, defaultPrevented: false,
+    metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  click(link);
+  await flushAsyncWork();
+  const first = env.document.body.querySelector("[data-gosx-navigation-error]");
+  assert.ok(first);
+  click(link);
+  await flushAsyncWork();
+  const notices = env.document.body.querySelectorAll("[data-gosx-navigation-error]");
+  assert.equal(notices.length, 1);
+  assert.notEqual(notices[0], first);
+  assert.equal(notices[0].parentNode, env.document.body, "notice is outside the link's layout");
+  assert.equal(notices[0].getAttribute("style"), null, "notice works without inline CSS");
+  const dismiss = notices[0].querySelector("[data-gosx-toast-dismiss]");
+  assert.ok(dismiss);
+  assert.equal(dismiss.getAttribute("type"), "button");
+  assert.equal(dismiss.getAttribute("aria-label"), "Dismiss notification");
+  click(dismiss);
+  assert.equal(env.document.body.querySelector("[data-gosx-navigation-error]"), null);
+  assert.notEqual(env.context.location.href, url);
+});
+
+test("managed navigation failures use the page's alert toast host", async () => {
+  const url = "http://localhost:3000/unavailable";
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/unavailable");
+  link.setAttribute("data-gosx-link", "");
+  const host = new FakeElement("div", null);
+  host.setAttribute("data-gosx-toast-host", "");
+  const env = createContext({elements: [link, host], fetchRoutes: {[url]: {ok: false, status: 503, text: "unavailable", url}}});
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("click")[0]({type: "click", button: 0, target: link,
+    defaultPrevented: false, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+    preventDefault() { this.defaultPrevented = true; }});
+  await flushAsyncWork();
+  const toast = host.querySelector("[data-gosx-toast]");
+  assert.ok(toast);
+  assert.equal(toast.getAttribute("role"), "alert");
+  assert.equal(toast.getAttribute("data-gosx-toast-kind"), "error");
+  assert.match(toast.querySelector(".gosx-toast__message").textContent, /try the link again/i);
+  assert.notEqual(env.context.location.href, url);
+});
+
+test("managed links still hard-load when page application fails", async () => {
+  const url = "http://localhost:3000/target";
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/target");
+  link.setAttribute("data-gosx-link", "");
+  const env = createContext({elements: [link], fetchRoutes: {[url]: {text: "__OK__", url}},
+    parseHTML() { return buildNavigatedDocument({title: "Target", bodyNodes: [new FakeElement("main", null)]}); }});
+  env.context.__gosx_dispose_page = async function() { throw new Error("dispose failed"); };
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("click")[0]({type: "click", button: 0, target: link,
+    defaultPrevented: false, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+    preventDefault() { this.defaultPrevented = true; }});
+  await flushAsyncWork();
+  assert.equal(env.context.location.href, url);
+  env.context.__gosx_dispose_page = async function() {};
+});
+
 test("navigation revalidate rejects cleanly so callers can use the documented hard-load fallback", async () => {
   const url = "http://localhost:3000/agenda";
   const oldMain = new FakeElement("main", null);

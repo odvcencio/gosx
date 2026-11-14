@@ -3103,6 +3103,10 @@
     return !!error && String(error.name || "") === "AbortError";
   }
 
+  // A managed link can remain on its current page only if navigation failed
+  // before page disposal or replacement started.
+  const navigationPreApplyFailures = new WeakSet();
+
   async function navigate(url, options) {
     const opts = options || {};
     const target = navigationURLParts(url);
@@ -3163,12 +3167,17 @@
     }
     const signal = activeNavigationController ? activeNavigationController.signal : null;
     startNavigation(target.href);
+    let beforeApply = true;
+    let pageRequest;
     try {
-      const page = await resolveNavigationPage(target.href, signal);
+      const loading = resolveNavigationPage(target.href, signal);
+      pageRequest = pageCache.get(target.href);
+      const page = await loading;
       if (!navigationIsCurrent(sequence)) {
         observeNavigation("debug", "navigation superseded", { url: String(url || "") });
         return false;
       }
+      beforeApply = false;
       const reconciliation = await applyNavigatedPage(
         page.nextDoc,
         page.nextURL,
@@ -3190,8 +3199,23 @@
       return true;
     } catch (err) {
       if (!navigationIsCurrent(sequence) || navigationAbortError(err)) return false;
-      failNavigation(err, url);
-      throw err;
+      const stayOnPage = beforeApply && !!opts.sourceLink;
+      // A response can fetch successfully yet fail to parse. Do not cache a
+      // page that cannot be applied: a retry must fetch the destination again.
+      if (beforeApply && pageRequest && pageCache.get(target.href) === pageRequest) {
+        pageCache.delete(target.href);
+      }
+      // Preserve rejections for programmatic callers; only a managed link's
+      // primitive rejection needs a wrapper to mark its pre-apply phase.
+      let failure = err;
+      if (stayOnPage) {
+        if (!failure || (typeof failure !== "object" && typeof failure !== "function")) {
+          failure = new Error(String(failure));
+        }
+        navigationPreApplyFailures.add(failure);
+      }
+      failNavigation(failure, url, stayOnPage);
+      throw failure;
     } finally {
       if (navigationIsCurrent(sequence)) {
         activeNavigationController = null;
@@ -3219,13 +3243,14 @@
     prefetchManagedLinks("render");
   }
 
-  function failNavigation(error, url) {
+  function failNavigation(error, url, stayOnPage) {
     setNavigationState({
       phase: "idle",
       pendingURL: "",
     }, "navigate:error");
     reportNavigationFailure("navigation", error, {
       source: String(url || ""),
+      fallback: stayOnPage ? "none" : "native",
       telemetry: { url: String(url || "") },
     });
     observeNavigation("error", "navigation failed", {});
@@ -7884,8 +7909,61 @@
     const url = new URL(anchor.getAttribute("href"), window.location.href);
     navigate(url.href, { replace: false, sourceLink: anchor }).catch(function(err) {
       console.error("[gosx] navigation failed:", err);
+      if (navigationPreApplyFailures.has(err)) {
+        navigationPreApplyFailures.delete(err);
+        // The link remains available for retry, and the current page keeps
+        // its unsaved controls, engines and focus. Do not turn a failed GET
+        // into a full-page load that can discard that state.
+        const message = "Could not open the page. Try the link again.";
+        if (!presentManagedFormToast({ ok: false }, { message: message })) {
+          const previous = findElement(document.body, function(node) {
+            return node.hasAttribute && node.hasAttribute("data-gosx-navigation-error");
+          });
+          if (previous) removeManagedToast(previous, "replaced");
+          const notice = document.createElement("div");
+          if (typeof notice.showPopover !== "function") {
+            // Native alerts avoid moving focus, scrolling to an offscreen
+            // dialog, and reliance on inline CSS in older browsers.
+            window.alert(message);
+            return;
+          }
+          notice.setAttribute("popover", "manual");
+          notice.setAttribute("role", "alert");
+          notice.setAttribute("data-gosx-navigation-error", "");
+          notice.setAttribute(TOAST_ATTR, "");
+          const copy = document.createElement("span");
+          copy.setAttribute("class", "gosx-toast__message");
+          copy.textContent = " " + message + " Press Escape to dismiss. ";
+          const dismiss = document.createElement("button");
+          dismiss.setAttribute("type", "button");
+          dismiss.setAttribute(TOAST_DISMISS_ATTR, "");
+          dismiss.setAttribute("aria-label", "Dismiss notification");
+          dismiss.textContent = "×";
+          notice.appendChild(copy);
+          notice.appendChild(dismiss);
+          // Native popovers occupy the top layer without inline styles or
+          // affecting a grid/flex layout or focus.
+          document.body.appendChild(notice);
+          notice.showPopover();
+        }
+        return;
+      }
       window.location.href = url.href;
     });
+  }
+
+  function dismissNavigationErrorOnEscape(event) {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    const notice = findElement(document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute("data-gosx-navigation-error");
+    });
+    if (notice) {
+      // The notice is above a managed disclosure. Consume Escape before
+      // document capture handlers can close the underlying draft instead.
+      event.preventDefault();
+      event.stopPropagation();
+      removeManagedToast(notice, "dismiss");
+    }
   }
 
   function onMouseOver(event) {
@@ -7948,6 +8026,7 @@
   // up independently of each other.
   document.addEventListener("visibilitychange", onHeartbeatVisibilityChange);
   if (typeof window.addEventListener === "function") {
+    window.addEventListener("keydown", dismissNavigationErrorOnEscape, true);
     window.addEventListener("popstate", onPopState);
     // onTitleFlashWindowFocus (gosx#214) stops the current data-gosx-watch
     // title flash, if any, the moment the visitor focuses this tab/window
