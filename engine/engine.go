@@ -305,6 +305,10 @@ type Config struct {
 	// MountID is the DOM element ID for mount-bearing engines (ignored for workers).
 	MountID string `json:"mountId,omitempty"`
 
+	// DeferUntilOpen delays mounting while any ancestor details element is closed.
+	// Without a closed details ancestor, the engine mounts normally.
+	DeferUntilOpen bool `json:"deferUntilOpen,omitempty"`
+
 	// MountAttrs are applied to the server-rendered mount element for surface
 	// engines. They are runtime-only and are not serialized into manifests.
 	MountAttrs map[string]any `json:"-"`

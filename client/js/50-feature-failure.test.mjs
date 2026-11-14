@@ -226,3 +226,140 @@ test("a silent Scene3D chunk times out, and a late arrival still mounts the scen
   const stale = context.__gosx.listIssues().filter((issue) => issue.ref === "scene3d" || issue.component === "GoSXScene3D");
   assert.equal(stale.length, 0, "the stale issues are cleared: " + JSON.stringify(stale));
 });
+
+
+test("deferred engine waits for every disclosure and mounts once", async () => {
+  const outer = new FakeElement("details", null);
+  const inner = new FakeElement("details", null);
+  const mount = new FakeElement("div", null);
+  mount.id = "deferred-root";
+  outer.appendChild(inner); inner.appendChild(mount);
+  outer.open = false; inner.open = false;
+  let count = 0;
+  const env = createContext({
+    elements: [outer],
+    engineFactories: { DeferredFixture() { count++; return { dispose() {} }; } },
+    fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] },
+  });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork(); await new Promise(resolve => setTimeout(resolve, 20)); await flushAsyncWork();
+  assert.equal(count, 0);
+  outer.open = true; outer.dispatchEvent({ type: "toggle" }); await flushAsyncWork();
+  assert.equal(count, 0);
+  inner.open = true; inner.dispatchEvent({ type: "toggle" }); await flushAsyncWork();
+  assert.equal(count, 1);
+  inner.open = false; inner.dispatchEvent({ type: "toggle" }); inner.open = true; inner.dispatchEvent({ type: "toggle" }); await flushAsyncWork();
+  assert.equal(count, 1);
+  assert.equal(inner.listenerCount("toggle"), 0);
+});
+
+test("disposing the page cancels deferred mounts", async () => {
+  const details = new FakeElement("details", null), mount = new FakeElement("div", null);
+  mount.id = "deferred-root"; details.appendChild(mount); details.open = false;
+  let count = 0;
+  const env = createContext({ elements: [details], engineFactories: { DeferredFixture() { count++; return {}; } },
+    fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork(); await new Promise(resolve => setTimeout(resolve, 20)); await flushAsyncWork();
+  env.context.__gosx.host.lifecycle.disposePage();
+  details.open = true; details.dispatchEvent({ type: "toggle" }); await flushAsyncWork();
+  assert.equal(count, 0); assert.equal(details.listenerCount("toggle"), 0);
+});
+
+test("deferred mount follows a removed then reinserted disclosure", async () => {
+  const old = new FakeElement("details", null), first = new FakeElement("div", null);
+  first.id = "deferred-root"; old.appendChild(first); old.open = false;
+  let count = 0;
+  const env = createContext({ elements: [old], engineFactories: { DeferredFixture() { count++; return {}; } },
+    fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await settle(30);
+  env.document.byID.delete("deferred-root");
+  for (const observer of env.mutationObservers) observer.trigger();
+  old.open = true; old.dispatchEvent({ type: "toggle" }); await flushAsyncWork();
+  assert.equal(count, 0);
+  const replacement = new FakeElement("details", env.document), second = new FakeElement("div", env.document);
+  second.id = "deferred-root"; replacement.appendChild(second); replacement.open = false;
+  env.document.byID.set("deferred-root", second);
+  for (const observer of env.mutationObservers.slice()) observer.trigger();
+  assert.equal(old.listenerCount("toggle"), 0);
+  replacement.open = true; replacement.dispatchEvent({ type: "toggle" }); await flushAsyncWork();
+  assert.equal(count, 1);
+});
+
+test("late factory honors closed disclosure and page disposal", async () => {
+  const details = new FakeElement("details", null), mount = new FakeElement("div", null);
+  mount.id = "deferred-root"; details.appendChild(mount); details.open = false;
+  let count = 0;
+  const env = createContext({ elements: [details], fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
+  env.context.__gosx_register_engine_factory("DeferredFixture", () => { count++; return {}; });
+  await flushAsyncWork(); assert.equal(count, 0);
+  env.context.__gosx.host.lifecycle.disposePage();
+  env.context.__gosx_mount_late_engine_factory("DeferredFixture");
+  details.open = true; details.dispatchEvent({ type: "toggle" }); await flushAsyncWork();
+  assert.equal(count, 0);
+});
+
+test("late factory waits again if disclosure closes after a failed start", async () => {
+  const details = new FakeElement("details", null), mount = new FakeElement("div", null);
+  mount.id = "deferred-root"; details.appendChild(mount); details.open = false;
+  let count = 0;
+  const env = createContext({ elements: [details], fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
+  details.open = true; details.dispatchEvent({type:"toggle"}); await settle(10);
+  details.open = false; details.dispatchEvent({type:"toggle"});
+  env.context.__gosx_register_engine_factory("DeferredFixture", () => { count++; return {}; });
+  env.context.__gosx_mount_late_engine_factory("DeferredFixture"); await flushAsyncWork();
+  assert.equal(count, 0);
+  details.open = true; details.dispatchEvent({type:"toggle"}); await settle(30);
+  assert.equal(count, 1, JSON.stringify(env.consoleLogs));
+});
+
+test("deferred mount survives removing and reinserting the same node", async () => {
+  const details = new FakeElement("details", null), mount = new FakeElement("div", null);
+  mount.id = "deferred-root"; details.appendChild(mount); details.open = false;
+  let count = 0;
+  const env = createContext({ elements: [details], engineFactories: { DeferredFixture() { count++; return {}; } },
+    fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
+  env.document.byID.delete("deferred-root"); for (const observer of env.mutationObservers) observer.trigger();
+  env.document.byID.set("deferred-root", mount); for (const observer of env.mutationObservers.slice()) observer.trigger();
+  details.open = true; details.dispatchEvent({type:"toggle"}); await flushAsyncWork();
+  assert.equal(count, 1);
+});
+
+test("deferred engine can be remounted after page bootstrap", async () => {
+  const details = new FakeElement("details", null), mount = new FakeElement("div", null);
+  mount.id = "deferred-root"; details.appendChild(mount); details.open = false;
+  let count = 0;
+  const env = createContext({ elements: [details], engineFactories: { DeferredFixture() { count++; return {dispose(){}}; } },
+    fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
+  env.context.__gosx.host.lifecycle.disposePage();
+  await env.context.__gosx.host.lifecycle.bootstrapPage(); await settle(20);
+  assert.equal(count, 0); assert.equal(details.listenerCount("toggle"), 1);
+  details.open = true; details.dispatchEvent({type:"toggle"}); await settle(20);
+  assert.equal(count, 1);
+});
+
+test("duplicate invalid engine cannot leak a deferred listener", async () => {
+  const a = new FakeElement("details", null), b = new FakeElement("details", null);
+  const first = new FakeElement("div", null), second = new FakeElement("div", null);
+  first.id = "first-root"; second.id = "second-root"; a.appendChild(first); b.appendChild(second); a.open = b.open = false;
+  let count = 0;
+  const env = createContext({ elements: [a,b], engineFactories: { DeferredFixture() { count++; return {}; } },
+    fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+    manifest: { engines: ["first-root", "second-root"].map(mountId => ({ id: "deferred", component: "DeferredFixture", kind: "surface", mountId, deferUntilOpen: true })) } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
+  env.context.__gosx.host.lifecycle.disposePage();
+  a.open = b.open = true; a.dispatchEvent({type:"toggle"}); b.dispatchEvent({type:"toggle"}); await flushAsyncWork();
+  assert.equal(count, 0); assert.equal(a.listenerCount("toggle"), 0); assert.equal(b.listenerCount("toggle"), 0);
+});

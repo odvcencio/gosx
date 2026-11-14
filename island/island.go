@@ -1651,6 +1651,8 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		return renderEngineError(err)
 	}
 
+	r.manifest.Engines[len(r.manifest.Engines)-1].DeferUntilOpen = cfg.DeferUntilOpen
+
 	if cfg.Thread == engine.ThreadWorker {
 		last := &r.manifest.Engines[len(r.manifest.Engines)-1]
 		last.Thread = string(cfg.Thread)

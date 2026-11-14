@@ -7,6 +7,8 @@
 // Calls into 30d, 30e and 30f.
   async function disposePage(reuseEngineIDs, nextDoc) {
     const reuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
+    clearDeferredEngineMounts();
+    lastMountManifest = null;
     goWASMEnginePageGeneration += 1;
     for (const pending of Array.from(pendingEngineRuntimes.values())) {
       disposePendingEngine(pending, true);

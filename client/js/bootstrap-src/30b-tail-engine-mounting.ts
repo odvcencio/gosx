@@ -4851,6 +4851,68 @@
     if (moduleRecord) moduleRecord.mountedIDs.add(entry.id);
   }
 
+  // Deferred mounts listen to every disclosure ancestor, including nested ones.
+  // The server fallback remains usable until all of them are open.
+  const deferredEngineMounts = new Map();
+  function clearDeferredEngineMounts() {
+    for (const cancel of deferredEngineMounts.values()) cancel();
+    deferredEngineMounts.clear();
+  }
+  function deferEngineUntilOpen(entry, preflightError) {
+    if (!entry.deferUntilOpen) return false;
+    const mount = resolveEngineMount(entry);
+    if (!mount) return false;
+    const details = [];
+    for (let node = mount.parentElement; node; node = node.parentElement) {
+      if (String(node.tagName || "").toLowerCase() === "details") details.push(node);
+    }
+    if (!details.some(node => !node.open)) return false;
+    const id = String(entry.id || "");
+    let observer = null;
+    let detached = false;
+    const cancel = function() {
+      if (observer) observer.disconnect();
+      for (const node of details) node.removeEventListener("toggle", onToggle);
+      if (deferredEngineMounts.get(id) === cancel) deferredEngineMounts.delete(id);
+    };
+    const onToggle = function() {
+      if (document.getElementById(entry.mountId || entry.id) !== mount) return;
+      for (let node = mount.parentElement; node; node = node.parentElement) {
+        if (String(node.tagName || "").toLowerCase() === "details" && !node.open) return;
+      }
+      cancel();
+      mountEngine(entry, preflightError).catch(function(error) {
+        console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, error);
+      });
+    };
+    for (const node of details) node.addEventListener("toggle", onToggle);
+    if (typeof MutationObserver === "function" && document.documentElement) {
+      observer = new MutationObserver(function() {
+        const replacement = document.getElementById(entry.mountId || entry.id);
+        if (!replacement) {
+          for (const node of details) node.removeEventListener("toggle", onToggle);
+          detached = true;
+          return;
+        }
+        const currentDetails = [];
+        for (let node = replacement.parentElement; node; node = node.parentElement) {
+          if (String(node.tagName || "").toLowerCase() === "details") currentDetails.push(node);
+        }
+        if (replacement === mount && !detached && currentDetails.length === details.length &&
+            currentDetails.every((node, index) => node === details[index])) return;
+        cancel();
+        if (!deferEngineUntilOpen(entry, preflightError)) {
+          mountEngine(entry, preflightError).catch(function(error) {
+            console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, error);
+          });
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    deferredEngineMounts.set(id, cancel);
+    return true;
+  }
+
   // The manifest of the most recent mountAllEngines call, kept for the
   // late-factory hook below. Bundles do not share the runtime's
   // pendingManifest closure variable, so this module records its own copy.
@@ -4874,7 +4936,8 @@
       const engineID = String(entry.id || "");
       if (!engineID) continue;
       if (window.__gosx.engines.has(engineID)) continue;
-      if (pendingEngineRuntimes.has(engineID)) continue;
+      if (pendingEngineRuntimes.has(engineID) || deferredEngineMounts.has(engineID)) continue;
+      if (deferEngineUntilOpen(entry, null)) continue;
       console.info("[gosx] mounting engine after late factory registration:", engineID);
       mountEngine(entry).catch(function(err) {
         console.error("[gosx] late engine mount failed for " + engineID + ":", err);
@@ -4883,6 +4946,7 @@
   };
 
   async function mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap) {
+    clearDeferredEngineMounts();
     lastMountManifest = manifest;
     if (!manifest.engines || manifest.engines.length === 0) return;
     // isNavigationBootstrap is true only when this bootstrap is running as
@@ -4947,7 +5011,9 @@
         // unchanged, so there is nothing to (re)mount here.
         return Promise.resolve();
       }
-      const promise = mountEngine(entry, invalidEntries.get(entry) || null).catch(function(e) {
+      const preflightError = invalidEntries.get(entry) || null;
+      if (!preflightError && deferEngineUntilOpen(entry, null)) return Promise.resolve();
+      const promise = mountEngine(entry, preflightError).catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });
       if (isNavigationBootstrap && engineID) {
