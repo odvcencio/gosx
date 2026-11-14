@@ -2069,3 +2069,35 @@ func TestRenderEngineDefersUntilOpenInManifest(t *testing.T) {
 		t.Fatalf("deferred field missing: %s (%v)", data, err)
 	}
 }
+
+func TestDeferredScene3DUsesInertScriptsAndKeepsMixedScenesEager(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		r := NewRenderer("main")
+		r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, DeferUntilOpen: true}, gosx.Text("fallback"))
+		if mixed {
+			r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+		}
+		html := gosx.RenderHTML(r.BootstrapScriptWithNonce("test-nonce"))
+		if got := strings.Contains(html, `<template id="gosx-deferred-scene3d">`); got == mixed {
+			t.Fatalf("mixed=%v, scripts: %s", mixed, html)
+		}
+		if !strings.Contains(html, `nonce="test-nonce"`) {
+			t.Fatalf("missing nonce: %s", html)
+		}
+		if !mixed && strings.Contains(gosx.RenderHTML(r.PreloadHints()), "bootstrap-feature-scene3d.js") {
+			t.Fatal("deferred Scene3D must not preload")
+		}
+	}
+}
+
+func TestDeferredScene3DSkipsPreloadHints(t *testing.T) {
+	r := NewRenderer("main")
+	props := json.RawMessage(`{"forceWebGL":true,"scene":{"models":[{"src":"/lazy-model.glb"}],"objects":[{"kind":"cube","texture":"/lazy-texture.png"}]}}`)
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, WASMPath: "/lazy-scene.wasm", Runtime: engine.RuntimeGoWASM, Props: props, DeferUntilOpen: true}, gosx.Text("fallback"))
+	hints := gosx.RenderHTML(r.PreloadHints())
+	for _, url := range []string{"/lazy-scene.wasm", "/lazy-model.glb", "/lazy-texture.png", "bootstrap-feature-scene3d-webgl"} {
+		if strings.Contains(hints, url) {
+			t.Fatalf("deferred resource %q is preloaded: %s", url, hints)
+		}
+	}
+}

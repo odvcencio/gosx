@@ -57,6 +57,9 @@ func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
 	}
 	for i := range r.manifest.Engines {
 		entry := &r.manifest.Engines[i]
+		if r.usesSelectiveRuntimeBootstrap() && entry.DeferUntilOpen {
+			continue
+		}
 		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
 			continue
 		}
