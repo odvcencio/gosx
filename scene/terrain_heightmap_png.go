@@ -13,6 +13,10 @@ import (
 // DecodeHeightmapPNG reads a grayscale PNG. A 16-bit file keeps every bit; an
 // 8-bit or color file uses its luminance scaled to 16 bits. The image's top
 // row becomes the terrain's minimum-Z row.
+//
+// DecodeHeightmapPNG is not available in js/wasm builds, which do not link the
+// PNG codec. In the browser, build the heightmap with HeightmapFromRaw, or
+// decode the PNG on the server.
 func DecodeHeightmapPNG(r io.Reader) (*Heightmap, error) {
 	img, _, err := image.Decode(r)
 	if err != nil {

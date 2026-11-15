@@ -2,13 +2,13 @@
 
 ## Unreleased
 
-### Fixes
-
-- `scene` no longer links `image`, `image/color` and `image/png` into js/wasm builds (#PR). In those builds the shoreline bake writes an uncompressed PNG (262,618 bytes as a data URL at resolution 256); native output is byte-for-byte unchanged.
-
 ### Breaking changes and migration
 
 - `scene.DecodeHeightmapPNG` no longer builds for js/wasm (#PR). Migration: decode the PNG on the server and send the samples, or build the heightmap in the browser with `scene.HeightmapFromRaw`.
+
+### Fixes
+
+- `scene` no longer links `image`, `image/color` and `image/png` into js/wasm builds (#PR). In those builds the shoreline bake writes an uncompressed PNG (262,618 bytes as a data URL at resolution 256); native output is byte-for-byte unchanged.
 
 ## v0.60.0
 

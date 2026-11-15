@@ -21,6 +21,9 @@ func pinnedShorelineTerrain(t *testing.T) *Terrain {
 }
 
 func TestBakeShorelineNativeBytesArePinned(t *testing.T) {
+	// The digests depend on the Go toolchain's compress/flate output. To
+	// regenerate them, run this test and copy the "got" hashes from the failure
+	// messages.
 	cases := []struct {
 		resolution int
 		sum        string
