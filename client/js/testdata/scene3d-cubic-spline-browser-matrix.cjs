@@ -104,6 +104,7 @@ const NEGATIVE_ERRORS = {
       '[' + name + '] texture lacks ' + color + ' pixels (expected >= 100)')),
 };
 const EXPECTED_CASE_NAMES = Object.freeze(['affine-gl', 'affine-wg', 'gl', 'wg', 'textured-gl', 'textured-wg']);
+const affinePick = require('./scene3d-affine-pick-geometry.cjs');
 const AFFINE_PARENT = Object.freeze([
   -2, 0, 0, 0,
   0, 1, 0, 0,
@@ -134,6 +135,8 @@ function verifyHostedClaimSources() {
       'scene3d-browser-diagnostics.cjs'),
     texturedFixture: path.join(REPO, 'client', 'js', 'testdata',
       'textured-glb-fixture.cjs'),
+    affinePickGeometry: path.join(REPO, 'client', 'js', 'testdata',
+      'scene3d-affine-pick-geometry.cjs'),
     workflow: path.join(REPO, '.github', 'workflows', 'ci.yml'),
     corpus: path.join(REPO, 'scene', 'harness', 'testdata', 'v1-corpus.json'),
     readme: path.join(REPO, 'README.md'),
@@ -471,9 +474,14 @@ function checkAffine(failures, value, webgpu) {
     const pick = affine.pick;
     exact(failures, pick && pick.targetID, 'affine-group-child',
       name + '.affine.pick.targetID');
+    // The pointer is at a pixel only the scaled triangle covers, not at the
+    // image of the local origin (0.5, 0.5, 1). The expected point and depth come
+    // from scene3d-affine-pick-geometry.cjs, which derives them from the camera,
+    // the canvas and the pixel offset. Depth is the distance along the unit ray.
+    const expectedPick = affinePick.expectedPick();
     closeArray(failures, pick && [pick.worldX, pick.worldY, pick.worldZ],
-      [0.5, 0.5, 1], name + '.affine.pick.world', 2e-4);
-    relativeClose(failures, pick && pick.depth, 2,
+      expectedPick.world, name + '.affine.pick.world', 2e-4);
+    relativeClose(failures, pick && pick.depth, expectedPick.depth,
       name + '.affine.pick.depth', 1e-4);
 
     if (webgpu) {
