@@ -249,10 +249,6 @@
   scroll-margin-top: 6rem;
 }
 
-.docs-guide-body {
-  max-width: var(--measure-prose);
-}
-
 .prose p {
   margin-bottom: var(--space-md);
   line-height: var(--lh-prose);
@@ -299,53 +295,6 @@
 
 .prose pre {
   margin: var(--space-md) 0;
-}
-
-.docs-guide-body pre {
-  padding: var(--space-md);
-  overflow-x: auto;
-  background: var(--code-bg);
-  border: 1px solid var(--code-border);
-  border-radius: var(--radius-md);
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  line-height: var(--lh-code);
-  tab-size: 4;
-}
-
-.docs-guide-body pre code {
-  font: inherit;
-  background: none;
-  border: 0;
-  padding: 0;
-}
-
-.docs-guide-body table {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  margin: var(--space-md) 0;
-  overflow-x: auto;
-  border-collapse: collapse;
-  font-size: var(--type-sm);
-}
-
-.docs-guide-body th,
-.docs-guide-body td {
-  padding: var(--space-xs) var(--space-sm);
-  text-align: left;
-  vertical-align: top;
-  border-bottom: 1px solid var(--border);
-}
-
-.docs-guide-body th {
-  color: var(--text-primary);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.docs-guide-body td {
-  color: var(--text-secondary);
 }
 
 /* ------------------------------------------------------------
@@ -912,10 +861,4 @@
     padding-top: var(--space-md);
   }
 
-  .docs-guide-body pre {
-    margin-inline: calc(var(--space-sm) * -1);
-    padding: var(--space-sm);
-    border-radius: 0;
-    border-inline: 0;
-  }
 }
