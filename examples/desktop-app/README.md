@@ -45,16 +45,30 @@ CGO_ENABLED=0 go build -o desktop-app ./examples/desktop-app
 ./desktop-app
 ```
 
-The macOS backend is being built in slices. Today it provides the window, the
+The macOS backend is being built in slices. It provides the window, the
 web view, `Navigate`, `SetHTML`, `Reload`, `ExecuteScript`, `SetTitle`, the
 background color, `OnWindowCreated`, `OnNavigationCompleted`, `OnClose` and the
 startup timeline (`EnvironmentReady` stays zero: WebKit has no separate
 environment step), the menu bar (`SetMenuBar`, with a standard application menu
-in front of the example's File menu), `SetMinSize`, `SetMaxSize`, `OpenURL` and
-the native message box. This example runs on it and works around what is not
-there yet: the file dialogs and the typed bridge to the page report
-`desktop.ErrUnsupported` until later slices land, and `GPU`, `SingleInstance` and
-`OnFocusChanged` have no effect. `App.Run` must be called from the main goroutine
+in front of the example's File menu), `SetMinSize`, `SetMaxSize`, `OpenURL`, the
+native message box, the native file dialogs (`OpenFileDialog` and
+`SaveFileDialog`) and the string transport and typed bridge between Go and the
+page.
+
+This example uses `desktop.New`, `App.Run`, `BackgroundColor`, `SetHTML`,
+`Navigate`, `App.Bind` and `Bridge().Emit` (the typed bridge), `SetMenuBar`,
+`OpenFileDialog`, `ShowMessage`, `OnNavigationCompleted`, `StartupTimeline` and
+`Close` on macOS. It does not call `Reload`, `ExecuteScript`, `SaveFileDialog`,
+`SetMinSize`, `SetMaxSize`, `OpenURL` or `SetTitle`.
+
+These report `desktop.ErrUnsupported` on macOS: `OpenDevTools`, `Minimize`,
+`Maximize`, `Restore`, `Focus`, `SetFullscreen`, `Serve`, `Clipboard`,
+`SetClipboard`, `WindowPlacement`, `NewWindow`, `RegisterProtocol`,
+`RegisterFileType`, `SetTray`, `CloseTray`, `Notify`, `SetFileDropHandler`,
+`AcquireSingleInstance` and `ForwardToFirstInstance`, and `WindowState` makes
+`desktop.New` fail. `GPU`, `SingleInstance` and `OnFocusChanged` (which the
+example sets) have no effect. The example tolerates this because it uses none of
+the unsupported calls. `App.Run` must be called from the main goroutine
 (the `desktop` package pins it to the main thread when it is imported). SIGINT and
 SIGTERM close the window and stop the engine.
 

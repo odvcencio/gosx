@@ -36,7 +36,14 @@ func (r *Renderer) scene3DCanUseWebGPU() bool {
 	return false
 }
 
-func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
+func preloadNonceAttr(nonce string) string {
+	if nonce == "" {
+		return ""
+	}
+	return ` nonce="` + html.EscapeString(nonce) + `"`
+}
+
+func (r *Renderer) writeScene3DPreloads(b *strings.Builder, nonce string) {
 	seen := map[string]bool{}
 	add := func(path, as string) {
 		path = strings.TrimSpace(path)
@@ -52,6 +59,7 @@ func (r *Renderer) writeScene3DPreloads(b *strings.Builder) {
 		fmt.Fprintf(b, `<link rel="preload" href="%s" as="%s" crossorigin="anonymous"`, html.EscapeString(path), as)
 		if as == "script" {
 			b.WriteString(` referrerpolicy="no-referrer"`)
+			b.WriteString(preloadNonceAttr(nonce))
 		}
 		b.WriteString(">\n")
 	}

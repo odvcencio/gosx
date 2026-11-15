@@ -34,6 +34,7 @@ Query parameters pick the configuration:
 | `audio` | `off`, `worklet` (silent kernel), `cicada` | `off` |
 | `width`, `height` | canvas size in CSS pixels | `1920`, `1080` |
 | `cull` | `0` turns off GPU frustum culling of the crowd on WebGPU | on |
+| `occlusion` | `1` adds two-phase Hi-Z occlusion culling to `cull` | off |
 | `shadows` | `1` adds a shadow-casting sun | off |
 
 `window.__stress.collect()` returns the per-frame measurements as JSON; see

@@ -3904,6 +3904,7 @@
 
   function sceneCommitRigidInstancePatch(patch) {
     sceneCommitImportedModelPose(patch, sceneApplyModelSkinPose);
+    for (const object of patch.staged.objects) sceneCrowdBatchTouch(object);
   }
 
   function sceneUpdateRigidInstancePoses(state, hydrationModels) {
@@ -4092,7 +4093,7 @@
         bounds.minX = bounds.minY = bounds.minZ = Infinity;
         bounds.maxX = bounds.maxY = bounds.maxZ = -Infinity;
         api.crowdMotionSweptBoundsInto(bounds, motion.record, motion.localRadius);
-        motion.dirty = true;
+        motion.dirty = true; sceneCrowdBatchTouch(object);
       }
     }
     return true;

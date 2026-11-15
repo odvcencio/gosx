@@ -2,22 +2,35 @@
 
 ## Unreleased
 
-### Added
+### Breaking changes and migration
+
+- Look change for native preview images (#866): the headless device's lit path now follows the lit WGSL in `render/bundle/lit.go`. It shades with the inverse-transpose normal times the sign of the model determinant, so normals are right under non-uniform or mirrored transforms, and it discards fragments whose screen winding disagrees with that sign, so back faces no longer draw. A real GPU already discarded those fragments. Two golden images changed, `mat-opacity-alpha` and `mat-opacity-additive` in `scene/harness/testdata/matrix`: 3 of 6,144 pixels each, at the silhouette of a translucent sphere, where its back hemisphere used to blend. Unlit and shadow-depth drawing still fill both windings; the shadow WGSL discards by orientation and the headless shadow pass does not yet.
+
+### Scene3D and Selena
+
+- Scene3D v1 corpus row `ordered-post-custom-uniforms` is now `enforced` (#866). Two Node tests in `client/js/runtime-20-scene-shaders-custom-post.test.js`, one for WebGPU and one for WebGL2, run a custom pass, tone mapping and a second custom pass, check they run in declaration order, and send a live uniform patch through `SCENE_CMD_SET_POST_UNIFORMS`. The next frame uploads the new value and builds no new shader module, pipeline or program. The tests run against fake GPU devices, not a real GPU, and cover custom passes around tone mapping.
+- Scene3D v1 corpus row `native-preview-degradation` is now `enforced` (#866). `render/bundle.PostEffectDiagnostics` reports every custom post pass the native renderer does not run, one diagnostic per pass in declaration order: `scene.native.custom_post_passthrough` for a pass with WGSL (the headless device draws it as an identity passthrough) and `scene.native.custom_post_skipped` for a pass without WGSL. `scene/preview` returns them in `Result.Bundle.Diagnostics`, so `gosx scene` shows them. A specular bloom finding no longer hides later findings, and the preview now reports only the post effects it renders (none with `DisablePostFX`, and those added by `RenderJSON`). Pixels do not change.
+- Scene3D v1 corpus row `nested-group-scale-pick` is now `enforced` (#866). The Go test `TestHeadlessNestedGroupScaleNormalsWindingAndPick` renders nested scaled groups on the headless device and checks normals, winding and pick under a non-uniform scale, a reflection and a nested uniform scale. The hosted-browser proof now picks at a pixel only the scaled triangle covers, so it fails if the pick ignores the scale; the expected point and depth come from `client/js/testdata/scene3d-affine-pick-geometry.cjs`. The browser fixture still uses one hand-written parent matrix, not nested groups.
+- `CustomPost.Stage` documentation corrected (#866). `Stage` is reserved: no renderer reads it; the browser backends and the native renderer run custom passes in declaration order, so declare a pass before or after `Tonemap` to place it. No behaviour change.
+- `README.md` and `examples/desktop-app/README.md` corrected (#866). The desktop shows Scene3D in the system webview through the browser backends; the pure-Go renderer is a CPU rasterizer behind `scene/preview`, with no native GPU device. The macOS list now includes the file dialogs and the typed bridge, which work.
+- A scene that fell back from WebGPU to WebGL2 no longer draws a blank canvas. The WebGL renderer called `uv1.use`, `uv1.bind` and `uv1.dispose` on a stub the WebGPU renderer had left without them (#853).
+- WebGPU auto exposure compiled again. Its measure shader declared `let target`, a reserved WGSL word that Chrome rejects, so any scene that set `Environment.AutoExposure` fell back to WebGL2. A new test scans the Scene3D runtime's WGSL for reserved words (#851).
+
+### Docs and docs site
 
 - Add 19 guide pages to the docs site under `/docs/guides/<slug>`: a "Games & simulation" section (game kit, rooms, netplay, determinism, physics and characters, team AI, replay, audio, speech, static export, game performance), terrain, crowds, the animation graph, shadows, image quality, decals and vessels under "Visual systems", and desktop packaging and signing. Each page renders from its `docs/*.md` file. Run `go generate ./examples/gosx-docs/app/docs` after you edit one of those guides.
 - Add `docs/packages.md` (a generated package map with layers and stability tiers), `docs/STABILITY.md`, `docs/ci-gates.md` and `docs/README.md` (a guide index). `go run ./scripts/pkgmap` regenerates the map, and a test fails when it is stale. Make `make ci` run every hosted CI Make target.
-
-### Changed
-
 - Restyle the docs site: a smaller type scale (`--type-base` and `--type-sm`), a denser guide navigation sent once (a CSS-only toggle on phones), and a reading width for guide pages. New tokens `--measure-prose`, `--type-label` and `--ls-eyebrow`.
 - Replace the `docs/` ignore allow-list with a test that keeps specs, plans and reports out of `docs/`.
+
+### Examples and starter
+
 - `gosx init` now teaches the strict `component Name(props: Type)` syntax in both templates, and each template includes a `README.md`. `gosx init` prints, and that README links, one path to a deployed app: `gosx build --prod`, `gosx deploy check dist`, and the deployment guide. The docs template's overview text now describes a starter docs site, and its navigation marks the current page with `aria-current="true"`.
-
-### Fixed
-
-- A scene that fell back from WebGPU to WebGL2 no longer draws a blank canvas. The WebGL renderer called `uv1.use`, `uv1.bind` and `uv1.dispose` on a stub the WebGPU renderer had left without them (#853).
-- WebGPU auto exposure compiled again. Its measure shader declared `let target`, a reserved WGSL word that Chrome rejects, so any scene that set `Environment.AutoExposure` fell back to WebGL2. A new test scans the Scene3D runtime's WGSL for reserved words (#851).
 - The `goetrope-watch` example serves its `/watch/<channel>` pages again (its page modules were never imported) and renders its layout once; `basic`, `canvasboard` and `goetrope-watch` read `PORT`.
+
+### Tooling and CI
+
+- The Scene3D v1 corpus contract test now knows all four Node test groups (`runtime`, `scene3d`, `scene3d-b`, `other`) and rejects evidence whose file the cited job does not run (#866). `gltf-cubic-trs-morph` cited `js-tests-b`, which no longer runs `scene3d-cubic-spline.test.mjs`; it now cites `js-tests-scene3d`. A Node test path that no group runs, or an owner command with no readable `NODE_TEST_GROUP`, now fails the check.
 
 ## v0.60.0
 

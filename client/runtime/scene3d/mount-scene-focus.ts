@@ -36,8 +36,26 @@ function sceneFocusPools() {
   const bundle = arguments[0], sceneStateArg = arguments[1];
   const pools = [];
   if (bundle && typeof bundle === "object") pools.push(bundle.meshObjects, bundle.objects, bundle.models);
-  if (sceneStateArg && typeof sceneStateArg === "object") pools.push(sceneStateObjects(sceneStateArg), sceneStateArg.models);
+  if (sceneStateArg && typeof sceneStateArg === "object") pools.push(sceneFocusStateNodes(sceneStateArg), sceneStateArg.models);
   return pools;
+}
+
+// sceneFocusStateNodes returns the scene state's interactive objects in table
+// order. A scene can hold tens of thousands of objects (a hydrated crowd), so
+// the list is rebuilt only when the table's interactiveRevision moves; a table
+// without one (a plain Map or array) is read in full every time.
+const sceneFocusStateCache = new WeakMap();
+function sceneFocusStateNodes() {
+  const sceneStateArg = arguments[0];
+  const table = sceneStateArg.objects;
+  if (!table || typeof table !== "object" || typeof table.interactiveRevision !== "number") return sceneStateObjects(sceneStateArg);
+  let cached = sceneFocusStateCache.get(table);
+  if (!cached || cached.revision !== table.interactiveRevision) {
+    cached = { revision: table.interactiveRevision, nodes: [] };
+    for (const node of table.values()) if (node && node.interactive === true) cached.nodes.push(node);
+    sceneFocusStateCache.set(table, cached);
+  }
+  return cached.nodes;
 }
 
 function sceneFocusCandidates() {

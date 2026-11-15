@@ -543,9 +543,9 @@ func (ir FXAAIR) MarshalJSON() ([]byte, error) {
 // CustomMaterial fields so the JS runtime can build pipelines from them
 // without contacting the Go server again.
 //
-// Stage controls insertion point in the browser post chain:
-//   - "" / "beforeTonemap" → after bloom, before tonemap (default)
-//   - "afterTonemap"       → after tonemap, in the LDR region
+// Stage carries CustomPost.Stage ("beforeTonemap" when empty). The browser
+// backends and the native renderer do not read it: a custom pass runs at its
+// position in the declared post-effect list.
 type CustomPostIR struct {
 	Name          string                  `json:"name"`
 	Stage         string                  `json:"stage,omitempty"`
