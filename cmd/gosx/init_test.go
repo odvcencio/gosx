@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
 )
 
 func TestRunInitCreatesStarterProject(t *testing.T) {
@@ -428,5 +433,105 @@ func assertAllGSXCompile(t *testing.T, root string) {
 	})
 	if err != nil {
 		t.Fatalf("walk %s: %v", root, err)
+	}
+}
+
+// legacyPropsDeclaration matches `func Name(props ...) Node`, the component
+// declaration the README marks deprecated. A no-argument `func Page() Node` or
+// `func Layout() Node` is not a props component and stays allowed: a layout
+// needs it because a strict component cannot render <Slot />.
+var legacyPropsDeclaration = regexp.MustCompile(`(?m)^func\s+[A-Z]\w*\(\s*props\b[^)]*\)\s*Node\b`)
+
+// TestInitTemplatesTeachStrictSyntax guards decision D3 from the v0.60.0
+// re-examination: neither scaffold may teach syntax the README deprecates.
+func TestInitTemplatesTeachStrictSyntax(t *testing.T) {
+	for _, template := range []string{"app", "docs"} {
+		t.Run(template, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), template)
+			if err := RunInit(dir, "example.com/"+template, template); err != nil {
+				t.Fatal(err)
+			}
+			checked := 0
+			err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() || filepath.Ext(path) != ".gsx" {
+					return err
+				}
+				checked++
+				source := readFile(t, path)
+				if legacyPropsDeclaration.MatchString(source) {
+					t.Errorf("%s declares a legacy props component; use component Name(props: Type)", path)
+				}
+				var stderr bytes.Buffer
+				if err := runCheck(path, &stderr); err != nil {
+					t.Errorf("gosx check %s: %v", path, err)
+				}
+				if strings.Contains(stderr.String(), "legacy") {
+					t.Errorf("gosx check %s warns about legacy syntax:\n%s", path, stderr.String())
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if checked == 0 {
+				t.Fatal("no .gsx files in scaffold")
+			}
+		})
+	}
+}
+
+// TestInitTemplatesLinkToDeployment checks the one step from a new project to
+// a deployed app: the printed next steps and the generated README name the
+// production build, the bundle check, and the deployment guide.
+func TestInitTemplatesLinkToDeployment(t *testing.T) {
+	steps := initNextSteps("my-app")
+	for _, want := range []string{"go run .", "gosx build --prod", "gosx deploy check dist", initDeployDocsURL} {
+		if !strings.Contains(steps, want) {
+			t.Errorf("next steps missing %q:\n%s", want, steps)
+		}
+	}
+	for _, template := range []string{"app", "docs"} {
+		dir := filepath.Join(t.TempDir(), template)
+		if err := RunInit(dir, "example.com/"+template, template); err != nil {
+			t.Fatal(err)
+		}
+		readme := readFile(t, filepath.Join(dir, "README.md"))
+		for _, want := range []string{"gosx build --prod", "gosx deploy check dist", "GOSX_ENV=production", "PUBLIC_URL", initDeployDocsURL} {
+			if !strings.Contains(readme, want) {
+				t.Errorf("%s README missing %q", template, want)
+			}
+		}
+	}
+}
+
+// TestDocsTemplateLayoutMarksCurrentPage renders the docs scaffold's layout and
+// checks that the navigation marks only the current page with aria-current="true".
+func TestDocsTemplateLayoutMarksCurrentPage(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "docs")
+	if err := RunInit(dir, "example.com/docs", "docs"); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := route.FileLayout(filepath.Join(dir, "app", "layout.gsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &route.RouteContext{Request: httptest.NewRequest(http.MethodGet, "/docs/routing", nil)}
+	rendered := gosx.RenderHTML(layout(ctx, gosx.El("main", gosx.Text("body"))))
+	if status := ctx.StatusCode(); status != 0 && status != http.StatusOK {
+		t.Fatalf("layout status = %d: %s", status, rendered)
+	}
+	link := regexp.MustCompile(`<a href="/docs/routing"[^>]*>`)
+	found := link.FindAllString(rendered, -1)
+	if len(found) == 0 {
+		t.Fatalf("no routing link in layout:\n%s", rendered)
+	}
+	for _, tag := range found {
+		if !strings.Contains(tag, `aria-current="true"`) {
+			t.Errorf("current page link lacks aria-current=\"true\": %s", tag)
+		}
+	}
+	other := regexp.MustCompile(`<a href="/docs/forms"[^>]*>`).FindString(rendered)
+	if other == "" || strings.Contains(other, `aria-current="true"`) {
+		t.Errorf("other page link must not be marked current: %q", other)
 	}
 }

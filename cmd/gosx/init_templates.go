@@ -43,6 +43,7 @@ func scaffoldFilesForTemplate(module, template string) ([]scaffoldFile, error) {
 			{Path: "session_secret.go", Contents: sessionSecretTemplate()},
 			{Path: ".env", Contents: envTemplate()},
 			{Path: ".gitignore", Contents: gitignoreTemplate()},
+			{Path: "README.md", Contents: readmeTemplate(initTemplateApp)},
 			{Path: "app/layout.gsx", Contents: appLayoutTemplate()},
 			{Path: "app/page.server.go", Contents: appHomeServerTemplate()},
 			{Path: "app/page.gsx", Contents: appHomeTemplate()},
@@ -67,6 +68,7 @@ func docsTemplateFiles(module string) ([]scaffoldFile, error) {
 		{Path: "session_secret.go", Contents: sessionSecretTemplate()},
 		{Path: ".env", Contents: docsEnvTemplate()},
 		{Path: ".gitignore", Contents: gitignoreTemplate()},
+		{Path: "README.md", Contents: readmeTemplate(initTemplateDocs)},
 	}
 
 	err := fs.WalkDir(initTemplateFS, "templates/docs", func(path string, d fs.DirEntry, err error) error {

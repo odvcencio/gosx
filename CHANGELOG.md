@@ -10,6 +10,9 @@
 - Restyle the docs site: a smaller type scale (`--type-base` and `--type-sm`), a denser guide navigation sent once (a CSS-only toggle on phones), and a reading width for guide pages. New tokens `--measure-prose`, `--type-label` and `--ls-eyebrow`.
 - Add `docs/packages.md` (a generated package map with layers and stability tiers), `docs/STABILITY.md`, `docs/ci-gates.md` and `docs/README.md` (a guide index). `go run ./scripts/pkgmap` regenerates the map, and a test fails when it is stale. Make `make ci` run every hosted CI Make target.
 - Replace the `docs/` ignore allow-list with a test that keeps specs, plans and reports out of `docs/`.
+### Changed
+
+- `gosx init` now teaches the strict `component Name(props: Type)` syntax in both templates, and each template includes a `README.md`. `gosx init` prints, and that README links, one path to a deployed app: `gosx build --prod`, `gosx deploy check dist`, and the deployment guide. The docs template's overview text now describes a starter docs site, and its navigation marks the current page with `aria-current="true"`.
 
 ## v0.60.0
 

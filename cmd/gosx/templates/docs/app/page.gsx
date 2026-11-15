@@ -1,14 +1,20 @@
 package docs
 
-func FeatureCard(props any) Node {
+type FeatureCardProps struct {
+	Kicker string
+	Title  string
+	Body   string
+	Href   string
+}
+
+component FeatureCard(props: FeatureCardProps) {
 	return <section class="card">
 		<strong>{props.Kicker}</strong>
 		<h3>{props.Title}</h3>
 		<p>{props.Body}</p>
 		<div class="hero-actions">
-			<Link class="hero-link" href={props.Href}>Open section</Link>
+			<a class="hero-link" href={props.Href} data-gosx-link>Open section</a>
 		</div>
-		{props.Children}
 	</section>
 }
 
@@ -17,16 +23,17 @@ func Page() Node {
 		<div class="page-topper">
 			<span class="eyebrow">Overview</span>
 			<p class="lede">
-				A paper-and-ink docs surface that exists to prove GoSX can route files, swap pages, and stay coherent.
+				A starter documentation site. Replace these pages with your own.
 			</p>
 		</div>
 		<h1>
-			GoSX now has a docs site that actually runs through its own pipeline.
+			Write your docs as plain .gsx pages.
 		</h1>
 		<p>
-			The point of this app is blunt: prove that GoSX can map a directory tree to routes, render real pages from
+			This site maps a directory tree to routes, renders each page from
 			<span class="inline-code">.gsx</span>
-			source, and move between them without full reloads.
+			source on the server, and moves between pages without full reloads. Start from the quickstart, then edit the files under
+			<span class="inline-code">app/</span>.
 		</p>
 		<div class="hero-actions">
 			<Link class="hero-link primary" href="/docs/getting-started">Open the quickstart path</Link>
