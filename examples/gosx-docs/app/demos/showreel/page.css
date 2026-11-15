@@ -30,6 +30,8 @@
 }
 .orbital-study h1 { margin: var(--space-xs) 0; font: 800 var(--type-2xl)/1.05 var(--font-display); letter-spacing: -0.04em; }
 .orbital-study p { line-height: 1.55; }
+.orbital-study__shows { margin: 0 0 var(--space-sm); color: rgba(245, 238, 227, 0.82); font-size: var(--type-sm); }
+.orbital-study__shows a { color: #f6ba77; pointer-events: auto; white-space: nowrap; }
 .orbital-study__intro > a { display: inline-flex; min-height: 2.5rem; align-items: center; color: #f6ba77; pointer-events: auto; }
 @media (max-width: 700px) {
   .orbital-study__intro { left: var(--space-md); right: var(--space-md); bottom: var(--space-md); width: auto; padding: var(--space-md); }

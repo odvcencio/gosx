@@ -18,14 +18,17 @@ func TestDemoShowreelStaysWithinItsRenderBudget(t *testing.T) {
 	if props.MaxPixels != showreelMaxPixels {
 		t.Errorf("showreel MaxPixels = %d, want %d", props.MaxPixels, showreelMaxPixels)
 	}
-	if props.PostFX.MaxPixels != scene.PostFXMaxPixels540p {
-		t.Errorf("showreel postfx MaxPixels = %d, want %d", props.PostFX.MaxPixels, scene.PostFXMaxPixels540p)
+	if props.PostFX.MaxPixels != scene.PostFXMaxPixels720p {
+		t.Errorf("showreel postfx MaxPixels = %d, want %d", props.PostFX.MaxPixels, scene.PostFXMaxPixels720p)
 	}
-	if props.Shadows.MaxPixels != scene.ShadowMaxPixels512 {
-		t.Errorf("showreel shadow MaxPixels = %d, want %d", props.Shadows.MaxPixels, scene.ShadowMaxPixels512)
+	if props.Shadows.MaxPixels != scene.ShadowMaxPixels1024 {
+		t.Errorf("showreel shadow MaxPixels = %d, want %d", props.Shadows.MaxPixels, scene.ShadowMaxPixels1024)
 	}
-	if props.MaxFPS != 30 || props.MaxDevicePixelRatio != 1.5 {
-		t.Errorf("showreel frame budget = %.0f fps at %.1f DPR, want 30 fps at 1.5 DPR", props.MaxFPS, props.MaxDevicePixelRatio)
+	if props.MaxFPS != 60 || props.MaxDevicePixelRatio != 1.5 {
+		t.Errorf("showreel frame budget = %.0f fps at %.1f DPR, want 60 fps at 1.5 DPR", props.MaxFPS, props.MaxDevicePixelRatio)
+	}
+	if props.AdaptiveQuality == nil || !*props.AdaptiveQuality || props.AdaptivePostFX == nil || !*props.AdaptivePostFX {
+		t.Error("showreel must keep adaptive quality so slower devices shed post effects")
 	}
 	if props.FillHeight == nil || !*props.FillHeight {
 		t.Error("showreel must fill the bounded CSS stage at desktop and mobile sizes")
@@ -34,13 +37,14 @@ func TestDemoShowreelStaysWithinItsRenderBudget(t *testing.T) {
 		reflect.TypeOf(scene.Bloom{}),
 		reflect.TypeOf(scene.Tonemap{}),
 		reflect.TypeOf(scene.Vignette{}),
+		reflect.TypeOf(scene.TAA{}),
 	}
 	gotPostFX := make([]reflect.Type, 0, len(props.PostFX.Effects))
 	for _, effect := range props.PostFX.Effects {
 		gotPostFX = append(gotPostFX, reflect.TypeOf(effect))
 	}
 	if !reflect.DeepEqual(gotPostFX, wantPostFX) {
-		t.Errorf("showreel postfx order = %v, want Bloom → Tonemap → Vignette", gotPostFX)
+		t.Errorf("showreel postfx order = %v, want Bloom → Tonemap → Vignette → TAA (TAA last)", gotPostFX)
 	}
 }
 
@@ -107,5 +111,43 @@ func showreelNodeID(node scene.Node) string {
 		return node.ID
 	default:
 		return ""
+	}
+}
+
+// TestDemoShowreelDeclaresItsImageQualityChain keeps the three v0.60.0
+// features the page text names: auto exposure, a two-cascade shadow, and TAA.
+func TestDemoShowreelDeclaresItsImageQualityChain(t *testing.T) {
+	props := DemoShowreelProgram()
+	if props.Environment.AutoExposure == nil {
+		t.Error("showreel should declare Environment.AutoExposure")
+	}
+	var cascades int
+	for _, node := range props.Graph.Nodes {
+		if light, ok := node.(scene.DirectionalLight); ok && light.CastShadow {
+			cascades = light.ShadowCascades
+		}
+	}
+	if cascades != 2 {
+		t.Errorf("showreel key light ShadowCascades = %d, want 2", cascades)
+	}
+}
+
+// TestDemoShowreelShedsTAAFirst keeps TAA on the top quality rung only, so a
+// slower device drops it before bloom and tone mapping.
+func TestDemoShowreelShedsTAAFirst(t *testing.T) {
+	ladder := DemoShowreelProgram().QualityLadder
+	if len(ladder) != 3 {
+		t.Fatalf("quality ladder has %d rungs, want 3", len(ladder))
+	}
+	has := func(rung scene.QualityRung, kind string) bool {
+		for _, effect := range rung.PostEffects {
+			if effect == kind {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(ladder[0], "taa") || has(ladder[1], "taa") || !has(ladder[1], "bloom") || len(ladder[2].PostEffects) != 0 {
+		t.Errorf("ladder = %#v, want TAA only on rung 0 and no effects on the last rung", ladder)
 	}
 }
