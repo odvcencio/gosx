@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Link the rooms demo card and its "See it live" pairing to the rooms guide at `/docs/guides/rooms`. The game performance guide now summarizes what to expect from the stress scene instead of listing every run.
+
 ### Breaking changes and migration
 
 - Look change for native preview images (#866): the headless device's lit path now follows the lit WGSL in `render/bundle/lit.go`. It shades with the inverse-transpose normal times the sign of the model determinant, so normals are right under non-uniform or mirrored transforms, and it discards fragments whose screen winding disagrees with that sign, so back faces no longer draw. A real GPU already discarded those fragments. Two golden images changed, `mat-opacity-alpha` and `mat-opacity-additive` in `scene/harness/testdata/matrix`: 3 of 6,144 pixels each, at the silhouette of a translucent sphere, where its back hemisphere used to blend. Unlit and shadow-depth drawing still fill both windings; the shadow WGSL discards by orientation and the headless shadow pass does not yet.
