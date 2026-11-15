@@ -136,6 +136,9 @@ func shadowStage(t *testing.T, posts []stagePost, light scene.Vector3, features 
 	}
 }
 
+// shadowStageInit runs in the page before its scripts.
+var shadowStageInit = `window.__gosx_scene3d_render_truth=true`
+
 // shadowStagePage mounts props on the production lazy-chunk WebGL page and
 // returns the page once the scene has drawn.
 func shadowStagePage(t *testing.T, props scene.Props) *browserPage {
@@ -166,7 +169,7 @@ func shadowStagePage(t *testing.T, props scene.Props) *browserPage {
 		url = e2eExposeToWindows(t, server.URL)
 	}
 	browser := newBrowserPage(t, e2eChromePath(t), map[string]any{"use-angle": "swiftshader", "enable-unsafe-swiftshader": true, "disable-features": "WebGPU"},
-		int(props.Width)+80, int(props.Height)+80, `window.__gosx_scene3d_render_truth=true`, 150*time.Second)
+		int(props.Width)+80, int(props.Height)+80, shadowStageInit, 150*time.Second)
 	browser.navigate(t, url+"/")
 	browser.waitFor(t, `!!window.mountError || document.getElementById('stage')?.getAttribute('data-gosx-scene3d-render-mesh-drawn') > 0`, 60*time.Second, "the stage to draw")
 	var mountError string

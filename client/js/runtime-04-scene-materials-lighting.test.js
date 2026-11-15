@@ -1808,6 +1808,35 @@ test("bootstrap stamps and validates Scene3D IR bundles", async () => {
   assert.ok(negativeInstanced.errors.some((entry) => entry.includes("instancedMesh.count")));
 });
 
+test("a scene's shadow map cap reaches the render bundle", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const bundleFor = (state) => api.createSceneRenderBundle(
+    320, 180, "#08151f", { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    [], [], [], [], [], { ambientColor: "#ffffff", ambientIntensity: 0.1 }, 0,
+    [], [], [], [], [], 0, false, {}, state,
+  );
+
+  // Both renderers read bundle.shadowMaxPixels and keep every shadow map at
+  // 1024 pixels a side when it is missing, so the mount must copy the cap.
+  const raised = api.createSceneState({ scene: { shadowMaxPixels: 4096 * 4096 } });
+  assert.equal(raised.shadowMaxPixels, 4096 * 4096);
+  assert.equal(bundleFor(raised).shadowMaxPixels, 4096 * 4096);
+
+  const lowered = api.createSceneState({ scene: { shadowMaxPixels: 512 * 512 } });
+  assert.equal(bundleFor(lowered).shadowMaxPixels, 512 * 512);
+
+  // No cap, or a negative one, leaves the renderers on their default.
+  for (const scene of [{}, { shadowMaxPixels: -1 }]) {
+    const state = api.createSceneState({ scene });
+    assert.equal(state.shadowMaxPixels, 0);
+    assert.equal("shadowMaxPixels" in bundleFor(state), false);
+  }
+});
+
 test("bootstrap applies Scene3D post-effect diff commands", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
