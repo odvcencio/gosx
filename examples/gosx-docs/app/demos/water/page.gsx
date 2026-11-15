@@ -289,7 +289,11 @@ func Page() Node {
 			</p>
 			<p class="water-demo__help-summary">
 				What this shows: a heightfield simulation with refraction, caustics and depth absorption, written as typed Go and compiled to Selena shaders for WebGPU and WebGL2.
-				<a href="https://github.com/odvcencio/gosx/blob/main/docs/scene3d-selena.md" target="_blank" rel="noopener noreferrer">Selena guide</a>
+				<a
+					href="https://github.com/odvcencio/gosx/blob/main/docs/scene3d-selena.md"
+					target="_blank"
+					rel="noopener noreferrer"
+				>Selena guide</a>
 			</p>
 			<h2>Interactions</h2>
 			<ul>

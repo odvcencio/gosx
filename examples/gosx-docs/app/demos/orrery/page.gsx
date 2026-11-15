@@ -14,7 +14,11 @@ func Page() Node {
 				</p>
 				<p class="orrery__shows">
 					What this shows: a whole choreography declared as typed animation data, with no bespoke script. Motion blur, auto exposure, and TAA finish the frame.
-					<a href="https://github.com/odvcencio/gosx/blob/main/docs/scene3d-timeline.md" target="_blank" rel="noopener noreferrer">Scene3D timeline guide</a>
+					<a
+						href="https://github.com/odvcencio/gosx/blob/main/docs/scene3d-timeline.md"
+						target="_blank"
+						rel="noopener noreferrer"
+					>Scene3D timeline guide</a>
 				</p>
 			</header>
 			<div class="orrery__canvas gosx-scene3d-poster-stage" data-gosx-scene3d-poster-stage>
