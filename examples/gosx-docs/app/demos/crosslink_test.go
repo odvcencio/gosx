@@ -248,3 +248,47 @@ func TestCapabilityIndexCoversEveryFacetOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestGalleryMapsHaveNoStaleKeys fails when a per-demo map in gallery.go names
+// a slug that is not in the catalog, so a renamed or removed demo cannot leave
+// orphaned copy, doc links, groups, sources, or backend labels behind.
+func TestGalleryMapsHaveNoStaleKeys(t *testing.T) {
+	slugs := map[string]bool{}
+	for _, demo := range Demos() {
+		slugs[demo.Slug] = true
+	}
+	check := func(name string, keys []string) {
+		t.Helper()
+		for _, key := range keys {
+			if !slugs[key] {
+				t.Errorf("%s has key %q, which is not a catalog demo", name, key)
+			}
+		}
+	}
+	keysOf := func(m map[string]string) []string {
+		out := make([]string, 0, len(m))
+		for key := range m {
+			out = append(out, key)
+		}
+		return out
+	}
+	check("demoShows", keysOf(demoShows))
+	check("demoDocPages", keysOf(demoDocPages))
+	check("demoSummaries", keysOf(demoSummaries))
+	check("demoGroups", keysOf(demoGroups))
+	sources := make([]string, 0, len(demoSources))
+	for key := range demoSources {
+		sources = append(sources, key)
+	}
+	check("demoSources", sources)
+	backends := make([]string, 0, len(nonSceneBackends))
+	for key := range nonSceneBackends {
+		backends = append(backends, key)
+	}
+	check("nonSceneBackends", backends)
+	for slug := range slugs {
+		if demoShows[slug] == "" || demoDocPages[slug] == "" {
+			t.Errorf("demo %q is missing its shows line or doc page", slug)
+		}
+	}
+}
