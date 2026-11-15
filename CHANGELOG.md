@@ -2,17 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- Add 19 guide pages to the docs site under `/docs/guides/<slug>`: a "Games & simulation" section (game kit, rooms, netplay, determinism, physics and characters, team AI, replay, audio, speech, static export, game performance), terrain, crowds, the animation graph, shadows, image quality, decals and vessels under "Visual systems", and desktop packaging and signing. Each page renders from its `docs/*.md` file. Run `go generate ./examples/gosx-docs/app/docs` after you edit one of those guides.
+- Add `docs/packages.md` (a generated package map with layers and stability tiers), `docs/STABILITY.md`, `docs/ci-gates.md` and `docs/README.md` (a guide index). `go run ./scripts/pkgmap` regenerates the map, and a test fails when it is stale. Make `make ci` run every hosted CI Make target.
+
+### Changed
+
+- Restyle the docs site: a smaller type scale (`--type-base` and `--type-sm`), a denser guide navigation sent once (a CSS-only toggle on phones), and a reading width for guide pages. New tokens `--measure-prose`, `--type-label` and `--ls-eyebrow`.
+- Replace the `docs/` ignore allow-list with a test that keeps specs, plans and reports out of `docs/`.
+- `gosx init` now teaches the strict `component Name(props: Type)` syntax in both templates, and each template includes a `README.md`. `gosx init` prints, and that README links, one path to a deployed app: `gosx build --prod`, `gosx deploy check dist`, and the deployment guide. The docs template's overview text now describes a starter docs site, and its navigation marks the current page with `aria-current="true"`.
+
 ### Fixed
 
 - A scene that fell back from WebGPU to WebGL2 no longer draws a blank canvas. The WebGL renderer called `uv1.use`, `uv1.bind` and `uv1.dispose` on a stub the WebGPU renderer had left without them (#853).
 - WebGPU auto exposure compiled again. Its measure shader declared `let target`, a reserved WGSL word that Chrome rejects, so any scene that set `Environment.AutoExposure` fell back to WebGL2. A new test scans the Scene3D runtime's WGSL for reserved words (#851).
-- Add 19 guide pages to the docs site under `/docs/guides/<slug>`: a "Games & simulation" section (game kit, rooms, netplay, determinism, physics and characters, team AI, replay, audio, speech, static export, game performance), terrain, crowds, the animation graph, shadows, image quality, decals and vessels under "Visual systems", and desktop packaging and signing. Each page renders from its `docs/*.md` file. Run `go generate ./examples/gosx-docs/app/docs` after you edit one of those guides.
-- Restyle the docs site: a smaller type scale (`--type-base` and `--type-sm`), a denser guide navigation sent once (a CSS-only toggle on phones), and a reading width for guide pages. New tokens `--measure-prose`, `--type-label` and `--ls-eyebrow`.
-- Add `docs/packages.md` (a generated package map with layers and stability tiers), `docs/STABILITY.md`, `docs/ci-gates.md` and `docs/README.md` (a guide index). `go run ./scripts/pkgmap` regenerates the map, and a test fails when it is stale. Make `make ci` run every hosted CI Make target.
-- Replace the `docs/` ignore allow-list with a test that keeps specs, plans and reports out of `docs/`.
-### Changed
-
-- `gosx init` now teaches the strict `component Name(props: Type)` syntax in both templates, and each template includes a `README.md`. `gosx init` prints, and that README links, one path to a deployed app: `gosx build --prod`, `gosx deploy check dist`, and the deployment guide. The docs template's overview text now describes a starter docs site, and its navigation marks the current page with `aria-current="true"`.
+- The `goetrope-watch` example serves its `/watch/<channel>` pages again (its page modules were never imported) and renders its layout once; `basic`, `canvasboard` and `goetrope-watch` read `PORT`.
 
 ## v0.60.0
 
