@@ -29,13 +29,15 @@ write_file() {
 
 write_fake_tools() {
 	tools_dir="$1"
-	mkdir -p "$tools_dir"
+	mkdir -p "$tools_dir" "${tools_dir}/goroot/lib/wasm"
+	printf '%s\n' '// fake wasm_exec shim' >"${tools_dir}/goroot/lib/wasm/wasm_exec.js"
 	write_file "${tools_dir}/go" \
 		'#!/usr/bin/env sh' \
 		'set -eu' \
 		'printf "%s\n" "go:$*" >>"${GOSX_FAKE_DEPLOY_LOG}"' \
 		'if [ "$#" -ge 2 ] && [ "$1" = "env" ] && [ "$2" = "GOHOSTOS" ]; then echo linux; exit 0; fi' \
 		'if [ "$#" -ge 2 ] && [ "$1" = "env" ] && [ "$2" = "GOHOSTARCH" ]; then echo amd64; exit 0; fi' \
+		'if [ "$#" -ge 2 ] && [ "$1" = "env" ] && [ "$2" = "GOROOT" ]; then echo "'"${tools_dir}"'/goroot"; exit 0; fi' \
 		'if [ "$#" -ge 1 ] && [ "$1" = "version" ]; then echo "go version go1.25.5 linux/amd64"; exit 0; fi' \
 		'if [ "$#" -ge 1 ] && [ "$1" = "build" ]; then' \
 		'  out=""' \

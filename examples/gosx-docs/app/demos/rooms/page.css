@@ -1,0 +1,156 @@
+/* Rooms demo, scoped under .rooms. Shell tokens come from the demos layout. */
+
+.rooms {
+  display: grid;
+  gap: var(--space-lg);
+  width: min(100%, 76rem);
+  margin-inline: auto;
+  padding: var(--space-xl) var(--space-lg) var(--space-xl);
+  color: var(--demo-fg, var(--color-text));
+}
+
+.rooms__header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-lg);
+}
+
+.rooms__header > div {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.rooms__eyebrow {
+  margin: 0;
+  color: var(--demo-accent);
+  font: 600 var(--type-sm)/1.4 var(--font-body);
+}
+
+.rooms h1 {
+  margin: 0;
+  font: 700 clamp(2.4rem, 5vw, 4rem)/1.02 var(--font-display);
+  letter-spacing: -0.04em;
+}
+
+.rooms__header p:last-child {
+  max-width: 40rem;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-base);
+  line-height: var(--lh-body);
+}
+
+.rooms__badge {
+  color: var(--demo-accent);
+  font: 600 var(--type-xs)/1.4 var(--font-mono);
+  white-space: nowrap;
+}
+
+.rooms__frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: var(--space-md);
+  align-items: stretch;
+}
+
+.rooms__client {
+  display: block;
+  width: 100%;
+  min-height: 30rem;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--demo-accent);
+  border-radius: var(--radius-lg);
+  background: var(--color-stage);
+}
+
+.rooms__panel {
+  display: grid;
+  align-content: start;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.rooms__panel h2 {
+  margin: 0;
+  color: var(--color-text-muted);
+  font: 600 var(--type-xs)/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rooms__phases {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-sm);
+  padding: 0;
+  list-style: none;
+  counter-reset: phase;
+}
+
+.rooms__phases li {
+  display: grid;
+  gap: 0.15rem;
+  padding-left: var(--space-lg);
+  position: relative;
+  counter-increment: phase;
+}
+
+.rooms__phases li::before {
+  content: counter(phase);
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--demo-accent);
+  font: 700 var(--type-sm)/1.5 var(--font-mono);
+}
+
+.rooms__phases strong {
+  font: 600 var(--type-sm)/1.5 var(--font-body);
+}
+
+.rooms__phases span,
+.rooms__keys {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-sm);
+  line-height: 1.55;
+}
+
+.rooms kbd {
+  padding: 0.05rem 0.4rem;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font: var(--type-xs)/1.5 var(--font-mono);
+}
+
+.rooms__footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--type-xs);
+  line-height: 1.6;
+}
+
+.rooms__footer p {
+  margin: 0;
+}
+
+.rooms__client:focus-visible {
+  outline: 2px solid var(--demo-accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 900px) {
+  .rooms { padding-inline: var(--space-md); }
+  .rooms__frame { grid-template-columns: minmax(0, 1fr); }
+  .rooms__client { min-height: 22rem; }
+  .rooms__footer { grid-template-columns: minmax(0, 1fr); }
+}
