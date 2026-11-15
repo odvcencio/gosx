@@ -82,6 +82,11 @@ func TestValidateNodeTestGroup(t *testing.T) {
 		{"other file in scene3d", "client/js/17-scene-input-pick.test.mjs", "scene3d", true},
 		{"other file in scene3d-b", "client/js/17-scene-input-pick.test.mjs", "scene3d-b", true},
 		{"script test in other", "scripts/build.test.mjs", "other", false},
+		{"e2e file no group runs", "e2e/water_demo_http.test.mjs", "other", true},
+		{"example file no group runs", "examples/gosx-docs/app/demos/beacon/reveal.test.mjs", "other", true},
+		{"scripts js wrong extension", "scripts/x.test.js", "other", true},
+		{"runtime dir too deep", "client/runtime/a/b/x.test.js", "other", true},
+		{"runtime dir one level", "client/runtime/a/x.test.js", "other", false},
 		{"unknown group", "client/js/17-scene-input-pick.test.mjs", "scene3d-c", true},
 	}
 	for _, tt := range tests {
@@ -93,12 +98,12 @@ func TestValidateNodeTestGroup(t *testing.T) {
 			}
 		})
 	}
-	// Other evidence kinds and commands without a group are not checked.
+	// Other evidence kinds are not checked; a node-test must resolve to a group.
 	if got := validateNodeTestGroup(v1CorpusEvidence{Kind: "go-test", Path: "x_test.go"}, v1CIOwner{Command: "NODE_TEST_GROUP=runtime"}); got != "" {
 		t.Fatalf("go-test evidence was checked: %q", got)
 	}
-	if got := validateNodeTestGroup(v1CorpusEvidence{Kind: "node-test", Path: "client/js/a.test.js"}, v1CIOwner{Command: "node --test"}); got != "" {
-		t.Fatalf("command without a group was checked: %q", got)
+	if got := validateNodeTestGroup(v1CorpusEvidence{Kind: "node-test", Path: "client/js/a.test.js"}, v1CIOwner{Command: "node --test"}); got == "" {
+		t.Fatal("a command without NODE_TEST_GROUP must fail the check")
 	}
 }
 
@@ -412,6 +417,8 @@ const (
 )
 
 // nodeTestGroupOf returns the NODE_TEST_GROUP value that runs a Node test path.
+// A path that no group runs (outside the Makefile's JS_NODE_TESTS patterns) is
+// an error.
 func nodeTestGroupOf(path string) (string, error) {
 	clean := filepath.ToSlash(filepath.Clean(path))
 	matches := func(patterns ...string) (bool, error) {
@@ -442,6 +449,19 @@ func nodeTestGroupOf(path string) (string, error) {
 			return group.name, nil
 		}
 	}
+	// JS_NODE_TESTS in the Makefile; "other" is these minus the groups above.
+	ok, err := matches(
+		"client/js/*.test.js",
+		"client/js/*.test.mjs",
+		"client/runtime/*/*.test.js",
+		"scripts/*.test.mjs",
+	)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("no Node test group runs this file")
+	}
 	return "other", nil
 }
 
@@ -456,7 +476,7 @@ func validateNodeTestGroup(evidence v1CorpusEvidence, owner v1CIOwner) string {
 	}
 	match := nodeTestGroupFlagRE.FindStringSubmatch(owner.Command)
 	if match == nil {
-		return ""
+		return fmt.Sprintf("CI owner %q command names no NODE_TEST_GROUP, so the file's group cannot be checked", owner.Label)
 	}
 	want := match[1]
 	switch want {

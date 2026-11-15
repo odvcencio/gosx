@@ -1323,7 +1323,10 @@ test("v1 ordered-post-custom-uniforms WebGPU: declaration order and live uniform
     },
     errorScopeBehavior() { return Promise.resolve(null); },
   });
+  // The harness routes every authored post pipeline here, so count the calls.
+  let asyncPipelineCalls = 0;
   fake.device.createRenderPipelineAsync = function(desc) {
+    asyncPipelineCalls += 1;
     return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
   };
   // The fake drops buffer labels; record them so a write names its pass.
@@ -1348,22 +1351,29 @@ test("v1 ordered-post-custom-uniforms WebGPU: declaration order and live uniform
   await renderValidatedPostFrame(harness, orderedPostBundle(sceneAPI, state), viewport);
   await flushAsyncWork();
   await flushAsyncWork();
+  const passStart1 = fake.state.renderPasses.length;
   await renderValidatedPostFrame(harness, orderedPostBundle(sceneAPI, state), viewport);
 
   // Fullscreen post passes bind a pipeline; read its label from the pipeline
   // itself (async-built pipelines) or its descriptor (synchronous ones).
   const pipelineLabel = (draw) => draw.pipeline && (draw.pipeline.label || (draw.pipeline.desc && draw.pipeline.desc.label)) || "";
-  const framePostLabels = () => {
+  const isAuthoredPost = (label) => /^gosx-selena-post-order-[ab]$/.test(label) || label === "gosx-post-toneMapping";
+  // The complete list of authored post draws in the frame that started at
+  // render pass index `start`.
+  const framePostLabels = (start) => {
     const labels = [];
-    for (const pass of mainRenderPasses(fake)) {
-      for (const draw of pass.draws) labels.push(pipelineLabel(draw));
+    for (const pass of fake.state.renderPasses.slice(start)) {
+      if (!(pass.descriptor && Array.isArray(pass.descriptor.colorAttachments) && pass.descriptor.colorAttachments.length > 0)) continue;
+      for (const draw of pass.draws) {
+        const label = pipelineLabel(draw);
+        if (isAuthoredPost(label)) labels.push(label);
+      }
     }
     return labels;
   };
-  const postLabels = framePostLabels().filter((label) => /^gosx-selena-post-order-[ab]$/.test(label) || label === "gosx-post-toneMapping");
-  assert.deepEqual(postLabels.slice(-3),
-    ["gosx-selena-post-order-a", "gosx-post-toneMapping", "gosx-selena-post-order-b"],
-    "post passes must draw in declaration order, got " + JSON.stringify(postLabels));
+  const expectedOrder = ["gosx-selena-post-order-a", "gosx-post-toneMapping", "gosx-selena-post-order-b"];
+  assert.deepEqual(framePostLabels(passStart1), expectedOrder,
+    "frame 2 must draw exactly the three post passes in declaration order");
 
   const writesFor = (name) => fake.state.writeBufferCalls.filter(
     (call) => call.buffer === buffersByLabel.get("gosx-selena-post-uniforms-" + name));
@@ -1374,22 +1384,22 @@ test("v1 ordered-post-custom-uniforms WebGPU: declaration order and live uniform
   // Live patch of order-a only.
   const modulesBefore = fake.state.shaderModules.length;
   const pipelinesBefore = fake.state.renderPipelines.length;
+  const asyncPipelinesBefore = asyncPipelineCalls;
+  const passStart2 = fake.state.renderPasses.length;
   const writesBeforeA = writesFor("order-a").length;
   const writesBeforeB = writesFor("order-b").length;
-  sendOrderedPostPatch(sceneAPI, state, "order-a", { strength: 0.5 });
+  sendOrderedPostPatch(sceneAPI, state, "order-a", { strength: 0.625 });
   await renderValidatedPostFrame(harness, orderedPostBundle(sceneAPI, state), viewport);
 
   assert.equal(writesFor("order-a").length > writesBeforeA, true, "the next frame must upload order-a's uniform buffer");
-  assert.equal(lastWrite("order-a").data[0], 0.5, "the patched strength must reach the GPU upload on the next frame");
+  assert.equal(lastWrite("order-a").data[0], 0.625, "the patched strength must reach the GPU upload on the next frame");
   assert.equal(lastWrite("order-a").data[1], 0.5, "unpatched uniforms of the same pass keep their value");
   assert.equal(writesFor("order-b").length > writesBeforeB, true);
   assert.equal(lastWrite("order-b").data[0], 0.75, "the other custom pass keeps its own value");
-  const patchedLabels = framePostLabels().filter((label) => /^gosx-selena-post-order-[ab]$/.test(label) || label === "gosx-post-toneMapping");
-  assert.deepEqual(patchedLabels.slice(-3),
-    ["gosx-selena-post-order-a", "gosx-post-toneMapping", "gosx-selena-post-order-b"],
-    "order must be unchanged after the patch");
+  assert.deepEqual(framePostLabels(passStart2), expectedOrder, "the patched frame must draw the same three passes in the same order");
   assert.equal(fake.state.shaderModules.length, modulesBefore, "a uniform patch must not create a shader module");
   assert.equal(fake.state.renderPipelines.length, pipelinesBefore, "a uniform patch must not create a render pipeline");
+  assert.equal(asyncPipelineCalls, asyncPipelinesBefore, "a uniform patch must not request an authored post pipeline");
   assert.deepEqual(Array.from(state.postEffects, (effect) => effect.name || effect.kind),
     ["order-a", "toneMapping", "order-b"], "a patch must not reorder the chain");
 });
@@ -1416,7 +1426,7 @@ test("v1 ordered-post-custom-uniforms WebGL2: declaration order and live uniform
         const src = program ? gl.programShaderSources(program) : "";
         current = src.includes("// order-a") ? "order-a"
           : src.includes("// order-b") ? "order-b"
-          : (src.includes("u_toneMapMode") && src.length < 5000 ? "toneMapping" : null);
+          : (src.includes("uniform vec4 u_background;") ? "toneMapping" : null);
         if (current) programs.push(current);
       } else if (op[0] === "uniform1f" && current && (op[1] === "strength" || op[1] === "mixAmount")) {
         uniforms[current + "." + op[1]] = op[2];
@@ -1425,28 +1435,30 @@ test("v1 ordered-post-custom-uniforms WebGL2: declaration order and live uniform
     return { programs, uniforms };
   };
 
+  // Collapse only consecutive repeats of one program (rebinding within a pass).
+  const collapse = (list) => list.filter((name, i) => i === 0 || list[i - 1] !== name);
+  const expected = ["order-a", "toneMapping", "order-b"];
+
   const start1 = gl.ops.length;
   renderer.render(bundleFor(), viewport);
   const first = trace(start1);
-  const firstPrograms = first.programs.filter((name, i, all) => i === 0 || all[i - 1] !== name);
-  assert.deepEqual(firstPrograms, ["order-a", "toneMapping", "order-b"],
+  assert.deepEqual(collapse(first.programs), expected,
     "post programs must run in declaration order, got " + JSON.stringify(first.programs));
   assert.equal(first.uniforms["order-a.strength"], 0.25);
   assert.equal(first.uniforms["order-b.strength"], 0.75);
 
   const creates = () => gl.ops.filter((op) => op[0] === "createProgram" || op[0] === "linkProgram").length;
   const createsBefore = creates();
-  sendOrderedPostPatch(sceneAPI, state, "order-a", { strength: 0.5 });
+  sendOrderedPostPatch(sceneAPI, state, "order-a", { strength: 0.625 });
   const start2 = gl.ops.length;
   renderer.render(bundleFor(), viewport);
   const second = trace(start2);
 
-  assert.equal(second.uniforms["order-a.strength"], 0.5, "the patched strength must be uploaded on the next frame");
+  assert.equal(second.uniforms["order-a.strength"], 0.625, "the patched strength must be uploaded on the next frame");
   assert.equal(second.uniforms["order-a.mixAmount"], 0.5, "unpatched uniforms of the same pass keep their value");
   assert.equal(second.uniforms["order-b.strength"], 0.75, "the other custom pass keeps its own value");
   assert.equal(creates(), createsBefore, "a uniform patch must not call createProgram or linkProgram");
-  assert.deepEqual(second.programs.filter((name, i, all) => i === 0 || all[i - 1] !== name),
-    ["order-a", "toneMapping", "order-b"], "order is unchanged after the patch");
+  assert.deepEqual(collapse(second.programs), expected, "order is unchanged after the patch, got " + JSON.stringify(second.programs));
   assert.deepEqual(warnLog.filter((m) => m.includes("custom post pass")), [], "valid passes must not warn");
 
   renderer.dispose();

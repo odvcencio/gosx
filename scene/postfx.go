@@ -188,7 +188,7 @@ type DOF struct {
 
 func (DOF) isPostEffect() {}
 
-// CustomPostStage names the stage an author wants for a CustomPost pass. It is
+// Reserved. CustomPostStage names the stage an author wants for a CustomPost pass. It is
 // recorded in the lowered post effect (see CustomPostIR.Stage), but no renderer
 // reads it: the browser backends (WebGPU, WebGL2) and the native renderer all
 // run a CustomPost where it is declared in the post-effect list, so Stage does
@@ -215,8 +215,8 @@ const (
 // run post effects, custom passes included, in the order they are declared.
 // Stage does not change that order; no renderer reads it. Declare a custom
 // pass before or after Tonemap to choose which side of it the pass runs on.
-// A live uniform patch for a named pass changes its uniforms without rebuilding
-// the pass or the chain.
+// On the browser backends (WebGPU and WebGL2), a live uniform patch for a named
+// pass changes its uniforms without rebuilding the pass or the chain.
 //
 // On failure (shader validation error, unsupported platform) the pass becomes
 // an identity passthrough rather than aborting the frame.
@@ -232,7 +232,7 @@ type CustomPost struct {
 	// Rect = (centerX, centerY, halfW, halfH)
 	// Meta = (cornerRadius, presence, ordinal, flags)
 	DOMRegions CustomPostDOMRegions
-	// Stage is recorded in the lowered post effect but no renderer reads it, so
+	// Reserved. Stage is recorded in the lowered post effect but no renderer reads it, so
 	// it does not move the pass: position in the post-effect list decides the
 	// order on every backend. Empty and "beforeTonemap" lower to the same value.
 	Stage CustomPostStage
