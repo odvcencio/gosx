@@ -102,11 +102,13 @@ func counterPage(counterProgram *program.Program) gosx.Node {
 
 	body := gosx.El("main", gosx.Attrs(gosx.Attr("class", "page-shell")),
 		gosx.El("section", gosx.Attrs(gosx.Attr("class", "panel")),
+			gosx.El("p", gosx.Attrs(gosx.Attr("class", "eyebrow")), gosx.Text("gosx dev")),
 			gosx.El("h1", gosx.Text("GoSX hot-swap demo")),
 			gosx.El("p", gosx.Attrs(gosx.Attr("class", "hint")),
 				gosx.Text("Click the counter, then edit counter.gsx and save. The island swaps in place — your count survives, no page reload."),
 			),
 			islands.RenderIslandFromProgram(counterProgram, map[string]int{}),
+			gosx.El("a", gosx.Attrs(gosx.Attr("class", "docs-link"), gosx.Attr("href", "https://gosx.m31labs.dev/docs/islands")), gosx.Text("How islands work")),
 		),
 	)
 

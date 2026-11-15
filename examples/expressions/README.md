@@ -1,4 +1,4 @@
-# expressions — expression-language samples
+# expressions: island expression forms
 
 Demonstrates the `.gsx` expression forms supported by the IR parser
 (see `gosx/docs/expressions.md` for the full subset specification).

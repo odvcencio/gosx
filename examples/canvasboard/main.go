@@ -22,9 +22,11 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/server"
@@ -37,12 +39,16 @@ const (
 	boardRows   = 5
 )
 
+//go:embed style.css
+var style string
+
 func main() {
 	app := server.New()
 
 	app.SetLayout(func(title string, body gosx.Node) gosx.Node {
 		return server.HTMLDocument(&server.DocumentContext{
 			Title: "GoSX CanvasBoard Example — " + title,
+			Head:  gosx.El("style", gosx.RawHTML(style)),
 			Body:  body,
 		})
 	})
@@ -51,7 +57,11 @@ func main() {
 		return HomePage()
 	})
 
-	addr := ":8080"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	addr := ":" + port
 	fmt.Println("CanvasBoard example server running at http://localhost" + addr)
 	fmt.Println("Inspect the <canvas data-gosx-surface-kind=\"canvas2d\"> placeholder.")
 	log.Fatal(app.ListenAndServe(addr))
@@ -64,9 +74,10 @@ func HomePage() gosx.Node {
 	nodes := generateBoardNodes()
 	return gosx.El("div",
 		gosx.Attrs(gosx.Attr("class", "container")),
+		gosx.El("p", gosx.Attrs(gosx.Attr("class", "eyebrow")), gosx.Text("GoSX / 2D engine surface")),
 		gosx.El("h1", gosx.Text("CanvasBoard primitive")),
 		gosx.El("p", gosx.Text(fmt.Sprintf(
-			"Phase 2 sample — %d rects, drag canvas to pan, wheel to zoom, click to select.",
+			"%d rectangles on a pannable, zoomable board. Drag to pan, scroll to zoom, click to select. The server sends the board state; the browser runtime draws it.",
 			len(nodes),
 		))),
 		gosx.CanvasBoard(gosx.CanvasBoardProps{
