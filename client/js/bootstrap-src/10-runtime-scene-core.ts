@@ -3409,7 +3409,7 @@
     const state = {
       background: typeof props.background === "string" && props.background ? props.background : "#08151f",
       camera: sceneCamera(props),
-      objects: new Map(),
+      objects: sceneObjectTable(),
       labels: new Map(),
       sprites: new Map(),
       html: new Map(),
@@ -3473,6 +3473,28 @@
 
   function sceneStateObjects(state) {
     return Array.from(state.objects.values());
+  }
+
+  // sceneObjectTable is the scene state's object map. Every write advances
+  // table.revision, and a write that adds, replaces or removes an interactive
+  // object also advances table.interactiveRevision. A record changes by being
+  // replaced (normalization builds a new one), never by an in-place edit of its
+  // interactive flag, so a reader can keep what it derived from the table while
+  // the matching count stands: the focus proxies keep the interactive objects
+  // (mount-scene-focus.ts) and the crowd partition its last walk.
+  function sceneObjectTable() {
+    const table = new Map(), get = Map.prototype.get, set = Map.prototype.set, remove = Map.prototype.delete, clear = Map.prototype.clear;
+    const wrote = function(before, after) {
+      table.revision += 1;
+      if (before && before.interactive === true || after && after.interactive === true) table.interactiveRevision += 1;
+    };
+    table.revision = 0;
+    table.interactiveRevision = 0;
+    table.set = function(key, value) { wrote(get.call(table, key), value); return set.call(table, key, value); };
+    table.delete = function(key) { wrote(get.call(table, key), null); return remove.call(table, key); };
+    // clear may drop interactive objects, so it counts as an interactive write.
+    table.clear = function() { wrote({ interactive: true }, null); return clear.call(table); };
+    return table;
   }
 
   function sceneStateObjectsWithMaterials(state) {
@@ -5543,7 +5565,7 @@
     }
     // Crowd agents leave the per-object walk here and return as one record
     // per batch after the ordinary objects.
-    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy) : objects;
+    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy, hierarchyState && hierarchyState.objects) : objects;
     const selectedObjects = sceneSelectLODObjects(sceneObjects, renderCamera);
     sceneReserveBakedObjectAttributes(bundle, selectedObjects);
     appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
@@ -5836,7 +5858,10 @@
   //
   // Writers that change an agent's pose rows in place must bump
   // _crowdSkin.rev. Motion writers set _crowdMotion.dirty, which the renderer
-  // clears after it uploads the record.
+  // clears after it uploads the record. Any writer that changes, in place, a
+  // field the partition reads (matrix, motion record, pose rows, tint) also
+  // calls sceneCrowdBatchTouch(object); see "Partition reuse". An agent's
+  // visibility, selection and draw flags change by replacing it in its table.
   //
   // Two record fields carry batch-level knowledge to the renderer.
   // crowdDirtyRanges is a flat list of [start, end) slot pairs naming the
@@ -5852,6 +5877,25 @@
   let sceneCrowdBatchSequence = 0;
   let sceneCrowdBatchEpoch = 0;
   let sceneCrowdBatchActive = [];
+
+  // ---- Partition reuse ----------------------------------------------------
+  //
+  // Walking every agent each bundle to learn that almost none changed cost
+  // about 3 ms per frame with 40,000 agents. A bundle reuses its scene's last
+  // walk when all of these hold, and then re-walks only the groups whose agents
+  // changed in place:
+  //   - the object list holds the same objects in the same order (one identity
+  //     test per entry). Transforms that keep identity pass (quality groups,
+  //     cached hierarchy views); a named material wraps each object that uses
+  //     it anew every bundle, so a scene with one walks in full, as before;
+  //   - the scene state's object table (sceneObjectTable) is unwritten since;
+  //   - no other walk entered the groups since (groups are shared by key);
+  //   - every in-place change since went through sceneCrowdBatchTouch.
+  // A touch on an agent that holds no slot (hidden, or on its own record) is
+  // untracked and makes the next bundle walk in full. A group holding an agent
+  // whose pose record the hierarchy derives each bundle (skin.derived) is
+  // re-walked every bundle.
+  const sceneCrowdBatchLast = new WeakMap();
 
   // sceneObjectModelMatrix returns parentMatrix itself, with no per-agent
   // arithmetic, exactly when an agent is a plain hydrated crowd member. Batch
@@ -6031,9 +6075,24 @@
       const skin = update.object._crowdSkin;
       skin.rows.set(update.rows);
       skin.rev += 1;
+      sceneCrowdBatchTouch(update.object);
       const tint = update.tint, held = skin.tint;
       if (tint !== held && !(tint && held && tint[0] === held[0] && tint[1] === held[1] && tint[2] === held[2] && tint[3] === held[3])) skin.tint = tint;
     }
+  }
+
+  // var, not let: tests run this section on its own and again with the whole file in one context.
+  var sceneCrowdBatchUntracked = 0;
+
+  // sceneCrowdBatchTouch marks the group of an agent whose matrix, motion
+  // record, pose rows or tint a writer has just changed in place (see
+  // "Partition reuse"). A touch on an agent that holds no slot is untracked.
+  function sceneCrowdBatchTouch(object) {
+    const skin = object && object._crowdSkin;
+    if (!skin) return;
+    const group = skin.group;
+    if (group && group.alive === true && group.objects[skin.slot] === object) group.touched = true;
+    else sceneCrowdBatchUntracked += 1;
   }
 
   // ---- Batch parent ------------------------------------------------------
@@ -6121,20 +6180,25 @@
     else ranges.push(slot, slot + 1);
   }
 
+  // sceneCrowdBatchResize keeps a group's first n slots.
+  function sceneCrowdBatchResize(group, n) {
+    group.objects.length = group.skins.length = group.motions.length = group.matrices.length =
+      group.revs.length = group.tintRefs.length = n;
+  }
+
   function sceneCrowdBatchEnter(group, epoch, active) {
     group.epoch = epoch;
     group.n = 0;
     group.changed = false;
     group.reshaped = false;
+    group.derived = false;
     active.push(group);
   }
 
-  // sceneCrowdBatchPartition returns the objects that are NOT batched crowd
-  // agents. When the scene has no crowd agent it returns its input unchanged.
-  function sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy) {
-    const list = Array.isArray(objects) ? objects : [];
-    const epoch = ++sceneCrowdBatchEpoch;
-    const active = sceneCrowdBatchActive = [];
+  // sceneCrowdBatchWalk sorts the agents of list into the groups entered at
+  // epoch (appending each newly entered group to active) and returns the
+  // objects that are not batched agents, or null when list holds no agent.
+  function sceneCrowdBatchWalk(list, epoch, active) {
     let rest = null;
     let cur = null;
     for (let i = 0; i < list.length; i += 1) {
@@ -6165,6 +6229,7 @@
             known.changed = true;
             sceneCrowdBatchMark(known, slot, epoch);
           }
+          if (skin.derived === true) known.derived = true;
           known.n = slot + 1;
           continue;
         }
@@ -6223,10 +6288,71 @@
         group.colorsDirty = true;
       }
       group.objects[slot] = object;
+      skin.slot = slot;
+      if (skin.derived === true) group.derived = true;
       group.n = slot + 1;
     }
+    return rest;
+  }
+
+  // sceneCrowdBatchReuse enters the groups of last, the scene's previous walk,
+  // at epoch and re-walks the agents of each group that was touched or holds a
+  // derived agent. It returns { rest } with the previous walk's other objects,
+  // or null when the list must be walked in full: a condition of "Partition
+  // reuse" fails, or a re-walked agent left its slot or group. The re-walked
+  // groups are then emptied, so the full walk, at a new epoch, rebuilds them.
+  function sceneCrowdBatchReuse(last, list, table, epoch, active) {
+    const held = last.list, groups = last.groups;
+    if (last.revision !== table.revision || last.untracked !== sceneCrowdBatchUntracked || held.length !== list.length) return null;
+    for (let i = 0; i < list.length; i += 1) if (held[i] !== list[i]) return null;
+    const again = [];
+    for (let i = 0; i < groups.length; i += 1) {
+      const group = groups[i];
+      if (group.alive !== true || group.epoch !== last.epoch) return null;
+      group.again = group.touched === true || group.derived === true;
+      if (group.again) again.push(group);
+    }
+    for (let i = 0; i < groups.length; i += 1) {
+      sceneCrowdBatchEnter(groups[i], epoch, active);
+      if (!groups[i].again) groups[i].n = groups[i].count;
+    }
+    if (again.length) {
+      const agents = [];
+      for (let i = 0; i < again.length; i += 1) {
+        for (let slot = 0; slot < again[i].count; slot += 1) agents.push(again[i].objects[slot]);
+      }
+      const strays = sceneCrowdBatchWalk(agents, epoch, active);
+      let kept = !(strays && strays.length) && active.length === groups.length;
+      for (let i = 0; kept && i < again.length; i += 1) kept = again[i].n === again[i].count;
+      if (!kept) {
+        for (let i = 0; i < again.length; i += 1) {
+          again[i].count = 0;
+          sceneCrowdBatchResize(again[i], 0);
+        }
+        active.length = 0;
+        return null;
+      }
+    }
+    last.epoch = epoch;
+    return { rest: last.rest ? last.rest.slice() : null };
+  }
+
+  // sceneCrowdBatchPartition returns the objects that are NOT batched crowd
+  // agents. When the scene has no crowd agent it returns its input unchanged.
+  // table is the scene state's object table; without one every bundle walks.
+  function sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy, table) {
+    const list = Array.isArray(objects) ? objects : [];
+    const tracked = table && typeof table.revision === "number" ? table : null;
+    const last = tracked ? sceneCrowdBatchLast.get(tracked) : null;
+    let epoch = ++sceneCrowdBatchEpoch;
+    const active = sceneCrowdBatchActive = [];
+    const reused = last ? sceneCrowdBatchReuse(last, list, tracked, epoch, active) : null;
+    // A failed reuse may have entered groups at this epoch; walk at a new one.
+    if (last && !reused) epoch = ++sceneCrowdBatchEpoch;
+    const rest = reused ? reused.rest : sceneCrowdBatchWalk(list, epoch, active);
     for (let i = 0; i < active.length; i += 1) {
       const group = active[i];
+      group.touched = false;
       group.time = timeSeconds;
       // A parented group follows its node every bundle, even when no agent changed.
       let parentMoved = false;
@@ -6240,8 +6366,7 @@
         group.changed = true;
         group.reshaped = true;
         group.count = group.n;
-        group.objects.length = group.skins.length = group.motions.length = group.matrices.length =
-          group.revs.length = group.tintRefs.length = group.n;
+        sceneCrowdBatchResize(group, group.n);
         group.colorsDirty = true;
       }
       if (group.colorsDirty || group.reshaped) {
@@ -6262,13 +6387,17 @@
       group.changed = false;
       group.reshaped = false;
     }
+    // Copies: the caller owns the arrays it was given and gets back.
+    if (tracked && !reused && active.length) {
+      sceneCrowdBatchLast.set(tracked, { revision: tracked.revision, untracked: sceneCrowdBatchUntracked, epoch,
+        list: list.slice(), rest: rest ? rest.slice() : null, groups: active.slice() });
+    } else if (tracked && !reused) sceneCrowdBatchLast.delete(tracked);
     for (const [key, groups] of sceneCrowdBatchGroups) {
       for (let i = groups.length - 1; i >= 0; i -= 1) {
         if (epoch - groups[i].epoch > sceneCrowdBatchStaleBundles) {
           const stale = groups[i];
           stale.alive = false;
-          stale.objects.length = stale.skins.length = stale.motions.length = stale.matrices.length =
-            stale.revs.length = stale.tintRefs.length = 0;
+          sceneCrowdBatchResize(stale, 0);
           groups.splice(i, 1);
         }
       }
@@ -8298,6 +8427,7 @@
     clearChildren,
     sceneNormalizeParentMatrix,
     createSceneRenderBundle,
+    sceneCrowdBatchTouch,
     sceneSelectLODObjects,
     SCENE_IR_VERSION: 1,
     SCENE_IR_SCHEMA: "gosx.scene3d.ir.v1",
