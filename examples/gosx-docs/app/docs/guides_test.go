@@ -93,7 +93,7 @@ func TestGuideLinksPointAtTheSiteOrTheRepository(t *testing.T) {
 
 func TestGuideCopiesMatchDocs(t *testing.T) {
 	_, testFile, _, _ := runtime.Caller(0)
-	docsDir := filepath.Join(filepath.Dir(testFile), "..", "..", "..", "..", "..", "docs")
+	docsDir := filepath.Join(filepath.Dir(testFile), "..", "..", "..", "..", "docs")
 	want := map[string]bool{}
 	for _, name := range docsapp.GuideSources() {
 		want[name] = true
