@@ -10,7 +10,11 @@ func Page() Node {
 			</span>
 			<span class="scene3d-bench__shows">
 				What this shows: how much frame time each renderer feature costs on your machine, including the v0.60.0 terrain, stadium crowd, and image-quality chain.
-				<a href="https://github.com/odvcencio/gosx/blob/main/docs/performance-metrics.md" target="_blank" rel="noopener noreferrer">Performance metrics</a>
+				<a
+					href="https://github.com/odvcencio/gosx/blob/main/docs/performance-metrics.md"
+					target="_blank"
+					rel="noopener noreferrer"
+				>Performance metrics</a>
 			</span>
 		</header>
 		<div class="scene3d-bench__workspace">
