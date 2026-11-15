@@ -1,12 +1,8 @@
 package scene
 
 import (
-	"bytes"
 	"encoding/base64"
 	"errors"
-	"image"
-	"image/color"
-	"image/png"
 	"math"
 )
 
@@ -25,6 +21,11 @@ import (
 // length shrinks to Turbidity times Ocean.Clarity near the shore, recovering
 // over three foam widths), and draws no water over dry land. Both renderers
 // read the same texture. BakeShoreline exposes the bake directly.
+//
+// In js/wasm builds the baked texture is written as an uncompressed PNG so the
+// browser engine does not link the PNG codec; its data URL is larger (262,618
+// bytes at resolution 256; a native build gives about 31,000 for a smooth test
+// island, and the size varies with the terrain).
 type OceanShoreline struct {
 	// Resolution is the texture side in texels, 32..1024. Zero means 256.
 	Resolution int `json:"resolution,omitempty"`
@@ -119,7 +120,7 @@ func BakeShoreline(t *Terrain, level float64, shoreline OceanShoreline) (*OceanB
 	toLand := squaredDistanceField(land, n, stepX, stepZ, true)
 	toWater := squaredDistanceField(land, n, stepX, stepZ, false)
 	rangeY := math.Max(math.Max(math.Abs(low), math.Abs(high)), 1e-6)
-	img := image.NewNRGBA(image.Rect(0, 0, n, n))
+	rgb := make([]byte, 3*n*n)
 	for j := 0; j < n; j++ {
 		for i := 0; i < n; i++ {
 			k := j*n + i
@@ -131,19 +132,16 @@ func BakeShoreline(t *Terrain, level float64, shoreline OceanShoreline) (*OceanB
 			}
 			g := clampFloat(0.5+d/(2*s.Distance), 0, 1)
 			sq := math.Copysign(math.Sqrt(math.Abs(heights[k])/rangeY), heights[k])
-			img.SetNRGBA(i, j, color.NRGBA{
-				R: uint8(math.Round(float64(clampFloat((sq+1)/2, 0, 1) * 255))),
-				G: uint8(math.Round(float64(g * 255))),
-				A: 255,
-			})
+			rgb[3*k] = uint8(math.Round(float64(clampFloat((sq+1)/2, 0, 1) * 255)))
+			rgb[3*k+1] = uint8(math.Round(float64(g * 255)))
 		}
 	}
-	var buf bytes.Buffer
-	if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&buf, img); err != nil {
+	encoded, err := encodeShorelinePNG(rgb, n)
+	if err != nil {
 		return nil, err
 	}
 	out := &OceanBathymetry{
-		Src:            "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()),
+		Src:            "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded),
 		MinX:           f.minX,
 		MinZ:           f.minZ,
 		MaxX:           f.minX + f.sizeX,
