@@ -64,8 +64,18 @@ func DocsNavigation() Node {
 			<span class="nav-group-title">Guide</span>
 			<div class="nav-group-links">
 				<a href="/" data-gosx-link class="nav-link" aria-current={request.path == "/"}>Overview</a>
-				<a href="/docs/getting-started" data-gosx-link class="nav-link" aria-current={request.path == "/docs/getting-started"}>Getting Started</a>
-				<a href="/docs/routing" data-gosx-link class="nav-link" aria-current={request.path == "/docs/routing"}>Routing</a>
+				<a
+					href="/docs/getting-started"
+					data-gosx-link
+					class="nav-link"
+					aria-current={request.path == "/docs/getting-started"}
+				>Getting Started</a>
+				<a
+					href="/docs/routing"
+					data-gosx-link
+					class="nav-link"
+					aria-current={request.path == "/docs/routing"}
+				>Routing</a>
 				<a href="/docs/forms" data-gosx-link class="nav-link" aria-current={request.path == "/docs/forms"}>Forms</a>
 				<a href="/docs/auth" data-gosx-link class="nav-link" aria-current={request.path == "/docs/auth"}>Auth</a>
 			</div>
@@ -73,15 +83,35 @@ func DocsNavigation() Node {
 		<div class="nav-group">
 			<span class="nav-group-title">Runtime</span>
 			<div class="nav-group-links">
-				<a href="/docs/runtime" data-gosx-link class="nav-link" aria-current={request.path == "/docs/runtime"}>Runtime</a>
-				<a href="/docs/images" data-gosx-link class="nav-link" aria-current={request.path == "/docs/images"}>Images</a>
+				<a
+					href="/docs/runtime"
+					data-gosx-link
+					class="nav-link"
+					aria-current={request.path == "/docs/runtime"}
+				>Runtime</a>
+				<a
+					href="/docs/images"
+					data-gosx-link
+					class="nav-link"
+					aria-current={request.path == "/docs/images"}
+				>Images</a>
 			</div>
 		</div>
 		<div class="nav-group">
 			<span class="nav-group-title">Labs</span>
 			<div class="nav-group-links">
-				<a href="/labs/stream" data-gosx-link class="nav-link" aria-current={request.path == "/labs/stream"}>Streaming</a>
-				<a href="/labs/secret" data-gosx-link class="nav-link" aria-current={request.path == "/labs/secret"}>Secret</a>
+				<a
+					href="/labs/stream"
+					data-gosx-link
+					class="nav-link"
+					aria-current={request.path == "/labs/stream"}
+				>Streaming</a>
+				<a
+					href="/labs/secret"
+					data-gosx-link
+					class="nav-link"
+					aria-current={request.path == "/labs/secret"}
+				>Secret</a>
 			</div>
 		</div>
 	</>
