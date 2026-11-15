@@ -58,45 +58,30 @@ func Layout() Node {
 	</div>
 }
 
-func DocsNavLink(props any) Node {
-	return <>
-		<If when={props.Active}>
-			<a href={props.Href} data-gosx-link class="nav-link active">{props.Label}</a>
-		</If>
-		<If when={props.Active == false}>
-			<a href={props.Href} data-gosx-link class="nav-link">{props.Label}</a>
-		</If>
-	</>
-}
-
 func DocsNavigation() Node {
 	return <>
 		<div class="nav-group">
 			<span class="nav-group-title">Guide</span>
 			<div class="nav-group-links">
-				<DocsNavLink href="/" label="Overview" active={request.path == "/"}></DocsNavLink>
-				<DocsNavLink
-					href="/docs/getting-started"
-					label="Getting Started"
-					active={request.path == "/docs/getting-started"}
-				></DocsNavLink>
-				<DocsNavLink href="/docs/routing" label="Routing" active={request.path == "/docs/routing"}></DocsNavLink>
-				<DocsNavLink href="/docs/forms" label="Forms" active={request.path == "/docs/forms"}></DocsNavLink>
-				<DocsNavLink href="/docs/auth" label="Auth" active={request.path == "/docs/auth"}></DocsNavLink>
+				<a href="/" data-gosx-link class="nav-link" aria-current={request.path == "/"}>Overview</a>
+				<a href="/docs/getting-started" data-gosx-link class="nav-link" aria-current={request.path == "/docs/getting-started"}>Getting Started</a>
+				<a href="/docs/routing" data-gosx-link class="nav-link" aria-current={request.path == "/docs/routing"}>Routing</a>
+				<a href="/docs/forms" data-gosx-link class="nav-link" aria-current={request.path == "/docs/forms"}>Forms</a>
+				<a href="/docs/auth" data-gosx-link class="nav-link" aria-current={request.path == "/docs/auth"}>Auth</a>
 			</div>
 		</div>
 		<div class="nav-group">
 			<span class="nav-group-title">Runtime</span>
 			<div class="nav-group-links">
-				<DocsNavLink href="/docs/runtime" label="Runtime" active={request.path == "/docs/runtime"}></DocsNavLink>
-				<DocsNavLink href="/docs/images" label="Images" active={request.path == "/docs/images"}></DocsNavLink>
+				<a href="/docs/runtime" data-gosx-link class="nav-link" aria-current={request.path == "/docs/runtime"}>Runtime</a>
+				<a href="/docs/images" data-gosx-link class="nav-link" aria-current={request.path == "/docs/images"}>Images</a>
 			</div>
 		</div>
 		<div class="nav-group">
 			<span class="nav-group-title">Labs</span>
 			<div class="nav-group-links">
-				<DocsNavLink href="/labs/stream" label="Streaming" active={request.path == "/labs/stream"}></DocsNavLink>
-				<DocsNavLink href="/labs/secret" label="Secret" active={request.path == "/labs/secret"}></DocsNavLink>
+				<a href="/labs/stream" data-gosx-link class="nav-link" aria-current={request.path == "/labs/stream"}>Streaming</a>
+				<a href="/labs/secret" data-gosx-link class="nav-link" aria-current={request.path == "/labs/secret"}>Secret</a>
 			</div>
 		</div>
 	</>

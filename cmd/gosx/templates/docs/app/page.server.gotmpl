@@ -2,44 +2,54 @@ package docs
 
 import "m31labs.dev/gosx/route"
 
+// featureCard has the same exported fields as FeatureCardProps in page.gsx.
+// A strict component accepts a spread only from a struct, so the page loads
+// structs here, not maps.
+type featureCard struct {
+	Kicker string
+	Title  string
+	Body   string
+	Href   string
+}
+
 func init() {
 	RegisterStaticDocsPage(
 		"Overview",
-		"A paper-and-ink docs surface that exists to prove GoSX can route files, swap pages, validate forms, and stay coherent.",
+		"A starter documentation site built with GoSX: file routes, nested layouts, validated forms, and auth.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
 					"showRouteTree": true,
-					"features": []map[string]string{
+					"features": []featureCard{
 						{
-							"kicker": "Tier 1",
-							"title":  "App scaffolding, metadata, APIs, 404 and 500 pages, public assets, and env loading.",
-							"body":   "The basics for building and booting a real server-first app now exist in the framework, not just in examples.",
-							"href":   "/docs/getting-started",
+							Kicker: "Routing",
+							Title:  "Folders are routes.",
+							Body:   "Each folder under app/ is a URL. Add a page.gsx for the page and a layout.gsx to wrap everything beneath it.",
+							Href:   "/docs/routing",
 						},
 						{
-							"kicker": "Tier 2",
-							"title":  "Client navigation and per-route middleware without spinning up a second framework.",
-							"body":   "Page-to-page transitions can stay inside the same GoSX runtime and preserve a server-first mental model.",
-							"href":   "/docs/runtime",
+							Kicker: "Forms",
+							Title:  "Validated forms with no client code.",
+							Body:   "A page.server.go Actions entry validates on the server and sends the user back with their values and any errors.",
+							Href:   "/docs/forms",
 						},
 						{
-							"kicker": "Tier 3",
-							"title":  "File-based pages, route groups, nested layouts, scoped 404s, redirects, and rewrites.",
-							"body":   "The route tree is now visible from the filesystem instead of being hidden inside a setup function.",
-							"href":   "/docs/routing",
+							Kicker: "Auth",
+							Title:  "Sessions and guarded pages.",
+							Body:   "Signed sessions, CSRF protection, and a sign-in flow ride inside the same routed app.",
+							Href:   "/docs/auth",
 						},
 						{
-							"kicker": "Phase 2",
-							"title":  "Sessions, CSRF, flashed form state, and auth now ride inside the same routed app model.",
-							"body":   "Forms and guards are part of the framework plane rather than bespoke app middleware.",
-							"href":   "/docs/forms",
+							Kicker: "Runtime",
+							Title:  "Page changes without a full reload.",
+							Body:   "Marked links fetch HTML and swap the page. Without JavaScript, they are ordinary links.",
+							Href:   "/docs/runtime",
 						},
 						{
-							"kicker": "Why this matters",
-							"title":  "The docs tree itself is the route map. You can see the information architecture from the filesystem.",
-							"body":   "This site exists to prove that GoSX features compose inside one dogfooded app instead of as disconnected demos.",
-							"href":   "/docs/auth",
+							Kicker: "Ship it",
+							Title:  "One dist/ folder is the whole deployment.",
+							Body:   "Run gosx build --prod, check the bundle with gosx deploy check dist, and follow the deployment guide.",
+							Href:   "https://gosx.m31labs.dev/docs/deployment",
 						},
 					},
 				}, nil

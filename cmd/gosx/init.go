@@ -88,8 +88,63 @@ func RunInit(dir string, module string, template string) error {
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "\nNext:\n  cd %s\n  go run .\n", dir)
+	fmt.Fprint(os.Stderr, initNextSteps(dir))
 	return nil
+}
+
+// initDeployDocsURL is the deployment guide that the generated README and the
+// printed next steps link to.
+const initDeployDocsURL = "https://gosx.m31labs.dev/docs/deployment"
+
+// initNextSteps is the text `gosx init` prints on success: run the app, then
+// the one linked path from a new project to a deployed one.
+func initNextSteps(dir string) string {
+	return fmt.Sprintf(`
+Next:
+  cd %s
+  go run .
+
+Ship it when you are ready:
+  gosx build --prod . && gosx deploy check dist
+  Then deploy the whole dist/ folder: %s
+`, dir, initDeployDocsURL)
+}
+
+// readmeTemplate is the README.md written into both templates. Its "Ship it"
+// section is the one step that leads from a new project to a deployed app.
+// The source uses ~ for a backtick so it can sit in a Go raw string.
+func readmeTemplate(template string) string {
+	title := "My GoSX app"
+	about := "A server-first GoSX app: file-routed ~.gsx~ pages, session-backed form actions, and a JSON API."
+	if template == initTemplateDocs {
+		title = "My GoSX docs site"
+		about = "A GoSX documentation site: file-routed ~.gsx~ pages, nested layouts, forms, and auth."
+	}
+	body := fmt.Sprintf(`# %s
+
+%s
+
+## Run it
+
+    go run .
+
+Open http://localhost:8080. Edit files under ~app/~, and add ~page.server.go~
+beside a page when it needs ~Load~, ~Metadata~, or ~Actions~.
+
+## Ship it
+
+1. Build the production bundle and check it:
+
+       gosx build --prod .
+       gosx deploy check dist
+
+2. Set ~GOSX_ENV=production~, set ~PUBLIC_URL~ to your ~https://~ origin, and
+   supply a random ~SESSION_SECRET~ (for example ~openssl rand -hex 32~).
+3. Upload the whole ~dist/~ folder and start it with ~PORT=8080 ./run.sh~. The
+   deployment guide covers a container image and each host setting:
+   %s
+`, title, about, initDeployDocsURL)
+	return strings.ReplaceAll(body, "~", "`")
 }
 
 // tidyScaffold resolves dependencies in a private staging tree before publication.
