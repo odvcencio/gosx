@@ -92,6 +92,7 @@
     {"id":"app/docs/public/demos/posters/livesim.webp","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/demos/posters/orrery.webp","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/demos/posters/playground.webp","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/demos/posters/rooms.webp","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/demos/posters/scene3d-bench.webp","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/demos/posters/scene3d.webp","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/demos/posters/showreel.webp","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},

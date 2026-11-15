@@ -860,6 +860,11 @@
       "count": 1
     },
     {
+      "file": "examples/gosx-docs/app/docs/guides/content/scene3d-shadows.md",
+      "source": "webgpu-shadows.ts",
+      "count": 1
+    },
+    {
       "file": "cmd/buildbootstrap/scene3d_runtime_sources_test.go",
       "source": "webgpu-points.ts",
       "count": 1
