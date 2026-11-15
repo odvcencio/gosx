@@ -6,8 +6,8 @@
 // post-effect chunk and still draw; a scene with TAA must fetch only its own
 // backend's chunk, and TAA must run. Run it on the charter GPU runners:
 //
-//	/home/draco/work/.runtime/tools/gpu/gpu-chrome.sh run -- env GOSX_WATER_E2E_REQUIRE_WEBGPU=1 go test -tags e2e -timeout 20m -run TestPostFXChunkLoadsOnlyForScenesThatDeclareIt ./e2e/
-//	mac-gpu-run <worktree> go test -tags e2e -timeout 20m -run TestPostFXChunkLoadsOnlyForScenesThatDeclareIt ./e2e/
+//	env GOSX_WATER_E2E_REQUIRE_WEBGPU=1 go test -tags e2e -timeout 20m -run TestPostFXChunkLoadsOnlyForScenesThatDeclareIt ./e2e/
+//	go test -tags e2e -timeout 20m -run TestPostFXChunkLoadsOnlyForScenesThatDeclareIt ./e2e/
 package e2e
 
 import (
