@@ -200,6 +200,13 @@ func BenchImageQualityScene() scene.Props {
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
 			scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
 		}},
+		// Rung 0 runs the whole chain; the governor sheds motion blur, depth of
+		// field and TAA first, then every post effect.
+		QualityLadder: []scene.QualityRung{
+			{Name: "full", PostEffects: []string{"dof", "motionBlur", "bloom", "toneMapping", "taa"}},
+			{Name: "lite", PostEffects: []string{"bloom", "toneMapping"}},
+			{Name: "raw"},
+		},
 		Graph: scene.NewGraph(nodes...),
 	}
 }
