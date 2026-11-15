@@ -177,6 +177,7 @@ func renderBundle(frame engine.RenderBundle, opts Options) (*Result, error) {
 	if opts.DisablePostFX {
 		frame.PostEffects = nil
 	}
+	frame.Diagnostics = withPostEffectDiagnostics(frame)
 	if opts.MaxSegments != 0 {
 		limit := max(opts.MaxSegments, 3)
 		for index := range frame.InstancedMeshes {
@@ -206,6 +207,21 @@ func renderBundle(frame engine.RenderBundle, opts Options) (*Result, error) {
 	//gosx:allow wall-clock measures render duration for Result.Duration only; no output pixel reads it
 	elapsed := time.Since(started)
 	return &Result{Image: cloneRGBA(device.Framebuffer()), Bundle: frame, Stats: renderer.Stats(), Duration: elapsed}, nil
+}
+
+// withPostEffectDiagnostics returns the frame's diagnostics with the post
+// effect findings recomputed from the effects the renderer will actually run.
+// BundleIR cannot see effects that RenderJSON appends afterwards, and it still
+// sees effects that Options.DisablePostFX removes, so both paths would report
+// the wrong set without this step.
+func withPostEffectDiagnostics(frame engine.RenderBundle) []engine.RenderDiagnostic {
+	out := make([]engine.RenderDiagnostic, 0, len(frame.Diagnostics))
+	for _, diagnostic := range frame.Diagnostics {
+		if !strings.HasPrefix(diagnostic.Code, "scene.native.custom_post_") && diagnostic.Code != "scene.native.specular_bloom_unsupported" {
+			out = append(out, diagnostic)
+		}
+	}
+	return append(out, bundle.PostEffectDiagnostics(frame)...)
 }
 
 // Bundle lowers typed authoring props to the renderer-facing native contract.
