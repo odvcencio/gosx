@@ -254,6 +254,27 @@ for required_output in build.json run.sh server/app; do
 		exit 1
 	fi
 done
+# The /demos/rooms page plays a Go/WASM client (examples/rooms/client, a
+# standard Go js/wasm build, not TinyGo). It lives outside the public bundle and
+# loads only on that page; the docs server serves it from runtime-assets/rooms.
+# wasm_exec.js must come from the same Go that built the wasm.
+rooms_dir="${dist_dir}/runtime-assets/rooms"
+mkdir -p "$rooms_dir"
+GOOS=js GOARCH=wasm CGO_ENABLED=0 "$go_cmd" build -trimpath -ldflags="-s -w" -o "${rooms_dir}/main.wasm" ./examples/rooms/client
+rooms_goroot="$("$go_cmd" env GOROOT)"
+for wasm_exec in "${rooms_goroot}/lib/wasm/wasm_exec.js" "${rooms_goroot}/misc/wasm/wasm_exec.js"; do
+	if [ -f "$wasm_exec" ]; then
+		cp "$wasm_exec" "${rooms_dir}/wasm_exec.js"
+		break
+	fi
+done
+gzip -9 -k -f "${rooms_dir}/main.wasm"
+for required_output in main.wasm main.wasm.gz wasm_exec.js; do
+	if [ ! -s "${rooms_dir}/${required_output}" ]; then
+		echo "gosx docs deploy: the rooms client build did not create dist/runtime-assets/rooms/${required_output}" >&2
+		exit 1
+	fi
+done
 if [ -n "${GOSX_DOCS_BLACKGLASS_ROM:-}" ]; then
 	python3 scripts/blackglass-cartridge.py --root "$dist_dir" \
 		--source "$GOSX_DOCS_BLACKGLASS_ROM" --sha256 "${GOSX_DOCS_BLACKGLASS_ROM_SHA256:-}"

@@ -110,6 +110,15 @@ var demoCatalog = []DemoDefinition{
 		Limitations: "This teaching demo uses last-write-wins rather than a production CRDT, and has no rooms or persistence.",
 	},
 	{
+		Slug: "rooms", Title: "Rooms", Tag: "lobby, countdown, bots, reconnect",
+		Promise: "Play a 30 second round against a bot in a server-authoritative room.",
+		Lesson:  "A room.Server runs lobby, countdown, run and results phases and puts a bot in every empty seat. The browser runs the same deterministic simulation from the room's seed, predicts your input, interpolates the other player, and redials with a resume token when the link drops.",
+		Accent:  "#f59e0b", Facets: []string{"Rooms", "Bots", "Prediction", "Reconnect", "Go WASM"},
+		SourcePath: "examples/gosx-docs/app/demos/rooms/page.gsx", Packages: []string{"room", "game/netsync", "route"},
+		Status: "live", RenderMode: "SSR page + Go/WASM game client in an iframe + room.Server",
+		Limitations: "The room is in memory with a 30 second round, a cap of 16 live rooms, and short idle and reconnect timers; there is no persistence, matchmaking beyond quick-match, or spectators. The client is a standard Go WASM build that loads only on this page.",
+	},
+	{
 		Slug: "scene3d", Title: "Geometry Zoo", Tag: "declarative PBR scene",
 		Promise: "Orbit a PBR scene with typed geometry, lighting, and materials.",
 		Lesson:  "Lights, materials, geometry, camera, tonemapping, and bloom lower from Go to GoSX Scene3D.",

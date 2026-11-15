@@ -28,6 +28,7 @@ var demoSummaries = map[string]string{
 	"scene3d-bench": "Compare renderer workloads with measured frame-time charts.",
 	"html-surface":  "Orbit HTML panels textured onto geometry inside a 3D scene.",
 	"cms":           "Build a block page, inspect its live preview, and publish a validated draft.",
+	"rooms":         "Steer a body in a 30 second round against a bot, then see the results.",
 	"orrery":        "Pause a 24-second star-system animation and orbit its keyframed scene.",
 }
 
@@ -46,6 +47,7 @@ var demoShows = map[string]string{
 	"scene3d-bench": "Renderer workloads you select by URL and compare with measured frame times.",
 	"html-surface":  "Live HTML and CSS rendered as a textured quad inside a 3D scene.",
 	"cms":           "A client-side block editor and a CSRF-protected server action on one page.",
+	"rooms":         "A server-run room with lobby, countdown, bots, prediction and reconnect.",
 	"orrery":        "Animation channels and material keyframes declared as deterministic data.",
 }
 
@@ -65,6 +67,7 @@ var demoDocPages = map[string]string{
 	"html-surface":  "/docs/scene3d",
 	"cms":           "/docs/forms",
 	"orrery":        "/docs/scene3d",
+	"rooms":         "/docs/hubs", // docs/rooms.md has no site page yet; repoint to /docs/guides/rooms when #850 lands
 }
 
 var demoGroups = map[string]string{
@@ -73,6 +76,7 @@ var demoGroups = map[string]string{
 	"html-surface":  "Scenes and materials",
 	"orrery":        "Scenes and materials",
 	"checkers":      "Games and interaction",
+	"rooms":         "Games and interaction",
 	"fluid":         "Live systems",
 	"livesim":       "Live systems",
 	"collab":        "Live systems",
@@ -213,6 +217,17 @@ var demoSources = map[string][]string{
 		"examples/gosx-docs/app/demos/cms/route.config.json",
 		"examples/gosx-docs/public/cms-client.js",
 	},
+	"rooms": {
+		"examples/gosx-docs/app/demos/rooms/assets.go",
+		"examples/gosx-docs/app/demos/rooms/client.html",
+		"examples/gosx-docs/app/demos/rooms/page.css",
+		"examples/gosx-docs/app/demos/rooms/page.gsx",
+		"examples/gosx-docs/app/demos/rooms/page.server.go",
+		"examples/gosx-docs/app/demos/rooms/rooms.go",
+		"examples/gosx-docs/app/demos/rooms/route.config.json",
+		"examples/rooms/client/main_js.go",
+		"room/roomtest/bodies.go",
+	},
 	"orrery": {
 		"examples/gosx-docs/app/demos/orrery/page.css",
 		"examples/gosx-docs/app/demos/orrery/page.gsx",
@@ -230,7 +245,7 @@ type DemoGroup struct {
 
 var orderedDemoGroups = []DemoGroup{
 	{ID: "scenes-and-materials", Title: "Scenes and materials", Description: "Study typed geometry, lighting, animation, and HTML textures."},
-	{ID: "games-and-interaction", Title: "Games and interaction", Description: "Play a Go-checked board game with a Scene3D table."},
+	{ID: "games-and-interaction", Title: "Games and interaction", Description: "Play a Go-checked board game, or a server-run room against a bot."},
 	{ID: "live-systems", Title: "Live systems", Description: "Follow server-owned simulations, shared documents, and presence."},
 	{ID: "application-patterns", Title: "Application patterns", Description: "Compile components, edit content, and publish through server actions."},
 	{ID: "engine-studies", Title: "Engine studies", Description: "Explore Blackglass Coast and inspect renderer workloads."},
@@ -242,6 +257,7 @@ var nonSceneBackends = map[string][]string{
 	"livesim":    {"Server and Canvas 2D"},
 	"collab":     {"Server and browser DOM"},
 	"cms":        {"Server and browser DOM"},
+	"rooms":      {"Server and Canvas 2D"},
 }
 
 func GalleryDemos() ([]DemoDefinition, error) {
