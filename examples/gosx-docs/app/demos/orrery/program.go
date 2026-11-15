@@ -76,6 +76,13 @@ func LodestarMeridianProgram() scene.Props {
 			scene.Vignette{Intensity: 0.16},
 			scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
 		}},
+		// Rung 0 runs motion blur and TAA; the governor sheds them first, then
+		// every post effect, when a slower device misses the frame target.
+		QualityLadder: []scene.QualityRung{
+			{Name: "full", PostEffects: []string{"motionBlur", "bloom", "toneMapping", "vignette", "taa"}},
+			{Name: "lite", PostEffects: []string{"bloom", "toneMapping", "vignette"}},
+			{Name: "raw"},
+		},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
 		Graph:   scene.NewGraph(orreryNodes()...),
 	}

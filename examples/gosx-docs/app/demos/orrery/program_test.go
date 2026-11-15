@@ -346,3 +346,23 @@ func TestLodestarMeridianDeclaresItsImageQualityChain(t *testing.T) {
 		t.Error("orrery should declare Environment.AutoExposure")
 	}
 }
+
+// TestLodestarMeridianShedsMotionBlurAndTAAFirst keeps both effects on the top
+// quality rung only.
+func TestLodestarMeridianShedsMotionBlurAndTAAFirst(t *testing.T) {
+	ladder := LodestarMeridianProgram().QualityLadder
+	if len(ladder) != 3 {
+		t.Fatalf("quality ladder has %d rungs, want 3", len(ladder))
+	}
+	has := func(rung scene.QualityRung, kind string) bool {
+		for _, effect := range rung.PostEffects {
+			if effect == kind {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(ladder[0], "taa") || !has(ladder[0], "motionBlur") || has(ladder[1], "taa") || has(ladder[1], "motionBlur") || len(ladder[2].PostEffects) != 0 {
+		t.Errorf("ladder = %#v", ladder)
+	}
+}
