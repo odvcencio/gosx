@@ -1061,7 +1061,8 @@ const budgets = [
     // 9 November 2026 (lazy post-effect chunks: TAA with the WebGL2 motion vectors, depth of field and auto exposure leave the renderer chunks and the monolith for the per-backend postfx chunks): measured raw 2142189 / gzip 604727 / brotli 494761; lock in the saving, targets drop to their exact minima (raw 2122720 -> 2076653, gzip 600721 -> 588343, brotli 488103 -> 478377), allowances unchanged.
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured bootstrap.js gzip 604962; only this exhausted target moves (588343 -> 588578), allowance unchanged.
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured bootstrap.js raw 2142825; only this exhausted target moves (2076653 -> 2077289), allowance unchanged.
-    file: "bootstrap.js", raw: 2077289, gzip: 588578,
+    // 15 November 2026 (shadow pass restores the depth write mask before it clears the map; one statement moves, raw size is unchanged and only the compressed encodings shift): measured bootstrap.js gzip 604963; only this exhausted target moves (588578 -> 588579), allowance unchanged.
+    file: "bootstrap.js", raw: 2077289, gzip: 588579,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1074,7 +1075,8 @@ const budgets = [
     // train 5 (#823 stadium crowd system): measured bootstrap.js brotli 504027; only this exhausted target moves (487015 -> 487643), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap.js brotli 504487; only this exhausted target moves (487643 -> 488103), allowance unchanged.
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured bootstrap.js brotli 494813; only this exhausted target moves (478377 -> 478429), allowance unchanged.
-    brotli: 478429 },
+    // 15 November 2026 (shadow pass restores the depth write mask before it clears the map; one statement moves, raw size is unchanged and only the compressed encodings shift): measured bootstrap.js brotli 495373; only this exhausted target moves (478429 -> 478989), allowance unchanged.
+    brotli: 478989 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
