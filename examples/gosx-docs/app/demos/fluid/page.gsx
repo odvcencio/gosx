@@ -63,9 +63,17 @@ func Page() Node {
 		<div class="fluid__footer">
 			<span>
 				What this shows: the server advects a {data.gridN}³ velocity field, quantizes it to {data.bitWidth} bits per value, and streams deltas to every browser at 20 Hz. Your drag changes only this browser's particle view.
-				<a href="https://github.com/odvcencio/gosx/tree/main/field" target="_blank" rel="noopener noreferrer">The field package</a>
+				<a
+					href="https://github.com/odvcencio/gosx/tree/main/field"
+					target="_blank"
+					rel="noopener noreferrer"
+				>The field package</a>
 				·
-				<a href="https://github.com/odvcencio/gosx/blob/main/docs/hub-snapshots.md" target="_blank" rel="noopener noreferrer">Hub snapshots</a>
+				<a
+					href="https://github.com/odvcencio/gosx/blob/main/docs/hub-snapshots.md"
+					target="_blank"
+					rel="noopener noreferrer"
+				>Hub snapshots</a>
 			</span>
 		</div>
 		<script src="/fluid-client.js" defer></script>
