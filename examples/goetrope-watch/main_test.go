@@ -46,6 +46,12 @@ func TestRoutesRenderServerData(t *testing.T) {
 				t.Fatalf("status = %d\n%s", rec.Code, rec.Body)
 			}
 			body := rec.Body.String()
+			if n := strings.Count(body, `class="watch-app__bar"`); n != 1 {
+				t.Errorf("layout rendered %d times, want 1", n)
+			}
+			if !strings.Contains(body, "watch.css") {
+				t.Error("page does not link watch.css")
+			}
 			for _, want := range tc.want {
 				if !strings.Contains(body, want) {
 					t.Errorf("response lacks %q", want)

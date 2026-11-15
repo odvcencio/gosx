@@ -35,15 +35,13 @@ func main() {
 // newApp wires the file-routed pages under root/app to a server. The test uses
 // it to render each route without opening a port.
 func newApp(root string) (*server.App, error) {
-	layout, err := route.FileLayout(filepath.Join(root, "app", "layout.gsx"))
-	if err != nil {
-		return nil, err
-	}
-
+	// app/layout.gsx wraps every page automatically; this layout adds the
+	// document shell and the stylesheet around it.
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
+		ctx.SetLanguage("en")
 		ctx.AddHead(server.Stylesheet("watch.css"))
-		return layout(ctx, body)
+		return server.HTMLDocument(ctx.Document("Goetrope Watch Surface", body))
 	})
 
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {

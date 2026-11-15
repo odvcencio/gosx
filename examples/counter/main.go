@@ -109,7 +109,7 @@ func counterPage(counterProgram *program.Program, count int) gosx.Node {
 			gosx.El("p", gosx.Attrs(gosx.Attr("class", "eyebrow")), gosx.Text("Island")),
 			gosx.El("h1", gosx.Text("GoSX Counter")),
 			gosx.El("p", gosx.Attrs(gosx.Attr("class", "about")),
-				gosx.Text("The server renders the first count. A small compiled program takes over in the browser. Without JavaScript, the links below still count."),
+				gosx.Text("The server renders the first count. A small compiled program takes over in the browser. Without JavaScript, plain links take its place."),
 			),
 			islands.RenderIslandFromProgram(counterProgram, initialProps{Initial: count}),
 			gosx.RawHTML(fmt.Sprintf(
