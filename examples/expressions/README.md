@@ -1,4 +1,4 @@
-# expressions — Phase 4 expression-language samples
+# expressions: island expression forms
 
 Demonstrates the `.gsx` expression forms surfaced by Phase 4
 (see `gosx/docs/expressions.md` for the full subset specification).

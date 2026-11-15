@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/server"
@@ -21,12 +22,22 @@ import (
 
 func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
-	root := filepath.Dir(thisFile)
-
-	counterProgram := program.CounterProgram()
-	counterJSON, err := program.EncodeJSON(counterProgram)
+	app, err := newApp(filepath.Dir(thisFile))
 	if err != nil {
-		log.Fatalf("encode counter island: %v", err)
+		log.Fatal(err)
+	}
+
+	port := getenv("PORT", "8080")
+	fmt.Printf("GoSX counter example running at http://localhost:%s\n", port)
+	log.Fatal(app.ListenAndServe(":" + port))
+}
+
+// newApp compiles the island from root/counter.gsx and returns a server that
+// renders it. The test uses it without opening a port.
+func newApp(root string) (*server.App, error) {
+	counterProgram, counterJSON, err := compileIsland(filepath.Join(root, "counter.gsx"), "Counter")
+	if err != nil {
+		return nil, fmt.Errorf("compile counter island: %w", err)
 	}
 
 	app := server.New()
@@ -39,10 +50,42 @@ func main() {
 	app.Route("/", func(r *http.Request) gosx.Node {
 		return counterPage(counterProgram, queryCount(r))
 	})
+	return app, nil
+}
 
-	port := getenv("PORT", "8080")
-	fmt.Printf("GoSX counter example running at http://localhost:%s\n", port)
-	log.Fatal(app.ListenAndServe(":" + port))
+// initialProps mirrors CounterProps in counter.gsx. The island reads its
+// starting count from the Initial field.
+type initialProps struct {
+	Initial int
+}
+
+// compileIsland compiles a .gsx file and returns the named island's program and
+// its JSON wire form: the same Compile, LowerIsland, EncodeJSON steps that
+// `gosx dev` runs on each island edit.
+func compileIsland(path, component string) (*program.Program, []byte, error) {
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	irProg, err := gosx.Compile(source)
+	if err != nil {
+		return nil, nil, fmt.Errorf("compile %s: %w", path, err)
+	}
+	for i, comp := range irProg.Components {
+		if !comp.IsIsland || comp.Name != component {
+			continue
+		}
+		isl, err := ir.LowerIsland(irProg, i)
+		if err != nil {
+			return nil, nil, fmt.Errorf("lower island %s: %w", component, err)
+		}
+		data, err := program.EncodeJSON(isl)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode island %s: %w", component, err)
+		}
+		return isl, data, nil
+	}
+	return nil, nil, fmt.Errorf("island %q not found in %s", component, path)
 }
 
 func queryCount(r *http.Request) int {
@@ -63,14 +106,19 @@ func counterPage(counterProgram *program.Program, count int) gosx.Node {
 
 	body := gosx.El("main", gosx.Attrs(gosx.Attr("class", "page-shell")),
 		gosx.El("section", gosx.Attrs(gosx.Attr("class", "counter-panel")),
+			gosx.El("p", gosx.Attrs(gosx.Attr("class", "eyebrow")), gosx.Text("Island")),
 			gosx.El("h1", gosx.Text("GoSX Counter")),
-			islands.RenderIslandFromProgram(counterProgram, map[string]int{"initial": count}),
+			gosx.El("p", gosx.Attrs(gosx.Attr("class", "about")),
+				gosx.Text("The server renders the first count. A small compiled program takes over in the browser. Without JavaScript, the links below still count."),
+			),
+			islands.RenderIslandFromProgram(counterProgram, initialProps{Initial: count}),
 			gosx.RawHTML(fmt.Sprintf(
 				`<noscript><div class="counter no-js-counter"><a href="/?count=%d">-</a><span class="count">%d</span><a href="/?count=%d">+</a></div></noscript>`,
 				count-1,
 				count,
 				count+1,
 			)),
+			gosx.El("a", gosx.Attrs(gosx.Attr("class", "docs-link"), gosx.Attr("href", "https://gosx.m31labs.dev/docs/islands")), gosx.Text("How islands work")),
 		),
 	)
 

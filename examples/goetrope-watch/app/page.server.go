@@ -24,6 +24,22 @@ func init() {
 	}
 }
 
+// highlightCard and roomPreview have the same exported fields as the strict
+// props in page.gsx: a strict component accepts a spread only from a struct.
+type highlightCard struct {
+	Kicker string
+	Title  string
+	Body   string
+}
+
+type roomPreview struct {
+	Code          string
+	Title         string
+	DisplayTitle  string
+	Status        string
+	SubtitleState string
+}
+
 func landingSnapshot() map[string]any {
 	return map[string]any{
 		"hero": map[string]any{
@@ -33,44 +49,44 @@ func landingSnapshot() map[string]any {
 			"watch_href": "/watch/alpha",
 			"note":       "This is a Gosx scaffold only. It is not wired to production playback control.",
 		},
-		"highlights": []map[string]any{
+		"highlights": []highlightCard{
 			{
-				"kicker": "1",
-				"title":  "Canonical state stays on the server.",
-				"body":   "The room snapshot and normalized queue titles are loaded by the page module, not assembled inside a sprawling client loop.",
+				Kicker: "1",
+				Title:  "Canonical state stays on the server.",
+				Body:   "The room snapshot and normalized queue titles are loaded by the page module, not assembled inside a sprawling client loop.",
 			},
 			{
-				"kicker": "2",
-				"title":  "Playback becomes a narrow transport shell.",
-				"body":   "The page can reserve a tiny interactive island later, but the document itself remains the source of truth for layout and copy.",
+				Kicker: "2",
+				Title:  "Playback becomes a narrow transport shell.",
+				Body:   "The page can reserve a tiny interactive island later, but the document itself remains the source of truth for layout and copy.",
 			},
 			{
-				"kicker": "3",
-				"title":  "Subtitles warm in the background.",
-				"body":   "A watch room can advertise subtitle cache status immediately so the user never stares at a blank loading overlay.",
+				Kicker: "3",
+				Title:  "Subtitles warm in the background.",
+				Body:   "A watch room can advertise subtitle cache status immediately so the user never stares at a blank loading overlay.",
 			},
 		},
-		"rooms": []map[string]any{
+		"rooms": []roomPreview{
 			{
-				"code":           "alpha",
-				"title":          "Room Alpha",
-				"display_title":  "Alien",
-				"status":         "Playing",
-				"subtitle_state": "Prewarmed",
+				Code:          "alpha",
+				Title:         "Room Alpha",
+				DisplayTitle:  "Alien",
+				Status:        "Playing",
+				SubtitleState: "Prewarmed",
 			},
 			{
-				"code":           "beta",
-				"title":          "Room Beta",
-				"display_title":  "Aliens: Special Edition",
-				"status":         "Queued",
-				"subtitle_state": "Cached",
+				Code:          "beta",
+				Title:         "Room Beta",
+				DisplayTitle:  "Aliens: Special Edition",
+				Status:        "Queued",
+				SubtitleState: "Cached",
 			},
 			{
-				"code":           "gamma",
-				"title":          "Room Gamma",
-				"display_title":  "Alien 3",
-				"status":         "Ready",
-				"subtitle_state": "Warm",
+				Code:          "gamma",
+				Title:         "Room Gamma",
+				DisplayTitle:  "Alien 3",
+				Status:        "Ready",
+				SubtitleState: "Warm",
 			},
 		},
 	}

@@ -10,8 +10,10 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
+	"net/http"
 	"path/filepath"
 	"runtime"
 
@@ -22,20 +24,12 @@ import (
 	"m31labs.dev/gosx/server"
 )
 
+//go:embed style.css
+var style string
+
 func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
-	root := filepath.Dir(thisFile)
-
-	router := route.NewRouter()
-	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.SetLanguage("en")
-		return server.HTMLDocument(ctx.Document("GoSX Example", body))
-	})
-	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
-		log.Fatal(err)
-	}
-
-	rootHandler, err := router.BuildChecked()
+	rootHandler, err := newHandler(filepath.Dir(thisFile))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,4 +39,19 @@ func main() {
 
 	fmt.Println("GoSX example server running at http://localhost:8080")
 	log.Fatal(app.ListenAndServe(":8080"))
+}
+
+// newHandler builds the file-routed handler for the pages under root/app. The
+// test uses it to render each route without opening a port.
+func newHandler(root string) (http.Handler, error) {
+	router := route.NewRouter()
+	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
+		ctx.SetLanguage("en")
+		ctx.AddHead(gosx.El("style", gosx.RawHTML(style)))
+		return server.HTMLDocument(ctx.Document("GoSX Example", body))
+	})
+	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
+		return nil, err
+	}
+	return router.BuildChecked()
 }

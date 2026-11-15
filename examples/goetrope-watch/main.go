@@ -6,6 +6,10 @@ import (
 	"runtime"
 
 	"m31labs.dev/gosx"
+	// The page.server.go files register each route's Load and Metadata in
+	// init, so the packages must be linked in.
+	_ "m31labs.dev/gosx/examples/goetrope-watch/app"
+	_ "m31labs.dev/gosx/examples/goetrope-watch/app/watch"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/server"
 )
@@ -14,9 +18,21 @@ func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := server.ResolveAppRoot(thisFile)
 
-	layout, err := route.FileLayout(filepath.Join(root, "app", "layout.gsx"))
+	app, err := newApp(root)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	log.Printf("goetrope-watch listening on http://localhost:8080")
+	log.Fatal(app.ListenAndServe(":8080"))
+}
+
+// newApp wires the file-routed pages under root/app to a server. The test uses
+// it to render each route without opening a port.
+func newApp(root string) (*server.App, error) {
+	layout, err := route.FileLayout(filepath.Join(root, "app", "layout.gsx"))
+	if err != nil {
+		return nil, err
 	}
 
 	router := route.NewRouter()
@@ -26,7 +42,7 @@ func main() {
 	})
 
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	app := server.New()
@@ -35,10 +51,8 @@ func main() {
 	app.SetPublicDir(filepath.Join(root, "public"))
 	rootHandler, err := router.BuildChecked()
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	app.Mount("/", rootHandler)
-
-	log.Printf("goetrope-watch prototype at http://localhost:8080")
-	log.Fatal(app.ListenAndServe(":8080"))
+	return app, nil
 }

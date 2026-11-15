@@ -1,4 +1,4 @@
-package panel
+package main
 
 import (
 	"m31labs.dev/gosx/engine"
@@ -7,40 +7,41 @@ import (
 
 // The island reads the engine's signals and writes its call signal. It does not
 // know whether the engine runs in a browser worker or natively in the desktop
-// host. Cmd, Reply, Ref and View repeat the field names of the Go types the
-// engine uses, because those names are the wire keys.
-type Args struct{ By int }
-type Sum struct{ Total int }
-type Cmd struct {
+// host. The Panel types repeat the field names of the Go types the engine uses,
+// because those names are the wire keys. Their type names differ (engine.go
+// declares View in the same package), which does not affect the wire.
+type PanelArgs struct{ By int }
+type PanelSum struct{ Total int }
+type PanelCmd struct {
 	ID   uint64
 	Name string
-	Args Args
+	Args PanelArgs
 }
-type Ref struct {
+type PanelRef struct {
 	ID    uint64
 	Error string
 }
-type Reply struct {
+type PanelReply struct {
 	ID     uint64
 	Name   string
 	Error  string
-	Value  Sum
-	Recent []Ref
+	Value  PanelSum
+	Recent []PanelRef
 }
-type View struct {
+type PanelView struct {
 	Count  int
 	Ticks  int
 	Source string
 }
 
 //gosx:island
-func Panel(props struct{}) Node {
+component Panel() {
 	status := signal.NewShared("gosx.engine.gosx-engine-counter", engine.WorkerStatus{})
-	view := signal.NewShared("counter.view", View{})
-	cmd := signal.NewShared("counter.cmd", Cmd{})
-	res := signal.NewShared("counter.cmd.result", Reply{})
-	inc := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "increment", Args: Args{By: 1}}) }
-	refuse := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "refuse"}) }
+	view := signal.NewShared("counter.view", PanelView{})
+	cmd := signal.NewShared("counter.cmd", PanelCmd{})
+	res := signal.NewShared("counter.cmd.result", PanelReply{})
+	inc := func() { cmd.Set(PanelCmd{ID: cmd.Get().ID + 1, Name: "increment", Args: PanelArgs{By: 1}}) }
+	refuse := func() { cmd.Set(PanelCmd{ID: cmd.Get().ID + 1, Name: "refuse"}) }
 	return <section class="panel">
 		<h1>Native engine</h1>
 		<p>Engine: <b id="state">{status.Get().State}/{status.Get().Thread}</b> running {view.Get().Source}</p>

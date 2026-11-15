@@ -1,28 +1,70 @@
+/* Design tokens copied from the GoSX docs site (examples/gosx-docs/app/global.css),
+   so this example shares its palette. Keep the names and values in step. */
+:root {
+  color-scheme: dark;
+  --color-canvas: #070809;
+  --color-surface: #101214;
+  --color-surface-raised: #181b1e;
+  --color-text: #f7f7f4;
+  --color-text-secondary: #c7c7c2;
+  --color-text-muted: #a5a6a3;
+  --color-accent: #d4af37;
+  --color-accent-soft: rgba(212, 175, 55, 0.12);
+  --color-accent-line: rgba(212, 175, 55, 0.42);
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-pill: 100vmax;
+  --elevation-panel: 0 1rem 3rem rgba(0, 0, 0, 0.28);
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
 .page-shell {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  margin: 0;
   padding: 2rem;
-  background: #f6f7f9;
-  color: #111827;
-  font-family: system-ui, sans-serif;
 }
 
 .counter-panel {
-  width: min(100%, 24rem);
+  width: min(100%, 26rem);
   padding: 2rem;
-  border: 1px solid #d7dce3;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 20px 55px rgba(15, 23, 42, 0.12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--elevation-panel);
+}
+
+.counter-panel .eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .counter-panel h1 {
+  margin: 0 0 0.5rem;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+}
+
+.counter-panel .about {
   margin: 0 0 1.5rem;
-  font-size: 1.45rem;
-  line-height: 1.2;
-  letter-spacing: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
 }
 
 .counter {
@@ -38,10 +80,10 @@
   min-height: 2.75rem;
   display: inline-grid;
   place-items: center;
-  border: 1px solid #9ca3af;
-  border-radius: 6px;
-  background: #f8fafc;
-  color: #111827;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   cursor: pointer;
   font-size: 1.15rem;
   font-weight: 700;
@@ -49,17 +91,29 @@
 }
 
 .counter button:hover,
-.counter a:hover {
-  background: #eef2f7;
+.counter a:hover,
+.counter button:focus-visible,
+.counter a:focus-visible {
+  border-color: var(--color-accent-line);
+  background: var(--color-accent-soft);
+  outline: none;
 }
 
 .counter .count {
   min-width: 4rem;
   text-align: center;
-  font-size: 2rem;
-  font-weight: bold;
+  font-family: var(--font-display);
+  font-size: 2.25rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .no-js-counter {
   margin-top: 1rem;
+}
+
+.docs-link {
+  display: inline-block;
+  margin-top: 1.5rem;
+  color: var(--color-accent);
+  font-size: 0.9rem;
 }

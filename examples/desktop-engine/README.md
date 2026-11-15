@@ -42,3 +42,9 @@ On macOS the same code builds with `CGO_ENABLED=0 go build ./examples/desktop-en
 The macOS backend carries the typed bridge through a `window.chrome.webview`
 shim over `WKScriptMessageHandler`, so the native channel should work there; it
 has not been run on a Mac. Linux has no desktop backend, so the example does not run there.
+
+## Docs
+
+[Engine worker](../../docs/engine-worker.md) describes the worker engine this
+example declares, and [browser services](../../docs/browser-services.md) the
+typed bridge. [Engines](https://gosx.m31labs.dev/docs/engines) is the site page.

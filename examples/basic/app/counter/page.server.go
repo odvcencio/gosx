@@ -13,14 +13,22 @@ import (
 	"m31labs.dev/gosx/server"
 )
 
+// PageData is the loader's result. A strict page reads it as props: the field
+// names match PageProps in page.gsx.
+type PageData struct {
+	Count    int
+	PrevHref string
+	NextHref string
+}
+
 func init() {
 	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			count, _ := strconv.Atoi(ctx.Query("count"))
-			return map[string]any{
-				"count":    count,
-				"prevHref": fmt.Sprintf("/counter?count=%d", count-1),
-				"nextHref": fmt.Sprintf("/counter?count=%d", count+1),
+			return PageData{
+				Count:    count,
+				PrevHref: fmt.Sprintf("/counter?count=%d", count-1),
+				NextHref: fmt.Sprintf("/counter?count=%d", count+1),
 			}, nil
 		},
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
