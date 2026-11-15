@@ -1,4 +1,4 @@
-// Package ir — import-binding layer.
+// This file is the import-binding layer.
 //
 // This file gives the lowerer one place to answer "does this identifier
 // refer to that import path?" instead of the name-based shortcut it used

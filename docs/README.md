@@ -5,7 +5,7 @@ These are the guides, by topic. The [package map](packages.md) shows where each 
 islands, the CLI). The [package table](../README.md#packages) lists the main packages.
 The hosted docs site is gosx.m31labs.dev.
 
-- [Package map](packages.md): every importable package, with its layer, stability tier and js/wasm support. Generated from the tree.
+- [Package map](packages.md): every importable package, with its layer, stability tier and whether it has Go files for js/wasm. Generated from the tree.
 - [Stability tiers](STABILITY.md): what stable, experimental and internal-use mean.
 - [CI gates](ci-gates.md): what each check proves and how to run it.
 

@@ -40,14 +40,12 @@ func TestDocsFolderHoldsOnlyIndexedUserGuides(t *testing.T) {
 		switch {
 		case e.IsDir() && name == "images":
 		case e.IsDir():
-			t.Errorf("docs/%s/: docs/ holds flat user guides only; specs and plans live in Hyphae", name)
-		case name == "embed.go":
-			// embeds the guides for the docs site; see docs/embed.go
+			t.Errorf("docs/%s/: docs/ holds flat user guides only; specs and plans do not belong in the repo", name)
 		case !strings.HasSuffix(name, ".md"):
 			t.Errorf("docs/%s: only Markdown user guides belong in docs/", name)
 		case name == "README.md":
 		case banned.MatchString(name):
-			t.Errorf("docs/%s looks like a spec, plan or history document; those live in Hyphae, not in the repo", name)
+			t.Errorf("docs/%s looks like a spec, plan or history document; those do not belong in the repo", name)
 		case !linked[name]:
 			t.Errorf("docs/%s is not linked from docs/README.md; add it to the index if it is a user guide", name)
 		default:
@@ -59,7 +57,7 @@ func TestDocsFolderHoldsOnlyIndexedUserGuides(t *testing.T) {
 				t.Errorf("docs/%s has a Status: banner; guides describe what works now, not project status", name)
 			}
 			if taskList.Match(body) {
-				t.Errorf("docs/%s has an open task list (- [ ]); task lists are plans and live in Hyphae", name)
+				t.Errorf("docs/%s has an open task list (- [ ]); task lists are plans, which do not belong in docs/", name)
 			}
 		}
 	}

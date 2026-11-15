@@ -5,8 +5,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 MANIFEST="$HERE/manifest.tsv"
-ROOT="${CORPUS_ROOT:-/home/draco/work/.runtime/gosx-corpus}"
-LOCK="${CORPUS_LOCK:-/home/draco/work/.runtime/locks/gosx-heavy.lock}"
+ROOT="${CORPUS_ROOT:-${TMPDIR:-/tmp}/gosx-corpus}"
+LOCK="${CORPUS_LOCK:-${TMPDIR:-/tmp}/gosx-heavy.lock}"
 REMOTE=""; GOSX="$REPO"; GOSX_REF=""; ONLY=""; BASELINE=0; KEEP=0; APPEND=0
 BUDGET="${CORPUS_BUDGET:-3600}"      # seconds of check run time; lock waits excluded
 STEP_TMO="${CORPUS_STEP_TIMEOUT:-10m}" # build, vet, resolve, wasm
@@ -20,7 +20,7 @@ usage: run.sh [-g GOSX_DIR] [-r GIT_REF] [-c name,name] [-o OUT_ROOT] [-b] [-k] 
   -b       rerun each failed check against the consumer's own pinned GoSX ("baseline")
   -a       append: keep the existing matrix and replace only the -c consumers
   -k       keep the consumer copies under \$CORPUS_ROOT/work
-  -R HOST  run each check on a tailnet host (tailnet-run --host HOST), e.g. buildbox; no local lock
+  -R HOST  run each check on a remote build host (see CORPUS_REMOTE_RUN); no local lock
   -B SEC   total time budget (default $BUDGET)
 U
   exit 2
@@ -33,7 +33,7 @@ while getopts "g:r:c:o:bkaB:m:R:h" o; do
 done
 
 [ -d "$(dirname "$LOCK")" ] || LOCK="$ROOT/.lock"  # hosted CI has no shared heavy lock
-export TMPDIR="${TMPDIR:-/home/draco/work/.runtime/tmp}"
+export TMPDIR="${TMPDIR:-/tmp}"
 mkdir -p "$TMPDIR" "$ROOT/work"
 export GOWORK=off GOMEMLIMIT="${GOMEMLIMIT:-1500MiB}" GOFLAGS="-p=2 -mod=mod"
 START=$SECONDS
@@ -144,7 +144,7 @@ while IFS=$'\t' read -r -u 3 NAME URL REF MODDIR BUILD VET TEST TTMO WASM PUBLIC
 
   # Hold the heavy lock for this consumer's checks, one consumer at a time.
   if [ -n "$REMOTE" ]; then
-    WRAP=(/home/draco/.local/bin/tailnet-run --host "$REMOTE" "$WD" bash -c); RUNDIR="$MODDIR"
+    WRAP=(${CORPUS_REMOTE_RUN:-remote-run} --host "$REMOTE" "$WD" bash -c); RUNDIR="$MODDIR"
     ENVX="GOFLAGS=-mod=mod GOMEMLIMIT=1500MiB"
   else
     WRAP=(bash -c); RUNDIR="$MD"; ENVX=""
