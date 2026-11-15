@@ -40,6 +40,15 @@ const HARNESS = path.join(REPO, 'client', 'js', 'testdata',
 const fixture = require(path.join(REPO, 'client', 'js', 'testdata',
   'cubic-spline-fixture.cjs'));
 const texturedFixture = require('./textured-glb-fixture.cjs');
+// The affine pick expectation is derived in this helper. Check the derivation
+// before any browser starts, so a broken one fails the job at once.
+const affinePick = require('./scene3d-affine-pick-geometry.cjs');
+{
+  const problems = affinePick.check();
+  if (problems.length > 0) {
+    throw new Error('affine pick geometry self-check failed: ' + problems.join('; '));
+  }
+}
 const CHROME_BIN = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
 const EXPECTED_VERSION_ENV = 'GOSX_EXPECTED_CHROME_VERSION';
 const IDENTITY_SELF_CHECK_ENV = 'GOSX_SCENE3D_CUBIC_IDENTITY_SELF_CHECK_ONLY';
@@ -104,13 +113,7 @@ const NEGATIVE_ERRORS = {
       '[' + name + '] texture lacks ' + color + ' pixels (expected >= 100)')),
 };
 const EXPECTED_CASE_NAMES = Object.freeze(['affine-gl', 'affine-wg', 'gl', 'wg', 'textured-gl', 'textured-wg']);
-const affinePick = require('./scene3d-affine-pick-geometry.cjs');
-const AFFINE_PARENT = Object.freeze([
-  -2, 0, 0, 0,
-  0, 1, 0, 0,
-  0, 0, 1, 0,
-  0.5, 0.5, 1, 1,
-]);
+const AFFINE_PARENT = Object.freeze(affinePick.PARENT.slice());
 const AFFINE_LOCAL_POSITIONS = Object.freeze([
   -0.4, -0.4, 0,
   0.4, -0.4, 0,

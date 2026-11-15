@@ -220,35 +220,71 @@ func TestHeadlessNestedGroupScaleNormalsWindingAndPick(t *testing.T) {
 		}
 	})
 
-	// A closed box under the x mirror covers the same pixels as the unmirrored
-	// box, because only its outward faces draw.
-	t.Run("a mirrored closed mesh keeps its coverage", func(t *testing.T) {
-		box := scene.Mesh{ID: "probe", Geometry: scene.BoxGeometry{Width: 1.5, Height: 1.5, Depth: 1.5},
-			Material: scene.StandardMaterial{Color: "#c0c0c0", Roughness: 0.8, Emissive: 0.6}}
-		count := func(sx float64) int {
+	// Extreme scale. The inner scale (0.001, 10, 0.001) stretches the plane's
+	// normal axis, so the cofactor product for that normal is about 1e-8 long. A
+	// normalize that treats anything under 1e-6 as zero would answer "up" and
+	// ignore the outer tilt. The plane is 2000 units wide so that it measures 2 by
+	// 2 after the 0.001 scale. The outer group tilts it 50 degrees about Z, and a
+	// rotation does not change the cofactor's length, so the true world normal is
+	// (-sin 50, cos 50, 0), which is the same face under a uniform scale. The
+	// "up" answer would differ from it by well over 15 levels (checked below), and
+	// the tolerance of 3 levels is the one the other normal cases use.
+	t.Run("an extreme scale keeps the normal direction", func(t *testing.T) {
+		tilt := 50 * math.Pi / 180
+		props := scaleTestProps(scene.Group{
+			Rotation: scene.Euler{Z: tilt},
+			Children: []scene.Node{scene.Group{
+				Scale: scene.Vec3(0.001, 10, 0.001),
+				Children: []scene.Node{scene.Mesh{
+					ID:       "probe",
+					Geometry: scene.PlaneGeometry{Width: 2000, Height: 2000},
+					Material: scene.StandardMaterial{Color: "#c0c0c0", Roughness: 0.8},
+				}},
+			}},
+		})
+		img, _ := renderScaleScene(t, props, nil)
+		got := centreRGB(img)
+		if rgbDistance(got, background) == 0 {
+			t.Fatalf("the plane did not draw: centre pixel %v", got)
+		}
+		want := referenceCentre(t, -math.Sin(tilt), math.Cos(tilt))
+		up := referenceCentre(t, 0, 1)
+		if d := rgbDistance(got, want); d > 3 {
+			t.Errorf("centre pixel %v differs from the uniform-scale reference %v by %d", got, want, d)
+		}
+		if d := rgbDistance(got, up); d < 15 {
+			t.Errorf("centre pixel %v is within %d of the straight-up reference %v; the test cannot tell the two apart", got, d, up)
+		}
+	})
+
+	// A closed box under the x mirror. Seen from above, the near face is the top
+	// (world y = +0.75, lit by the key light) and the far face is the bottom
+	// (world y = -0.75, facing away from the light, so only its emissive glow
+	// shows). The centre pixel is the lit top when the rule keeps front faces and
+	// the dark bottom when it is inverted, which would leave only the inner faces.
+	// The expected value is a lone plane at y = +0.75 with the same material, which
+	// draws in front whatever the winding rule does to the box.
+	t.Run("a mirrored closed mesh shows its near face", func(t *testing.T) {
+		material := scene.StandardMaterial{Color: "#c0c0c0", Roughness: 0.8, Emissive: 0.6}
+		box := scene.Mesh{ID: "probe", Geometry: scene.BoxGeometry{Width: 1.5, Height: 1.5, Depth: 1.5}, Material: material}
+		centre := func(sx float64) [3]int {
 			img, _ := renderScaleScene(t, scaleTestProps(scene.Group{
-				Scale: scene.Vec3(sx, 1, 1), Rotation: scene.Euler{Y: 0.3},
-				Children: []scene.Node{box},
+				Scale: scene.Vec3(sx, 1, 1), Children: []scene.Node{box},
 			}), nil)
-			n := 0
-			for y := 0; y < scaleTestSize; y++ {
-				for x := 0; x < scaleTestSize; x++ {
-					if c := img.RGBAAt(x, y); c.R|c.G|c.B != 0 {
-						n++
-					}
-				}
+			return centreRGB(img)
+		}
+		topFace := scene.Mesh{ID: "probe", Geometry: scene.PlaneGeometry{Width: 1.5, Height: 1.5}, Material: material}
+		refImg, _ := renderScaleScene(t, scaleTestProps(scene.Group{
+			Position: scene.Vec3(0, 0.75, 0), Children: []scene.Node{topFace},
+		}), nil)
+		want := centreRGB(refImg)
+		if rgbDistance(want, background) == 0 {
+			t.Fatalf("the reference top face did not draw: %v", want)
+		}
+		for _, sx := range []float64{1, -1} {
+			if got := centre(sx); rgbDistance(got, want) > 3 {
+				t.Errorf("scale x %v: centre pixel %v differs from the lit top face %v; the far face may be showing", sx, got, want)
 			}
-			return n
-		}
-		plain, mirrored := count(1), count(-1)
-		if plain < 200 {
-			t.Fatalf("the box drew %d pixels, want at least 200", plain)
-		}
-		// Mirroring turns the box about the Y axis, so the silhouette is the
-		// mirror image and has the same area. A missing winding discard would
-		// not change area here, but a wrong sign would leave holes.
-		if diff := plain - mirrored; diff > plain/50 || -diff > plain/50 {
-			t.Errorf("coverage: plain %d, mirrored %d", plain, mirrored)
 		}
 	})
 

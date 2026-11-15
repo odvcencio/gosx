@@ -106,8 +106,15 @@ function check() {
   unitScale[0] = 1;
   const dropped = edgeDistances(p, worldTriangle(modelMatrix(unitScale)));
   if (dropped.every((d) => d > -margin)) problems.push('a pick that ignored the scale would also hit: ' + dropped);
-  const noParent = edgeDistances(p, worldTriangle(modelMatrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])));
-  if (noParent.every((d) => d > -margin)) problems.push('a pick that ignored the parent would also hit: ' + noParent);
+  // A renderer that dropped the whole parent matrix (translation too) would put
+  // the triangle at the origin in the z = 0 plane, and the same ray would hit it
+  // there. What differs is where: the reported world z would be 0 instead of 1,
+  // and the depth about 3.05 instead of 2.04.
+  const noParent = pickAt(PICK_OFFSET, 0);
+  if (Math.abs(hit.world[2] - 1) > 1e-9) problems.push('expected world z is ' + hit.world[2] + ', want 1');
+  if (Math.abs(hit.depth - 2.03597) > 1e-4) problems.push('expected depth is ' + hit.depth + ', want 2.03597');
+  if (Math.abs(noParent.world[2] - 0) > 1e-9) problems.push('a pick that ignored the parent would report z ' + noParent.world[2] + ', want 0');
+  if (Math.abs(noParent.depth - 3.054) > 1e-3) problems.push('a pick that ignored the parent would report depth ' + noParent.depth + ', want about 3.054');
   const centre = edgeDistances([0.5, 0.5], worldTriangle(modelMatrix(unitScale)));
   if (!centre.every((d) => d > 0)) problems.push('self-check: the centre should be inside both');
   return problems;

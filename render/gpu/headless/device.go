@@ -1297,6 +1297,7 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 	}
 	var tri [3]clipVertex
 	var clipScratch [4]clipVertex
+	var basis affineBasis
 	for inst := firstInstance; inst < firstInstance+instanceCount; inst++ {
 		model, ok := readMat4Stride(instanceBuf, inst, instanceStride)
 		if !ok {
@@ -1314,7 +1315,8 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 		if shading != nil {
 			shading.orientation = 0
 			if instanceBuf != nil {
-				_, shading.orientation = affineNormal(model, [3]float32{0, 0, 1})
+				basis = newAffineBasis(model)
+				shading.orientation = basis.orientation
 			}
 		}
 		for base := 0; base+2 < vertexCount; base += 3 {
@@ -1342,7 +1344,7 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 					tri[i].uv = readUV(uvBuf, vertex)
 					normal := readNormal(normalBuf, vertex)
 					if instanceBuf != nil {
-						normal, _ = affineNormal(model, normal)
+						normal = basis.normal(normal)
 					}
 					tri[i].normal = normal
 				} else {
@@ -1769,15 +1771,23 @@ func transformPoint(m [16]float32, p [3]float32) [3]float32 {
 	}
 }
 
-// affineNormal copies affineNormal in litWGSL (render/bundle/lit.go). It
-// returns the world normal and the orientation sign of the model matrix.
+// affineBasis copies affineNormal in litWGSL (render/bundle/lit.go). It holds
+// what that function derives from one model matrix, so a draw computes it once
+// per instance instead of once per vertex.
 //
 // The normal moves by the cofactor matrix of the upper 3x3, which is the
 // inverse transpose up to a positive scale, times the sign of the determinant.
 // Columns are divided by the largest absolute entry first, so the determinant
 // test does not depend on the size of the transform. A zero matrix or a
-// determinant at or below 1e-12 gives the plain normalized normal and +1.
-func affineNormal(m [16]float32, n [3]float32) ([3]float32, float32) {
+// determinant at or below 1e-12 is degenerate: the normal is the plain
+// normalized input and the orientation is +1.
+type affineBasis struct {
+	co          [3][3]float32 // cofactor columns co0, co1, co2
+	orientation float32
+	degenerate  bool
+}
+
+func newAffineBasis(m [16]float32) affineBasis {
 	linearScale := float32(0)
 	for _, i := range [...]int{0, 1, 2, 4, 5, 6, 8, 9, 10} {
 		if a := float32(math.Abs(float64(m[i]))); a > linearScale {
@@ -1785,7 +1795,7 @@ func affineNormal(m [16]float32, n [3]float32) ([3]float32, float32) {
 		}
 	}
 	if linearScale == 0 {
-		return normalize3(n), 1
+		return affineBasis{orientation: 1, degenerate: true}
 	}
 	c0 := [3]float32{m[0] / linearScale, m[1] / linearScale, m[2] / linearScale}
 	c1 := [3]float32{m[4] / linearScale, m[5] / linearScale, m[6] / linearScale}
@@ -1795,18 +1805,46 @@ func affineNormal(m [16]float32, n [3]float32) ([3]float32, float32) {
 	co2 := cross3(c0, c1)
 	determinant := float32(c0[0]*co0[0]) + float32(c0[1]*co0[1]) + float32(c0[2]*co0[2])
 	if math.Abs(float64(determinant)) <= 1e-12 {
-		return normalize3(n), 1
+		return affineBasis{orientation: 1, degenerate: true}
 	}
 	orientation := float32(-1)
 	if determinant > 0 {
 		orientation = 1
 	}
+	return affineBasis{co: [3][3]float32{co0, co1, co2}, orientation: orientation}
+}
+
+// normal returns the world normal for the local normal n.
+//
+// normalize3 answers (0, 1, 0) for a vector 1e-6 long or shorter, and litWGSL
+// has no such threshold. Under a scale like (10, 0.001, 0.001) the cofactor
+// product of the normal along x is about 1e-8 long, so a short vector is
+// divided by its largest component first. Above the threshold the arithmetic is
+// unchanged. Only an exactly zero product falls back to the input normal.
+func (b *affineBasis) normal(n [3]float32) [3]float32 {
+	if b.degenerate {
+		return normalize3(n)
+	}
 	var out [3]float32
 	for i := 0; i < 3; i++ {
-		sum := float32(co0[i]*n[0]) + float32(co1[i]*n[1]) + float32(co2[i]*n[2])
-		out[i] = float32(sum * orientation)
+		sum := float32(b.co[0][i]*n[0]) + float32(b.co[1][i]*n[1]) + float32(b.co[2][i]*n[2])
+		out[i] = float32(sum * b.orientation)
 	}
-	return normalize3(out), orientation
+	if length3(out) <= 1e-6 {
+		largest := float32(0)
+		for _, v := range out {
+			if a := float32(math.Abs(float64(v))); a > largest {
+				largest = a
+			}
+		}
+		if largest == 0 {
+			return normalize3(n)
+		}
+		for i := range out {
+			out[i] /= largest
+		}
+	}
+	return normalize3(out)
 }
 
 func cross3(a, b [3]float32) [3]float32 {
