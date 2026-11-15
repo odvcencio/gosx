@@ -57,6 +57,18 @@ type kitServer struct {
 	hits map[string]int
 }
 
+// waitHits polls until the server has seen at least n document loads of key.
+func waitHits(s *kitServer, key string, n int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if s.Hits(key) >= n {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
 func (s *kitServer) Hits(key string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -407,7 +419,18 @@ func TestGameKitBrowserAdapters(t *testing.T) {
 			t.Fatal("watchdog reloaded again")
 		}
 		// The retry button clears the guard and reloads; the next stall gets its reload again.
+		// The page still shows "failed" from before the click, so a poll for
+		// "failed" would return at once. First prove the retry loaded a new
+		// document (a third hit, and the marker set below is gone), then wait
+		// for the second stall to fail it.
+		p.eval(t, `window.__beforeRetry=1`, nil)
 		p.run(t, chromedp.Click(`[data-boot-retry]`, chromedp.ByQuery))
+		if !waitHits(srv, "watchdog", 3, 15*time.Second) {
+			t.Fatalf("retry did not reload: loads=%d\n%s", srv.Hits("watchdog"), p.Console())
+		}
+		if !p.pollFor(`window.__beforeRetry === undefined`, 15*time.Second) {
+			t.Fatalf("retry never produced a fresh document\n%s", p.Console())
+		}
 		if !p.pollFor(`document.querySelector('[data-boot-root]').dataset.boot==='failed'`, 15*time.Second) || srv.Hits("watchdog") != 4 {
 			t.Fatalf("retry cycle: loads=%d\n%s", srv.Hits("watchdog"), p.Console())
 		}
