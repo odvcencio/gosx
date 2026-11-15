@@ -28,8 +28,10 @@ type Terrain struct {
 	// ID names the terrain. Empty means "terrain".
 	ID string
 	// Heightmap is the height source: decode a 16-bit PNG
-	// (DecodeHeightmapPNG), read raw samples (HeightmapFromRaw), sample a
-	// function (HeightmapFromFunc), or generate one (GenerateHeightmap).
+	// (DecodeHeightmapPNG; not available in js/wasm builds, where you decode
+	// on the server or use HeightmapFromRaw), read raw samples
+	// (HeightmapFromRaw), sample a function (HeightmapFromFunc), or generate
+	// one (GenerateHeightmap).
 	// Required.
 	Heightmap *Heightmap
 	// Src optionally names a URL of the same samples as a headerless

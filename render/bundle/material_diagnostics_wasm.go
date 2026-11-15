@@ -11,3 +11,9 @@ func MaterialDiagnostics(engine.RenderBundle) []engine.RenderDiagnostic { return
 type materialDiagnosticsCache struct{}
 
 func (*materialDiagnosticsCache) update(engine.RenderBundle) []engine.RenderDiagnostic { return nil }
+
+// PostEffectDiagnostics reports nothing in the browser build, for the same
+// reason as MaterialDiagnostics. It exists so package scene/preview compiles.
+// A preview result built in a js/wasm build therefore carries no post-effect
+// diagnostics.
+func PostEffectDiagnostics(engine.RenderBundle) []engine.RenderDiagnostic { return nil }

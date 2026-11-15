@@ -2,7 +2,10 @@ package scene
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"image/color"
 	"image/png"
 	"math"
 	"strings"
@@ -118,5 +121,48 @@ func TestOceanShorelineLowersFromTheTerrain(t *testing.T) {
 	noTerrain := Props{Environment: Environment{Ocean: &Ocean{Shoreline: &OceanShoreline{}}}}
 	if noTerrain.SceneIR().Environment.Ocean.Bathymetry != nil {
 		t.Fatal("a shoreline baked without a terrain")
+	}
+}
+
+func TestBakeShorelineTexelsMatchAcrossEncodings(t *testing.T) {
+	h, err := HeightmapFromFunc(65, 65, func(u, v float64) float64 {
+		return clampFloat(0.9-math.Hypot(u-0.45, v-0.55)*1.6+0.1*u, 0, 1)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terrain := &Terrain{Heightmap: h, Width: 160, HeightScale: 30, Position: Vector3{Y: -12}}
+	b, err := BakeShoreline(terrain, 0, OceanShoreline{Resolution: 32, Distance: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok := strings.CutPrefix(b.Src, "data:image/png;base64,")
+	if !ok {
+		t.Fatalf("src is not a PNG data URL: %.40s", b.Src)
+	}
+	raw, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bd := img.Bounds(); bd.Dx() != 32 || bd.Dy() != 32 {
+		t.Fatalf("bounds = %v, want 32x32", bd)
+	}
+	var rg []byte
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+			if c.A != 255 || c.B != 0 {
+				t.Fatalf("texel (%d,%d) = %+v, want alpha 255 and B 0", x, y, c)
+			}
+			rg = append(rg, c.R, c.G)
+		}
+	}
+	sum := sha256.Sum256(rg)
+	if got := hex.EncodeToString(sum[:]); got != "8b4add6aeb70da32aeb477e71bd8632d485c676eed4f80d0581743ea897d4ae0" {
+		t.Fatalf("R,G texel digest = %s", got)
 	}
 }

@@ -2,7 +2,6 @@ package hubclient
 
 import (
 	"context"
-	"net/http"
 	"sync"
 )
 
@@ -71,5 +70,5 @@ type conn interface {
 // return an error; browser Dial returns a pending socket and reports handshake
 // failures asynchronously through its Events channel.
 type dialer interface {
-	Dial(ctx context.Context, rawURL string, header http.Header) (conn, error)
+	Dial(ctx context.Context, rawURL string, header Header) (conn, error)
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,7 +11,6 @@ import (
 	hubclient "m31labs.dev/gosx/hub/client"
 	"m31labs.dev/gosx/netplay"
 	"m31labs.dev/gosx/netplay/dgram"
-	"m31labs.dev/gosx/netplay/hubnet"
 	"m31labs.dev/gosx/netplay/signal"
 )
 
@@ -63,7 +61,7 @@ type Options struct {
 	// HubURL is the hub WebSocket endpoint of the relay, for example
 	// "wss://example.com/gosx/hub/match". Dial opens its own connection to it.
 	HubURL string
-	Header http.Header
+	Header hubclient.Header
 	// Session labels this connection in signaling (default "netplay"). Use
 	// letters, digits, '.', '_' and '-' only, up to 64 bytes.
 	Session string
@@ -151,12 +149,12 @@ func Dial(opts Options) (*Conn, error) {
 		opts: opts, in: dgram.NewQueue(queueLen),
 		events: make(chan event, 64), closeCh: make(chan struct{}), done: make(chan struct{}),
 	}
-	c.frame[0] = hubnet.FrameTag
+	c.frame[0] = dgram.FrameTag
 	c.hc = hubclient.New(hubclient.Options{
 		URL: opts.HubURL, Header: opts.Header,
 		OnStateChange: func(s hubclient.State) { c.post(event{kind: evHubState, state: s}) },
 		OnBinary: func(data []byte) {
-			if len(data) > 1 && data[0] == hubnet.FrameTag {
+			if len(data) > 1 && data[0] == dgram.FrameTag {
 				c.in.Push(data[1:])
 			}
 		},
@@ -342,17 +340,28 @@ func (c *Conn) run() {
 		case e := <-c.events:
 			switch e.kind {
 			case evHubState:
-				if e.state == hubclient.StateConnected && !hubUp {
-					hubUp = true
+				if e.state != hubclient.StateConnected {
+					hubUp = false // the next connection gets a new hub client ID
+					break
+				}
+				if hubUp {
+					break
+				}
+				hubUp = true
+				// Say hello on every hub connection, not only the first: after a
+				// reconnect the relay sees a new client ID and needs to learn
+				// which session it carries.
+				if err := c.hc.Send(signal.EventHello, &signal.Hello{Session: c.opts.Session}); err != nil {
 					if !hello {
 						hello = true
-						if err := c.hc.Send(signal.EventHello, &signal.Hello{Session: c.opts.Session}); err != nil {
-							startAfterConfig()
-							break
-						}
-						cfgTimer.Reset(c.opts.ConfigWait)
-						cfgWait = cfgTimer.C
+						startAfterConfig()
 					}
+					break
+				}
+				if !hello {
+					hello = true
+					cfgTimer.Reset(c.opts.ConfigWait)
+					cfgWait = cfgTimer.C
 				}
 			case evSignal:
 				switch m := e.msg.(type) {

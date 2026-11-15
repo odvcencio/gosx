@@ -106,3 +106,49 @@ func TestRemoveClosesPeer(t *testing.T) {
 		t.Fatalf("send after close: %v", err)
 	}
 }
+
+func TestClientBySessionFollowsHelloAndReconnect(t *testing.T) {
+	var got [][2]string
+	s, err := NewServer(Config{OnHello: func(id, sess, _ string) { got = append(got, [2]string{id, sess}) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var c collector
+	if _, ok := s.ClientBySession("seat-a"); ok {
+		t.Fatal("unknown session found")
+	}
+	s.Handle("c1", &signal.Hello{Session: "seat-a"}, c.reply)
+	s.Handle("c2", &signal.Hello{Session: "seat-b"}, c.reply)
+	if id, ok := s.ClientBySession("seat-a"); !ok || id != "c1" {
+		t.Fatalf("seat-a -> %q %v", id, ok)
+	}
+	if sess, ok := s.SessionOf("c2"); !ok || sess != "seat-b" {
+		t.Fatalf("c2 -> %q %v", sess, ok)
+	}
+	// The hub client reconnects with a new ID and says hello again.
+	s.Handle("c3", &signal.Hello{Session: "seat-a"}, c.reply)
+	if id, _ := s.ClientBySession("seat-a"); id != "c3" {
+		t.Fatalf("seat-a after reconnect -> %q, want c3", id)
+	}
+	if id, _ := s.ClientBySession("seat-a"); id == "c1" {
+		t.Fatal("old client still owns the session")
+	}
+	// Removing the stale client must not drop the new owner.
+	s.Remove("c1")
+	if id, _ := s.ClientBySession("seat-a"); id != "c3" {
+		t.Fatalf("seat-a after removing c1 -> %q, want c3", id)
+	}
+	s.Remove("c3")
+	if _, ok := s.ClientBySession("seat-a"); ok {
+		t.Fatal("removed client still found")
+	}
+	// A client that renames its session frees the old name.
+	s.Handle("c2", &signal.Hello{Session: "seat-c"}, c.reply)
+	if _, ok := s.ClientBySession("seat-b"); ok {
+		t.Fatal("old session name kept")
+	}
+	if len(got) != 4 || got[2] != [2]string{"c3", "seat-a"} {
+		t.Fatalf("OnHello calls %v", got)
+	}
+}

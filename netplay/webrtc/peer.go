@@ -48,7 +48,7 @@ type PeerStats struct {
 // blocking. Both are safe to call from the game loop while pion's goroutines
 // deliver packets.
 type Peer struct {
-	id      string
+	id      atomic.Pointer[string]
 	session string
 	pc      *pion.PeerConnection
 	dc      *pion.DataChannel
@@ -69,7 +69,8 @@ func newPeer(id, session string, pc *pion.PeerConnection, dc *pion.DataChannel, 
 	if queueLen <= 0 {
 		queueLen = defaultQueueLen
 	}
-	p := &Peer{id: id, session: session, pc: pc, dc: dc, in: dgram.NewQueue(queueLen), done: make(chan struct{})}
+	p := &Peer{session: session, pc: pc, dc: dc, in: dgram.NewQueue(queueLen), done: make(chan struct{})}
+	p.id.Store(&id)
 	dc.OnMessage(func(m pion.DataChannelMessage) {
 		p.recv.Add(1)
 		p.recvBytes.Add(uint64(len(m.Data)))
@@ -79,7 +80,7 @@ func newPeer(id, session string, pc *pion.PeerConnection, dc *pion.DataChannel, 
 }
 
 // ID returns the hub client ID the peer connected through ("" for a client-side Peer).
-func (p *Peer) ID() string { return p.id }
+func (p *Peer) ID() string { return *p.id.Load() }
 
 // Session returns the session label from signaling.
 func (p *Peer) Session() string { return p.session }

@@ -23,7 +23,7 @@ const wsPreference = time.Second
 // Get one with Server.Link(clientID). A Link exists before the data channel
 // opens; until either path carries traffic, Send drops datagrams.
 type Link struct {
-	id   string
+	id   atomic.Pointer[string]
 	s    *Server
 	peer atomic.Pointer[Peer]
 
@@ -39,7 +39,8 @@ func (s *Server) Link(clientID string) *Link {
 	defer s.mu.Unlock()
 	l, ok := s.links[clientID]
 	if !ok {
-		l = &Link{id: clientID, s: s}
+		l = &Link{s: s}
+		l.id.Store(&clientID)
 		s.links[clientID] = l
 	}
 	return l
@@ -54,6 +55,9 @@ func (s *Server) unlinkPeer(clientID string, p *Peer) {
 	}
 }
 
+// ID returns the hub client ID the Link serves. It changes on Server.Rebind.
+func (l *Link) ID() string { return *l.id.Load() }
+
 func (l *Link) fallback() *hubnet.FallbackPeer {
 	l.s.mu.Lock()
 	fb := l.s.fb
@@ -61,7 +65,7 @@ func (l *Link) fallback() *hubnet.FallbackPeer {
 	if fb == nil {
 		return nil
 	}
-	return fb.Peer(l.id)
+	return fb.Peer(l.ID())
 }
 
 var epoch = time.Now()
