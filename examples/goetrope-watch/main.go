@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"path/filepath"
 	"runtime"
 
@@ -23,8 +24,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("goetrope-watch listening on http://localhost:8080")
-	log.Fatal(app.ListenAndServe(":8080"))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Printf("goetrope-watch listening on http://localhost:%s", port)
+	log.Fatal(app.ListenAndServe(":" + port))
 }
 
 // newApp wires the file-routed pages under root/app to a server. The test uses

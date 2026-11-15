@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 
@@ -37,8 +38,12 @@ func main() {
 	app := server.New()
 	app.Mount("/", rootHandler)
 
-	fmt.Println("GoSX example server running at http://localhost:8080")
-	log.Fatal(app.ListenAndServe(":8080"))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	fmt.Printf("GoSX example server running at http://localhost:%s\n", port)
+	log.Fatal(app.ListenAndServe(":" + port))
 }
 
 // newHandler builds the file-routed handler for the pages under root/app. The

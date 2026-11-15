@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/server"
@@ -56,7 +57,11 @@ func main() {
 		return HomePage()
 	})
 
-	addr := ":8080"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	addr := ":" + port
 	fmt.Println("CanvasBoard example server running at http://localhost" + addr)
 	fmt.Println("Inspect the <canvas data-gosx-surface-kind=\"canvas2d\"> placeholder.")
 	log.Fatal(app.ListenAndServe(addr))
