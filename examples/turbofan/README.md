@@ -195,3 +195,9 @@ establish hardware GPU performance. See [the engineering inspector](engineering-
 The lathe generator regression test also covers the surface gap found while
 building this example: each sampled quad must contain two non-overlapping
 triangles sharing a diagonal, with every boundary edge present once.
+
+## Docs
+
+[Scene3D](https://gosx.m31labs.dev/docs/scene3d) covers the renderer this example
+uses, and [Scene3D performance](https://gosx.m31labs.dev/docs/scene3d-performance)
+covers the frame budget.
