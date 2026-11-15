@@ -409,7 +409,7 @@ interception and contest queries. The same values were reproduced on:
 |---|---|---|
 | linux/amd64, `GOAMD64=v1` | no | pinned here |
 | linux/amd64, `GOAMD64=v3` | yes | identical |
-| darwin/arm64 (Apple M4 Pro, oscar-mbp) | yes | identical |
+| darwin/arm64 (Apple M4 Pro) | yes | identical |
 | js/wasm (Node) | no | identical |
 
 ## Costs

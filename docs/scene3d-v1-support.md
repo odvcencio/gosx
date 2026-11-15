@@ -112,12 +112,12 @@ dashboards, and interactive scenes. Its supported boundary is:
 - The currently tested standard material/texture subset is supported.
   Meshopt- and Draco-compressed geometry fails closed with named errors.
   `KHR_texture_basisu` is not silently advertised: renderer KTX2 block upload
-  and glTF Basis import are separate browser capabilities. S4 owns asset-pipe
-  normalization and this S0 row makes no asset-pipeline support claim.
+  and glTF Basis import are separate browser capabilities. Asset-pipeline normalization is a separate area, and this row
+  makes no asset-pipeline support claim.
 - Desktop orbit/fly/first-person controls, pointer lock, picking, object drag,
   and transform-gizmo commits are the v1 interaction boundary.
 - Supported browser post effects preserve declaration order. Native/headless
-  custom-post behavior remains blocked until S5 provides backend-specific
+  custom-post behavior remains blocked until the native backend provides backend-specific
   degradation and telemetry evidence; it is not claimed as browser parity.
 - Hub updates either emit complete commands or reject a remount-required diff
   atomically. Generic hydration must not discard Scene3D command output.
@@ -208,13 +208,13 @@ without a jump:
 | `gltf-sparse-embedded-image` | enforced | Sparse overlays and embedded bufferView images are tested. |
 | `gltf-meshopt-rejection` | enforced | Meshopt input fails closed with a named error. |
 | `gltf-draco-rejection` | enforced | Draco input fails closed with a named error. |
-| `gltf-basis-ktx2-policy` | enforced | Basis import degradation and renderer KTX2 upload are separate browser facts; S4 owns asset-pipe policy. |
+| `gltf-basis-ktx2-policy` | enforced | Basis import degradation and renderer KTX2 upload are separate browser facts; the asset pipeline owns that policy separately. |
 | `gltf-cubic-trs-morph` | enforced | Analytic fixture covers TRS, morph weights, clamps, seeks, native WebGL2 canvas pixels, and production WebGPU renderer pixels from the exact proof-private target. Actual WebGPU canvas presentation remains part of the release-pinned hardware completion obligation. |
 | `nested-group-scale-pick` | blocked | Browser renderer proof and native unit coverage exist; require renderer-consumed native normals, winding/cull, and pick evidence before certification. |
 | `desktop-controls-picking` | enforced | Orbit/first-person controls and picking stay inside the v1 boundary. |
 | `desktop-gizmo-commit` | blocked | Add one end-to-end fly/pointer-lock/object-drag/gizmo commit proof. |
 | `ordered-post-custom-uniforms` | blocked | Add one cross-backend order/uniform-patch proof before certifying this row. |
-| `native-preview-degradation` | blocked | S5 must add backend-specific `CustomPost` degradation and telemetry evidence before this can be certified. |
+| `native-preview-degradation` | blocked | The native backend must add backend-specific `CustomPost` degradation and telemetry evidence before this can be certified. |
 | `hub-command-diff` | enforced | Diffable fields produce a lossless command stream. |
 | `hub-remount-atomic-reject` | enforced | Remount fields reject before mutation or watcher notification. |
 | `scene-p95-budget-route` | blocked | Add a dedicated corpus route and measured p95/p99 evidence. |

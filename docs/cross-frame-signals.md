@@ -1,9 +1,5 @@
 # Cross-frame shared signals
 
-> Status: shipped 2026-05-26. See ADR 0009 (gosx hyphae space:
-> `decisions/0009-iframe-transport-postmessage-relay.md`) for the
-> architectural rationale and the falsification that motivated this work.
-
 GoSX shared signals (`$preview.*`, `$selection.*`, etc.) normally fan out
 inside a single browser frame: the Bridge's signal store is per-Bridge,
 and `js.Global()` resolves to the current frame's window. The
@@ -34,7 +30,7 @@ Do NOT reach for the relay when:
 - The two pages are cross-origin and you don't want to commit a stable
   origin contract.
 - The state needs ordering / acknowledgement guarantees (postMessage
-  delivery is fire-and-forget; revisit ADR 0009's triggers).
+  delivery is fire-and-forget).
 - The components live in the same document. A `signal.Signal` over the local
   store is faster and simpler.
 
@@ -233,10 +229,6 @@ EDITOR FRAME                                     IFRAME (STOREFRONT)
 
 ## See also
 
-- `decisions/0009-iframe-transport-postmessage-relay.md` (gosx hyphae)
-- `decisions/0008-iframe-preview-stays-via-shared-signal-portal.md` (the
-  ADR with the falsified original claim)
-- `plans/2026-05-26-iframe-cross-frame-signal-transport.md`
 - `client/bridge/cross_frame.go`
 - `client/wasm/cross_frame.go`
 - `client/wasm/cross_frame_parse.go`

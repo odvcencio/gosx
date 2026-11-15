@@ -1,6 +1,6 @@
-# expressions — Phase 4 expression-language samples
+# expressions — expression-language samples
 
-Demonstrates the `.gsx` expression forms surfaced by Phase 4
+Demonstrates the `.gsx` expression forms supported by the IR parser
 (see `gosx/docs/expressions.md` for the full subset specification).
 
 The samples here are illustrative: each `.gsx` snippet shows a form that
@@ -33,7 +33,7 @@ round-trip tests:
 | `title.replace("a", "b")`                                    | `OpReplace`                          |
 | `title.substring(0, 4)`                                      | `OpSubstring`                        |
 
-Closure-only forms (Phase 4 additions) bind the parameter name to the
+Closure-only forms bind the parameter name to the
 existing `_item` magic prop so the lowered ops are identical to the
 legacy bare-expression form `items.map(_item * 2)`.
 

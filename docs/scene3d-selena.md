@@ -288,10 +288,10 @@ conserves energy across roughness:
 
 ### Tests
 
-`e2e/selena_surface_e2e_test.go` runs on the real-GPU runners:
+`e2e/selena_surface_e2e_test.go` needs a browser with real WebGPU:
 
 ```sh
-/home/draco/work/.runtime/tools/gpu/gpu-chrome.sh run -- env GOSX_SELENA_SURFACE_WEBGPU=1 go test -tags e2e -timeout 25m -run 'TestSelenaSurface|TestStandardLightingWhiteFurnace' ./e2e/
+env GOSX_SELENA_SURFACE_WEBGPU=1 go test -tags e2e -timeout 25m -run 'TestSelenaSurface|TestStandardLightingWhiteFurnace' ./e2e/
 ```
 
 `TestSelenaSurfaceMatchesStandardMaterial` renders one scene (sky image

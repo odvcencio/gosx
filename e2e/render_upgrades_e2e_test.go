@@ -7,8 +7,7 @@
 //
 // Run on the charter GPU runners, for example:
 //
-//	/home/draco/work/.runtime/tools/gpu/gpu-chrome.sh run -- go test -tags e2e -timeout 20m -run 'TestStandardMaterialShadowOnGPU|TestBeaconFrameCost' ./e2e/
-//	GPU_CHROME_EXCLUSIVE=1 /home/draco/.local/bin/mac-gpu-run <worktree> go test -tags e2e -timeout 20m -run 'TestStandardMaterialShadowOnGPU|TestBeaconFrameCost' ./e2e/
+//	go test -tags e2e -timeout 20m -run 'TestStandardMaterialShadowOnGPU|TestBeaconFrameCost' ./e2e/
 //
 // GOSX_RENDER_BUNDLES names a directory of bootstrap bundles to serve instead
 // of client/js (for a before/after comparison). GOSX_RENDER_OUT names a folder
@@ -49,7 +48,7 @@ func renderUpgradeBackends() []string {
 func requireRenderGPU(t *testing.T) {
 	t.Helper()
 	if !e2eWindowsRelay() && os.Getenv("GOSX_WATER_E2E_REQUIRE_WEBGPU") != "1" && os.Getenv("GPU_CHROME_ENDPOINT") == "" {
-		t.Skip("needs a GPU browser (gpu-chrome.sh or mac-gpu-run)")
+		t.Skip("needs a GPU-capable Chrome")
 	}
 }
 
