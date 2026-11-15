@@ -636,3 +636,17 @@ func DocsIndexAriaCurrent(currentPath string) any {
 	}
 	return nil
 }
+
+// GuideSources lists the docs/*.md file names the catalog renders as guide
+// pages, in catalog order.
+func GuideSources() []string {
+	var names []string
+	for _, section := range docsCatalog {
+		for _, entry := range section.Entries {
+			if strings.HasPrefix(entry.Source, "docs/") && strings.HasSuffix(entry.Source, ".md") {
+				names = append(names, strings.TrimPrefix(entry.Source, "docs/"))
+			}
+		}
+	}
+	return names
+}
