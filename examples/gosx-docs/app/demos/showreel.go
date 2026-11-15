@@ -67,6 +67,13 @@ func DemoShowreelProgram() scene.Props {
 				scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
 			},
 		},
+		// Rung 0 runs the whole chain; the governor sheds TAA first, then every
+		// post effect, when a slower device misses the frame target.
+		QualityLadder: []scene.QualityRung{
+			{Name: "full", PostEffects: []string{"bloom", "toneMapping", "vignette", "taa"}},
+			{Name: "lite", PostEffects: []string{"bloom", "toneMapping", "vignette"}},
+			{Name: "raw"},
+		},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels1024},
 		Graph:   scene.NewGraph(showreelNodes()...),
 	}

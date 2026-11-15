@@ -131,3 +131,23 @@ func TestDemoShowreelDeclaresItsImageQualityChain(t *testing.T) {
 		t.Errorf("showreel key light ShadowCascades = %d, want 2", cascades)
 	}
 }
+
+// TestDemoShowreelShedsTAAFirst keeps TAA on the top quality rung only, so a
+// slower device drops it before bloom and tone mapping.
+func TestDemoShowreelShedsTAAFirst(t *testing.T) {
+	ladder := DemoShowreelProgram().QualityLadder
+	if len(ladder) != 3 {
+		t.Fatalf("quality ladder has %d rungs, want 3", len(ladder))
+	}
+	has := func(rung scene.QualityRung, kind string) bool {
+		for _, effect := range rung.PostEffects {
+			if effect == kind {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(ladder[0], "taa") || has(ladder[1], "taa") || !has(ladder[1], "bloom") || len(ladder[2].PostEffects) != 0 {
+		t.Errorf("ladder = %#v, want TAA only on rung 0 and no effects on the last rung", ladder)
+	}
+}
