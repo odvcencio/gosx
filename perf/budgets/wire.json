@@ -66,7 +66,7 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 28620,
-          "htmlWireBytes": 15235,
+          "htmlWireBytes": 16700,
           "imageWireBytes": 26270,
           "inlineScriptBytes": 256,
           "jsWireBytes": 28620,
@@ -84,7 +84,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "htmlWireBytes": "2026-11-15: the /demos gallery now shows a one-line what-this-shows, a doc-page link and capability chips on each of 13 cards, plus a capability index. Hosted wire run for PR #846 measured htmlWireBytes=16259 B (+1024 B over the prior 15235 B cap). Set the cap to the measurement plus 2.5% headroom. All other limits and policies are unchanged."
+        }
       },
       "/demos/scene3d/": {
         "limits": {

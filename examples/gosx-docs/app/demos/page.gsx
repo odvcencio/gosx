@@ -113,7 +113,7 @@ func Page() Node {
 									>{demo.Title}</a>
 								</h3>
 								<p class="demo-card__summary">{demo.Summary}</p>
-							<p class="demo-card__shows"><span>What this shows</span>{demo.Shows}</p>
+								<p class="demo-card__shows"><span>What this shows</span>{demo.Shows}</p>
 								<ul class="demo-card__facets" aria-label={demo.Title + " capabilities"}>
 									<Each of={demo.Facets} as="facet">
 										<li>{facet}</li>
@@ -131,7 +131,7 @@ func Page() Node {
 									>Open demo</a>
 									<a href={demoSourceURL(demo.SourcePath)} target="_blank" rel="noopener noreferrer">View source</a>
 									<a class="demo-card__doc" href={demo.DocHref} data-gosx-link="true">{"Read: " + demo.DocTitle}</a>
-								<Each of={demoGuides(demo.Slug)} as="guide">
+									<Each of={demoGuides(demo.Slug)} as="guide">
 										<a class="demo-card__guide" href={guide.Href} data-gosx-link="true">
 											{guide.Title + " guide"}
 										</a>
