@@ -281,9 +281,9 @@ go run .
 ```
 
 To verify a published release end to end from a GoSX checkout, run
-`python3 scripts/smoke-published-starter.py v0.59.1`. This installs the tagged
-CLI, creates a fresh app with the public module, and checks development and
-production serving. To test a downloaded release binary instead, add
+`python3 scripts/smoke-published-starter.py <tag>`, where `<tag>` is a published
+release such as `v0.60.0`. This installs the tagged CLI, creates a fresh app
+with the public module, and checks development and production serving. To test a downloaded release binary instead, add
 `--cli /absolute/path/to/gosx`. The script retains its evidence directory.
 
 Both templates ignore `.env` and its variants in Git. Their generated `.env`

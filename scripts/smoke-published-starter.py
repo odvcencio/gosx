@@ -46,9 +46,11 @@ def serve_and_check(command, *, cwd, env, version, log):
                     with http.open(url + "/api/health", timeout=2) as response:
                         health = json.load(response)
                     break
-                except (OSError, urllib.error.URLError):
+                except (OSError, urllib.error.URLError, ValueError) as error:
+                    # ValueError: the health endpoint answered with something
+                    # that is not JSON yet (json.JSONDecodeError is a ValueError).
                     if time.monotonic() >= deadline:
-                        raise RuntimeError(f"server did not become ready; see {log}")
+                        raise RuntimeError(f"server did not become ready ({error}); see {log}")
                     time.sleep(0.25)
             if health.get("ok") is not True or health.get("version") != version[1:]:
                 raise RuntimeError(f"unexpected health response: {health}")
@@ -72,11 +74,11 @@ def serve_and_check(command, *, cwd, env, version, log):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("version", help="published stable tag, e.g. v0.59.1")
+    parser.add_argument("version", help="published stable tag, e.g. v0.60.0")
     parser.add_argument("--cli", type=Path, help="published CLI binary; default: go install the tag")
     args = parser.parse_args()
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", args.version):
-        parser.error("version must be a stable tag such as v0.59.1")
+        parser.error("version must be a stable tag such as v0.60.0")
     if args.cli and (not args.cli.is_absolute() or not os.access(args.cli, os.X_OK)):
         parser.error("--cli must be an absolute path to an executable")
 
