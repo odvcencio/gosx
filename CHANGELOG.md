@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- `gosx init` now teaches the strict `component Name(props: Type)` syntax in both templates, and each template includes a `README.md`. `gosx init` prints, and that README links, one path to a deployed app: `gosx build --prod`, `gosx deploy check dist`, and the deployment guide. The docs template's overview text now describes a starter docs site, and its navigation marks the current page with `aria-current="true"`.
+
 ## v0.60.0
 
 ### Breaking changes and migration
