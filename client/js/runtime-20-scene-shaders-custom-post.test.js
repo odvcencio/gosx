@@ -1204,7 +1204,7 @@ test("custom post WebGPU: a customPost authored through createSceneState is comp
   assert.deepEqual(failWarns, [], "a valid authored custom pass must not warn");
 });
 
-test("custom post WebGPU: reserved time and patched uniforms reach the post uniform buffer", async () => {
+test("custom post WebGPU: reserved time and authored uniforms reach the post uniform buffer", async () => {
   const fake = makeFakeGPUDeviceForCompute({
     pipelineAsyncBehavior(desc) {
       return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
@@ -1259,6 +1259,197 @@ test("custom post WebGPU: reserved time and patched uniforms reach the post unif
     assert.equal(Number(writes.at(-1).data[0]), seconds);
     assert.equal(harness.renderer.diagnostics().uniformTime, seconds);
   }
+});
+
+// v1 corpus row ordered-post-custom-uniforms. The post chain is exactly three
+// effects: custom "order-a", tone mapping, custom "order-b". A live uniform
+// patch goes through the same SCENE_CMD_SET_POST_UNIFORMS command the
+// application sends; the bundle is rebuilt from scene state each frame, as the
+// mount loop does.
+const ORDERED_POST_LAYOUT = {
+  uniformBlock: {
+    name: "UserUniforms",
+    size: 16,
+    fields: [
+      { name: "strength", type: "float", offset: 0 },
+      { name: "mixAmount", type: "float", offset: 4 },
+    ],
+  },
+};
+
+function orderedPostScene(sceneAPI, extra) {
+  const state = sceneAPI.createSceneState({
+    scene: {
+      postEffects: [
+        Object.assign({ kind: "customPost", name: "order-a", uniforms: { strength: 0.25, mixAmount: 0.5 }, shaderLayout: ORDERED_POST_LAYOUT }, extra("a")),
+        { kind: "toneMapping", exposure: 1 },
+        Object.assign({ kind: "customPost", name: "order-b", uniforms: { strength: 0.75, mixAmount: 0.125 }, shaderLayout: ORDERED_POST_LAYOUT }, extra("b")),
+      ],
+    },
+  });
+  assert.deepEqual(Array.from(state.postEffects, (effect) => effect.name || effect.kind),
+    ["order-a", "toneMapping", "order-b"], "the chain must keep its declaration order in scene state");
+  return state;
+}
+
+function orderedPostBundle(sceneAPI, state) {
+  return sceneAPI.createSceneRenderBundle(
+    320, 180,
+    null,
+    { x: 0, y: 0, z: 5, fov: 72, near: 0.05, far: 128 },
+    [], [], [], [], [],
+    {},
+    0,
+    [], [],
+    [{ id: "ordered-post-cp", count: 4, emitter: { kind: "point" }, material: { color: "#fff" } }],
+    [],
+    state.postEffects,
+    0,
+    false,
+  );
+}
+
+function sendOrderedPostPatch(sceneAPI, state, name, uniforms) {
+  sceneAPI.applySceneCommands(state, [{
+    kind: 14, // SCENE_CMD_SET_POST_UNIFORMS
+    data: { effects: [{ name, uniforms }] },
+  }]);
+}
+
+test("v1 ordered-post-custom-uniforms WebGPU: declaration order and live uniform patch", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+  // The fake drops buffer labels; record them so a write names its pass.
+  const buffersByLabel = new Map();
+  const createBuffer = fake.device.createBuffer;
+  fake.device.createBuffer = function(desc) {
+    const buffer = createBuffer.call(fake.device, desc);
+    if (desc && desc.label) buffersByLabel.set(desc.label, buffer);
+    return buffer;
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  const sceneAPI = harness.env.context.__gosx_scene3d_api;
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const wgsl = (tag) => ({
+    fragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); } // " + tag,
+    vertexWGSL: "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); } // " + tag,
+  });
+  const state = orderedPostScene(sceneAPI, wgsl);
+
+  // Frame 1 submits the WGSL; the async pipelines resolve before frame 2.
+  await renderValidatedPostFrame(harness, orderedPostBundle(sceneAPI, state), viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await renderValidatedPostFrame(harness, orderedPostBundle(sceneAPI, state), viewport);
+
+  // Fullscreen post passes bind a pipeline; read its label from the pipeline
+  // itself (async-built pipelines) or its descriptor (synchronous ones).
+  const pipelineLabel = (draw) => draw.pipeline && (draw.pipeline.label || (draw.pipeline.desc && draw.pipeline.desc.label)) || "";
+  const framePostLabels = () => {
+    const labels = [];
+    for (const pass of mainRenderPasses(fake)) {
+      for (const draw of pass.draws) labels.push(pipelineLabel(draw));
+    }
+    return labels;
+  };
+  const postLabels = framePostLabels().filter((label) => /^gosx-selena-post-order-[ab]$/.test(label) || label === "gosx-post-toneMapping");
+  assert.deepEqual(postLabels.slice(-3),
+    ["gosx-selena-post-order-a", "gosx-post-toneMapping", "gosx-selena-post-order-b"],
+    "post passes must draw in declaration order, got " + JSON.stringify(postLabels));
+
+  const writesFor = (name) => fake.state.writeBufferCalls.filter(
+    (call) => call.buffer === buffersByLabel.get("gosx-selena-post-uniforms-" + name));
+  const lastWrite = (name) => writesFor(name).at(-1);
+  assert.equal(lastWrite("order-a").data[0], 0.25, "order-a must upload its authored strength");
+  assert.equal(lastWrite("order-b").data[0], 0.75, "order-b must upload its authored strength");
+
+  // Live patch of order-a only.
+  const modulesBefore = fake.state.shaderModules.length;
+  const pipelinesBefore = fake.state.renderPipelines.length;
+  const writesBeforeA = writesFor("order-a").length;
+  const writesBeforeB = writesFor("order-b").length;
+  sendOrderedPostPatch(sceneAPI, state, "order-a", { strength: 0.5 });
+  await renderValidatedPostFrame(harness, orderedPostBundle(sceneAPI, state), viewport);
+
+  assert.equal(writesFor("order-a").length > writesBeforeA, true, "the next frame must upload order-a's uniform buffer");
+  assert.equal(lastWrite("order-a").data[0], 0.5, "the patched strength must reach the GPU upload on the next frame");
+  assert.equal(lastWrite("order-a").data[1], 0.5, "unpatched uniforms of the same pass keep their value");
+  assert.equal(writesFor("order-b").length > writesBeforeB, true);
+  assert.equal(lastWrite("order-b").data[0], 0.75, "the other custom pass keeps its own value");
+  const patchedLabels = framePostLabels().filter((label) => /^gosx-selena-post-order-[ab]$/.test(label) || label === "gosx-post-toneMapping");
+  assert.deepEqual(patchedLabels.slice(-3),
+    ["gosx-selena-post-order-a", "gosx-post-toneMapping", "gosx-selena-post-order-b"],
+    "order must be unchanged after the patch");
+  assert.equal(fake.state.shaderModules.length, modulesBefore, "a uniform patch must not create a shader module");
+  assert.equal(fake.state.renderPipelines.length, pipelinesBefore, "a uniform patch must not create a render pipeline");
+  assert.deepEqual(Array.from(state.postEffects, (effect) => effect.name || effect.kind),
+    ["order-a", "toneMapping", "order-b"], "a patch must not reorder the chain");
+});
+
+test("v1 ordered-post-custom-uniforms WebGL2: declaration order and live uniform patch", async () => {
+  const { env, renderer, canvas, warnLog } = createWebGLRendererForPost();
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const sceneAPI = env.context.__gosx_scene3d_api;
+  const vert = "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const frag = (tag) => "precision mediump float; varying vec2 v_uv; uniform sampler2D _sceneColor; uniform float strength; uniform float mixAmount; void main() { gl_FragColor = texture2D(_sceneColor, v_uv) * strength * mixAmount; } // " + tag;
+  const state = orderedPostScene(sceneAPI, (tag) => ({ vertexGLSL: vert, fragmentGLSL: frag("order-" + tag) }));
+  const bundleFor = () => Object.assign(makeWebGLBundleWithCustomPost({}), { postEffects: state.postEffects });
+  const gl = canvas.getContext("webgl2");
+
+  // Walk the op log from `start`: which program is bound, and which float
+  // uniforms are uploaded while it is bound.
+  const trace = (start) => {
+    const programs = [];
+    const uniforms = {};
+    let current = null;
+    for (const op of gl.ops.slice(start)) {
+      if (op[0] === "useProgram") {
+        const program = gl.programs.find((p) => p.id === op[1]);
+        const src = program ? gl.programShaderSources(program) : "";
+        current = src.includes("// order-a") ? "order-a"
+          : src.includes("// order-b") ? "order-b"
+          : (src.includes("u_toneMapMode") && src.length < 5000 ? "toneMapping" : null);
+        if (current) programs.push(current);
+      } else if (op[0] === "uniform1f" && current && (op[1] === "strength" || op[1] === "mixAmount")) {
+        uniforms[current + "." + op[1]] = op[2];
+      }
+    }
+    return { programs, uniforms };
+  };
+
+  const start1 = gl.ops.length;
+  renderer.render(bundleFor(), viewport);
+  const first = trace(start1);
+  const firstPrograms = first.programs.filter((name, i, all) => i === 0 || all[i - 1] !== name);
+  assert.deepEqual(firstPrograms, ["order-a", "toneMapping", "order-b"],
+    "post programs must run in declaration order, got " + JSON.stringify(first.programs));
+  assert.equal(first.uniforms["order-a.strength"], 0.25);
+  assert.equal(first.uniforms["order-b.strength"], 0.75);
+
+  const creates = () => gl.ops.filter((op) => op[0] === "createProgram" || op[0] === "linkProgram").length;
+  const createsBefore = creates();
+  sendOrderedPostPatch(sceneAPI, state, "order-a", { strength: 0.5 });
+  const start2 = gl.ops.length;
+  renderer.render(bundleFor(), viewport);
+  const second = trace(start2);
+
+  assert.equal(second.uniforms["order-a.strength"], 0.5, "the patched strength must be uploaded on the next frame");
+  assert.equal(second.uniforms["order-a.mixAmount"], 0.5, "unpatched uniforms of the same pass keep their value");
+  assert.equal(second.uniforms["order-b.strength"], 0.75, "the other custom pass keeps its own value");
+  assert.equal(creates(), createsBefore, "a uniform patch must not call createProgram or linkProgram");
+  assert.deepEqual(second.programs.filter((name, i, all) => i === 0 || all[i - 1] !== name),
+    ["order-a", "toneMapping", "order-b"], "order is unchanged after the patch");
+  assert.deepEqual(warnLog.filter((m) => m.includes("custom post pass")), [], "valid passes must not warn");
+
+  renderer.dispose();
 });
 
 test("Selena mesh WebGPU: postFX MSAA render pass uses a matching pipeline sample count", async () => {

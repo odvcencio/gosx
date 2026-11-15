@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Scene3D v1 corpus row `ordered-post-custom-uniforms` is now `enforced` (#PR). Two Node tests in `client/js/runtime-20-scene-shaders-custom-post.test.js`, one for WebGPU and one for WebGL2, run a custom pass, tone mapping and a second custom pass, check they run in declaration order, and send a live uniform patch through `SCENE_CMD_SET_POST_UNIFORMS`. The next frame uploads the new value and builds no new shader module, pipeline or program.
+- The Scene3D v1 corpus contract test now knows all four Node test groups (`runtime`, `scene3d`, `scene3d-b`, `other`) and rejects evidence whose file the cited job does not run (#PR). `gltf-cubic-trs-morph` cited `js-tests-b`, which no longer runs `scene3d-cubic-spline.test.mjs`; it now cites `js-tests-scene3d`.
+- `CustomPost.Stage` documentation corrected (#PR). No renderer reads `Stage`; the browser backends and the native renderer run custom passes in declaration order, so declare a pass before or after `Tonemap` to place it. No behaviour change.
+
 ## v0.60.0
 
 ### Breaking changes and migration

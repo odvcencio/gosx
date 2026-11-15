@@ -213,7 +213,7 @@ without a jump:
 | `nested-group-scale-pick` | blocked | Browser renderer proof and native unit coverage exist; require renderer-consumed native normals, winding/cull, and pick evidence before certification. |
 | `desktop-controls-picking` | enforced | Orbit/first-person controls and picking stay inside the v1 boundary. |
 | `desktop-gizmo-commit` | blocked | Add one end-to-end fly/pointer-lock/object-drag/gizmo commit proof. |
-| `ordered-post-custom-uniforms` | blocked | Add one cross-backend order/uniform-patch proof before certifying this row. |
+| `ordered-post-custom-uniforms` | enforced | Two Node tests (WebGPU and WebGL2) run a custom pass, tone mapping, and a second custom pass in declaration order, then send a live uniform patch through the post-uniforms scene command. The next frame uploads the new value and creates no shader module, pipeline, or program. |
 | `native-preview-degradation` | blocked | S5 must add backend-specific `CustomPost` degradation and telemetry evidence before this can be certified. |
 | `hub-command-diff` | enforced | Diffable fields produce a lossless command stream. |
 | `hub-remount-atomic-reject` | enforced | Remount fields reject before mutation or watcher notification. |

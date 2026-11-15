@@ -112,11 +112,11 @@
       "requirement": "Imported CUBICSPLINE translation, rotation, scale, and morph weights follow glTF Appendix C.",
       "targetBackends": ["webgpu", "webgl2"],
       "ciOwners": [
-        {"label": "js-tests-b", "job": "js-tests-b", "step": "JavaScript runtime contract tests (other suites)", "command": "make test-js-node NODE_TEST_GROUP=other"},
+        {"label": "js-tests-scene3d", "job": "js-tests-scene3d", "step": "Scene3D renderer contract tests", "command": "make test-js-node NODE_TEST_GROUP=scene3d"},
         {"label": "scene3d-v1-browser-renderer-proof", "job": "scene3d-v1-browser-renderer-proof", "step": "Run Scene3D CUBICSPLINE browser renderer proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""}
       ],
       "evidence": [
-        {"kind": "node-test", "path": "client/js/scene3d-cubic-spline.test.mjs", "contains": "CUBICSPLINE translation Hermite-interpolates with interval-scaled tangents", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests-b"},
+        {"kind": "node-test", "path": "client/js/scene3d-cubic-spline.test.mjs", "contains": "CUBICSPLINE translation Hermite-interpolates with interval-scaled tangents", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests-scene3d"},
         {"kind": "browser-test", "path": "client/js/testdata/scene3d-cubic-spline-browser.cjs", "contains": "proof-private-gpu-texture", "backends": ["webgpu", "webgl2"], "ciLabel": "scene3d-v1-browser-renderer-proof"}
       ]
     },
@@ -153,11 +153,16 @@
     },
     {
       "id": "ordered-post-custom-uniforms",
-      "state": "blocked",
+      "state": "enforced",
       "requirement": "Supported post effects preserve declaration order and live custom uniform patches.",
       "targetBackends": ["webgpu", "webgl2"],
-      "ciOwners": [],
-      "evidence": []
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js NODE_TEST_GROUP=runtime"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/runtime-20-scene-shaders-custom-post.test.js", "contains": "v1 ordered-post-custom-uniforms WebGPU: declaration order and live uniform patch", "backends": ["webgpu"], "ciLabel": "js-tests"},
+        {"kind": "node-test", "path": "client/js/runtime-20-scene-shaders-custom-post.test.js", "contains": "v1 ordered-post-custom-uniforms WebGL2: declaration order and live uniform patch", "backends": ["webgl2"], "ciLabel": "js-tests"}
+      ]
     },
     {
       "id": "native-preview-degradation",

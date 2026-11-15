@@ -188,15 +188,20 @@ type DOF struct {
 
 func (DOF) isPostEffect() {}
 
-// CustomPostStage selects where a CustomPost pass executes within the
-// bloom/tonemap chain.
+// CustomPostStage names the stage an author wants for a CustomPost pass. It is
+// recorded in the lowered post effect (see CustomPostIR.Stage), but no renderer
+// reads it: the browser backends (WebGPU, WebGL2) and the native renderer all
+// run a CustomPost where it is declared in the post-effect list, so Stage does
+// not move a pass.
 type CustomPostStage string
 
 const (
-	// CustomPostBeforeTonemap places the pass after bloom, before tonemap.
-	// This is the default when Stage is empty.
+	// CustomPostBeforeTonemap is the value recorded when Stage is empty. It does
+	// not place the pass before tonemap; declare the pass before Tonemap to
+	// run it there.
 	CustomPostBeforeTonemap CustomPostStage = "beforeTonemap"
-	// CustomPostAfterTonemap places the pass after tonemap, in the LDR region.
+	// CustomPostAfterTonemap is recorded as given. It does not place the pass
+	// after tonemap; declare the pass after Tonemap to run it there.
 	CustomPostAfterTonemap CustomPostStage = "afterTonemap"
 )
 
@@ -206,9 +211,12 @@ const (
 // 0-4 sceneColor/sceneColorSampler/sceneDepth/sceneDepthSampler/UserUniforms)
 // is emitted by selena materials with kind "post".
 //
-// Ordering: by default (Stage == "" or "beforeTonemap") custom passes run
-// after bloom, before tonemap. Set Stage to "afterTonemap" to run after
-// tonemapping in the LDR region.
+// Ordering: the browser backends (WebGPU and WebGL2) and the native renderer
+// run post effects, custom passes included, in the order they are declared.
+// Stage does not change that order; no renderer reads it. Declare a custom
+// pass before or after Tonemap to choose which side of it the pass runs on.
+// A live uniform patch for a named pass changes its uniforms without rebuilding
+// the pass or the chain.
 //
 // On failure (shader validation error, unsupported platform) the pass becomes
 // an identity passthrough rather than aborting the frame.
@@ -224,8 +232,9 @@ type CustomPost struct {
 	// Rect = (centerX, centerY, halfW, halfH)
 	// Meta = (cornerRadius, presence, ordinal, flags)
 	DOMRegions CustomPostDOMRegions
-	// Stage controls ordering relative to bloom/tonemap.
-	// Empty string and "beforeTonemap" are equivalent (default).
+	// Stage is recorded in the lowered post effect but no renderer reads it, so
+	// it does not move the pass: position in the post-effect list decides the
+	// order on every backend. Empty and "beforeTonemap" lower to the same value.
 	Stage CustomPostStage
 }
 
