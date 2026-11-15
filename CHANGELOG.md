@@ -5,6 +5,7 @@
 ### Fixed
 
 - A scene that fell back from WebGPU to WebGL2 no longer draws a blank canvas. The WebGL renderer called `uv1.use`, `uv1.bind` and `uv1.dispose` on a stub the WebGPU renderer had left without them (#853).
+- WebGPU auto exposure compiled again. Its measure shader declared `let target`, a reserved WGSL word that Chrome rejects, so any scene that set `Environment.AutoExposure` fell back to WebGL2. A new test scans the Scene3D runtime's WGSL for reserved words (#851).
 
 ## v0.60.0
 
