@@ -116,9 +116,12 @@ dashboards, and interactive scenes. Its supported boundary is:
   normalization and this S0 row makes no asset-pipeline support claim.
 - Desktop orbit/fly/first-person controls, pointer lock, picking, object drag,
   and transform-gizmo commits are the v1 interaction boundary.
-- Supported browser post effects preserve declaration order. Native/headless
-  custom-post behavior remains blocked until S5 provides backend-specific
-  degradation and telemetry evidence; it is not claimed as browser parity.
+- Supported browser post effects preserve declaration order. The native
+  renderer does not run custom post shaders: a pass with WGSL is an identity
+  passthrough on the headless device, and a pass without WGSL is skipped. Each
+  one is reported as a diagnostic (`scene.native.custom_post_passthrough` or
+  `scene.native.custom_post_skipped`) that names the pass. This is not browser
+  parity.
 - Hub updates either emit complete commands or reject a remount-required diff
   atomically. Generic hydration must not discard Scene3D command output.
 - A corpus route must publish measured p95/p99 frame evidence and stay inside
@@ -214,7 +217,7 @@ without a jump:
 | `desktop-controls-picking` | enforced | Orbit/first-person controls and picking stay inside the v1 boundary. |
 | `desktop-gizmo-commit` | blocked | Add one end-to-end fly/pointer-lock/object-drag/gizmo commit proof. |
 | `ordered-post-custom-uniforms` | enforced | Two Node tests (WebGPU and WebGL2) run a custom pass, tone mapping, and a second custom pass in declaration order, then send a live uniform patch through the post-uniforms scene command. The next frame uploads the new value and creates no shader module, pipeline, or program. |
-| `native-preview-degradation` | blocked | S5 must add backend-specific `CustomPost` degradation and telemetry evidence before this can be certified. |
+| `native-preview-degradation` | enforced | Two Go tests (the headless renderer and the native preview) show that a custom post pass draws the same pixels as no pass and that each unexecuted pass is reported by name. The native renderer still does not execute custom post shaders; it now says so. A pass whose pipeline fails to build on the headless device is not reported separately. |
 | `hub-command-diff` | enforced | Diffable fields produce a lossless command stream. |
 | `hub-remount-atomic-reject` | enforced | Remount fields reject before mutation or watcher notification. |
 | `scene-p95-budget-route` | blocked | Add a dedicated corpus route and measured p95/p99 evidence. |

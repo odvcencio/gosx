@@ -50,10 +50,12 @@ web view, `Navigate`, `SetHTML`, `Reload`, `ExecuteScript`, `SetTitle`, the
 background color, `OnWindowCreated`, `OnNavigationCompleted`, `OnClose` and the
 startup timeline (`EnvironmentReady` stays zero: WebKit has no separate
 environment step), the menu bar (`SetMenuBar`, with a standard application menu
-in front of the example's File menu), `SetMinSize`, `SetMaxSize`, `OpenURL` and
-the native message box. This example runs on it and works around what is not
-there yet: the file dialogs and the typed bridge to the page report
-`desktop.ErrUnsupported` until later slices land, and `GPU`, `SingleInstance` and
+in front of the example's File menu), `SetMinSize`, `SetMaxSize`, `OpenURL`, the
+native message box, the native file dialogs (`OpenFileDialog` and
+`SaveFileDialog`) and the string transport and typed bridge between Go and the
+page. This example uses all of these on macOS. What is not there yet reports
+`desktop.ErrUnsupported` (the clipboard, window placement, extra windows, tray
+icons, notifications and file drop), and `GPU`, `SingleInstance` and
 `OnFocusChanged` have no effect. `App.Run` must be called from the main goroutine
 (the `desktop` package pins it to the main thread when it is imported). SIGINT and
 SIGTERM close the window and stop the engine.

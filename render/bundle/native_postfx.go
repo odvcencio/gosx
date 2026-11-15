@@ -640,7 +640,8 @@ func resolveNativePostFXEffects(b engine.RenderBundle) []nativePostFXEffect {
 			// allowed (different name == different pass).
 			wgsl := strings.TrimSpace(effect.FragmentWGSL)
 			if wgsl == "" {
-				continue // no WGSL → skip on native
+				// No WGSL: skipped on native. PostEffectDiagnostics reports it.
+				continue
 			}
 			name := effect.Name
 			if name == "" {
@@ -769,9 +770,11 @@ func (r *Renderer) recordNativePostFXPasses(enc gpu.CommandEncoder, effects []na
 			// so headless Draw() is a no-op (identity passthrough). This keeps
 			// headless captures stable — the custom effect is invisible on headless,
 			// which is correct: native doesn't implement the full Selena post contract.
+			// PostEffectDiagnostics reports every such pass, so the drop is not silent.
 			customRes := r.ensureCustomPostPipeline(effect)
 			if customRes == nil {
 				// Shader/pipeline failed; skip this pass (identity for this slot).
+				// PostEffectDiagnostics already reports the pass as not executed.
 				continue
 			}
 			label = effect.customLabel

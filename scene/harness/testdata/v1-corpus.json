@@ -166,11 +166,16 @@
     },
     {
       "id": "native-preview-degradation",
-      "state": "blocked",
+      "state": "enforced",
       "requirement": "Unsupported native custom-post behavior remains explicit and observable.",
       "targetBackends": ["native-preview", "headless"],
-      "ciOwners": [],
-      "evidence": []
+      "ciOwners": [
+        {"label": "go-tests", "job": "go-tests", "step": "Non-CLI unit and integration tests", "command": "make test-unit"}
+      ],
+      "evidence": [
+        {"kind": "go-test", "path": "scene/preview/coverage_test.go", "contains": "TestNativePreviewReportsCustomPostDegradation", "backends": ["native-preview"], "ciLabel": "go-tests"},
+        {"kind": "go-test", "path": "render/bundle/custom_post_degradation_test.go", "contains": "TestHeadlessCustomPostIsReportedPassthrough", "backends": ["headless"], "ciLabel": "go-tests"}
+      ]
     },
     {
       "id": "hub-command-diff",
