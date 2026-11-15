@@ -8,20 +8,19 @@ import (
 	"m31labs.dev/gosx/render/bundle"
 )
 
-// This file records one gap that changes how you should read every other test
-// here: the CPU rasterizer does no back-face culling.
+// This file covers the unlit path. The lit path (pipeline label "bundle.lit")
+// discards a fragment whose screen winding disagrees with the sign of the model
+// matrix determinant, as litWGSL does with
+// `if (frontFacing != (in.orientation > 0.0)) { discard; }`.
+// group_scale_test.go tests that rule.
 //
-// rasterizeTriangle measures the signed area of the screen-space triangle and
-// keeps a pixel when all three edge functions share that sign. Both windings
-// therefore fill. So a wrongly wound geometry generator looks correct in every
-// headless frame, and "flip a winding" is not a usable sensitivity probe for a
-// golden test in this package.
-//
-// The browser runtime does not cull back faces today either, which is why a
-// wrongly wound cap has never shown up as a visible defect. Both change on the
-// day culling arrives. Until then, winding correctness has to be checked in
-// package scene/geom against the signed area of the generated triangles, not
-// against a rendered image.
+// The unlit path and the shadow depth pass still fill both windings:
+// rasterizeTriangle keeps a pixel when all three edge functions share one sign.
+// The shadow WGSL in render/bundle/lit.go discards by orientation too, and the
+// headless shadow pass does not do that yet. So a wrongly wound geometry
+// generator looks correct in an unlit or shadow frame, and "flip a winding" is
+// not a sensitivity probe for those paths. Check winding in package scene/geom
+// against the signed area of the generated triangles instead.
 
 // windingTriangle returns a screen-filling triangle in one of the two windings.
 // The three corners are identical; only their order differs.
@@ -66,9 +65,9 @@ func renderWindingFrame(t *testing.T, reversed bool) *image.RGBA {
 	return cloneTestRGBA(device.Framebuffer())
 }
 
-// TestBothWindingsFill states the no-culling behaviour as a fact instead of an
-// assumption. Invert this test on the day the rasterizer starts culling, and say
-// which winding it keeps.
+// TestBothWindingsFill states the unlit path's no-culling behaviour as a fact
+// instead of an assumption. Invert this test on the day the unlit path starts
+// culling, and say which winding it keeps.
 func TestBothWindingsFill(t *testing.T) {
 	forward := renderWindingFrame(t, false)
 	reversed := renderWindingFrame(t, true)

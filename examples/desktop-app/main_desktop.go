@@ -6,11 +6,13 @@
 //
 // Run it with `go run ./examples/desktop-app` on Windows (WebView2Loader.dll
 // must sit next to the executable or on PATH) or on macOS (AppKit and WKWebView
-// ship with the system; no cgo, no Xcode). On macOS the backend currently
-// provides the window, web view, navigation events, the startup timeline, the
-// menu bar, size limits, OpenURL and the message box; the file dialogs, the
-// page bridge and the other Windows features return desktop.ErrUnsupported until
-// later slices land, and this example tolerates that where it can.
+// ship with the system; no cgo, no Xcode). On macOS the backend provides the
+// window, web view, navigation events, the startup timeline, the menu bar, size
+// limits, OpenURL, the message box, the file dialogs and the page bridge. The
+// clipboard, window placement, extra windows, tray, notifications, file drop,
+// single-instance locking and other Windows features return
+// desktop.ErrUnsupported or have no effect until later slices land, and this
+// example tolerates that where it can.
 package main
 
 import (
