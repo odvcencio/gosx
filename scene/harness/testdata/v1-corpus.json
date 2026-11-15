@@ -122,11 +122,17 @@
     },
     {
       "id": "nested-group-scale-pick",
-      "state": "blocked",
+      "state": "enforced",
       "requirement": "Nested group scale reaches SceneIR, render transforms, raycast, and pick.",
       "targetBackends": ["webgpu", "webgl2", "native-preview"],
-      "ciOwners": [],
-      "evidence": []
+      "ciOwners": [
+        {"label": "scene3d-v1-browser-renderer-proof", "job": "scene3d-v1-browser-renderer-proof", "step": "Run Scene3D CUBICSPLINE browser renderer proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""},
+        {"label": "go-tests", "job": "go-tests", "step": "Non-CLI unit and integration tests", "command": "make test-unit"}
+      ],
+      "evidence": [
+        {"kind": "browser-test", "path": "client/js/testdata/scene3d-cubic-spline-browser.cjs", "contains": "affine-pick-scale-only-pixel", "backends": ["webgpu", "webgl2"], "ciLabel": "scene3d-v1-browser-renderer-proof"},
+        {"kind": "go-test", "path": "render/gpu/headless/group_scale_test.go", "contains": "TestHeadlessNestedGroupScaleNormalsWindingAndPick", "backends": ["native-preview"], "ciLabel": "go-tests"}
+      ]
     },
     {
       "id": "desktop-controls-picking",

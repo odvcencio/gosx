@@ -181,12 +181,13 @@ const TEXTURED_PNG = texturedFixture.quadrantPNG(MUTATION === 'texture-white');
 const TEXTURED_PNG_SHA256 = require('crypto').createHash('sha256').update(TEXTURED_PNG).digest('hex');
 const textureBlobSessions = new Map();
 
-const AFFINE_PARENT = [
-  -2, 0, 0, 0,
-  0, 1, 0, 0,
-  0, 0, 1, 0,
-  0.5, 0.5, 1, 1,
-];
+const affinePick = require('./scene3d-affine-pick-geometry.cjs');
+// The parent matrix, camera and canvas size come from the helper, the single
+// source for the pick derivation. The guard fails if the canvas size drifts.
+const AFFINE_PARENT = affinePick.PARENT.slice();
+if (W !== affinePick.CANVAS.width || H !== affinePick.CANVAS.height) {
+  throw new Error('canvas size ' + W + 'x' + H + ' differs from scene3d-affine-pick-geometry.cjs');
+}
 const AFFINE_LOCAL_POSITIONS = [-0.4, -0.4, 0, 0.4, -0.4, 0, 0, 0.4, 0];
 const AFFINE_MODEL_MATRIX = [
   -Math.SQRT2, Math.SQRT1_2, 0, 0,
@@ -232,7 +233,7 @@ function affineManifestFor(mount, engine, webgpu) {
     props: {
       width: W, height: H, autoRotate: false, animation: false,
       responsive: false, maxDevicePixelRatio: 1, background: '#101418',
-      camera: { x: 0.5, y: 0.5, z: 3, fov: 50 },
+      camera: Object.assign({}, affinePick.CAMERA),
       lights: [{ id: 'key', kind: 'directional', intensity: 1.2,
         directionX: 0, directionY: 0, directionZ: -1 }],
       forceWebGL: !webgpu, requireWebGL: !webgpu, preferWebGPU: Boolean(webgpu),
@@ -1492,11 +1493,15 @@ function affineRefsSetExpr(mount) {
     'window.__affineRefs={mount:m,canvas:cv,state:st,object:object};return true;})()';
 }
 
+// affine-pick-scale-only-pixel
+// The pointer is off the canvas centre. The centre is the image of the local
+// origin, so a pick that ignored the parent scale would hit it too. The offset in
+// scene3d-affine-pick-geometry.cjs lands inside the scaled triangle only.
 function affinePickExpr() {
   return '(function(){var r=window.__affineRefs;if(!r||!r.canvas)return false;' +
     'window.__affineInputEvents.length=0;var b=r.canvas.getBoundingClientRect();' +
     'var base={bubbles:true,cancelable:true,pointerId:71,pointerType:"mouse",isPrimary:true,' +
-      'button:0,clientX:b.left+b.width/2,clientY:b.top+b.height/2};' +
+      'button:0,clientX:b.left+b.width/2+' + affinePick.PICK_OFFSET.x + ',clientY:b.top+b.height/2+' + affinePick.PICK_OFFSET.y + '};' +
     'r.canvas.dispatchEvent(new PointerEvent("pointerdown",Object.assign({buttons:1},base)));' +
     'document.dispatchEvent(new PointerEvent("pointerup",Object.assign({buttons:0},base)));' +
     'return true;})()';
