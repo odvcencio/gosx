@@ -267,6 +267,10 @@ does not consume the sample used by adaptive quality.
   `EXT_disjoint_timer_query_webgl2` around the full render call. Both include
   water, world geometry, and post effects. They exclude display scanout and
   asset uploads that occur outside the frame.
+  With WebGPU GPU-driven crowds (`scene.GPUDriven`), the crowd frustum culls
+  for the camera and shadow lights run in a separate command buffer that is
+  submitted before the frame's, so `gpuMS` no longer counts them. The occlusion
+  cull stays in the frame and is counted.
 - `source` is `gpu-timestamp`, `webgl-timer`, or `none`. `scope` is `frame`.
   `frameSeq` identifies the measured frame; asynchronous readback can lag the
   current frame. `atMS` is the time when the result was read.

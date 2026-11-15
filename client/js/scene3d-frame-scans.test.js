@@ -305,3 +305,164 @@ test("a batch whose pose records the hierarchy derives is re-walked every frame,
   riders[4]._crowdSkin.rev += 1; // a view's pose changes without a touch
   assert.equal(batches(build(api, state)).riders.revision, first.riders.revision + 1);
 });
+
+// ---- Crowd cull split --------------------------------------------------------
+// With GPU-driven crowds the crowd frustum culls are encoded on a command
+// encoder of their own ("gosx-crowd-cull"), and that encoder is submitted before
+// the frame's ("gosx-frame"), so the frame's GPU timer does not count them.
+
+async function cullSplitHarness() {
+  const log = { encoders: [], events: [] };
+  const h = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { renderBundles: true },
+    configureDevice(device) {
+      // hold(pattern) makes validation of a render pipeline whose label matches settle on a later
+      // turn, so that pipeline is not ready within the frame that made it. Other pipelines stay ready.
+      let held = null, heldNext = false;
+      const createRenderPipeline = device.createRenderPipeline, popErrorScope = device.popErrorScope;
+      log.hold = (pattern) => { held = pattern; };
+      device.createRenderPipeline = function(descriptor) {
+        if (held && held.test(descriptor.label || "")) heldNext = true;
+        return createRenderPipeline.apply(this, arguments);
+      };
+      device.popErrorScope = function() {
+        if (!heldNext) return popErrorScope.apply(this, arguments);
+        heldNext = false;
+        return Promise.resolve(null);
+      };
+      const create = device.createCommandEncoder;
+      device.createCommandEncoder = function(descriptor) {
+        const encoder = create.apply(this, arguments);
+        const record = { label: descriptor && descriptor.label, passes: [], finished: false };
+        log.encoders.push(record);
+        const beginComputePass = encoder.beginComputePass;
+        encoder.beginComputePass = function(passDescriptor) {
+          record.passes.push(passDescriptor && passDescriptor.label);
+          return beginComputePass.apply(this, arguments);
+        };
+        const finish = encoder.finish;
+        encoder.finish = function() {
+          const buffer = Object.assign({}, finish.apply(this, arguments), { encoder: record });
+          record.finished = true;
+          return buffer;
+        };
+        return encoder;
+      };
+      const submit = device.queue.submit;
+      device.queue.submit = function(buffers) {
+        for (const buffer of buffers) log.events.push({ label: buffer.encoder && buffer.encoder.label, record: buffer.encoder });
+        return submit.apply(this, arguments);
+      };
+    },
+  });
+  const F32 = vm.runInContext("Float32Array", h.env.context);
+  const api = h.env.context.__gosx_scene3d_api;
+  h.canvas.width = 64;
+  h.canvas.height = 64;
+  const atlas = { id: "split-atlas", width: 4, height: 8, data: new F32(4 * 8 * 4), clips: new Map([["Run", { start: 1, segments: 6, duration: 1 }]]), missingClips: new Set() };
+  const positions = [-0.2, 0, 0.2, 0.2, 0, 0.2, 0, 0.6, 0, 0.2, 0, 0.2, 0.2, 0, -0.2, 0, 0.6, 0];
+  const count = positions.length / 3;
+  const vertices = { count, immutable: true, revision: 0, positions: new F32(positions), normals: new F32(count * 3).fill(0.5), uvs: new F32(count * 2),
+    tangents: new F32(count * 4).map((_v, i) => (i % 4 === 0 || i % 4 === 3 ? 1 : 0)), joints: new F32(count * 4),
+    weights: new F32(count * 4).map((_v, i) => (i % 4 === 0 ? 1 : 0)) };
+  const bounds = { minX: -0.3, minY: 0, minZ: -0.3, maxX: 0.3, maxY: 1.2, maxZ: 0.3 };
+  const agents = [];
+  for (let i = 0; i < 20; i++) {
+    const agent = api.normalizeSceneObject({ id: "p/a" + i + "/0", kind: "mesh", vertices, materialKind: "standard", color: "#d98c5f", roughness: 0.6 }, i);
+    Object.assign(agent, { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, spinX: 0, spinY: 0, spinZ: 0, shiftX: 0, shiftY: 0, shiftZ: 0,
+      static: false, skin: null, pickable: true, castShadow: true, receiveShadow: false, depthWrite: true,
+      parentMatrix: new F32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, (i % 10) * 0.5 - 2, 0, -3 - Math.floor(i / 10), 1]) });
+    agent.vertices.immutable = true;
+    agent.vertices.revision = 0;
+    agent._crowdSkin = { atlas, bounds, rows: new F32([i % 6, (i % 6) + 1, 0.5]), poseRows: null, batchID: "p", rev: 0, group: null, parent: "" };
+    agents.push(agent);
+  }
+  h.renderer.prepareCrowdAtlas(atlas);
+  const bundle = (gpuDriven) => {
+    const out = api.createSceneRenderBundle(64, 64, "#000000", { x: 0, y: 1.2, z: 3, fov: 62, near: 0.05, far: 100 }, agents, [], [], [], [], {}, 0.4, [], [], [], [], [], 0, false,
+      { retainedGeometry: true, worldBakedAttributeViews: false, rigidImportedBatches: false, crowdBatches: true });
+    out.lights = [];
+    if (gpuDriven) out.gpuDriven = { occlusion: false };
+    return out;
+  };
+  let n = 0;
+  const frame = async (b) => {
+    n += 1;
+    const result = h.renderer.render(b, { width: 64, height: 64 }, { nowMS: n * 16, sceneTime: 0.5, active: true });
+    await flushAsyncWork();
+    await flushAsyncWork();
+    return result;
+  };
+  return { h, log, bundle, frame };
+}
+
+// The frames after `from` in log.encoders.
+function encodersFrom(log, from) { return log.encoders.slice(from); }
+
+// Index of an encoder's submission among the submits after `from`; -1 when it was never submitted.
+function submittedAt(log, from, record) { return log.events.slice(from).findIndex((e) => e.record === record); }
+
+test("GPU-driven crowd culls run on their own encoder, submitted before the frame's", async () => {
+  const { h, log, bundle, frame } = await cullSplitHarness();
+  try {
+    // Pipelines compile asynchronously; draw until a frame encodes the camera cull.
+    let from = 0, split = null;
+    for (let i = 0; i < 8 && !split; i++) {
+      from = log.encoders.length;
+      const submits = log.events.length;
+      const result = await frame(bundle(true));
+      if (result !== "submitted") continue;
+      const frames = encodersFrom(log, from);
+      const cull = frames.find((e) => e.label === "gosx-crowd-cull" && e.passes.includes("gosx-crowd-cull"));
+      const main = frames.find((e) => e.label === "gosx-frame");
+      if (cull && main && main.finished) split = { cull, main, submits, frames };
+    }
+    assert.ok(split, "a frame must encode the crowd cull on a gosx-crowd-cull encoder");
+    assert.equal(split.main.passes.includes("gosx-crowd-cull"), false, "the frame encoder holds no crowd cull pass");
+    assert.equal(split.frames.filter((e) => e.label === "gosx-crowd-cull").length, 1, "one cull encoder per frame");
+    const cullAt = submittedAt(log, split.submits, split.cull), mainAt = submittedAt(log, split.submits, split.main);
+    assert.ok(cullAt >= 0, "the cull encoder is submitted");
+    assert.ok(mainAt > cullAt, "the cull encoder is submitted before the frame encoder");
+  } finally { h.renderer.dispose(); }
+});
+
+test("a frame held for pipeline validation still submits the crowd cull encoder first", async () => {
+  const { h, log, bundle, frame } = await cullSplitHarness();
+  try {
+    // Shadow-casting agents under a shadow-casting light need the crowd shadow pipeline, which the
+    // crowd makes while it encodes, after the cull encoder exists. Hold its validation, and draw
+    // until a frame stops there: the renderer then calls wgpuSubmitPendingFrame.
+    // First warm up until the cull kernels are ready, as a running scene does.
+    for (let i = 0; i < 6; i++) await frame(bundle(true));
+    log.hold(/crowd-shadow/);
+    let held = null;
+    for (let i = 0; i < 10 && !held; i++) {
+      const next = bundle(true);
+      next.lights = [{ kind: "directional", directionX: 0.3, directionY: -1, directionZ: -0.4, intensity: 1, castShadow: true, color: "#ffffff", shadowSize: 256 }];
+      const from = log.encoders.length, submits = log.events.length;
+      const result = await frame(next);
+      const frames = encodersFrom(log, from);
+      if (result === "pending" && frames.some((e) => e.label === "gosx-crowd-cull")) held = { frames, submits };
+    }
+    assert.ok(held, "a frame is held for validation after it encoded the crowd cull");
+    const cull = held.frames.find((e) => e.label === "gosx-crowd-cull");
+    const main = held.frames.find((e) => e.label === "gosx-frame");
+    assert.ok(main, "the held frame created its own encoder");
+    assert.ok(cull.passes.includes("gosx-crowd-cull"), "the held frame encoded the crowd cull");
+    assert.equal(main.passes.includes("gosx-crowd-cull"), false, "the frame encoder holds no crowd cull pass");
+    const cullAt = submittedAt(log, held.submits, cull), mainAt = submittedAt(log, held.submits, main);
+    assert.ok(cullAt >= 0, "the held frame submits the cull encoder");
+    assert.ok(mainAt > cullAt, "the cull encoder is submitted before the held frame's encoder");
+  } finally { h.renderer.dispose(); }
+});
+
+test("a scene without GPU-driven crowds creates no crowd cull encoder", async () => {
+  const { h, log, bundle, frame } = await cullSplitHarness();
+  try {
+    for (let i = 0; i < 6; i++) await frame(bundle(false));
+    assert.ok(log.encoders.some((e) => e.label === "gosx-frame"), "frames were encoded");
+    assert.equal(log.encoders.some((e) => e.label === "gosx-crowd-cull"), false);
+    assert.equal(log.encoders.some((e) => e.passes.includes("gosx-crowd-cull")), false);
+  } finally { h.renderer.dispose(); }
+});
