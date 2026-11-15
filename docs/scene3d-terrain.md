@@ -112,7 +112,7 @@ A `Heightmap` is a grid of 16-bit samples. Sample 0 is the lowest point and 6553
 
 | Source | Call |
 |---|---|
-| 16-bit grayscale PNG (8-bit and color also read) | `scene.DecodeHeightmapPNG(r)` |
+| 16-bit grayscale PNG (8-bit and color also read) | `scene.DecodeHeightmapPNG(r)` (not available in js/wasm builds; in the browser use `HeightmapFromRaw`, or decode on the server) |
 | Headerless `.r16` / `.raw` export | `scene.HeightmapFromRaw(data, columns, rows, binary.LittleEndian)` |
 | Any function | `scene.HeightmapFromFunc(columns, rows, func(u, v float64) float64)` |
 | Seeded fractal noise | `scene.GenerateHeightmap(scene.TerrainNoise{...})` |
@@ -173,7 +173,7 @@ Set `Ocean.Shoreline` with a terrain present and `Ocean.Bathymetry` nil. When th
 - makes the surf zone murkier: the absorption length shrinks to `Turbidity` (default 0.35) times `Clarity` at the shore and recovers over three foam widths,
 - draws no water over dry land.
 
-`scene.BakeShoreline(terrain, level, settings)` runs the same bake if you want to cache or inspect it. The default 256 x 256 bake adds roughly 50 to 150 KB to the page.
+`scene.BakeShoreline(terrain, level, settings)` runs the same bake if you want to cache or inspect it. On native builds the texture is a compressed PNG, so its size varies with the terrain. In js/wasm builds it is an uncompressed PNG whose size depends only on the resolution: the data URL is 262,618 bytes at 256 x 256 and 4,196,102 bytes at 1024 x 1024.
 
 ## WebGPU and WebGL2
 
