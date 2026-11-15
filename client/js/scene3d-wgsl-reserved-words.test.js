@@ -22,13 +22,21 @@ const RESERVED = new Set(("NULL Self abstract active alignas alignof as asm asm_
 
 const dir = path.join(__dirname, "..", "runtime", "scene3d");
 
-// Template literals that hold WGSL: they declare an entry point.
+// WGSL lives in two shapes: template literals that declare an entry point, and
+// quoted string fragments (single or double quotes) that the renderers join
+// into shaders. Quoted strings count when they declare something in WGSL
+// syntax: "let x", "var<..> x", "fn name(", or an @group/@binding attribute.
 function wgslSources(text) {
   const out = [];
-  const re = /`([^`]*)`/gs;
   let m;
-  while ((m = re.exec(text))) {
+  const templates = /`([^`]*)`/gs;
+  while ((m = templates.exec(text))) {
     if (/@(compute|fragment|vertex)\b/.test(m[1])) out.push(m[1]);
+  }
+  const quoted = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
+  while ((m = quoted.exec(text))) {
+    const body = m[1] !== undefined ? m[1] : m[2];
+    if (/\b(?:let|const)\s+[A-Za-z_]\w*\s*[=:]|\bvar\s*(?:<[^>]*>)?\s+[A-Za-z_]\w*\s*[:=;]|\bfn\s+[A-Za-z_]\w*\s*\(|@group\(/.test(body)) out.push(body);
   }
   return out;
 }
@@ -57,10 +65,16 @@ test("no Scene3D WGSL source declares a reserved word", () => {
       for (const name of declared(source)) if (RESERVED.has(name)) offenders.push(file + ": " + name);
     }
   }
-  assert.ok(scanned > 10, "scan found only " + scanned + " WGSL sources; the matcher is broken");
+  assert.ok(scanned > 100, "scan found only " + scanned + " WGSL sources; the matcher is broken");
   assert.deepEqual([...new Set(offenders)], []);
 });
 
 test("the matcher catches the auto exposure defect", () => {
   assert.deepEqual(declared("@compute @workgroup_size(1) fn main() { let target = 1.0; }").filter((n) => RESERVED.has(n)), ["target"]);
+});
+
+test("quoted WGSL fragments are scanned too", () => {
+  const sources = wgslSources(`const a = "let target = vec3f(1.0);"; const b = 'fn meta(x: f32) -> f32 { return x; }';`);
+  assert.equal(sources.length, 2);
+  assert.deepEqual(sources.flatMap(declared).filter((n) => RESERVED.has(n)), ["target", "meta"]);
 });
