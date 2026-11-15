@@ -27,7 +27,11 @@ func Page() Node {
 			</p>
 			<p class="scene3d-showcase__shows">
 				What this shows: the five gold spheres on the front edge change only in roughness. Under the energy-conserving BRDF, a rougher surface spreads the same light into a wider, dimmer highlight.
-				<a href="https://github.com/odvcencio/gosx/blob/main/docs/scene3d-image-quality.md" target="_blank" rel="noopener noreferrer">Image quality guide</a>
+				<a
+					href="https://github.com/odvcencio/gosx/blob/main/docs/scene3d-image-quality.md"
+					target="_blank"
+					rel="noopener noreferrer"
+				>Image quality guide</a>
 			</p>
 			<p class="scene3d-showcase__controls">
 				Drag to orbit · scroll or pinch to zoom
@@ -42,7 +46,7 @@ func Page() Node {
 						PBR materials and a three-point lighting rig
 					</li>
 					<li>
-						Two-cascade soft shadows, temporal anti-aliasing, auto exposure, bloom, vignette, color grade, and ACES passes
+						Shadow, bloom, vignette, color grade, and ACES passes
 					</li>
 					<li>
 						Responsive orbit interaction and backend fallback

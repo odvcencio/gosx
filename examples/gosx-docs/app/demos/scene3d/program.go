@@ -34,7 +34,6 @@ func GeometryZooProgram() scene.Props {
 		Environment: scene.Environment{
 			AmbientColor:     "#ffffff",
 			AmbientIntensity: 0.26,
-			AutoExposure:     &scene.AutoExposure{MinExposure: 0.7, MaxExposure: 1.6, Key: 0.2, SpeedUp: 2, SpeedDown: 1},
 			Sky:              &scene.Sky{Mode: "gradient", TopColor: "#0d1822", HorizonColor: "#2b4553", BottomColor: "#1b2c36"},
 		},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels2048},
@@ -62,7 +61,6 @@ func postFX() scene.PostFX {
 			scene.Bloom{Mode: "mip", Threshold: 0.85, Strength: 0.4, Radius: 12, Scale: 0.5},
 			scene.Vignette{Intensity: 0.55},
 			scene.ColorGrade{Exposure: 1.0, Contrast: 1.05, Saturation: 1.08},
-			scene.TAA{HistoryWeight: 0.9, ClampGamma: 1.25},
 		},
 	}
 }
@@ -89,10 +87,6 @@ func lights() []scene.Node {
 			CastShadow: true,
 			ShadowBias: -0.001,
 			ShadowSize: 2048,
-
-			ShadowCascades: 2,
-			ShadowDistance: 18,
-			ShadowSoftness: 0.15,
 		},
 		scene.PointLight{
 			ID:        "fill",
@@ -163,7 +157,7 @@ func roughnessLadder() []scene.Node {
 			ID:         fmt.Sprintf("ladder-%d", i),
 			Geometry:   scene.SphereGeometry{Radius: 0.2, Segments: 32},
 			Material:   scene.StandardMaterial{Color: "#e2b46f", Roughness: r, Metalness: 1},
-			Position:   scene.Vec3(-1.2+0.6*float64(i), 0.06, 2.55),
+			Position:   scene.Vec3(-1.2+0.6*float64(i), 0.16, 2.55),
 			CastShadow: true,
 		})
 	}
