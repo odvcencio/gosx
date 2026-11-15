@@ -23,8 +23,9 @@ var legacyPropsDeclaration = regexp.MustCompile(`(?m)^func\s+([A-Z]\w*)\(\s*prop
 // legacyAllowed lists the declarations that cannot move to the strict form yet.
 // Each needs a reason; remove the entry when the reason goes away.
 var legacyAllowed = map[string]string{
-	"synced-video/player.gsx:SyncedPlayer":   "a .gsx //gosx:engine component has no strict form yet (README, legacy component syntax)",
-	"turbofan/app/page.gsx:TurbofanControls": "a legacy Page cannot call a strict component with named attributes",
+	"expressions/expressions.gsx:Expressions": "a strict island cannot yet express closure methods on a slice prop (filter, map, find)",
+	"synced-video/player.gsx:SyncedPlayer":    "a .gsx //gosx:engine component has no strict form yet (README, legacy component syntax)",
+	"turbofan/app/page.gsx:TurbofanControls":  "a legacy Page cannot call a strict component with named attributes",
 }
 
 // skippedExamples are not standalone examples: gosx-docs is the docs site and
