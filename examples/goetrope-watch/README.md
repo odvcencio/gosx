@@ -1,30 +1,34 @@
-# Goetrope Watch Surface Prototype
+# goetrope-watch
 
-This example reimagines the Goetrope viewer as a server-driven GoSX app.
+A watch-room viewer reimagined as a server-driven GoSX app. The server renders
+the room, the queue and the subtitle state; the browser only has to carry a
+narrow playback transport. It is a prototype and does not touch production
+playback.
 
-The prototype keeps the page shape on the server:
+## Run it
 
-- the watch room shell is file-routed through `.gsx` pages
-- queue state, subtitle state, and the next item are precomputed in `page.server.go`
-- playback is represented as a narrow surface, not a full client-managed page
-- queue titles are normalized before they ever reach the render tree
-
-The example is intentionally isolated. It does not wire into production Goetrope and it does not touch live playback control code.
-
-## Layout
-
-- `app/layout.gsx` defines the shared shell
-- `app/page.server.go` and `app/page.gsx` render the landing surface
-- `app/watch/[code]/page.server.go` and `app/watch/[code]/page.gsx` render a room snapshot
-- `app/watch/[code]/player.gsx` contains the transport shell placeholder
-- `public/watch.css` carries the visual system
-
-## Run
-
-From this directory:
-
-```bash
-go run .
+```sh
+go run ./examples/goetrope-watch
+go test ./examples/goetrope-watch   # renders both routes through the file router
 ```
 
-The app is meant as a prototype and reference point for a later Goetrope migration, not as a production entrypoint.
+Open <http://localhost:8080>, then <http://localhost:8080/watch/alpha>.
+
+## What to read
+
+- `app/layout.gsx` is the shared shell.
+- `app/page.server.go` and `app/page.gsx` render the landing page.
+- `app/watch/page.server.go` loads the room snapshot for
+  `app/watch/[code]/page.gsx`, which renders it.
+- The landing page's cards are strict `component`s with typed props structs. A
+  strict component accepts a spread only from a struct, so `app/page.server.go`
+  builds structs (`highlightCard`, `roomPreview`) whose fields match.
+- The room page writes its queue, transport shell and moments inline. `gosx
+  check` cannot type-check a strict component inside a `[code]` directory yet:
+  it fails with `malformed import path ... invalid char '['`.
+- `public/watch.css` carries the visual system.
+
+## Docs
+
+[Components](https://gosx.m31labs.dev/docs/components) and
+[Routing](https://gosx.m31labs.dev/docs/routing).

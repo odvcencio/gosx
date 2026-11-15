@@ -112,8 +112,8 @@ dashboards, and interactive scenes. Its supported boundary is:
 - The currently tested standard material/texture subset is supported.
   Meshopt- and Draco-compressed geometry fails closed with named errors.
   `KHR_texture_basisu` is not silently advertised: renderer KTX2 block upload
-  and glTF Basis import are separate browser capabilities. S4 owns asset-pipe
-  normalization and this S0 row makes no asset-pipeline support claim.
+  and glTF Basis import are separate browser capabilities. Asset-pipeline normalization is a separate area, and this row
+  makes no asset-pipeline support claim.
 - Desktop orbit/fly/first-person controls, pointer lock, picking, object drag,
   and transform-gizmo commits are the v1 interaction boundary.
 - Supported browser post effects preserve declaration order. The native
@@ -211,7 +211,7 @@ without a jump:
 | `gltf-sparse-embedded-image` | enforced | Sparse overlays and embedded bufferView images are tested. |
 | `gltf-meshopt-rejection` | enforced | Meshopt input fails closed with a named error. |
 | `gltf-draco-rejection` | enforced | Draco input fails closed with a named error. |
-| `gltf-basis-ktx2-policy` | enforced | Basis import degradation and renderer KTX2 upload are separate browser facts; S4 owns asset-pipe policy. |
+| `gltf-basis-ktx2-policy` | enforced | Basis import degradation and renderer KTX2 upload are separate browser facts; the asset pipeline owns that policy separately. |
 | `gltf-cubic-trs-morph` | enforced | Analytic fixture covers TRS, morph weights, clamps, seeks, native WebGL2 canvas pixels, and production WebGPU renderer pixels from the exact proof-private target. Actual WebGPU canvas presentation remains part of the release-pinned hardware completion obligation. |
 | `nested-group-scale-pick` | enforced | Nesting is proven in Go: scene lowering and `scene.RaycastGraph` handle nested non-uniform scale (`scene/group_scale_affine_test.go`), and VM lowering does too (`client/vm/scene_group_scale_test.go`). Rendering and pick are proven per backend. WebGPU and WebGL2 (hosted Chrome, `scene3d-v1-browser-renderer-proof`): the renderer draws one triangle under a scaled, reflected parent matrix, and a pointer pick at a pixel only the scaled triangle covers reports the world point and depth derived from that matrix; the check fails if the pick ignores the scale. Native preview (Go test `TestHeadlessNestedGroupScaleNormalsWindingAndPick`): the lit path shades with the inverse-transpose normal, discards fragments whose winding disagrees with the matrix's orientation, and its pick agrees with `scene.RaycastGraph`, under nested non-uniform scale, a reflection and nested uniform scale. Not proven: the browser fixture hand-writes one pre-composed parent matrix instead of nesting groups, the browser proof checks pick and transforms but not normals, and the native shadow depth pass does not yet discard by orientation. |
 | `desktop-controls-picking` | enforced | Orbit/first-person controls and picking stay inside the v1 boundary. |

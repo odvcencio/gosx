@@ -106,6 +106,9 @@ func TestBenchScene_Dispatch(t *testing.T) {
 		{"particles-storm", len(BenchParticlesStormScene().Graph.Nodes)},
 		{"gpu-driven", len(BenchGPUDrivenScene().Graph.Nodes)},
 		{"instanced-classic", len(BenchInstancedClassicScene().Graph.Nodes)},
+		{"crowd", len(BenchCrowdScene().Graph.Nodes)},
+		{"terrain", len(BenchTerrainScene().Graph.Nodes)},
+		{"image-quality", len(BenchImageQualityScene().Graph.Nodes)},
 		{"mixed", len(BenchMixedScene().Graph.Nodes)},
 		{"", len(BenchMixedScene().Graph.Nodes)},
 		{"not-a-real-workload", len(BenchMixedScene().Graph.Nodes)},
@@ -214,4 +217,67 @@ func sceneRecordsEqual(t *testing.T, a, b scene.SceneIR) bool {
 		t.Fatal(err)
 	}
 	return string(left) == string(right)
+}
+
+// TestBenchCrowdSceneStaysBelowTheCullingLimit keeps the stadium well under
+// 10,000 fans, where GPU-driven crowd culling is known to lose the Metal
+// device (GoSX #829), and checks the scene lowers without error.
+func TestBenchCrowdSceneStaysBelowTheCullingLimit(t *testing.T) {
+	props := BenchCrowdScene()
+	crowds := props.Environment.Crowds
+	if len(crowds) != 1 {
+		t.Fatalf("crowds = %d, want 1", len(crowds))
+	}
+	layout, err := crowds[0].Layout()
+	if err != nil {
+		t.Fatalf("crowd layout: %v", err)
+	}
+	if n := len(layout.Seats); n < 1000 || n > benchCrowdSeatCeiling {
+		t.Fatalf("seats = %d, want between 1000 and %d", n, benchCrowdSeatCeiling)
+	}
+	if _, err := json.Marshal(props.SceneIR()); err != nil {
+		t.Fatalf("lower crowd scene: %v", err)
+	}
+}
+
+// TestBenchTerrainSceneLowersTerrainAndScatter proves the terrain workload
+// carries a terrain, a wind field and scatter batches, and that the scatter
+// stays on its distance bands.
+func TestBenchTerrainSceneLowersTerrainAndScatter(t *testing.T) {
+	props := BenchTerrainScene()
+	if props.Environment.Terrain == nil || props.Environment.Wind == nil {
+		t.Fatalf("terrain workload needs Environment.Terrain and Wind, got %#v", props.Environment)
+	}
+	ir := props.SceneIR()
+	if len(ir.InstancedMeshes) == 0 {
+		t.Fatal("terrain workload lowered no scatter batches")
+	}
+	if props.GPUDriven == nil {
+		t.Fatal("terrain workload should let WebGPU cull scatter on the GPU")
+	}
+}
+
+// TestBenchImageQualitySceneUsesTheFullChain proves the workload declares each
+// effect the page advertises, with TAA last as the renderer requires.
+func TestBenchImageQualitySceneUsesTheFullChain(t *testing.T) {
+	props := BenchImageQualityScene()
+	effects := props.PostFX.Effects
+	if len(effects) == 0 {
+		t.Fatal("no post effects")
+	}
+	if _, ok := effects[len(effects)-1].(scene.TAA); !ok {
+		t.Fatalf("last effect = %T, want scene.TAA", effects[len(effects)-1])
+	}
+	var dof, blur bool
+	for _, effect := range effects {
+		switch effect.(type) {
+		case scene.DOF:
+			dof = true
+		case scene.MotionBlur:
+			blur = true
+		}
+	}
+	if !dof || !blur || props.Environment.AutoExposure == nil {
+		t.Fatalf("dof=%v motionBlur=%v autoExposure=%v, want all three", dof, blur, props.Environment.AutoExposure != nil)
+	}
 }

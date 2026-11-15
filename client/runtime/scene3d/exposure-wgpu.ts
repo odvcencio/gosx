@@ -38,11 +38,11 @@ var<workgroup> sums: array<f32, 256>;
     }
     if (index == 0u) {
         let average = exp2(sums[0] / 4096.0);
-        let target = clamp(params.key / max(average, 0.0001) * exp2(params.compensation), params.minExposure, params.maxExposure);
+        let best = clamp(params.key / max(average, 0.0001) * exp2(params.compensation), params.minExposure, params.maxExposure);
         var current = state.exposure;
-        if (params.reset > 0.5 || state.valid < 0.5 || !(current > 0.0)) { current = target; }
-        let rate = select(params.speedDown, params.speedUp, target > current);
-        state.exposure = current + (target - current) * (1.0 - exp(-max(params.dt, 0.0) * rate));
+        if (params.reset > 0.5 || state.valid < 0.5 || !(current > 0.0)) { current = best; }
+        let rate = select(params.speedDown, params.speedUp, best > current);
+        state.exposure = current + (best - current) * (1.0 - exp(-max(params.dt, 0.0) * rate));
         state.averageLuminance = average;
         state.valid = 1.0;
     }

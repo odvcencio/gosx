@@ -35,8 +35,13 @@ func main() {
 	duration := func(k string) time.Duration { d, _ := time.ParseDuration(get(k, "")); return d }
 	modeName := get("mode", "duel")
 	m := roomtest.Mode(roomtest.Options{Name: "duel", Seats: 2, Props: 6, Duration: 2 * time.Minute})
-	if modeName == "party" {
+	switch modeName {
+	case "party":
 		m = roomtest.Mode(roomtest.Options{Name: "party", Seats: 6, Props: 12, Duration: 3 * time.Minute, LobbyWait: 5 * time.Second})
+	case "round":
+		// The docs site's /demos/rooms mode: a 30 second round. Keep it equal
+		// to rooms.RoundMode in examples/gosx-docs/app/demos/rooms.
+		m = roomtest.Mode(roomtest.Options{Name: "round", Seats: 2, Props: 6, Countdown: 3 * time.Second, Duration: 30 * time.Second})
 	}
 
 	var held byte

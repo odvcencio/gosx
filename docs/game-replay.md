@@ -121,9 +121,8 @@ Your game's snapshot size and tick cost dominate these numbers; run `go test -be
 ```
 go test ./game/replay/...                                   # state hash at tick N equals live play
 go test -bench . -run xxx ./game/replay                     # seek, record and play benchmarks
-tailnet-run --host oscar-mbp <worktree> go test ./game/replay/...   # arm64
-tailnet-run --host buildbox <worktree> go test ./game/replay/...    # amd64
-mac-gpu-run <worktree> go test -tags e2e -timeout 5m -run TestReplayViewerBrowser ./e2e/
+# run the same tests on an arm64 host and an amd64 host to check cross-architecture determinism
+go test -tags e2e -timeout 5m -run TestReplayViewerBrowser ./e2e/   # needs a GPU-capable Chrome
 ```
 
 `TestSeekMatchesLiveState` seeks to hundreds of ticks and compares the state hash with the hash live play had at each. `TestGoldenAcrossArchitectures` pins fixed hashes recorded on amd64 and passes on arm64. `TestReplayViewerBrowser` scrubs a wasm replay in Chrome with real mouse and keyboard input and checks the same hashes.

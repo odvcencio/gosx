@@ -1,0 +1,21 @@
+# Known import edges that break the layer rules in docs/packages.md.
+# TestLayerRulesHoldExceptForKnownEdges allows exactly these and fails on any
+# other, or on a line here that no longer matches an edge. Remove a line when
+# you fix the edge. Format: `importer -> imported`.
+assetpipe -> render/bundle/ktx2
+assetpipe/ibl -> render/bundle/ktx2
+assetpipe/texture -> render/bundle/ktx2
+assetpipe/variantsel -> scene/capability
+engine/surface -> .
+engine/surface -> ir
+engine/surface -> ir/golower
+field -> hub
+highlight -> .
+ir -> island/aot
+physics/hubrunner -> hub
+physics/hubrunner -> sim
+strictcheck -> imagepipe
+strictcheck -> route
+strictcheck -> server
+telemetry -> server
+telemetry -> sim

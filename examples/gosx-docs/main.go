@@ -19,6 +19,7 @@ import (
 	collab "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
 	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
+	demorooms "m31labs.dev/gosx/examples/gosx-docs/app/demos/rooms"
 	docshubs "m31labs.dev/gosx/examples/gosx-docs/app/docs/hubs"
 	_ "m31labs.dev/gosx/examples/gosx-docs/modules"
 	"m31labs.dev/gosx/gameboy"
@@ -189,6 +190,14 @@ func buildDocsApp(root, port string) (*server.App, error) {
 	app.Mount("/demos/checkers/ws", checkers.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)
 	app.Mount("/demos/livesim/ws", livesim.Hub)
+	// The rooms demo: a bounded room.Server for the WebSocket, and the Go/WASM
+	// client page, which loads only on /demos/rooms.
+	roomServer, err := demorooms.NewServer(publicBase)
+	if err != nil {
+		return nil, err
+	}
+	app.Mount("/demos/rooms/play/", http.StripPrefix("/demos/rooms/play", roomServer))
+	app.Mount("/demos/rooms/client/", demorooms.AssetHandler(root))
 	app.Mount("/docs/hubs/ws", docshubs.ExampleHub)
 	rootHandler, err := router.BuildChecked()
 	if err != nil {

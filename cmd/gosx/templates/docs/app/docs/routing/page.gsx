@@ -1,6 +1,6 @@
 package docs
 
-func Page() Node {
+component Page() {
 	return <article class="prose">
 		<div class="page-topper">
 			<span class="eyebrow">Routing</span>

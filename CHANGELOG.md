@@ -14,10 +14,24 @@
 - `CustomPost.Stage` documentation corrected (#866). `Stage` is reserved: no renderer reads it; the browser backends and the native renderer run custom passes in declaration order, so declare a pass before or after `Tonemap` to place it. No behaviour change.
 - `README.md` and `examples/desktop-app/README.md` corrected (#866). The desktop shows Scene3D in the system webview through the browser backends; the pure-Go renderer is a CPU rasterizer behind `scene/preview`, with no native GPU device. The macOS list now includes the file dialogs and the typed bridge, which work.
 - Scene3D no longer rescans the scene in a frame where nothing it reads changed (#829). The crowd batcher reuses its last walk while the object list and its agents are unchanged, the focus proxies keep the interactive objects until one is added, replaced or removed, and WebGPU keeps the result of the water-manifest scan. In the game stress scene (22 skinned figures, 40,000 crowd figures) on an NVIDIA RTX 5070 Ti with WebGPU, main-thread time fell from 15.2 / 17.0 ms to 2.2 / 3.4 ms per frame (p50 / p95); the full table is in `docs/game-performance.md`. With `scene.GPUDriven` crowds on WebGPU, the crowd frustum culls now run in their own command buffer, submitted before the frame's, so the reported `gpuMS` no longer counts them.
+- A scene that fell back from WebGPU to WebGL2 no longer draws a blank canvas. The WebGL renderer called `uv1.use`, `uv1.bind` and `uv1.dispose` on a stub the WebGPU renderer had left without them (#853).
+- WebGPU auto exposure compiled again. Its measure shader declared `let target`, a reserved WGSL word that Chrome rejects, so any scene that set `Environment.AutoExposure` fell back to WebGL2. A new test scans the Scene3D runtime's WGSL for reserved words (#851).
 
 ### Server and islands
 
 - Script preload hints carry the request nonce under a nonce-based Content-Security-Policy (#857). Every `<link rel="preload" as="script">` that the runtime head and file routes emit (feature bundles, required chunks, Scene3D scripts) now has the same per-request nonce as its script, so Chromium no longer blocks the preload and reports a violation under `script-src 'nonce-…' 'strict-dynamic'`. `island.Renderer` and `server.PageRuntime` gain `PreloadHintsWithNonce`; `PreloadHints` is unchanged and carries no nonce. A page without a nonce policy renders the same markup as before, and shared-cacheable responses stay nonce-free.
+
+### Docs and docs site
+
+- Add 19 guide pages to the docs site under `/docs/guides/<slug>`: a "Games & simulation" section (game kit, rooms, netplay, determinism, physics and characters, team AI, replay, audio, speech, static export, game performance), terrain, crowds, the animation graph, shadows, image quality, decals and vessels under "Visual systems", and desktop packaging and signing. Each page renders from its `docs/*.md` file. Run `go generate ./examples/gosx-docs/app/docs` after you edit one of those guides.
+- Add `docs/packages.md` (a generated package map with layers and stability tiers), `docs/STABILITY.md`, `docs/ci-gates.md` and `docs/README.md` (a guide index). `go run ./scripts/pkgmap` regenerates the map, and a test fails when it is stale. Make `make ci` run every hosted CI Make target.
+- Restyle the docs site: a smaller type scale (`--type-base` and `--type-sm`), a denser guide navigation sent once (a CSS-only toggle on phones), and a reading width for guide pages. New tokens `--measure-prose`, `--type-label` and `--ls-eyebrow`.
+- Replace the `docs/` ignore allow-list with a test that keeps specs, plans and reports out of `docs/`.
+
+### Examples and starter
+
+- `gosx init` now teaches the strict `component Name(props: Type)` syntax in both templates, and each template includes a `README.md`. `gosx init` prints, and that README links, one path to a deployed app: `gosx build --prod`, `gosx deploy check dist`, and the deployment guide. The docs template's overview text now describes a starter docs site, and its navigation marks the current page with `aria-current="true"`.
+- The `goetrope-watch` example serves its `/watch/<channel>` pages again (its page modules were never imported) and renders its layout once; `basic`, `canvasboard` and `goetrope-watch` read `PORT`.
 
 ### Tooling and CI
 
@@ -1118,7 +1132,7 @@ Wire format: unchanged. Packets keep the same layout and protocol version. A rel
   frame}]` with both players in local mode, to a shared signal that a Go WASM
   engine reads. It uses the same per-frame latch and same-turn edge writes as
   `HeldMode: "absolute"`, and makes a game's own keyboard, touch and pad
-  reading unnecessary. Hub input is unchanged. See `docs/fight-input.md`.
+  reading unnecessary. Hub input is unchanged.
 
 - Add `Scene3D.Live(ctx, event, data)` to `engine/wasm` and
   `window.__gosx.scene3d.live`, which feed a named Live event to a mounted

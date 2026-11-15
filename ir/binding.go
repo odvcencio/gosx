@@ -1,4 +1,4 @@
-// Package ir — import-binding layer.
+// This file is the import-binding layer.
 //
 // This file gives the lowerer one place to answer "does this identifier
 // refer to that import path?" instead of the name-based shortcut it used
@@ -23,6 +23,7 @@
 // stay usable from any lowering path (CST-based ir/lower.go today; a
 // future go/ast-based path could reuse ImportTable's Add/Lookup shape
 // too) and impose no TinyGo build-tag cost.
+
 package ir
 
 import (

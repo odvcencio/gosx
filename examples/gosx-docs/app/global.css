@@ -135,8 +135,8 @@
   --font-body: 'Inter', 'Inter Fallback', sans-serif;
   --font-mono: 'JetBrains Mono', 'JetBrains Mono Fallback', monospace;
   --type-xs: 0.75rem;
-  --type-sm: clamp(0.833rem, 0.78rem + 0.28vw, 1rem);
-  --type-base: clamp(1rem, 0.93rem + 0.38vw, 1.25rem);
+  --type-sm: clamp(0.875rem, 0.84rem + 0.15vw, 0.95rem);
+  --type-base: clamp(1rem, 0.95rem + 0.22vw, 1.125rem);
   --type-lg: 1.25rem;
   --type-xl: 1.5625rem;
   --type-2xl: 1.953rem;
@@ -181,6 +181,11 @@
   --duration-slow: 500ms;
   --duration-slower: 800ms;
   --site-nav-offset: 4.5rem;
+
+  /* Reading measure and rail type, shared by guide pages. */
+  --measure-prose: 46rem;
+  --type-label: 0.75rem;
+  --ls-eyebrow: 0.08em;
 
   /* Existing site names remain aliases for current pages and components. */
   --bg: var(--color-canvas);

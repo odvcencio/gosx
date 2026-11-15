@@ -1,23 +1,5 @@
 package watch
 
-func QueueRow(props any) Node {
-	return <div class="queue-row">
-		<span class="queue-row__index">{props.Index}</span>
-		<div class="queue-row__body">
-			<strong>{props.DisplayTitle}</strong>
-			<p>{props.Year}</p>
-		</div>
-		<span class="queue-row__state">{props.SubtitleState}</span>
-	</div>
-}
-
-func Moment(props any) Node {
-	return <div class="moment">
-		<span class="eyebrow">{props.Label}</span>
-		<p>{props.Value}</p>
-	</div>
-}
-
 func Page() Node {
 	return <article class="watch-page">
 		<section class="watch-hero">
@@ -64,7 +46,20 @@ func Page() Node {
 						Server-renders the room first. Transport stays narrow.
 					</h2>
 					<p>{data.subtitle_state.detail}</p>
-					<TransportShell {...data.player}></TransportShell>
+					<section class="transport-shell" aria-label="Playback controls prototype">
+						<div class="transport-shell__head">
+							<div>
+								<span class="eyebrow">{data.player.badge}</span>
+								<h3>{data.player.title}</h3>
+							</div>
+							<p>{data.player.subtitle}</p>
+						</div>
+						<div class="transport-shell__actions">
+							<span class="chip chip--primary">{data.player.primary_action}</span>
+							<span class="chip">{data.player.secondary_action}</span>
+							<span class="chip">{data.player.tertiary_action}</span>
+						</div>
+					</section>
 				</div>
 			</div>
 			<aside class="watch-grid__side">
@@ -75,7 +70,14 @@ func Page() Node {
 					</div>
 					<div class="queue-list">
 						<Each as="item" of={data.queue}>
-							<QueueRow {...item}></QueueRow>
+							<div class="queue-row">
+								<span class="queue-row__index">{item.index}</span>
+								<div class="queue-row__body">
+									<strong>{item.display_title}</strong>
+									<p>{item.year}</p>
+								</div>
+								<span class="queue-row__state">{item.subtitle_state}</span>
+							</div>
 						</Each>
 					</div>
 				</section>
@@ -94,7 +96,10 @@ func Page() Node {
 					<span class="eyebrow">Moments</span>
 					<div class="moment-list">
 						<Each as="moment" of={data.moments}>
-							<Moment {...moment}></Moment>
+							<div class="moment">
+								<span class="eyebrow">{moment.label}</span>
+								<p>{moment.value}</p>
+							</div>
 						</Each>
 					</div>
 				</section>

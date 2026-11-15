@@ -14,6 +14,9 @@ type DemoDefinition struct {
 	Title        string
 	Tag          string
 	Summary      string
+	Shows        string // one line: what the demo shows
+	DocHref      string // site doc page that teaches the demo's subject
+	DocTitle     string
 	Group        string
 	PosterPath   string
 	Promise      string
@@ -107,6 +110,15 @@ var demoCatalog = []DemoDefinition{
 		Limitations: "This teaching demo uses last-write-wins rather than a production CRDT, and has no rooms or persistence.",
 	},
 	{
+		Slug: "rooms", Title: "Rooms", Tag: "lobby, countdown, bots, reconnect",
+		Promise: "Play a 30 second round against a bot in a server-authoritative room.",
+		Lesson:  "A room.Server runs lobby, countdown, run and results phases and puts a bot in every empty seat. The browser runs the same deterministic simulation from the room's seed, predicts your input, interpolates the other player, and redials with a resume token when the link drops.",
+		Accent:  "#f59e0b", Facets: []string{"Rooms", "Bots", "Prediction", "Reconnect", "Go WASM"},
+		SourcePath: "examples/gosx-docs/app/demos/rooms/page.gsx", Packages: []string{"room", "game/netsync", "route"},
+		Status: "live", RenderMode: "SSR page + Go/WASM game client in an iframe + room.Server",
+		Limitations: "The room is in memory with a 30 second round, a cap of 16 live rooms, and short idle and reconnect timers; there is no persistence, matchmaking beyond quick-match, or spectators. The client is a standard Go WASM build that loads only on this page.",
+	},
+	{
 		Slug: "scene3d", Title: "Geometry Zoo", Tag: "declarative PBR scene",
 		Promise: "Orbit a PBR scene with typed geometry, lighting, and materials.",
 		Lesson:  "Lights, materials, geometry, camera, tonemapping, and bloom lower from Go to GoSX Scene3D.",
@@ -160,6 +172,11 @@ func Demos() []DemoDefinition {
 	for _, definition := range demoCatalog {
 		demo := definition
 		demo.Summary = demoSummaries[demo.Slug]
+		demo.Shows = demoShows[demo.Slug]
+		if href := demoDocPages[demo.Slug]; href != "" {
+			demo.DocHref = href
+			demo.DocTitle = docTitleForHref(href)
+		}
 		demo.Group = demoGroups[demo.Slug]
 		demo.PosterPath = "/demos/posters/" + demo.Slug + ".webp"
 		demo.SourcePaths = append([]string(nil), demoSources[demo.Slug]...)
@@ -236,6 +253,30 @@ func LiveDemoForGuide(docHref string) (DemoDefinition, bool) {
 		}
 	}
 	return DemoDefinition{}, false
+}
+
+func docTitleForHref(href string) string {
+	for _, section := range docsapp.DocsCatalog() {
+		for _, entry := range section.Entries {
+			if entry.Href == href {
+				return entry.Title
+			}
+		}
+	}
+	return ""
+}
+
+// ExtraGuides returns the related guides of a demo other than its primary doc
+// page, so a card never links the same page twice.
+func ExtraGuides(demoSlug string) []docsapp.DocEntry {
+	primary := demoDocPages[demoSlug]
+	var guides []docsapp.DocEntry
+	for _, guide := range RelatedGuides(demoSlug) {
+		if guide.Href != primary {
+			guides = append(guides, guide)
+		}
+	}
+	return guides
 }
 
 // RelatedGuides returns the documentation guides that teach the concepts a

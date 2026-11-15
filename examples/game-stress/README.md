@@ -62,3 +62,10 @@ go run ./examples/game-stress -cicada /tmp/cicada-fixture   # then open /?audio=
 | `stage/` | The arena and crowd layout and the engine's props, shared by the server and the engine. |
 | `web/` | The page, the generated figures, the per-frame instrumentation and the HTTP handler. |
 | `engine/` | The Go WASM engine (`GOOS=js GOARCH=wasm`). |
+
+## Docs
+
+- [Game performance](../../docs/game-performance.md): the frame budget and each measurement.
+- [Engine worker](../../docs/engine-worker.md): the `thread=worker` mode.
+- [Scene3D crowds](../../docs/scene3d-crowd.md) and [crowd motion](../../docs/scene3d-crowd-motion.md): the stand sections.
+- [Game audio](../../docs/audio.md): the mixer behind `audio=worklet`.

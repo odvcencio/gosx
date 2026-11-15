@@ -1,31 +1,44 @@
 package docs
 
 import (
+	"fmt"
+
 	"m31labs.dev/gosx/scene"
 )
 
-// GeometryZooProgram presents seven materials in one orbitable composition.
+// GeometryZooProgram presents seven materials in one orbitable composition,
+// plus a five-sphere ladder at the plinth's edge that steps one gold metal from
+// mirror-smooth to matte. It teaches how roughness shapes a highlight under the
+// renderer's energy-conserving BRDF: a rougher surface spreads the same light
+// into a wider, dimmer highlight instead of gaining or losing energy.
 func GeometryZooProgram() scene.Props {
 	return scene.Props{
-		Width:               1200,
-		Height:              760,
-		Background:          "#111d26",
-		Responsive:          scene.Bool(true),
-		FillHeight:          scene.Bool(true),
-		MaxFPS:              60,
-		MaxDevicePixelRatio: 1.5,
-		MaxPixels:           scene.PostFXMaxPixels540p,
-		DeferPostFX:         scene.Bool(true),
-		Controls:            "orbit",
-		AutoRotate:          scene.Bool(true), // gentle turntable keeps the scene alive
-		Camera:              cinematicCamera(),
-		ControlTarget:       scene.Vec3(0, 1.4, 0),
+		Width:                 1200,
+		Height:                760,
+		Background:            "#111d26",
+		Responsive:            scene.Bool(true),
+		FillHeight:            scene.Bool(true),
+		MaxFPS:                60,
+		MaxDevicePixelRatio:   1.5,
+		MaxPixels:             scene.PostFXMaxPixels720p,
+		PreferWebGPU:          scene.Bool(true),
+		AdaptiveQuality:       scene.Bool(true),
+		AdaptiveTargetFrameMS: 17,
+		AdaptiveWarmupFrames:  12,
+		AdaptivePostFX:        scene.Bool(true),
+		DeferPostFX:           scene.Bool(true),
+		Controls:              "orbit",
+		AutoRotate:            scene.Bool(true), // gentle turntable keeps the scene alive
+		Camera:                cinematicCamera(),
+		ControlTarget:         scene.Vec3(0, 1.4, 0),
 		Environment: scene.Environment{
 			AmbientColor:     "#ffffff",
 			AmbientIntensity: 0.26,
+			Sky:              &scene.Sky{Mode: "gradient", TopColor: "#0d1822", HorizonColor: "#2b4553", BottomColor: "#1b2c36"},
 		},
-		PostFX: postFX(),
-		Graph:  scene.NewGraph(sceneNodes()...),
+		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels2048},
+		PostFX:  postFX(),
+		Graph:   scene.NewGraph(sceneNodes()...),
 	}
 }
 
@@ -42,9 +55,10 @@ func cinematicCamera() scene.PerspectiveCamera {
 // postFX keeps highlight treatment within the shared scene pipeline.
 func postFX() scene.PostFX {
 	return scene.PostFX{
+		MaxPixels: scene.PostFXMaxPixels720p,
 		Effects: []scene.PostEffect{
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.15},
-			scene.Bloom{Threshold: 0.85, Strength: 0.45, Radius: 14},
+			scene.Bloom{Mode: "mip", Threshold: 0.85, Strength: 0.4, Radius: 12, Scale: 0.5},
 			scene.Vignette{Intensity: 0.55},
 			scene.ColorGrade{Exposure: 1.0, Contrast: 1.05, Saturation: 1.08},
 		},
@@ -57,6 +71,7 @@ func sceneNodes() []scene.Node {
 	nodes = append(nodes, lights()...)
 	nodes = append(nodes, floor())
 	nodes = append(nodes, heroMeshes()...)
+	nodes = append(nodes, roughnessLadder()...)
 	return nodes
 }
 
@@ -129,4 +144,22 @@ func heroMeshes() []scene.Node {
 		scene.Mesh{ID: "rubber-sphere", Geometry: scene.SphereGeometry{Radius: 0.48, Segments: 32}, Material: scene.StandardMaterial{Color: "#30424a", Roughness: 0.9, Metalness: 0}, Position: scene.Vec3(2.25, 2.35, -1.1), CastShadow: true},
 		scene.Mesh{ID: "stone-sphere", Geometry: scene.SphereGeometry{Radius: 0.55, Segments: 32}, Material: scene.StandardMaterial{Color: "#93918b", Roughness: 0.8, Metalness: 0.02}, Position: scene.Vec3(-2.35, 0.62, 0.6), CastShadow: true},
 	}
+}
+
+// roughnessLadder is five spheres of one gold metal whose roughness steps from
+// 0.06 to 0.9, laid along the plinth's front edge. Only roughness changes, so
+// the highlight is the whole lesson.
+func roughnessLadder() []scene.Node {
+	roughness := []float64{0.06, 0.2, 0.38, 0.62, 0.9}
+	nodes := make([]scene.Node, 0, len(roughness))
+	for i, r := range roughness {
+		nodes = append(nodes, scene.Mesh{
+			ID:         fmt.Sprintf("ladder-%d", i),
+			Geometry:   scene.SphereGeometry{Radius: 0.2, Segments: 32},
+			Material:   scene.StandardMaterial{Color: "#e2b46f", Roughness: r, Metalness: 1},
+			Position:   scene.Vec3(-1.2+0.6*float64(i), 0.16, 2.55),
+			CastShadow: true,
+		})
+	}
+	return nodes
 }

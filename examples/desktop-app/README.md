@@ -83,3 +83,8 @@ manifest signed with your Ed25519 key. Without `--manifest-key` (or
 
 On Linux the example runs only the engine and prints its address; the desktop
 runtime supports Windows and macOS today.
+
+## Docs
+
+See the desktop sections of the [README](../../README.md) and
+[desktop code signing](../../docs/desktop-code-signing.md).

@@ -127,7 +127,7 @@ big 3D sports game, and `e2e/game_stress_e2e_test.go` runs it in Chrome and
 writes one JSON file per run with every frame's record:
 
 ```sh
-# On a machine with a GPU (the GoSX runners: gpu-chrome.sh run -- ..., mac-gpu-run <worktree> ...)
+# On a machine with a GPU-capable Chrome (set GOSX_E2E_CHROME to it)
 GOSX_STRESS_BENCH=1 GOSX_STRESS_OUT=/tmp/stress \
   go test -tags e2e -timeout 40m -run TestGameStressBenchmark -v ./e2e
 ```

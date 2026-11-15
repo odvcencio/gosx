@@ -215,7 +215,8 @@ a {
   outline: none;
 }
 
-.nav-link.active {
+.nav-link.active,
+.nav-link[aria-current="true"] {
   background: var(--color-accent-soft);
   border-color: rgba(180, 87, 46, 0.24);
   color: var(--color-ink);

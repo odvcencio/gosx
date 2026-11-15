@@ -320,7 +320,7 @@ before you render a large library.
 - Render, cache, packs and budgets, takes, import, coverage, the booth server,
   the estimator, and ElevenLabs against a local fake server:
   `go test ./game/audio/speech/voicerender/` (no paid call is ever made).
-- Real-browser checks (Apple M4 Pro Chrome through `mac-gpu-run`):
+- Real-browser checks (a GPU-capable Chrome):
   `go test -tags e2e -run 'TestSpeechTimeline|TestRecordingBooth' ./e2e/` renders
   a timeline in an `OfflineAudioContext` and compares it with the reference
   mix, and records a take through the booth page with `getUserMedia` and the

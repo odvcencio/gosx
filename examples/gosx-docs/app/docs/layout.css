@@ -31,17 +31,16 @@
   scrollbar-width: thin;
 }
 
-.docs-guide-disclosure > summary {
-  display: none;
-}
-
-.docs-guide-disclosure {
+/* One copy of the guide navigation serves every width. On phones a CSS-only
+   checkbox toggle shows or hides it, so no second list is sent. */
+.docs-guide-toggle,
+.docs-guide-summary {
   display: none;
 }
 
 .docs-guide-navigation {
   display: grid;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .docs-guide-index {
@@ -89,18 +88,18 @@
 }
 
 .docs-guide-group h2 {
-  margin: 0 0 var(--space-xs);
+  margin: var(--space-xs) 0;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: var(--text-small);
+  font-size: var(--type-label);
   font-weight: 400;
-  letter-spacing: var(--ls-label);
+  letter-spacing: var(--ls-eyebrow);
   text-transform: uppercase;
 }
 
 .docs-guide-link {
   display: block;
-  padding: var(--space-xs) var(--space-sm);
+  padding: 0.3rem var(--space-sm);
   color: var(--text-muted);
   border-left: 1px solid var(--border);
   font-size: var(--text-small);
@@ -125,9 +124,11 @@
 }
 
 .docs-guide-link.is-current {
-  color: #17140b;
-  background: var(--accent);
-  border-left-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
+  padding-left: calc(var(--space-sm) - 1px);
+  font-weight: 600;
 }
 
 .docs-section.light .docs-guide-link.is-current {
@@ -738,12 +739,16 @@
     display: none;
   }
 
-  .docs-guide-navigation--desktop {
+  .docs-guide-navigation {
     display: none;
   }
 
-  .docs-guide-disclosure {
-    display: block;
+  .docs-guide-toggle {
+    display: inline-block;
+  }
+
+  .docs-guide-toggle:checked ~ .docs-guide-navigation {
+    display: grid;
   }
 
   .docs-grid {
@@ -761,8 +766,8 @@
     margin-bottom: var(--space-md);
   }
 
-  .docs-guide-disclosure > summary {
-    display: list-item;
+  .docs-guide-summary {
+    display: block;
     padding: var(--space-sm);
     color: var(--text-primary);
     background: var(--surface);
@@ -777,13 +782,13 @@
       border-color var(--duration-fast) var(--ease-out-expo);
   }
 
-  .docs-guide-disclosure > summary:hover,
-  .docs-guide-disclosure > summary:focus-visible {
+  .docs-guide-summary:hover,
+  .docs-guide-toggle:focus-visible + .docs-guide-summary {
     background: var(--surface-hover);
     border-color: var(--accent-line);
   }
 
-  .docs-guide-disclosure > summary:active {
+  .docs-guide-summary:active {
     border-color: var(--accent);
   }
 
@@ -830,7 +835,30 @@
   .docs-page-toc .toc-link,
   .docs-footer__link,
   .docs-404 a,
-  .docs-guide-disclosure > summary {
+  .docs-guide-summary {
     transition-duration: 0s;
   }
+}
+
+
+/* ------------------------------------------------------------
+   Phones
+   ------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+  .docs-grid {
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-sm);
+    padding-top: calc(var(--space-md) + 4rem);
+  }
+
+  .docs-header__title {
+    font-size: clamp(1.9rem, 8vw, 2.4rem);
+  }
+
+  .prose h2 {
+    margin-top: var(--space-xl);
+    padding-top: var(--space-md);
+  }
+
 }

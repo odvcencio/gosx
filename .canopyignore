@@ -9,7 +9,6 @@
 /build/
 /dist/
 /data/
-/docs/
 **/build/
 
 # Local binaries and compiled/browser artifacts.
