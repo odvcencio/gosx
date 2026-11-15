@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add 19 guide pages to the docs site under `/docs/guides/<slug>`: a "Games & simulation" section (game kit, rooms, netplay, determinism, physics and characters, team AI, replay, audio, speech, static export, game performance), terrain, crowds, the animation graph, shadows, image quality, decals and vessels under "Visual systems", and desktop packaging and signing. Each page renders from its `docs/*.md` file. Run `go generate ./examples/gosx-docs/app/docs` after you edit one of those guides.
+- Restyle the docs site: a smaller type scale (`--type-base` and `--type-sm`), a denser guide navigation sent once (a CSS-only toggle on phones), and a reading width for guide pages. New tokens `--measure-prose`, `--type-label` and `--ls-eyebrow`.
+- Add `docs/packages.md` (a generated package map with layers and stability tiers), `docs/STABILITY.md`, `docs/ci-gates.md` and `docs/README.md` (a guide index). `go run ./scripts/pkgmap` regenerates the map, and a test fails when it is stale. Make `make ci` run every hosted CI Make target.
+- Replace the `docs/` ignore allow-list with a test that keeps specs, plans and reports out of `docs/`.
+
 ## v0.60.0
 
 ### Breaking changes and migration
