@@ -1,6 +1,7 @@
 // Command pkgmap writes docs/packages.md, the map of every importable GoSX
-// package: its layer, its stability tier, what it does and whether it builds
-// for js/wasm. It reads the package list from `go list` and the layer and tier
+// package: its layer, its stability tier, what it does and whether it has Go
+// files for js/wasm (the js/wasm column does not prove the package builds there;
+// the build-wasm-all gate does). It reads the package list from `go list` and the layer and tier
 // of each package from scripts/pkgmap/layers.txt, so the page cannot drift from
 // the tree.
 //
@@ -193,7 +194,7 @@ func page(module string, pkgs []pkg) []byte {
 		if len(rows) == 0 {
 			continue
 		}
-		fmt.Fprintf(&b, "\n## %s\n\n| Package | Tier | js/wasm | What it is |\n|---|---|---|---|\n", l.title)
+		fmt.Fprintf(&b, "\n## %s\n\n| Package | Tier | js/wasm files | What it is |\n|---|---|---|---|\n", l.title)
 		for _, p := range rows {
 			w := "no"
 			if p.WASM {

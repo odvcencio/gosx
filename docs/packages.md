@@ -23,7 +23,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 ## Foundations
 
-| Package | Tier | js/wasm | What it is |
+| Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `command` | internal-use | yes | Defines page commands: named actions with keyboard chords that the opt-in workbench runtime dispatches and mirrors into aria-keyshortcuts. |
 | `controller` | internal-use | yes | Defines GoSX's declarative headless browser controller contract. |
@@ -45,7 +45,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 ## Kernels
 
-| Package | Tier | js/wasm | What it is |
+| Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `assetpipe` | experimental | yes | Inventories Scene3D-ready project assets, describes the build-time optimization work GoSX should perform before those assets ship, and runs the part of that work GoSX can do in pure Go. |
 | `assetpipe/gltfedit` | experimental | yes | Reads a glTF 2.0 or GLB document, rewrites mesh primitives, and writes a new GLB. |
@@ -75,7 +75,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 ## Scene and compiler
 
-| Package | Tier | js/wasm | What it is |
+| Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `.` | stable | yes | The GoSX core: components, the .gsx grammar and parser, and the compiler entry points. |
 | `format` | stable | yes | Provides a canonical formatter for GoSX source files. |
@@ -106,7 +106,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 ## Web primitives
 
-| Package | Tier | js/wasm | What it is |
+| Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `action` | stable | yes | Defines the event and action model for GoSX components. |
 | `auth` | stable | yes | Identifies the current user and guards handlers behind that identity. |
@@ -129,7 +129,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 ## App server
 
-| Package | Tier | js/wasm | What it is |
+| Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `dev` | stable | yes | Provides the GoSX development proxy and live-reload server. |
 | `route` | stable | yes | Provides declarative server routing with layouts for GoSX apps. |
@@ -138,7 +138,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 ## Game stack
 
-| Package | Tier | js/wasm | What it is |
+| Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `game` | experimental | yes | Provides a first-class runtime foundation for interactive simulations, games, and scientific visualizations in GoSX. |
 | `game/actions` | experimental | yes | Maps keyboard, mouse, pointer-lock and gamepad input onto named game actions. |
@@ -186,7 +186,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 ## Browser side
 
-| Package | Tier | js/wasm | What it is |
+| Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `client/bridge` | internal-use | yes | The WASM bridge for island and engine lifecycle, signals and canvas boards. |
 | `client/browser` | internal-use | yes | Provides typed browser services for Go-WASM engines. |
@@ -202,7 +202,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 
 ## Tools
 
-| Package | Tier | js/wasm | What it is |
+| Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `browser` | internal-use | yes | Supplies the authoring marker used by GoSX island handlers for browser-owned effects. |
 | `cmd/gosx` | stable | yes | The GoSX compiler and development tool. |
@@ -224,7 +224,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `perf/wire` | internal-use | yes | Measures what a page costs over the network before any script runs: the document, every resource the HTML asks the browser to load, and every runtime asset the GoSX manifest tells the bootstrap to fetch. |
 | `perf/wire/cmd/wiregate` | internal-use | yes | Measures GoSX routes over the network and checks them against perf/budgets/wire.json. |
 | `scripts` | internal-use | yes | Verifies the generated client bundle artifacts promised by client/js/bootstrap-src/chunks.json. |
-| `scripts/pkgmap` | internal-use | yes | Writes docs/packages.md, the map of every importable GoSX package: its layer, its stability tier, what it does and whether it builds for js/wasm. |
+| `scripts/pkgmap` | internal-use | yes | Writes docs/packages.md, the map of every importable GoSX package: its layer, its stability tier, what it does and whether it has Go files for js/wasm (the js/wasm column does not prove the package builds there; the build-wasm-all gate does). |
 | `test/desktop/installer-smoke` | internal-use | yes | Smoke test program for the desktop installer. |
 | `test/desktop/update-check-fixture` | internal-use | yes | Update-feed fixture server for desktop update tests. |
 | `test/desktop/update-check-smoke` | internal-use | yes | Smoke test program for the desktop update check. |

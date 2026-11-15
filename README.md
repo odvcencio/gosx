@@ -1350,7 +1350,7 @@ Three tiers:
 
 ## Packages
 
-The full list, with a layer, a [stability tier](docs/STABILITY.md) and a js/wasm flag for each package, is the generated [package map](docs/packages.md). [docs/README.md](docs/README.md) indexes the guides by topic.
+The full list, with a layer, a [stability tier](docs/STABILITY.md) and a flag for whether it has Go files for js/wasm, is the generated [package map](docs/packages.md). [docs/README.md](docs/README.md) indexes the guides by topic.
 
 | Package | Purpose |
 |---------|---------|
