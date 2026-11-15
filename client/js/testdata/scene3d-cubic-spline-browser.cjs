@@ -2047,10 +2047,14 @@ async function runAffineCase(send, c, sessionId) {
     if (!pick || pick.targetID !== 'affine-group-child') {
       fail('[' + c.name + '] actual canvas pick missed affine child: ' + JSON.stringify(pick));
     } else {
-      assertClose([pick.worldX, pick.worldY, pick.worldZ], [0.5, 0.5, 1],
+      // The pointer pick is taken at a pixel only the scaled triangle covers.
+      // The expected point and distance come from scene3d-affine-pick-geometry.cjs,
+      // the same source the matrix runner checks against.
+      const expectedPick = affinePick.expectedPick();
+      assertClose([pick.worldX, pick.worldY, pick.worldZ], expectedPick.world,
         '[' + c.name + '] actual affine pick point', 2e-4);
-      if (Math.abs(Number(pick.depth) - 2) >= 2e-4) {
-        fail('[' + c.name + '] actual affine pick distance=' + pick.depth + ' want 2');
+      if (Math.abs(Number(pick.depth) - expectedPick.depth) >= 2e-4) {
+        fail('[' + c.name + '] actual affine pick distance=' + pick.depth + ' want ' + expectedPick.depth);
       }
     }
   }
