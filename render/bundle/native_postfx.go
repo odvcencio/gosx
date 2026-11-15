@@ -397,14 +397,12 @@ func (r *Renderer) buildColorGradePipeline() error {
 // (caller should skip this pass — identity passthrough for that frame's slot).
 //
 // Headless behavior: the headless device accepts all CreateRenderPipeline /
-// CreateShaderModule calls but the subsequent Draw call in recordNativePostFXPasses
-// falls through isFullscreenCopyPass → identity copy, so custom passes behave
-// as passthrough on headless. This keeps headless captures stable and
-// meaningful without requiring the native renderer to implement Selena's post
-// contract. The label "bundle.postfx.custom:<name>" is intentionally NOT in
-// isFullscreenCopyPass, so headless skips the draw (no-op rather than copy),
-// which is the right behavior — the custom effect should be invisible in
-// headless captures just like it is a transparent pass.
+// CreateShaderModule calls and never runs the shader. Its Draw treats any pass
+// whose label starts with "bundle.postfx." as a fullscreen copy of its input
+// (isFullscreenCopyPass in render/gpu/headless), and the label
+// "bundle.postfx.custom:<name>" has that prefix. So the custom pass is an
+// identity copy of its input, and the frame equals the frame without the pass.
+// PostEffectDiagnostics reports every such pass.
 func (r *Renderer) ensureCustomPostPipeline(effect nativePostFXEffect) *nativeCustomPostResources {
 	if r.customPostCache == nil {
 		r.customPostCache = make(map[string]*nativeCustomPostResources)
@@ -765,11 +763,11 @@ func (r *Renderer) recordNativePostFXPasses(enc gpu.CommandEncoder, effects []na
 			}
 		case nativePostFXCustom:
 			// Custom post pass compiled from Selena-emitted WGSL.
-			// Headless behavior: ensureCustomPostPipeline's pipeline label is
-			// "bundle.postfx.custom:<name>", which is NOT in isFullscreenCopyPass,
-			// so headless Draw() is a no-op (identity passthrough). This keeps
-			// headless captures stable — the custom effect is invisible on headless,
-			// which is correct: native doesn't implement the full Selena post contract.
+			// Headless behavior: the pipeline label is
+			// "bundle.postfx.custom:<name>". The headless device copies the input
+			// for any "bundle.postfx." label (isFullscreenCopyPass), so the pass is
+			// an identity copy and its shader does not run; the native renderer
+			// does not implement the full Selena post contract.
 			// PostEffectDiagnostics reports every such pass, so the drop is not silent.
 			customRes := r.ensureCustomPostPipeline(effect)
 			if customRes == nil {

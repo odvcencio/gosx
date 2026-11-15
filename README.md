@@ -657,7 +657,7 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
 
 - **On the web**, two authored TypeScript backends consume the IR: a WebGPU renderer and a WebGL2 renderer. Each ships as a separately fetched chunk, so a WebGPU-capable browser never downloads the WebGL renderer and the reverse also holds.
-- **On the desktop**, a window shows the page in the system webview (WebView2 on Windows, WKWebView on macOS), so Scene3D is drawn by the same two browser backends. Outside a browser, a pure-Go renderer (`render/gpu` + `render/bundle`, with hand-written WGSL) consumes the same IR on a CPU rasterizer. It backs `scene/preview`, which renders to PNG with no browser and no GPU. There is no native GPU device, and that renderer does not run custom post shaders: it reports each one as a diagnostic.
+- **On the desktop**, a window shows the page in the system webview (WebView2 on Windows, WKWebView on macOS), so Scene3D there is drawn by the same two browser backends. The pure-Go renderer (`render/gpu` + `render/bundle`, with hand-written WGSL) consumes the same IR and has two device targets: in a native build, a CPU rasterizer that backs `scene/preview`, which renders to PNG with no browser and no GPU; and, from Go WebAssembly, browser WebGPU through `render/gpu/jsgpu` (it can target a canvas, but no shipped page script calls its entry point). There is no native GPU device. The native build does not run custom post shaders and reports each one as a diagnostic.
 
 Typed Scene3D surfaces declare WebGPU as a default capability, so a capable browser takes the WebGPU path first and falls back through WebGL2 to canvas when the device or the scene needs it. The server computes a per-backend fidelity verdict and ships it with the scene, so a backend that cannot render a scene faithfully is diverted rather than allowed to draw the wrong image. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
 
@@ -761,7 +761,9 @@ separate release-pinned hardware certification obligation in that contract.
   materials avoid duplicating shader sources. Transport does not imply execution:
   the current native mesh renderer uses the standard material and reports
   `MaterialFallbacks` in frame stats and `scene.native.custom_material_fallback`
-  in preview diagnostics.
+  in preview diagnostics. `MaterialFallbacks` also carries the post-effect
+  findings: `scene.native.custom_post_passthrough`,
+  `scene.native.custom_post_skipped` and `scene.native.specular_bloom_unsupported`.
 
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadow maps on directional lights, with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap; spot lights render their cone and penumbra but do not yet cast shadows on either browser backend
 - **Cameras** — perspective and orthographic cameras with orbit, first-person, fly, drag, pointer-lock, and transition hints plus picking and projection-aware sprites/labels

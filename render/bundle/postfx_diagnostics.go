@@ -21,6 +21,9 @@ func PostEffectDiagnostics(b engine.RenderBundle) []engine.RenderDiagnostic {
 	return appendPostEffectDiagnostics(nil, b)
 }
 
+// A new diagnostic code added here must also be added to the filter in
+// withPostEffectDiagnostics (scene/preview/preview.go), or the preview reports
+// it twice. TestWithPostEffectDiagnosticsReportsEachCodeOnce checks the filter.
 func appendPostEffectDiagnostics(out []engine.RenderDiagnostic, b engine.RenderBundle) []engine.RenderDiagnostic {
 	for _, effect := range b.PostEffects {
 		switch strings.ToLower(strings.TrimSpace(effect.Kind)) {
