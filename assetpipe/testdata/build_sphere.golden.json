@@ -1,0 +1,49 @@
+[
+  {
+    "Name": "hero",
+    "Radius": 6.9282,
+    "Stats": {
+      "triangles": 1536,
+      "vertices": 825,
+      "drawCalls": 1,
+      "materials": 1,
+      "joints": 5,
+      "textureBytes": 21844
+    },
+    "LODs": [
+      {
+        "Level": 0,
+        "URI": "hero.glb",
+        "Triangles": 1536,
+        "Ratio": 1,
+        "Distance": 0
+      },
+      {
+        "Level": 1,
+        "URI": "hero.lod1.glb",
+        "Triangles": 768,
+        "Ratio": 0.5,
+        "Distance": 39.1918
+      },
+      {
+        "Level": 2,
+        "URI": "hero.lod2.glb",
+        "Triangles": 307,
+        "Ratio": 0.1999,
+        "Distance": 61.9879
+      }
+    ],
+    "Textures": [
+      {
+        "Image": "albedo-0",
+        "Role": "base-color",
+        "Width": 64,
+        "Variants": [
+          "hero.textures/albedo-0.high.rgba8unorm-srgb.ktx2",
+          "hero.textures/albedo-0.high.rgb8unorm-srgb.ktx2",
+          "hero.textures/albedo-0.high.bc7-rgba-unorm-srgb.ktx2"
+        ]
+      }
+    ]
+  }
+]

@@ -26,6 +26,8 @@ func runAssetsCommand(args []string, stdout io.Writer) error {
 	switch args[0] {
 	case "plan":
 		return runAssetPlanCommand(args[1:], stdout)
+	case "build":
+		return runAssetBuildCommand(args[1:], stdout)
 	case "help", "-h", "--help":
 		assetsUsage(stdout)
 		return nil
@@ -136,6 +138,9 @@ func assetsUsage(w io.Writer) {
 
 Usage:
   gosx assets plan [--json] [--write report.json] [path...]
+  gosx assets build [flags] [path|spec.json...]
+
+Run 'gosx assets build --help' for the export build step.
 
 Examples:
   gosx assets plan public

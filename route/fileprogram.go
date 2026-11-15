@@ -7,7 +7,6 @@ import (
 	"go/constant"
 	"go/parser"
 	"html"
-	"m31labs.dev/gosx/internal/sceneprobe"
 	"math"
 	"net/http"
 	"path/filepath"
@@ -15,6 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"m31labs.dev/gosx/internal/sceneprobe"
 
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
@@ -3193,10 +3194,6 @@ func fileRenderActionPath(env fileRenderEnv, name string) string {
 	return actionPath(name)
 }
 
-func fileFormEnhancementMode(attrs []ir.Attr, env fileRenderEnv) string {
-	return managedFormMode(attrs, env, "")
-}
-
 func fileAutoFormEnhancementMode(attrs []ir.Attr, env fileRenderEnv) string {
 	mode := managedFormMode(attrs, env, "")
 	if mode != http.MethodGet {
@@ -3607,32 +3604,6 @@ func sortedStringAnyMap(values map[string]any) []fileStringAnyEntry {
 func isEngineReservedAttr(name string) bool {
 	switch strings.TrimSpace(name) {
 	case "name", "component", "kind", "wasmPath", "wasm", "programRef", "program", "mountId", "capabilities", "requiredCapabilities", "requireCapabilities", "requires", "runtime", "props", "id":
-		return true
-	default:
-		return false
-	}
-}
-
-func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
-	for _, attr := range attrs {
-		if isTextBlockReservedAttr(attr.Name) || attr.Kind == ir.AttrSpread || !htmlattr.SafeAuthoredName(attr.Name) {
-			continue
-		}
-		switch attr.Kind {
-		case ir.AttrStatic:
-			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(attr.Name), html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
-		case ir.AttrExpr:
-			value := evalFileExpr(attr.Expr, env)
-			renderFileEvaluatedAttr(b, attr.Name, value)
-		case ir.AttrBool:
-			fmt.Fprintf(b, " %s", html.EscapeString(attr.Name))
-		}
-	}
-}
-
-func isTextBlockReservedAttr(name string) bool {
-	switch strings.TrimSpace(name) {
-	case "mode", "as", "tag", "text", "font", "lang", "locale", "dir", "direction", "align", "textAlign", "text-align", "whiteSpace", "whitespace", "lineHeight", "maxWidth", "maxLines", "overflow", "heightHint", "lineCountHint", "source", "static":
 		return true
 	default:
 		return false
@@ -4463,11 +4434,6 @@ func scene3DEnsureMap(ref *map[string]any) map[string]any {
 		*ref = map[string]any{}
 	}
 	return *ref
-}
-
-func scene3DSetString(record map[string]any, key, value string) bool {
-	record[key] = scene3DCSSStringValue(value)
-	return true
 }
 
 func scene3DSetNumber(record map[string]any, key, value string) bool {

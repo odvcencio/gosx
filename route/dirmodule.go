@@ -57,17 +57,6 @@ func DirModuleCaller(skip int, opts DirModuleOptions) DirModule {
 	return DirModuleFor(dirModuleSourceHere(skip+1), opts)
 }
 
-// MustRegisterDirModuleCaller registers a directory module using a caller
-// higher in the stack.
-//
-// Deprecated: use RegisterDirModuleCaller and handle the returned error.
-func MustRegisterDirModuleCaller(skip int, opts DirModuleOptions) error {
-	if skip < 0 {
-		skip = 0
-	}
-	return MustRegisterDirModule(DirModuleFor(dirModuleSourceHere(skip+1), opts))
-}
-
 // DirModuleRegistry stores directory-scoped route modules keyed by source path.
 type DirModuleRegistry struct {
 	mu      sync.RWMutex
@@ -148,27 +137,9 @@ func (r *DirModuleRegistry) RegisterHere(opts DirModuleOptions) error {
 	return r.Register(DirModuleFor(dirModuleSourceHere(1), opts))
 }
 
-// MustRegisterHere registers a directory module inferred from the calling file.
-//
-// Deprecated: use RegisterHere and handle the returned error.
-func (r *DirModuleRegistry) MustRegisterHere(opts DirModuleOptions) error {
-	return r.Register(DirModuleFor(dirModuleSourceHere(1), opts))
-}
-
 // RegisterCaller registers a directory module using a caller higher in the
 // stack. `skip=0` means the immediate caller.
 func (r *DirModuleRegistry) RegisterCaller(skip int, opts DirModuleOptions) error {
-	if skip < 0 {
-		skip = 0
-	}
-	return r.Register(DirModuleFor(dirModuleSourceHere(skip+1), opts))
-}
-
-// MustRegisterCaller registers a directory module using a caller higher in the
-// stack.
-//
-// Deprecated: use RegisterCaller and handle the returned error.
-func (r *DirModuleRegistry) MustRegisterCaller(skip int, opts DirModuleOptions) error {
 	if skip < 0 {
 		skip = 0
 	}

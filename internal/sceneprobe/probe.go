@@ -4,6 +4,7 @@ package sceneprobe
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -41,6 +42,14 @@ type Record struct {
 	OcclusionMap, EmissiveMap, SpecularIntensityMap, SpecularColorMap string
 	TileTexture, CubeMap                                              string
 	TextureDescriptors                                                map[string]Texture
+	// ShaderLayout is the Selena binding descriptor of a custom material;
+	// only the parts that gate the Selena lighting chunk are decoded.
+	ShaderLayout *ShaderLayout `json:"shaderLayout"`
+	// CustomUniforms is read only to find "gosx:data:<key>" texture references.
+	CustomUniforms map[string]json.RawMessage `json:"customUniforms"`
+	// LODGroup marks an instanced mesh in a scatter level-of-detail band,
+	// which the terrain chunk selects.
+	LODGroup Presence `json:"lodGroup"`
 
 	Generator            Presence `json:"generator"`
 	CompressedPositions  Presence `json:"compressedPositions"`
@@ -155,16 +164,22 @@ type Probe struct {
 
 	Scene                                                                                                                *Probe
 	ParticleBursts, Timelines, ControlZoom, ModelPreparation                                                             bool
+	PostEffects, PostFX                                                                                                  json.RawMessage
 	ForceWebGL, RequireWebGL, PreferCanvas                                                                               bool
 	PreferWebGL                                                                                                          *bool
 	BackendCaps                                                                                                          *struct{ Capable []string }
 	Compression                                                                                                          Presence
+	ShaderWarmup, TextAtlases                                                                                            Presence // gate the opt-in warm-up and text atlas chunks
 	Groups, ComputeParticles, InstancedMeshes, Points, Models, InstancedGLBMeshes, Objects, Sprites, WaterSystems, Nodes []Record
 	Animations                                                                                                           []Clip
 	Environment                                                                                                          struct {
-		EnvMap string
-		IBL    struct{ Radiance, Irradiance, BRDFLUT Texture }
-		Ocean  struct{ Spectrum Presence }
+		EnvMap       string
+		IBL          struct{ Radiance, Irradiance, BRDFLUT Texture }
+		Ocean        struct{ Spectrum Presence }
+		AutoExposure Presence
+		// Terrain, Wind and Crowds gate the terrain and crowd chunks.
+		Terrain, Wind Presence
+		Crowds        Items
 	}
 	Walk                            map[string]json.RawMessage
 	Vessel                          *struct{ NodeID string }
@@ -173,6 +188,181 @@ type Probe struct {
 	PosterAlt                       string
 	Err                             error `json:"-"`
 	ChunkErr, PreloadErr, PosterErr error `json:"-"`
+}
+
+// ShaderLayout holds the Selena descriptor fields a page needs to decide
+// whether to advertise the Selena scene lighting chunk.
+type ShaderLayout struct {
+	Context  []string
+	Textures []struct{ Engine, Format, SampleMode string }
+}
+
+// selenaLightingInputs are the Selena engine inputs only the lighting chunk
+// supplies. The classic cameraPos, sunDir, sunColor and ambient are not here:
+// the WebGL renderer supplies those without the chunk.
+var selenaLightingInputs = map[string]bool{
+	"cameraForward": true, "fog": true, "lightCount": true, "lights": true,
+	"shadow0": true, "shadow1": true, "shadowSplits0": true, "shadowSplits1": true,
+	"shadowMatrices0": true, "shadowMatrices1": true, "shadowMap0": true, "shadowMap1": true,
+}
+
+// NeedsSelenaLighting reports whether any Selena material in the scene, in
+// either accepted props shape, reads the scene lighting block.
+func (p *Probe) NeedsSelenaLighting() bool {
+	if p == nil {
+		return false
+	}
+	for _, records := range [][]Record{p.Objects, p.InstancedMeshes, p.Points, p.InstancedGLBMeshes, p.Models, p.Sprites} {
+		for _, record := range records {
+			if record.ShaderLayout.readsSelenaLighting() {
+				return true
+			}
+		}
+	}
+	return p.Scene.NeedsSelenaLighting()
+}
+
+// NeedsSelenaDataTexture reports whether any Selena material in the scene reads
+// a data texture: a texture the descriptor marks sampleMode "load" or "both",
+// one with an explicit float format, or a uniform that references a host-written
+// texture ("gosx:data:<key>"). Only such a scene advertises the data-texture
+// chunk.
+func (p *Probe) NeedsSelenaDataTexture() bool {
+	if p == nil {
+		return false
+	}
+	for _, records := range [][]Record{p.Objects, p.InstancedMeshes, p.Points, p.InstancedGLBMeshes, p.Models, p.Sprites} {
+		for _, record := range records {
+			if record.ShaderLayout.readsDataTexture() || record.referencesDataTexture() {
+				return true
+			}
+		}
+	}
+	return p.Scene.NeedsSelenaDataTexture()
+}
+
+func (l *ShaderLayout) readsDataTexture() bool {
+	if l == nil {
+		return false
+	}
+	for _, texture := range l.Textures {
+		switch texture.SampleMode {
+		case "load", "both":
+			return true
+		}
+		switch texture.Format {
+		case "r16float", "r32float", "rgba16float", "rgba32float":
+			return true
+		}
+	}
+	return false
+}
+
+// referencesDataTexture is permissive on purpose: a "gosx:data:" substring in
+// any custom uniform, bare or inside a {resource|ref|sceneResource} object,
+// costs at most one unused chunk URL.
+func (r Record) referencesDataTexture() bool {
+	for _, raw := range r.CustomUniforms {
+		if bytes.Contains(raw, []byte("gosx:data:")) {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *ShaderLayout) readsSelenaLighting() bool {
+	if l == nil {
+		return false
+	}
+	for _, name := range l.Context {
+		if selenaLightingInputs[name] {
+			return true
+		}
+	}
+	for _, texture := range l.Textures {
+		if selenaLightingInputs[texture.Engine] {
+			return true
+		}
+	}
+	return false
+}
+
+// NeedsShaderWarmup reports whether the scene sets Props.ShaderWarmup, which
+// bootstrap-feature-scene3d-warmup.js serves.
+func (p *Probe) NeedsShaderWarmup() bool {
+	return p != nil && (p.ShaderWarmup.Truthy || p.Scene.NeedsShaderWarmup())
+}
+
+// NeedsTextAtlases reports whether the scene declares Props.TextAtlases, which
+// bootstrap-feature-scene3d-text-atlas.js draws.
+func (p *Probe) NeedsTextAtlases() bool {
+	return p != nil && (p.TextAtlases.Truthy || p.Scene.NeedsTextAtlases())
+}
+
+// NeedsDepthFX reports whether the scene declares a decals or motionBlur post
+// effect in either accepted props shape. Those passes live in
+// bootstrap-feature-scene3d-depthfx.js. An effect entry that cannot be read as
+// an object counts as absent.
+func (p *Probe) NeedsDepthFX() bool {
+	return p != nil && (p.hasPostEffect("decals", "motionBlur") || p.Scene.NeedsDepthFX())
+}
+
+// NeedsPostFX reports whether the scene declares a taa or dof post effect, or
+// environment.autoExposure, in either accepted props shape. Both renderers run
+// those passes from their bootstrap-feature-scene3d-postfx-<backend>.js chunk.
+func (p *Probe) NeedsPostFX() bool {
+	return p != nil && (p.Environment.AutoExposure.Truthy || p.hasPostEffect("taa", "dof") || p.Scene.NeedsPostFX())
+}
+
+// NeedsWebGPUPostFX adds a motionBlur post effect to NeedsPostFX: WebGPU motion
+// blur reads the velocity pass in the WebGPU post-effects chunk. WebGL2 motion
+// blur follows the camera only and needs no post-effects chunk.
+func (p *Probe) NeedsWebGPUPostFX() bool {
+	return p != nil && (p.NeedsPostFX() || p.hasPostEffect("motionBlur") || p.Scene.NeedsWebGPUPostFX())
+}
+
+// hasPostEffect reports whether this level's postEffects or postFX lists an
+// effect of one of kinds.
+func (p *Probe) hasPostEffect(kinds ...string) bool {
+	for _, field := range []json.RawMessage{p.PostEffects, p.PostFX} {
+		var list []json.RawMessage
+		if json.Unmarshal(field, &list) != nil {
+			continue
+		}
+		for _, raw := range list {
+			var effect struct{ Kind string }
+			if json.Unmarshal(raw, &effect) == nil && slices.Contains(kinds, effect.Kind) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// NeedsTerrain reports whether the scene reaches
+// bootstrap-feature-scene3d-terrain.js, in either accepted props shape. The
+// mount fetches that chunk for Environment.Terrain, for Environment.Wind, and
+// for an instanced mesh in a scatter level-of-detail band (lodGroup).
+func (p *Probe) NeedsTerrain() bool {
+	if p == nil {
+		return false
+	}
+	if p.Environment.Terrain.Truthy || p.Environment.Wind.Truthy {
+		return true
+	}
+	for i := range p.InstancedMeshes {
+		if p.InstancedMeshes[i].LODGroup.Truthy {
+			return true
+		}
+	}
+	return p.Scene.NeedsTerrain()
+}
+
+// NeedsCrowds reports whether the scene declares at least one
+// Environment.Crowds entry, in either accepted props shape. Only such a scene
+// fetches bootstrap-feature-scene3d-crowd.js.
+func (p *Probe) NeedsCrowds() bool {
+	return p != nil && (p.Environment.Crowds.Any || p.Scene.NeedsCrowds())
 }
 
 // NeedsOceanFFT reports whether the scene's ocean carries a wave spectrum, in
@@ -261,5 +451,15 @@ func (p *Presence) UnmarshalJSON(raw []byte) error {
 	p.Present = true
 	p.NonNull = !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 	p.Truthy = TruthyJSON(raw)
+	return nil
+}
+
+// Items records whether a JSON value is an array with at least one element,
+// without decoding the elements.
+type Items struct{ Any bool }
+
+func (i *Items) UnmarshalJSON(raw []byte) error {
+	raw = bytes.TrimSpace(raw)
+	i.Any = len(raw) > 2 && raw[0] == '[' && len(bytes.TrimSpace(raw[1:len(raw)-1])) > 0
 	return nil
 }

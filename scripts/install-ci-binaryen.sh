@@ -9,7 +9,7 @@ trap 'rm -rf -- "${work_dir}"' EXIT
 install_dir="${RUNNER_TEMP:-/tmp}/gosx-binaryen-${binaryen_version}"
 
 curl --fail --location --silent --show-error \
-	--retry 5 --retry-delay 2 --retry-all-errors \
+	--connect-timeout 30 --retry 9 --retry-max-time 600 --retry-all-errors \
 	--output "${work_dir}/binaryen.tar.gz" \
 	"https://github.com/WebAssembly/binaryen/releases/download/version_${binaryen_version}/binaryen-version_${binaryen_version}-x86_64-linux.tar.gz"
 printf '%s  %s\n' "${binaryen_sha256}" "${work_dir}/binaryen.tar.gz" | sha256sum --check --status

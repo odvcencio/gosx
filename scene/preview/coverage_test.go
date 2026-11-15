@@ -232,3 +232,52 @@ func hashPixels(img *image.RGBA) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// TestNativePreviewReportsCustomPostDegradation proves that a custom post pass
+// does not vanish in a native preview. The CPU rasterizer runs no custom
+// shader, so the preview must return a diagnostic that names the pass, both for
+// a pass carried in a decoded JSON document and for one in a typed SceneIR, and
+// it must not report a pass that DisablePostFX removed.
+func TestNativePreviewReportsCustomPostDegradation(t *testing.T) {
+	const wgsl = "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }"
+	doc := `{"schema":"gosx.scene3d.ir.v1","objects":[{"id":"box","kind":"cube","size":1,"color":"#44aaee"}],` +
+		`"postEffects":[{"kind":"customPost","name":"GravLens","fragmentWGSL":"` + wgsl + `"}]}`
+	ir := scene.SceneIR{
+		Schema:      "gosx.scene3d.ir.v1",
+		Objects:     []scene.ObjectIR{{ID: "box", Kind: "cube", Size: 1, Color: "#44aaee"}},
+		PostEffects: []scene.PostEffectIR{scene.CustomPostIR{Name: "GravLens", FragmentWGSL: wgsl}},
+	}
+	renders := map[string]func(preview.Options) (*preview.Result, error){
+		"RenderJSON": func(o preview.Options) (*preview.Result, error) { return preview.RenderJSON([]byte(doc), o) },
+		"RenderIR":   func(o preview.Options) (*preview.Result, error) { return preview.RenderIR(ir, o) },
+	}
+	for name, render := range renders {
+		t.Run(name, func(t *testing.T) {
+			opts := preview.Options{Width: 48, Height: 32, DisableShadows: true, Camera: cameraAt(0, 0, 4)}
+			result, err := render(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, d := range result.Bundle.Diagnostics {
+				if d.Code == "scene.native.custom_post_passthrough" {
+					count++
+					if d.Target != "GravLens" || !strings.Contains(d.Message, `"GravLens"`) {
+						t.Fatalf("diagnostic does not name the pass: %+v", d)
+					}
+				}
+			}
+			if count != 1 {
+				t.Fatalf("passthrough diagnostics = %d, want 1 in %+v", count, result.Bundle.Diagnostics)
+			}
+			opts.DisablePostFX = true
+			result, err = render(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found := findDiagnostic(result.Bundle.Diagnostics, "scene.native.custom_post_passthrough"); found {
+				t.Fatal("DisablePostFX removed the pass, so it must not be reported")
+			}
+		})
+	}
+}

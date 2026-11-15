@@ -229,6 +229,11 @@ func TestForcedDesyncIsRepairedFromRelayBlob(t *testing.T) {
 	if c <= 100 || c > 130 {
 		t.Fatalf("desync detected at checksum frame %d, want the first one after 100", c)
 	}
+	// The report names the player that disagreed.
+	if p1, p0 := rep.Players[1], rep.Players[0]; p1.Desyncs != 1 || p1.Resyncs != 1 || p1.FirstDesyncFrame != c ||
+		p0.Desyncs != 0 || p0.Resyncs != 0 || p0.FirstDesyncFrame != 0 {
+		t.Fatalf("per-player desync facts: p0 %+v p1 %+v", p0, p1)
+	}
 	if r.s[1].Stats().Resyncs != 1 || r.s[0].Stats().Resyncs != 0 {
 		t.Fatalf("resyncs applied: p0 %d p1 %d", r.s[0].Stats().Resyncs, r.s[1].Stats().Resyncs)
 	}
@@ -258,6 +263,14 @@ func TestSecondDesyncEndsMatchWithReportAndReplay(t *testing.T) {
 	if !rep.Ended || rep.EndReason != EndDesync || len(rep.DesyncFrames) != 2 {
 		t.Fatalf("report %+v", rep)
 	}
+	if p1, p0 := rep.Players[1], rep.Players[0]; p1.Desyncs != 2 || p0.Desyncs != 0 ||
+		p1.FirstDesyncFrame != rep.DesyncFrames[0] {
+		t.Fatalf("per-player desync facts: p0 %+v p1 %+v", p0, p1)
+	}
+	r.relay.Finish() // a finished match cannot be re-ended with another reason
+	if got := r.relay.Report().EndReason; got != EndDesync {
+		t.Fatalf("end reason after Finish = %d, want EndDesync", got)
+	}
 	if rep.Replay == nil || rep.Replay.Frames < 500 || len(rep.Replay.Checks) == 0 {
 		t.Fatalf("replay not attached: %+v", rep.Replay)
 	}
@@ -269,7 +282,8 @@ func TestSecondDesyncEndsMatchWithReportAndReplay(t *testing.T) {
 }
 
 func TestRelaySimulationRespectsCatchUpBudget(t *testing.T) {
-	r := newRig(t, rigOpts{})
+	// A wide window lets 200 frames arrive at once.
+	r := newRig(t, rigOpts{relay: func(c *RelayConfig[pad]) { c.PredictionWindow = 300 }})
 	tag := idTag(&[32]byte{})
 	// Both players deliver 200 frames in one burst.
 	_ = r.nets[0].Endpoint(0).Send(inputPacket(tag, 0, 1, 0, 200, 1))
@@ -334,4 +348,111 @@ func TestSpectatorFollowsAfterDelay(t *testing.T) {
 // inputAt is the input the relay logged for player p at frame f.
 func (r *rig) inputAt(p int, f int64) pad {
 	return pad(r.relay.log[p][f])
+}
+
+func TestHonestPlayersAreNotAckLagFlagged(t *testing.T) {
+	l1 := link60
+	l1.Seed = 2
+	r := newRig(t, rigOpts{links: [2]NetConfig{link60, l1}})
+	r.run(20 * time.Second)
+	rep := r.relay.Report()
+	for i, p := range rep.Players {
+		if p.AckLagFlagged || p.MaxAckLag > r.relay.AckLagLimit() {
+			t.Fatalf("honest player %d flagged: %+v (limit %d)", i, p, r.relay.AckLagLimit())
+		}
+		if p.LastPacketTick == 0 || p.LastLogTick == 0 {
+			t.Fatalf("player %d stall facts missing: %+v", i, p)
+		}
+	}
+}
+
+func TestRelayFlagsAPeerThatKeepsAcknowledgingFrameZero(t *testing.T) {
+	r := newRig(t, rigOpts{relay: func(c *RelayConfig[pad]) { c.PredictionWindow = 120; c.AckLagSlack = AckLagSlackNone }})
+	tag := idTag(&[32]byte{})
+	// Player 0 sends 100 frames at once.
+	_ = r.nets[0].Endpoint(0).Send(inputPacket(tag, 0, 1, 0, 128, 1))
+	r.now += time.Millisecond
+	r.relay.Tick(r.now)
+	// Two seconds on, player 1 sends 10 frames and still acknowledges nothing.
+	_ = r.nets[1].Endpoint(0).Send(inputPacket(tag, 0, 1, 0, 10, 2))
+	r.now += 2 * time.Second
+	r.relay.Tick(r.now)
+	rep := r.relay.Report()
+	if limit := r.relay.AckLagLimit(); limit != 120+3 {
+		t.Fatalf("limit = %d, want 123", limit)
+	}
+	if p := rep.Players[1]; !p.AckLagFlagged || p.AckLag != 128 || p.MaxAckLag != 128 || p.AckedFrame != 0 {
+		t.Fatalf("cheater not flagged: %+v", p)
+	}
+	if p := rep.Players[0]; p.AckLagFlagged {
+		t.Fatalf("player 0 wrongly flagged: %+v", p)
+	}
+}
+
+func TestStallFactsShowWhoseLogStoppedFirst(t *testing.T) {
+	r := newRig(t, rigOpts{links: [2]NetConfig{{Seed: 1, Delay: [2]time.Duration{20 * time.Millisecond, 20 * time.Millisecond}}, {Seed: 2, Delay: [2]time.Duration{20 * time.Millisecond, 20 * time.Millisecond}}}})
+	r.run(3 * time.Second)
+	r.next[1] = 1 << 62 // player 1 goes silent
+	r.run(2 * time.Second)
+	rep := r.relay.Report()
+	p0, p1 := rep.Players[0], rep.Players[1]
+	if !(p1.LastLogAt < p0.LastLogAt && p1.LastLogTick < p0.LastLogTick) {
+		t.Fatalf("player 1 stopped first, but p0 %+v p1 %+v", p0, p1)
+	}
+	if p1.LastLogAt > 3*time.Second+200*time.Millisecond {
+		t.Fatalf("player 1 log grew at %v after it went silent", p1.LastLogAt)
+	}
+	if p1.LastPacketAt < p1.LastLogAt {
+		t.Fatalf("last packet before last log growth: %+v", p1)
+	}
+}
+
+func TestFinishEndsBothSessionsNormallyWithoutFurtherTicks(t *testing.T) {
+	d := [2]time.Duration{20 * time.Millisecond, 20 * time.Millisecond}
+	r := newRig(t, rigOpts{links: [2]NetConfig{{Seed: 1, Delay: d}, {Seed: 2, Delay: d}}})
+	r.run(2 * time.Second)
+	r.relay.Finish()
+	r.relay.Finish() // idempotent
+	if !r.relay.Draining() {
+		t.Fatal("relay owes End repeats after Finish")
+	}
+	r.next[2] = 1 << 62 // the app never calls Tick again
+	r.run(time.Second)
+	for i := 0; i < 2; i++ {
+		s := r.s[i]
+		if s.Status() != StatusEnded || !errors.Is(s.Err(), ErrMatchOver) || !s.MatchOver() ||
+			errors.Is(s.Err(), ErrDisconnect) || s.EndReason() != EndMatchOver {
+			t.Fatalf("peer %d: status %v err %v", i, s.Status(), s.Err())
+		}
+	}
+	if rep := r.relay.Report(); !rep.Ended || rep.EndReason != EndMatchOver || rep.Replay != nil {
+		t.Fatalf("report %+v", rep)
+	}
+	// Later ticks send the repeats, paced by relay time, and then stop.
+	for n := 0; n < 30 && r.relay.Draining(); n++ {
+		r.now += 100 * time.Millisecond
+		r.relay.Tick(r.now)
+	}
+	if r.relay.Draining() {
+		t.Fatal("still draining after 3 s of relay time")
+	}
+}
+
+func TestMatchOverSurvivesLossOfTheBurst(t *testing.T) {
+	// All packets to the players are lost until after the burst, so only the
+	// ticked repeats reach them.
+	d := [2]time.Duration{20 * time.Millisecond, 20 * time.Millisecond}
+	r := newRig(t, rigOpts{links: [2]NetConfig{{Seed: 1, Delay: d}, {Seed: 2, Delay: d}}})
+	r.run(time.Second)
+	r.nets[0].SetLoss(1)
+	r.nets[1].SetLoss(1)
+	r.relay.Finish()
+	r.nets[0].SetLoss(0)
+	r.nets[1].SetLoss(0)
+	r.run(time.Second) // the relay keeps ticking
+	for i := 0; i < 2; i++ {
+		if !r.s[i].MatchOver() {
+			t.Fatalf("peer %d err = %v", i, r.s[i].Err())
+		}
+	}
 }

@@ -1,0 +1,96 @@
+{
+  "schema": "selena.artifact.v1",
+  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "languageVersion": "selena.lang.v1",
+  "source": {
+    "path": "pulse.sel",
+    "sha256": "7f0729c0834cfcf5fe6850012b4c171ab99f3f7c0c5407515270685617a64bcd"
+  },
+  "options": {
+    "targets": [
+      "wgsl",
+      "gles"
+    ]
+  },
+  "default": "Pulse",
+  "materials": [
+    {
+      "name": "Pulse",
+      "layout": {
+        "schemaVersion": "selena.descriptor.v1",
+        "languageVersion": "selena.lang.v1",
+        "material": "Pulse",
+        "kind": "mesh",
+        "entryPoints": {
+          "vertex": "vertexMain",
+          "fragment": "fragmentMain"
+        },
+        "uniformBlock": {
+          "size": 128,
+          "fields": [
+            {
+              "name": "mvp",
+              "type": "mat4",
+              "offset": 0,
+              "size": 64
+            },
+            {
+              "name": "normalMatrix",
+              "type": "mat3",
+              "offset": 64,
+              "size": 48
+            },
+            {
+              "name": "emissive",
+              "type": "vec3",
+              "offset": 112,
+              "size": 12
+            }
+          ],
+          "defaults": [
+            {
+              "name": "emissive",
+              "type": "vec3",
+              "values": [
+                0.4,
+                0.55,
+                0.65
+              ]
+            }
+          ]
+        },
+        "attributes": [
+          {
+            "name": "position",
+            "location": 0,
+            "type": "vec3"
+          },
+          {
+            "name": "uv",
+            "location": 1,
+            "type": "vec2"
+          }
+        ],
+        "textures": [],
+        "wgsl": {
+          "group": 0,
+          "binding": 0
+        },
+        "metal": {
+          "buffer": 0
+        }
+      },
+      "shaders": [
+        {
+          "target": "wgsl",
+          "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  emissive : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let stripe = ((sin((in.vUv.x * 18.0)) * 0.12) + 0.88);\n  return vec4<f32>(mix(vec3<f32>(0.025, 0.04, 0.07), u.emissive, stripe), 1.0);\n}\n"
+        },
+        {
+          "target": "gles",
+          "vertex": "#version 300 es\nin vec3 position;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 emissive;\nout vec2 vUv;\n\nvoid main() {\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
+          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 emissive;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  float stripe = ((sin((vUv.x * 18.0)) * 0.12) + 0.88);\n  fragColor = vec4(mix(vec3(0.025, 0.04, 0.07), emissive, stripe), 1.0);\n}\n"
+        }
+      ]
+    }
+  ]
+}

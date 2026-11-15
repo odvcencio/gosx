@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/scene/selenabuild"
 )
 
 func TestFamiliesCompilePortableSelenaArtifacts(t *testing.T) {
@@ -74,5 +75,13 @@ func TestResolveLabelsFallbackHonestly(t *testing.T) {
 func TestUnknownFamilyFailsClosed(t *testing.T) {
 	if _, err := Compile("marble-mystery"); err == nil {
 		t.Fatal("unknown family compiled")
+	}
+}
+
+// The shipped artifacts must match their .sel sources and the linked Selena
+// compiler. Rebuild them with: gosx selena build examples/gosx-docs/app/demos/checkers/materials
+func TestArtifactsMatchSources(t *testing.T) {
+	if err := selenabuild.Check(".", selenabuild.Options{}); err != nil {
+		t.Fatal(err)
 	}
 }

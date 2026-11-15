@@ -127,18 +127,11 @@
       return inlineFeature;
     }
 
-    // Scene3D is loaded via an async <script> tag emitted by the Go renderer,
+    // Scene3D is loaded via a deferred <script> tag emitted by the Go renderer,
     // not dynamically by the runtime. Wait for it to signal readiness.
     if (name === "scene3d") {
       if (!window.__gosx_scene3d_available) {
-        await new Promise(function(resolve) {
-          if (window.__gosx_scene3d_available) { resolve(); return; }
-          var prev = window.__gosx_scene3d_loaded;
-          window.__gosx_scene3d_loaded = function() {
-            if (typeof prev === "function") { prev(); }
-            resolve();
-          };
-        });
+        await waitForScene3DChunk();
       }
       var scene3dFeature = { name: "scene3d" };
       activeBootstrapFeatures.set(name, scene3dFeature);
@@ -168,6 +161,39 @@
       console.error("[gosx] failed to initialize bootstrap feature " + name + ":", error);
       return null;
     }
+  }
+
+  // waitForScene3DChunk resolves when the Scene3D chunk signals readiness. It
+  // rejects when the chunk's script fails to load (a 404 or an integrity
+  // failure), when the script runs without signalling (it threw early), or
+  // when no signal arrives within __gosx_runtime_ready_timeout_ms (default
+  // 10 s). ensureManifestFeatures reports the rejection and drops only Scene3D:
+  // the other features still mount, gosx:ready still fires, and each Scene3D
+  // mount keeps its server fallback. A chunk that lands after the timeout
+  // clears the report and mounts its scenes through the late-factory hook.
+  function waitForScene3DChunk() {
+    return new Promise(function(resolve, reject) {
+      const script = document.querySelector?.('script[data-gosx-script="feature-scene3d"]');
+      const src = script?.getAttribute("src") || "";
+      const timeoutMS = Number(window.__gosx_runtime_ready_timeout_ms) > 0 ? Number(window.__gosx_runtime_ready_timeout_ms) : 10000;
+      let settled = false;
+      const settle = function(message) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (message) reject(new Error(message + (src ? " (" + src + ")" : ""))); else resolve();
+      };
+      const timer = setTimeout(function() { settle("Scene3D chunk did not signal readiness within " + timeoutMS + " ms"); }, timeoutMS);
+      const prev = window.__gosx_scene3d_loaded;
+      window.__gosx_scene3d_loaded = function() {
+        if (typeof prev === "function") prev();
+        if (!settled) return settle("");
+        window.__gosx?.clearIssues?.(function(issue) { return issue.ref === "scene3d" || issue.ref === "GoSXScene3D"; });
+        window.__gosx_mount_late_engine_factory?.("GoSXScene3D");
+      };
+      script?.addEventListener?.("error", function() { settle("Scene3D chunk failed to load"); });
+      script?.addEventListener?.("load", function() { if (!window.__gosx_scene3d_available) settle("Scene3D chunk ran but did not signal readiness"); });
+    });
   }
 
   // documentNeedsTextLayoutFeature gates the text-layout engine fetch. The
@@ -262,9 +288,12 @@
     }
     return Promise.all(names.map(function(name) {
       // Each feature fails alone: a chunk that is missing or throws is logged
-      // with its URL and dropped, so the other features still mount.
+      // with its URL, reported as an issue, and dropped, so the other
+      // features still mount.
       return ensureBootstrapFeature(name).catch(function(error) {
-        console.error("[gosx] feature " + name + " unavailable (" + bootstrapFeatureURL(name) + "):", error);
+        const url = bootstrapFeatureURL(name);
+        console.error("[gosx] feature " + name + " unavailable (" + url + "):", error);
+        window.__gosx?.reportIssue?.({ type: "feature", ref: name, source: url, message: "feature " + name + " unavailable: " + (error?.message || error), error });
         return null;
       });
     })).then(function(features) {

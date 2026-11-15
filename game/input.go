@@ -85,7 +85,15 @@ type Input struct {
 	pointerX float64
 	pointerY float64
 	sequence uint64
+	// normalized caches the normalized form of action names and key codes
+	// that are not already normalized ("ArrowLeft" -> "arrowleft"), so Apply
+	// does not allocate a lowercase copy for every event.
+	normalized map[string]string
 }
+
+// maxNormalized bounds Input.normalized, so a stream of distinct codes cannot
+// grow it without limit. Codes past the bound are normalized on every event.
+const maxNormalized = 512
 
 // NewInput creates an input mapper with optional bindings.
 func NewInput(bindings ...Binding) *Input {
@@ -119,8 +127,8 @@ func (in *Input) Apply(event InputEvent) {
 	if in == nil {
 		return
 	}
-	event.Action = normalizeAction(event.Action)
-	event.Code = normalizeCode(event.Code)
+	event.Action = in.normalize(event.Action)
+	event.Code = in.normalize(event.Code)
 	in.sequence++
 	in.events = append(in.events, event)
 	switch event.Kind {
@@ -227,7 +235,9 @@ func (in *Input) EndFrame() {
 		}
 		in.actions[action] = state
 	}
-	in.events = nil
+	// Keep the buffer: Events returns a copy, so nothing outside holds it.
+	clear(in.events)
+	in.events = in.events[:0]
 }
 
 // Action returns the current state for action.
@@ -269,6 +279,25 @@ func (in *Input) Events() []InputEvent {
 	out := make([]InputEvent, len(in.events))
 	copy(out, in.events)
 	return out
+}
+
+// normalize returns normalizeCode(s), from the cache when s needs a change.
+func (in *Input) normalize(s string) string {
+	if cached, ok := in.normalized[s]; ok {
+		return cached
+	}
+	n := normalizeCode(s)
+	if n == s || len(n) == 0 {
+		// Already normalized: strings.ToLower returned s without copying.
+		return n
+	}
+	if in.normalized == nil {
+		in.normalized = make(map[string]string)
+	}
+	if len(in.normalized) < maxNormalized {
+		in.normalized[s] = n
+	}
+	return n
 }
 
 func normalizeAction(action string) string {

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"m31labs.dev/gosx/internal/telemetryerr"
 	"m31labs.dev/gosx/scheduled"
 )
 
@@ -38,10 +36,7 @@ func TestScheduledStatusPublicDefault(t *testing.T) {
 
 func TestScheduledStatusEmptyDoesNotCreateScheduler(t *testing.T) {
 	app := New()
-	if err := app.EnablePublicScheduledStatus(); err != nil {
-		t.Fatal(err)
-	}
-	for _, h := range []http.Handler{app.Build(), app.ScheduledStatusHandler(), ScheduledStatusHandler(nil)} {
+	for _, h := range []http.Handler{app.ScheduledStatusHandler(), ScheduledStatusHandler(nil)} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/_gosx/scheduled", nil))
 		if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "[]" {
@@ -109,15 +104,3 @@ func (s *scheduledStatusStore) Load(name string) (scheduled.TaskStatus, bool) {
 	return st, ok
 }
 func (s *scheduledStatusStore) List() []scheduled.TaskStatus { return nil }
-
-func TestEnablePublicScheduledStatusBeforeBuild(t *testing.T) {
-	app := New()
-	app.Build()
-	if err := app.EnablePublicScheduledStatus(); !errors.Is(err, telemetryerr.ErrAfterBuild) {
-		t.Fatalf("late opt-in: %v", err)
-	}
-	var nilApp *App
-	if err := nilApp.EnablePublicScheduledStatus(); !errors.Is(err, telemetryerr.ErrInvalidOptions) {
-		t.Fatalf("nil app: %v", err)
-	}
-}

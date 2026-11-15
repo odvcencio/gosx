@@ -41,6 +41,7 @@
   // and fall back to webgl — that's the intended failure mode.
   var sceneBool = sceneApi.sceneBool || function(v, d) { return v == null ? d : !!v; };
   var sceneNumber = sceneApi.sceneNumber || function(v, d) { var n = Number(v); return Number.isFinite(n) ? n : d; };
+  var sceneTextAtlasURL = sceneApi.sceneTextAtlasURL || function(url) { return url; };
   // Shared material alpha-cutoff normalization used by the WebGPU pack path.
   var sceneNormalizeMaterialAlphaCutoff = sceneApi.sceneNormalizeMaterialAlphaCutoff;
   var scenePostDOMRegionPixelBounds = sceneApi.scenePostDOMRegionPixelBounds || function() { return { mode: "off", bounds: null }; };
@@ -101,6 +102,27 @@
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneSkyUniformData = sceneApi.sceneSkyUniformData;
+  // Selena scene lighting (16c2-scene-selena-lighting) ships in the gated
+  // scene3d-selena-lighting chunk, advertised only when a Selena material
+  // reads lights, shadows or fog. Until it loads WebGPU supplies none of it.
+  var sceneSelenaLightingRequested = false;
+  function sceneSelenaFrameLighting(holder, cam, view, bundle, slots, lightIndices, matrices, clip) {
+    var api = window.__gosx_scene3d_selena_lighting_api;
+    if (!api && !sceneSelenaLightingRequested && typeof sceneApi.loadPresentation === "function") {
+      sceneSelenaLightingRequested = true;
+      sceneApi.loadPresentation("selena-lighting", "gosxScene3dSelenaLightingUrl", "").catch(function() {});
+    }
+    return api ? api.frame(holder, cam, view, bundle, slots, lightIndices, matrices, clip) : null;
+  }
+  function sceneSelenaLightingValue(lighting, field) {
+    var api = window.__gosx_scene3d_selena_lighting_api;
+    return api ? api.value(lighting, field) : undefined;
+  }
+  function sceneSelenaShadowMapSlot(lighting, texture) {
+    var api = window.__gosx_scene3d_selena_lighting_api, engine = texture && texture.engine;
+    if (api) return api.shadowSlot(lighting, texture);
+    return engine === "shadowMap0" || engine === "shadowMap1" ? null : undefined;
+  }
   var sceneSkyPhysicalParams = sceneApi.sceneSkyPhysicalParams;
   var sceneSkyPhysicalShaderSource = sceneApi.sceneSkyPhysicalShaderSource;
   var sceneAtmosphereQuality = sceneApi.sceneAtmosphereQuality;
@@ -119,6 +141,7 @@
   var sceneOceanUniformData = sceneApi.sceneOceanUniformData;
   var sceneSkyPhysicalSource = sceneApi.sceneSkyPhysicalSource || function(kind) { return typeof sceneSkyPhysicalShaderSource === "function" ? sceneSkyPhysicalShaderSource(kind) : ""; };
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
+  var sceneShadowCascadeBiasScale = sceneApi.sceneShadowCascadeBiasScale || function() { return 1; };
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;

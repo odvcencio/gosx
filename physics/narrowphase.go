@@ -7,11 +7,14 @@ const contactTolerance = 1e-6
 // Collide returns the first contact manifold between two colliders. Use
 // CollideAll when either collider is a triangle mesh, because a mesh pair can
 // produce one manifold per contacting triangle.
+//
+// A pair whose collision layers do not interact (see SetCollisionFilter)
+// produces no manifold.
 func Collide(a, b *Collider) (ContactManifold, bool) {
-	if a == nil || b == nil {
+	if a == nil || b == nil || !collidersInteract(a, b) {
 		return ContactManifold{}, false
 	}
-	if a.Shape == ShapeTriangleMesh || b.Shape == ShapeTriangleMesh {
+	if a.Shape == ShapeTriangleMesh || b.Shape == ShapeTriangleMesh || a.Shape == ShapeHeightfield || b.Shape == ShapeHeightfield {
 		manifolds := CollideAll(a, b, nil)
 		if len(manifolds) == 0 {
 			return ContactManifold{}, false
@@ -26,12 +29,21 @@ func Collide(a, b *Collider) (ContactManifold, bool) {
 //
 // A collider that failed validation produces no manifolds. Check Collider.Err
 // or World.Diagnostics to find such a collider; it never collides with
-// anything.
+// anything. Neither does a pair whose collision layers do not interact.
 func CollideAll(a, b *Collider, out []ContactManifold) []ContactManifold {
-	if a == nil || b == nil || a.invalid != nil || b.invalid != nil {
+	if a == nil || b == nil || a.invalid != nil || b.invalid != nil || !collidersInteract(a, b) {
 		return out
 	}
 	switch {
+	case a.Shape == ShapeHeightfield:
+		return collideHeightfieldShape(a, b, out)
+	case b.Shape == ShapeHeightfield:
+		start := len(out)
+		out = collideHeightfieldShape(b, a, out)
+		for i := start; i < len(out); i++ {
+			out[i] = flipManifold(out[i])
+		}
+		return out
 	case a.Shape == ShapeTriangleMesh && b.Shape == ShapeTriangleMesh:
 		// Not implemented. World.Diagnostics reports the pair.
 		return out

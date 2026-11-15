@@ -129,6 +129,15 @@
       : Math.pow((channel + 0.055) / 1.055, 2.4);
   }
 
+  // Joint palette for skinned vertex shaders. Rigs of up to 64 joints use the
+  // u_jointMatrices uniform array. Larger rigs (up to SCENE_MAX_SKIN_JOINTS)
+  // set u_jointTexCount > 0 and read the palette from a float texture, four
+  // RGBA32F texels per matrix on row 0, so the uniform-vector budget stays flat.
+  const SCENE_UNIFORM_SKIN_JOINTS = 64;
+  const SCENE_MAX_SKIN_JOINTS = 256;
+  const SCENE_GLSL_JOINT_PALETTE = "uniform mat4 u_jointMatrices[64];\nuniform highp sampler2D u_jointTexture;\nuniform int u_jointTexCount;\nmat4 gosxJointMatrix(int j){if(u_jointTexCount>0){int x=j*4;return mat4(texelFetch(u_jointTexture,ivec2(x,0),0),texelFetch(u_jointTexture,ivec2(x+1,0),0),texelFetch(u_jointTexture,ivec2(x+2,0),0),texelFetch(u_jointTexture,ivec2(x+3,0),0));}return u_jointMatrices[j];}";
+  // GLSL ES 1.00 sources (no texelFetch) keep the 64-joint uniform array only.
+  const SCENE_GLSL_JOINT_PALETTE_LEGACY = "uniform mat4 u_jointMatrices[64];\nmat4 gosxJointMatrix(int j){return u_jointMatrices[j];}";
   const SCENE_GLSL_AFFINE_NORMAL = "vec4 gosxAffineNormal(mat3 m,vec3 n){vec3 e=max(max(abs(m[0]),abs(m[1])),abs(m[2]));float s=max(e.x,max(e.y,e.z));mat3 a=m/s;vec3 x=cross(a[1],a[2]),y=cross(a[2],a[0]),z=cross(a[0],a[1]);float d=dot(a[0],x);if(!(s>0.)||abs(d)<=1e-12)return vec4(normalize(n),1.);float o=sign(d);return vec4(normalize(mat3(x,y,z)*n*o),o);}";
 
   const SCENE_PBR_VERTEX_SOURCE = [
@@ -282,7 +291,7 @@
     "uniform float u_shadowCascadeSplits0[4];",
     "uniform int u_shadowCascades0;",
     "uniform bool u_hasShadow0;",
-    "uniform float u_shadowBias0;",
+    "uniform float u_shadowBias0[4];",
     "uniform float u_shadowSoftness0;",
     "",
     "uniform highp sampler2DArray u_shadowMap1;",
@@ -290,7 +299,7 @@
     "uniform float u_shadowCascadeSplits1[4];",
     "uniform int u_shadowCascades1;",
     "uniform bool u_hasShadow1;",
-    "uniform float u_shadowBias1;",
+    "uniform float u_shadowBias1[4];",
     "uniform float u_shadowSoftness1;",
     "",
     // Per-object shadow receive control
@@ -404,7 +413,7 @@
     "    if (u_shadowCascades0 >= 3 && viewDepth >= u_shadowCascadeSplits0[1]) c = 2;",
     "    if (u_shadowCascades0 >= 4 && viewDepth >= u_shadowCascadeSplits0[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices0[c];",
-    "    return shadowFactor(u_shadowMap0, c, ls, u_shadowBias0, u_shadowSoftness0);",
+    "    return shadowFactor(u_shadowMap0, c, ls, u_shadowBias0[c], u_shadowSoftness0);",
     "}",
     "",
     "float shadowFactorSlot1(float viewDepth) {",
@@ -413,43 +422,7 @@
     "    if (u_shadowCascades1 >= 3 && viewDepth >= u_shadowCascadeSplits1[1]) c = 2;",
     "    if (u_shadowCascades1 >= 4 && viewDepth >= u_shadowCascadeSplits1[2]) c = 3;",
     "    mat4 ls = u_lightSpaceMatrices1[c];",
-    "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1, u_shadowSoftness1);",
-    "}",
-    "",
-    // GGX/Trowbridge-Reitz normal distribution function.
-    "float distributionGGX(vec3 N, vec3 H, float roughness) {",
-    "    float a = roughness * roughness;",
-    "    float a2 = a * a;",
-    "    float NdotH = max(dot(N, H), 0.0);",
-    "    float NdotH2 = NdotH * NdotH;",
-    "    float denom = NdotH2 * (a2 - 1.0) + 1.0;",
-    "    denom = PI * denom * denom;",
-    "    return a2 / max(denom, 0.0000001);",
-    "}",
-    "",
-    // Smith geometry function (GGX variant) — single direction.
-    "float geometrySchlickGGX(float NdotV, float roughness) {",
-    "    float r = roughness + 1.0;",
-    "    float k = (r * r) / 8.0;",
-    "    return NdotV / (NdotV * (1.0 - k) + k);",
-    "}",
-    "",
-    // Smith geometry function — combined for view and light directions.
-    "float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {",
-    "    float NdotV = max(dot(N, V), 0.0);",
-    "    float NdotL = max(dot(N, L), 0.0);",
-    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
-    "}",
-    "",
-    // Schlick fresnel approximation. F90 is the authored specular intensity:
-    // the grazing reflectance the KHR specular extension scales, so an
-    // intensity below 1 dims the whole lobe, not just the F0 floor.
-    "vec3 fresnelSchlick(float cosTheta, vec3 F0, float F90) {",
-    "    return F0 + (vec3(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
-    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float F90, float roughness) {",
-    "    return F0 + (max(vec3(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "    return shadowFactor(u_shadowMap1, c, ls, u_shadowBias1[c], u_shadowSoftness1);",
     "}",
     "",
     "vec3 rotateEnvY(vec3 dir, float radians) {",
@@ -477,6 +450,7 @@
     "    float kernel = min(2.0 * aa.x * (dot(dx, dx) + dot(dy, dy)), aa.y);",
     "    return kernel > 0.0 ? sqrt(sqrt(min(r*r*r*r + kernel, 1.0))) : r;",
     "}",
+    GLSL_BRDF,
     GLSL_TRANSMISSION,
     "void main() {",
     "    if (dot(u_cut[1].xyz, v_worldPosition) + u_cut[1].w > 0.0) discard;",
@@ -571,7 +545,7 @@
     "        mapNormal.xy *= u_normalScale;",
     "        N = normalize(TBN * mapNormal);",
     "    }",
-    "",
+    "    float surfaceClearcoat = u_clearcoat, surfaceClearcoatRoughness = 0.04, surfaceSheen = u_sheen, surfaceTransmission = u_transmission;",
     "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
     "    float NoV = max(dot(N, V), 0.0);",
     "",
@@ -621,7 +595,8 @@
     "    }",
     "",
     // Accumulate direct lighting.
-    "    float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    float transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    GosxLayer gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
     "    vec3 Lo = vec3(0.0);",
     "    vec3 specularRadiance = vec3(0.0);",
     "    vec3 specularEnvironment = vec3(0.0);",
@@ -681,25 +656,11 @@
     "            attenuation = pointLightAttenuation(dist, u_lightRanges[i], u_lightDecays[i]);",
     "        }",
     "",
-    "        vec3 H = normalize(V + L);",
     "        float NdotL = max(dot(N, L), 0.0);",
-    "",
-    // Cook-Torrance specular BRDF.
-    "        float D = distributionGGX(N, H, roughness);",
-    "        float G = geometrySmith(N, V, L, roughness);",
-    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "",
-    "        vec3 numerator = D * G * F;",
-    "        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
-    "        vec3 specular = numerator / denominator;",
-    "",
-    // Energy conservation: diffuse complement of the dielectric specular.
-    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
-    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
-    // the Fresnel colour and never borrows the metallic Fresnel.
-    "        vec3 Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
-    "        float kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
-    "",
+    // Cook-Torrance GGX with multiscatter energy and the clear-coat layer;
+    // the diffuse weight is (1 - maxRGB(dielectric Fresnel)) * (1 - metalness).
+    "        vec3 specular;",
+    "        vec3 brdf = gosxDirectBRDF(N, V, L, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer, specular);",
     // Shadow attenuation follows the light associated with each slot.
     "        float shadow = 1.0;",
     "        if (u_receiveShadow && (lightType == 1 || lightType == 3)) {",
@@ -711,7 +672,7 @@
     "        }",
     "",
     "        vec3 radiance = lightColor * intensity * attenuation;",
-    "        Lo += (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadow;",
+    "        Lo += brdf * radiance * NdotL * shadow;",
     "        specularRadiance += specular * radiance * NdotL * shadow;",
     "    }",
     "",
@@ -721,17 +682,8 @@
     "    vec3 ambient;",
     "#if GOSX_HDR_IBL",
     "    if (u_hasIBL) {",
-    "        vec3 Nr = rotateEnvY(N, u_envRotation);",
-    "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
-    "        vec3 FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        vec3 irradiance = texture(u_iblIrradiance, Nr).rgb;",
-    "        vec3 prefiltered = textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod).rgb;",
-    "        vec2 brdf = texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg;",
-    "        vec3 diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
-    "        vec3 specularIBL = prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y);",
-    "        ambient = (diffuseIBL + specularIBL) * u_envIntensity;",
-    "        specularEnvironment = specularIBL * u_envIntensity;",
+    "        ambient = gosxImageLight(N, V, NoV, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer, specularEnvironment) * u_envIntensity;",
+    "        specularEnvironment *= u_envIntensity;",
     "    } else",
     "#endif",
     "    if (u_hasEnvMap) {",
@@ -748,14 +700,14 @@
     "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, F90, roughness);",
     "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
     "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
     "        specularEnvironment = envSpecular * Fenv * (1.0 - roughness * 0.65) * u_envIntensity;",
+    "        ambient = gosxCoatOver(kDenv * envDiffuse * (1.0 - transmission) * u_envIntensity + specularEnvironment, textureLod(u_envMap, envEquirectUV(Rr), gosxLayer.coatRoughness * u_envMapMaxLod).rgb * u_envIntensity, NoV, gosxLayer, specularEnvironment);",
     "    } else {",
     "        float hemi = N.y * 0.5 + 0.5;",
     "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
     "                        + u_skyColor * u_skyIntensity * hemi",
     "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "        ambient = gosxCoatOver(envDiffuse * albedo * (1.0 - transmission), envDiffuse, NoV, gosxLayer, specularEnvironment);",
     "    }",
     "    if (!u_hasEnvMap) {",
     "#if GOSX_HDR_IBL",
@@ -788,13 +740,7 @@
     "        color += u_rimColor * rim;",
     "    }",
     "",
-    "    float clearcoat = clamp(u_clearcoat, 0.0, 1.0);",
-    "    if (clearcoat > 0.0001) {",
-    "        float cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
-    "        color += vec3(cc * 0.28);",
-    "    }",
-    "",
-    "    float sheen = clamp(u_sheen, 0.0, 1.0);",
+    "    float sheen = clamp(surfaceSheen, 0.0, 1.0);",
     "    if (sheen > 0.0001) {",
     "        float velvet = pow(1.0 - NoV, 3.0) * sheen;",
     "        color += albedo * velvet * 0.55;",
@@ -868,7 +814,7 @@
   // --- Shadow Depth Shader Sources ---
 
   // Cutaway planes are off when every value is zero.
-  const SCENE_NO_CUT = new Float32Array(12);
+  const SCENE_NO_CUT = new Float32Array(12); function sceneWebGLWindUpload(gl: any, ip: any, wind: any) { if (ip.uniforms.wind === undefined) ip.uniforms.wind = gl.getUniformLocation(ip.program, "u_wind[0]"); if (ip.uniforms.wind) gl.uniform4fv(ip.uniforms.wind, wind && window.__gosx_scene3d_terrain_api ? window.__gosx_scene3d_terrain_api.windFor(wind) : SCENE_NO_CUT); } // Environment.Wind sway for instanced batches (terrain.ts sceneWindFor)
   const SCENE_SHADOW_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -886,123 +832,6 @@
     "#version 300 es",
     "precision highp float;",
     "void main() {}",
-  ].join("\n");
-
-  // --- Points Shader Sources ---
-
-  const SCENE_POINTS_VERTEX_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "precision highp int;",
-    "",
-    "in vec3 a_position;",
-    "in float a_size;",
-    "in vec4 a_color;",
-    "",
-    "uniform mat4 u_viewMatrix;",
-    "uniform mat4 u_projectionMatrix;",
-    "uniform mat4 u_modelMatrix;",
-    "uniform float u_defaultSize;",
-    "uniform vec4 u_defaultColor;",
-    "uniform bool u_hasPerVertexColor;",
-    "uniform bool u_hasPerVertexSize;",
-    "uniform bool u_sizeAttenuation;",
-    "uniform int u_pointStyle;",
-    "uniform float u_viewportHeight;",
-    "uniform float u_minPixelSize;",
-    "uniform float u_maxPixelSize;",
-    "",
-    // Fog
-    "uniform int u_hasFog;",
-    "uniform float u_fogDensity;",
-    "",
-    "out vec4 v_color;",
-    "out float v_fogFactor;",
-    "out float v_pointSize;",
-    "",
-    "void main() {",
-    "    vec4 worldPos = u_modelMatrix * vec4(a_position, 1.0);",
-    "    vec4 viewPos = u_viewMatrix * worldPos;",
-    "    gl_Position = u_projectionMatrix * viewPos;",
-    "",
-    "    float size = u_hasPerVertexSize ? a_size : u_defaultSize;",
-    "    float pixelSize;",
-    "    if (u_sizeAttenuation) {",
-    "        pixelSize = max(size * (u_viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
-    "    } else {",
-    "        pixelSize = max(size, 1.0);",
-    "    }",
-    "    float minPixelSize = max(u_minPixelSize, 0.0);",
-    "    if (minPixelSize > 0.0) {",
-    "        pixelSize = max(pixelSize, minPixelSize);",
-    "    }",
-    "    if (u_maxPixelSize > 0.0) {",
-    "        pixelSize = min(pixelSize, u_maxPixelSize);",
-    "    }",
-    "    gl_PointSize = pixelSize;",
-    "    v_pointSize = gl_PointSize;",
-    "",
-    "    v_color = u_hasPerVertexColor ? a_color : u_defaultColor;",
-    "",
-    // Exponential fog
-    "    if (u_hasFog != 0) {",
-    "        float dist = length(viewPos.xyz);",
-    "        v_fogFactor = exp(-u_fogDensity * u_fogDensity * dist * dist);",
-    "        v_fogFactor = clamp(v_fogFactor, 0.0, 1.0);",
-    "    } else {",
-    "        v_fogFactor = 1.0;",
-    "    }",
-    "}",
-  ].join("\n");
-
-  const SCENE_POINTS_FRAGMENT_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "precision highp int;",
-    "",
-    "in vec4 v_color;",
-    "in float v_fogFactor;",
-    "in float v_pointSize;",
-    "",
-    "uniform float u_opacity;",
-    "uniform vec3 u_fogColor;",
-    "uniform int u_hasFog;",
-    "uniform int u_pointStyle;",
-    "",
-    "out vec4 fragColor;",
-    "",
-    "void main() {",
-    "    float alpha = 1.0;",
-    "    vec3 color = v_color.rgb;",
-    "    if (u_pointStyle == 1) {",
-    "        vec2 centered = gl_PointCoord - vec2(0.5);",
-    "        float radial = length(centered);",
-    "        float square = max(abs(centered.x), abs(centered.y));",
-    "        float focus = clamp((v_pointSize - 1.0) / 10.0, 0.0, 1.0);",
-    "        float coreRadius = mix(0.49, 0.18, focus);",
-    "        float core = 1.0 - smoothstep(coreRadius, coreRadius + 0.05, square);",
-    "        float halo = (1.0 - smoothstep(0.12, 0.72, radial)) * focus;",
-    "        float streakX = 1.0 - smoothstep(0.02, 0.16, abs(centered.x));",
-    "        float streakY = 1.0 - smoothstep(0.02, 0.16, abs(centered.y));",
-    "        float streak = max(streakX, streakY) * focus;",
-    "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0);",
-    "        color = mix(color, vec3(1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
-    "    } else if (u_pointStyle == 2) {",
-    // glow: pure radial gaussian falloff — soft gas cloud, no core, no streaks
-    "        vec2 centered = gl_PointCoord - vec2(0.5);",
-    "        float radial = length(centered) * 2.0;",
-    "        if (radial > 1.0) discard;",
-    "        float g = exp(-radial * radial * 3.5);",
-    "        alpha = g;",
-    "    }",
-    "",
-    // Apply fog
-    "    if (u_hasFog != 0) {",
-    "        color = mix(u_fogColor, color, v_fogFactor);",
-    "    }",
-    "",
-    "    fragColor = vec4(color, alpha * v_color.a * u_opacity);",
-    "}",
   ].join("\n");
 
   // --- Instanced PBR Vertex Shader ---
@@ -1031,7 +860,7 @@
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
-    "uniform bool u_hasInstanceColor;",
+    "uniform bool u_hasInstanceColor;", "uniform vec4 u_wind[3];", "vec3 gosxWindOffset(mat4 m, vec3 p) { vec4 s = u_wind[2]; if (s.x <= 0.0) return vec3(0.0); vec4 a = u_wind[0]; vec4 b = u_wind[1]; vec2 o = m[3].xz; float ph = (dot(o, a.xy) - b.z * a.w) * 6.2831853 / b.y + 0.35 * sin(dot(o, vec2(a.y, -a.x)) * 6.2831853 / (b.y * 1.7)); float k = clamp(p.y / s.y, 0.0, 1.0); float f = s.x * a.z * 0.1 * (1.0 + b.x * sin(ph)) * (0.75 + 0.25 * sin(6.2831853 * b.w * a.w + o.x * 0.37 + o.y * 0.53)) * k * k * s.y * length(m[1].xyz); return vec3(a.x * f, -0.3 * abs(f) * k, a.y * f); }",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -1043,7 +872,7 @@
     SCENE_GLSL_AFFINE_NORMAL,
     "",
     "void main() {",
-    "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
+    "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0); worldPos.xyz += gosxWindOffset(a_instanceMatrix, a_position);",
     "    v_worldPosition = worldPos.xyz;",
     "mat3 m=mat3(a_instanceMatrix);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
     "    v_uv = a_uv;",
@@ -1199,7 +1028,7 @@
 	    "uniform mat4 u_viewMatrix;",
 	    "uniform mat4 u_projectionMatrix;",
 	    "uniform mat4 u_modelMatrix;",
-	    "uniform mat4 u_jointMatrices[64];",
+	    SCENE_GLSL_JOINT_PALETTE,
 	    "uniform bool u_hasSkin;",
     "",
     "out vec3 v_worldPosition;",
@@ -1216,10 +1045,10 @@
     "",
     "    if (u_hasSkin) {",
     "        skinMatrix =",
-    "            a_weights.x * u_jointMatrices[int(a_joints.x)] +",
-    "            a_weights.y * u_jointMatrices[int(a_joints.y)] +",
-    "            a_weights.z * u_jointMatrices[int(a_joints.z)] +",
-    "            a_weights.w * u_jointMatrices[int(a_joints.w)];",
+    "            a_weights.x * gosxJointMatrix(int(a_joints.x)) +",
+    "            a_weights.y * gosxJointMatrix(int(a_joints.y)) +",
+    "            a_weights.z * gosxJointMatrix(int(a_joints.z)) +",
+    "            a_weights.w * gosxJointMatrix(int(a_joints.w));",
     "",
     "    }",
     "",
@@ -1301,12 +1130,12 @@
       var m = sceneShadowLightSpaceMatrix(light, sceneBounds);
       slot.cascades[0].lightMatrix = m;
       slot.cascades[0].splitNear = 0;
-      slot.cascades[0].splitFar = camFar || 100;
+      slot.cascades[0].splitFar = camFar || 100; slot.cascades[0].biasScale = 1;
       return;
     }
 
-    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5);
-    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, camFar || 100, n, lambda);
+    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5), reach = sceneNumber(light.shadowDistance, 0);
+    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, reach > 0 ? Math.min(reach, camFar || reach) : camFar || 100, n, lambda);
 
     // Light direction (normalized) — matches sceneShadowLightSpaceMatrix.
     var dx = sceneNumber(light.directionX, 0);
@@ -1323,12 +1152,12 @@
     var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
     var sceneRadius = Math.sqrt(ex * ex + ey * ey + ez * ez);
 
-    var prevSplit = camNear || 0.1;
+    var prevSplit = camNear || 0.1, reference = sceneShadowLightSpaceMatrix(light, sceneBounds); // bias reference: the one-map fit
     for (var i = 0; i < n; i++) {
       var splitFar = splits[i];
       var corners = sceneShadowFrustumSubCorners(viewMatrix, fovDeg, aspect, prevSplit, splitFar);
       var matrix = sceneShadowFitLightSpaceOrtho([dx, dy, dz], corners, sceneRadius, slot.size);
-      slot.cascades[i].lightMatrix = matrix;
+      slot.cascades[i].lightMatrix = matrix; slot.cascades[i].biasScale = sceneShadowCascadeBiasScale(reference, matrix);
       slot.cascades[i].splitNear = prevSplit;
       slot.cascades[i].splitFar = splitFar;
       prevSplit = splitFar;
@@ -1944,41 +1773,6 @@
     "    float dist = length(center);",
     "    float vignette = 1.0 - smoothstep(0.3, 0.7, dist * u_intensity);",
     "    fragColor = vec4(color * vignette, 1.0);",
-    "}",
-  ].join("\n");
-
-  const SCENE_POST_DOF_SOURCE = [
-    "#version 300 es",
-    "precision highp float;",
-    "in vec2 v_uv;",
-    "uniform sampler2D u_texture;",
-    "uniform sampler2D u_depthTexture;",
-    "uniform float u_focusDistance;",
-    "uniform float u_aperture;",
-    "uniform float u_maxBlur;",
-    "uniform float u_near;",
-    "uniform float u_far;",
-    "out vec4 fragColor;",
-    "",
-    "float linearDepth(float depth) {",
-    "    float z = depth * 2.0 - 1.0;",
-    "    return (2.0 * u_near * u_far) / max(0.0001, u_far + u_near - z * (u_far - u_near));",
-    "}",
-    "",
-    "void main() {",
-    "    vec2 texel = 1.0 / vec2(textureSize(u_texture, 0));",
-    "    float depth = linearDepth(texture(u_depthTexture, v_uv).r);",
-    "    float blur = clamp(abs(depth - u_focusDistance) * u_aperture * u_maxBlur, 0.0, u_maxBlur);",
-    "    vec3 color = texture(u_texture, v_uv).rgb * 0.22;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur,  0.0)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  0.0)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(0.0,  blur)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2(0.0, -blur)).rgb * 0.10;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur,  blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur,  blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2( blur, -blur)).rgb * 0.095;",
-    "    color += texture(u_texture, v_uv + texel * vec2(-blur, -blur)).rgb * 0.095;",
-    "    fragColor = vec4(color, 1.0);",
     "}",
   ].join("\n");
 
@@ -4485,6 +4279,8 @@
     return typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api || SCENE_WEBGL_RENDER_TRUTH_NOOP;
   }
 
+  function sceneWebGLDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webglRun(state, effect, i, ...rest) : rest[0]; }
+  function sceneWebGLDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
   function createScenePostProcessor(gl, resolveSelenaUniform) {
 
     var quad = createSceneFullscreenQuad(gl);
@@ -4498,7 +4294,7 @@
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     function postFrameContext(projection, view, lights) { return projection && projection.projection ? projection : { projection: projection, view: view, lights: lights }; }
     var currentLinearInput = true;
-    var currentWidth = 0;
+    var currentWidth = 0, depthFx: any = { gl: gl };
     var currentHeight = 0;
     var hdrDegradationReported = false;
     // Lazily compiled shader programs, keyed by effect name.
@@ -4653,7 +4449,7 @@
           ? resolveSelenaUniform(material, layout, field, null)
           : selenaPostFallbackUniformValue(material, layout, field);
         if (val == null) continue;
-        sceneSelenaUploadUniform(gl, loc, field.type, val);
+        sceneSelenaUploadUniform(gl, loc, field.type, val, field.count);
       }
 
       withScenePostScissor(w, h, bounds, function() {
@@ -4813,7 +4609,7 @@
     function applyDOF(inputTex, effect, targetFBO, w, h, camera) {
 
       if (!sceneFBO || !sceneFBO.depthTex) return inputTex;
-      var prog = getProgram("dof", SCENE_POST_DOF_SOURCE);
+      var prog = getProgram("dof", sceneWebGLPostfxDOFSource());
       if (!prog) return inputTex;
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.activeTexture(gl.TEXTURE1);
@@ -4877,7 +4673,7 @@
 	        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
             gl.drawBuffers(sceneFBO.specularTex ? [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1] : [gl.COLOR_ATTACHMENT0]);
 	        return {
-            framebuffer: sceneFBO.fbo, width: sw,
+            framebuffer: sceneFBO.fbo, colorTexture: sceneFBO.colorTex, width: sw,
             height: sh,
             factor: factor,
             hdrSupported: sceneFBO.hdrSupported,
@@ -4888,12 +4684,12 @@
       releaseSpecular: function() { if (sceneFBO) sceneWebGLSpecularTarget(gl, sceneFBO, false); },
       prepareTemporal: function(effects: any[], projection: Float32Array, view: Float32Array, canJitter: boolean, lights: any) {
         if (!canJitter) { if (temporal) temporal.reset(); temporalEnabled = false; return false; }
-        if (!temporal) temporal = createSceneTemporalHistory(gl, quad);
+        if (!temporal) temporal = sceneWebGLPostfxTemporal(gl, quad);
         temporalEnabled = temporal.prepare(effects, { width: currentWidth, height: currentHeight }, projection, view, canJitter, lights);
         gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
         return temporalEnabled;
       },
-      resetTemporal: function() { if (temporal) { temporal.dispose(); temporal = null; } temporalEnabled = false; },
+      resetTemporal: function() { if (temporal) { temporal.dispose(); temporal = null; } temporalEnabled = false; }, temporalMotion: function(bundle: any, helpers: any) { temporal.motion(bundle, helpers); },
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
@@ -5040,13 +4836,7 @@
               }
               break;
             }
-            default:
-              // Unknown effect — skip. A kind that reaches here NEVER draws;
-              // the chain record stays at pipeline="missing", dispatched=0,
-              // which is precisely how a case-sensitivity mismatch on the
-              // effect kind (the customPost defect) becomes visible instead of
-              // being masked by a healthy-looking postEffects count.
-              break;
+            default: currentTexture = sceneWebGLDepthFxPass(depthFx, effect, i, currentTexture, targetFBO, passW, passH, sceneFBO.depthTex, atmosphereContext); break; // decals and motion blur; any other kind never draws
           }
 
           if (postChain) {
@@ -5074,7 +4864,7 @@
 
       // Release all post-processing GPU resources.
       dispose: function() {
-        mipBloom.dispose(); atmospherePost.dispose();
+        mipBloom.dispose(); atmospherePost.dispose(); sceneWebGLDepthFxDispose(depthFx);
         if (temporal) temporal.dispose();
         if (sceneFBO) {
           disposeScenePostFBO(gl, sceneFBO);
@@ -5300,7 +5090,7 @@
   function scenePBRTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
     var descriptor = raw && typeof raw === "object" ? raw : {}; const wrap = (value: any) => [33071, 33648, 10497].indexOf(value) >= 0 ? value : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071);
     return {
-      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
+      uri: (typeof sceneTextAtlasURL === "function" ? sceneTextAtlasURL : String)(typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim()),
       role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
       colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
         ? descriptor.colorSpace.trim().toLowerCase()
@@ -5835,13 +5625,13 @@
   // Compile PBR vertex + fragment shaders and return a program object with
   // cached uniform locations. Returns null on compile/link failure so the
   // caller can fall back to the legacy renderer.
-  function createScenePBRProgram(gl, detail = false) {
-    const warmed = detail ? null : scenePBRTakeInitialProgram(gl, "base");
+  function createScenePBRProgram(gl, detail = false, variant: any = null) {
+    const warmed = detail || variant ? null : scenePBRTakeInitialProgram(gl, "base");
     if (warmed === false) return null;
     if (warmed) {
       return scenePBRFinalizeBaseProgram(gl, warmed);
     }
-    const compiled = scenePBRBuildProgram(gl, SCENE_PBR_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "PBR shader");
+    const compiled = scenePBRBuildProgram(gl, variant ? variant.vertex(SCENE_PBR_VERTEX_SOURCE) : SCENE_PBR_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : variant ? variant.fragment(SCENE_PBR_FRAGMENT_SOURCE) : SCENE_PBR_FRAGMENT_SOURCE), "PBR shader");
     if (!compiled) return null;
     const { program, vertexShader, fragmentShader } = compiled;
 
@@ -5944,7 +5734,15 @@
     return sceneNumber(value, 0);
   }
 
-  function sceneSelenaUploadUniform(gl, loc, type, value) {
+  function sceneSelenaUploadUniform(gl, loc, type, value, count = 0) {
+    // An array field (count > 1, e.g. the `lights` engine input) uploads every
+    // element from one flat value: count times the type's components.
+    if (count > 1) {
+      var size = sceneSelenaFloatCount(type), flat = value && typeof value.length === "number" ? value : [];
+      var data = flat instanceof Float32Array && flat.length >= size * count ? flat.subarray(0, size * count) : Float32Array.from({ length: size * count }, (_, k) => sceneNumber(flat[k], 0));
+      if (size === 4) gl.uniform4fv(loc, data); else if (size === 3) gl.uniform3fv(loc, data); else if (size === 2) gl.uniform2fv(loc, data); else gl.uniform1fv(loc, data);
+      return;
+    }
     switch (String(type || "")) {
     case "mat4":
       gl.uniformMatrix4fv(loc, false, value);
@@ -6061,7 +5859,7 @@
       "\n" + qualifier + " vec4 a_joints;" +
       "\n" + qualifier + " vec4 a_weights;" +
       "\nuniform mat4 u_modelMatrix;" +
-      "\nuniform mat4 u_jointMatrices[64];" +
+      "\n" + (/#version\s+300\s+es/.test(source) ? SCENE_GLSL_JOINT_PALETTE : SCENE_GLSL_JOINT_PALETTE_LEGACY) +
       "\nuniform bool u_hasSkin;\n" + SCENE_GLSL_AFFINE_NORMAL + "\n";
     out = out.slice(0, mainIdx) + extraDecls + out.slice(mainIdx);
 
@@ -6069,10 +5867,10 @@
     var bodyStart = mainIdx + mainMarker.length;
     var skinBlock =
       "\n  mat4 selenaSkinMatrix = u_hasSkin ? (" +
-      "\n      a_weights.x * u_jointMatrices[int(a_joints.x)] +" +
-      "\n      a_weights.y * u_jointMatrices[int(a_joints.y)] +" +
-      "\n      a_weights.z * u_jointMatrices[int(a_joints.z)] +" +
-      "\n      a_weights.w * u_jointMatrices[int(a_joints.w)]" +
+      "\n      a_weights.x * gosxJointMatrix(int(a_joints.x)) +" +
+      "\n      a_weights.y * gosxJointMatrix(int(a_joints.y)) +" +
+      "\n      a_weights.z * gosxJointMatrix(int(a_joints.z)) +" +
+      "\n      a_weights.w * gosxJointMatrix(int(a_joints.w))" +
       "\n  ) : mat4(1.0);" +
       "\n  vec4 selenaSkinWorldPos4 = u_modelMatrix * (selenaSkinMatrix * vec4(a_position, 1.0));" +
       "\n  vec3 position = selenaSkinWorldPos4.xyz;";
@@ -6156,6 +5954,8 @@
         result.skinUniforms = {
           modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
           jointMatrices: gl.getUniformLocation(program, "u_jointMatrices[0]"),
+          jointTexture: gl.getUniformLocation(program, "u_jointTexture"),
+          jointTexCount: gl.getUniformLocation(program, "u_jointTexCount"),
           hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
         /* @ts-expect-error TS2551 -- skinAttributes is added to the program record only when skinned */ };
         result.skinAttributes = {
@@ -6183,8 +5983,8 @@
   // Compile the skinned PBR vertex shader with the same PBR fragment shader.
   // Returns a program object with cached attribute/uniform locations including
   // the joint matrix array and skin flag, or null on failure.
-  function createScenePBRSkinnedProgram(gl, detail = false) {
-    return scenePBRCreateProgramInfo(gl, SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader", function(program: any) {
+  function createScenePBRSkinnedProgram(gl, detail = false, variant: any = null) {
+    return scenePBRCreateProgramInfo(gl, variant ? variant.vertex(SCENE_PBR_SKINNED_VERTEX_SOURCE) : SCENE_PBR_SKINNED_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : variant ? variant.fragment(SCENE_PBR_FRAGMENT_SOURCE) : SCENE_PBR_FRAGMENT_SOURCE), "Skinned PBR shader", function(program: any) {
 
       // Cache attribute locations.
       var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights");
@@ -6197,6 +5997,8 @@
       uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
       uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
       uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
+      uniforms.jointTexture = gl.getUniformLocation(program, "u_jointTexture");
+      uniforms.jointTexCount = gl.getUniformLocation(program, "u_jointTexCount");
 
       return {
         attributes: attributes,
@@ -6311,6 +6113,86 @@
     return scenePBRDeferredProgramInfo(gl, program, function() {
       return initialize(program, vertexShader, fragmentShader);
     }, { vertexShader, fragmentShader });
+  }
+
+  // Joint palette texture shared by every skinned draw on this context.
+  // Rigs above SCENE_UNIFORM_SKIN_JOINTS joints upload their matrices here
+  // (4 RGBA32F texels per matrix on one row) instead of the uniform array.
+  var sceneJointPalettes = new WeakMap(); if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = window.__gosx_scene3d_asset_ext.uv1 || { use() { return null; }, bind() {}, dispose() {} }; }
+  function sceneUploadJointPalette(gl, locs, matrices, jointCount) {
+    var jointPalette = sceneJointPalettes.get(gl);
+    if (!locs.jointTexture || !locs.jointTexCount) return false;
+    if (jointCount > SCENE_MAX_SKIN_JOINTS) {
+      if (!jointPalette || !jointPalette.warned) {
+        jointPalette = jointPalette || { texture: null, width: 0, unit: 0, warned: false };
+        sceneJointPalettes.set(gl, jointPalette);
+        jointPalette.warned = true;
+        console.warn("[gosx] skin has " + jointCount + " joints; the WebGL2 backend supports at most " + SCENE_MAX_SKIN_JOINTS + ". Extra joints are ignored.");
+      }
+      jointCount = SCENE_MAX_SKIN_JOINTS;
+    }
+    var width = jointCount * 4;
+    if (!jointPalette) { jointPalette = { texture: null, width: 0, unit: 0, warned: false }; sceneJointPalettes.set(gl, jointPalette); }
+    var unit = Math.floor(sceneNumber(gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS), 0)) - 1;
+    var fragmentUnits = Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0));
+    if (unit < fragmentUnits || unit < 1 || width > gl.getParameter(gl.MAX_TEXTURE_SIZE)) return false;
+    var previousActive = gl.getParameter(gl.ACTIVE_TEXTURE);
+    var previousFlip = gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL);
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    try {
+      if (!jointPalette.texture) {
+        jointPalette.texture = gl.createTexture();
+        if (!jointPalette.texture) return false;
+        gl.bindTexture(gl.TEXTURE_2D, jointPalette.texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      } else {
+        gl.bindTexture(gl.TEXTURE_2D, jointPalette.texture);
+      }
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      var data = matrices.length === jointCount * 16 ? matrices : matrices.subarray(0, jointCount * 16);
+      if (jointPalette.width < width) {
+        // Grow to the largest palette seen; smaller rigs reuse the texture.
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, 1, 0, gl.RGBA, gl.FLOAT, data);
+        jointPalette.width = width;
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, 1, gl.RGBA, gl.FLOAT, data);
+      }
+    } finally {
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, Boolean(previousFlip));
+      gl.activeTexture(previousActive);
+    }
+    gl.uniform1i(locs.jointTexture, unit);
+    gl.uniform1i(locs.jointTexCount, jointCount);
+    return true;
+  }
+
+  function sceneDisposeJointPalette(gl) {
+    var jointPalette = sceneJointPalettes.get(gl);
+    if (jointPalette && jointPalette.texture) gl.deleteTexture(jointPalette.texture);
+    sceneJointPalettes.delete(gl);
+  }
+
+  // locs carries the program's cached skin uniform locations:
+  // jointMatrices (array), jointTexture and jointTexCount.
+  function sceneUploadSkinJoints(gl, locs, skin) {
+    var matrices = skin && skin.jointMatrices;
+    var location = locs && locs.jointMatrices;
+    var total = matrices ? Math.floor(matrices.length / 16) : 0;
+    if (!location || !total) return;
+    if (total > SCENE_UNIFORM_SKIN_JOINTS && sceneUploadJointPalette(gl, locs, matrices, total)) return;
+    if (locs.jointTexCount) gl.uniform1i(locs.jointTexCount, 0);
+    var length = Math.min(total, SCENE_UNIFORM_SKIN_JOINTS) * 16;
+    var upload = matrices;
+    if (matrices.length !== length) {
+      var views = skin._jointMatrixUploadViews || (skin._jointMatrixUploadViews = Object.create(null));
+      var cached = views[length];
+      if (!cached || cached.source !== matrices) cached = views[length] = { source: matrices, view: matrices.subarray(0, length) };
+      upload = cached.view;
+    }
+    gl.uniformMatrix4fv(location, false, upload);
   }
 
   function scenePBRAttributeLocations(gl: any, program: any, names: string) {
@@ -6719,7 +6601,7 @@
         case SCENE_POST_VIGNETTE: scenePBRGetPostProgram(gl, programs, "vignette", SCENE_POST_VIGNETTE_SOURCE); break;
         case SCENE_POST_COLOR_GRADE: scenePBRGetPostProgram(gl, programs, "colorGrade", SCENE_POST_COLORGRADE_SOURCE); break;
         case SCENE_POST_SSAO: scenePBRGetPostProgram(gl, programs, "ssao", SCENE_POST_SSAO_SOURCE); break;
-        case SCENE_POST_DOF: scenePBRGetPostProgram(gl, programs, "dof", SCENE_POST_DOF_SOURCE); break;
+        case SCENE_POST_DOF: scenePBRGetPostProgram(gl, programs, "dof", sceneWebGLPostfxDOFSource()); break;
         case SCENE_POST_FXAA: scenePBRGetPostProgram(gl, programs, "fxaa", SCENE_POST_FXAA_SOURCE); break;
         case SCENE_POST_CUSTOM_POST: {
           const name = effect.name || "custom";
@@ -6783,7 +6665,7 @@
     let extension = null;
     try { extension = gl.getExtension("KHR_parallel_shader_compile"); } catch (_error) {}
     state = { extension: extension && typeof extension.COMPLETION_STATUS_KHR === "number" ? extension : null,
-      pending: new Set(), frame: null, disposed: false };
+      pending: new Set(), frame: null, disposed: false, total: 0, failed: 0 };
     scenePBRCompileContexts.set(gl, state);
     return state;
   }
@@ -6831,7 +6713,7 @@
     for (const record of state.pending) {
       try {
         if (!lost && !gl.getProgramParameter(record.program, state.extension.COMPLETION_STATUS_KHR)) continue;
-        record.status = !lost && gl.getProgramParameter(record.program, gl.LINK_STATUS) ? "ready" : "failed";
+        record.status = !lost && gl.getProgramParameter(record.program, gl.LINK_STATUS) ? "ready" : "failed"; if (record.status === "failed") state.failed++;
         if (record.status === "ready") {
           for (const initialize of record.initialize) initialize();
         } else {
@@ -6930,7 +6812,7 @@
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
-    const queue = scenePBRCompileContext(gl);
+    const queue = scenePBRCompileContext(gl); queue.total++; // shaderPrograms() counts every link
     if (queue.extension) {
       const record = { program, vertexShader, fragmentShader, label, status: "pending", initialize: [] as Array<() => void> };
       scenePBRProgramStates.set(program, record);
@@ -6939,7 +6821,7 @@
       return program;
     }
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.warn("[gosx] " + label + " program link failed:", gl.getProgramInfoLog(program));
+      queue.failed++; console.warn("[gosx] " + label + " program link failed:", gl.getProgramInfoLog(program));
       gl.deleteProgram(program);
       gl.deleteShader(vertexShader);
       gl.deleteShader(fragmentShader);
@@ -7257,9 +7139,9 @@
 
     gl.uniformMatrix4fv(uniforms[matricesKey], false, _scenePBRCascadeMatScratch);
     gl.uniform1fv(uniforms[splitsKey], _scenePBRCascadeSplitScratch);
+    for (var bi = 0; bi < 4; bi++) _scenePBRCascadeSplitScratch[bi] = sceneNumber(light.shadowBias, 0.005) * sceneNumber(slot.cascades[bi < numCascades ? bi : 0].biasScale, 1); gl.uniform1fv(uniforms[biasKey], _scenePBRCascadeSplitScratch); // per-cascade bias, reusing the uploaded split scratch
     gl.uniform1i(uniforms[cascadesKey], numCascades);
     gl.uniform1i(uniforms[hasKey], 1);
-    gl.uniform1f(uniforms[biasKey], sceneNumber(light.shadowBias, 0.005));
     gl.uniform1f(uniforms[softKey], Math.max(0, sceneNumber(light.shadowSoftness, 0)));
     gl.uniform1i(uniforms[indexKey], lightIndex);
   }
@@ -7635,6 +7517,10 @@
       var loc = gl.getUniformLocation(info.program, glBinding.uniform || tex.name);
       if (!loc) continue;
       var unit = Math.max(0, Math.floor(sceneNumber(glBinding.unit, i)));
+      // Shadow maps bind the slot's depth array, or a lit placeholder array.
+      const shadowSlot = sceneSelenaShadowMapSlot(textureCache._gosxSelenaLighting, tex);
+      if (shadowSlot !== undefined) { scenePBRBindTexture(gl, unit, shadowSlot ? shadowSlot.depthTexture : scenePBRPlaceholderShadow(gl, textureCache), gl.TEXTURE_2D_ARRAY); gl.uniform1i(loc, unit); continue; }
+      if (sceneDataTextureBind(gl, info, unit, loc, material, tex, selenaPlaceholderTexture)) continue;
       const environmentSlot = sceneWebGLSelenaEnvironmentSlot(material, tex);
       if (environmentSlot) {
         const environment = textureCache._gosxSelenaEnvironment;
@@ -7692,7 +7578,7 @@
 	    var skinnedProgramFailed = false;
     var detailResources = { programs: new Map(), atlases: new Map(), materials: new Map(), bake: null };
     var detailEnabled = true;
-    var customProgramCache = new Map();
+    var customProgramCache = new Map(), selenaSurfacePrograms = new Map();
     var selenaProgramCache = new Map();
 
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Shadow program (depth-only shader for shadow pass).
@@ -7705,7 +7591,7 @@
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
     var transmissionResources = sceneCreateTransmissionWebGL(gl);
     var frameLinear = false;
     const programPreparation: ScenePBRPreparationHooks = { ensureSelenaProgram, ensureSkinnedProgram, ensureCustomProgram,
@@ -8083,6 +7969,7 @@
     const activeStaticPointKeys = new Set();
     var computeParticleSystems = new Map();
     var lastComputeParticleTimeSeconds = null;
+    var softParticles = createSceneWebGLSoftParticles(gl), exposureGL = sceneWebGLPostfxAutoExposure(gl), motionHelpers = { attribute: bindScenePBRDirectAttribute, data: scenePBRDirectAttribute, indices: bindScenePBRDirectIndexBuffer };
     var lastPreparedScene = null;
     var webglComputeParticleDrawStats = {
       drawEntries: 0,
@@ -8091,6 +7978,7 @@
       authoredDrawEntries: 0,
       authoredDrawInstances: 0,
       authoredDrawCalls: 0,
+      softDrawCalls: 0,
     };
     // Last string this renderer wrote per compute-particle-stats attribute,
     // so an unchanged 0-valued scene stops re-calling setAttribute every
@@ -8561,7 +8449,7 @@
     var instancedGeometryCache = {};
 
     // Local texture cache for this renderer instance.
-    const textureCache = Object.assign(new Map(), { _gosxSelenaEnvironment: null as { info: number[]; [slot: string]: any } | null, _sceneTextureEpoch: 0, _gosxGeneration: {
+    const textureCache = Object.assign(new Map(), { _gosxSelenaEnvironment: null as { info: number[]; [slot: string]: any } | null, _gosxSelenaLighting: null as any, _gosxSelenaLightingInput: null as any, _sceneTextureEpoch: 0, _gosxGeneration: {
       disposed: false,
       onResourceReady: function() {
         textureCache._sceneTextureEpoch++;
@@ -8586,58 +8474,14 @@
 	    // Set once per frame before any selena draw; explicit customUniforms.time still overrides.
 	    var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;
 
-	    // Live per-frame values for Selena `context { ... }` uniform fields
-	    // (bindings.Layout marks them Class "context"). Reserved names the
-	    // Scene3D WebGL executor injects — all other context fields fall
-	    // through to the material's own values/defaults, so the water-demo
-	    // corpus (resolution/objectKind/spheres/...) keeps its per-material
-	    // channels, and `time` stays the reserved auto-uniform resolved
-	    // before this map is consulted:
-	    //   cameraPos : vec3 — world-space camera position, matching
-	    //                      u_cameraPosition on the built-in PBR path.
-	    //   sunDir    : vec3 — normalized direction TOWARD the first
-	    //                      directional light (the PBR light array
-	    //                      stores from-light directions; Selena
-	    //                      surfaces dot against toward-light, so this
-	    //                      negates it)
-	    //   sunColor  : vec3 — that light's color × intensity
-	    //   ambient   : vec3 — environment ambientColor × ambientIntensity
+	    // Live per-frame values for Selena `context { ... }` engine inputs: the
+	    // camera, key light, ambient, fog, packed lights and both shadow slots
+	    // (sceneSelenaFillLighting in 16c2-scene-selena-lighting). Unknown context
+	    // names fall through to the material's values; `time` is resolved first.
 	    var sceneSelenaFrameContext = null;
 
-	    function sceneSelenaFrameContextUpdate(cam, lights, environment) {
-	      var sunDir = [0, 1, 0];
-	      var sunColor = [1, 1, 1];
-	      var lightArray = Array.isArray(lights) ? lights : [];
-	      for (var i = 0; i < lightArray.length; i++) {
-	        var light = lightArray[i] || {};
-	        if (String(light.kind || "").toLowerCase() !== "directional") continue;
-	        var dx = sceneNumber(light.directionX, 0);
-	        var dy = sceneNumber(light.directionY, -1);
-	        var dz = sceneNumber(light.directionZ, 0);
-	        var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-	        sunDir = [-dx / len, -dy / len, -dz / len];
-	        var rgba = sceneColorRGBA(light.color, [1, 1, 1, 1]);
-	        var intensity = sceneNumber(light.intensity, 1);
-	        sunColor = [rgba[0] * intensity, rgba[1] * intensity, rgba[2] * intensity];
-	        break;
-	      }
-	      var env = environment || {};
-	      var ambientRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
-	      var ambientIntensity = sceneNumber(env.ambientIntensity, 0);
-	      sceneSelenaFrameContext = {
-	        cameraPos: [
-	          sceneNumber(cam && cam.x, 0),
-	          sceneNumber(cam && cam.y, 0),
-	          sceneNumber(cam && cam.z, 0),
-	        ],
-	        sunDir: sunDir,
-	        sunColor: sunColor,
-	        ambient: [
-	          ambientRGBA[0] * ambientIntensity,
-	          ambientRGBA[1] * ambientIntensity,
-	          ambientRGBA[2] * ambientIntensity,
-	        ],
-	      };
+	    function sceneSelenaFrameContextUpdate(cam, bundle, view) {
+	      sceneSelenaFrameContext = sceneSelenaFrameLighting(textureCache, cam, view, bundle, shadowSlots, shadowLightIndices, null, "gl");
 	    }
     var identityModelMatrix = new Float32Array([
       1, 0, 0, 0,
@@ -8917,7 +8761,7 @@
       sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
-      scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode), programPreparation);
+      scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode), programPreparation); if (frameMeta?.warmup) scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(frameMeta.warmup, frameMeta, canvas.parentNode), programPreparation);
       postProcessor = programPreparation.postProcessor;
       if (!scenePBRFrameProgramsReady(gl, program)) return "pending";
 
@@ -8948,7 +8792,7 @@
           return surface && !(surface.sourceKind === "html" && !surface.textureReady);
         }));
       beginWebGLDirectMeshBufferFrame(bundle);
-      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer) {
+      if (!scenePBRHasFrameData(hasPBRData, hasPointsData, hasInstancedData, hasLineData, frameMeta, oceanResources) && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !skyResources.renderer) {
         sweepWebGLDirectMeshBuffers();
         retireInstancedStreams();
         return "empty";
@@ -9190,7 +9034,7 @@
       // Refresh the Selena context-injection state (cameraPos/sunDir/
       // sunColor/ambient) — also outside `if (hasPBRData)`, so scenes whose
       // meshes are ALL Selena-dressed still get live context.
-      sceneSelenaFrameContextUpdate(cam, bundle.lights, bundle.environment);
+      sceneSelenaFrameContextUpdate(cam, bundle, viewMatrix);
 
       const drawList = hasPBRData ? (preparedScene && preparedScene.pbrPasses
         ? preparedScene.pbrPasses : buildPBRDrawList(bundle)) : null;
@@ -9217,7 +9061,7 @@
       applyDepthMode(gl, "opaque");
       drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta?.frameRequest);
       } // end if (hasPBRData)
-      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
+      drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque"); window.__gosx_scene3d_terrain_api?.webgl(terrainResources, gl, { environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix, viewMatrix), height: renderH, textureCache: textureCache, time: sceneSelenaFrameTime, load: scenePBRLoadTexture, uniforms: scenePBRCacheBaseUniforms, fragment: () => scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), program: program, mount: canvas.parentNode, prepare: (u, m) => { gl.uniformMatrix4fv(u.viewMatrix, false, viewMatrix); gl.uniformMatrix4fv(u.projectionMatrix, false, projMatrix); gl.uniform3f(u.cameraPosition, cam.x, cam.y, cam.z); scenePBRUploadExposure(gl, u, bundle.environment, frameLinear); scenePBRUploadLights(gl, u, bundle.lights, bundle.environment, _frameLightsHash); scenePBRUploadEnvironmentMap(gl, u, bundle.environment, textureCache, shadowSlots, shadowLightIndices); scenePBRUploadShadowUniforms(gl, u, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache); uploadMaterial(gl, u, m, textureCache); } });
       const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
       sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: sceneSelenaFrameTime, quality: frameMeta?.oceanTier,
         meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
@@ -9225,7 +9069,7 @@
       scenePBRCompositePass(gl, frameMeta, renderTarget);
       // The ocean owns a program and texture unit zero. Restore the PBR pass
       // and invalidate material bindings before drawing glass against it.
-      gl.useProgram(program);
+      gl.useProgram(program); window.__gosx_scene3d_crowd_api?.webgl(gl, { environment: bundle.environment, camera: cam, proj: projMatrix, viewProj: sceneMat4Multiply(projMatrix, viewMatrix), height: renderH, time: bundle.timeSeconds, uniforms: scenePBRCacheBaseUniforms, fragment: () => scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE), program: program, mount: canvas.parentNode, textureCache: textureCache, prepare: (u: any, m: any) => { gl.uniformMatrix4fv(u.viewMatrix, false, viewMatrix); gl.uniformMatrix4fv(u.projectionMatrix, false, projMatrix); gl.uniform3f(u.cameraPosition, cam.x, cam.y, cam.z); scenePBRUploadExposure(gl, u, bundle.environment, frameLinear); scenePBRUploadLights(gl, u, bundle.lights, bundle.environment, _frameLightsHash); scenePBRUploadEnvironmentMap(gl, u, bundle.environment, textureCache, shadowSlots, shadowLightIndices); scenePBRUploadShadowUniforms(gl, u, shadowSlots, shadowLightIndices, bundle.lights, bundle.environment, textureCache); uploadMaterial(gl, u, m, textureCache); } }); // Environment.Crowds (crowd-glsl.ts)
       if (bundle.environment && bundle.environment.ocean || scenePBRHasComposite(frameMeta)) textureCache._sceneTextureEpoch++;
 
       if (transmissionSettings.screen) transmissionResources.capture(renderTarget);
@@ -9265,7 +9109,7 @@
       activeStaticPointEntries.clear();
       activeStaticPointKeys.clear();
       drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, sceneSelenaFrameTime, renderH);
-      drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
+      softParticles.beginFrame(renderTarget, renderW, renderH); drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
 
@@ -9273,7 +9117,7 @@
 
       // Apply post-processing chain if active.
       if (usePostProcessing && postProcessor) {
-        var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
+        if (temporalActive) postProcessor.temporalMotion(bundle, motionHelpers); exposureGL.apply(renderTarget, renderW, renderH, bundle.environment, cam); var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, cam, { projection: projMatrix, view: viewMatrix, lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: sceneMat4Multiply(projMatrix,viewMatrix), meta: frameMeta });
         // Post passes replace material texture bindings, including unit zero.
         textureCache._sceneTextureEpoch++;
         if (postResult && postResult.postChain) {
@@ -9320,8 +9164,8 @@
 	      return skinnedProgram;
 	    }
 
-    function ensureCustomProgram(material) {
-      return scenePBREnsureCustomProgram(gl, customProgramCache, material);
+    function ensureCustomProgram(material, skinned = false) {
+      return skinned ? null : scenePBREnsureCustomProgram(gl, customProgramCache, material);
     }
 
     function ensureSelenaProgram(material, skinned) {
@@ -9400,15 +9244,9 @@
       // customUniforms so a declared `param time` — whose compiled default ships
       // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
       var autoUniform = sceneSelenaAutoUniformValue(name, sceneSelenaFrameTime, sceneSelenaFrameProximity); if (autoUniform !== undefined) return autoUniform;
-      // Context-class fields with reserved names resolve to live per-frame
-      // scene state (see sceneSelenaFrameContextUpdate); unknown context
-      // names fall through to the material's own values/defaults below.
-      if (field && field.class === "context" && sceneSelenaFrameContext) {
-        if (name === "cameraPos") return sceneSelenaFrameContext.cameraPos;
-        if (name === "sunDir") return sceneSelenaFrameContext.sunDir;
-        if (name === "sunColor") return sceneSelenaFrameContext.sunColor;
-        if (name === "ambient") return sceneSelenaFrameContext.ambient;
-      }
+      // Engine context fields resolve to live per-frame scene state (see
+      // sceneSelenaFrameContextUpdate); other names fall through below.
+      var lightingValue = sceneSelenaLightingValue(sceneSelenaFrameContext, field); if (lightingValue !== undefined) return lightingValue;
       if (field && field.class === "context" && name === "environmentInfo") {
         const environment = textureCache._gosxSelenaEnvironment;
         return environment ? environment.info : [0, 0, 0, 0];
@@ -9435,7 +9273,7 @@
         var loc = info.uniforms && info.uniforms[field.name];
         if (!loc) continue;
         var value = selenaUniformValue(material, layout, field, owner);
-        sceneSelenaUploadUniform(gl, loc, field.type, value);
+        sceneSelenaUploadUniform(gl, loc, field.type, value, field.count);
       }
     }
 
@@ -9480,20 +9318,6 @@
     // built-in skinned-PBR upload a few lines below (isSkinned branch of
     // drawPBRObjectList), reused verbatim here since both paths share the
     // exact same joint-matrix contract (SCENE_PBR_SKINNED_VERTEX_SOURCE).
-    function uploadSkinJoints(location, skin) {
-      var matrices = skin && skin.jointMatrices;
-      var length = matrices && Math.min(Math.floor(matrices.length / 16), 64) * 16;
-      if (!location || !length) return;
-      var upload = matrices;
-      if (matrices.length !== length) {
-        var views = skin._jointMatrixUploadViews || (skin._jointMatrixUploadViews = Object.create(null));
-        var cached = views[length];
-        if (!cached || cached.source !== matrices) cached = views[length] = { source: matrices, view: matrices.subarray(0, length) };
-        upload = cached.view;
-      }
-      gl.uniformMatrix4fv(location, false, upload);
-    }
-
     function uploadSelenaSkinUniforms(gl, info, obj) {
       var skinUniforms = info && info.skinUniforms;
       if (!skinUniforms) return;
@@ -9501,7 +9325,7 @@
       if (skinUniforms.modelMatrix) {
         gl.uniformMatrix4fv(skinUniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
       }
-      uploadSkinJoints(skinUniforms.jointMatrices, obj.skin);
+      sceneUploadSkinJoints(gl, skinUniforms, obj.skin);
     }
 
     // Bind the a_joints/a_weights attributes for a skinned Selena draw.
@@ -9807,7 +9631,7 @@
           meshColorVisibility.set(obj, count > 0);
           if (count > 0 && obj.directVertices && obj.retainedGeometry && obj.vertices &&
               obj.vertexCount > 0 && scenePBRObjectRenderPass(obj, mat) === "opaque" &&
-              !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat)) {
+              !sceneSelenaIsMaterial(mat) && !scenePBRHasCustomHooks(mat) && !sceneWebGLSelenaSurfaceHook(mat)) {
             if (count === 1) obj.modelMatrix = batch.transforms.subarray(0, 16);
             rigidObjectBatches.set(obj, batch);
           }
@@ -9830,7 +9654,7 @@
             objectIsSkinned(obj) ||
             !obj.modelMatrix || !(sceneAffineDeterminant(obj.modelMatrix, 0) > 0.000001) ||
             scenePBRObjectRenderPass(obj, mat) !== "opaque" ||
-            sceneSelenaIsMaterial(mat) || scenePBRHasCustomHooks(mat)) continue;
+            sceneSelenaIsMaterial(mat) || scenePBRHasCustomHooks(mat) || sceneWebGLSelenaSurfaceHook(mat)) continue;
         let groups = rigidBatchRecords.get(obj.vertices);
         if (!groups) {
           groups = new Map();
@@ -9970,7 +9794,7 @@
       uploadMaterial(gl, ip.uniforms, mat, textureCache);
       if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
       gl.uniform1i(ip.uniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
-      gl.uniform1i(ip.uniforms.hasInstanceColor, 0);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 0); sceneWebGLWindUpload(gl, ip, null);
       gl.depthMask(sceneTransmissionDepthWrite(obj, mat, scenePBRObjectRenderPass(obj, mat) === "opaque"));
       const allowed = {};
       for (const [name, size, fallback] of [
@@ -10135,7 +9959,8 @@
           continue;
         }
 
-        var customProgram = !isSkinned ? ensureCustomProgram(mat) : null;
+        var customProgram = sceneWebGLAuthoredProgram(gl, selenaSurfacePrograms, mat, isSkinned, ensureCustomProgram, obj, { base: createScenePBRProgram, skinned: createScenePBRSkinnedProgram, usable: scenePBRUsableProgramInfo });
+        if (customProgram === false) continue;
 
         // Reaching this line means the object is about to draw with the
         // built-in PBR shader. If it authored a Selena or CustomMaterial
@@ -10190,6 +10015,7 @@
         }
 
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, currentUniforms, mat, detailEnabled);
+        sceneWebGLUploadSelenaSurface(gl, customProgram, mat, selenaUniformValue);
 
         // Per-object shadow receive control.
         gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
@@ -10213,7 +10039,7 @@
 	        if (isSkinned) {
 	          gl.uniform1i(currentUniforms.hasSkin, 1);
 
-          uploadSkinJoints(currentUniforms.jointMatrices, obj.skin);
+          sceneUploadSkinJoints(gl, currentUniforms, obj.skin);
         } else if (currentUniforms.hasSkin) {
           gl.uniform1i(currentUniforms.hasSkin, 0);
         }
@@ -10261,7 +10087,7 @@
           gl.vertexAttrib4f(currentAttribs.tangent, 1, 0, 0, 1);
         }
 
-        // Joints and weights (skinned meshes only).
+        window.__gosx_scene3d_asset_ext.uv1.bind(gl, currentProgram, obj, mat);
         if (isSkinned && currentAttribs.joints >= 0 && currentAttribs.weights >= 0) {
           var joints = obj.vertices.joints;
           var weights = obj.vertices.weights;
@@ -10531,6 +10357,7 @@
         // stops that scintillation without giving up the depth cue.
         computeEntry.minPixelSize = sceneNumber(material.minPixelSize, 0);
         computeEntry.maxPixelSize = sceneNumber(material.maxPixelSize, 0);
+        computeEntry.softDistance = sceneNumber(material.softDistance, 0);
         computeEntry.customVertex = typeof sourceEntry.renderVertex === "string" ? sourceEntry.renderVertex : "";
         computeEntry.customFragment = typeof sourceEntry.renderFragment === "string" ? sourceEntry.renderFragment : "";
         computeEntry.customUniforms = sourceEntry.renderUniforms && typeof sourceEntry.renderUniforms === "object"
@@ -10589,7 +10416,8 @@
         var layerID = (typeof entry.id === "string" && entry.id) ? entry.id : ("points-" + i);
         var pp = ensurePointsAuthoredGLProgram(entry, layerID);
         var usedAuthored = !!pp;
-        if (!pp) pp = ensurePointsProgram();
+        var softPP = usedAuthored ? null : softParticles.program(entry);
+        if (!pp) pp = softPP || ensurePointsProgram();
         // Neither an authored program nor the builtin fallback compiled for
         // this layer (e.g. the builtin failed to compile in this
         // environment) — skip only this entry rather than aborting the rest
@@ -10653,7 +10481,7 @@
         }
 
         // Depth write control.
-        var depthWrite = entry.depthWrite !== false;
+        var depthWrite = entry.depthWrite !== false && !softPP;
         gl.depthMask(depthWrite);
         gl.depthFunc(gl.LEQUAL);
 
@@ -10667,39 +10495,9 @@
         gl.uniform1i(pp.uniforms.pointStyle, scenePointStyleCode(entry.style));
         gl.uniform1f(pp.uniforms.minPixelSize, Math.max(0, sceneNumber(entry.minPixelSize, 0)));
         gl.uniform1f(pp.uniforms.maxPixelSize, Math.max(0, sceneNumber(entry.maxPixelSize, 0)));
+        if (softPP) softParticles.bind(softPP, entry);
 
-        // Cache typed arrays on first use — positions/sizes/colors are static.
-        var rawPositions = entry.positions;
-        if (!entry._cachedPos && rawPositions && (Array.isArray(rawPositions) || sceneIsNumericTypedArray(rawPositions)) && rawPositions.length >= count * 3) {
-          entry._cachedPos = rawPositions instanceof Float32Array ? rawPositions : new Float32Array(rawPositions);
-        }
-        var rawSizes = entry.sizes;
-        if (!entry._cachedSizes && rawSizes && (Array.isArray(rawSizes) || sceneIsNumericTypedArray(rawSizes)) && rawSizes.length >= count) {
-          entry._cachedSizes = rawSizes instanceof Float32Array ? rawSizes : new Float32Array(rawSizes);
-        }
-        var rawColors = entry.colors;
-        if (!entry._cachedColors && rawColors && (Array.isArray(rawColors) || sceneIsNumericTypedArray(rawColors)) && rawColors.length >= count) {
-          if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
-            entry._cachedColors = new Float32Array(count * 4);
-            for (var ci = 0; ci < count; ci++) {
-              var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
-              entry._cachedColors[ci * 4] = crgba[0];
-              entry._cachedColors[ci * 4 + 1] = crgba[1];
-              entry._cachedColors[ci * 4 + 2] = crgba[2];
-              entry._cachedColors[ci * 4 + 3] = crgba[3];
-            }
-          } else if (rawColors.length >= count * 4) {
-            entry._cachedColors = new Float32Array(rawColors);
-          } else if (rawColors.length >= count * 3) {
-            entry._cachedColors = new Float32Array(count * 4);
-            for (var ci2 = 0; ci2 < count; ci2++) {
-              entry._cachedColors[ci2 * 4] = rawColors[ci2 * 3];
-              entry._cachedColors[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
-              entry._cachedColors[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
-              entry._cachedColors[ci2 * 4 + 3] = 1;
-            }
-          }
-        }
+        sceneWebGLCachePointArrays(entry, count);
         // Positions (vec3) — bind the entry's cached VBO (uploaded once
         // per typed-array lifetime for static points, updated in-place
         // via bufferSubData for dynamic compute particle systems).
@@ -10751,6 +10549,7 @@
           webglComputeParticleDrawStats.drawEntries += 1;
           webglComputeParticleDrawStats.drawInstances += count;
           webglComputeParticleDrawStats.drawCalls += 1;
+          if (softPP) webglComputeParticleDrawStats.softDrawCalls += 1;
           if (usedAuthored) {
             webglComputeParticleDrawStats.authoredDrawEntries += 1;
             webglComputeParticleDrawStats.authoredDrawInstances += count;
@@ -10762,6 +10561,7 @@
       // Restore state.
       gl.depthMask(true);
       gl.disable(gl.BLEND);
+      if (softParticles.used()) textureCache._sceneTextureEpoch++;
 
       // Switch back to PBR program.
       gl.useProgram(program);
@@ -10883,7 +10683,7 @@
         if (!ip) continue;
         gl.useProgram(ip.program); uploadInstancedFrame(ip);
         gl.depthMask(sceneTransmissionDepthWrite(mesh, mat, renderPass === "opaque"));
-        uploadMaterial(gl, ip.uniforms, mat, textureCache);
+        uploadMaterial(gl, ip.uniforms, mat, textureCache); sceneWebGLWindUpload(gl, ip, mesh.wind);
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.
@@ -10996,9 +10796,10 @@
     function dispose() {
       sceneWebGLDisposeDetail(gl, detailResources);
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources);
-      if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
+      if (oceanResources.renderer) oceanResources.renderer.dispose(); terrainResources.dispose?.(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
-      transmissionResources.dispose();
+      transmissionResources.dispose(); window.__gosx_scene3d_crowd_api?.dispose(gl);
+      softParticles.dispose(); exposureGL.dispose();
       scenePBRDisposeProgramQueue(gl);
 
       // Drop cached GL_MAX_* constants: covers context loss (mount.ts calls
@@ -11033,6 +10834,7 @@
       instancedStreamRecords.clear();
       rigidBatchRecords.clear();
       disposeCrowdResources();
+      sceneDisposeJointPalette(gl); window.__gosx_scene3d_asset_ext.uv1.dispose(gl);
       meshColorVisibility.clear();
       rigidObjectBatches.clear();
       disposeOwnedProgram(rigidShadowProgram);
@@ -11101,6 +10903,7 @@
         disposeOwnedProgram(cp);
       }
       customProgramCache.clear();
+      sceneWebGLDisposeSelenaSurfaces(selenaSurfacePrograms, disposeOwnedProgram);
       scenePBRAuthoredProgramKeys.delete(customProgramCache);
 
       for (const record of selenaProgramCache.values()) {
@@ -11215,7 +11018,7 @@
       drawnPostEffects: function() { return lastPostEffects; },
       renderSurfaces: renderSurfaces,
       dispose: function() { frameTimer.dispose(); dispose(); },
-      diagnostics: diagnostics,
+      diagnostics: diagnostics, shaderPrograms: function() { const q = scenePBRCompileContext(gl); return { total: q.total, pending: q.pending.size, failed: q.failed }; },
       type: "webgl-pbr",
       textureVariantContext: textureVariantContext,
     };

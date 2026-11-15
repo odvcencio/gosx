@@ -15,9 +15,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"m31labs.dev/gosx/internal/filepolicy"
-	"m31labs.dev/gosx/internal/htmlattr"
-	"m31labs.dev/gosx/internal/sceneprobe"
 	"maps"
 	neturl "net/url"
 	"os"
@@ -28,6 +25,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"m31labs.dev/gosx/internal/filepolicy"
+	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/sceneprobe"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
@@ -102,8 +103,15 @@ type Renderer struct {
 	bootstrapFeatureScene3dVesselPath           string
 	bootstrapFeatureScene3dOceanQueryPath       string
 	bootstrapFeatureScene3dHierarchyPath        string
+	bootstrapFeatureScene3dSelenaLightingPath   string
+	bootstrapFeatureScene3dDataTexturePath      string
+	bootstrapFeatureScene3dWarmupPath           string
+	bootstrapFeatureScene3dTextAtlasPath        string
 	bootstrapFeatureScene3dOceanFFTPath         string
 	bootstrapFeatureScene3dParticleBurstPath    string
+	bootstrapFeatureScene3dDepthFXPath          string
+	bootstrapFeatureScene3dPostFXWebGPUPath     string
+	bootstrapFeatureScene3dPostFXWebGLPath      string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -284,7 +292,14 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapFeatureScene3dModelPreparationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-model-preparation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DModelPreparation.Hash))
 	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
 	renderer.bootstrapFeatureScene3dHierarchyPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hierarchy.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHierarchy.Hash))
+	renderer.bootstrapFeatureScene3dSelenaLightingPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-selena-lighting.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DSelenaLighting.Hash))
+	renderer.bootstrapFeatureScene3dDataTexturePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-data-texture.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDataTexture.Hash))
+	renderer.bootstrapFeatureScene3dWarmupPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-warmup.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWarmup.Hash))
+	renderer.bootstrapFeatureScene3dTextAtlasPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-text-atlas.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTextAtlas.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
+	renderer.bootstrapFeatureScene3dDepthFXPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-depthfx.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDepthFX.Hash))
+	renderer.bootstrapFeatureScene3dPostFXWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-postfx-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DPostFXWebGPU.Hash))
+	renderer.bootstrapFeatureScene3dPostFXWebGLPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-postfx-webgl.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DPostFXWebGL.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
 	renderer.bootstrapFeatureScene3dOceanQueryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-query.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanQuery.Hash))
@@ -758,12 +773,74 @@ func (r *Renderer) SetBootstrapFeatureScene3DHierarchyPath(path string) {
 	r.bootstrapFeatureScene3dHierarchyPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DSelenaLightingPath overrides the content-gated
+// Selena scene lighting URL.
+func (r *Renderer) SetBootstrapFeatureScene3DSelenaLightingPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dSelenaLightingPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DDataTexturePath overrides the content-gated
+// Selena data-texture upload URL.
+func (r *Renderer) SetBootstrapFeatureScene3DDataTexturePath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dDataTexturePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DWarmupPath overrides the content-gated shader
+// warm-up URL.
+func (r *Renderer) SetBootstrapFeatureScene3DWarmupPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dWarmupPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DTextAtlasPath overrides the content-gated text
+// atlas URL.
+func (r *Renderer) SetBootstrapFeatureScene3DTextAtlasPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dTextAtlasPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DParticleBurstPath overrides the demand-loaded burst URL.
 func (r *Renderer) SetBootstrapFeatureScene3DParticleBurstPath(path string) {
 	if r == nil {
 		return
 	}
 	r.bootstrapFeatureScene3dParticleBurstPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DDepthFXPath overrides the demand-loaded depth-effects URL (decals, motion blur).
+func (r *Renderer) SetBootstrapFeatureScene3DDepthFXPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dDepthFXPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DPostFXWebGPUPath overrides the demand-loaded WebGPU
+// post-effects URL (temporal anti-aliasing, depth of field, auto exposure).
+func (r *Renderer) SetBootstrapFeatureScene3DPostFXWebGPUPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dPostFXWebGPUPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DPostFXWebGLPath overrides the demand-loaded WebGL
+// post-effects URL (temporal anti-aliasing, depth of field, auto exposure).
+func (r *Renderer) SetBootstrapFeatureScene3DPostFXWebGLPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dPostFXWebGLPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
 // SetBootstrapFeatureScene3DTimelinePath overrides the demand-loaded timeline chunk URL.
@@ -899,8 +976,22 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DZoom, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-hierarchy.js", r.bootstrapFeatureScene3dHierarchyPath, r.runtimeAssets.BootstrapFeatureScene3DHierarchy):
 		return r.runtimeAssets.BootstrapFeatureScene3DHierarchy, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-selena-lighting.js", r.bootstrapFeatureScene3dSelenaLightingPath, r.runtimeAssets.BootstrapFeatureScene3DSelenaLighting):
+		return r.runtimeAssets.BootstrapFeatureScene3DSelenaLighting, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-data-texture.js", r.bootstrapFeatureScene3dDataTexturePath, r.runtimeAssets.BootstrapFeatureScene3DDataTexture):
+		return r.runtimeAssets.BootstrapFeatureScene3DDataTexture, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-warmup.js", r.bootstrapFeatureScene3dWarmupPath, r.runtimeAssets.BootstrapFeatureScene3DWarmup):
+		return r.runtimeAssets.BootstrapFeatureScene3DWarmup, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-text-atlas.js", r.bootstrapFeatureScene3dTextAtlasPath, r.runtimeAssets.BootstrapFeatureScene3DTextAtlas):
+		return r.runtimeAssets.BootstrapFeatureScene3DTextAtlas, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
 		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-depthfx.js", r.bootstrapFeatureScene3dDepthFXPath, r.runtimeAssets.BootstrapFeatureScene3DDepthFX):
+		return r.runtimeAssets.BootstrapFeatureScene3DDepthFX, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-postfx-webgpu.js", r.bootstrapFeatureScene3dPostFXWebGPUPath, r.runtimeAssets.BootstrapFeatureScene3DPostFXWebGPU):
+		return r.runtimeAssets.BootstrapFeatureScene3DPostFXWebGPU, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-postfx-webgl.js", r.bootstrapFeatureScene3dPostFXWebGLPath, r.runtimeAssets.BootstrapFeatureScene3DPostFXWebGL):
+		return r.runtimeAssets.BootstrapFeatureScene3DPostFXWebGL, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
 		return r.runtimeAssets.BootstrapFeatureScene3DTimeline, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-vessel.js", r.bootstrapFeatureScene3dVesselPath, r.runtimeAssets.BootstrapFeatureScene3DVessel):
@@ -1099,7 +1190,14 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DModelPreparationPath(runtime.BootstrapFeatureScene3DModelPreparation)
 	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
 	r.SetBootstrapFeatureScene3DHierarchyPath(runtime.BootstrapFeatureScene3DHierarchy)
+	r.SetBootstrapFeatureScene3DSelenaLightingPath(runtime.BootstrapFeatureScene3DSelenaLighting)
+	r.SetBootstrapFeatureScene3DDataTexturePath(runtime.BootstrapFeatureScene3DDataTexture)
+	r.SetBootstrapFeatureScene3DWarmupPath(runtime.BootstrapFeatureScene3DWarmup)
+	r.SetBootstrapFeatureScene3DTextAtlasPath(runtime.BootstrapFeatureScene3DTextAtlas)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
+	r.SetBootstrapFeatureScene3DDepthFXPath(runtime.BootstrapFeatureScene3DDepthFX)
+	r.SetBootstrapFeatureScene3DPostFXWebGPUPath(runtime.BootstrapFeatureScene3DPostFXWebGPU)
+	r.SetBootstrapFeatureScene3DPostFXWebGLPath(runtime.BootstrapFeatureScene3DPostFXWebGL)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
 	r.SetBootstrapFeatureScene3DOceanQueryPath(runtime.BootstrapFeatureScene3DOceanQuery)
@@ -1480,21 +1578,6 @@ func cspNonceAttr(nonce string) string {
 		return ""
 	}
 	return ` nonce="` + html.EscapeString(nonce) + `"`
-}
-
-// htmlJSStringLiteral returns a JS string literal (including surrounding
-// quotes) safe to embed inside an inline <script> tag. Uses JSON encoding
-// plus a </script> guard so the result can sit inside an HTML context
-// without being terminated early by a literal </script> in the payload.
-func htmlJSStringLiteral(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return `""`
-	}
-	// HTML spec forbids the literal string "</" inside a script element
-	// if it starts a closing tag; escape the forward slash to be safe.
-	out := strings.ReplaceAll(string(b), "</", `<\/`)
-	return out
 }
 
 // RenderEngine registers an engine instance in the hydration manifest and,
@@ -2230,6 +2313,11 @@ func childProgramPath(parent string, idx int) string {
 // during HTML parsing, BEFORE the scripts execute — eliminating the
 // serial dependency of HTML → JS → fetch WASM.
 func (r *Renderer) PreloadHints() gosx.Node {
+	return r.PreloadHintsWithNonce("")
+}
+
+// PreloadHintsWithNonce attaches the request nonce to script preload hints.
+func (r *Renderer) PreloadHintsWithNonce(nonce string) gosx.Node {
 	if !r.needsClientBootstrap() {
 		return gosx.Text("")
 	}
@@ -2300,7 +2388,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
 				continue
 			}
-			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer"%s>`, path, preloadNonceAttr(nonce)))
 			b.WriteByte('\n')
 		}
 		// Required opt-in chunks are fetched by the loader, never by a script
@@ -2310,12 +2398,12 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
 				continue
 			}
-			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer"%s>`, path, preloadNonceAttr(nonce)))
 			b.WriteByte('\n')
 		}
 	}
 
-	r.writeScene3DPreloads(&b)
+	r.writeScene3DPreloads(&b, nonce)
 	return gosx.RawHTML(b.String())
 }
 
@@ -2333,7 +2421,14 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"experience", r.bootstrapFeatureScene3dExperiencePath, r.scene3DNeedsExperienceChunk()},
 		{"instance-stream", r.bootstrapFeatureScene3dInstanceStreamPath, true},
 		{"hierarchy", r.bootstrapFeatureScene3dHierarchyPath, true},
+		{"selena-lighting", r.bootstrapFeatureScene3dSelenaLightingPath, r.scene3DNeedsSelenaLightingChunk()},
+		{"data-texture", r.bootstrapFeatureScene3dDataTexturePath, r.scene3DNeedsSelenaDataTextureChunk()},
+		{"warmup", r.bootstrapFeatureScene3dWarmupPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsShaderWarmup)},
+		{"text-atlas", r.bootstrapFeatureScene3dTextAtlasPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsTextAtlases)},
 		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
+		{"depthfx", r.bootstrapFeatureScene3dDepthFXPath, r.scene3DNeedsDepthFXChunk()},
+		{"postfx-webgpu", r.bootstrapFeatureScene3dPostFXWebGPUPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsWebGPUPostFX)},
+		{"postfx-webgl", r.bootstrapFeatureScene3dPostFXWebGLPath, r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsPostFX)},
 		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
 		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
 		{"webgpu", r.bootstrapFeatureScene3dWebGPUPath, true},
@@ -2344,6 +2439,9 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"vessel", r.bootstrapFeatureScene3dVesselPath, r.scene3DNeedsVesselChunk()},
 		{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath, r.scene3DNeedsVesselChunk()},
 		{"ocean-fft", r.bootstrapFeatureScene3dOceanFFTPath, r.scene3DNeedsOceanFFTChunk()},
+		// Terrain and crowds ship as runtime feature chunks (build.json runtime.features).
+		{"terrain", r.requiredFeaturePath("scene3d-terrain"), r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsTerrain)},
+		{"crowd", r.requiredFeaturePath("scene3d-crowd"), r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsCrowds)},
 		{"compute", r.bootstrapFeatureScene3dComputePath, needsCompute},
 		{"decompress", r.bootstrapFeatureScene3dDecompressPath, needsDecompress},
 	} {
@@ -2822,6 +2920,59 @@ func (r *Renderer) scene3DNeedsParticleBurstChunk() bool {
 		}
 		props := sceneProbe(entry)
 		if props.ParticleBursts {
+			return true
+		}
+	}
+	return false
+}
+
+// Decals and motion blur load only for scenes that declare them.
+func (r *Renderer) scene3DNeedsDepthFXChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		props := sceneProbe(entry)
+		if props.NeedsDepthFX() {
+			return true
+		}
+	}
+	return false
+}
+
+// Selena scene lighting is advertised only when a Selena material on the page
+// reads the lighting block (lights, shadows, fog or the camera forward vector).
+func (r *Renderer) scene3DNeedsSelenaLightingChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).NeedsSelenaLighting() {
+			return true
+		}
+	}
+	return false
+}
+
+// The Selena data-texture chunk is advertised only when a Selena material on
+// the page reads a data texture (load or float format) or references a
+// host-written one ("gosx:data:<key>").
+func (r *Renderer) scene3DNeedsSelenaDataTextureChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).NeedsSelenaDataTexture() {
+			return true
+		}
+	}
+	return false
+}
+
+// scene3DNeedsChunk reports whether any Scene3D engine on the page needs the
+// chunk the probe method gates: shader warm-up and text atlases are
+// advertised only for scenes that declare them.
+func (r *Renderer) scene3DNeedsChunk(needs func(*sceneprobe.Probe) bool) bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && needs(sceneProbe(entry)) {
 			return true
 		}
 	}

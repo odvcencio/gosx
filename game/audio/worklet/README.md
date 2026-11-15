@@ -46,10 +46,10 @@ opaque. Image replacement metadata must be validated by the backend again.
 
 Messages retain a small transferable protocol: `c` submits a `Uint8Array` of
 commands; `i` supplies a new image and `info`; `r` acknowledges initialization;
-`m` transfers engine messages (`n` valid bytes); `b` returns that buffer. `e`
+`m` transfers engine messages (`n` valid bytes, `f` the engine position in sample frames since the last play); `b` returns that buffer. `e`
 reports a fatal host error, `x` rejects a request, and `f` reports a configured
 backend fault, usually without waiting for `b` (see below). `q` reports timing
-histograms, memory and underruns; `p` resets the histogram. Closing the typed
+histograms, memory, underruns and the position `f`; `p` resets the histogram. Closing the typed
 node sends `close`, releases the reactor, disconnects the node and closes ports.
 
 The processor drains the active reactor's message ring every eighth render
@@ -91,3 +91,5 @@ Validation runs in Go and the processor. Native asset tests enforce 24 KiB raw
 and 6 KiB gzip limits. The Node suite exercises a separate mono backend with
 different record sizes and export names. Applications should additionally test
 their actual kernel and listen/check PCM in a browser.
+
+Package `game/audio/kernel` wraps this protocol for `js/wasm` games (start, send commands, receive messages, report state and position) and routes the node to a mixer bus; `worklet.State` and `worklet.Event` implement the same protocol in plain Go. See docs/audio.md.

@@ -712,14 +712,14 @@ test("WebGL PBR shader consumes the uploaded factors in direct and IBL paths", (
   // Direct Schlick carries F90: an omitted intensity must scale the lobe.
   assert.match(source, /vec3 fresnelSchlick\(float cosTheta, vec3 F0, float F90\) \{/);
   assert.match(source, /return F0 \+ \(vec3\(F90\) - F0\) \* pow/);
-  assert.match(source, /vec3 F = fresnelSchlick\(max\(dot\(H, V\), 0\.0\), F0, F90\);/);
+  assert.match(source, /fresnelSchlick\(VdotH, F0, F90\) \/ denominator \* layer\.energy;/);
   // The implicit-F90 Schlick form must not come back anywhere.
   assert.doesNotMatch(source, /return F0 \+ \(1\.0 - F0\) \* pow/);
   // Scalar dielectric diffuse, never the inverse RGB tint.
   assert.match(source, /float kD = \(1\.0 - max\(Fdiel\.x, max\(Fdiel\.y, Fdiel\.z\)\)\) \* \(1\.0 - metalness\);/);
   assert.doesNotMatch(source, /vec3 kD = \(vec3\(1\.0\) - F\) \* \(1\.0 - metalness\);/);
-  // Split-sum IBL weights brdf.y by the mixed F90.
-  assert.match(source, /vec3\(F90\) \* brdf\.y/);
+  // Split-sum IBL weights the DFG bias term by the mixed F90.
+  assert.match(source, /vec3 FssEss = F0 \* dfg\.x \+ vec3\(F90\) \* dfg\.y;/);
   assert.doesNotMatch(source, /prefiltered \* \(F0 \* brdf\.x \+ brdf\.y\)/);
   // Roughness-adjusted environment Fresnel honours F90.
   assert.match(source, /vec3 fresnelSchlickRoughness\(float cosTheta, vec3 F0, float F90, float roughness\) \{/);
@@ -1207,14 +1207,14 @@ test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => 
   // Direct Schlick carries F90: an omitted intensity must scale the lobe.
   assert.match(source, /fn fresnelSchlick\(cosTheta: f32, F0: vec3f, F90: f32\) -> vec3f \{/);
   assert.match(source, /return F0 \+ \(vec3f\(F90\) - F0\) \* pow/);
-  assert.match(source, /let F = fresnelSchlick\(max\(dot\(H, V\), 0\.0\), F0, F90\);/);
+  assert.match(source, /fresnelSchlick\(VdotH, F0, F90\) \/ denominator \* layer\.energy;/);
   // The implicit-F90 Schlick form must not come back anywhere.
   assert.doesNotMatch(source, /return F0 \+ \(1\.0 - F0\) \* pow/);
   // Scalar dielectric diffuse, never the inverse RGB tint.
   assert.match(source, /let kD = \(1\.0 - max\(Fdiel\.x, max\(Fdiel\.y, Fdiel\.z\)\)\) \* \(1\.0 - metalness\);/);
   assert.doesNotMatch(source, /let kD = \(vec3f\(1\.0\) - F\) \* \(1\.0 - metalness\);/);
-  // Split-sum IBL weights brdf.y by the mixed F90.
-  assert.match(source, /vec3f\(F90\) \* brdf\.y/);
+  // Split-sum IBL weights the DFG bias term by the mixed F90.
+  assert.match(source, /let FssEss = F0 \* dfg\.x \+ vec3f\(F90\) \* dfg\.y;/);
   assert.doesNotMatch(source, /prefiltered \* \(F0 \* brdf\.x \+ brdf\.y\)/);
   // Roughness-adjusted environment Fresnel honours F90.
   assert.match(source, /fn fresnelSchlickRoughness\(cosTheta: f32, F0: vec3f, F90: f32, roughness: f32\) -> vec3f \{/);

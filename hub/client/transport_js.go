@@ -5,7 +5,6 @@ package hubclient
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"m31labs.dev/gosx/hub/socket"
 )
@@ -15,7 +14,7 @@ func newDefaultDialer(bool) dialer { return browserDialer{} }
 
 type browserDialer struct{}
 
-func (browserDialer) Dial(ctx context.Context, rawURL string, _ http.Header) (conn, error) {
+func (browserDialer) Dial(ctx context.Context, rawURL string, _ Header) (conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

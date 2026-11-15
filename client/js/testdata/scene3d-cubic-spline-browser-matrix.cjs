@@ -40,6 +40,15 @@ const HARNESS = path.join(REPO, 'client', 'js', 'testdata',
 const fixture = require(path.join(REPO, 'client', 'js', 'testdata',
   'cubic-spline-fixture.cjs'));
 const texturedFixture = require('./textured-glb-fixture.cjs');
+// The affine pick expectation is derived in this helper. Check the derivation
+// before any browser starts, so a broken one fails the job at once.
+const affinePick = require('./scene3d-affine-pick-geometry.cjs');
+{
+  const problems = affinePick.check();
+  if (problems.length > 0) {
+    throw new Error('affine pick geometry self-check failed: ' + problems.join('; '));
+  }
+}
 const CHROME_BIN = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
 const EXPECTED_VERSION_ENV = 'GOSX_EXPECTED_CHROME_VERSION';
 const IDENTITY_SELF_CHECK_ENV = 'GOSX_SCENE3D_CUBIC_IDENTITY_SELF_CHECK_ONLY';
@@ -104,12 +113,7 @@ const NEGATIVE_ERRORS = {
       '[' + name + '] texture lacks ' + color + ' pixels (expected >= 100)')),
 };
 const EXPECTED_CASE_NAMES = Object.freeze(['affine-gl', 'affine-wg', 'gl', 'wg', 'textured-gl', 'textured-wg']);
-const AFFINE_PARENT = Object.freeze([
-  -2, 0, 0, 0,
-  0, 1, 0, 0,
-  0, 0, 1, 0,
-  0.5, 0.5, 1, 1,
-]);
+const AFFINE_PARENT = Object.freeze(affinePick.PARENT.slice());
 const AFFINE_LOCAL_POSITIONS = Object.freeze([
   -0.4, -0.4, 0,
   0.4, -0.4, 0,
@@ -134,6 +138,8 @@ function verifyHostedClaimSources() {
       'scene3d-browser-diagnostics.cjs'),
     texturedFixture: path.join(REPO, 'client', 'js', 'testdata',
       'textured-glb-fixture.cjs'),
+    affinePickGeometry: path.join(REPO, 'client', 'js', 'testdata',
+      'scene3d-affine-pick-geometry.cjs'),
     workflow: path.join(REPO, '.github', 'workflows', 'ci.yml'),
     corpus: path.join(REPO, 'scene', 'harness', 'testdata', 'v1-corpus.json'),
     readme: path.join(REPO, 'README.md'),
@@ -373,6 +379,18 @@ function checkIdentity(failures, value, label) {
   }, label);
 }
 
+// clientEventNames is the producer's per-event diagnostic list for the report
+// being verified; checkTelemetry names a case's events next to a count
+// mismatch so the extra event is visible without the artifact.
+let clientEventNames = [];
+
+function caseEventNote(label) {
+  const caseName = String(label).replace(/\.telemetry$/, '');
+  const names = clientEventNames.filter((event) => event && event.caseName === caseName)
+    .map((event) => [event.cat, event.lvl, event.msg].join(' '));
+  return ' [events: ' + (names.length ? names.join('; ') : 'none recorded') + ']';
+}
+
 function checkTelemetry(failures, value, label) {
   check(failures, value && typeof value === 'object', label + ': missing');
   if (!value || typeof value !== 'object') return;
@@ -385,7 +403,8 @@ function checkTelemetry(failures, value, label) {
   for (const field of ['emittedEvents', 'attemptedEvents', 'attemptedBatches',
     'dispatchedEvents', 'dispatchedBatches', 'serverAcceptedEvents',
     'serverAcceptedBatches']) {
-    exact(failures, value[field], 1, label + '.' + field);
+    const note = (field === 'emittedEvents' || field === 'attemptedEvents') && value[field] !== 1 ? caseEventNote(label) : '';
+    exact(failures, value[field], 1, label + '.' + field + note);
   }
   exact(failures, value.lastFlushReason, 'manual-drain', label + '.lastFlushReason');
   exact(failures, value.lastFailureReason, '', label + '.lastFailureReason');
@@ -458,9 +477,14 @@ function checkAffine(failures, value, webgpu) {
     const pick = affine.pick;
     exact(failures, pick && pick.targetID, 'affine-group-child',
       name + '.affine.pick.targetID');
+    // The pointer is at a pixel only the scaled triangle covers, not at the
+    // image of the local origin (0.5, 0.5, 1). The expected point and depth come
+    // from scene3d-affine-pick-geometry.cjs, which derives them from the camera,
+    // the canvas and the pixel offset. Depth is the distance along the unit ray.
+    const expectedPick = affinePick.expectedPick();
     closeArray(failures, pick && [pick.worldX, pick.worldY, pick.worldZ],
-      [0.5, 0.5, 1], name + '.affine.pick.world', 2e-4);
-    relativeClose(failures, pick && pick.depth, 2,
+      expectedPick.world, name + '.affine.pick.world', 2e-4);
+    relativeClose(failures, pick && pick.depth, expectedPick.depth,
       name + '.affine.pick.depth', 1e-4);
 
     if (webgpu) {
@@ -1102,6 +1126,7 @@ function verifyReport(report, mode, browser) {
   const failures = [];
   check(failures, report && typeof report === 'object', 'report is not an object');
   if (!report || typeof report !== 'object') return failures;
+  clientEventNames = Array.isArray(report.clientEventNames) ? report.clientEventNames : [];
   checkTopLevel(failures, report, mode, browser);
   const affineGL = Array.isArray(report.cases) ?
     report.cases.find((value) => value.name === 'affine-gl') : null;

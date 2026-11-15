@@ -43,6 +43,8 @@ const (
 	PostEffectKindCustomPost     = "customPost"
 	PostEffectKindGodRays        = "godRays"
 	PostEffectKindGrain          = "grain"
+	PostEffectKindDecals         = "decals"
+	PostEffectKindMotionBlur     = "motionBlur"
 )
 
 // ErrUnknownPostEffectKind reports a postEffects entry whose "kind" field no
@@ -67,6 +69,8 @@ var postEffectIRDecoders = map[string]func([]byte) (PostEffectIR, error){
 	PostEffectKindCustomPost:     decodePostEffectIRAs[CustomPostIR],
 	PostEffectKindGodRays:        decodePostEffectIRAs[GodRaysIR],
 	PostEffectKindGrain:          decodePostEffectIRAs[GrainIR],
+	PostEffectKindDecals:         decodePostEffectIRAs[DecalsIR],
+	PostEffectKindMotionBlur:     decodePostEffectIRAs[MotionBlurIR],
 }
 
 // decodePostEffectIRAs decodes one entry into the concrete IR type T. The
@@ -539,9 +543,9 @@ func (ir FXAAIR) MarshalJSON() ([]byte, error) {
 // CustomMaterial fields so the JS runtime can build pipelines from them
 // without contacting the Go server again.
 //
-// Stage controls insertion point in the browser post chain:
-//   - "" / "beforeTonemap" → after bloom, before tonemap (default)
-//   - "afterTonemap"       → after tonemap, in the LDR region
+// Stage carries CustomPost.Stage ("beforeTonemap" when empty). The browser
+// backends and the native renderer do not read it: a custom pass runs at its
+// position in the declared post-effect list.
 type CustomPostIR struct {
 	Name          string                  `json:"name"`
 	Stage         string                  `json:"stage,omitempty"`
@@ -708,6 +712,10 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 			out = append(out, ir)
 		case FXAA:
 			out = append(out, FXAAIR{})
+		case Decals:
+			out = append(out, ev.lower())
+		case MotionBlur:
+			out = append(out, ev.lower())
 		case CustomPost:
 			ir := lowerCustomPost(ev)
 			if ir != nil {

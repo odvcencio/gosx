@@ -274,7 +274,7 @@ function sceneRenderWithTiming(renderer, bundle, viewport, meta, timing) {
   const start = performance.now();
   timing.frameIntervalMS = timing.submitAtMS > 0 ? start - timing.submitAtMS : 0;
   timing.submitAtMS = start;
-  try { return renderer.render(bundle, viewport, meta); }
+  try { return sceneShaderWarmupSettle(meta, renderer.render(bundle, viewport, meta)); }
   finally { timing.cpuSubmitMS = performance.now() - start; }
 }
 

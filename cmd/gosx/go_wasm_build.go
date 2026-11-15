@@ -167,6 +167,9 @@ func runGoWASMOnlyBuild(projectDir string, opts BuildOptions) error {
 	if len(cfg.Build.GoWASM) == 0 {
 		return fmt.Errorf("--go-wasm-only requires build.goWASM entries")
 	}
+	if err := runSelenaBuildStep(projectDir, cfg.Build.Selena, os.Stdout); err != nil {
+		return err
+	}
 	output := opts.OutputDir
 	if output == "" {
 		output = filepath.Join(projectDir, "dist", "go-wasm")

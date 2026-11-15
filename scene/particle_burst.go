@@ -49,7 +49,7 @@ func (b ParticleBurst) Validate() error {
 	values := []float64{b.Bounds, b.Emitter.Position.X, b.Emitter.Position.Y, b.Emitter.Position.Z,
 		b.Emitter.Rotation.X, b.Emitter.Rotation.Y, b.Emitter.Rotation.Z, b.Emitter.Spin.X, b.Emitter.Spin.Y, b.Emitter.Spin.Z,
 		b.Emitter.Radius, b.Emitter.Rate, b.Emitter.Lifetime, b.Emitter.Wind, b.Emitter.Scatter,
-		b.Material.Size, b.Material.SizeEnd, b.Material.Opacity, b.Material.OpacityEnd, b.Material.MinPixelSize, b.Material.MaxPixelSize}
+		b.Material.Size, b.Material.SizeEnd, b.Material.Opacity, b.Material.OpacityEnd, b.Material.MinPixelSize, b.Material.MaxPixelSize, b.Material.SoftDistance}
 	for _, force := range b.Forces {
 		if strings.TrimSpace(force.Kind) == "" {
 			return fmt.Errorf("particle burst force needs a kind")
@@ -61,7 +61,7 @@ func (b ParticleBurst) Validate() error {
 			return fmt.Errorf("particle burst values must be finite")
 		}
 	}
-	if b.Emitter.Radius < 0 || b.Material.Size < 0 || b.Material.SizeEnd < 0 || b.Material.MinPixelSize < 0 || b.Material.MaxPixelSize < 0 ||
+	if b.Emitter.Radius < 0 || b.Material.Size < 0 || b.Material.SizeEnd < 0 || b.Material.MinPixelSize < 0 || b.Material.MaxPixelSize < 0 || b.Material.SoftDistance < 0 ||
 		b.Material.Opacity < 0 || b.Material.Opacity > 1 || b.Material.OpacityEnd < 0 || b.Material.OpacityEnd > 1 {
 		return fmt.Errorf("particle burst sizes must be nonnegative and opacity must be in [0,1]")
 	}

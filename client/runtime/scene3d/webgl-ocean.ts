@@ -13,7 +13,7 @@ const SCENE_OCEAN_GLSL_COMMON = [
   "float r=textureLod(u_bathymetry,uv,0.).r;",
   "  if (u_ocean[6].z > 1.5) { float s = 2. * r - 1.; return sign(s) * s * s * u_ocean[6].y; }", // signed-sqrt: fine steps near y = 0
   "  return mix(u_ocean[6].x, u_ocean[6].y, r);",
-  "}",
+  "}", "float oceanShore(vec2 xz) { vec2 uv=(xz-u_ocean[5].xy)/(u_ocean[5].zw-u_ocean[5].xy); if(u_ocean[23].x<=0.||u_ocean[6].z<.5||any(lessThan(uv*(1.-uv),vec2(0))))return 1e4; return (.5-textureLod(u_bathymetry,uv,0.).g)*2.*u_ocean[23].x; }", // the baked shoreline: meters from the waterline, positive at sea
 ].join("\n");
 
 const SCENE_OCEAN_VERTEX_GLSL = [
@@ -123,8 +123,8 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
   "  //GOSX_SUN_PATH",
   "  float crest = v_crest * v_crest;",
   "  vec3 scatter = u_ocean[3].xyz * (sunCol * 0.18 * pow(clamp(dot(V, -L) * 0.5 + 0.5, 0., 1.), 4.) + ambient * 0.12) * crest;",
-  "  float depth = max(v_w.y - oceanFloor(v_w.xz), 0.);",
-  "  float cl = u_ocean[1].w;",
+  "  float depth = max(v_w.y - oceanFloor(v_w.xz), 0.); float sd = oceanShore(v_w.xz);",
+  "  float cl = u_ocean[1].w * (u_ocean[23].x > 0. ? mix(u_ocean[23].z, 1., smoothstep(0., u_ocean[23].y * 3., sd)) : 1.);",
   "  float T = exp(-3. * depth * 0.5 * (1. + 1. / max(V.y, 0.08)) / cl);",
   "  vec3 water = mix(u_ocean[2].xyz * ambient, u_ocean[1].xyz * ambient + scatter, clamp(1. - exp(-depth / (cl * 0.6)), 0., 1.));",
   "  float foam = 0.;",
@@ -140,7 +140,7 @@ const SCENE_OCEAN_FRAGMENT_GLSL = [
   "      float breaker = exp(-pow((v_d0 - bd) / 0.16, 2.)) * (1. - smoothstep(0.28, 0.6, ph));",
   "      float edge = (1. - smoothstep(0.0, 0.1, depth)) * smoothstep(0.002, 0.03, depth);",
   "      float wash = (1. - smoothstep(0.2, 1.2, v_d0)) * (1. - smoothstep(0.25, 0.95, ph)) * 0.18;",
-  "      foam = max(foam, (breaker * (0.3 + 0.7 * lace) + edge * lace + wash * lace) * bu * 1.6);",
+  "      foam = max(foam, (breaker * (0.3 + 0.7 * lace) + edge * lace + wash * lace) * bu * 1.6); if (u_ocean[23].x > 0.) foam = max(foam, (1. - smoothstep(0., u_ocean[23].y, sd)) * smoothstep(-0.5, 0.25, sd) * (0.45 + 0.55 * lace) * bu * 1.4);",
   "    }",
   "    foam = clamp(foam * u_ocean[3].w, 0., 1.) * (1. - smoothstep(80., 250., dist));",
   "  }",

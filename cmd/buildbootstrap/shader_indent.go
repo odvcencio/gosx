@@ -53,7 +53,7 @@ func compactShaderIndentation(code string) string {
 }
 
 func compactBrowserSource(src source, code string) string {
-	if src.rel == "../runtime/scene3d/webgl.ts" || src.rel == "../runtime/scene3d/webgl-ocean.ts" {
+	if src.rel == "../runtime/scene3d/webgl.ts" || src.rel == "../runtime/scene3d/webgl-points.ts" || src.rel == "../runtime/scene3d/webgl-ocean.ts" {
 		return compactShaderIndentation(code)
 	}
 	return code

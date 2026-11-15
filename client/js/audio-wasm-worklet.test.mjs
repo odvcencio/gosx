@@ -382,3 +382,14 @@ test('a reactor that drains more records than MessageCapacity stops the node', a
   assert.ok(f.messages.some(m => m.t === 'e' && /invalid message count/.test(m.e)));
   assert.equal(f.render(128).alive, false);
 });
+
+test('message batches and timing replies report the engine position in frames', async () => {
+  const f = await fixture();
+  const x = f.reactors[0].x;
+  new Uint8Array(x.memory.buffer, 3072, 4).set([1, 2, 3, 4]); x.messages = 1;
+  for (let i = 0; i < 8; i++) f.render(128);
+  // The batch is posted at the eighth quantum, after 8 * 128 frames have rendered.
+  assert.equal(f.messages.find(m => m.t === 'm').f, 8 * 128);
+  f.send({t: 'q', l: 0});
+  assert.equal(f.messages.find(m => m.t === 'q').f, 8 * 128);
+});

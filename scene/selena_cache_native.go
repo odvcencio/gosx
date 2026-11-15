@@ -18,6 +18,7 @@ import (
 type selenaCacheKey struct {
 	source            [32]byte
 	material, targets string
+	modules           string
 	mrt               bool
 }
 
@@ -34,13 +35,13 @@ var compiledSelena = struct {
 	bytes   int
 }{entries: make(map[selenaCacheKey]*list.Element)}
 
-func compileSelenaCached(source []byte, opts selena.CompileOptions) (selena.Result, error) {
+func compileSelenaCached(source []byte, opts selena.CompileOptions, modules []string) (selena.Result, error) {
 	var targets strings.Builder
 	for _, target := range opts.Targets {
 		targets.WriteString(string(target))
 		targets.WriteByte(0)
 	}
-	key := selenaCacheKey{sha256.Sum256(source), opts.Material, targets.String(), opts.SpecularMRT}
+	key := selenaCacheKey{sha256.Sum256(source), opts.Material, targets.String(), strings.Join(modules, "\x00"), opts.SpecularMRT}
 	compiledSelena.Lock()
 	entry := compiledSelena.entries[key]
 	if entry != nil {
@@ -52,7 +53,7 @@ func compileSelenaCached(source []byte, opts selena.CompileOptions) (selena.Resu
 		result.Layout = cloneSelenaLayout(result.Layout)
 		return result, nil
 	}
-	result, err := selena.Compile(source, opts)
+	result, err := selenaCompile(source, opts, modules)
 	if err != nil {
 		return result, err
 	}
@@ -77,6 +78,7 @@ func compileSelenaCached(source []byte, opts selena.CompileOptions) (selena.Resu
 				compiledSelena.order.Remove(old)
 			}
 			key.material = strings.Clone(key.material)
+			key.modules = strings.Clone(key.modules)
 			compiledSelena.entries[key] = compiledSelena.order.PushFront(selenaCacheEntry{key, result, size})
 			compiledSelena.bytes += size
 		}

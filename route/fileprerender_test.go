@@ -15,6 +15,8 @@ func TestFileRoutesPrerenderUsesResolvedHooksBeforeLoading(t *testing.T) {
 	for _, tc := range []struct {
 		name, config          string
 		load, actions, export bool
+		staticOnly            bool
+		reason                string
 		want                  int
 	}{
 		{name: "static", export: true, want: 200},
@@ -23,6 +25,9 @@ func TestFileRoutesPrerenderUsesResolvedHooksBeforeLoading(t *testing.T) {
 		{name: "opt-in-loader", load: true, config: `{"prerender":true}`, export: true, want: 200},
 		{name: "opt-in-actions", actions: true, config: `{"prerender":true}`, export: true, want: 200},
 		{name: "opt-out", config: `{"prerender":false}`, export: true, want: 204},
+		{name: "static-only-loader", load: true, export: true, staticOnly: true, want: 200},
+		{name: "static-only-actions", actions: true, export: true, staticOnly: true, want: 204, reason: "actions"},
+		{name: "static-only-opt-out", load: true, config: `{"prerender":false}`, export: true, staticOnly: true, want: 204, reason: "config"},
 		{name: "live-loader", load: true, want: 200},
 		{name: "live-opt-out", load: true, config: `{"prerender":false}`, want: 200},
 	} {
@@ -32,6 +37,11 @@ func TestFileRoutesPrerenderUsesResolvedHooksBeforeLoading(t *testing.T) {
 				exportEnv = "1"
 			}
 			t.Setenv("GOSX_STATIC_EXPORT", exportEnv)
+			onlyEnv := ""
+			if tc.staticOnly {
+				onlyEnv = "1"
+			}
+			t.Setenv("GOSX_STATIC_EXPORT_ONLY", onlyEnv)
 			root := t.TempDir()
 			source := filepath.Join(root, "page.gsx")
 			if err := os.WriteFile(source, []byte("package app\nfunc Page() Node { return <p>page</p> }\n"), 0600); err != nil {
@@ -65,6 +75,9 @@ func TestFileRoutesPrerenderUsesResolvedHooksBeforeLoading(t *testing.T) {
 			}
 			if tc.want == 204 && (loads != 0 || w.Body.Len() != 0 || w.Header().Get("X-GoSX-Prerender") != "skip") {
 				t.Fatalf("skipped page loaded or rendered: loads=%d headers=%v", loads, w.Header())
+			}
+			if tc.reason != "" && w.Header().Get("X-GoSX-Prerender-Reason") != tc.reason {
+				t.Fatalf("skip reason = %q, want %q", w.Header().Get("X-GoSX-Prerender-Reason"), tc.reason)
 			}
 			if tc.load && tc.want == 200 && loads != 1 {
 				t.Fatalf("loads=%d want=1", loads)

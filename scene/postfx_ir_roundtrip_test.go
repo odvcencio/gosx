@@ -72,6 +72,24 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 			Saturation: float64(rtSaturation),
 		},
 	},
+	"Decals": {
+		effect: Decals{
+			Materials:   []DecalMaterial{{Name: "scorch", Albedo: "/d/scorch.png", Columns: 2, Rows: 2, Roughness: 0.5, AngleFadeStart: 50, AngleFadeEnd: 80, EdgeFade: 0.25, NormalStrength: 2, EmissiveIntensity: 3}},
+			Items:       []ProjectedDecal{{Material: "scorch", Position: Vec3(1, 2, 3), Normal: Vec3(0, 0, 1), Size: Vec3(2, 4, 0.5), Frame: 3, Opacity: 0.5, Tint: "#ff8000", Layer: 2}},
+			Pools:       []string{"impacts"},
+			MaxDistance: 40,
+		},
+		wantIR: DecalsIR{
+			Materials:   []DecalMaterial{{Name: "scorch", Albedo: "/d/scorch.png", Columns: 2, Rows: 2, Roughness: 0.5, AngleFadeStart: 50, AngleFadeEnd: 80, EdgeFade: 0.25, NormalStrength: 2, EmissiveIntensity: 3, Blend: "lit"}},
+			Records:     []float32{1, 2, 3, 0.5, 0, 0, 0, 1, 2, 4, 0.5, 3, 1, float32(128) / 255, 0, 1, 2, 0, 0, 0},
+			Pools:       []string{"impacts"},
+			MaxDistance: 40,
+		},
+	},
+	"MotionBlur": {
+		effect: MotionBlur{Quality: MotionBlurHigh, Strength: 0.75, MaxBlur: 48},
+		wantIR: MotionBlurIR{Quality: "high", Strength: 0.75, MaxBlur: 48, Samples: 16, TileSize: 16},
+	},
 	"TAA": {effect: TAA{HistoryWeight: 0.875, ClampGamma: 1.25, DepthThreshold: 0.015625}, wantIR: TAAIR{HistoryWeight: 0.875, ClampGamma: 1.25, DepthThreshold: 0.015625}},
 	"ContactShadows": {
 		effect: ContactShadows{Distance: 1.5, Thickness: 0.125, Bias: 0.015625, Intensity: 0.5, Direction: Vec3(-1, -1, 0)},
@@ -240,7 +258,7 @@ func TestSceneIRRoundTripsWholePostChain(t *testing.T) {
 // So a new effect that ships without a decoder fails here, at the seam where a
 // missing decoder becomes a dropped effect.
 func TestPostEffectIRRoundTripCoversEveryType(t *testing.T) {
-	effectTypes := methodReceiverTypes(t, "postfx.go", "isPostEffect")
+	effectTypes := methodReceiverTypes(t, "isPostEffect", "postfx.go", "decal.go", "motion_blur.go")
 	if len(effectTypes) == 0 {
 		t.Fatal("found no PostEffect type in postfx.go; the parser or the file layout changed")
 	}
@@ -255,7 +273,7 @@ func TestPostEffectIRRoundTripCoversEveryType(t *testing.T) {
 		}
 	}
 
-	irTypes := methodReceiverTypes(t, "postfx_ir.go", "legacyProps")
+	irTypes := methodReceiverTypes(t, "legacyProps", "postfx_ir.go", "decal.go", "motion_blur.go")
 	if len(irTypes) == 0 {
 		t.Fatal("found no PostEffectIR type in postfx_ir.go; the parser or the file layout changed")
 	}
@@ -396,7 +414,17 @@ func slicesContain(values []string, want string) bool {
 // methodReceiverTypes parses one file in this package and returns every type that
 // declares the named method. It reads the source rather than a registry, because
 // a registry is exactly the thing a new type forgets to join.
-func methodReceiverTypes(t *testing.T, file, method string) []string {
+func methodReceiverTypes(t *testing.T, method string, files ...string) []string {
+	t.Helper()
+	var names []string
+	for _, file := range files {
+		names = append(names, fileMethodReceiverTypes(t, file, method)...)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func fileMethodReceiverTypes(t *testing.T, file, method string) []string {
 	t.Helper()
 	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
 	if err != nil {

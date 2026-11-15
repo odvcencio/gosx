@@ -139,6 +139,7 @@ var draftFastNeeds = []string{
 	"js-tests",
 	"js-tests-b",
 	"js-tests-scene3d",
+	"js-tests-scene3d-b",
 }
 
 var baseAggregateNeeds = []string{
@@ -152,6 +153,7 @@ var baseAggregateNeeds = []string{
 	"js-tests",
 	"js-tests-b",
 	"js-tests-scene3d",
+	"js-tests-scene3d-b",
 	"wire-gates",
 	"wasm-tests",
 	"browser-tests",
@@ -165,15 +167,18 @@ var baseAggregateNeeds = []string{
 var cliShardJobs = []string{"go-cli-tests", "go-cli-tests-b", "go-cli-tests-c"}
 
 // jsShardJobs are the Node suite lanes. js-tests runs the runtime-NN suites
-// after its other checks, js-tests-scene3d runs renderer contracts, and
-// js-tests-b runs the remaining files (NODE_TEST_GROUP in the Makefile). Each runs exactly one group, so a lane that is missing,
+// after its other checks, js-tests-scene3d and js-tests-scene3d-b run the
+// renderer contracts in two halves split by file name, and js-tests-b runs the
+// remaining files (NODE_TEST_GROUP in the Makefile). Each runs exactly one group, so a lane that is missing,
 // renamed, or pointed at another group silently drops JavaScript tests from
 // CI. All run on draft pull requests too: they are part of the draft fast
-// check.
-var jsShardJobs = []struct{ name, step, run string }{
-	{"js-tests", "JavaScript runtime contract tests", "make test-js NODE_TEST_GROUP=runtime"},
-	{"js-tests-b", "JavaScript runtime contract tests (other suites)", "make test-js-node NODE_TEST_GROUP=other"},
-	{"js-tests-scene3d", "Scene3D renderer contract tests", "make test-js-node NODE_TEST_GROUP=scene3d"},
+// check. timeout pins each lane's timeout-minutes; every lane has 10, and the
+// scene3d split exists so that each half stays well under that.
+var jsShardJobs = []struct{ name, step, run, timeout string }{
+	{"js-tests", "JavaScript runtime contract tests", "make test-js NODE_TEST_GROUP=runtime", "10"},
+	{"js-tests-b", "JavaScript runtime contract tests (other suites)", "make test-js-node NODE_TEST_GROUP=other", "10"},
+	{"js-tests-scene3d", "Scene3D renderer contract tests", "make test-js-node NODE_TEST_GROUP=scene3d", "10"},
+	{"js-tests-scene3d-b", "Scene3D renderer contract tests (second half)", "make test-js-node NODE_TEST_GROUP=scene3d-b", "10"},
 }
 
 // browserShardJobs are the e2e browser lanes in citest shard order. The first
@@ -230,7 +235,7 @@ func Validate(source []byte) error {
 		if !ok {
 			return fmt.Errorf("workflow.jobs: %s job is missing", shard.name)
 		}
-		if err := validateJSShardJob(job, shard.name, shard.step, shard.run); err != nil {
+		if err := validateJSShardJob(job, shard.name, shard.step, shard.run, shard.timeout); err != nil {
 			return err
 		}
 	}
@@ -458,7 +463,7 @@ func validateCLIShardJob(node *yaml.Node, name string, shard int) error {
 	return exactString(fields["run"], label+" shard step.run", fmt.Sprintf("make test-cli CLI_SHARD=%d", shard))
 }
 
-func validateJSShardJob(node *yaml.Node, name, stepName, run string) error {
+func validateJSShardJob(node *yaml.Node, name, stepName, run, timeoutMinutes string) error {
 	label := name + " job"
 	job, err := mapping(node, label)
 	if err != nil {
@@ -471,7 +476,7 @@ func validateJSShardJob(node *yaml.Node, name, stepName, run string) error {
 	if !ok {
 		return fmt.Errorf("%s: missing field \"timeout-minutes\"", label)
 	}
-	if err := exactInt(timeout, label+".timeout-minutes", "10"); err != nil {
+	if err := exactInt(timeout, label+".timeout-minutes", timeoutMinutes); err != nil {
 		return err
 	}
 	stepsNode, ok := job["steps"]
@@ -647,6 +652,8 @@ func validateDocs(node *yaml.Node, shard int) error {
 	return exactStringMap(step["env"], label+".env", map[string]string{
 		"GOSX_E2E_CHROME":    latestChromePath,
 		"GOSX_E2E_PROOF_DIR": docsProofDir,
+		// A browser that fails to start must fail the job, not skip its tests.
+		"GOSX_REQUIRE_CHROME": "1",
 	})
 }
 

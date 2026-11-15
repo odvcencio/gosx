@@ -43,3 +43,11 @@ func TestInterspersedPerfArgsStopsAtSeparator(t *testing.T) {
 		t.Fatalf("interspersedPerfArgs() = %#v, want %#v", got, want)
 	}
 }
+
+func TestBudgetTimingSamples(t *testing.T) {
+	for in, want := range map[int]int{0: 3, 1: 1, 5: 5, -2: 1} {
+		if got := budgetTimingSamples(in); got != want {
+			t.Errorf("budgetTimingSamples(%d) = %d, want %d", in, got, want)
+		}
+	}
+}

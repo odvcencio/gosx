@@ -6,24 +6,22 @@ import (
 	"encoding/json"
 	"strings"
 
-	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/physics"
 	"m31labs.dev/gosx/scene"
 )
 
-// SceneBuilder renders the current runtime state into Scene3D props.
+// SceneBuilder renders the current runtime state into Scene3D props: the
+// scene declaration. The runtime runs it at the end of the first Step and of
+// every Step after InvalidateScene, not on every Step. Per-frame motion (poses,
+// instance transforms) takes the binary instance stream instead; see
+// docs/engine-frame-loop.md.
 type SceneBuilder func(*Context) scene.Props
 
 type latestScene struct {
 	props       scene.Props
 	physicsHash string
 	ok          bool
-}
-
-// EngineMount is implemented by server.PageState and server.PageRuntime.
-type EngineMount interface {
-	Engine(engine.Config, gosx.Node) gosx.Node
 }
 
 // Scene returns the latest Scene3D props produced by the runtime.
@@ -41,6 +39,18 @@ func (r *Runtime) SceneIR() (scene.IR, bool) {
 		return scene.IR{}, false
 	}
 	return props.CanonicalIR(), true
+}
+
+// InvalidateScene marks the scene declaration as changed: the next Step ends by
+// running the SceneBuilder, and, when the runtime owns a scene-derived physics
+// world, by checking whether the physics declaration changed. Call it when
+// what the builder returns changes: an entity appears or goes, a material or
+// mesh changes, a body is added. Steps without it reuse the last scene and do
+// no scene work.
+func (r *Runtime) InvalidateScene() {
+	if r != nil {
+		r.sceneDirty = true
+	}
 }
 
 // BuildScene forces the configured SceneBuilder to run against the current
@@ -64,29 +74,45 @@ func (r *Runtime) BuildScene() (scene.Props, bool) {
 }
 
 func (r *Runtime) rebuildScene(ctx *Context) {
-	if r == nil || r.sceneBuilder == nil {
+	if r == nil {
+		return
+	}
+	r.sceneDirty = false
+	if r.sceneBuilder == nil {
 		return
 	}
 	props := r.sceneBuilder(ctx)
-	physicsHash := scenePhysicsHash(props)
+	if !r.physicsFromScene {
+		// The physics world comes from Config or the game manages it, so the
+		// physics declaration does not matter: skip lowering and hashing.
+		r.latestScene = latestScene{props: props, ok: true}
+		return
+	}
+	ir := props.CanonicalIR()
+	physicsHash := physicsDeclarationHash(ir)
 	previousPhysicsHash := r.latestScene.physicsHash
 	r.latestScene = latestScene{props: props, physicsHash: physicsHash, ok: true}
-	if r.physicsFromScene && physicsHash != previousPhysicsHash {
-		r.physics = PhysicsFromScene(props)
+	if physicsHash != previousPhysicsHash {
+		r.physics = physicsFromIR(ir)
 	}
 }
 
 // PhysicsFromScene builds a physics.World from the Scene3D physics declaration.
 func PhysicsFromScene(props scene.Props) *physics.World {
-	ir := props.CanonicalIR()
+	return physicsFromIR(props.CanonicalIR())
+}
+
+func physicsFromIR(ir scene.IR) *physics.World {
 	if ir.Physics == nil {
 		return nil
 	}
 	return physics.BuildWorld(ir.PhysicsSpec())
 }
 
-func scenePhysicsHash(props scene.Props) string {
-	ir := props.CanonicalIR()
+// physicsDeclarationHash fingerprints the parts of the physics declaration that
+// a rebuilt world would change: dynamic body poses and velocities are left out,
+// because the running world owns them.
+func physicsDeclarationHash(ir scene.IR) string {
 	if ir.Physics == nil {
 		return ""
 	}
@@ -177,6 +203,9 @@ func (r *Runtime) withRuntimeProps(cfg engine.Config) engine.Config {
 	}
 	props["gameProfile"] = r.profile.Name
 	props["fixedStepSeconds"] = r.FixedStep().Seconds()
+	if _, set := props["framePacing"]; !set && r.profile.FramePacing != "" {
+		props["framePacing"] = r.profile.FramePacing
+	}
 	if assets := r.assets.Manifest(); len(assets) > 0 {
 		props["assets"] = assets
 	}
@@ -190,12 +219,4 @@ func (r *Runtime) withRuntimeProps(cfg engine.Config) engine.Config {
 		cfg.Props = raw
 	}
 	return cfg
-}
-
-// Mount registers the runtime's engine config with a page/runtime mount target.
-func (r *Runtime) Mount(target EngineMount, fallback gosx.Node) gosx.Node {
-	if target == nil {
-		return fallback
-	}
-	return target.Engine(r.EngineConfig(), fallback)
 }

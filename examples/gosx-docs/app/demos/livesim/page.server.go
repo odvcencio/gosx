@@ -1,3 +1,5 @@
+//go:build !js || !wasm
+
 package livesim
 
 import (
@@ -12,9 +14,6 @@ import (
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/sim"
 )
-
-// Hub is the package-level hub that main.go mounts at /demos/livesim/ws.
-var Hub *hub.Hub
 
 // runner drives the live simulation for the lifetime of the docs process.
 var runner *sim.Runner

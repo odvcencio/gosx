@@ -30,8 +30,9 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 		"uniform sampler2D u_iblBRDFLUT;",
 		"textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod)",
 		"texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg",
-		"prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y)",
-		"irradiance * albedo * kDenv",
+		"vec3 FssEss = F0 * dfg.x + vec3(F90) * dfg.y;",
+		"textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod).rgb * FssEss + irradiance * gosxMultiscatter(FssEss, F0, dfg)",
+		"irradiance * albedo * kD * (1.0 - transmission)",
 		"scenePBRLinearHDRPixels",
 		"gl.RGBA16F || 0x881A",
 		"OES_texture_float_linear",
@@ -53,14 +54,19 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 
 // TestBothRenderersConsumeTheGeneratedIBLProducts pins the shared metadata and
 // the exact, backend-specific F90 split-sum convention in both runtime
-// backends. The old unweighted-B form (F0 * brdf.x + brdf.y) must not appear.
+// backends. The old unweighted-B form (F0 * dfg.x + dfg.y) must not appear.
+//
+// The split sum lives in gosxImageLight (GLSL_BRDF and WGSL_BRDF) since
+// 2026-11-09: the single-scattering term FssEss lights the prefiltered
+// radiance, and the multiple-scattering term (Fdez-Aguera 2019) lights the
+// irradiance, so the diffuse weight kD is one minus both.
 func TestBothRenderersConsumeTheGeneratedIBLProducts(t *testing.T) {
 	for _, tc := range []struct {
 		path     string
 		splitSum string
 	}{
-		{webglRendererPath, "prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y)"},
-		{webgpuRendererPath, "prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y)"},
+		{webglRendererPath, "vec3 FssEss = F0 * dfg.x + vec3(F90) * dfg.y;"},
+		{webgpuRendererPath, "let FssEss = F0 * dfg.x + vec3f(F90) * dfg.y;"},
 	} {
 		source := readRenderer(t, tc.path)
 		for _, marker := range []string{
@@ -69,13 +75,14 @@ func TestBothRenderersConsumeTheGeneratedIBLProducts(t *testing.T) {
 			"GoSXiblModel",
 			"ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
 			tc.splitSum,
-			"irradiance * albedo * kDenv",
+			"* FssEss + irradiance * gosxMultiscatter(FssEss, F0, dfg)",
+			"irradiance * albedo * kD * (1.0 - transmission)",
 		} {
 			if !strings.Contains(source, marker) {
 				t.Errorf("%s does not consume the generated IBL contract marker %q", tc.path, marker)
 			}
 		}
-		if strings.Contains(source, "prefiltered * (F0 * brdf.x + brdf.y)") {
+		if strings.Contains(source, "prefiltered * (F0 * brdf.x + brdf.y)") || strings.Contains(source, "F0 * dfg.x + dfg.y") {
 			t.Errorf("%s still contains the old unweighted-B split-sum form", tc.path)
 		}
 	}

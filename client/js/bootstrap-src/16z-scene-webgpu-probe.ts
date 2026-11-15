@@ -47,6 +47,10 @@
   var _webgpuProbeRetryCount = 0;
   var _webgpuProbeWarnings = [];
   var _webgpuProbeInFlight = false;
+  // True while the re-probe a device loss started has not settled. Later
+  // retries (sceneWebGPUMaybeRetryUnavailableProbe) do not set it, so the mount
+  // can tell "the first answer is still coming" from "the answer was no".
+  var _webgpuLossReprobePending = false;
   var _webgpuLastProbeStartedAt = 0;
   var WEBGPU_LOST_REPROBE_INTERVAL_MS = 1000;
   var WEBGPU_LOST_REPROBE_WINDOW_MS = 10000;
@@ -507,6 +511,7 @@
         warnings: _webgpuProbeWarnings.slice(),
         lostProbeCount: _webgpuLostProbeCount,
         lostProbeBackoffUntil: _webgpuLostProbeBackoffUntil,
+        reprobePending: _webgpuLossReprobePending,
       };
     };
     window.__gosx_scene3d_webgpu_diagnostics = sceneWebGPUDiagnostics;
@@ -1035,7 +1040,14 @@
     _webgpuAdapterProbe = null;
     _webgpuDeviceProbe = null;
     _webgpuDeviceLimits = {};
-    return sceneWebGPUStartProbe();
+    _webgpuLossReprobePending = true;
+    return sceneWebGPUStartProbe().then(function(ok) {
+      _webgpuLossReprobePending = false;
+      return ok;
+    }, function(err) {
+      _webgpuLossReprobePending = false;
+      throw err;
+    });
   }
 
   sceneWebGPUStartProbe();

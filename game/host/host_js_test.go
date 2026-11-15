@@ -24,9 +24,11 @@ func replaceGlobal(t *testing.T, name string, value any) {
 func TestBrowserFrameDeliveryAndCancellation(t *testing.T) {
 	next := 0
 	callbacks := map[int]js.Value{}
+	var functions []js.Value
 	request := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		next++
 		callbacks[next] = args[0]
+		functions = append(functions, args[0])
 		return next
 	})
 	cancel := js.FuncOf(func(_ js.Value, args []js.Value) any {
@@ -39,22 +41,62 @@ func TestBrowserFrameDeliveryAndCancellation(t *testing.T) {
 	replaceGlobal(t, "cancelAnimationFrame", cancel)
 	replaceGlobal(t, "document", map[string]any{"hidden": false})
 	source := NewFrameSourceJS()
+	t.Cleanup(source.Release)
+	fire := func(ts float64) {
+		t.Helper()
+		if len(callbacks) != 1 {
+			t.Fatalf("%d browser requests outstanding, want 1", len(callbacks))
+		}
+		for id, fn := range callbacks {
+			delete(callbacks, id)
+			fn.Invoke(ts)
+		}
+	}
 	called := 0
 	first := source.RequestFrame(func(now float64) {
 		called++
-		if now != 123.5 || len(source.pending) != 1 {
-			t.Error("delivery must pass the host timestamp and release only its own callback")
+		if now != 123.5 {
+			t.Errorf("timestamp %v, want the host timestamp", now)
 		}
 	})
 	second := source.RequestFrame(func(float64) { t.Error("canceled frame ran") })
-	fn := callbacks[first]
-	delete(callbacks, first)
-	fn.Invoke(123.5)
-	source.CancelFrame(first) // Already delivered: no second release.
+	if first == second || len(callbacks) != 1 {
+		t.Fatalf("handles %d %d with %d browser requests: two requests share one frame", first, second, len(callbacks))
+	}
 	source.CancelFrame(second)
-	source.CancelFrame(second) // Already canceled: no second release.
-	if called != 1 || len(callbacks) != 0 || len(source.pending) != 0 {
+	fire(123.5)
+	source.CancelFrame(first)  // Already delivered: a no-op.
+	source.CancelFrame(second) // Already canceled: a no-op.
+	if called != 1 || len(callbacks) != 0 || !source.queue.empty() {
 		t.Fatal("frame callbacks were retained after delivery/cancellation")
+	}
+	// A frame callback that asks for the next frame gets one browser request,
+	// with the same JS function as before: no js.FuncOf per frame.
+	frames := 0
+	var loop func(float64)
+	loop = func(float64) {
+		frames++
+		if frames < 5 {
+			source.RequestFrame(loop)
+		}
+	}
+	source.RequestFrame(loop)
+	for i := 0; i < 5; i++ {
+		fire(float64(i))
+	}
+	if frames != 5 || len(callbacks) != 0 {
+		t.Fatalf("ran %d frames with %d requests left", frames, len(callbacks))
+	}
+	for i, fn := range functions {
+		if !fn.Equal(functions[0]) {
+			t.Fatalf("browser request %d used another JS function", i)
+		}
+	}
+	// Cancelling the only request cancels the browser request.
+	h := source.RequestFrame(func(float64) { t.Error("canceled frame ran") })
+	source.CancelFrame(h)
+	if len(callbacks) != 0 {
+		t.Fatal("cancelling the last request must cancel the browser request")
 	}
 	if source.Hidden() {
 		t.Fatal("visible document reported hidden")
@@ -106,18 +148,21 @@ func TestWorkerFrameSourceUsesTheWorkerClockAndForwardedVisibility(t *testing.T)
 	replaceGlobal(t, "document", js.Undefined())
 
 	source := NewFrameSourceJS()
+	t.Cleanup(source.Release)
 	got := -1.0
-	h := source.RequestFrame(func(ts float64) { got = ts })
-	if h != 101 || rafCalls != 0 {
-		t.Fatalf("handle %d, rAF calls %d: the worker clock must serve the request", h, rafCalls)
+	source.RequestFrame(func(ts float64) { got = ts })
+	if _, ok := callbacks[101]; !ok || rafCalls != 0 {
+		t.Fatalf("worker requests %v, rAF calls %d: the worker clock must serve the request", callbacks, rafCalls)
 	}
-	callbacks[h].Invoke(16.5)
+	fn := callbacks[101]
+	delete(callbacks, 101)
+	fn.Invoke(16.5)
 	if got != 16.5 {
 		t.Fatalf("timestamp %v", got)
 	}
 	h2 := source.RequestFrame(func(float64) { t.Error("canceled frame ran") })
 	source.CancelFrame(h2)
-	if _, still := callbacks[h2]; still || rafCalls != 0 {
+	if len(callbacks) != 0 || rafCalls != 0 {
 		t.Fatal("cancel must reach the worker clock")
 	}
 	if source.Hidden() {
@@ -155,5 +200,79 @@ func TestForwardedInputBindsToTheWorkerBridgeAndReleasesIt(t *testing.T) {
 	replaceGlobal(t, "__gosx", map[string]any{})
 	if _, ok := NewForwardedInput(); ok {
 		t.Fatal("no worker bridge: forwarded input must be unavailable")
+	}
+}
+
+func TestGamepadReaderReusesBuffersAndSkipsUnchangedPads(t *testing.T) {
+	pad := js.Global().Call("eval", `({index: 1, id: "controller", mapping: "standard", connected: true, timestamp: 5, buttons: [{value: 1}, {value: 0}], axes: [0.5, -0.25]})`)
+	pads := js.Global().Get("Array").New(js.Null(), pad)
+	reads := 0
+	read := js.FuncOf(func(_ js.Value, _ []js.Value) any { reads++; return pads })
+	t.Cleanup(read.Release)
+	replaceGlobal(t, "navigator", map[string]any{"getGamepads": read})
+	reader := NewGamepadReader()
+	first := reader.Gamepads()
+	if len(first) != 1 || first[0].Index != 1 || first[0].ID != "controller" || first[0].Mapping != "standard" ||
+		first[0].Buttons[0] != 1 || first[0].Axes[1] != -0.25 {
+		t.Fatalf("snapshot %+v", first)
+	}
+	buttons := &first[0].Buttons[0]
+	// Unchanged timestamp: the reader keeps its snapshot.
+	pad.Get("buttons").Index(0).Set("value", 0)
+	if got := reader.Gamepads(); got[0].Buttons[0] != 1 {
+		t.Fatal("a pad whose timestamp did not change was read again")
+	}
+	// A new timestamp: the reader reads the pad into the same buffers.
+	pad.Set("timestamp", 6)
+	second := reader.Gamepads()
+	if second[0].Buttons[0] != 0 || &second[0].Buttons[0] != buttons {
+		t.Fatal("a changed pad must be read again into the reused buffers")
+	}
+	// The pad goes and another arrives in the same slot: its id is read again.
+	pads.SetIndex(1, js.Null())
+	if got := reader.Gamepads(); len(got) != 0 {
+		t.Fatalf("a missing pad is still reported: %+v", got)
+	}
+	pad.Set("id", "other")
+	pads.SetIndex(1, pad)
+	if got := reader.Gamepads(); len(got) != 1 || got[0].ID != "other" {
+		t.Fatalf("a reconnected slot kept the old id: %+v", got)
+	}
+	if reads != 5 {
+		t.Fatalf("navigator.getGamepads ran %d times, want once per poll", reads)
+	}
+}
+
+func TestForwardedInputPrefersTheBinaryBridge(t *testing.T) {
+	bridge := js.Global().Call("eval", `({json: 0, subs: new Set(), onInput(cb) { this.json++; return () => {}; }, onInputBytes(cb) { this.subs.add(cb); return () => this.subs.delete(cb); }, emit(bytes) { for (const cb of this.subs) cb(bytes); }})`)
+	replaceGlobal(t, "__gosx", map[string]any{"worker": bridge})
+	input, ok := NewForwardedInput()
+	if !ok || bridge.Get("json").Int() != 0 {
+		t.Fatal("a bridge with onInputBytes must be used in binary form")
+	}
+	var got []InputEvent
+	input.Subscribe(func(e InputEvent) { got = append(got, e) })
+	emit := func(e InputEvent) {
+		record := encodeInputRecord(e)
+		bytes := js.Global().Get("Uint8Array").New(len(record))
+		js.CopyBytesToJS(bytes, record)
+		bridge.Call("emit", bytes)
+	}
+	emit(InputEvent{Kind: "key", Code: "KeyA", Down: true, AtMS: 380, ReceivedMS: 382.5})
+	emit(InputEvent{Kind: "pad", PadIndex: 0, PadID: "P", Mapping: "standard", Connected: true, Buttons: []float64{1, 0}, Axes: []float64{-1}})
+	if !input.KeyDown("KeyA") || len(input.Gamepads()) != 1 || input.Gamepads()[0].Axes[0] != -1 {
+		t.Fatal("binary events did not update the tracked state")
+	}
+	if len(got) != 2 || got[0].Delay() != 2.5 {
+		t.Fatalf("events %+v", got)
+	}
+	bridge.Call("emit", js.Global().Get("Uint8Array").New(3)) // garbage is ignored
+	bridge.Call("emit", "not bytes")
+	if len(got) != 2 {
+		t.Fatal("a malformed record reached subscribers")
+	}
+	input.Close()
+	if bridge.Get("subs").Get("size").Int() != 0 {
+		t.Fatal("Close must unsubscribe from the binary bridge")
 	}
 }

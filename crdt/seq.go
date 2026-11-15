@@ -216,15 +216,6 @@ func (s *seq) contains(id OpID) bool {
 	return ok
 }
 
-// elemByID returns a copy of the element with the given identity.
-func (s *seq) elemByID(id OpID) (listElem, bool) {
-	block, off, ok := s.locate(id)
-	if !ok {
-		return listElem{}, false
-	}
-	return block.elems[off], true
-}
-
 // visibleIndexOf returns the visible index of id. It returns the visible length
 // when the element is absent or tombstoned, which matches the older lookup that
 // searched a materialized visible list.
@@ -358,12 +349,6 @@ func (s *seq) insertAfter(after OpID, hasAfter bool, elem listElem) {
 	s.insertAt(bi, off, elem)
 }
 
-// append adds elem at the end of the document order.
-func (s *seq) append(elem listElem) {
-	bi := len(s.blocks) - 1
-	s.insertAt(bi, len(s.blocks[bi].elems), elem)
-}
-
 func (s *seq) insertAt(bi, off int, elem listElem) {
 	block := s.blocks[bi]
 	if off >= len(block.elems) {
@@ -436,17 +421,6 @@ func (s *seq) setVisibility(id OpID, deleted bool, visID OpID) (listElem, bool) 
 	elem.Deleted = deleted
 	elem.VisibilityID = visID
 	return *elem, true
-}
-
-// forEach walks the elements in document order. It stops when fn returns false.
-func (s *seq) forEach(fn func(elem *listElem) bool) {
-	for _, block := range s.blocks {
-		for i := range block.elems {
-			if !fn(&block.elems[i]) {
-				return
-			}
-		}
-	}
 }
 
 // elems materializes the document order. Callers that serialize or clone the

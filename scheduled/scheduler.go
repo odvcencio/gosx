@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -37,6 +38,20 @@ type Options struct {
 	// ShutdownGrace is the default drain window for Stop when grace<=0 and
 	// for an App shutdown with a deadline; defaults to 30s.
 	ShutdownGrace time.Duration
+	// OnPanic, when set, is called for every panic the scheduler recovers:
+	// in a task's Fn (the attempt fails and the task's retry policy applies)
+	// or in the task's Schedule, Backoff or Store (that task's goroutine
+	// ends). Each panic is also logged at error level as "task_panic".
+	OnPanic func(Panic)
+}
+
+// Panic describes a panic the scheduler recovered.
+type Panic struct {
+	Task    string
+	Run     RunID // empty when the panic was outside an attempt's Fn
+	Attempt int   // zero when the panic was outside an attempt's Fn
+	Value   any
+	Stack   []byte
 }
 
 // registered holds a task plus the bookkeeping the scheduler needs across runs.
@@ -177,9 +192,53 @@ func (s *Scheduler) Start(ctx context.Context) {
 		t := t
 		go func() {
 			defer s.workFinished()
+			defer s.recoverWorker(t.Name)
 			s.scheduleLoop(ctx, t)
 		}()
 	}
+}
+
+// recoverWorker is the last recover on a scheduler goroutine. Fn panics are
+// recovered per attempt in callTask; this catches the rest (a custom
+// Schedule, Backoff or Store), so a bug there ends only this task's
+// goroutine, not the process.
+func (s *Scheduler) recoverWorker(task string) {
+	if v := recover(); v != nil {
+		s.reportPanic(Panic{Task: task, Value: v, Stack: debug.Stack()})
+	}
+}
+
+// reportPanic logs p and calls Options.OnPanic. A panic inside OnPanic is
+// logged and dropped.
+func (s *Scheduler) reportPanic(p Panic) {
+	s.opts.Logger.Error("task_panic",
+		"task", p.Task,
+		"run", string(p.Run),
+		"attempt", p.Attempt,
+		"panic", fmt.Sprint(p.Value),
+		"stack", string(p.Stack),
+	)
+	if s.opts.OnPanic == nil {
+		return
+	}
+	defer func() {
+		if v := recover(); v != nil {
+			s.opts.Logger.Error("task_panic_hook", "task", p.Task, "panic", fmt.Sprint(v))
+		}
+	}()
+	s.opts.OnPanic(p)
+}
+
+// callTask runs one attempt's Fn. A panic becomes the attempt's error, so
+// the attempt is recorded as failed and the task's retry policy applies.
+func (s *Scheduler) callTask(ctx context.Context, task Task, tick *schedTick) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("scheduled: task %q panicked: %v", task.Name, v)
+			s.reportPanic(Panic{Task: task.Name, Run: tick.run.id, Attempt: tick.run.attempt, Value: v, Stack: debug.Stack()})
+		}
+	}()
+	return task.Fn(ctx, tick)
 }
 
 // scheduleLoop fires task on its schedule until ctx is done, Stop is called, or
@@ -256,6 +315,7 @@ func (s *Scheduler) Enqueue(name string, payload []byte) (RunID, error) {
 	id := newRunID(name, s.opts.Now)
 	go func() {
 		defer s.workFinished()
+		defer s.recoverWorker(task.Name)
 		s.runOnceWithID(context.Background(), task, id)
 	}()
 	return id, nil
@@ -361,7 +421,7 @@ func (s *Scheduler) runAttempt(parent context.Context, task Task, id RunID, atte
 	wdDone := s.startWatchdog(runCtx, task, run)
 
 	tick := &schedTick{run: run}
-	err := task.Fn(runCtx, tick)
+	err := s.callTask(runCtx, task, tick)
 
 	// Stop the watchdog and wait for it to exit before we drop the run.
 	cancelCause(nil)

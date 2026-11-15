@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestRunExportSkipsLoadAndActionsUnlessOptedIn(t *testing.T) {
+func TestRunBuildProdSkipsLoadAndActionsUnlessOptedIn(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "safe-export")
 	if err := RunInit(dir, "example.com/safe-export", ""); err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestRunExportSkipsLoadAndActionsUnlessOptedIn(t *testing.T) {
 	oldStderr := os.Stderr
 	os.Stderr = warnings
 	defer func() { os.Stderr = oldStderr; warnings.Close() }()
-	if err := RunExport(dir); err != nil {
+	if err := RunBuildWithOptions(dir, BuildOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	os.Stderr = oldStderr
@@ -95,5 +95,24 @@ func TestPrerenderEmptyRoutesDoesNotStartAuthenticatedServer(t *testing.T) {
 	}
 	if got := readFile(t, filepath.Join(output, "style.css")); got != "body {}" {
 		t.Fatal(got)
+	}
+}
+
+func TestRunExportFailsOnPagesItCannotShip(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "loud-export")
+	if err := RunInit(dir, "example.com/loud-export", ""); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(dir, "app", "[slug]", "page.gsx"), "package app\n\nfunc Page() Node {\n\treturn <p>slug</p>\n}\n")
+	// The check runs before any runtime build, so the test needs no TinyGo.
+	err := RunExport(dir)
+	if err == nil {
+		t.Fatal("export dropped a page that a static host cannot serve")
+	}
+	if !strings.Contains(err.Error(), "route parameters") || !strings.Contains(err.Error(), "cannot be part of a static bundle") {
+		t.Fatalf("unexpected error:\n%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {
+		t.Fatalf("export wrote dist before failing: %v", statErr)
 	}
 }

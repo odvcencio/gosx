@@ -128,6 +128,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/05a-audio-mixer.ts"),
 			sourceFile("bootstrap-src/06-motion-core.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile("../runtime/host/document-lifecycle.ts"),
@@ -172,14 +173,19 @@ var outputs = []output{
 			// it, so both files ship here and neither declares a name twice.
 			sourceFile("../runtime/scene3d/ocean-waves.ts"),
 			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
+			sourceFile("bootstrap-src/16c3-scene-data-texture-shims.ts"),
 			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
 			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
 			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-brdf.ts"),
 			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgl-detail.ts"),
+			sourceFile("../runtime/scene3d/webgl-selena-surface.ts"),
+			sourceFile("../runtime/scene3d/webgl-points.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			// The Environment.Ocean passes ship beside the renderer that calls them.
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
@@ -189,7 +195,10 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
-			sourceFile("../runtime/scene3d/webgl-taa.ts"),
+			sourceFile("../runtime/scene3d/webgl-soft-particles.ts"),
+			// TAA, depth of field and auto exposure ship only in the per-backend
+			// postfx chunks; the monolith keeps the stand-ins that load them.
+			sourceFile("../runtime/scene3d/webgl-postfx.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
 			// legacy monolithic bootstrap.js throws ReferenceError the first
@@ -201,11 +210,14 @@ var outputs = []output{
 			// from wgpuCreatePostProcessor, which sits outside the renderer
 			// closure, so the packer cannot live inside that closure. It ships
 			// right after 16a because that placement compresses best.
+			sourceFile("../runtime/scene3d/webgpu-brdf.ts"),
 			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
+			sourceFile("../runtime/scene3d/webgpu-selena-surface.ts"),
 			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
 			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu-cutaway.ts"),
+			sourceFile("../runtime/scene3d/webgpu-shadows.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -214,6 +226,9 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-points.ts"),
+			sourceFile("../runtime/scene3d/webgpu-soft-particles.ts"),
+			sourceFile("../runtime/scene3d/webgpu-postfx.ts"),
 			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
@@ -225,6 +240,8 @@ var outputs = []output{
 			// variant.
 			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
 			sourceFile("../runtime/scene3d/gltf.ts"),
+			sourceFile("../runtime/scene3d/asset-ext.ts"),
+			sourceFile("../runtime/scene3d/asset-meshopt.ts"),
 			sourceFile("../runtime/scene3d/animation.ts"),
 			sourceFile("bootstrap-src/19b-scene-control-forms.ts"),
 			// 16d publishes the base symbols the lazy WebGL chunk reads through
@@ -240,6 +257,10 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
+			sourceFile("../runtime/scene3d/frame-owner.ts"),
+			sourceFile("../runtime/scene3d/optional-chunks.ts"),
+			sourceFile("../runtime/scene3d/pipeline-warmup.ts"),
+			sourceFile("../runtime/scene3d/text-atlas.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/hydrate-input.ts"),
 			sourceFile("../runtime/scene3d/mount-input.ts"),
@@ -275,6 +296,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/00-textlayout.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/05a-audio-mixer.ts"),
 			sourceFile("bootstrap-src/06-motion-core.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile("../runtime/host/document-lifecycle.ts"),
@@ -295,6 +317,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/00-textlayout.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/05a-audio-mixer.ts"),
 			sourceFile("bootstrap-src/06-motion-core.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile("../runtime/host/document-lifecycle.ts"),
@@ -541,6 +564,10 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/overlay-dom.ts"),
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
+			sourceFile("../runtime/scene3d/frame-owner.ts"),
+			// Shader warm-up and text atlases load from their own opt-in
+			// chunks; the base keeps only these shims.
+			sourceFile("../runtime/scene3d/optional-chunks.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/mount-input.ts"),
 			sourceFile("../runtime/scene3d/geometry-assets.ts"),
@@ -565,6 +592,7 @@ var outputs = []output{
 			// solver and a Radiance HDR decoder it can never reach.
 			sourceFile("bootstrap-src/15a1-scene-texture-budget.ts"),
 			sourceFile("bootstrap-src/16b-scene-hdr.ts"),
+			sourceFile("bootstrap-src/16c3-scene-data-texture-shims.ts"),
 			// 16e is the legacy vertex-colour renderer. It left
 			// 10-runtime-scene-core.js, where every Scene3D page paid for it,
 			// and joined the renderer it backs up. createSceneWebGLResult in
@@ -572,8 +600,11 @@ var outputs = []output{
 			// factory ships in this same chunk, so a WebGPU page can never
 			// reach either one.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-brdf.ts"),
 			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgl-detail.ts"),
+			sourceFile("../runtime/scene3d/webgl-selena-surface.ts"),
+			sourceFile("../runtime/scene3d/webgl-points.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
 			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
 			sourceFile("../runtime/scene3d/webgl-reflect.ts"),
@@ -582,7 +613,8 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
 			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
-			sourceFile("../runtime/scene3d/webgl-taa.ts"),
+			sourceFile("../runtime/scene3d/webgl-soft-particles.ts"),
+			sourceFile("../runtime/scene3d/webgl-postfx.ts"),
 			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
 	},
@@ -593,6 +625,7 @@ var outputs = []output{
 	{
 		name: "bootstrap-feature-scene3d-command.js",
 		sources: []source{
+			sourceFile("../runtime/scene3d/pose-interp.ts"),
 			sourceFile("../runtime/scene3d/command-runtime.ts"),
 		},
 	},
@@ -627,11 +660,15 @@ var outputs = []output{
 			// It now ships once, in the base scene3d chunk, and this bridge
 			// hands 16a the two symbols it reads lexically.
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
+			sourceFile("bootstrap-src/16c3-scene-data-texture-shims.ts"),
+			sourceFile("../runtime/scene3d/webgpu-brdf.ts"),
 			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
+			sourceFile("../runtime/scene3d/webgpu-selena-surface.ts"),
 			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
 			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu-cutaway.ts"),
+			sourceFile("../runtime/scene3d/webgpu-shadows.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -640,6 +677,9 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-points.ts"),
+			sourceFile("../runtime/scene3d/webgpu-soft-particles.ts"),
+			sourceFile("../runtime/scene3d/webgpu-postfx.ts"),
 			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
@@ -697,8 +737,68 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/hierarchy.ts")},
 	},
 	{
+		name: "bootstrap-feature-scene3d-selena-lighting.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26n-feature-scene3d-selena-lighting-prefix.ts"),
+			sourceFile("bootstrap-src/16c2-scene-selena-lighting.ts"),
+			sourceFile("bootstrap-src/26n-feature-scene3d-selena-lighting-suffix.ts"),
+		},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-data-texture.js",
+		sources: []source{sourceFile("../runtime/scene3d/data-texture.ts")},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-warmup.js",
+		sources: []source{sourceFile("../runtime/scene3d/pipeline-warmup.ts")},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-text-atlas.js",
+		sources: []source{sourceFile("../runtime/scene3d/text-atlas.ts")},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",
 		sources: []source{sourceFile("../runtime/scene3d/particle-burst.ts")},
+	},
+	{
+		// Post effects only some scenes declare: temporal anti-aliasing (with the
+		// motion vectors motion blur also reads), depth of field and auto
+		// exposure, one chunk per backend. The mount fetches a backend's
+		// chunk with its renderer chunk when the page advertises it; the
+		// renderers call it through window.__gosx_scene3d_postfx_<backend>_api.
+		name: "bootstrap-feature-scene3d-postfx-webgpu.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26o-feature-scene3d-postfx-webgpu-prefix.ts"),
+			sourceFile("../runtime/scene3d/taa-wgpu.ts"),
+			sourceFile("../runtime/scene3d/dof-wgpu.ts"),
+			sourceFile("../runtime/scene3d/exposure-wgpu.ts"),
+			sourceFile("bootstrap-src/26o-feature-scene3d-postfx-webgpu-api.ts"),
+		},
+	},
+	{
+		name: "bootstrap-feature-scene3d-postfx-webgl.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26o-feature-scene3d-postfx-webgl-prefix.ts"),
+			sourceFile("../runtime/scene3d/taa-motion-gl.ts"),
+			sourceFile("../runtime/scene3d/taa-gl.ts"),
+			sourceFile("../runtime/scene3d/dof-gl.ts"),
+			sourceFile("../runtime/scene3d/exposure-gl.ts"),
+			sourceFile("bootstrap-src/26o-feature-scene3d-postfx-webgl-api.ts"),
+		},
+	},
+	{
+		// Depth-driven post passes (projected decals, motion blur). Loaded only
+		// for scenes that declare one of those effects.
+		name: "bootstrap-feature-scene3d-depthfx.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/depthfx.ts"),
+			sourceFile("../runtime/scene3d/decal-data.ts"),
+			sourceFile("../runtime/scene3d/decal-wgpu.ts"),
+			sourceFile("../runtime/scene3d/decal-gl.ts"),
+			sourceFile("../runtime/scene3d/motion-blur.ts"),
+			sourceFile("../runtime/scene3d/motion-blur-wgpu.ts"),
+			sourceFile("../runtime/scene3d/motion-blur-gl.ts"),
+		},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-model-preparation.js",
@@ -725,8 +825,33 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/timeline.ts")},
 	},
 	{
+		// Environment.Crowds: seat layout, the fan rig and both backend
+		// passes. Fetched only when a scene declares environment.crowds; the
+		// renderers call it through window.__gosx_scene3d_crowd_api.
+		name: "bootstrap-feature-scene3d-crowd.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/crowd-layout.ts"),
+			sourceFile("../runtime/scene3d/crowd-rig.ts"),
+			sourceFile("../runtime/scene3d/crowd-state.ts"),
+			sourceFile("../runtime/scene3d/crowd-glsl.ts"),
+			sourceFile("../runtime/scene3d/crowd-wgsl.ts"),
+			sourceFile("../runtime/scene3d/crowd.ts"),
+		},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-zoom.js",
 		sources: []source{sourceFile("../runtime/scene3d/mount-pan.ts"), sourceFile("../runtime/scene3d/mount-zoom.ts")},
+	},
+	{
+		// Environment.Terrain: the CDLOD selection and both backend passes.
+		// Fetched only when a scene declares environment.terrain; the
+		// renderers call it through window.__gosx_scene3d_terrain_api.
+		name: "bootstrap-feature-scene3d-terrain.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/terrain.ts"),
+			sourceFile("../runtime/scene3d/terrain-wgsl.ts"),
+			sourceFile("../runtime/scene3d/terrain-glsl.ts"),
+		},
 	},
 	{
 		// Grounded controls ship only for scenes with an authored Walk contract.
@@ -756,6 +881,8 @@ var outputs = []output{
 			// it, and a second copy would be a second download.
 			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
 			sourceFile("../runtime/scene3d/gltf.ts"),
+			sourceFile("../runtime/scene3d/asset-ext.ts"),
+			sourceFile("../runtime/scene3d/asset-meshopt.ts"),
 			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"),
 		},
 	},
@@ -765,6 +892,21 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26g-feature-scene3d-animation-prefix.ts"),
 			sourceFile("../runtime/scene3d/animation.ts"),
 			sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.ts"),
+		},
+	},
+	{
+		// Animation graph evaluation for models driven by motion/animgraph:
+		// layered clip sampling with bone masks and additive layers, humanoid
+		// rig mapping and retargeting, and IK. A page loads it by requiring the
+		// "scene3d-animation-graph" feature; it wraps the animation chunk's
+		// sampled-clip hooks at run time, so no renderer chunk grows.
+		name: "bootstrap-feature-scene3d-animation-graph.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26n-feature-scene3d-animation-graph-prefix.ts"),
+			sourceFile("../runtime/scene3d/animation-rig.ts"),
+			sourceFile("../runtime/scene3d/ik.ts"),
+			sourceFile("../runtime/scene3d/animation-graph.ts"),
+			sourceFile("bootstrap-src/26n-feature-scene3d-animation-graph-suffix.ts"),
 		},
 	},
 	{

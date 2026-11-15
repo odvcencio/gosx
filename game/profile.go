@@ -7,6 +7,10 @@ import (
 	"m31labs.dev/gosx/engine"
 )
 
+// FramePacingVsyncDivisor is the Scene3D pacing policy that renders on every
+// k-th display refresh (scene.Props.FramePacing "vsync-divisor").
+const FramePacingVsyncDivisor = "vsync-divisor"
+
 const (
 	// ProfileInteractive is the default game/runtime profile.
 	ProfileInteractive = "interactive"
@@ -25,10 +29,17 @@ const (
 // Profile describes the browser/native capabilities and timing defaults that
 // an interactive runtime expects.
 type Profile struct {
-	Name                 string
-	FixedStep            time.Duration
-	MaxDelta             time.Duration
-	MaxSubsteps          int
+	Name        string
+	FixedStep   time.Duration
+	MaxDelta    time.Duration
+	MaxSubsteps int
+	// FramePacing is the Scene3D render-loop pacing the runtime's engine
+	// config asks for when the scene props do not set one (see
+	// scene.Props.FramePacing). The game profiles (interactive, fighting,
+	// first-person) use FramePacingVsyncDivisor, which renders on every k-th
+	// display refresh and so paces evenly at any refresh rate. Empty keeps
+	// the renderer's fixed-interval default.
+	FramePacing          string
 	Capabilities         []engine.Capability
 	RequiredCapabilities []engine.Capability
 	Bindings             []Binding
@@ -38,6 +49,7 @@ type Profile struct {
 func InteractiveProfile() Profile {
 	return Profile{
 		Name:        ProfileInteractive,
+		FramePacing: FramePacingVsyncDivisor,
 		FixedStep:   time.Second / 60,
 		MaxDelta:    250 * time.Millisecond,
 		MaxSubsteps: 5,
@@ -108,6 +120,7 @@ func Web3DProfile() Profile {
 func FightingProfile() Profile {
 	return Profile{
 		Name:        ProfileFighting,
+		FramePacing: FramePacingVsyncDivisor,
 		FixedStep:   time.Second / 60,
 		MaxDelta:    100 * time.Millisecond,
 		MaxSubsteps: 3,
@@ -156,6 +169,7 @@ func FightingProfile() Profile {
 func FirstPersonProfile() Profile {
 	return Profile{
 		Name:        ProfileFirstPerson,
+		FramePacing: FramePacingVsyncDivisor,
 		FixedStep:   time.Second / 60,
 		MaxDelta:    100 * time.Millisecond,
 		MaxSubsteps: 4,

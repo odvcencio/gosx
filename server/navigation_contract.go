@@ -555,10 +555,6 @@ func navigationBasePath(currentPath string) string {
 	return currentPath
 }
 
-func sameNavigationTarget(left, right *navigationTarget) bool {
-	return left != nil && right != nil && left.origin == right.origin && left.path == right.path && left.search == right.search
-}
-
 // sameNavigationCurrentTarget treats a queryless authored link as naming the
 // route regardless of the current request's query. Once the author includes a
 // query, it remains an exact current-view match.

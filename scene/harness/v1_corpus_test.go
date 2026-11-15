@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -61,6 +62,51 @@ func TestV1CorpusContract(t *testing.T) {
 	t.Logf("Scene3D v1 contract is coherent; blocked completion cases: %s", strings.Join(blocked, ", "))
 }
 
+func TestValidateNodeTestGroup(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		group   string
+		wantErr bool
+	}{
+		{"runtime file in runtime", "client/js/runtime-20-scene-shaders-custom-post.test.js", "runtime", false},
+		{"runtime file in other", "client/js/runtime-20-scene-shaders-custom-post.test.js", "other", true},
+		{"scene3d a-o mjs in scene3d", "client/js/scene3d-cubic-spline.test.mjs", "scene3d", false},
+		{"scene3d a-o js in scene3d", "client/js/scene3d-animation.test.js", "scene3d", false},
+		{"scene3d c mjs in other (the old hole)", "client/js/scene3d-cubic-spline.test.mjs", "other", true},
+		{"scene3d c mjs in scene3d-b", "client/js/scene3d-cubic-spline.test.mjs", "scene3d-b", true},
+		{"scene3d c mjs in runtime", "client/js/scene3d-cubic-spline.test.mjs", "runtime", true},
+		{"scene3d p+ js in scene3d-b", "client/js/scene3d-post.test.js", "scene3d-b", false},
+		{"scene3d p+ mjs in scene3d", "client/js/scene3d-shadow.test.mjs", "scene3d", true},
+		{"other file in other", "client/js/17-scene-input-pick.test.mjs", "other", false},
+		{"other file in scene3d", "client/js/17-scene-input-pick.test.mjs", "scene3d", true},
+		{"other file in scene3d-b", "client/js/17-scene-input-pick.test.mjs", "scene3d-b", true},
+		{"script test in other", "scripts/build.test.mjs", "other", false},
+		{"e2e file no group runs", "e2e/water_demo_http.test.mjs", "other", true},
+		{"example file no group runs", "examples/gosx-docs/app/demos/beacon/reveal.test.mjs", "other", true},
+		{"scripts js wrong extension", "scripts/x.test.js", "other", true},
+		{"runtime dir too deep", "client/runtime/a/b/x.test.js", "other", true},
+		{"runtime dir one level", "client/runtime/a/x.test.js", "other", false},
+		{"unknown group", "client/js/17-scene-input-pick.test.mjs", "scene3d-c", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner := v1CIOwner{Label: "job", Command: "make test-js-node NODE_TEST_GROUP=" + tt.group}
+			got := validateNodeTestGroup(v1CorpusEvidence{Kind: "node-test", Path: tt.path}, owner)
+			if (got != "") != tt.wantErr {
+				t.Fatalf("validateNodeTestGroup(%s, %s) = %q, want error %v", tt.path, tt.group, got, tt.wantErr)
+			}
+		})
+	}
+	// Other evidence kinds are not checked; a node-test must resolve to a group.
+	if got := validateNodeTestGroup(v1CorpusEvidence{Kind: "go-test", Path: "x_test.go"}, v1CIOwner{Command: "NODE_TEST_GROUP=runtime"}); got != "" {
+		t.Fatalf("go-test evidence was checked: %q", got)
+	}
+	if got := validateNodeTestGroup(v1CorpusEvidence{Kind: "node-test", Path: "client/js/a.test.js"}, v1CIOwner{Command: "node --test"}); got == "" {
+		t.Fatal("a command without NODE_TEST_GROUP must fail the check")
+	}
+}
+
 func TestV1CorpusContractRejectsFalseClaims(t *testing.T) {
 	base, repoRoot, docs, workflow := loadV1Corpus(t)
 	tests := []struct {
@@ -103,15 +149,24 @@ func TestV1CorpusContractRejectsFalseClaims(t *testing.T) {
 		},
 		{
 			name: "Node evidence claims the job that runs the other group",
-			want: `is in NODE_TEST_GROUP=runtime, not the other group CI owner "js-tests-b" runs`,
+			want: `is in NODE_TEST_GROUP=runtime, not the NODE_TEST_GROUP=other that CI owner "js-tests-b" runs`,
 			edit: func(manifest *v1CorpusManifest, _ *string) {
 				entry := findV1Case(manifest, "desktop-controls-picking")
 				entry.Evidence[0].CILabel = "js-tests-b"
 			},
 		},
 		{
+			name: "Scene3D evidence claims the other group's job",
+			want: `is in NODE_TEST_GROUP=scene3d, not the NODE_TEST_GROUP=other that CI owner "js-tests-b" runs`,
+			edit: func(manifest *v1CorpusManifest, _ *string) {
+				entry := findV1Case(manifest, "gltf-cubic-trs-morph")
+				entry.CIOwners[0] = v1CIOwner{Label: "js-tests-b", Job: "js-tests-b", Step: "JavaScript runtime contract tests (other suites)", Command: "make test-js-node NODE_TEST_GROUP=other"}
+				entry.Evidence[0].CILabel = "js-tests-b"
+			},
+		},
+		{
 			name: "runtime-group owner claims a file outside the group",
-			want: `is not in NODE_TEST_GROUP=runtime, which CI owner "js-tests" runs`,
+			want: `is in NODE_TEST_GROUP=other, not the NODE_TEST_GROUP=runtime that CI owner "js-tests" runs`,
 			edit: func(manifest *v1CorpusManifest, _ *string) {
 				entry := findV1Case(manifest, "desktop-controls-picking")
 				entry.Evidence[2].CILabel = "js-tests"
@@ -346,9 +401,72 @@ func validateEvidencePath(evidence v1CorpusEvidence) string {
 	return ""
 }
 
-// nodeRuntimeTestPattern is the Makefile's NODE_TEST_GROUP=runtime file set
-// (JS_NODE_RUNTIME_TESTS); NODE_TEST_GROUP=other is every other Node test.
-const nodeRuntimeTestPattern = "client/js/runtime-[0-9]*.test.js"
+// The Makefile's Node test groups, by file name. Keep these in step with
+// JS_NODE_RUNTIME_TESTS, JS_NODE_SCENE3D_TESTS and JS_NODE_SCENE3D_ALL_TESTS:
+//
+//	runtime  client/js/runtime-[0-9]*.test.js
+//	scene3d  client/js/scene3d-[a-o]*.test.js and .test.mjs
+//	scene3d-b every other client/js/scene3d-*.test.js and .test.mjs
+//	other    every remaining Node test
+const (
+	nodeRuntimeTestPattern   = "client/js/runtime-[0-9]*.test.js"
+	nodeSceneTestPatternJS   = "client/js/scene3d-[a-o]*.test.js"
+	nodeSceneTestPatternMJS  = "client/js/scene3d-[a-o]*.test.mjs"
+	nodeSceneAllTestPatternJ = "client/js/scene3d-*.test.js"
+	nodeSceneAllTestPatternM = "client/js/scene3d-*.test.mjs"
+)
+
+// nodeTestGroupOf returns the NODE_TEST_GROUP value that runs a Node test path.
+// A path that no group runs (outside the Makefile's JS_NODE_TESTS patterns) is
+// an error.
+func nodeTestGroupOf(path string) (string, error) {
+	clean := filepath.ToSlash(filepath.Clean(path))
+	matches := func(patterns ...string) (bool, error) {
+		for _, pattern := range patterns {
+			ok, err := filepath.Match(pattern, clean)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	for _, group := range []struct {
+		name     string
+		patterns []string
+	}{
+		{"runtime", []string{nodeRuntimeTestPattern}},
+		{"scene3d", []string{nodeSceneTestPatternJS, nodeSceneTestPatternMJS}},
+		{"scene3d-b", []string{nodeSceneAllTestPatternJ, nodeSceneAllTestPatternM}},
+	} {
+		ok, err := matches(group.patterns...)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return group.name, nil
+		}
+	}
+	// JS_NODE_TESTS in the Makefile; "other" is these minus the groups above.
+	ok, err := matches(
+		"client/js/*.test.js",
+		"client/js/*.test.mjs",
+		"client/runtime/*/*.test.js",
+		"scripts/*.test.mjs",
+	)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("no Node test group runs this file")
+	}
+	return "other", nil
+}
+
+// nodeTestGroupFlagRE finds the NODE_TEST_GROUP value in an owner command.
+var nodeTestGroupFlagRE = regexp.MustCompile(`NODE_TEST_GROUP=([A-Za-z0-9-]+)`)
 
 // validateNodeTestGroup checks that a Node test is in the group its owning job
 // runs, so evidence cannot claim a CI job that never executes the file.
@@ -356,15 +474,22 @@ func validateNodeTestGroup(evidence v1CorpusEvidence, owner v1CIOwner) string {
 	if evidence.Kind != "node-test" {
 		return ""
 	}
-	inRuntime, err := filepath.Match(nodeRuntimeTestPattern, filepath.ToSlash(filepath.Clean(evidence.Path)))
+	match := nodeTestGroupFlagRE.FindStringSubmatch(owner.Command)
+	if match == nil {
+		return fmt.Sprintf("CI owner %q command names no NODE_TEST_GROUP, so the file's group cannot be checked", owner.Label)
+	}
+	want := match[1]
+	switch want {
+	case "runtime", "scene3d", "scene3d-b", "other":
+	default:
+		return fmt.Sprintf("CI owner %q runs unknown NODE_TEST_GROUP=%s", owner.Label, want)
+	}
+	got, err := nodeTestGroupOf(evidence.Path)
 	if err != nil {
 		return err.Error()
 	}
-	switch {
-	case strings.Contains(owner.Command, "NODE_TEST_GROUP=runtime") && !inRuntime:
-		return fmt.Sprintf("is not in NODE_TEST_GROUP=runtime, which CI owner %q runs", owner.Label)
-	case strings.Contains(owner.Command, "NODE_TEST_GROUP=other") && inRuntime:
-		return fmt.Sprintf("is in NODE_TEST_GROUP=runtime, not the other group CI owner %q runs", owner.Label)
+	if got != want {
+		return fmt.Sprintf("is in NODE_TEST_GROUP=%s, not the NODE_TEST_GROUP=%s that CI owner %q runs", got, want, owner.Label)
 	}
 	return ""
 }

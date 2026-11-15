@@ -10,6 +10,7 @@ const ts = require("../runtime/node_modules/typescript");
 const {
   createBoardWebGPUHarness,
   flushAsyncWork,
+  shadowUniformState,
 } = require("./runtime-test-harness.js");
 
 const sourceRoot = path.join(__dirname, "bootstrap-src");
@@ -230,8 +231,10 @@ test("WebGL and WebGPU receivers reject invalid perspective coordinates before s
   assert.ok(glGuard >= 0 && glGuard < glSample);
   assert.match(webgl, /u_receiveShadow && \(lightType == 1 \|\| lightType == 3\)/);
 
-  const gpuGuard = webgpu.indexOf('"    if (lightSpacePos.w <= 0.0) { return 1.0; }"');
-  const gpuSample = webgpu.indexOf("textureSampleCompareLevel(shadowMap0");
+  // WebGPU cascades sample in the shadow module of the WebGPU source set.
+  const gpuSet = require("./scene3d-renderer-source-set.js").readSceneRendererBackendSrc("webgpu");
+  const gpuGuard = gpuSet.indexOf('"    if (p.w <= 0.0) { return 1.0; }",');
+  const gpuSample = gpuSet.indexOf("textureSampleCompareLevel(map, samp,");
   assert.ok(gpuGuard >= 0 && gpuGuard < gpuSample);
   assert.match(webgpu, /lightType == 1u \|\| lightType == 3u/);
 });
@@ -321,12 +324,9 @@ test("WebGPU spot shadows render in deterministic slots and retire on removal an
   const shadowTextureIDs = shadowPasses.map((pass) => pass.descriptor.depthStencilAttachment.view.textureId);
   assert.equal(new Set(shadowTextureIDs).size, 2);
 
-  const uniformWrite = harness.fake.state.writeBufferCalls.filter(
-    (call) => call.data && call.data.length === 40,
-  ).at(-1);
-  assert.ok(uniformWrite);
-  const words = new Int32Array(uniformWrite.data.buffer, uniformWrite.data.byteOffset, uniformWrite.data.length);
-  assert.deepEqual([words[36], words[37]], [2, 3]);
+  // ShadowUniforms: two 80-float cascade slots, then the light indices.
+  const words = shadowUniformState(harness.fake).i32;
+  assert.deepEqual([words[160], words[161]], [2, 3]);
 
   harness.renderer.render(spotShadowBundle(api, []), { width: 64, height: 64 }, { nowMS: 17, active: true });
   for (const id of shadowTextureIDs) {

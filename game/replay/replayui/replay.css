@@ -1,0 +1,20 @@
+/* Replay controls. Uses the kit --kit-* variables. */
+.kit-replay {
+  position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%); z-index: var(--kit-z, 1000);
+  width: min(52rem, 96vw); box-sizing: border-box;
+  display: grid; grid-template-columns: auto 1fr; gap: var(--kit-gap, 0.75rem);
+  padding: 0.75rem 1rem; border-radius: var(--kit-panel-radius, 12px);
+  background: var(--kit-bg, rgba(12, 14, 20, 0.92)); border: 1px solid var(--kit-border, rgba(255, 255, 255, 0.16));
+  font-family: var(--kit-font, system-ui, sans-serif); color: var(--kit-fg, #f2f4f8);
+}
+.kit-replay-transport { display: flex; gap: 0.4rem; }
+.kit-replay .kit-button { width: auto; min-width: 2.4rem; padding: 0.4rem 0.7rem; }
+.kit-replay .kit-button[data-kit-selected="true"] { background: var(--kit-accent, #5b9dff); color: var(--kit-accent-fg, #06101f); border-color: transparent; }
+.kit-replay-scrub { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--kit-gap, 0.75rem); }
+.kit-replay-scrub input[type="range"] { width: 100%; accent-color: var(--kit-accent, #5b9dff); }
+.kit-replay-scrub input[type="range"]:focus-visible { outline: none; box-shadow: var(--kit-focus, 0 0 0 3px rgba(91, 157, 255, 0.55)); }
+.kit-replay-time { color: var(--kit-fg-dim, #aab2c0); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kit-replay-group { display: flex; flex-wrap: wrap; gap: 0.35rem; grid-column: 1 / -1; }
+.kit-replay-markers { grid-column: 1 / -1; list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.kit-replay-markers .kit-button { color: var(--kit-fg-dim, #aab2c0); }
+@media (max-width: 40rem) { .kit-replay { grid-template-columns: 1fr; } }

@@ -1,10 +1,9 @@
-// Package sim provides server-authoritative game simulation over gosx hubs.
-// Games implement the Simulation interface and a Runner drives the simulation
-// at a fixed tick rate, collecting player inputs and broadcasting state.
-//
-// The Runner never calls the Simulation concurrently with itself. It supports
-// pause, speed, catch-up, input queues, pluggable broadcasters and replay logs
-// with an initial snapshot; see Options and the package README.
+//go:build !js || !wasm
+
+// The Runner and its hub wiring are server code: a js/wasm build of sim keeps
+// the simulation contract, replay logs and the binary snapshot codec, and links
+// no hub, net/http or crypto/tls.
+
 package sim
 
 import (
@@ -16,51 +15,6 @@ import (
 
 	"m31labs.dev/gosx/hub"
 )
-
-// Input holds raw per-client input data for a single tick.
-type Input struct {
-	Data []byte
-}
-
-// Simulation is the interface a game must implement to be driven by a Runner.
-type Simulation interface {
-	// Tick advances the simulation one step with the collected inputs. The
-	// inputs map has random iteration order: use SortedPlayerIDs or EachInput
-	// when order can affect state. The Runner never calls Tick, Snapshot,
-	// Restore or State concurrently with one another.
-	Tick(inputs map[string]Input)
-	// Snapshot returns an opaque checkpoint for rollback or replay.
-	Snapshot() []byte
-	// Restore resets the simulation to a previous snapshot.
-	Restore(snapshot []byte)
-	// State returns the current authoritative state for broadcast.
-	State() []byte
-}
-
-// CheckedRestorer is the optional part of a Simulation that reports a snapshot
-// it cannot apply and, when it does, leaves the simulation unchanged. Restore
-// has no result, so a Runner that is told to load a save cannot see a refusal
-// unless the simulation implements this. Runner.RestoreSnapshot calls it in place
-// of Restore. game.Runtime implements it.
-type CheckedRestorer interface {
-	RestoreSnapshot(snapshot []byte) error
-}
-
-// StateEncoding controls how Runner places Simulation state bytes into hub
-// payloads.
-type StateEncoding string
-
-const (
-	// StateEncodingBytes preserves the historical behavior: []byte state fields
-	// are JSON-encoded by encoding/json, which produces base64 strings.
-	StateEncodingBytes StateEncoding = "bytes"
-	// StateEncodingJSON embeds valid JSON state bytes directly as JSON values.
-	// Invalid JSON falls back to StateEncodingBytes behavior.
-	StateEncodingJSON StateEncoding = "json"
-)
-
-// RingDisabled turns off the rollback snapshot ring when set as Options.RingSize.
-const RingDisabled = -1
 
 // Options configures a Runner.
 type Options struct {
@@ -396,24 +350,4 @@ func encodeStateData(encoding StateEncoding, data []byte) any {
 		return []byte(nil)
 	}
 	return data
-}
-
-func cloneInput(input Input) Input {
-	if input.Data == nil {
-		return Input{}
-	}
-	data := make([]byte, len(input.Data))
-	copy(data, input.Data)
-	return Input{Data: data}
-}
-
-func cloneInputs(inputs map[string]Input) map[string]Input {
-	if len(inputs) == 0 {
-		return map[string]Input{}
-	}
-	out := make(map[string]Input, len(inputs))
-	for playerID, input := range inputs {
-		out[playerID] = cloneInput(input)
-	}
-	return out
 }

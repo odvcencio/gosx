@@ -1485,7 +1485,8 @@ test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /var WGSL_POST_SSAO_FRAGMENT = \[/);
-  assert.match(webgpu, /var WGSL_POST_DOF_FRAGMENT = \[/);
+  // DOF ships in the on-demand WebGPU post-effects chunk.
+  assert.match(fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dof-wgpu.ts"), "utf8"), /var WGSL_POST_DOF_FRAGMENT = \[/);
   assert.match(webgpu, /var depthTex: texture_depth_2d/);
   assert.match(webgpu, /textureLoad\(depthTex, p, 0\)/);
   assert.match(webgpu, /texture: \{ sampleType: "depth" \}/);
@@ -1542,10 +1543,15 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
   assert.match(webgpu, /f\[10\] = clamp01\(sceneNumber\(mat\.iridescence, 0\)\)/);
   assert.match(webgpu, /f\[11\] = Math\.max\(-1, Math\.min\(1, sceneNumber\(mat\.anisotropy, 0\)\)\)/);
   assert.match(webgpu, /roughness = clamp\(roughness \* \(1\.0 - abs\(material\.anisotropy\) \* 0\.28\), 0\.04, 1\.0\)/);
-  assert.match(webgpu, /let clearcoat = clamp\(material\.clearcoat, 0\.0, 1\.0\)/);
-  assert.match(webgpu, /let sheen = clamp\(material\.sheen, 0\.0, 1\.0\)/);
+  // The material's coat, sheen and transmission become surface inputs the
+  // shared BRDF reads (a Selena surface hook supplies them instead).
+  assert.match(webgpu, /let surfaceClearcoat = material\.clearcoat;/);
+  assert.match(webgpu, /clamp\(coat, 0\.0, 1\.0\)/);
+  assert.match(webgpu, /let surfaceSheen = material\.sheen;/);
+  assert.match(webgpu, /let sheen = clamp\(surfaceSheen, 0\.0, 1\.0\)/);
   assert.match(webgpu, /let iridescence = clamp\(material\.iridescence, 0\.0, 1\.0\)/);
-  assert.match(webgpu, /let transmission = clamp\(material\.transmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)/);
+  assert.match(webgpu, /let surfaceTransmission = material\.transmission;/);
+  assert.match(webgpu, /let transmission = clamp\(surfaceTransmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)/);
 });
 
 test("Scene3D WebGPU reports custom material fallback diagnostics", () => {
@@ -1602,7 +1608,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
   // name === "time" before user values can shadow it.
   assert.match(webgl, /function sceneSelenaAutoUniformValue\(name, time, proximity\)/);
   assert.match(webgl, /var autoUniform = sceneSelenaAutoUniformValue\(name, sceneSelenaFrameTime, sceneSelenaFrameProximity\);[\s\S]*?hasOwnProperty\.call\(values, name\)/);
-  assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,500}sceneSelenaMaterialValue\(material, name\)/);
+  assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,800}sceneSelenaMaterialValue\(material, name\)/);
 
   // Shader time and wall time are distinct. Stateful water retains the wall
   // clock, while declarative materials receive the mounted scene playhead.
@@ -1986,7 +1992,7 @@ test("Scene3D WebGPU Selena materials can bind live water resources", () => {
   assert.match(webgpu, /function sceneSelenaStorageBufferDescriptors\(layout\)/);
   assert.match(webgpu, /buffer: \{ type: "read-only-storage" \}/);
   assert.match(webgpu, /liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL/);
-  assert.match(webgpu, /var liveView = environmentSlot \? \(environmentRecord && environmentRecord\.view\) : context\.liveView\(material, tex\)/);
+  assert.match(webgpu, /var liveView = environmentSlot \? \(environmentRecord && environmentRecord\.view\) : \(sceneSelenaShadowMapView\(context, tex\) \|\| sceneDataTextureView\(context, material, tex\) \|\| context\.liveView\(material, tex\)\)/);
   assert.match(webgpu, /sceneWebGPUAppendSelenaTextures\(selenaTextureContext, material, textures, entries, cacheViews\)/);
   assert.match(webgpu, /var buffer = sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
 });

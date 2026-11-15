@@ -311,7 +311,8 @@ test("binary frames reach the Scene3D entry points without copying", async () =>
     dispatchClipFrame: (t, b, o) => { dispatched.push(["clip", t, b, o]); return Promise.resolve(); },
   };
   const applied = [];
-  const mount = { __gosxScene3DHandle: { applyInstanceStream: b => { applied.push(b); return { applied: true }; } } };
+  const textures = [];
+  const mount = { __gosxScene3DHandle: { applyInstanceStream: b => { applied.push(b); return { applied: true }; }, applyDataTexture: b => { textures.push(b); return { applied: true }; } } };
   page.document.getElementById = id => (id === "arena" ? mount : null);
   const { worker } = await mounted(page);
   const pose = new Uint8Array([1, 2, 3]).buffer;
@@ -326,9 +327,12 @@ test("binary frames reach the Scene3D entry points without copying", async () =>
   assert.equal(dispatched[0][2].buffer, pose, "the page view must share the transferred buffer");
   assert.equal(dispatched[1][3].fallbackPoseFrame.buffer, fb);
   assert.deepEqual(Array.from(applied[0]), [7, 7]);
+  worker.say({ t: "frame", kind: "data-texture", target: "arena", buf: new Uint8Array([8, 8, 8]).buffer });
+  assert.deepEqual(Array.from(textures[0]), [8, 8, 8], "a data-texture frame reaches handle.applyDataTexture");
+  assert.equal(applied.length, 1, "and not the instance stream");
   const stats = page.host.get(ENTRY.id).stats();
-  assert.equal(stats.framesIn, 4);
-  assert.equal(stats.frameBytes, 3 + 2 + 1 + 2);
+  assert.equal(stats.framesIn, 5);
+  assert.equal(stats.frameBytes, 3 + 2 + 1 + 2 + 3);
 });
 
 test("a rejected frame dispatch is reported as an engine event", async () => {
@@ -618,6 +622,10 @@ test("worker: frame dispatch shims transfer owned buffers and copy views", async
   const r = api.applyInstanceStream("arena", new Uint8Array([5]));
   assert.equal(w.of("frame")[3].msg.kind, "instance");
   assert.equal(r.applied, true);
+  const texture = api.applyDataTexture("arena", new Uint8Array([6]));
+  assert.equal(w.of("frame")[4].msg.kind, "data-texture");
+  assert.equal(w.of("frame")[4].msg.target, "arena");
+  assert.deepEqual(plain(texture), { applied: true, queued: true });
 });
 
 test("worker: visibility updates hidden and notifies listeners", async () => {
@@ -897,6 +905,34 @@ test("worker: input arrives as JSON stamped with the event time and arrival time
   assert.equal(seen.length, 2);
   w.send({ t: "input", ev: "not an object" });
   assert.equal(seen.length, 2);
+});
+
+// The binary record is the contract game/host decodes (forwarded.go,
+// TestInputRecordGolden decodes these same bytes).
+const INPUT_RECORD_GOLDEN_KEY = "0101010000000000000000000000000000000000000000000000000000000000000000000004b5400000000000c077400000000000007940000000000400010000000000000000004b65794161";
+test("worker: forwarded input as binary records", () => {
+  const w = bootWorker();
+  const records = [];
+  w.scope.__gosx.worker.onInputBytes(bytes => records.push(Buffer.from(bytes).toString("hex")));
+  w.setClock(400);
+  w.send({ t: "input", ev: { k: "key", code: "KeyA", key: "a", down: true, ts: 5380 } });
+  assert.equal(records.length, 1);
+  assert.equal(records[0], INPUT_RECORD_GOLDEN_KEY);
+  w.send({ t: "input", ev: { k: "pad", index: 2, id: "Pad", mapping: "standard", connected: true, buttons: [1, 0.5], axes: [-1], ts: 5390 } });
+  const pad = Buffer.from(records[1], "hex");
+  assert.equal(pad[1], 3);
+  assert.equal(pad[2], 2, "connected flag");
+  assert.equal(pad.readInt32LE(12), 2);
+  assert.equal(pad.readUInt16LE(56), 2);
+  assert.equal(pad.readUInt16LE(58), 1);
+  assert.equal(pad.readDoubleLE(72 + 8), 0.5);
+  assert.equal(pad.readDoubleLE(72 + 16), -1);
+  assert.equal(pad.subarray(72 + 24).toString("utf8"), "Padstandard");
+  // A long string grows the reused buffer instead of truncating.
+  w.send({ t: "input", ev: { k: "key", code: "K".repeat(600), ts: 5400 } });
+  assert.equal(Buffer.from(records[2], "hex").readUInt16LE(60), 600);
+  w.send({ t: "input", ev: { k: "unknown", ts: 5410 } });
+  assert.equal(records.length, 3, "an unknown kind sends no record");
 });
 
 // ---------------------------------------------------------------------------

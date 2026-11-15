@@ -355,7 +355,7 @@ func (r *PageRuntime) HeadWithNonce(nonce string) gosx.Node {
 	nodes := []gosx.Node{}
 	if r.active {
 		nodes = append(nodes,
-			r.renderer.PreloadHints(),
+			r.renderer.PreloadHintsWithNonce(nonce),
 			r.renderer.PageHeadWithNonce(nonce),
 		)
 	}
@@ -385,10 +385,15 @@ func (r *PageRuntime) HeadWithNonce(nonce string) gosx.Node {
 // versus its {slotPageHead}, most often — can bind each to its own named
 // slot without also getting the other's markup bundled in.
 func (r *PageRuntime) PreloadHints() gosx.Node {
+	return r.PreloadHintsWithNonce("")
+}
+
+// PreloadHintsWithNonce attaches the request nonce to script preload hints.
+func (r *PageRuntime) PreloadHintsWithNonce(nonce string) gosx.Node {
 	if r == nil || !r.active {
 		return gosx.Text("")
 	}
-	return r.renderer.PreloadHints()
+	return r.renderer.PreloadHintsWithNonce(nonce)
 }
 
 // PageHead renders the hydration manifest and bootstrap script for every
@@ -443,12 +448,4 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		Hubs:                            summary.Hubs,
 		Controllers:                     summary.Controllers,
 	}
-}
-
-func (r *PageRuntime) usesCompatRuntimeAssets() bool {
-	if r == nil || r.renderer == nil {
-		return false
-	}
-	head := gosx.RenderHTML(r.renderer.PageHead())
-	return strings.Contains(head, "/gosx/")
 }

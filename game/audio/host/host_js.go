@@ -14,6 +14,8 @@ import (
 // HostJS is the real browser Host, backed by a WebAudio AudioContext.
 type HostJS struct {
 	ctx      js.Value
+	mixer    js.Value // window.__gosx.audioMixer when shared
+	shared   bool
 	closed   bool
 	lifetime context.Context
 	cancel   context.CancelFunc
@@ -35,6 +37,16 @@ func NewHostJSWithOptions(options HostOptions) (host *HostJS, err error) {
 	defer recoverAudio("create context", &err)
 	if !nonnegative(options.SampleRate) {
 		return nil, errors.New("audio: invalid sample rate")
+	}
+	if !options.Private {
+		mixer, ctx, err := adoptSharedContext(options)
+		if err != nil {
+			return nil, err
+		}
+		if !mixer.IsUndefined() {
+			lifetime, cancel := context.WithCancel(context.Background())
+			return &HostJS{ctx: ctx, mixer: mixer, shared: true, lifetime: lifetime, cancel: cancel, worklets: make(map[*WorkletNodeJS]struct{}), sources: make(map[*sourceNodeJS]struct{})}, nil
+		}
 	}
 	ctor := js.Global().Get("AudioContext")
 	if ctor.Type() != js.TypeFunction {
@@ -90,6 +102,11 @@ func (h *HostJS) CreateSource(buffer Buffer) SourceNode {
 }
 
 func (h *HostJS) Destination() Node {
+	if h.shared {
+		if input := h.mixer.Call("input", "master"); input.Type() == js.TypeObject {
+			return &busInputJS{value: input}
+		}
+	}
 	return &rawNodeJS{value: h.ctx.Get("destination")}
 }
 
@@ -112,6 +129,10 @@ func (h *HostJS) DecodeAudioData(data []byte) (buffer Buffer, err error) {
 func jsValueOf(n Node) js.Value {
 	switch v := n.(type) {
 	case *rawNodeJS:
+		return v.value
+	case *busInputJS:
+		return v.value
+	case *pannerNodeJS3D:
 		return v.value
 	case *gainNodeJS:
 		return v.value

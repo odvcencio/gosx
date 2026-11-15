@@ -1,6 +1,10 @@
 package perf
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"time"
+)
 
 // ResourceEntry represents a resource loading event from the Performance API.
 type ResourceEntry struct {
@@ -46,4 +50,47 @@ func FormatWaterfall(entries []ResourceEntry) string {
 			e.InitiatorType, size, e.StartTime, e.Duration, name)
 	}
 	return out
+}
+
+const (
+	// networkQuietWindow is how long the resource list must stay unchanged
+	// before a budget measurement reads it.
+	networkQuietWindow = 750 * time.Millisecond
+	// networkQuietMax bounds the wait on a page that never goes quiet.
+	networkQuietMax  = 6 * time.Second
+	networkQuietPoll = 150 * time.Millisecond
+)
+
+// waitForNetworkQuiet polls the number of finished resources until it stays
+// unchanged for quiet, or max passes. The byte budget sums transfer sizes at
+// one moment, and a resource that finishes after it (a lazy navigation script
+// of 111 KB on /demos/water) made the total differ by more than 100 KB between
+// runs of the same code. It returns how long it waited and whether the page
+// went quiet.
+func waitForNetworkQuiet(ctx context.Context, count func() (int, error), quiet, max, poll time.Duration) (time.Duration, bool, error) {
+	start := time.Now()
+	last, err := count()
+	if err != nil {
+		return 0, false, err
+	}
+	stableSince := time.Now()
+	for time.Since(start) < max {
+		select {
+		case <-ctx.Done():
+			return time.Since(start), false, ctx.Err()
+		case <-time.After(poll):
+		}
+		n, err := count()
+		if err != nil {
+			return time.Since(start), false, err
+		}
+		if n != last {
+			last, stableSince = n, time.Now()
+			continue
+		}
+		if time.Since(stableSince) >= quiet {
+			return time.Since(start), true, nil
+		}
+	}
+	return time.Since(start), false, nil
 }

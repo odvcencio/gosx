@@ -220,6 +220,10 @@ func TestWaterProbeFramesOnTheGPU(t *testing.T) {
 			if r.Error != "" || r.CapErr != "" {
 				t.Fatalf("%s: error %q capture %q", backend, r.Error, r.CapErr)
 			}
+			// A lost WebGPU device makes the renderer fall back to WebGL; the "webgpu" subtest must not pass on that.
+			if want := map[string]string{"webgpu": "webgpu", "webgl2": "webgl"}[backend]; r.Backend != want {
+				t.Fatalf("%s subtest drew on %q, want %q", backend, r.Backend, want)
+			}
 			if dir := os.Getenv("OCEAN_PROBE_EVIDENCE"); dir != "" {
 				_ = os.MkdirAll(dir, 0o755)
 				blob, _ := json.MarshalIndent(r.Compare, "", " ")

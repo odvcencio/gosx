@@ -112,6 +112,13 @@ type Hub struct {
 	// public browser-only hubs should enable this before serving.
 	RequireOrigin bool
 
+	// CheckOrigin replaces the same-origin rule for this hub's WebSocket
+	// upgrades. Nil keeps the package default (same origin only, or the
+	// function installed with SetCheckOrigin). RequireOrigin still refuses a
+	// missing Origin before CheckOrigin runs. OriginAllowlist.Check is a ready
+	// policy for clients served from other origins. Set it before serving.
+	CheckOrigin func(*http.Request) bool
+
 	// MaxMessagesPerSecond bounds inbound text and binary messages per client.
 	// MaxMessageBurst is the per-client token-bucket capacity; when zero it
 	// defaults to twice MaxMessagesPerSecond. Zero rate means unlimited.
@@ -623,6 +630,51 @@ func (h *Hub) Send(clientID string, event string, data any) {
 // so forced disconnects have the same lifecycle semantics as peer closes.
 // It returns false when the client is no longer connected.
 func (h *Hub) Disconnect(clientID, reason string) bool {
+	return h.disconnect(clientID, websocket.ClosePolicyViolation, reason)
+}
+
+// DisconnectWithCode is Disconnect with a caller-chosen WebSocket close code,
+// so a browser client can tell why the server closed it (CloseEvent.code).
+// Applications use the private range 4000 to 4999; 3000 to 3999 is for
+// registered libraries. A code outside 1000, 1001, 1008, 1011 and 3000 to 4999
+// is replaced by 1008 (policy violation). The reason is cut to the 123 bytes a
+// close frame can carry, at a UTF-8 boundary. It returns false when the client
+// is no longer connected.
+//
+// The call writes the close frame itself and can wait for an in-flight write
+// up to the hub's write timeout, so do not call it while holding a lock that
+// handlers need.
+func (h *Hub) DisconnectWithCode(clientID string, code int, reason string) bool {
+	return h.disconnect(clientID, normalizeCloseCode(code), reason)
+}
+
+// maxCloseReason is the longest reason a close frame carries: a control frame
+// payload is at most 125 bytes, and the code takes two.
+const maxCloseReason = 123
+
+func normalizeCloseCode(code int) int {
+	switch {
+	case code == websocket.CloseNormalClosure, code == websocket.CloseGoingAway,
+		code == websocket.ClosePolicyViolation, code == websocket.CloseInternalServerErr:
+		return code
+	case code >= 3000 && code <= 4999:
+		return code
+	}
+	return websocket.ClosePolicyViolation
+}
+
+func truncateCloseReason(reason string) string {
+	if len(reason) <= maxCloseReason {
+		return reason
+	}
+	cut := maxCloseReason
+	for cut > 0 && reason[cut]&0xC0 == 0x80 { // do not split a UTF-8 sequence
+		cut--
+	}
+	return reason[:cut]
+}
+
+func (h *Hub) disconnect(clientID string, code int, reason string) bool {
 	h.mu.RLock()
 	client, ok := h.clients[clientID]
 	h.mu.RUnlock()
@@ -648,7 +700,7 @@ func (h *Hub) Disconnect(clientID, reason string) bool {
 	// do not hold client.mu here: WriteControl can wait for an in-flight
 	// normal write until its deadline, while client.mu must remain available
 	// to the non-blocking trySend and channel-close lifecycle.
-	_ = client.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason), time.Now().Add(writeWait))
+	_ = client.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, truncateCloseReason(reason)), time.Now().Add(writeWait))
 	_ = client.conn.Close()
 	return true
 }
@@ -782,7 +834,15 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	}()
 
 	connectionUpgrader := upgrader
-	if h.RequireOrigin {
+	if check := h.CheckOrigin; check != nil {
+		require := h.RequireOrigin
+		connectionUpgrader.CheckOrigin = func(r *http.Request) bool {
+			if require && r.Header.Get("Origin") == "" {
+				return false
+			}
+			return check(r)
+		}
+	} else if h.RequireOrigin {
 		connectionUpgrader.CheckOrigin = func(r *http.Request) bool { return sameOrigin(r, true) }
 	}
 	connectionUpgrader.EnableCompression = h.EnableCompression

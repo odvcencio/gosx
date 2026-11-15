@@ -41,6 +41,11 @@ const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
+// TAA, depth of field and auto exposure ship per backend in on-demand chunks
+// (bootstrap-feature-scene3d-postfx-<backend>.js). The board harnesses load the
+// WebGPU one with the renderer, as a page that declares those effects would.
+const bootstrapFeatureScene3DPostFXWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-postfx-webgpu.js"), "utf8");
+const bootstrapFeatureScene3DPostFXWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-postfx-webgl.js"), "utf8");
 const scene3DWebGPUBackendSource = readSceneRendererBackendSrc("webgpu");
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.ts"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
@@ -1903,7 +1908,8 @@ function buildPointLineGLBBytes() {
   return Array.from(glb);
 }
 
-function buildSkinnedGLBBytes() {
+function buildSkinnedGLBBytes(options = {}) {
+  const jointCount = Math.max(2, Math.floor(options.jointCount || 2));
   const chunks = [];
   const bufferViews = [];
   let byteOffset = 0;
@@ -1940,10 +1946,11 @@ function buildSkinnedGLBBytes() {
     0, 0, 1,
     0, 0, 1,
   ]);
+  const lastJoint = jointCount - 1;
   const joints = new Uint8Array([
-    0, 1, 0, 0,
-    0, 1, 0, 0,
-    0, 1, 0, 0,
+    0, lastJoint, 0, 0,
+    0, lastJoint, 0, 0,
+    0, lastJoint, 0, 0,
   ]);
   const weights = new Float32Array([
     0.75, 0.25, 0, 0,
@@ -1951,15 +1958,13 @@ function buildSkinnedGLBBytes() {
     1, 0, 0, 0,
   ]);
   const indices = new Uint16Array([2, 0, 1]);
-  const inverseBindMatrices = new Float32Array(32);
-  inverseBindMatrices[0] = 1;
-  inverseBindMatrices[5] = 1;
-  inverseBindMatrices[10] = 1;
-  inverseBindMatrices[15] = 1;
-  inverseBindMatrices[16] = 1;
-  inverseBindMatrices[21] = 1;
-  inverseBindMatrices[26] = 1;
-  inverseBindMatrices[31] = 1;
+  const inverseBindMatrices = new Float32Array(jointCount * 16);
+  for (let j = 0; j < jointCount; j++) {
+    inverseBindMatrices[j * 16] = 1;
+    inverseBindMatrices[j * 16 + 5] = 1;
+    inverseBindMatrices[j * 16 + 10] = 1;
+    inverseBindMatrices[j * 16 + 15] = 1;
+  }
   const times = new Float32Array([0, 1]);
   const translations = new Float32Array([
     0, 0, 0,
@@ -1983,8 +1988,9 @@ function buildSkinnedGLBBytes() {
     scenes: [{ nodes: [0, 1] }],
     nodes: [
       { name: "skinned-mesh", mesh: 0, skin: 0, translation: [2, 0, 0] },
-      { name: "root-joint", children: [2] },
-      { name: "tip-joint" },
+      ...Array.from({ length: jointCount }, (_, k) => k === 0
+        ? { name: "root-joint", children: [2] }
+        : (k === jointCount - 1 ? { name: "tip-joint" } : { name: "joint-" + k, children: [k + 2] })),
     ],
     meshes: [{
       name: "rig",
@@ -2001,7 +2007,7 @@ function buildSkinnedGLBBytes() {
     }],
     skins: [{
       name: "rig-skin",
-      joints: [1, 2],
+      joints: Array.from({ length: jointCount }, (_, k) => k + 1),
       inverseBindMatrices: 5,
       skeleton: 1,
     }],
@@ -2030,7 +2036,7 @@ function buildSkinnedGLBBytes() {
       { bufferView: jointView, componentType: 5121, count: 3, type: "VEC4" },
       { bufferView: weightView, componentType: 5126, count: 3, type: "VEC4" },
       { bufferView: indexView, componentType: 5123, count: 3, type: "SCALAR" },
-      { bufferView: inverseBindView, componentType: 5126, count: 2, type: "MAT4" },
+      { bufferView: inverseBindView, componentType: 5126, count: jointCount, type: "MAT4" },
       { bufferView: timeView, componentType: 5126, count: 2, type: "SCALAR" },
       { bufferView: translationView, componentType: 5126, count: 2, type: "VEC3" },
     ],
@@ -2226,6 +2232,7 @@ function createContext(options) {
   // does a WebGPU page whose device is lost. A test can still override the
   // route through options.fetchRoutes, or drop it to prove the chunk is absent.
   routes.set("/gosx/bootstrap-feature-scene3d-webgl.js", { text: bootstrapFeatureScene3DWebGLSource });
+  routes.set("/gosx/bootstrap-feature-scene3d-postfx-webgl.js", { text: bootstrapFeatureScene3DPostFXWebGLSource });
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
     routes.set(url, response);
   }
@@ -3364,6 +3371,8 @@ function loadSceneAdaptiveQualityAPI() {
   ` + capabilityDPR + sceneProps + sceneIsPlainObject + qualityLadderCore + source.slice(start, end) + `
     globalThis.adaptiveAPI = {
       createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
+      sceneObserveAdaptiveQualityRAF, sceneAdaptiveResumeSampling,
+      createSceneGraphicsRecovery, sceneWebGPULossReturnAllowed, sceneDispatchGraphicsReset, sceneGraphicsResetSwap,
       sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,
       sceneEffectivePointQualityGroup, sceneFilterPointsByQualityGroups,
       sceneQualityLadderPointBudgetScale, sceneApplyPointBudgetScale,
@@ -4576,6 +4585,7 @@ async function createBoardWebGPUHarness(options) {
   };
 
   runScript(scene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  runScript(opts.fresh ? freshFeatureBundleSource("scene3d-postfx-webgpu") : bootstrapFeatureScene3DPostFXWebGPUSource, env.context, "bootstrap-feature-scene3d-postfx-webgpu.js");
   const api = env.context.__gosx_scene3d_webgpu_api;
   assert.ok(api && typeof api.createRenderer === "function", "webgpu chunk must publish createRenderer");
 
@@ -4848,6 +4858,22 @@ function deviceCallDelta(before, after) {
 
 // Retry the same frame after builtin pipeline compilation settles. Authored
 // shader fallback/recovery remains visible to tests after the first submission.
+// shadowUniformState rebuilds the WebGPU ShadowUniforms buffer (656 bytes)
+// from every queue.writeBuffer to it, because a frame uploads only the span
+// that changed (wgpuPackShadowUniforms).
+function shadowUniformState(fake) {
+  const writes = fake.state.writeBufferCalls.filter((call) => call.buffer && call.buffer.size === 656 && call.data);
+  assert.ok(writes.length > 0, "expected a ShadowUniforms upload");
+  const target = writes.at(-1).buffer;
+  const bytes = new Uint8Array(656);
+  for (const call of writes) {
+    if (call.buffer !== target) continue;
+    const data = call.data;
+    bytes.set(ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data), call.offset || 0);
+  }
+  return { f: new Float32Array(bytes.buffer), i32: new Int32Array(bytes.buffer) };
+}
+
 async function renderPreparedFrame(renderer, ...args) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const result = renderer.render(...args);
@@ -5041,6 +5067,7 @@ async function createCanvasBoardRoutingHarness(options = {}) {
       return { adapter: { __kind: "adapter" }, device: fake.device, ready: true };
     };
     runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+    runScript(bootstrapFeatureScene3DPostFXWebGPUSource, env.context, "bootstrap-feature-scene3d-postfx-webgpu.js");
     assert.ok(
       env.context.__gosx_scene3d_webgpu_api && typeof env.context.__gosx_scene3d_webgpu_api.createRenderer === "function",
       "webgpu chunk must publish createRenderer",
@@ -5275,6 +5302,7 @@ async function createComputeParticleHarness(fakeDevice, options) {
     return { adapter: { __kind: "adapter" }, device: fakeDevice, ready: true };
   };
   runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  runScript(bootstrapFeatureScene3DPostFXWebGPUSource, env.context, "bootstrap-feature-scene3d-postfx-webgpu.js");
 
   const api = env.context.__gosx_scene3d_webgpu_api;
   const mount = new FakeElement("div", null);
@@ -5538,8 +5566,11 @@ function createWebGLRendererForPost(options) {
     runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
     runScript(freshFeatureBundleSource("scene3d-compute"), env.context, "bootstrap-feature-scene3d-compute.js");
     runScript(freshFeatureBundleSource("scene3d-webgl"), env.context, "bootstrap-feature-scene3d-webgl.js");
+    runScript(freshFeatureBundleSource("scene3d-postfx-webgl"), env.context, "bootstrap-feature-scene3d-postfx-webgl.js");
   } else {
     runScript(bootstrapSource, env.context, "bootstrap.js");
+    // The monolith keeps the renderers inline but not their post effects.
+    runScript(bootstrapFeatureScene3DPostFXWebGLSource, env.context, "bootstrap-feature-scene3d-postfx-webgl.js");
   }
   const api = env.context.__gosx_scene3d_api;
   const registry = api.sceneBackendRegistry;
@@ -5661,6 +5692,7 @@ async function createCullSystemHarness(fakeDevice) {
     return { adapter: { __kind: "adapter" }, device: fakeDevice, ready: true };
   };
   runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+  runScript(bootstrapFeatureScene3DPostFXWebGPUSource, env.context, "bootstrap-feature-scene3d-postfx-webgpu.js");
 
   const api = env.context.__gosx_scene3d_api;
   return { env, api };
@@ -5979,6 +6011,7 @@ module.exports = {
   deviceCallDelta,
   renderWaterPerfShapeFrames,
   renderPreparedFrame,
+  shadowUniformState,
   waterComputeKernelPipeline,
   assertWaterComputeKernelBindings,
   loadBoardLabels,

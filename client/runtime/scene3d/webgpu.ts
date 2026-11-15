@@ -5,7 +5,7 @@
   }
 
   function wgpuCreatePipelineGuard(canvas: any): any {
-    var guard: any = { frameAbort: null, pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
+    var guard: any = { frameAbort: null, pending: 0, created: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
     var notificationPending = false;
     function changed() {
       if (guard.disposed || notificationPending) return;
@@ -64,7 +64,7 @@
     var pipeline: any;
     var scoped = false;
     var error: any = null;
-    if (guard) guard.pending++;
+    if (guard) { guard.pending++; guard.created++; }
     function finish(failure: any) {
       state.ready = !failure;
       if (guard) {
@@ -404,18 +404,7 @@
     "    _pad3: u32,",
     "};",
     "",
-    "struct ShadowUniforms {",
-    "    lightSpaceMatrix0: mat4x4f,",
-    "    lightSpaceMatrix1: mat4x4f,",
-    "    hasShadow0: u32,",
-    "    hasShadow1: u32,",
-    "    shadowBias0: f32,",
-    "    shadowBias1: f32,",
-    "    shadowLightIndex0: i32,",
-    "    shadowLightIndex1: i32,",
-    "    _pad0: u32,",
-    "    _pad1: u32,",
-    "};",
+    WGSL_SHADOW_UNIFORMS_STRUCT,
   ].join("\n");
 
   // -- PBR material uniform structure --
@@ -1742,7 +1731,7 @@
   ].join("\n");
 
   var WGSL_PBR_INSTANCED_VERTEX = [
-    WGSL_FRAME_STRUCTS,
+    WGSL_FRAME_STRUCTS, WGSL_MATERIAL_STRUCT,
     WGSL_AFFINE_NORMAL,
     "",
     "struct VertexInput {",
@@ -1767,12 +1756,12 @@
     "    @location(5) @interpolate(flat) instanceColor: vec4f,",
     "};",
     "",
-    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
+    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;", "@group(1) @binding(0) var<uniform> material: MaterialUniforms;", "fn gosxWindSway(m: mat4x4f, p: vec3f) -> vec4f { let w = m * vec4f(p, 1.0); let s = material.modelMatrix[2]; if (s.x <= 0.0) { return w; } let a = material.modelMatrix[0]; let b = material.modelMatrix[1]; let o = m[3].xz; let ph = (dot(o, a.xy) - b.z * a.w) * 6.2831853 / b.y + 0.35 * sin(dot(o, vec2f(a.y, -a.x)) * 6.2831853 / (b.y * 1.7)); let k = clamp(p.y / s.y, 0.0, 1.0); let f = s.x * a.z * 0.1 * (1.0 + b.x * sin(ph)) * (0.75 + 0.25 * sin(6.2831853 * b.w * a.w + o.x * 0.37 + o.y * 0.53)) * k * k * s.y * length(m[1].xyz); return vec4f(w.x + a.x * f, w.y - 0.3 * abs(f) * k, w.z + a.y * f, 1.0); }",
     "",
     "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
     "    var out: VertexOutput;",
     "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-    "    let world = model * vec4f(in.position, 1.0);",
+    "    let world = gosxWindSway(model, in.position);",
     "    out.worldPos = world.xyz;",
     "    let an = gosxAffineNormal(model, in.normal);",
     "    out.normal = an.xyz;",
@@ -1831,9 +1820,9 @@
     "@group(0) @binding(1) var<storage, read> lights: array<Light>;",
     "@group(0) @binding(2) var<uniform> fog: FogUniforms;",
     "@group(0) @binding(3) var<uniform> env: EnvUniforms;",
-    "@group(0) @binding(4) var shadowMap0: texture_depth_2d;",
+    "@group(0) @binding(4) var shadowMap0: texture_depth_2d_array;",
     "@group(0) @binding(5) var shadowSampler0: sampler_comparison;",
-    "@group(0) @binding(6) var shadowMap1: texture_depth_2d;",
+    "@group(0) @binding(6) var shadowMap1: texture_depth_2d_array;",
     "@group(0) @binding(7) var shadowSampler1: sampler_comparison;",
     "@group(0) @binding(8) var<uniform> shadow: ShadowUniforms;",
     "@group(0) @binding(9) var iblIrradiance: texture_cube<f32>;",
@@ -1873,98 +1862,8 @@
       "@group(1) @binding(17) var thicknessTex: texture_2d<f32>;",
       "@group(1) @binding(18) var thicknessSamp: sampler;",
       "",
-    "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
-    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
-    "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
-    "    return vec3f(projCoords3.x * 0.5 + 0.5, 0.5 - projCoords3.y * 0.5, projCoords3.z);",
-    "}",
-    "",
-    // 4-tap Poisson disk PCF shadow sampling for shadow slot 0.
-    "fn shadowFactor0(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
-    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
-    "    if (lightSpacePos.w <= 0.0) { return 1.0; }",
-    "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
-    "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
-    "    if (!inside) { return 1.0; }",
-    "    let poissonDisk = array<vec2f, 4>(",
-    "        vec2f(-0.94201624, -0.39906216),",
-    "        vec2f(0.94558609, -0.76890725),",
-    "        vec2f(-0.094184101, -0.92938870),",
-    "        vec2f(0.34495938, 0.29387760),",
-    "    );",
-    "",
-    "    var shadowVal: f32 = 0.0;",
-    "    let texDim = textureDimensions(shadowMap0);",
-    "    let texelSize = 1.0 / f32(texDim.x);",
-    "",
-    "    for (var i = 0u; i < 4u; i = i + 1u) {",
-    "        let sampleUV = clamp(projCoords.xy + poissonDisk[i] * texelSize, vec2f(0.0), vec2f(1.0));",
-    "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
-    "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap0, shadowSampler0, sampleUV, refDepth);",
-    "    }",
-    "    return shadowVal / 4.0;",
-    "}",
-    "",
-    // 4-tap Poisson disk PCF shadow sampling for shadow slot 1.
-    "fn shadowFactor1(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
-    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
-    "    if (lightSpacePos.w <= 0.0) { return 1.0; }",
-    "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
-    "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
-    "    if (!inside) { return 1.0; }",
-    "    let poissonDisk = array<vec2f, 4>(",
-    "        vec2f(-0.94201624, -0.39906216),",
-    "        vec2f(0.94558609, -0.76890725),",
-    "        vec2f(-0.094184101, -0.92938870),",
-    "        vec2f(0.34495938, 0.29387760),",
-    "    );",
-    "",
-    "    var shadowVal: f32 = 0.0;",
-    "    let texDim = textureDimensions(shadowMap1);",
-    "    let texelSize = 1.0 / f32(texDim.x);",
-    "",
-    "    for (var i = 0u; i < 4u; i = i + 1u) {",
-    "        let sampleUV = clamp(projCoords.xy + poissonDisk[i] * texelSize, vec2f(0.0), vec2f(1.0));",
-    "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
-    "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap1, shadowSampler1, sampleUV, refDepth);",
-    "    }",
-    "    return shadowVal / 4.0;",
-    "}",
-    "",
-    // GGX/Trowbridge-Reitz normal distribution function.
-    "fn distributionGGX(N: vec3f, H: vec3f, roughness: f32) -> f32 {",
-    "    let a = roughness * roughness;",
-    "    let a2 = a * a;",
-    "    let NdotH = max(dot(N, H), 0.0);",
-    "    let NdotH2 = NdotH * NdotH;",
-    "    let denom = NdotH2 * (a2 - 1.0) + 1.0;",
-    "    return a2 / max(PI * denom * denom, 0.0000001);",
-    "}",
-    "",
-    // Smith geometry function (GGX variant) -- single direction.
-    "fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {",
-    "    let r = roughness + 1.0;",
-    "    let k = (r * r) / 8.0;",
-    "    return NdotV / (NdotV * (1.0 - k) + k);",
-    "}",
-    "",
-    // Smith geometry function -- combined for view and light directions.
-    "fn geometrySmith(N: vec3f, V: vec3f, L: vec3f, roughness: f32) -> f32 {",
-    "    let NdotV = max(dot(N, V), 0.0);",
-    "    let NdotL = max(dot(N, L), 0.0);",
-    "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
-    "}",
-    "",
-    // Schlick fresnel approximation. F90 is the authored specular intensity:
-    // the grazing reflectance the KHR specular extension scales, so an
-    // intensity below 1 dims the whole lobe, not just the F0 floor.
-    "fn fresnelSchlick(cosTheta: f32, F0: vec3f, F90: f32) -> vec3f {",
-    "    return F0 + (vec3f(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
-    "",
-    "fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3f, F90: f32, roughness: f32) -> vec3f {",
-    "    return F0 + (max(vec3f(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
-    "}",
+    // Cascaded shadow sampling (webgpu-shadows module).
+    WGSL_SHADOW_CASCADE_FNS,
     "",
     "fn rotateEnvY(dir: vec3f, radians: f32) -> vec3f {",
     "    let c = cos(radians);",
@@ -2001,133 +1900,13 @@
     "    return clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0);",
     "}",
     "",
-    // -- Rect-area light: polygon form factor --------------------------------
-    //
-    // The next three functions reproduce the diffuse half of three.js
-    // RE_Direct_RectArea_Physical. three.js evaluates the diffuse term with
-    // LTC_Evaluate and an IDENTITY matrix, which reduces to the analytic polygon
-    // form factor and needs no lookup table. The diffuse response of a
-    // RectAreaLight is therefore exact here, not an approximation.
-    //
-    // The specular half of three.js reads two fitted 64x64 LTC tables. This
-    // renderer uploads no such tables, so rectAreaLightRadiance approximates
-    // specular with a representative point. See the rect-area-specular cell in
-    // scene/capability/capability.go for the recorded gap.
-
-    // Edge integral of the polygon form factor.
-    "fn ltcEdgeVectorFormFactor(v1: vec3f, v2: vec3f) -> vec3f {",
-    "    let x = dot(v1, v2);",
-    "    let y = abs(x);",
-    "    let a = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;",
-    "    let b = 3.4175940 + (4.1616724 + y) * y;",
-    "    let v = a / b;",
-    "    var thetaSinTheta = 0.5 * inverseSqrt(max(1.0 - x * x, 0.0000001)) - v;",
-    "    if (x > 0.0) {",
-    "        thetaSinTheta = v;",
-    "    }",
-    "    return cross(v1, v2) * thetaSinTheta;",
-    "}",
-    "",
-    // Clipped sphere form factor of the accumulated edge vector.
-    "fn ltcClippedSphereFormFactor(f: vec3f) -> f32 {",
-    "    let l = length(f);",
-    "    return max((l * l + f.z) / (l + 1.0), 0.0);",
-    "}",
-    "",
-    // Diffuse form factor of a rectangle at a shaded point. Returns 0 when the
-    // point sits behind the emitter, so a rect-area light only lights the side
-    // its direction points at.
-    //
-    // The tangent basis: with the identity matrix the form factor depends only
-    // on N, so any basis around N gives the same answer. Pick a stable one.
-    "fn rectAreaFormFactor(N: vec3f, P: vec3f, halfWidth: vec3f, halfHeight: vec3f, center: vec3f) -> f32 {",
-    "    let rect0 = center + halfWidth - halfHeight;",
-    "    let rect1 = center - halfWidth - halfHeight;",
-    "    let rect2 = center - halfWidth + halfHeight;",
-    "    let rect3 = center + halfWidth + halfHeight;",
-    "    let lightNormal = cross(rect1 - rect0, rect3 - rect0);",
-    "    if (dot(lightNormal, P - rect0) < 0.0) {",
-    "        return 0.0;",
-    "    }",
-    "    var helper = vec3f(0.0, 0.0, 1.0);",
-    "    if (abs(N.z) > 0.999) {",
-    "        helper = vec3f(1.0, 0.0, 0.0);",
-    "    }",
-    "    let T1 = normalize(cross(helper, N));",
-    "    let T2 = cross(N, T1);",
-    "    let basis = transpose(mat3x3f(T1, T2, N));",
-    "    let c0 = normalize(basis * (rect0 - P));",
-    "    let c1 = normalize(basis * (rect1 - P));",
-    "    let c2 = normalize(basis * (rect2 - P));",
-    "    let c3 = normalize(basis * (rect3 - P));",
-    "    var edges = ltcEdgeVectorFormFactor(c0, c1);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c1, c2);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c2, c3);",
-    "    edges = edges + ltcEdgeVectorFormFactor(c3, c0);",
-    "    return ltcClippedSphereFormFactor(edges);",
-    "}",
-    "",
-    // Closest point on the rectangle to the mirror direction. This is the
-    // representative-point stand-in for the LTC specular table.
-    "fn rectAreaRepresentativePoint(P: vec3f, N: vec3f, V: vec3f, center: vec3f, halfWidth: vec3f, halfHeight: vec3f, planeNormal: vec3f) -> vec3f {",
-    "    let R = reflect(-V, N);",
-    "    var hit = center;",
-    "    let denom = dot(planeNormal, R);",
-    "    if (abs(denom) > 0.00001) {",
-    "        let t = dot(planeNormal, center - P) / denom;",
-    "        if (t > 0.0) {",
-    "            hit = P + R * t;",
-    "        }",
-    "    }",
-    "    let wLen = max(length(halfWidth), 0.00001);",
-    "    let hLen = max(length(halfHeight), 0.00001);",
-    "    let wDir = halfWidth / wLen;",
-    "    let hDir = halfHeight / hLen;",
-    "    let offset = hit - center;",
-    "    let u = clamp(dot(offset, wDir), -wLen, wLen);",
-    "    let v = clamp(dot(offset, hDir), -hLen, hLen);",
-    "    return center + wDir * u + hDir * v;",
-    "}",
-    "",
-    // Full rect-area contribution: exact diffuse form factor plus a
-    // representative-point specular lobe.
-    //
-    // three.js multiplies the diffuse term by diffuseColor, which already folds
-    // in metalness. The form factor carries the cosine and the solid angle, so
-    // there is no separate NdotL or 1/PI in the diffuse line.
-    "fn rectAreaLightRadiance(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, F90: f32, NoV: f32) -> vec3f {",
-    "    let center = light.position.xyz;",
-    "    let halfWidth = light.areaHalfWidth.xyz;",
-    "    let halfHeight = light.areaHalfHeight.xyz;",
-    "    let formFactor = rectAreaFormFactor(N, P, halfWidth, halfHeight, center);",
-    "    if (formFactor <= 0.0) {",
-    "        return vec3f(0.0);",
-    "    }",
-    "    let radiance = light.color.rgb * light.direction.w;",
-    "    var out = albedo * (1.0 - metalness) * radiance * formFactor;",
-    "    let repPoint = rectAreaRepresentativePoint(P, N, V, center, halfWidth, halfHeight, light.direction.xyz);",
-    "    let toRep = repPoint - P;",
-    "    let repDist = length(toRep);",
-    "    let L = toRep / max(repDist, 0.0001);",
-    "    let NdotL = max(dot(N, L), 0.0);",
-    "    if (NdotL > 0.0) {",
-    "        let H = normalize(V + L);",
-    "        let D = distributionGGX(N, H, roughness);",
-    "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "        let brdf = (D * G * F) / (4.0 * NoV * NdotL + 0.0001);",
-    "        out = out + radiance * brdf * formFactor;",
-    "        gosxSpecularRadiance += radiance * brdf * formFactor;",
-    "    }",
-    "    return out;",
-    "}",
-    "",
     "fn gsxSpecularRoughness(n: vec3f, r: f32, aa: vec2f) -> f32 {",
     "    let dx = dpdx(n); let dy = dpdy(n);",
     "    let kernel = min(2.0 * aa.x * (dot(dx, dx) + dot(dy, dy)), aa.y);",
     "    if (kernel > 0.0) { return sqrt(sqrt(min(r*r*r*r + kernel, 1.0))); }",
     "    return r;",
     "}",
+    WGSL_BRDF,
     WGSL_TRANSMISSION,
     "fn gosxPBRColor(in: VertexOutput) -> vec4f {",
     SCENE_WEBGPU_CUTAWAY_DISCARD_WGSL,
@@ -2208,7 +1987,7 @@
     "        mapNormal = vec3f(mapNormal.xy * material.normalScale, mapNormal.z);",
     "        N = normalize(TBN * mapNormal);",
     "    }",
-    "",
+    "    let surfaceClearcoat = material.clearcoat; let surfaceClearcoatRoughness = 0.04; let surfaceSheen = material.sheen; let surfaceTransmission = material.transmission;",
     "    let V = normalize(frame.cameraPos - in.worldPos);",
     "    let NoV = max(dot(N, V), 0.0);",
       "",
@@ -2254,12 +2033,17 @@
       "    }",
     "",
     // Accumulate direct lighting.
-    "    let transmission = clamp(material.transmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    let transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
+    "    let gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
     "    var Lo = vec3f(0.0);",
     "",
     // arrayLength bounds the loop against the storage buffer the JS side sized
     // this frame. No compile-time light cap remains.
     "    let lightCount = min(frame.lightCount, arrayLength(&lights));",
+    // Each slot's shadow is sampled once per fragment, outside the light loop. Frames without a shadow slot use wgpuUnshadowedPBRFragment, which drops these calls.
+    "    var shadowSlot0 = 1.0; var shadowSlot1 = 1.0;",
+    "    if (material.receiveShadow != 0u && shadow.lightIndex.x >= 0) { shadowSlot0 = shadowSlotFactor(shadowMap0, shadowSampler0, shadow.slot0, in.worldPos); }",
+    "    if (material.receiveShadow != 0u && shadow.lightIndex.y >= 0) { shadowSlot1 = shadowSlotFactor(shadowMap1, shadowSampler1, shadow.slot1, in.worldPos); }",
     "    for (var i = 0u; i < lightCount; i = i + 1u) {",
     "        let light = lights[i];",
     "        let lightType = u32(light.position.w);",
@@ -2313,56 +2097,28 @@
     "            attenuation = pointLightAttenuation(dist, range, decay);",
     "        }",
     "",
-    "        let H = normalize(V + L);",
     "        let NdotL = max(dot(N, L), 0.0);",
-    "",
-    // Cook-Torrance specular BRDF.
-    "        let D = distributionGGX(N, H, roughness);",
-    "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
-    "",
-    "        let numerator = D * G * F;",
-    "        let denominator = 4.0 * NoV * NdotL + 0.0001;",
-    "        let specular = numerator / denominator;",
-    "",
-    // Energy conservation: diffuse complement of the dielectric specular.
-    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
-    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
-    // the Fresnel colour and never borrows the metallic Fresnel.
-    "        let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
-    "        let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
-    "",
+    // Cook-Torrance GGX with multiscatter energy and the clear-coat layer;
+    // the diffuse weight is (1 - maxRGB(dielectric Fresnel)) * (1 - metalness).
+    "        let lit = gosxDirectBRDF(N, V, L, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer);",
     // Shadow attenuation follows the light associated with each slot.
     "        var shadowAtten: f32 = 1.0;",
     "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {",
-    "            if (shadow.hasShadow0 != 0u && i32(i) == shadow.shadowLightIndex0) {",
-    "                shadowAtten = shadowFactor0(in.worldPos, shadow.lightSpaceMatrix0, shadow.shadowBias0);",
-    "            } else if (shadow.hasShadow1 != 0u && i32(i) == shadow.shadowLightIndex1) {",
-    "                shadowAtten = shadowFactor1(in.worldPos, shadow.lightSpaceMatrix1, shadow.shadowBias1);",
-    "            }",
+    "            if (i32(i) == shadow.lightIndex.x) { shadowAtten = shadowSlot0; } else if (i32(i) == shadow.lightIndex.y) { shadowAtten = shadowSlot1; }",
     "        }",
     "",
     "        let radiance = lightColor * intensity * attenuation;",
-    "        Lo = Lo + (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadowAtten;",
-    "        gosxSpecularRadiance += specular * radiance * NdotL * shadowAtten;",
+    "        Lo = Lo + lit.color * radiance * NdotL * shadowAtten;",
+    "        gosxSpecularRadiance += lit.specular * radiance * NdotL * shadowAtten;",
     "    }",
     "",
     "    // Assetpipe split-sum IBL, with hemisphere fallback while products load.",
     "    var ambient: vec3f;",
     "    var specularEnvironment = vec3f(0.0);",
     "    if (env.hasIBL != 0u) {",
-    "        let Nr = rotateEnvY(N, env.envRotation);",
-    "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
-    "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        let irradiance = textureSample(iblIrradiance, iblSampler, Nr).rgb;",
-    "        let maxLod = f32(max(env.radianceMipLevels, 1u) - 1u);",
-    "        let prefiltered = textureSampleLevel(iblRadiance, iblSampler, Rr, roughness * maxLod).rgb;",
-    "        let brdf = textureSample(iblBRDFLUT, iblSampler, vec2f(NoV, roughness)).rg;",
-    "        let diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
-    "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
-    "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
-    "        specularEnvironment = specularIBL * env.envIntensity;",
+    "        let ibl = gosxImageLight(N, V, NoV, albedo, metalness, roughness, F0, F90, specF0, specF90, transmission, gosxLayer);",
+    "        ambient = ibl.color * env.envIntensity;",
+    "        specularEnvironment = ibl.specular * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
     // Explicit LOD avoids seam/pole derivative blur and matches WebGL2.
     "        let Nr = rotateEnvY(N, env.envRotation);",
@@ -2373,14 +2129,17 @@
     "        let Fenv = fresnelSchlickRoughness(NoV, F0, F90, roughness);",
     "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
-    "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
-    "        specularEnvironment = envSpecular * Fenv * (1.0 - roughness * 0.65) * env.envIntensity;",
+    "        let envLit = gosxCoatOver(GosxLit((kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity, envSpecular * Fenv * (1.0 - roughness * 0.65) * env.envIntensity), textureSampleLevel(envMapTex, envMapSampler, envEquirectUV(Rr), gosxLayer.coatRoughness * maxLod).rgb * env.envIntensity, NoV, gosxLayer);",
+    "        ambient = envLit.color;",
+    "        specularEnvironment = envLit.specular;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
     "                       + env.skyColor * env.skyIntensity * hemi",
     "                       + env.groundColor * env.groundIntensity * (1.0 - hemi);",
-    "        ambient = envDiffuse * albedo * (1.0 - transmission);",
+    "        let hemiLit = gosxCoatOver(GosxLit(envDiffuse * albedo * (1.0 - transmission), vec3f(0.0)), envDiffuse, NoV, gosxLayer);",
+    "        ambient = hemiLit.color;",
+    "        specularEnvironment = hemiLit.specular;",
     "    }",
     "    if (env.hasIBL == 0u && env.hasEnvMap == 0u) {",
     "        let reflectedTransmission = transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
@@ -2403,13 +2162,7 @@
     "        color = color + material.rimColor * rim;",
     "    }",
     "",
-    "    let clearcoat = clamp(material.clearcoat, 0.0, 1.0);",
-    "    if (clearcoat > 0.0001) {",
-    "        let cc = pow(NoV, mix(12.0, 96.0, 1.0 - roughness)) * clearcoat;",
-    "        color = color + vec3f(cc * 0.28);",
-    "    }",
-    "",
-    "    let sheen = clamp(material.sheen, 0.0, 1.0);",
+    "    let sheen = clamp(surfaceSheen, 0.0, 1.0);",
     "    if (sheen > 0.0001) {",
     "        let velvet = pow(1.0 - NoV, 3.0) * sheen;",
     "        color = color + albedo * velvet * 0.55;",
@@ -2749,259 +2502,6 @@
     "",
     "@fragment fn fragmentMain(in: ThickLineOutput) -> @location(0) vec4f {",
     "    return vec4f(clamp(in.color.rgb, vec3f(0.0), vec3f(1.0)), clamp(in.color.a, 0.0, 1.0));",
-    "}",
-  ].join("\n");
-
-  // -----------------------------------------------------------------------
-  // Points Vertex Shader (WGSL) -- instanced billboard quads
-  // -----------------------------------------------------------------------
-
-  var WGSL_POINTS_VERTEX = [
-    WGSL_FRAME_STRUCTS,
-    "",
-    "struct ParticleInstance {",
-    "    position: vec3f,",
-    "    size: f32,",
-    "    color: vec4f,",
-    "};",
-    "",
-    "struct PointsUniforms {",
-    "    modelMatrix: mat4x4f,",
-    "    defaultColorAndSize: vec4f,",
-    "    flags: vec4u,",
-    "    params: vec4f,",
-    "    fogColor: vec4f,",
-    "};",
-    "",
-    "struct PointsOutput {",
-    "    @builtin(position) clipPos: vec4f,",
-    "    @location(0) @interpolate(flat) color: vec3f,",
-    "    @location(1) @interpolate(flat) fogFactor: f32,",
-    "    @location(2) @interpolate(flat) alpha: f32,",
-    "    @location(3) pointCoord: vec2f,",
-    "    @location(4) @interpolate(flat) pointSize: f32,",
-    "};",
-    "",
-    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
-    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
-    "@group(2) @binding(1) var<storage, read> particles: array<ParticleInstance>;",
-    "",
-    // Unit quad: 6 vertices for 2 triangles.
-    "const quadPos = array<vec2f, 6>(",
-    "    vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(-0.5, 0.5),",
-    "    vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5),",
-    ");",
-    "",
-    "@vertex fn vertexMain(",
-    "    @builtin(vertex_index) vertexIndex: u32,",
-    "    @builtin(instance_index) instanceIndex: u32,",
-    ") -> PointsOutput {",
-    "    let quad = quadPos[vertexIndex];",
-    "    let p = particles[instanceIndex];",
-    "",
-    "    let worldPos = (points.modelMatrix * vec4f(p.position, 1.0)).xyz;",
-    "    let viewPos = frame.viewMatrix * vec4f(worldPos, 1.0);",
-    "",
-    // Compute point size with optional attenuation.
-    "    var rawSize = p.size;",
-    "    if (points.flags.y == 0u) { rawSize = points.defaultColorAndSize.w; }",
-    "",
-    "    var pixelSize: f32;",
-    "    if (points.flags.z != 0u) {",
-    "        pixelSize = max(rawSize * (frame.viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
-    "    } else {",
-    "        pixelSize = max(rawSize, 1.0);",
-    "    }",
-    "    let minPixelSize = max(points.fogColor.a, 0.0);",
-    "    if (minPixelSize > 0.0) {",
-    "        pixelSize = max(pixelSize, minPixelSize);",
-    "    }",
-    "    if (points.params.w > 0.0) {",
-    "        pixelSize = min(pixelSize, points.params.w);",
-    "    }",
-    "",
-    // Billboard: offset in clip space by quad * pixelSize.
-    "    let clipPos = frame.projMatrix * viewPos;",
-    "    let viewport = max(vec2f(frame.viewportWidth, frame.viewportHeight), vec2f(1.0));",
-    "    let ndcOffsetX = quad.x * pixelSize / viewport.x * clipPos.w * 2.0;",
-    "    let ndcOffsetY = quad.y * pixelSize / viewport.y * clipPos.w * 2.0;",
-    "",
-    "    var out: PointsOutput;",
-    "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
-    "",
-    // Color.
-    "    if (points.flags.x != 0u) {",
-    "        out.color = p.color.rgb;",
-    "    } else {",
-    "        out.color = points.defaultColorAndSize.rgb;",
-    "    }",
-    "    out.alpha = p.color.a * points.params.x;",
-    "    out.pointCoord = quad + vec2f(0.5, 0.5);",
-    "    out.pointSize = pixelSize;",
-    "",
-    // Fog.
-    "    if (points.params.y != 0.0) {",
-    "        let dist = length(viewPos.xyz);",
-    "        out.fogFactor = clamp(exp(-points.params.z * points.params.z * dist * dist), 0.0, 1.0);",
-    "    } else {",
-    "        out.fogFactor = 1.0;",
-    "    }",
-    "",
-    "    return out;",
-    "}",
-  ].join("\n");
-
-  var WGSL_POINTS_INSTANCED_VERTEX = [
-    WGSL_FRAME_STRUCTS,
-    "",
-    "struct PointsUniforms {",
-    "    modelMatrix: mat4x4f,",
-    "    defaultColorAndSize: vec4f,",
-    "    flags: vec4u,",
-    "    params: vec4f,",
-    "    fogColor: vec4f,",
-    "};",
-    "",
-    "struct PointsInput {",
-    "    @location(0) position: vec3f,",
-    "    @location(1) size: f32,",
-    "    @location(2) color: vec4f,",
-    "};",
-    "",
-    "struct PointsOutput {",
-    "    @builtin(position) clipPos: vec4f,",
-    "    @location(0) @interpolate(flat) color: vec3f,",
-    "    @location(1) @interpolate(flat) fogFactor: f32,",
-    "    @location(2) @interpolate(flat) alpha: f32,",
-    "    @location(3) pointCoord: vec2f,",
-    "    @location(4) @interpolate(flat) pointSize: f32,",
-    "};",
-    "",
-    "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
-    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
-    "",
-    // Unit quad: 6 vertices for 2 triangles.
-    "const quadPos = array<vec2f, 6>(",
-    "    vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(-0.5, 0.5),",
-    "    vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5),",
-    ");",
-    "",
-    "@vertex fn vertexMain(",
-    "    @builtin(vertex_index) vertexIndex: u32,",
-    "    in: PointsInput,",
-    ") -> PointsOutput {",
-    "    let quad = quadPos[vertexIndex];",
-    "",
-    "    let worldPos = (points.modelMatrix * vec4f(in.position, 1.0)).xyz;",
-    "    let viewPos = frame.viewMatrix * vec4f(worldPos, 1.0);",
-    "",
-    // Compute point size with optional attenuation.
-    "    var rawSize = in.size;",
-    "    if (points.flags.y == 0u) { rawSize = points.defaultColorAndSize.w; }",
-    "",
-    "    var pixelSize: f32;",
-    "    if (points.flags.z != 0u) {",
-    "        pixelSize = max(rawSize * (frame.viewportHeight * 0.5) / max(-viewPos.z, 0.001), 1.0);",
-    "    } else {",
-    "        pixelSize = max(rawSize, 1.0);",
-    "    }",
-    "    let minPixelSize = max(points.fogColor.a, 0.0);",
-    "    if (minPixelSize > 0.0) {",
-    "        pixelSize = max(pixelSize, minPixelSize);",
-    "    }",
-    "    if (points.params.w > 0.0) {",
-    "        pixelSize = min(pixelSize, points.params.w);",
-    "    }",
-    "",
-    // Billboard: offset in clip space by quad * pixelSize.
-    "    let clipPos = frame.projMatrix * viewPos;",
-    "    let viewport = max(vec2f(frame.viewportWidth, frame.viewportHeight), vec2f(1.0));",
-    "    let ndcOffsetX = quad.x * pixelSize / viewport.x * clipPos.w * 2.0;",
-    "    let ndcOffsetY = quad.y * pixelSize / viewport.y * clipPos.w * 2.0;",
-    "",
-    "    var out: PointsOutput;",
-    "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
-    "",
-    // Color.
-    "    if (points.flags.x != 0u) {",
-    "        out.color = in.color.rgb;",
-    "    } else {",
-    "        out.color = points.defaultColorAndSize.rgb;",
-    "    }",
-    "    out.alpha = in.color.a * points.params.x;",
-    "    out.pointCoord = quad + vec2f(0.5, 0.5);",
-    "    out.pointSize = pixelSize;",
-    "",
-    // Fog.
-    "    if (points.params.y != 0.0) {",
-    "        let dist = length(viewPos.xyz);",
-    "        out.fogFactor = clamp(exp(-points.params.z * points.params.z * dist * dist), 0.0, 1.0);",
-    "    } else {",
-    "        out.fogFactor = 1.0;",
-    "    }",
-    "",
-    "    return out;",
-    "}",
-  ].join("\n");
-
-  // -----------------------------------------------------------------------
-  // Points Fragment Shader (WGSL)
-  // -----------------------------------------------------------------------
-
-  var WGSL_POINTS_FRAGMENT = [
-    "struct PointsUniforms {",
-    "    modelMatrix: mat4x4f,",
-    "    defaultColorAndSize: vec4f,",
-    "    flags: vec4u,",
-    "    params: vec4f,",
-    "    fogColor: vec4f,",
-    "};",
-    "",
-    "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
-    "",
-    "struct PointsInput {",
-    "    @location(0) @interpolate(flat) color: vec3f,",
-    "    @location(1) @interpolate(flat) fogFactor: f32,",
-    "    @location(2) @interpolate(flat) alpha: f32,",
-    "    @location(3) pointCoord: vec2f,",
-    "    @location(4) @interpolate(flat) pointSize: f32,",
-    "};",
-    "",
-    "@fragment fn fragmentMain(in: PointsInput) -> @location(0) vec4f {",
-    "    var color = in.color;",
-    "    var alpha = in.alpha;",
-    "    if (points.flags.w == 1u) {",
-    "        let centered = in.pointCoord - vec2f(0.5, 0.5);",
-    "        let radial = length(centered);",
-    "        let square = max(abs(centered.x), abs(centered.y));",
-    "        let focus = clamp((in.pointSize - 1.0) / 10.0, 0.0, 1.0);",
-    "        let coreRadius = mix(0.49, 0.18, focus);",
-    "        let core = 1.0 - smoothstep(coreRadius, coreRadius + 0.05, square);",
-    "        let halo = (1.0 - smoothstep(0.12, 0.72, radial)) * focus;",
-    "        let streakX = 1.0 - smoothstep(0.02, 0.16, abs(centered.x));",
-    "        let streakY = 1.0 - smoothstep(0.02, 0.16, abs(centered.y));",
-    "        let streak = max(streakX, streakY) * focus;",
-    "        alpha = clamp(core + halo * 0.5 + streak * 0.2, 0.0, 1.0) * in.alpha;",
-    "        color = mix(color, vec3f(1.0, 1.0, 1.0), clamp(focus * 0.22 + core * focus * 0.28, 0.0, 0.4));",
-    "    } else if (points.flags.w == 2u) {",
-    "        let centered = in.pointCoord - vec2f(0.5, 0.5);",
-    "        let radial = length(centered) * 2.0;",
-    "        if (radial > 1.0) {",
-    "            discard;",
-    "        }",
-    "        let sizeFocus = clamp((in.pointSize - 4.0) / 48.0, 0.0, 1.0);",
-    "        let falloff = mix(4.2, 3.2, sizeFocus);",
-    "        let core = exp(-radial * radial * falloff);",
-    "        let edgeFeather = 1.0 - smoothstep(0.78, 1.0, radial);",
-    "        alpha = core * edgeFeather * in.alpha;",
-    "    }",
-    "    if (alpha <= 0.003) {",
-    "        discard;",
-    "    }",
-    "    if (points.params.y != 0.0) {",
-    "        color = mix(points.fogColor.rgb, color, in.fogFactor);",
-    "    }",
-    "    return vec4f(color, alpha);",
     "}",
   ].join("\n");
 
@@ -3378,44 +2878,6 @@
     "}",
   ].join("\n");
 
-  var WGSL_POST_DOF_FRAGMENT = [
-    "struct DOFParams {",
-    "    focusDepth: f32,",
-    "    aperture: f32,",
-    "    maxBlur: f32,",
-    "    _pad0: f32,",
-    "    texelSize: vec2f,",
-    "    _pad1: vec2f,",
-    "};",
-    "",
-    "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
-    "@group(0) @binding(1) var inputSamp: sampler;",
-    "@group(0) @binding(2) var depthTex: texture_depth_2d;",
-    "@group(0) @binding(3) var<uniform> params: DOFParams;",
-    "",
-    "fn depthAt(uv: vec2f) -> f32 {",
-    "    let dims = vec2f(textureDimensions(depthTex));",
-    "    let p = vec2i(clamp(uv * dims, vec2f(0.0), dims - vec2f(1.0)));",
-    "    return textureLoad(depthTex, p, 0);",
-    "}",
-    "",
-    "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
-    "    let center = textureSample(inputTex, inputSamp, uv).rgb;",
-    "    let depth = depthAt(uv);",
-    "    let coc = clamp(abs(depth - params.focusDepth) * max(params.aperture, 0.0) * 80.0, 0.0, 1.0);",
-    "    let radius = clamp(params.maxBlur, 0.0, 48.0) * coc;",
-    "    let offsets = array<vec2f, 8>(",
-    "        vec2f(1.0, 0.0), vec2f(-1.0, 0.0), vec2f(0.0, 1.0), vec2f(0.0, -1.0),",
-    "        vec2f(0.707, 0.707), vec2f(-0.707, 0.707), vec2f(0.707, -0.707), vec2f(-0.707, -0.707)",
-    "    );",
-    "    var blur = center * 0.28;",
-    "    for (var i = 0u; i < 8u; i = i + 1u) {",
-    "        blur = blur + textureSample(inputTex, inputSamp, uv + offsets[i] * params.texelSize * radius).rgb * 0.09;",
-    "    }",
-    "    return vec4f(mix(center, blur, coc), 1.0);",
-    "}",
-  ].join("\n");
-
   // -----------------------------------------------------------------------
   // Buffer / Uniform Helpers
   // -----------------------------------------------------------------------
@@ -3564,7 +3026,7 @@
   function wgpuTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
     var descriptor = raw && typeof raw === "object" ? raw : {};
     return {
-      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
+      uri: (typeof sceneTextAtlasURL === "function" ? sceneTextAtlasURL : String)(typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim()),
       role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
       colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
         ? descriptor.colorSpace.trim().toLowerCase()
@@ -3946,9 +3408,9 @@
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", viewDimension: "2d-array" } },
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", viewDimension: "2d-array" } },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
         { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
@@ -4153,7 +3615,7 @@
       vertex: {
         module: vertexModule,
         entryPoint: "vertexMain",
-        buffers: WGPU_PBR_VERTEX_LAYOUT,
+        buffers: vertexModule.gosxVertexLayout || WGPU_PBR_VERTEX_LAYOUT,
       },
       fragment: sceneWebGPUColorFragment(fragmentModule, targetFormat, wgpuBlendState(blendMode)),
       primitive: { topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 ? "cw" : "ccw" },
@@ -4443,15 +3905,6 @@
   // Shadow Resources
   // -----------------------------------------------------------------------
 
-  function wgpuCreateShadowMap(device, size) {
-    var texture = device.createTexture({
-      size: [size, size, 1],
-      format: "depth24plus",
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    return { texture: texture, view: texture.createView(), size: size };
-  }
-
   // -----------------------------------------------------------------------
   // Post-Processing Manager (WebGPU)
   // -----------------------------------------------------------------------
@@ -4536,6 +3989,8 @@
   }
 
   function wgpuPostOutput(direct: boolean, canvasOutput: any, intermediateOutput: any) { return direct ? canvasOutput : intermediateOutput; }
+  function wgpuDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webgpuRun(state, effect, i, ...rest) : rest[1]; }
+  function wgpuDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
   function wgpuPostPipelineName(name: string, canvasVariant: boolean) { return canvasVariant && name !== "present" ? "canvas-" + name : name; }
 
   function wgpuWarmPostOutputs(name: string, source: string, layout: any, canvasVariant: boolean, presentation: string, target: string, getPipeline: any) {
@@ -4559,7 +4014,7 @@
     var pingPongB = null, pingPongBView = null;
     var pingPongWidth = 0, pingPongHeight = 0;
     var depthTex = null, depthTexView: any = null, depthResolvePipeline: any = null, depthResolveLayout: any = null;
-    var currentWidth = 0, currentHeight = 0;
+    var currentWidth = 0, currentHeight = 0, depthFx: any = { device: device }; // decals and motion blur: see depthfx.ts
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
     var atmospherePost = createSceneAtmospherePostWebGPU({ device, format: targetFormat, sampler: linearSampler, getPipeline, getParamBuffer, fullscreenPass });
     var mipBloom = createSceneWebGPUMipBloom({ device: device, format: targetFormat, sampler: linearSampler, getPipeline: getPipeline, getParamBuffer: getParamBuffer, paramsLayout: getPostParamsLayout, compositeLayout: getBloomCompositeLayout, fullscreenPass: fullscreenPass, compositeSource: WGSL_POST_BLOOM_COMPOSITE_FRAGMENT });
@@ -4790,13 +4245,6 @@
       return postParamBuffers[name];
     }
 
-    function focusDepthForEffect(effect, camera) {
-      var focus = Math.max(0, sceneNumber(effect && effect.focusDistance, 8));
-      var near = Math.max(0.0001, sceneNumber(camera && camera.near, 0.1));
-      var far = Math.max(near + 0.0001, sceneNumber(camera && camera.far, 1000));
-      return clamp01((focus - near) / (far - near));
-    }
-
     function ensureFBOs(width, height) {
       if (width === currentWidth && height === currentHeight && sceneTex) return;
       // Destroy old.
@@ -4916,7 +4364,7 @@
 
     // Resolve covered MSAA depth before a depth-reading post pass.
     function prepareSceneDepth(effects: any[], samples: number) {
-      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST].includes(effect.kind))) return false;
+      if (samples !== 4 || !effects.some(effect => [SCENE_POST_SSAO, SCENE_POST_DOF, "contactShadows", SCENE_POST_CUSTOM_POST, "decals", "motionBlur"].includes(effect.kind))) return false;
       if (!depthResolvePipeline) {
         depthResolveLayout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", multisampled: true } }] });
         var module = device.createShaderModule({ label: "post-depth-resolve", code: `@group(0) @binding(0) var source: texture_depth_multisampled_2d;
@@ -4949,7 +4397,7 @@
             getPipeline("bloomComposite", WGSL_POST_BLOOM_COMPOSITE_FRAGMENT, getBloomCompositeLayout()); break;
           case "contactShadows": getPipeline("contactShadows", WGSL_POST_CONTACT_SHADOWS_FRAGMENT, getSSAOLayout()); break;
           case SCENE_POST_SSAO: getPipeline("ssao", WGSL_POST_SSAO_FRAGMENT, getSSAOLayout()); break;
-          case SCENE_POST_DOF: getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout()); break;
+          case SCENE_POST_DOF: getPipeline("dof", wgpuPostfxDOFFragment(), getSSAOLayout()); break;
           case "taa":
           case SCENE_POST_FXAA: getPipeline("fxaa", postUsesF16 ? WGSL_POST_FXAA_FRAGMENT_F16 : WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout()); break;
           case SCENE_POST_VIGNETTE: getPipeline("vignette", WGSL_POST_VIGNETTE_FRAGMENT, getPostParamsLayout()); break;
@@ -5134,18 +4582,9 @@
               currentTexView = outputView;
               break;
             case SCENE_POST_DOF: {
-              var dofPipeline = getPipeline("dof", WGSL_POST_DOF_FRAGMENT, getSSAOLayout());
+              var dofPipeline = getPipeline("dof", wgpuPostfxDOFFragment(), getSSAOLayout());
               var dofBuf = getParamBuffer("dof", 32);
-              device.queue.writeBuffer(dofBuf, 0, new Float32Array([
-                focusDepthForEffect(effect, camera),
-                sceneNumber(effect.aperture, 0.04),
-                sceneNumber(effect.maxBlur, 8.0),
-                0,
-                1 / Math.max(1, scaledW),
-                1 / Math.max(1, scaledH),
-                0,
-                0,
-              ]));
+              device.queue.writeBuffer(dofBuf, 0, wgpuPostfxDOFParams(effect, camera, scaledW, scaledH));
               var dofBG = device.createBindGroup({
                 layout: getSSAOLayout(),
                 entries: [
@@ -5268,8 +4707,7 @@
               currentTexView = outputView;
               break;
             }
-            default:
-              break;
+            default: currentTexView = wgpuDepthFxPass(depthFx, effect, i, encoder, currentTexView, outputView, outputFormat, depthTexView, scaledW, scaledH, atmosphereContext, postChain); break;
           }
         }
 
@@ -5290,12 +4728,10 @@
       },
 
       dispose: function() {
-        mipBloom.dispose(); atmospherePost.dispose();
+        mipBloom.dispose(); atmospherePost.dispose(); wgpuDepthFxDispose(depthFx);
         disposed = true;
         for (const texture of [sceneTex, auxTex, depthTex, pingPongA, pingPongB]) if (texture) texture.destroy();
-        for (var key in postParamBuffers) {
-          if (postParamBuffers[key]) postParamBuffers[key].destroy();
-        }
+        for (var key in postParamBuffers) { if (postParamBuffers[key]) postParamBuffers[key].destroy(); }
         customPostUniformBuffers.forEach(function(buf) { if (buf) buf.destroy(); });
         customPostUniformBuffers.clear();
         customPostPipelineCache.clear();
@@ -7220,7 +6656,7 @@
     // data-prop/entry-field WGSL resolution tier has been retired in favor of
     // Selena-primary -> builtin-fallback (see getWaterPoolPipeline /
     // getWaterRenderPipeline / renderWaterCausticsPass / etc.).
-    var waterManifestShaderSourcesByID = null;
+    var waterManifestShaderSourcesByID = null, waterManifestScanKey: any[] = [];
     var activeWaterShaderSourcesByID = null;
     // waterAuthoredCausticsPipelineLastError/waterAuthoredSurfacePipelineLastError
     // are kept (always "") as stable no-op reads for the
@@ -7235,7 +6671,7 @@
     var pbrVertexModule = null;
     var pbrInstancedVertexModule = null;
     var pbrInstancedCullVertexModule = null;
-    var pbrFragmentModule = null;
+    var pbrFragmentModule = null, pbrUnshadowedFragmentModule = null, pbrShadowsActive = false; if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = Object.assign({ gpuWanted() { return ""; }, gpuModules(): any { return null; }, gpuDraw() {}, gpuDispose() {} }, window.__gosx_scene3d_asset_ext.uv1); }
     var elioSkinShaderModule: any = null;
     var elioSkinPipeline: any = null;
     var computedMorphShaderModule: any = null;
@@ -7281,7 +6717,7 @@
     var pointsFragmentModule = null;
 
     // Pipeline cache.
-    var detailResources = new Map().get("active");
+    var detailResources = new Map().get("active"), selenaSurfaces = sceneWebGPUSelenaSurfaceResources();
     var detailEnabled = true;
     var pipelineCache = {};
     var activeSampleCount = 1;
@@ -7343,6 +6779,20 @@
     var pointsUniformScratchF = new Float32Array(pointsUniformScratch);
     var pointsUniformScratchU = new Uint32Array(pointsUniformScratch);
     var computeParticleSystems = new Map();
+    var temporalAA = wgpuPostfxTemporalAA(function() {
+      return { device: device, linearSampler: linearSampler, frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout, pointsLayout: pointsBindGroupLayout, pointsVertex: pointsVertexModule,
+        materialGroup: function() { return createMaterialBindGroup(null, false, defaultMaterialOwner); }, previousSkin: function(obj: any) { return obj._gosxTAAPreviousSkin || null; },
+        skinBuffer: function(obj: any) { return webGPUObjectIsSkinned(obj) && obj._gosxWGPUElioSkinOutputBuffer || null; },
+        bindPositions: function(pass: any, slot: number, obj: any) { return webGPUBindRetainedMeshAttribute(pass, slot, obj, "positions", 3); },
+        bindIndices: function(pass: any, obj: any) { return webGPUBindRetainedMeshIndexBuffer(pass, obj); } };
+    });
+    var autoExposure = wgpuPostfxAutoExposure(function() { return { device: device }; });
+    var softParticles = wgpuCreateSoftParticles(function() {
+      return { device: device, frame: frameBindGroupLayout, material: materialBindGroupLayout, points: pointsBindGroupLayout, vertex: pointsVertexModule,
+        scratchF: pointsUniformScratchF, scratchU: pointsUniformScratchU, format: targetFormat, samples: activeSampleCount, bindGroup: wgpuCachedBindGroup,
+        buffer: function(owner: any, data: Float32Array) { return wgpuCachedTrackedBuffer(owner, "_gosxWGPUSoftPointsUniformBuffer", data, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true); },
+        materialGroup: function() { return createMaterialBindGroup(null, false, defaultMaterialOwner); } };
+    });
     var waterSystems = new Map();
     var waterSystemRetireSerial = 0;
     var instancedCullSystems = new Map(); // meshId → { system, signature }
@@ -7873,7 +7323,7 @@
 
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
-    var dummyShadowView = null;
+    var dummyShadowView = null, dummyShadowArrayView = null;
 
     // Default sampler for materials.
     var linearSampler = null;
@@ -7996,7 +7446,7 @@
     // Post-processor.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -8020,7 +7470,7 @@
     var _fogUniformF   = new Float32Array(_fogUniformBuf);
     var _fogUniformU   = new Uint32Array(_fogUniformBuf);
 
-    var _shadowUniformBuf = new ArrayBuffer(160);
+    var _shadowUniformBuf = new ArrayBuffer(SCENE_WEBGPU_SHADOW_UNIFORM_BYTES);
     var _shadowUniformF   = new Float32Array(_shadowUniformBuf);
     var _shadowUniformU   = new Uint32Array(_shadowUniformBuf);
     var _shadowUniformI   = new Int32Array(_shadowUniformBuf);
@@ -8441,7 +7891,7 @@
         pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
         pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
         pbrInstancedCullVertexModule = device.createShaderModule({ label: "pbr-instanced-cull-vert", code: WGSL_PBR_INSTANCED_CULL_VERTEX });
-        pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
+        pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT }); pbrUnshadowedFragmentModule = null;
         shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
         shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
         shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
@@ -8467,7 +7917,7 @@
         });
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        shadowUniformBuffer = device.createBuffer({ size: SCENE_WEBGPU_SHADOW_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBufferStride = Math.max(
           256,
           Math.floor(sceneNumber(device && device.limits && device.limits.minUniformBufferOffsetAlignment, 256))
@@ -8512,7 +7962,7 @@
           format: "depth24plus",
           usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
-        dummyShadowView = dummyShadowTex.createView();
+        dummyShadowView = dummyShadowTex.createView(); dummyShadowArrayView = dummyShadowTex.createView({ dimension: "2d-array" });
 
         // Clear the dummy shadow texture to depth 1.0.
         var initEncoder = device.createCommandEncoder();
@@ -8558,7 +8008,7 @@
 
     const selenaTextureContext = {
       device, textureCache, iblResources, placeholderCubeView, placeholderView,
-      envMapSampler, linearSampler, liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL,
+      envMapSampler, linearSampler, liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL, frame: selenaFrame,
     };
 
     // Ensure main depth texture matches canvas size.
@@ -8725,7 +8175,7 @@
     function instancedMeshUsesCull(mesh: any) {
       return Boolean(typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) || webGPUBuiltinCullEligible(mesh);
     }
-    function prepareBundlePipelines(bundle: any, prepared: any, effects: any[], post: boolean) {
+    function prepareBundlePipelines(bundle: any, prepared: any, effects: any[], post: boolean, warmup?: any) { if (warmup) prepareBundlePipelines(warmup, warmup.prepared, [], false); // Props.ShaderWarmup variants (pipeline-warmup.ts)
       var materials = bundle.materials || [];
       var instancedVariants = (bundle.instancedMeshes || []).map(function(mesh: any) {
         var material = instancedMeshMaterial(mesh, materials), blend = scenePBRObjectRenderPass(mesh, material);
@@ -8735,6 +8185,7 @@
       if (key && key === preparedPipelineKey) return;
       var passes = prepared && prepared.pbrPasses || buildDrawList(bundle);
       var shadows = Array.isArray(bundle.lights) && bundle.lights.some(function(light: any) { return light.castShadow; });
+      pbrShadowsActive = shadows && bundle.lights.some(wgpuShadowCaster);
       if (shadows) getShadowPipeline(false);
       for (var blend of ["opaque", "alpha", "additive"]) {
         var objects = passes[blend] || [];
@@ -8742,7 +8193,7 @@
         for (var object of objects) {
           var material = materials[object.materialIndex];
           var reflected = sceneWebGPUObjectReflected(object);
-          if (!getObjectSelenaPipeline(object, material, blend, depth)) getPBRPipeline(blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", Boolean(material && material.detail));
+          if (!getObjectSelenaPipeline(object, material, blend, depth)) getPBRPipeline(blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", pbrVariant(material));
           if (shadows && object.castShadow) getShadowPipeline(reflected);
           if (webGPUObjectIsSkinned(object)) ensureElioSkinPipeline();
           if (object.computedMorph) ensureComputedMorphPipeline();
@@ -8767,12 +8218,24 @@
       preparedPipelineKey = key;
     }
 
+    // pbrFragment picks the PBR fragment module: the detail module, the full
+    // module while a shadow slot is active, or the unshadowed module.
+    function pbrFragment(detail: boolean) {
+      if (detail) return detailResources.fragment;
+      if (pbrShadowsActive) return pbrFragmentModule;
+      if (!pbrUnshadowedFragmentModule) pbrUnshadowedFragmentModule = device.createShaderModule({ label: "pbr-frag-unshadowed", code: wgpuUnshadowedPBRFragment(WGSL_PBR_FRAGMENT) });
+      return pbrUnshadowedFragmentModule;
+    }
+    function pbrKeyPrefix(detail: boolean) { return (selectiveBloom ? "specular|" : "") + (detail || pbrShadowsActive ? "" : "unshadowed|"); }
+
     // Get or create a PBR pipeline for the given blend mode.
-    function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
-      var reflected = frontFace === "cw";
-      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    // PBR variant: true for detail, a Selena surface variant, else false.
+    function pbrVariant(material: any) { return material && material.detail ? true : sceneWebGPUSelenaSurfaceVariant(device, selenaSurfaces, material, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT) || false; }
+    function getPBRPipeline(blendMode, depthWrite, frontFace, detail: any = false, uv1 = "") {
+      var reflected = frontFace === "cw", variant = detail === true ? detailResources : detail || null, kind = sceneWebGPUPipelineKind(reflected, "pbr");
+      var key = pbrKeyPrefix(!!variant) + wgpuPipelineKey((detail === true ? sceneDetailVariantKey(kind, true) : variant ? variant.key + ":" + kind : kind) + (uv1 ? ":uv1" + uv1 : ""), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
+      var uv1Modules = uv1 ? window.__gosx_scene3d_asset_ext.uv1.gpuModules(device, WGSL_PBR_VERTEX, WGSL_PBR_FRAGMENT, uv1) : null; var pipeline = wgpuCreatePBRPipeline(device, variant ? variant.pipelineLayout : pbrPipelineLayout, uv1Modules ? uv1Modules.vertex : pbrVertexModule, variant ? variant.fragment : uv1Modules ? uv1Modules.fragment : pbrFragment(false), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -8791,17 +8254,17 @@
     }
 
     function getPBRInstancedPipeline(blendMode, depthWrite, detail = false) {
-      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = pbrKeyPrefix(detail) + wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, pbrFragment(detail), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
 
     function getPBRInstancedCullPipeline(blendMode, depthWrite, detail = false) {
-      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = pbrKeyPrefix(detail) + wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedCullVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedCullVertexModule, pbrFragment(detail), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -8976,20 +8439,19 @@
       var textures = sceneSelenaTextureDescriptors(layout);
       for (var i = 0; i < textures.length; i++) {
         var wgsl = textures[i] && textures[i].wgsl || {};
-        // Cube maps require cube views; other material textures use 2D.
-        var texDimension = textures[i] && textures[i].dimension === "cube" ? "cube" : "2d";
+        var texLayout = sceneSelenaWGPUTextureLayout(textures[i]);
         var textureVisibility = textures[i] && textures[i].vertexStage === true
           ? visibility
           : (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2);
         entries.push({
           binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
           /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
-          texture: { sampleType: "float", viewDimension: texDimension },
+          texture: texLayout,
         });
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
           /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
-          sampler: { type: "filtering" },
+          sampler: { type: texLayout.sampleType === "unfilterable-float" ? "non-filtering" : "filtering" },
         });
       }
       var storageBuffers = sceneSelenaStorageBufferDescriptors(layout);
@@ -10726,9 +10188,27 @@
     // dispatchWaterComputeStage below).
     function sceneWaterManifestShaderSources() {
       if (waterManifestShaderSourcesByID && waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
-      waterManifestShaderSourcesByID = new Map();
       var mountSources = canvas && (canvas.__gosxScene3DWaterShaderSources || (canvas.parentNode && canvas.parentNode.__gosxScene3DWaterShaderSources));
       var published = mountSources || (typeof window !== "undefined" ? window.__gosx_scene3d_water_shader_sources_by_id : null);
+      var doc = canvas && canvas.ownerDocument
+        ? canvas.ownerDocument
+        : (typeof window !== "undefined" && window.document
+          ? window.document
+          : (typeof document !== "undefined" ? document : null));
+      var scan = doc && doc.querySelectorAll;
+      var manifestScript = scan && doc.getElementById ? doc.getElementById("gosx-manifest") : null;
+      // The bootstrap runtime publishes its manifest parse; reusing it skips a
+      // re-parse, and on a page that opted into data-gosx-release the DOM text
+      // is empty and the published parse is the only remaining copy.
+      var manifestMemo = typeof window !== "undefined" ? window.__gosx_manifest : null;
+      var scripts = scan ? (doc.scripts || doc.querySelectorAll("script")) : null;
+      // The scan reads the manifest text (megabytes with a large crowd), so an empty result is kept too, until the
+      // published map or its size, the manifest element or its parse, or the page's script count changes.
+      var key = waterManifestScanKey, size = published && typeof published === "object" ? Object.keys(published).length : 0;
+      var memoValue = manifestMemo && manifestMemo.value, scriptCount = scripts ? scripts.length : -1;
+      if (waterManifestShaderSourcesByID && key[0] === published && key[1] === size && key[2] === manifestScript && key[3] === memoValue && key[4] === scriptCount) return waterManifestShaderSourcesByID;
+      key[0] = published; key[1] = size; key[2] = manifestScript; key[3] = memoValue; key[4] = scriptCount;
+      waterManifestShaderSourcesByID = new Map();
       if (published && typeof published === "object") {
         var ids = Object.keys(published);
         for (var pi = 0; pi < ids.length; pi += 1) {
@@ -10739,12 +10219,7 @@
         }
         if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
       }
-      var doc = canvas && canvas.ownerDocument
-        ? canvas.ownerDocument
-        : (typeof window !== "undefined" && window.document
-          ? window.document
-          : (typeof document !== "undefined" ? document : null));
-      if (!doc || !doc.querySelectorAll) return waterManifestShaderSourcesByID;
+      if (!scan) return waterManifestShaderSourcesByID;
       var fields = [
         "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
         "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
@@ -10772,38 +10247,14 @@
       }
       function ingestManifestText(text) {
         if (!text || text.indexOf("waterSystems") < 0 || text.indexOf("WGSL") < 0) return;
-        try {
-          var manifest = JSON.parse(text);
-          var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
-          for (var ei = 0; ei < engines.length; ei += 1) {
-            var scene = engines[ei] && engines[ei].props && engines[ei].props.scene;
-            var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : [];
-            for (var wi = 0; wi < systems.length; wi += 1) {
-              var water = systems[wi];
-              if (!water || typeof water !== "object") continue;
-              var id = typeof water.id === "string" && water.id ? water.id : ("scene-water-" + wi);
-              var record = waterManifestShaderSourcesByID.get(id) || {};
-              for (var fi = 0; fi < fields.length; fi += 1) {
-                var name = fields[fi];
-                if (typeof water[name] === "string" && water[name].trim()) record[name] = water[name];
-              }
-              waterManifestShaderSourcesByID.set(id, record);
-            }
-          }
-        } catch (_err) {}
+        try { ingestManifestValue(JSON.parse(text)); } catch (_err) {}
       }
-      var manifestScript = doc.getElementById ? doc.getElementById("gosx-manifest") : null;
-      // The bootstrap runtime publishes its manifest parse; reusing it skips a
-      // re-parse, and on a page that opted into data-gosx-release the DOM text
-      // is empty and the published parse is the only remaining copy.
-      var manifestMemo = typeof window !== "undefined" ? window.__gosx_manifest : null;
       if (manifestScript && manifestMemo && manifestMemo.element === manifestScript && manifestMemo.value) {
         ingestManifestValue(manifestMemo.value);
         if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
       }
       ingestManifestText(manifestScript && manifestScript.textContent || "");
       if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
-      var scripts = doc.scripts || doc.querySelectorAll("script");
       for (var si = 0; si < scripts.length; si += 1) {
         ingestManifestText(scripts[si] && scripts[si].textContent || "");
       }
@@ -14980,45 +14431,10 @@
       words[18] = 0; words[19] = 0;
       device.queue.writeBuffer(envUniformBuffer, 0, data);
     }
+    // uploadShadowUniforms packs every slot's cascades (webgpu-shadows module).
+    // shadowLightMatrices is kept for callers that read the one-map matrices.
     function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
-      var lightArray = Array.isArray(lights) ? lights : [];
-      // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + pad(8) = 160. Round up to 256.
-      var f = _shadowUniformF;
-      var u = _shadowUniformU;
-      var i = _shadowUniformI;
-
-      if (shadowLightMatrices[0]) {
-        f.set(shadowLightMatrices[0], 0);   // lightSpaceMatrix0 @ offset 0
-      } else {
-        f.fill(0, 0, 16);                   // zero out slot 0 (no stale matrix)
-      }
-      if (shadowLightMatrices[1]) {
-        f.set(shadowLightMatrices[1], 16);  // lightSpaceMatrix1 @ offset 64
-      } else {
-        f.fill(0, 16, 32);                  // zero out slot 1 (no stale matrix)
-      }
-
-      u[32] = shadowLightMatrices[0] ? 1 : 0;  // hasShadow0
-      u[33] = shadowLightMatrices[1] ? 1 : 0;  // hasShadow1
-
-      var bias0 = 0.005;
-      if (shadowLightIndices[0] >= 0 && lightArray[shadowLightIndices[0]]) {
-        bias0 = sceneNumber(lightArray[shadowLightIndices[0]].shadowBias, 0.005);
-      }
-      f[34] = bias0;  // shadowBias0
-
-      var bias1 = 0.005;
-      if (shadowLightIndices[1] >= 0 && lightArray[shadowLightIndices[1]]) {
-        bias1 = sceneNumber(lightArray[shadowLightIndices[1]].shadowBias, 0.005);
-      }
-      f[35] = bias1;  // shadowBias1
-
-      i[36] = shadowLightIndices[0];  // shadowLightIndex0
-      i[37] = shadowLightIndices[1];  // shadowLightIndex1
-      u[38] = 0; // pad
-      u[39] = 0; // pad
-
-      device.queue.writeBuffer(shadowUniformBuffer, 0, f);
+      var span = wgpuPackShadowUniforms(_shadowUniformF, _shadowUniformI, shadowSlots, shadowLightIndices, Array.isArray(lights) ? lights : []); if (span) device.queue.writeBuffer(shadowUniformBuffer, span[0] * 4, _shadowUniformF.subarray(span[0], span[1]));
     }
 
     // Normal-incidence dielectric Fresnel for an authored material IOR:
@@ -15179,7 +14595,7 @@
       u[13] = 0; u[14] = 0; u[15] = 0; u[16] = 0; u[17] = 0;
       u[18] = receiveShadow ? 1 : 0;
       u[19] = 0; // hasOcclusionMap, set by createMaterialBindGroup
-      for (var mi = 0; mi < 16; mi++) f[20 + mi] = mi % 5 === 0 ? 1 : 0;
+      for (var mi = 0; mi < 16; mi++) f[20 + mi] = mi % 5 === 0 ? 1 : 0; if (mat.wind && window.__gosx_scene3d_terrain_api) f.set(window.__gosx_scene3d_terrain_api.windFor(mat.wind), 20); // wind sway (scene/wind.go): material.modelMatrix is otherwise unused
       f[36] = f[37] = f[38] = 1;
       f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1; // modelScaleSigns.w: normal-map U scale
       f[40] = sceneWebGPUDielectricF0(mat.ior);
@@ -15321,8 +14737,8 @@
     var transmissionResources = JSON.parse("null"), transmissionView = JSON.parse("null");
 
     function createFrameBindGroup(shadowView0, shadowView1) {
-      var view0 = shadowView0 || dummyShadowView;
-      var view1 = shadowView1 || dummyShadowView;
+      var view0 = shadowView0 || dummyShadowArrayView;
+      var view1 = shadowView1 || dummyShadowArrayView;
       var iblIrradianceView = iblResources.active && iblResources.irradiance ? iblResources.irradiance.view : placeholderCubeView;
       var iblRadianceView = iblResources.active && iblResources.radiance ? iblResources.radiance.view : placeholderCubeView;
       var iblBRDFView = iblResources.active && iblResources.brdfLUT ? iblResources.brdfLUT.view : placeholderView;
@@ -15381,9 +14797,9 @@
           { binding: 1, resource: { buffer: lightStorageBuffer } },
           { binding: 2, resource: { buffer: fogUniformBuffer } },
           { binding: 3, resource: { buffer: envUniformBuffer } },
-          { binding: 4, resource: shadowView0 || dummyShadowView },
+          { binding: 4, resource: shadowView0 || dummyShadowArrayView },
           { binding: 5, resource: comparisonSampler },
-          { binding: 6, resource: shadowView1 || dummyShadowView },
+          { binding: 6, resource: shadowView1 || dummyShadowArrayView },
           { binding: 7, resource: comparisonSampler },
           { binding: 8, resource: { buffer: shadowUniformBuffer } },
           { binding: 9, resource: iblIrradianceView || placeholderCubeView },
@@ -15627,7 +15043,7 @@
       }
       pass.setIndexBuffer(record.buffer, "uint32");
       return data.length;
-    }
+    } function webGPUSelenaIndexCount(pass: any, obj: any): number { return obj.directVertices ? webGPUBindRetainedMeshIndexBuffer(pass, obj) : 0; } // Selena: world-baked streams are already index-expanded
 
     function webGPUDefaultAttributeData(obj, key, count, tupleSize, defaults) {
       var direct = webGPUDirectAttribute(obj, key, count, tupleSize);
@@ -15793,7 +15209,7 @@
         pointsEntryGPUBuffers.delete(record.outputBuffer);
         record.outputBuffer.destroy();
       }
-      record.outputBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, bytes);
+      record.outputBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC, bytes);
       return record.outputBuffer;
     }
 
@@ -16323,6 +15739,27 @@
 
     var shadowFrameBindGroups = [];
 
+    // renderLightShadowCascades fills one shadow slot (webgpu-shadows module)
+    // and renders every cascade layer. Casters cull once per light against its
+    // full-scene fit, a superset of every cascade; each cascade writes its own
+    // shadow-matrix arena slot, so no pass overwrites another's matrix.
+    function renderLightShadowCascades(encoder: any, light: any, lightIndex: number, slot: number, rawLightMatrix: any, bounds: any, frame: any) {
+      var cascades = sceneWebGPUShadowCascadeCount(light, frame.camera);
+      var size = Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024)));
+      // The authored memory cap covers every cascade layer of the light.
+      size = resolveShadowSize(size, frame.maxPixels > 0 ? frame.maxPixels / cascades : frame.maxPixels);
+      var shadowSlot = shadowSlots[slot] = wgpuFitShadowSlot(wgpuEnsureShadowSlot(device, shadowSlots[slot], size, cascades, destroyRendererGPUResource), light, rawLightMatrix,
+        { view: scratchViewMatrix, camera: frame.camera, aspect: frame.aspect, bounds: bounds });
+      var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
+      frame.matrices[slot] = lightMatrix;
+      frame.indices[slot] = lightIndex;
+      frame.gpuDriven.lightView(encoder, lightMatrix, slot);
+      frame.crowd.lightView(frame.crowdEncoder, lightMatrix, slot);
+      for (var c = 0; c < cascades; c++) {
+        renderShadowPass(encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
+      }
+    }
+
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
       var sp = getShadowPipeline();
       if (!sp) return;
@@ -16330,9 +15767,9 @@
       // Each light owns a base matrix followed by its retained caster matrices.
       // Reserve both regions before encoding so the second light cannot grow
       // or destroy the shared arena before this frame's single submission.
-      var baseSlot = Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))) * (objects.length + 1);
+      var baseSlot = Math.max(0, Math.floor(sceneNumber(shadowResource.arenaSlot, sceneNumber(shadowResource.lightSlot, 0)))) * (objects.length + 1);
       var baseMatrixOffset = baseSlot * shadowFrameBufferStride;
-      if (!ensureShadowFrameBufferCapacity(Math.max(2 * (objects.length + 1), baseSlot + objects.length + 1))) return;
+      if (!ensureShadowFrameBufferCapacity(Math.max(sceneNumber(shadowResource.arenaSlots, 2) * (objects.length + 1), baseSlot + objects.length + 1))) return;
       device.queue.writeBuffer(shadowFrameBuffer, baseMatrixOffset, lightMatrix, 0, 16);
       var shadowBG = wgpuShadowFrameBindGroup(device, shadowFrameBindGroups, shadowBindGroupLayout, shadowFrameBuffer);
       var shadowPassDescriptor = {
@@ -16464,12 +15901,13 @@
         }
         return false;
       }
-      function bindPBRPipeline(reflected, material = Object.create(null)) {
-        var hasDetail = Boolean(material && material.detail);
-        var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr");
-        kind += ":" + objectDepthWrite;
+      function bindPBRPipeline(reflected, material = Object.create(null), uv1 = "") {
+        var hasDetail = Boolean(material && material.detail), variant = pbrVariant(material), surface = variant === true ? null : variant;
+        var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : (surface ? surface.key + ":" : "") + sceneWebGPUPipelineKind(reflected, "pbr");
+        kind += ":" + objectDepthWrite + uv1;
+        if (surface && surface.groupLayout) pass.setBindGroup(2, sceneWebGPUSelenaSurfaceGroup(device, selenaSurfaces, material, surface, selenaFrame));
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail)));
+        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", variant, uv1)));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -16560,7 +15998,7 @@
             // Fail closed: skip the whole object (and its draw-call stat)
             // when any declared attribute could not be bound.
             if (!allBound) continue;
-            var selenaIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            var selenaIndexCount = webGPUSelenaIndexCount(pass, obj);
             if (selenaIndexCount > 0) pass.drawIndexed(selenaIndexCount);
             else pass.draw(count);
             if (frameRequest) frameRequest.record(obj.id);
@@ -16589,7 +16027,7 @@
           }
           continue;
         }
-        bindPBRPipeline(reflectedDirect, mat);
+        bindPBRPipeline(reflectedDirect, mat, window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat));
 
         var matBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
         var modelOffset = webGPUCutawayOffset(materialFrame, obj);
@@ -16628,7 +16066,7 @@
         }
         if (!worldBuffersBound) worldBuffersBound = wgpuBindWorldMeshBuffers(pass, pbrBuffers);
         if (!worldBuffersBound) continue;
-        pass.draw(count, 1, offset);
+        window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat) ? (worldBuffersBound = false, window.__gosx_scene3d_asset_ext.uv1.gpuDraw(device, pass, obj, offset, count, webGPUBindSceneMeshVertexBuffer, pbrBuffers)) : pass.draw(count, 1, offset);
         if (frameRequest) frameRequest.record(obj.id);
         if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
       }
@@ -16819,7 +16257,7 @@
 
         var mat = instancedMeshMaterial(mesh, materials);
         var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
-        pass.setBindGroup(1, createMaterialBindGroup(mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
+        pass.setBindGroup(1, createMaterialBindGroup(mesh.wind ? Object.assign({}, mat, { wind: mesh.wind }) : mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
         if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
         if (webGPUGPUDrivenHost().drawMesh(pass, mesh, meshDepthWrite)) continue;
 
@@ -17524,7 +16962,19 @@
       return stats;
     }
 
-    function drawComputeParticleEntries(pass, records, environment, timeSeconds) {
+    // drawComputeParticlePasses draws hard systems in the main pass, then soft
+    // systems in the read-only depth continuation pass when any exist.
+    function drawComputeParticlePasses(encoder: any, pass: any, descriptor: any, frameGroup: any, records: any[], environment: any, timeSeconds: number, depthView: any) {
+      var soft = softParticles.plan(records, depthView);
+      Object.assign(frameStats, drawComputeParticleEntries(pass, soft ? softParticles.hard(records) : records, environment, timeSeconds));
+      if (!soft) return pass;
+      pass = softParticles.beginPass(encoder, pass, descriptor);
+      pass.setBindGroup(0, frameGroup);
+      wgpuSoftParticleMergeStats(frameStats, softParticles.draw(pass, records, environment, timeSeconds, depthView));
+      return pass;
+    }
+
+    function drawComputeParticleEntries(pass: any, records: any[], environment: any, timeSeconds: number) {
       var stats = {
         computeParticleDrawEntries: 0,
         computeParticleDrawInstances: 0,
@@ -17563,72 +17013,9 @@
         var material = entry.material && typeof entry.material === "object" ? entry.material : {};
         var emitter = entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
 
-        var px = sceneNumber(emitter.x, 0);
-        var py = sceneNumber(emitter.y, 0);
-        var pz = sceneNumber(emitter.z, 0);
-        var hasSpin = sceneNumber(emitter.spinX, 0) !== 0 || sceneNumber(emitter.spinY, 0) !== 0 || sceneNumber(emitter.spinZ, 0) !== 0;
+        wgpuComputeParticleModelMatrix(emitter, timeSeconds, _computeModelMat, _computeTilt, _computeSpin);
 
-        if (hasSpin) {
-          var spx = sceneNumber(emitter.spinX, 0) * timeSeconds;
-          var spy = sceneNumber(emitter.spinY, 0) * timeSeconds;
-          var spz = sceneNumber(emitter.spinZ, 0) * timeSeconds;
-          var csx = Math.cos(spx), ssx = Math.sin(spx);
-          var csy = Math.cos(spy), ssy = Math.sin(spy);
-          var csz = Math.cos(spz), ssz = Math.sin(spz);
-          _computeSpin[0] = csy*csz; _computeSpin[4] = ssx*ssy*csz-csx*ssz; _computeSpin[8]  = csx*ssy*csz+ssx*ssz; _computeSpin[12] = 0;
-          _computeSpin[1] = csy*ssz; _computeSpin[5] = ssx*ssy*ssz+csx*csz; _computeSpin[9]  = csx*ssy*ssz-ssx*csz; _computeSpin[13] = 0;
-          _computeSpin[2] = -ssy;    _computeSpin[6] = ssx*csy;             _computeSpin[10] = csx*csy;             _computeSpin[14] = 0;
-          _computeSpin[3] = 0;       _computeSpin[7] = 0;                   _computeSpin[11] = 0;                   _computeSpin[15] = 1;
-
-          var rx = sceneNumber(emitter.rotationX, 0);
-          var ry = sceneNumber(emitter.rotationY, 0);
-          var rz = sceneNumber(emitter.rotationZ, 0);
-          var cxr = Math.cos(rx), sxr = Math.sin(rx);
-          var cyr = Math.cos(ry), syr = Math.sin(ry);
-          var czr = Math.cos(rz), szr = Math.sin(rz);
-          _computeTilt[0] = cyr*czr; _computeTilt[4] = sxr*syr*czr-cxr*szr; _computeTilt[8]  = cxr*syr*czr+sxr*szr; _computeTilt[12] = px;
-          _computeTilt[1] = cyr*szr; _computeTilt[5] = sxr*syr*szr+cxr*czr; _computeTilt[9]  = cxr*syr*szr-sxr*czr; _computeTilt[13] = py;
-          _computeTilt[2] = -syr;    _computeTilt[6] = sxr*cyr;             _computeTilt[10] = cxr*cyr;             _computeTilt[14] = pz;
-          _computeTilt[3] = 0;       _computeTilt[7] = 0;                   _computeTilt[11] = 0;                   _computeTilt[15] = 1;
-
-          sceneMat4MultiplyInto(_computeModelMat, _computeTilt, _computeSpin);
-        } else {
-          var rx2 = sceneNumber(emitter.rotationX, 0);
-          var ry2 = sceneNumber(emitter.rotationY, 0);
-          var rz2 = sceneNumber(emitter.rotationZ, 0);
-          var cxr2 = Math.cos(rx2), sxr2 = Math.sin(rx2);
-          var cyr2 = Math.cos(ry2), syr2 = Math.sin(ry2);
-          var czr2 = Math.cos(rz2), szr2 = Math.sin(rz2);
-          _computeModelMat[0] = cyr2*czr2; _computeModelMat[4] = sxr2*syr2*czr2-cxr2*szr2; _computeModelMat[8]  = cxr2*syr2*czr2+sxr2*szr2; _computeModelMat[12] = px;
-          _computeModelMat[1] = cyr2*szr2; _computeModelMat[5] = sxr2*syr2*szr2+cxr2*czr2; _computeModelMat[9]  = cxr2*syr2*szr2-sxr2*czr2; _computeModelMat[13] = py;
-          _computeModelMat[2] = -syr2;     _computeModelMat[6] = sxr2*cyr2;                _computeModelMat[10] = cxr2*cyr2;                _computeModelMat[14] = pz;
-          _computeModelMat[3] = 0;         _computeModelMat[7] = 0;                        _computeModelMat[11] = 0;                        _computeModelMat[15] = 1;
-        }
-
-        pointsUniformScratchF.fill(0);
-        var puF = pointsUniformScratchF;
-        var puU = pointsUniformScratchU;
-        puF.set(sceneWebGPUPointModelMatrix(entry, _computeTilt, _computeModelMat), 0);
-
-        var defaultColorRGBA = sceneColorRGBA(material.color, [1, 1, 1, 1]);
-        puF[16] = defaultColorRGBA[0];
-        puF[17] = defaultColorRGBA[1];
-        puF[18] = defaultColorRGBA[2];
-        puF[19] = sceneNumber(material.size, 1);
-        puU[20] = 1;
-        puU[21] = 1;
-        puU[22] = material.attenuation ? 1 : 0;
-        puU[23] = scenePointStyleCode(material.style);
-        puF[24] = 1;
-        puF[25] = fogDensity > 0 ? 1 : 0;
-        puF[26] = fogDensity;
-        puF[27] = sceneNumber(material.maxPixelSize, 0);
-        puF[28] = fogColorRGBA[0];
-        puF[29] = fogColorRGBA[1];
-        puF[30] = fogColorRGBA[2];
-        puF[31] = sceneNumber(material.minPixelSize, 0);
-
-        var pointsUniformBuffer = ensurePointsUniformGPUBuffer(system, puF);
+        var puF = wgpuComputeParticlePointsUniforms(pointsUniformScratchF, pointsUniformScratchU, entry, material, _computeTilt, _computeModelMat, fogDensity, fogColorRGBA);
 
         var blendMode = typeof material.blendMode === "string" ? material.blendMode.toLowerCase() : "";
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
@@ -17639,6 +17026,7 @@
         // validates once, memoized on the entry.
         var hasAuthoredRender = (typeof entry.renderVertexWGSL === "string" && entry.renderVertexWGSL) &&
                                 (typeof entry.renderFragmentWGSL === "string" && entry.renderFragmentWGSL);
+        var pointsUniformBuffer = ensurePointsUniformGPUBuffer(system, puF);
         var cpSystemID = (entry && typeof entry.id === "string") ? entry.id : ("cp-" + i);
         if (hasAuthoredRender) {
           stats.computeParticleAuthoredCandidateEntries += 1;
@@ -18682,7 +18070,7 @@
       webGPUPrepareMaterialFrame(materialFrame, device, bundle, retainedMeshAttributeEpoch, wgpuCreateTrackedBuffer, destroyRendererGPUResource, pointsEntryGPUBuffers);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer && !oceanResources.renderer) {
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !skyResources.renderer && !oceanResources.renderer) {
         webGPUSweepRetainedMeshBuffers();
         return "empty";
       }
@@ -18736,16 +18124,16 @@
       detailEnabled = frameMeta?.detailEnabled !== false;
       if (detailEnabled && detailResources) sceneWebGPUDetailBakeResources(device, detailResources, placeholderView);
       if (scenePicker && scenePicker.hasPending()) scenePicker.preparePipelines();
-      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing);
+      prepareBundlePipelines(bundle, preparedScene, postEffects, usePostProcessing, frameMeta?.warmup); temporalAA.prepare(postEffects, usePostProcessing, sampleCount); autoExposure.prepare(bundle.environment, usePostProcessing);
       if (pipelineGuard.coreError) return "failed";
       if (pipelineGuard.pending) return "pending";
       // The standard mesh, shadow and post variants are prepared above. Other
       // feature renderers can discover pipelines while encoding; defer their
       // canvas commands until the entire frame has encoded successfully.
       pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost().present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
-        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds) ||
+        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds || bundle.environment.autoExposure || bundle.environment.terrain) ||
         (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
-        postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST; }));
+        postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST || effect.kind === "taa"; }));
 
       // Upload per-frame uniforms (use scaled dims so point sprites and
       // projection aspect match the actual render target, not the canvas).
@@ -18758,22 +18146,24 @@
       uploadLights(bundle.lights);
       uploadFogUniforms(bundle.environment);
       uploadEnvUniforms(bundle.environment);
+      if (temporalAA.beginFrame(postEffects, { postProcessing: usePostProcessing, perspective: !!cam && cam.kind !== "orthographic" && !(bundle.camera && bundle.camera.mode === "ortho2d"), width: scaledW, height: scaledH, samples: sampleCount, view: scratchViewMatrix, projection: _frameUniformF, projectionOffset: 16, viewProjection: scratchSelenaViewProjection, now: performance.now() })) device.queue.writeBuffer(frameUniformBuffer, 64, _frameUniformF, 16, 16);
 
       // --- Shadow Pass ---
       var shadowLightMatrices = [null, null];
       var shadowLightIndices = [-1, -1];
       var activeShadowCount = 0;
 
-      var encoder = device.createCommandEncoder({ label: "gosx-frame" });
+      var encoder = device.createCommandEncoder({ label: "gosx-frame" }), crowdEncoder = encoder;
       gpuTimingFrameSeq += 1;
       drainDeferredGPUResources(false);
       var gpuTimingToken = beginGPUFrameTiming(encoder);
       // Per-pass stamps ride on the render-pass descriptors, so the slot must be
       // chosen before the shadow pass opens.
       pollGPUPassTimingReadback();
-      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
+      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
+      sceneWebGPUSelenaSurfaceFrame(selenaSurfaces);
       detailResources = sceneWebGPUPrepareDetailFrame(device, detailResources, bundle.materials, textureCache, {
         placeholderView: placeholderView, enabled: detailEnabled,
       });
@@ -18801,7 +18191,7 @@
       selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
-      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder); window.__gosx_scene3d_ocean_fft_api?.frame(oceanResources, { device: device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaFrame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
+      temporalAA.capturePreviousSkins(encoder, bundle.meshObjects); var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder); window.__gosx_scene3d_ocean_fft_api?.frame(oceanResources, { device: device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaFrame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
       var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
       activePickMeshPositions = pbrSceneBuffers;
       if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
@@ -18824,19 +18214,22 @@
         return !material || !material.detail;
       }) : instancedDrawList.opaque });
       var crowd = webGPUCrowdHost();
-      crowd.beginFrame(bundle, encoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
+      // The crowd's frustum cull passes (the camera's and each light's) go in a command buffer of their own, submitted before the
+      // frame's: on Metal (Apple M4 Pro, Chrome 157) a command buffer that holds them and the frame-end timestamp fails with "Insufficient
+      // Memory" and loses the device. Dawn records each submit as one Metal command buffer. The occlusion cull reads this frame's depth.
+      crowdEncoder = bundle.gpuDriven ? device.createCommandEncoder({ label: "gosx-crowd-cull" }) : encoder;
+      crowd.beginFrame(bundle, crowdEncoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
       var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
+      var shadowFrame = { bundle: bundle, camera: cam, maxPixels: shadowMaxPixels, gpuDriven: gpuDriven, crowd: crowd, crowdEncoder: crowdEncoder, aspect: scaledW / scaledH, buffers: pbrSceneBuffers, matrices: shadowLightMatrices, indices: shadowLightIndices };
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
-        if (!light || !light.castShadow) continue;
-        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-        if (kind !== "directional" && kind !== "spot") continue;
+        if (!wgpuShadowCaster(light)) continue;
 
         if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
 
@@ -18846,23 +18239,7 @@
         var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
         if (!rawLightMatrix) continue;
 
-        var slot = activeShadowCount;
-        var shadowSize = sceneNumber(light.shadowSize, 1024);
-        shadowSize = Math.max(256, Math.min(4096, shadowSize));
-        shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
-
-        if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
-          if (shadowSlots[slot]) destroyRendererGPUResource(shadowSlots[slot].texture);
-          shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
-        }
-
-        var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
-        shadowLightMatrices[slot] = lightMatrix;
-        shadowLightIndices[slot] = li;
-
-        gpuDriven.lightView(encoder, lightMatrix, slot);
-        crowd.lightView(encoder, lightMatrix, slot);
-        renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots[slot].view, lightSlot: slot }, pbrSceneBuffers);
+        renderLightShadowCascades(encoder, light, li, activeShadowCount, rawLightMatrix, sceneBounds, shadowFrame);
         activeShadowCount++;
       }
 
@@ -18876,7 +18253,8 @@
         }
       }
 
-      uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights);
+      pbrShadowsActive = activeShadowCount > 0;
+      uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights); sceneSelenaFrameLighting(selenaFrame, cam, scratchViewMatrix, bundle, shadowSlots, shadowLightIndices, shadowLightMatrices, "gpu");
 
       // Create frame bind group.
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
@@ -19157,7 +18535,7 @@
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
+        disabled: Boolean(frameMeta?.frameRequest) || selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() || Boolean(bundle.environment && bundle.environment.wind) ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
@@ -19221,9 +18599,9 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
+      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} }; window.__gosx_scene3d_terrain_api?.webgpu(terrainResources, mainPass, { device: device, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, height: scaledH, frameGroup: frameBindGroup, frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: materialUniformData, time: selenaFrame.time, frameBuffer: frameUniformBuffer, format: targetFormat, samples: sampleCount, specular: selectiveBloom, textureCache: textureCache, load: wgpuLoadTexture, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, attr: queueWebGPUAttribute });
       // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
-      const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
+      const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; }; window.__gosx_scene3d_crowd_api?.webgpu(mainPass, { device: device, environment: bundle.environment, camera: cam, proj: scratchProjMatrix, viewProj: scratchSelenaViewProjection, height: scaledH, time: bundle.timeSeconds, frameGroup: frameBindGroup, frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: materialUniformData, format: targetFormat, samples: sampleCount, specular: selectiveBloom, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, mount: canvas.parentNode }); // Environment.Crowds (crowd-wgsl.ts)
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
         if (drawList.opaque.length > 0) {
@@ -19329,7 +18707,7 @@
         var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG, [0]);
         Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, selenaFrame.time));
-        Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds));
+        mainPass = drawComputeParticlePasses(encoder, mainPass, mainPassDescriptor, frameBindGroup, computeParticleRecords, bundle.environment, frameTimeSeconds, mainDepthTargetView);
       }
 
       mainPass.end();
@@ -19352,13 +18730,15 @@
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
-        Object.assign(frameStats, postProcessor.apply(encoder, postEffects, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta }));
+        var chain = temporalAA.resolve(encoder, postEffects, { colorView: postTarget.colorView, colorFormat: targetFormat, depthView: mainDepthTargetView, samples: sampleCount, objects: bundle.meshObjects, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle }); autoExposure.apply(encoder, bundle.environment, postTarget, cam, frameNowMS);
+        Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: temporalAA.velocityView() } }), temporalAA.stats(), autoExposure.stats());
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
       gpuDriven.finishEncoding(encoder);
       crowd.finishEncoding(encoder);
+      if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; }
       device.queue.submit([encoder.finish()]);
       Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink), crowd.endFrame());
       pollGPUTimingReadback();
@@ -19391,8 +18771,8 @@
     function dispose() { pipelineGuard.release(rawDevice);
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true; clearTimeout(webGPUAttributeTimer); webGPUAttributeTimer = null;
-      if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); oceanResources.fft?.dispose(); sceneReflectDispose(oceanResources);
-      if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null;
+      if (skyResources.renderer) skyResources.renderer.dispose(); terrainResources.dispose?.(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); oceanResources.fft?.dispose(); sceneReflectDispose(oceanResources);
+      if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null; window.__gosx_scene3d_crowd_api?.dispose(device);
       skyResources.renderer = null;
 
       gpuTimingDisposed = true;
@@ -19485,7 +18865,7 @@
       mainMSAAView = null;
       destroyRendererGPUResource(dummyShadowTex);
       dummyShadowTex = null;
-      dummyShadowView = null;
+      dummyShadowView = dummyShadowArrayView = null;
       destroyRendererGPUResource(placeholderTex);
       placeholderTex = null;
       placeholderView = null;
@@ -19509,7 +18889,7 @@
           destroyRendererGPUResource(record.texture);
         }
       }
-      sceneWebGPUDisposeDetail(detailResources); detailResources = null;
+      sceneWebGPUDisposeDetail(detailResources); detailResources = null; sceneWebGPUDisposeSelenaSurfaces(selenaSurfaces);
       textureCache.clear();
       selenaPipelineCache.clear();
       selenaComputePipelineCache.clear();
@@ -19749,7 +19129,7 @@
       getPerformanceTimingStatus: getPerformanceTimingStatus,
       getFrameTiming: getFrameTiming,
       diagnostics: diagnostics,
-      getFrameProgress: function() { return webGPUFrameProof; },
+      getFrameProgress: function() { return webGPUFrameProof; }, shaderPrograms: function() { return { total: pipelineGuard.created, pending: pipelineGuard.pending, failed: pipelineGuard.failures.length }; },
       render: pipelineGuard.wrapFrame(render, endWebGPUErrorScope),
       getFailureReason: function() { return pipelineGuard.coreError ? "webgpu-pipeline-failed" : ""; },
       dispose: dispose,
@@ -19898,7 +19278,7 @@
     return groups[shadow] = record.bg;
   }
   function sceneWebGPUIsSelenaMaterial(material: any) {
-    return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) &&
+    return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) && !sceneWebGPUSelenaSurfaceHook(material) &&
       ((typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
        (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())));
   }

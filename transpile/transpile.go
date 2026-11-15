@@ -1630,7 +1630,7 @@ func (t *transpiler) typedPropsType(tag string) (string, bool) {
 		if sharedType, ok := t.sharedPropsType(tag); ok {
 			return sharedType, true
 		}
-		return t.gosxUIPropsType(tag)
+		return "", false
 	}
 	return propsType, true
 }
@@ -1693,8 +1693,7 @@ func (t *transpiler) sharedComponent(tag string) (SharedComponent, bool) {
 	return comp, true
 }
 
-// sharedPropsType resolves tag's callee props type the same way
-// gosxUIPropsType resolves a m31labs.dev/gosx/ui call: alias qualified onto
+// sharedPropsType resolves tag's callee props type: alias qualified onto
 // the props type name, so emitTypedComponentCall's composite literal reads
 // as an ordinary qualified Go type, exactly like the call itself.
 func (t *transpiler) sharedPropsType(tag string) (string, bool) {
@@ -1716,18 +1715,6 @@ func (t *transpiler) sharedPropsType(tag string) (string, bool) {
 // source text (e.g. "./ui"), which names the resolver gap precisely.
 func (t *transpiler) errUnresolvedSharedCall(n *gotreesitter.Node, tag, rawPath string) {
 	t.errorf(n, "shared component %s cannot be projected without a resolved Go import for %q; gosx transpile does not resolve a ./ or ../ import on its own — run gosx check, which resolves and type-checks a shared .gsx import", tag, rawPath)
-}
-
-func (t *transpiler) gosxUIPropsType(tag string) (string, bool) {
-	alias, component, ok := splitMemberTag(tag)
-	if !ok || t.imports[alias] != "m31labs.dev/gosx/ui" {
-		return "", false
-	}
-	propsType := gosxUIComponentPropsType(component)
-	if propsType == "" {
-		return "", false
-	}
-	return alias + "." + propsType, true
 }
 
 func (t *transpiler) emitTypedComponentCall(tag, propsType string, attrs []string, children []string, slotArgs []string) string {
@@ -1794,18 +1781,11 @@ func (t *transpiler) emitAttrs(n *gotreesitter.Node) []string {
 	return t.emitAttrsWithMode(n, false, false)
 }
 
-func (t *transpiler) emitTypedAttrs(n *gotreesitter.Node) []string {
-	return t.emitAttrsWithMode(n, true, false)
-}
-
 func (t *transpiler) emitHTMLAttrs(n *gotreesitter.Node) []string {
 	return t.emitAttrsWithMode(n, false, true)
 }
 
 func (t *transpiler) emitTypedAttrsForTag(tag string, n *gotreesitter.Node) []string {
-	if t.isGoSXUITag(tag) {
-		return t.emitGoSXUIAttrs(tag, n)
-	}
 	if comp, ok := t.sharedComponent(tag); ok {
 		return t.emitTypedAttrsWithAliases(tag, comp.Fields, n)
 	}
@@ -1891,77 +1871,6 @@ func upperFirst(value string) string {
 	return string(value[0]-'a'+'A') + value[1:]
 }
 
-func (t *transpiler) isGoSXUITag(tag string) bool {
-	alias, _, ok := splitMemberTag(tag)
-	return ok && t.imports[alias] == "m31labs.dev/gosx/ui"
-}
-
-func (t *transpiler) emitGoSXUIAttrs(tag string, n *gotreesitter.Node) []string {
-	alias, component, _ := splitMemberTag(tag)
-	var baseFields []string
-	var inputFields []string
-	var propFields []string
-	var extraAttrs []string
-
-	for i := 0; i < int(n.NamedChildCount()); i++ {
-		child := n.NamedChild(i)
-		switch t.nodeType(child) {
-		case "jsx_attribute":
-			nameNode := t.childByField(child, "name")
-			if nameNode == nil {
-				continue
-			}
-			name := t.text(nameNode)
-			value, _, ok := t.emitAttrValue(child)
-			if !ok {
-				continue
-			}
-			if field := gosxUIPropField(component, name); field != "" {
-				if gosxUIUsesNestedInputProps(component) && gosxUIInputPropField(name) != "" {
-					inputFields = append(inputFields, fmt.Sprintf("%s: %s", field, value))
-				} else {
-					propFields = append(propFields, fmt.Sprintf("%s: %s", field, value))
-				}
-				continue
-			}
-			if field := gosxUIBaseField(component, name); field != "" {
-				baseFields = append(baseFields, fmt.Sprintf("%s: %s", field, value))
-				continue
-			}
-			extraAttrs = append(extraAttrs, fmt.Sprintf("%s(%q, %s)", t.gosxRef("Attr"), name, value))
-		case "jsx_spread_attribute":
-			t.errorf(child, "spread attributes are not supported for typed component props")
-		}
-	}
-
-	if len(extraAttrs) > 0 {
-		baseFields = append(baseFields, fmt.Sprintf("Attrs: %s(%s)", t.gosxRef("Attrs"), strings.Join(extraAttrs, ", ")))
-	}
-	if gosxUIUsesNestedInputProps(component) {
-		inputLiteral := t.emitGoSXUIInputProps(alias, baseFields, inputFields)
-		if inputLiteral != "" {
-			propFields = append([]string{inputLiteral}, propFields...)
-		}
-		return propFields
-	}
-	if len(baseFields) > 0 {
-		propFields = append([]string{fmt.Sprintf("BaseProps: %s.BaseProps{%s}", alias, strings.Join(baseFields, ", "))}, propFields...)
-	}
-	return propFields
-}
-
-func (t *transpiler) emitGoSXUIInputProps(alias string, baseFields []string, inputFields []string) string {
-	var fields []string
-	if len(baseFields) > 0 {
-		fields = append(fields, fmt.Sprintf("BaseProps: %s.BaseProps{%s}", alias, strings.Join(baseFields, ", ")))
-	}
-	fields = append(fields, inputFields...)
-	if len(fields) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("InputProps: %s.InputProps{%s}", alias, strings.Join(fields, ", "))
-}
-
 func (t *transpiler) emitAttrsWithMode(n *gotreesitter.Node, typed, htmlElement bool) []string {
 	var attrs []string
 	for i := 0; i < int(n.NamedChildCount()); i++ {
@@ -1984,10 +1893,6 @@ func (t *transpiler) emitAttrsWithMode(n *gotreesitter.Node, typed, htmlElement 
 		}
 	}
 	return attrs
-}
-
-func (t *transpiler) emitAttr(n *gotreesitter.Node) string {
-	return t.emitAttrWithMode(n, false, false)
 }
 
 func (t *transpiler) emitAttrWithMode(n *gotreesitter.Node, typed, htmlElement bool) string {
@@ -2189,194 +2094,6 @@ func isAttrListPropsType(propsType string) bool {
 	default:
 		return false
 	}
-}
-
-func gosxUIComponentPropsType(component string) string {
-	switch component {
-	case "Box", "Stack", "Inline", "Grid":
-		return "LayoutProps"
-	case "Text", "CardTitle":
-		return "TextProps"
-	case "Button":
-		return "ButtonProps"
-	case "Card":
-		return "CardProps"
-	case "CardHeader", "CardContent", "CardFooter":
-		return "BaseProps"
-	case "Badge":
-		return "BadgeProps"
-	case "Field":
-		return "FieldProps"
-	case "Input":
-		return "InputProps"
-	case "Textarea":
-		return "TextareaProps"
-	case "Select":
-		return "SelectProps"
-	case "Checkbox":
-		return "CheckboxProps"
-	case "Tabs":
-		return "TabsProps"
-	case "Table":
-		return "TableProps"
-	default:
-		return ""
-	}
-}
-
-func gosxUIPropField(component, attr string) string {
-	name := strings.ToLower(attr)
-	if gosxUIUsesNestedInputProps(component) {
-		if field := gosxUIInputPropField(attr); field != "" {
-			return field
-		}
-		switch component {
-		case "Textarea":
-			if name == "rows" {
-				return "Rows"
-			}
-		case "Select":
-			if name == "options" {
-				return "Options"
-			}
-		}
-		return ""
-	}
-
-	switch component {
-	case "Box", "Stack", "Inline", "Grid":
-		switch name {
-		case "as":
-			return "As"
-		case "gap":
-			return "Gap"
-		case "align":
-			return "Align"
-		case "justify":
-			return "Justify"
-		}
-	case "Text", "CardTitle":
-		switch name {
-		case "as":
-			return "As"
-		case "tone":
-			return "Tone"
-		case "size":
-			return "Size"
-		case "weight":
-			return "Weight"
-		}
-	case "Button":
-		switch name {
-		case "type":
-			return "Type"
-		case "href":
-			return "Href"
-		case "variant":
-			return "Variant"
-		case "size":
-			return "Size"
-		case "disabled":
-			return "Disabled"
-		}
-	case "Card":
-		if name == "tone" {
-			return "Tone"
-		}
-	case "Badge":
-		if name == "tone" {
-			return "Tone"
-		}
-	case "Field":
-		switch name {
-		case "id":
-			return "ID"
-		case "label":
-			return "Label"
-		case "help":
-			return "Help"
-		case "error":
-			return "Error"
-		case "required":
-			return "Required"
-		}
-	case "Input":
-		return gosxUIInputPropField(attr)
-	case "Checkbox":
-		switch name {
-		case "id":
-			return "ID"
-		case "name":
-			return "Name"
-		case "value":
-			return "Value"
-		case "label":
-			return "Label"
-		case "checked":
-			return "Checked"
-		case "disabled":
-			return "Disabled"
-		}
-	case "Tabs":
-		switch name {
-		case "active":
-			return "Active"
-		case "items":
-			return "Items"
-		}
-	case "Table":
-		switch name {
-		case "columns":
-			return "Columns"
-		case "rows":
-			return "Rows"
-		case "empty":
-			return "Empty"
-		}
-	}
-	return ""
-}
-
-func gosxUIInputPropField(attr string) string {
-	switch strings.ToLower(attr) {
-	case "id":
-		return "ID"
-	case "name":
-		return "Name"
-	case "type":
-		return "Type"
-	case "value":
-		return "Value"
-	case "placeholder":
-		return "Placeholder"
-	case "describedby", "aria-describedby":
-		return "DescribedBy"
-	case "required":
-		return "Required"
-	case "disabled":
-		return "Disabled"
-	case "invalid":
-		return "Invalid"
-	default:
-		return ""
-	}
-}
-
-func gosxUIBaseField(component, attr string) string {
-	name := strings.ToLower(attr)
-	switch name {
-	case "class":
-		return "Class"
-	case "id":
-		if gosxUIPropField(component, attr) == "" {
-			return "ID"
-		}
-	}
-	return ""
-}
-
-func gosxUIUsesNestedInputProps(component string) bool {
-	return component == "Textarea" || component == "Select"
 }
 
 func stripGSXAttributeExpressionText(text string) string {

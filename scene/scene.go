@@ -93,18 +93,28 @@ type Environment struct {
 	// keeps the flat Props.Background clear color. See sky.go.
 	Sky *Sky
 	// Ocean describes the open-ocean surface. See ocean.go.
-	Haze         *Haze
-	Ocean        *Ocean
+	Haze  *Haze
+	Ocean *Ocean
+	// Terrain is the heightmap ground surface. See terrain.go.
+	Terrain *Terrain
+	// Wind is the shared wind field vegetation sways under. See wind.go.
+	Wind         *Wind
 	EnvIntensity float64
 	EnvRotation  float64
 	Exposure     float64
+	// AutoExposure adapts exposure to the scene's brightness over time. Nil
+	// keeps Exposure fixed. See exposure.go.
+	AutoExposure *AutoExposure
 	ToneMapping  string // "aces", "reinhard", "linear", "" (default = aces)
 	FogColor     string
 	FogDensity   float64 // for exponential fog (0 = no fog)
-	Transition   Transition
-	InState      *EnvironmentProps
-	OutState     *EnvironmentProps
-	Live         []string
+	// Crowds are stadium, arena and concert audiences. See crowd.go and
+	// docs/scene3d-crowd.md.
+	Crowds     []Crowd
+	Transition Transition
+	InState    *EnvironmentProps
+	OutState   *EnvironmentProps
+	Live       []string
 }
 
 // Props is the typed Go-side Scene3D surface. It lowers into the current
@@ -222,6 +232,12 @@ type Props struct {
 	FrameIntervalMS float64 `json:"frameIntervalMS,omitempty"`
 	// ModelPreparation advertises the opt-in Surface.PrepareModels authority.
 	ModelPreparation *bool `json:"modelPreparation,omitempty"`
+	// ShaderWarmup compiles the listed materials and draw variants before the
+	// first frame and reports progress. See ShaderWarmup.
+	ShaderWarmup *ShaderWarmup `json:"-"`
+	// TextAtlases are label textures (numbers, nameplates) drawn in the
+	// browser at mount. Materials use TextAtlas.Texture and TextAtlas.Region.
+	TextAtlases []TextAtlas `json:"-"`
 	// TextureDeliveryProfile selects model-map variants for this mount.
 	// "auto" follows device hints; "low", "standard", and "high" set a
 	// delivery ceiling. Empty preserves the legacy capability-only policy.
@@ -1070,6 +1086,14 @@ type ParticleMaterial struct {
 	// MaxPixelSize caps sprite growth as particles approach the camera,
 	// matching Points.MaxPixelSize. Zero leaves the size uncapped.
 	MaxPixelSize float64
+	// SoftDistance fades a sprite over this many world units as it nears
+	// the opaque surface behind it, so spray and smoke meet the ground or a
+	// shoreline without a hard rectangle. Zero keeps hard sprites. Only
+	// blended ("alpha" or "additive") builtin sprites soften; authored render
+	// shaders and depth-writing sprites draw unchanged. WebGPU always reads
+	// scene depth; WebGL2 softens only when the scene renders through the
+	// post chain, and draws hard sprites otherwise.
+	SoftDistance float64
 }
 
 // Label lowers into one legacy scene label.
@@ -1316,6 +1340,10 @@ type DirectionalLight struct {
 	ShadowSize     int
 	ShadowCascades int
 	ShadowSoftness float64
+	// ShadowDistance limits how far from the camera the shadow cascades
+	// reach, in world units. Zero uses the camera far plane. A shorter
+	// distance spends every cascade's texels on the visible play area.
+	ShadowDistance float64
 	Transition     Transition
 	InState        *LightProps
 	OutState       *LightProps
@@ -2099,6 +2127,12 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
 	setBool(out, "renderBeforeModels", p.RenderBeforeModels)
 	setBool(out, "modelPreparation", p.ModelPreparation)
+	if warmup := p.ShaderWarmup.legacyProps(); warmup != nil {
+		out["shaderWarmup"] = warmup
+	}
+	if atlases := textAtlasProps(p.TextAtlases); atlases != nil {
+		out["textAtlases"] = atlases
+	}
 	setString(out, "textureDeliveryProfile", string(p.TextureDeliveryProfile))
 	setString(out, "framePacing", p.FramePacing)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
@@ -2462,6 +2496,12 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 	case *ComputeParticles:
 		if current != nil {
 			l.lowerComputeParticles(*current, parent)
+		}
+	case Scatter:
+		l.lowerScatter(current)
+	case *Scatter:
+		if current != nil {
+			l.lowerScatter(*current)
 		}
 	case WaterSystem:
 		l.lowerWaterSystem(current)
@@ -3438,6 +3478,7 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 			Attenuation:  cp.Material.Attenuation,
 			MinPixelSize: cp.Material.MinPixelSize,
 			MaxPixelSize: cp.Material.MaxPixelSize,
+			SoftDistance: cp.Material.SoftDistance,
 		},
 		Bounds:         cp.Bounds,
 		Transition:     lowerTransition(cp.Transition),
@@ -3975,6 +4016,7 @@ func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worl
 		ShadowSize:     light.ShadowSize,
 		ShadowCascades: normalizeShadowCascades(light.ShadowCascades),
 		ShadowSoftness: normalizeShadowSoftness(light.ShadowSoftness),
+		ShadowDistance: light.ShadowDistance,
 		Transition:     lowerTransition(light.Transition),
 		InState:        light.InState.legacyProps(),
 		OutState:       light.OutState.legacyProps(),

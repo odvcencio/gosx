@@ -11,7 +11,7 @@
 //	gosx detlint <packages>      Check //gosx:deterministic packages for cross-platform hazards
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
 //	gosx desktop package         Package a Windows desktop app for direct download
-//	gosx export <dir>            Pre-render static GoSX pages
+//	gosx export [--zip] <dir>    Build a server-less static bundle
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
 //	gosx check <file.gsx>        Parse and validate without emitting
@@ -28,6 +28,9 @@
 //	gosx scene check             Check Scene3D feature support and budgets
 //	gosx scene inspect           Inspect Scene3D feature use and budgets
 //	gosx scene validate          Validate SceneIR JSON files
+//	gosx voice render|estimate|booth|import|coverage|fragments
+//	                              Build game commentary voice clips
+//	gosx selena build|check      Compile .sel sources into artifacts / check them
 //	gosx size [--json] <dist|build.json>
 //	                              Report runtime bundle sizes
 //	gosx ui list                 List source-owned UI recipes
@@ -113,6 +116,10 @@ func main() {
 		cmdRelease()
 	case "scene":
 		cmdScene()
+	case "selena":
+		cmdSelena()
+	case "voice":
+		cmdVoice()
 	case "version":
 		fmt.Printf("gosx v%s\n", gosx.Version)
 	case "help", "-h", "--help":
@@ -183,10 +190,18 @@ Usage:
 	case "detlint":
 		detlintUsage(w)
 	case "export":
-		fmt.Fprintf(w, `gosx export - Pre-render static GoSX pages
+		fmt.Fprintf(w, `gosx export - Build a static bundle that needs no Go server
+
+Runs the production build (TinyGo runtime, content-hashed assets) and keeps
+dist/static. Every URL in the bundle is relative to its page, so the folder
+runs from any path on any static host. Fails when a page cannot be exported.
 
 Usage:
-  gosx export [dir]
+  gosx export [--zip[=path]] [dir]
+
+Flags:
+  --zip         also write dist/static.zip (index.html at the archive root)
+  --zip=path    write the archive to path
 
 `)
 	case "init":
@@ -254,6 +269,10 @@ Usage:
 		releaseUsage(w)
 	case "scene":
 		sceneUsage(w)
+	case "selena":
+		selenaUsage(w)
+	case "voice":
+		voiceUsage(w)
 	case "version":
 		fmt.Fprintf(w, `gosx version - Print version
 
@@ -292,6 +311,7 @@ Commands:
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
+  voice <subcommand>   Record or render commentary voice clips (gosx voice help)
   budget derive        Derive performance allocations
   budget explain       Explain performance allocations
   perf [--budget file] <url>
@@ -311,6 +331,8 @@ Commands:
   scene check          Check Scene3D feature support and budgets
   scene inspect        Inspect Scene3D feature use and budgets
   scene validate       Validate SceneIR JSON files
+  selena build         Compile .sel sources into <file>.sel.json artifacts
+  selena check         Fail when a Selena artifact is missing or stale
   version              Print version
 
 Init templates:
@@ -445,8 +467,23 @@ func cmdDev() {
 }
 
 func cmdExport() {
-	dir := argOrDefault(2, ".")
-	if err := RunExport(dir); err != nil {
+	dir := "."
+	opts := ExportOptions{}
+	for i := 2; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		switch {
+		case arg == "--zip":
+			opts.Zip = "auto"
+		case strings.HasPrefix(arg, "--zip="):
+			opts.Zip = strings.TrimPrefix(arg, "--zip=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "gosx export: unknown flag %s\n", arg)
+			os.Exit(1)
+		default:
+			dir = arg
+		}
+	}
+	if err := RunExportWithOptions(dir, opts); err != nil {
 		fmt.Fprintf(os.Stderr, "gosx export: %v\n", err)
 		os.Exit(1)
 	}

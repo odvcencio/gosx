@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.59.1**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.60.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 Desktop hosts can discover late native-engine registrations with
 `window.gosxDesktop.refreshMethods()`, force selected components onto the WASM
@@ -229,7 +229,7 @@ GoSX is opinionated about a small number of things and flexible about everything
 - **The browser is a render target.** Server components are the baseline. Client-side JavaScript is something you opt into, feature by feature, not a default ambient runtime.
 - **One language, explicit browser compiler.** You write Go. `go build` produces the server and CLI, and `gosx dev` uses standard Go WASM for local iteration. Production builds use TinyGo or, for eligible pinned releases, a verified prebuilt runtime. There is no app-side Node, npm, webpack, or bundler config.
 - **No JavaScript toolchain is not zero browser cost.** GoSX still ships a measured browser bootstrap, feature chunks, and WASM runtime only when a route needs them. The performance contract is that the compiler and build pipeline justify every shipped runtime slice.
-- **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
+- **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
 - **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
 - **You pay for what you use.** Static pages are static. Islands ship only when a page has an island. Production manifests choose among capability-linked `core`, `engine`, `collab`, and `full` WASM profiles; the legacy `islands` name remains a read-compatible alias. An app with no islands has no client VM; an app with no engines has no engine bundle.
 - **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure, and the island VM, patch applier, and feature chunks are source you can read. Build manifests report the exact bytes each route ships.
@@ -261,7 +261,7 @@ small-package boundaries and buffer ownership contracts.
 Install Go 1.26 or newer and the CLI for the release you want to use:
 
 ```bash
-go install m31labs.dev/gosx/cmd/gosx@v0.59.1
+go install m31labs.dev/gosx/cmd/gosx@v0.60.0
 ```
 
 Make sure your Go binary directory is on `PATH`, then create an app:
@@ -295,9 +295,13 @@ refuse to start without a non-placeholder secret of at least 16 bytes.
 Short secrets are rejected in every mode. The docs example uses the same
 policy. `session.New` keeps its existing API and validation.
 
-Before deploying, set `GOSX_ENV=production` and supply a random secret through
-your deployment environment, for example one
-generated with `openssl rand -hex 32`.
+Before deploying, set `GOSX_ENV=production`, set `PUBLIC_URL` to your public
+`https://` origin, and supply a random secret through your deployment
+environment, for example one generated with `openssl rand -hex 32`. Only
+development (`GOSX_ENV=development` or `gosx dev`) may drop the `Secure` flag
+from session cookies. Outside development the scaffolds keep `Secure` even when
+`PUBLIC_URL` is unset or `http://`, and log a warning; browsers then send the
+cookie only over HTTPS.
 Keep it stable across restarts and replicas to preserve sessions. The known
 placeholders are `change-me-in-production`, `gosx-app-session-secret`, and
 `gosx-docs-session-secret`.
@@ -480,7 +484,7 @@ the classified routes and response checks.
 
 **Routing and Edge** — Server middleware can be annotated with `app.UseEdge`, and `app.UseI18n` adds locale-prefix routing that composes with both `server.App` and file routing.
 
-**Content and Components** — `content` uses mdpp as the canonical Markdown++ content-source layer for `.md`, `.mdx`, and `.mdpp` collections, with typed frontmatter, diagnostics, renderer hooks, and slug indexes. `components` provides a registry for reusable server component libraries and file-route bindings, and `ui` seeds GoSX UI: layout, typography, form, card, tab, table, badge, and stylesheet primitives users can copy from or compose directly.
+**Content and Components** — `content` uses mdpp as the canonical Markdown++ content-source layer for `.md`, `.mdx`, and `.mdpp` collections, with typed frontmatter, diagnostics, renderer hooks, and slug indexes.
 
 **Text Layout** — `TextBlock` supports a deterministic approximate server
 layout and bootstrap-managed refinement with browser font metrics. Font,
@@ -497,9 +501,7 @@ contract without pretending the approximate first pass is exact.
 
 **Embedded apps** — Opt into iframe framing allowlists, a public base path for routes and runtime URLs, and partitioned session cookies for Discord Activities. Defaults retain same-origin framing and SameSite=Lax cookies. See [the embedded apps guide](./docs/embedded-apps.md).
 
-**Stripe** — Hosted Checkout is server-first: `stripeui.HostedCheckoutForm` posts to an app-owned Go endpoint that calls Stripe's API and returns a native 303, with no Stripe.js or GoSX browser runtime. Elements and embedded Checkout are explicit runtime surfaces whose HTML contains only a publishable key, typed allowlisted display options, and a fixed same-origin session-action path; client secrets are fetched through scoped CSRF-aware transport and never serialized into the page or forwarded in events. `stripeui.Require` emits the nonced bootstrap, direct Stripe.js loader, and local bridge in lifecycle order. See [the Stripe integration guide](./docs/stripe.md).
 
-**Polar** — Hosted Checkout stays entirely server-first: `polarui.CheckoutForm` submits only an opaque offer ID and CSRF token to `polaradapter`, which resolves typed server-owned checkout inputs, calls Polar through a bounded private-OAT client, and returns an empty 303 to an exact configured HTTPS checkout origin. It adds no browser runtime or provider data to SSR. See [the Polar integration guide](./docs/polar.md).
 
 ## Engines
 
@@ -650,6 +652,8 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 
 [Scene3D particle bursts](docs/scene3d-particle-bursts.md) start finite event effects with typed Go emitters and automatic browser cleanup.
 
+[Scene3D projected decals](docs/scene3d-decals.md) paint bullet holes, footprints and scorch marks onto any surface from the depth buffer, with a pooled Go manager for many short-lived decals.
+
 [Scene3D timelines](docs/scene3d-timeline.md) sequence object and camera tweens in Go, with seekable browser playback and reduced-motion settling.
 
 [Shared motion and shader surfaces](docs/motion-transport.md) coordinate HTML, cameras, uniforms and Selena time from Go, with typed playback controls and the same material in 2D and 3D.
@@ -659,7 +663,7 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
 
 - **On the web**, two authored TypeScript backends consume the IR: a WebGPU renderer and a WebGL2 renderer. Each ships as a separately fetched chunk, so a WebGPU-capable browser never downloads the WebGL renderer and the reverse also holds.
-- **On the desktop**, and for headless rendering, a pure-Go WebGPU pipeline (`render/gpu` + `render/bundle`, with hand-written WGSL) consumes the same IR. It also backs `scene/preview`, which renders to PNG with no browser and no GPU.
+- **On the desktop**, a window shows the page in the system webview (WebView2 on Windows, WKWebView on macOS), so Scene3D there is drawn by the same two browser backends. The pure-Go renderer (`render/gpu` + `render/bundle`, with hand-written WGSL) consumes the same IR and has two device targets: in a native build, a CPU rasterizer that backs `scene/preview`, which renders to PNG with no browser and no GPU; and, from Go WebAssembly, browser WebGPU through `render/gpu/jsgpu` (it can target a canvas, but no shipped page script calls its entry point). There is no native GPU device. The native build does not run custom post shaders and reports each one as a diagnostic.
 
 Typed Scene3D surfaces declare WebGPU as a default capability, so a capable browser takes the WebGPU path first and falls back through WebGL2 to canvas when the device or the scene needs it. The server computes a per-backend fidelity verdict and ships it with the scene, so a backend that cannot render a scene faithfully is diverted rather than allowed to draw the wrong image. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
 
@@ -734,6 +738,15 @@ separate release-pinned hardware certification obligation in that contract.
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes
 
+  Browser builds load Selena materials from build-time artifacts:
+  `gosx build` (or `gosx selena build`) writes `<file>.sel.json` next to each
+  `.sel` source, and `scene.DecodeSelenaArtifact` plus
+  `scene.MaterialFromSelenaArtifact` turn an embedded artifact into a material
+  without linking the compiler. `gosx selena check` fails when an artifact no
+  longer matches its source. Selena mesh materials can read every scene light,
+  both shadow slots with their cascades, and fog. See
+  [Selena materials in Scene3D](docs/scene3d-selena.md).
+
   Selena browser shaders use GLSL ES 3.00 for GoSX's WebGL2 contexts. The returned
   binding layout contains the WebGL2 host requirements. Materials with extra host
   requirements include `shaderLayout.targetRequires`; `scene.SelenaTargetRequirements(material.ShaderLayout, target)`
@@ -754,7 +767,9 @@ separate release-pinned hardware certification obligation in that contract.
   materials avoid duplicating shader sources. Transport does not imply execution:
   the current native mesh renderer uses the standard material and reports
   `MaterialFallbacks` in frame stats and `scene.native.custom_material_fallback`
-  in preview diagnostics.
+  in preview diagnostics. `MaterialFallbacks` also carries the post-effect
+  findings: `scene.native.custom_post_passthrough`,
+  `scene.native.custom_post_skipped` and `scene.native.specular_bloom_unsupported`.
 
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadow maps on directional lights, with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap; spot lights render their cone and penumbra but do not yet cast shadows on either browser backend
 - **Cameras** — perspective and orthographic cameras with orbit, first-person, fly, drag, pointer-lock, and transition hints plus picking and projection-aware sprites/labels
@@ -770,7 +785,7 @@ separate release-pinned hardware certification obligation in that contract.
 - **WebGPU presentation** — tier-aware 4x MSAA render targets with resolve-to-canvas/post-FX targets, adapter feature/limit negotiation for timestamp queries, shader-f16, indirect first-instance, compressed textures, subgroups, manifest-driven `requiredFeatures` / `requiredLimits` negotiation, opt-in adapter `powerPreference`, opt-in canvas `alphaMode` / `colorSpace` / `toneMapping`, and diagnostics exposed for tooling through `data-gosx-scene3d-webgpu-*` mount attributes, plus shared SceneIR parity across WebGPU, WebGL2, and headless backends
 - **First-content reveal** — an opt-in `data-gosx-scene3d-reveal-class` mount attribute names a CSS class. After the first frame with drawable content, the runtime stamps `data-gosx-scene3d-revealed="true"` on the mount and adds the class to the document element; dispose removes the class again. Pure CSS can fade a static boot placeholder — no app-authored watcher script
 - **Lantern inspector** — a read-only Scene3D dev inspector served at `/gosx/devtools-lantern.js` (`server.DevtoolsLanternPath`, tag helper `server.DevtoolsLanternScriptTag()`). Apps include the tag only when devtools are enabled; Shift+D toggles a panel with truthful render FPS, backend and adaptive-quality state, live node-type counts, draw calls, and camera state — all read from the debug registry the production bundle already exposes
-- **Post-processing** — `SSAO`, `DOF`, `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, with backend-specific passes skipped gracefully when unavailable
+- **Post-processing** — `SSAO`, `DOF`, `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, `Decals` (box-projected, depth-driven) and `MotionBlur` (tile-max velocity gather, quality presets), with backend-specific passes skipped gracefully when unavailable
 - **Editor/debug surfaces** — `AxesHelper`, `GridHelper`, `BoxHelper`, `BoundingBoxHelper`, `SkeletonHelper`, visual `TransformControls`, selected mesh outline styling, dashed/solid line materials, and opt-in `Stats` overlay
 - **Native preview & certification** — `scene/preview` renders typed scenes to PNG with no browser or GPU (thumbnails, docs images, deterministic visual tests), and `scene/harness` certifies contract evidence — frame hashes, coverage, Selena artifact hashes, and BVH-accelerated ray/drag traces that are exact for every analytic primitive and every triangle mesh, use a pick radius for points, sprites and line strokes, fall back to a bounds box only for glTF models Go never loads, and name the method behind each hit — into schema-versioned JSON reports suitable for agent-operated authoring workflows
 - **Shadow pixel cap** — v0.15.0's `Shadows.MaxPixels` caps each shadow map (default 1024²), preventing multi-megabyte-per-light allocations when individual lights request large shadow sizes
@@ -778,7 +793,7 @@ separate release-pinned hardware certification obligation in that contract.
 - **Transitions** — declarative enter/exit/state transitions on any scene node via `InState` / `OutState` / `Live`
 - **Camera controls** — `orbit`, `first-person`, `fly`, pointer lock, drag-to-rotate, focus targets, pick signals (including the world-space click ray as `$surface.event.rayOriginX/Y/Z` + `rayDirX/Y/Z`), interactive TransformControls gizmo drags that emit `gosx:scene3d:input` `kind:"gizmo-commit"` events and an optional `GizmoOutputSignal`, drag signals, event signals exposed as `$`-signals consumable by surrounding islands
 - **Capability tiers** — graceful degradation across WebGPU → WebGL → canvas fallbacks
-- **Shared IR across backends** — the JS WebGPU and WebGL2 browser backends, the pure-Go desktop WebGPU pipeline, and the headless software rasterizer all consume the same SceneIR, with feature parity gated by what each target surface actually supports and reported through the capability verdict
+- **Shared IR across backends** — the JS WebGPU and WebGL2 browser backends and the pure-Go CPU rasterizer behind `scene/preview` all consume the same SceneIR, with feature parity gated by what each target surface actually supports and reported through the capability verdict
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
 
 The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. When something goes wrong, the implementation is Go and authored TypeScript rather than a black box.
@@ -828,19 +843,21 @@ listeners, carets and timers. Authorization, document storage and conflict polic
 remain server responsibilities. The demo uses last-write-wins snapshots; the
 separate editor package supplies the richer CRDT editing surface.
 
-## Collaboration: CRDT + Workspace
+## Collaboration: CRDT
 
 The `crdt` package implements a conflict-free replicated document model with a bloom-filter-based sync protocol, delta-encoded changes, and vector-clock causality tracking. Documents serialize to a compact binary snapshot — interned actor and object tables, zigzag varint deltas, run-length tombstones, and change hashes recomputed on load rather than stored — which costs about 5 bytes per character of text. The chunk framing follows Automerge's shape (magic bytes, ULEB128 length, truncated checksum) but the body is GoSX's own encoding, so treat it as protocol-compatible in structure, not byte-compatible with Automerge. Older JSON snapshots still load. Its convergence contract is covered by partitioned concurrent text edits, large partitioned histories, tombstone save/load merge tests, and sync recovery tests. It's independent of the transport — you can drive it over a `hub`, over Redis, or over raw bytes in a file.
 
 ```go
 doc := crdt.NewDoc()
-doc.Apply(change)               // apply a local or remote change
-bytes, _ := doc.Save()          // serialize the full doc state
-sync := crdtsync.NewState()    // start a sync session
-msg := sync.Generate(doc)      // produce the next sync message to send
+text, _ := doc.MakeText(crdt.Root, "body") // edit with Put, SpliceText, ...
+doc.SpliceText(text, 0, 0, "hello")
+doc.Commit("edit")                  // seal local edits into a change
+bytes, _ := doc.Save()              // serialize the full doc state
+state := crdtsync.NewState()        // start a sync session
+msg, ok := doc.GenerateSyncMessage(state) // next message to send, if any
+// on the peer: err := other.ReceiveSyncMessage(state, msg)
 ```
 
-The `workspace` package layers a distributed semantic collaboration space on top of `crdt` + `hub` + `vecdb`: agents join a workspace, write findings with vector embeddings, query across peers, and persist state. It's used in GoSX's multi-agent tooling and is also the substrate for any app that wants "multiple clients editing shared state with presence and similarity search" without building it from scratch.
 
 ## Volumetric Data & Simulation
 
@@ -865,23 +882,10 @@ rt := game.New(game.Config{
         }
     },
 })
-node := rt.Mount(ctx, gosx.Text("Loading simulation"))
+node := serve.Mount(rt, ctx, gosx.Text("Loading simulation")) // m31labs.dev/gosx/game/serve
 ```
 
 Together these packages (`field`, `game`, `sim`, `hub`) give you a complete server-authoritative interactive simulation stack in pure Go, with no third-party real-time engine.
-
-## Semantic Layer
-
-GoSX ships a vector-native semantic layer for content routing, similarity search, and LLM-adjacent workflows:
-
-- **`vecdb`** — in-memory vector database with k-NN search, cosine / inner-product / L2 metrics, and TurboQuant-backed compression. Safe for concurrent reads and writes.
-- **`embed`** — embedding provider abstraction. Implement `Provider` to plug in OpenAI, Cohere, a local model, or a deterministic test encoder.
-- **`semantic`** — built on `vecdb` + `embed`, with three production-ready primitives:
-  - `semantic.Router` — route a request to the most semantically similar handler
-  - `semantic.Cache` — cache responses by embedding similarity rather than exact key match
-  - `semantic.ContentIndex` — similarity-driven content discovery and ranking
-
-The math for MSE-optimal quantization lives in [TurboQuant](https://github.com/odvcencio/turboquant), a standalone pure-Go module that GoSX consumes as a dependency. You get the compression ratio of an engineered quantizer without taking on a C library.
 
 ## Editor
 
@@ -926,7 +930,7 @@ gosx scene inspect [--strict] [--budget file] <file-or-dir>...
 gosx scene validate [--strict] <file-or-dir>...
                                       # Structured schema diagnostics for scene documents
 gosx scene schema [--out path]        # Emit the SceneIR JSON schema
-gosx export [app]                     # Pre-render static pages to dist/static/
+gosx export [--zip] [app]              # Server-less static bundle in dist/static/ (see docs/static-game.md)
 gosx compile <file.gsx>                # Compile .gsx to Go
 gosx check <file.gsx>                  # Parse, validate, and check strict props with Go
 gosx render <file.gsx> [component]     # Render component to HTML
@@ -1349,7 +1353,7 @@ those chunks with matching source maps.
 Three tiers:
 
 1. **Static** — `gosx export` pre-renders HTML. No server needed.
-2. **Server** — Go binary. SSR, actions, hubs, ISR, Scene3D, sim, workspace.
+2. **Server** — Go binary. SSR, actions, hubs, ISR, Scene3D, sim.
 3. **Edge** — Prerendered routes at the edge, dynamic requests fall back to origin.
 
 ## Packages
@@ -1363,10 +1367,6 @@ Three tiers:
 | `server` | HTTP server, page rendering, caching, streaming, i18n, edge annotations, assets |
 | `route` | File-based routing, layouts, data loaders, modules. Includes an EXPERIMENTAL render-profile hook (`RenderProfile`, gosx#185): pin an exact gosx version if you depend on it directly. |
 | `content` | mdpp-backed Markdown/MDX/Markdown++ collection loading with typed metadata, diagnostics, and renderer hooks |
-| `components` | Registry and binding adapters for server component libraries |
-| `ui` | GoSX UI primitives and registry-backed component library seed |
-| `polarui` | Zero-runtime native Polar hosted-checkout form |
-| `polaradapter` | Typed server-only Polar Checkout API and POST/303 adapter |
 | `action` | Named mutation handlers with validation |
 | `session` | Signed cookie sessions, CSRF, flash state |
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |
@@ -1376,10 +1376,6 @@ Three tiers:
 | `field` | 3D vector fields, trilinear sampling, operators, per-component compression, hub streaming |
 | `sim` | Server-authoritative game simulation: tick loop, snapshots, replay, spectator sync |
 | `crdt` | Conflict-free replicated documents with bloom-filter sync protocol |
-| `workspace` | Distributed semantic collaboration (CRDT + hub + vecdb) |
-| `vecdb` | In-memory vector database with k-NN search and quantized storage |
-| `embed` | Embedding provider abstraction |
-| `semantic` | Semantic router, similarity cache, content index |
 | `engine` | Worker/surface model with capability declarations |
 | `engine/wasm` | Standard-Go WASM engine registration, browser context, and instance lifecycle |
 | `editor` | Go-native text editor building blocks (textmodel, input, highlight, toolbar, vscode shim) |
@@ -1388,12 +1384,11 @@ Three tiers:
 | `client/bridge` | WASM bridge for island/engine lifecycle |
 | `client/wasm` | WASM entry point |
 | `client/js` | Authored TypeScript browser runtime and generated bundles: bootstrap, patch applier, and feature chunks (islands, hubs, engines, Scene3D WebGL/WebGPU/glTF/animation) |
-| `render` | Server-side HTML rendering from IR |
+| `render` | Render bundles for Scene3D and 2D canvases (`render/bundle`, `render/bundle2d`, `render/boardgpu`) |
 | `css` | Component-scoped CSS with `:where()` selectors |
 | `textlayout` | Text measurement, line breaking, ellipsis |
 | `format` | Source formatter for `.gsx` files |
 | `lsp` | Language server protocol for editor integration |
-| `apptest` | HTTP testing helpers for pages, APIs, and forms |
 | `islandtest` | Island program testing helpers |
 | `dev` | Development server with file watching |
 | `desktop` | Native desktop host backed by Windows WebView2, shell integration, native UI, crash reports, and update feed helpers |
@@ -1444,7 +1439,7 @@ The discipline is real, but it is per-package rather than per-module, and the di
 The six libraries the framework's runtime paths use:
 
 - [gotreesitter](https://github.com/odvcencio/gotreesitter) — pure-Go tree-sitter runtime with grammar composition
-- [turboquant](https://github.com/odvcencio/turboquant) — pure-Go MSE-optimal vector quantizer powering `vecdb`
+- [turboquant](https://github.com/odvcencio/turboquant) — pure-Go MSE-optimal vector quantizer powering `crdt` vector quantization
 - [gorilla/websocket](https://github.com/gorilla/websocket) — WebSocket support for hubs
 - [rivo/uniseg](https://github.com/rivo/uniseg) — Unicode segmentation for text layout
 - [golang.org/x/image](https://pkg.go.dev/golang.org/x/image) — image optimization
@@ -1467,9 +1462,9 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.59.1**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.60.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, and `sim` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
-If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
+If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The sim layer has production users but is newer.
 
 ## License
 

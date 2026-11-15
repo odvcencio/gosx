@@ -47,6 +47,7 @@ func cmdPerf() {
 	fs.Var(&asserts, "assert", "assertion expression (repeatable)")
 	budgetPath := fs.String("budget", "", "perf budget JSON to evaluate after profiling")
 	budgetProfile := fs.String("budget-profile", "", "budget profile to apply to every page")
+	timingSamples := fs.Int("timing-samples", 0, "with --budget, measure each route this many times and gate load timings (lcp, tbt, ttfb, ...) on the median; 0 means the default of 3, 1 means a single sample")
 	fs.Parse(interspersedPerfArgs(os.Args[2:]))
 
 	urls := fs.Args()
@@ -97,6 +98,8 @@ func cmdPerf() {
 		// A budget gate must not judge a page by a mid-load renderer
 		// recovery; measure such a page once more before evaluating.
 		perf.RetryRecoveredPages(scenario, report)
+		// Load timings swing with runner load; gate them on a median.
+		perf.SampleTimings(scenario, report, budgetTimingSamples(*timingSamples))
 	}
 
 	if *jsonOut {
@@ -159,6 +162,18 @@ func cmdPerf() {
 			os.Exit(1)
 		}
 	}
+}
+
+// budgetTimingSamples resolves the --timing-samples flag: 0 selects the
+// default, anything below 1 is a single sample.
+func budgetTimingSamples(flagValue int) int {
+	if flagValue == 0 {
+		return perf.DefaultBudgetTimingSamples
+	}
+	if flagValue < 1 {
+		return 1
+	}
+	return flagValue
 }
 
 // annotateInconclusiveBudgetPages raises a GitHub Actions warning for each
@@ -294,6 +309,7 @@ func interspersedPerfArgs(args []string) []string {
 		"scroll":         true,
 		"throttle":       true,
 		"timeout":        true,
+		"timing-samples": true,
 		"trace":          true,
 		"type":           true,
 	}

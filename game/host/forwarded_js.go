@@ -24,17 +24,42 @@ func NewForwardedInput() (input *ForwardedInput, ok bool) {
 		return nil, false
 	}
 	input = newForwardedInput()
-	callback := js.FuncOf(func(_ js.Value, args []js.Value) any {
-		if len(args) == 0 || args[0].Type() != js.TypeString {
+	var callback js.Func
+	var unsubscribe js.Value
+	if bridge.Get("onInputBytes").Type() == js.TypeFunction {
+		// One binary record per event: one copy, no JSON (see forwarded.go).
+		var decoder inputDecoder
+		var buf []byte
+		callback = js.FuncOf(func(_ js.Value, args []js.Value) any {
+			if len(args) == 0 || args[0].Type() != js.TypeObject {
+				return nil
+			}
+			n := args[0].Get("byteLength").Int()
+			if cap(buf) < n {
+				buf = make([]byte, n)
+			}
+			buf = buf[:n]
+			js.CopyBytesToGo(buf, args[0])
+			if event, ok := decoder.decode(buf); ok {
+				input.Apply(*event)
+			}
 			return nil
-		}
-		var event InputEvent
-		if json.Unmarshal([]byte(args[0].String()), &event) == nil {
-			input.Apply(event)
-		}
-		return nil
-	})
-	unsubscribe := bridge.Call("onInput", callback)
+		})
+		unsubscribe = bridge.Call("onInputBytes", callback)
+	} else {
+		// A page runtime from before the binary bridge sends JSON strings.
+		callback = js.FuncOf(func(_ js.Value, args []js.Value) any {
+			if len(args) == 0 || args[0].Type() != js.TypeString {
+				return nil
+			}
+			var event InputEvent
+			if json.Unmarshal([]byte(args[0].String()), &event) == nil {
+				input.Apply(event)
+			}
+			return nil
+		})
+		unsubscribe = bridge.Call("onInput", callback)
+	}
 	var once sync.Once
 	input.close = func() {
 		once.Do(func() {

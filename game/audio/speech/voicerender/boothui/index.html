@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recording booth</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font: 16px/1.4 system-ui, sans-serif; margin: 0; background: #14161a; color: #e8e8e8; }
+  main { max-width: 46rem; margin: 0 auto; padding: 1.5rem; }
+  h1 { font-size: 1rem; font-weight: 600; color: #9aa; margin: 0 0 1rem; }
+  #line { font-size: 2rem; margin: .5rem 0; min-height: 3rem; }
+  #meta { color: #9aa; font-size: .9rem; }
+  #variant { display: inline-block; padding: .1rem .5rem; border-radius: .25rem; background: #2b3a55; color: #cfe; margin-right: .5rem; }
+  #hint { color: #bcd; margin: .5rem 0 1rem; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1rem 0; }
+  button { font: inherit; padding: .5rem 1rem; border-radius: .3rem; border: 1px solid #456; background: #20262e; color: inherit; cursor: pointer; }
+  button.primary { background: #2e6b3e; border-color: #4a8; }
+  button.rec { background: #8a2b2b; border-color: #d66; }
+  button:disabled { opacity: .4; cursor: default; }
+  #meter { height: .9rem; background: #20262e; border-radius: .2rem; overflow: hidden; }
+  #bar { height: 100%; width: 0; background: #4a8; transition: width 40ms linear; }
+  #bar.hot { background: #d84; } #bar.clip { background: #d44; }
+  #status { margin-top: 1rem; color: #9aa; min-height: 1.4rem; }
+  ol { padding-left: 1.2rem; max-height: 14rem; overflow: auto; color: #aab; font-size: .9rem; }
+  li.done { color: #6c8; } li.cur { color: #fff; font-weight: 600; }
+  .keys { color: #789; font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Recording booth <span id="who"></span> <span id="progress"></span></h1>
+  <div id="meta"><span id="variant"></span><span id="key"></span></div>
+  <div id="line">Loading...</div>
+  <div id="hint"></div>
+  <div id="meter"><div id="bar"></div></div>
+  <div class="row">
+    <button id="record" class="primary">Record (space)</button>
+    <button id="retake" disabled>Retake (r)</button>
+    <button id="play" disabled>Play take (p)</button>
+    <button id="ref">Reference read (f)</button>
+    <button id="skip">Skip (s)</button>
+    <button id="prev">Back (b)</button>
+    <button id="next">Next (n)</button>
+  </div>
+  <div id="status"></div>
+  <ol id="list"></ol>
+  <div class="keys">Space starts and stops a take. A take is saved when you stop. Retake replaces it. Skip leaves the line unrecorded.</div>
+</main>
+<script src="booth.js"></script>
+</body>
+</html>

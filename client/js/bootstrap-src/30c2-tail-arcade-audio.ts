@@ -21,7 +21,20 @@
     voiceLimit: 28,
   };
 
+  // arcadeMixer returns the page's shared mixer (05-document-env) when it is
+  // present. The synth then plays on the mixer's AudioContext and routes through
+  // its sfx bus (or the bus a cue names), so master/sfx volume, mute and ducking
+  // apply to it. Without a mixer the synth keeps a private context and chain.
+  function arcadeMixer() {
+    const mixer = window.__gosx && window.__gosx.audioMixer;
+    return mixer && typeof mixer.context === "function" && typeof mixer.input === "function" ? mixer : null;
+  }
+
   function arcadeAudioContext() {
+    const mixer = arcadeMixer();
+    if (mixer) {
+      return mixer.context();
+    }
     const Ctor = window.AudioContext || window.webkitAudioContext;
     if (!Ctor) return null;
     if (!arcadeAudioState.context) {
@@ -57,7 +70,23 @@
     arcadeAudioState.master = master;
   }
 
-  function arcadeOutput(audio) {
+  function arcadeOutput(audio, busID) {
+    const mixer = arcadeMixer();
+    if (mixer && audio === mixer.context()) {
+      const bus = String(busID || "sfx");
+      let trim = arcadeAudioState.trims && arcadeAudioState.trims.get(bus);
+      if (!trim) {
+        const input = mixer.input(bus);
+        if (input) {
+          trim = audio.createGain();
+          trim.gain.value = 0.82;
+          trim.connect(input);
+          arcadeAudioState.trims = arcadeAudioState.trims || new Map();
+          arcadeAudioState.trims.set(bus, trim);
+        }
+      }
+      if (trim) return trim;
+    }
     arcadeConfigureOutput(audio);
     return arcadeAudioState.master || audio.destination;
   }
@@ -84,6 +113,7 @@
       pan: arcadeClamp(raw.pan, -0.95, 0.95, 0),
       depth: arcadeClamp(raw.depth, -0.75, 0.75, 0),
       rate: arcadeClamp(raw.rate, 0.25, 2, 1),
+      bus: typeof raw.bus === "string" ? raw.bus.trim() : "",
     };
   }
 
@@ -194,7 +224,7 @@
       tail = panner;
       nodes.push(panner);
     }
-    tail.connect(arcadeOutput(audio));
+    tail.connect(arcadeOutput(audio, opts.bus));
   }
 
   function arcadeSetParam(param, value, time) {
@@ -366,6 +396,9 @@
     }
     if (layer && typeof layer.rate === "number" && layer.rate > 0) {
       merged.rate = arcadeClamp(layer.rate, 0.05, 4, baseOpts.rate);
+    }
+    if (baseOpts.bus) {
+      merged.bus = baseOpts.bus;
     }
     if (layer && layer.envelope && typeof layer.envelope === "object") {
       merged.envelope = layer.envelope;

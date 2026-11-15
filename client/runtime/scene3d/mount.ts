@@ -32,10 +32,11 @@
     }
     // A spectral ocean needs the FFT chunk; if it cannot load, the renderer keeps the Gerstner ocean.
     if ((props.scene || props).environment?.ocean?.spectrum) { try { await ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; }
+    for (const [on, kind, key] of [[props.shaderWarmup, "warmup", "gosxScene3dWarmupUrl"], [props.textAtlases, "text-atlas", "gosxScene3dTextAtlasUrl"]]) if (on) { try { await ensureSceneGatedFeatureLoaded(kind, key, ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; } // opt-in chunks (optional-chunks.ts); a scene draws without them
+    // Decals and motion blur live in their own chunk, loaded before the first frame; without it the renderers skip those effects.
+    if (scenePostEffects(props).some((effect: any) => effect.kind === "decals" || effect.kind === "motionBlur")) { try { await ensureSceneGatedFeatureLoaded("depthfx", "gosxScene3dDepthfxUrl", ""); } catch (_e) {} if (!scene3DFactoryCurrent()) return {}; }
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
-    function scene3DFactoryCurrent() {
-      return !ctx.isCurrent || ctx.isCurrent();
-    }
+    function scene3DFactoryCurrent() { return !ctx.isCurrent || ctx.isCurrent(); }
     let initialRuntimeCommands = null;
     if (runtimeScene) {
       ctx._ssr = true;
@@ -168,6 +169,7 @@
     let disposePresentation = () => {};
     let publishMetrics = () => {};
     let clockLastFrameMS = NaN;
+    const frameOwner = createSceneFrameOwner(); // the engine frame hook and the retained bundle (frame-owner.ts)
     let animationPaused = false;
     let animationToggle = null;
 
@@ -176,6 +178,9 @@
 
     function sceneAnimationState() {
       if (sceneRequiredShaderFailure) return { wants: false, reason: sceneRequiredShaderFailure };
+      return frameOwner.hook ? { wants: true, reason: "frame-hook" } : sceneOwnAnimationState(); // the hook's engine pauses its own time
+    }
+    function sceneOwnAnimationState() { // what the scene needs without a hook: "static" moves only on scheduleRender
       // Sailing is user-controlled motion; the vessel separately suppresses camera bob.
       if (motion.reducedMotion) return { wants: !animationPaused && sceneVesselEnabled(props) && Boolean(sceneState._gosxMotionController?.active), reason: "reduced-motion" };
       // A user-paused declarative scene stops the loop outright: wants
@@ -205,6 +210,7 @@
         return { wants: true, reason: "compute-particles" };
       }
       if (sceneState.environment && sceneState.environment.ocean) return { wants: true, reason: "ocean" };
+      if (sceneState.environment?.crowds?.length) return { wants: true, reason: "crowd" }; // crowd fans animate on the scene clock (crowd*.ts)
       if (Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length > 0) {
         if (sceneWaterSystemsPaused(sceneState)) {
           return { wants: false, reason: "water-paused" };
@@ -578,7 +584,7 @@
         nowMS: nowMS,
         // Declarative scene seconds; telemetry retains the separate wall clock.
         sceneTime: clockSeconds,
-        oceanTier: sceneLowHardware() ? "low" : "high",
+        oceanTier: sceneLowHardware() ? "low" : "high", warmup: sceneShaderWarmupFrame(mount, props, renderer), textAtlases: sceneRegisterTextAtlases(props, mount),
         clockRevision: clockSubmission.requested,
         displayDeltaMS: displayDeltaMS,
         active: active,
@@ -763,6 +769,7 @@
     let idleContextTimer = null;
     let contextVoluntarilyLost = false;
     let voluntaryLoseContextExtension = null;
+    const graphicsRecovery = createSceneGraphicsRecovery();
 
     function sceneRenderLoopSnapshot(reason) {
       const animation = sceneAnimationState();
@@ -851,6 +858,7 @@
         adapterInfo: (priorDiagnostics && priorDiagnostics.adapterInfo) || null,
       } : null;
       publishSceneRenderWatchdogState(recoveryReason, stalledFor || 0);
+      if (recoveryReason === "webgpu-device-lost") sceneDispatchGraphicsReset(mount, graphicsRecovery, "lost", "webgpu", recoveryReason, renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.reason : "");
       gosxSceneEmit("warn", "render-watchdog-recovery", {
         rendererKind: renderer?.kind || "",
         reason: recoveryReason,
@@ -914,7 +922,7 @@
       // event fires, that variable already reads "" even though this is
       // still, right now, a WebGPU-failure fallback.
       const fallbackReason = sceneDebugAttr(mount, sceneAttr("renderer-fallback"));
-      if (fallbackReason === "webgpu-device-lost" || !sceneFallbackRequiresReplacementCanvas(fallbackReason)) {
+      if (fallbackReason === "webgpu-device-lost" ? !sceneWebGPULossReturnAllowed(graphicsRecovery, sceneFrameNowMS(), graphicsRecovery.lossReason) : !sceneFallbackRequiresReplacementCanvas(fallbackReason)) {
         return false;
       }
       const trialCanvas = prepareSceneReplacementCanvas();
@@ -962,7 +970,7 @@
       }
       /* @ts-expect-error TS2367 -- sceneWebGLFallbackOwner is a tri-state sentinel: 0 | null | false | the owning renderer instance */ if (reason === "webgpu-device-lost") {
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) return;
-        recoverSceneWebGPURenderer(reason, 0, true);
+        recoverSceneWebGPURenderer(reason, 0, !sceneWebGPULossReturnAllowed(graphicsRecovery, sceneFrameNowMS(), diagnostics && diagnostics.deviceLostInfo ? diagnostics.deviceLostInfo.reason : ""));
         return;
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
       recoverSceneWebGPURenderer("webgpu-probe-recovered", 0, false);
@@ -1126,7 +1134,7 @@
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const failureReason = rendererReportsWebGPUFailure(diagnostics);
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (failureReason) {
-        recoverSceneWebGPURenderer(failureReason, 0, true);
+        if (!sceneWebGPULossAwaitsReprobe(graphicsRecovery, failureReason, now)) recoverSceneWebGPURenderer(failureReason, 0, true);
         return;
       }
       if (checkSceneWebGPUFrameErrorResilience(diagnostics)) {
@@ -1487,6 +1495,7 @@
     function runSceneFrame() { return sceneRunFrameGuard(runSceneFrameInner, arguments, function() { return frameHandle === -1; }, function() { frameHandle = 0; }); }
     function runSceneFrameInner() {
         const now = motionScheduler && typeof motionScheduler.now === "function" ? motionScheduler.now() : arguments[0];
+        sceneObserveAdaptiveQualityRAF(adaptiveQuality, now);
         if (frameHandle !== -1) frameHandle = 0;
         const scheduledRender = renderHandle === -1;
         if (scheduledRender) renderHandle = null;
@@ -1564,6 +1573,7 @@
       renderWatchdogLastSeq = -1;
       renderWatchdogLastAt = 0;
       renderWatchdogLastAdvanceAt = sceneFrameNowMS();
+      sceneGraphicsRecoverySwap(mount, adaptiveQuality, graphicsRecovery, nextRenderer.kind, fallbackReason || "");
       if (previous && previous !== renderer && typeof previous.dispose === "function") {
         previous.dispose();
       }
@@ -1661,18 +1671,6 @@
 	        reason: reason || "",
 	      });
 	      return true;
-	    }
-
-	    function sceneFallbackRequiresReplacementCanvas(reason) {
-	      // A canvas that already had getContext("webgpu") called on it is
-	      // permanently tainted to that context type — getContext("webgl2")
-	      // on the SAME canvas returns null regardless of whether the WebGPU
-	      // device itself is still alive. webgpu-persistent-frame-error's
-	      // canvas was claimed by the (still-alive-but-broken) WebGPU
-	      // renderer exactly like webgpu-device-lost's was, so it needs the
-	      // same fresh-canvas treatment. Failed PBR shaders also need a fresh
-	      // context so their teardown cannot cancel the legacy shader queue.
-	      return reason === "webgpu-pipeline-failed" || reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
 	    }
 
     // WebGL fallback owner: null = idle, 0 = settled, false = terminal, or the
@@ -1953,6 +1951,7 @@
       gosxSceneEmit("warn", "webgl-context-lost", {
         voluntary: contextVoluntarilyLost === true,
       });
+      sceneDispatchGraphicsReset(mount, graphicsRecovery, "lost", "webgl", "webgl-context-lost");
       // Dispose the live WebGL renderer immediately so its closures release
       // every handle (programs, FBOs, cascade textures, IBL cubemaps,
       // post-fx pipeline) before the browser can re-attach a fresh context
@@ -2026,6 +2025,7 @@
       if (disposed || sceneWebGLFallbackOwner === false || sceneWebGLFallbackOwner === renderer) {
         return;
       }
+      frameOwner.serial++;
       if (/^(controls|controls-inertia|controls-reset|controls-keyboard|controls-pan|controls-zoom|camera|signal-camera|scroll|gizmo-drag|vessel-helm|vessel-camera|vessel-look|vessel-reset|vessel-command)$/.test(reason || "")) sceneActiveInputUntil = sceneNowMilliseconds() + 180;
       lastRenderReason = reason || "refresh";
       recordScenePerfCounter("schedule:" + (reason || "refresh"));
@@ -2700,7 +2700,7 @@
       if (!arcadeAudio) {
         return;
       }
-      const synthOptions = { intensity: cue.intensity, pan: cue.pan, depth: cue.depth, rate: cue.rate };
+      const synthOptions = { intensity: cue.intensity, pan: cue.pan, depth: cue.depth, rate: cue.rate, bus: cue.bus };
       if (cue.patch && typeof cue.patch === "object" && typeof arcadeAudio.playPatch === "function") {
         arcadeAudio.playPatch(cue.patch, synthOptions);
         return;
@@ -3109,37 +3109,29 @@
         viewportDirty = false;
       }
       if (!sceneCanRender()) {
-        cancelFrame();
+        frameOwner.lastMS = NaN; cancelFrame();
         return;
       }
+      if (sceneFrameOwnerRun(frameOwner, now, sceneNowMilliseconds()) && renderHandle != null) cancelScheduledRender(); // the hook's writes draw now
       sceneAdvanceScrollCamera(sceneState._scrollCamera);
       // Advance the pausable scene clock. Deltas clamp at 250 ms so a
       // backgrounded tab cannot fast-forward the choreography on return;
       // while paused (or under reduced motion) the clock simply stops, and
       // every declared-animation consumer below samples the frozen time.
-      const frameDeltaSeconds = !Number.isFinite(clockLastFrameMS)
-        ? 0
-        : Math.max(0, Math.min(0.25, (now - clockLastFrameMS) / 1000));
+      const frameDeltaSeconds = !Number.isFinite(clockLastFrameMS) ? 0 : Math.max(0, Math.min(0.25, (now - clockLastFrameMS) / 1000));
       clockLastFrameMS = now;
-      if (!animationPaused && !motion.reducedMotion) {
-        clockSeconds += frameDeltaSeconds;
-      }
+      if (!animationPaused && !motion.reducedMotion) clockSeconds += frameDeltaSeconds;
       const timeSeconds = clockSeconds;
       if (dayCycle) dayCycle.advance(timeSeconds);
       if (exploration) exploration.advance(timeSeconds);
       // @ts-ignore TS7005 -- the optional authority is installed after renderer creation
       const advanceVessel = sceneControlHandle?.advance;
-      if (advanceVessel) {
-        advanceVessel(frameDeltaSeconds, frameStart / 1000,
-          sceneQualityLadderPointBudgetScale(adaptiveQuality), animationPaused, timeSeconds);
-      }
+      if (advanceVessel) advanceVessel(frameDeltaSeconds, frameStart / 1000, sceneQualityLadderPointBudgetScale(adaptiveQuality), animationPaused, timeSeconds);
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
       // so a frozen value proves the pause contract observably.
       publishSceneFrameAttr(sceneAttr("animation-clock"), timeSeconds.toFixed(3));
-      const modelAnimationDelta = lastModelAnimationTimeSeconds == null
-        ? 0
-        : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
+      const modelAnimationDelta = lastModelAnimationTimeSeconds == null ? 0 : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
       lastModelAnimationTimeSeconds = timeSeconds;
       if (perfEnabled) performance.mark("scene3d-model-animations-start");
       sceneAdvanceModelAnimations(sceneState, modelAnimationDelta, motion.reducedMotion);
@@ -3151,7 +3143,7 @@
             applySceneMotionBindings(runtimeBundle, sceneState, sceneControlHandle),
             sceneCurrentControlCamera(sceneControlController(sceneControlHandle), runtimeBundle.camera || sceneState.camera, sceneState._scrollCamera),
           );
-          effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources; effectiveBundle.gpuDriven = sceneState.gpuDriven;
+          effectiveBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); effectiveBundle.waterShaderSourcesByID = mountedWaterShaderSources; effectiveBundle.gpuDriven = sceneState.gpuDriven; effectiveBundle.simAlpha = frameOwner.alpha;
           sceneHydrateBundleWaterShaderSources(effectiveBundle, effectiveBundle.waterShaderSourcesByID);
           latestBundle = effectiveBundle;
           publishMountedSceneCamera(effectiveBundle.camera, reason || "render");
@@ -3162,11 +3154,7 @@
       if (runtimeScene && ctx.runtime) {
         const commandResult = applySceneCommands(sceneState, ctx.runtime.tick());
         notifySceneRendererLifecycle("runtime-tick", false, false);
-        if (commandResult && typeof commandResult.then === "function") {
-          commandResult.then(function() {
-            scheduleRender("runtime-model-commands");
-          });
-        }
+        if (commandResult && typeof commandResult.then === "function") commandResult.then(function() { scheduleRender("runtime-model-commands"); });
       }
       applyWasmMotionFrame(timeSeconds);
       // C3: write motion-evaluated material uniforms into customUniforms BEFORE
@@ -3187,7 +3175,9 @@
         }
       }
       if (perfEnabled) performance.mark("scene3d-bundle-start");
-      const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport);
+      const activeCamera = sceneViewportCamera(sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera), sceneState.camera, viewport), bundleSerial = frameOwner.serial; const audioMixer = window.__gosx && window.__gosx.audioMixer; if (audioMixer && audioMixer.updateCamera) audioMixer.updateCamera(activeCamera);
+      // @ts-ignore TS7005 -- scroll, vessel and motion-controller motion run outside scheduleRender
+      if (sceneFrameOwnerCanReuse(frameOwner, latestBundle, renderer, viewport, activeCamera, () => sceneState._scrollCamera || sceneState._gosxMotionController?.active || sceneControlHandle?.advance || sceneOwnAnimationState().wants)) return renderMountedFrame(Object.assign(latestBundle, { timeSeconds, simAlpha: frameOwner.alpha }), now, frameStart, true);
       applySceneHTMLTextureRecordsToState(sceneState, htmlTextureState);
       const pointQualityGroups = sceneQualityLadderAdmittedGroups(adaptiveQuality);
       const pointBudgetScale = sceneQualityLadderPointBudgetScale(adaptiveQuality);
@@ -3225,9 +3215,10 @@
           // Only the PBR WebGL renderer can draw a crowd batch record.
           crowdBatches: Boolean(renderer && typeof renderer.prepareCrowdMotionShaders === "function"),
           meshWireframeFallback: renderer?.kind === "canvas",
-        }, sceneState,
+        }, sceneState, frameOwner.arrays,
       ), sceneState, sceneControlHandle);
-      latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
+      sceneFrameOwnerRetain(frameOwner, bundleSerial, renderer, viewport, activeCamera);
+      latestBundle.simAlpha = frameOwner.alpha; latestBundle.cameraProximity = sceneCameraProximityValue(sceneState._scrollCamera); latestBundle.waterShaderSourcesByID = mountedWaterShaderSources; latestBundle.gpuDriven = sceneState.gpuDriven; sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
       publishMountedSceneCamera(latestBundle.camera, reason || "render");
       // point-quality-skipped: entries dropped by sceneFilterPointsByQualityGroups
       // this frame (0 when no ladder is active or nothing was tagged). Same
@@ -3576,6 +3567,9 @@
       applyInstanceStream(bytes) {
         return window.__gosx_scene3d_apply_instance_stream_frame(sceneState, bytes, scheduleRender, mount);
       },
+      applyDataTexture(bytes: any) { const api = window.__gosx_scene3d_data_texture_api, copy = api ? bytes : bytes.slice(); return api ? api.apply(copy, scheduleRender, mount) : ensureSceneGatedFeatureLoaded("data-texture", "gosxScene3dDataTextureUrl", "").then((loaded: any) => loaded.apply(copy, scheduleRender, mount)); },
+      // setFrameHook(fn) installs the one engine frame callback and returns its remover (frame-owner.ts).
+      setFrameHook(fn: any) { if (disposed) throw new Error("disposed"); return sceneFrameOwnerSet(frameOwner, fn, sceneNowMilliseconds(), (on: boolean) => on ? scheduleRender("frame-hook") : applySceneRenderLoopState("frame-hook")); },
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
         return currentMountedSceneCamera();
       },
@@ -3586,7 +3580,7 @@
           selectionID: lastAppliedSelectionID || "",
           lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
           rendererStats: renderer && typeof renderer.getStats === "function" ? renderer.getStats() : null,
-          poseFrames: handle.__gosxPoseFrameStats || null,
+          poseFrames: handle.__gosxPoseFrameStats || null, ...sceneFrameOwnerTelemetry(frameOwner),
           // @ts-ignore TS7005 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
           motionFrames: handle.__gosxMotionFrameStats || null,
         };
@@ -3694,7 +3688,7 @@
     function disposeMountedScene() {
       pendingFrameRequest = null;
       const ownsMount = mount.__gosxScene3DOwner === sceneMountOwner;
-      disposed = true;
+      disposed = true; sceneFrameOwnerDispose(frameOwner, sceneNowMilliseconds());
       disposePresentation();
       if (dayCycle) dayCycle.dispose();
       if (exploration) exploration.dispose();

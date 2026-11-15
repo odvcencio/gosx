@@ -222,3 +222,27 @@ test('affine GPU instrumentation records the bound model buffer and typed dynami
   assert.equal(receipt.positionBuffer,1); assert.equal(receipt.materialBuffer,2);
   assert.equal(receipt.modelBuffer,3); assert.equal(receipt.modelOffset,256);
 });
+
+test('a telemetry count mismatch names the case events without loosening the count', () => {
+  const begin = verifier.indexOf('let clientEventNames = [];');
+  const end = verifier.indexOf('function checkAffineScalePolicy(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const context = vm.createContext({ util });
+  const helpers = verifier.slice(verifier.indexOf('function check('), verifier.indexOf('function containsSwiftShader('));
+  vm.runInContext(helpers + verifier.slice(begin, end) + '\nglobalThis.useNames = (n) => { clientEventNames = n; };', context);
+  context.useNames([
+    { caseName: 'textured-wg', cat: 'scene3d', lvl: 'info', msg: 'model-hydration-committed' },
+    { caseName: 'textured-wg', cat: 'scene3d', lvl: 'warn', msg: 'adaptive-quality-transition' },
+    { caseName: 'gl', cat: 'scene3d', lvl: 'info', msg: 'model-hydration-committed' },
+  ]);
+  const telemetry = (count) => ({ enabled: true, queueDepth: 0, pendingRequests: 0, droppedOverflowEvents: 0, droppedSerializationEvents: 0,
+    failedEvents: 0, failedBatches: 0, beaconFailures: 0, fetchFailures: 0, emittedEvents: count, attemptedEvents: count, attemptedBatches: count,
+    dispatchedEvents: count, dispatchedBatches: count, serverAcceptedEvents: count, serverAcceptedBatches: count,
+    lastFlushReason: 'manual-drain', lastFailureReason: '' });
+  const run = (value) => JSON.parse(vm.runInContext(`(function () { const f = []; checkTelemetry(f, ${JSON.stringify(value)}, 'textured-wg.telemetry'); return JSON.stringify(f); })()`, context));
+  assert.deepEqual(run(telemetry(1)), [], 'one event per case still passes');
+  const failures = run(telemetry(2));
+  assert.ok(failures.includes('textured-wg.telemetry.emittedEvents [events: scene3d info model-hydration-committed; scene3d warn adaptive-quality-transition]: got 2, want 1'), failures.join('\n'));
+  assert.ok(failures.some((f) => f.startsWith('textured-wg.telemetry.attemptedEvents [events: ')));
+  assert.ok(failures.includes('textured-wg.telemetry.dispatchedEvents: got 2, want 1'), 'other counters keep their plain message');
+});

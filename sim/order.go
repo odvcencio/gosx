@@ -1,6 +1,6 @@
 package sim
 
-import "sort"
+import "m31labs.dev/gosx/sim/simcore"
 
 // SortedPlayerIDs returns the keys of inputs in ascending order.
 //
@@ -9,17 +9,10 @@ import "sort"
 // RNG draws) diverges between runs and breaks replay. Iterate this slice
 // instead.
 func SortedPlayerIDs(inputs map[string]Input) []string {
-	ids := make([]string, 0, len(inputs))
-	for id := range inputs {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
+	return simcore.SortedPlayerIDs(inputs)
 }
 
 // EachInput calls fn for every input in ascending player ID order.
 func EachInput(inputs map[string]Input, fn func(playerID string, input Input)) {
-	for _, id := range SortedPlayerIDs(inputs) {
-		fn(id, inputs[id])
-	}
+	simcore.EachInput(inputs, fn)
 }

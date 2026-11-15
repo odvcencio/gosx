@@ -1,0 +1,136 @@
+{
+  "schema": "selena.artifact.v1",
+  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "languageVersion": "selena.lang.v1",
+  "source": {
+    "path": "tide.sel",
+    "sha256": "7444721601e7008532eaf206dc6f03700a0c988aa7b1df34b2898714986cf118"
+  },
+  "options": {
+    "targets": [
+      "wgsl",
+      "gles"
+    ]
+  },
+  "default": "Tide",
+  "materials": [
+    {
+      "name": "Tide",
+      "layout": {
+        "schemaVersion": "selena.descriptor.v1",
+        "languageVersion": "selena.lang.v1",
+        "material": "Tide",
+        "kind": "mesh",
+        "entryPoints": {
+          "vertex": "vertexMain",
+          "fragment": "fragmentMain"
+        },
+        "uniformBlock": {
+          "size": 160,
+          "fields": [
+            {
+              "name": "mvp",
+              "type": "mat4",
+              "offset": 0,
+              "size": 64
+            },
+            {
+              "name": "normalMatrix",
+              "type": "mat3",
+              "offset": 64,
+              "size": 48
+            },
+            {
+              "name": "ink",
+              "type": "vec3",
+              "offset": 112,
+              "size": 12
+            },
+            {
+              "name": "glow",
+              "type": "vec3",
+              "offset": 128,
+              "size": 12
+            },
+            {
+              "name": "gain",
+              "type": "float",
+              "offset": 140,
+              "size": 4
+            },
+            {
+              "name": "time",
+              "type": "float",
+              "offset": 144,
+              "size": 4,
+              "class": "context",
+              "source": "engine"
+            }
+          ],
+          "defaults": [
+            {
+              "name": "ink",
+              "type": "vec3",
+              "values": [
+                0.025,
+                0.043,
+                0.075
+              ]
+            },
+            {
+              "name": "glow",
+              "type": "vec3",
+              "values": [
+                0.34,
+                0.81,
+                0.76
+              ]
+            },
+            {
+              "name": "gain",
+              "type": "float",
+              "values": [
+                0.6
+              ]
+            }
+          ]
+        },
+        "attributes": [
+          {
+            "name": "position",
+            "location": 0,
+            "type": "vec3"
+          },
+          {
+            "name": "uv",
+            "location": 1,
+            "type": "vec2"
+          }
+        ],
+        "textures": [],
+        "wgsl": {
+          "group": 0,
+          "binding": 0
+        },
+        "metal": {
+          "buffer": 0
+        },
+        "context": [
+          "time"
+        ],
+        "engineVersion": "selena.engine.v1"
+      },
+      "shaders": [
+        {
+          "target": "wgsl",
+          "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  ink : vec3<f32>,\n  glow : vec3<f32>,\n  gain : f32,\n  time : f32,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let coord = in.vUv;\n  let drift = (u.time * 0.65);\n  let wave = ((sin((((coord.x * 12.0) + (sin(((coord.y * 5.0) + drift)) * 2.0)) + drift)) * 0.5) + 0.5);\n  let ribbon = pow(wave, 5.0);\n  return vec4<f32>(mix(u.ink, u.glow, clamp((ribbon * u.gain), 0.0, 1.0)), 1.0);\n}\n"
+        },
+        {
+          "target": "gles",
+          "vertex": "#version 300 es\nin vec3 position;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 ink;\nuniform vec3 glow;\nuniform float gain;\nuniform float time;\nout vec2 vUv;\n\nvoid main() {\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
+          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 ink;\nuniform vec3 glow;\nuniform float gain;\nuniform float time;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec2 coord = vUv;\n  float drift = (time * 0.65);\n  float wave = ((sin((((coord.x * 12.0) + (sin(((coord.y * 5.0) + drift)) * 2.0)) + drift)) * 0.5) + 0.5);\n  float ribbon = pow(wave, 5.0);\n  fragColor = vec4(mix(ink, glow, clamp((ribbon * gain), 0.0, 1.0)), 1.0);\n}\n"
+        }
+      ]
+    }
+  ]
+}

@@ -25,17 +25,32 @@ const (
 //go:embed sources/imperial-jade.sel
 var imperialJadeSource []byte
 
+//go:embed sources/imperial-jade.sel.json
+var imperialJadeArtifact []byte
+
 //go:embed sources/carved-wood.sel
 var carvedWoodSource []byte
+
+//go:embed sources/carved-wood.sel.json
+var carvedWoodArtifact []byte
 
 //go:embed sources/brushed-steel.sel
 var brushedSteelSource []byte
 
+//go:embed sources/brushed-steel.sel.json
+var brushedSteelArtifact []byte
+
 //go:embed sources/midnight-lacquer.sel
 var midnightLacquerSource []byte
 
+//go:embed sources/midnight-lacquer.sel.json
+var midnightLacquerArtifact []byte
+
 //go:embed sources/moon-porcelain.sel
 var moonPorcelainSource []byte
+
+//go:embed sources/moon-porcelain.sel.json
+var moonPorcelainArtifact []byte
 
 // Profile keeps authored source, compiled artifacts, and honest fallback together.
 type Profile struct {
@@ -73,7 +88,14 @@ func Compile(family Family) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	compiled, layout, err := scene.CompileSelenaMaterial(definition.source, scene.SelenaMaterialOptions{
+	// The .sel.json artifact is built from the .sel source at build time
+	// (gosx selena build), so this package loads in browser builds without the
+	// Selena compiler. TestArtifactsMatchSources keeps the two in step.
+	file, err := scene.DecodeSelenaArtifact(definition.artifact)
+	if err != nil {
+		return Profile{}, fmt.Errorf("load checkers material %s: %w", family, err)
+	}
+	compiled, layout, err := scene.MaterialFromSelenaArtifact(file, scene.SelenaMaterialOptions{
 		Material: definition.material,
 		Standard: definition.standard,
 	})
@@ -114,6 +136,7 @@ type definition struct {
 	name        string
 	material    string
 	source      []byte
+	artifact    []byte
 	standard    scene.StandardMaterial
 	fallback    scene.StandardMaterial
 	fallbackFor string
@@ -122,27 +145,27 @@ type definition struct {
 func definitionFor(family Family) (definition, error) {
 	switch family {
 	case ImperialJade:
-		return definition{name: "Imperial Jade", material: "ImperialJade", source: imperialJadeSource,
+		return definition{name: "Imperial Jade", material: "ImperialJade", source: imperialJadeSource, artifact: imperialJadeArtifact,
 			standard:    scene.StandardMaterial{Color: "#4fa979", Roughness: 0.18, Metalness: 0.02, Clearcoat: 0.82, Transmission: 0.38},
 			fallback:    scene.StandardMaterial{Color: "#397f5d", Roughness: 0.24, Metalness: 0.02, Clearcoat: 0.7},
 			fallbackFor: "opaque jade with authored Fresnel rim and baked thickness tint"}, nil
 	case CarvedWood:
-		return definition{name: "Carved Wood", material: "CarvedWood", source: carvedWoodSource,
+		return definition{name: "Carved Wood", material: "CarvedWood", source: carvedWoodSource, artifact: carvedWoodArtifact,
 			standard:    scene.StandardMaterial{Color: "#70462f", Roughness: 0.58, Metalness: 0, Clearcoat: 0.12},
 			fallback:    scene.StandardMaterial{Color: "#70462f", Roughness: 0.62, Metalness: 0},
 			fallbackFor: "satin walnut PBR without procedural directional grain"}, nil
 	case BrushedSteel:
-		return definition{name: "Brushed Steel", material: "BrushedSteel", source: brushedSteelSource,
+		return definition{name: "Brushed Steel", material: "BrushedSteel", source: brushedSteelSource, artifact: brushedSteelArtifact,
 			standard:    scene.StandardMaterial{Color: "#aeb8bd", Roughness: 0.3, Metalness: 0.92, Anisotropy: 0.72},
 			fallback:    scene.StandardMaterial{Color: "#939da3", Roughness: 0.38, Metalness: 0.88},
 			fallbackFor: "metallic PBR with tangent-aligned brush contrast baked by Selena"}, nil
 	case MidnightLacquer:
-		return definition{name: "Midnight Lacquer", material: "MidnightLacquer", source: midnightLacquerSource,
+		return definition{name: "Midnight Lacquer", material: "MidnightLacquer", source: midnightLacquerSource, artifact: midnightLacquerArtifact,
 			standard:    scene.StandardMaterial{Color: "#230c0d", Roughness: 0.12, Metalness: 0.16, Clearcoat: 0.96, Sheen: 0.14},
 			fallback:    scene.StandardMaterial{Color: "#2b0d0f", Roughness: 0.16, Metalness: 0.12, Clearcoat: 0.9},
 			fallbackFor: "deep cinnabar lacquer without procedural clouding and gold-leaf flecks"}, nil
 	case MoonPorcelain:
-		return definition{name: "Moon Porcelain", material: "MoonPorcelain", source: moonPorcelainSource,
+		return definition{name: "Moon Porcelain", material: "MoonPorcelain", source: moonPorcelainSource, artifact: moonPorcelainArtifact,
 			standard:    scene.StandardMaterial{Color: "#cbd9df", Roughness: 0.22, Metalness: 0.01, Clearcoat: 0.76, Iridescence: 0.18},
 			fallback:    scene.StandardMaterial{Color: "#b8cbd3", Roughness: 0.28, Metalness: 0.01, Clearcoat: 0.68},
 			fallbackFor: "glazed porcelain without procedural cobalt crackle and pearlescent rim"}, nil

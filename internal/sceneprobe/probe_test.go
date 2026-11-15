@@ -70,3 +70,149 @@ func TestProbePreservesLegacyNormalization(t *testing.T) {
 		t.Fatalf("texture descriptor case/empty fallback changed: %q", textures)
 	}
 }
+
+func TestNeedsSelenaLightingReadsMaterialLayouts(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{}`: false,
+		`{"scene":{"objects":[{"shaderLayout":{"context":["cameraPos","sunDir","sunColor","ambient"]}}]}}`: false,
+		`{"scene":{"objects":[{"shaderLayout":{"context":["resolution","spheres"]}}]}}`:                    false,
+		`{"scene":{"objects":[{"shaderLayout":{"context":["cameraPos","lights","lightCount"]}}]}}`:         true,
+		`{"scene":{"points":[{"shaderLayout":{"context":["fog"]}}]}}`:                                      true,
+		`{"objects":[{"shaderLayout":{"textures":[{"name":"shadowMap1","engine":"shadowMap1"}]}}]}`:        true,
+		`{"scene":{"instancedMeshes":[{"shaderLayout":{"textures":[{"name":"albedo"}]}}]}}`:                false,
+	} {
+		if got := Decode(json.RawMessage(raw)).NeedsSelenaLighting(); got != want {
+			t.Errorf("%s: NeedsSelenaLighting = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsSelenaLighting() {
+		t.Fatal("nil probe needs lighting")
+	}
+}
+
+func TestNeedsSelenaDataTextureReadsLayoutsAndReferences(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`{}`: false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"albedo"}]}}]}}`:                                                      false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"albedo","format":"rgba8unorm"}]}}]}}`:                                false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"spectrum","format":"r16float"}]}}]}}`:                                true,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"t","format":"rgba32float"}]}}]}}`:                                    true,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"t","sampleMode":"load"}]}}]}}`:                                       true,
+		`{"objects":[{"shaderLayout":{"textures":[{"name":"t","sampleMode":"both"}]}}]}`:                                                 true,
+		`{"scene":{"points":[{"customUniforms":{"spectrum":"gosx:data:spectrum"}}]}}`:                                                    true,
+		`{"scene":{"instancedMeshes":[{"customUniforms":{"spectrum":{"resource":" gosx:data:a/b "}}}]}}`:                                 true,
+		`{"scene":{"objects":[{"customUniforms":{"radiance":"gosx:environment:radiance","gain":[1,2]}}]}}`:                               false,
+		`{"scene":{"objects":[{"shaderLayout":{"textures":[{"name":"s","engine":"shadowMap0"}]},"customUniforms":{"tint":[1,0,0,1]}}]}}`: false,
+	} {
+		if got := Decode(json.RawMessage(raw)).NeedsSelenaDataTexture(); got != want {
+			t.Errorf("%s: NeedsSelenaDataTexture = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsSelenaDataTexture() {
+		t.Fatal("nil probe needs a data texture")
+	}
+}
+
+func TestNeedsShaderWarmupAndTextAtlasesReadBothShapes(t *testing.T) {
+	for raw, want := range map[string][2]bool{
+		`{}`: {false, false},
+		`{"shaderWarmup":null,"textAtlases":null}`:                     {false, false},
+		`{"shaderWarmup":{"materials":[]}}`:                            {true, false},
+		`{"scene":{"textAtlases":[{"id":"numbers"}]}}`:                 {false, true},
+		`{"shaderWarmup":{"materials":[]},"textAtlases":[{"id":"a"}]}`: {true, true},
+	} {
+		probe := Decode(json.RawMessage(raw))
+		if got := [2]bool{probe.NeedsShaderWarmup(), probe.NeedsTextAtlases()}; got != want {
+			t.Errorf("%s: warm-up, text atlases = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsShaderWarmup() || nilProbe.NeedsTextAtlases() {
+		t.Fatal("a nil probe needs no opt-in chunk")
+	}
+}
+
+func TestProbeNeedsDepthFX(t *testing.T) {
+	cases := map[string]bool{
+		`{}`:                                  false,
+		`{"postEffects":[{"kind":"bloom"}]}`:  false,
+		`{"postEffects":[{"kind":"decals"}]}`: true,
+		`{"postFX":[{"kind":"motionBlur"}]}`:  true,
+		`{"scene":{"postEffects":[{"kind":"bloom"},{"kind":"decals"}]}}`: true,
+		`{"postFX":{"effects":[{"kind":"decals"}]}}`:                     false,
+		`{"postEffects":[null,7,{"kind":3}]}`:                            false,
+	}
+	for raw, want := range cases {
+		p := Decode(json.RawMessage(raw))
+		if p.Err != nil {
+			t.Fatalf("%s: decode: %v", raw, p.Err)
+		}
+		if got := p.NeedsDepthFX(); got != want {
+			t.Errorf("%s: NeedsDepthFX = %v, want %v", raw, got, want)
+		}
+	}
+}
+
+// The terrain chunk serves Environment.Terrain, Environment.Wind and scatter
+// level-of-detail bands; the crowd chunk serves a non-empty Environment.Crowds.
+// Both props shapes count, and empty or null values do not.
+func TestNeedsTerrainAndCrowdsReadBothShapes(t *testing.T) {
+	for raw, want := range map[string][2]bool{
+		`{}`: {false, false},
+		`{"environment":{"terrain":null,"wind":null,"crowds":null}}`:          {false, false},
+		`{"environment":{"crowds":[]},"instancedMeshes":[{"lodGroup":""}]}`:   {false, false},
+		`{"environment":{"crowds":{"id":"a"}}}`:                               {false, false},
+		`{"environment":{"terrain":{"size":64}}}`:                             {true, false},
+		`{"scene":{"environment":{"wind":{"speed":2}}}}`:                      {true, false},
+		`{"scene":{"instancedMeshes":[{"id":"grass","lodGroup":"meadow"}]}}`:  {true, false},
+		`{"scene":{"environment":{"crowds":[{"id":"north"}]}}}`:               {false, true},
+		`{"environment":{"terrain":{"size":64},"crowds":[ {"id":"stand"} ]}}`: {true, true},
+		`{"scene":{"objects":[{"id":"box","kind":"box","lodGroup":"x"}]}}`:    {false, false},
+	} {
+		probe := Decode(json.RawMessage(raw))
+		if probe.Err != nil {
+			t.Fatalf("%s: decode: %v", raw, probe.Err)
+		}
+		if got := [2]bool{probe.NeedsTerrain(), probe.NeedsCrowds()}; got != want {
+			t.Errorf("%s: terrain, crowds = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsTerrain() || nilProbe.NeedsCrowds() {
+		t.Fatal("a nil probe needs no terrain or crowd chunk")
+	}
+}
+
+func TestProbeNeedsPostFX(t *testing.T) {
+	// want: NeedsPostFX (both backends' chunks), NeedsWebGPUPostFX.
+	cases := map[string][2]bool{
+		`{}`:                                                          {false, false},
+		`{"postEffects":[{"kind":"bloom"}]}`:                          {false, false},
+		`{"postEffects":[{"kind":"decals"}]}`:                         {false, false},
+		`{"postEffects":[{"kind":"taa"}]}`:                            {true, true},
+		`{"postFX":[{"kind":"dof"}]}`:                                 {true, true},
+		`{"postEffects":[{"kind":"motionBlur"}]}`:                     {false, true},
+		`{"scene":{"postFX":[{"kind":"motionBlur"}]}}`:                {false, true},
+		`{"environment":{"autoExposure":{}}}`:                         {true, true},
+		`{"environment":{"autoExposure":null}}`:                       {false, false},
+		`{"scene":{"environment":{"autoExposure":{"key":0.2}}}}`:      {true, true},
+		`{"scene":{"postEffects":[{"kind":"bloom"},{"kind":"taa"}]}}`: {true, true},
+		`{"postFX":{"effects":[{"kind":"taa"}]}}`:                     {false, false},
+		`{"postEffects":[null,7,{"kind":3}]}`:                         {false, false},
+	}
+	for raw, want := range cases {
+		p := Decode(json.RawMessage(raw))
+		if p.Err != nil {
+			t.Fatalf("%s: decode: %v", raw, p.Err)
+		}
+		if got := [2]bool{p.NeedsPostFX(), p.NeedsWebGPUPostFX()}; got != want {
+			t.Errorf("%s: NeedsPostFX, NeedsWebGPUPostFX = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsPostFX() || nilProbe.NeedsWebGPUPostFX() || nilProbe.NeedsDepthFX() {
+		t.Fatal("a nil probe needs no post-effect chunk")
+	}
+}

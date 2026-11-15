@@ -164,7 +164,7 @@ func TestIBLTruthMatchesRuntimeConsumers(t *testing.T) {
 		"u_iblRadiance",
 		"u_iblBRDFLUT",
 		"textureLod(u_iblRadiance",
-		"prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y)",
+		"vec3 FssEss = F0 * dfg.x + vec3(F90) * dfg.y;",
 		"scenePBRLinearHDRPixels",
 	} {
 		if !strings.Contains(webgl, marker) {
@@ -176,7 +176,7 @@ func TestIBLTruthMatchesRuntimeConsumers(t *testing.T) {
 		"iblRadiance: texture_cube<f32>",
 		"iblBRDFLUT: texture_2d<f32>",
 		"textureSampleLevel(iblRadiance",
-		"prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y)",
+		"let FssEss = F0 * dfg.x + vec3f(F90) * dfg.y;",
 	} {
 		if !strings.Contains(webgpu, marker) {
 			t.Errorf("expected real WebGPU IBL marker %q in 16a-scene-webgpu.js", marker)

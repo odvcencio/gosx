@@ -1,0 +1,129 @@
+{
+  "schema": "selena.artifact.v1",
+  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "languageVersion": "selena.lang.v1",
+  "source": {
+    "path": "sources/brushed-steel.sel",
+    "sha256": "88b08179dd760d12037bbacb229641fcc0f684a2136d4d605f4ccdf50d99bbe4"
+  },
+  "options": {
+    "targets": [
+      "wgsl",
+      "gles"
+    ]
+  },
+  "default": "BrushedSteel",
+  "materials": [
+    {
+      "name": "BrushedSteel",
+      "layout": {
+        "schemaVersion": "selena.descriptor.v1",
+        "languageVersion": "selena.lang.v1",
+        "material": "BrushedSteel",
+        "kind": "mesh",
+        "entryPoints": {
+          "vertex": "vertexMain",
+          "fragment": "fragmentMain"
+        },
+        "uniformBlock": {
+          "size": 144,
+          "fields": [
+            {
+              "name": "mvp",
+              "type": "mat4",
+              "offset": 0,
+              "size": 64
+            },
+            {
+              "name": "normalMatrix",
+              "type": "mat3",
+              "offset": 64,
+              "size": 48
+            },
+            {
+              "name": "steelDark",
+              "type": "vec3",
+              "offset": 112,
+              "size": 12
+            },
+            {
+              "name": "steelLight",
+              "type": "vec3",
+              "offset": 128,
+              "size": 12
+            },
+            {
+              "name": "brushGain",
+              "type": "float",
+              "offset": 140,
+              "size": 4
+            }
+          ],
+          "defaults": [
+            {
+              "name": "steelDark",
+              "type": "vec3",
+              "values": [
+                0.28,
+                0.32,
+                0.34
+              ]
+            },
+            {
+              "name": "steelLight",
+              "type": "vec3",
+              "values": [
+                0.72,
+                0.77,
+                0.79
+              ]
+            },
+            {
+              "name": "brushGain",
+              "type": "float",
+              "values": [
+                0.14
+              ]
+            }
+          ]
+        },
+        "attributes": [
+          {
+            "name": "position",
+            "location": 0,
+            "type": "vec3"
+          },
+          {
+            "name": "normal",
+            "location": 1,
+            "type": "vec3"
+          },
+          {
+            "name": "uv",
+            "location": 2,
+            "type": "vec2"
+          }
+        ],
+        "textures": [],
+        "wgsl": {
+          "group": 0,
+          "binding": 0
+        },
+        "metal": {
+          "buffer": 0
+        }
+      },
+      "shaders": [
+        {
+          "target": "wgsl",
+          "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  steelDark : vec3<f32>,\n  steelLight : vec3<f32>,\n  brushGain : f32,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n  @location(2) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vNormal : vec3<f32>,\n  @location(1) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vNormal = in.normal;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let n = normalize(in.vNormal);\n  let brush = (sin((in.vUv.y * 180.0)) * u.brushGain);\n  let tangent = (pow(abs(n.x), 2.0) * 0.24);\n  let stamped = (smoothstep(0.32, 0.06, length((in.vUv - vec2<f32>(0.5, 0.5)))) * 0.16);\n  let body = mix(u.steelDark.rgb, u.steelLight.rgb, ((0.52 + brush) + tangent));\n  return vec4<f32>((body * (1.0 - stamped)), 1.0);\n}\n"
+        },
+        {
+          "target": "gles",
+          "vertex": "#version 300 es\nin vec3 position;\nin vec3 normal;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 steelDark;\nuniform vec3 steelLight;\nuniform float brushGain;\nout vec3 vNormal;\nout vec2 vUv;\n\nvoid main() {\n  vNormal = normal;\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
+          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 steelDark;\nuniform vec3 steelLight;\nuniform float brushGain;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float brush = (sin((vUv.y * 180.0)) * brushGain);\n  float tangent = (pow(abs(n.x), 2.0) * 0.24);\n  float stamped = (smoothstep(0.32, 0.06, length((vUv - vec2(0.5, 0.5)))) * 0.16);\n  vec3 body = mix(steelDark.rgb, steelLight.rgb, ((0.52 + brush) + tangent));\n  fragColor = vec4((body * (1.0 - stamped)), 1.0);\n}\n"
+        }
+      ]
+    }
+  ]
+}

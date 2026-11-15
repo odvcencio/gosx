@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	sellsp "m31labs.dev/selena/lsp"
 )
 
 const (
@@ -34,7 +35,10 @@ type responseError struct {
 }
 
 type server struct {
-	docs     map[string]string
+	docs map[string]string
+	// selena serves .sel documents: Selena compiler diagnostics, hover,
+	// completion and definition (m31labs.dev/selena/lsp).
+	selena   *sellsp.Session
 	reader   *bufio.Reader
 	writer   io.Writer
 	shutdown bool
@@ -104,6 +108,7 @@ type textEdit struct {
 func Serve(stdin io.Reader, stdout io.Writer) error {
 	s := &server{
 		docs:   make(map[string]string),
+		selena: sellsp.NewSession(sellsp.Options{}),
 		reader: bufio.NewReader(stdin),
 		writer: stdout,
 	}
@@ -157,6 +162,8 @@ func (s *server) handle(req request) error {
 				"documentSymbolProvider":     true,
 				"hoverProvider":              true,
 				"definitionProvider":         true,
+				// Completion answers for .sel documents only.
+				"completionProvider": map[string]any{"triggerCharacters": []string{".", ":"}},
 			},
 			"serverInfo": map[string]any{
 				"name":    "gosx-lsp",
@@ -176,12 +183,21 @@ func (s *server) handle(req request) error {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return s.respondError(req.ID, -32602, err.Error())
 		}
+		if sellsp.IsSelena(params.TextDocument.URI) {
+			return s.publishSelena(params.TextDocument.URI, params.TextDocument.Text)
+		}
 		s.docs[params.TextDocument.URI] = params.TextDocument.Text
 		return s.publishDiagnostics(params.TextDocument.URI)
 	case "textDocument/didChange":
 		var params didChangeParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return s.respondError(req.ID, -32602, err.Error())
+		}
+		if sellsp.IsSelena(params.TextDocument.URI) {
+			if len(params.ContentChanges) == 0 {
+				return nil
+			}
+			return s.publishSelena(params.TextDocument.URI, params.ContentChanges[len(params.ContentChanges)-1].Text)
 		}
 		if len(params.ContentChanges) > 0 {
 			s.docs[params.TextDocument.URI] = params.ContentChanges[len(params.ContentChanges)-1].Text
@@ -192,6 +208,9 @@ func (s *server) handle(req request) error {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return s.respondError(req.ID, -32602, err.Error())
 		}
+		if sellsp.IsSelena(params.TextDocument.URI) {
+			return nil // didChange already published the compiler's diagnostics
+		}
 		return s.publishProjectDiagnostics(params.TextDocument.URI)
 	case "textDocument/didClose":
 		var params didCloseParams
@@ -199,6 +218,7 @@ func (s *server) handle(req request) error {
 			return s.respondError(req.ID, -32602, err.Error())
 		}
 		delete(s.docs, params.TextDocument.URI)
+		s.selena.Close(params.TextDocument.URI)
 		return s.notify("textDocument/publishDiagnostics", map[string]any{
 			"uri":         params.TextDocument.URI,
 			"diagnostics": []Diagnostic{},
@@ -238,6 +258,9 @@ func (s *server) handle(req request) error {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return s.respondError(req.ID, -32602, err.Error())
 		}
+		if sellsp.IsSelena(params.TextDocument.URI) {
+			return s.respond(req.ID, s.selena.Hover(params.TextDocument.URI, sellsp.Position(params.Position)))
+		}
 		source, ok := s.docs[params.TextDocument.URI]
 		if !ok {
 			return s.respond(req.ID, nil)
@@ -248,17 +271,38 @@ func (s *server) handle(req request) error {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return s.respondError(req.ID, -32602, err.Error())
 		}
+		if sellsp.IsSelena(params.TextDocument.URI) {
+			return s.respond(req.ID, s.selena.Definition(params.TextDocument.URI, sellsp.Position(params.Position)))
+		}
 		source, ok := s.docs[params.TextDocument.URI]
 		if !ok {
 			return s.respond(req.ID, nil)
 		}
 		return s.respond(req.ID, DefinitionAt(params.TextDocument.URI, URIToPath(params.TextDocument.URI), []byte(source), params.Position))
+	case "textDocument/completion":
+		var params textDocumentPositionParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return s.respondError(req.ID, -32602, err.Error())
+		}
+		if sellsp.IsSelena(params.TextDocument.URI) {
+			return s.respond(req.ID, s.selena.Completion(params.TextDocument.URI, sellsp.Position(params.Position)))
+		}
+		return s.respond(req.ID, []any{})
 	default:
 		if len(req.ID) == 0 {
 			return nil
 		}
 		return s.respond(req.ID, nil)
 	}
+}
+
+// publishSelena analyzes a .sel document with the Selena language server and
+// publishes the compiler's diagnostics.
+func (s *server) publishSelena(uri, text string) error {
+	return s.notify("textDocument/publishDiagnostics", map[string]any{
+		"uri":         uri,
+		"diagnostics": s.selena.Update(uri, text),
+	})
 }
 
 func (s *server) publishDiagnostics(uri string) error {

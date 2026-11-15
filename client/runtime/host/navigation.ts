@@ -3926,6 +3926,11 @@
     }
   }
 
+  function audioCueMixer() {
+    const mixer = typeof window !== "undefined" && window.__gosx && window.__gosx.audioMixer;
+    return mixer && typeof mixer.context === "function" && typeof mixer.input === "function" ? mixer : null;
+  }
+
   function audioCueContextConstructor() {
     return (typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext)) || null;
   }
@@ -3940,10 +3945,13 @@
       resumeAudioCueContextIfSuspended();
       return;
     }
+    // Share the page's mixer context when one is installed, so countdown cues
+    // obey the ui bus; otherwise construct a private context.
+    const mixer = audioCueMixer();
     const Ctor = audioCueContextConstructor();
-    if (!Ctor) return;
+    if (!Ctor && !mixer) return;
     try {
-      audioCueContext = new Ctor();
+      audioCueContext = (mixer && mixer.context()) || new Ctor();
     } catch (_e) {
       audioCueContext = null;
       return;
@@ -4002,7 +4010,8 @@
       gain.gain.value = 0.25;
     }
     oscillator.connect(gain);
-    gain.connect(context.destination);
+    const mixer = audioCueMixer();
+    gain.connect((mixer && mixer.context() === context && mixer.input("ui")) || context.destination);
     oscillator.start(startAt);
     oscillator.stop(endAt + 0.02);
   }

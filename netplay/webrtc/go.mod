@@ -6,7 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/ice/v4 v4.4.8
 	github.com/pion/webrtc/v4 v4.2.25
-	m31labs.dev/gosx v0.25.2
+	m31labs.dev/gosx v0.60.0
 )
 
 require (
@@ -32,7 +32,7 @@ require (
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	m31labs.dev/prism v0.1.3 // indirect
-	m31labs.dev/selena v0.5.3-0.20261023001026-65ca73e1b8b1 // indirect
+	m31labs.dev/selena v0.5.3 // indirect
 	m31labs.dev/turboquant v0.2.1 // indirect
 )
 

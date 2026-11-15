@@ -2,20 +2,25 @@
 package docs
 
 import (
+	_ "embed"
 	"sync"
 
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/scene"
 )
 
+// pulse.sel.json is built from pulse.sel at build time (gosx selena build), so
+// this page also compiles for browser builds, which carry no Selena compiler.
+//
+//go:embed pulse.sel.json
+var pulseArtifact []byte
+
 var motionMaterialFixture = sync.OnceValues(func() (scene.CustomMaterial, error) {
-	material, _, err := scene.CompileSelenaMaterial([]byte(`material Pulse {
-    param emissive : color = rgb(0.4, 0.55, 0.65)
-    surface(geo) -> color {
-        let stripe = sin(geo.uv.x * 18.0) * 0.12 + 0.88
-        return mix(rgb(0.025, 0.04, 0.07), emissive, stripe)
-    }
-}`), scene.SelenaMaterialOptions{})
+	file, err := scene.DecodeSelenaArtifact(pulseArtifact)
+	if err != nil {
+		return scene.CustomMaterial{}, err
+	}
+	material, _, err := scene.MaterialFromSelenaArtifact(file, scene.SelenaMaterialOptions{})
 	return material, err
 })
 

@@ -878,40 +878,6 @@ func compareAgainstStoredBaseline(baseline ValidatedPixelBaseline, state string,
 	return ComparePixelEvidenceWithThresholds(data, current, baselinePath, currentPath, baseline.ThresholdPct, effectiveThreshold)
 }
 
-func loadBaselineThreshold(root string) (float64, error) {
-	manifest, err := readPixelManifest(root)
-	if err != nil {
-		return 0, err
-	}
-	if err := validatePixelThreshold(manifest.Threshold.EffectivePct, false); err != nil {
-		return 0, err
-	}
-	return manifest.Threshold.EffectivePct, nil
-}
-
-func readPixelManifest(root string) (PixelEvidenceManifest, error) {
-	path, err := containedBaselineManifestPath(root, pixelManifestPath(root))
-	if err != nil {
-		return PixelEvidenceManifest{}, err
-	}
-	return readPixelManifestPath(path)
-}
-
-func readPixelManifestPath(path string) (PixelEvidenceManifest, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return PixelEvidenceManifest{}, fmt.Errorf("visual: read baseline pixel manifest %s: %w", path, err)
-	}
-	if err := requirePixelManifestThreshold(body); err != nil {
-		return PixelEvidenceManifest{}, err
-	}
-	manifest, err := decodePixelManifest(body, false)
-	if err != nil {
-		return PixelEvidenceManifest{}, err
-	}
-	return manifest, nil
-}
-
 func readStrictPixelManifestPath(path string) (PixelEvidenceManifest, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {

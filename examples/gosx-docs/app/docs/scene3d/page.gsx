@@ -614,6 +614,36 @@ func Page() Node {
 			<p>
 				A custom material narrows the capability verdict. The resolver reads which shader sources the material actually carries. WGSL only serves WebGPU. GLSL only serves WebGL. Ship both, or accept that one backend drops out.
 			</p>
+			<h3>Compile at build time</h3>
+			<p>
+				Browser code loads Selena materials from artifact files instead of compiling them.
+				<span class="inline-code">gosx build</span>
+				writes
+				<span class="inline-code">rock.sel.json</span>
+				next to
+				<span class="inline-code">rock.sel</span>
+				; embed it and pass it to
+				<span class="inline-code">scene.DecodeSelenaArtifact</span>
+				and
+				<span class="inline-code">scene.MaterialFromSelenaArtifact</span>
+				. The compile functions above are not in js/wasm builds, which keeps the Selena parser and tree-sitter out of the browser module.
+				<span class="inline-code">gosx selena check</span>
+				fails when an artifact no longer matches its source.
+			</p>
+			<h3>Scene lighting</h3>
+			<p>
+				A Selena mesh material reads every scene light, both shadow slots with their cascades, and fog by declaring the engine inputs
+				<span class="inline-code">lights</span>
+				,
+				<span class="inline-code">shadowMap0</span>
+				,
+				<span class="inline-code">fog</span>
+				and the rest in its
+				<span class="inline-code">context</span>
+				block. The Selena
+				<span class="inline-code">lighting</span>
+				module does the per-light math. WebGL2 provides up to four cascades per slot; WebGPU provides one, and the same compiled material uses more when the renderer provides them.
+			</p>
 		</section>
 		<section id="lights">
 			<h2>Lights</h2>

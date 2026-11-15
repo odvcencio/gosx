@@ -125,7 +125,8 @@
           const known=cached.skin && cached.skin.atlas===skin.atlas && cached.skin.batchID===skin.batchID && cached.skin.parent===skin.parent ? cached.skin.group : null;
           if (moved || cached.skinRevision!==skin.rev) cached.revision=(cached.revision || 0)+1;
           cached.skinRevision=skin.rev;
-          cached.skin=Object.assign(cached.skin || {},skin,{group:known,rev:cached.revision});
+          // derived: the crowd partition re-walks this view's group every bundle, as the view changes without a touch.
+          cached.skin=Object.assign(cached.skin || {},skin,{group:known,rev:cached.revision,derived:true});
           view._crowdSkin=cached.skin;
         }
       } else if (mode==="instances") {

@@ -153,20 +153,20 @@
     "materials": 1
   },
   "mat-opacity-additive": {
-    "pixelSHA256": "4bc2b654d985101018ea808866b21b64e2c461e105d98c6898516e10f417c8f3",
+    "pixelSHA256": "f023044ba7e09f1a0710d56404843c158e94b217f0b3b2d2e45d7873f292f68d",
     "coverage": 0.11149088541666667,
-    "uniqueColors": 269,
-    "luminanceVariance": 0.005197103915724205,
-    "edgeEnergy": 0.0058610386029411335,
+    "uniqueColors": 268,
+    "luminanceVariance": 0.005187640383436507,
+    "edgeEnergy": 0.00575556602328427,
     "batches": 1,
     "materials": 1
   },
   "mat-opacity-alpha": {
-    "pixelSHA256": "c5e70a6c9038616f5e072a77323cbe0693bbfc97c82d3e6596cb77189e81a5cd",
+    "pixelSHA256": "a861d5c09cb813f853d55f346308bc00a02960cd6c78a0694ff0aa1d0993c684",
     "coverage": 0.11149088541666667,
-    "uniqueColors": 191,
-    "luminanceVariance": 0.002298405213964494,
-    "edgeEnergy": 0.004093757659313726,
+    "uniqueColors": 190,
+    "luminanceVariance": 0.002292602608633829,
+    "edgeEnergy": 0.003991820874183006,
     "batches": 1,
     "materials": 1
   },

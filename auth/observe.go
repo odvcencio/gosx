@@ -102,10 +102,3 @@ func newAuthEvent(r *http.Request, eventType string) AuthEvent {
 	}
 	return event
 }
-
-func observeAuthEvent(manager *Manager, event AuthEvent) {
-	if manager == nil {
-		return
-	}
-	manager.observe(event)
-}

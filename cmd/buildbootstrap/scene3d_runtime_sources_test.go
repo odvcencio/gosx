@@ -68,7 +68,8 @@ func TestScene3DBundlesUseTypedRuntimeAuthorities(t *testing.T) {
 
 func TestWebGPUPointSpritePerPointVaryingsStayFlat(t *testing.T) {
 	clientJS := shippedClientJS(t)
-	sourcePath := filepath.Clean(filepath.Join(clientJS, "..", "runtime", "scene3d", "webgpu.ts"))
+	// The builtin points shaders live in the WebGPU points module.
+	sourcePath := filepath.Clean(filepath.Join(clientJS, "..", "runtime", "scene3d", "webgpu-points.ts"))
 	bundlePath := filepath.Join(clientJS, "bootstrap-feature-scene3d-webgpu.js")
 	monolithPath := filepath.Join(clientJS, "bootstrap.js")
 

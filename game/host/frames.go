@@ -16,3 +16,11 @@ type FrameSource interface {
 	// example a backgrounded browser tab.
 	Hidden() bool
 }
+
+// FrameAlphaSink is the optional part of a FrameSource that passes each
+// frame's interpolation alpha back to the host renderer. game/loop.Driver
+// calls SetFrameAlpha after Step and its render callback, inside the frame.
+// SceneFrameSource implements it.
+type FrameAlphaSink interface {
+	SetFrameAlpha(alpha float64)
+}

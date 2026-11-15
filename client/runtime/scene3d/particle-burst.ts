@@ -21,13 +21,13 @@ interface SceneParticleBurstSpec {
     const duration = spec.delay + Math.max(.08, emitter.lifetime * .12) + emitter.lifetime * 1.56;
     if (Math.abs(spec.duration - duration) > 1e-8) throw new TypeError('invalid Scene3D burst deadline');
     for (const value of [p.bounds ?? 0, ...['x', 'y', 'z', 'rotationX', 'rotationY', 'rotationZ', 'spinX', 'spinY', 'spinZ', 'radius', 'rate', 'wind', 'scatter'].map(k => emitter[k] ?? 0),
-      ...['size', 'sizeEnd', 'opacity', 'opacityEnd', 'minPixelSize', 'maxPixelSize'].map(k => material[k] ?? 0)]) {
+      ...['size', 'sizeEnd', 'opacity', 'opacityEnd', 'minPixelSize', 'maxPixelSize', 'softDistance'].map(k => material[k] ?? 0)]) {
       if (!Number.isFinite(value)) throw new TypeError('non-finite Scene3D burst value');
     }
     for (const force of p.forces || []) {
       if (!force || typeof force.kind !== 'string' || !force.kind.trim() || !['strength', 'x', 'y', 'z', 'frequency'].every(k => Number.isFinite(force[k] ?? 0))) throw new TypeError('invalid Scene3D burst force');
     }
-    if ((p.bounds ?? 0) < 0 || (emitter.radius ?? 0) < 0 || ['size', 'sizeEnd', 'minPixelSize', 'maxPixelSize'].some(k => (material[k] ?? 0) < 0) ||
+    if ((p.bounds ?? 0) < 0 || (emitter.radius ?? 0) < 0 || ['size', 'sizeEnd', 'minPixelSize', 'maxPixelSize', 'softDistance'].some(k => (material[k] ?? 0) < 0) ||
         ['opacity', 'opacityEnd'].some(k => (material[k] ?? 0) < 0 || (material[k] ?? 0) > 1)) throw new TypeError('invalid Scene3D burst appearance');
     // Keep a private plan so caller edits cannot change active rendering.
     return { ...spec, particles: JSON.parse(JSON.stringify(p)) };

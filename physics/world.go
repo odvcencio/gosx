@@ -91,6 +91,34 @@ type World struct {
 	broadphaseStep uint64
 	// sweepTargets is the reused result buffer of the swept broadphase query.
 	sweepTargets []*Collider
+
+	// colliderVersion counts collider additions and removals. Queries compare
+	// it with queryVersion to know when the static grid needs a rebuild
+	// before it can answer.
+	colliderVersion uint64
+	queryVersion    uint64
+	// queryBuilt is the broadphase build count queryMovable was listed at.
+	queryBuilt   uint64
+	queryMovable []queryEntry
+	// Query scratch. One query runs at a time, so these are shared.
+	queryOut       []*Collider
+	queryTris      []int
+	queryContacts  []ContactManifold
+	queryProbe     Collider
+	castScratch    castQuery
+	overlapScratch overlapQuery
+
+	// triggerPairs is the sorted set of trigger pairs that touched in the
+	// last step, triggerPrev the step before. triggerEvents holds the last
+	// step's events. All three keep their backing arrays.
+	triggerPairs   []triggerPair
+	triggerPrev    []triggerPair
+	triggerEvents  []TriggerEvent
+	triggerHandler func(TriggerEvent)
+
+	// characters lists the character controllers in creation order.
+	characters         []*Character
+	nextCharacterIndex int
 }
 
 func DefaultWorldConfig() WorldConfig {
@@ -258,6 +286,15 @@ func (w *World) stepFixed(dt float64) {
 	}
 	w.integrateVelocities(dt)
 	w.updateSleep(dt)
+	w.updateTriggers()
+}
+
+// StepCount returns the number of fixed steps the world has run.
+func (w *World) StepCount() uint64 {
+	if w == nil {
+		return 0
+	}
+	return w.steps
 }
 
 // wakeTouchedBodies wakes a sleeping body that a moving body now touches. A
@@ -660,6 +697,7 @@ func (w *World) registerCollider(collider *Collider) {
 		collider.index = w.nextColliderIndex
 	}
 	w.colliders = append(w.colliders, collider)
+	w.colliderVersion++
 }
 
 func dampingFactor(damping, dt float64) float64 {

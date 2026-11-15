@@ -371,6 +371,7 @@ func (props *ComputeParticlesProps) legacyProps() map[string]any {
 		setNumeric(material, "opacity", props.Material.Opacity)
 		setNumeric(material, "opacityEnd", props.Material.OpacityEnd)
 		setString(material, "blendMode", strings.TrimSpace(string(props.Material.BlendMode)))
+		setNumeric(material, "softDistance", props.Material.SoftDistance)
 		if props.Material.Attenuation {
 			material["attenuation"] = true
 		}

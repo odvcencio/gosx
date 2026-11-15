@@ -5,7 +5,7 @@ func helperFileModuleHereSource() string {
 }
 
 func helperMustRegisterFileModuleHere(registry *FileModuleRegistry) {
-	registry.MustRegisterHere(FileModuleOptions{})
+	registry.RegisterHere(FileModuleOptions{})
 }
 
 func helperMustRegisterFileModuleViaWrapper(registry *FileModuleRegistry) {
@@ -13,7 +13,7 @@ func helperMustRegisterFileModuleViaWrapper(registry *FileModuleRegistry) {
 }
 
 func helperRegisterModuleWrapper(registry *FileModuleRegistry) {
-	registry.MustRegisterCaller(1, FileModuleOptions{})
+	registry.RegisterCaller(1, FileModuleOptions{})
 }
 
 func helperDirModuleHereSource() string {
@@ -25,5 +25,5 @@ func helperMustRegisterDirModuleViaWrapper(registry *DirModuleRegistry) {
 }
 
 func helperRegisterDirModuleWrapper(registry *DirModuleRegistry) {
-	registry.MustRegisterCaller(1, DirModuleOptions{})
+	registry.RegisterCaller(1, DirModuleOptions{})
 }

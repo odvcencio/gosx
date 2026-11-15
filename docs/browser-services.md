@@ -15,7 +15,7 @@ These packages do not replace application rules, simulation or wire protocols.
 | WebSocket | `hub/socket.Dial` | Call `Dispose` on replacement/unmount; copy borrowed binary bytes before retention. |
 | Hub protocol | `hub/client` | Uses the same socket transport; retains the Hub protocol and reconnect behavior. |
 | Audio | `game/audio/host` | Close the host; stop/disconnect owned voices and graphs when their lifetimes end. |
-| Retained graphics | `scene.NewSurface`, `scene.NewStreamWriter` | Dispose producer handles; the Scene3D mount retains renderer ownership. |
+| Retained graphics | `scene.NewSurface`, `scene.NewStreamWriter`, `scene.NewTextureWriter` | Dispose producer handles; the Scene3D mount retains renderer ownership. |
 | Native capabilities | `client/browser` clipboard/fullscreen/desktop APIs | Start user-gesture operations synchronously and use context variants for pending completion. |
 
 ## DOM and event cost
@@ -229,6 +229,10 @@ It rejects reentrant writes, which could otherwise corrupt an active view.
 For skinned animation, use the existing typed `PoseFrame`/`MotionFrame` paths.
 To pose a skinned model from your own simulation clock, see
 [sampled clip frames](scene3d-clip-frames.md).
+
+For host-written Selena data textures (spectra, scope traces, lookup
+tables), see [data textures](scene3d-selena.md#data-textures);
+`scene.TextureWriter` uses the same binary path.
 
 `InstanceStreamFrame.Encode()` returns an independently owned byte slice.
 `EncodeInto(dst)` may alias `dst`; its bytes are valid until that storage is

@@ -974,6 +974,7 @@ func validateLight(report *Report, light scene.LightIR, path string) {
 		"height":         light.Height,
 		"shadowBias":     light.ShadowBias,
 		"shadowSoftness": light.ShadowSoftness,
+		"shadowDistance": light.ShadowDistance,
 	})
 	validateNonNegativeNumericFields(report, light.ID, path, map[string]float64{
 		"intensity":      light.Intensity,
@@ -984,6 +985,7 @@ func validateLight(report *Report, light scene.LightIR, path string) {
 		"width":          light.Width,
 		"height":         light.Height,
 		"shadowSoftness": light.ShadowSoftness,
+		"shadowDistance": light.ShadowDistance,
 	})
 	if light.ShadowSize < 0 {
 		report.add(Error, "scene.shadow.invalid_size", "Light shadowSize must not be negative", path+".shadowSize", light.ID, nil)

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GoSX rooms example</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #080a0f; color: #f5f7fb; }
+      main { width: min(960px, calc(100vw - 32px)); }
+      canvas { width: 100%; aspect-ratio: 16 / 10; display: block; background: #0b0f17; border: 1px solid #29313d; }
+      header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 20px; font-weight: 650; }
+      #status { font-size: 13px; color: #b8c6d8; font-variant-numeric: tabular-nums; }
+      p { font-size: 13px; color: #8a96a8; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Rooms example</h1>
+        <div id="status">Loading wasm…</div>
+      </header>
+      <canvas id="stage" width="1280" height="800"></canvas>
+      <p>Arrow keys or WASD to move, Shift to boost. Add <code>?server=wss://host/play/ws</code>,
+        <code>&amp;mode=party</code>, <code>&amp;code=ABCDE</code> or <code>&amp;private=1</code> to the URL.</p>
+    </main>
+    <script src="./wasm_exec.js"></script>
+    <script type="module">
+      const go = new Go();
+      const wasm = await WebAssembly.instantiateStreaming(fetch("./main.wasm"), go.importObject);
+      go.run(wasm.instance);
+    </script>
+  </body>
+</html>

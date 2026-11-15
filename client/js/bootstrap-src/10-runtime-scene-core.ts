@@ -608,6 +608,16 @@
     return typed;
   }
 
+  // Material fields that name the UV set an occlusion or emissive map reads.
+  // Only the second set (1) is carried; the default stays absent so materials
+  // that never use it keep their exact shape.
+  function sceneMaterialUVSets(occlusion, emissive) {
+    const out = {};
+    if (occlusion === 1) out.occlusionTexCoord = 1;
+    if (emissive === 1) out.emissiveTexCoord = 1;
+    return out;
+  }
+
   function sceneNormalizeMeshFloatArray(value, tupleSize) {
     const typed = sceneTypedFloatArray(value);
     const safeTupleSize = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
@@ -730,6 +740,8 @@
       positions: count * 3 === positions.length ? positions : positions.slice(0, count * 3),
       normals: sceneMeshSnapshotAttribute(normals, count, [0, 1, 0], snapshot),
       uvs: sceneMeshSnapshotAttribute(uvs, count, [0, 0], snapshot),
+      // Optional second UV set (TEXCOORD_1) for occlusion and emissive maps.
+      uvs1: item.uvs1 && item.uvs1.length >= count * 2 ? sceneNormalizeMeshFloatArray(item.uvs1, 2).slice(0, count * 2) : null,
       tangents: sceneMeshSnapshotAttribute(tangents, count, [1, 0, 0, 1], snapshot),
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
@@ -926,6 +938,7 @@
       normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
       normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(item, "normalUVScale"), current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(item, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(item, "emissiveTexCoord") ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -1125,6 +1138,7 @@
           ? Math.max(0, Math.min(1, Math.floor(sceneFallbackNumber(item, current, "shadowCascades", 0))))
           : 0),
       shadowSoftness: Math.max(0, sceneFallbackNumber(item, current, "shadowSoftness", 0)),
+      shadowDistance: Math.max(0, sceneFallbackNumber(item, current, "shadowDistance", 0)),
       ...lifecycle,
     };
     if (normalized.kind === "directional" && normalized.directionX === 0 && normalized.directionY === 0 && normalized.directionZ === 0) {
@@ -1677,6 +1691,7 @@
         : (Object.prototype.hasOwnProperty.call(current, "occlusionStrength")
           ? clamp01(sceneNumber(current.occlusionStrength, 1))
           : undefined),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(raw, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(raw, "emissiveTexCoord") ?? current.emissiveTexCoord),
       blendMode: normalizeSceneMaterialBlendMode(
         sceneObjectMaterialHasValue(raw, "blendMode") ? sceneObjectMaterialValue(raw, "blendMode") : current.blendMode,
         materialKind || current.materialKind || "flat",
@@ -2261,6 +2276,7 @@
       normalScale: sceneNumber(sceneObjectMaterialValue(item, "normalScale"), sceneNumber(current.normalScale, 1)),
       normalUVScale: sceneNormalUVScale(sceneObjectMaterialValue(item, "normalUVScale"), current.normalUVScale),
       occlusionStrength: clamp01(sceneNumber(sceneObjectMaterialValue(item, "occlusionStrength"), sceneNumber(current.occlusionStrength, 1))),
+      ...sceneMaterialUVSets(sceneObjectMaterialValue(item, "occlusionTexCoord") ?? current.occlusionTexCoord, sceneObjectMaterialValue(item, "emissiveTexCoord") ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -2308,6 +2324,8 @@
         : (Object.prototype.hasOwnProperty.call(current, "pickable") ? sceneBool(current.pickable, true) : undefined),
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       receiveShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "receiveShadow") ? item.receiveShadow : current.receiveShadow, false),
+      // Scatter (scene/scatter.go): the distance band, its cell centre and the wind sway; terrain.ts selects the bands.
+      ...(({ lodGroup, lodLevel, lodMinDistance, lodMaxDistance, x, y, z, wind }) => ({ lodGroup, lodLevel, lodMinDistance, lodMaxDistance, x, y, z, wind }))(item.lodGroup || item.wind ? item : current),
       ...lifecycle,
     };
     // Carry the cached Float32Array view of transforms forward when the
@@ -2383,6 +2401,7 @@
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
       minPixelSize: sceneClampNumberOrCSSVar(item.minPixelSize, sceneNumber(current.minPixelSize, 0), 0, Number.POSITIVE_INFINITY),
       maxPixelSize: sceneClampNumberOrCSSVar(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0), 0, Number.POSITIVE_INFINITY),
+      softDistance: sceneClampNumberOrCSSVar(item.softDistance, sceneNumber(current.softDistance, 0), 0, Number.POSITIVE_INFINITY),
     };
   }
 
@@ -2722,6 +2741,7 @@
       normalScale: sceneFallbackNumber(item, current, "normalScale", 1),
       normalUVScale: sceneNormalUVScale(item.normalUVScale, current.normalUVScale),
       occlusionStrength: clamp01(sceneFallbackNumber(item, current, "occlusionStrength", 1)),
+      ...sceneMaterialUVSets(item.occlusionTexCoord ?? current.occlusionTexCoord, item.emissiveTexCoord ?? current.emissiveTexCoord),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
       specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
       ...sceneNormalizeMaterialLobes(item, current),
@@ -2825,6 +2845,8 @@
     fxaa: "fxaa",
     godrays: "godRays",
     grain: "grain",
+    decals: "decals",
+    motionblur: "motionBlur",
     taa: "taa",
     custompost: "customPost",
     "custom-post": "customPost",
@@ -3179,6 +3201,8 @@
       if (src && maxX > minX && maxZ > minZ && maxHeight > minHeight) {
         const encoding = typeof source.encoding === "string" && source.encoding.trim().toLowerCase() === "signed-sqrt" ? "signed-sqrt" : "linear";
         bathymetry = { src, minX, minZ, maxX, maxZ, minHeight, maxHeight, encoding };
+        // The baked shoreline (scene.OceanShoreline) also fills G with the signed waterline distance.
+        if (source.shoreDistance > 0) Object.assign(bathymetry, { shoreDistance: source.shoreDistance, shoreFoam: source.shoreFoam, shoreTurbidity: source.shoreTurbidity });
       }
     }
     const out = {
@@ -3211,6 +3235,17 @@
     return out;
   }
 
+  // Environment.Crowds (scene/crowd.go) pass through unchanged; the crowd chunk
+  // (crowd*.ts) expands and draws them, and is fetched the first time a scene
+  // declares one. Until it arrives the renderers draw no crowd.
+  function sceneEnvironmentCrowds(list) {
+    if (!Array.isArray(list) || list.length === 0) return null;
+    if (typeof window !== "undefined" && !window.__gosx_scene3d_crowd_api && typeof ensureSceneGatedFeatureLoaded === "function") {
+      ensureSceneGatedFeatureLoaded("crowd", "gosxScene3dCrowdUrl", "", true).catch(function() {}); // the loader reports a failure
+    }
+    return list;
+  }
+
   function sceneEnvironmentText(source, key) {
     return typeof source[key] === "string" ? source[key] : "";
   }
@@ -3223,6 +3258,9 @@
     const text = key => sceneEnvironmentText(source, key) || sceneEnvironmentText(base, key);
     const scalar = (key, minimum, maximum) => sceneClampNumberOrCSSVar(source[key], sceneNumber(base[key], 0), minimum, maximum);
     const haze = Object.prototype.hasOwnProperty.call(source, "haze") ? source.haze : base.haze;
+    // Auto exposure stays the authored object; the renderers' post-effect
+    // chunks fill its defaults where they use it.
+    const autoExposure = has("autoExposure") ? source.autoExposure : base.autoExposure;
     const environment = {
       ambientColor: text("ambientColor"),
       ambientIntensity: scalar("ambientIntensity", 0, 4),
@@ -3233,14 +3271,16 @@
       envMap: text("envMap"),
       ibl: normalizeSceneEnvironmentIBL(source.ibl, base.ibl),
       sky: normalizeSceneSky(has("sky") ? source.sky : base.sky),
-      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null),
+      ocean: has("ocean") ? normalizeSceneOcean(source.ocean) : (base.ocean || null), terrain: has("terrain") ? source.terrain || null : (base.terrain || null), wind: has("wind") ? source.wind || null : (base.wind || null),
       haze: sceneIsPlainObject(haze) ? sceneHaze(haze) : null,
       envIntensity: sceneClampNumberOrCSSVar(has("envIntensity") ? source.envIntensity : undefined, sceneNumber(base.envIntensity, 1) || 1, 0, 8),
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(has("exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
+      autoExposure: autoExposure && typeof autoExposure === "object" ? autoExposure : null,
       toneMapping: text("toneMapping"),
       fogColor: text("fogColor"),
       fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),
+      crowds: sceneEnvironmentCrowds(has("crowds") ? source.crowds : base.crowds),
       ...lifecycle,
       specified: false,
     };
@@ -3283,14 +3323,16 @@
         ibl: normalizeSceneEnvironmentIBL(environment.ibl, null),
         sky: normalizeSceneSky(environment.sky),
         // Already normalized by normalizeSceneEnvironment; pass it through.
-        ocean: environment.ocean || null,
+        ocean: environment.ocean || null, terrain: environment.terrain || null, wind: environment.wind || null,
         haze: environment.haze || null,
         envIntensity: sceneClampNumberOrCSSVar(environment.envIntensity, 1, 0, 8),
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
+        autoExposure: environment.autoExposure || null,
         toneMapping: sceneEnvironmentText(environment, "toneMapping"),
         fogColor: sceneEnvironmentText(environment, "fogColor"),
         fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
+        crowds: environment.crowds || null,
         specified: Boolean(environment.specified),
       }
       : normalizeSceneEnvironment(environment, null);
@@ -3367,7 +3409,7 @@
     const state = {
       background: typeof props.background === "string" && props.background ? props.background : "#08151f",
       camera: sceneCamera(props),
-      objects: new Map(),
+      objects: sceneObjectTable(),
       labels: new Map(),
       sprites: new Map(),
       html: new Map(),
@@ -3431,6 +3473,28 @@
 
   function sceneStateObjects(state) {
     return Array.from(state.objects.values());
+  }
+
+  // sceneObjectTable is the scene state's object map. Every write advances
+  // table.revision, and a write that adds, replaces or removes an interactive
+  // object also advances table.interactiveRevision. A record changes by being
+  // replaced (normalization builds a new one), never by an in-place edit of its
+  // interactive flag, so a reader can keep what it derived from the table while
+  // the matching count stands: the focus proxies keep the interactive objects
+  // (mount-scene-focus.ts) and the crowd partition its last walk.
+  function sceneObjectTable() {
+    const table = new Map(), get = Map.prototype.get, set = Map.prototype.set, remove = Map.prototype.delete, clear = Map.prototype.clear;
+    const wrote = function(before, after) {
+      table.revision += 1;
+      if (before && before.interactive === true || after && after.interactive === true) table.interactiveRevision += 1;
+    };
+    table.revision = 0;
+    table.interactiveRevision = 0;
+    table.set = function(key, value) { wrote(get.call(table, key), value); return set.call(table, key, value); };
+    table.delete = function(key) { wrote(get.call(table, key), null); return remove.call(table, key); };
+    // clear may drop interactive objects, so it counts as an interactive write.
+    table.clear = function() { wrote({ interactive: true }, null); return clear.call(table); };
+    return table;
   }
 
   function sceneStateObjectsWithMaterials(state) {
@@ -5204,10 +5268,58 @@
     return selected;
   }
 
-  function sceneCreateFloat32Builder() {
+  function sceneCreateFloat32Builder(slot) {
     // World-baked attributes can be large. Write them directly into typed
     // bundle-owned storage instead of staging boxed numbers in JS arrays.
-    return { buffer: null, length: 0 };
+    // A retention slot (sceneRetentionSlot) lends the scratch storage that the
+    // last build did not hand out, so an unchanged frame allocates nothing.
+    return { buffer: slot && slot.scratch ? slot.scratch : null, length: 0, slot: slot || null };
+  }
+
+  // ---- Bundle array retention ---------------------------------------------
+  //
+  // A mount passes one retention object to every createSceneRenderBundle call.
+  // When a frame produces the same values as the last one for a typed array,
+  // the bundle gets last frame's array again: the build allocates nothing for
+  // it, and a renderer that caches GPU uploads by array identity (the WebGL
+  // staticMeshArrayVBOs WeakMap, for one) skips the upload. An array that a
+  // bundle received is never written again, so identity still means content:
+  // a frame with other values gets a new array, as before retention.
+  function sceneRetentionSlot(retention, key) {
+    if (!retention) return null;
+    let slot = retention[key];
+    if (!slot) {
+      slot = { handed: null, scratch: null };
+      retention[key] = slot;
+    }
+    return slot;
+  }
+
+  function sceneTypedPrefixEqual(a, b, length) {
+    for (let i = 0; i < length; i += 1) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
+  // sceneRetainTypedArray converts the JS array values to Ctor, reusing last
+  // frame's array when the converted values are the same.
+  function sceneRetainTypedArray(retention, key, values, Ctor) {
+    const slot = sceneRetentionSlot(retention, key);
+    if (!slot || !values || typeof values.length !== "number") return new Ctor(values || []);
+    const length = values.length;
+    let scratch = slot.scratch;
+    if (!scratch || !(scratch instanceof Ctor) || scratch.length < length) scratch = new Ctor(length);
+    for (let i = 0; i < length; i += 1) scratch[i] = values[i];
+    const handed = slot.handed;
+    if (handed && handed instanceof Ctor && handed.length === length && sceneTypedPrefixEqual(handed, scratch, length)) {
+      slot.scratch = scratch;
+      return handed;
+    }
+    const out = scratch.length === length ? scratch : scratch.subarray(0, length);
+    slot.handed = out;
+    slot.scratch = null;
+    return out;
   }
 
   function sceneReserveFloat32Builder(builder, additionalLength) {
@@ -5277,7 +5389,15 @@
   }
 
   function sceneFinishFloat32Builder(builder) {
-    if (!builder || builder.length <= 0 || !builder.buffer) return new Float32Array(0);
+    const slot = builder && builder.slot;
+    if (!builder || builder.length <= 0 || !builder.buffer) {
+      if (!slot) return new Float32Array(0);
+      if (builder && builder.buffer) slot.scratch = builder.buffer;
+      if (builder) builder.buffer = null;
+      if (slot.handed && slot.handed.length === 0) return slot.handed;
+      slot.handed = new Float32Array(0);
+      return slot.handed;
+    }
     // Transfer this build's storage to the completed bundle. Its exact-length
     // view avoids copying large attribute streams at every animation frame.
     // Detach the builder so a later reserve/append cannot mutate that bundle.
@@ -5285,6 +5405,19 @@
     const length = builder.length;
     builder.buffer = null;
     builder.length = 0;
+    if (slot) {
+      const handed = slot.handed;
+      if (handed && handed.length === length && sceneTypedPrefixEqual(handed, buffer, length)) {
+        // The same values as last frame: keep last frame's array, and this
+        // storage, never handed out, becomes the next build's scratch.
+        slot.scratch = buffer;
+        return handed;
+      }
+      const out = length === buffer.length ? buffer : buffer.subarray(0, length);
+      slot.handed = out;
+      slot.scratch = null;
+      return out;
+    }
     return length === buffer.length ? buffer : buffer.subarray(0, length);
   }
 
@@ -5325,7 +5458,9 @@
     sceneReserveWorldMeshAttributes(bundle, count);
   }
 
-  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities, hierarchyState) {
+  // retention, optional, is the mount's bundle array retention object (see
+  // sceneRetentionSlot); pass the same object every frame.
+  function createSceneRenderBundle(width, height, background, camera, objects, labels, sprites, html, lights, environment, timeSeconds, points, instancedMeshes, computeParticles, waterSystems, postEffects, postFXMaxPixels, showDebugGrid, rendererCapabilities, hierarchyState, retention) {
     const bundleBuildStartedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
       : Date.now();
@@ -5383,11 +5518,11 @@
       // already happens in the draw plan.
       worldLinePasses: [],
       meshObjects: [],
-      worldMeshPositions: sceneCreateFloat32Builder(),
-      worldMeshColors: sceneCreateFloat32Builder(),
-      worldMeshNormals: sceneCreateFloat32Builder(),
-      worldMeshUVs: sceneCreateFloat32Builder(),
-      worldMeshTangents: sceneCreateFloat32Builder(),
+      worldMeshPositions: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshPositions")),
+      worldMeshColors: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshColors")),
+      worldMeshNormals: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshNormals")),
+      worldMeshUVs: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshUVs")),
+      worldMeshTangents: sceneCreateFloat32Builder(sceneRetentionSlot(retention, "worldMeshTangents")),
       vertexCount: 0,
       worldVertexCount: 0,
       worldMeshVertexCount: 0,
@@ -5430,7 +5565,7 @@
     }
     // Crowd agents leave the per-object walk here and return as one record
     // per batch after the ordinary objects.
-    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy) : objects;
+    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy, hierarchyState && hierarchyState.objects) : objects;
     const selectedObjects = sceneSelectLODObjects(sceneObjects, renderCamera);
     sceneReserveBakedObjectAttributes(bundle, selectedObjects);
     appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
@@ -5448,15 +5583,15 @@
     for (const entry of html || []) {
       appendSceneHTMLToBundle(bundle, materialLookup, camera, width, height, entry, timeSeconds);
     }
-    appendSceneInstancedMeshesToBundle(bundle, materialLookup, instancedMeshes, objects, timeSeconds, hierarchy);
-    bundle.positions = new Float32Array(bundle.positions);
-    bundle.colors = new Float32Array(bundle.colors);
+    appendSceneInstancedMeshesToBundle(bundle, materialLookup, (window.__gosx_scene3d_terrain_api?.bands(instancedMeshes, renderCamera) || instancedMeshes), objects, timeSeconds, hierarchy);
+    bundle.positions = sceneRetainTypedArray(retention, "positions", bundle.positions, Float32Array);
+    bundle.colors = sceneRetainTypedArray(retention, "colors", bundle.colors, Float32Array);
     bundle.vertexCount = bundle.positions.length / 2;
-    bundle.worldPositions = new Float32Array(bundle.worldPositions);
-    bundle.worldColors = new Float32Array(bundle.worldColors);
+    bundle.worldPositions = sceneRetainTypedArray(retention, "worldPositions", bundle.worldPositions, Float32Array);
+    bundle.worldColors = sceneRetainTypedArray(retention, "worldColors", bundle.worldColors, Float32Array);
     bundle.worldVertexCount = bundle.worldPositions.length / 3;
-    bundle.worldLineWidths = new Float32Array(bundle.worldLineWidths);
-    bundle.worldLinePasses = new Uint8Array(bundle.worldLinePasses);
+    bundle.worldLineWidths = sceneRetainTypedArray(retention, "worldLineWidths", bundle.worldLineWidths, Float32Array);
+    bundle.worldLinePasses = sceneRetainTypedArray(retention, "worldLinePasses", bundle.worldLinePasses, Uint8Array);
     bundle.worldMeshPositions = sceneFinishFloat32Builder(bundle.worldMeshPositions);
     bundle.worldMeshColors = sceneFinishFloat32Builder(bundle.worldMeshColors);
     bundle.worldMeshNormals = sceneFinishFloat32Builder(bundle.worldMeshNormals);
@@ -5723,7 +5858,10 @@
   //
   // Writers that change an agent's pose rows in place must bump
   // _crowdSkin.rev. Motion writers set _crowdMotion.dirty, which the renderer
-  // clears after it uploads the record.
+  // clears after it uploads the record. Any writer that changes, in place, a
+  // field the partition reads (matrix, motion record, pose rows, tint) also
+  // calls sceneCrowdBatchTouch(object); see "Partition reuse". An agent's
+  // visibility, selection and draw flags change by replacing it in its table.
   //
   // Two record fields carry batch-level knowledge to the renderer.
   // crowdDirtyRanges is a flat list of [start, end) slot pairs naming the
@@ -5739,6 +5877,25 @@
   let sceneCrowdBatchSequence = 0;
   let sceneCrowdBatchEpoch = 0;
   let sceneCrowdBatchActive = [];
+
+  // ---- Partition reuse ----------------------------------------------------
+  //
+  // Walking every agent each bundle to learn that almost none changed cost
+  // about 3 ms per frame with 40,000 agents. A bundle reuses its scene's last
+  // walk when all of these hold, and then re-walks only the groups whose agents
+  // changed in place:
+  //   - the object list holds the same objects in the same order (one identity
+  //     test per entry). Transforms that keep identity pass (quality groups,
+  //     cached hierarchy views); a named material wraps each object that uses
+  //     it anew every bundle, so a scene with one walks in full, as before;
+  //   - the scene state's object table (sceneObjectTable) is unwritten since;
+  //   - no other walk entered the groups since (groups are shared by key);
+  //   - every in-place change since went through sceneCrowdBatchTouch.
+  // A touch on an agent that holds no slot (hidden, or on its own record) is
+  // untracked and makes the next bundle walk in full. A group holding an agent
+  // whose pose record the hierarchy derives each bundle (skin.derived) is
+  // re-walked every bundle.
+  const sceneCrowdBatchLast = new WeakMap();
 
   // sceneObjectModelMatrix returns parentMatrix itself, with no per-agent
   // arithmetic, exactly when an agent is a plain hydrated crowd member. Batch
@@ -5918,9 +6075,24 @@
       const skin = update.object._crowdSkin;
       skin.rows.set(update.rows);
       skin.rev += 1;
+      sceneCrowdBatchTouch(update.object);
       const tint = update.tint, held = skin.tint;
       if (tint !== held && !(tint && held && tint[0] === held[0] && tint[1] === held[1] && tint[2] === held[2] && tint[3] === held[3])) skin.tint = tint;
     }
+  }
+
+  // var, not let: tests run this section on its own and again with the whole file in one context.
+  var sceneCrowdBatchUntracked = 0;
+
+  // sceneCrowdBatchTouch marks the group of an agent whose matrix, motion
+  // record, pose rows or tint a writer has just changed in place (see
+  // "Partition reuse"). A touch on an agent that holds no slot is untracked.
+  function sceneCrowdBatchTouch(object) {
+    const skin = object && object._crowdSkin;
+    if (!skin) return;
+    const group = skin.group;
+    if (group && group.alive === true && group.objects[skin.slot] === object) group.touched = true;
+    else sceneCrowdBatchUntracked += 1;
   }
 
   // ---- Batch parent ------------------------------------------------------
@@ -6008,20 +6180,25 @@
     else ranges.push(slot, slot + 1);
   }
 
+  // sceneCrowdBatchResize keeps a group's first n slots.
+  function sceneCrowdBatchResize(group, n) {
+    group.objects.length = group.skins.length = group.motions.length = group.matrices.length =
+      group.revs.length = group.tintRefs.length = n;
+  }
+
   function sceneCrowdBatchEnter(group, epoch, active) {
     group.epoch = epoch;
     group.n = 0;
     group.changed = false;
     group.reshaped = false;
+    group.derived = false;
     active.push(group);
   }
 
-  // sceneCrowdBatchPartition returns the objects that are NOT batched crowd
-  // agents. When the scene has no crowd agent it returns its input unchanged.
-  function sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy) {
-    const list = Array.isArray(objects) ? objects : [];
-    const epoch = ++sceneCrowdBatchEpoch;
-    const active = sceneCrowdBatchActive = [];
+  // sceneCrowdBatchWalk sorts the agents of list into the groups entered at
+  // epoch (appending each newly entered group to active) and returns the
+  // objects that are not batched agents, or null when list holds no agent.
+  function sceneCrowdBatchWalk(list, epoch, active) {
     let rest = null;
     let cur = null;
     for (let i = 0; i < list.length; i += 1) {
@@ -6052,6 +6229,7 @@
             known.changed = true;
             sceneCrowdBatchMark(known, slot, epoch);
           }
+          if (skin.derived === true) known.derived = true;
           known.n = slot + 1;
           continue;
         }
@@ -6110,10 +6288,71 @@
         group.colorsDirty = true;
       }
       group.objects[slot] = object;
+      skin.slot = slot;
+      if (skin.derived === true) group.derived = true;
       group.n = slot + 1;
     }
+    return rest;
+  }
+
+  // sceneCrowdBatchReuse enters the groups of last, the scene's previous walk,
+  // at epoch and re-walks the agents of each group that was touched or holds a
+  // derived agent. It returns { rest } with the previous walk's other objects,
+  // or null when the list must be walked in full: a condition of "Partition
+  // reuse" fails, or a re-walked agent left its slot or group. The re-walked
+  // groups are then emptied, so the full walk, at a new epoch, rebuilds them.
+  function sceneCrowdBatchReuse(last, list, table, epoch, active) {
+    const held = last.list, groups = last.groups;
+    if (last.revision !== table.revision || last.untracked !== sceneCrowdBatchUntracked || held.length !== list.length) return null;
+    for (let i = 0; i < list.length; i += 1) if (held[i] !== list[i]) return null;
+    const again = [];
+    for (let i = 0; i < groups.length; i += 1) {
+      const group = groups[i];
+      if (group.alive !== true || group.epoch !== last.epoch) return null;
+      group.again = group.touched === true || group.derived === true;
+      if (group.again) again.push(group);
+    }
+    for (let i = 0; i < groups.length; i += 1) {
+      sceneCrowdBatchEnter(groups[i], epoch, active);
+      if (!groups[i].again) groups[i].n = groups[i].count;
+    }
+    if (again.length) {
+      const agents = [];
+      for (let i = 0; i < again.length; i += 1) {
+        for (let slot = 0; slot < again[i].count; slot += 1) agents.push(again[i].objects[slot]);
+      }
+      const strays = sceneCrowdBatchWalk(agents, epoch, active);
+      let kept = !(strays && strays.length) && active.length === groups.length;
+      for (let i = 0; kept && i < again.length; i += 1) kept = again[i].n === again[i].count;
+      if (!kept) {
+        for (let i = 0; i < again.length; i += 1) {
+          again[i].count = 0;
+          sceneCrowdBatchResize(again[i], 0);
+        }
+        active.length = 0;
+        return null;
+      }
+    }
+    last.epoch = epoch;
+    return { rest: last.rest ? last.rest.slice() : null };
+  }
+
+  // sceneCrowdBatchPartition returns the objects that are NOT batched crowd
+  // agents. When the scene has no crowd agent it returns its input unchanged.
+  // table is the scene state's object table; without one every bundle walks.
+  function sceneCrowdBatchPartition(bundle, objects, timeSeconds, hierarchy, table) {
+    const list = Array.isArray(objects) ? objects : [];
+    const tracked = table && typeof table.revision === "number" ? table : null;
+    const last = tracked ? sceneCrowdBatchLast.get(tracked) : null;
+    let epoch = ++sceneCrowdBatchEpoch;
+    const active = sceneCrowdBatchActive = [];
+    const reused = last ? sceneCrowdBatchReuse(last, list, tracked, epoch, active) : null;
+    // A failed reuse may have entered groups at this epoch; walk at a new one.
+    if (last && !reused) epoch = ++sceneCrowdBatchEpoch;
+    const rest = reused ? reused.rest : sceneCrowdBatchWalk(list, epoch, active);
     for (let i = 0; i < active.length; i += 1) {
       const group = active[i];
+      group.touched = false;
       group.time = timeSeconds;
       // A parented group follows its node every bundle, even when no agent changed.
       let parentMoved = false;
@@ -6127,8 +6366,7 @@
         group.changed = true;
         group.reshaped = true;
         group.count = group.n;
-        group.objects.length = group.skins.length = group.motions.length = group.matrices.length =
-          group.revs.length = group.tintRefs.length = group.n;
+        sceneCrowdBatchResize(group, group.n);
         group.colorsDirty = true;
       }
       if (group.colorsDirty || group.reshaped) {
@@ -6149,13 +6387,17 @@
       group.changed = false;
       group.reshaped = false;
     }
+    // Copies: the caller owns the arrays it was given and gets back.
+    if (tracked && !reused && active.length) {
+      sceneCrowdBatchLast.set(tracked, { revision: tracked.revision, untracked: sceneCrowdBatchUntracked, epoch,
+        list: list.slice(), rest: rest ? rest.slice() : null, groups: active.slice() });
+    } else if (tracked && !reused) sceneCrowdBatchLast.delete(tracked);
     for (const [key, groups] of sceneCrowdBatchGroups) {
       for (let i = groups.length - 1; i >= 0; i -= 1) {
         if (epoch - groups[i].epoch > sceneCrowdBatchStaleBundles) {
           const stale = groups[i];
           stale.alive = false;
-          stale.objects.length = stale.skins.length = stale.motions.length = stale.matrices.length =
-            stale.revs.length = stale.tintRefs.length = 0;
+          sceneCrowdBatchResize(stale, 0);
           groups.splice(i, 1);
         }
       }
@@ -7273,7 +7515,8 @@
   }
 
   function sceneMeshCanCacheWorldBakedGeometry(bundle, object, material, vertices, emitWireSegments, timeSeconds) {
-    return sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) &&
+    // A second UV stream is baked per object below, outside the geometry cache.
+    return !vertices.uvs1 && sceneMeshHasStableLocalGeometry(bundle, object, vertices, emitWireSegments) &&
       sceneMaterialUsesAuthoredMeshShader(material) &&
       !sceneMeshObjectSupportsRetainedBackend(object, material, timeSeconds);
   }
@@ -7491,6 +7734,10 @@
       (!vertices.attributes || Object.keys(vertices.attributes).length === 0);
     if (!cachedView) sceneReserveWorldMeshAttributes(bundle, bakedVertexCount);
     if (!cacheEligible) sceneDropWorldBakedGeometryCache(object);
+    // Occlusion and emissive maps on TEXCOORD_1 read this per-object stream. It
+    // follows the same corner order as the world stream: index dereference and
+    // the mirrored-winding swap. The renderers bind it with the object.
+    const uvs1Out = !cachedGeometry && vertices.uvs1 ? new Float32Array(bakedVertexCount * 2) : null;
     if (cachedGeometry) {
       // Cached attributes already have the final Float32 representation.
       // Backends without direct world views receive their own aggregate copy.
@@ -7582,6 +7829,13 @@
         sceneMeshVertexUVInto(uvs[0], vertices, source0);
         sceneMeshVertexUVInto(uvs[1], vertices, source1);
         sceneMeshVertexUVInto(uvs[2], vertices, source2);
+        if (uvs1Out) {
+          const u1 = vertices.uvs1;
+          const o1 = meshVertexCount * 2;
+          uvs1Out[o1] = u1[source0 * 2]; uvs1Out[o1 + 1] = u1[source0 * 2 + 1];
+          uvs1Out[o1 + 2] = u1[source1 * 2]; uvs1Out[o1 + 3] = u1[source1 * 2 + 1];
+          uvs1Out[o1 + 4] = u1[source2 * 2]; uvs1Out[o1 + 5] = u1[source2 * 2 + 1];
+        }
 
         for (let index = 0; index < 3; index += 1) {
           const point = points[index];
@@ -7677,6 +7931,7 @@
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,
     });
+    if (uvs1Out) meshRecord.uvs1 = meshVertexCount * 2 === uvs1Out.length ? uvs1Out : uvs1Out.subarray(0, meshVertexCount * 2);
     if (cachedView) {
       // These vertices already include the authored transform, index expansion
       // and mirrored winding. Use the ordinary direct draw contract with an
@@ -8172,6 +8427,7 @@
     clearChildren,
     sceneNormalizeParentMatrix,
     createSceneRenderBundle,
+    sceneCrowdBatchTouch,
     sceneSelectLODObjects,
     SCENE_IR_VERSION: 1,
     SCENE_IR_SCHEMA: "gosx.scene3d.ir.v1",
@@ -8339,6 +8595,7 @@
     scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
+    sceneShadowCascadeBiasScale: typeof sceneShadowCascadeBiasScale === "function" ? sceneShadowCascadeBiasScale : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
     generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
     normalizeInstancedGeometryKind: typeof normalizeInstancedGeometryKind === "function" ? normalizeInstancedGeometryKind : undefined,

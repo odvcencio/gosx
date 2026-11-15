@@ -26,6 +26,28 @@ const MountFrameSubmittedEvent = "gosx:scene3d:frame-submitted"
 // MountFrameCancelEvent cancels a pending frame request on its owning mount.
 const MountFrameCancelEvent = "gosx:scene3d:frame-cancel"
 
+// MountGraphicsResetEvent is emitted when a mount loses its GPU context or
+// device and again when a rebuilt renderer draws. The page does not reload.
+const MountGraphicsResetEvent = "gosx:scene3d:graphics-reset"
+
+// GraphicsReset phases.
+const (
+	GraphicsResetLost     = "lost"
+	GraphicsResetRestored = "restored"
+)
+
+// GraphicsReset describes one graphics reset transition on a mount. A game
+// can pause play on Lost and resume on Restored. Backend names the renderer
+// kind after the transition ("webgpu" or "webgl"); a WebGPU device loss first
+// restores on "webgl" and may later restore on "webgpu" when the browser
+// grants a new device. Count is the number of losses this mount has seen.
+type GraphicsReset struct {
+	Phase   string `json:"phase"`
+	Backend string `json:"backend"`
+	Reason  string `json:"reason"`
+	Count   int    `json:"count"`
+}
+
 // MountFrameRequest asks for one submission containing every visible primitive
 // of the specified imported model instances (for example "hero/slot-0").
 // A new request supersedes the previous request. Pending shader compilation,

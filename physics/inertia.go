@@ -86,7 +86,7 @@ func colliderVolume(c *Collider) float64 {
 	case ShapeCone:
 		r := math.Abs(c.Radius)
 		return math.Pi * r * r * math.Abs(c.Height) / 3
-	case ShapeConvexHull, ShapeTriangleMesh:
+	case ShapeConvexHull, ShapeTriangleMesh, ShapeHeightfield:
 		size := c.localBounds.Size()
 		return math.Abs(float64(size.X * size.Y * size.Z))
 	default:
@@ -133,7 +133,7 @@ func colliderPrincipalInertia(c *Collider, mass float64) Vec3 {
 		return Vec3{X: radial, Y: axial, Z: radial}
 	case ShapeCapsule:
 		return capsuleInertia(mass, math.Abs(c.Radius), math.Abs(c.Height))
-	case ShapeConvexHull, ShapeTriangleMesh:
+	case ShapeConvexHull, ShapeTriangleMesh, ShapeHeightfield:
 		// Use the local bounding box. The result overstates a thin hull but it
 		// is never zero and never negative, so the solver stays stable.
 		size := c.localBounds.Size()

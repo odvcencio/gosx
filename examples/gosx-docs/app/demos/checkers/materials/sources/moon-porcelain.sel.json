@@ -1,0 +1,131 @@
+{
+  "schema": "selena.artifact.v1",
+  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "languageVersion": "selena.lang.v1",
+  "source": {
+    "path": "sources/moon-porcelain.sel",
+    "sha256": "d3118aee1c8b90d007f30e21af87c3cefa1023f0b8f23a7faff1a7822e848941"
+  },
+  "options": {
+    "targets": [
+      "wgsl",
+      "gles"
+    ]
+  },
+  "default": "MoonPorcelain",
+  "materials": [
+    {
+      "name": "MoonPorcelain",
+      "layout": {
+        "schemaVersion": "selena.descriptor.v1",
+        "languageVersion": "selena.lang.v1",
+        "material": "MoonPorcelain",
+        "kind": "mesh",
+        "entryPoints": {
+          "vertex": "vertexMain",
+          "fragment": "fragmentMain"
+        },
+        "uniformBlock": {
+          "size": 160,
+          "fields": [
+            {
+              "name": "mvp",
+              "type": "mat4",
+              "offset": 0,
+              "size": 64
+            },
+            {
+              "name": "normalMatrix",
+              "type": "mat3",
+              "offset": 64,
+              "size": 48
+            },
+            {
+              "name": "porcelain",
+              "type": "vec3",
+              "offset": 112,
+              "size": 12
+            },
+            {
+              "name": "cobalt",
+              "type": "vec3",
+              "offset": 128,
+              "size": 12
+            },
+            {
+              "name": "pearl",
+              "type": "vec3",
+              "offset": 144,
+              "size": 12
+            }
+          ],
+          "defaults": [
+            {
+              "name": "porcelain",
+              "type": "vec3",
+              "values": [
+                0.82,
+                0.88,
+                0.91
+              ]
+            },
+            {
+              "name": "cobalt",
+              "type": "vec3",
+              "values": [
+                0.035,
+                0.15,
+                0.42
+              ]
+            },
+            {
+              "name": "pearl",
+              "type": "vec3",
+              "values": [
+                0.72,
+                0.88,
+                0.96
+              ]
+            }
+          ]
+        },
+        "attributes": [
+          {
+            "name": "position",
+            "location": 0,
+            "type": "vec3"
+          },
+          {
+            "name": "normal",
+            "location": 1,
+            "type": "vec3"
+          },
+          {
+            "name": "uv",
+            "location": 2,
+            "type": "vec2"
+          }
+        ],
+        "textures": [],
+        "wgsl": {
+          "group": 0,
+          "binding": 0
+        },
+        "metal": {
+          "buffer": 0
+        }
+      },
+      "shaders": [
+        {
+          "target": "wgsl",
+          "source": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  porcelain : vec3<f32>,\n  cobalt : vec3<f32>,\n  pearl : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n  @location(2) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vNormal : vec3<f32>,\n  @location(1) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vNormal = in.normal;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let n = normalize(in.vNormal);\n  let veinA = abs(sin(((in.vUv.x * 29.0) + (sin((in.vUv.y * 17.0)) * 1.8))));\n  let veinB = abs(sin(((in.vUv.y * 37.0) + (sin((in.vUv.x * 11.0)) * 2.1))));\n  let crackle = smoothstep(0.08, 0.015, (veinA * veinB));\n  let wash = ((sin(((in.vUv.x - in.vUv.y) * 8.0)) * 0.06) + 0.1);\n  let body = mix(u.porcelain.rgb, u.cobalt.rgb, ((crackle * 0.62) + wash));\n  let rim = (pow((1.0 - abs(n.z)), 3.0) * 0.24);\n  return vec4<f32>(mix(body, u.pearl.rgb, rim), 1.0);\n}\n"
+        },
+        {
+          "target": "gles",
+          "vertex": "#version 300 es\nin vec3 position;\nin vec3 normal;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 porcelain;\nuniform vec3 cobalt;\nuniform vec3 pearl;\nout vec3 vNormal;\nout vec2 vUv;\n\nvoid main() {\n  vNormal = normal;\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
+          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 porcelain;\nuniform vec3 cobalt;\nuniform vec3 pearl;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float veinA = abs(sin(((vUv.x * 29.0) + (sin((vUv.y * 17.0)) * 1.8))));\n  float veinB = abs(sin(((vUv.y * 37.0) + (sin((vUv.x * 11.0)) * 2.1))));\n  float crackle = smoothstep(0.08, 0.015, (veinA * veinB));\n  float wash = ((sin(((vUv.x - vUv.y) * 8.0)) * 0.06) + 0.1);\n  vec3 body = mix(porcelain.rgb, cobalt.rgb, ((crackle * 0.62) + wash));\n  float rim = (pow((1.0 - abs(n.z)), 3.0) * 0.24);\n  fragColor = vec4(mix(body, pearl.rgb, rim), 1.0);\n}\n"
+        }
+      ]
+    }
+  ]
+}

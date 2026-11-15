@@ -1297,6 +1297,7 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 	}
 	var tri [3]clipVertex
 	var clipScratch [4]clipVertex
+	var basis affineBasis
 	for inst := firstInstance; inst < firstInstance+instanceCount; inst++ {
 		model, ok := readMat4Stride(instanceBuf, inst, instanceStride)
 		if !ok {
@@ -1308,6 +1309,16 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 		// with no GPU present. The field stayed zero before, so every headless
 		// pick reported background.
 		target.pickID = readInstancePickID(instanceBuf, inst, instanceStride)
+		// The lit path discards fragments whose winding disagrees with the model
+		// matrix's orientation, as litWGSL does. Every other path keeps filling
+		// both windings.
+		if shading != nil {
+			shading.orientation = 0
+			if instanceBuf != nil {
+				basis = newAffineBasis(model)
+				shading.orientation = basis.orientation
+			}
+		}
 		for base := 0; base+2 < vertexCount; base += 3 {
 			valid := true
 			for i := 0; i < 3; i++ {
@@ -1333,7 +1344,7 @@ func (r *RenderPassEncoder) rasterizeDraw(vertexCount, instanceCount, firstVerte
 					tri[i].uv = readUV(uvBuf, vertex)
 					normal := readNormal(normalBuf, vertex)
 					if instanceBuf != nil {
-						normal = transformDirection(model, normal)
+						normal = basis.normal(normal)
 					}
 					tri[i].normal = normal
 				} else {
@@ -1757,6 +1768,90 @@ func transformPoint(m [16]float32, p [3]float32) [3]float32 {
 		(float32(m[0]*x) + float32(m[4]*y) + float32(m[8]*z) + m[12]) / w,
 		(float32(m[1]*x) + float32(m[5]*y) + float32(m[9]*z) + m[13]) / w,
 		(float32(m[2]*x) + float32(m[6]*y) + float32(m[10]*z) + m[14]) / w,
+	}
+}
+
+// affineBasis copies affineNormal in litWGSL (render/bundle/lit.go). It holds
+// what that function derives from one model matrix, so a draw computes it once
+// per instance instead of once per vertex.
+//
+// The normal moves by the cofactor matrix of the upper 3x3, which is the
+// inverse transpose up to a positive scale, times the sign of the determinant.
+// Columns are divided by the largest absolute entry first, so the determinant
+// test does not depend on the size of the transform. A zero matrix or a
+// determinant at or below 1e-12 is degenerate: the normal is the plain
+// normalized input and the orientation is +1.
+type affineBasis struct {
+	co          [3][3]float32 // cofactor columns co0, co1, co2
+	orientation float32
+	degenerate  bool
+}
+
+func newAffineBasis(m [16]float32) affineBasis {
+	linearScale := float32(0)
+	for _, i := range [...]int{0, 1, 2, 4, 5, 6, 8, 9, 10} {
+		if a := float32(math.Abs(float64(m[i]))); a > linearScale {
+			linearScale = a
+		}
+	}
+	if linearScale == 0 {
+		return affineBasis{orientation: 1, degenerate: true}
+	}
+	c0 := [3]float32{m[0] / linearScale, m[1] / linearScale, m[2] / linearScale}
+	c1 := [3]float32{m[4] / linearScale, m[5] / linearScale, m[6] / linearScale}
+	c2 := [3]float32{m[8] / linearScale, m[9] / linearScale, m[10] / linearScale}
+	co0 := cross3(c1, c2)
+	co1 := cross3(c2, c0)
+	co2 := cross3(c0, c1)
+	determinant := float32(c0[0]*co0[0]) + float32(c0[1]*co0[1]) + float32(c0[2]*co0[2])
+	if math.Abs(float64(determinant)) <= 1e-12 {
+		return affineBasis{orientation: 1, degenerate: true}
+	}
+	orientation := float32(-1)
+	if determinant > 0 {
+		orientation = 1
+	}
+	return affineBasis{co: [3][3]float32{co0, co1, co2}, orientation: orientation}
+}
+
+// normal returns the world normal for the local normal n.
+//
+// normalize3 answers (0, 1, 0) for a vector 1e-6 long or shorter, and litWGSL
+// has no such threshold. Under a scale like (10, 0.001, 0.001) the cofactor
+// product of the normal along x is about 1e-8 long, so a short vector is
+// divided by its largest component first. Above the threshold the arithmetic is
+// unchanged. Only an exactly zero product falls back to the input normal.
+func (b *affineBasis) normal(n [3]float32) [3]float32 {
+	if b.degenerate {
+		return normalize3(n)
+	}
+	var out [3]float32
+	for i := 0; i < 3; i++ {
+		sum := float32(b.co[0][i]*n[0]) + float32(b.co[1][i]*n[1]) + float32(b.co[2][i]*n[2])
+		out[i] = float32(sum * b.orientation)
+	}
+	if length3(out) <= 1e-6 {
+		largest := float32(0)
+		for _, v := range out {
+			if a := float32(math.Abs(float64(v))); a > largest {
+				largest = a
+			}
+		}
+		if largest == 0 {
+			return normalize3(n)
+		}
+		for i := range out {
+			out[i] /= largest
+		}
+	}
+	return normalize3(out)
+}
+
+func cross3(a, b [3]float32) [3]float32 {
+	return [3]float32{
+		float32(a[1]*b[2]) - float32(a[2]*b[1]),
+		float32(a[2]*b[0]) - float32(a[0]*b[2]),
+		float32(a[0]*b[1]) - float32(a[1]*b[0]),
 	}
 }
 
@@ -2395,8 +2490,12 @@ func decodeSceneLights(data []byte, offset int) []sceneLight {
 // and the browser copies still disagree and which one this repository judges
 // correct.
 type litProgram struct {
-	lighting sceneLighting
-	material materialState
+	// orientation is the sign of the current instance's model determinant, set
+	// per instance by rasterizeDraw. Zero means no instance matrix, so no winding
+	// test.
+	orientation float32
+	lighting    sceneLighting
+	material    materialState
 
 	// light is the direction toward the primary light, which is the light the
 	// cascade fit uses. litWGSL keeps it as `let L = normalize(-scene.lightDir.xyz)`
@@ -3046,6 +3145,14 @@ func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *litP
 	}
 	area := edge(pts[0], pts[1], pts[2])
 	if math.Abs(float64(area)) < 1e-6 {
+		return
+	}
+	// Winding convention, matching a GPU with FrontFaceCCW: edge() equals the
+	// cross product of the triangle in NDC (y up) because the screen y flip and
+	// edge()'s own sign cancel, so area > 0 means counter-clockwise, which is
+	// front facing. litWGSL keeps a fragment only when front facing equals
+	// orientation > 0.
+	if shading != nil && shading.orientation != 0 && (area > 0) != (shading.orientation > 0) {
 		return
 	}
 	minX := max(0, int(math.Floor(float64(min3(pts[0][0], pts[1][0], pts[2][0])))))

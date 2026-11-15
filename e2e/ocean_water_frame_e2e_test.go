@@ -91,7 +91,15 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 			defer browser.Close()
 			ctx, cancel := context.WithTimeout(browser.Context, 150*time.Second)
 			defer cancel()
-			init := `window.__gosx_scene3d_render_truth = true;`
+			// Record how the WebGPU device ends: a Metal command buffer that fails ("Insufficient Memory") loses the device and the
+			// renderer falls back to WebGL, which a test that only reads the water frame would not notice.
+			init := `window.__gosx_scene3d_render_truth = true; window.__gpuLost = null; window.__gpuTimestamps = false;
+if (navigator.gpu) { const requestAdapter = navigator.gpu.requestAdapter.bind(navigator.gpu); navigator.gpu.requestAdapter = async function (...a) {
+  const adapter = await requestAdapter(...a);
+  if (adapter) { const requestDevice = adapter.requestDevice.bind(adapter); adapter.requestDevice = async function (...b) {
+    const device = await requestDevice(...b); window.__gpuTimestamps = device.features.has("timestamp-query");
+    device.lost.then((info) => { window.__gpuLost = info.reason + ": " + info.message; }); return device; }; }
+  return adapter; }; }`
 			if backend == "webgl2" {
 				init += `window.__gosx_scene3d_force_webgl = true;`
 			}
@@ -123,10 +131,22 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 				Now, Clock               float64
 				W                        []float64
 			}
+			// A wedged page must fail the subtest with what the page knew, not hold the GPU for the whole 150 s.
+			lostNote := func() string {
+				var note string
+				c, stop := context.WithTimeout(ctx, 5*time.Second)
+				defer stop()
+				if chromedp.Run(c, chromedp.Evaluate(`String(window.__gpuLost)`, &note)) != nil {
+					return "the page does not answer"
+				}
+				return "device lost: " + note
+			}
 			get := func() reading {
 				var raw string
-				if err := chromedp.Run(ctx, chromedp.Evaluate(read, &raw, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil {
-					t.Fatal(err)
+				c, stop := context.WithTimeout(ctx, 20*time.Second)
+				defer stop()
+				if err := chromedp.Run(c, chromedp.Evaluate(read, &raw, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil {
+					t.Fatalf("reading the page's water frame: %v (%s)", err, lostNote())
 				}
 				var r reading
 				if err := json.Unmarshal([]byte(raw), &r); err != nil {
@@ -149,6 +169,9 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 			}
 			if backend == "webgl2" && first.Backend != "webgl" {
 				t.Fatalf("forced WebGL2 ran on %q", first.Backend)
+			}
+			if backend == "webgpu" && first.Backend != "webgpu" {
+				t.Fatalf("WebGPU run drew on %q (%s)", first.Backend, lostNote())
 			}
 			time.Sleep(2 * time.Second)
 			second := get()
@@ -173,6 +196,36 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 			}
 			if age := second.Now - second.W[8]; age < 0 || age > 100 {
 				t.Fatalf("reading is %vms old when read", age)
+			}
+			if backend == "webgpu" {
+				// The WebGPU device must still be alive after the frames above. Stamping the graph's ~400 compute passes in one
+				// Metal command buffer once lost it. (Chrome 157 on Metal reports no GPU time for the renderer's own stamps
+				// either, so the graph's ms is logged and not asserted.)
+				var end struct {
+					Lost       *string
+					Timestamps bool
+					Ms         *float64
+					Backend    string
+				}
+				var raw string
+				const finish = `(async () => {
+  const api = window.__gosx_scene3d_ocean_fft_api;
+  for (let i = 0; i < 100; i++) { const t = api && api.timing(); if (t && t.ms > 0) break; await new Promise((r) => setTimeout(r, 50)); }
+  const t = api && api.timing();
+  return JSON.stringify({lost: window.__gpuLost, timestamps: window.__gpuTimestamps, ms: t ? t.ms : null, backend: document.getElementById("sea").getAttribute("data-gosx-scene3d-backend")});
+})()`
+				c, stop := context.WithTimeout(ctx, 20*time.Second)
+				defer stop()
+				if err := chromedp.Run(c, chromedp.Evaluate(finish, &raw, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) })); err != nil {
+					t.Fatalf("reading the device state: %v", err)
+				}
+				if err := json.Unmarshal([]byte(raw), &end); err != nil {
+					t.Fatalf("%s: %v", raw, err)
+				}
+				t.Logf("device: %s", raw)
+				if end.Lost != nil || end.Backend != "webgpu" {
+					t.Fatalf("the WebGPU device did not survive the water frames: lost=%v backend=%q", end.Lost, end.Backend)
+				}
 			}
 			if dir := os.Getenv("OCEAN_WATER_EVIDENCE"); dir != "" {
 				var shot []byte

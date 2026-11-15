@@ -29,12 +29,6 @@ func (w *bitWriter) put(value uint32, n int) {
 	w.pos += n
 }
 
-// reset clears the block and rewinds to bit 0.
-func (w *bitWriter) reset() {
-	w.buf = [BlockBytes]byte{}
-	w.pos = 0
-}
-
 // bitReader reads one block least significant bit first.
 type bitReader struct {
 	buf []byte

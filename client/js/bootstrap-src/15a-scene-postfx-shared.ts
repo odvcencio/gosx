@@ -231,12 +231,16 @@ function sceneRenderTruthTimeAdvancing(mount, seconds) {
 // populates these far more richly), then the user agent. Reported honestly as
 // "dawn" / "wgpu" / "unknown" so a consumer can tell a guess from a fact via
 // the accompanying engine + adapter strings.
+// Headless Chromium reports "HeadlessChrome/<ver>" with no word boundary
+// before "Chrome", and Chrome on iOS reports "CriOS/" over WebKit. Both tokens
+// are matched explicitly: HeadlessChrome is Blink, CriOS stays WebKit.
 function sceneRenderTruthBrowserEngine() {
   if (typeof navigator === "undefined" || !navigator) return "";
   var ua = String(navigator.userAgent || "");
   if (/\bFirefox\/|\bGecko\//.test(ua) && ua.indexOf("like Gecko") < 0) return "gecko";
-  if (/\bEdg\//.test(ua)) return "blink-edge";
-  if (/\bChrome\/|\bChromium\//.test(ua)) return "blink";
+  if (/\bCriOS\/|\bFxiOS\/|\bEdgiOS\//.test(ua)) return "webkit";
+  if (/\bEdg\/|\bHeadlessEdg\//.test(ua)) return "blink-edge";
+  if (/\b(?:Headless)?Chrome\/|\bChromium\//.test(ua)) return "blink";
   if (/\bSafari\//.test(ua)) return "webkit";
   return "";
 }

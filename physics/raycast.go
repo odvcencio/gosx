@@ -11,27 +11,11 @@ type RaycastHit struct {
 	Distance float64
 }
 
-// Raycast returns the closest hit against all world colliders. maxDistance <= 0
-// means unbounded.
+// Raycast returns the closest hit against all world colliders, triggers
+// included. maxDistance <= 0 means unbounded. Use RaycastFiltered to choose
+// layers, skip triggers or exclude a body.
 func (w *World) Raycast(ray Ray, maxDistance float64) (RaycastHit, bool) {
-	if w == nil {
-		return RaycastHit{}, false
-	}
-	limit := raycastMaxDistance(maxDistance)
-	best := RaycastHit{Distance: math.Inf(1)}
-	found := false
-	for _, collider := range w.colliders {
-		hit, ok := collider.Raycast(ray, limit)
-		if !ok {
-			continue
-		}
-		if !found || hit.Distance < best.Distance-epsilon ||
-			(math.Abs(hit.Distance-best.Distance) <= epsilon && colliderIndex(hit.Collider) < colliderIndex(best.Collider)) {
-			best = hit
-			found = true
-		}
-	}
-	return best, found
+	return w.RaycastFiltered(ray, maxDistance, QueryFilter{IncludeTriggers: true})
 }
 
 // Raycast returns the closest hit against this collider. maxDistance <= 0
@@ -64,6 +48,8 @@ func (c *Collider) Raycast(ray Ray, maxDistance float64) (RaycastHit, bool) {
 		hit, ok = raycastCone(c, r, limit)
 	case ShapeTriangleMesh:
 		hit, ok = raycastMesh(c, r, limit)
+	case ShapeHeightfield:
+		hit, ok = raycastHeightfield(c, r, limit)
 	case ShapeConvexHull:
 		// A hull is stored as a point cloud with no face list, so there is no
 		// surface to intersect. Supply Indices to also get a triangulated
@@ -91,7 +77,7 @@ func (c *Collider) RaycastSupported() bool {
 		return false
 	}
 	switch c.Shape {
-	case ShapeSphere, ShapePlane, ShapeBox, ShapeCapsule, ShapeCylinder, ShapeCone, ShapeTriangleMesh:
+	case ShapeSphere, ShapePlane, ShapeBox, ShapeCapsule, ShapeCylinder, ShapeCone, ShapeTriangleMesh, ShapeHeightfield:
 		return true
 	case ShapeConvexHull:
 		return c.mesh != nil

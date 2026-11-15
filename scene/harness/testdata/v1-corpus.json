@@ -71,13 +71,13 @@
     {
       "id": "gltf-meshopt-rejection",
       "state": "enforced",
-      "requirement": "Meshopt-compressed buffer views fail closed with a named diagnostic.",
+      "requirement": "Meshopt-compressed buffer views decode, and fail closed with a named diagnostic when the decoder is absent.",
       "targetBackends": ["webgpu", "webgl2"],
       "ciOwners": [
         {"label": "js-tests-b", "job": "js-tests-b", "step": "JavaScript runtime contract tests (other suites)", "command": "make test-js-node NODE_TEST_GROUP=other"}
       ],
       "evidence": [
-        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "EXT_meshopt_compression raises a named error instead of reading garbage", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests-b"}
+        {"kind": "node-test", "path": "client/js/19-scene-gltf.test.mjs", "contains": "EXT_meshopt_compression names the extension when its decoder is not loaded", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests-b"}
       ]
     },
     {
@@ -112,21 +112,27 @@
       "requirement": "Imported CUBICSPLINE translation, rotation, scale, and morph weights follow glTF Appendix C.",
       "targetBackends": ["webgpu", "webgl2"],
       "ciOwners": [
-        {"label": "js-tests-b", "job": "js-tests-b", "step": "JavaScript runtime contract tests (other suites)", "command": "make test-js-node NODE_TEST_GROUP=other"},
+        {"label": "js-tests-scene3d", "job": "js-tests-scene3d", "step": "Scene3D renderer contract tests", "command": "make test-js-node NODE_TEST_GROUP=scene3d"},
         {"label": "scene3d-v1-browser-renderer-proof", "job": "scene3d-v1-browser-renderer-proof", "step": "Run Scene3D CUBICSPLINE browser renderer proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""}
       ],
       "evidence": [
-        {"kind": "node-test", "path": "client/js/scene3d-cubic-spline.test.mjs", "contains": "CUBICSPLINE translation Hermite-interpolates with interval-scaled tangents", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests-b"},
+        {"kind": "node-test", "path": "client/js/scene3d-cubic-spline.test.mjs", "contains": "CUBICSPLINE translation Hermite-interpolates with interval-scaled tangents", "backends": ["webgpu", "webgl2"], "ciLabel": "js-tests-scene3d"},
         {"kind": "browser-test", "path": "client/js/testdata/scene3d-cubic-spline-browser.cjs", "contains": "proof-private-gpu-texture", "backends": ["webgpu", "webgl2"], "ciLabel": "scene3d-v1-browser-renderer-proof"}
       ]
     },
     {
       "id": "nested-group-scale-pick",
-      "state": "blocked",
+      "state": "enforced",
       "requirement": "Nested group scale reaches SceneIR, render transforms, raycast, and pick.",
       "targetBackends": ["webgpu", "webgl2", "native-preview"],
-      "ciOwners": [],
-      "evidence": []
+      "ciOwners": [
+        {"label": "scene3d-v1-browser-renderer-proof", "job": "scene3d-v1-browser-renderer-proof", "step": "Run Scene3D CUBICSPLINE browser renderer proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""},
+        {"label": "go-tests", "job": "go-tests", "step": "Non-CLI unit and integration tests", "command": "make test-unit"}
+      ],
+      "evidence": [
+        {"kind": "browser-test", "path": "client/js/testdata/scene3d-cubic-spline-browser.cjs", "contains": "affine-pick-scale-only-pixel", "backends": ["webgpu", "webgl2"], "ciLabel": "scene3d-v1-browser-renderer-proof"},
+        {"kind": "go-test", "path": "render/gpu/headless/group_scale_test.go", "contains": "TestHeadlessNestedGroupScaleNormalsWindingAndPick", "backends": ["native-preview"], "ciLabel": "go-tests"}
+      ]
     },
     {
       "id": "desktop-controls-picking",
@@ -153,19 +159,29 @@
     },
     {
       "id": "ordered-post-custom-uniforms",
-      "state": "blocked",
+      "state": "enforced",
       "requirement": "Supported post effects preserve declaration order and live custom uniform patches.",
       "targetBackends": ["webgpu", "webgl2"],
-      "ciOwners": [],
-      "evidence": []
+      "ciOwners": [
+        {"label": "js-tests", "job": "js-tests", "step": "JavaScript runtime contract tests", "command": "make test-js NODE_TEST_GROUP=runtime"}
+      ],
+      "evidence": [
+        {"kind": "node-test", "path": "client/js/runtime-20-scene-shaders-custom-post.test.js", "contains": "v1 ordered-post-custom-uniforms WebGPU: declaration order and live uniform patch", "backends": ["webgpu"], "ciLabel": "js-tests"},
+        {"kind": "node-test", "path": "client/js/runtime-20-scene-shaders-custom-post.test.js", "contains": "v1 ordered-post-custom-uniforms WebGL2: declaration order and live uniform patch", "backends": ["webgl2"], "ciLabel": "js-tests"}
+      ]
     },
     {
       "id": "native-preview-degradation",
-      "state": "blocked",
+      "state": "enforced",
       "requirement": "Unsupported native custom-post behavior remains explicit and observable.",
       "targetBackends": ["native-preview", "headless"],
-      "ciOwners": [],
-      "evidence": []
+      "ciOwners": [
+        {"label": "go-tests", "job": "go-tests", "step": "Non-CLI unit and integration tests", "command": "make test-unit"}
+      ],
+      "evidence": [
+        {"kind": "go-test", "path": "scene/preview/coverage_test.go", "contains": "TestNativePreviewReportsCustomPostDegradation", "backends": ["native-preview"], "ciLabel": "go-tests"},
+        {"kind": "go-test", "path": "render/bundle/custom_post_degradation_test.go", "contains": "TestHeadlessCustomPostIsReportedPassthrough", "backends": ["headless"], "ciLabel": "go-tests"}
+      ]
     },
     {
       "id": "hub-command-diff",

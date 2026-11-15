@@ -189,3 +189,26 @@ func TestDriverDefaultStillPausesWhileHidden(t *testing.T) {
 		t.Fatal("RunWhileHidden must default to false so existing games keep pausing")
 	}
 }
+
+type alphaSource struct {
+	*ManualFrameSource
+	alphas []float64
+}
+
+func (s *alphaSource) SetFrameAlpha(alpha float64) { s.alphas = append(s.alphas, alpha) }
+
+// A source that implements host.FrameAlphaSink gets every frame's alpha after
+// the render callback, inside the frame.
+func TestDriverReportsAlphaToTheFrameSource(t *testing.T) {
+	rt := game.New(game.Config{FixedStep: 10 * time.Millisecond})
+	source := &alphaSource{ManualFrameSource: NewManualFrameSource()}
+	d := New(rt, source)
+	var rendered []float64
+	d.Start(func(alpha float64, _ game.Frame) { rendered = append(rendered, alpha) })
+	source.Fire(0)
+	source.Fire(15)
+	source.Fire(20)
+	if len(source.alphas) != 3 || source.alphas[1] != rendered[1] || source.alphas[1] != 0.5 || source.alphas[2] != 0 {
+		t.Fatalf("alphas %v, rendered %v", source.alphas, rendered)
+	}
+}

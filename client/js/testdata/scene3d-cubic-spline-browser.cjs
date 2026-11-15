@@ -181,12 +181,13 @@ const TEXTURED_PNG = texturedFixture.quadrantPNG(MUTATION === 'texture-white');
 const TEXTURED_PNG_SHA256 = require('crypto').createHash('sha256').update(TEXTURED_PNG).digest('hex');
 const textureBlobSessions = new Map();
 
-const AFFINE_PARENT = [
-  -2, 0, 0, 0,
-  0, 1, 0, 0,
-  0, 0, 1, 0,
-  0.5, 0.5, 1, 1,
-];
+const affinePick = require('./scene3d-affine-pick-geometry.cjs');
+// The parent matrix, camera and canvas size come from the helper, the single
+// source for the pick derivation. The guard fails if the canvas size drifts.
+const AFFINE_PARENT = affinePick.PARENT.slice();
+if (W !== affinePick.CANVAS.width || H !== affinePick.CANVAS.height) {
+  throw new Error('canvas size ' + W + 'x' + H + ' differs from scene3d-affine-pick-geometry.cjs');
+}
 const AFFINE_LOCAL_POSITIONS = [-0.4, -0.4, 0, 0.4, -0.4, 0, 0, 0.4, 0];
 const AFFINE_MODEL_MATRIX = [
   -Math.SQRT2, Math.SQRT1_2, 0, 0,
@@ -232,7 +233,7 @@ function affineManifestFor(mount, engine, webgpu) {
     props: {
       width: W, height: H, autoRotate: false, animation: false,
       responsive: false, maxDevicePixelRatio: 1, background: '#101418',
-      camera: { x: 0.5, y: 0.5, z: 3, fov: 50 },
+      camera: Object.assign({}, affinePick.CAMERA),
       lights: [{ id: 'key', kind: 'directional', intensity: 1.2,
         directionX: 0, directionY: 0, directionZ: -1 }],
       forceWebGL: !webgpu, requireWebGL: !webgpu, preferWebGPU: Boolean(webgpu),
@@ -299,7 +300,31 @@ const notFound = [];
 const networkFailures = [];
 const clientEventCompletions = [];
 const clientEventResponses = [];
+// Diagnostics only: the case, category, level and message of every telemetry
+// event the server accepted (never the event body), so a count mismatch names
+// the extra event.
+const clientEventNames = [];
 const networkRequests = new Map();
+function recordClientEventNames(body) {
+  let batch = null;
+  try { batch = JSON.parse(body.toString('utf8')); } catch (_e) {
+    clientEventNames.push({ caseName: '', cat: '', lvl: '', msg: 'unparsable batch' });
+    return;
+  }
+  for (const event of Array.isArray(batch && batch.events) ? batch.events : []) {
+    let caseName = '';
+    try { caseName = new URL(String(event.url || ''), BASE).pathname.replace(/^\/case\//, ''); } catch (_e) {}
+    // A quality transition also names why it fired and the timing it judged.
+    const fields = event.fields && typeof event.fields === 'object' ? event.fields : {};
+    const detail = String(event.msg || '') === 'adaptive-quality-transition'
+      ? ['reason', 'activeTier', 'frameMS', 'ewmaFrameMS', 'p95FrameMS', 'targetFrameMS', 'measurement']
+        .filter((key) => fields[key] !== undefined)
+        .map((key) => key + '=' + (typeof fields[key] === 'number' ? Math.round(fields[key] * 10) / 10 : String(fields[key]).slice(0, 40))).join(',')
+      : '';
+    clientEventNames.push({ caseName, cat: String(event.cat || ''), lvl: String(event.lvl || ''), msg: String(event.msg || '') + (detail ? '(' + detail + ')' : '') });
+  }
+}
+
 const server = http.createServer((req, res) => {
   const method = String(req.method || 'GET').toUpperCase();
   const parsed = new URL(req.url || '/', 'http://127.0.0.1');
@@ -323,8 +348,11 @@ const server = http.createServer((req, res) => {
       fail('client-events request failed: ' + detail);
       if (!res.headersSent) send(500, Buffer.from('client-events request failed'), 'text/plain');
     });
+    const bodyChunks = [];
+    req.on('data', (chunk) => bodyChunks.push(chunk));
     req.once('end', () => {
       if (res.headersSent) return;
+      recordClientEventNames(Buffer.concat(bodyChunks));
       clientEventResponses.push({ method, path: parsed.pathname, status: 204 });
       res.writeHead(204);
       res.end();
@@ -1465,11 +1493,15 @@ function affineRefsSetExpr(mount) {
     'window.__affineRefs={mount:m,canvas:cv,state:st,object:object};return true;})()';
 }
 
+// affine-pick-scale-only-pixel
+// The pointer is off the canvas centre. The centre is the image of the local
+// origin, so a pick that ignored the parent scale would hit it too. The offset in
+// scene3d-affine-pick-geometry.cjs lands inside the scaled triangle only.
 function affinePickExpr() {
   return '(function(){var r=window.__affineRefs;if(!r||!r.canvas)return false;' +
     'window.__affineInputEvents.length=0;var b=r.canvas.getBoundingClientRect();' +
     'var base={bubbles:true,cancelable:true,pointerId:71,pointerType:"mouse",isPrimary:true,' +
-      'button:0,clientX:b.left+b.width/2,clientY:b.top+b.height/2};' +
+      'button:0,clientX:b.left+b.width/2+' + affinePick.PICK_OFFSET.x + ',clientY:b.top+b.height/2+' + affinePick.PICK_OFFSET.y + '};' +
     'r.canvas.dispatchEvent(new PointerEvent("pointerdown",Object.assign({buttons:1},base)));' +
     'document.dispatchEvent(new PointerEvent("pointerup",Object.assign({buttons:0},base)));' +
     'return true;})()';
@@ -2015,10 +2047,14 @@ async function runAffineCase(send, c, sessionId) {
     if (!pick || pick.targetID !== 'affine-group-child') {
       fail('[' + c.name + '] actual canvas pick missed affine child: ' + JSON.stringify(pick));
     } else {
-      assertClose([pick.worldX, pick.worldY, pick.worldZ], [0.5, 0.5, 1],
+      // The pointer pick is taken at a pixel only the scaled triangle covers.
+      // The expected point and distance come from scene3d-affine-pick-geometry.cjs,
+      // the same source the matrix runner checks against.
+      const expectedPick = affinePick.expectedPick();
+      assertClose([pick.worldX, pick.worldY, pick.worldZ], expectedPick.world,
         '[' + c.name + '] actual affine pick point', 2e-4);
-      if (Math.abs(Number(pick.depth) - 2) >= 2e-4) {
-        fail('[' + c.name + '] actual affine pick distance=' + pick.depth + ' want 2');
+      if (Math.abs(Number(pick.depth) - expectedPick.depth) >= 2e-4) {
+        fail('[' + c.name + '] actual affine pick distance=' + pick.depth + ' want ' + expectedPick.depth);
       }
     }
   }
@@ -2417,7 +2453,7 @@ function scanChromeDiagnostics() {
 function writeReport(extra) {
   const report = Object.assign({
     errors, warnings, notFound, unexpectedRequests, networkFailures, clientEventCompletions,
-    clientEventResponses,
+    clientEventResponses, clientEventNames,
     sourceCommit: SOURCE_COMMIT,
     selectedBrowser: SELECTED_BROWSER,
     webgpuProofTarget: PROOF_TARGET,

@@ -155,3 +155,32 @@ func TestPollStampsConfiguredPlayerID(t *testing.T) {
 		t.Fatalf("expected event stamped with player p1, got %+v", events)
 	}
 }
+
+type fixedSource []State
+
+func (s fixedSource) Gamepads() []State { return s }
+
+// Steady-state polling allocates nothing, whether the pad is idle or moving.
+func TestPollerSteadyStateAllocatesNothing(t *testing.T) {
+	pad := State{Index: 0, ID: "pad", Mapping: "standard", Buttons: make([]float64, 17), Axes: make([]float64, 4)}
+	var source Source = fixedSource{pad} // converted once: boxing a slice allocates
+	input := game.NewInput()
+	poller := NewPoller(Config{})
+	step := 0
+	poll := func() {
+		step++
+		pad.Buttons[0] = float64(step % 2)
+		pad.Axes[0] = float64(step%3) / 2
+		poller.Poll(source, input)
+		input.EndFrame()
+	}
+	for i := 0; i < 8; i++ {
+		poll()
+	}
+	if allocs := testing.AllocsPerRun(500, poll); allocs != 0 {
+		t.Fatalf("Poll allocated %v times per call", allocs)
+	}
+	if len(input.Events()) != 0 {
+		t.Fatal("EndFrame must clear the polled events")
+	}
+}

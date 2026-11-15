@@ -30,6 +30,18 @@ type PageReport struct {
 	Interactions       []InteractionMetric `json:"interactions,omitempty"`
 	MetricAvailability *MetricAvailability `json:"metricAvailability,omitempty"`
 
+	// TimingSamples lists every load-timing sample when a budget gate
+	// measured the page more than once. The timing fields of this report
+	// then hold the median (see SampleTimings).
+	TimingSamples []TimingSample `json:"timingSamples,omitempty"`
+
+	// CollectionStall is set on a stub page whose collection timed out while
+	// the main thread was stalled (the frame sample window ran out with almost
+	// no frames). The page carries no metrics; a budget reports it as
+	// inconclusive with this reason. A timeout with no such evidence is a
+	// hard error and never produces a stub.
+	CollectionStall string `json:"collectionStall,omitempty"`
+
 	// Network resource waterfall (top-N slowest or largest)
 	Resources             []ResourceEntry `json:"resources,omitempty"`
 	TotalBytesTransferred int64           `json:"totalBytesTransferred"`

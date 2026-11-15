@@ -116,9 +116,12 @@ dashboards, and interactive scenes. Its supported boundary is:
   normalization and this S0 row makes no asset-pipeline support claim.
 - Desktop orbit/fly/first-person controls, pointer lock, picking, object drag,
   and transform-gizmo commits are the v1 interaction boundary.
-- Supported browser post effects preserve declaration order. Native/headless
-  custom-post behavior remains blocked until S5 provides backend-specific
-  degradation and telemetry evidence; it is not claimed as browser parity.
+- Supported browser post effects preserve declaration order. The native
+  renderer does not run custom post shaders: a pass with WGSL is an identity
+  passthrough on the headless device, and a pass without WGSL is skipped. Each
+  one is reported as a diagnostic (`scene.native.custom_post_passthrough` or
+  `scene.native.custom_post_skipped`) that names the pass. This is not browser
+  parity.
 - Hub updates either emit complete commands or reject a remount-required diff
   atomically. Generic hydration must not discard Scene3D command output.
 - A corpus route must publish measured p95/p99 frame evidence and stay inside
@@ -210,11 +213,11 @@ without a jump:
 | `gltf-draco-rejection` | enforced | Draco input fails closed with a named error. |
 | `gltf-basis-ktx2-policy` | enforced | Basis import degradation and renderer KTX2 upload are separate browser facts; S4 owns asset-pipe policy. |
 | `gltf-cubic-trs-morph` | enforced | Analytic fixture covers TRS, morph weights, clamps, seeks, native WebGL2 canvas pixels, and production WebGPU renderer pixels from the exact proof-private target. Actual WebGPU canvas presentation remains part of the release-pinned hardware completion obligation. |
-| `nested-group-scale-pick` | blocked | Browser renderer proof and native unit coverage exist; require renderer-consumed native normals, winding/cull, and pick evidence before certification. |
+| `nested-group-scale-pick` | enforced | Nesting is proven in Go: scene lowering and `scene.RaycastGraph` handle nested non-uniform scale (`scene/group_scale_affine_test.go`), and VM lowering does too (`client/vm/scene_group_scale_test.go`). Rendering and pick are proven per backend. WebGPU and WebGL2 (hosted Chrome, `scene3d-v1-browser-renderer-proof`): the renderer draws one triangle under a scaled, reflected parent matrix, and a pointer pick at a pixel only the scaled triangle covers reports the world point and depth derived from that matrix; the check fails if the pick ignores the scale. Native preview (Go test `TestHeadlessNestedGroupScaleNormalsWindingAndPick`): the lit path shades with the inverse-transpose normal, discards fragments whose winding disagrees with the matrix's orientation, and its pick agrees with `scene.RaycastGraph`, under nested non-uniform scale, a reflection and nested uniform scale. Not proven: the browser fixture hand-writes one pre-composed parent matrix instead of nesting groups, the browser proof checks pick and transforms but not normals, and the native shadow depth pass does not yet discard by orientation. |
 | `desktop-controls-picking` | enforced | Orbit/first-person controls and picking stay inside the v1 boundary. |
 | `desktop-gizmo-commit` | blocked | Add one end-to-end fly/pointer-lock/object-drag/gizmo commit proof. |
-| `ordered-post-custom-uniforms` | blocked | Add one cross-backend order/uniform-patch proof before certifying this row. |
-| `native-preview-degradation` | blocked | S5 must add backend-specific `CustomPost` degradation and telemetry evidence before this can be certified. |
+| `ordered-post-custom-uniforms` | enforced | Two Node tests (WebGPU and WebGL2, run against fake GPU devices, not real-GPU evidence) run a custom pass, tone mapping, and a second custom pass in declaration order, then send a live uniform patch through the post-uniforms scene command. The next frame uploads the new value and creates no shader module, pipeline, or program. They cover custom passes around tone mapping. |
+| `native-preview-degradation` | enforced | One Go test in `render/bundle` shows that on the headless device a custom post pass draws the same pixels as no pass and that the pass is reported by name; one Go test in `scene/preview` checks that the preview entry points return that diagnostic (it does not compare pixels). The native renderer still does not execute custom post shaders; it now says so. A pass whose pipeline fails to build on the headless device is not reported separately. |
 | `hub-command-diff` | enforced | Diffable fields produce a lossless command stream. |
 | `hub-remount-atomic-reject` | enforced | Remount fields reject before mutation or watcher notification. |
 | `scene-p95-budget-route` | blocked | Add a dedicated corpus route and measured p95/p99 evidence. |
@@ -267,6 +270,10 @@ does not consume the sample used by adaptive quality.
   `EXT_disjoint_timer_query_webgl2` around the full render call. Both include
   water, world geometry, and post effects. They exclude display scanout and
   asset uploads that occur outside the frame.
+  With WebGPU GPU-driven crowds (`scene.GPUDriven`), the crowd frustum culls
+  for the camera and shadow lights run in a separate command buffer that is
+  submitted before the frame's, so `gpuMS` no longer counts them. The occlusion
+  cull stays in the frame and is counted.
 - `source` is `gpu-timestamp`, `webgl-timer`, or `none`. `scope` is `frame`.
   `frameSeq` identifies the measured frame; asynchronous readback can lag the
   current frame. `atMS` is the time when the result was read.
@@ -336,6 +343,36 @@ Full quality uses five noise octaves; balanced uses three; survival removes the 
 Use `scene.Tonemap{Mode: scene.TonemapAgX, Exposure: 0.7}` for a fitted AgX log-exposure sigmoid with a toe, shoulder and highlight desaturation, followed by one sRGB transfer. Put `scene.Grain{Intensity: 0.015}` after tonemap and before FXAA. Grain uses a fixed pixel pattern; grading and haze dither without frame seeds. Survival removes grain and retains tonemap. New Go zero fields are omitted so browser defaults apply; nil haze and absent effects preserve existing wire data and shader variants. JS can explicitly set zero intensity to disable an effect.
 
 A restrained coastal chain is GodRays, mip Bloom (`Threshold: 1.2, Strength: 0.12, Radius: 3, Scale: 0.5`), AgX, Grain and FXAA. Keeping bloom above diffuse daylight and its strength low avoids broad halos. Estimated additional 1440p desktop cost for shafts, haze and grade: 0.4–0.9 ms, unmeasured. Combined atmosphere estimates are 1.5–3.4 ms; planar geometry can dominate. Hardware frame-time and Chrome/Edge/Firefox visual acceptance remain required.
+
+### Motion blur
+
+`scene.MotionBlur{Quality: scene.MotionBlurMedium, Strength: 0.5, MaxBlur: 32}` blurs the frame along each pixel's
+motion. Add it to `PostFX.Effects` to opt in; a scene without it pays nothing, and its code downloads only for scenes
+that list it. Put it after `scene.Decals` and before `Tonemap`, `Bloom`, TAA and FXAA, so it blurs linear HDR color.
+Do not make it the last effect on WebGL2 when `PostFX.MaxPixels` scales the chain below the canvas size.
+
+The pass follows McGuire et al. (2012). It builds a velocity buffer, takes the largest velocity in each screen tile,
+spreads that to the neighboring tiles, then gathers samples along the dominant velocity. Each tap is weighted by
+depth and by how far its own velocity reaches, so a sharp object that moves across a blurred background keeps its
+edge and a fast object does not smear over a still one in front of it.
+
+- `Quality`: `low` (6 taps, 32 px tiles), `medium` (10 taps, 24 px, default) or `high` (16 taps, 16 px).
+- `Strength`: the fraction of a frame the shutter is open, 0..1. Default 0.5, a 180 degree shutter.
+- `MaxBlur`: the longest blur in pixels at 1080p, 1..128, and never more than the tile size. Default 32.
+
+**Backends.** WebGPU blurs camera motion, rigid bodies and skinned meshes, using the motion vectors the renderer
+already draws for TAA (static geometry reprojects through the depth buffer and the previous view-projection; moving
+meshes write their own velocity). WebGL2 has no per-object velocity target, so it blurs camera motion only: a turning
+or moving camera blurs the view, while an object that moves in front of a still camera does not blur there. The
+effect needs `EXT_color_buffer_float` on WebGL2 and does nothing without it.
+
+**Adaptive quality.** The pass reads the active quality tier. The `survival`, `minimal` and `low` tiers skip it. The
+`reduced`, `balanced` and `medium` tiers draw the `low` preset whatever `Quality` says. Adaptive post-FX suppression
+removes it with the other costly effects, so list `"motionBlur"` in the `PostEffects` of each quality ladder rung that
+should keep it.
+
+**History.** The pass keeps the previous frame's view-projection. It draws nothing for the first frame, after a gap of
+more than 250 ms, and after a camera cut of more than 10 world units in one frame.
 
 ### Controlling the Scene3D animation clock
 

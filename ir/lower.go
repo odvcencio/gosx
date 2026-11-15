@@ -1164,18 +1164,6 @@ func (l *lowerer) returnExprNodes(returnStmt *gotreesitter.Node) []*gotreesitter
 	return exprs
 }
 
-func (l *lowerer) firstNonEmptyNodeText(nodes []*gotreesitter.Node) string {
-	for _, node := range nodes {
-		if node == nil {
-			continue
-		}
-		if text := strings.TrimSpace(l.text(node)); text != "" {
-			return text
-		}
-	}
-	return ""
-}
-
 func (l *lowerer) firstNamedChildByType(n *gotreesitter.Node, typ string) *gotreesitter.Node {
 	if n == nil {
 		return nil

@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"m31labs.dev/gosx/internal/filepolicy"
 	"mime"
 	"net/http"
 	"os"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"m31labs.dev/gosx/internal/filepolicy"
 
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
@@ -99,17 +100,6 @@ func (a *App) effectiveRuntimeRoot() string {
 		}
 	}
 	return ResolveAppRoot("")
-}
-
-func (a *App) hasCompatRuntimeAssets() bool {
-	root := a.effectiveRuntimeRoot()
-	if root == "" {
-		return false
-	}
-	if isFile(filepath.Join(root, "build", "bootstrap.js")) {
-		return true
-	}
-	return isFile(filepath.Join(root, "build.json")) && isDir(filepath.Join(root, "assets"))
 }
 
 func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
@@ -282,10 +272,6 @@ func serveImmutableRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath st
 	}
 	httpcache.MarkImmutableAsset(w, r)
 	serveRuntimeFileWithCompression(w, r, fsPath, compression)
-}
-
-func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {
-	serveRuntimeFileWithCompression(w, r, fsPath, true)
 }
 
 func serveRuntimeFileWithCompression(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {
@@ -521,8 +507,22 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DModelPreparation.File)
 	case "bootstrap-feature-scene3d-hierarchy.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DHierarchy.File)
+	case "bootstrap-feature-scene3d-selena-lighting.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DSelenaLighting.File)
+	case "bootstrap-feature-scene3d-data-texture.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DDataTexture.File)
+	case "bootstrap-feature-scene3d-warmup.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWarmup.File)
+	case "bootstrap-feature-scene3d-text-atlas.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DTextAtlas.File)
 	case "bootstrap-feature-scene3d-particle-burst.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
+	case "bootstrap-feature-scene3d-depthfx.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DDepthFX.File)
+	case "bootstrap-feature-scene3d-postfx-webgpu.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DPostFXWebGPU.File)
+	case "bootstrap-feature-scene3d-postfx-webgl.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DPostFXWebGL.File)
 	case "bootstrap-feature-scene3d-zoom.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DZoom.File)
 	case "bootstrap-feature-scene3d-timeline.js":

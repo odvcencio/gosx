@@ -262,7 +262,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	_ "__MODULE__/modules"
@@ -283,14 +282,15 @@ func main() {
 	appName := getenv("APP_NAME", "My GoSX App")
 	port := getenv("PORT", "8080")
 	publicBase := getenv("PUBLIC_URL", "http://localhost:"+port)
-	// Local development serves plain HTTP. A Secure cookie never reaches the
-	// server there. Point PUBLIC_URL at an https origin to restore Secure.
+	// Only development (GOSX_ENV=development, or gosx dev) may drop the Secure
+	// cookie flag, because it serves plain HTTP. Production keeps Secure even
+	// when PUBLIC_URL is unset or http://; set PUBLIC_URL to your https origin.
 	secret, err := sessionSecret()
 	if err != nil {
 		log.Fatal(err)
 	}
 	sessions, err := session.New(secret, session.Options{
-		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
+		AllowInsecure: allowInsecureCookies(publicBase),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -640,13 +640,36 @@ import (
 	"strings"
 )
 
+// developmentMode reports whether the app runs in development: GOSX_ENV is
+// "development", or GOSX_ENV is unset and "gosx dev" set GOSX_DEV=1.
+func developmentMode() bool {
+	mode := strings.TrimSpace(os.Getenv("GOSX_ENV"))
+	return strings.EqualFold(mode, "development") || (mode == "" && os.Getenv("GOSX_DEV") == "1")
+}
+
+// insecureCookiesAllowed is the decision table for session.Options.AllowInsecure.
+// Only development over an http:// PUBLIC_URL may drop the Secure flag.
+func insecureCookiesAllowed(dev bool, publicBase string) bool {
+	return dev && strings.HasPrefix(publicBase, "http://")
+}
+
+// allowInsecureCookies applies insecureCookiesAllowed to the process
+// environment. Outside development an http:// PUBLIC_URL keeps the Secure
+// flag on session cookies and logs a warning: a browser then sends them only
+// over HTTPS, so a missing PUBLIC_URL cannot weaken cookies silently.
+func allowInsecureCookies(publicBase string) bool {
+	dev := developmentMode()
+	if !dev && strings.HasPrefix(publicBase, "http://") {
+		log.Printf("PUBLIC_URL is %q (http://) outside development: session cookies keep the Secure flag and browsers send them only over HTTPS. Set PUBLIC_URL to your https:// origin, or GOSX_ENV=development for local HTTP.", publicBase)
+	}
+	return insecureCookiesAllowed(dev, publicBase)
+}
+
 func sessionSecret() (string, error) {
 	secret := strings.TrimSpace(os.Getenv("SESSION_SECRET"))
 	switch secret {
 	case "", "change-me-in-production", "gosx-app-session-secret", "gosx-docs-session-secret":
-		mode := strings.TrimSpace(os.Getenv("GOSX_ENV"))
-		dev := strings.EqualFold(mode, "development") || (mode == "" && os.Getenv("GOSX_DEV") == "1")
-		if !dev {
+		if !developmentMode() {
 			return "", fmt.Errorf("set SESSION_SECRET to a random secret of at least 16 bytes; missing or placeholder secrets are only allowed in development")
 		}
 		var random [32]byte

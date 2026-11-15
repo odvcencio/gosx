@@ -638,9 +638,14 @@ func buildWindowsInstallerBinary(output, mainSource string) error {
 	return nil
 }
 
-// installerBuildHasEmptyGitPlaceholder recognizes only an empty .git
-// directory that Git itself cannot use. Explicit Git environment overrides and
-// nonempty or unreadable metadata retain Go's ordinary fail-closed behavior.
+// installerBuildHasEmptyGitPlaceholder reports whether Go's VCS stamping would
+// fail for a build run in dir because of an empty .git directory that Git
+// cannot use. It finds the repository the way cmd/go does (goBuildVCSRoot), so
+// a placeholder above a linked worktree counts: Go skips the worktree's .git
+// file and stops at the placeholder. It then asks Git about the directory where
+// Go would run `git status`. Explicit Git environment overrides, an explicit
+// -buildvcs setting, a nearer repository of any kind and nonempty or unreadable
+// metadata retain Go's ordinary fail-closed behavior.
 func installerBuildHasEmptyGitPlaceholder(dir string) bool {
 	if os.Getenv("GIT_DIR") != "" || os.Getenv("GIT_WORK_TREE") != "" {
 		return false
@@ -654,26 +659,63 @@ func installerBuildHasEmptyGitPlaceholder(dir string) bool {
 	if err != nil {
 		return false // Go's automatic VCS detection already handles missing Git.
 	}
-	for current := filepath.Clean(dir); ; current = filepath.Dir(current) {
-		marker := filepath.Join(current, ".git")
-		info, err := os.Stat(marker)
-		if err == nil {
-			if !info.IsDir() {
-				return false
-			}
-			entries, err := os.ReadDir(marker)
-			if err != nil || len(entries) != 0 {
-				return false
-			}
-			return exec.Command(git, "-C", dir, "rev-parse", "--git-dir").Run() != nil
-		}
-		if !os.IsNotExist(err) {
-			return false
-		}
-		if parent := filepath.Dir(current); parent == current {
-			return false
-		}
+	root, ok := goBuildVCSRoot(dir)
+	if !ok {
+		return false
 	}
+	entries, err := os.ReadDir(filepath.Join(root, ".git"))
+	if err != nil || len(entries) != 0 {
+		return false
+	}
+	return exec.Command(git, "-C", root, "rev-parse", "--git-dir").Run() != nil
+}
+
+// goBuildVCSRoot returns the directory that cmd/go takes as the Git repository
+// for a build run in dir. It mirrors vcs.FromDir in cmd/go: walk up from dir
+// and stop at the nearest directory holding a version-control root marker.
+// Go counts only a .git directory as a Git root, so the .git file of a linked
+// worktree is skipped and the walk continues. ok is false when no marker is
+// found or the nearest marker belongs to another version-control system.
+func goBuildVCSRoot(dir string) (string, bool) {
+	current, err := filepath.Abs(dir)
+	if err != nil {
+		return "", false
+	}
+	for {
+		if hasGoVCSRootMarker(current, ".git", true) {
+			return current, true
+		}
+		for _, other := range otherGoVCSRootMarkers {
+			if hasGoVCSRootMarker(current, other.name, other.isDir) {
+				return "", false
+			}
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		current = parent
+	}
+}
+
+// otherGoVCSRootMarkers are the root markers cmd/go recognizes for version
+// control systems other than Git (RootNames in cmd/go/internal/vcs).
+var otherGoVCSRootMarkers = []struct {
+	name  string
+	isDir bool
+}{
+	{".hg", true},
+	{".bzr", true},
+	{".svn", true},
+	{".fslckout", false},
+	{"_FOSSIL_", false},
+}
+
+// hasGoVCSRootMarker matches cmd/go's isVCSRoot: the name exists in dir and
+// is a directory exactly when isDir is set.
+func hasGoVCSRootMarker(dir, name string, isDir bool) bool {
+	info, err := os.Stat(filepath.Join(dir, name))
+	return err == nil && info.IsDir() == isDir
 }
 
 func setCommandEnvironment(environment []string, values map[string]string) []string {

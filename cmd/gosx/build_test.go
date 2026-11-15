@@ -1179,6 +1179,8 @@ func TestRunBuildProdPreservesFileModuleHooksInStaticExport(t *testing.T) {
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
+	// The test reads the exported page, not runtime bytes.
+	useFakePrebuiltRuntime(t)
 	dir := filepath.Join(t.TempDir(), "build-app")
 	if err := RunInit(dir, "example.com/build-app", ""); err != nil {
 		t.Fatal(err)

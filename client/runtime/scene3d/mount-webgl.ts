@@ -884,7 +884,7 @@
       return null;
     }
     const joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
-    if (!joints.length || joints.length > 64) {
+    if (!joints.length || joints.length > 256) {
       return null;
     }
     let inverseBindMatrices = skin.inverseBindMatrices instanceof Float32Array
@@ -1392,7 +1392,7 @@
         count: vertexCount,
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
-        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs), uvs1: vertices.uvs1 instanceof Float32Array ? new Float32Array(vertices.uvs1) : null,
         tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
@@ -1408,7 +1408,7 @@
           return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
         }),
         normals: transformedNormals,
-        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs), uvs1: vertices.uvs1 instanceof Float32Array ? new Float32Array(vertices.uvs1) : null,
         tangents: sceneModelTransformTangents(vertices.tangents, transformedNormals, model, modelOrientation),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
@@ -1824,7 +1824,14 @@
     if (!sceneHasNavigatorWebGPU()) {
       return Promise.resolve(null);
     }
-    return ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
+    return sceneWithPostFXChunk(ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js"), "postfx-webgpu", "gosxScene3dPostfxWebgpuUrl");
+  }
+
+  // TAA, depth of field and auto exposure ship per backend in a chunk the page
+  // advertises only for scenes that declare them. It loads with the renderer
+  // chunk; with no URL it settles at once and the renderer skips those passes.
+  function sceneWithPostFXChunk(renderer: Promise<any>, kind: string, key: string) {
+    return Promise.all([renderer, ensureSceneGatedFeatureLoaded(kind, key, "").catch((): any => null)]).then((loaded: any[]) => loaded[0]);
   }
 
   async function ensurePreferredWebGPUBackend(props, capability) {
@@ -1859,18 +1866,14 @@
   // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
 
   function ensureWebGLFeatureLoaded() {
-    // The monolith keeps 16-scene-webgl.js inline, so nothing to fetch.
-    if (typeof createScenePBRRendererOrFallback === "function") {
-      return Promise.resolve(sceneWebGLChunkAPI() || { inline: true });
-    }
-    if (window.__gosx_scene3d_webgl_api) {
-      return Promise.resolve(window.__gosx_scene3d_webgl_api);
-    }
-    if (window.__gosx_scene3d_webgl_feature_promise) {
+    // The monolith keeps 16-scene-webgl.js inline, and a loaded chunk stays
+    // loaded; then only the post-effect chunk can be left to fetch.
+    const ready = typeof createScenePBRRendererOrFallback === "function" ? sceneWebGLChunkAPI() || { inline: true } : window.__gosx_scene3d_webgl_api;
+    if (!ready && window.__gosx_scene3d_webgl_feature_promise) {
       return window.__gosx_scene3d_webgl_feature_promise;
     }
-    const promise = ensureSceneGatedFeatureLoaded("webgl", "gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js");
-    window.__gosx_scene3d_webgl_feature_promise = promise;
+    const promise = sceneWithPostFXChunk(ready ? Promise.resolve(ready) : ensureSceneGatedFeatureLoaded("webgl", "gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js"), "postfx-webgl", "gosxScene3dPostfxWebglUrl");
+    if (!ready) window.__gosx_scene3d_webgl_feature_promise = promise;
     return promise;
   }
 
@@ -1939,12 +1942,11 @@
   //
   // A WebGPU page does NOT wait here. It reaches WebGL only through a device
   // loss, and deferSceneWebGLFallback below fetches the chunk at that point.
+  // A WebGL mount waits here even when the renderer is in place (the monolith,
+  // or an earlier mount), for the post-effect chunk its page advertises.
   async function settlePreferredWebGLBackend(props, capability) {
-    if (sceneWebGLRendererFactory()) {
-      return true;
-    }
     if (!sceneMountWantsWebGLFirst(props, capability)) {
-      return false;
+      return !!sceneWebGLRendererFactory();
     }
     try {
       return !!(await ensureWebGLFeatureLoaded());
@@ -2098,9 +2100,9 @@
 
   // A scene command can add a wave spectrum after mount. Ask for the FFT chunk once; until it lands the renderer keeps
   // drawing Gerstner waves, and a failed fetch is not retried on every schedule.
-  var sceneOceanFFTRequested = false;
+  var sceneOceanFFTRequested = false, sceneTerrainLoad = null; function sceneTerrainFeature(state) { /* terrain, wind and scatter bands (terrain.ts); one load per page, so a failed fetch is reported once and not retried on every schedule */ return (state?.environment?.terrain || state?.environment?.wind || state?.instancedMeshes?.some((mesh) => mesh?.lodGroup)) && !window.__gosx_scene3d_terrain_api ? (sceneTerrainLoad = sceneTerrainLoad || ensureSceneGatedFeatureLoaded("terrain", "gosxScene3dTerrainUrl", "", true).catch(() => null)) : null; }
   function requestSceneOceanFFTIfNeeded(state) {
-    if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
+    sceneTerrainFeature(state); if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
     sceneOceanFFTRequested = true;
     ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", "").catch(function() {});
   }
@@ -2121,7 +2123,7 @@
   // settleSceneComputeFeature awaits the compute chunk before the first
   // render when the scene needs it. Await it next to settlePreferredWebGLBackend
   // so the first frame draws the particles instead of skipping them.
-  async function settleSceneComputeFeature(state) {
+  async function settleSceneComputeFeature(state) { await sceneTerrainFeature(state);
     if (!sceneNeedsComputeFeature(state)) {
       return false;
     }
@@ -3902,6 +3904,7 @@
 
   function sceneCommitRigidInstancePatch(patch) {
     sceneCommitImportedModelPose(patch, sceneApplyModelSkinPose);
+    for (const object of patch.staged.objects) sceneCrowdBatchTouch(object);
   }
 
   function sceneUpdateRigidInstancePoses(state, hydrationModels) {
@@ -4090,7 +4093,7 @@
         bounds.minX = bounds.minY = bounds.minZ = Infinity;
         bounds.maxX = bounds.maxY = bounds.maxZ = -Infinity;
         api.crowdMotionSweptBoundsInto(bounds, motion.record, motion.localRadius);
-        motion.dirty = true;
+        motion.dirty = true; sceneCrowdBatchTouch(object);
       }
     }
     return true;
@@ -5134,7 +5137,7 @@
     ));
     const cpuRAFBudgetMS = Math.max(targetFrameMS, authoredFrameIntervalMS > 0
       ? authoredFrameIntervalMS
-      : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 0));
+      : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 1000 / 60));
     const profileOverrides = (props && (props.qualityProfiles || props.adaptiveQualityProfiles)) || adaptiveConfig.profiles || {};
     const defaults = {
       full: { dprCap: defaultSceneMaxDevicePixelRatio(capability), surfaceResolution: 160, causticsResolution: 512, objectShadowResolution: 512, objectTextureMaxSide: 512, objectTexturePixelBudget: 786432, expensivePassCadence: 1 },
@@ -5215,6 +5218,7 @@
       sampleCursor: 0,
       sampleScratch: new Array(120),
       lastRAFNowMS: null,
+      ...sceneAdaptiveCadenceFields(),
       missingRendererSamples: 0,
       rendererTimingFallbackFrames: Math.max(2, Math.floor(sceneNumber(props && props.adaptiveRendererTimingFallbackFrames, 8))),
       resumePending: true,
@@ -5404,29 +5408,6 @@
     }
   }
 
-  function sceneAdaptiveSetTier(state, tier, reason, nowMS) {
-    if (!state.profiles[tier] || state.activeTier === tier) return false;
-    state.activeTier = tier;
-    state.activeProfile = state.profiles[tier];
-    state.tier = tier;
-    state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, state.activeProfile.dprCap);
-    state.qualityRevision += 1;
-    state.transitionReason = reason;
-    state.cooldownUntilMS = nowMS + state.cooldownMS;
-    state.badFrames = 0;
-    state.goodFrames = 0;
-    state.severeFrames = 0;
-    return true;
-  }
-
-  // Frame caps quantize rAF intervals on displays such as 90 and 144 Hz.
-  // Judge sustained cadence from the existing timing window so isolated long
-  // intervals do not strand either governor below its requested quality.
-  /** @param {{ewmaFrameMS:number,p95FrameMS:number}} state @param {number} target */
-  function sceneAdaptiveHealthyRAFCadence(state, target) {
-    return state.ewmaFrameMS <= target * 1.06 && state.p95FrameMS <= target * 1.35;
-  }
-
   function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
     if (state && viewport && viewport.devicePixelRatio > 0 && state.renderDevicePixelRatio !== viewport.devicePixelRatio) {
       state.renderDevicePixelRatio = viewport.devicePixelRatio;
@@ -5441,8 +5422,7 @@
     const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     const rafNow = Number.isFinite(Number(frameNowMS)) ? Number(frameNowMS) : now;
     const cpuDurationMS = Math.max(0, now - sceneNumber(frameStart, now));
-    const rafIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
-    state.lastRAFNowMS = rafNow;
+    const rafIntervalMS = sceneAdaptiveCadence(state, rafNow, cpuDurationMS);
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
@@ -5467,6 +5447,8 @@
       return false;
     }
     const frameMS = sample.durationMS;
+    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
+    if (sceneAdaptiveStallSample(state, isRAFMeasured, rafIntervalMS) || sceneAdaptiveScrollHeld(state, isRAFMeasured, sceneState, now)) { applySceneAdaptiveQualityState(mount, state, now, false); return false; }
     state.lastFrameMS = frameMS;
     state.measurement = sample.source;
     state.lastMeasurement = sample;
@@ -5481,9 +5463,8 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
     const cpuMeasured = isRAFMeasured || sample.source.indexOf("cpu-work+") === 0;
-    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const target = sceneAdaptiveTarget(state, cpuMeasured);
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     if (missesBudget) {
@@ -5514,7 +5495,7 @@
         state.cooldownUntilMS = now + state.cooldownMS;
         changed = true;
       }
-    } else if (now >= state.cooldownUntilMS && state.validSamples >= 300 && state.goodFrames >= 300) {
+    } else if (now >= state.cooldownUntilMS && state.validSamples >= sceneAdaptivePromotionFrames(state, 300) && state.goodFrames >= sceneAdaptivePromotionFrames(state, 300)) {
       if (state.postFXSuppressed) {
         state.postFXSuppressed = false;
         state.qualityRevision += 1;
@@ -5525,6 +5506,7 @@
         changed = sceneAdaptiveSetTier(state, order[activeIndex - 1], "recovered", now);
       }
     }
+    if (!changed && activeIndex <= requestedIndex && state.goodFrames >= 300) state.promotionBackoff = 1;
     if (changed) {
       sceneApplyAdaptivePostFX(sceneState, state);
       applyScenePostFXState(mount, sceneState);
@@ -5537,7 +5519,7 @@
         ewmaFrameMS: state.ewmaFrameMS,
         p95FrameMS: state.p95FrameMS,
         targetFrameMS: state.targetFrameMS,
-        dprCap: state.renderDevicePixelRatio || state.currentMaxDevicePixelRatio,
+        dprCap: state.currentMaxDevicePixelRatio,
         postFXSuppressed: state.postFXSuppressed,
       });
       return true;
