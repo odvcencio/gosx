@@ -257,18 +257,19 @@ if [ -z "$runtime_asset" ]; then
 	exit 1
 fi
 # The home page no longer needs the shared WASM runtime (its hero renders
-# through the JavaScript Scene3D path), so take the hashed WASM path from the
-# first page that still loads it. The performance page always does.
+# through the JavaScript Scene3D path), so take the hashed WASM path from a
+# page whose manifest loads the full runtime: the livesim demo does. The
+# performance page only names the file as text, which is not a load.
 wasm_asset="$(grep -o '/gosx/assets/runtime/gosx-runtime\.[0-9a-f][0-9a-f]*\.wasm' "$tmp_dir/home.html" | sed -n '1p')"
 if [ -z "$wasm_asset" ]; then
-	if ! fetch_exact "/performance/" "$tmp_dir/performance.html"; then
-		echo "gosx docs smoke: /performance/ did not return HTTP 200" >&2
+	if ! fetch_exact "/demos/livesim/" "$tmp_dir/livesim.html"; then
+		echo "gosx docs smoke: /demos/livesim/ did not return HTTP 200" >&2
 		exit 1
 	fi
-	wasm_asset="$(grep -o '/gosx/assets/runtime/gosx-runtime\.[0-9a-f][0-9a-f]*\.wasm' "$tmp_dir/performance.html" | sed -n '1p')"
+	wasm_asset="$(grep -o '"path":"/gosx/assets/runtime/gosx-runtime\.[0-9a-f][0-9a-f]*\.wasm"' "$tmp_dir/livesim.html" | sed -n '1s/^"path":"//;1s/"$//p')"
 fi
 if [ -z "$wasm_asset" ]; then
-	echo "gosx docs smoke: neither the home page nor /performance/ names the hashed WASM runtime" >&2
+	echo "gosx docs smoke: neither the home page nor /demos/livesim/ loads the hashed WASM runtime" >&2
 	exit 1
 fi
 runtime_asset="/${runtime_asset#/}"
