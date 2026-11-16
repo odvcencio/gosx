@@ -66,7 +66,7 @@
         "limits": {
           "cssWireBytes": 256,
           "frameworkJsWireBytes": 28620,
-          "htmlWireBytes": 16567,
+          "htmlWireBytes": 16569,
           "imageWireBytes": 26270,
           "inlineScriptBytes": 256,
           "jsWireBytes": 28620,
@@ -86,7 +86,7 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "htmlWireBytes": "2026-11-15: the /demos gallery shows a one-line what-this-shows, a doc-page link and capability chips on each card, plus a capability index. Hosted wire run for PR #846 measured htmlWireBytes=16259 B for 13 cards (+1024 B over the prior 15235 B cap). The Rooms card in PR #864 adds 265 B; a local make wire-gate run measured 16524 B for 14 cards. Set the cap to the measurement, with no headroom. All other limits and policies are unchanged. With every docs and demo change combined, the merge train PR #871, hosted wire run 43753220804 measured 16567 B (+43 B); set the cap to that measurement."
+          "htmlWireBytes": "2026-11-15: the /demos gallery shows a one-line what-this-shows, a doc-page link and capability chips on each card, plus a capability index. Hosted wire run for PR #846 measured htmlWireBytes=16259 B for 13 cards (+1024 B over the prior 15235 B cap). The Rooms card in PR #864 adds 265 B; a local make wire-gate run measured 16524 B for 14 cards. Set the cap to the measurement, with no headroom. All other limits and policies are unchanged. With every docs and demo change combined, the merge train PR #871, hosted wire run 43753220804 measured 16567 B (+43 B); set the cap to that measurement. 2026-11-16: the rooms demo card now links /docs/guides/rooms instead of /docs/hubs (+2 B brotli on the demos index). Hosted wire run on PR #874 (job 133006454406 at head f236c38e80) measured htmlWireBytes=16569 B. Set to that measurement with no extra headroom."
         }
       },
       "/demos/scene3d/": {
