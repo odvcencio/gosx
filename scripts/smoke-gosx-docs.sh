@@ -252,9 +252,23 @@ fi
 # from the rendered document. The CSS compatibility URL resolves through the
 # build manifest to its immutable hashed asset.
 runtime_asset="$(grep -o 'gosx/assets/runtime/bootstrap-runtime\.[0-9a-f][0-9a-f]*\.js' "$tmp_dir/home.html" | sed -n '1p')"
+if [ -z "$runtime_asset" ]; then
+	echo "gosx docs smoke: rendered home page does not name the hashed bootstrap runtime" >&2
+	exit 1
+fi
+# The home page no longer needs the shared WASM runtime (its hero renders
+# through the JavaScript Scene3D path), so take the hashed WASM path from the
+# first page that still loads it. The performance page always does.
 wasm_asset="$(grep -o '/gosx/assets/runtime/gosx-runtime\.[0-9a-f][0-9a-f]*\.wasm' "$tmp_dir/home.html" | sed -n '1p')"
-if [ -z "$runtime_asset" ] || [ -z "$wasm_asset" ]; then
-	echo "gosx docs smoke: rendered home page does not name hashed runtime assets" >&2
+if [ -z "$wasm_asset" ]; then
+	if ! fetch_exact "/performance/" "$tmp_dir/performance.html"; then
+		echo "gosx docs smoke: /performance/ did not return HTTP 200" >&2
+		exit 1
+	fi
+	wasm_asset="$(grep -o '/gosx/assets/runtime/gosx-runtime\.[0-9a-f][0-9a-f]*\.wasm' "$tmp_dir/performance.html" | sed -n '1p')"
+fi
+if [ -z "$wasm_asset" ]; then
+	echo "gosx docs smoke: neither the home page nor /performance/ names the hashed WASM runtime" >&2
 	exit 1
 fi
 runtime_asset="/${runtime_asset#/}"
