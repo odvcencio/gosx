@@ -67,7 +67,7 @@ var demoDocPages = map[string]string{
 	"html-surface":  "/docs/scene3d",
 	"cms":           "/docs/forms",
 	"orrery":        "/docs/scene3d",
-	"rooms":         "/docs/hubs", // docs/rooms.md has no site page yet; repoint to /docs/guides/rooms when #850 lands
+	"rooms":         "/docs/guides/rooms",
 }
 
 var demoGroups = map[string]string{

@@ -317,6 +317,7 @@ var docsCatalog = []DocSection{
 				Section:     "games",
 				Source:      "docs/rooms.md",
 				Keywords:    []string{"rooms", "multiplayer", "bots", "prediction", "netsync", "online"},
+				Demo:        "rooms",
 			},
 			{
 				Title:       "Netplay",
