@@ -28,7 +28,7 @@ struct Particle {
 };
 
 struct ParticleForce {
-  meta   : vec4<f32>, // x kind, y strength, z frequency, w unused
+  parameters : vec4<f32>, // x kind, y strength, z frequency, w unused
   vector : vec4<f32>, // xyz direction/target/axis, w unused
 };
 
@@ -68,8 +68,8 @@ fn forceVectorOrDefault(v : vec3<f32>, fallback : vec3<f32>) -> vec3<f32> {
 }
 
 fn particleForceAcceleration(f : ParticleForce, pos : vec3<f32>, time : f32) -> vec3<f32> {
-  let kind = u32(f.meta.x + 0.5);
-  let strength = f.meta.y;
+  let kind = u32(f.parameters.x + 0.5);
+  let strength = f.parameters.y;
   let v = f.vector.xyz;
   if (kind == PARTICLE_FORCE_GRAVITY) {
     let g = forceVectorOrDefault(v, vec3<f32>(0.0, -1.0, 0.0));
@@ -97,7 +97,7 @@ fn particleForceAcceleration(f : ParticleForce, pos : vec3<f32>, time : f32) -> 
     return normalize(cross(radial, axis)) * strength;
   }
   if (kind == PARTICLE_FORCE_TURBULENCE) {
-    var freq = abs(f.meta.z);
+    var freq = abs(f.parameters.z);
     if (freq <= 0.000001) {
       freq = 1.0;
     }
@@ -134,9 +134,9 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         break;
       }
       let force = u.forces[fi];
-      let kind = u32(force.meta.x + 0.5);
+      let kind = u32(force.parameters.x + 0.5);
       if (kind == PARTICLE_FORCE_DRAG) {
-        drag = drag + force.meta.y;
+        drag = drag + force.parameters.y;
       } else {
         acceleration = acceleration + particleForceAcceleration(force, p.position.xyz, u.time);
       }
