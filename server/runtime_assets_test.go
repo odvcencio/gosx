@@ -15,6 +15,27 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 )
 
+func TestRuntimeMountPrecedence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "build"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build", "gosx-runtime.wasm"), []byte("runtime"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	app := New()
+	app.SetRuntimeRoot(root)
+	app.Mount("/gosx/islands/Counter.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("program")) }))
+	handler := app.Build()
+	for _, tc := range []struct{ path, body string }{{"/gosx/islands/Counter.json", "program"}, {"/gosx/runtime.wasm", "runtime"}} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if rec.Code != http.StatusOK || rec.Body.String() != tc.body {
+			t.Errorf("%s: status %d, body %q", tc.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestAppPreservesIslandProgramMediaTypeForCompressedSidecars(t *testing.T) {
 	root := t.TempDir()
 	assetsDir := filepath.Join(root, "assets", "islands")

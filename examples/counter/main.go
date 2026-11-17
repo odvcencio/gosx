@@ -1,5 +1,6 @@
 // Example counter runs the standalone Counter island demo.
 //
+// Build: go run ./cmd/gosx build-runtime build
 // Run: go run ./examples/counter
 // Visit: http://localhost:8080
 package main
@@ -14,6 +15,7 @@ import (
 	"strconv"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/island/program"
@@ -22,6 +24,13 @@ import (
 
 func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
+	if os.Getenv("GOSX_DEV") != "1" {
+		for _, name := range []string{"gosx-runtime.wasm", "wasm_exec.js"} {
+			if _, err := os.Stat(filepath.Join(filepath.Dir(thisFile), "../..", "build", name)); err != nil {
+				log.Fatal("missing island runtime; run `go run ./cmd/gosx build-runtime build` from the repository root, then configure app.SetRuntimeRoot(repositoryRoot)")
+			}
+		}
+	}
 	app, err := newApp(filepath.Dir(thisFile))
 	if err != nil {
 		log.Fatal(err)
@@ -41,6 +50,18 @@ func newApp(root string) (*server.App, error) {
 	}
 
 	app := server.New()
+	runtimeRoot := filepath.Join(root, "../..")
+	if os.Getenv("GOSX_DEV") == "1" {
+		runtimeRoot = os.Getenv("GOSX_APP_ROOT")
+	}
+	app.SetRuntimeRoot(runtimeRoot)
+	var runtimeHash string
+	var runtimeSize int64
+	if os.Getenv("GOSX_DEV") != "1" {
+		if data, err := os.ReadFile(filepath.Join(root, "../..", "build", "gosx-runtime.wasm")); err == nil {
+			runtimeHash, runtimeSize = buildmanifest.ContentHash(data), int64(len(data))
+		}
+	}
 	app.SetPublicDir(root)
 	app.Mount("/gosx/islands/Counter.json", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -48,7 +69,7 @@ func newApp(root string) (*server.App, error) {
 		_, _ = w.Write(counterJSON)
 	}))
 	app.Route("/", func(r *http.Request) gosx.Node {
-		return counterPage(counterProgram, queryCount(r))
+		return counterPage(counterProgram, queryCount(r), runtimeHash, runtimeSize)
 	})
 	return app, nil
 }
@@ -100,8 +121,11 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
-func counterPage(counterProgram *program.Program, count int) gosx.Node {
+func counterPage(counterProgram *program.Program, count int, runtimeHash string, runtimeSize int64) gosx.Node {
 	islands := island.NewRenderer("counter")
+	if runtimeHash != "" {
+		islands.SetRuntime("/gosx/runtime.wasm", runtimeHash, runtimeSize)
+	}
 	islands.SetProgramAsset("Counter", "/gosx/islands/Counter.json", "json", "")
 
 	body := gosx.El("main", gosx.Attrs(gosx.Attr("class", "page-shell")),

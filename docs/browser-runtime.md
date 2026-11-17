@@ -1,5 +1,26 @@
 # GoSX in the browser
 
+## Run a compiled island with `go run`
+
+From a GoSX checkout, build the runtime once and start the counter example:
+
+```sh
+go run ./cmd/gosx build-runtime build
+go run ./examples/counter
+```
+
+The runtime build requires TinyGo. The example compiles its island program,
+mounts the JSON at `/gosx/islands/Counter.json`, and calls
+`app.SetRuntimeRoot(repositoryRoot)` so the server can find `build/` and the
+bootstrap scripts in `client/js/`. It registers the program URL with
+`SetProgramAsset` and the runtime URL and its content hash with `SetRuntime`.
+See `examples/counter/main.go` for the complete code. For multiple programs,
+`PageRuntime.SetProgramDir` can infer their URLs by name instead.
+
+`gosx dev` stages its own runtime and island programs and supports hot reload;
+it does not require the standalone setup above. `gosx build` prepares assets
+for deployment.
+
 GoSX applications can be written in Go and GSX without setting up an
 application-side JavaScript toolchain. Islands execute both JavaScript and
 WebAssembly in the browser; other enhancements may use JavaScript without an

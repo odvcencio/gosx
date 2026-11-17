@@ -13,10 +13,10 @@
 // Track B payoff (see dev/hotswap.go and the injected client snippet in
 // dev/server.go).
 //
-// Run standalone (without the dev server) and it still works as a plain island
-// demo — it serves its own compiled program at /gosx/islands/Counter.json. Under
-// `gosx dev`, the dev server serves that path from its staged build instead and
-// owns the hot-swap.
+// For standalone use, build the runtime first with
+// `go run ./cmd/gosx build-runtime build` from the repository root. The app
+// serves its compiled program at /gosx/islands/Counter.json. Under `gosx dev`,
+// the dev server supplies the staged program and owns the hot-swap.
 package main
 
 import (
@@ -28,6 +28,7 @@ import (
 	"runtime"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/island/program"
@@ -37,6 +38,19 @@ import (
 func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := filepath.Dir(thisFile)
+	runtimeRoot := filepath.Join(root, "../..")
+	var runtimeHash string
+	var runtimeSize int64
+	if os.Getenv("GOSX_DEV") != "1" {
+		data, err := os.ReadFile(filepath.Join(runtimeRoot, "build", "gosx-runtime.wasm"))
+		if err != nil {
+			log.Fatal("missing island runtime; run `go run ./cmd/gosx build-runtime build` from the repository root, then configure app.SetRuntimeRoot(repositoryRoot)")
+		}
+		if _, err := os.Stat(filepath.Join(runtimeRoot, "build", "wasm_exec.js")); err != nil {
+			log.Fatal("missing island runtime; run `go run ./cmd/gosx build-runtime build` from the repository root, then configure app.SetRuntimeRoot(repositoryRoot)")
+		}
+		runtimeHash, runtimeSize = buildmanifest.ContentHash(data), int64(len(data))
+	}
 
 	counterProgram, counterJSON, err := compileIsland(filepath.Join(root, "counter.gsx"), "Counter")
 	if err != nil {
@@ -46,6 +60,10 @@ func main() {
 		counterProgram.Name, len(counterProgram.Nodes), len(counterProgram.Exprs), len(counterJSON))
 
 	app := server.New()
+	if os.Getenv("GOSX_DEV") == "1" {
+		runtimeRoot = os.Getenv("GOSX_APP_ROOT")
+	}
+	app.SetRuntimeRoot(runtimeRoot)
 	app.SetPublicDir(root)
 	// Standalone fallback: serve the compiled program directly. `gosx dev`
 	// shadows /gosx/islands/* with its staged, hot-swappable build, so this
@@ -56,7 +74,7 @@ func main() {
 		_, _ = w.Write(counterJSON)
 	}))
 	app.Route("/", func(_ *http.Request) gosx.Node {
-		return counterPage(counterProgram)
+		return counterPage(counterProgram, runtimeHash, runtimeSize)
 	})
 
 	port := getenv("PORT", "8080")
@@ -96,8 +114,11 @@ func compileIsland(path, component string) (*program.Program, []byte, error) {
 	return nil, nil, fmt.Errorf("island %q not found in %s", component, path)
 }
 
-func counterPage(counterProgram *program.Program) gosx.Node {
+func counterPage(counterProgram *program.Program, runtimeHash string, runtimeSize int64) gosx.Node {
 	islands := island.NewRenderer("hotswap")
+	if runtimeHash != "" {
+		islands.SetRuntime("/gosx/runtime.wasm", runtimeHash, runtimeSize)
+	}
 	islands.SetProgramAsset("Counter", "/gosx/islands/Counter.json", "json", "")
 
 	body := gosx.El("main", gosx.Attrs(gosx.Attr("class", "page-shell")),

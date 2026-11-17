@@ -24,7 +24,7 @@ func TestCounterIslandCompiles(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	app := server.New()
-	app.Route("/", func(_ *http.Request) gosx.Node { return counterPage(prog) })
+	app.Route("/", func(_ *http.Request) gosx.Node { return counterPage(prog, "", 0) })
 	app.Build().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `data-gosx-island="Counter"`) {
 		t.Fatalf("page does not mount the island: status %d\n%s", rec.Code, rec.Body)

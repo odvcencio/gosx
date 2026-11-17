@@ -752,6 +752,17 @@ func (a *App) buildDispatcher(mux, redirectMux, rewriteMux, mountMux *http.Serve
 		if redirectHandled(redirectMux, w, r) {
 			return
 		}
+		// Let explicit /gosx/ mounts take precedence over the runtime's
+		// catch-all, without changing precedence for other routes or mounts.
+		_, routePattern := mux.Handler(r)
+		_, mountPattern := mountMux.Handler(r)
+		mountPath := mountPattern
+		if _, path, ok := strings.Cut(mountPath, " "); ok {
+			mountPath = path
+		}
+		if routePattern == "GET /gosx/" && strings.HasPrefix(mountPath, "/gosx/") && mountHandled(mountMux, w, r) {
+			return
+		}
 		if routeHandled(mux, w, r) {
 			return
 		}
