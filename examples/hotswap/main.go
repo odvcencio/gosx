@@ -28,7 +28,7 @@ import (
 	"runtime"
 
 	"m31labs.dev/gosx"
-	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/examples/internal/runtimecheck"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/island/program"
@@ -37,24 +37,26 @@ import (
 
 func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
-	root := filepath.Dir(thisFile)
-	runtimeRoot := filepath.Join(root, "../..")
-	var runtimeHash string
-	var runtimeSize int64
-	if os.Getenv("GOSX_DEV") != "1" {
-		data, err := os.ReadFile(filepath.Join(runtimeRoot, "build", "gosx-runtime.wasm"))
-		if err != nil {
-			log.Fatal("missing island runtime; run `go run ./cmd/gosx build-runtime build` from the repository root, then configure app.SetRuntimeRoot(repositoryRoot)")
-		}
-		if _, err := os.Stat(filepath.Join(runtimeRoot, "build", "wasm_exec.js")); err != nil {
-			log.Fatal("missing island runtime; run `go run ./cmd/gosx build-runtime build` from the repository root, then configure app.SetRuntimeRoot(repositoryRoot)")
-		}
-		runtimeHash, runtimeSize = buildmanifest.ContentHash(data), int64(len(data))
+	app, err := newApp(filepath.Dir(thisFile))
+	if err != nil {
+		log.Fatal(err)
 	}
+	port := getenv("PORT", "8080")
+	fmt.Printf("GoSX hot-swap demo running at http://localhost:%s\n", port)
+	fmt.Println("Tip: run `gosx dev ./examples/hotswap`, then edit counter.gsx and watch the island swap without a reload.")
+	log.Fatal(app.ListenAndServe(":" + port))
+}
 
+func newApp(root string) (*server.App, error) {
+	runtimeRoot := filepath.Join(root, "../..")
+	if os.Getenv("GOSX_DEV") != "1" {
+		if err := runtimecheck.Check(root); err != nil {
+			return nil, err
+		}
+	}
 	counterProgram, counterJSON, err := compileIsland(filepath.Join(root, "counter.gsx"), "Counter")
 	if err != nil {
-		log.Fatalf("compile counter island: %v", err)
+		return nil, fmt.Errorf("compile counter island: %w", err)
 	}
 	log.Printf("island %s compiled: %d nodes, %d exprs, %d bytes JSON",
 		counterProgram.Name, len(counterProgram.Nodes), len(counterProgram.Exprs), len(counterJSON))
@@ -74,13 +76,11 @@ func main() {
 		_, _ = w.Write(counterJSON)
 	}))
 	app.Route("/", func(_ *http.Request) gosx.Node {
-		return counterPage(counterProgram, runtimeHash, runtimeSize)
+		hash, size, _ := server.RuntimeAssetInfo(runtimeRoot)
+		return counterPage(counterProgram, hash, size)
 	})
 
-	port := getenv("PORT", "8080")
-	fmt.Printf("GoSX hot-swap demo running at http://localhost:%s\n", port)
-	fmt.Println("Tip: run `gosx dev ./examples/hotswap`, then edit counter.gsx and watch the island swap without a reload.")
-	log.Fatal(app.ListenAndServe(":" + port))
+	return app, nil
 }
 
 // compileIsland compiles a .gsx file and returns the named island's program

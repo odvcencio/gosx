@@ -15,7 +15,7 @@ import (
 	"strconv"
 
 	"m31labs.dev/gosx"
-	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/examples/internal/runtimecheck"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/island/program"
@@ -24,13 +24,6 @@ import (
 
 func main() {
 	_, thisFile, _, _ := runtime.Caller(0)
-	if os.Getenv("GOSX_DEV") != "1" {
-		for _, name := range []string{"gosx-runtime.wasm", "wasm_exec.js"} {
-			if _, err := os.Stat(filepath.Join(filepath.Dir(thisFile), "../..", "build", name)); err != nil {
-				log.Fatal("missing island runtime; run `go run ./cmd/gosx build-runtime build` from the repository root, then configure app.SetRuntimeRoot(repositoryRoot)")
-			}
-		}
-	}
 	app, err := newApp(filepath.Dir(thisFile))
 	if err != nil {
 		log.Fatal(err)
@@ -44,6 +37,11 @@ func main() {
 // newApp compiles the island from root/counter.gsx and returns a server that
 // renders it. The test uses it without opening a port.
 func newApp(root string) (*server.App, error) {
+	if os.Getenv("GOSX_DEV") != "1" {
+		if err := runtimecheck.Check(root); err != nil {
+			return nil, err
+		}
+	}
 	counterProgram, counterJSON, err := compileIsland(filepath.Join(root, "counter.gsx"), "Counter")
 	if err != nil {
 		return nil, fmt.Errorf("compile counter island: %w", err)
@@ -55,13 +53,6 @@ func newApp(root string) (*server.App, error) {
 		runtimeRoot = os.Getenv("GOSX_APP_ROOT")
 	}
 	app.SetRuntimeRoot(runtimeRoot)
-	var runtimeHash string
-	var runtimeSize int64
-	if os.Getenv("GOSX_DEV") != "1" {
-		if data, err := os.ReadFile(filepath.Join(root, "../..", "build", "gosx-runtime.wasm")); err == nil {
-			runtimeHash, runtimeSize = buildmanifest.ContentHash(data), int64(len(data))
-		}
-	}
 	app.SetPublicDir(root)
 	app.Mount("/gosx/islands/Counter.json", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -69,7 +60,8 @@ func newApp(root string) (*server.App, error) {
 		_, _ = w.Write(counterJSON)
 	}))
 	app.Route("/", func(r *http.Request) gosx.Node {
-		return counterPage(counterProgram, queryCount(r), runtimeHash, runtimeSize)
+		hash, size, _ := server.RuntimeAssetInfo(runtimeRoot)
+		return counterPage(counterProgram, queryCount(r), hash, size)
 	})
 	return app, nil
 }
