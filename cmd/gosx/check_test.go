@@ -2,11 +2,48 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRunCheckStrictRouteDirectories(t *testing.T) {
+	for _, route := range []string{"watch/[code]", "docs/[...slug]", "(marketing)/pricing", "watch/[[optional]]"} {
+		t.Run(route, func(t *testing.T) {
+			dir := t.TempDir()
+			mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/routes\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => ./gosxstub\n")
+			mustWriteFile(t, filepath.Join(dir, "gosxstub", "go.mod"), "module m31labs.dev/gosx\n\ngo 1.26\n")
+			mustWriteFile(t, filepath.Join(dir, "gosxstub", "node.go"), "package gosx\ntype Node struct{}\nfunc El(string, ...any) Node { return Node{} }\nfunc Expr(any) Node { return Node{} }\n")
+			page := filepath.Join(dir, "app", route, "page.gsx")
+			mustWriteFile(t, filepath.Join(filepath.Dir(page), "props.go"), "package watch\ntype Marker string\n")
+			mustWriteFile(t, page, `package watch
+type MomentProps struct { Label string; Extra Marker }
+component Moment(props: MomentProps) {
+	return <div>{props.Label}</div>
+}
+func Page() Node {
+	return <article></article>
+}
+`)
+			if err := runCheck(page, &bytes.Buffer{}); err != nil {
+				t.Fatalf("runCheck: %v", err)
+			}
+			if err := runCheckTypes(page, &bytes.Buffer{}); err != nil {
+				t.Fatalf("runCheckTypes: %v", err)
+			}
+			if err := checkStrictProject(context.Background(), dir); err != nil {
+				t.Fatalf("build strict check: %v", err)
+			}
+			// A missing field must still be rejected in the virtual package.
+			mustWriteFile(t, page, strings.ReplaceAll(readFile(t, page), "props.Label", "props.Missing"))
+			if err := runCheck(page, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "Missing") {
+				t.Fatalf("runCheck accepted an invalid field: %v", err)
+			}
+		})
+	}
+}
 
 func TestRunCheckAcceptsModernGSXShapes(t *testing.T) {
 	dir := t.TempDir()

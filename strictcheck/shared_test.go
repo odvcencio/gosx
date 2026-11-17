@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+func TestCheckSharedComponentsUnderRouteDirectory(t *testing.T) {
+	root := newTestModule(t)
+	base := filepath.Join(root, "app", "[code]")
+	mustWrite(t, filepath.Join(base, "ui", "label.gsx"), `package ui
+type LabelProps struct { Text string }
+component Label(props: LabelProps) {
+	return <span>{props.Text}</span>
+}
+`)
+	page := filepath.Join(base, "page.gsx")
+	mustWrite(t, page, `package app
+import ui "./ui"
+component Page() {
+	return <ui.Label Text="hello" />
+}
+`)
+	if err := CheckFile(context.Background(), page); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
 // sharedTeamMarkFixture writes the shared components design's own headline
 // example (a strict ui.TeamMark declared in app/ui, called from a strict
 // app/page.gsx) into a fresh test module, and returns the module root and
