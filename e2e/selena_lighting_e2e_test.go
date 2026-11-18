@@ -70,7 +70,14 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backends := []string{"webgl"}
+	// "webgl-chunks" is the production page: the runtime bootstrap, then the
+	// lazily fetched Scene3D, WebGL and Selena lighting chunks. The other cases
+	// load the monolith, which carries the same code under its authored names.
+	// The WebGL chunk is the only file whose property names the build renames
+	// (cmd/buildbootstrap/webgl_minify.go), so only this case can show a name
+	// that no longer matches across two chunks. One did: the renamed call to
+	// the lighting chunk threw on every frame and the canvas stayed empty.
+	backends := []string{"webgl", "webgl-chunks"}
 	if os.Getenv("GPU_CHROME_ENDPOINT") != "" || os.Getenv("GOSX_SELENA_LIGHTING_WEBGPU") == "1" {
 		backends = append(backends, "webgpu")
 	}
@@ -83,6 +90,7 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 	}
 	for _, backend := range backends {
 		t.Run(backend, func(t *testing.T) {
+			renderer := strings.TrimSuffix(backend, "-chunks")
 			yes, no := true, false
 			props := scene.Props{
 				Width: 320, Height: 240, Background: "#000000", AutoRotate: &no,
@@ -96,7 +104,7 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 					scene.PointLight{ID: "lamp", Color: "#ffffff", Intensity: 1, Position: scene.Vector3{X: 3, Y: 2}},
 				),
 			}
-			if backend == "webgl" {
+			if renderer == "webgl" {
 				props.ForceWebGL = &yes
 				props.RequireWebGL = &yes
 			} else {
@@ -109,6 +117,16 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 				t.Fatal(err)
 			}
 			page := []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#selena-lighting-root{width:320px;height:240px}</style></head><body><div id="selena-lighting-root"></div><script id="gosx-manifest" type="application/json">%s</script><script src="/bootstrap.js"></script></body></html>`, manifest))
+			if renderer != backend {
+				payload, err := json.Marshal(props)
+				if err != nil {
+					t.Fatal(err)
+				}
+				page = []byte(fmt.Sprintf(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}#selena-lighting-root{width:320px;height:240px}</style></head><body><div id="selena-lighting-root"></div>
+<script src="/gosx/bootstrap-runtime.js"></script>
+<script data-gosx-script="feature-scene3d" data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js" data-gosx-scene3d-selena-lighting-url="/gosx/bootstrap-feature-scene3d-selena-lighting.js" src="/gosx/bootstrap-feature-scene3d.js"></script>
+<script>window.__gosx_engine_factories.GoSXScene3D({mount:document.getElementById('selena-lighting-root'),emit(){},props:%s}).catch(error=>{window.mountError=String(error);});</script></body></html>`, payload))
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.URL.Path == "/":
@@ -117,7 +135,7 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 				case r.URL.Path == "/bootstrap.js":
 					w.Header().Set("Content-Type", "application/javascript")
 					_, _ = w.Write(bootstrap)
-				case strings.HasPrefix(r.URL.Path, "/gosx/bootstrap-feature-") && strings.HasSuffix(r.URL.Path, ".js"):
+				case strings.HasPrefix(r.URL.Path, "/gosx/bootstrap-") && strings.HasSuffix(r.URL.Path, ".js"):
 					http.ServeFile(w, r, filepath.Join(root, "client", "js", filepath.Base(r.URL.Path)))
 				default:
 					http.NotFound(w, r)
@@ -129,7 +147,7 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 				url = e2eExposeToWindows(t, server.URL)
 			}
 			flags := map[string]any{"use-angle": "swiftshader", "enable-unsafe-swiftshader": true}
-			if backend == "webgl" {
+			if renderer == "webgl" {
 				flags["disable-features"] = "WebGPU"
 			} else {
 				flags["enable-unsafe-webgpu"] = true
@@ -141,8 +159,8 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 			var shot []byte
 			ok := false
 			for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
-				browser.eval(t, `(() => {const e=document.querySelector('[data-gosx-scene3d-mounted]');return {backend:e?.getAttribute('data-gosx-scene3d-backend')||'',fallback:e?.getAttribute('data-gosx-scene3d-render-mesh-material-fallback')||'',drawn:e?.getAttribute('data-gosx-scene3d-render-mesh-drawn')||''}})()`, &reading)
-				if reading.Backend != backend {
+				browser.eval(t, `(() => {const e=document.querySelector('[data-gosx-scene3d-mounted]')||document.getElementById('selena-lighting-root');return {backend:e?.getAttribute('data-gosx-scene3d-backend')||e?.getAttribute('data-gosx-scene3d-renderer')||'',fallback:e?.getAttribute('data-gosx-scene3d-render-mesh-material-fallback')||'',drawn:e?.getAttribute('data-gosx-scene3d-render-mesh-drawn')||''}})()`, &reading)
+				if reading.Backend != renderer {
 					continue
 				}
 				if err := chromedp.Run(browser.ctx, chromedp.Screenshot("canvas", &shot, chromedp.ByQuery)); err != nil {
@@ -165,9 +183,19 @@ func TestSelenaSceneLightingReachesShaders(t *testing.T) {
 				_ = os.MkdirAll(out, 0o755)
 				_ = os.WriteFile(filepath.Join(out, backend+".png"), shot, 0o644)
 			}
+			if renderer != backend {
+				// The page must have fetched the lighting chunk: without it
+				// the WebGL chunk supplies the classic inputs itself, and
+				// this case would pass without crossing the boundary.
+				var lighting bool
+				browser.eval(t, `!!window.__gosx_scene3d_selena_lighting_api && !!document.querySelector('script[src$="bootstrap-feature-scene3d-selena-lighting.js"]')`, &lighting)
+				if !lighting {
+					t.Fatalf("%s never loaded the Selena lighting chunk; console=%s", backend, browser.Console())
+				}
+			}
 			if !ok {
 				var attributes map[string]string
-				browser.eval(t, `(() => {const e=document.querySelector('[data-gosx-scene3d-mounted]');return e?Object.fromEntries(e.getAttributeNames().filter(n=>n.startsWith('data-gosx')).map(n=>[n,e.getAttribute(n)])):{}})()`, &attributes)
+				browser.eval(t, `(() => {const e=document.querySelector('[data-gosx-scene3d-mounted]')||document.getElementById('selena-lighting-root');return e?Object.fromEntries(e.getAttributeNames().filter(n=>n.startsWith('data-gosx')).map(n=>[n,e.getAttribute(n)])):{}})()`, &attributes)
 				t.Fatalf("%s did not render the lighting probe: %+v; attributes=%v; pageErrors=%v; console=%s", backend, reading, attributes, browser.PageErrors(), browser.Console())
 			}
 			if errors := browser.PageErrors(); len(errors) != 0 {

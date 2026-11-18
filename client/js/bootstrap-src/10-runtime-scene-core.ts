@@ -3428,6 +3428,8 @@
       capability: capability || null,
       postEffects: deferPostFX ? [] : postEffects,
       postFXMaxPixels: postFXMaxPixels,
+      // The shadow map cap is set once: a scene that changes it remounts.
+      shadowMaxPixels: Math.max(0, Math.floor(sceneNumber(scene && scene.shadowMaxPixels, 0))),
       gpuDriven: sceneGPUDrivenMode(props),
       _deferredPostEffects: deferPostFX ? postEffects : null,
       _adaptiveSourcePostEffects: postEffects,
@@ -5558,6 +5560,12 @@
     const normalizedPostFXMaxPixels = Math.max(0, Math.floor(sceneNumber(postFXMaxPixels, 0)));
     if (normalizedPostFXMaxPixels > 0) {
       bundle.postFXMaxPixels = normalizedPostFXMaxPixels;
+    }
+    // The mount passes its scene state as hierarchyState. Both renderers read
+    // the cap from the bundle and fall back to 1024 pixels a side without it,
+    // so a scene's Shadows.MaxPixels had no effect until it was copied here.
+    if (hierarchyState && hierarchyState.shadowMaxPixels > 0) {
+      bundle.shadowMaxPixels = hierarchyState.shadowMaxPixels;
     }
     const materialLookup = new Map();
     if (sceneBool(showDebugGrid, false)) {
