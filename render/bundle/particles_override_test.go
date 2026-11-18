@@ -19,7 +19,7 @@ struct Particle {
   velocity : vec4<f32>,
 };
 struct ParticleForce {
-  meta   : vec4<f32>,
+  parameters : vec4<f32>,
   vector : vec4<f32>,
 };
 struct ParticleUniforms {
