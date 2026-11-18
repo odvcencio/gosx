@@ -702,22 +702,21 @@
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
       if (obj.directVertices) {
-        // Retained casters draw from model-space vertex buffers and never land
-        // in the baked soup, so fold their transformed world bounds into the
-        // light-frustum fit instead of skipping them outright.
-        if (!obj.retainedGeometry || !obj.castShadow) continue;
-        var casterBounds = obj.bounds;
+        // Retained casters and receivers use model-space buffers. Include their
+        // world bounds so switching a floor to retained geometry preserves the fit.
+        if (!obj.retainedGeometry || (!obj.castShadow && !obj.receiveShadow)) continue;
+        var retainedBounds = obj.bounds;
         if (
-          casterBounds &&
-          isFinite(casterBounds.minX) && isFinite(casterBounds.minY) && isFinite(casterBounds.minZ) &&
-          isFinite(casterBounds.maxX) && isFinite(casterBounds.maxY) && isFinite(casterBounds.maxZ)
+          retainedBounds &&
+          isFinite(retainedBounds.minX) && isFinite(retainedBounds.minY) && isFinite(retainedBounds.minZ) &&
+          isFinite(retainedBounds.maxX) && isFinite(retainedBounds.maxY) && isFinite(retainedBounds.maxZ)
         ) {
-          if (casterBounds.minX < minX) minX = casterBounds.minX;
-          if (casterBounds.minY < minY) minY = casterBounds.minY;
-          if (casterBounds.minZ < minZ) minZ = casterBounds.minZ;
-          if (casterBounds.maxX > maxX) maxX = casterBounds.maxX;
-          if (casterBounds.maxY > maxY) maxY = casterBounds.maxY;
-          if (casterBounds.maxZ > maxZ) maxZ = casterBounds.maxZ;
+          if (retainedBounds.minX < minX) minX = retainedBounds.minX;
+          if (retainedBounds.minY < minY) minY = retainedBounds.minY;
+          if (retainedBounds.minZ < minZ) minZ = retainedBounds.minZ;
+          if (retainedBounds.maxX > maxX) maxX = retainedBounds.maxX;
+          if (retainedBounds.maxY > maxY) maxY = retainedBounds.maxY;
+          if (retainedBounds.maxZ > maxZ) maxZ = retainedBounds.maxZ;
         }
         continue;
       }

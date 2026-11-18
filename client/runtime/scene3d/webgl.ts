@@ -1479,6 +1479,7 @@
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
     gl.viewport(0, 0, shadowResources.size, shadowResources.size);
+    gl.depthMask(true); // Before the clear: it obeys the mask, and a frame that ends on a blended draw leaves writes off, so the map would keep every earlier caster.
     gl.clearDepth(1);
     gl.clear(gl.DEPTH_BUFFER_BIT);
 
@@ -1491,7 +1492,6 @@
     }
 
     gl.enable(gl.DEPTH_TEST);
-    gl.depthMask(true);
     gl.depthFunc(gl.LEQUAL);
     gl.disable(gl.BLEND);
 

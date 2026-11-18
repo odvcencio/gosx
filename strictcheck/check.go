@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"m31labs.dev/gosx/internal/checkpath"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/transpile"
 )
@@ -202,21 +203,7 @@ func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts O
 	if err != nil {
 		return err
 	}
-	generated, err := transpile.TranspilePackageWithSharedImports(files, importNames, sharedImports)
-	if err != nil {
-		return err
-	}
-	if len(generated) == 0 {
-		return nil
-	}
-	// Runs before goCheck (gosx#230): a name written on both the .gsx and a
-	// sibling .go side reaches the Go compiler as a bare "redeclared in this
-	// block" pointing at a temporary projection file the author never wrote.
-	// This stage names both declarations at their own source positions.
-	if err := validatePackageDeclCollisions(files, generated); err != nil {
-		return err
-	}
-	return goCheck(ctx, files, generated, sharedOverlay, opts)
+	return goCheck(ctx, files, importNames, sharedImports, sharedOverlay, opts)
 }
 
 // validateStrictRenderEntries refuses a strict render entry's declared props
@@ -340,10 +327,7 @@ func resolveImportNames(ctx context.Context, files []transpile.PackageFile, opts
 // (transpile.emitImportDeclaration) actually resolve against real
 // declarations, exactly as if the target directory had been `gosx check`ed
 // on its own first.
-func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[string]string, sharedOverlay map[string]string, opts Options) error {
-	if len(files) == 0 || (len(generated) == 0 && len(sharedOverlay) == 0) {
-		return nil
-	}
+func goCheck(ctx context.Context, files []transpile.PackageFile, importNames map[string]string, sharedImports map[string]transpile.SharedImport, sharedOverlay map[string]string, opts Options) error {
 	dir := filepath.Dir(files[0].Path)
 	tempDir, err := os.MkdirTemp("", "gosx-strictcheck-*")
 	if err != nil {
@@ -351,12 +335,51 @@ func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[s
 	}
 	defer os.RemoveAll(tempDir)
 
+	overlay := make(map[string]string, len(files)+len(sharedOverlay))
+	checkDir, commandDir, commandArg, err := checkpath.Prepare(dir, tempDir, overlay)
+	if err != nil {
+		return err
+	}
+	// Shared components can themselves be under a route segment. Move their
+	// projections into the same virtual namespace and rewrite only the Go
+	// projection's imports, leaving the source and runtime paths untouched.
+	sharedDirs := make(map[string]string)
+	for rawPath, shared := range sharedImports {
+		target, err := filepath.Abs(filepath.Join(dir, rawPath))
+		if err != nil {
+			return err
+		}
+		virtual, root, arg, err := checkpath.Prepare(target, tempDir, overlay)
+		if err != nil {
+			return err
+		}
+		sharedDirs[target] = virtual
+		if arg != "." {
+			modulePath, err := readModulePath(root)
+			if err != nil {
+				return err
+			}
+			shared.GoImportPath = modulePath + "/" + strings.TrimPrefix(arg, "./")
+			sharedImports[rawPath] = shared
+		}
+	}
+	generated, err := transpile.TranspilePackageWithSharedImports(files, importNames, sharedImports)
+	if err != nil {
+		return err
+	}
+	if len(generated) == 0 {
+		return nil
+	}
+	// Report colliding declarations at their original .gsx and .go positions
+	// before the compiler sees the temporary projection.
+	if err := validatePackageDeclCollisions(files, generated); err != nil {
+		return err
+	}
 	sourcePaths := make([]string, 0, len(generated))
 	for sourcePath := range generated {
 		sourcePaths = append(sourcePaths, sourcePath)
 	}
 	sort.Strings(sourcePaths)
-	overlay := make(map[string]string, len(sourcePaths)+len(sharedOverlay))
 	usedVirtual := make(map[string]struct{}, len(sourcePaths)+len(sharedOverlay))
 	for i, sourcePath := range sourcePaths {
 		tempPath := filepath.Join(tempDir, "projection_"+strconv.Itoa(i)+".go")
@@ -365,7 +388,7 @@ func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[s
 		}
 		virtual := uniqueVirtualGoPath(dir, i, usedVirtual)
 		usedVirtual[virtual] = struct{}{}
-		overlay[virtual] = tempPath
+		overlay[filepath.Join(checkDir, filepath.Base(virtual))] = tempPath
 	}
 	sharedVirtualPaths := make([]string, 0, len(sharedOverlay))
 	for virtual := range sharedOverlay {
@@ -376,6 +399,11 @@ func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[s
 		tempPath := filepath.Join(tempDir, "shared_"+strconv.Itoa(i)+".go")
 		if err := os.WriteFile(tempPath, []byte(sharedOverlay[virtual]), 0o600); err != nil {
 			return err
+		}
+		if target, err := filepath.Abs(filepath.Dir(virtual)); err == nil {
+			if relocated, ok := sharedDirs[target]; ok {
+				virtual = filepath.Join(relocated, filepath.Base(virtual))
+			}
 		}
 		overlay[virtual] = tempPath
 	}
@@ -394,9 +422,9 @@ func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[s
 	if !hasModuleMode(opts.GOFLAGS) {
 		args = append(args, "-mod=readonly")
 	}
-	args = append(args, ".")
+	args = append(args, commandArg)
 	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = dir
+	cmd.Dir = commandDir
 	cmd.Env = commandEnv(opts)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

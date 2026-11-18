@@ -278,9 +278,13 @@ test("render truth: the WebGPU customPost dead path reports WHY it did not draw"
 test("render truth: authored Selena shader modules capture browser compilation info", () => {
   // getCompilationInfo() is the browser's own verdict, and the only place a
   // Tint-versus-naga disagreement surfaces as text rather than wrong pixels.
-  const captures = webgpuSource.match(/renderTruth\(\)\.captureShaderInfo\(/g) || [];
-  assert.ok(captures.length >= 9, `expected every authored Selena shader module instrumented, got ${captures.length}`);
-  assert.match(webgpuSource, /captureShaderInfo\(module, "selena-post-" \+ name\);/);
+  const authoredModules = [...webgpuSource.matchAll(/(\w+) = \w+\.createShaderModule\(\{ label: ("(?:selena-[^"]*|[^"]*-authored-[^"]*)"(?: \+ name)?), code: [^}]+\}\);/g)];
+  assert.ok(authoredModules.some(([, , label]) => label === '"selena-material"'));
+  for (const match of authoredModules) {
+    const [creation, shaderModule, label] = match;
+    const nextLine = webgpuSource.slice(match.index + creation.length).trimStart().split("\n", 1)[0];
+    assert.equal(nextLine, `renderTruth().captureShaderInfo(${shaderModule}, ${label});`, label);
+  }
 });
 
 test("render truth: device loss and uncaptured GPU errors reach the journal", () => {

@@ -1553,6 +1553,10 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	}
 	b.WriteString(fmt.Sprintf(` src="%s"%s></script>`, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+		deferred := r.allSceneEnginesDeferred()
+		if deferred {
+			b.WriteString(`<template id="gosx-deferred-scene3d">`)
+		}
 		// The strict hydrate decoder is not part of the initial Scene3D route.
 		// Emit it only for a shared-runtime Scene3D program, ordered before the
 		// main deferred scene bundle so the factory observes its published API.
@@ -1568,6 +1572,9 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		b.WriteString(`"`)
 		b.WriteString(r.runtimeScriptAttrs(scene3dPath, nonce))
 		b.WriteString(">\x3c/script>")
+		if deferred {
+			b.WriteString(`</template>`)
+		}
 
 	}
 	return gosx.RawHTML(b.String())
@@ -1650,6 +1657,8 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	if err != nil {
 		return renderEngineError(err)
 	}
+
+	r.manifest.Engines[len(r.manifest.Engines)-1].DeferUntilOpen = cfg.DeferUntilOpen
 
 	if cfg.Thread == engine.ThreadWorker {
 		last := &r.manifest.Engines[len(r.manifest.Engines)-1]
@@ -2351,6 +2360,9 @@ func (r *Renderer) PreloadHintsWithNonce(nonce string) gosx.Node {
 	}
 
 	for _, entry := range r.manifest.Engines {
+		if r.usesSelectiveRuntimeBootstrap() && entry.DeferUntilOpen && strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
 		if entry.ProgramRef != "" {
 			href := html.EscapeString(entry.ProgramRef)
 			parsed, parseErr := neturl.Parse(entry.ProgramRef)
@@ -2385,7 +2397,7 @@ func (r *Renderer) PreloadHintsWithNonce(nonce string) gosx.Node {
 			r.selectedBootstrapFeaturePath("islands"),
 			r.selectedBootstrapFeaturePath("scene3d"),
 		} {
-			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
+			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] || (r.allSceneEnginesDeferred() && path == r.selectedBootstrapFeaturePath("scene3d")) {
 				continue
 			}
 			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer"%s>`, path, preloadNonceAttr(nonce)))
@@ -3022,6 +3034,28 @@ func (r *Renderer) scene3DNeedsWalkChunk() bool {
 		}
 	}
 	return false
+}
+
+// allSceneEnginesDeferred preserves eager loading for mixed pages and explicit feature requests.
+func (r *Renderer) allSceneEnginesDeferred() bool {
+	if !r.usesSelectiveRuntimeBootstrap() {
+		return false
+	}
+	for _, feature := range r.explicitFeatures() {
+		if feature == "scene3d" {
+			return false
+		}
+	}
+	found := false
+	for _, entry := range r.manifest.Engines {
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			found = true
+			if !entry.DeferUntilOpen {
+				return false
+			}
+		}
+	}
+	return found
 }
 
 func (r *Renderer) hasSceneEngines() bool {

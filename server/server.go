@@ -406,8 +406,12 @@ type NavigationConfigurable interface {
 	SetNavigationHead(fn func(nonce string) gosx.Node)
 }
 
-// Mount registers an arbitrary HTTP handler under the given pattern. When
-// EnableNavigation is set and handler implements NavigationConfigurable, Build
+// Mount registers an arbitrary HTTP handler under the given pattern. A matching
+// mount whose pattern starts with /gosx/ takes precedence over the built-in
+// runtime handler, even when the mount returns 404. A broad /gosx/ mount also
+// owns runtime assets; use exact paths or a narrower prefix such as /gosx/islands/.
+// POST /gosx/action/ retains its existing routing.
+// When EnableNavigation is set and handler implements NavigationConfigurable, Build
 // wires the navigation-runtime head builder into it (see registerMountRoutes),
 // so a file-routed app built with route.NewRouter and mounted here needs only
 // app.EnableNavigation() in the composition root. EnableNavigation and Mount may run in either order; only
@@ -751,6 +755,18 @@ func (a *App) buildDispatcher(mux, redirectMux, rewriteMux, mountMux *http.Serve
 	return func(w http.ResponseWriter, r *http.Request, allowRewrite bool) {
 		if redirectHandled(redirectMux, w, r) {
 			return
+		}
+		// Only inspect mounts for runtime paths; preserve explicit route precedence.
+		if strings.HasPrefix(r.URL.Path, "/gosx/") && !(r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/gosx/action/")) {
+			_, requestRoutePattern := mux.Handler(r)
+			_, mountPattern := mountMux.Handler(r)
+			mountPath := mountPattern
+			if _, path, ok := strings.Cut(mountPath, " "); ok {
+				mountPath = path
+			}
+			if (requestRoutePattern == "" || requestRoutePattern == "GET /gosx/") && strings.HasPrefix(mountPath, "/gosx/") && mountHandled(mountMux, w, r) {
+				return
+			}
 		}
 		if routeHandled(mux, w, r) {
 			return

@@ -15,6 +15,48 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 )
 
+func TestRuntimeMountPrecedence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "build"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build", "gosx-runtime.wasm"), []byte("runtime"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, mount, path, method, body string
+		status                          int
+	}{
+		{"exact", "/gosx/islands/Counter.json", "/gosx/islands/Counter.json", "GET", "mounted", 200},
+		{"prefix", "/gosx/islands/", "/gosx/islands/Counter.json", "GET", "mounted", 200},
+		{"post", "/gosx/islands/", "/gosx/islands/Counter.json", "POST", "mounted", 200},
+		{"action", "/gosx/", "/gosx/action/save", "POST", "Method Not Allowed\n", 405},
+		{"root", "/", "/gosx/runtime.wasm", "GET", "runtime", 200},
+		{"override", "/gosx/", "/gosx/runtime.wasm", "GET", "mounted", 200},
+		{"no fallback", "/gosx/", "/gosx/missing", "GET", "missing", 404},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := New()
+			app.SetRuntimeRoot(root)
+			app.Mount(tc.mount, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.status == 404 {
+					w.WriteHeader(404)
+					_, _ = w.Write([]byte("missing"))
+					return
+				}
+				_, _ = w.Write([]byte("mounted"))
+			}))
+			rec := httptest.NewRecorder()
+			app.Build().ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+			if rec.Code != tc.status || rec.Body.String() != tc.body {
+				t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+}
+
 func TestAppPreservesIslandProgramMediaTypeForCompressedSidecars(t *testing.T) {
 	root := t.TempDir()
 	assetsDir := filepath.Join(root, "assets", "islands")

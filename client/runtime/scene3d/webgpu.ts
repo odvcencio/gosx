@@ -536,9 +536,8 @@
     "}",
   ].join("\n");
 
-  // Emitted by m31labs.dev/elio/emit/wgsl from stdlib.Skin().
-  // The runtime pads dispatch buffers to the 64-wide workgroup size, so the
-  // generated kernel can stay byte-for-byte aligned with Elio's current output.
+  // Extends Elio's stdlib.Skin() position blend to skin normals and tangents.
+  // The runtime pads each dispatch buffer to the 64-wide workgroup size.
   //
   // One dispatch writes three contiguous regions of a single tracked output
   // buffer, each paddedCount elements wide: positions (vec3) first, then
@@ -8170,7 +8169,7 @@
     function getObjectSelenaPipeline(object: any, material: any, blend: string, depth: boolean) {
       if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var options = sceneWebGPUSelenaPipelineOptions(object, sceneWebGPUObjectReflected(object));
-      return webGPUObjectIsSkinned(object) ? getSelenaSkinnedPipeline(material, blend, depth, options) : getSelenaPipeline(material, blend, depth, options);
+      return getSelenaPipeline(material, blend, depth, options);
     }
     function instancedMeshUsesCull(mesh: any) {
       return Boolean(typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) || webGPUBuiltinCullEligible(mesh);
@@ -8572,9 +8571,6 @@
       return out;
     }
 
-    // NOTE: getSelenaSkinnedPipeline is a near-identical sibling (skinned-mesh
-    // variant using WGPU_PBR_VERTEX_LAYOUT, no attrs). Keep the two in sync —
-    // any substantive change here must be mirrored there.
     function getSelenaPipeline(material, blendMode, depthWrite, options) {
       if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
@@ -8707,90 +8703,6 @@
         // Memoize the failure too — a broken shader must not re-attempt (and
         // re-warn) once per object per frame.
         stamp(null, true);
-        return null;
-      }
-    }
-
-    // Skinned variant of getSelenaPipeline. Identical except the pipeline's
-    // vertex.buffers use the 4-slot skinned layout (WGPU_PBR_VERTEX_LAYOUT) so
-    // slot 0 receives the compute-skinned position buffer produced by
-    // updateElioSkinnedMeshes. The skinned draw binds vertex buffers via
-    // webGPUBindElioSkinnedBuffers rather than iterating attrs, so this resource
-    // deliberately does NOT expose an attrs field (avoids double-binding).
-    function getSelenaSkinnedPipeline(material, blendMode, depthWrite, options) {
-      const selective = selectiveBloom;
-      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
-      var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
-      var pipelineFrontFace = selenaPipelineFrontFace(options);
-      // Per-material memo, mirroring getSelenaPipeline. A SEPARATE stamp slot
-      // (_gosxWGPUSelenaSkinnedResource) so a material drawn both skinned and
-      // unskinned never aliases the wrong pipeline — the skinned key uses the
-      // "selena-skinned" prefix + WGPU_PBR_VERTEX_LAYOUT, a different pipeline.
-      var memo = material._gosxWGPUSelenaSkinnedResource;
-      if (
-        memo && memo.specular === selective &&
-        memo.blendMode === blendMode &&
-        memo.depthWrite === depthWrite &&
-        memo.targetFormat === targetFormat &&
-        memo.sampleCount === activeSampleCount &&
-        memo.cullMode === pipelineCullMode &&
-        memo.frontFace === pipelineFrontFace
-      ) {
-        return memo.failed ? null : memo.resource;
-      }
-      var layout = sceneSelenaMaterialLayout(material);
-      var shader = selective ? material.specularFragmentWGSL : sceneSelenaWGSLSource(material);
-      // Content-based key, mirroring getSelenaPipeline (see note there).
-      var key = [
-        "selena-skinned",
-        shader,
-        JSON.stringify(layout),
-        blendMode,
-        depthWrite ? "1" : "0",
-        targetFormat,
-        activeSampleCount,
-        pipelineCullMode,
-        pipelineFrontFace,
-      ].join("|");
-      function stampSkinned(resource, failed) {
-        material._gosxWGPUSelenaSkinnedResource = {
-          blendMode: blendMode,
-          depthWrite: depthWrite,
-          specular: selective, targetFormat: targetFormat,
-          sampleCount: activeSampleCount,
-          cullMode: pipelineCullMode,
-          frontFace: pipelineFrontFace,
-          resource: resource,
-          failed: failed,
-        };
-      }
-      var cached = selenaPipelineCache.get(key);
-      if (cached) {
-        stampSkinned(cached.failed ? null : cached, !!cached.failed);
-        return cached.failed ? null : cached;
-      }
-      try {
-        var bindGroupLayout = sceneSelenaBindGroupLayout(device, layout);
-        var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
-        var module = device.createShaderModule({ label: "selena-material-skinned", code: shader });
-        renderTruth().captureShaderInfo(module, "selena-material-skinned");
-        var pipeline = wgpuCreateValidatedPipeline(device, "render", {
-          label: "gosx-selena-skinned-" + (layout.material || "material") + "-" + blendMode,
-          layout: pipelineLayout,
-          vertex: { module: module, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
-          fragment: sceneWebGPUColorFragment(module, sceneWebGPUColorTarget(targetFormat, selective), wgpuBlendState(blendMode)),
-          primitive: { topology: "triangle-list", cullMode: pipelineCullMode, frontFace: pipelineFrontFace },
-          multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
-          depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
-        });
-        cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout };
-        selenaPipelineCache.set(key, cached);
-        stampSkinned(cached, false);
-        return cached;
-      } catch (err) {
-        console.warn("[gosx] Selena skinned WebGPU pipeline failed; falling back to PBR material.", err);
-        selenaPipelineCache.set(key, { failed: true });
-        stampSkinned(null, true);
         return null;
       }
     }
@@ -11342,6 +11254,7 @@
       if (!pass || !attr || !obj || !pbrBuffers) return false;
       var count = obj.vertexCount;
       var offset = obj.vertexOffset;
+      if (webGPUObjectIsSkinned(obj)) return webGPUBindElioSelenaAttribute(pass, obj, attr, obj.vertexCount);
       var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
       if (attr.source === "positions") {
         if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return true;
@@ -15043,7 +14956,7 @@
       }
       pass.setIndexBuffer(record.buffer, "uint32");
       return data.length;
-    } function webGPUSelenaIndexCount(pass: any, obj: any): number { return obj.directVertices ? webGPUBindRetainedMeshIndexBuffer(pass, obj) : 0; } // Selena: world-baked streams are already index-expanded
+    } function webGPUSelenaIndexCount(pass: any, obj: any): number { return obj.directVertices || webGPUObjectIsSkinned(obj) ? webGPUBindRetainedMeshIndexBuffer(pass, obj) : 0; } // World-baked streams are already index-expanded
 
     function webGPUDefaultAttributeData(obj, key, count, tupleSize, defaults) {
       var direct = webGPUDirectAttribute(obj, key, count, tupleSize);
@@ -15543,6 +15456,27 @@
       return true;
     }
 
+    // Selena chooses the vertex slots. Elio packs three deformed streams into
+    // one buffer, while UVs and user attributes stay on the original geometry.
+    function webGPUBindElioSelenaAttribute(pass, obj, attr, count) {
+      const buffer = obj._gosxWGPUElioSkinOutputBuffer;
+      const padded = obj._gosxWGPUElioSkinOutputPaddedCount;
+      if (!buffer || !(padded >= count)) return false;
+      if (attr.source === "custom") return webGPUBindRetainedMeshAttribute(pass, attr.slot, obj, "custom:" + attr.name, attr.components);
+      if (attr.source === "uvs" && attr.components === 2) {
+        const uvs = webGPUDefaultAttributeData(obj, "uvs", count, 2, [0, 0]);
+        pass.setVertexBuffer(attr.slot, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+        return true;
+      }
+      let offset;
+      if (attr.source === "positions" && attr.components === 3) offset = 0;
+      else if (attr.source === "normals" && attr.components === 3) offset = padded * 12;
+      else if (attr.source === "tangents" && attr.components === 4) offset = padded * 24;
+      else return false;
+      pass.setVertexBuffer(attr.slot, buffer, offset, count * attr.components * 4);
+      return true;
+    }
+
     function webGPUBindElioSkinnedBuffers(pass, obj, count) {
       var outputBuffer = obj && obj._gosxWGPUElioSkinOutputBuffer;
       if (!outputBuffer) return false;
@@ -15877,6 +15811,7 @@
       var currentPipelineKind = "";
       var objectDepthWrite = depthWrite, worldBuffersBound = false;
       function bindMeshAttribute(attr, obj, offset, count) {
+        if (webGPUObjectIsSkinned(obj)) return webGPUBindElioSelenaAttribute(pass, obj, attr, count);
         var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
         if (attr.source === "positions") {
           if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return true;
@@ -15976,18 +15911,6 @@
           var selenaBG = createSelenaBindGroup(mat, selenaResource, obj);
           if (selenaBG) {
             pass.setBindGroup(0, selenaBG);
-            if (isSkinned) {
-              // Skinned positions live in the compute-pass output buffer; bind via
-              // the shared 4-slot skinned binding (slot0=skinned pos, 1-3=base).
-              if (webGPUBindElioSkinnedBuffers(pass, obj, count)) {
-                var selenaSkinIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
-                if (selenaSkinIndexCount > 0) pass.drawIndexed(selenaSkinIndexCount);
-                else pass.draw(count);
-                if (frameRequest) frameRequest.record(obj.id);
-                if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
-              }
-              continue;
-            }
             var allBound = true;
             for (var ai = 0; ai < selenaResource.attrs.length; ai++) {
               if (!bindMeshAttribute(selenaResource.attrs[ai], obj, offset, count)) {

@@ -72,11 +72,14 @@ test("baked fits preserve indexed triangle selection, culling, receivers and ret
     indices: [2, 1, 0], count: 4,
   } }, 0);
   const retained = mesh(F32, { id: "retained", customVertex: "", customFragment: "", x: -4, castShadow: true });
+  const receiver = mesh(F32, { id: "receiver", customVertex: "", customFragment: "", x: -20, castShadow: false, receiveShadow: true });
   const ignored = mesh(F32, { id: "ignored", customVertex: "", customFragment: "", x: -100, castShadow: false });
   const culled = mesh(F32, { id: "culled", x: 100, viewCulled: true });
-  const bundle = draw(api, [indexed, retained, ignored, culled]);
+  const bundle = draw(api, [indexed, retained, receiver, ignored, culled]);
   assert.ok(bundle.meshObjects.some(o => o.retainedGeometry && o.castShadow));
   assert.deepEqual(fit(api, bundle), scan(api, bundle));
+  const receiverBounds = bundle.meshObjects.find(o => o.id === "receiver" && o.retainedGeometry).bounds;
+  assert.equal(fit(api, bundle).minX, receiverBounds.minX, "receive-only retained meshes contribute to the fit");
   assert.ok(fit(api, bundle).maxX < 10, "unused vertices and culled meshes do not expand the fit");
 });
 

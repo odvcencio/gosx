@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"m31labs.dev/gosx"
-	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island"
@@ -44,18 +41,6 @@ func newHandler(runtimeRoot string) (http.Handler, error) {
 	return app.Build(), nil
 }
 
-// runtimeAsset describes the island runtime that the server will serve at
-// /gosx/runtime.wasm; the page loader verifies it against this hash. Without
-// the file (before build-runtime has run) the page has no hash and its island
-// does not hydrate.
-func runtimeAsset(root string) (string, int64) {
-	data, err := os.ReadFile(filepath.Join(root, "build", "gosx-runtime.wasm"))
-	if err != nil {
-		return "", 0
-	}
-	return buildmanifest.ContentHash(data), int64(len(data))
-}
-
 func compilePanel(dir string) (*program.Program, error) {
 	irProg, err := gosx.Compile(panelSource)
 	if err != nil {
@@ -78,7 +63,7 @@ func compilePanel(dir string) (*program.Program, error) {
 func page(prog *program.Program, runtimeRoot string) gosx.Node {
 	r := island.NewRenderer("desktop-engine")
 	// The island runtime (WASM) hydrates the island; the engine needs none of it.
-	hash, size := runtimeAsset(runtimeRoot)
+	hash, size, _ := server.RuntimeAssetInfo(runtimeRoot)
 	r.SetRuntime("/gosx/runtime.wasm", hash, size)
 	r.SetProgramAsset("Panel", "/app/Panel.json", "json", "")
 	cfg := engine.Config{

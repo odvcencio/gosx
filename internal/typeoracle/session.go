@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"m31labs.dev/gosx/internal/checkpath"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/transpile"
 )
@@ -389,7 +390,7 @@ type exportEntry struct {
 // back points into the Go build cache, never into the overlay itself, so
 // nothing under it needs to survive past this one command.
 func newExportLookup(ctx context.Context, dir string, generated map[string]string, opts Options) (func(path string) (io.ReadCloser, error), error) {
-	overlayPath, cleanup, err := writeOverlay(dir, generated)
+	overlayPath, commandDir, commandArg, cleanup, err := writeOverlay(dir, generated)
 	if err != nil {
 		return nil, err
 	}
@@ -405,9 +406,9 @@ func newExportLookup(ctx context.Context, dir string, generated map[string]strin
 	if !hasModuleModeFlag(opts.GOFLAGS) {
 		args = append(args, "-mod=readonly")
 	}
-	args = append(args, ".")
+	args = append(args, commandArg)
 	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = dir
+	cmd.Dir = commandDir
 	cmd.Env = commandEnv(opts)
 	out, err := cmd.Output()
 	if err != nil {
@@ -453,10 +454,10 @@ func newExportLookup(ctx context.Context, dir string, generated map[string]strin
 // virtual .go path inside dir to it, plus a cleanup func that removes the
 // temp directory. It never touches dir itself. See newExportLookup's doc
 // comment for why this overlay exists.
-func writeOverlay(dir string, generated map[string]string) (string, func(), error) {
+func writeOverlay(dir string, generated map[string]string) (string, string, string, func(), error) {
 	tempDir, err := os.MkdirTemp("", "gosx-typeoracle-*")
 	if err != nil {
-		return "", nil, err
+		return "", "", "", nil, err
 	}
 	cleanup := func() { os.RemoveAll(tempDir) }
 
@@ -467,16 +468,21 @@ func writeOverlay(dir string, generated map[string]string) (string, func(), erro
 	sort.Strings(sourcePaths)
 
 	overlay := make(map[string]string, len(sourcePaths))
+	checkDir, commandDir, commandArg, err := checkpath.Prepare(dir, tempDir, overlay)
+	if err != nil {
+		cleanup()
+		return "", "", "", nil, err
+	}
 	used := make(map[string]struct{}, len(sourcePaths))
 	for i, sourcePath := range sourcePaths {
 		tempPath := filepath.Join(tempDir, "projection_"+strconv.Itoa(i)+".go")
 		if err := os.WriteFile(tempPath, []byte(generated[sourcePath]), 0o600); err != nil {
 			cleanup()
-			return "", nil, err
+			return "", "", "", nil, err
 		}
 		virtual := uniqueVirtualGoPath(dir, i, used)
 		used[virtual] = struct{}{}
-		overlay[virtual] = tempPath
+		overlay[filepath.Join(checkDir, filepath.Base(virtual))] = tempPath
 	}
 	overlayPath := filepath.Join(tempDir, "overlay.json")
 	data, err := json.Marshal(struct {
@@ -484,13 +490,13 @@ func writeOverlay(dir string, generated map[string]string) (string, func(), erro
 	}{Replace: overlay})
 	if err != nil {
 		cleanup()
-		return "", nil, err
+		return "", "", "", nil, err
 	}
 	if err := os.WriteFile(overlayPath, data, 0o600); err != nil {
 		cleanup()
-		return "", nil, err
+		return "", "", "", nil, err
 	}
-	return overlayPath, cleanup, nil
+	return overlayPath, commandDir, commandArg, cleanup, nil
 }
 
 // uniqueVirtualGoPath names a virtual .go file inside dir that collides

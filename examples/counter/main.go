@@ -1,5 +1,6 @@
 // Example counter runs the standalone Counter island demo.
 //
+// Build: go run ./cmd/gosx build-runtime build
 // Run: go run ./examples/counter
 // Visit: http://localhost:8080
 package main
@@ -14,6 +15,7 @@ import (
 	"strconv"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/examples/internal/runtimecheck"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/island/program"
@@ -35,12 +37,22 @@ func main() {
 // newApp compiles the island from root/counter.gsx and returns a server that
 // renders it. The test uses it without opening a port.
 func newApp(root string) (*server.App, error) {
+	if os.Getenv("GOSX_DEV") != "1" {
+		if err := runtimecheck.Check(root); err != nil {
+			return nil, err
+		}
+	}
 	counterProgram, counterJSON, err := compileIsland(filepath.Join(root, "counter.gsx"), "Counter")
 	if err != nil {
 		return nil, fmt.Errorf("compile counter island: %w", err)
 	}
 
 	app := server.New()
+	runtimeRoot := filepath.Join(root, "../..")
+	if os.Getenv("GOSX_DEV") == "1" {
+		runtimeRoot = os.Getenv("GOSX_APP_ROOT")
+	}
+	app.SetRuntimeRoot(runtimeRoot)
 	app.SetPublicDir(root)
 	app.Mount("/gosx/islands/Counter.json", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -48,7 +60,8 @@ func newApp(root string) (*server.App, error) {
 		_, _ = w.Write(counterJSON)
 	}))
 	app.Route("/", func(r *http.Request) gosx.Node {
-		return counterPage(counterProgram, queryCount(r))
+		hash, size, _ := server.RuntimeAssetInfo(runtimeRoot)
+		return counterPage(counterProgram, queryCount(r), hash, size)
 	})
 	return app, nil
 }
@@ -100,8 +113,11 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
-func counterPage(counterProgram *program.Program, count int) gosx.Node {
+func counterPage(counterProgram *program.Program, count int, runtimeHash string, runtimeSize int64) gosx.Node {
 	islands := island.NewRenderer("counter")
+	if runtimeHash != "" {
+		islands.SetRuntime("/gosx/runtime.wasm", runtimeHash, runtimeSize)
+	}
 	islands.SetProgramAsset("Counter", "/gosx/islands/Counter.json", "json", "")
 
 	body := gosx.El("main", gosx.Attrs(gosx.Attr("class", "page-shell")),

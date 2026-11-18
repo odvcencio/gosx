@@ -14,6 +14,23 @@ A Selena material is one of two kinds:
 | Surface material | `surface(geo) -> Surface` | The renderer's standard lighting, exactly as for a `StandardMaterial`: every light, shadows, image-based lighting, fog, exposure and tone mapping. Start here for a custom look on lit geometry. |
 | Full material | `surface(geo) -> color` | The material's own; it replaces the whole shader. Use it for unlit effects and stylized lighting. |
 
+## Using Elio and Selena on the same mesh
+
+On WebGPU, an animated skinned mesh can use an ordinary Selena mesh material.
+The Elio skinning pass writes positions, normals and tangents into one GPU
+buffer. Scene3D binds the requested regions to the vertex locations declared
+by the material. UVs and custom attributes, such as a per-vertex color, come
+from the original geometry. A position-only shader binds just the transformed
+positions. The material can also request a normal or tangent at a different
+location without copying the computed geometry back to the CPU.
+
+Water uses a different interface. The pool demo binds the running water
+system's height field and caustics to material inputs such as
+`gosx:water:water-main:state` and `gosx:water:water-main:caustics`.
+The spectral ocean consumes the displacement, slope and foam textures from
+its Elio pass graph in the dedicated ocean renderer. Those graph exports are
+internal to that renderer.
+
 ## Compile at build time, load without the compiler
 
 Browser code should load Selena materials from artifact files. An artifact
