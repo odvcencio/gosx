@@ -91,7 +91,6 @@ test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none
   assert.match(webgpu, /var reflectedDirect = obj\.directVertices && sceneAffineDeterminant\(obj\.modelMatrix, 0\) < 0;/);
   assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided\s*\? \{ cullMode: "none" \}\s*:\s*\(reflectedDirect \? \{ frontFace: "cw" \} : null\);/);
   assert.match(webgpu, /getSelenaPipeline\(material, blend, depth, options\)/);
-  assert.match(webgpu, /getSelenaSkinnedPipeline\(material, blend, depth, options\)/);
 });
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
