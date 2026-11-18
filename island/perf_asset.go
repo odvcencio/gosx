@@ -70,6 +70,15 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 	if r == nil || r.perfAssets == nil || r.manifest == nil {
 		return fail("unknown-reachability", "/perfAssetUses")
 	}
+	// The current evidence schema cannot say whether a disclosure was opened
+	// before readiness. Do not certify an invented phase for its downloads.
+	if r.usesSelectiveRuntimeBootstrap() {
+		for _, entry := range r.manifest.Engines {
+			if entry.DeferUntilOpen && strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+				return fail("unknown-reachability", "/deferredScene3D")
+			}
+		}
+	}
 	if r.hasSceneEngines() != (backend != "none") {
 		return fail("invalid-input", "/backend")
 	}

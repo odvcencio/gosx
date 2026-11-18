@@ -4,6 +4,10 @@
 
   const bootstrapFeatureFactories = window.__gosx_bootstrap_features || Object.create(null);
   const activeBootstrapFeatures = new Map();
+  const loadedSceneHydrateURLs = new Set();
+  const pendingSceneHydrateURLs = new Map();
+  // Capture the live document authorization before any soft navigation.
+  const deferredSceneDocumentNonce = gosxCurrentScriptNonce();
   // In-flight feature loads, keyed by name. Two callers can ask for the same
   // feature in the same tick — the document gate and the manifest gate both ask
   // for "textlayout" — and a feature factory must run exactly once.
@@ -93,15 +97,23 @@
     return publicPath ? String(publicPath).trim() : gosxBasePathURL("/gosx/bootstrap-feature-" + name + ".js");
   }
 
-  function ensureBootstrapFeature(name) {
+  function ensureBootstrapFeature(name, skipTextLayout) {
+    if (name === "scene3d") {
+      syncDeferredSceneScriptConfig();
+      if (!skipTextLayout && document.getElementById("gosx-deferred-scene3d") && manifestNeedsTextLayoutFeature(["scene3d"])) {
+        return ensureBootstrapFeature("textlayout").then(function() { return ensureBootstrapFeature("scene3d", true); });
+      }
+    }
     if (activeBootstrapFeatures.has(name)) {
       return Promise.resolve(activeBootstrapFeatures.get(name));
     }
     if (pendingBootstrapFeatures.has(name)) {
-      return pendingBootstrapFeatures.get(name);
+      const pending = pendingBootstrapFeatures.get(name);
+      return name === "scene3d" ? pending.then(function(feature) { syncDeferredSceneScriptConfig(); return feature; }) : pending;
     }
     const pending = initBootstrapFeature(name).then(function(feature) {
       pendingBootstrapFeatures.delete(name);
+      if (name === "scene3d") syncDeferredSceneScriptConfig();
       return feature;
     }, function(error) {
       pendingBootstrapFeatures.delete(name);
@@ -131,7 +143,29 @@
     // not dynamically by the runtime. Wait for it to signal readiness.
     if (name === "scene3d") {
       if (!window.__gosx_scene3d_available) {
-        await waitForScene3DChunk();
+        const template = document.getElementById("gosx-deferred-scene3d");
+        if (template && template.content) {
+          const hydrate = template.content.querySelector('script[data-gosx-script="feature-scene3d-hydrate"]');
+          if (hydrate) {
+            const hydrateKey = deferredSceneScriptKey(hydrate);
+            if (!loadedSceneHydrateURLs.has(hydrateKey)) await appendDeferredSceneScript(hydrate);
+          }
+          const source = template.content.querySelector('script[data-gosx-script="feature-scene3d"]');
+          if (!source) throw new Error("deferred Scene3D script is missing");
+          let script = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+          if (!script) {
+            script = cloneDeferredSceneScript(source);
+            document.head.appendChild(script);
+          }
+          try { await waitForScene3DChunk(); } catch (error) {
+            // A timeout does not cancel a script download; keep that element
+            // so retries cannot cause a second copy to execute later.
+            if (String(error?.message || error).includes("chunk failed to load")) script.remove();
+            throw error;
+          }
+        } else {
+          await waitForScene3DChunk();
+        }
       }
       var scene3dFeature = { name: "scene3d" };
       activeBootstrapFeatures.set(name, scene3dFeature);
@@ -161,6 +195,56 @@
       console.error("[gosx] failed to initialize bootstrap feature " + name + ":", error);
       return null;
     }
+  }
+
+  // After a soft navigation the existing scene script remains live while the
+  // destination advertises its optional chunk URLs on an inert template.
+  function syncDeferredSceneScriptConfig() {
+    const source = document.getElementById("gosx-deferred-scene3d")?.content?.querySelector('script[data-gosx-script="feature-scene3d"]');
+    const live = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+    if (!source || !live) return;
+    for (const attr of Array.from(live.attributes)) {
+      if (attr.name.startsWith("data-gosx-scene3d-")) live.removeAttribute(attr.name);
+    }
+    for (const attr of Array.from(source.attributes)) {
+      if (attr.name.startsWith("data-gosx-scene3d-")) live.setAttribute(attr.name, attr.value);
+    }
+  }
+
+  // Clone the server-authored script attributes, including nonce, integrity and
+  // versioned backend URLs. Scripts inside the template remain inert until open.
+  function cloneDeferredSceneScript(source) {
+    const script = document.createElement("script");
+    for (const attr of Array.from(source.attributes)) script.setAttribute(attr.name, attr.value);
+    // A fetched page nonce cannot authorize scripts in the current document.
+    script.nonce = "";
+    script.removeAttribute("nonce");
+    if (deferredSceneDocumentNonce) script.nonce = deferredSceneDocumentNonce;
+    return script;
+  }
+  function deferredSceneScriptKey(source) {
+    const src = source.getAttribute("src") || "";
+    return new URL(src, document.baseURI).href + "\n" + (source.getAttribute("integrity") || "");
+  }
+  function appendDeferredSceneScript(source) {
+    const url = deferredSceneScriptKey(source);
+    let pending = pendingSceneHydrateURLs.get(url);
+    if (!pending) {
+      const script = cloneDeferredSceneScript(source);
+      pending = new Promise(function(resolve, reject) {
+        script.onload = function() { loadedSceneHydrateURLs.add(url); pendingSceneHydrateURLs.delete(url); resolve(); };
+        script.onerror = function() { pendingSceneHydrateURLs.delete(url); script.remove(); reject(new Error("deferred Scene3D hydrate failed")); };
+        document.head.appendChild(script);
+      });
+      pendingSceneHydrateURLs.set(url, pending);
+    }
+    const timeoutMS = Number(window.__gosx_runtime_ready_timeout_ms) > 0 ? Number(window.__gosx_runtime_ready_timeout_ms) : 10000;
+    // Removing an in-flight script does not reliably prevent execution. Keep
+    // one underlying request and let subsequent attempts share its result.
+    return new Promise(function(resolve, reject) {
+      const timer = setTimeout(function() { reject(new Error("deferred Scene3D hydrate timed out")); }, timeoutMS);
+      pending.then(function() { clearTimeout(timer); resolve(); }, function(error) { clearTimeout(timer); reject(error); });
+    });
   }
 
   // waitForScene3DChunk resolves when the Scene3D chunk signals readiness. It
@@ -242,7 +326,7 @@
       names.push("engines");
       // Check if any engine is GoSXScene3D
       for (var i = 0; i < manifest.engines.length; i++) {
-        if (manifest.engines[i].component === "GoSXScene3D") {
+        if (manifest.engines[i].component === "GoSXScene3D" && !manifest.engines[i].deferUntilOpen) {
           names.push("scene3d");
           break;
         }
@@ -279,6 +363,9 @@
   }
 
   function ensureManifestFeatures(manifest) {
+    // A retained scene engine can survive navigation without mounting again.
+    // Refresh destination chunk metadata even when no new feature load occurs.
+    if (manifest?.engines?.some(entry => entry?.component === "GoSXScene3D" && entry.deferUntilOpen)) syncDeferredSceneScriptConfig();
     const names = manifestFeatureNames(manifest);
     if (manifestNeedsTextLayoutFeature(names)) {
       names.push("textlayout");

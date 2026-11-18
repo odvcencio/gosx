@@ -4851,6 +4851,134 @@
     if (moduleRecord) moduleRecord.mountedIDs.add(entry.id);
   }
 
+  // Selective runtime loads the Scene3D feature only when an opted-in scene
+  // starts. A page generation guard prevents a late download mounting stale DOM.
+  const deferredSceneLoads = new Map();
+  async function mountDeferredEngine(entry, preflightError, retryAttempt = 0) {
+    const generation = goWASMEnginePageGeneration;
+    const id = String(entry.id || "");
+    if (!preflightError && entry.deferUntilOpen && entry.component === "GoSXScene3D" &&
+        typeof ensureBootstrapFeature === "function") {
+      if (deferredSceneLoads.get(id) === generation) return;
+      deferredSceneLoads.set(id, generation);
+      try {
+        await ensureBootstrapFeature("scene3d");
+      } catch (error) {
+        if (generation !== goWASMEnginePageGeneration) return;
+        const failedAfterExecution = String(error?.message || error).includes("ran but did not signal readiness");
+        window.__gosx?.reportIssue?.({scope: "engine", type: "feature", component: entry.component,
+          source: id, ref: "scene3d", message: "Scene3D feature unavailable: " + (error?.message || error) + (failedAfterExecution ? "; reload the page to retry" : ""), fallback: "server"});
+        if (!failedAfterExecution) retryDeferredOnReopen(entry, retryAttempt);
+        return;
+      } finally { if (deferredSceneLoads.get(id) === generation) deferredSceneLoads.delete(id); }
+    }
+    if (generation !== goWASMEnginePageGeneration) return;
+    window.__gosx?.clearIssues?.(function(issue) { return issue.scope === "engine" && issue.type === "feature" && issue.source === id && issue.ref === "scene3d"; });
+    return mountEngine(entry, preflightError);
+  }
+
+  // Keep fallback visible after a failed fetch; a close/open gesture retries.
+  function retryDeferredOnReopen(entry, retryAttempt) {
+    const id = String(entry.id || "");
+    const mount = document.getElementById(entry.mountId || entry.id);
+    let hasDetails = false;
+    for (let node = mount && mount.parentElement; node; node = node.parentElement) {
+      if (String(node.tagName || "").toLowerCase() === "details") { hasDetails = true; break; }
+    }
+    if (!hasDetails) {
+      if (retryAttempt > 0 || !mount) return;
+      const timer = setTimeout(function() {
+        if (deferredEngineMounts.get(id) !== cancel) return;
+        deferredEngineMounts.delete(id);
+        mountDeferredEngine(entry, null, retryAttempt + 1).catch(function(error) { console.error("[gosx] deferred engine retry failed:", error); });
+      }, 500);
+      const cancel = function() { clearTimeout(timer); if (deferredEngineMounts.get(id) === cancel) deferredEngineMounts.delete(id); };
+      deferredEngineMounts.set(id, cancel);
+      return;
+    }
+    const cancel = function() {
+      document.removeEventListener("toggle", retry, true);
+      if (deferredEngineMounts.get(id) === cancel) deferredEngineMounts.delete(id);
+    };
+    const retry = function(event) {
+      const mount = document.getElementById(entry.mountId || entry.id);
+      if (!mount) return;
+      let ownsEvent = false;
+      for (let node = mount.parentElement; node; node = node.parentElement) {
+        if (String(node.tagName || "").toLowerCase() !== "details") continue;
+        if (node === event.target) ownsEvent = true;
+        if (!node.open) return;
+      }
+      if (!ownsEvent) return;
+      cancel();
+      mountDeferredEngine(entry, null).catch(function(error) { console.error("[gosx] deferred engine retry failed:", error); });
+    };
+    document.addEventListener("toggle", retry, true);
+    deferredEngineMounts.set(id, cancel);
+  }
+
+  // Deferred mounts listen to every disclosure ancestor, including nested ones.
+  // The server fallback remains usable until all of them are open.
+  const deferredEngineMounts = new Map();
+  function clearDeferredEngineMounts() {
+    for (const cancel of deferredEngineMounts.values()) cancel();
+    deferredEngineMounts.clear();
+  }
+  function deferEngineUntilOpen(entry, preflightError) {
+    if (!entry.deferUntilOpen) return false;
+    const mount = resolveEngineMount(entry);
+    if (!mount) return false;
+    const details = [];
+    for (let node = mount.parentElement; node; node = node.parentElement) {
+      if (String(node.tagName || "").toLowerCase() === "details") details.push(node);
+    }
+    if (!details.some(node => !node.open)) return false;
+    const id = String(entry.id || "");
+    let observer = null;
+    let detached = false;
+    const cancel = function() {
+      if (observer) observer.disconnect();
+      for (const node of details) node.removeEventListener("toggle", onToggle);
+      if (deferredEngineMounts.get(id) === cancel) deferredEngineMounts.delete(id);
+    };
+    const onToggle = function() {
+      if (document.getElementById(entry.mountId || entry.id) !== mount) return;
+      for (let node = mount.parentElement; node; node = node.parentElement) {
+        if (String(node.tagName || "").toLowerCase() === "details" && !node.open) return;
+      }
+      cancel();
+      mountDeferredEngine(entry, preflightError).catch(function(error) {
+        console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, error);
+      });
+    };
+    for (const node of details) node.addEventListener("toggle", onToggle);
+    if (typeof MutationObserver === "function" && document.documentElement) {
+      observer = new MutationObserver(function() {
+        const replacement = document.getElementById(entry.mountId || entry.id);
+        if (!replacement) {
+          for (const node of details) node.removeEventListener("toggle", onToggle);
+          detached = true;
+          return;
+        }
+        const currentDetails = [];
+        for (let node = replacement.parentElement; node; node = node.parentElement) {
+          if (String(node.tagName || "").toLowerCase() === "details") currentDetails.push(node);
+        }
+        if (replacement === mount && !detached && currentDetails.length === details.length &&
+            currentDetails.every((node, index) => node === details[index])) return;
+        cancel();
+        if (!deferEngineUntilOpen(entry, preflightError)) {
+          mountDeferredEngine(entry, preflightError).catch(function(error) {
+            console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, error);
+          });
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    deferredEngineMounts.set(id, cancel);
+    return true;
+  }
+
   // The manifest of the most recent mountAllEngines call, kept for the
   // late-factory hook below. Bundles do not share the runtime's
   // pendingManifest closure variable, so this module records its own copy.
@@ -4874,15 +5002,17 @@
       const engineID = String(entry.id || "");
       if (!engineID) continue;
       if (window.__gosx.engines.has(engineID)) continue;
-      if (pendingEngineRuntimes.has(engineID)) continue;
+      if (pendingEngineRuntimes.has(engineID) || deferredEngineMounts.has(engineID) || deferredSceneLoads.has(engineID)) continue;
+      if (deferEngineUntilOpen(entry, null)) continue;
       console.info("[gosx] mounting engine after late factory registration:", engineID);
-      mountEngine(entry).catch(function(err) {
+      mountDeferredEngine(entry, null).catch(function(err) {
         console.error("[gosx] late engine mount failed for " + engineID + ":", err);
       });
     }
   };
 
   async function mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap) {
+    clearDeferredEngineMounts();
     lastMountManifest = manifest;
     if (!manifest.engines || manifest.engines.length === 0) return;
     // isNavigationBootstrap is true only when this bootstrap is running as
@@ -4947,7 +5077,9 @@
         // unchanged, so there is nothing to (re)mount here.
         return Promise.resolve();
       }
-      const promise = mountEngine(entry, invalidEntries.get(entry) || null).catch(function(e) {
+      const preflightError = invalidEntries.get(entry) || null;
+      if (!preflightError && deferEngineUntilOpen(entry, null)) return Promise.resolve();
+      const promise = mountDeferredEngine(entry, preflightError).catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });
       if (isNavigationBootstrap && engineID) {
