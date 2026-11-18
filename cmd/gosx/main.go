@@ -11,7 +11,7 @@
 //	gosx detlint <packages>      Check //gosx:deterministic packages for cross-platform hazards
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
 //	gosx desktop package         Package a Windows desktop app for direct download
-//	gosx export [--zip] <dir>    Build a server-less static bundle
+//	gosx export [flags] <dir>    Build a server-less static bundle
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
 //	gosx check <file.gsx>        Parse and validate without emitting
@@ -46,6 +46,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"m31labs.dev/gosx"
@@ -197,11 +198,20 @@ dist/static. Every URL in the bundle is relative to its page, so the folder
 runs from any path on any static host. Fails when a page cannot be exported.
 
 Usage:
-  gosx export [--zip[=path]] [dir]
+  gosx export [--zip[=path]] [--out=dir] [--precompressed=false]
+              [--single-file[=path]] [dir]
 
 Flags:
-  --zip         also write dist/static.zip (index.html at the archive root)
-  --zip=path    write the archive to path
+  --zip                    also write dist/static.zip (index.html at the archive root)
+  --zip=path               write the archive to path
+  --out=dir                also write the static bundle to dir. The folder must be
+                           missing, empty, or a previous export (it has index.html);
+                           its old contents are replaced
+  --precompressed=false    leave the .gz and .br copies out of the exported folder
+                           (dir with --out, else dist/static). Default: true
+  --single-file            also write one HTML file that runs from disk (file://)
+                           or any HTTP path: dist/static.html
+  --single-file=path       write that file to path
 
 `)
 	case "init":
@@ -467,26 +477,53 @@ func cmdDev() {
 }
 
 func cmdExport() {
-	dir := "."
-	opts := ExportOptions{}
-	for i := 2; i < len(os.Args); i++ {
-		arg := os.Args[i]
-		switch {
-		case arg == "--zip":
-			opts.Zip = "auto"
-		case strings.HasPrefix(arg, "--zip="):
-			opts.Zip = strings.TrimPrefix(arg, "--zip=")
-		case strings.HasPrefix(arg, "-"):
-			fmt.Fprintf(os.Stderr, "gosx export: unknown flag %s\n", arg)
-			os.Exit(1)
-		default:
-			dir = arg
-		}
+	dir, opts, err := parseExportArgs(os.Args[2:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gosx export: %v\n", err)
+		os.Exit(1)
 	}
 	if err := RunExportWithOptions(dir, opts); err != nil {
 		fmt.Fprintf(os.Stderr, "gosx export: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// parseExportArgs reads the arguments after "gosx export".
+func parseExportArgs(args []string) (string, ExportOptions, error) {
+	dir := "."
+	opts := ExportOptions{}
+	for _, arg := range args {
+		switch {
+		case arg == "--zip":
+			opts.Zip = "auto"
+		case strings.HasPrefix(arg, "--zip="):
+			opts.Zip = strings.TrimPrefix(arg, "--zip=")
+		case arg == "--out" || arg == "--out=":
+			return "", opts, fmt.Errorf("--out needs a folder: --out=<dir>")
+		case strings.HasPrefix(arg, "--out="):
+			opts.Out = strings.TrimPrefix(arg, "--out=")
+		case arg == "--precompressed":
+			v := true
+			opts.Precompressed = &v
+		case strings.HasPrefix(arg, "--precompressed="):
+			v, err := strconv.ParseBool(strings.TrimPrefix(arg, "--precompressed="))
+			if err != nil {
+				return "", opts, fmt.Errorf("--precompressed takes true or false, got %q", strings.TrimPrefix(arg, "--precompressed="))
+			}
+			opts.Precompressed = &v
+		case arg == "--single-file":
+			opts.SingleFile = "auto"
+		case arg == "--single-file=":
+			return "", opts, fmt.Errorf("--single-file= needs a path; use --single-file for dist/static.html")
+		case strings.HasPrefix(arg, "--single-file="):
+			opts.SingleFile = strings.TrimPrefix(arg, "--single-file=")
+		case strings.HasPrefix(arg, "-"):
+			return "", opts, fmt.Errorf("unknown flag %s", arg)
+		default:
+			dir = arg
+		}
+	}
+	return dir, opts, nil
 }
 
 func cmdCompile() {
