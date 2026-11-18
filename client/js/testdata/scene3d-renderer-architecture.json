@@ -1388,7 +1388,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "wgpuStartTextureLoad@3195:3",
+      "name": "wgpuStartTextureLoad@3194:3",
       "lines": 124,
       "cyclomatic": 35,
       "cognitive": 83,
@@ -1397,7 +1397,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "wgpuCreateSceneColorPipeline@3717:3",
+      "name": "wgpuCreateSceneColorPipeline@3716:3",
       "lines": 26,
       "cyclomatic": 2,
       "cognitive": 1,
@@ -1406,7 +1406,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "wgpuCreatePostProcessor@4004:3",
+      "name": "wgpuCreatePostProcessor@4003:3",
       "lines": 726,
       "cyclomatic": 133,
       "cognitive": 211,
@@ -1415,7 +1415,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "anonymous@4416:14",
+      "name": "anonymous@4415:14",
       "lines": 314,
       "cyclomatic": 29,
       "cognitive": 83,
@@ -1424,7 +1424,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "createSceneWebGPUPicker@5076:3",
+      "name": "createSceneWebGPUPicker@5075:3",
       "lines": 416,
       "cyclomatic": 118,
       "cognitive": 173,
@@ -1433,7 +1433,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "queuePick@5238:5",
+      "name": "queuePick@5237:5",
       "lines": 31,
       "cyclomatic": 9,
       "cognitive": 18,
@@ -1442,7 +1442,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "createSceneWebGPURenderer@6442:3",
+      "name": "createSceneWebGPURenderer@6441:3",
       "lines": 12138,
       "cyclomatic": 4200,
       "cognitive": 5425,
@@ -1452,7 +1452,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "initGPUResources@7714:6",
+      "name": "initGPUResources@7713:6",
       "lines": 285,
       "cyclomatic": 20,
       "cognitive": 23,
@@ -1461,7 +1461,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "sceneSelenaPipelineAttributes@8517:5",
+      "name": "sceneSelenaPipelineAttributes@8516:5",
       "lines": 57,
       "cyclomatic": 28,
       "cognitive": 59,
@@ -1470,7 +1470,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "sceneWaterObjectState@9909:5",
+      "name": "sceneWaterObjectState@9821:5",
       "lines": 95,
       "cyclomatic": 39,
       "cognitive": 57,
@@ -1479,7 +1479,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "sceneWaterManifestShaderSources@10189:5",
+      "name": "sceneWaterManifestShaderSources@10101:5",
       "lines": 85,
       "cyclomatic": 74,
       "cognitive": 121,
@@ -1488,7 +1488,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "ingestManifestValue@10228:7",
+      "name": "ingestManifestValue@10140:7",
       "lines": 20,
       "cyclomatic": 19,
       "cognitive": 38,
@@ -1497,7 +1497,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "createSceneWaterSystem@10712:5",
+      "name": "createSceneWaterSystem@10624:5",
       "lines": 202,
       "cyclomatic": 33,
       "cognitive": 32,
@@ -1506,7 +1506,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderWaterObjectMeshTargetPass@11536:5",
+      "name": "renderWaterObjectMeshTargetPass@11449:5",
       "lines": 27,
       "cyclomatic": 14,
       "cognitive": 13,
@@ -1515,7 +1515,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderWaterObjectSceneTexturePasses@11873:5",
+      "name": "renderWaterObjectSceneTexturePasses@11786:5",
       "lines": 155,
       "cyclomatic": 44,
       "cognitive": 70,
@@ -1524,7 +1524,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "updateWaterSystems@12032:5",
+      "name": "updateWaterSystems@11945:5",
       "lines": 510,
       "cyclomatic": 172,
       "cognitive": 286,
@@ -1533,7 +1533,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawWaterPoolEntries@13574:5",
+      "name": "drawWaterPoolEntries@13487:5",
       "lines": 104,
       "cyclomatic": 34,
       "cognitive": 79,
@@ -1542,7 +1542,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawWaterSurfaceSide@13722:5",
+      "name": "drawWaterSurfaceSide@13635:5",
       "lines": 104,
       "cyclomatic": 34,
       "cognitive": 84,
@@ -1551,7 +1551,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "updateInstancedCullSystems@13883:5",
+      "name": "updateInstancedCullSystems@13796:5",
       "lines": 164,
       "cyclomatic": 69,
       "cognitive": 114,
@@ -1560,7 +1560,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "syncEnvironmentIBL@14323:5",
+      "name": "syncEnvironmentIBL@14236:5",
       "lines": 60,
       "cyclomatic": 31,
       "cognitive": 63,
@@ -1569,7 +1569,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "renderShadowPass@15763:116",
+      "name": "renderShadowPass@15697:116",
       "lines": 99,
       "cyclomatic": 33,
       "cognitive": 64,
@@ -1578,7 +1578,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawPBRObjects@15872:5",
+      "name": "drawPBRObjects@15806:5",
       "lines": 201,
       "cyclomatic": 99,
       "cognitive": 202,
@@ -1587,7 +1587,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawPointsEntries@16790:5",
+      "name": "drawPointsEntries@16713:5",
       "lines": 158,
       "cyclomatic": 51,
       "cognitive": 86,
@@ -1596,7 +1596,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "mirrorWebGPUFrameAttributes@17132:5",
+      "name": "mirrorWebGPUFrameAttributes@17055:5",
       "lines": 259,
       "cyclomatic": 223,
       "cognitive": 225,
@@ -1605,7 +1605,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "drawBoardLabels@17755:5",
+      "name": "drawBoardLabels@17678:5",
       "lines": 117,
       "cyclomatic": 39,
       "cognitive": 76,
@@ -1614,7 +1614,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "render@17987:5",
+      "name": "render@17910:5",
       "lines": 738,
       "cyclomatic": 260,
       "cognitive": 319,
@@ -1623,7 +1623,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "dispose@18771:5",
+      "name": "dispose@18694:5",
       "lines": 145,
       "cyclomatic": 37,
       "cognitive": 61,
@@ -1633,7 +1633,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "diagnostics@19029:5",
+      "name": "diagnostics@18952:5",
       "lines": 90,
       "cyclomatic": 47,
       "cognitive": 47,
