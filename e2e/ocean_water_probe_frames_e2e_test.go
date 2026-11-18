@@ -57,12 +57,24 @@ if (window.GPUAdapter) {
     const d = await request.apply(this, a); window.__gpuTex = {};
     const make = d.createTexture.bind(d);
     d.createTexture = (desc) => { desc = Object.assign({}, desc, { usage: desc.usage | GPUTextureUsage.COPY_SRC }); const t = make(desc); if (desc.label) window.__gpuTex[desc.label] = { t, n: desc.size[0] || desc.size.width }; return t; };
+    // A tier switch can encode two attempts at the same next sequence. The
+    // host maps only the staging buffer of the submitted, published attempt.
+    const captures = new WeakMap();
+    const map = GPUBuffer.prototype.mapAsync;
+    GPUBuffer.prototype.mapAsync = function (...args) {
+      const frame = captures.get(this);
+      if (frame) {
+        captures.delete(this);
+        window.__frames[keyOf()] = frame;
+      }
+      return map.apply(this, args);
+    };
     const copy = GPUCommandEncoder.prototype.copyBufferToBuffer;
     GPUCommandEncoder.prototype.copyBufferToBuffer = function (src, so, dst, doff, size) {
-      if (window.__capOn && window.__capW && size === 1024) {
+      if (window.__capOn && window.__capW && src.label === "gosx-ocean-fft-probe-out" && dst.label === "gosx-ocean-fft-probe-staging") {
         try {
-          const water = window.__gosx_scene3d_ocean_fft_api.water(), key = keyOf();
-          if (water && !window.__frames[key]) {
+          const water = window.__gosx_scene3d_ocean_fft_api.water();
+          if (water) {
             const frame = frameOf(water), pending = [];
             for (let i = 0; i < 4; i++) {
               const dt = window.__gpuTex["gosx-elio-ocean-dispTex" + i], st = window.__gpuTex["gosx-elio-ocean-slopeTex" + i];
@@ -72,7 +84,9 @@ if (window.GPUAdapter) {
                 this.copyTextureToBuffer({ texture: e.t }, { buffer: buf, bytesPerRow: e.n * 8 }, [e.n, e.n]); pending.push({ i, kind, n: e.n, buf });
               }
             }
-            frame.pending = pending; window.__frames[key] = frame;
+            const abandoned = captures.get(dst);
+            if (abandoned) for (const p of abandoned.pending) p.buf.destroy();
+            frame.pending = pending; captures.set(dst, frame);
           }
         } catch (e) { window.__capErr = "gpu: " + e; }
       }
