@@ -1,6 +1,6 @@
 {
   "schema": "selena.artifact.v1",
-  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "compiler": "v0.6.1-0.20261118153911-ea402fd4ab7d",
   "languageVersion": "selena.lang.v1",
   "source": {
     "path": "sources/imperial-jade.sel",
@@ -123,7 +123,7 @@
         {
           "target": "gles",
           "vertex": "#version 300 es\nin vec3 position;\nin vec3 normal;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 deepJade;\nuniform vec3 paleJade;\nuniform vec3 rimTint;\nout vec3 vNormal;\nout vec2 vUv;\n\nvoid main() {\n  vNormal = normal;\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
-          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 deepJade;\nuniform vec3 paleJade;\nuniform vec3 rimTint;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float thickness = clamp((1.0 - abs(n.y)), 0.0, 1.0);\n  float internal = (sin(((vUv.x + vUv.y) * 18.0)) * 0.035);\n  vec3 body = mix(deepJade.rgb, paleJade.rgb, ((thickness * 0.62) + internal));\n  float rim = (pow((1.0 - abs(n.z)), 3.0) * 0.22);\n  fragColor = vec4(mix(body, rimTint.rgb, rim), 0.94);\n}\n"
+          "fragment": "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 deepJade;\nuniform vec3 paleJade;\nuniform vec3 rimTint;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float thickness = clamp((1.0 - abs(n.y)), 0.0, 1.0);\n  float internal = (sin(((vUv.x + vUv.y) * 18.0)) * 0.035);\n  vec3 body = mix(deepJade.rgb, paleJade.rgb, ((thickness * 0.62) + internal));\n  float rim = (pow((1.0 - abs(n.z)), 3.0) * 0.22);\n  fragColor = vec4(mix(body, rimTint.rgb, rim), 0.94);\n}\n"
         }
       ]
     }

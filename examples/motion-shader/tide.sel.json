@@ -1,6 +1,6 @@
 {
   "schema": "selena.artifact.v1",
-  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "compiler": "v0.6.1-0.20261118153911-ea402fd4ab7d",
   "languageVersion": "selena.lang.v1",
   "source": {
     "path": "tide.sel",
@@ -128,7 +128,7 @@
         {
           "target": "gles",
           "vertex": "#version 300 es\nin vec3 position;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 ink;\nuniform vec3 glow;\nuniform float gain;\nuniform float time;\nout vec2 vUv;\n\nvoid main() {\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
-          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 ink;\nuniform vec3 glow;\nuniform float gain;\nuniform float time;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec2 coord = vUv;\n  float drift = (time * 0.65);\n  float wave = ((sin((((coord.x * 12.0) + (sin(((coord.y * 5.0) + drift)) * 2.0)) + drift)) * 0.5) + 0.5);\n  float ribbon = pow(wave, 5.0);\n  fragColor = vec4(mix(ink, glow, clamp((ribbon * gain), 0.0, 1.0)), 1.0);\n}\n"
+          "fragment": "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 ink;\nuniform vec3 glow;\nuniform float gain;\nuniform float time;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec2 coord = vUv;\n  float drift = (time * 0.65);\n  float wave = ((sin((((coord.x * 12.0) + (sin(((coord.y * 5.0) + drift)) * 2.0)) + drift)) * 0.5) + 0.5);\n  float ribbon = pow(wave, 5.0);\n  fragColor = vec4(mix(ink, glow, clamp((ribbon * gain), 0.0, 1.0)), 1.0);\n}\n"
         }
       ]
     }

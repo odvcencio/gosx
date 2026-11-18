@@ -74,6 +74,27 @@ test('deferred Scene3D respects CSP, navigation, retry and disposal', {skip: !en
     await crossing.waitForFunction(() => window.__gosx?.engines?.has('scene'));
     assert.equal(await crossing.locator('script[data-gosx-script="feature-scene3d"]').evaluate(node => node.dataset.gosxScene3dWebglUrl), '/b-webgl.js');
     await crossing.close();
+
+    // Closing during an in-flight download must preserve the fallback.
+    releaseHydrate = null;
+    const reclosed = await browser.newPage();
+    await reclosed.goto(`http://127.0.0.1:${server.address().port}/a`);
+    await reclosed.waitForFunction(() => window.__gosx?.ready);
+    await reclosed.locator('summary').click();
+    await reclosed.waitForFunction(() => document.querySelector('script[data-gosx-script="feature-scene3d-hydrate"]'));
+    await reclosed.locator('summary').click();
+    const loaded = reclosed.waitForResponse(response => response.url().endsWith('/bootstrap-feature-scene3d.js'));
+    assert.ok(releaseHydrate);
+    releaseHydrate();
+    await loaded;
+    await reclosed.waitForFunction(() => window.__gosx_scene3d_available);
+    assert.equal(await reclosed.evaluate(() => window.__gosx.engines.has('scene')), false);
+    assert.equal(await reclosed.locator('#mount').textContent(), 'Fallback');
+    const requestsBeforeReopen = sceneRequests;
+    await reclosed.locator('summary').click();
+    await reclosed.waitForFunction(() => window.__gosx.engines.has('scene'));
+    assert.equal(sceneRequests, requestsBeforeReopen);
+    await reclosed.close();
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

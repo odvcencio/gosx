@@ -19,7 +19,7 @@
     if (!entryRequiresAsyncWebGPUProbe(entry)) {
       return;
     }
-    if (typeof window !== "undefined" && typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
+    if (typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
       await window.__gosx_scene3d_webgpu_probe_ready();
     }
   }

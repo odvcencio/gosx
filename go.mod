@@ -23,7 +23,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	golang.org/x/sys v0.43.0
 	golang.org/x/tools v0.42.0
-	m31labs.dev/selena v0.6.0
+	m31labs.dev/selena v0.6.1-0.20261118153911-ea402fd4ab7d
 	m31labs.dev/turboquant v0.2.1
 )
 

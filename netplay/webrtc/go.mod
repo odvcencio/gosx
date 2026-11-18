@@ -32,7 +32,7 @@ require (
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	m31labs.dev/prism v0.1.3 // indirect
-	m31labs.dev/selena v0.6.0 // indirect
+	m31labs.dev/selena v0.6.1-0.20261118153911-ea402fd4ab7d // indirect
 	m31labs.dev/turboquant v0.2.1 // indirect
 )
 

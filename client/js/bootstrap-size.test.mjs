@@ -1066,7 +1066,9 @@ const budgets = [
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured bootstrap.js raw 2142825; only this exhausted target moves (2076653 -> 2077289), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured bootstrap.js gzip 605882; only this exhausted target moves (588578 -> 589498), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured bootstrap.js raw 2144945; only this exhausted target moves (2077289 -> 2079409), allowance unchanged.
-    file: "bootstrap.js", raw: 2082445, gzip: 590490,
+    // The monolith embeds the deferred disclosure helper for offline use.
+    // It measures 607081 gzip and 497089 Brotli after splitting the engines chunk.
+    file: "bootstrap.js", raw: 2082445, gzip: 590697,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1080,7 +1082,7 @@ const budgets = [
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap.js brotli 504487; only this exhausted target moves (487643 -> 488103), allowance unchanged.
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured bootstrap.js brotli 494813; only this exhausted target moves (478377 -> 478429), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured bootstrap.js brotli 495845; only this exhausted target moves (478429 -> 479461), allowance unchanged.
-    brotli: 480204 },
+    brotli: 480705 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -2130,7 +2132,8 @@ const budgets = [
   // minimums move.
     // The merge of main at 0e48b8acd5 (planar-mirror change and call mailboxes) measures 115,579 raw and 30,545 Brotli bytes on the monolith;
     // only the raw and Brotli minimums move, to the smallest values that clear them.
-  { file: "bootstrap-feature-engines.js", raw: 113063, gzip: 32750, brotli: 29768 },
+  { file: "bootstrap-feature-engines.js", raw: 110000, gzip: 32050, brotli: 29200 },
+  { file: "bootstrap-feature-deferred-engines.js", raw: 2948, gzip: 1245, brotli: 1106 },
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
   // Wave 1 M2: exact chords and anyModifiers. Measured: 14481 / 4002 / 3663;
   // delta +199 / +86 / +100. Existing hard limits cover the change.

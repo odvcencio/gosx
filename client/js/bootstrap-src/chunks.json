@@ -127,6 +127,7 @@
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
         "../runtime/host/modules.ts",
+        "../runtime/host/deferred-engines.ts",
         "bootstrap-src/30b-tail-engine-mounting.ts",
         "../runtime/host/hubs.ts",
         "bootstrap-src/30c1-tail-hub-fight-input.ts",
@@ -212,6 +213,7 @@
     {
       "name": "bootstrap-feature-engines.js",
       "sources": [
+        "bootstrap-src/feature-registration-prefix.ts",
         "bootstrap-src/26b-feature-engines-prefix.ts",
         "../runtime/host/compatibility.ts",
         "bootstrap-src/26b1-canvas2d-painter.ts",
@@ -275,6 +277,14 @@
       "name": "bootstrap-feature-netplay.js",
       "sources": [
         "../runtime/host/netplay.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-deferred-engines.js",
+      "sources": [
+        "bootstrap-src/feature-registration-prefix.ts",
+        "../runtime/host/deferred-engines.ts",
+        "bootstrap-src/deferred-engines-suffix.ts"
       ]
     },
     {

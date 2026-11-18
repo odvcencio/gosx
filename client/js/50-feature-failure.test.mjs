@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const H = require("./runtime-test-harness.js");
 const { bootstrapRuntimeSource, createContext, runScript, flushAsyncWork, FakeElement } = H;
+const deferredHelperSource = fs.readFileSync(path.join(here, "bootstrap-feature-deferred-engines.js"), "utf8");
 const chunkSource = (name) => fs.readFileSync(path.join(here, `bootstrap-feature-${name}.js`), "utf8");
 
 const url = (name) => `/gosx/bootstrap-feature-${name}.js`;
@@ -242,6 +243,7 @@ test("deferred engine waits for every disclosure and mounts once", async () => {
     fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
     manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] },
   });
+  runScript(deferredHelperSource, env.context, "deferred-engines.js");
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   await flushAsyncWork(); await new Promise(resolve => setTimeout(resolve, 20)); await flushAsyncWork();
   assert.equal(count, 0);
@@ -254,6 +256,28 @@ test("deferred engine waits for every disclosure and mounts once", async () => {
   assert.equal(inner.listenerCount("toggle"), 0);
 });
 
+test("the full bootstrap mounts a deferred engine without fetching a feature", async () => {
+  const details = new FakeElement("details", null);
+  const mount = new FakeElement("div", null);
+  mount.id = "deferred-root";
+  details.open = false;
+  details.appendChild(mount);
+  let mounts = 0;
+  const env = createContext({
+    elements: [details],
+    engineFactories: { DeferredFixture() { mounts++; return {}; } },
+    manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: mount.id, deferUntilOpen: true }] },
+  });
+  runScript(H.bootstrapSource, env.context, "bootstrap.js");
+  await settle(20);
+  assert.equal(mounts, 0);
+  details.open = true;
+  details.dispatchEvent({ type: "toggle" });
+  await flushAsyncWork();
+  assert.equal(mounts, 1);
+  assert.ok(env.fetchCalls.every(call => !call.url.includes("bootstrap-feature-deferred-engines")));
+});
+
 test("disposing the page cancels deferred mounts", async () => {
   const details = new FakeElement("details", null), mount = new FakeElement("div", null);
   mount.id = "deferred-root"; details.appendChild(mount); details.open = false;
@@ -261,6 +285,7 @@ test("disposing the page cancels deferred mounts", async () => {
   const env = createContext({ elements: [details], engineFactories: { DeferredFixture() { count++; return {}; } },
     fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
     manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(deferredHelperSource, env.context, "deferred-engines.js");
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   await flushAsyncWork(); await new Promise(resolve => setTimeout(resolve, 20)); await flushAsyncWork();
   env.context.__gosx.host.lifecycle.disposePage();
@@ -275,6 +300,7 @@ test("deferred mount follows a removed then reinserted disclosure", async () => 
   const env = createContext({ elements: [old], engineFactories: { DeferredFixture() { count++; return {}; } },
     fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
     manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(deferredHelperSource, env.context, "deferred-engines.js");
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   await settle(30);
   env.document.byID.delete("deferred-root");
@@ -296,6 +322,7 @@ test("late factory honors closed disclosure and page disposal", async () => {
   let count = 0;
   const env = createContext({ elements: [details], fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
     manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(deferredHelperSource, env.context, "deferred-engines.js");
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
   env.context.__gosx_register_engine_factory("DeferredFixture", () => { count++; return {}; });
   await flushAsyncWork(); assert.equal(count, 0);
@@ -311,6 +338,7 @@ test("late factory waits again if disclosure closes after a failed start", async
   let count = 0;
   const env = createContext({ elements: [details], fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
     manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(deferredHelperSource, env.context, "deferred-engines.js");
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
   details.open = true; details.dispatchEvent({type:"toggle"}); await settle(10);
   details.open = false; details.dispatchEvent({type:"toggle"});
@@ -328,6 +356,7 @@ test("deferred mount survives removing and reinserting the same node", async () 
   const env = createContext({ elements: [details], engineFactories: { DeferredFixture() { count++; return {}; } },
     fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
     manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(deferredHelperSource, env.context, "deferred-engines.js");
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
   env.document.byID.delete("deferred-root"); for (const observer of env.mutationObservers) observer.trigger();
   env.document.byID.set("deferred-root", mount); for (const observer of env.mutationObservers.slice()) observer.trigger();
@@ -342,6 +371,7 @@ test("deferred engine can be remounted after page bootstrap", async () => {
   const env = createContext({ elements: [details], engineFactories: { DeferredFixture() { count++; return {dispose(){}}; } },
     fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
     manifest: { engines: [{ id: "deferred", component: "DeferredFixture", kind: "surface", mountId: "deferred-root", deferUntilOpen: true }] } });
+  runScript(deferredHelperSource, env.context, "deferred-engines.js");
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
   env.context.__gosx.host.lifecycle.disposePage();
   await env.context.__gosx.host.lifecycle.bootstrapPage(); await settle(20);
@@ -358,6 +388,7 @@ test("duplicate invalid engine cannot leak a deferred listener", async () => {
   const env = createContext({ elements: [a,b], engineFactories: { DeferredFixture() { count++; return {}; } },
     fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
     manifest: { engines: ["first-root", "second-root"].map(mountId => ({ id: "deferred", component: "DeferredFixture", kind: "surface", mountId, deferUntilOpen: true })) } });
+  runScript(deferredHelperSource, env.context, "deferred-engines.js");
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
   env.context.__gosx.host.lifecycle.disposePage();
   a.open = b.open = true; a.dispatchEvent({type:"toggle"}); b.dispatchEvent({type:"toggle"}); await flushAsyncWork();
@@ -367,10 +398,11 @@ test("duplicate invalid engine cannot leak a deferred listener", async () => {
 test("all deferred Scene3D entries do not request the scene feature at startup", async () => {
   const details = new FakeElement("details", null), mount = new FakeElement("div", null);
   mount.id = "scene-root"; details.appendChild(mount); details.open = false;
-  const env = createContext({ elements: [details], fetchRoutes: { [url("engines")]: { text: chunkSource("engines") } },
+  const env = createContext({ elements: [details], fetchRoutes: { [url("engines")]: { text: chunkSource("engines") }, [url("deferred-engines")]: { text: deferredHelperSource } },
     manifest: { engines: [{id:"scene", component:"GoSXScene3D", kind:"surface", mountId:"scene-root", deferUntilOpen:true}] } });
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js"); await settle(30);
   assert.equal(env.context.__gosx.ready, true);
+  assert.ok(env.context.__gosx.deferredEngines?.has("scene"));
   assert.equal(env.context.__gosx.engines.has("scene"), false);
   assert.equal(env.context.__gosx.listIssues().filter(issue => issue.ref === "scene3d").length, 0);
 });

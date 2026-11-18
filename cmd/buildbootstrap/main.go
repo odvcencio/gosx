@@ -276,6 +276,7 @@ var outputs = []output{
 			// monolith ships every part, in the original order.
 			sourceFile(tailEventDelegationFile),
 			sourceFile("../runtime/host/modules.ts"),
+			sourceFile("../runtime/host/deferred-engines.ts"),
 			sourceFile(tailEngineMountingFile),
 			sourceFile(tailHubConnectionsFile),
 			sourceFile(tailHubFightInputFile),
@@ -365,6 +366,7 @@ var outputs = []output{
 	{
 		name: "bootstrap-feature-engines.js",
 		sources: []source{
+			sourceFile("bootstrap-src/feature-registration-prefix.ts"),
 			sourceFile("bootstrap-src/26b-feature-engines-prefix.ts"),
 			sourceFile(hostCompatibilityFile),
 			// 26b1 installs window.__gosx_paint_canvas_bundle — the standalone 2D
@@ -444,6 +446,14 @@ var outputs = []output{
 		// only for a page that calls RequireFeature("netplay").
 		name:    "bootstrap-feature-netplay.js",
 		sources: []source{sourceFile("../runtime/host/netplay.ts")},
+	},
+	{
+		name: "bootstrap-feature-deferred-engines.js",
+		sources: []source{
+			sourceFile("bootstrap-src/feature-registration-prefix.ts"),
+			sourceFile("../runtime/host/deferred-engines.ts"),
+			sourceFile("bootstrap-src/deferred-engines-suffix.ts"),
+		},
 	},
 	{
 		// Host for engines with Thread: worker. The same file is the page

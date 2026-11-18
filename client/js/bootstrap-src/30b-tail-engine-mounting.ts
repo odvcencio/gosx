@@ -488,9 +488,13 @@
     return true;
   }
 
+  function reportEngineIssue(value) {
+    if (typeof window.__gosx?.reportIssue === "function") window.__gosx.reportIssue({scope: "engine", ...value()});
+  }
+
   function reportGoWASMEngineModuleFailure(entry, mount, error) {
     console.error(`[gosx] failed to load engine module ${entry && entry.id || "<unknown>"}:`, error);
-    if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+    if (typeof window.__gosx_emit === "function") {
       window.__gosx_emit("error", "engine", "failed to load engine module", {
         component: String(entry && entry.component || ""),
         engineID: String(entry && entry.id || ""),
@@ -499,20 +503,17 @@
         error: error && error.message ? String(error.message) : String(error),
       });
     }
-    if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-      window.__gosx.reportIssue({
-        scope: "engine",
-        type: "module",
-        component: entry && entry.component,
-        source: entry && entry.id,
-        ref: entry && (entry.programRef || entry.component),
-        element: mount,
-        code: error && error.code ? String(error.code) : "engine-module-load-failed",
-        message: error && error.message ? String(error.message) : `failed to load engine module ${entry && entry.id || "<unknown>"}`,
-        error,
-        fallback: "server",
-      });
-    }
+    reportEngineIssue(() => ({
+      type: "module",
+      component: entry && entry.component,
+      source: entry && entry.id,
+      ref: entry && (entry.programRef || entry.component),
+      element: mount,
+      code: error && error.code ? String(error.code) : "engine-module-load-failed",
+      message: error && error.message ? String(error.message) : `failed to load engine module ${entry && entry.id || "<unknown>"}`,
+      error,
+      fallback: "server",
+    }));
   }
 
   function pixelSurfaceCapabilityEnabled(entry) {
@@ -2004,13 +2005,13 @@
     let followState = null;
     const syncBrainID = String((ctx && ctx.id) || "gosx-video-sync");
     let syncBrainActive = false;
-    let syncBrainAvailable = typeof window !== "undefined" && typeof window.__gosx_video_sync_new === "function";
+    let syncBrainAvailable = typeof window.__gosx_video_sync_new === "function";
     let syncBrainWarned = false;
     // JS fallback drift engine — the brain-absent, parity-locked port of the
     // Go videosync engine (28-video-sync-fallback.js). Used on the default
     // "nudge" path when the WASM brain is unavailable. One instance per
     // follow session, created lazily.
-    const jsBrainAvailable = typeof window !== "undefined" && typeof window.__gosx_video_sync_js_create === "function";
+    const jsBrainAvailable = typeof window.__gosx_video_sync_js_create === "function";
     let jsBrain = null;
     let pingTimer = 0;
     let lastPingSentAt = null;
@@ -3220,7 +3221,7 @@
       syncBrainActive = false;
       if (!syncBrainWarned) {
         syncBrainWarned = true;
-        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        if (typeof window.__gosx_emit === "function") {
           try {
             window.__gosx_emit("warn", "video-sync", "video sync brain failed; falling back to legacy follow path", {
               engineID: syncBrainID,
@@ -4429,7 +4430,7 @@
     const missing = status.missing.join(", ");
     const level = authoredFallback ? "warn" : "error";
     console[level](`[gosx] missing required engine capabilities for ${entry.id}: ${missing}`);
-    if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+    if (typeof window.__gosx_emit === "function") {
       window.__gosx_emit(level, "engine", "missing required engine capabilities", {
         component: String(entry.component || ""),
         engineID: String(entry.id || ""),
@@ -4437,19 +4438,16 @@
         requiredCapabilities: status.required.slice(),
       });
     }
-    if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-      window.__gosx.reportIssue({
-        scope: "engine",
-        type: "capability",
-        severity: authoredFallback ? "warning" : "error",
-        component: entry.component,
-        source: entry.id,
-        ref: status.missing.join(" "),
-        element: mount,
-        message: `missing required engine capabilities: ${missing}`,
-        fallback: authoredFallback ? "authored" : "unsupported",
-      });
-    }
+    reportEngineIssue(() => ({
+      type: "capability",
+      severity: authoredFallback ? "warning" : "error",
+      component: entry.component,
+      source: entry.id,
+      ref: status.missing.join(" "),
+      element: mount,
+      message: `missing required engine capabilities: ${missing}`,
+      fallback: authoredFallback ? "authored" : "unsupported",
+    }));
   }
 
   function createEngineContext(entry, mount, runtime, capabilityStatus, pending) {
@@ -4692,24 +4690,21 @@
     if (typeof factory !== "function") {
       disposePendingEngine(pending, true);
       console.warn(`[gosx] no engine factory registered for ${entry.component}`);
-      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+      if (typeof window.__gosx_emit === "function") {
         window.__gosx_emit("warn", "engine", "no engine factory registered", {
           component: String(entry.component || ""),
           engineID: String(entry.id || ""),
         });
       }
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "engine",
-          type: "factory",
-          component: entry.component,
-          source: entry.id,
-          ref: entry.component,
-          element: mount,
-          message: `no engine factory registered for ${entry.component}`,
-          fallback: "server",
-        });
-      }
+      reportEngineIssue(() => ({
+        type: "factory",
+        component: entry.component,
+        source: entry.id,
+        ref: entry.component,
+        element: mount,
+        message: `no engine factory registered for ${entry.component}`,
+        fallback: "server",
+      }));
       return;
     }
 
@@ -4756,7 +4751,7 @@
       disposePendingEngine(pending, !ctx._ssr);
       if (!owned) return;
       console.error(`[gosx] failed to mount engine ${entry.id}:`, e);
-      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+      if (typeof window.__gosx_emit === "function") {
         window.__gosx_emit("error", "engine", "failed to mount engine", {
           component: String(entry.component || ""),
           engineID: String(entry.id || ""),
@@ -4764,19 +4759,16 @@
           stack: e && e.stack ? String(e.stack) : "",
         });
       }
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "engine",
-          type: "mount",
-          component: entry.component,
-          source: entry.id,
-          ref: entry.programRef || entry.component,
-          element: mount,
-          message: `failed to mount engine ${entry.id}`,
-          error: e,
-          fallback: "server",
-        });
-      }
+      reportEngineIssue(() => ({
+        type: "mount",
+        component: entry.component,
+        source: entry.id,
+        ref: entry.programRef || entry.component,
+        element: mount,
+        message: `failed to mount engine ${entry.id}`,
+        error: e,
+        fallback: "server",
+      }));
     }
   }
 
@@ -4788,17 +4780,14 @@
     const mount = document.getElementById(mountID);
     if (!mount) {
       console.warn(`[gosx] engine mount #${mountID} not found for ${entry.id}`);
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        window.__gosx.reportIssue({
-          scope: "engine",
-          type: "mount",
-          component: entry.component,
-          source: entry.id,
-          ref: mountID,
-          message: `engine mount #${mountID} not found`,
-          fallback: "server",
-        });
-      }
+      reportEngineIssue(() => ({
+        type: "mount",
+        component: entry.component,
+        source: entry.id,
+        ref: mountID,
+        message: `engine mount #${mountID} not found`,
+        fallback: "server",
+      }));
       return null;
     }
     return mount;
@@ -4851,132 +4840,16 @@
     if (moduleRecord) moduleRecord.mountedIDs.add(entry.id);
   }
 
-  // Selective runtime loads the Scene3D feature only when an opted-in scene
-  // starts. A page generation guard prevents a late download mounting stale DOM.
-  const deferredSceneLoads = new Map();
-  async function mountDeferredEngine(entry, preflightError, retryAttempt = 0) {
-    const generation = goWASMEnginePageGeneration;
-    const id = String(entry.id || "");
-    if (!preflightError && entry.deferUntilOpen && entry.component === "GoSXScene3D" &&
-        typeof ensureBootstrapFeature === "function") {
-      if (deferredSceneLoads.get(id) === generation) return;
-      deferredSceneLoads.set(id, generation);
-      try {
-        await ensureBootstrapFeature("scene3d");
-      } catch (error) {
-        if (generation !== goWASMEnginePageGeneration) return;
-        const failedAfterExecution = String(error?.message || error).includes("ran but did not signal readiness");
-        window.__gosx?.reportIssue?.({scope: "engine", type: "feature", component: entry.component,
-          source: id, ref: "scene3d", message: "Scene3D feature unavailable: " + (error?.message || error) + (failedAfterExecution ? "; reload the page to retry" : ""), fallback: "server"});
-        if (!failedAfterExecution) retryDeferredOnReopen(entry, retryAttempt);
-        return;
-      } finally { if (deferredSceneLoads.get(id) === generation) deferredSceneLoads.delete(id); }
-    }
-    if (generation !== goWASMEnginePageGeneration) return;
-    window.__gosx?.clearIssues?.(function(issue) { return issue.scope === "engine" && issue.type === "feature" && issue.source === id && issue.ref === "scene3d"; });
-    return mountEngine(entry, preflightError);
-  }
-
-  // Keep fallback visible after a failed fetch; a close/open gesture retries.
-  function retryDeferredOnReopen(entry, retryAttempt) {
-    const id = String(entry.id || "");
-    const mount = document.getElementById(entry.mountId || entry.id);
-    let hasDetails = false;
-    for (let node = mount && mount.parentElement; node; node = node.parentElement) {
-      if (String(node.tagName || "").toLowerCase() === "details") { hasDetails = true; break; }
-    }
-    if (!hasDetails) {
-      if (retryAttempt > 0 || !mount) return;
-      const timer = setTimeout(function() {
-        if (deferredEngineMounts.get(id) !== cancel) return;
-        deferredEngineMounts.delete(id);
-        mountDeferredEngine(entry, null, retryAttempt + 1).catch(function(error) { console.error("[gosx] deferred engine retry failed:", error); });
-      }, 500);
-      const cancel = function() { clearTimeout(timer); if (deferredEngineMounts.get(id) === cancel) deferredEngineMounts.delete(id); };
-      deferredEngineMounts.set(id, cancel);
-      return;
-    }
-    const cancel = function() {
-      document.removeEventListener("toggle", retry, true);
-      if (deferredEngineMounts.get(id) === cancel) deferredEngineMounts.delete(id);
-    };
-    const retry = function(event) {
-      const mount = document.getElementById(entry.mountId || entry.id);
-      if (!mount) return;
-      let ownsEvent = false;
-      for (let node = mount.parentElement; node; node = node.parentElement) {
-        if (String(node.tagName || "").toLowerCase() !== "details") continue;
-        if (node === event.target) ownsEvent = true;
-        if (!node.open) return;
-      }
-      if (!ownsEvent) return;
-      cancel();
-      mountDeferredEngine(entry, null).catch(function(error) { console.error("[gosx] deferred engine retry failed:", error); });
-    };
-    document.addEventListener("toggle", retry, true);
-    deferredEngineMounts.set(id, cancel);
-  }
-
-  // Deferred mounts listen to every disclosure ancestor, including nested ones.
-  // The server fallback remains usable until all of them are open.
-  const deferredEngineMounts = new Map();
-  function clearDeferredEngineMounts() {
-    for (const cancel of deferredEngineMounts.values()) cancel();
-    deferredEngineMounts.clear();
-  }
-  function deferEngineUntilOpen(entry, preflightError) {
-    if (!entry.deferUntilOpen) return false;
-    const mount = resolveEngineMount(entry);
-    if (!mount) return false;
-    const details = [];
-    for (let node = mount.parentElement; node; node = node.parentElement) {
-      if (String(node.tagName || "").toLowerCase() === "details") details.push(node);
-    }
-    if (!details.some(node => !node.open)) return false;
-    const id = String(entry.id || "");
-    let observer = null;
-    let detached = false;
-    const cancel = function() {
-      if (observer) observer.disconnect();
-      for (const node of details) node.removeEventListener("toggle", onToggle);
-      if (deferredEngineMounts.get(id) === cancel) deferredEngineMounts.delete(id);
-    };
-    const onToggle = function() {
-      if (document.getElementById(entry.mountId || entry.id) !== mount) return;
-      for (let node = mount.parentElement; node; node = node.parentElement) {
-        if (String(node.tagName || "").toLowerCase() === "details" && !node.open) return;
-      }
-      cancel();
-      mountDeferredEngine(entry, preflightError).catch(function(error) {
-        console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, error);
-      });
-    };
-    for (const node of details) node.addEventListener("toggle", onToggle);
-    if (typeof MutationObserver === "function" && document.documentElement) {
-      observer = new MutationObserver(function() {
-        const replacement = document.getElementById(entry.mountId || entry.id);
-        if (!replacement) {
-          for (const node of details) node.removeEventListener("toggle", onToggle);
-          detached = true;
-          return;
-        }
-        const currentDetails = [];
-        for (let node = replacement.parentElement; node; node = node.parentElement) {
-          if (String(node.tagName || "").toLowerCase() === "details") currentDetails.push(node);
-        }
-        if (replacement === mount && !detached && currentDetails.length === details.length &&
-            currentDetails.every((node, index) => node === details[index])) return;
-        cancel();
-        if (!deferEngineUntilOpen(entry, preflightError)) {
-          mountDeferredEngine(entry, preflightError).catch(function(error) {
-            console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, error);
-          });
-        }
-      });
-      observer.observe(document.documentElement, { childList: true, subtree: true });
-    }
-    deferredEngineMounts.set(id, cancel);
-    return true;
+  // A parked disclosure has no mount promise until it opens.
+  function startManifestEngine(entry, preflightError) {
+    if (!entry.deferUntilOpen || preflightError) return mountEngine(entry, preflightError);
+    const helper = window.__gosx?.deferredEngines ||
+      (typeof installDeferredEngines === "function" ? installDeferredEngines() : null);
+    if (helper) return helper.start(entry, mountEngine, resolveEngineMount,
+      typeof ensureBootstrapFeature === "function" ? ensureBootstrapFeature : null);
+    reportEngineIssue(() => ({type: "feature", ref: "deferred-engines", component: entry.component,
+      source: entry.id, message: "Deferred engine support unavailable", fallback: "server"}));
+    return null;
   }
 
   // The manifest of the most recent mountAllEngines call, kept for the
@@ -5002,17 +4875,16 @@
       const engineID = String(entry.id || "");
       if (!engineID) continue;
       if (window.__gosx.engines.has(engineID)) continue;
-      if (pendingEngineRuntimes.has(engineID) || deferredEngineMounts.has(engineID) || deferredSceneLoads.has(engineID)) continue;
-      if (deferEngineUntilOpen(entry, null)) continue;
-      console.info("[gosx] mounting engine after late factory registration:", engineID);
-      mountDeferredEngine(entry, null).catch(function(err) {
+      if (pendingEngineRuntimes.has(engineID) || window.__gosx.deferredEngines?.has(engineID)) continue;
+      const pending = startManifestEngine(entry, null);
+      if (pending) pending.catch(function(err) {
         console.error("[gosx] late engine mount failed for " + engineID + ":", err);
       });
     }
   };
 
   async function mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap) {
-    clearDeferredEngineMounts();
+    window.__gosx.deferredEngines?.clear();
     lastMountManifest = manifest;
     if (!manifest.engines || manifest.engines.length === 0) return;
     // isNavigationBootstrap is true only when this bootstrap is running as
@@ -5050,18 +4922,15 @@
     });
     if (videoEngines.length > 1) {
       console.error("[gosx] only one video engine is supported per page");
-      if (window.__gosx && typeof window.__gosx.reportIssue === "function") {
-        for (const entry of videoEngines.slice(1)) {
-          window.__gosx.reportIssue({
-            scope: "engine",
-            type: "mount",
-            component: entry.component,
-            source: entry.id,
-            ref: entry.id,
-            message: "only one video engine is supported per page",
-            fallback: "server",
-          });
-        }
+      for (const entry of videoEngines.slice(1)) {
+        reportEngineIssue(() => ({
+          type: "mount",
+          component: entry.component,
+          source: entry.id,
+          ref: entry.id,
+          message: "only one video engine is supported per page",
+          fallback: "server",
+        }));
       }
     }
 
@@ -5078,13 +4947,14 @@
         return Promise.resolve();
       }
       const preflightError = invalidEntries.get(entry) || null;
-      if (!preflightError && deferEngineUntilOpen(entry, null)) return Promise.resolve();
-      const promise = mountDeferredEngine(entry, preflightError).catch(function(e) {
+      const pending = startManifestEngine(entry, preflightError);
+      if (!pending) return;
+      const promise = pending.catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });
       if (isNavigationBootstrap && engineID) {
         promise.then(function() {
-          if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+          if (typeof window.__gosx_emit === "function") {
             window.__gosx_emit("info", "engine", "engine-remounted", {
               engineID,
               component: String((entry && entry.component) || ""),
