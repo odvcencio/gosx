@@ -480,9 +480,9 @@ func writeOverlay(dir string, generated map[string]string) (string, string, stri
 			cleanup()
 			return "", "", "", nil, err
 		}
-		virtual := uniqueVirtualGoPath(checkDir, i, used)
+		virtual := uniqueVirtualGoPath(dir, i, used)
 		used[virtual] = struct{}{}
-		overlay[virtual] = tempPath
+		overlay[filepath.Join(checkDir, filepath.Base(virtual))] = tempPath
 	}
 	overlayPath := filepath.Join(tempDir, "overlay.json")
 	data, err := json.Marshal(struct {

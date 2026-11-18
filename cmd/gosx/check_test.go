@@ -17,7 +17,8 @@ func TestRunCheckStrictRouteDirectories(t *testing.T) {
 			mustWriteFile(t, filepath.Join(dir, "gosxstub", "go.mod"), "module m31labs.dev/gosx\n\ngo 1.26\n")
 			mustWriteFile(t, filepath.Join(dir, "gosxstub", "node.go"), "package gosx\ntype Node struct{}\nfunc El(string, ...any) Node { return Node{} }\nfunc Expr(any) Node { return Node{} }\n")
 			page := filepath.Join(dir, "app", route, "page.gsx")
-			mustWriteFile(t, filepath.Join(filepath.Dir(page), "props.go"), "package watch\ntype Marker string\n")
+			mustWriteFile(t, filepath.Join(filepath.Dir(page), "zz_gosx_strictcheck_0.go"), "package watch\ntype Marker = SiblingMarker\n")
+			mustWriteFile(t, filepath.Join(filepath.Dir(page), "zz_gosx_typeoracle_0.go"), "package watch\ntype SiblingMarker string\n")
 			mustWriteFile(t, page, `package watch
 type MomentProps struct { Label string; Extra Marker }
 component Moment(props: MomentProps) {
