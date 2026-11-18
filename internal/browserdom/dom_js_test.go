@@ -111,6 +111,41 @@ func TestTypedElementAndDatasetHandleSemantics(t *testing.T) {
 	}
 }
 
+func TestModalDialogOpensOnceAndClosesOnlyWhenOpen(t *testing.T) {
+	dialog := domObject()
+	dialog.Set("open", false)
+	shown, closed := 0, 0
+	domMethod(t, dialog, "showModal", func([]js.Value) any {
+		if dialog.Get("open").Truthy() {
+			panic("the browser throws InvalidStateError on an open dialog")
+		}
+		shown++
+		dialog.Set("open", true)
+		return nil
+	})
+	domMethod(t, dialog, "close", func([]js.Value) any { closed++; dialog.Set("open", false); return nil })
+	el := FromJS(dialog)
+	el.CloseDialog()
+	if closed != 0 {
+		t.Fatal("CloseDialog called close on a closed dialog")
+	}
+	el.ShowModal()
+	el.ShowModal()
+	if shown != 1 || !el.Open() {
+		t.Fatalf("ShowModal ran showModal %d times, open=%v; want once and open", shown, el.Open())
+	}
+	el.CloseDialog()
+	el.CloseDialog()
+	if closed != 1 || el.Open() {
+		t.Fatalf("CloseDialog ran close %d times, open=%v; want once and closed", closed, el.Open())
+	}
+	// An element with no dialog methods, and the zero Element, are left alone.
+	FromJS(domObject()).ShowModal()
+	FromJS(domObject()).CloseDialog()
+	(Element{}).ShowModal()
+	(Element{}).CloseDialog()
+}
+
 func TestElementHandlesAndLazyTargetsAllocateNoWrappers(t *testing.T) {
 	node, event := domObject(), domObject()
 	event.Set("target", node)

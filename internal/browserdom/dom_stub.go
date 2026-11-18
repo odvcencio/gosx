@@ -96,6 +96,8 @@ func (e Element) SetDisabled(value bool)                 {}
 func (e Element) Connected() bool                        { return false }
 func (e Element) Open() bool                             { return false }
 func (e Element) SetOpen(value bool)                     {}
+func (e Element) ShowModal()                             {}
+func (e Element) CloseDialog()                           {}
 func (e Element) Focus()                                 {}
 func (e Element) Click()                                 {}
 func (e Element) Remove()                                {}
