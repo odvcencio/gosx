@@ -209,7 +209,8 @@ func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
 		SourceHref          string   `json:"sourceHref"`
 		SourcePath          string   `json:"sourcePath"`
 		HeaderDirection     string   `json:"headerDirection"`
-		HeaderAlign         string   `json:"headerAlign"`
+		TextAligned         bool     `json:"textAligned"`
+		TextStacked         bool     `json:"textStacked"`
 		TitleWidth          float64  `json:"titleWidth"`
 		TitleHeight         float64  `json:"titleHeight"`
 		HasHorizontalScroll bool     `json:"hasHorizontalScroll"`
@@ -221,6 +222,29 @@ func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
 	const title = document.querySelector('.play__title');
 	const headerStyle = getComputedStyle(header);
 	const titleRect = title.getBoundingClientRect();
+	const headerRect = header.getBoundingClientRect();
+	const rtl = headerStyle.direction === 'rtl';
+	const contentStart = rtl
+	  ? headerRect.right - parseFloat(headerStyle.borderRightWidth) - parseFloat(headerStyle.paddingRight)
+	  : headerRect.left + parseFloat(headerStyle.borderLeftWidth) + parseFloat(headerStyle.paddingLeft);
+	const nodes = ['.play__eyebrow', '.play__title', '.play__subtitle', '.play__guide']
+	  .map((selector) => header.querySelector(selector));
+	const visibleText = nodes.map((node) => {
+	  if (!node) return null;
+	  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+	  let text;
+	  while ((text = walker.nextNode())) {
+	    const start = text.data.search(/\S/);
+	    if (start < 0) continue;
+	    const range = document.createRange();
+	    range.setStart(text, start);
+	    range.setEnd(text, text.length);
+	    const rect = range.getClientRects()[0];
+	    if (rect && rect.width > 0 && rect.height > 0) return rect;
+	  }
+	  return null;
+	});
+	const boxes = nodes.map((node) => node?.getBoundingClientRect());
 	return {
 	  viewportWidth: window.innerWidth,
 	  currentHrefs: current.map((link) => new URL(link.href, location.href).pathname),
@@ -231,7 +255,9 @@ func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
 	  sourceHref: document.querySelector('.demo-details__source')?.getAttribute('href') || '',
 	  sourcePath: document.querySelector('.demo-details__path')?.textContent.trim() || '',
 	  headerDirection: headerStyle.flexDirection,
-	  headerAlign: headerStyle.alignItems,
+	  textAligned: visibleText.every((rect) => rect && Math.abs((rtl ? rect.right : rect.left) - contentStart) <= 1),
+	  textStacked: boxes.every((rect, i) => rect && rect.width > 0 && rect.height > 0 &&
+	    (i === 0 || boxes[i - 1].bottom <= rect.top + 1)),
 	  titleWidth: titleRect.width,
 	  titleHeight: titleRect.height,
 	  hasHorizontalScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -262,8 +288,8 @@ func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
 	if !strings.Contains(got.SourceHref, "/examples/gosx-docs/app/demos/playground/page.gsx") || got.SourcePath != "examples/gosx-docs/app/demos/playground/page.gsx" {
 		t.Errorf("direct-load source = (%q, %q)", got.SourceHref, got.SourcePath)
 	}
-	if got.HeaderDirection != "column" || got.HeaderAlign != "flex-start" {
-		t.Errorf("mobile playground header layout = direction %q, align %q", got.HeaderDirection, got.HeaderAlign)
+	if got.HeaderDirection != "column" || !got.TextAligned || !got.TextStacked {
+		t.Errorf("mobile playground header layout = direction %q, text aligned %t, text stacked %t", got.HeaderDirection, got.TextAligned, got.TextStacked)
 	}
 	if got.TitleWidth < 250 || got.TitleHeight > 40 {
 		t.Errorf("mobile playground title bounds = %.2fx%.2f; title is still squeezed or wrapped", got.TitleWidth, got.TitleHeight)

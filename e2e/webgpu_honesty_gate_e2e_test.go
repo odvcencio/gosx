@@ -40,7 +40,12 @@ type backendCaps struct {
 func TestWebGPUHonestyGate(t *testing.T) {
 	chrome := e2eChromePath(t)
 	app := startDocsApp(t, honestyGateBaseURL())
-	page := newBrowserPage(t, chrome, nil, 1280, 800, "", 90*time.Second)
+	page := newBrowserPage(t, chrome, map[string]any{
+		"use-gl":                    "angle",
+		"use-angle":                 "swiftshader",
+		"enable-unsafe-swiftshader": true,
+		"enable-webgl":              true,
+	}, 1280, 800, "", 90*time.Second)
 
 	fixturePath := "/test/webgpu-honesty-gate"
 	if status := page.navigate(t, app.baseURL+fixturePath); status < 200 || status > 299 {
@@ -106,6 +111,7 @@ func TestWebGPUHonestyGate(t *testing.T) {
     };
   })()`, &attrs)
 
+	t.Logf("Scene3D backend=%q fallback=%q", attrs.Backend, attrs.Fallback)
 	if attrs.Backend == "" {
 		t.Fatalf("no [data-gosx-scene3d-mounted] element found on %s\n\nLogs:\n%s", fixturePath, app.logs.String())
 	}
