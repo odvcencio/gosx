@@ -21,6 +21,8 @@
 
 ### Server and islands
 
+- Mounts under `/gosx/` take precedence over the runtime handler for matching paths, including runtime assets (#880). Use exact paths or a narrow prefix.
+
 - Script preload hints carry the request nonce under a nonce-based Content-Security-Policy (#857). Every `<link rel="preload" as="script">` that the runtime head and file routes emit (feature bundles, required chunks, Scene3D scripts) now has the same per-request nonce as its script, so Chromium no longer blocks the preload and reports a violation under `script-src 'nonce-…' 'strict-dynamic'`. `island.Renderer` and `server.PageRuntime` gain `PreloadHintsWithNonce`; `PreloadHints` is unchanged and carries no nonce. A page without a nonce policy renders the same markup as before, and shared-cacheable responses stay nonce-free.
 
 ### Docs and docs site
@@ -31,6 +33,8 @@
 - Replace the `docs/` ignore allow-list with a test that keeps specs, plans and reports out of `docs/`.
 
 ### Examples and starter
+
+- The counter and hotswap examples require a built runtime for standalone runs; build it with `go run ./cmd/gosx build-runtime build` (#880).
 
 - `gosx init` now teaches the strict `component Name(props: Type)` syntax in both templates, and each template includes a `README.md`. `gosx init` prints, and that README links, one path to a deployed app: `gosx build --prod`, `gosx deploy check dist`, and the deployment guide. The docs template's overview text now describes a starter docs site, and its navigation marks the current page with `aria-current="true"`.
 - The `goetrope-watch` example serves its `/watch/<channel>` pages again (its page modules were never imported) and renders its layout once; `basic`, `canvasboard` and `goetrope-watch` read `PORT`.

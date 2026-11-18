@@ -6,14 +6,21 @@ the island you changed and ships the new program over the dev socket.
 
 ## Run it
 
+For standalone use, install TinyGo and run from the repository root:
+
+```sh
+go run ./cmd/gosx build-runtime build
+go run ./examples/hotswap
+```
+
+Build the runtime first when `gosx build` or `gosx export` starts the example for prerendering. For hot reload, run:
+
 ```sh
 gosx dev ./examples/hotswap
 ```
 
 Open the printed URL, click the counter up a few times, then edit
 `counter.gsx` and save. Try changing the label, the step size, or a class.
-`go run ./examples/hotswap` only serves the server-rendered page; the island
-needs the dev server to hydrate.
 
 ## What to read
 

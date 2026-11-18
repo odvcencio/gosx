@@ -5,18 +5,16 @@ for GoSX's shared browser VM. The server renders the first count (`?count=5`)
 and a `<noscript>` pair of links keeps the counter usable without JavaScript.
 `counter.css` is the sidecar stylesheet.
 
-This example only serves the server-rendered page. It does not serve the
-browser runtime or the island program, so the island does not hydrate under
-`go run`. [hotswap](../hotswap) is the same island run under `gosx dev`, which
-serves both.
-
 ## Run it
 
+From the repository root, build the runtime with TinyGo installed, then run:
+
 ```sh
+go run ./cmd/gosx build-runtime build
 go run ./examples/counter
 ```
 
-Open <http://localhost:8080>.
+Open <http://localhost:8080>. Build the runtime first when `gosx build` or `gosx export` starts the example for prerendering.
 
 ## What to read
 
