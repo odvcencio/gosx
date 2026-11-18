@@ -322,38 +322,29 @@
 
   function manifestFeatureNames(manifest) {
     const names = [];
-    if (manifestHasEntries(manifest, "engines")) {
+    if (manifest?.engines?.length) {
       names.push("engines");
-      // Check if any engine is GoSXScene3D
-      for (var i = 0; i < manifest.engines.length; i++) {
-        if (manifest.engines[i].component === "GoSXScene3D" && !manifest.engines[i].deferUntilOpen) {
-          names.push("scene3d");
-          break;
-        }
-      }
+      if (manifest.engines.some(entry => entry?.deferUntilOpen)) names.push("deferred-engines");
+      if (manifest.engines.some(entry => entry?.component === "GoSXScene3D" && !entry.deferUntilOpen)) names.push("scene3d");
     }
-    if (manifestHasEntries(manifest, "hubs")) {
+    if (manifest?.hubs?.length) {
       names.push("hubs");
     }
-    if (manifestHasEntries(manifest, "controllers")) {
+    if (manifest?.controllers?.length) {
       names.push("controllers");
     }
     if (manifestNeedsIslandsFeature(manifest)) {
       names.push("islands");
     }
-    for (const name of (manifest && manifest.features) || []) {
+    for (const name of manifest?.features || []) {
       const key = String(name || "").trim();
-      if (key && names.indexOf(key) < 0) names.push(key);
+      if (key && !names.includes(key)) names.push(key);
     }
     return names;
   }
 
-  function manifestHasEntries(manifest, key) {
-    return Boolean(manifest && manifest[key] && manifest[key].length > 0);
-  }
-
   function manifestNeedsIslandsFeature(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands");
+    return Boolean(manifest?.islands?.length || manifest?.computeIslands?.length);
   }
 
   function manifestNeedsWASMRuntime(manifest) {
@@ -565,7 +556,7 @@
 
     const manifest = loadManifest();
     const connectHubs = gosxHost.hubs?.connectAll;
-    if (!manifestHasEntries(manifest, "hubs") && connectHubs) await connectHubs(manifest);
+    if (!manifest?.hubs?.length && connectHubs) await connectHubs(manifest);
     if (!manifest) {
       pendingManifest = null;
       // A page can hold text blocks and no manifest. Keep the text-layout load

@@ -123,7 +123,6 @@ export function createContext(options = {}) {
     clearTimeout() {},
     goWASMEnginePageGeneration: 0,
     pendingEngineRuntimes: new Map(),
-    clearDeferredEngineMounts() {},
     lastMountManifest: null,
     disposeManagedMotion() {},
     disposeManagedTextLayouts() {},

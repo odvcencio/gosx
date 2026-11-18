@@ -69,6 +69,7 @@ var runtimeFeatureChunks = []struct{ name, role string }{
 	{"netplay", "hubs"},
 	{"arcade-audio", "hubs"},
 	{"engine-worker", "engines"},
+	{"deferred-engines", "engines"},
 	{"motion-transport", "motion"},
 	{"motion-svg", "motion"},
 	{"motion-scene", "motion"},

@@ -1,6 +1,6 @@
 {
   "schema": "selena.artifact.v1",
-  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "compiler": "v0.6.1-0.20261118153911-ea402fd4ab7d",
   "languageVersion": "selena.lang.v1",
   "source": {
     "path": "sources/midnight-lacquer.sel",
@@ -123,7 +123,7 @@
         {
           "target": "gles",
           "vertex": "#version 300 es\nin vec3 position;\nin vec3 normal;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 lacquerBlack;\nuniform vec3 cinnabar;\nuniform vec3 goldLeaf;\nout vec3 vNormal;\nout vec2 vUv;\n\nvoid main() {\n  vNormal = normal;\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
-          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 lacquerBlack;\nuniform vec3 cinnabar;\nuniform vec3 goldLeaf;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float cloudA = sin(((vUv.x * 31.0) + (sin((vUv.y * 9.0)) * 3.0)));\n  float cloudB = sin(((vUv.y * 47.0) + (sin((vUv.x * 13.0)) * 2.0)));\n  float cloud = clamp((((cloudA + cloudB) * 0.18) + 0.34), 0.0, 1.0);\n  float flake = smoothstep(0.985, 0.94, abs((sin((vUv.x * 173.0)) * sin((vUv.y * 149.0)))));\n  vec3 body = mix(lacquerBlack.rgb, cinnabar.rgb, cloud);\n  vec3 gilded = mix(body, goldLeaf.rgb, (flake * 0.38));\n  float clear = (pow((1.0 - abs(n.z)), 4.0) * 0.16);\n  fragColor = vec4((gilded + vec3(clear, clear, clear)), 1.0);\n}\n"
+          "fragment": "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 lacquerBlack;\nuniform vec3 cinnabar;\nuniform vec3 goldLeaf;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float cloudA = sin(((vUv.x * 31.0) + (sin((vUv.y * 9.0)) * 3.0)));\n  float cloudB = sin(((vUv.y * 47.0) + (sin((vUv.x * 13.0)) * 2.0)));\n  float cloud = clamp((((cloudA + cloudB) * 0.18) + 0.34), 0.0, 1.0);\n  float flake = smoothstep(0.985, 0.94, abs((sin((vUv.x * 173.0)) * sin((vUv.y * 149.0)))));\n  vec3 body = mix(lacquerBlack.rgb, cinnabar.rgb, cloud);\n  vec3 gilded = mix(body, goldLeaf.rgb, (flake * 0.38));\n  float clear = (pow((1.0 - abs(n.z)), 4.0) * 0.16);\n  fragColor = vec4((gilded + vec3(clear, clear, clear)), 1.0);\n}\n"
         }
       ]
     }

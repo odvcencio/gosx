@@ -1427,6 +1427,9 @@ func (r *Renderer) pageFeatures() map[string]bool {
 	if len(r.manifest.Controllers) > 0 {
 		set["controllers"] = true
 	}
+	if r.hasDeferredEngines() {
+		set["deferred-engines"] = true
+	}
 	if r.hasSceneEngines() {
 		set["scene3d"] = true
 		set["textlayout"] = true
@@ -1545,6 +1548,11 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	if plan.Patch && r.patchPath != "" {
 		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"%s></script>`, html.EscapeString(r.patchPath), r.runtimeScriptAttrs(r.patchPath, nonce)))
 		b.WriteByte('\n')
+	}
+	if plan.Selective && r.hasDeferredEngines() {
+		path := r.requiredFeaturePath("deferred-engines")
+		b.WriteByte('\n')
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="feature-deferred-engines" src="%s"%s></script>`, html.EscapeString(path), r.runtimeScriptAttrs(path, nonce)))
 	}
 	bootstrapPath := r.selectedBootstrapPath()
 	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s"`, plan.Mode))
@@ -2499,6 +2507,9 @@ func (r *Renderer) bootstrapScriptSrcs() map[string]bool {
 	if bootstrapPath := r.selectedBootstrapPath(); bootstrapPath != "" {
 		srcs[bootstrapPath] = true
 	}
+	if plan.Selective && r.hasDeferredEngines() {
+		srcs[r.requiredFeaturePath("deferred-engines")] = true
+	}
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		srcs[scene3dPath] = true
 	}
@@ -3056,6 +3067,15 @@ func (r *Renderer) allSceneEnginesDeferred() bool {
 		}
 	}
 	return found
+}
+
+func (r *Renderer) hasDeferredEngines() bool {
+	for _, entry := range r.manifest.Engines {
+		if entry.DeferUntilOpen {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Renderer) hasSceneEngines() bool {

@@ -359,7 +359,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 // not this vocabulary.
 var runtimeExcludableAssetRoles = map[string][]string{
 	"islands":     {"bootstrap-feature-islands.js"},
-	"engines":     {"bootstrap-feature-engines.js", "bootstrap-feature-engine-worker.js"},
+	"engines":     {"bootstrap-feature-engines.js", "bootstrap-feature-engine-worker.js", "bootstrap-feature-deferred-engines.js"},
 	"hubs":        {"bootstrap-feature-hubs.js", "bootstrap-feature-hub-document.js", "bootstrap-feature-netplay.js", "bootstrap-feature-arcade-audio.js"},
 	"controllers": {"bootstrap-feature-controllers.js", "bootstrap-controller-input.js"},
 	"workbench":   {"bootstrap-feature-workbench.js"},

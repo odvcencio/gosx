@@ -1,6 +1,6 @@
 {
   "schema": "selena.artifact.v1",
-  "compiler": "v0.5.3-0.20261109010419-168e3fd588ef",
+  "compiler": "v0.6.1-0.20261118153911-ea402fd4ab7d",
   "languageVersion": "selena.lang.v1",
   "source": {
     "path": "sources/brushed-steel.sel",
@@ -121,7 +121,7 @@
         {
           "target": "gles",
           "vertex": "#version 300 es\nin vec3 position;\nin vec3 normal;\nin vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 steelDark;\nuniform vec3 steelLight;\nuniform float brushGain;\nout vec3 vNormal;\nout vec2 vUv;\n\nvoid main() {\n  vNormal = normal;\n  vUv = uv;\n  gl_Position = (mvp * vec4(position, 1.0));\n}\n",
-          "fragment": "#version 300 es\nprecision highp float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 steelDark;\nuniform vec3 steelLight;\nuniform float brushGain;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float brush = (sin((vUv.y * 180.0)) * brushGain);\n  float tangent = (pow(abs(n.x), 2.0) * 0.24);\n  float stamped = (smoothstep(0.32, 0.06, length((vUv - vec2(0.5, 0.5)))) * 0.16);\n  vec3 body = mix(steelDark.rgb, steelLight.rgb, ((0.52 + brush) + tangent));\n  fragColor = vec4((body * (1.0 - stamped)), 1.0);\n}\n"
+          "fragment": "#version 300 es\nprecision highp float;\nprecision highp int;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform vec3 steelDark;\nuniform vec3 steelLight;\nuniform float brushGain;\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 fragColor;\n\nvoid main() {\n  vec3 n = normalize(vNormal);\n  float brush = (sin((vUv.y * 180.0)) * brushGain);\n  float tangent = (pow(abs(n.x), 2.0) * 0.24);\n  float stamped = (smoothstep(0.32, 0.06, length((vUv - vec2(0.5, 0.5)))) * 0.16);\n  vec3 body = mix(steelDark.rgb, steelLight.rgb, ((0.52 + brush) + tangent));\n  fragColor = vec4((body * (1.0 - stamped)), 1.0);\n}\n"
         }
       ]
     }

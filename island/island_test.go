@@ -2057,6 +2057,29 @@ func TestRenderEngineWorkerModeWithoutWorkerThreadIsRejected(t *testing.T) {
 	}
 }
 
+func TestDeferredEngineHelperLoadsOnlyWhenUsed(t *testing.T) {
+	const helper = "/gosx/assets/runtime/bootstrap-feature-deferred-engines.abcd.js"
+	for _, deferred := range []bool{false, true} {
+		r := NewRenderer("main")
+		r.featureChunkPaths = map[string]string{"deferred-engines": helper}
+		r.RenderEngine(engine.Config{Name: "Visual", Kind: engine.KindSurface, DeferUntilOpen: deferred}, gosx.Text("fallback"))
+		html := gosx.RenderHTML(r.BootstrapScriptWithNonce("page-nonce"))
+		index := strings.Index(html, helper)
+		if (index >= 0) != deferred || (r.FeaturePaths()["deferred-engines"] == helper) != deferred {
+			t.Fatalf("deferred=%v helper URL: %s", deferred, html)
+		}
+		if deferred {
+			beforeBootstrap, _, found := strings.Cut(html, `data-gosx-script="bootstrap"`)
+			if !found || !strings.Contains(beforeBootstrap, `src="`+helper+`"`) || !strings.Contains(beforeBootstrap, `nonce="page-nonce"`) {
+				t.Fatal("expected an authorized helper before bootstrap")
+			}
+		}
+		if strings.Contains(gosx.RenderHTML(r.PreloadHints()), helper) {
+			t.Fatal("the script tag already requests the helper")
+		}
+	}
+}
+
 func TestRenderEngineDefersUntilOpenInManifest(t *testing.T) {
 	r := NewRenderer("main")
 	r.RenderEngine(engine.Config{Name: "Visual", Kind: engine.KindSurface, DeferUntilOpen: true}, gosx.Text("fallback"))
