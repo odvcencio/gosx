@@ -259,7 +259,7 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /SCENE_ELIO_SKIN_LBS_SOURCE/);
-  assert.match(source, /Emitted by m31labs\.dev\/elio\/emit\/wgsl from stdlib\.Skin\(\)/);
+  assert.match(source, /elioSkinningKernel: "m31labs\.dev\/elio\/stdlib\.Skin"/);
   assert.match(source, /@compute @workgroup_size\(64\)/);
   assert.match(source, /wgpuCreateValidatedPipeline\(device, "compute", \{[\s\S]*label: "gosx-elio-skin-lbs"/);
   assert.match(source, /updateElioSkinnedMeshes\(bundle, encoder\)/);
