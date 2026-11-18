@@ -83,6 +83,10 @@ Importing `m31labs.dev/gosx` in browser code links the compiler back in. A minim
 - Local multiplayer: `NewRouter(p1Map, p2Map)`, `Join(device)` on a first press from a new device, then `Feed` and `Update` on the router. Devices are `keyboard`, `mouse` and `pad:N`.
 - `actions/bridge.Publisher` copies action state into a `game.Input` for systems that read it.
 
+## Rumble
+
+`host.RumbleGamepad(index, host.Rumble{Duration: 160 * time.Millisecond, Strong: 0.8, Weak: 0.4})` shakes the gamepad in the browser's slot `index` (the number after `pad:` in an action device name). `Strong` is the heavy motor and `Weak` the light one, each from 0 to 1. The call returns at once, so it is safe in a frame callback, and a new effect replaces the one playing. It reports false when the slot is empty, the pad has no motors or the browser has no vibration support; `host.StopRumble(index)` stops the motors. Browsers play an effect only after the player has pressed something. Tested with a faked `navigator.getGamepads` (`game/host/rumble_js_test.go`); no real pad was held.
+
 ## Camera
 
 `Director` runs the base source (a `Follow` or `Frame`) every frame and decides what is shown. `Take`, `GoTo` and `Play` blend from the pose on screen, so a handoff never pops. `Interrupt` ends an unlocked sequence when the player takes control. With reduced motion, blends become cuts and sequences follow `Sequence.Reduced` (skip, or play as cuts). Shake is trauma-based and is zero when `ShakeScale` returns 0. `Pose.Perspective` converts to `scene.PerspectiveCamera` with `TransitionMS` 0 so the renderer does not ease on top of the director.
