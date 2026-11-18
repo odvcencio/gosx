@@ -287,7 +287,7 @@
     function model(i: number) {
       let m = frame.models[i];
       if (!m) {
-        m = { id: "", rigHash: 0, dt: 0, detail: 0, layerCount: 0, layers: [] as any[], ikCount: 0, ik: [] as any[], lookCount: 0, look: [] as any[] };
+        m = { id: "", rigHash: 0, dt: 0, detail: 0, hasRoot: false, hold: false, root: new Float64Array(4), layerCount: 0, layers: [] as any[], ikCount: 0, ik: [] as any[], lookCount: 0, look: [] as any[] };
         for (let l = 0; l < AG_MAX_LAYERS; l++) {
           const layer = { weight: 0, count: 0, samples: [] as any[] };
           for (let s = 0; s < AG_MAX_SAMPLES; s++) layer.samples.push({ name: "", time: 0, weight: 0, loop: false });
@@ -322,8 +322,18 @@
         m.dt = f();
         if (m.dt < 0) throw new RangeError("negative animation graph frame dt");
         const modelFlags = u8();
-        if (modelFlags > 3) throw new RangeError("invalid animation graph model flags");
+        if (modelFlags > 15) throw new RangeError("invalid animation graph model flags");
         m.detail = modelFlags & 3;
+        // Bit 2: a root placement (x, y, z, yaw) follows. Bit 3: the entry
+        // ends after it, and the model keeps its last pose.
+        m.hasRoot = (modelFlags & 4) !== 0;
+        m.hold = (modelFlags & 8) !== 0;
+        if (m.hasRoot) { m.root[0] = f(); m.root[1] = f(); m.root[2] = f(); m.root[3] = f(); }
+        if (m.hold) {
+          if (!m.hasRoot) throw new RangeError("placement-only animation graph model has no root");
+          m.layerCount = 0; m.ikCount = 0; m.lookCount = 0;
+          continue;
+        }
         m.layerCount = u8();
         if (m.layerCount > AG_MAX_LAYERS) throw new RangeError("too many animation graph layers");
         for (let l = 0; l < m.layerCount; l++) {
@@ -388,7 +398,7 @@
     const holders = state._animGraphHolders || (state._animGraphHolders = new Map());
     let holder = holders.get(id);
     if (!holder) {
-      holder = { id, serial: 0, data: null as any, state, feedback: new Float64Array(AG_FEEDBACK_FLOATS), feedbackCount: 0 };
+      holder = { id, serial: 0, data: null as any, state, feedback: new Float64Array(AG_FEEDBACK_FLOATS), feedbackCount: 0, root: new Float64Array(4), hasRoot: false };
       holders.set(id, holder);
     }
     return holder;
@@ -908,9 +918,28 @@
 
   const AG_APPLIED = [{ applied: true, pending: false }, { applied: true, pending: true }];
 
+  // The mount's live transform patch, kept from the last applyClipFrame call
+  // so a record that hydrates between frames starts where its last frame put
+  // it.
+  let agPatchModel: any = null;
+  // One reused patch keeps a 22-player frame free of garbage.
+  const agRootPatch = { x: 0, y: 0, z: 0, rotationY: 0 };
+
+  // agPlaceRecord moves a record to its holder's root: a world position and a
+  // rotation about +Y. The model's other rotations and its scale stay as
+  // declared. The mount's live patch updates the model's fields and its root
+  // transform together.
+  function agPlaceRecord(state: any, record: any, holder: any) {
+    if (!holder.hasRoot || typeof agPatchModel !== "function") return;
+    agRootPatch.x = holder.root[0]; agRootPatch.y = holder.root[1]; agRootPatch.z = holder.root[2];
+    agRootPatch.rotationY = holder.root[3];
+    agPatchModel(state, record, agRootPatch);
+  }
+
   // agApply runs inside the mount's applyClipFrame with the mount's own scene
   // state and pose function, so it can find records and re-skin them.
-  function agApply(state: any, frame: any, applyPose: any) {
+  function agApply(state: any, frame: any, applyPose: any, patchModel?: any) {
+    if (typeof patchModel === "function") agPatchModel = patchModel;
     const pending = Boolean(state._modelHydrationPromise || state._modelHydrationUncommitted);
     const index = agRecordIndex(state);
     for (let i = 0; i < frame.count; i++) {
@@ -924,13 +953,23 @@
         const src = frame.models[i];
         if (agReachesOthers(src) !== (pass === 1)) continue;
         const holder = agHolder(state, src.id);
-        holder.data = agCopyModel(holder.data, src, frame);
+        if (src.hasRoot) { holder.root.set(src.root); holder.hasRoot = true; }
+        else holder.hasRoot = false;
+        // A placement-only entry keeps the held pose: the serial stays, so
+        // the evaluator re-skins the last pose at the new root.
+        if (!src.hold) {
+          holder.data = agCopyModel(holder.data, src, frame);
+          holder.serial++;
+        }
         holder.state = state;
-        holder.serial++;
         const record = index.byID.get(src.id);
         if (!record) continue;
+        agPlaceRecord(state, record, holder);
         agInstallSampler(state, record, holder);
         applyPose(record, 0, false);
+        // The pose just written is current for the new placement, so the
+        // mount's next animation pass has nothing to redo for this record.
+        record.poseDirty = false;
       }
     }
     return AG_APPLIED[pending ? 1 : 0];
@@ -975,15 +1014,16 @@
           record.__animGraphClips = clips;
           const holders = state && state._animGraphHolders;
           const holder = holders && record.id ? holders.get(record.id) : null;
+          if (holder) agPlaceRecord(state, record, holder);
           if (holder && holder.data) agInstallSampler(state, record, holder);
         }
         return result;
       };
     }
     const applyClipFrame = api.applyClipFrame;
-    api.applyClipFrame = function(state: any, models: any, applyPose: any) {
+    api.applyClipFrame = function(state: any, models: any, applyPose: any, patchModel?: any) {
       if (models && models[AG_MARKER] === true) {
-        const result = agApply(state, models.frame, applyPose);
+        const result = agApply(state, models.frame, applyPose, patchModel);
         models.result = result;
         if (models.handle) agStates.set(models.handle, state);
         return result;

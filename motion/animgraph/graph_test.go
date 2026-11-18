@@ -526,9 +526,11 @@ type decodedModel struct {
 	RigHash uint32
 	DT      float32
 	Flags   byte
-	Layers  []decodedLayer
-	IK      []decodedIK
-	Look    []decodedLook
+	// Root is x, y, z, yaw when Flags bit 2 is set.
+	Root   [4]float32
+	Layers []decodedLayer
+	IK     []decodedIK
+	Look   []decodedLook
 }
 
 type decodedLayer struct {
@@ -577,6 +579,13 @@ func decodeFrame(t *testing.T, b []byte) decodedFrame {
 	var f decodedFrame
 	for m := u16(); m > 0; m-- {
 		model := decodedModel{ID: str(), RigHash: u32(), DT: f32(), Flags: u8()}
+		if model.Flags&frameFlagRoot != 0 {
+			model.Root = [4]float32{f32(), f32(), f32(), f32()}
+		}
+		if model.Flags&frameFlagPlacementOnly != 0 {
+			f.Models = append(f.Models, model)
+			continue
+		}
 		for l := u8(); l > 0; l-- {
 			layer := decodedLayer{Weight: f32()}
 			for s := u8(); s > 0; s-- {

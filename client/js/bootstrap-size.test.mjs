@@ -1693,7 +1693,8 @@ const budgets = [
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured bootstrap-feature-scene3d.js raw 692403; only this exhausted target moves (658834 -> 659431), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured bootstrap-feature-scene3d.js gzip 199300; only this exhausted target moves (189139 -> 189809), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured bootstrap-feature-scene3d.js raw 694543; only this exhausted target moves (659431 -> 661469), allowance unchanged.
-    file: "bootstrap-feature-scene3d.js", raw: 661608, gzip: 189848,
+    // 18 November 2026 (animation graph root placement: the clip-frame hook passes the mount's live transform patch to the lazy animation graph chunk, which moves a model to the root its frame carries): measured bootstrap-feature-scene3d.js raw 694692 / gzip 199354; only these exhausted targets move to their exact minima (661608 -> 661611, 189848 -> 189861), allowances unchanged. The raw growth is the one argument; the gzip growth follows from the minifier renaming identifiers around it.
+    file: "bootstrap-feature-scene3d.js", raw: 661611, gzip: 189861,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
@@ -1757,7 +1758,11 @@ const budgets = [
   // runs in a Web Worker) add 3435 raw / 1249 gzip / 1184 Brotli bytes to this optional chunk,
   // which loads only when a page dispatches Scene3D commands or frames. The raw target was
   // already at its hard limit; all three move to the smallest value that clears the new size.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 26353, gzip: 8240, brotli: 7531 },
+  // 18 November 2026 (animation graph root placement): applyMountedClipFrame takes the mount's
+  // live transform patch and hands it to the animation chunk's applyClipFrame. Measured raw
+  // 28405 / gzip 9265; only these exhausted targets move to their exact minima
+  // (26353 -> 26357, 8240 -> 8241), allowances unchanged.
+  { file: "bootstrap-feature-scene3d-command.js", raw: 26357, gzip: 8241, brotli: 7531 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
