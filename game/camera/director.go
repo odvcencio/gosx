@@ -1,6 +1,9 @@
 package camera
 
-import "math"
+import (
+	"math"
+	"reflect"
+)
 
 // Blend describes how a handoff moves from the old pose to the new source.
 // A zero Duration is a cut.
@@ -90,9 +93,12 @@ type DirectorConfig struct {
 // pose on screen, so control handoffs never pop. Add shake with AddTrauma.
 // Not safe for concurrent use.
 type Director struct {
-	cfg       DirectorConfig
-	base      Source
-	cur       Source
+	cfg  DirectorConfig
+	base Source
+	cur  Source
+	// onBase is true while cur is the base source. It is tracked, not compared:
+	// a SourceFunc cannot be compared.
+	onBase    bool
 	shake     *Shake
 	bookmarks map[string]Pose
 
@@ -113,13 +119,24 @@ type Director struct {
 // NewDirector creates a Director with base as the gameplay source.
 func NewDirector(cfg DirectorConfig, base Source) *Director {
 	return &Director{
-		cfg: cfg, base: base, cur: base,
+		cfg: cfg, base: base, cur: base, onBase: true,
 		shake:     NewShake(cfg.Shake, cfg.ShakeScale),
 		bookmarks: map[string]Pose{},
 	}
 }
 
 func (d *Director) reduced() bool { return d.cfg.ReducedMotion != nil && d.cfg.ReducedMotion() }
+
+// sameSource reports whether a caller handed the director its own base
+// source. Sources of a type Go cannot compare (a SourceFunc) are never the
+// same: the director then runs both, as it does for any two sources.
+func sameSource(a, b Source) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	ta := reflect.TypeOf(a)
+	return ta == reflect.TypeOf(b) && ta.Comparable() && a == b
+}
 
 func (d *Director) emit(e Event) {
 	if d.cfg.OnEvent != nil {
@@ -129,7 +146,7 @@ func (d *Director) emit(e Event) {
 
 // SetBase replaces the gameplay source and cuts to it.
 func (d *Director) SetBase(src Source) {
-	d.base, d.cur, d.seq, d.blending = src, src, nil, false
+	d.base, d.cur, d.onBase, d.seq, d.blending = src, src, true, nil, false
 }
 
 // Bookmark stores a named pose.
@@ -159,14 +176,14 @@ func (d *Director) startBlend(b Blend) {
 // source keeps running underneath.
 func (d *Director) Take(src Source, b Blend) {
 	d.endSequence(true)
-	d.cur = src
+	d.cur, d.onBase = src, sameSource(src, d.base)
 	d.startBlend(b)
 }
 
 // Release hands the camera back to the base source.
 func (d *Director) Release(b Blend) {
 	d.endSequence(true)
-	d.cur = d.base
+	d.cur, d.onBase = d.base, true
 	d.startBlend(b)
 }
 
@@ -182,7 +199,7 @@ func (d *Director) GoTo(name string, b Blend) bool {
 
 // Busy reports whether the camera is not simply showing the base source: a
 // blend, bookmark or sequence is active.
-func (d *Director) Busy() bool { return d.blending || d.cur != d.base || d.seq != nil }
+func (d *Director) Busy() bool { return d.blending || !d.onBase || d.seq != nil }
 
 // Playing returns the name of the running sequence, or "".
 func (d *Director) Playing() string {
@@ -200,7 +217,7 @@ func (d *Director) Play(seq Sequence) bool {
 	}
 	if d.reduced() && seq.Reduced == ReducedSkip {
 		d.endSequence(false)
-		d.cur = d.base
+		d.cur, d.onBase = d.base, true
 		d.blending = false
 		return false
 	}
@@ -215,13 +232,13 @@ func (d *Director) beginStep(i int) {
 	d.step, d.stepHold, d.stepLive = i, 0, false
 	switch {
 	case st.Source != nil:
-		d.cur = st.Source
+		d.cur, d.onBase = st.Source, sameSource(st.Source, d.base)
 	default:
 		p, ok := d.bookmarks[st.Shot]
 		if !ok {
 			p = d.last // unknown shot: hold where we are rather than jump
 		}
-		d.cur = Static(p)
+		d.cur, d.onBase = Static(p), false
 	}
 	d.startBlend(st.Blend)
 	if !d.blending {
@@ -248,7 +265,7 @@ func (d *Director) Stop() {
 	}
 	ret := d.seq.Return
 	d.endSequence(true)
-	d.cur = d.base
+	d.cur, d.onBase = d.base, true
 	d.startBlend(ret)
 }
 
@@ -284,7 +301,7 @@ func (d *Director) advanceSequence(dt float64) {
 	}
 	ret := d.seq.Return
 	d.endSequence(false)
-	d.cur = d.base
+	d.cur, d.onBase = d.base, true
 	d.startBlend(ret)
 }
 
@@ -296,13 +313,13 @@ func (d *Director) Update(dt float64) Pose {
 	}
 	if d.reduced() && d.seq != nil && d.seq.Reduced == ReducedSkip {
 		d.endSequence(true)
-		d.cur = d.base
+		d.cur, d.onBase = d.base, true
 		d.blending = false
 	}
 	d.advanceSequence(dt)
 	basePose := d.base.Update(dt)
 	pose := basePose
-	if d.cur != d.base {
+	if !d.onBase {
 		pose = d.cur.Update(dt)
 	}
 	if d.blending {
