@@ -48,6 +48,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `assetpipe` | experimental | yes | Inventories Scene3D-ready project assets, describes the build-time optimization work GoSX should perform before those assets ship, and runs the part of that work GoSX can do in pure Go. |
+| `assetpipe/author` | experimental | yes | Builds rigged, animated glTF models from Go code: a mesh builder (ring stacks, ellipsoids, swept tubes, merge, normals, atlas UVs), a skeleton with skin weights and joint bands, keyframed clips sampled from Go functions, a texture atlas, morph targets, and a writer on top of gltfedit. |
 | `assetpipe/gltfedit` | experimental | yes | Reads a glTF 2.0 or GLB document, rewrites mesh primitives, and writes a new GLB. |
 | `assetpipe/hdrimage` | experimental | yes | Decodes high dynamic range images into linear float32 pixels. |
 | `assetpipe/ibl` | experimental | yes | Builds image-based lighting products from a linear high dynamic range environment image. |
