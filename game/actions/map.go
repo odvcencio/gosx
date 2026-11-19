@@ -63,7 +63,14 @@ type State struct {
 	// Value is the action value: 0/1 for buttons unless a gamepad trigger
 	// reports an analog level, and [-1,1] for axes.
 	Value float64
-	// Tapped is true on the frame a press shorter than the tap limit ends.
+	// Canceled is true together with Released when the press ended without
+	// the player letting go: the window lost the focus (ReleaseAll), the
+	// browser took a touch away, the source was withdrawn (Suppress) or the
+	// action's context left the stack. Logic that acts on a release, such as
+	// a throw when the finger lifts, skips a canceled one.
+	Canceled bool
+	// Tapped is true on the frame a press shorter than the tap limit ends,
+	// unless it ended Canceled.
 	Tapped bool
 	// DoubleTapped is true on the frame of the second press of a double tap.
 	DoubleTapped bool
@@ -99,6 +106,9 @@ type srcState struct {
 	// Update. If it is down again by then, it was let go and pressed again
 	// between two frames.
 	lifted bool
+	// canceled is true when the source went up since the last Update without
+	// the player letting go.
+	canceled bool
 }
 
 // Map turns raw events into action state. Use one Map per player. It is not
@@ -319,26 +329,50 @@ func (m *Map) Feed(ev Event) {
 	if ev.Value == 0 {
 		if s.latches() && prev != 0 && !st.suppressed {
 			st.lifted = true
+			st.canceled = ev.Canceled
 		}
 		st.suppressed = false
 		return
 	}
+	st.canceled = false
 	if s.latches() && !st.suppressed && math.Abs(ev.Value) > math.Abs(st.latch) {
 		st.latch = ev.Value
 	}
 }
 
 // ReleaseAll zeroes every held input. Games call it on window blur so keys
-// pressed before a focus change do not stay stuck.
+// pressed before a focus change do not stay stuck. The player did not let
+// go, so every action it releases reads Canceled.
 func (m *Map) ReleaseAll() {
 	for src, s := range m.src {
 		if src.latches() && s.value != 0 && !s.suppressed {
 			s.lifted = true
+			s.canceled = true
 		}
 		s.value = 0
 		s.suppressed = false
 	}
 	m.pendDX, m.pendDY, m.pendWX, m.pendWY = 0, 0, 0, 0
+}
+
+// Suppress withdraws src from the game: a press of it that no Update has
+// reported yet is dropped, and src stays out of every action until it is
+// let go. Call it when the browser used the key itself, at the moment it
+// did: Escape that closed a dialog (the dialog's cancel event) must not
+// pause the game as well, however many frames pass before the next Update.
+// An action that src already held down is released, and reads Canceled.
+//
+// It reports whether there was anything to withdraw: false when src is up
+// and has not been pressed since the last Update, so a later press counts.
+func (m *Map) Suppress(src Source) bool {
+	st := m.src[src]
+	if st == nil || st.suppressed || (st.value == 0 && st.latch == 0) {
+		return false
+	}
+	st.latch, st.lifted, st.canceled = 0, false, true
+	// A key that came and went between two frames leaves nothing to hold back.
+	st.suppressed = st.value != 0
+	return true
 }
 
 func (m *Map) read(b Binding, deadzone float64) float64 {
@@ -414,7 +448,19 @@ func (m *Map) Update(dt time.Duration) {
 	for _, s := range m.src {
 		s.latch = 0
 		s.lifted = false
+		s.canceled = false
 	}
+}
+
+// canceled reports whether a source of the action went up since the last
+// Update without the player letting go.
+func (m *Map) canceled(d *actionDef) bool {
+	for _, b := range d.Bindings {
+		if st := m.src[b.Source]; st != nil && st.canceled {
+			return true
+		}
+	}
+	return false
 }
 
 // repressed reports whether the action's keys and buttons were let go and
@@ -443,7 +489,8 @@ func (m *Map) repressed(d *actionDef) bool {
 
 func (d *actionDef) deactivate() {
 	was := d.state.Down
-	d.state = State{Released: was}
+	// The context left the stack with the action held: not the player's release.
+	d.state = State{Released: was, Canceled: was}
 	d.holdDone, d.haveTap = false, false
 }
 
@@ -478,6 +525,7 @@ func (m *Map) updateDef(d *actionDef) {
 	again := down && prev.Down && m.repressed(d)
 	st.Pressed = down && (!prev.Down || again)
 	st.Released = !down && prev.Down
+	st.Canceled = st.Released && m.canceled(d)
 	if again {
 		if m.now-d.pressAt <= tap && !d.holdDone {
 			st.Tapped = true
@@ -499,7 +547,8 @@ func (m *Map) updateDef(d *actionDef) {
 		dur := m.now - d.pressAt
 		st.HeldFor = dur
 		st.Holding = false
-		if dur <= tap && !d.holdDone {
+		// A press that was taken away is not a tap, however short.
+		if dur <= tap && !d.holdDone && !st.Canceled {
 			st.Tapped = true
 			d.lastTap, d.haveTap = d.pressAt, true
 		} else {

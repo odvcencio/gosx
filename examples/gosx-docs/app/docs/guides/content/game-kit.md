@@ -4,7 +4,7 @@ The game kit is the layer above `game/*` that every browser game ends up writing
 
 | Package | Does |
 |---|---|
-| `game/actions` | Named actions on keyboard, mouse, pointer lock and gamepad. Stacked input contexts, rebinding, labels, local multiplayer. |
+| `game/actions` | Named actions on keyboard, mouse, pointer lock, gamepad and touch. Stacked input contexts, rebinding, labels, local multiplayer. |
 | `game/flow` | State stack (boot, title, lobby, play, pause, results) tied to `Runtime.SetPaused` and input contexts. |
 | `game/boot` | Loading gate with progress, stall watchdog, retry budget and one automatic reload. `boot/bootpage` renders the WASM preload links and a watchdog script. |
 | `game/settings` | Typed, versioned options: bus volumes, motion, camera shake, render scale, frame cap, quality, language, bindings. |
@@ -76,12 +76,47 @@ Importing `m31labs.dev/gosx` in browser code links the compiler back in. A minim
 - A `Map` holds contexts. `Push("menu")` makes the menu the top context; an `Opaque` context hides the ones below. Inputs held when the stack changes are ignored until released, so the key that opens a menu does not press the menu's buttons.
 - Call `Update(dt)` once per frame. `Update` and the query methods (`Pressed`, `Down`, `Value`, `Vec2`, `State`) do not allocate.
 - A button pressed and released between two `Update` calls reads as pressed in the next frame, then released in the one after (the tap latch). Analog sticks do not latch.
+- A held button let go and pressed again between two `Update` calls reads as pressed again. Two whole taps between two `Update` calls still read as one.
 - Timing per action: `Tap`, `Hold`, `DoubleTap`. Read `Tapped`, `Holding`, `State().HoldStarted`, `DoubleTapped`.
+- A press can end without the player letting go: the window loses the focus (`ReleaseAll`), the browser takes a touch away, or the action's context leaves the stack. The action then reads `Released` and `State().Canceled` together, and is not `Tapped`. Logic that acts on a release, such as a throw when the key comes up, skips a canceled one.
+- When the browser uses a key itself, withdraw it at that moment with `Suppress(source)`: in a dialog's `cancel` event, `in.Suppress(actions.Key("Escape"))` keeps the Escape that closed the dialog from pausing the game as well, however many frames pass before the next `Update`. The next press counts.
+- Keys aimed at a form control are skipped unless `BrowserConfig.KeepKey` says otherwise; `actions.KeepUnusedKeys` sends the game every key the control does not use itself (Escape from a menu, a letter from a slider).
+- `BrowserConfig.StopRepeatClicks` keeps a held Enter or Space from pressing a control the focus moved to while the key was down: the press that opens a dialog does not go on to press the dialog's main button.
 - `Rebind(ctx, action, slot, source, policy)` returns the conflicts and, under `ConflictReject`, changes nothing. `ConflictSwap` trades the sources; `ConflictUnbind` clears the other binding. `Capture()` then `TakeCaptured()` gives a "press a key" flow; Escape cancels. A slot number equal to the binding count adds a binding (up to `MaxBindings`); `RemoveSlot` deletes an added one.
 - Pause: bind `actions.PauseBindings()` (Escape, gamepad Start) in gameplay and `actions.BackBindings()` in the menu, then call `flow.HandleInput(map, flow.Controls{})` each frame.
 - `Export()` returns only the changed bindings; `Save`/`Load` use `game/storage`. Settings hold the same data in `Settings.Bindings`.
 - Local multiplayer: `NewRouter(p1Map, p2Map)`, `Join(device)` on a first press from a new device, then `Feed` and `Update` on the router. Devices are `keyboard`, `mouse` and `pad:N`.
 - `actions/bridge.Publisher` copies action state into a `game.Input` for systems that read it.
+
+### Touch
+
+On a touch screen the page draws its own stick and buttons, and they are input sources like a key: `actions.TouchAxis("steer", false)`, `actions.TouchAxis("steer", true)` (y grows downward, as on a gamepad) and `actions.TouchButton("sprint")`. Mark the elements and attach once:
+
+```html
+<div data-gosx-stick="steer" data-gosx-stick-center="follow" data-gosx-stick-radius="56"></div>
+<button data-gosx-hold="sprint">Sprint</button>
+```
+
+```go
+touches, detach := actions.AttachTouch(in, actions.TouchConfig{
+	Stick: actions.Stick{Radius: 56, Deadzone: .12, Floating: true, Follow: true},
+	Allow: func(name string, stick bool) bool { return playing }, // false leaves the touch to the page
+})
+```
+
+- Each finger holds one control, and several fingers hold several: one thumb on the stick, the other on a button. A pen and the primary mouse button count as fingers. A stick belongs to the first finger that takes it; a button stays down until every finger on it has gone.
+- A stick's box is the area a finger can land in. `fixed` puts the centre in the middle of the box; `floating` puts it where the finger lands; `follow` also lets the centre trail a finger that goes past the rim. The deflection is a circle: the two axes together are never longer than 1.
+- While a control is held its element carries `data-gosx-touch="on"`. A held stick also carries `--stick-cx` and `--stick-cy` (its centre, in pixels from the element's left and top) and `--stick-x` and `--stick-y` (-1 to 1), so a stylesheet draws the ring and the knob with no script.
+- A lift ends the touch. `pointercancel`, a lost pointer capture, the window losing the focus and the page being hidden cancel it: a button's release then reads `Canceled`.
+- Hiding an element does not take its finger away: the browser goes on sending that finger's moves to it. When a control goes away with a finger on it, call `touches.Drop(name)`; the finger must touch again to act.
+- Give the elements `touch-action: none`, or the browser scrolls with the finger and cancels the touch.
+- Act on the finger, not on `click`: while one finger is down, a tap of a second finger makes no click in a browser, so a button that waits for a click cannot be pressed with a thumb on the stick. Bind the button as a `TouchButton` and act on `Released` that is not `Canceled`. A lone finger's tap does make a click as well; `TouchConfig.Ended` is called at the lift, before that click, so the game can drop it.
+- `actions.Touches` is the tracker without the browser: `StickDown`, `Move`, `ButtonDown`, `Up`, `Cancel`. A test or another host feeds it directly.
+- The pointer listeners and the page's markup were exercised in one game's browser checks, with touch emulation in Chrome. No phone or tablet was held.
+
+## Rumble
+
+`host.RumbleGamepad(index, host.Rumble{Duration: 160 * time.Millisecond, Strong: 0.8, Weak: 0.4})` shakes the gamepad in the browser's slot `index` (the number after `pad:` in an action device name). `Strong` is the heavy motor and `Weak` the light one, each from 0 to 1. The call returns at once, so it is safe in a frame callback, and a new effect replaces the one playing. It reports false when the slot is empty, the pad has no motors or the browser has no vibration support; `host.StopRumble(index)` stops the motors. Browsers play an effect only after the player has pressed something. Tested with a faked `navigator.getGamepads` (`game/host/rumble_js_test.go`); no real pad was held.
 
 ## Camera
 

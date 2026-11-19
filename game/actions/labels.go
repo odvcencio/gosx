@@ -116,6 +116,9 @@ func Label(s Source, style PadStyle) string {
 			return "Axis " + strings.TrimPrefix(s.Code, "axis")
 		}
 		return axisBase[n]
+	case KindTouchButton, KindTouchAxis:
+		// An on-screen control is its own label: the page draws it.
+		return ""
 	}
 	return s.Code
 }

@@ -72,6 +72,27 @@ func ControlUsesKey(kind, code string) bool {
 	return false
 }
 
+// RepeatClicks reports whether a repeat of a held key presses the element.
+// The browser repeats a key that is held down. Each repeat of Enter is a
+// click on a button, a link or a summary; a repeat of Space arms a button,
+// which then clicks when Space is let go. tag is the element's tag name,
+// inputType its type attribute and role its role attribute.
+//
+// BrowserConfig.StopRepeatClicks uses it to keep a held key from pressing a
+// control the focus moved to while the key was down.
+func RepeatClicks(code, tag, inputType, role string) bool {
+	if code != "Enter" && code != "NumpadEnter" && code != "Space" {
+		return false
+	}
+	switch strings.ToLower(tag) {
+	case "button", "a", "summary":
+		return true
+	case "input":
+		return ControlKind(tag, inputType, false) == ControlButton
+	}
+	return strings.EqualFold(role, "button") || strings.EqualFold(role, "link")
+}
+
 // KeepUnusedKeys is a BrowserConfig.KeepKey that sends the game every key
 // the form control does not use itself (ControlUsesKey): Escape from a text
 // field, a letter from a slider, a digit from a checkbox.

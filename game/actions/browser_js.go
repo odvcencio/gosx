@@ -32,6 +32,14 @@ type BrowserConfig struct {
 	// PointerLockOnly makes MouseDX and MouseDY report only while the pointer
 	// is locked (the default for game cameras). Wheel and buttons always report.
 	PointerLockOnly bool
+	// StopRepeatClicks keeps a held Enter or Space from pressing a control
+	// the focus moved to while the key was down. The browser repeats a held
+	// key, and a repeat presses whatever has the focus by then: the press
+	// that opens a dialog goes on to press the dialog's main button, and the
+	// one after it. With this set a held key acts only on the control it
+	// went down on; a new press acts anywhere (RepeatClicks says which
+	// elements it covers).
+	StopRepeatClicks bool
 }
 
 // Attach registers keyboard, mouse, wheel, blur and tab-hide listeners that
@@ -85,14 +93,23 @@ func Attach(sink Sink, cfg BrowserConfig) (detach func()) {
 		}
 		return ControlKind(tag.String(), kind, t.Get("isContentEditable").Truthy())
 	}
+	// pressedOn is the element Enter or Space last went down on, for
+	// StopRepeatClicks.
+	var pressedOn js.Value
 	key := func(down bool) func(ev js.Value) {
 		return func(ev js.Value) {
 			if ev.Get("repeat").Truthy() {
+				if down && cfg.StopRepeatClicks && !ev.Get("target").Equal(pressedOn) && clicksAgain(ev) {
+					ev.Call("preventDefault")
+				}
 				return
 			}
 			code := ev.Get("code").String()
 			if code == "" {
 				return
+			}
+			if down && cfg.StopRepeatClicks && (code == "Enter" || code == "NumpadEnter" || code == "Space") {
+				pressedOn = ev.Get("target")
 			}
 			if down && !cfg.KeepEditable {
 				if kind := control(ev); kind != "" && (cfg.KeepKey == nil || !cfg.KeepKey(code, kind)) {
@@ -157,6 +174,30 @@ func Attach(sink Sink, cfg BrowserConfig) (detach func()) {
 			f.Release()
 		}
 	}
+}
+
+// clicksAgain reports whether a repeated key press would click the element
+// it is aimed at once more.
+func clicksAgain(ev js.Value) bool {
+	t := ev.Get("target")
+	if !t.Truthy() {
+		return false
+	}
+	tag := t.Get("tagName")
+	if tag.Type() != js.TypeString {
+		return false
+	}
+	text := func(v js.Value) string {
+		if v.Type() == js.TypeString {
+			return v.String()
+		}
+		return ""
+	}
+	role := ""
+	if t.Get("getAttribute").Type() == js.TypeFunction {
+		role = text(t.Call("getAttribute", "role"))
+	}
+	return RepeatClicks(text(ev.Get("code")), tag.String(), text(t.Get("type")), role)
 }
 
 // RequestPointerLock asks the browser to lock the pointer to el, which must
