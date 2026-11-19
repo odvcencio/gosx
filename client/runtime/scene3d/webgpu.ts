@@ -14961,7 +14961,7 @@
     // mesh's geometry and marks it live this frame. Retained entries rebuild
     // on revision change; non-retained ones (skinned draws) are kept while
     // their typed arrays keep the same identity.
-    function webGPUDirectMeshEntry(obj) {
+    function webGPUDirectMeshEntry(obj: any) {
       var vertices = obj.vertices;
       var retained = obj.retainedGeometry === true;
       var entry = retainedMeshAttributeCache.get(vertices);
@@ -14991,7 +14991,7 @@
     // draw of the same stream reuses it too. A mesh without UVs binds one
     // zero-filled buffer per stream. Callers pass a skinned object, which
     // always has vertices; every "uvs" record holds two components.
-    function webGPUBindSkinnedUVBuffer(pass, slot, obj, count) {
+    function webGPUBindSkinnedUVBuffer(pass: any, slot: number, obj: any, count: number) {
       if (!(count > 0)) return false;
       var entry = webGPUDirectMeshEntry(obj);
       var data = webGPUDirectAttribute(obj, "uvs", count, 2);
@@ -15026,7 +15026,7 @@
     // change and retire with their attribute buffers; non-retained direct
     // geometry (skinned draws) reuses while the Uint32Array identity is stable.
     // Returns 0 when there are no valid indices so callers keep draw().
-    function webGPUBindRetainedMeshIndexBuffer(pass, obj) {
+    function webGPUBindRetainedMeshIndexBuffer(pass: any, obj: any) {
       if (!pass) return 0;
       var vertices = obj && obj.vertices;
       if (!vertices) return 0;
@@ -15124,7 +15124,7 @@
 
     // webGPUElioSkinVertexBuffer returns the GPU copy of a mesh's packed skin input. The bytes are packed from the source
     // attributes, uploaded once and dropped: the cache keeps only the source arrays, which rebuild them after a device loss.
-    function webGPUElioSkinVertexBuffer(obj, count, paddedCount, jointCount) {
+    function webGPUElioSkinVertexBuffer(obj: any, count: number, paddedCount: number, jointCount: number) {
       var vertices = obj && obj.vertices;
       // Same source defaults the CPU draw path used before skinning moved to
       // the compute pass: normals fall back to +Z, tangents to (1,0,0,w=1).
@@ -15173,13 +15173,13 @@
     // frame; resourceOwner is the scene object behind it, which lasts. State
     // cached on the record itself is lost at the end of the frame, and the
     // GPU buffers it held stay allocated until the renderer is disposed.
-    function webGPUObjectResourceOwner(obj) {
+    function webGPUObjectResourceOwner(obj: any) {
       return obj && obj.resourceOwner || obj;
     }
 
     // webGPUObjectSkinOutputBuffer returns the skin output buffer the owner
     // holds on this device, before or after this frame's dispatch.
-    function webGPUObjectSkinOutputBuffer(obj) {
+    function webGPUObjectSkinOutputBuffer(obj: any) {
       var owner = webGPUObjectResourceOwner(obj);
       var record = owner && owner._gosxWGPUElioSkinRecord;
       return record && record.outputBuffer && pointsEntryGPUBuffers.has(record.outputBuffer) ? record.outputBuffer : null;
