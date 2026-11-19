@@ -438,3 +438,86 @@ test("renderer hooks stay single statements on existing lines", () => {
   assert.ok(gl.includes("void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}"));
   assert.equal(gpu.match(/gosxPBRColor\(in\)/g).length, 2, "two fragment entry points call gosxPBRColor(in)");
 });
+
+// A crowd's full level of detail is drawn only when the camera nears the
+// stands, which in a match first happens mid-play. Building that level's
+// pipeline or program on its first use held the whole WebGPU frame while it
+// built (1 s with the frame-rate cap lifted on an Apple M4 Pro) and cost a
+// 39 ms synchronous compile on WebGL. The first draw now starts every level.
+function drawRuntime() {
+  const window = {};
+  const context = vm.createContext({ window, Math, Float32Array, Float64Array, Uint8Array, Uint16Array, Uint32Array, Int8Array, ArrayBuffer, DataView,
+    TextDecoder, Number, Array, Object, String, JSON, Error, TypeError, Map, Set, WeakMap, performance,
+    GPUBufferUsage: { VERTEX: 32, INDEX: 16, UNIFORM: 64, COPY_DST: 8, STORAGE: 128 }, GPUTextureUsage: { TEXTURE_BINDING: 4, COPY_DST: 2 },
+    GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 } });
+  vm.runInContext(code + `\n globalThis.d = { sceneCrowdGPUDraw, sceneCrowdGLDraw, sceneCrowdSelect, sceneCrowdPack, sceneCrowdModel };`, context);
+  return context.d;
+}
+
+// Any property or call on the stub gives the stub; it stands for GPU objects.
+const stub = new Proxy(function () {}, { get: (_, key) => (key === "then" || typeof key === "symbol") ? undefined : stub, apply: () => stub });
+const mount = { setAttribute() {}, getAttribute() { return null; }, removeAttribute() {}, dispatchEvent() {} };
+const farView = () => ({ ...lookAt([0, 160, 520], [0, 0, 0], Math.PI / 4, 16 / 9), height: 1080 });
+// The smallest PBR fragments that carry the anchors the crowd splices into.
+const wgslFragment = "struct VertexOutput {\n  @location(5) @interpolate(flat) instanceColor : vec4f,\n};\nfn f() { gosxPBRColor(in); }";
+const glslFragment = "void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}";
+
+test("the first crowd draw starts every level of detail's WebGPU pipeline", () => {
+  const d = drawRuntime(), ir = bowl().ir;
+  const pick = d.sceneCrowdSelect({ model: d.sceneCrowdModel(ir) }, d.sceneCrowdPack(ir), ir, farView());
+  assert.equal(pick.fans[0], 0, "precondition: no fan is near enough for the full level");
+  assert.ok(pick.fans[1] + pick.fans[2] > 0);
+  const built = [];
+  const device = new Proxy({}, { get: (_, key) => key === "queue" ? stub : () => stub });
+  const o = { ...farView(), device, environment: { crowds: [ir] }, mount, time: 1, frameStructs: "", fragment: wgslFragment, format: "bgra8unorm", samples: 1,
+    specular: false, frameLayout: stub, materialLayout: stub, frameGroup: stub, material: () => ({ data: new Float32Array(64) }),
+    create: (_device, kind, descriptor) => { built.push(descriptor.label); return {}; }, validation: new Map() };
+  assert.equal(d.sceneCrowdGPUDraw(stub, o), "ready");
+  assert.deepEqual([...new Set(built)].sort(), ["gosx-crowd-0", "gosx-crowd-1", "gosx-crowd-2"], "every level is built on the first draw");
+  const count = built.length;
+  d.sceneCrowdGPUDraw(stub, o);
+  assert.equal(built.length, count, "later draws build nothing");
+});
+
+function fakeGL(parallel) {
+  const links = [], checks = [];
+  let next = 1;
+  const gl = new Proxy({}, { get: (_, key) => {
+    if (typeof key === "string" && /^[A-Z0-9_]+$/.test(key)) return key;
+    switch (key) {
+      case "getExtension": return (name) => name === "KHR_parallel_shader_compile" && parallel ? { COMPLETION_STATUS_KHR: "COMPLETION_STATUS_KHR" } : null;
+      case "getParameter": return (name) => name === "VERTEX_ARRAY_BINDING" ? null : 16;
+      case "isEnabled": return () => false;
+      case "createProgram": return () => ({ id: next++ });
+      case "linkProgram": return (program) => links.push(program.id);
+      case "getProgramParameter": return (program, name) => { if (name === "LINK_STATUS") checks.push(program.id); return true; };
+      case "getShaderParameter": return () => true;
+      default: return () => stub;
+    }
+  } });
+  return { gl, links, checks };
+}
+
+for (const parallel of [true, false]) {
+  test(`a crowd ${parallel ? "starts" : "leaves"} its other levels' WebGL programs ${parallel ? "with" : "without"} parallel compile`, () => {
+    const d = drawRuntime(), ir = bowl().ir;
+    const { gl, links, checks } = fakeGL(parallel);
+    const o = { ...farView(), environment: { crowds: [ir] }, mount, time: 1, fragment: glslFragment, uniforms: () => ({}), prepare() {}, surface() {} };
+    assert.equal(d.sceneCrowdGLDraw(gl, o), "ready");
+    const used = new Set(checks);
+    assert.ok(used.size > 0, "the drawn levels are linked and checked");
+    assert.equal(links.length, used.size, "the match's first frames compile only the drawn levels");
+    // Past the match's first second, one more program starts each frame.
+    for (let frame = 1; frame <= 8; frame++) d.sceneCrowdGLDraw(gl, { ...o, time: 1 + frame * 0.5 });
+    if (parallel) {
+      assert.ok(links.length > used.size, "the other levels start");
+      assert.ok(links.some((id) => !used.has(id)), "a started level is not waited for");
+    } else {
+      assert.equal(links.length, used.size, "without parallel compile only the drawn levels compile");
+    }
+    const linked = links.length;
+    d.sceneCrowdGLDraw(gl, { ...o, time: 9 });
+    assert.equal(links.length, linked, "once every level has started, draws compile nothing");
+    assert.equal(new Set(links).size, links.length, "no program is compiled twice");
+  });
+}
