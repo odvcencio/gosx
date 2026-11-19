@@ -16,10 +16,19 @@ type BrowserConfig struct {
 	// PreventDefault, if set, is asked for each key code; returning true calls
 	// preventDefault so the browser does not scroll on Space or arrows.
 	PreventDefault func(code string) bool
-	// IgnoreEditable skips key events whose target is an input, textarea,
-	// select or contenteditable element, so typing in a form field does not
-	// move the player. Default on; set KeepEditable to turn it off.
+	// A key press aimed at a form control (an input, textarea, select or
+	// contenteditable element) is skipped, so typing in a field or stepping
+	// through a menu does not move the player. KeepEditable turns that off
+	// for every key. A key release is never skipped: a key that went down
+	// before the focus moved into a field must not stay down.
 	KeepEditable bool
+	// KeepKey, if set, is asked for each key press aimed at a form control,
+	// with the key's code and the control's kind (ControlText, ControlSelect,
+	// ControlRange, ControlToggle or ControlButton). Returning true sends the
+	// key to the game as well; the control still acts on it unless
+	// PreventDefault says otherwise. KeepUnusedKeys keeps every key the
+	// control does not use itself. It is not asked when KeepEditable is set.
+	KeepKey func(code, kind string) bool
 	// PointerLockOnly makes MouseDX and MouseDY report only while the pointer
 	// is locked (the default for game cameras). Wheel and buttons always report.
 	PointerLockOnly bool
@@ -58,28 +67,37 @@ func Attach(sink Sink, cfg BrowserConfig) (detach func()) {
 		on.Call("addEventListener", name, f)
 		regs = append(regs, reg{on, name, f})
 	}
-	editable := func(ev js.Value) bool {
-		if cfg.KeepEditable {
-			return false
-		}
+	// control is the kind of form control the event is aimed at, or "".
+	control := func(ev js.Value) string {
 		t := ev.Get("target")
 		if !t.Truthy() {
-			return false
+			return ""
 		}
-		switch strings.ToLower(t.Get("tagName").String()) {
-		case "input", "textarea", "select":
-			return true
+		tag := t.Get("tagName")
+		if tag.Type() != js.TypeString {
+			return "" // the window or the document
 		}
-		return t.Get("isContentEditable").Truthy()
+		kind := ""
+		if strings.EqualFold(tag.String(), "input") {
+			if typ := t.Get("type"); typ.Type() == js.TypeString {
+				kind = typ.String()
+			}
+		}
+		return ControlKind(tag.String(), kind, t.Get("isContentEditable").Truthy())
 	}
 	key := func(down bool) func(ev js.Value) {
 		return func(ev js.Value) {
-			if ev.Get("repeat").Truthy() || editable(ev) {
+			if ev.Get("repeat").Truthy() {
 				return
 			}
 			code := ev.Get("code").String()
 			if code == "" {
 				return
+			}
+			if down && !cfg.KeepEditable {
+				if kind := control(ev); kind != "" && (cfg.KeepKey == nil || !cfg.KeepKey(code, kind)) {
+					return
+				}
 			}
 			v := 0.0
 			if down {
