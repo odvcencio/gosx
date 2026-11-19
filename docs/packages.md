@@ -141,7 +141,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `game` | experimental | yes | Provides a first-class runtime foundation for interactive simulations, games, and scientific visualizations in GoSX. |
-| `game/actions` | experimental | yes | Maps keyboard, mouse, pointer-lock and gamepad input onto named game actions. |
+| `game/actions` | experimental | yes | Maps keyboard, mouse, pointer-lock, gamepad and touch input onto named game actions. |
 | `game/actions/bridge` | experimental | yes | Publishes action state from package actions to a game.Input, so systems that read game.Input see the same actions. |
 | `game/audio` | experimental | yes | A small WebAudio bus graph and one-shot player for a browser game client. |
 | `game/audio/host` | experimental | yes | Exposes typed browser audio nodes and lifecycle controls without importing the game runtime or manifest player. |
