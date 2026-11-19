@@ -1069,7 +1069,9 @@ const budgets = [
     // The monolith embeds the deferred disclosure helper for offline use.
     // It measures 607081 gzip and 497089 Brotli after splitting the engines chunk.
     // 18 November 2026 (WebGPU skinned meshes keep their skin output, bind group, UV buffer and TAA copy on the scene object): measured bootstrap.js gzip 607107; only this exhausted target moves (590697 -> 590723), allowance unchanged.
-    file: "bootstrap.js", raw: 2082445, gzip: 590723,
+    // 18 November 2026 (WebGPU draws retained Selena meshes from their own vertex buffers): measured bootstrap.js raw 2148005; only this exhausted target moves (2082445 -> 2082469), allowance unchanged.
+    // 18 November 2026 (WebGPU draws retained Selena meshes from their own vertex buffers): measured bootstrap.js gzip 607136; only this exhausted target moves (590723 -> 590752), allowance unchanged.
+    file: "bootstrap.js", raw: 2082469, gzip: 590752,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1981,7 +1983,8 @@ const budgets = [
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap-feature-scene3d-webgpu.js raw 543942; only this exhausted target moves (517373 -> 518040), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured bootstrap-feature-scene3d-webgpu.js gzip 140023; only this exhausted target moves (133294 -> 133355), allowance unchanged.
     // 18 November 2026 (WebGPU skinned meshes keep their skin output, bind group, UV buffer and TAA copy on the scene object): measured bootstrap-feature-scene3d-webgpu.js gzip 140027; only this exhausted target moves (133355 -> 133359), allowance unchanged.
-    raw: 493223, gzip: 133359,
+    // 18 November 2026 (WebGPU draws retained Selena meshes from their own vertex buffers): measured bootstrap-feature-scene3d-webgpu.js gzip 140050; only this exhausted target moves (133359 -> 133381), allowance unchanged.
+    raw: 493223, gzip: 133381,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -1994,7 +1997,8 @@ const budgets = [
     // train 5 (#823 stadium crowd system): measured bootstrap-feature-scene3d-webgpu.js brotli 123527; only this exhausted target moves (117542 -> 117644), allowance unchanged.
     // train 5 (#809 projected decals and motion blur, on #802's newer renderer code): measured bootstrap-feature-scene3d-webgpu.js brotli 123687; only this exhausted target moves (117644 -> 117797), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured bootstrap-feature-scene3d-webgpu.js brotli 118224; only this exhausted target moves (112575 -> 112594), allowance unchanged.
-    brotli: 112594 },
+    // 18 November 2026 (WebGPU draws retained Selena meshes from their own vertex buffers): measured bootstrap-feature-scene3d-webgpu.js brotli 118303; only this exhausted target moves (112594 -> 112669), allowance unchanged.
+    brotli: 112669 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -3331,7 +3335,8 @@ const routeBudgets = [
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1411413; only this exhausted target moves (1344378 -> 1345877), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1413544; only this exhausted target moves (1345877 -> 1348008), allowance unchanged.
     // 18 November 2026 (WebGPU skinned meshes keep their skin output, bind group, UV buffer and TAA copy on the scene object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1416270; only this exhausted target moves (1350218 -> 1350734), allowance unchanged.
-    raw: 1350734,
+    // 18 November 2026 (WebGPU draws retained Selena meshes from their own vertex buffers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1416391; only this exhausted target moves (1350734 -> 1350855), allowance unchanged.
+    raw: 1350855,
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 383698 bytes; only this exhausted target moves (366989 -> 367314), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395831; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (unshadowed PBR fragment for frames without a shadow slot): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395963; only this exhausted target moves (379447 -> 379579) under the unchanged allowance.
@@ -3349,7 +3354,8 @@ const routeBudgets = [
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395055; only this exhausted target moves (378134 -> 378671), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395823; only this exhausted target moves (378671 -> 379439), allowance unchanged.
     // 18 November 2026 (WebGPU skinned meshes keep their skin output, bind group, UV buffer and TAA copy on the scene object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 396584; only this exhausted target moves (380043 -> 380200), allowance unchanged.
-    gzip: 380200,
+    // 18 November 2026 (WebGPU draws retained Selena meshes from their own vertex buffers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 396607; only this exhausted target moves (380200 -> 380223), allowance unchanged.
+    gzip: 380223,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.

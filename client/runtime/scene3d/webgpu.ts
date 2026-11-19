@@ -15875,6 +15875,9 @@
       var objectDepthWrite = depthWrite, worldBuffersBound = false;
       function bindMeshAttribute(attr, obj, offset, count) {
         if (webGPUObjectIsSkinned(obj)) return webGPUBindElioSelenaAttribute(pass, obj, attr, count);
+        // Retained geometry keeps its own buffers; it is not in the world-baked
+        // pbrBuffers that vertexOffset indexes. Fail closed on a missing stream.
+        if (obj.retainedGeometry && obj.directVertices) return webGPUBindRetainedMeshAttribute(pass, attr.slot, obj, attr.source === "custom" ? "custom:" + attr.name : attr.source, attr.components);
         var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
         if (attr.source === "positions") {
           if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return true;
