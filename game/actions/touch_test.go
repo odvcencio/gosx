@@ -447,3 +447,54 @@ func TestTouchDrop(t *testing.T) {
 		t.Fatalf("after a lift the host heard %v", ended)
 	}
 }
+
+// A press that is taken away before the next frame: the frame after the
+// press still reports the release as canceled, not as the player's.
+func TestCanceledPressBetweenFrames(t *testing.T) {
+	m := touchMap()
+	tt := NewTouches(m)
+	m.Update(frame)
+	tt.ButtonDown(1, "target1")
+	tt.Cancel(1)
+	m.Update(frame)
+	if st := m.State("throw"); !st.Pressed || st.Released {
+		t.Fatalf("the frame after a press that came and went: %+v", st)
+	}
+	m.Update(frame)
+	if st := m.State("throw"); !st.Released || !st.Canceled || st.Tapped {
+		t.Fatalf("the release of a press that was taken away between frames: %+v, want Released and Canceled, not Tapped", st)
+	}
+	m.Update(frame)
+	if st := m.State("throw"); st.Released || st.Canceled {
+		t.Fatalf("the cancel was reported twice: %+v", st)
+	}
+
+	// The same for a key the window's losing the focus let go.
+	m.Feed(Event{Device: DeviceKeyboard, Source: Key("ShiftLeft"), Value: 1})
+	m.ReleaseAll()
+	m.Update(frame)
+	if st := m.State("sprint"); !st.Pressed {
+		t.Fatalf("a key pressed before the window lost the focus: %+v", st)
+	}
+	m.Update(frame)
+	if st := m.State("sprint"); !st.Released || !st.Canceled {
+		t.Fatalf("its release: %+v, want Released and Canceled", st)
+	}
+
+	// A finger that lifts between frames is still the player's release, and
+	// the next press starts clean.
+	tt.ButtonDown(2, "target1")
+	tt.Up(2)
+	m.Update(frame)
+	m.Update(frame)
+	if st := m.State("throw"); !st.Released || st.Canceled {
+		t.Fatalf("a tap between frames: %+v, want Released and not Canceled", st)
+	}
+	tt.ButtonDown(3, "target1")
+	m.Update(frame)
+	tt.Up(3)
+	m.Update(frame)
+	if st := m.State("throw"); !st.Released || st.Canceled {
+		t.Fatalf("a press after a canceled one: %+v", st)
+	}
+}

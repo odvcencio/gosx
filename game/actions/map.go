@@ -446,9 +446,15 @@ func (m *Map) Update(dt time.Duration) {
 		}
 	}
 	for _, s := range m.src {
+		// A press that came and went between two frames read as down in this
+		// one (the latch), and its release is reported in the next. Whether
+		// that release was the player's must last until then.
+		pending := s.latch != 0 && s.value == 0
 		s.latch = 0
 		s.lifted = false
-		s.canceled = false
+		if !pending {
+			s.canceled = false
+		}
 	}
 }
 
