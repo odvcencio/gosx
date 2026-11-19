@@ -43,7 +43,9 @@ type TouchConfig struct {
 	// with the control's name, whether it was a stick, and whether the touch
 	// was taken away, not lifted. For a lifted finger this is before the
 	// click the browser may make of the tap, so a game that acts on the
-	// finger's lift can drop that click.
+	// finger's lift can drop that click. A GoSX island runs a button's click
+	// handler earlier still, during the lift and before this is called: that
+	// one comes while Touches.Held still reports the button held.
 	Ended func(name string, stick, canceled bool)
 }
 
