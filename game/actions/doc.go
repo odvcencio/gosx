@@ -8,9 +8,11 @@
 //
 // Feed raw events into the Map as they arrive, then call Update once per
 // frame. A button pressed and released between two Update calls still reads
-// as pressed in the next frame (the tap latch), so a fast tap is never lost
-// to a slow frame. Update and the query methods (Pressed, Down, Value, Vec2,
-// State) do not allocate.
+// as pressed in the next frame (the tap latch), and a held button let go and
+// pressed again between two Update calls reads as pressed again, so a fast
+// tap or a fast second press is never lost to a slow frame. Two whole taps
+// between two Update calls still read as one. Update and the query methods
+// (Pressed, Down, Value, Vec2, State) do not allocate.
 //
 // Bindings can be changed at run time with Rebind, which detects conflicts
 // and can reject, swap or unbind them. Capture records the next press for a

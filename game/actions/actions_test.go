@@ -83,6 +83,94 @@ func TestTapLatchBetweenFrames(t *testing.T) {
 	}
 }
 
+// A held key let go and pressed again between two frames is a new press.
+func TestRepressBetweenFrames(t *testing.T) {
+	m := newMap()
+	press(m, Key("Space"))
+	m.Update(frame)
+	release(m, Key("Space"))
+	press(m, Key("Space")) // both before the next Update
+	m.Update(frame)
+	if st := m.State("jump"); !st.Pressed || !st.Down || st.Released {
+		t.Fatalf("the second press was lost: %+v", st)
+	}
+	m.Update(frame)
+	if st := m.State("jump"); st.Pressed || !st.Down {
+		t.Fatalf("a held key reads as pressed again: %+v", st)
+	}
+	// Up, down and up again: the press is seen, and its release a frame on.
+	release(m, Key("Space"))
+	press(m, Key("Space"))
+	release(m, Key("Space"))
+	m.Update(frame)
+	if st := m.State("jump"); !st.Pressed || !st.Down {
+		t.Fatalf("the press inside the frame was lost: %+v", st)
+	}
+	m.Update(frame)
+	if st := m.State("jump"); !st.Released || st.Down || st.Pressed {
+		t.Fatalf("expected the release next frame: %+v", st)
+	}
+	// ReleaseAll lets the key go; a press after it is a new press.
+	press(m, Key("Space"))
+	m.Update(frame)
+	m.ReleaseAll()
+	press(m, Key("Space"))
+	m.Update(frame)
+	if st := m.State("jump"); !st.Pressed || !st.Down {
+		t.Fatalf("the press after ReleaseAll was lost: %+v", st)
+	}
+}
+
+// A second binding tapped while the first stays held is not a new press: the
+// action never went up.
+func TestRepressNeedsEveryBindingUp(t *testing.T) {
+	m := newMap()
+	press(m, Key("Space"))
+	m.Update(frame)
+	press(m, PadButton(0))
+	release(m, PadButton(0))
+	press(m, PadButton(0))
+	m.Update(frame)
+	if st := m.State("jump"); st.Pressed || !st.Down {
+		t.Fatalf("the action was held throughout: %+v", st)
+	}
+	// A stick that holds an axis past its threshold does the same.
+	m.Feed(Event{Source: PadAxis(0), Value: 1})
+	press(m, Key("KeyD"))
+	m.Update(frame)
+	release(m, Key("KeyD"))
+	press(m, Key("KeyD"))
+	m.Update(frame)
+	if st := m.State("moveX"); st.Pressed || !st.Down {
+		t.Fatalf("the stick held the axis throughout: %+v", st)
+	}
+}
+
+// The press that ended inside the frame was a tap, so the second one is a
+// double tap.
+func TestRepressEndsATapAndDoubleTaps(t *testing.T) {
+	m := newMap()
+	press(m, Key("ShiftLeft"))
+	m.Update(frame)
+	release(m, Key("ShiftLeft"))
+	press(m, Key("ShiftLeft"))
+	m.Update(frame)
+	if st := m.State("dash"); !st.Pressed || !st.Tapped || !st.DoubleTapped || st.HeldFor != 0 {
+		t.Fatalf("a fast second press should end a tap and double tap: %+v", st)
+	}
+	// A press held past the tap limit, then let go and pressed again, is a
+	// new press but neither a tap nor a double tap.
+	for i := 0; i < 40; i++ {
+		m.Update(frame)
+	}
+	release(m, Key("ShiftLeft"))
+	press(m, Key("ShiftLeft"))
+	m.Update(frame)
+	if st := m.State("dash"); !st.Pressed || st.Tapped || st.DoubleTapped {
+		t.Fatalf("a long press let go and pressed again: %+v", st)
+	}
+}
+
 func TestLatchDoesNotApplyToAxisSticks(t *testing.T) {
 	m := newMap()
 	m.Feed(Event{Source: PadAxis(0), Value: 1})

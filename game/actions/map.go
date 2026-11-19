@@ -95,6 +95,10 @@ type srcState struct {
 	value      float64
 	latch      float64
 	suppressed bool
+	// lifted is true when a held key or button went fully up since the last
+	// Update. If it is down again by then, it was let go and pressed again
+	// between two frames.
+	lifted bool
 }
 
 // Map turns raw events into action state. Use one Map per player. It is not
@@ -244,6 +248,7 @@ func (m *Map) recompute() {
 			s.suppressed = true
 			s.latch = 0
 		}
+		s.lifted = false
 	}
 }
 
@@ -312,6 +317,9 @@ func (m *Map) Feed(ev Event) {
 	}
 	st.value = ev.Value
 	if ev.Value == 0 {
+		if s.latches() && prev != 0 && !st.suppressed {
+			st.lifted = true
+		}
 		st.suppressed = false
 		return
 	}
@@ -323,7 +331,10 @@ func (m *Map) Feed(ev Event) {
 // ReleaseAll zeroes every held input. Games call it on window blur so keys
 // pressed before a focus change do not stay stuck.
 func (m *Map) ReleaseAll() {
-	for _, s := range m.src {
+	for src, s := range m.src {
+		if src.latches() && s.value != 0 && !s.suppressed {
+			s.lifted = true
+		}
 		s.value = 0
 		s.suppressed = false
 	}
@@ -402,7 +413,32 @@ func (m *Map) Update(dt time.Duration) {
 	}
 	for _, s := range m.src {
 		s.latch = 0
+		s.lifted = false
 	}
+}
+
+// repressed reports whether the action's keys and buttons were let go and
+// pressed again since the last Update: every one that is down now went fully
+// up in between, and no stick holds the action.
+func (m *Map) repressed(d *actionDef) bool {
+	found := false
+	for _, b := range d.Bindings {
+		if !b.Source.latches() {
+			if m.read(b, d.Deadzone) != 0 {
+				return false
+			}
+			continue
+		}
+		st := m.src[b.Source]
+		if st == nil || st.suppressed || (st.value == 0 && st.latch == 0) {
+			continue
+		}
+		if !st.lifted {
+			return false // held throughout
+		}
+		found = true
+	}
+	return found
 }
 
 func (d *actionDef) deactivate() {
@@ -437,8 +473,19 @@ func (m *Map) updateDef(d *actionDef) {
 		// for axes. Keep Value non-negative so UI code can show a level.
 		st.Value = -sum
 	}
-	st.Pressed = down && !prev.Down
+	// A key let go and pressed again between two frames reads down at both.
+	// It is still a new press, and the press before it has ended.
+	again := down && prev.Down && m.repressed(d)
+	st.Pressed = down && (!prev.Down || again)
 	st.Released = !down && prev.Down
+	if again {
+		if m.now-d.pressAt <= tap && !d.holdDone {
+			st.Tapped = true
+			d.lastTap, d.haveTap = d.pressAt, true
+		} else {
+			d.haveTap = false
+		}
+	}
 	switch {
 	case st.Pressed:
 		d.pressAt = m.now
