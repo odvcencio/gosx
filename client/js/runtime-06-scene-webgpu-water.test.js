@@ -77,10 +77,12 @@ test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buf
 
   // One tracked output buffer backs slots 0/1/3: positions at offset 0,
   // normals at paddedCount * 12, tangents at paddedCount * 24, each bound
-  // with its logical draw size; only slot 2 keeps a cached UV buffer.
+  // with its logical draw size; only slot 2 keeps a cached UV buffer, which
+  // belongs to the vertex stream and uploads once, not every frame.
   assert.match(skinnedBind, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
   assert.match(skinnedBind, /pass\.setVertexBuffer\(1,\s*outputBuffer,\s*paddedCount \* 12,\s*vec3Bytes\)/);
-  assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedUVs"/);
+  assert.match(skinnedBind, /webGPUBindSkinnedUVBuffer\(pass,\s*2,\s*obj,\s*count\)/);
+  assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedUVs"/);
   assert.match(skinnedBind, /pass\.setVertexBuffer\(3,\s*outputBuffer,\s*paddedCount \* 24,\s*Math\.max\(4,\s*count \* 4 \* 4\)\)/);
   assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedNormals"/);
   assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedTangents"/);

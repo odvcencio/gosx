@@ -413,18 +413,18 @@ function taaResolve(st: any, encoder: any, effects: any[], frame: any) {
   return resolved ? effects.filter(function(e: any) { return !e || e.kind !== "taa"; }) : effects;
 }
 
-// taaCapturePreviousSkins copies each skinned mesh's positions before this
-// frame's skinning dispatch overwrites them.
+// taaCapturePreviousSkins copies each skinned mesh's positions before this frame's skinning dispatch overwrites them.
+// The copy belongs to the scene object (resourceOwner) on this device, not to the draw record rebuilt every frame.
 function taaCapturePreviousSkins(st: any, encoder: any, objects: any[]) {
   if (!st.active || !st.valid) return;
   var r = st.resources();
   for (var i = 0; i < (objects || []).length; i++) {
-    var obj = objects[i], skin = obj && r.skinBuffer(obj);
+    var obj = objects[i], skin = obj && r.skinBuffer(obj), owner = skin && (obj.resourceOwner || obj), previous = owner && owner._gosxTAAPreviousSkin;
     if (!skin) continue;
-    if (!obj._gosxTAAPreviousSkin || obj._gosxTAAPreviousSkin.size !== skin.size) {
-      obj._gosxTAAPreviousSkin = r.device.createBuffer({ label: "gosx-taa-previous-skin", size: skin.size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    if (!previous || previous.size !== skin.size || owner._gosxTAAPreviousSkinDevice !== r.device) {
+      previous = owner._gosxTAAPreviousSkin = r.device.createBuffer({ label: "gosx-taa-previous-skin", size: skin.size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }); owner._gosxTAAPreviousSkinDevice = r.device;
     }
-    encoder.copyBufferToBuffer(skin, 0, obj._gosxTAAPreviousSkin, 0, skin.size);
+    encoder.copyBufferToBuffer(skin, 0, previous, 0, skin.size);
   }
 }
 

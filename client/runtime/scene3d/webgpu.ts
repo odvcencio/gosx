@@ -6780,8 +6780,9 @@
     var computeParticleSystems = new Map();
     var temporalAA = wgpuPostfxTemporalAA(function() {
       return { device: device, linearSampler: linearSampler, frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout, pointsLayout: pointsBindGroupLayout, pointsVertex: pointsVertexModule,
-        materialGroup: function() { return createMaterialBindGroup(null, false, defaultMaterialOwner); }, previousSkin: function(obj: any) { return obj._gosxTAAPreviousSkin || null; },
-        skinBuffer: function(obj: any) { return webGPUObjectIsSkinned(obj) && obj._gosxWGPUElioSkinOutputBuffer || null; },
+        materialGroup: function() { return createMaterialBindGroup(null, false, defaultMaterialOwner); }, previousSkin: function(obj: any) { return webGPUObjectResourceOwner(obj)._gosxTAAPreviousSkin || null; },
+        // The owner's buffer, so the capture before this frame's dispatch sees last frame's skin.
+        skinBuffer: function(obj: any) { return webGPUObjectIsSkinned(obj) && webGPUObjectSkinOutputBuffer(obj) || null; },
         bindPositions: function(pass: any, slot: number, obj: any) { return webGPUBindRetainedMeshAttribute(pass, slot, obj, "positions", 3); },
         bindIndices: function(pass: any, obj: any) { return webGPUBindRetainedMeshIndexBuffer(pass, obj); } };
     });
@@ -14901,20 +14902,12 @@
       return true;
     }
 
-    // webGPUBindRetainedMeshIndexBuffer uploads (once) and binds the optional
-    // authored index stream of a direct-vertex mesh as a uint32 index buffer,
-    // returning its triangle-index count. Retained entries rebuild on revision
-    // change and retire with their attribute buffers; non-retained direct
-    // geometry (skinned draws) reuses while the Uint32Array identity is stable.
-    // Returns 0 when there are no valid indices so callers keep draw().
-    function webGPUBindRetainedMeshIndexBuffer(pass, obj) {
-      if (!pass) return 0;
-      var vertices = obj && obj.vertices;
-      if (!vertices) return 0;
-      var data = vertices.indices;
-      if (!(data instanceof Uint32Array) || data.length < 3 || data.length % 3 !== 0) {
-        return 0;
-      }
+    // webGPUDirectMeshEntry returns the cache entry for a direct-vertex
+    // mesh's geometry and marks it live this frame. Retained entries rebuild
+    // on revision change; non-retained ones (skinned draws) are kept while
+    // their typed arrays keep the same identity.
+    function webGPUDirectMeshEntry(obj) {
+      var vertices = obj.vertices;
       var retained = obj.retainedGeometry === true;
       var entry = retainedMeshAttributeCache.get(vertices);
       if (entry && retained && entry.revision !== obj.geometryRevision) {
@@ -14932,6 +14925,61 @@
         retainedMeshAttributeCache.set(vertices, entry);
       }
       entry.lastSeenEpoch = retainedMeshAttributeEpoch;
+      return entry;
+    }
+
+    // webGPUBindSkinnedUVBuffer binds a skinned mesh's UVs. The compute pass
+    // deforms positions, normals and tangents; UVs are plain geometry, so
+    // they upload once per vertex stream, like the index buffer, and every
+    // skinned object that draws that stream shares the buffer. The record
+    // matches webGPUBindRetainedMeshAttribute's "uvs" record, so a retained
+    // draw of the same stream reuses it too. A mesh without UVs binds one
+    // zero-filled buffer per stream. Callers pass a skinned object, which
+    // always has vertices; every "uvs" record holds two components.
+    function webGPUBindSkinnedUVBuffer(pass, slot, obj, count) {
+      if (!(count > 0)) return false;
+      var entry = webGPUDirectMeshEntry(obj);
+      var data = webGPUDirectAttribute(obj, "uvs", count, 2);
+      var key = data ? "uvs" : "uvs:default";
+      var record = entry.attributes[key];
+      if (!data) data = record && record.data.length === count * 2 ? record.data : new Float32Array(count * 2);
+      if (!record || record.data !== data) {
+        if (record) {
+          retainedMeshBufferStats.rebuilds += 1;
+          webGPURetireRetainedMeshAttribute(entry, key);
+        }
+        var buffer = wgpuCreateTrackedBuffer(GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, data.byteLength || 4);
+        if (!buffer) return false;
+        device.queue.writeBuffer(buffer, 0, data);
+        record = { buffer: buffer, data: data, components: 2, byteLength: data.byteLength };
+        entry.attributes[key] = record;
+        retainedMeshBufferStats.misses += 1;
+        retainedMeshBufferStats.allocations += 1;
+        retainedMeshBufferStats.uploadCalls += 1;
+        retainedMeshBufferStats.uploadBytes += data.byteLength;
+        retainedMeshBufferStats.liveBytes += data.byteLength;
+      } else {
+        retainedMeshBufferStats.hits += 1;
+      }
+      pass.setVertexBuffer(slot, record.buffer, 0, Math.max(4, count * 2 * 4));
+      return true;
+    }
+
+    // webGPUBindRetainedMeshIndexBuffer uploads (once) and binds the optional
+    // authored index stream of a direct-vertex mesh as a uint32 index buffer,
+    // returning its triangle-index count. Retained entries rebuild on revision
+    // change and retire with their attribute buffers; non-retained direct
+    // geometry (skinned draws) reuses while the Uint32Array identity is stable.
+    // Returns 0 when there are no valid indices so callers keep draw().
+    function webGPUBindRetainedMeshIndexBuffer(pass, obj) {
+      if (!pass) return 0;
+      var vertices = obj && obj.vertices;
+      if (!vertices) return 0;
+      var data = vertices.indices;
+      if (!(data instanceof Uint32Array) || data.length < 3 || data.length % 3 !== 0) {
+        return 0;
+      }
+      var entry = webGPUDirectMeshEntry(obj);
       var record = entry.attributes.indices;
       if (!record || record.data !== data) {
         if (record) {
@@ -15126,6 +15174,23 @@
       return record.outputBuffer;
     }
 
+    // webGPUObjectResourceOwner returns the object that owns a draw record's
+    // per-object GPU state. The scene rebuilds each mesh draw record every
+    // frame; resourceOwner is the scene object behind it, which lasts. State
+    // cached on the record itself is lost at the end of the frame, and the
+    // GPU buffers it held stay allocated until the renderer is disposed.
+    function webGPUObjectResourceOwner(obj) {
+      return obj && obj.resourceOwner || obj;
+    }
+
+    // webGPUObjectSkinOutputBuffer returns the skin output buffer the owner
+    // holds on this device, before or after this frame's dispatch.
+    function webGPUObjectSkinOutputBuffer(obj) {
+      var owner = webGPUObjectResourceOwner(obj);
+      var record = owner && owner._gosxWGPUElioSkinRecord;
+      return record && record.outputBuffer && pointsEntryGPUBuffers.has(record.outputBuffer) ? record.outputBuffer : null;
+    }
+
     function webGPUElioSkinRecord(obj) {
       if (!webGPUObjectIsSkinned(obj)) return null;
       ensureElioSkinPipeline();
@@ -15138,10 +15203,13 @@
       var boneData = webGPUElioBoneData(obj, jointCount);
       if (!vertexData || !boneData) return null;
 
-      var record = obj._gosxWGPUElioSkinRecord;
+      // The output buffer and bind group belong to the scene object, not to
+      // this frame's draw record: one of each per skinned object.
+      var owner = webGPUObjectResourceOwner(obj);
+      var record = owner._gosxWGPUElioSkinRecord;
       if (!record) {
         record = {};
-        obj._gosxWGPUElioSkinRecord = record;
+        owner._gosxWGPUElioSkinRecord = record;
       }
 
       var boneBuffer = wgpuCachedTrackedBuffer(
@@ -15463,11 +15531,7 @@
       const padded = obj._gosxWGPUElioSkinOutputPaddedCount;
       if (!buffer || !(padded >= count)) return false;
       if (attr.source === "custom") return webGPUBindRetainedMeshAttribute(pass, attr.slot, obj, "custom:" + attr.name, attr.components);
-      if (attr.source === "uvs" && attr.components === 2) {
-        const uvs = webGPUDefaultAttributeData(obj, "uvs", count, 2, [0, 0]);
-        pass.setVertexBuffer(attr.slot, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
-        return true;
-      }
+      if (attr.source === "uvs" && attr.components === 2) return webGPUBindSkinnedUVBuffer(pass, attr.slot, obj, count);
       let offset;
       if (attr.source === "positions" && attr.components === 3) offset = 0;
       else if (attr.source === "normals" && attr.components === 3) offset = padded * 12;
@@ -15486,11 +15550,10 @@
       // (unpadded) draw size; slot 2 stays on its own UV buffer.
       var paddedCount = sceneNumber(obj && obj._gosxWGPUElioSkinOutputPaddedCount, 0);
       if (!(paddedCount > 0)) return false;
-      var uvs = webGPUDefaultAttributeData(obj, "uvs", count, 2, [0, 0]);
       var vec3Bytes = Math.max(4, count * 3 * 4);
       pass.setVertexBuffer(0, outputBuffer, 0, vec3Bytes);
       pass.setVertexBuffer(1, outputBuffer, paddedCount * 12, vec3Bytes);
-      pass.setVertexBuffer(2, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      if (!webGPUBindSkinnedUVBuffer(pass, 2, obj, count)) return false;
       pass.setVertexBuffer(3, outputBuffer, paddedCount * 24, Math.max(4, count * 4 * 4));
       return true;
     }

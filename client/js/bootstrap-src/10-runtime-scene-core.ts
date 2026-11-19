@@ -7649,7 +7649,10 @@
         vertices: vertices,
         directVertices: true,
         retainedGeometry: retained,
-        resourceOwner: retained ? resourceOwner : undefined,
+        // This record is rebuilt every frame; the scene object behind it is
+        // not. Renderers key per-object GPU state (the skin output buffer and
+        // its bind group, TAA history) on resourceOwner, retained or not.
+        resourceOwner: resourceOwner,
         geometryRevision: retained ? geometryRevision : undefined,
         modelMatrix: sceneObjectModelMatrix(object, timeSeconds),
         vertexOffset: 0,
