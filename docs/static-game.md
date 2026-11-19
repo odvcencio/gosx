@@ -92,6 +92,16 @@ fixture packs to 10,466 bytes. A real game with 65 files (3D models, textures,
 WebAssembly, runtime scripts), 20.7 MB of files without the `.gz` and
 `.br` copies, packs to 11,599,640 bytes (11.1 MiB).
 
+## A WASM audio kernel in a static game
+
+A game that plays a WASM audio kernel (`game/audio/kernel`, for example
+Cicada's music engine) has no server to mount `worklet.Handler()` on. Set
+`kernel.Config.InlineProcessor`: the processor then loads from the copy
+compiled into the game, as a `data:` URL, in the folder and in the single file.
+Put the kernel module and its data in `public/` and fetch them with
+`audio.HTTPLoader` and a relative path; in the single file those requests are
+answered from memory.
+
 ## What "any path" means
 
 Every URL the page uses to load code or data is relative to the page:

@@ -13,6 +13,13 @@ backend-extracted `ImageInfo`. The processor URL contains its source digest, so
 cached code cannot mix with a newer host. It works with an Activity proxy prefix
 and an external-script CSP; no source is generated in the application.
 
+A static export (`gosx export`) has no server to mount `Handler` on. There,
+load `DataURL()` instead: the same processor source as a `data:` URL, built from
+the copy compiled into the program. It works from any folder and from the
+export's single HTML file opened from disk (`file://`), where a worklet module
+from a blob URL is refused. `kernel.Config.InlineProcessor` does this for you.
+A page whose CSP allows no `data:` scripts must serve `Handler`.
+
 Browser imports retain the typed ABI and portable `Path`/`Source` APIs, but
 exclude the HTTP handler and its server dependencies. Processor assets are
 hashed only when requested, so unused audio worklets add no asset initialization

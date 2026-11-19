@@ -197,6 +197,14 @@ Serve `worklet.Handler()` from your server under that prefix. `Start` loads the
 processor, compiles the module once, waits until the kernel reports ready, and
 connects it to the bus. Call it from a goroutine after a user gesture.
 
+A static export has no server. Set `InlineProcessor: true` instead of
+`ProcessorPrefix`: the processor then loads from the copy compiled into the
+game, as a `data:` URL, from any folder and from the single HTML file opened
+from disk. Ship the kernel module and the data blob as files in `public/` and
+fetch them with `audio.HTTPLoader`; the single file answers those requests
+from memory. A page whose Content-Security-Policy allows no `data:` scripts
+must serve `worklet.Handler()` instead.
+
 | Method | Use |
 | --- | --- |
 | `node.Send(records)` | Post a batch of command records. The processor rejects the whole batch if any record is invalid. |
