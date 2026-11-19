@@ -2441,6 +2441,83 @@ test("16a skinned LBS output survives renderer disposal with a fresh bind group 
   assert.deepEqual(Object.keys(bound), ["0"]);
 });
 
+test("16a skinned meshes keep no CPU copy of the packed skin input and rebuild it on a new renderer", async () => {
+  // The packed skin input (72 bytes a vertex) used to stay in memory after
+  // its upload, on the geometry: 22 athletes of 25,856 padded vertices kept
+  // 41 MB. The source attributes rebuild it when a new renderer (after a
+  // device loss) needs it.
+  const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const vertices = {
+    count: 3,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    joints: new Float32Array(12),
+    weights: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+    uvs: new Float32Array([0, 0, 1, 0, 0, 1]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    tangents: new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]),
+  };
+  const owner = { id: "keeper" };
+  const skin = { jointMatrices: identity };
+  const bundle = () => ({
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [{ kind: "standard", color: "#ffffff" }],
+    meshObjects: [{ id: "keeper", kind: "gltf-mesh", materialIndex: 0, vertexOffset: 0, vertexCount: 3, viewCulled: false,
+      depthCenter: 4, directVertices: true, modelMatrix: identity, skin, vertices, resourceOwner: owner }],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+  });
+  const packedBytes = 64 * 72;
+  // Every array buffer two property levels under the geometry, except the source attributes.
+  function held(value, depth, out) {
+    if (!value || typeof value !== "object" || depth > 2) return out;
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) { out.push(value.byteLength); return out; }
+    for (const key of Object.keys(value)) {
+      if (depth === 0 && ["positions", "joints", "weights", "uvs", "normals", "tangents"].includes(key)) continue;
+      held(value[key], depth + 1, out);
+    }
+    return out;
+  }
+  function inputBuffer(state, from) {
+    for (const pass of state.computePasses.slice(from)) {
+      if (!pass.dispatches.some((d) => d.pipeline && d.pipeline.label === "gosx-elio-skin-lbs")) continue;
+      for (const record of pass.bindGroups) {
+        const entry = record.group.desc.entries.find((e) => e.binding === 1);
+        if (entry) return entry.resource.buffer;
+      }
+    }
+    return null;
+  }
+
+  const first = await createBoardWebGPUHarness({ fresh: true });
+  await renderPreparedFrame(first.renderer, bundle(), {});
+  const input = inputBuffer(first.fake.state, 0);
+  assert.ok(input, "the LBS dispatch reads a packed input buffer");
+  assert.equal(input.size, packedBytes);
+  assert.deepEqual(held(vertices, 0, []).filter((n) => n === packedBytes), [], "no packed copy stays on the geometry after the upload");
+  const from = first.fake.state.computePasses.length;
+  for (let frame = 0; frame < 2; frame += 1) await renderPreparedFrame(first.renderer, bundle(), {});
+  assert.strictEqual(inputBuffer(first.fake.state, from), input, "later frames reuse the uploaded input");
+  assert.equal(first.fake.state.writeBufferCalls.filter((c) => c.buffer === input).length, 1, "the input uploads once");
+  first.renderer.dispose();
+
+  // A new renderer, as after a device loss: the input is packed again from the source attributes.
+  const second = await createBoardWebGPUHarness({ fresh: true });
+  await renderPreparedFrame(second.renderer, bundle(), {});
+  const rebuilt = inputBuffer(second.fake.state, 0);
+  assert.ok(rebuilt && rebuilt !== input && !rebuilt.destroyed, "the new renderer uploads its own live input");
+  const write = second.fake.state.writeBufferCalls.find((c) => c.buffer === rebuilt);
+  assert.ok(write, "the rebuilt input is uploaded");
+  const view = new DataView(write.data.buffer, write.data.byteOffset, write.data.byteLength);
+  assert.deepEqual([view.getFloat32(72, true), view.getFloat32(76, true), view.getFloat32(144 + 4, true)], [1, 0, 1],
+    "the rebuilt input carries the source positions");
+  assert.deepEqual(held(vertices, 0, []).filter((n) => n === packedBytes), []);
+  second.renderer.dispose();
+});
+
 test("16a skinned draw records rebuilt every frame keep one LBS output, bind group and UV buffer per owner", async () => {
   // createSceneRenderBundle pushes a fresh draw record for every mesh each
   // frame; resourceOwner is the scene object behind it. Skin state cached on

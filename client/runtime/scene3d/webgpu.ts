@@ -1,3 +1,58 @@
+  // wgpuSameItems reports whether two arrays hold the same items, compared by identity.
+  function wgpuSameItems(a: any[], b: any[]) {
+    if (!a || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  // wgpuPackElioSkinVertices packs the Elio skin kernel's input: per vertex, position, normalized weights, clamped joint
+  // indices, normal and tangent, 72 bytes. src is [positions, joints, weights, normals, tangents]; padding vertices get weight 1.
+  function wgpuPackElioSkinVertices(src: any[], count: number, paddedCount: number, jointCount: number) {
+    var positions = src[0], joints = src[1], weights = src[2], normals = src[3], tangents = src[4];
+    var stride = 72;
+    var bytes = new Uint8Array(paddedCount * stride);
+    var view = new DataView(bytes.buffer);
+    var maxJoint = Math.max(0, jointCount - 1);
+    for (var i = 0; i < paddedCount; i++) {
+      var off = i * stride;
+      if (i < count) {
+        var p = i * 3;
+        var q = i * 4;
+        view.setFloat32(off, sceneNumber(positions[p], 0), true);
+        view.setFloat32(off + 4, sceneNumber(positions[p + 1], 0), true);
+        view.setFloat32(off + 8, sceneNumber(positions[p + 2], 0), true);
+        var w0 = Math.max(0, sceneNumber(weights[q], 0));
+        var w1 = Math.max(0, sceneNumber(weights[q + 1], 0));
+        var w2 = Math.max(0, sceneNumber(weights[q + 2], 0));
+        var w3 = Math.max(0, sceneNumber(weights[q + 3], 0));
+        var sum = w0 + w1 + w2 + w3;
+        if (sum <= 0.000001) {
+          w0 = 1; w1 = 0; w2 = 0; w3 = 0;
+        } else {
+          w0 /= sum; w1 /= sum; w2 /= sum; w3 /= sum;
+        }
+        view.setFloat32(off + 12, w0, true);
+        view.setFloat32(off + 16, w1, true);
+        view.setFloat32(off + 20, w2, true);
+        view.setFloat32(off + 24, w3, true);
+        view.setUint32(off + 28, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q], 0)))), true);
+        view.setUint32(off + 32, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 1], 0)))), true);
+        view.setUint32(off + 36, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 2], 0)))), true);
+        view.setUint32(off + 40, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 3], 0)))), true);
+        view.setFloat32(off + 44, sceneNumber(normals[p], 0), true);
+        view.setFloat32(off + 48, sceneNumber(normals[p + 1], 0), true);
+        view.setFloat32(off + 52, sceneNumber(normals[p + 2], 0), true);
+        view.setFloat32(off + 56, sceneNumber(tangents[q], 1), true);
+        view.setFloat32(off + 60, sceneNumber(tangents[q + 1], 0), true);
+        view.setFloat32(off + 64, sceneNumber(tangents[q + 2], 0), true);
+        view.setFloat32(off + 68, sceneNumber(tangents[q + 3], 1), true);
+      } else {
+        view.setFloat32(off + 12, 1, true);
+      }
+    }
+    return bytes;
+  }
+
   function wgpuEmitGPUTiming(sample: any) {
     if (typeof window !== "undefined" && window.__gosx_scene3d_perf === true) {
       document.dispatchEvent(new CustomEvent("gosx:scene3d:perf", { detail: sample }));
@@ -15067,86 +15122,25 @@
       return data;
     }
 
-    function webGPUElioSkinVertexData(obj, count, paddedCount, jointCount) {
+    // webGPUElioSkinVertexBuffer returns the GPU copy of a mesh's packed skin input. The bytes are packed from the source
+    // attributes, uploaded once and dropped: the cache keeps only the source arrays, which rebuild them after a device loss.
+    function webGPUElioSkinVertexBuffer(obj, count, paddedCount, jointCount) {
       var vertices = obj && obj.vertices;
-      var positions = webGPUDirectAttribute(obj, "positions", count, 3);
-      var joints = webGPUDirectAttribute(obj, "joints", count, 4);
-      var weights = webGPUDirectAttribute(obj, "weights", count, 4);
       // Same source defaults the CPU draw path used before skinning moved to
       // the compute pass: normals fall back to +Z, tangents to (1,0,0,w=1).
-      var normals = webGPUDefaultAttributeData(obj, "normals", count, 3, [0, 0, 1]);
-      var tangents = webGPUDefaultAttributeData(obj, "tangents", count, 4, [1, 0, 0, 1]);
-      if (!vertices || !positions || !joints || !weights || !normals || !tangents || count <= 0 || paddedCount <= 0) return null;
+      var key = [webGPUDirectAttribute(obj, "positions", count, 3), webGPUDirectAttribute(obj, "joints", count, 4),
+        webGPUDirectAttribute(obj, "weights", count, 4), webGPUDefaultAttributeData(obj, "normals", count, 3, [0, 0, 1]),
+        webGPUDefaultAttributeData(obj, "tangents", count, 4, [1, 0, 0, 1]), count, paddedCount, jointCount];
+      if (!vertices || !key[0] || !key[1] || !key[2] || !key[3] || !key[4] || count <= 0 || paddedCount <= 0) return null;
       var cache = vertices._gosxWGPUElioSkinVertexData;
-      if (
-        cache &&
-        cache.positions === positions &&
-        cache.joints === joints &&
-        cache.weights === weights &&
-        cache.normals === normals &&
-        cache.tangents === tangents &&
-        cache.count === count &&
-        cache.paddedCount === paddedCount &&
-        cache.jointCount === jointCount
-      ) {
-        return cache.data;
-      }
-
-      var stride = 72;
-      var bytes = new Uint8Array(paddedCount * stride);
-      var view = new DataView(bytes.buffer);
-      var maxJoint = Math.max(0, jointCount - 1);
-      for (var i = 0; i < paddedCount; i++) {
-        var off = i * stride;
-        if (i < count) {
-          var p = i * 3;
-          var q = i * 4;
-          view.setFloat32(off, sceneNumber(positions[p], 0), true);
-          view.setFloat32(off + 4, sceneNumber(positions[p + 1], 0), true);
-          view.setFloat32(off + 8, sceneNumber(positions[p + 2], 0), true);
-          var w0 = Math.max(0, sceneNumber(weights[q], 0));
-          var w1 = Math.max(0, sceneNumber(weights[q + 1], 0));
-          var w2 = Math.max(0, sceneNumber(weights[q + 2], 0));
-          var w3 = Math.max(0, sceneNumber(weights[q + 3], 0));
-          var sum = w0 + w1 + w2 + w3;
-          if (sum <= 0.000001) {
-            w0 = 1; w1 = 0; w2 = 0; w3 = 0;
-          } else {
-            w0 /= sum; w1 /= sum; w2 /= sum; w3 /= sum;
-          }
-          view.setFloat32(off + 12, w0, true);
-          view.setFloat32(off + 16, w1, true);
-          view.setFloat32(off + 20, w2, true);
-          view.setFloat32(off + 24, w3, true);
-          view.setUint32(off + 28, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q], 0)))), true);
-          view.setUint32(off + 32, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 1], 0)))), true);
-          view.setUint32(off + 36, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 2], 0)))), true);
-          view.setUint32(off + 40, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 3], 0)))), true);
-          view.setFloat32(off + 44, sceneNumber(normals[p], 0), true);
-          view.setFloat32(off + 48, sceneNumber(normals[p + 1], 0), true);
-          view.setFloat32(off + 52, sceneNumber(normals[p + 2], 0), true);
-          view.setFloat32(off + 56, sceneNumber(tangents[q], 1), true);
-          view.setFloat32(off + 60, sceneNumber(tangents[q + 1], 0), true);
-          view.setFloat32(off + 64, sceneNumber(tangents[q + 2], 0), true);
-          view.setFloat32(off + 68, sceneNumber(tangents[q + 3], 1), true);
-        } else {
-          view.setFloat32(off + 12, 1, true);
-        }
-      }
-
-      cache = {
-        positions: positions,
-        joints: joints,
-        weights: weights,
-        normals: normals,
-        tangents: tangents,
-        count: count,
-        paddedCount: paddedCount,
-        jointCount: jointCount,
-        data: bytes,
-      };
-      vertices._gosxWGPUElioSkinVertexData = cache;
-      return bytes;
+      var buffer = cache && pointsEntryGPUBuffers.has(cache.buffer) ? cache.buffer : null;
+      if (buffer && wgpuSameItems(cache.key, key)) return buffer;
+      var bytes = wgpuPackElioSkinVertices(key, count, paddedCount, jointCount);
+      if (buffer && wgpuTrackedBufferSize(buffer) < bytes.byteLength) { pointsEntryGPUBuffers.delete(buffer); buffer.destroy(); buffer = null; }
+      if (!buffer) buffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, bytes.byteLength);
+      device.queue.writeBuffer(buffer, 0, bytes);
+      vertices._gosxWGPUElioSkinVertexData = { key: key, buffer: buffer };
+      return buffer;
     }
 
     function webGPUElioEnsureOutputBuffer(record, paddedCount) {
@@ -15199,9 +15193,9 @@
       var jointCount = Math.floor(sceneNumber(skin && skin.jointMatrices && skin.jointMatrices.length, 0) / 16);
       if (count <= 0 || jointCount <= 0) return null;
       var paddedCount = Math.max(64, Math.ceil(count / 64) * 64);
-      var vertexData = webGPUElioSkinVertexData(obj, count, paddedCount, jointCount);
+      var vertexBuffer = webGPUElioSkinVertexBuffer(obj, count, paddedCount, jointCount);
       var boneData = webGPUElioBoneData(obj, jointCount);
-      if (!vertexData || !boneData) return null;
+      if (!vertexBuffer || !boneData) return null;
 
       // The output buffer and bind group belong to the scene object, not to
       // this frame's draw record: one of each per skinned object.
@@ -15218,13 +15212,6 @@
         boneData,
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         true
-      );
-      var vertexBuffer = wgpuCachedTrackedBuffer(
-        obj.vertices,
-        "_gosxWGPUElioSkinVertexBuffer",
-        vertexData,
-        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        false
       );
       var outputBuffer = webGPUElioEnsureOutputBuffer(record, paddedCount);
       // paddedCount places the normal/tangent regions inside the single
