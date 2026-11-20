@@ -712,7 +712,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   runFragment(context, [
     bufferDecls,
     sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
-    sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
+    sliceBetween(source, "function sceneWebGPUDielectricF0", "function webGPUObjectVertexCount"),
     sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
   ].join("\n"), "webgpu-material-extract.js");
 
@@ -797,7 +797,7 @@ test("WebGPU materialUniformData packs an authored emissive colour and rim term"
   runFragment(context, [
     bufferDecls,
     sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
-    sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
+    sliceBetween(source, "function sceneWebGPUDielectricF0", "function webGPUObjectVertexCount"),
     sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
   ].join("\n"), "webgpu-material-extract-emissive.js");
 

@@ -219,7 +219,7 @@ test("water projected targets wait for deferred model texture decode and GPU upl
     wgpuTextureRecordDisposed: () => false,
   };
   for (const name of ["wgpuTextureDescriptor", "wgpuTextureCacheKey", "wgpuIsKTX2URL", "wgpuNotifyTextureSettled", "wgpuStartTextureLoad", "wgpuLoadTexture",
-    "sceneSelenaMaterialValue", "sceneSelenaParseResourceRef", "sceneSelenaResourceRef", "sceneSelenaTextureURL", "sceneSelenaTextureDescriptors"]) {
+    "sceneSelenaMaterialValue", "sceneSelenaParseResourceRef", "sceneSelenaResourceRef", "wgpuSceneSelenaTextureURL", "wgpuSceneSelenaTextureDescriptors"]) {
     g[name] = rendererFunction(name, g);
   }
   const actualLoad = g.wgpuLoadTexture;

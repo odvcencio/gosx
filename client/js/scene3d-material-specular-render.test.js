@@ -970,7 +970,7 @@ function setupWebGPURenderer() {
   runFragment(context, [
     bufferDecls,
     sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
-    sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
+    sliceBetween(source, "function sceneWebGPUDielectricF0", "function webGPUObjectVertexCount"),
     sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
   ].join("\n"), "webgpu-specular-extract.js");
   return { source, context };
@@ -1255,7 +1255,7 @@ test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => 
     "shared specF0 is assigned before the F0 mix");
   assert.doesNotMatch(source.slice(colorMapPos, mixPos), /specF90\s*=/);
   // The effective-F0 clamp happens before the intensity, never inside it.
-  const helper = sliceBetween(source, "function sceneWebGPUSpecularFactors", "    function materialUniformData");
+  const helper = sliceBetween(source, "function sceneWebGPUSpecularFactors", "function sceneWebGPUSpecularColorLogs");
   assert.match(helper, /Math\.min\(iorF0 \* color\[0\], 1\) \* intensity/);
   assert.doesNotMatch(helper, /Math\.min\(iorF0 \* intensity/);
   assert.doesNotMatch(helper, /color\[0\] \* intensity, 1\)/);
@@ -1272,7 +1272,7 @@ function setupWebGPUMaterialBinding() {
     bufferDecls,
     sliceBetween(source, "function wgpuTextureDescriptor", "function wgpuLoadTexture"),
     sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
-    sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
+    sliceBetween(source, "function sceneWebGPUDielectricF0", "function webGPUObjectVertexCount"),
     sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
     sliceBetween(source, "function wgpuCachedBindGroup", "function createMaterialBindGroup"),
     sliceBetween(source, "function createMaterialBindGroup", "    // _frameBindGroupCache memoizes"),

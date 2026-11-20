@@ -534,7 +534,7 @@ test("WebGPU bind-group layout: 32-bit float textures are unfilterable with a no
   const context = vm.createContext({
     GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 },
     sceneNumber: (v, d) => (Number.isFinite(v) ? v : d),
-    sceneSelenaTextureDescriptors: (l) => l.textures,
+    wgpuSceneSelenaTextureDescriptors: (l) => l.textures,
     sceneSelenaStorageBufferDescriptors: () => [],
     sceneSelenaStateDescriptors: () => [],
   });

@@ -42,12 +42,12 @@ test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", ()
 
 test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buffers", () => {
   const source = readSceneRendererBackendSrc("webgpu");
-  const sceneBuffers = source.slice(source.indexOf("function ensurePBRSceneAttributeBuffers"), source.indexOf("function webGPUBindSceneMeshVertexBuffer"));
-  const bindSceneBuffer = source.slice(source.indexOf("function webGPUBindSceneMeshVertexBuffer"), source.indexOf("// -----------------------------------------------------------------------\n    // Draw list construction"));
+  const sceneBuffers = source.slice(source.indexOf("function ensurePBRSceneAttributeBuffers"), source.indexOf("// -----------------------------------------------------------------------\n    // Draw list construction"));
+  const bindSceneBuffer = source.slice(source.indexOf("function webGPUBindSceneMeshVertexBuffer"), source.indexOf("function buildDrawList"));
   const shadowPass = source.slice(source.indexOf("function renderShadowPass"), source.indexOf("// -----------------------------------------------------------------------\n    // PBR object drawing"));
-  const drawPBR = source.slice(source.indexOf("function drawPBRObjects"), source.indexOf("function instancedMeshCount"));
+  const drawPBR = source.slice(source.indexOf("function drawPBRObjects"), source.indexOf("function instancedMeshTransformData"));
   const bindWorld = source.slice(source.indexOf("function wgpuBindWorldMeshBuffers"), source.indexOf("function createSceneWebGPURenderer"));
-  const skinnedBind = source.slice(source.indexOf("function webGPUBindElioSkinnedBuffers"), source.indexOf("// -----------------------------------------------------------------------\n    // Shadow Pass"));
+  const skinnedBind = source.slice(source.indexOf("function webGPUBindElioSkinnedBuffers"), source.indexOf("function ensurePBRSceneAttributeBuffers"));
 
   // wgpuStablePBRAttributeBuffer caches each attribute on a renderer-scoped,
   // content-compared slot (not wgpuCachedTrackedBuffer(bundle, "_gosxWGPU...")
@@ -1993,7 +1993,7 @@ test("Scene3D WebGPU Selena materials can bind live water resources", () => {
   assert.match(webgpu, /case "heightfield":[\s\S]{0,180}resolved\.system\.activeIndex === 0 \? resolved\.system\.bufferA : resolved\.system\.bufferB/);
   assert.match(webgpu, /function sceneSelenaStorageBufferDescriptors\(layout\)/);
   assert.match(webgpu, /buffer: \{ type: "read-only-storage" \}/);
-  assert.match(webgpu, /liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL/);
+  assert.match(webgpu, /liveView: sceneSelenaLiveTextureView, url: wgpuSceneSelenaTextureURL/);
   assert.match(webgpu, /var liveView = environmentSlot \? \(environmentRecord && environmentRecord\.view\) : \(sceneSelenaShadowMapView\(context, tex\) \|\| sceneDataTextureView\(context, material, tex\) \|\| context\.liveView\(material, tex\)\)/);
   assert.match(webgpu, /sceneWebGPUAppendSelenaTextures\(selenaTextureContext, material, textures, entries, cacheViews\)/);
   assert.match(webgpu, /var buffer = sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);

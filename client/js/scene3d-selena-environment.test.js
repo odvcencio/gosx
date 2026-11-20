@@ -101,7 +101,7 @@ test("WebGPU Selena reuses IBL views, updates bind groups on readiness/replaceme
     sceneNumber:(v,f)=>Number.isFinite(v)?v:f,
     sceneSelenaUniformData:()=>new Float32Array(4),sceneSelenaUniformBufferSlot:()=>"uniforms",
     sceneWaterMainSelenaContext:()=>undefined,
-    wgpuCachedTrackedBuffer:()=>buffer,sceneSelenaTextureDescriptors:l=>l.textures,
+    wgpuCachedTrackedBuffer:()=>buffer,wgpuSceneSelenaTextureDescriptors:l=>l.textures,
     sceneSelenaStorageBufferDescriptors:()=>[],sceneSelenaStateDescriptors:()=>[],
     sceneSelenaLiveTextureView:()=>null, sceneSelenaShadowMapView:()=>null, sceneDataTextureView:()=>null, sceneDataTextureSampler:()=>null,
     sceneSelenaTextureURL:()=>{throw Error("IBL resource passed to URL loader");},

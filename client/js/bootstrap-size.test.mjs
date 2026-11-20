@@ -1077,7 +1077,8 @@ const budgets = [
     // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured bootstrap.js gzip 608285; the target rises by exactly the measured overage (591173 -> 591901), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured bootstrap.js raw 2154286; the target rises by exactly the measured overage (2085728 -> 2088750), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured bootstrap.js gzip 609525; the target rises by exactly the measured overage (591901 -> 593141), allowance unchanged.
-    file: "bootstrap.js", raw: 2088750, gzip: 593141,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured bootstrap.js.gz gzip 609886; only this exhausted target moves (593141 -> 593502), allowance unchanged.
+    file: "bootstrap.js", raw: 2088750, gzip: 593502,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -2002,7 +2003,9 @@ const budgets = [
     // 18 November 2026 (WebGPU draws retained Selena meshes from their own vertex buffers): measured bootstrap-feature-scene3d-webgpu.js gzip 140050; only this exhausted target moves (133359 -> 133381), allowance unchanged.
     // 18 November 2026 (WebGPU frees the CPU copy of the packed skin input once uploaded): measured bootstrap-feature-scene3d-webgpu.js gzip 140105; only this exhausted target moves (133381 -> 133433), allowance unchanged.
     // 19 November 2026 (Per-team Selena surface materials on instanced meshes (owner-approved 19 Nov 2026)): measured bootstrap-feature-scene3d-webgpu.js raw 518080, gzip 140320; the targets rise by exactly the measured overages (493223 -> 493418, 133433 -> 133648), allowance unchanged.
-    raw: 493418, gzip: 133648,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured bootstrap-feature-scene3d-webgpu.js raw 518090; only this exhausted target moves (493418 -> 493419), allowance unchanged.
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 140770; only this exhausted target moves (133648 -> 134066), allowance unchanged.
+    raw: 493419, gzip: 134066,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -2017,7 +2020,8 @@ const budgets = [
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured bootstrap-feature-scene3d-webgpu.js brotli 118224; only this exhausted target moves (112575 -> 112594), allowance unchanged.
     // 18 November 2026 (WebGPU draws retained Selena meshes from their own vertex buffers): measured bootstrap-feature-scene3d-webgpu.js brotli 118303; only this exhausted target moves (112594 -> 112669), allowance unchanged.
     // 19 November 2026 (Per-team Selena surface materials on instanced meshes (owner-approved 19 Nov 2026)): measured bootstrap-feature-scene3d-webgpu.js brotli 118428; the target rises by exactly the measured overage (112669 -> 112794), allowance unchanged.
-    brotli: 112794 },
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured bootstrap-feature-scene3d-webgpu.js.br brotli 118631; only this exhausted target moves (112794 -> 112981), allowance unchanged.
+    brotli: 112981 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -2585,7 +2589,8 @@ const routeBudgets = [
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured Scene3D Chromium route (WebGPU, with labels) raw 1569513; only this exhausted target moves (1502478 -> 1503977), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D Chromium route (WebGPU, with labels) raw 1571644; only this exhausted target moves (1503977 -> 1506108), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route (WebGPU, with labels) raw 1579320; the target rises by exactly the measured overage (1511456 -> 1513784), allowance unchanged.
-    raw: 1513784,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D Chromium route (WebGPU, with labels) raw 1579330; only this exhausted target moves (1513784 -> 1513794), allowance unchanged.
+    raw: 1513794,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 427783 bytes; only this exhausted target moves (411074 -> 411399), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) gzip 439916; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route (WebGPU, with labels) gzip measures 430169 bytes; only this exhausted target moves (411399 -> 413785), allowance unchanged.
@@ -2603,7 +2608,8 @@ const routeBudgets = [
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D Chromium route (WebGPU, with labels) gzip 439908; only this exhausted target moves (422756 -> 423524), allowance unchanged.
     // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route (WebGPU, with labels) gzip 441563; the target rises by exactly the measured overage (424979 -> 425179), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route (WebGPU, with labels) gzip 442567; the target rises by exactly the measured overage (425179 -> 426183), allowance unchanged.
-    gzip: 426183,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 443017; only this exhausted target moves (426183 -> 426633), allowance unchanged.
+    gzip: 426633,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2624,7 +2630,8 @@ const routeBudgets = [
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D Chromium route (WebGPU, with labels) brotli 378464; only this exhausted target moves (361410 -> 362080), allowance unchanged.
     // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route (WebGPU, with labels) brotli 379971; the target rises by exactly the measured overage (363574 -> 363587), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route (WebGPU, with labels) brotli 380336; the target rises by exactly the measured overage (363587 -> 363952), allowance unchanged.
-    brotli: 363952,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D Chromium route (WebGPU, with labels).br brotli 380539; only this exhausted target moves (363952 -> 364155), allowance unchanged.
+    brotli: 364155,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -3131,7 +3138,8 @@ const routeBudgets = [
     // 9 November 2026 (PR #834 Scene3D chunk loading, merged with main: the bounded Scene3D chunk wait and feature issue report in the runtime core, the gated-chunk failure report, the terrain/crowd fallback removal, and the WebGPU device-loss re-probe wait): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1880959; only this exhausted target moves (1813924 -> 1815423), allowance unchanged.
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1883090; only this exhausted target moves (1815423 -> 1817554), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1892302; the target rises by exactly the measured overage (1823903 -> 1826766), allowance unchanged.
-    raw: 1826766,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1892312; only this exhausted target moves (1826766 -> 1826776), allowance unchanged.
+    raw: 1826776,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 517576 bytes; only this exhausted target moves (500351 -> 501192), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 534654; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip measures 522257 bytes; only this exhausted target moves (501192 -> 505873), allowance unchanged.
@@ -3149,7 +3157,8 @@ const routeBudgets = [
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 533087; only this exhausted target moves (515935 -> 516703), allowance unchanged.
     // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 535033; the target rises by exactly the measured overage (518267 -> 518649), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 536037; the target rises by exactly the measured overage (518649 -> 519653), allowance unchanged.
-    gzip: 519653,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 536487; only this exhausted target moves (519653 -> 520103), allowance unchanged.
+    gzip: 520103,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -3170,7 +3179,8 @@ const routeBudgets = [
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 459220; only this exhausted target moves (442166 -> 442836), allowance unchanged.
     // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 460910; the target rises by exactly the measured overage (444350 -> 444526), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) brotli 461275; the target rises by exactly the measured overage (444526 -> 444891), allowance unchanged.
-    brotli: 444891,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 461478; only this exhausted target moves (444891 -> 445094), allowance unchanged.
+    brotli: 445094,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -3375,7 +3385,8 @@ const routeBudgets = [
     // 19 November 2026 (Per-team Selena surface materials on instanced meshes (owner-approved 19 Nov 2026)): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1416832; the target rises by exactly the measured overage (1350931 -> 1351296), allowance unchanged.
     // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1418350; the target rises by exactly the measured overage (1351296 -> 1352814), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1421352; the target rises by exactly the measured overage (1352814 -> 1355816), allowance unchanged.
-    raw: 1355816,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1421362; only this exhausted target moves (1355816 -> 1355826), allowance unchanged.
+    raw: 1355826,
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 383698 bytes; only this exhausted target moves (366989 -> 367314), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395831; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (unshadowed PBR fragment for frames without a shadow slot): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395963; only this exhausted target moves (379447 -> 379579) under the unchanged allowance.
@@ -3398,7 +3409,8 @@ const routeBudgets = [
     // 19 November 2026 (Per-team Selena surface materials on instanced meshes (owner-approved 19 Nov 2026)): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 396877; the target rises by exactly the measured overage (380278 -> 380493), allowance unchanged.
     // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 397366; the target rises by exactly the measured overage (380493 -> 380982), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 398370; the target rises by exactly the measured overage (380982 -> 381986), allowance unchanged.
-    gzip: 381986,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 398820; only this exhausted target moves (381986 -> 382436), allowance unchanged.
+    gzip: 382436,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
@@ -3417,7 +3429,8 @@ const routeBudgets = [
     // 10 November 2026 (Scene3D frame scans, merged with v0.60.0 main: the kept water-source scan result, the focus proxies' interactive-object list, crowd partition reuse with its touch contract, and the crowd's frustum culls in their own submit): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 338247; only this exhausted target moves (321501 -> 322140), allowance unchanged.
     // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 339653; the target rises by exactly the measured overage (322884 -> 323508), allowance unchanged.
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) brotli 340018; the target rises by exactly the measured overage (323508 -> 323842), allowance unchanged.
-    brotli: 323842,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract closure-free WebGPU helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 340221; only this exhausted target moves (323842 -> 324020), allowance unchanged.
+    brotli: 324020,
   },
 
 ];
