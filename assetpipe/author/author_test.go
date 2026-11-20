@@ -306,3 +306,34 @@ func TestASmallTargetIsWrittenSparse(t *testing.T) {
 		t.Fatalf("target values %v %v", vals[:12], err)
 	}
 }
+
+func TestPropSetWritesOneNamedMeshPerProp(t *testing.T) {
+	a, b := &Mesh{}, &Mesh{}
+	a.Ellipsoid("a", 0, 0, Vec3{0, 1, 0}, Vec3{.1, .1, .1}, 8, 4)
+	b.Tube("b", 0, 0, []Vec3{{0, 0, 0}, {0, 1, 0}}, .02, 6)
+	d, err := (&PropSet{Generator: "test", Props: []Prop{{"mask-cage", a}, {"visor", b}}, Material: Material{Name: "gear"}}).Document()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Meshes) != 2 || d.Meshes[0].Name != "mask-cage" || d.Meshes[1].Name != "visor" || len(d.Nodes) != 2 || d.Nodes[1].Name != "visor" {
+		t.Fatalf("meshes %+v nodes %+v", d.Meshes, d.Nodes)
+	}
+	if err := SetImages(d, Image{URI: "atlas.png", MIME: "image/png"}); err != nil {
+		t.Fatal(err)
+	}
+	glb, err := d.WriteGLB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := gltfedit.Parse(glb, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos, _, err := back.ReadAccessor(back.Meshes[0].Primitives[0].Attributes["POSITION"])
+	if err != nil || len(pos) != 3*len(a.P) || math.Abs(pos[1]-a.P[0][1]) > 1e-6 {
+		t.Fatalf("positions %v %v", len(pos), err)
+	}
+	if back.Meshes[0].Primitives[0].Attributes["JOINTS_0"] != 0 || len(back.Skins) != 0 {
+		t.Fatal("a prop is not skinned")
+	}
+}

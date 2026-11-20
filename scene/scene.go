@@ -1313,10 +1313,12 @@ type Model struct {
 	// share the GLB's authored shape, as before. Instanced crowds
 	// (InstancedGLBMesh) do not read this field.
 	MorphWeights map[string]float64
-	Transition   Transition
-	InState      *ModelProps
-	OutState     *ModelProps
-	Live         []string
+	// Attachments fix gear meshes to joints of this model's skin (Attachment).
+	Attachments []Attachment
+	Transition  Transition
+	InState     *ModelProps
+	OutState    *ModelProps
+	Live        []string
 }
 
 // Decal projects a planar texture or color marker into the scene. The initial
@@ -3855,6 +3857,7 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.ClipSampled = model.ClipSampled
 	record.RootMotion = model.ClipSampled && model.RootMotion
 	record.MorphWeights = finiteMorphWeights(model.MorphWeights)
+	record.Attachments = lowerAttachments(model.Attachments)
 	l.models = append(l.models, record)
 	l.anchors[id] = world
 }

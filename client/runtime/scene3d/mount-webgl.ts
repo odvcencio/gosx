@@ -770,6 +770,7 @@
 
   function sceneModelEffectivelyHidden(model, object) {
     return Boolean(model && model.visible === false)
+      || Boolean(model && model.attachments && sceneModelAttachmentHidden(model, object))
       || sceneModelMaxScale(model) <= 0.0015
       || sceneModelZeroOpacityHidesObject(model, object);
   }
@@ -3758,6 +3759,8 @@
         staged.objects.push(object);
         objectIDs.push(object.id);
       }
+      stage = "attachments";
+      if (Array.isArray(instanceModel.attachments)) await sceneInstantiateModelAttachments(state, generation, instanceModel, asset, skinInstances, prefix, staged, objectIDs);
       stage = "points";
       for (let i = 0; i < asset.points.length; i += 1) {
         const point = sceneInstantiateModelPointsEntry(asset.points[i], instanceModel, prefix, i);

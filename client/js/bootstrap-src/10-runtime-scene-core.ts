@@ -1468,6 +1468,19 @@
     });
   }
 
+  // A model's attachments (scene.Attachment): plain records, each with
+  // its own material as an override bag, as a model's material is.
+  function sceneNormalizeModelAttachments(list) {
+    if (!Array.isArray(list)) return null;
+    const out = [];
+    for (const entry of list) {
+      if (!sceneIsPlainObject(entry) || typeof entry.name !== "string" || typeof entry.src !== "string" || typeof entry.joint !== "string") continue;
+      const material = sceneIsPlainObject(entry.material) ? normalizeSceneModel(Object.assign({}, entry.material, { src: entry.src }), 0).materialOverride : null;
+      out.push({ name: entry.name, src: entry.src.trim(), mesh: typeof entry.mesh === "string" ? entry.mesh : "", joint: entry.joint, hidden: entry.hidden === true, material });
+    }
+    return out.length ? out : null;
+  }
+
   function normalizeSceneModel(item, index) {
     const current = item && typeof item === "object" ? item : {};
     const previewSrc = typeof current.previewSrc === "string" && current.previewSrc.trim() ? current.previewSrc.trim() : "";
@@ -1595,6 +1608,7 @@
       clipSampled: sceneBool(current.clipSampled, false),
       rootMotion: sceneBool(current.rootMotion, false),
       morphWeights: current.morphWeights && typeof current.morphWeights === "object" && !Array.isArray(current.morphWeights) ? current.morphWeights : null,
+      attachments: sceneNormalizeModelAttachments(current.attachments),
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       interactive: sceneBool(current.interactive, false),
       label: typeof current.label === "string" ? current.label.trim() : "",

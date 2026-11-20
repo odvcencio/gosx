@@ -35,6 +35,14 @@ type ModelPatch struct {
 	Scale *Vector3
 	// Visible shows or hides the model.
 	Visible *bool
+	// Attachments shows (true) or hides (false) the model's attachments by
+	// name (Model.Attachments). Attachments it does not name keep their state.
+	Attachments map[string]bool
+	// Uniforms sets material values by name on the objects that draw with
+	// the model's own Material: a Selena material's params, so one
+	// material can give each model its own colour. Attachments with a
+	// Material of their own keep theirs.
+	Uniforms map[string]any
 }
 
 // PatchModelsCommand changes mounted models in place (ModelPatch). Patches
@@ -58,6 +66,12 @@ func PatchModelsCommand(patches []ModelPatch) Command {
 		}
 		if p.Visible != nil {
 			entry["visible"] = *p.Visible
+		}
+		if len(p.Attachments) > 0 {
+			entry["attachments"] = p.Attachments
+		}
+		if len(p.Uniforms) > 0 {
+			entry["uniforms"] = p.Uniforms
 		}
 		out = append(out, entry)
 	}

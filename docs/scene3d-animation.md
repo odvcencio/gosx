@@ -642,6 +642,37 @@ cmd := scene.PatchModelsCommand([]scene.ModelPatch{{
 Targets a patch does not name return to their authored weight. Instanced
 crowds (`InstancedGLBMesh`) do not read `MorphWeights`.
 
+`ModelPatch.Uniforms` sets material values by name on the objects that
+draw with the model's own material, such as a Selena material's params, so
+one material can give each player his own skin tone; the next frame packs
+them.
+
+### Gear on joints
+
+`Model.Attachments` fixes the meshes of another glTF to one joint of a
+skinned model: a facemask on the head, a glove on a hand, a towel at the hip.
+Model each piece where it sits on the character in its bind pose, in the
+character's units, and give each piece a mesh name. Scene3D binds every
+vertex of the piece wholly to the joint, so the joint matrices that pose the
+body pose the gear on the same frame, on the GPU:
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    Attachments: []scene.Attachment{
+        {Name: "mask-cage", Src: "/arena/gear.glb", Mesh: "mask-cage", Joint: "head"},
+        {Name: "visor-smoke", Src: "/arena/gear.glb", Mesh: "visor", Joint: "head", Hidden: true,
+            Material: &scene.StandardMaterial{Color: "#1c2226", Opacity: scene.Float(.7), BlendMode: scene.BlendAlpha}},
+    }}
+```
+
+Every model shares one loaded copy of the gear file. A piece with no
+`Material` draws with the model's own material, so gear painted on the
+model's texture atlas takes its colours. A hidden piece costs no draw, and
+`ModelPatch.Attachments` shows or hides pieces of a mounted model by name, so
+a model can carry every piece its players might wear and show the pieces
+this player wears. `assetpipe/author.PropSet` writes such a gear file: one
+unskinned mesh and node per piece.
+
 ### Clip names and durations
 
 `gltfclip.Read(glb)` returns each animation's name and duration from the

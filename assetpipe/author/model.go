@@ -215,7 +215,15 @@ func (m *Model) Document() (*gltfedit.Document, error) {
 		}
 	}
 
-	mat := m.Material
+	if err := writeMaterial(d, m.Material); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// writeMaterial writes the one atlas material (images 0 and 1 by SetImages),
+// its textures and sampler, and the default scene.
+func writeMaterial(d *gltfedit.Document, mat Material) error {
 	pbr := map[string]any{"baseColorTexture": map[string]int{"index": 0}, "roughnessFactor": mat.Roughness, "metallicFactor": mat.Metallic}
 	textures := []map[string]int{{"source": 0, "sampler": 0}}
 	if mat.MetallicRoughness {
@@ -223,18 +231,18 @@ func (m *Model) Document() (*gltfedit.Document, error) {
 		textures = append(textures, map[string]int{"source": 1, "sampler": 0})
 	}
 	if err := d.SetSection("materials", []map[string]any{{"name": mat.Name, "doubleSided": mat.DoubleSided, "pbrMetallicRoughness": pbr}}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := d.SetSection("textures", textures); err != nil {
-		return nil, err
+		return err
 	}
 	if err := d.SetSection("samplers", []map[string]int{{"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071}}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := d.SetSection("scene", 0); err != nil {
-		return nil, err
+		return err
 	}
-	return d, nil
+	return nil
 }
 
 // clip samples one clip into channels: the root joint's translation, then a

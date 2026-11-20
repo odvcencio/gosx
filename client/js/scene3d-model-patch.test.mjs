@@ -1,7 +1,8 @@
 // PatchModels (command 16, scene.PatchModelsCommand): mounted models change
 // their own morph weights, scale and visibility in place. The scene core's
 // command switch, the mount's live patch and model-looks.ts run in one VM; the skin
-// pose and the reload are recorded, not run.
+// pose and the reload are recorded, not run. Attachments (scene.Attachment)
+// bind gear meshes to a joint of the host skin.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -41,9 +42,12 @@ function fixture() {
     functions('sceneModelLocalTransformVector', 'sceneModelMaxScale') +
     functions('sceneModelTransformMatrix', 'sceneModelIdentityBindMatrices') +
     functions('sceneApplyModelLiveOpacity', 'sceneApplyModelComputedPose') +
-    functions('sceneApplyModelLivePatch', 'sceneApplyModelLiveEvent') + looks,
+    functions('sceneApplyModelLivePatch', 'sceneApplyModelLiveEvent') +
+    functions('sceneModelEffectivelyHidden', 'sceneModelRotateDirection') + looks,
     context,
   );
+  context.sceneModelMaxScale = () => 1;
+  context.sceneModelZeroOpacityHidesObject = () => false;
   vm.runInContext([
     "function record(id, morphs, animated) {",
     "  return { id, model: { id, morphWeights: morphs ? { mass: 0 } : null, x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1, visible: true },",
@@ -97,4 +101,80 @@ test('scale and visibility patch the record and its root transform', () => {
   assert.ok(rt.some(v => Math.abs(v - 1.05) < 1e-6), 'the root transform carries the scale: ' + JSON.stringify(rt));
   assert.equal(run('lineman.poseDirty'), true);
   assert.equal(run('poses.length'), 0, 'no weights, no fold');
+});
+
+// --- attachments (scene.Attachment) -------------------------------------------
+
+function attachFixture() {
+  const context = vm.createContext({ window: {}, console: { warn: (...a) => context.warnings.push(a.join(' ')) }, Float32Array, Map, Set, WeakMap, Promise });
+  context.warnings = [];
+  for (const name of ['10-runtime-primitives.ts', '10-runtime-scene-utils.ts', '11-scene-math.ts']) {
+    vm.runInContext(fs.readFileSync(path.join(root, 'client/js/bootstrap-src', name), 'utf8'), context, { filename: name });
+  }
+  context.sceneOwns = (value, key) => Boolean(value) && Object.prototype.hasOwnProperty.call(value, key);
+  context.gear = { objects: [
+    { id: 'mask-cage-prim-0', vertices: { count: 3, positions: new Float32Array(9) } },
+    { id: 'visor-prim-0', vertices: { count: 2, positions: new Float32Array(6) } },
+  ] };
+  context.loadSceneModelAsset = async () => context.gear;
+  context.sceneInstantiateModelObject = (raw, model, prefix, index, skins) => Object.assign({}, raw, {
+    id: prefix + '/' + index, skin: skins[raw.skinIndex], owner: model,
+    _modelHidden: context.sceneModelEffectivelyHidden(model, raw) });
+  context.sceneModelMaxScale = () => 1;
+  context.sceneModelZeroOpacityHidesObject = () => false;
+  vm.runInContext(functions('sceneModelEffectivelyHidden', 'sceneApplyModelObjectHiddenState') + looks, context);
+  vm.runInContext([
+    "const asset = { nodes: [{ name: 'pelvis' }, { name: 'chest' }, { name: 'head' }] };",
+    "const skins = [{ joints: [0, 1, 2] }];",
+    "const model = { id: 'home-00', materialOverride: { color: '#ffffff' }, attachments: [",
+    "  { name: 'mask', src: '/gear.glb', mesh: 'mask-cage', joint: 'head', hidden: false, material: null },",
+    "  { name: 'visor', src: '/gear.glb', mesh: 'visor', joint: 'head', hidden: true, material: { color: '#203040', opacity: 0.4 } },",
+    "  { name: 'tail', src: '/gear.glb', mesh: 'visor', joint: 'tail', hidden: false, material: null }] };",
+    "const staged = { objects: [] }, ids = [];",
+  ].join('\n'), context);
+  return expression => vm.runInContext(expression, context);
+}
+
+test('attachments bind their meshes wholly to one joint of the host skin', async () => {
+  const run = attachFixture();
+  await run('sceneInstantiateModelAttachments({}, 1, model, asset, skins, "home-00", staged, ids)');
+  assert.deepEqual([...run('ids')], ['home-00/mask/0', 'home-00/visor/1'], 'each attachment takes only its own mesh');
+  const mask = run('staged.objects[0]');
+  assert.deepEqual([...mask.vertices.joints], [2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0], 'the head is joint slot 2');
+  assert.deepEqual([...mask.vertices.weights], [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+  assert.equal(run('staged.objects[0].skin === skins[0]'), true, 'the host skin poses it');
+  assert.equal(run('gear.objects[0].vertices.joints'), undefined, 'the shared gear asset is not changed');
+  assert.equal(mask._attachment, 'mask');
+  assert.equal(mask._modelHidden, false);
+  assert.equal(run('staged.objects[1]._modelHidden'), true, 'a hidden attachment starts hidden');
+  assert.equal(run('staged.objects[0].owner.materialOverride.color'), '#ffffff', "no material: the model's own");
+  assert.equal(run('staged.objects[1].owner.materialOverride.opacity'), 0.4, 'its own material');
+  assert.match(run('warnings.join("\\n")'), /attachment tail names no joint/);
+});
+
+test('a patch shows and hides attachments of a mounted model', () => {
+  const run = fixture();
+  run("state.models[0].attachments = [{ name: 'mask', hidden: false }, { name: 'visor', hidden: true }]");
+  run("lineman.model.attachments = state.models[0].attachments");
+  run("lineman.objectIDs = ['home-00/mask/0', 'home-00/visor/1']");
+  run("state.objects.set('home-00/mask/0', { id: 'home-00/mask/0', _attachment: 'mask', _modelHidden: false })");
+  run("state.objects.set('home-00/visor/1', { id: 'home-00/visor/1', _attachment: 'visor', _modelHidden: true })");
+  run("applySceneCommands(state, [{ kind: 16, data: { models: [{ id: 'home-00', attachments: { mask: false, visor: true } }] } }])");
+  assert.equal(run("state.objects.get('home-00/mask/0')._modelHidden"), true);
+  assert.equal(run("state.objects.get('home-00/visor/1')._modelHidden"), false);
+  assert.deepEqual(JSON.parse(run("JSON.stringify(state.models[0].attachments.map(a => a.hidden))")), [true, false], 'the declared model keeps the patch');
+});
+
+test('a patch sets material values on the model\'s own objects, not on gear with its own material', () => {
+  const run = fixture();
+  run("state.models[0].materialOverride = { customUniforms: { skin: [1, 1, 1], jersey: [0, 0, 1] } }");
+  run("lineman.objectIDs = ['home-00/body/0', 'home-00/visor/1']");
+  run("state.objects.set('home-00/body/0', { id: 'home-00/body/0', customUniforms: { skin: [1, 1, 1], jersey: [0, 0, 1] } })");
+  run("state.objects.set('home-00/visor/1', { id: 'home-00/visor/1', _attachment: 'visor', _attachmentMaterial: true, customUniforms: { tint: 1 } })");
+  run("var before = state.objects.get('home-00/body/0').customUniforms");
+  run("applySceneCommands(state, [{ kind: 16, data: { models: [{ id: 'home-00', uniforms: { skin: [0.4, 0.25, 0.18] } }] } }])");
+  assert.deepEqual(JSON.parse(run("JSON.stringify(state.objects.get('home-00/body/0').customUniforms)")), { skin: [0.4, 0.25, 0.18], jersey: [0, 0, 1] });
+  assert.equal(run("state.objects.get('home-00/body/0').customUniforms !== before"), true, 'a new values object, so the material profile sees the change');
+  assert.deepEqual(JSON.parse(run("JSON.stringify(state.objects.get('home-00/visor/1').customUniforms)")), { tint: 1 });
+  assert.deepEqual(JSON.parse(run("JSON.stringify(state.models[0].materialOverride.customUniforms)")), { skin: [0.4, 0.25, 0.18], jersey: [0, 0, 1] }, 'the declared model keeps the patch');
 });
