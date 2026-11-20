@@ -268,7 +268,7 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   assert.match(source, /updateElioSkinnedMeshes\(meshState, device, bundle, encoder\)/);
   assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
   assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
-  assert.match(source, /webGPUBindElioSkinnedBuffers\(meshState, device, pass, obj, count\)/);
+  assert.match(source, /webGPUBindElioSkinnedBuffers\(drawState\.meshState, device, pass, obj, count\)/);
   assert.match(source, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-dispatches/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-kernel/);
@@ -1589,7 +1589,7 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   assert.match(webgpu, /entryPoint: "vertexMain"/);
   assert.match(webgpu, /entryPoint: "fragmentMain"/);
   assert.match(webgpu, /function createSelenaBindGroup\(meshState\s*, selenaState\s*, device\s*, material, resource, cacheOwner, renderContext = sceneWaterMainSelenaContext\(selenaState, material\)\)/);
-  assert.match(webgpu, /createSelenaBindGroup\(meshState, selenaState, device, mat, selenaResource, obj\)/);
+  assert.match(webgpu, /createSelenaBindGroup\(drawState\.meshState, drawState\.selenaState, device, mat, selenaResource, obj\)/);
   assert.match(webgpu, /function sceneSelenaRenderContextUniformValue/);
   assert.match(webgpu, /function sceneSelenaUniformBufferSlot/);
   assert.match(webgpu, /var vectorValue = Array\.isArray\(value\) \|\| \(value && typeof value\.length === "number"\)/);

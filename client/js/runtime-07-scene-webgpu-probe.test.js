@@ -58,10 +58,10 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
   assert.match(webgpu, /stepMode: "instance"[\s\S]*shaderLocation: 4[\s\S]*shaderLocation: 7/);
   assert.match(webgpu, /shaderLocation: 8/);
   assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
-  assert.match(webgpu, /function drawInstancedMeshes\(pass, meshList, materials/);
+  assert.match(webgpu, /function drawInstancedMeshes\(drawState\s*, device\s*, pass\s*, meshList\s*, materials/);
   assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
   assert.match(webgpu, /function getShadowInstancedPipeline/);
-  assert.match(webgpu, /webGPUFrameMaterialGroup\(uniformState\.materialFrame, matIndex, mat, receiveShadow,[\s\S]*createMaterialBindGroup\(uniformState, gpuRes, meshState, device/);
+  assert.match(webgpu, /webGPUFrameMaterialGroup\(drawState\.uniformState\.materialFrame, matIndex, mat, receiveShadow,[\s\S]*createMaterialBindGroup\(drawState\.uniformState, drawState\.gpuRes, drawState\.meshState, device/);
   assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
   assert.doesNotMatch(mount, /instanced-meshes/);
 });
@@ -78,7 +78,7 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.match(webgpu, /bindPBRPipeline\(reflectedDirect, mat\)/);
   assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -pipeState\.activeSampleCount : pipeState\.activeSampleCount\)/);
-  assert.match(webgpu, /getPBRPipeline\(pipeState, device, blendMode, objectDepthWrite, reflected \? "cw" : "ccw", variant, uv1\)/);
+  assert.match(webgpu, /getPBRPipeline\(drawState\.pipeState, device, blendMode, objectDepthWrite, reflected \? "cw" : "ccw", variant, uv1\)/);
 });
 
 test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {

@@ -267,7 +267,7 @@ test("both renderers sway instanced batches from the shared wind without breakin
   assert.match(gpu, /"    let world = gosxWindSway\(model, in\.position\);"/);
   assert.match(gpu, /@group\(1\) @binding\(0\) var<uniform> material: MaterialUniforms;", "fn gosxWindSway/);
   assert.match(gpu, /f\.set\(window\.__gosx_scene3d_terrain_api\.windFor\(mat\.wind\), 20\)/);
-  assert.match(gpu, /createMaterialBindGroup\(uniformState, gpuRes, meshState, device, mesh\.wind \? Object\.assign\(\{\}, mat, \{ wind: mesh\.wind \}\) : mat/);
+  assert.match(gpu, /createMaterialBindGroup\(drawState\.uniformState, drawState\.gpuRes, drawState\.meshState, device, mesh\.wind \? Object\.assign\(\{\}, mat, \{ wind: mesh\.wind \}\) : mat/);
   // The GPU-driven variant still finds its model and colour anchors.
   assert.match(gpu, /"    let model = mat4x4f\(in\.instanceMatrix0, in\.instanceMatrix1, in\.instanceMatrix2, in\.instanceMatrix3\);"/);
   // The crowd variant still finds its world-position anchor.

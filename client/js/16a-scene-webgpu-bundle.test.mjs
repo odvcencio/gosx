@@ -534,8 +534,8 @@ test("the recorder and the real encoder run the same encode function", () => {
   assert.notEqual(start, -1);
   // One function drives both targets. That is what removes the blind spots: the
   // recorder cannot miss a command the encoder issues.
-  assert.match(webgpuSource, /webGPUBundleCache\.plan\(bundleLayoutKey, function\(recorder\) \{\s*\n\s*encodeBundleableSceneDraws\(recorder, bundleContext\);/);
-  assert.match(webgpuSource, /encodeBundleableSceneDraws\(bundleEncoder, bundleContext\);/);
+  assert.match(webgpuSource, /webGPUBundleCache\.plan\(bundleLayoutKey, function\(recorder\) \{\s*\n\s*encodeBundleableSceneDraws\(drawState, device, recorder, bundleContext\);/);
+  assert.match(webgpuSource, /encodeBundleableSceneDraws\(drawState, device, bundleEncoder, bundleContext\);/);
 });
 
 test("the frame bind group is memoized, or no bundle could ever replay", () => {

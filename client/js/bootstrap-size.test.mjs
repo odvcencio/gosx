@@ -1093,7 +1093,9 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured bootstrap.js raw 2175577; only this exhausted target moves (2106229 -> 2110041), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured bootstrap.js.gz gzip 612590; only this exhausted target moves (596157 -> 596206), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured bootstrap.js raw 2176576; only this exhausted target moves (2110041 -> 2111040), allowance unchanged.
-    file: "bootstrap.js", raw: 2111040, gzip: 596206,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured bootstrap.js raw 2178779; only this exhausted target moves (2111040 -> 2113243), allowance unchanged.
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured bootstrap.js.gz gzip 612970; only this exhausted target moves (596206 -> 596586), allowance unchanged.
+    file: "bootstrap.js", raw: 2113243, gzip: 596586,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -2045,7 +2047,9 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 144744; only this exhausted target moves (137786 -> 137851), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured bootstrap-feature-scene3d-webgpu.js raw 544677; only this exhausted target moves (517691 -> 518740), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 145004; only this exhausted target moves (137851 -> 138099), allowance unchanged.
-    raw: 518740, gzip: 138099,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured bootstrap-feature-scene3d-webgpu.js raw 547707; only this exhausted target moves (518740 -> 521625), allowance unchanged.
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 145674; only this exhausted target moves (138099 -> 138737), allowance unchanged.
+    raw: 521625, gzip: 138737,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -2070,7 +2074,8 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured bootstrap-feature-scene3d-webgpu.js.br brotli 120998; only this exhausted target moves (114786 -> 115236), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured bootstrap-feature-scene3d-webgpu.js.br brotli 121338; only this exhausted target moves (115236 -> 115560), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured bootstrap-feature-scene3d-webgpu.js.br brotli 121552; only this exhausted target moves (115560 -> 115763), allowance unchanged.
-    brotli: 115763 },
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured bootstrap-feature-scene3d-webgpu.js.br brotli 121950; only this exhausted target moves (115763 -> 116142), allowance unchanged.
+    brotli: 116142 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -2649,7 +2654,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D Chromium route (WebGPU, with labels) raw 1603352; only this exhausted target moves (1533386 -> 1537816), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D Chromium route (WebGPU, with labels) raw 1604816; only this exhausted target moves (1537816 -> 1539280), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D Chromium route (WebGPU, with labels) raw 1605917; only this exhausted target moves (1539280 -> 1540381), allowance unchanged.
-    raw: 1540381,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D Chromium route (WebGPU, with labels) raw 1608947; only this exhausted target moves (1540381 -> 1543411), allowance unchanged.
+    raw: 1543411,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 427783 bytes; only this exhausted target moves (411074 -> 411399), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) gzip 439916; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route (WebGPU, with labels) gzip measures 430169 bytes; only this exhausted target moves (411399 -> 413785), allowance unchanged.
@@ -2679,7 +2685,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 446923; only this exhausted target moves (430532 -> 430539), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 446991; only this exhausted target moves (430539 -> 430607), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 447251; only this exhausted target moves (430607 -> 430867), allowance unchanged.
-    gzip: 430867,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 447921; only this exhausted target moves (430867 -> 431537), allowance unchanged.
+    gzip: 431537,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2710,7 +2717,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D Chromium route (WebGPU, with labels).br brotli 382906; only this exhausted target moves (366050 -> 366522), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D Chromium route (WebGPU, with labels).br brotli 383246; only this exhausted target moves (366522 -> 366862), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D Chromium route (WebGPU, with labels).br brotli 383460; only this exhausted target moves (366862 -> 367076), allowance unchanged.
-    brotli: 367076,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D Chromium route (WebGPU, with labels).br brotli 383858; only this exhausted target moves (367076 -> 367474), allowance unchanged.
+    brotli: 367474,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -3228,7 +3236,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1916334; only this exhausted target moves (1846368 -> 1850798), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1917798; only this exhausted target moves (1850798 -> 1852262), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1918899; only this exhausted target moves (1852262 -> 1853363), allowance unchanged.
-    raw: 1853363,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1921929; only this exhausted target moves (1853363 -> 1856393), allowance unchanged.
+    raw: 1856393,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 517576 bytes; only this exhausted target moves (500351 -> 501192), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 534654; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip measures 522257 bytes; only this exhausted target moves (501192 -> 505873), allowance unchanged.
@@ -3258,7 +3267,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 540393; only this exhausted target moves (524002 -> 524009), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 540461; only this exhausted target moves (524009 -> 524077), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 540721; only this exhausted target moves (524077 -> 524337), allowance unchanged.
-    gzip: 524337,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 541391; only this exhausted target moves (524337 -> 525007), allowance unchanged.
+    gzip: 525007,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -3289,7 +3299,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 463845; only this exhausted target moves (446989 -> 447461), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 464185; only this exhausted target moves (447461 -> 447801), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 464399; only this exhausted target moves (447801 -> 448015), allowance unchanged.
-    brotli: 448015,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 464797; only this exhausted target moves (448015 -> 448413), allowance unchanged.
+    brotli: 448413,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -3505,7 +3516,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1445384; only this exhausted target moves (1375418 -> 1379848), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1446848; only this exhausted target moves (1379848 -> 1381312), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1447949; only this exhausted target moves (1381312 -> 1382413), allowance unchanged.
-    raw: 1382413,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1450979; only this exhausted target moves (1382413 -> 1385443), allowance unchanged.
+    raw: 1385443,
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 383698 bytes; only this exhausted target moves (366989 -> 367314), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395831; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (unshadowed PBR fragment for frames without a shadow slot): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395963; only this exhausted target moves (379447 -> 379579) under the unchanged allowance.
@@ -3540,7 +3552,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 402726; only this exhausted target moves (386335 -> 386342), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 402794; only this exhausted target moves (386342 -> 386410), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 403054; only this exhausted target moves (386410 -> 386670), allowance unchanged.
-    gzip: 386670,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 403724; only this exhausted target moves (386670 -> 387340), allowance unchanged.
+    gzip: 387340,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
@@ -3569,7 +3582,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 8: water uniforms, bind groups, system lifecycle and quality profile leave the renderer closure with an explicit water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 342588; only this exhausted target moves (325824 -> 326274), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 9: water Selena draw builders and the pool and surface draw passes leave the renderer closure on the water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 342928; only this exhausted target moves (326274 -> 326598), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 10: the water caustics, object texture and shadow passes and updateWaterSystems leave the renderer closure on the water state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 343142; only this exhausted target moves (326598 -> 326801), allowance unchanged.
-    brotli: 326801,
+    // 19 November 2026 (WebGPU renderer split, step 11: shadow passes, the PBR draw pass, instanced culling and the instanced draw passes leave the renderer closure with an explicit draw state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 343540; only this exhausted target moves (326801 -> 327181), allowance unchanged.
+    brotli: 327181,
   },
 
 ];

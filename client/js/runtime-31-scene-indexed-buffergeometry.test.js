@@ -544,7 +544,7 @@ test("backends wire uint32 index buffers and indexed draws for indexed direct me
   assert.match(webgpu, /pass\.drawIndexed\(skinnedShadowIndexCount\)/);
   assert.match(webgpu, /pass\.drawIndexed\(morphShadowIndexCount\)/);
   assert.match(webgpu, /obj\.directVertices \|\| webGPUObjectIsSkinned\(obj\) \? webGPUBindRetainedMeshIndexBuffer\(meshState, device, pass, obj\) : 0/);
-  assert.match(webgpu, /var selenaIndexCount = webGPUSelenaIndexCount\(meshState, device, pass, obj\);\s*if \(selenaIndexCount > 0\) pass\.drawIndexed\(selenaIndexCount\)/);
+  assert.match(webgpu, /var selenaIndexCount = webGPUSelenaIndexCount\(drawState\.meshState, device, pass, obj\);\s*if \(selenaIndexCount > 0\) pass\.drawIndexed\(selenaIndexCount\)/);
   assert.match(webgpu, /pass\.drawIndexed\(skinnedPBRIndexCount\)/);
 
   const mountWebGL = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "mount-webgl.ts"), "utf8");

@@ -1841,3 +1841,788 @@
     pipeState.waterObjectMeshPipelineCache[key] = pipeline;
     return pipeline;
   }
+
+  // updateInstancedCullSystems dispatches GPU frustum-cull compute passes for
+  // all InstancedMeshes that carry a cullKernelWGSL + the gpu-cull capability.
+  // Called once per frame, AFTER uploadFrameUniforms (so scratchSelenaViewProjection
+  // is ready), BEFORE the shadow pass and main render pass. Mirrors
+  // updateComputeParticleSystems shape.
+  //
+  // vp is the current frame's scratchSelenaViewProjection (post-depth-remap,
+  // WebGPU [0,1] clip convention — see extractFrustumPlanesJS comment above).
+  //
+  // Returns a Map: meshId → { system, isReady }.
+  function updateInstancedCullSystems(drawState: any, device: any, instancedMeshes: any, encoder: any, vp: any) {
+    if (!Array.isArray(instancedMeshes) || instancedMeshes.length === 0) {
+      return drawState.instancedCullSystems;
+    }
+    // Check if gpu-cull capability is active. The webgpu chunk is only loaded
+    // when webgpu is active, so we can check the API's capabilities JSON or
+    // simply gate on the feature we know is set to true in
+    // 16a-scene-webgpu.capabilities.json. We guard on createSceneInstancedCullSystem
+    // being available (exported by 16b into __gosx_scene3d_api).
+    var cullApi = (typeof window !== "undefined" && window.__gosx_scene3d_api)
+      ? window.__gosx_scene3d_api
+      : null;
+    var createCullFn = cullApi && typeof cullApi.createSceneInstancedCullSystem === "function"
+      ? cullApi.createSceneInstancedCullSystem
+      : null;
+    var sigFn = cullApi && typeof cullApi.cullSystemSignature === "function"
+      ? cullApi.cullSystemSignature
+      : null;
+
+    var planes = extractFrustumPlanesJS(vp);
+    var activeIds = new Set();
+    var fingerprintFn = cullApi && typeof cullApi.sceneInstanceTransformFingerprint === "function"
+      ? cullApi.sceneInstanceTransformFingerprint
+      : null;
+    var maxScaleFn = cullApi && typeof cullApi.sceneInstancedMaxTransformScale === "function"
+      ? cullApi.sceneInstancedMaxTransformScale
+      : null;
+
+    for (var i = 0; i < instancedMeshes.length; i++) {
+      var mesh = instancedMeshes[i];
+      if (!mesh || webGPUGPUDrivenHost(drawState, device).owns(mesh)) continue;
+      var wgsl = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) ? mesh.cullKernelWGSL.trim() : null;
+      // A mesh without an authored kernel still culls on the GPU when the
+      // renderer's own kernel applies. webGPUBuiltinCullEligible states the
+      // three conditions.
+      if (!wgsl && !webGPUBuiltinCullEligible(mesh)) continue;
+      if (!createCullFn) continue;
+
+      var meshId = (typeof mesh.id === "string" && mesh.id) ? mesh.id : ("mesh-" + i);
+      activeIds.add(meshId);
+
+      // Recreate system when kernel or capacity changes.
+      var sig = sigFn ? sigFn(mesh) : "";
+      var existing = drawState.instancedCullSystems.get(meshId);
+      if (!existing || existing.signature !== sig) {
+        if (existing && existing.system && typeof existing.system.dispose === "function") {
+          existing.system.dispose();
+        }
+        var newSystem = createCullFn(device, mesh, { fallbackRadius: webGPUInstancedCullRadius(mesh) });
+        drawState.instancedCullSystems.set(meshId, { system: newSystem, signature: sig });
+        existing = drawState.instancedCullSystems.get(meshId);
+      }
+
+      if (!existing || !existing.system) continue;
+      var sys = existing.system;
+      if (!sys.isReady()) continue;
+
+      // Build instance records for this mesh. The native InstanceRecord is
+      // 80B: mat4 (col-major, 64B) + pickData uint32x4 (16B), zero pickData
+      // for now (S6 consumer will supply real pickData). The records depend
+      // ONLY on the (static) transforms, so build + upload them ONCE per
+      // system + transforms array — rebuilding the 80B buffer and re-uploading
+      // it to the GPU every frame is pure waste (≈450KB/frame of allocations →
+      // GC churn → frame hitches) for a static instanced ring. After the first
+      // upload we pass null so sys.update skips the input-buffer write and only
+      // refreshes the frustum-plane uniform + dispatches.
+      // Instanced meshes serialize their count under `count` (legacyProps);
+      // `instanceCount` is often absent. instancedMeshCount() resolves
+      // instanceCount→count→0, so the cull operates on the REAL count instead
+      // of 0 (which left the input buffer unpopulated → drawIndirect rendered
+      // only degenerate zero-matrix instances → an invisible ring).
+      // The identity check below catches a scene that reuses one transforms
+      // array. A scene core that rebuilds the array every frame defeats it,
+      // so the fingerprint catches that case too: equal contents skip the
+      // 80-byte-per-instance encode AND the queue.writeBuffer. A static
+      // 10 000-instance mesh re-uploaded 800 KB per frame before this.
+      var instanceCount = instancedMeshCount(mesh);
+      var transforms = mesh.transforms;
+      var fingerprint = fingerprintFn && transforms && instanceCount > 0
+        ? fingerprintFn(transforms, instanceCount)
+        : null;
+      var records = null;
+      // The fingerprint is authoritative when available. It also fixes the
+      // opposite defect: a scene that mutates one transforms array IN PLACE
+      // kept the array identity, so the identity check alone never re-uploaded
+      // and the GPU culled against stale transforms.
+      var contentsChanged = fingerprint !== null
+        ? existing.uploadedFingerprint !== fingerprint
+        : existing.uploadedTransforms !== transforms;
+      if (transforms && instanceCount > 0 && contentsChanged) {
+        var tf = (transforms instanceof Float32Array) ? transforms : new Float32Array(transforms);
+        var recF = existing.recordScratch && existing.recordScratch.length === instanceCount * 20
+          ? existing.recordScratch
+          : new Float32Array(instanceCount * 20); // 20 f32 slots = 80B per record; zero-init covers pickData
+        existing.recordScratch = recF;
+        for (var j = 0; j < instanceCount; j++) {
+          var src = j * 16;
+          var dst = j * 20;
+          for (var k = 0; k < 16; k++) recF[dst + k] = (src + k < tf.length) ? tf[src + k] : 0;
+        }
+        records = recF;
+        existing.uploadedTransforms = transforms;
+      }
+      if (contentsChanged) {
+        existing.uploadedFingerprint = fingerprint;
+        // maxInstanceScale only matters for an authored kernel, and it costs a
+        // pass over the transforms, so recompute it only when they change.
+        existing.maxInstanceScale = maxScaleFn && transforms
+          ? maxScaleFn(transforms, instanceCount)
+          : 1;
+      }
+
+      // Get geometry vertex count for the drawArgs reset.
+      var geom = getInstancedGeometry(drawState, device, mesh);
+      var vertexCount = (geom && geom.vertexCount > 0) ? geom.vertexCount : 1;
+
+      sys.update(device, encoder, planes, vertexCount, records, instanceCount, {
+        transformFingerprint: fingerprint,
+        maxInstanceScale: existing.maxInstanceScale,
+      });
+    }
+
+    // GC: dispose systems for meshes no longer in the bundle.
+    for (var _it = drawState.instancedCullSystems.entries(), _entry = _it.next(); !_entry.done; _entry = _it.next()) {
+      var _id   = _entry.value[0];
+      var _rec  = _entry.value[1];
+      if (!activeIds.has(_id)) {
+        if (_rec && _rec.system && typeof _rec.system.dispose === "function") {
+          _rec.system.dispose();
+        }
+        drawState.instancedCullSystems.delete(_id);
+      }
+    }
+
+    // Cull telemetry readback — gated on window.__gosx_scene3d_cull_telemetry === true.
+    // Throttled to ~every 30 frames to avoid GPU readback stalls every frame.
+    // Poll BEFORE requesting the next readback: mapAsync reads data from the
+    // PREVIOUS cycle's copy (already submitted); calling requestSurvivorReadback
+    // first would encode a new copy into the still-open encoder, causing mapAsync
+    // to race against an unsubmitted write and read stale zeros.
+    var cullTelemetryOn = (typeof window !== "undefined" && window.__gosx_scene3d_cull_telemetry === true);
+    if (cullTelemetryOn) {
+      drawState.cullTelemetryFrameCount += 1;
+      // Step 1: poll — reads survivor count from previous cycle's submitted copy.
+      var survivorSnapshot = {};
+      for (var _pi = drawState.instancedCullSystems.entries(), _pe = _pi.next(); !_pe.done; _pe = _pi.next()) {
+        var _pId  = _pe.value[0];
+        var _pRec = _pe.value[1];
+        if (_pRec && _pRec.system && _pRec.system.isReady()) {
+          if (typeof _pRec.system.pollSurvivors === "function") {
+            _pRec.system.pollSurvivors();
+          }
+          survivorSnapshot[_pId] = {
+            instanceCount: _pRec.system.instanceCount || 0,
+            survivors: _pRec.system.lastSurvivors,
+          };
+        }
+      }
+      drawState.lastCullSurvivors = JSON.stringify(survivorSnapshot);
+      // Step 2: request next readback after polling (copy encoded into current encoder).
+      if (drawState.cullTelemetryFrameCount >= 30) {
+        drawState.cullTelemetryFrameCount = 0;
+        for (var _ti = drawState.instancedCullSystems.entries(), _te = _ti.next(); !_te.done; _te = _ti.next()) {
+          var _tRec = _te.value[1];
+          if (_tRec && _tRec.system && _tRec.system.isReady() && typeof _tRec.system.requestSurvivorReadback === "function") {
+            _tRec.system.requestSurvivorReadback(encoder);
+          }
+        }
+      }
+    } else {
+      drawState.lastCullSurvivors = null;
+    }
+
+    return drawState.instancedCullSystems;
+  }
+
+  function ensureShadowFrameBufferCapacity(drawState: any, device: any, matrixCount: any) {
+    var required = Math.max(1, Math.floor(sceneNumber(matrixCount, 1)));
+    if (drawState.shadowFrameBuffer && drawState.shadowFrameBufferCapacity >= required) {
+      return true;
+    }
+    var capacity = Math.max(1, drawState.shadowFrameBufferCapacity);
+    while (capacity < required) capacity *= 2;
+    destroyRendererGPUResource(drawState.shadowFrameBuffer);
+    drawState.shadowFrameBuffer = device.createBuffer({
+      size: capacity * drawState.shadowFrameBufferStride,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    drawState.shadowFrameBufferCapacity = capacity;
+    return Boolean(drawState.shadowFrameBuffer);
+  }
+
+  function renderShadowPass(drawState: any, device: any, encoder: any, lightMatrix: any, bundle: any, shadowResource: any, pbrBuffers: any) {
+    var sp = getShadowPipeline(drawState.pipeState, device);
+    if (!sp) return;
+    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+    // Each light owns a base matrix followed by its retained caster matrices.
+    // Reserve both regions before encoding so the second light cannot grow
+    // or destroy the shared arena before this frame's single submission.
+    var baseSlot = Math.max(0, Math.floor(sceneNumber(shadowResource.arenaSlot, sceneNumber(shadowResource.lightSlot, 0)))) * (objects.length + 1);
+    var baseMatrixOffset = baseSlot * drawState.shadowFrameBufferStride;
+    if (!ensureShadowFrameBufferCapacity(drawState, device, Math.max(sceneNumber(shadowResource.arenaSlots, 2) * (objects.length + 1), baseSlot + objects.length + 1))) return;
+    device.queue.writeBuffer(drawState.shadowFrameBuffer, baseMatrixOffset, lightMatrix, 0, 16);
+    var shadowBG = wgpuShadowFrameBindGroup(device, drawState.shadowFrameBindGroups, drawState.pipeState.shadowBindGroupLayout, drawState.shadowFrameBuffer);
+    var shadowPassDescriptor = {
+      colorAttachments: [],
+      depthStencilAttachment: {
+        view: shadowResource.view,
+        depthLoadOp: "clear",
+        depthClearValue: 1.0,
+        depthStoreOp: "store",
+      },
+    };
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var shadowStamps = gpuPassTimestampWrites(drawState.timingState, "shadow");
+    if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
+    var pass = encoder.beginRenderPass(shadowPassDescriptor);
+    pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+    var currentShadowPipeline = "";
+    var retainedShadowMatrixSlot = baseSlot + 1;
+    for (var i = 0; i < objects.length; i++) {
+      var obj = objects[i];
+      if (!obj || obj.viewCulled) continue;
+      if (!obj.castShadow) continue;
+      if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+      if (obj._crowdBatch === true || obj._crowdSkin) continue;
+      if (webGPUObjectIsSkinned(obj)) {
+        var skinnedPositionBuffer = obj._gosxWGPUElioSkinOutputBuffer;
+        if (!skinnedPositionBuffer) continue;
+        if (currentShadowPipeline !== "static") {
+          pass.setPipeline(wgpuRequirePipeline(sp));
+          currentShadowPipeline = "static";
+        }
+        pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+        pass.setVertexBuffer(0, skinnedPositionBuffer);
+        var skinnedShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
+        if (skinnedShadowIndexCount > 0) pass.drawIndexed(skinnedShadowIndexCount);
+        else pass.draw(obj.vertexCount);
+        continue;
+      }
+
+      var computedMorphRecord = webGPUObjectComputedMorphDrawRecord(obj);
+      if (computedMorphRecord) {
+        if (currentShadowPipeline !== "static") {
+          pass.setPipeline(wgpuRequirePipeline(sp));
+          currentShadowPipeline = "static";
+        }
+        pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+        if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
+        var morphShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
+        if (morphShadowIndexCount > 0) pass.drawIndexed(morphShadowIndexCount);
+        else pass.draw(obj.vertexCount);
+        continue;
+      }
+
+      if (obj.retainedGeometry && obj.directVertices) {
+        // Retained geometry casts from cached model-space positions. Indexed
+        // meshes use drawIndexed; expanded procedural triangle lists use
+        // draw. The shadow uniform carries the light view-projection alone,
+        // so every model-space caster folds in its own transform per draw.
+        var reflectedCaster = sceneWebGPUObjectReflected(obj), retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
+        if (currentShadowPipeline !== retainedPipelineKind) {
+          pass.setPipeline(wgpuRequirePipeline(getShadowPipeline(drawState.pipeState, device, reflectedCaster)));
+          currentShadowPipeline = retainedPipelineKind;
+        }
+        if (!webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, 0, obj, "positions", 3)) continue;
+        var casterIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
+        var casterModel = obj.modelMatrix, casterMatrix = lightMatrix;
+        if (casterModel && casterModel.length >= 16) {
+          if (!drawState._shadowCombinedMatrixScratch) drawState._shadowCombinedMatrixScratch = new Float32Array(16);
+          sceneMat4MultiplyInto(drawState._shadowCombinedMatrixScratch, lightMatrix, casterModel);
+          casterMatrix = drawState._shadowCombinedMatrixScratch;
+        }
+        var casterMatrixOffset = retainedShadowMatrixSlot * drawState.shadowFrameBufferStride;
+        retainedShadowMatrixSlot += 1;
+        device.queue.writeBuffer(drawState.shadowFrameBuffer, casterMatrixOffset, casterMatrix, 0, 16);
+        pass.setBindGroup(0, shadowBG, [casterMatrixOffset]);
+        if (casterIndexCount > 0) pass.drawIndexed(casterIndexCount);
+        else pass.draw(obj.vertexCount);
+        continue;
+      }
+
+      if (currentShadowPipeline !== "static") {
+        pass.setPipeline(wgpuRequirePipeline(sp));
+        currentShadowPipeline = "static";
+      }
+
+      pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+      if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
+      pass.draw(obj.vertexCount);
+    }
+
+    pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+    webGPUCrowdHost(drawState, device).drawShadow(pass, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
+    drawInstancedShadowMeshes(drawState, device, pass, bundle, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
+    pass.end();
+  }
+
+  function drawPBRObjects(drawState: any, device: any, pass: any, objectList: any, bundle: any, materials: any, frameBindGroup: any, blendMode: any, depthWrite: any, pbrBuffers: any, stats: any, frameRequest = null) {
+    var lastMaterialIndex = -1;
+    var lastReceiveShadow = null;
+    var lastMaterialOwner = null;
+    var lastModelOffset = -1;
+    var currentPipelineKind = "";
+    var objectDepthWrite = depthWrite, worldBuffersBound = false;
+    function bindMeshAttribute(attr, obj, offset, count) {
+      if (webGPUObjectIsSkinned(obj)) return webGPUBindElioSelenaAttribute(drawState.meshState, device, pass, obj, attr, count);
+      // Retained geometry keeps its own buffers; it is not in the world-baked
+      // pbrBuffers that vertexOffset indexes. Fail closed on a missing stream.
+      if (obj.retainedGeometry && obj.directVertices) return webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, attr.slot, obj, attr.source === "custom" ? "custom:" + attr.name : attr.source, attr.components);
+      var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
+      if (attr.source === "positions") {
+        if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return true;
+        return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.positions, offset, count);
+      }
+      if (attr.source === "normals") {
+        if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.normalBuffer, count, 3)) return true;
+        return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.normals, offset, count);
+      }
+      if (attr.source === "uvs") {
+        return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.uvs, offset, count);
+      }
+      if (attr.source === "tangents") {
+        if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return true;
+        return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
+      }
+      // Custom attribute stream: bind fail-closed from the retained direct
+      // vertex data under its "custom:<name>" key. Any failure returns false
+      // so the caller skips the draw instead of binding a stale slot.
+      if (attr.source === "custom") {
+        return webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, attr.slot, obj, "custom:" + attr.name, attr.components);
+      }
+      return false;
+    }
+    function bindPBRPipeline(reflected, material = Object.create(null), uv1 = "") {
+      var hasDetail = Boolean(material && material.detail), variant = pbrVariant(drawState.pipeState, drawState.gpuRes, device, material), surface = variant === true ? null : variant;
+      var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : (surface ? surface.key + ":" : "") + sceneWebGPUPipelineKind(reflected, "pbr");
+      kind += ":" + objectDepthWrite + uv1;
+      if (surface && surface.groupLayout) pass.setBindGroup(2, sceneWebGPUSelenaSurfaceGroup(device, drawState.pipeState.selenaSurfaces, material, surface, drawState.selenaState.frame));
+      if (currentPipelineKind === kind) return;
+      pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(drawState.pipeState, device, blendMode, objectDepthWrite, reflected ? "cw" : "ccw", variant, uv1)));
+      pass.setBindGroup(0, frameBindGroup);
+      currentPipelineKind = kind;
+      lastMaterialIndex = -1;
+      lastReceiveShadow = null;
+      lastMaterialOwner = null;
+    }
+    for (var i = 0; i < objectList.length; i++) {
+      var obj = objectList[i];
+      if (obj._crowdBatch === true || obj._crowdSkin) continue;
+      var matIndex = sceneNumber(obj.materialIndex, 0);
+      var mat = materials[matIndex] || null;
+      objectDepthWrite = sceneTransmissionDepthWrite(obj, mat, depthWrite);
+      var receiveShadow = !!obj.receiveShadow;
+      var offset = Math.max(0, Math.floor(obj.vertexOffset));
+      var count = obj.vertexCount;
+      var isSkinned = webGPUObjectIsSkinned(obj);
+      var computedMorphRecord = !isSkinned ? webGPUObjectComputedMorphDrawRecord(obj) : null;
+      if (isSkinned || computedMorphRecord || obj.retainedGeometry) worldBuffersBound = false;
+      // cullMode: "back" is getSelenaPipeline's own default (every OTHER
+      // caller passes no options and relies on it -- see the comment on
+      // pipelineCullMode there). obj.doubleSided opts a single mesh object
+      // out of that default; anything absent/false resolves to the exact
+      // same "back" value the hardcoded default produced before this line
+      // existed. obj.doubleSided opts a mesh out; cullMode:"none" draws both
+      // faces regardless of winding, so it is safe under any convention.
+      //
+      // HISTORY, because the previous comment here inverted the truth and a
+      // reader must not restore it. It warned that "back" facing DEPENDED on
+      // box/sphere winding their triangles with the right-hand normal
+      // OPPOSITE the declared shading normal. That was a real measurement of
+      // a real state, but it described a defect rather than a requirement:
+      // 12-scene-geometry.ts wound its solid meshes clockwise while
+      // 16c-scene-shared-pbr.ts and scene/geom both wound counter-clockwise,
+      // so the same authored shape had opposite winding depending only on
+      // whether it was instanced.
+      //
+      // 12-scene-geometry.ts now winds counter-clockwise, so all three
+      // producers agree and every generator's geometric normal points the
+      // same way as its shading normal. The native renderer is the evidence
+      // that this is the correct sense: render/bundle draws scene/geom with
+      // CullBack plus FrontFaceCCW (renderer.go), render/gpu/jsgpu maps that
+      // pair to cullMode "back" plus frontFace "ccw" with no inversion, and
+      // its golden frames pass. So "back" here now culls the same faces the
+      // native path culls.
+      //
+      // UNVERIFIED ON HARDWARE. Confirm on a real GPU that a non-doubleSided
+      // Selena mesh still shows its exterior.
+      //
+      // This is not the only path the winding change moved, and an earlier
+      // note here said it was. Three SHADOW sites cull as well: the two
+      // gosx-shadow pipelines above and the WebGL2 shadow pass. They cull the
+      // FRONT face, so the winding change moved each of them from recording
+      // the near surface of a caster to recording the far one.
+      // render/bundle/shadow_drift_test.go measures that move and pins all
+      // three settings. See client/js/12-scene-geometry-winding.test.mjs for
+      // the winding numbers.
+      var reflectedDirect = sceneWebGPUObjectReflected(obj);
+      var selenaResource = getObjectSelenaPipeline(function(m: any, b: any, d: any, o: any) { return getSelenaPipeline(drawState.pipeState, drawState.selenaState, device, m, b, d, o); }, obj, mat, blendMode, depthWrite);
+      if (selenaResource) {
+        worldBuffersBound = false;
+        var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + sceneWebGPUSelenaPipelineSuffix(obj, reflectedDirect);
+        if (currentPipelineKind !== selenaKey) {
+          pass.setPipeline(wgpuRequirePipeline(selenaResource.pipeline));
+          currentPipelineKind = selenaKey;
+        }
+        var selenaBG = createSelenaBindGroup(drawState.meshState, drawState.selenaState, device, mat, selenaResource, obj);
+        if (selenaBG) {
+          pass.setBindGroup(0, selenaBG);
+          var allBound = true;
+          for (var ai = 0; ai < selenaResource.attrs.length; ai++) {
+            if (!bindMeshAttribute(selenaResource.attrs[ai], obj, offset, count)) {
+              allBound = false;
+              break;
+            }
+          }
+          // Fail closed: skip the whole object (and its draw-call stat)
+          // when any declared attribute could not be bound.
+          if (!allBound) continue;
+          var selenaIndexCount = webGPUSelenaIndexCount(drawState.meshState, device, pass, obj);
+          if (selenaIndexCount > 0) pass.drawIndexed(selenaIndexCount);
+          else pass.draw(count);
+          if (frameRequest) frameRequest.record(obj.id);
+          if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
+          continue;
+        }
+      }
+      if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, drawState.pipeState.detailResources, mat, drawState.pipeState.detailEnabled));
+      if (isSkinned) {
+        bindPBRPipeline(reflectedDirect, mat);
+        var skinnedOwner = mat || obj;
+        if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
+          var skinnedMatBG = webGPUFrameMaterialGroup(drawState.uniformState.materialFrame, matIndex, mat, receiveShadow, function(m: any, r: any, o: any) { return createMaterialBindGroup(drawState.uniformState, drawState.gpuRes, drawState.meshState, device, m, r, o); });
+          pass.setBindGroup(1, skinnedMatBG, [0]);
+          lastModelOffset = 0;
+          lastMaterialIndex = matIndex;
+          lastReceiveShadow = receiveShadow;
+          lastMaterialOwner = skinnedOwner;
+        }
+        if (webGPUBindElioSkinnedBuffers(drawState.meshState, device, pass, obj, count)) {
+          var skinnedPBRIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
+          if (skinnedPBRIndexCount > 0) pass.drawIndexed(skinnedPBRIndexCount);
+          else pass.draw(count);
+          if (frameRequest) frameRequest.record(obj.id);
+          if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
+        }
+        continue;
+      }
+      bindPBRPipeline(reflectedDirect, mat, window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat));
+
+      var matBG = webGPUFrameMaterialGroup(drawState.uniformState.materialFrame, matIndex, mat, receiveShadow, function(m: any, r: any, o: any) { return createMaterialBindGroup(drawState.uniformState, drawState.gpuRes, drawState.meshState, device, m, r, o); });
+      var modelOffset = webGPUCutawayOffset(drawState.uniformState.materialFrame, obj);
+      if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || matBG !== lastMaterialOwner || modelOffset !== lastModelOffset) {
+        drawState.modelDynamicOffsets[0] = modelOffset;
+        pass.setBindGroup(1, matBG, drawState.modelDynamicOffsets);
+        lastMaterialIndex = matIndex;
+        lastReceiveShadow = receiveShadow;
+        lastMaterialOwner = matBG;
+        lastModelOffset = modelOffset;
+      }
+      if (computedMorphRecord) {
+        if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, count, 3)) continue;
+        if (!webGPUBindComputedMorphBuffer(pass, 1, computedMorphRecord.normalBuffer, count, 3)) continue;
+        if (!webGPUBindSceneMeshVertexBuffer(pass, 2, pbrBuffers && pbrBuffers.uvs, offset, count)) continue;
+        if (!webGPUBindComputedMorphBuffer(pass, 3, computedMorphRecord.tangentBuffer, count, 4)) continue;
+        pass.draw(count);
+        if (frameRequest) frameRequest.record(obj.id);
+        if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
+        continue;
+      }
+      if (obj.retainedGeometry) {
+        if (!webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, 0, obj, "positions", 3)) continue;
+        if (!webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, 1, obj, "normals", 3)) continue;
+        if (!webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, 2, obj, "uvs", 2)) continue;
+        if (!webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, 3, obj, "tangents", 4)) continue;
+        var pbrIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
+        if (pbrIndexCount > 0) {
+          pass.drawIndexed(pbrIndexCount);
+        } else {
+          pass.draw(count);
+        }
+        if (frameRequest) frameRequest.record(obj.id);
+        if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
+        continue;
+      }
+      if (!worldBuffersBound) worldBuffersBound = wgpuBindWorldMeshBuffers(pass, pbrBuffers);
+      if (!worldBuffersBound) continue;
+      window.__gosx_scene3d_asset_ext.uv1.gpuWanted(obj, mat) ? (worldBuffersBound = false, window.__gosx_scene3d_asset_ext.uv1.gpuDraw(device, pass, obj, offset, count, webGPUBindSceneMeshVertexBuffer, pbrBuffers)) : pass.draw(count, 1, offset);
+      if (frameRequest) frameRequest.record(obj.id);
+      if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
+    }
+  }
+
+  function instancedMeshTransformData(drawState: any, device: any, mesh: any, count: any) {
+    if (!mesh || count <= 0 || !mesh.transforms) return null;
+    if (!mesh._cachedTransforms) mesh._cachedTransforms = scenePrepareInstancedTransforms(webGPUInstancedCacheOwner(drawState, device, mesh.id, mesh), mesh.transforms);
+    var data = mesh._cachedTransforms;
+    return data && data.length >= count * 16 ? data : null;
+  }
+
+  function instancedMeshColorData(drawState: any, device: any, mesh: any, count: any) {
+    if (!mesh || count <= 0) return null;
+    return mesh._cachedInstanceColors = scenePrepareInstancedColors(webGPUInstancedCacheOwner(drawState, device, mesh.id, mesh), mesh.colors, count, true);
+  }
+
+  function getInstancedGeometry(drawState: any, device: any, mesh: any) {
+    if (typeof generateInstancedGeometry !== "function") return null;
+    var kind = typeof normalizeInstancedGeometryKind === "function"
+      ? normalizeInstancedGeometryKind(mesh && mesh.kind)
+      : (typeof mesh.kind === "string" ? mesh.kind.toLowerCase() : "box");
+    var size = sceneNumber(mesh && mesh.size, 0);
+    var w = sceneNumber(mesh.width, 1);
+    var h = sceneNumber(mesh.height, 1);
+    var d = sceneNumber(mesh.depth, 1);
+    var r = sceneNumber(mesh.radius, 0.5);
+    var rt = sceneNumber(mesh.radiusTop, r);
+    var rb = sceneNumber(mesh.radiusBottom, r);
+    var tube = sceneNumber(mesh.tube, 0.3);
+    var s = sceneNumber(mesh.segments, 32);
+    var radial = sceneNumber(mesh.radialSegments, 32);
+    var tubular = sceneNumber(mesh.tubularSegments, 16);
+    var key = kind + ":" + size + ":" + w + ":" + h + ":" + d + ":" + r + ":" + rt + ":" + rb + ":" + tube + ":" + s + ":" + radial + ":" + tubular;
+    if (drawState.instancedGeometryCache[key]) return drawState.instancedGeometryCache[key];
+    var geom = generateInstancedGeometry(kind, {
+      size: size,
+      width: w,
+      height: h,
+      depth: d,
+      radius: r,
+      radiusTop: rt,
+      radiusBottom: rb,
+      tube: tube,
+      segments: s,
+      radialSegments: radial,
+      tubularSegments: tubular,
+    });
+    drawState.instancedGeometryCache[key] = geom;
+    return geom;
+  }
+
+  function ensureInstancedGeometryGPUBuffer(drawState: any, device: any, geom: any, slot: any, data: any) {
+    return wgpuCachedTrackedBuffer(drawState.meshState, device, geom, slot, data, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, false);
+  }
+
+  // Persistent mesh IDs own buffers and groups across transient draw records.
+  function webGPUInstancedCacheOwner(drawState: any, device: any, meshId = "", fallback?: any, namespace = "instanced") {
+    if (!meshId) return fallback;
+    var key = namespace + ":" + meshId;
+    var owner = drawState.instancedCacheOwners.get(key);
+    if (!owner) {
+      owner = { meshId: meshId, seenEpoch: 0 };
+      drawState.instancedCacheOwners.set(key, owner);
+    }
+    owner.seenEpoch = drawState.meshState.instancedCacheOwnerEpoch;
+    return owner;
+  }
+
+  // webGPUSweepInstancedCacheOwners frees the cached buffers of instanced
+  // meshes that have not drawn for 120 rendered frames.
+  function webGPUSweepInstancedCacheOwners(drawState: any, device: any) {
+    drawState.instancedCacheOwners.forEach(function(owner, meshId) {
+      if (drawState.meshState.instancedCacheOwnerEpoch - owner.seenEpoch <= 120) return;
+      var slots = Object.keys(owner).filter(function(slot) { return drawState.meshState.pointsEntryGPUBuffers.has(owner[slot]); });
+      for (var i = 0; i < slots.length; i++) {
+        var buffer = owner[slots[i]];
+        if (!buffer) continue;
+        drawState.meshState.pointsEntryGPUBuffers.delete(buffer);
+        destroyRendererGPUResource(buffer);
+      }
+      drawState.instancedCacheOwners.delete(meshId);
+    });
+  }
+
+  // webGPUGPUDrivenHost returns this renderer's GPU-driven instancing host
+  // (indirect-instancing.ts), or the inert host until the compute chunk publishes the
+  // factory. The hooks are the renderer's own factories, shader sources and
+  // instanced helpers, so the host builds pipelines that match the renderer's.
+  function webGPUGPUDrivenHost(drawState: any, device: any) {
+    var host = drawState.gpuDrivenHosts.get("host");
+    if (host) return host;
+    var api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
+    if (!device || !api || typeof api.createSceneGPUDrivenHost !== "function") return SCENE_GPU_DRIVEN_INERT_HOST;
+    host = api.createSceneGPUDrivenHost(device, {
+      onResourceReady: drawState.pipelineGuard.changed,
+      createFrameBindGroupLayout: wgpuCreateFrameBindGroupLayout,
+      createMaterialBindGroupLayout: wgpuCreateMaterialBindGroupLayout,
+      createShadowBindGroupLayout: wgpuCreateShadowBindGroupLayout,
+      pbrInstancedVertexWGSL: WGSL_PBR_INSTANCED_VERTEX,
+      pbrFragmentWGSL: WGSL_PBR_FRAGMENT,
+      shadowInstancedVertexWGSL: WGSL_SHADOW_INSTANCED_VERTEX,
+      shadowFragmentWGSL: WGSL_SHADOW_FRAGMENT,
+      pbrVertexLayout: WGPU_PBR_VERTEX_LAYOUT,
+      shadowVertexLayout: WGPU_SHADOW_VERTEX_LAYOUT,
+      blendState: wgpuBlendState,
+      instancedMeshCount: instancedMeshCount,
+      instancedMeshColorData: function(mesh: any, count: any) { return instancedMeshColorData(drawState, device, mesh, count); },
+      getInstancedGeometry: function(mesh: any) { return getInstancedGeometry(drawState, device, mesh); },
+      ensureInstancedGeometryGPUBuffer: function(geom: any, slot: any, data: any) { return ensureInstancedGeometryGPUBuffer(drawState, device, geom, slot, data); },
+      instancedCullRadius: webGPUInstancedCullRadius,
+      drawInstancedMeshes: function(pass: any, meshList: any, materials: any, blendMode: any, depthWrite: any) { return drawInstancedMeshes(drawState, device, pass, meshList, materials, blendMode, depthWrite); },
+    });
+    drawState.gpuDrivenHosts.set("host", host);
+    return host;
+  }
+
+  // webGPUCrowdHost returns this renderer's crowd host. The
+  // hooks bind a batch record's retained geometry and its material group.
+  function webGPUCrowdHost(drawState: any, device: any) {
+    var host = drawState.gpuDrivenHosts.get("crowd");
+    if (host) return host;
+    host = createSceneWebGPUCrowd(device, {
+      bindAttribute: function(pass: any, slot: number, obj: any, key: string, components: number) { return webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, slot, obj, key, components); },
+      bindIndex: function(pass: any, obj: any) { return webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj); },
+      materialGroup: function(record, materials) {
+        var index = sceneNumber(record.materialIndex, 0);
+        return webGPUFrameMaterialGroup(drawState.uniformState.materialFrame, index, materials[index] || null, !!record.receiveShadow, function(m: any, r: any, o: any) { return createMaterialBindGroup(drawState.uniformState, drawState.gpuRes, drawState.meshState, device, m, r, o); });
+      },
+    });
+    drawState.gpuDrivenHosts.set("crowd", host);
+    return host;
+  }
+
+  // Share content snapshots across all passes and fresh per-frame mesh copies.
+  function ensureInstancedTransformGPUBuffer(drawState: any, device: any, mesh: any, data: any) {
+    return wgpuStablePBRAttributeBuffer(drawState.meshState, device, "_gosxWGPUInstanceTransformSnapshot", data, webGPUInstancedCacheOwner(drawState, device, mesh && mesh.id) || mesh, "_gosxWGPUInstanceTransformBuffer");
+  }
+
+  function ensureInstancedColorGPUBuffer(drawState: any, device: any, mesh: any, data: any) {
+    return wgpuStablePBRAttributeBuffer(drawState.meshState, device, "_gosxWGPUInstanceColorSnapshot", data, webGPUInstancedCacheOwner(drawState, device, mesh && mesh.id) || mesh, "_gosxWGPUInstanceColorBuffer");
+  }
+
+  function buildInstancedDrawList(drawState: any, device: any, bundle: any, materials: any) {
+    var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+    var opaque = [];
+    var alpha = [];
+    var additive = [];
+    for (var i = 0; i < meshes.length; i++) {
+      var mesh = meshes[i];
+      if (!mesh || mesh.viewCulled) continue;
+      if (instancedMeshCount(mesh) <= 0) continue;
+      if (!instancedMeshTransformData(drawState, device, mesh, instancedMeshCount(mesh))) continue;
+      var mat = instancedMeshMaterial(mesh, materials);
+      var pass = scenePBRObjectRenderPass(mesh, mat);
+      if (pass === "alpha") alpha.push(mesh);
+      else if (pass === "additive") additive.push(mesh);
+      else opaque.push(mesh);
+    }
+    alpha.sort(scenePBRDepthSort);
+    additive.sort(scenePBRDepthSort);
+    return { opaque: opaque, alpha: alpha, additive: additive };
+  }
+
+  function drawInstancedMeshes(drawState: any, device: any, pass: any, meshList: any, materials: any, blendMode: any, depthWrite: any) {
+    for (var i = 0; i < meshList.length; i++) {
+      var mesh = meshList[i];
+      var instanceCount = instancedMeshCount(mesh);
+      var transformData = instancedMeshTransformData(drawState, device, mesh, instanceCount);
+      if (!transformData) continue;
+
+      var geom = getInstancedGeometry(drawState, device, mesh);
+      if (!geom || geom.vertexCount <= 0) continue;
+
+      var mat = instancedMeshMaterial(mesh, materials), variant = pbrVariant(drawState.pipeState, drawState.gpuRes, device, mat), surface = wgpuInstancedSurface(variant);
+      var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
+      pass.setBindGroup(1, createMaterialBindGroup(drawState.uniformState, drawState.gpuRes, drawState.meshState, device, mesh.wind ? Object.assign({}, mat, { wind: mesh.wind }) : mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(drawState, device, mesh.id) || mesh), [0]);
+      if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, drawState.pipeState.detailResources, mat, drawState.pipeState.detailEnabled));
+      else wgpuBindInstancedSurfaceGroup(pass, device, drawState.pipeState.selenaSurfaces, mat, surface, drawState.selenaState.frame);
+      if (webGPUGPUDrivenHost(drawState, device).drawMesh(pass, mesh, meshDepthWrite)) continue;
+
+      // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
+      // not-ready / no kernel / capability absent → draw-all).
+      var meshId = (typeof mesh.id === "string" && mesh.id) ? mesh.id : ("mesh-" + i);
+      var cullRecord = instancedMeshUsesCull(mesh) ? drawState.instancedCullSystems.get(meshId) : null;
+      var cullSys = cullRecord && cullRecord.system;
+
+      if (wgpuInstancedCullReady(cullSys, surface)) {
+        // GPU-culled path: slot 4 = outputBuf (80B InstanceRecord, cull layout).
+        // Use the cull pipeline (loc 8 = pickData vec4u) instead of the
+        // standard pipeline (loc 8 = instanceColor vec4f).
+        pass.setPipeline(wgpuRequirePipeline(getPBRInstancedCullPipeline(drawState.pipeState, device, blendMode, meshDepthWrite, Boolean(mat && mat.detail))));
+        pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
+        pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
+        pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
+        pass.setVertexBuffer(3, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedTangentBuffer", geom.tangents));
+        pass.setVertexBuffer(4, cullSys.outputBuf);
+        pass.drawIndirect(cullSys.drawArgsBuf, 0);
+      } else {
+        // Draw-all path (not-ready, no kernel, or capability absent).
+        pass.setPipeline(wgpuRequirePipeline(getPBRInstancedPipeline(drawState.pipeState, device, blendMode, meshDepthWrite, variant)));
+        pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
+        pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
+        pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
+        pass.setVertexBuffer(3, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedTangentBuffer", geom.tangents));
+        pass.setVertexBuffer(4, ensureInstancedTransformGPUBuffer(drawState, device, mesh, transformData));
+        pass.setVertexBuffer(5, ensureInstancedColorGPUBuffer(drawState, device, mesh, instancedMeshColorData(drawState, device, mesh, instanceCount)));
+        pass.draw(geom.vertexCount, instanceCount);
+      }
+    }
+  }
+
+  function webGPUShadowComputeBounds(drawState: any, device: any, bundle: any) {
+    var bounds = typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds(bundle) : null;
+    var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+    for (var i = 0; i < meshes.length; i++) {
+      var mesh = meshes[i];
+      if (!mesh || mesh.viewCulled) continue;
+      var count = instancedMeshCount(mesh);
+      var transforms = instancedMeshTransformData(drawState, device, mesh, count);
+      if (!transforms) continue;
+      bounds = expandInstancedBounds(bounds, mesh, transforms, count);
+    }
+    return bounds || { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
+  }
+
+  function drawInstancedShadowMeshes(drawState: any, device: any, pass: any, bundle: any, lightSlot = 0) {
+    var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+    var drew = false;
+    for (var i = 0; i < meshes.length; i++) {
+      var mesh = meshes[i];
+      if (!mesh || mesh.viewCulled || !mesh.castShadow) continue;
+      if (webGPUGPUDrivenHost(drawState, device).drawShadowMesh(pass, mesh, lightSlot)) { drew = false; continue; }
+      var instanceCount = instancedMeshCount(mesh);
+      var transformData = instancedMeshTransformData(drawState, device, mesh, instanceCount);
+      if (!transformData) continue;
+      var geom = getInstancedGeometry(drawState, device, mesh);
+      if (!geom || geom.vertexCount <= 0) continue;
+      if (!drew) {
+        pass.setPipeline(wgpuRequirePipeline(getShadowInstancedPipeline(drawState.pipeState, device)));
+        drew = true;
+      }
+      pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(drawState, device, geom, "_gosxWGPUInstancedShadowPositionBuffer", geom.positions));
+      pass.setVertexBuffer(1, ensureInstancedTransformGPUBuffer(drawState, device, mesh, transformData));
+      pass.draw(geom.vertexCount, instanceCount);
+    }
+  }
+
+  // webGPUSummarizeCullSystems totals the cull dispatch counters across the
+  // live systems so the mount can publish them.
+  function webGPUSummarizeCullSystems(drawState: any, device: any) {
+    var dispatches = 0;
+    var skipped = 0;
+    var builtin = 0;
+    drawState.instancedCullSystems.forEach(function(record) {
+      var system = record && record.system;
+      if (!system) return;
+      dispatches += sceneNumber(system.dispatchCount, 0);
+      skipped += sceneNumber(system.skippedDispatchCount, 0);
+      if (system.usesBuiltinKernel) builtin += 1;
+    });
+    return { dispatches: dispatches, skipped: skipped, builtin: builtin };
+  }
+
+  // encodeBundleableSceneDraws drives ONE target through the PBR and instanced
+  // draws of all three passes. The target is either the recorder (a dry run
+  // that issues no WebGPU calls) or a real GPURenderBundleEncoder. Both see the
+  // same call sequence, which is what makes the recorder's verdict sound.
+  function encodeBundleableSceneDraws(drawState: any, device: any, target: any, ctx: any) {
+    var passes = [
+      { name: "opaque", blend: "opaque", depthWrite: true },
+      { name: "alpha", blend: "alpha", depthWrite: false },
+      { name: "additive", blend: "additive", depthWrite: false },
+    ];
+    for (var p = 0; p < passes.length; p++) {
+      var spec = passes[p];
+      var meshList = ctx.drawList[spec.name];
+      if (meshList && meshList.length > 0) {
+        drawPBRObjects(drawState, device, target, meshList, ctx.bundle, ctx.materials, ctx.frameBindGroup, spec.blend, spec.depthWrite, ctx.pbrBuffers, null);
+      }
+      var instancedList = ctx.instancedDrawList[spec.name];
+      if (instancedList && instancedList.length > 0) {
+        target.setBindGroup(0, ctx.frameBindGroup);
+        drawInstancedMeshes(drawState, device, target, instancedList, ctx.materials, spec.blend, spec.depthWrite);
+      }
+    }
+  }

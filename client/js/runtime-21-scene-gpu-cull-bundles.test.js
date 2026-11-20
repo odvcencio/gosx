@@ -1065,13 +1065,13 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The dispatch hook must call updateInstancedCullSystems.
-  assert.match(webgpu, /updateInstancedCullSystems\(bundle\.instancedMeshes,\s*encoder,\s*uniformState\.scratchSelenaViewProjection\)/,
+  assert.match(webgpu, /updateInstancedCullSystems\(drawState,\s*device,\s*bundle\.instancedMeshes,\s*encoder,\s*uniformState\.scratchSelenaViewProjection\)/,
     "frame loop must call updateInstancedCullSystems with instancedMeshes, encoder, and scratchSelenaViewProjection");
 
   // The frame loop must call it AFTER uploadFrameUniforms (so VP is ready) and
   // BEFORE the shadow and main render passes.
   const uploadPos = webgpu.indexOf("var cam = uploadFrameUniforms(");
-  const cullPos   = webgpu.indexOf("updateInstancedCullSystems(bundle.instancedMeshes");
+  const cullPos   = webgpu.indexOf("updateInstancedCullSystems(drawState, device, bundle.instancedMeshes");
   // Use the call site, not the function definition — the definition appears first
   // in the file but runs only when invoked. The call constructs a shadow-view
   // descriptor; the definition only names its shadowResource parameter.
@@ -1840,8 +1840,8 @@ test("telemetry T6: 16a pollSurvivors is called BEFORE requestSurvivorReadback i
 
   // Use the LAST occurrence of "return instancedCullSystems;" as the block boundary
   // (there is an earlier early-return for the empty-meshes case that must be excluded).
-  const gcEnd = webgpu.lastIndexOf("return instancedCullSystems;");
-  assert.ok(gcEnd > 0, "must find return instancedCullSystems");
+  const gcEnd = webgpu.lastIndexOf("return drawState.instancedCullSystems;");
+  assert.ok(gcEnd > 0, "must find return drawState.instancedCullSystems");
   const telemetryRegion = webgpu.slice(0, gcEnd);
 
   // Use lastIndexOf so we find the occurrences inside the telemetry block (not
