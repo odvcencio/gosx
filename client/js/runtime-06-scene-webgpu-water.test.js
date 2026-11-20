@@ -214,16 +214,16 @@ test("bootstrap preserves Scene3D point maxPixelSize from GLB extras", () => {
 test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
   const source = readSceneRendererBackendSrc("webgpu");
 
-  assert.match(source, /function publishWebGPUFrameStats\(stats\s*\)/);
+  assert.match(source, /function publishWebGPUFrameStats\(telemetryState\s*, stats\s*\)/);
   assert.match(source, /gpuTimingFrameSeq: 0, webGPUFrameSeq: 0/);
-  assert.match(source, /timingState\.webGPUFrameSeq \+= 1/);
+  assert.match(source, /telemetryState\.timing\.webGPUFrameSeq \+= 1/);
   assert.match(source, /data-gosx-scene3d-webgpu-frame-seq/);
   assert.match(source, /data-gosx-scene3d-webgpu-frame-at/);
   assert.match(source, /__gosxScene3DWebGPUStats = published/);
-  assert.match(source, /__gosxScene3DWebGPUProof = webGPUFrameProof/);
+  assert.match(source, /__gosxScene3DWebGPUProof = telemetryState\.webGPUFrameProof/);
   assert.match(source, /WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS = 250/);
-  assert.match(source, /var mirrorDiagnostics = verboseTelemetry \|\| webGPUAttributeMount !== mount \|\| diagnosticElapsed < 0 \|\| diagnosticElapsed >= WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS/);
-  assert.match(source, /if \(!mirrorDiagnostics\) \{ scheduleWebGPUAttributeMirror\(\); return; \}/);
+  assert.match(source, /var mirrorDiagnostics = verboseTelemetry \|\| telemetryState\.webGPUAttributeMount !== mount \|\| diagnosticElapsed < 0 \|\| diagnosticElapsed >= WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS/);
+  assert.match(source, /if \(!mirrorDiagnostics\) \{ scheduleWebGPUAttributeMirror\(telemetryState\); return; \}/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-entries/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-instances/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-draw-instances/);
@@ -255,7 +255,7 @@ test("Scene3D WebGPU ignores popErrorScope lifecycle drops", () => {
   assert.match(source, /rendererDeviceStillActive\(scopedDevice\)/);
   assert.match(source, /indexOf\("instance dropped"\) >= 0/);
   assert.match(source, /indexOf\("poperrorscope"\) >= 0/);
-  assert.match(source, /\.catch\(function\(error\) \{[\s\S]*if \(isWebGPUErrorScopeLifecycleMessage\(message\)\) return;[\s\S]*reportWebGPUFrameError\(message\);[\s\S]*\}\);/);
+  assert.match(source, /\.catch\(function\(error\) \{[\s\S]*if \(isWebGPUErrorScopeLifecycleMessage\(message\)\) return;[\s\S]*reportWebGPUFrameError\(telemetryState, message\);[\s\S]*\}\);/);
 });
 
 test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
@@ -1857,7 +1857,7 @@ test("Scene3D WebGPU quality allocation retries with bounded backoff and publish
   assert.match(applyQuality[0], /system\.qualityAllocationFailures \+= 1;[\s\S]*system\.qualityAllocationConsecutiveFailures \+= 1;/);
   assert.match(applyQuality[0], /system\.qualityAllocationNextFrame = timingState\.webGPUFrameSeq \+ Math\.min\(60,\s*Math\.pow\(2, Math\.min\(6, system\.qualityAllocationConsecutiveFailures - 1\)\)\)/);
   assert.match(webgpu, /proof\.waterQualityAllocationPending = stats\.waterQualityAllocationPending \|\| 0;[\s\S]*proof\.waterQualityAllocationFailures = stats\.waterQualityAllocationFailures \|\| 0;[\s\S]*proof\.waterQualityAllocationRetryFrame = stats\.waterQualityAllocationRetryFrame \|\| 0;/);
-  assert.match(webgpu, /wgpuUpdateFrameProof\(published, webGPUFrameProof\)/);
+  assert.match(webgpu, /wgpuUpdateFrameProof\(published, telemetryState\.webGPUFrameProof\)/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-pending/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-failures/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-retry-frame/);

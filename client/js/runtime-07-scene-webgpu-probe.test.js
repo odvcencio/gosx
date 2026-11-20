@@ -133,9 +133,9 @@ test("Scene3D WebGPU supports tiered MSAA render targets", () => {
   assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(sampleCount \|\| 1\)\) \}/);
   assert.match(webgpu, /activeSampleCount = sampleCount/);
   assert.match(webgpu, /mainColorAttachment\.resolveTarget = mainResolveView/);
-  assert.match(webgpu, /function sceneWebGPUCanvasConfiguration\(\)/);
-  assert.match(webgpu, /colorSpace: activePresentation\.colorSpace/);
-  assert.match(webgpu, /config\.toneMapping = \{ mode: activePresentation\.toneMappingMode \}/);
+  assert.match(webgpu, /function sceneWebGPUCanvasConfiguration\(telemetryState\s*\)/);
+  assert.match(webgpu, /colorSpace: telemetryState\.activePresentation\.colorSpace/);
+  assert.match(webgpu, /config\.toneMapping = \{ mode: telemetryState\.activePresentation\.toneMappingMode \}/);
   assert.match(mount, /function sceneWebGPUOptions\(props, capability\)/);
   assert.match(mount, /msaaSamples: requestedSamples > 1 \? 4 : \(antialias \? 4 : 1\)/);
   assert.match(mount, /powerPreference: sceneWebGPUPowerPreference/);

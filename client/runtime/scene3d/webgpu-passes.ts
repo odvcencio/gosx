@@ -3700,3 +3700,445 @@
     }
     return picker.queuePick(x, y, width, height, callback);
   }
+
+  var WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS = 250;
+  function sceneWebGPUCanvasConfiguration(telemetryState: any) {
+    var config = {
+      device: telemetryState.rawDevice,
+      format: telemetryState.presentationFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      alphaMode: telemetryState.activePresentation.alphaMode,
+      colorSpace: telemetryState.activePresentation.colorSpace,
+    };
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (telemetryState.activePresentation.toneMappingMode) {
+      config.toneMapping = { mode: telemetryState.activePresentation.toneMappingMode };
+    }
+    return config;
+  }
+
+  function sceneWebGPUSurfaceKey(telemetryState: any, device: any, canvas) {
+    var p = telemetryState.activePresentation || {};
+    return [
+      canvas ? canvas.width : 0,
+      canvas ? canvas.height : 0,
+      telemetryState.presentationFormat,
+      p.alphaMode,
+      p.colorSpace,
+      p.toneMappingMode || "",
+      device ? "d" : "",
+    ].join("|");
+  }
+
+  // configureWebGPUCanvas reconfigures the canvas swapchain ONLY when the surface
+  // it depends on actually changed (size, format, alpha mode, colour space, tone
+  // mapping, device).
+  //
+  // This used to be called unconditionally on every rendered frame, under a comment
+  // that claimed it reconfigured "if canvas resized" — there was no such check.
+  // GPUCanvasContext.configure() re-creates the drawable; on Metal that is an
+  // expensive, synchronising driver operation, so the water demo paid a fixed
+  // per-frame stall that no amount of reducing its workload could touch: disabling
+  // caustics, reflection, refraction, or cutting the mesh to a quarter of its
+  // vertices all changed the frame rate by nothing, because the cost was never in
+  // the work being drawn. It pinned frames to a multiple of the display refresh on
+  // Apple hardware while D3D12/NVIDIA drivers, which make a redundant configure()
+  // nearly free, showed no symptom at all.
+  function configureWebGPUCanvas(telemetryState: any, device: any, canvas) {
+    var target = canvas || (telemetryState.gpuCtx && telemetryState.gpuCtx.canvas) || null;
+    var key = sceneWebGPUSurfaceKey(telemetryState, device, target);
+    if (key === telemetryState.configuredSurfaceKey) return false;
+    telemetryState.gpuCtx.configure(sceneWebGPUCanvasConfiguration(telemetryState));
+    telemetryState.configuredSurfaceKey = key;
+    return true;
+  }
+
+  function queueWebGPUAttribute(telemetryState: any, name, value) {
+    if (telemetryState.webGPUPendingAttributes[name] === value) return;
+    telemetryState.webGPUPendingAttributes[name] = value;
+    if (!telemetryState.webGPUAttributeFormatting) scheduleWebGPUAttributeMirror(telemetryState);
+  }
+
+  function scheduleWebGPUAttributeMirror(telemetryState: any) {
+    if (telemetryState.rendererResourcesDisposed || telemetryState.webGPUAttributeTimer !== null || typeof setTimeout !== "function") return;
+    var now = (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now();
+    var delay = webGPUVerboseTelemetry() || telemetryState.lastWebGPUDiagnosticAttributeAt == null ? 0 :
+      Math.max(0, WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS - (now - telemetryState.lastWebGPUDiagnosticAttributeAt));
+    telemetryState.webGPUAttributeTimer = setTimeout(function() {
+      telemetryState.webGPUAttributeTimer = null;
+      if (!telemetryState.rendererResourcesDisposed) mirrorWebGPUFrameAttributes(telemetryState);
+    }, delay);
+    // Node harness timers should not retain disposed or static test contexts.
+    if (telemetryState.webGPUAttributeTimer && typeof telemetryState.webGPUAttributeTimer.unref === "function") telemetryState.webGPUAttributeTimer.unref();
+  }
+
+  function mirrorWebGPUAttributes(telemetryState: any, mount) {
+    if (telemetryState.webGPUAttributeTimer !== null) clearTimeout(telemetryState.webGPUAttributeTimer);
+    telemetryState.webGPUAttributeTimer = null;
+    if (telemetryState.webGPUAttributeMount !== mount) {
+      telemetryState.webGPUAttributeMount = mount;
+      telemetryState.webGPUEssentialAttributeCache = Object.create(null);
+    }
+    for (var name in telemetryState.webGPUPendingAttributes) {
+      var value = telemetryState.webGPUPendingAttributes[name];
+      if (telemetryState.webGPUEssentialAttributeCache[name] === value) continue;
+      telemetryState.webGPUEssentialAttributeCache[name] = value;
+      if (value === null) mount.removeAttribute(name);
+      else mount.setAttribute(name, value);
+    }
+  }
+
+  function publishWebGPUFrameStats(telemetryState: any, stats: any) {
+    var mount = telemetryState.canvas && telemetryState.canvas.parentNode;
+    if (!mount) return;
+    telemetryState.timing.webGPUFrameSeq += 1;
+    var published = stats;
+    // Render only into the unpublished buffer, including frames that abort.
+    telemetryState.frameStats = telemetryState.lastWebGPUFrameStats || telemetryState.spareFrameStats;
+    published.lastError = telemetryState.webGPULastError || undefined;
+    published.frameErrorStreak = telemetryState.webGPUConsecutiveFrameErrors || undefined;
+    published.frameSeq = telemetryState.timing.webGPUFrameSeq;
+    published.frameAt = (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now();
+    telemetryState.lastWebGPUFrameStats = published;
+    mount.__gosxScene3DWebGPUStats = published;
+
+    wgpuUpdateFrameProof(published, telemetryState.webGPUFrameProof);
+    mount.__gosxScene3DWebGPUProof = telemetryState.webGPUFrameProof;
+    mirrorWebGPUFrameAttributes(telemetryState);
+  }
+
+  function mirrorWebGPUFrameAttributes(telemetryState: any) {
+    var mount = telemetryState.canvas && telemetryState.canvas.parentNode;
+    if (!mount || typeof mount.setAttribute !== "function") return;
+    var published = telemetryState.lastWebGPUFrameStats;
+    var now = (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now();
+    var verboseTelemetry = webGPUVerboseTelemetry();
+    var diagnosticElapsed = (published && !telemetryState.webGPUFrameAttributesSeeded) || telemetryState.lastWebGPUDiagnosticAttributeAt == null
+      ? Infinity : now - telemetryState.lastWebGPUDiagnosticAttributeAt;
+    var mirrorDiagnostics = verboseTelemetry || telemetryState.webGPUAttributeMount !== mount || diagnosticElapsed < 0 || diagnosticElapsed >= WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS;
+    if (!mirrorDiagnostics) { scheduleWebGPUAttributeMirror(telemetryState); return; }
+    telemetryState.lastWebGPUDiagnosticAttributeAt = now;
+    if (!published) { mirrorWebGPUAttributes(telemetryState, mount); return; }
+    telemetryState.webGPUFrameAttributesSeeded = true;
+    telemetryState.webGPUAttributeFormatting = true;
+    try {
+    // Exact progress and simulation proof live in JS. Mirror existing
+    // attributes at the diagnostic cadence for probes and E2E checks.
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-frame-seq", String(published.frameSeq || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-frame-at", String(published.frameAt || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-systems", String(published.waterSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-compute-dispatches", String(published.waterComputeDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-draw-calls", String(published.waterDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-tick-seq", String(published.waterSimulationTickSeq || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-substep-seq", String(published.waterSolverSubstepSeq || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-dropped-ticks", String(published.waterDroppedTicks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-normal-seq", String(published.waterNormalDispatchSeq || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-state-sync-seq", String(published.waterSampledStateSyncSeq || 0));
+    // M5 at-rest gating (water-parity-campaign): a per-frame count of water
+    // systems currently parked (skipping sim substeps/normal/state-copy/
+    // caustics, retaining last-rendered textures). Exact values stay in JS;
+    // the DOM mirror follows the same cadence as other diagnostics. See
+    // WATER_REST_ENERGY_EPSILON's comment above updateWaterSystems.
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));
+    // Preserve the render-bundle counters used by performance probes.
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-bundle-state", String(published.bundleState || "direct"));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-bundle-reason", String(published.bundleReason || ""));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-bundle-encodes", String(published.bundleEncodes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-bundle-replays", String(published.bundleReplays || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-bundle-draws", String(published.bundleDraws || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-mesh-objects", String(published.retainedMeshObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-mesh-vertices", String(published.retainedMeshVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-world-baked-mesh-objects", String(published.worldBakedMeshObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-world-baked-mesh-vertices", String(published.worldBakedMeshVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-cache-entries", String(published.retainedCacheEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-cache-hits", String(published.retainedCacheHits || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-cache-misses", String(published.retainedCacheMisses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-upload-bytes", String(published.retainedUploadBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-allocations", String(published.retainedAllocations || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-rebuilds", String(published.retainedRebuilds || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-retirements", String(published.retainedRetirements || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-retained-live-bytes", String(published.retainedLiveBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-bundle-build-cpu-ms", String(published.bundleBuildCPUms || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-planner-cpu-ms", String(published.plannerCPUms || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-planner-full-vertex-hash-scans", String(published.plannerFullVertexHashScans || 0));
+    // GPU cull dispatch counters. skipped-dispatches proves the static-scene
+    // fingerprint skip fired.
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-cull-dispatches", String(published.cullDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-cull-skipped-dispatches", String(published.cullSkippedDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-cull-builtin-systems", String(published.cullBuiltinSystems || 0));
+    // Which precision the post chain compiled with. "f16" means the device
+    // negotiated shader-f16 and the blur and FXAA stages run half precision.
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-post-precision", String(published.postPrecision || "none"));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-post-dom-region-bounded-passes", String(published.postDOMRegionBoundedPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-post-dom-region-bounded-skips", String(published.postDOMRegionBoundedSkips || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-post-dom-region-bounded-pixels", String(published.postDOMRegionBoundedPixels || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-last-error", telemetryState.webGPULastError || null);
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-entries", String(published.pointEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-instances", String(published.pointInstances || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-draw-entries", String(published.pointDrawEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-draw-instances", String(published.pointDrawInstances || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-draw-calls", String(published.pointDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-authored-draw-entries", String(published.pointAuthoredDrawEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-authored-draw-instances", String(published.pointAuthoredDrawInstances || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-authored-draw-calls", String(published.pointAuthoredDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-skipped-empty", String(published.pointSkippedEmpty || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-point-skipped-no-positions", String(published.pointSkippedNoPositions || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-entries", String(published.computeParticleEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-instances", String(published.computeParticleInstances || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-draw-entries", String(published.computeParticleDrawEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-draw-instances", String(published.computeParticleDrawInstances || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-draw-calls", String(published.computeParticleDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-authored-draw-entries", String(published.computeParticleAuthoredDrawEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-authored-draw-instances", String(published.computeParticleAuthoredDrawInstances || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-authored-draw-calls", String(published.computeParticleAuthoredDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-authored-candidate-entries", String(published.computeParticleAuthoredCandidateEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-authored-pending-entries", String(published.computeParticleAuthoredPendingEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-authored-failed-entries", String(published.computeParticleAuthoredFailedEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-skipped-empty", String(published.computeParticleSkippedEmpty || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-compute-particle-skipped-not-ready", String(published.computeParticleSkippedNotReady || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-cells", String(published.waterCells || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-vertices", String(published.waterVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-compute-systems", String(published.waterAuthoredComputeSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-compute-dispatches", String(published.waterAuthoredComputeDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-compute-fallbacks", String(published.waterAuthoredComputeFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-compute-systems", String(published.waterSelenaComputeSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-compute-dispatches", String(published.waterSelenaComputeDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-compute-fallbacks", String(published.waterSelenaComputeFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-drop-dispatches", String(published.waterDropDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-drop-dispatch-total", String(published.waterDropDispatchTotal || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-drop-event", String(published.waterLastDropEventID || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-systems", String(published.waterObjectSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-dispatches", String(published.waterObjectDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-event-dispatches", String(published.waterObjectEventDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-event", String(published.waterLastObjectDisplacementEventID || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-spheres", String(published.waterObjectSpheres || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-rounded-systems", String(published.waterRoundedSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-corner-radius", String(published.waterCornerRadius || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-light-dir-x", String(published.waterLightDirX || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-light-dir-y", String(published.waterLightDirY || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-light-dir-z", String(published.waterLightDirZ || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-caustic-systems", String(published.waterCausticSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-caustic-passes", String(published.waterCausticPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-caustic-texture-pixels", String(published.waterCausticTexturePixels || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-caustic-systems", String(published.waterAuthoredCausticSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-caustic-passes", String(published.waterAuthoredCausticPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-caustic-fallbacks", String(published.waterAuthoredCausticFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-caustic-fallback-reason", String(published.waterAuthoredCausticFallbackReason || ""));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-caustic-source-bytes", String(published.waterAuthoredCausticSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-entry-caustic-source-bytes", String(published.waterEntryCausticSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-resolved-caustic-source-bytes", String(published.waterResolvedCausticSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-surface-source-bytes", String(published.waterAuthoredSurfaceSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-entry-surface-source-bytes", String(published.waterEntrySurfaceSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-resolved-surface-source-bytes", String(published.waterResolvedSurfaceSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-manifest-shader-systems", String(published.waterManifestShaderSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-manifest-shader-fields", String(published.waterManifestShaderFields || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-manifest-caustic-source-bytes", String(published.waterManifestCausticSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-manifest-surface-source-bytes", String(published.waterManifestSurfaceSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-bundle-shader-systems", String(published.waterBundleShaderSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-bundle-caustic-source-bytes", String(published.waterBundleCausticSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-bundle-surface-source-bytes", String(published.waterBundleSurfaceSourceBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-passes", String(published.waterObjectTexturePasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-targets", String(published.waterObjectTextureTargets || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-pixels", String(published.waterObjectTexturePixels || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-width", String(published.waterObjectTextureWidth || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-height", String(published.waterObjectTextureHeight || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-pixel-budget", String(published.waterObjectTexturePixelBudget || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-expensive-pass-cadence", String(published.waterExpensivePassCadence || 1));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-quality-allocation-pending", String(published.waterQualityAllocationPending || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-quality-allocation-failures", String(published.waterQualityAllocationFailures || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-quality-allocation-retry-frame", String(published.waterQualityAllocationRetryFrame || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-mesh-passes", String(published.waterObjectTextureMeshPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-mesh-draw-calls", String(published.waterObjectTextureMeshDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-selena-draw-calls", String(published.waterObjectTextureSelenaDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-fallback-passes", String(published.waterObjectTextureFallbackPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-candidate-objects", String(published.waterObjectTextureCandidateObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-selected-objects", String(published.waterObjectTextureSelectedObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-fallback-missing-objects", String(published.waterObjectTextureFallbackMissingObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-fallback-missing-resources", String(published.waterObjectTextureFallbackMissingResources || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-texture-candidate-profile", String(published.waterObjectTextureCandidateProfile || ""));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-shadow-passes", String(published.waterObjectShadowPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-shadow-texture-pixels", String(published.waterObjectShadowTexturePixels || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-shadow-mesh-passes", String(published.waterObjectShadowMeshPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-shadow-mesh-draw-calls", String(published.waterObjectShadowMeshDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-object-shadow-passes", String(published.waterAuthoredObjectShadowPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-object-shadow-fallbacks", String(published.waterAuthoredObjectShadowFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-object-mesh-shadow-passes", String(published.waterAuthoredObjectMeshShadowPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-object-mesh-shadow-fallbacks", String(published.waterAuthoredObjectMeshShadowFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-shadow-fallback-passes", String(published.waterObjectShadowFallbackPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-shadow-fallback-missing-objects", String(published.waterObjectShadowFallbackMissingObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-shadow-fallback-missing-resources", String(published.waterObjectShadowFallbackMissingResources || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-reflection-systems", String(published.waterReflectionSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-refraction-systems", String(published.waterRefractionSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-object-optics-systems", String(published.waterObjectOpticsSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-pool-passes", String(published.waterPoolPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-pool-draw-calls", String(published.waterPoolDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-pool-draw-vertices", String(published.waterPoolDrawVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-pool-tile-texture-loaded", String(published.waterPoolTileTextureLoaded || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-pool-tile-texture-fallbacks", String(published.waterPoolTileTextureFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-pool-tile-texture-pending", String(published.waterPoolTileTexturePending || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-pool-tile-texture-failed", String(published.waterPoolTileTextureFailed || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-pool-passes", String(published.waterAuthoredPoolPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-pool-vertex-passes", String(published.waterAuthoredPoolVertexPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-pool-fragment-passes", String(published.waterAuthoredPoolFragmentPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-pool-fallbacks", String(published.waterAuthoredPoolFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-pool-passes", String(published.waterSelenaPoolPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-pool-fallbacks", String(published.waterSelenaPoolFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-surface-passes", String(published.waterSelenaSurfacePasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-surface-fallbacks", String(published.waterSelenaSurfaceFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-caustic-passes", String(published.waterSelenaCausticPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-caustic-fallbacks", String(published.waterSelenaCausticFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-object-shadow-passes", String(published.waterSelenaObjectShadowPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-object-shadow-fallbacks", String(published.waterSelenaObjectShadowFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-object-mesh-shadow-passes", String(published.waterSelenaObjectMeshShadowPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-selena-object-mesh-shadow-fallbacks", String(published.waterSelenaObjectMeshShadowFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-draw-entries", String(published.waterDrawEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-draw-vertices", String(published.waterDrawVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-surface-mesh-resolution", String(published.waterSurfaceMeshResolution || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-surface-above-draw-calls", String(published.waterSurfaceAboveDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-surface-above-draw-vertices", String(published.waterSurfaceAboveDrawVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-surface-below-draw-calls", String(published.waterSurfaceBelowDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-surface-below-draw-vertices", String(published.waterSurfaceBelowDrawVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-surface-systems", String(published.waterAuthoredSurfaceSystems || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-surface-draw-calls", String(published.waterAuthoredSurfaceDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-surface-vertex-draw-calls", String(published.waterAuthoredSurfaceVertexDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-surface-pending-draw-calls", String(published.waterAuthoredSurfacePendingDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-surface-fallbacks", String(published.waterAuthoredSurfaceFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-authored-surface-fallback-reason", String(published.waterAuthoredSurfaceFallbackReason || ""));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-sky-cube-texture-loaded", String(published.waterSkyCubeTextureLoaded || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-sky-cube-texture-fallbacks", String(published.waterSkyCubeTextureFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-sky-cube-texture-pending", String(published.waterSkyCubeTexturePending || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-sky-cube-texture-failed", String(published.waterSkyCubeTextureFailed || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-mesh-objects", String(published.meshObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-mesh-draw-calls", String(published.meshDrawCalls || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-mesh-view-culled", String(published.meshViewCulled || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-skinned-mesh-objects", String(published.skinnedMeshObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-dispatches", String(published.computedMorphDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-vertices", String(published.computedMorphVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-kernel", String(published.computedMorphKernel || ""));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-dispatches", String(published.elioSkinningDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-vertices", String(published.elioSkinningVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-kernel", String(published.elioSkinningKernel || ""));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-instanced-meshes", String(published.instancedMeshes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-instanced-instances", String(published.instancedInstances || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-line-entries", String(published.lineEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-surface-entries", String(published.surfaceEntries || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-post-effects", String(published.postEffects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-post-ssao-passes", String(published.postSSAOPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-post-dof-passes", String(published.postDOFPasses || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-custom-material-fallbacks", String(published.customMaterialFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-custom-wgsl-fallbacks", String(published.customWGSLFallbacks || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-custom-uniform-fallbacks", String(published.customUniformFallbacks || 0));
+    if (published.customMaterialFallbacks > 0) {
+      queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-custom-material-fallback-reason", "custom-wgsl-hooks-unsupported");
+    } else {
+      queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-custom-material-fallback-reason", null);
+    }
+    // Render-truth surface: backend-neutral attribute names both renderers
+    // write, so probes and deploy gates never branch on which backend won.
+    // Gated on the diagnostics tier -- when it is off nothing here runs and
+    // production pays a single boolean read per diagnostic interval.
+    var truthApi = renderTruth();
+    if (truthApi.enabled()) {
+      truthApi.publish(telemetryState.sink, {
+        backend: "webgpu",
+        postChain: published.postChain,
+        meshSubmitted: published.meshObjects || 0,
+        meshDrawn: published.meshDrawCalls || 0,
+        meshViewCulled: published.meshViewCulled || 0,
+        meshUndrawable: published.meshUndrawable || 0,
+        pointsSubmitted: published.pointEntries || 0,
+        pointsDrawn: published.pointDrawEntries || 0,
+        pointInstancesSubmitted: published.pointInstances || 0,
+        pointInstancesDrawn: published.pointDrawInstances || 0,
+        uniformTime: telemetryState.draw.selenaState.frame.time,
+        adapterInfo: webGPUAdapterInfoSnapshot(),
+      });
+    }
+    // Cull survivor telemetry: written when __gosx_scene3d_cull_telemetry is
+    // enabled; removed otherwise so the attribute is absent in production.
+    if (telemetryState.draw.lastCullSurvivors !== null) {
+      queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-cull-survivors", telemetryState.draw.lastCullSurvivors);
+    } else {
+      queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-cull-survivors", null);
+    }
+    mirrorWebGPUAttributes(telemetryState, mount);      } finally { telemetryState.webGPUAttributeFormatting = false; }
+  }
+
+  function reportWebGPUFrameError(telemetryState: any, message) {
+    var text = String(message || "").slice(0, 500);
+    if (!text) return;
+    // Unlike webGPUErrorReportCount below (capped at 3 lifetime emits so a
+    // persistently-erroring session doesn't spam window.__gosx_emit
+    // forever), webGPUConsecutiveFrameErrors is UNCAPPED and reset to 0 on
+    // the next clean frame (see endWebGPUErrorScope) — it's what the
+    // mount-level resilience watchdog polls via diagnostics().frameErrorStreak
+    // to decide when to demote (tear down post-FX) and, if that doesn't
+    // help, fall back to WebGL.
+    telemetryState.webGPUConsecutiveFrameErrors += 1;
+    // Any error frame breaks a clean streak, however long — the mount
+    // must not restore post-FX on a scene that is still failing.
+    telemetryState.webGPUConsecutiveCleanFrames = 0;
+    telemetryState.webGPULastError = text;
+    var stats = telemetryState.lastWebGPUFrameStats || telemetryState.spareFrameStats;
+    stats.lastError = text;
+    stats.frameErrorStreak = telemetryState.webGPUConsecutiveFrameErrors;
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-last-error", text);
+    mirrorWebGPUFrameAttributes(telemetryState);
+    if (telemetryState.webGPUErrorReportCount >= 3) return;
+    telemetryState.webGPUErrorReportCount += 1;
+    try {
+      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        window.__gosx_emit("error", "scene3d-webgpu", "render-error", {
+          error: text,
+          pointEntries: stats.pointEntries || 0,
+          pointInstances: stats.pointInstances || 0,
+          pointDrawEntries: stats.pointDrawEntries || 0,
+          pointDrawInstances: stats.pointDrawInstances || 0,
+          computeParticleDrawInstances: stats.computeParticleDrawInstances || 0,
+        });
+      }
+    } catch (_err) {}
+  }
+
+  function beginWebGPUErrorScope(telemetryState: any, device: any) {
+    if (!device || telemetryState.pendingWebGPUErrorScope || typeof device.pushErrorScope !== "function") return false;
+    try {
+      device.pushErrorScope("validation");
+      telemetryState.pendingWebGPUErrorScope = true;
+      return true;
+    } catch (_err) {
+      telemetryState.pendingWebGPUErrorScope = false;
+      return false;
+    }
+  }
+
+  function endWebGPUErrorScope(telemetryState: any, device: any, submitted: boolean = false) {
+    if (!device || !telemetryState.pendingWebGPUErrorScope || typeof device.popErrorScope !== "function") return;
+    telemetryState.pendingWebGPUErrorScope = false;
+    try {
+      device.popErrorScope().then(function(error) {
+        if (error) {
+          telemetryState.pipelineGuard.uncaptured({ error: error });
+        } else if (submitted) {
+          telemetryState.webGPUConsecutiveFrameErrors = 0;
+          telemetryState.webGPUConsecutiveCleanFrames += 1;
+          telemetryState.webGPULastError = "";
+          if (telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.lastError) {
+            telemetryState.lastWebGPUFrameStats.lastError = undefined;
+            telemetryState.lastWebGPUFrameStats.frameErrorStreak = undefined;
+            mirrorWebGPUFrameAttributes(telemetryState);
+          }
+        }
+      }).catch(function(error) {
+        var message = error && error.message ? error.message : String(error);
+        if (isWebGPUErrorScopeLifecycleMessage(message)) return;
+        reportWebGPUFrameError(telemetryState, message);
+      });
+    } catch (error) {
+      var message = error && error.message ? error.message : String(error);
+      if (isWebGPUErrorScopeLifecycleMessage(message)) return;
+      reportWebGPUFrameError(telemetryState, message);
+    }
+  }

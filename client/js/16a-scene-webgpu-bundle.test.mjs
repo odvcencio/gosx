@@ -524,7 +524,7 @@ test("the bundle encoder is created with the same formats the main pass uses", (
 test("the direct draw block is skipped only when a bundle carried the frame", () => {
   assert.match(
     webgpuSource,
-    /if \(frameStats\.bundleState === "direct" && \(hasPBRData \|\| hasInstancedData \|\| hasWorldLines \|\| hasSurfaces\)\)/,
+    /if \(telemetryState\.frameStats\.bundleState === "direct" && \(hasPBRData \|\| hasInstancedData \|\| hasWorldLines \|\| hasSurfaces\)\)/,
     "an ineligible or re-encoded frame must still reach the direct path exactly once",
   );
 });
