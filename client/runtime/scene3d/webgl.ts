@@ -5074,6 +5074,10 @@
           gl.generateMipmap(gl.TEXTURE_2D);
           record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          // The extension is queried once per context; the cache key is an expando on gl.
+          if (gl._gosxAniso === undefined) gl._gosxAniso = typeof gl.getExtension === "function" ? gl.getExtension("EXT_texture_filter_anisotropic") : null;
+          var aniso = gl._gosxAniso;
+          if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1));
         } else {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         }
@@ -10679,11 +10683,14 @@
           };
         }
         if (scenePBRObjectRenderPass(mesh, mat) !== renderPass) continue;
-        ip = mat && mat.detail ? sceneWebGLDetailProgram(gl, detailResources, "instanced") : ensureInstancedProgram();
+        var surfaceIP = sceneWebGLSelenaSurfaceProgram(gl, selenaSurfacePrograms, mat, "instanced");
+        if (surfaceIP === false) continue;
+        ip = surfaceIP || (mat && mat.detail ? sceneWebGLDetailProgram(gl, detailResources, "instanced") : ensureInstancedProgram());
         if (!ip) continue;
         gl.useProgram(ip.program); uploadInstancedFrame(ip);
         gl.depthMask(sceneTransmissionDepthWrite(mesh, mat, renderPass === "opaque"));
         uploadMaterial(gl, ip.uniforms, mat, textureCache); sceneWebGLWindUpload(gl, ip, mesh.wind);
+        sceneWebGLUploadSelenaSurface(gl, surfaceIP, mat, selenaUniformValue);
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.

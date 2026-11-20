@@ -1375,7 +1375,7 @@ test("WebGPU specular-intensity loaded map binds the real view and reuses the bi
   callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
   assert.strictEqual(context.__lastUniform.u[41], 1);
   assert.strictEqual(lastBoundResource(calls, 13), view);
-  assert.strictEqual(lastBoundResource(calls, 14), context.linearSampler);
+  assert.deepEqual(JSON.parse(JSON.stringify(lastBoundResource(calls, 14).descriptor)), { addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", maxAnisotropy: 8 }, "material textures get their own anisotropic sampler, not the shared linearSampler");
   const load = calls.loads[calls.loads.length - 1];
   assert.strictEqual(load.url, "spec.png");
   assert.strictEqual(load.role, "specular-intensity");
@@ -1516,7 +1516,7 @@ test("WebGPU specular-color map binds at 15/16 with srgb role and flags 41/51 in
   assert.strictEqual(context.__lastUniform.u[51], 1);
   assert.strictEqual(lastBoundResource(calls, 13), iView);
   assert.strictEqual(lastBoundResource(calls, 15), cView);
-  assert.strictEqual(lastBoundResource(calls, 16), context.linearSampler);
+  assert.deepEqual(JSON.parse(JSON.stringify(lastBoundResource(calls, 16).descriptor)), { addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", maxAnisotropy: 8 }, "material textures get their own anisotropic sampler, not the shared linearSampler");
   const bothLoads = calls.loads.slice(-2);
   assert.ok(bothLoads.some((l) => l.role === "specular-intensity" && l.colorSpace === "linear"));
   assert.ok(bothLoads.some((l) => l.role === "specular-color" && l.colorSpace === "srgb"));
@@ -1604,7 +1604,7 @@ test("signed and zero normal scales survive glTF, object profiles and both rende
     assert.deepEqual([packed[39], packed[43]], expected);
     assert.deepEqual(JSON.parse(JSON.stringify(lastBoundResource(calls, 4).descriptor)), {
       addressModeU: "repeat", addressModeV: "repeat",
-      magFilter: "linear", minFilter: "linear", mipmapFilter: "linear",
+      magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", maxAnisotropy: 8,
     });
     // Numeric sampling oracle for the production shader expressions and uploaded
     // scales: periodic coordinates select the same texel without an image capture.
@@ -1632,14 +1632,16 @@ test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidat
   context.scenePBRTextureLooksHDR = () => false;
   context.scenePBRIsKTX2URL = () => false;
   context.scenePBRNotifyTextureSettled = () => {};
-  const parameters = [];
+  const parameters = [], extQueries = [];
   let mipmaps = 0;
   context.gl = { TEXTURE_2D: 3553, TEXTURE_CUBE_MAP: 34067, TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
     TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243, CLAMP_TO_EDGE: 33071,
     LINEAR: 9729, LINEAR_MIPMAP_LINEAR: 9987, RGBA: 6408, UNSIGNED_BYTE: 5121,
     createTexture: () => ({}), bindTexture() {}, texImage2D() {},
-    getParameter() { return null; }, activeTexture() {},
+    getParameter: (p) => p === 0x84FF ? 4 : null, activeTexture() {},
+    getExtension: (name) => { extQueries.push(name); return name === "EXT_texture_filter_anisotropic" ? { TEXTURE_MAX_ANISOTROPY_EXT: 0x84FE, MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0x84FF } : null; },
     texParameteri: (target, axis, value) => parameters.push([axis, value]),
+    texParameterf: (target, axis, value) => parameters.push([axis, value]),
     generateMipmap: () => mipmaps++, };
   context.cache = new Map();
   const gpu = setupWebGPUMaterialBinding();
@@ -1663,6 +1665,7 @@ test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidat
     assert.ok(parameters.some(([axis, value]) => axis === 10242 && value === wrapS));
     assert.ok(parameters.some(([axis, value]) => axis === 10243 && value === wrapT));
     assert.ok(parameters.some(([axis, value]) => axis === 10241 && value === 9987));
+    assert.ok(parameters.some(([axis, value]) => axis === 0x84FE && value === 4), "anisotropy is min(8, device maximum)");
     gpu.context.material = JSON.parse(JSON.stringify(profile));
     gpu.context.owner = owner;
     const group = callIn(gpu.context, 'createMaterialBindGroup(material, false, owner, null)');
@@ -1677,6 +1680,7 @@ test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidat
   }
   assert.equal(context.cache.size, 4, "one URI with different wrap modes needs distinct WebGL textures");
   assert.equal(mipmaps, 4, "NPOT mipmaps stay enabled in WebGL2");
+  assert.equal(extQueries.length, 1, "the anisotropy extension is queried once per context");
 });
 
 
@@ -1760,7 +1764,7 @@ function setupTextureUploadHarness() {
       this.bindingCalls++;
       this.bindings.set(`${this.activeUnit}:${target}`, texture);
     },
-    texImage2D() { this.uploads++; }, texParameteri() {}, generateMipmap() {},
+    texImage2D() { this.uploads++; }, texParameteri() {}, texParameterf() {}, generateMipmap() {},
   });
   let notifications = 0;
   context.canvas = { dispatchEvent() { notifications++; } };

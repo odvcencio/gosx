@@ -90,6 +90,75 @@ test("WebGL splices the surface hook into the standard PBR fragment", (t) => {
   validate(t, "glslangValidator", [], c.scenePBRFragmentSourceForContext({ getExtension: () => null, getParameter: () => 16 }, shader), ".frag");
 });
 
+test("a surface hook that reads geo.color owns the instance color on both backends", () => {
+  const cases = [["webgpu", "WGSL_PBR_FRAGMENT", "sceneWebGPUSelenaSurfaceFragment", "customFragmentWGSL", /var albedo = gosxS\.baseColor \* in\.instanceColor\.rgb;/, /var albedo = gosxS\.baseColor;/],
+    ["webgl", "SCENE_PBR_FRAGMENT_SOURCE", "sceneWebGLSelenaSurfaceFragment", "customFragment", /vec3 albedo = gosxS\.baseColor \* v_instanceColor\.rgb;/, /vec3 albedo = gosxS\.baseColor;/]];
+  for (const [backend, base, splice, field, multiplied, owned] of cases) {
+    const c = rendererContext(backend);
+    const source = vm.runInContext(base, c);
+    const plain = surfaceMaterial();
+    assert.doesNotMatch(plain[field], /selenaGeo\.color/);
+    assert.match(c[splice](source, plain), multiplied, backend + ": a hook that ignores geo.color keeps the multiply");
+    const reads = surfaceMaterial();
+    reads[field] = reads[field].replace(/(\n  \w+ c = )/, "$1selenaGeo.color.rgb * ");
+    assert.match(reads[field], /selenaGeo\.color\.rgb/);
+    const shader = c[splice](source, reads);
+    assert.match(shader, owned, backend + ": a hook that reads geo.color gets no multiply");
+    assert.doesNotMatch(shader, /baseColor \* (in|v)_?\.?instanceColor/);
+    assert.match(shader, /instanceColor\.a/, "the alpha coverage term stays");
+  }
+});
+
+test("WebGL builds an instanced surface program from the instanced vertex stage", () => {
+  const c = rendererContext("webgl");
+  const sources = [], names = [];
+  const gl = new Proxy({ VERTEX_SHADER: 35633, FRAGMENT_SHADER: 35632, COMPILE_STATUS: 35713, LINK_STATUS: 35714,
+    createShader: (type) => ({ type }), shaderSource: (shader, source) => { shader.source = source; sources.push(source); },
+    getShaderParameter: () => true, createProgram: () => ({}), getProgramParameter: () => true, getExtension: () => null,
+    getAttribLocation: (_p, name) => (names.push(name), names.length), getUniformLocation: (_p, name) => ({ name }),
+  }, { get: (target, key) => key in target ? target[key] : () => null });
+  const cache = new Map();
+  const material = surfaceMaterial();
+  const info = c.sceneWebGLSelenaSurfaceProgram(gl, cache, material, "instanced");
+  assert.ok(info && info.program, "an instanced surface program is built and ready");
+  assert.match(sources[0], /a_instanceMatrix/, "the vertex stage is the instanced one");
+  assert.match(sources[1], /SelenaSurface gosxS = selenaSurface\(/, "the fragment carries the hook");
+  assert.ok(info.attributes.instanceMatrix >= 0 && info.attributes.instanceColor >= 0 && info.uniforms.hasInstanceColor, "instanced locations are cached");
+  assert.ok(Array.isArray(info.surface) && info.surface.length > 0, "the hook's params are bound");
+  assert.equal(c.sceneWebGLSelenaSurfaceProgram(gl, cache, material, "instanced"), info, "one program per hook");
+  const plain = c.sceneWebGLSelenaSurfaceProgram(gl, cache, material, false);
+  assert.notEqual(plain, info, "instanced and static programs are cached apart");
+  assert.equal(c.sceneWebGLSelenaSurfaceProgram(gl, cache, { kind: "standard" }, "instanced"), null);
+  assert.equal(c.sceneWebGLSelenaSurfaceProgram(gl, cache, null, "instanced"), null);
+});
+
+test("WebGPU instanced pipelines take a surface variant's layout and fragment", () => {
+  const source = readSceneRendererBackendSrc("webgpu");
+  const start = source.indexOf("function getPBRInstancedPipeline("), end = source.indexOf("function getPBRInstancedCullPipeline(", start);
+  assert.ok(start >= 0 && end > start);
+  const created = [];
+  const c = createContext({}).context;
+  c.pipelineCache = {}; c.targetFormat = "rgba8unorm"; c.activeSampleCount = 1; c.selectiveBloom = false; c.pbrShadowsActive = true;
+  c.device = {}; c.pbrPipelineLayout = "pbr-layout"; c.detailResources = { pipelineLayout: "detail-layout" }; c.pbrInstancedVertexModule = "instanced-vertex";
+  c.pbrKeyPrefix = () => ""; c.pbrFragment = (detail) => detail ? "detail-frag" : "pbr-frag";
+  c.wgpuPipelineKey = (...parts) => parts.join("|"); c.sceneWebGPUColorTarget = (format) => format;
+  c.wgpuCreatePBRInstancedPipeline = (...args) => (created.push(args), { n: created.length });
+  // The variant choice lives in top-level helpers outside the renderer closure.
+  const helpers = source.slice(source.indexOf("function wgpuInstancedSurface("), source.indexOf("function createSceneWebGPURenderer("));
+  vm.runInContext(ts.transpileModule(helpers + source.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, c);
+  const surface = { key: "surface0", pipelineLayout: "surface-layout", fragment: "surface-frag" };
+  const plain = c.getPBRInstancedPipeline("alpha", false, false), detail = c.getPBRInstancedPipeline("alpha", false, true), hooked = c.getPBRInstancedPipeline("alpha", false, surface);
+  assert.deepEqual(created.map((args) => [args[1], args[3]]), [["pbr-layout", "pbr-frag"], ["detail-layout", "detail-frag"], ["surface-layout", "surface-frag"]]);
+  assert.ok(created.every((args) => args[2] === "instanced-vertex"), "every variant uses the instanced vertex stage");
+  assert.equal(created[2][4], "alpha", "the blend mode reaches the pipeline");
+  assert.equal(c.getPBRInstancedPipeline("alpha", false, surface), hooked, "one pipeline per variant");
+  assert.equal(new Set([plain, detail, hooked]).size, 3);
+  // The surface fragment reads these vertex outputs; the instanced vertex stage must declare them.
+  const c2 = rendererContext("webgpu"), vertex = vm.runInContext("WGSL_PBR_INSTANCED_VERTEX", c2);
+  const output = between(vertex, "struct VertexOutput {", "};");
+  for (const field of ["worldPos", "normal", "uv", "tangent", "bitangent", "instanceColor"]) assert.ok(output.includes(field + ":"), "VertexOutput has " + field);
+});
+
 test("both standard fragments still validate with the shared BRDF", (t) => {
   validate(t, "naga", [], vm.runInContext("WGSL_PBR_FRAGMENT", rendererContext("webgpu")), ".wgsl");
   validate(t, "glslangValidator", [], vm.runInContext("SCENE_PBR_FRAGMENT_SOURCE", rendererContext("webgl")), ".frag");

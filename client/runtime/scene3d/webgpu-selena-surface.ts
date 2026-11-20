@@ -36,7 +36,7 @@ function sceneWebGPUSelenaSurfaceFragment(source: string, material: any) {
   }
   const out = source.replace("fn gosxPBRColor(in: VertexOutput) -> vec4f {", function() { return hook + "\nfn gosxPBRColor(in: VertexOutput) -> vec4f {"; })
     .replace(/[ \t]*var albedo = material\.albedo;[\s\S]*?(?=[ \t]*if \(material\.unlit != 0u\) \{)/, `    let gosxS = selenaSurface(SelenaSurfaceGeo(in.worldPos, normalize(in.normal), in.uv, in.tangent, in.bitangent, normalize(frame.cameraPos - in.worldPos), in.instanceColor));
-    var albedo = gosxS.baseColor * in.instanceColor.rgb;
+    var albedo = gosxS.baseColor${hook.indexOf("selenaGeo.color") < 0 ? " * in.instanceColor.rgb" : ""};
     let finalOpacity = material.opacity * clamp(in.instanceColor.a, 0.0, 1.0);
     let cutoff = material.alphaCutoff;
     let alphaEnabled = cutoff >= 0.0;

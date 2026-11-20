@@ -3113,7 +3113,6 @@
   var wgpuMaterialSamplerCache = new WeakMap();
   function wgpuMaterialSampler(device, linearSampler, rawDescriptor, role) {
     var descriptor = wgpuTextureDescriptor(rawDescriptor, "", role, "linear");
-    if (descriptor.wrapS === 33071 && descriptor.wrapT === 33071) return linearSampler;
     var cache = wgpuMaterialSamplerCache.get(device);
     if (!cache) {
       cache = new Map();
@@ -3126,7 +3125,7 @@
       }
       cache.set(key, device.createSampler({
         addressModeU: addressMode(descriptor.wrapS), addressModeV: addressMode(descriptor.wrapT),
-        magFilter: "linear", minFilter: "linear", mipmapFilter: "linear",
+        magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", maxAnisotropy: 8,
       }));
     }
     return cache.get(key);
@@ -6493,6 +6492,21 @@
     return webGPUPerformanceTelemetry() || (typeof window !== "undefined" && window.__gosx_scene3d_cull_telemetry === true);
   }
 
+  // An instanced PBR batch draws with the plain program, the detail variant
+  // (detail === true) or a Selena surface variant (an object). These helpers
+  // keep that choice out of the renderer closure.
+  function wgpuInstancedSurface(variant: any) { return variant && variant !== true ? variant : null; }
+  function wgpuInstancedPipelineParts(detail: any, plainLayout: any, detailResources: any, pbrFragment: any) {
+    const surface = wgpuInstancedSurface(detail);
+    if (surface) return { name: surface.key + ":pbr-instanced", layout: surface.pipelineLayout, fragment: surface.fragment };
+    if (detail) return { name: "pbr-instanced-detail", layout: detailResources.pipelineLayout, fragment: pbrFragment(true) };
+    return { name: "pbr-instanced", layout: plainLayout, fragment: pbrFragment(false) };
+  }
+  function wgpuBindInstancedSurfaceGroup(pass: any, device: any, resources: any, material: any, surface: any, frame: any) {
+    if (surface && surface.groupLayout) pass.setBindGroup(2, sceneWebGPUSelenaSurfaceGroup(device, resources, material, surface, frame));
+  }
+  function wgpuInstancedCullReady(cullSys: any, surface: any) { return Boolean(cullSys && cullSys.isReady() && !surface); }
+
   function createSceneWebGPURenderer(canvas, options) {
     function sceneWebGPUFactoryFailure(reason) {
       var text = String(reason || "unknown");
@@ -8257,9 +8271,9 @@
       for (var mesh of bundle.instancedMeshes || []) {
         var material = instancedMeshMaterial(mesh, materials);
         var meshBlend = scenePBRObjectRenderPass(mesh, material);
-        var meshDepth = sceneTransmissionDepthWrite(mesh, material, meshBlend === "opaque"), meshDetail = Boolean(material && material.detail);
+        var meshDepth = sceneTransmissionDepthWrite(mesh, material, meshBlend === "opaque"), meshDetail = pbrVariant(material);
         getPBRInstancedPipeline(meshBlend, meshDepth, meshDetail);
-        if (instancedMeshUsesCull(mesh)) getPBRInstancedCullPipeline(meshBlend, meshDepth, meshDetail);
+        if (instancedMeshUsesCull(mesh)) getPBRInstancedCullPipeline(meshBlend, meshDepth, meshDetail === true);
         if (shadows && mesh.castShadow) getShadowInstancedPipeline();
       }
       if (bundle.waterSystems && bundle.waterSystems.length) ensureWaterPipelines();
@@ -8308,10 +8322,12 @@
       return pipeline;
     }
 
-    function getPBRInstancedPipeline(blendMode, depthWrite, detail = false) {
-      var key = pbrKeyPrefix(detail) + wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+    // detail: true for the detail variant, a Selena surface variant object, or false.
+    function getPBRInstancedPipeline(blendMode, depthWrite, detail: any = false) {
+      var parts = wgpuInstancedPipelineParts(detail, pbrPipelineLayout, detailResources, pbrFragment);
+      var key = pbrKeyPrefix(!!detail) + wgpuPipelineKey(parts.name, blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, pbrFragment(detail), blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedPipeline(device, parts.layout, pbrInstancedVertexModule, parts.fragment, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -16231,10 +16247,11 @@
         var geom = getInstancedGeometry(mesh);
         if (!geom || geom.vertexCount <= 0) continue;
 
-        var mat = instancedMeshMaterial(mesh, materials);
+        var mat = instancedMeshMaterial(mesh, materials), variant = pbrVariant(mat), surface = wgpuInstancedSurface(variant);
         var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
         pass.setBindGroup(1, createMaterialBindGroup(mesh.wind ? Object.assign({}, mat, { wind: mesh.wind }) : mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
         if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, detailResources, mat, detailEnabled));
+        else wgpuBindInstancedSurfaceGroup(pass, device, selenaSurfaces, mat, surface, selenaFrame);
         if (webGPUGPUDrivenHost().drawMesh(pass, mesh, meshDepthWrite)) continue;
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
@@ -16243,7 +16260,7 @@
         var cullRecord = instancedMeshUsesCull(mesh) ? instancedCullSystems.get(meshId) : null;
         var cullSys = cullRecord && cullRecord.system;
 
-        if (cullSys && cullSys.isReady()) {
+        if (wgpuInstancedCullReady(cullSys, surface)) {
           // GPU-culled path: slot 4 = outputBuf (80B InstanceRecord, cull layout).
           // Use the cull pipeline (loc 8 = pickData vec4u) instead of the
           // standard pipeline (loc 8 = instanceColor vec4f).
@@ -16256,7 +16273,7 @@
           pass.drawIndirect(cullSys.drawArgsBuf, 0);
         } else {
           // Draw-all path (not-ready, no kernel, or capability absent).
-          pass.setPipeline(wgpuRequirePipeline(getPBRInstancedPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail))));
+          pass.setPipeline(wgpuRequirePipeline(getPBRInstancedPipeline(blendMode, meshDepthWrite, variant)));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
