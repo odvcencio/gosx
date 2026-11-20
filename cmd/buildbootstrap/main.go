@@ -1474,6 +1474,9 @@ func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
 		options.MangleProps = webGLPrivatePropertyPattern
 		options.MangleQuoted = esbuild.MangleQuotedTrue
+	} else if entry.name == "bootstrap-feature-scene3d-webgpu.js" {
+		options.MangleProps = webGPUPrivatePropertyPattern
+		options.MangleQuoted = esbuild.MangleQuotedTrue
 	}
 	result := esbuild.Transform(input, options)
 	if len(result.Errors) > 0 {

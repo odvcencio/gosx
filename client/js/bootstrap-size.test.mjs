@@ -2063,7 +2063,8 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, step 14a: the closure's remaining helpers, lifecycle and post-processing toggles leave the renderer closure on the state objects): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 146534; only this exhausted target moves (139199 -> 139556), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured bootstrap-feature-scene3d-webgpu.js raw 563040; only this exhausted target moves (532684 -> 536228), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 146604; only this exhausted target moves (139556 -> 139622), allowance unchanged.
-    raw: 536228, gzip: 139622,
+    // 20 November 2026 (WebGPU renderer split, property renaming: esbuild renames 215 private state-object fields in this chunk only): measured raw 539995, gzip 144270, brotli 121698; lock in the saving, targets drop to their exact minima (raw 536228 -> 514281, gzip 139622 -> 137400, brotli 117449 -> 115902), allowances unchanged.
+    raw: 514281, gzip: 137400,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -2093,7 +2094,7 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, step 13: telemetry attributes, frame statistics, error scopes and canvas configuration leave the renderer closure with an explicit telemetry state object): measured bootstrap-feature-scene3d-webgpu.js.br brotli 122675; only this exhausted target moves (116348 -> 116833), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14a: the closure's remaining helpers, lifecycle and post-processing toggles leave the renderer closure on the state objects): measured bootstrap-feature-scene3d-webgpu.js.br brotli 122755; only this exhausted target moves (116833 -> 116909), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured bootstrap-feature-scene3d-webgpu.js.br brotli 123322; only this exhausted target moves (116909 -> 117449), allowance unchanged.
-    brotli: 117449 },
+    brotli: 115902 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
