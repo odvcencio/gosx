@@ -1085,7 +1085,9 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured bootstrap.js.gz gzip 610887; only this exhausted target moves (594016 -> 594503), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured bootstrap.js raw 2166304; only this exhausted target moves (2093976 -> 2100768), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured bootstrap.js.gz gzip 611842; only this exhausted target moves (594503 -> 595458), allowance unchanged.
-    file: "bootstrap.js", raw: 2100768, gzip: 595458,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured bootstrap.js raw 2167875; only this exhausted target moves (2100768 -> 2102339), allowance unchanged.
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured bootstrap.js.gz gzip 611899; only this exhausted target moves (595458 -> 595515), allowance unchanged.
+    file: "bootstrap.js", raw: 2102339, gzip: 595515,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1104,7 +1106,8 @@ const budgets = [
     // 20 November 2026 (gear on joints and per-model material values for athletes, owner-approved 19 Nov 2026): measured bootstrap.js brotli 498284; the target rises by exactly the measured overage (481318 -> 481900), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured bootstrap.js.br brotli 498399; only this exhausted target moves (481900 -> 482015), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured bootstrap.js.br brotli 498824; only this exhausted target moves (482015 -> 482440), allowance unchanged.
-    brotli: 482440 },
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured bootstrap.js.br brotli 499040; only this exhausted target moves (482440 -> 482656), allowance unchanged.
+    brotli: 482656 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -2022,7 +2025,9 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 142159; only this exhausted target moves (134809 -> 135389), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured bootstrap-feature-scene3d-webgpu.js raw 530950; only this exhausted target moves (499000 -> 505666), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 143037; only this exhausted target moves (135389 -> 136225), allowance unchanged.
-    raw: 505666, gzip: 136225,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured bootstrap-feature-scene3d-webgpu.js raw 532588; only this exhausted target moves (505666 -> 507226), allowance unchanged.
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 143180; only this exhausted target moves (136225 -> 136361), allowance unchanged.
+    raw: 507226, gzip: 136361,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -2041,7 +2046,8 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured bootstrap-feature-scene3d-webgpu.js.br brotli 118750; only this exhausted target moves (112981 -> 113095), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured bootstrap-feature-scene3d-webgpu.js.br brotli 119089; only this exhausted target moves (113095 -> 113418), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured bootstrap-feature-scene3d-webgpu.js.br brotli 119804; only this exhausted target moves (113418 -> 114099), allowance unchanged.
-    brotli: 114099 },
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured bootstrap-feature-scene3d-webgpu.js.br brotli 119959; only this exhausted target moves (114099 -> 114246), allowance unchanged.
+    brotli: 114246 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -2614,7 +2620,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D Chromium route (WebGPU, with labels) raw 1581810; only this exhausted target moves (1513881 -> 1516274), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D Chromium route (WebGPU, with labels) raw 1585190; only this exhausted target moves (1516274 -> 1519654), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D Chromium route (WebGPU, with labels) raw 1592190; only this exhausted target moves (1519654 -> 1526654), allowance unchanged.
-    raw: 1526654,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D Chromium route (WebGPU, with labels) raw 1593828; only this exhausted target moves (1526654 -> 1528292), allowance unchanged.
+    raw: 1528292,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route (WebGPU, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 427783 bytes; only this exhausted target moves (411074 -> 411399), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route (WebGPU, with labels) gzip 439916; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route (WebGPU, with labels) gzip measures 430169 bytes; only this exhausted target moves (411399 -> 413785), allowance unchanged.
@@ -2637,7 +2644,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 443797; only this exhausted target moves (426897 -> 427413), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 444406; only this exhausted target moves (427413 -> 428022), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 445284; only this exhausted target moves (428022 -> 428900), allowance unchanged.
-    gzip: 428900,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 445427; only this exhausted target moves (428900 -> 429043), allowance unchanged.
+    gzip: 429043,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2662,7 +2670,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D Chromium route (WebGPU, with labels).br brotli 380658; only this exhausted target moves (364155 -> 364274), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D Chromium route (WebGPU, with labels).br brotli 380997; only this exhausted target moves (364274 -> 364613), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D Chromium route (WebGPU, with labels).br brotli 381712; only this exhausted target moves (364613 -> 365328), allowance unchanged.
-    brotli: 365328,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D Chromium route (WebGPU, with labels).br brotli 381867; only this exhausted target moves (365328 -> 365483), allowance unchanged.
+    brotli: 365483,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -3174,7 +3183,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1894792; only this exhausted target moves (1826863 -> 1829256), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1898172; only this exhausted target moves (1829256 -> 1832636), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1905172; only this exhausted target moves (1832636 -> 1839636), allowance unchanged.
-    raw: 1839636,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) raw 1906810; only this exhausted target moves (1839636 -> 1841274), allowance unchanged.
+    raw: 1841274,
     // 2026-11-09 Selena scene lighting: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 517576 bytes; only this exhausted target moves (500351 -> 501192), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip 534654; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Chromium route after a WebGPU device loss (both backends, with labels) gzip measures 522257 bytes; only this exhausted target moves (501192 -> 505873), allowance unchanged.
@@ -3197,7 +3207,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 537267; only this exhausted target moves (520367 -> 520883), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 537876; only this exhausted target moves (520883 -> 521492), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 538754; only this exhausted target moves (521492 -> 522370), allowance unchanged.
-    gzip: 522370,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 538897; only this exhausted target moves (522370 -> 522513), allowance unchanged.
+    gzip: 522513,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -3222,7 +3233,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 461597; only this exhausted target moves (445094 -> 445213), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 461936; only this exhausted target moves (445213 -> 445552), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 462651; only this exhausted target moves (445552 -> 446267), allowance unchanged.
-    brotli: 446267,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 462806; only this exhausted target moves (446267 -> 446422), allowance unchanged.
+    brotli: 446422,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -3432,7 +3444,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1423842; only this exhausted target moves (1355913 -> 1358306), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1427222; only this exhausted target moves (1358306 -> 1361686), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1434222; only this exhausted target moves (1361686 -> 1368686), allowance unchanged.
-    raw: 1368686,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) raw 1435860; only this exhausted target moves (1368686 -> 1370324), allowance unchanged.
+    raw: 1370324,
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 383698 bytes; only this exhausted target moves (366989 -> 367314), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395831; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 9 November 2026 (unshadowed PBR fragment for frames without a shadow slot): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels) gzip 395963; only this exhausted target moves (379447 -> 379579) under the unchanged allowance.
@@ -3460,7 +3473,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 399600; only this exhausted target moves (382700 -> 383216), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 400209; only this exhausted target moves (383216 -> 383825), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 401087; only this exhausted target moves (383825 -> 384703), allowance unchanged.
-    gzip: 384703,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 401230; only this exhausted target moves (384703 -> 384846), allowance unchanged.
+    gzip: 384846,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
@@ -3483,7 +3497,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU frame and pass timing): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 340340; only this exhausted target moves (324020 -> 324133), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU mesh, skinning, and morph helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 340679; only this exhausted target moves (324133 -> 324456), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract webgpu uniform and bind group helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 341394; only this exhausted target moves (324456 -> 325137), allowance unchanged.
-    brotli: 325137,
+    // 19 November 2026 (WebGPU renderer split, rebased: refactor(scene3d): extract WebGPU target and pipeline helpers): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 341549; only this exhausted target moves (325137 -> 325284), allowance unchanged.
+    brotli: 325284,
   },
 
 ];

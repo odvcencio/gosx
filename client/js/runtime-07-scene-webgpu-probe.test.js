@@ -128,7 +128,7 @@ test("Scene3D WebGPU supports tiered MSAA render targets", () => {
   const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.ts"), "utf8");
 
   assert.match(webgpu, /function createSceneWebGPURenderer\(canvas, options\)/);
-  assert.match(webgpu, /function ensureMSAAColor\(width, height, sampleCount\)/);
+  assert.match(webgpu, /function ensureMSAAColor\(pipeState\s*, device\s*, targetFormat\s*, width\s*, height\s*, sampleCount\s*\)/);
   assert.match(webgpu, /sampleCount: sampleCount/);
   assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(sampleCount \|\| 1\)\) \}/);
   assert.match(webgpu, /activeSampleCount = sampleCount/);

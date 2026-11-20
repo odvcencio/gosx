@@ -1659,3 +1659,81 @@
       ],
     });
   }
+
+  // Ensure main depth texture matches canvas size.
+  function ensureMainDepth(pipeState: any, device: any, width: any, height: any, sampleCount: any) {
+    sampleCount = Math.max(1, Math.floor(sampleCount || 1));
+    if (pipeState.mainDepthTexture && pipeState.mainDepthWidth === width && pipeState.mainDepthHeight === height && pipeState.mainDepthSampleCount === sampleCount) return;
+    if (pipeState.mainDepthTexture) pipeState.mainDepthTexture.destroy();
+    pipeState.mainDepthTexture = device.createTexture({
+      size: [width, height, 1],
+      format: "depth24plus",
+      sampleCount: sampleCount,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    pipeState.mainDepthView = pipeState.mainDepthTexture.createView();
+    pipeState.mainDepthWidth = width;
+    pipeState.mainDepthHeight = height;
+    pipeState.mainDepthSampleCount = sampleCount;
+  }
+
+  function ensureMSAAColor(pipeState: any, device: any, targetFormat: any, width: any, height: any, sampleCount: any) {
+    sampleCount = Math.max(1, Math.floor(sampleCount || 1));
+    if (sampleCount <= 1) return null;
+    if (
+      pipeState.mainMSAATexture &&
+      pipeState.mainMSAAWidth === width &&
+      pipeState.mainMSAAHeight === height &&
+      pipeState.mainMSAASampleCount === sampleCount && pipeState.mainMSAAFormat === targetFormat
+    ) {
+      return pipeState.mainMSAAView;
+    }
+    if (pipeState.mainMSAATexture) pipeState.mainMSAATexture.destroy();
+    pipeState.mainMSAATexture = device.createTexture({
+      size: [width, height, 1],
+      format: targetFormat,
+      sampleCount: sampleCount,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    pipeState.mainMSAAView = pipeState.mainMSAATexture.createView();
+    pipeState.mainMSAAWidth = width;
+    pipeState.mainMSAAHeight = height;
+    pipeState.mainMSAASampleCount = sampleCount;
+    pipeState.mainMSAAFormat = targetFormat;
+    return pipeState.mainMSAAView;
+  }
+
+  function ensureElioSkinPipeline(pipeState: any, meshState: any, device: any) {
+    if (meshState.elioSkinPipeline) return;
+    pipeState.elioSkinShaderModule = device.createShaderModule({ label: "elio-skin-lbs", code: SCENE_ELIO_SKIN_LBS_SOURCE });
+    meshState.elioSkinPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+      label: "gosx-elio-skin-lbs",
+      layout: pipeState.elioSkinPipelineLayout,
+      compute: { module: pipeState.elioSkinShaderModule, entryPoint: "skin" },
+    });
+  }
+
+  function ensureComputedMorphPipeline(pipeState: any, meshState: any, device: any) {
+    if (meshState.computedMorphPipeline) return;
+    pipeState.computedMorphShaderModule = device.createShaderModule({ label: "computed-morph", code: SCENE_COMPUTED_MORPH_SOURCE });
+    meshState.computedMorphPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+      label: "gosx-computed-morph",
+      layout: pipeState.computedMorphPipelineLayout,
+      compute: { module: pipeState.computedMorphShaderModule, entryPoint: "morphPose" },
+    });
+  }
+
+  function getShadowPipeline(pipeState: any, device: any, reflected?: any) {
+    if (reflected) {
+      if (!pipeState.shadowReflectedPipeline) pipeState.shadowReflectedPipeline = wgpuCreateShadowPipeline(device, pipeState.shadowBindGroupLayout, pipeState.shadowVertexModule, "cw");
+      return pipeState.shadowReflectedPipeline;
+    }
+    if (!pipeState.shadowPipeline) pipeState.shadowPipeline = wgpuCreateShadowPipeline(device, pipeState.shadowBindGroupLayout, pipeState.shadowVertexModule, "ccw");
+    return pipeState.shadowPipeline;
+  }
+
+  function getShadowInstancedPipeline(pipeState: any, device: any) {
+    if (pipeState.shadowInstancedPipeline) return pipeState.shadowInstancedPipeline;
+    pipeState.shadowInstancedPipeline = wgpuCreateShadowInstancedPipeline(device, pipeState.shadowBindGroupLayout, pipeState.shadowInstancedVertexModule, pipeState.shadowFragmentModule);
+    return pipeState.shadowInstancedPipeline;
+  }

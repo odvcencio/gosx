@@ -6662,10 +6662,14 @@
     var pointsAuthoredUserUniformBGL = null;
     var pointsAuthoredVertexPipelineLayout = null;   // [frame, userUniform, pointsUniform] for Points layers
     var pointsAuthoredStoragePipelineLayout = null;  // [frame, userUniform, pointsStorage] for ComputeParticle render
-    var shadowBindGroupLayout = null;
+    var pipeState: any = {
+      mainDepthTexture: null, mainDepthView: null, mainDepthWidth: 0, mainDepthHeight: 0, mainDepthSampleCount: 1,
+      mainMSAATexture: null, mainMSAAView: null, mainMSAAWidth: 0, mainMSAAHeight: 0, mainMSAASampleCount: 1, mainMSAAFormat: "",
+      shadowPipeline: null, shadowReflectedPipeline: null, shadowInstancedPipeline: null,
+      shadowBindGroupLayout: null, shadowVertexModule: null, shadowInstancedVertexModule: null, shadowFragmentModule: null,
+      elioSkinPipelineLayout: null, computedMorphPipelineLayout: null, elioSkinShaderModule: null, computedMorphShaderModule: null,
+    };
     var pbrPipelineLayout = null;
-    var elioSkinPipelineLayout: any = null;
-    var computedMorphPipelineLayout: any = null;
     var pointsPipelineLayout = null;
     var pointsVertexPipelineLayout = null;
     var selenaPipelineCache = new Map();
@@ -6697,8 +6701,6 @@
     var pbrInstancedVertexModule = null;
     var pbrInstancedCullVertexModule = null;
     var pbrFragmentModule = null, pbrUnshadowedFragmentModule = null, pbrShadowsActive = false; if (typeof window !== "undefined") { window.__gosx_scene3d_asset_ext = window.__gosx_scene3d_asset_ext || {}; window.__gosx_scene3d_asset_ext.uv1 = Object.assign({ gpuWanted() { return ""; }, gpuModules(): any { return null; }, gpuDraw() {}, gpuDispose() {} }, window.__gosx_scene3d_asset_ext.uv1); }
-    var elioSkinShaderModule: any = null;
-    var computedMorphShaderModule: any = null;
     var waterComputeShaderModule: any = null;
     var waterRenderVertexModule: any = null;
     var waterRenderFragmentModule: any = null;
@@ -6725,9 +6727,6 @@
     var waterObjectMeshShadowPipeline: any = null;
     var waterObjectMeshPipelineCache = {};
     var waterPoolPipelineCache = {};
-    var shadowVertexModule = null;
-    var shadowInstancedVertexModule = null;
-    var shadowFragmentModule = null;
     var sceneWorldColorVertexModule = null;
     var sceneClipColorVertexModule = null;
     var sceneColorFragmentModule = null;
@@ -6777,7 +6776,7 @@
       positionBuffer: null, normalBuffer: null, tangentBuffer: null,
       elioSkinBindGroupLayout: null, computedMorphBindGroupLayout: null,
       elioSkinPipeline: null, computedMorphPipeline: null,
-      ensureElioSkinPipeline: ensureElioSkinPipeline, ensureComputedMorphPipeline: ensureComputedMorphPipeline,
+      ensureElioSkinPipeline: function() { return ensureElioSkinPipeline(pipeState, meshState, device); }, ensureComputedMorphPipeline: function() { return ensureComputedMorphPipeline(pipeState, meshState, device); },
     };
     // Hoisted scratches so uniform uploads don't allocate fresh 128-byte
     // ArrayBuffers per entry per frame. The WGSL PointsUniforms layout is
@@ -6908,19 +6907,6 @@
     var shadowFrameBuffer = null;
     var shadowFrameBufferStride = 256;
     var shadowFrameBufferCapacity = 0;
-
-    // Depth texture for main render pass.
-    var mainDepthTexture = null;
-    var mainDepthView = null;
-    var mainDepthWidth = 0;
-    var mainDepthHeight = 0;
-    var mainDepthSampleCount = 1;
-    var mainMSAATexture = null;
-    var mainMSAAView = null;
-    var mainMSAAWidth = 0;
-    var mainMSAAHeight = 0;
-    var mainMSAASampleCount = 1;
-    var mainMSAAFormat = "";
 
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
@@ -7133,16 +7119,16 @@
         pointsAuthoredStoragePipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, pointsAuthoredUserUniformBGL, pointsBindGroupLayout],
         });
-        shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(device);
+        pipeState.shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(device);
 
         // Pipeline layouts.
         pbrPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, gpuRes.materialBindGroupLayout],
         });
-        elioSkinPipelineLayout = device.createPipelineLayout({
+        pipeState.elioSkinPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [meshState.elioSkinBindGroupLayout],
         });
-        computedMorphPipelineLayout = device.createPipelineLayout({
+        pipeState.computedMorphPipelineLayout = device.createPipelineLayout({
           bindGroupLayouts: [meshState.computedMorphBindGroupLayout],
         });
         waterComputePipelineLayout = device.createPipelineLayout({
@@ -7175,9 +7161,9 @@
         pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
         pbrInstancedCullVertexModule = device.createShaderModule({ label: "pbr-instanced-cull-vert", code: WGSL_PBR_INSTANCED_CULL_VERTEX });
         pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT }); pbrUnshadowedFragmentModule = null;
-        shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
-        shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
-        shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
+        pipeState.shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
+        pipeState.shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
+        pipeState.shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
         sceneWorldColorVertexModule = device.createShaderModule({ label: "scene-world-color-vert", code: WGSL_SCENE_WORLD_COLOR_VERTEX });
         sceneClipColorVertexModule = device.createShaderModule({ label: "scene-clip-color-vert", code: WGSL_SCENE_CLIP_COLOR_VERTEX });
         sceneColorFragmentModule = device.createShaderModule({ label: "scene-color-frag", code: WGSL_SCENE_COLOR_FRAGMENT });
@@ -7294,69 +7280,6 @@
       envMapSampler: gpuRes.envMapSampler, linearSampler: gpuRes.linearSampler, liveView: sceneSelenaLiveTextureView, url: wgpuSceneSelenaTextureURL, frame: selenaFrame,
     };
 
-    // Ensure main depth texture matches canvas size.
-    function ensureMainDepth(width, height, sampleCount) {
-      sampleCount = Math.max(1, Math.floor(sampleCount || 1));
-      if (mainDepthTexture && mainDepthWidth === width && mainDepthHeight === height && mainDepthSampleCount === sampleCount) return;
-      if (mainDepthTexture) mainDepthTexture.destroy();
-      mainDepthTexture = device.createTexture({
-        size: [width, height, 1],
-        format: "depth24plus",
-        sampleCount: sampleCount,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-      });
-      mainDepthView = mainDepthTexture.createView();
-      mainDepthWidth = width;
-      mainDepthHeight = height;
-      mainDepthSampleCount = sampleCount;
-    }
-
-    function ensureMSAAColor(width, height, sampleCount) {
-      sampleCount = Math.max(1, Math.floor(sampleCount || 1));
-      if (sampleCount <= 1) return null;
-      if (
-        mainMSAATexture &&
-        mainMSAAWidth === width &&
-        mainMSAAHeight === height &&
-        mainMSAASampleCount === sampleCount && mainMSAAFormat === targetFormat
-      ) {
-        return mainMSAAView;
-      }
-      if (mainMSAATexture) mainMSAATexture.destroy();
-      mainMSAATexture = device.createTexture({
-        size: [width, height, 1],
-        format: targetFormat,
-        sampleCount: sampleCount,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
-      });
-      mainMSAAView = mainMSAATexture.createView();
-      mainMSAAWidth = width;
-      mainMSAAHeight = height;
-      mainMSAASampleCount = sampleCount;
-      mainMSAAFormat = targetFormat;
-      return mainMSAAView;
-    }
-
-    function ensureElioSkinPipeline() {
-      if (meshState.elioSkinPipeline) return;
-      elioSkinShaderModule = device.createShaderModule({ label: "elio-skin-lbs", code: SCENE_ELIO_SKIN_LBS_SOURCE });
-      meshState.elioSkinPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-        label: "gosx-elio-skin-lbs",
-        layout: elioSkinPipelineLayout,
-        compute: { module: elioSkinShaderModule, entryPoint: "skin" },
-      });
-    }
-
-    function ensureComputedMorphPipeline() {
-      if (meshState.computedMorphPipeline) return;
-      computedMorphShaderModule = device.createShaderModule({ label: "computed-morph", code: SCENE_COMPUTED_MORPH_SOURCE });
-      meshState.computedMorphPipeline = wgpuCreateValidatedPipeline(device, "compute", {
-        label: "gosx-computed-morph",
-        layout: computedMorphPipelineLayout,
-        compute: { module: computedMorphShaderModule, entryPoint: "morphPose" },
-      });
-    }
-
     function ensureWaterPipelines() {
       if (waterComputeShaderModule) return;
       waterComputeShaderModule = device.createShaderModule({ label: "gosx-water-compute", code: SCENE_WATER_COMPUTE_SOURCE });
@@ -7466,7 +7389,7 @@
       var passes = prepared && prepared.pbrPasses || buildDrawList(bundle);
       var shadows = Array.isArray(bundle.lights) && bundle.lights.some(function(light: any) { return light.castShadow; });
       pbrShadowsActive = shadows && bundle.lights.some(wgpuShadowCaster);
-      if (shadows) getShadowPipeline(false);
+      if (shadows) getShadowPipeline(pipeState, device, false);
       for (var blend of ["opaque", "alpha", "additive"]) {
         var objects = passes[blend] || [];
         var depth = blend === "opaque";
@@ -7474,9 +7397,9 @@
           var material = materials[object.materialIndex];
           var reflected = sceneWebGPUObjectReflected(object);
           if (!getObjectSelenaPipeline(object, material, blend, depth)) getPBRPipeline(blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", pbrVariant(material));
-          if (shadows && object.castShadow) getShadowPipeline(reflected);
-          if (webGPUObjectIsSkinned(object)) ensureElioSkinPipeline();
-          if (object.computedMorph) ensureComputedMorphPipeline();
+          if (shadows && object.castShadow) getShadowPipeline(pipeState, device, reflected);
+          if (webGPUObjectIsSkinned(object)) ensureElioSkinPipeline(pipeState, meshState, device);
+          if (object.computedMorph) ensureComputedMorphPipeline(pipeState, meshState, device);
         }
       }
       for (var mesh of bundle.instancedMeshes || []) {
@@ -7485,7 +7408,7 @@
         var meshDepth = sceneTransmissionDepthWrite(mesh, material, meshBlend === "opaque"), meshDetail = pbrVariant(material);
         getPBRInstancedPipeline(meshBlend, meshDepth, meshDetail);
         if (instancedMeshUsesCull(mesh)) getPBRInstancedCullPipeline(meshBlend, meshDepth, meshDetail === true);
-        if (shadows && mesh.castShadow) getShadowInstancedPipeline();
+        if (shadows && mesh.castShadow) getShadowInstancedPipeline(pipeState, device);
       }
       if (bundle.waterSystems && bundle.waterSystems.length) ensureWaterPipelines();
       if (post) {
@@ -8297,25 +8220,6 @@
       var pipeline = wgpuCreateThickLinePipeline(device, device.createPipelineLayout({ bindGroupLayouts: [gpuRes.frameBindGroupLayout] }), thickLineVertexModule, thickLineFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
-    }
-
-    // Get or create a shadow pipeline.
-    var shadowPipeline = null;
-    var shadowReflectedPipeline = null;
-    function getShadowPipeline(reflected) {
-      if (reflected) {
-        if (!shadowReflectedPipeline) shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "cw");
-        return shadowReflectedPipeline;
-      }
-      if (!shadowPipeline) shadowPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "ccw");
-      return shadowPipeline;
-    }
-
-    var shadowInstancedPipeline = null;
-    function getShadowInstancedPipeline() {
-      if (shadowInstancedPipeline) return shadowInstancedPipeline;
-      shadowInstancedPipeline = wgpuCreateShadowInstancedPipeline(device, shadowBindGroupLayout, shadowInstancedVertexModule, shadowFragmentModule);
-      return shadowInstancedPipeline;
     }
 
     // Get or create a points pipeline for the given blend mode.
@@ -11826,8 +11730,8 @@
       }
     }
 
-    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
-      var sp = getShadowPipeline();
+    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
+      var sp = getShadowPipeline(pipeState, device);
       if (!sp) return;
       var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
       // Each light owns a base matrix followed by its retained caster matrices.
@@ -11837,7 +11741,7 @@
       var baseMatrixOffset = baseSlot * shadowFrameBufferStride;
       if (!ensureShadowFrameBufferCapacity(Math.max(sceneNumber(shadowResource.arenaSlots, 2) * (objects.length + 1), baseSlot + objects.length + 1))) return;
       device.queue.writeBuffer(shadowFrameBuffer, baseMatrixOffset, lightMatrix, 0, 16);
-      var shadowBG = wgpuShadowFrameBindGroup(device, shadowFrameBindGroups, shadowBindGroupLayout, shadowFrameBuffer);
+      var shadowBG = wgpuShadowFrameBindGroup(device, shadowFrameBindGroups, pipeState.shadowBindGroupLayout, shadowFrameBuffer);
       var shadowPassDescriptor = {
         colorAttachments: [],
         depthStencilAttachment: {
@@ -11895,7 +11799,7 @@
           // so every model-space caster folds in its own transform per draw.
           var reflectedCaster = sceneWebGPUObjectReflected(obj), retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
           if (currentShadowPipeline !== retainedPipelineKind) {
-            pass.setPipeline(wgpuRequirePipeline(getShadowPipeline(reflectedCaster)));
+            pass.setPipeline(wgpuRequirePipeline(getShadowPipeline(pipeState, device, reflectedCaster)));
             currentShadowPipeline = retainedPipelineKind;
           }
           if (!webGPUBindRetainedMeshAttribute(meshState, device, pass, 0, obj, "positions", 3)) continue;
@@ -12361,7 +12265,7 @@
         var geom = getInstancedGeometry(mesh);
         if (!geom || geom.vertexCount <= 0) continue;
         if (!drew) {
-          pass.setPipeline(wgpuRequirePipeline(getShadowInstancedPipeline()));
+          pass.setPipeline(wgpuRequirePipeline(getShadowInstancedPipeline(pipeState, device)));
           drew = true;
         }
         pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedShadowPositionBuffer", geom.positions));
@@ -13897,10 +13801,10 @@
         }
         postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
         if (sampleCount > 1) {
-          mainColorView = ensureMSAAColor(scaledW, scaledH, sampleCount);
+          mainColorView = ensureMSAAColor(pipeState, device, targetFormat, scaledW, scaledH, sampleCount);
           mainResolveView = postTarget.colorView;
-          ensureMainDepth(scaledW, scaledH, sampleCount);
-          mainDepthTargetView = mainDepthView;
+          ensureMainDepth(pipeState, device, scaledW, scaledH, sampleCount);
+          mainDepthTargetView = pipeState.mainDepthView;
         } else {
           mainColorView = postTarget.colorView;
           mainDepthTargetView = postTarget.depthView;
@@ -13908,13 +13812,13 @@
       } else {
         var currentView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
         if (sampleCount > 1) {
-          mainColorView = ensureMSAAColor(width, height, sampleCount);
+          mainColorView = ensureMSAAColor(pipeState, device, targetFormat, width, height, sampleCount);
           mainResolveView = currentView;
         } else {
           mainColorView = currentView;
         }
-        ensureMainDepth(width, height, sampleCount);
-        mainDepthTargetView = mainDepthView;
+        ensureMainDepth(pipeState, device, width, height, sampleCount);
+        mainDepthTargetView = pipeState.mainDepthView;
       }
 
       // Clear color.
@@ -14439,12 +14343,12 @@
       waterPoolPipelineCache = {};
       waterObjectMeshPipelineCache = {};
 
-      destroyRendererGPUResource(mainDepthTexture);
-      mainDepthTexture = null;
-      mainDepthView = null;
-      destroyRendererGPUResource(mainMSAATexture);
-      mainMSAATexture = null;
-      mainMSAAView = null;
+      destroyRendererGPUResource(pipeState.mainDepthTexture);
+      pipeState.mainDepthTexture = null;
+      pipeState.mainDepthView = null;
+      destroyRendererGPUResource(pipeState.mainMSAATexture);
+      pipeState.mainMSAATexture = null;
+      pipeState.mainMSAAView = null;
       destroyRendererGPUResource(dummyShadowTex);
       dummyShadowTex = null;
       dummyShadowView = gpuRes.dummyShadowArrayView = null;
