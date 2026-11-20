@@ -335,8 +335,8 @@ test("Scene3D WebGPU water supports compound sphere object displacement", () => 
   // back to dispatchWaterPass(encoder, system, fallbackPipeline) -- the SAME
   // seedCompute/dropCompute resolved pipeline this test already exercises --
   // when Selena's WGSL+descriptor aren't present on the entry.
-  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "seed", seedCompute\.pipeline\)/);
-  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "drop", dropCompute\.pipeline\)/);
+  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "seed", seedCompute\.pipeline, undefined, waterState, device\)/);
+  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "drop", dropCompute\.pipeline, undefined, waterState, device\)/);
   assert.match(webgpu, /return \{ dispatches: dispatchWaterPass\(encoder, system, fallbackPipeline, sharedPass\), selena: 0, selenaFallback: 0 \};/);
   assert.match(webgpu, /if \(dropDispatches > 0\) \{\s*system\.lastDropEventID = dropEventID;/s);
   assert.match(webgpu, /system\.dropDispatchCount = Math\.max/);
@@ -473,11 +473,11 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
     "retained duck targets must keep the projection matrices they were rendered with across cadence skips");
   assert.match(webgpu, /if \(passSlot === 0\) \{[\s\S]*system\.objectViewProjectionMatrix\.set\(uniformState\.scratchSelenaViewProjection\)[\s\S]*\} else \{[\s\S]*system\.objectReflectionViewProjectionMatrix\.set\(uniformState\.scratchSelenaViewProjection\)/,
     "each alternating target must update only its matching retained projection matrix");
-  assert.match(webgpu, /function getWaterRenderPipeline\(system, surfaceSide, forceBuiltin\)/);
+  assert.match(webgpu, /function getWaterRenderPipeline\(system, surfaceSide, forceBuiltin, waterState\s*, device\s*\)/);
   assert.doesNotMatch(webgpu, /var entry = forceBuiltin \? \{\} : \(system && system\.entry \|\| \{\}\)/);
   assert.doesNotMatch(webgpu, /var vertexSource = forceBuiltin \? "" : sceneWaterAuthoredSurfaceVertexSource\(entry\)/);
-  assert.match(webgpu, /pipelineRecord = getWaterRenderPipeline\(null, side, true\)/);
-  assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin\)/);
+  assert.match(webgpu, /pipelineRecord = getWaterRenderPipeline\(null, side, true, waterState, device\)/);
+  assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin, waterState\s*, device\s*\)/);
   assert.doesNotMatch(webgpu, /getWaterPoolPipeline\(null, true\)/);
   assert.doesNotMatch(webgpu, /label: authored[\s\S]*"gosx-water-" \+ backend \+ "-surface-" \+ side/);
   assert.doesNotMatch(webgpu, /authoredVertex: !!vertexSource/);
@@ -492,10 +492,10 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.doesNotMatch(webgpu, /waterAuthoredSurfacePipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
   assert.match(webgpu, /cullMode: side === "below" \? "back" : "front"/);
   assert.match(webgpu, /label: side === "below" \? "gosx-water-render-below"[\s\S]*?depthWriteEnabled: true/);
-  assert.match(webgpu, /getWaterSelenaMeshDraw\(material, renderContext, system, \{ blendMode: "alpha", depthWrite: true, cullMode: "front" \}\)/);
+  assert.match(webgpu, /getWaterSelenaMeshDraw\(material, renderContext, system, \{ blendMode: "alpha", depthWrite: true, cullMode: "front" \}, waterState, device\)/);
   assert.match(webgpu, /function drawWaterSurfaceSide/);
-  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "above", stats, camera\)/);
-  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "below", stats, camera\)/);
+  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "above", stats, camera, waterState, device\)/);
+  assert.match(webgpu, /drawWaterSurfaceSide\(renderPass, records, frameBindGroup, "below", stats, camera, waterState, device\)/);
   assert.match(webgpu, /waterSurfaceAboveDrawCalls/);
   assert.match(webgpu, /waterSurfaceBelowDrawCalls/);
   assert.match(webgpu, /waterAuthoredSurfaceDrawCalls/);
@@ -531,7 +531,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /label: "gosx-water-pool"/);
   assert.match(webgpu, /waterPoolPipelineLayout = device\.createPipelineLayout/);
   assert.match(webgpu, /waterPoolVertexModule = device\.createShaderModule/);
-  assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin\)/);
+  assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin, waterState\s*, device\s*\)/);
   assert.match(webgpu, /function createWaterPoolBindGroup\(system, buffer, waterState\s*, device\s*\)/);
   // The hand-written data-prop-authored pool pipeline tier
   // (sceneWaterAuthoredPoolVertexSource/FragmentSource, sceneWaterAuthoredShaderSource,
@@ -546,7 +546,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.doesNotMatch(webgpu, /waterAuthoredPoolPipelineFailures = new Set/);
   assert.match(webgpu, /label: "gosx-water-pool-pass"/);
   assert.match(webgpu, /label: "gosx-water-pool-pass"[\s\S]*?primitive: \{ topology: "triangle-list", cullMode: "back" \}/);
-  assert.match(webgpu, /getWaterSelenaMeshDraw\(material, renderContext, system, \{ cullMode: "back" \}\)/);
+  assert.match(webgpu, /getWaterSelenaMeshDraw\(material, renderContext, system, \{ cullMode: "back" \}, waterState, device\)/);
   assert.match(webgpu, /corner == 1u \|\| corner == 2u \|\| corner == 5u/,
     "box pool must face inward so back-face culling hides the exterior shell");
   assert.match(webgpu, /corner == 1u \|\| corner == 4u \|\| corner == 5u/,
@@ -556,14 +556,14 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /fn waterPoolRoundedBoundaryNormal/);
   assert.match(webgpu, /fn waterPoolRoundedVertex/);
   assert.match(webgpu, /roundedPoolVertexCount = 44 \* 9/);
-  assert.match(webgpu, /tileRecord = tileURL \? wgpuLoadTexture\(device, tileURL, gpuRes\.textureCache\) : null/);
+  assert.match(webgpu, /tileRecord = tileURL \? wgpuLoadTexture\(device, tileURL, waterState\.gpuRes\.textureCache\) : null/);
   assert.match(webgpu, /textureSample\(tileTexture, poolSampler, in\.tileUV\)/);
   assert.match(webgpu, /textureSample\(causticTexture, poolSampler, causticUV\)/);
   assert.match(webgpu, /textureSample\(objectShadowTexture, poolSampler, waterUV\)/);
   assert.match(webgpu, /var rounded = wgpuSceneWaterPoolShapeRounded\(entry\) && sceneNumber\(entry\.cornerRadius, 0\) > 0\.0001/);
   assert.match(webgpu, /renderPass\.draw\(vertexCount\)/);
   assert.match(webgpu, /stats\.waterPoolDrawVertices \+= vertexCount/);
-  assert.match(webgpu, /drawWaterPoolEntries\(mainPass, waterUpdateStats\.records, frameBindGroup\)/);
+  assert.match(webgpu, /drawWaterPoolEntries\(mainPass, waterUpdateStats\.records, frameBindGroup, waterState, device\)/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-passes/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-loaded/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-pool-passes/);
@@ -1714,7 +1714,7 @@ test("Scene3D water renderers use one scheduler and bounded balanced-quality wor
   assert.match(webgl, /meshUploadSource === mesh && meshUploadProgram === prog/);
   assert.match(webgpu, /var expensivePassCadence = Math\.max\(1, system\.expensivePassCadence \|\| 1\)/);
   assert.match(webgpu, /system\.waterObjectMoved = objectMoved/);
-  assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*var stepResult = dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline, waterSimPass\)/);
+  assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*var stepResult = dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline, waterSimPass, waterState, device\)/);
   assert.match(webgpu, /optics\.caustics && refreshExpensivePasses/);
   assert.match(webgpu, /selenaPass\.draw\(system\.vertexCount\)/,
     "WebGPU Selena caustics must project the authored water topology");
@@ -1799,8 +1799,8 @@ test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event
   // still gated by runWaterSim so fused work skips identically at rest.
   assert.match(webgpu, /var waterSimPass = encoder\.beginComputePass\(\{ label: "gosx-water-sim-normal-pass" \}\);/);
   assert.match(webgpu, /for \(var waterTick = 0; waterTick < waterClock\.ticks; waterTick\+\+\)[\s\S]*solverStep < 2/);
-  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline, waterSimPass\)/);
-  assert.match(webgpu, /var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal", normalCompute\.pipeline, waterSimPass\);\s*\n\s*waterSimPass\.end\(\);/);
+  assert.match(webgpu, /dispatchWaterComputeStage\(encoder, system, entry, "simulation", simulationCompute\.pipeline, waterSimPass, waterState, device\)/);
+  assert.match(webgpu, /var normalResult = dispatchWaterComputeStage\(encoder, system, entry, "normal", normalCompute\.pipeline, waterSimPass, waterState, device\);\s*\n\s*waterSimPass\.end\(\);/);
   // The substep loop, the rest-energy decay, AND the normal dispatch/pass-end
   // all live inside `if (runWaterSim) {` -- i.e. one gate, one pass, no
   // separate `if (hasSimulationTick && runWaterSim)` gate for normal anymore.

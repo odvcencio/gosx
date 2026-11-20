@@ -1414,7 +1414,7 @@
     };
   }
 
-  function dispatchWaterObjectDisplacementEvents(system, entry, encoder, pipeline, currentTime, waterState: any, device: any, dispatchWaterComputeStage: any) {
+  function dispatchWaterObjectDisplacementEvents(system, entry, encoder, pipeline, currentTime, waterState: any, device: any) {
     if (!system || !encoder || !pipeline) {
       return { dispatches: 0, selena: 0, selenaFallback: 0, lastID: Math.max(0, Math.floor(sceneNumber(system && system.lastObjectDisplacementEventID, 0))) };
     }
@@ -1444,7 +1444,7 @@
       // _waterComputeObjectState -- freshly stashed by the
       // sceneWaterUniformData call immediately above -- for this event's
       // own object state (see sceneWaterDisplacementSelenaRenderContext).
-      var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "displacement", pipeline);
+      var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "displacement", pipeline, undefined, waterState, device);
       var eventDispatches = eventResult.dispatches;
       selenaDispatches += eventResult.selena;
       selenaFallbacks += eventResult.selenaFallback;
@@ -1469,7 +1469,7 @@
   // scalar dispatch below (entry.dropEventID) stays intact as the fallback
   // for any caller that still only supplies the single-shot fields.
 
-  function dispatchWaterDropEvents(system, entry, encoder, pipeline, currentTime, waterState: any, device: any, dispatchWaterComputeStage: any) {
+  function dispatchWaterDropEvents(system, entry, encoder, pipeline, currentTime, waterState: any, device: any) {
     if (!system || !encoder || !pipeline) {
       return { dispatches: 0, selena: 0, selenaFallback: 0, lastID: Math.max(0, Math.floor(sceneNumber(system && system.lastDropEventID, 0))) };
     }
@@ -1488,7 +1488,7 @@
       if (id <= lastID) continue;
       var eventEntry = sceneWaterDropEventEntry(entry, event);
       device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, eventEntry, 0, currentTime, { transientObject: true }, waterState, device));
-      var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "drop", pipeline);
+      var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "drop", pipeline, undefined, waterState, device);
       var eventDispatches = eventResult.dispatches;
       selenaDispatches += eventResult.selena;
       selenaFallbacks += eventResult.selenaFallback;
@@ -2371,4 +2371,810 @@
       }
     }
     return records;
+  }
+
+  // sceneWaterKnotContextArray packs the 65-point trefoil torus-knot
+  // polyline that surface.sel / surface-below.sel's SDF sphere-trace reads
+  // via `context { knot : array<vec4,65> }`. The points depend on NOTHING in
+  // the scene (pure function of the loop index — the shaders used to rebuild
+  // them per FRAGMENT, ~260 transcendentals plus a 1040-byte dynamically
+  // indexed private array that collapsed GPU occupancy), so they are computed
+  // once here and cached module-level. Formula is byte-identical to the old
+  // in-shader loop: theta = ki/64 * 2pi, rad = 0.17*(2+cos(3*theta))*0.5,
+  // point = (rad*cos(2*theta), -0.17*sin(3*theta)*0.5, rad*sin(2*theta), 0).
+  function sceneWaterKnotContextArray(waterState: any) {
+    var out = waterState.sceneWaterKnotArrayCache;
+    if (!out) {
+      // .w of every element stays 0 (Float32Array zero-init), matching the
+      // old vec4f(..., 0.0) fourth component.
+      waterState.sceneWaterKnotArrayCache = out = new Float32Array(65 * 4);
+      for (var ki = 0; ki <= 64; ki++) {
+        var theta = ki / 64.0 * 6.283185307;
+        var rad = 0.17 * (2.0 + Math.cos(3.0 * theta)) * 0.5;
+        var offset = ki * 4;
+        out[offset] = rad * Math.cos(2.0 * theta);
+        out[offset + 1] = -0.17 * Math.sin(3.0 * theta) * 0.5;
+        out[offset + 2] = rad * Math.sin(2.0 * theta);
+      }
+    }
+    return out;
+  }
+
+  // getWaterSelenaMeshDraw resolves the {pipeline, bindGroup} pair for a
+  // mesh/mesh+state-kind Selena water pass, or null if the pipeline/bind
+  // group could not be built (caller falls back to the hand-written path;
+  // this can happen the same way any authored-shader path can fail: WGSL
+  // validation rejection, memoized as a failure by getSelenaPipeline, or a
+  // live resource -- state/texture/grid -- not being ready yet).
+  // pipelineOptions is forwarded to getSelenaPipeline as-is (cullMode/
+  // targetFormat/sampleCount/depthStencil/labelSuffix); blendMode/depthWrite
+  // default to "opaque"/true; pass them explicitly to override. Water
+  // surfaces are alpha blended but deliberately retain depth writes so
+  // pool/object intersections remain stable.
+  function getWaterSelenaMeshDraw(material, renderContext, system, pipelineOptions, waterState: any, device: any) {
+    if (!material) return null;
+    var opts = pipelineOptions || {};
+    var blendMode = typeof opts.blendMode === "string" && opts.blendMode ? opts.blendMode : "opaque";
+    var depthWrite = Object.prototype.hasOwnProperty.call(opts, "depthWrite") ? opts.depthWrite : true;
+    var selenaResource = getSelenaPipeline(waterState.pipeState, waterState.selenaState, device, material, blendMode, depthWrite, opts);
+    if (!selenaResource) return null;
+    var bindGroup = createSelenaBindGroup(waterState.meshState, waterState.selenaState, device, material, selenaResource, system, renderContext);
+    if (!bindGroup) return null;
+    // attrs is forwarded (not just pipeline/bindGroup) so a per-object draw
+    // loop with its own vertex-buffer binding convention (e.g.
+    // drawWaterObjectProjectedShadowObjectsSelena's reuse of
+    // bindWaterObjectSelenaAttributes below) can bind attributes without a
+    // second getSelenaPipeline call.
+    return { pipeline: selenaResource.pipeline, bindGroup: bindGroup, attrs: selenaResource.attrs };
+  }
+
+  // getWaterSelenaPostDraw mirrors getWaterSelenaMeshDraw for a post-kind
+  // Selena water pass (object-shadow/compound-shadow below).
+  function getWaterSelenaPostDraw(material, renderContext, system, pipelineOptions, waterState: any, device: any) {
+    if (!material) return null;
+    var selenaResource = getSelenaPostPipeline(waterState.pipeState, waterState.selenaState, device, material, pipelineOptions);
+    if (!selenaResource) return null;
+    var bindGroup = createSelenaPostBindGroup(waterState.meshState, waterState.selenaState, device, waterState.gpuRes.dummyShadowView, material, selenaResource, system, renderContext);
+    if (!bindGroup) return null;
+    return { pipeline: selenaResource.pipeline, bindGroup: bindGroup };
+  }
+
+  // --- Pool pass (the original template) ----------------------------------
+
+  // sceneWaterPoolSelenaMaterial builds (and memoizes on the system) the
+  // pool pass's Selena material + its per-frame customUniforms (live
+  // render-target resource refs + the tile texture URL).
+  function sceneWaterPoolSelenaMaterial(system, entry, waterState: any, device: any) {
+    var material = sceneWaterSelenaMaterial(system, entry, "poolSelenaWGSL", "pool", "_selenaPoolMaterial");
+    if (!material) return null;
+
+    // Live water render targets (caustics/shadow) are resolved through the
+    // SAME gosx:water:<id>:<slot> resource-ref mechanism the water-object
+    // custom materials already use; the state heightfield resolves through
+    // the descriptor's `state` name ("height", matching pool.sel's
+    // `state height`). The tile texture is a plain user-config URL (not a
+    // live GPU resource), so it is supplied as a literal string, exactly
+    // like createWaterPoolBindGroup's tileTexture handling below.
+    var tileURL = entry && typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+    material.customUniforms = {
+      tileTexture: tileURL,
+      causticTexture: sceneWaterSelenaResourceRef(system, "caustics"),
+      shadowTexture: sceneWaterSelenaResourceRef(system, "shadow"),
+      height: sceneWaterSelenaResourceRef(system, "state"),
+    };
+
+    // Mirror createWaterPoolBindGroup's tile-texture bookkeeping so
+    // diagnostics (waterPoolTileTexture* stats) stay accurate regardless of
+    // which pool path rendered this frame. wgpuLoadTexture is memoized by
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // URL in textureCache, so this is not a duplicate fetch.
+    var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, waterState.gpuRes.textureCache) : null;
+    system.waterPoolTileRequested = !!tileURL;
+    system.waterPoolTileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
+    system.waterPoolTilePending = Boolean(tileRecord && tileRecord.pending && !tileRecord.loaded && !tileRecord.failed);
+    system.waterPoolTileFailed = Boolean(tileRecord && tileRecord.failed);
+
+    return material;
+  }
+
+  // getWaterPoolSelenaDraw resolves the {pipeline, bindGroup} pair for the
+  // generic Selena pool path, or null if the pipeline/bind group could not
+  // be built (caller falls back to the hand-written pool path).
+  function getWaterPoolSelenaDraw(system, entry, waterState: any, device: any) {
+    var material = sceneWaterPoolSelenaMaterial(system, entry, waterState, device);
+    var renderContext = sceneWaterPoolSelenaRenderContext(system);
+    return getWaterSelenaMeshDraw(material, renderContext, system, { cullMode: "back" }, waterState, device);
+  }
+
+  // --- Surface / surface-below passes -------------------------------------
+  //
+  // Drawn by drawWaterSurfaceSide below (WaterSystem-owned code, one call
+  // per "above"/"below" side per system, mirroring the hand-written
+  // getWaterRenderPipeline(system, side)/getWaterRenderBindGroupCached
+  // pattern it sits alongside).
+
+  // sceneWaterSurfaceSelenaMaterial builds the surface pass's Selena
+  // material + customUniforms: the tile/caustic/refraction/reflection/
+  // clipped-reflection live resource refs, the "sky" cube map (a plain URL,
+  // like pool's tileTexture -- resolved via the cube-texture path
+  // sceneSelenaBindGroupLayout/createSelenaBindGroup added for
+  // dimension:"cube" textures), and the "height" state ref. Also mirrors
+  // createWaterRenderBindGroup's tile/sky-cube loaded-state bookkeeping so
+  // diagnostics (waterSurfaceTile*/waterSkyCube* stats) stay accurate
+  // regardless of which surface path rendered this frame.
+  function sceneWaterSurfaceSelenaMaterial(system, entry, wgslField, descKey, memoSlot, waterState: any, device: any) {
+    var material = sceneWaterSelenaMaterial(system, entry, wgslField, descKey, memoSlot);
+    if (!material) return null;
+    var tileURL = entry && typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+    var cubeURL = entry && typeof entry.cubeMap === "string" ? entry.cubeMap.trim() : "";
+    material.customUniforms = {
+      tileTexture: tileURL,
+      causticTexture: sceneWaterSelenaResourceRef(system, "caustics"),
+      sky: cubeURL,
+      objectRefractionTex: sceneWaterSelenaResourceRef(system, "refraction"),
+      objectReflectionTex: sceneWaterSelenaResourceRef(system, "reflection"),
+      objectClippedReflectionTex: sceneWaterSelenaResourceRef(system, "clippedReflection"),
+      height: sceneWaterSelenaResourceRef(system, "state"),
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ };
+    var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, waterState.gpuRes.textureCache) : null;
+    var cubeRecord = cubeURL ? wgpuLoadCubeTexture(device, cubeURL, waterState.gpuRes.textureCache) : null;
+    system.waterSurfaceTileRequested = !!tileURL;
+    system.waterSurfaceTileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
+    system.waterSurfaceTilePending = Boolean(tileRecord && tileRecord.pending && !tileRecord.loaded && !tileRecord.failed);
+    system.waterSurfaceTileFailed = Boolean(tileRecord && tileRecord.failed);
+    system.waterSkyCubeRequested = !!cubeURL;
+    system.waterSkyCubeLoaded = Boolean(cubeRecord && cubeRecord.loaded && cubeRecord.view);
+    system.waterSkyCubePending = Boolean(cubeRecord && cubeRecord.pending && !cubeRecord.loaded && !cubeRecord.failed);
+    system.waterSkyCubeFailed = Boolean(cubeRecord && cubeRecord.failed);
+    return material;
+  }
+
+  // sceneWaterSurfaceSelenaRenderContext builds the per-frame renderContext
+  // shared by the surface AND surface-below passes (surface-below is the
+  // exact same field set minus refractionMatrix/reflectionMatrix/waterColor,
+  // which the generic packer simply won't find in surface-below's
+  // descriptor -- extra renderContext.uniforms entries a material's fields
+  // don't reference are harmless, see sceneSelenaUniformData's
+  // per-declared-field loop).
+  //
+  // waterColor is an AUTHOR `param` on WaterSurface (surface.sel), not a
+  // `context` field, but the generic uniform packer doesn't distinguish
+  // param/context -- it just needs a value from renderContext.uniforms OR
+  // material.customUniforms OR a compiled descriptor default, and
+  // WaterSurface's `param waterColor : vec3` has no literal default (so the
+  // descriptor carries none either), which used to leave it packed as
+  // (0,0,0) via sceneSelenaUniformValue's final "zero" fallback. surface.sel
+  // multiplies the ENTIRE refracted branch (pool floor/walls/caustics/
+  // submerged objects) by waterColor whenever the refraction ray points
+  // down into the water -- the common case when looking down at the pool --
+  // so a zeroed waterColor blacked out refraction/caustics/pool-interior
+  // through the surface, matching the reported near-black regression. Mirror
+  // WebGL2's createWaterRenderBindGroup-equivalent call site
+  // (16-scene-webgl.js's `sceneWaterRenderHexColor(entry.shallowColor, ...)`)
+  // using the shared sceneColorRGBA helper (11-scene-math.ts) both renderers
+  // already use elsewhere (see sceneWaterUniformData's `shallow` derivation
+  // above), so both backends tint the underwater refraction from the SAME
+  // entry.shallowColor config.
+  function sceneWaterSurfaceSelenaRenderContext(system, camera, uniformSlotName, waterState: any) {
+    var entry = (system && system.entry) || {};
+    var light = (system && system.waterLightDir) || { x: 0.3, y: 0.9, z: 0.45 };
+    var half = (system && system.waterObjectHalfSize) || { x: 0, y: 0, z: 0 };
+    var center = (system && system.waterObjectCenter) || { x: 0, y: 0, z: 0 };
+    var optics = (system && system.waterOpticsFlags) || {};
+    var camPos = sceneWaterCameraPosFromCam(camera);
+    var refractionMatrix = (system && system.objectViewProjectionReady) ? system.objectViewProjectionMatrix : waterState.uniformState.scratchSelenaViewProjection;
+    var reflectionMatrix = (system && system.objectReflectionViewProjectionReady) ? system.objectReflectionViewProjectionMatrix : waterState.uniformState.scratchSelenaViewProjection;
+    var fallbackWaterColor = sceneColorRGBA(entry.shallowColor, [0.48, 0.82, 0.92, 1]);
+    var hasHDRWaterColor = sceneNumber(entry.aboveWaterColorR, 0) !== 0 || sceneNumber(entry.aboveWaterColorG, 0) !== 0 || sceneNumber(entry.aboveWaterColorB, 0) !== 0;
+    var waterColor = hasHDRWaterColor
+      ? [sceneNumber(entry.aboveWaterColorR, 0.25), sceneNumber(entry.aboveWaterColorG, 1), sceneNumber(entry.aboveWaterColorB, 1.25)]
+      : fallbackWaterColor;
+    return {
+      uniformSlotSuffix: uniformSlotName + "-" + String((system && system.id) || "water"),
+      uniforms: {
+        poolWidth: sceneNumber(system && system.waterPoolWidth, 1),
+        poolLength: sceneNumber(system && system.waterPoolLength, 1),
+        poolHeight: sceneNumber(system && system.waterPoolHeight, 1),
+        cornerRadius: sceneNumber(system && system.waterCornerRadius, 0),
+        poolShape: wgpuSceneWaterPoolShapeRounded(entry) ? 1 : 0,
+        // normalScale has a compiled descriptor default (1.0, matching
+        // surface.sel's own `param normalScale : float = 1.0`), so this
+        // omission was never a zeroing bug like waterColor -- but it DID
+        // silently ignore a live entry.normalScale override the way
+        // WebGL2's sceneWaterUniformData packs it. Forward it explicitly
+        // (mirrors the caustics render context's identical fix above).
+        normalScale: sceneNumber(entry.normalScale, 1.0),
+        objectRadius: sceneNumber(system && system.waterObjectRadius, 0.3),
+        opticsCaustic: optics.caustics ? 1 : 0,
+        gridResolution: sceneNumber(system && system.surfaceResolution, sceneNumber(system && system.waterResolution, 256)),
+        objectKind: sceneNumber(system && system.waterObjectKind, 0),
+        objectSubtype: sceneNumber(system && system.waterObjectSubtype, 0),
+        objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
+        meshTextureEnable: waterSystemHasObjectTextureSubject(system) && sceneWaterObjectTextureTargetSlots(system).every(slot => (system.waterObjectTextureReadySlots & (1 << slot)) !== 0) ? 1 : 0,
+        opticsEnable: optics.object ? 1 : 0,
+        waterColor: [waterColor[0], waterColor[1], waterColor[2]],
+        lightDir: [sceneNumber(light.x, 0.3), sceneNumber(light.y, 0.9), sceneNumber(light.z, 0.45)],
+        cameraPos: [camPos.x, camPos.y, camPos.z],
+        objectCenter: [sceneNumber(center.x, 0), sceneNumber(center.y, 0), sceneNumber(center.z, 0)],
+        objectHalf: [sceneNumber(half.x, 0), sceneNumber(half.y, 0), sceneNumber(half.z, 0)],
+        refractionMatrix: refractionMatrix,
+        reflectionMatrix: reflectionMatrix,
+        spheres: sceneWaterSpheresContextArray(system),
+        knot: sceneWaterKnotContextArray(waterState),
+      },
+      grid: sceneNumber(system && system.waterResolution, 256),
+    };
+  }
+
+  // getWaterSurfaceSelenaDraw / getWaterSurfaceBelowSelenaDraw resolve the
+  // {pipeline, bindGroup} pair for the "above"/"below" surface passes.
+  // Alpha-blended, depth-writing, single-sided cull (opposite winding per
+  // side) -- matching upstream WaterSurfacePass and the hand-written
+  // descriptor (fragment blend:"alpha", depthWriteEnabled:true,
+  // cullMode: side==="below"?"back":"front").
+  function getWaterSurfaceSelenaDraw(system, entry, camera, waterState: any, device: any) {
+    var material = sceneWaterSurfaceSelenaMaterial(system, entry, "surfaceSelenaWGSL", "surface", "_selenaSurfaceMaterial", waterState, device);
+    var renderContext = sceneWaterSurfaceSelenaRenderContext(system, camera, "water-surface", waterState);
+    return getWaterSelenaMeshDraw(material, renderContext, system, { blendMode: "alpha", depthWrite: true, cullMode: "front" }, waterState, device);
+  }
+
+  function getWaterSurfaceBelowSelenaDraw(system, entry, camera, waterState: any, device: any) {
+    var material = sceneWaterSurfaceSelenaMaterial(system, entry, "surfaceBelowSelenaWGSL", "surfaceBelow", "_selenaSurfaceBelowMaterial", waterState, device);
+    var renderContext = sceneWaterSurfaceSelenaRenderContext(system, camera, "water-surface-below", waterState);
+    return getWaterSelenaMeshDraw(material, renderContext, system, { blendMode: "alpha", depthWrite: true, cullMode: "back" }, waterState, device);
+  }
+
+  // --- Caustics pass -------------------------------------------------------
+  //
+  // Drawn by renderWaterCausticsPass below into its own offscreen
+  // WATER_CAUSTICS_TEXTURE_FORMAT target (no depth attachment, no MSAA) --
+  // depthStencil:false + sampleCount:1 mirror the hand-written
+  // waterCausticsPipeline's descriptor exactly.
+
+  // normalScale: WaterCaustics (like WaterSurface/WaterSurfaceBelow above)
+  // declares `param normalScale : float = 1.0` -- a compiled descriptor
+  // default exists, so omitting it here isn't a zeroing bug like waterColor
+  // was (no live default -> sceneSelenaUniformValue's default-lookup step
+  // finds the compiled 1.0 and uses it), but it DOES silently ignore a
+  // live entry.normalScale override (WebGL2's sceneWaterUniformData packs
+  // the live value into the hand-written WaterUniforms buffer at the same
+  // index the caustics/surface passes read). Forward it explicitly so a
+  // user-configured WaterSystem normalScale prop actually reaches the
+  // Selena caustics pass instead of silently pinning to the shader's own
+  // default.
+  function sceneWaterCausticsSelenaRenderContext(system, waterState: any) {
+    var entry = (system && system.entry) || {};
+    var light = (system && system.waterLightDir) || { x: 0.3, y: 0.9, z: 0.45 };
+    var center = (system && system.waterObjectCenter) || { x: 0, y: 0, z: 0 };
+    var half = (system && system.waterObjectHalfSize) || { x: 0, y: 0, z: 0 };
+    var optics = (system && system.waterOpticsFlags) || {};
+    return {
+      uniformSlotSuffix: "water-caustics-" + String((system && system.id) || "water"),
+      uniforms: {
+        poolWidth: sceneNumber(system && system.waterPoolWidth, 1),
+        poolLength: sceneNumber(system && system.waterPoolLength, 1),
+        poolHeight: sceneNumber(system && system.waterPoolHeight, 1),
+        normalScale: sceneNumber(entry.normalScale, 1.0),
+        opticsEnable: optics.caustics ? 1 : 0,
+        gridResolution: sceneNumber(system && system.surfaceResolution, 201),
+        resolution: sceneNumber(system && system.waterResolution, 256),
+        time: waterState.selenaState.frame.time,
+        objectKind: sceneNumber(system && system.waterObjectKind, 0),
+        objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
+        lightDir: [sceneNumber(light.x, 0.3), sceneNumber(light.y, 0.9), sceneNumber(light.z, 0.45)],
+        objectCenter: [sceneNumber(center.x, 0), sceneNumber(center.y, 0), sceneNumber(center.z, 0)],
+        objectHalfRadius: [sceneNumber(half.x, 0), sceneNumber(half.y, 0), sceneNumber(half.z, 0), sceneNumber(system && system.waterObjectRadius, 0)],
+        spheres: sceneWaterSpheresContextArray(system),
+        // Texel spacing for caustics.sel's objectShadowTexture 9-tap soft
+        // sample (M2), forwarded live so a resized shadow RTT
+        // (system.objectShadowResolution, WaterSystem's objectShadowResolution
+        // prop) keeps the soft-shadow footprint texel-correct instead of
+        // silently pinning to the shader's own compiled default.
+        objectShadowTexelSize: 1.0 / Math.max(1, sceneNumber(system && system.objectShadowResolution, WATER_OBJECT_SHADOW_TEXTURE_SIZE)),
+      },
+      grid: sceneNumber(system && system.waterResolution, 256),
+    };
+  }
+
+  // getWaterCausticsSelenaDraw projects the authored water grid into the
+  // caustics target. See drawCount usage in renderWaterCausticsPass.
+  function getWaterCausticsSelenaDraw(system, entry, waterState: any, device: any) {
+    var material = sceneWaterCausticsSelenaMaterial(system, entry);
+    var renderContext = sceneWaterCausticsSelenaRenderContext(system, waterState);
+    return getWaterSelenaMeshDraw(material, renderContext, system, {
+      targetFormat: WATER_CAUSTICS_TEXTURE_FORMAT,
+      sampleCount: 1,
+      depthStencil: false,
+      labelSuffix: "water-caustics",
+    }, waterState, device);
+  }
+
+  // --- Object shadow / compound shadow passes (post kind) -----------------
+  //
+  // Drawn by renderWaterObjectShadowPass below into system.objectShadowView
+  // (WATER_OBJECT_TEXTURE_FORMAT, no depth attachment) -- getSelenaPostPipeline
+  // never adds a depthStencil state, matching the hand-written
+  // waterObjectShadowPipeline exactly. The raw hand-written contract
+  // branches on objectParams.x (kind) INSIDE one shader; Selena splits this
+  // into two materials (WaterObjectShadow for kind<2.5 -- sphere/cube --
+  // and WaterCompoundShadow for kind>=2.5 -- the up-to-32-sphere compound
+  // proxy), so the HOST selects the material by kind instead.
+
+  function sceneWaterCompoundShadowSelenaRenderContext(system) {
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var base = sceneWaterObjectShadowSelenaContextBase(system);
+    base.spheres = sceneWaterSpheresContextArray(system);
+    return {
+      uniformSlotSuffix: "water-compound-shadow-" + String((system && system.id) || "water"),
+      uniforms: base,
+    };
+  }
+
+  // getWaterObjectShadowSelenaDraw picks WaterObjectShadow or
+  // WaterCompoundShadow by the system's active object kind (mirroring the
+  // raw hand-written shader's `objectParams.x >= 2.5` branch) and draws it
+  // through the generic Selena post path.
+  function getWaterObjectShadowSelenaDraw(system, entry, waterState: any, device: any) {
+    var kind = sceneNumber(system && system.waterObjectKind, 0);
+    var pipelineOptions = { targetFormat: WATER_OBJECT_TEXTURE_FORMAT, labelSuffix: "water-object-shadow" };
+    if (kind >= 2.5) {
+      if (!sceneWaterCompoundShadowUsesSelena(entry)) return null;
+      var compoundMaterial = sceneWaterCompoundShadowSelenaMaterial(system, entry);
+      var compoundContext = sceneWaterCompoundShadowSelenaRenderContext(system);
+      return getWaterSelenaPostDraw(compoundMaterial, compoundContext, system, pipelineOptions, waterState, device);
+    }
+    if (!sceneWaterObjectShadowUsesSelena(entry)) return null;
+    var material = sceneWaterObjectShadowSelenaMaterial(system, entry);
+    var renderContext = sceneWaterObjectShadowSelenaRenderContext(system);
+    return getWaterSelenaPostDraw(material, renderContext, system, pipelineOptions, waterState, device);
+  }
+
+  // --- Object mesh-shadow pass (projected mesh, mesh kind) ----------------
+  //
+  // Drawn by renderWaterObjectMeshShadowPass/drawWaterObjectProjectedShadowObjects
+  // below into system.objectShadowView (WATER_OBJECT_TEXTURE_FORMAT, no
+  // depth attachment, cullMode:"none" -- matching the hand-written
+  // waterObjectMeshShadowPipeline exactly). Unlike the other water-system
+  // passes above, this material/render-context pair is resolved ONCE per
+  // system per frame (not per projected object): mvp/normalMatrix are
+  // declared but UNUSED by object-mesh-shadow.sel's body (confirmed by
+  // TestWaterSelenaWGSLDescriptorMatchesBindings's WGSL parse), and
+  // lightDir/poolHalfW/poolHalfL don't vary per object, so every object in
+  // the projected-shadow list shares one bind group; only the position
+  // vertex buffer changes per object (bindWaterObjectSelenaAttributes,
+  // reused from the object-texture RTT draw path).
+
+  function getWaterObjectMeshShadowSelenaDraw(system, entry, waterState: any, device: any) {
+    var material = sceneWaterObjectMeshShadowSelenaMaterial(system, entry);
+    var renderContext = sceneWaterObjectMeshShadowSelenaRenderContext(system);
+    return getWaterSelenaMeshDraw(material, renderContext, system, {
+      targetFormat: WATER_OBJECT_TEXTURE_FORMAT,
+      sampleCount: 1,
+      depthStencil: false,
+      cullMode: "none",
+      labelSuffix: "water-object-mesh-shadow",
+    }, waterState, device);
+  }
+
+  // -----------------------------------------------------------------------
+  // The five water simulation COMPUTE kernels (seed/drop/displacement/
+  // simulation/normal), routed through the generic descriptor-driven Selena
+  // feedback-compute path above (getSelenaComputePipeline /
+  // createSelenaComputeBindGroup) instead of the hardcoded
+  // waterComputeBindGroupLayout/waterSeedPipeline/.../SCENE_WATER_COMPUTE_SOURCE
+  // pipelines below. Each kernel falls back to the builtin hardcoded
+  // pipeline (passed in as fallbackPipeline; the hand-written
+  // data-prop-authored compute pipeline tier has been retired) when its
+  // Selena WGSL+descriptor aren't present on the entry, or the Selena
+  // pipeline/bind group failed to
+  // build -- mirroring the render passes' sceneWaterXxxUsesSelena/
+  // getWaterXxxSelenaDraw fallback convention exactly (see
+  // renderWaterCausticsPass above). Dispatch math (ceil(cellCount/64)) and
+  // ping-pong (system.activeIndex toggling bufferA/bufferB) are UNCHANGED
+  // from the hardcoded path -- only pipeline/bind-group sourcing moves to
+  // the descriptor.
+  // -----------------------------------------------------------------------
+
+  // getWaterSelenaComputeDraw resolves the {pipeline, bindGroup} pair for a
+  // feedback-kind Selena water compute kernel, or null if the pipeline/bind
+  // group could not be built (caller falls back to the resolved authored-or-
+  // hardcoded pipeline). Mirrors getWaterSelenaMeshDraw/getWaterSelenaPostDraw.
+  function getWaterSelenaComputeDraw(material, renderContext, system, inBuf, outBuf, waterState: any, device: any) {
+    if (!material) return null;
+    var selenaResource = getSelenaComputePipeline(waterState.selenaState, device, material);
+    if (!selenaResource) return null;
+    var bindGroup = createSelenaComputeBindGroup(waterState.meshState, waterState.selenaState, device, system, selenaResource, inBuf, outBuf, renderContext);
+    if (!bindGroup) return null;
+    return { pipeline: selenaResource.pipeline, bindGroup: bindGroup };
+  }
+
+  function prepareWaterComputePipelines(system: any, entry: any, waterState: any, device: any) {
+    var resources = [];
+    for (var stage of ["seed", "drop", "displacement", "simulation", "normal"]) {
+      var fields = sceneWaterComputeStageFields(stage);
+      var material = sceneWaterSelenaMaterial(system, entry, fields.wgslField, fields.descKey, fields.memoSlot);
+      var resource = material && getSelenaComputePipeline(waterState.selenaState, device, material);
+      if (resource) resources.push(resource.pipeline);
+    }
+    for (var pipeline of resources) wgpuRequirePipeline(pipeline);
+  }
+
+  function getWaterComputeStageSelenaDraw(system, entry, stage, readBuffer, writeBuffer, waterState: any, device: any) {
+    var fields = sceneWaterComputeStageFields(stage);
+    if (!fields) return null;
+    var material = sceneWaterSelenaMaterial(system, entry, fields.wgslField, fields.descKey, fields.memoSlot);
+    if (!material) return null;
+    var renderContext = sceneWaterComputeStageRenderContext(system, entry, stage);
+    return getWaterSelenaComputeDraw(material, renderContext, system, readBuffer, writeBuffer, waterState, device);
+  }
+
+  // dispatchWaterComputeStage is the single per-stage entry point every
+  // seed/drop/displacement/simulation/normal call site below uses: tries the
+  // descriptor-driven Selena compute path first, falling back to
+  // fallbackPipeline (the builtin hardcoded compute pipeline; the
+  // hand-written data-prop-authored compute pipeline tier has been
+  // retired) when Selena's WGSL+descriptor aren't present on the entry, or
+  // the Selena pipeline/bind group failed to
+  // build. Returns {dispatches, selena, selenaFallback} so call sites can
+  // fold all three into the existing waterComputeDispatches/
+  // waterAuthoredComputeDispatches stats plus the new
+  // waterSelenaComputeDispatches/waterSelenaComputeFallbacks counters.
+  // sharedPass (optional) mirrors dispatchWaterPass/dispatchWaterPassSelena's
+  // parameter of the same name: when set, this stage's dispatch is recorded
+  // into that already-open compute pass instead of opening/closing its own.
+  // The P3 water-sim/normal fusion (see the runWaterSim block below) is the
+  // sole caller that passes sharedPass, batching the tick's 2 simulation
+  // substeps plus the trailing normal reconstruction into one pass.
+  function dispatchWaterComputeStage(encoder, system, entry, stage, fallbackPipeline, sharedPass, waterState: any, device: any) {
+    if (!encoder && !sharedPass) return { dispatches: 0, selena: 0, selenaFallback: 0 };
+    if (!system) return { dispatches: 0, selena: 0, selenaFallback: 0 };
+    if (sceneWaterComputeStageUsesSelena(entry, stage)) {
+      var readBuffer = system.activeIndex === 0 ? system.bufferA : system.bufferB;
+      var writeBuffer = system.activeIndex === 0 ? system.bufferB : system.bufferA;
+      var draw = getWaterComputeStageSelenaDraw(system, entry, stage, readBuffer, writeBuffer, waterState, device);
+      if (draw) {
+        var n = dispatchWaterPassSelena(encoder, system, draw, sharedPass);
+        return { dispatches: n, selena: n, selenaFallback: 0 };
+      }
+      return { dispatches: dispatchWaterPass(encoder, system, fallbackPipeline, sharedPass), selena: 0, selenaFallback: 1 };
+    }
+    return { dispatches: dispatchWaterPass(encoder, system, fallbackPipeline, sharedPass), selena: 0, selenaFallback: 0 };
+  }
+
+  // getWaterPoolPipeline: builtin-only now. The hand-written
+  // data-prop-authored pool pipeline tier (entry.poolVertexWGSL/
+  // poolFragmentWGSL) has been retired -- the pool pass resolves
+  // Selena-primary (see sceneWaterPoolUsesSelena/getWaterPoolSelenaDraw in
+  // drawWaterPoolEntries below) falling through to this builtin
+  // waterPoolVertexModule/waterPoolFragmentModule
+  // (SCENE_WATER_POOL_*_SOURCE) pipeline as the last-resort safety net.
+  // system/forceBuiltin are accepted (unused) to keep existing call sites
+  // stable.
+  function getWaterPoolPipeline(system, forceBuiltin, waterState: any, device: any) {
+    var sampleCount = Math.max(1, Math.floor(waterState.pipeState.activeSampleCount || 1));
+    var cacheKey = ["pool", waterState.pipeState.targetFormat, sampleCount].join("\x00");
+    var cached = waterState.waterPoolPipelineCache[cacheKey];
+    if (cached) return cached;
+    var record = {
+      pipeline: wgpuCreateValidatedPipeline(device, "render", {
+        label: "gosx-water-pool-pass",
+        layout: waterState.waterPoolPipelineLayout,
+        vertex: { module: waterState.waterPoolVertexModule, entryPoint: "vertexMain", buffers: [] },
+        fragment: {
+          module: waterState.waterPoolFragmentModule,
+          entryPoint: "fragmentMain",
+          targets: [{ format: waterState.pipeState.targetFormat }],
+        },
+        primitive: { topology: "triangle-list", cullMode: "back" },
+        multisample: { count: sampleCount },
+        depthStencil: {
+          format: "depth24plus",
+          depthWriteEnabled: true,
+          depthCompare: "less-equal",
+        },
+      }),
+      authored: false,
+      authoredVertex: false,
+      authoredFragment: false,
+      failed: false,
+    };
+    waterState.waterPoolPipelineCache[cacheKey] = record;
+    return record;
+  }
+
+  function drawWaterPoolEntries(renderPass, records, frameBindGroup, waterState: any, device: any) {
+    var roundedPoolVertexCount = 44 * 9;
+    var stats = {
+      waterPoolPasses: 0,
+      waterPoolDrawCalls: 0,
+      waterPoolDrawVertices: 0,
+      waterPoolTileTextureLoaded: 0,
+      waterPoolTileTextureFallbacks: 0,
+      waterPoolTileTexturePending: 0,
+      waterPoolTileTextureFailed: 0,
+      waterAuthoredPoolPasses: 0,
+      waterAuthoredPoolVertexPasses: 0,
+      waterAuthoredPoolFragmentPasses: 0,
+      waterAuthoredPoolFallbacks: 0,
+      // Proof-of-concept: pool pass routed through the generic
+      // descriptor-driven Selena WebGPU render path instead of the
+      // hand-written waterPool*WGSL pipeline. See sceneWaterPoolUsesSelena /
+      // getWaterPoolSelenaDraw above. Every other pass is unaffected.
+      waterSelenaPoolPasses: 0,
+      waterSelenaPoolFallbacks: 0,
+    };
+    if (!renderPass || !Array.isArray(records) || records.length === 0 || !frameBindGroup) return stats;
+    renderPass.setBindGroup(0, frameBindGroup);
+    var frameGroupBound = true;
+    var activePipeline = null;
+    for (var i = 0; i < records.length; i++) {
+      var system = records[i] && records[i].system;
+      if (!system) continue;
+      var entry = system.entry || {};
+      if (entry.renderPool === false || entry.poolPass === false) continue;
+      var rounded = wgpuSceneWaterPoolShapeRounded(entry) && sceneNumber(entry.cornerRadius, 0) > 0.0001;
+
+      if (sceneWaterPoolUsesSelena(entry, rounded)) {
+        var selenaDraw = getWaterPoolSelenaDraw(system, entry, waterState, device);
+        if (selenaDraw) {
+          if (selenaDraw.pipeline !== activePipeline) {
+            renderPass.setPipeline(wgpuRequirePipeline(selenaDraw.pipeline));
+            activePipeline = selenaDraw.pipeline;
+          }
+          // The generic Selena pipeline layout has exactly ONE bind group
+          // (group 0 carries mvp/params/textures/state together -- see
+          // sceneSelenaBindGroupLayout), unlike the hand-written pool
+          // pipeline's two groups (0=frame, 1=material). Overwriting group
+          // 0 here is why frameGroupBound is tracked and restored below
+          // before any subsequent hand-written-path draw in this loop.
+          renderPass.setBindGroup(0, selenaDraw.bindGroup);
+          frameGroupBound = false;
+          // pool.sel now ports the rounded-corner geometry too, exactly
+          // like the hand-written path's `vertexCount` below: the box
+          // shape only ever needs 30 vertices, but the rounded vertex()
+          // branch indexes up to roundedPoolVertexCount (44*9 = 396), so a
+          // rounded pass must draw that many for every index the shader
+          // branches on to actually be issued.
+          var selenaVertexCount = rounded ? roundedPoolVertexCount : 30;
+          renderPass.draw(selenaVertexCount);
+          stats.waterPoolPasses += 1;
+          stats.waterPoolDrawCalls += 1;
+          stats.waterPoolDrawVertices += selenaVertexCount;
+          stats.waterSelenaPoolPasses += 1;
+          if (system.waterPoolTileLoaded) {
+            stats.waterPoolTileTextureLoaded += 1;
+          } else if (system.waterPoolTileRequested) {
+            stats.waterPoolTileTextureFallbacks += 1;
+            if (system.waterPoolTilePending) stats.waterPoolTileTexturePending += 1;
+            if (system.waterPoolTileFailed) stats.waterPoolTileTextureFailed += 1;
+          }
+          continue;
+        }
+        stats.waterSelenaPoolFallbacks += 1;
+        // Fall through to the hand-written path below (e.g. Selena pipeline
+        // validation failed, or a live resource wasn't ready yet).
+      }
+
+      if (!frameGroupBound) {
+        renderPass.setBindGroup(0, frameBindGroup);
+        frameGroupBound = true;
+        activePipeline = null;
+      }
+      var pipelineRecord = getWaterPoolPipeline(system, undefined, waterState, device);
+      if (!pipelineRecord || !pipelineRecord.pipeline) continue;
+      if (pipelineRecord.pipeline !== activePipeline) {
+        renderPass.setPipeline(wgpuRequirePipeline(pipelineRecord.pipeline));
+        activePipeline = pipelineRecord.pipeline;
+      }
+      var vertexCount = rounded ? roundedPoolVertexCount : 30;
+      var bindGroup = getWaterPoolBindGroupCached(system, waterState, device);
+      if (!bindGroup) continue;
+      renderPass.setBindGroup(1, bindGroup);
+      renderPass.draw(vertexCount);
+      stats.waterPoolPasses += 1;
+      stats.waterPoolDrawCalls += 1;
+      stats.waterPoolDrawVertices += vertexCount;
+      if (pipelineRecord.authored) stats.waterAuthoredPoolPasses += 1;
+      if (pipelineRecord.authoredVertex) stats.waterAuthoredPoolVertexPasses += 1;
+      if (pipelineRecord.authoredFragment) stats.waterAuthoredPoolFragmentPasses += 1;
+      if (pipelineRecord.failed) stats.waterAuthoredPoolFallbacks += 1;
+      if (system.waterPoolTileLoaded) {
+        stats.waterPoolTileTextureLoaded += 1;
+      } else if (system.waterPoolTileRequested) {
+        stats.waterPoolTileTextureFallbacks += 1;
+        if (system.waterPoolTilePending) stats.waterPoolTileTexturePending += 1;
+        if (system.waterPoolTileFailed) stats.waterPoolTileTextureFailed += 1;
+      }
+    }
+    return stats;
+  }
+
+  // getWaterRenderPipeline: builtin-only now. The hand-written
+  // data-prop-authored surface pipeline tier (entry.surfaceVertexWGSL/
+  // surfaceFragmentWGSL/surfaceBelowFragmentWGSL) has been retired -- each
+  // surface side resolves Selena-primary (see sceneWaterSurfaceUsesSelena/
+  // sceneWaterSurfaceBelowUsesSelena/getWaterSurfaceSelenaDraw/
+  // getWaterSurfaceBelowSelenaDraw in drawWaterSurfaceSide below) falling
+  // through to this builtin waterRenderVertexModule/waterRenderFragmentModule/
+  // waterRenderBelowFragmentModule (SCENE_WATER_RENDER_*_SOURCE) pipeline as
+  // the last-resort safety net. system/forceBuiltin are accepted (unused) to
+  // keep existing call sites stable.
+  function getWaterRenderPipeline(system, surfaceSide, forceBuiltin, waterState: any, device: any) {
+    var sampleCount = Math.max(1, Math.floor(waterState.pipeState.activeSampleCount || 1));
+    var side = surfaceSide === "below" ? "below" : "above";
+    var cacheKey = [side, "alpha", sampleCount, waterState.pipeState.targetFormat].join("\x00");
+    var cached = waterState.waterRenderPipelineCache.get(cacheKey);
+    if (cached && cached.pipeline) return cached;
+    var vertexModule = waterState.waterRenderVertexModule;
+    var fragmentModule = side === "below" ? waterState.waterRenderBelowFragmentModule : waterState.waterRenderFragmentModule;
+    var descriptor = {
+      label: side === "below" ? "gosx-water-render-below" : "gosx-water-render-above",
+      layout: waterState.waterRenderPipelineLayout,
+      vertex: { module: vertexModule, entryPoint: "vertexMain", buffers: [] },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{ format: waterState.pipeState.targetFormat, blend: wgpuBlendState("alpha") }],
+      },
+      primitive: { topology: "triangle-list", cullMode: side === "below" ? "back" : "front" },
+      multisample: { count: sampleCount },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: true,
+        depthCompare: "less-equal",
+      },
+    };
+    var pipeline = wgpuCreateValidatedPipeline(device, "render", descriptor);
+    var record = { pipeline: pipeline, authored: false, authoredVertex: false, failed: false, pending: false };
+    waterState.waterRenderPipelineCache.set(cacheKey, record);
+    return record;
+  }
+
+  function drawWaterSurfaceSide(renderPass, records, frameBindGroup, side, stats, camera, waterState: any, device: any) {
+    renderPass.setBindGroup(0, frameBindGroup);
+    // frameGroupBound tracks whether group 0 currently holds frameBindGroup
+    // or a Selena material bind group (the generic Selena pipeline layout
+    // has exactly ONE bind group, unlike the hand-written surface pipeline's
+    // two groups: 0=frame, 1=material -- see drawWaterPoolEntries' identical
+    // pattern/comment).
+    var frameGroupBound = true;
+    var activePipeline = null;
+    for (var i = 0; i < records.length; i++) {
+      var system = records[i] && records[i].system;
+      if (!system || system.vertexCount <= 0) continue;
+      var entry = system.entry || {};
+
+      var usesSelena = side === "below" ? sceneWaterSurfaceBelowUsesSelena(entry) : sceneWaterSurfaceUsesSelena(entry);
+      if (usesSelena) {
+        var selenaDraw = side === "below"
+          ? getWaterSurfaceBelowSelenaDraw(system, entry, camera, waterState, device)
+          : getWaterSurfaceSelenaDraw(system, entry, camera, waterState, device);
+        if (selenaDraw) {
+          writeWaterObjectTextureMatrices(system, waterState, waterState.uniformState, device);
+          if (selenaDraw.pipeline !== activePipeline) {
+            renderPass.setPipeline(wgpuRequirePipeline(selenaDraw.pipeline));
+            activePipeline = selenaDraw.pipeline;
+          }
+          renderPass.setBindGroup(0, selenaDraw.bindGroup);
+          frameGroupBound = false;
+          renderPass.draw(system.vertexCount);
+          stats.waterDrawCalls += 1;
+          stats.waterDrawVertices += system.vertexCount;
+          stats.waterSurfaceMeshResolution = system.surfaceMeshResolution;
+          stats.waterSelenaSurfacePasses += 1;
+          if (system.waterSkyCubeLoaded) {
+            stats.waterSkyCubeTextureLoaded += 1;
+          } else if (system.waterSkyCubeRequested) {
+            stats.waterSkyCubeTextureFallbacks += 1;
+            if (system.waterSkyCubePending) stats.waterSkyCubeTexturePending += 1;
+            if (system.waterSkyCubeFailed) stats.waterSkyCubeTextureFailed += 1;
+          }
+          if (side === "below") {
+            stats.waterSurfaceBelowDrawCalls += 1;
+            stats.waterSurfaceBelowDrawVertices += system.vertexCount;
+          } else {
+            stats.waterSurfaceAboveDrawCalls += 1;
+            stats.waterSurfaceAboveDrawVertices += system.vertexCount;
+          }
+          continue;
+        }
+        stats.waterSelenaSurfaceFallbacks += 1;
+        // Fall through to the hand-written path below.
+      }
+
+      if (!frameGroupBound) {
+        renderPass.setBindGroup(0, frameBindGroup);
+        frameGroupBound = true;
+        activePipeline = null;
+      }
+      var pipelineRecord = getWaterRenderPipeline(system, side, undefined, waterState, device);
+      if (!pipelineRecord || !pipelineRecord.pipeline) {
+        if (pipelineRecord && pipelineRecord.pending) {
+          stats.waterAuthoredSurfacePendingDrawCalls += 1;
+        }
+        if (pipelineRecord && pipelineRecord.failed) {
+          stats.waterAuthoredSurfaceFallbacks += 1;
+          stats.waterAuthoredSurfaceFallbackReason = waterState.waterAuthoredSurfacePipelineLastError;
+        }
+        pipelineRecord = getWaterRenderPipeline(null, side, true, waterState, device);
+      }
+      if (!pipelineRecord || !pipelineRecord.pipeline) continue;
+      writeWaterObjectTextureMatrices(system, waterState, waterState.uniformState, device);
+      if (pipelineRecord.pipeline !== activePipeline) {
+        renderPass.setPipeline(wgpuRequirePipeline(pipelineRecord.pipeline));
+        activePipeline = pipelineRecord.pipeline;
+      }
+      if (pipelineRecord.authored) {
+        stats.waterAuthoredSurfaceSystems += 1;
+        stats.waterAuthoredSurfaceDrawCalls += 1;
+      }
+      if (pipelineRecord.authoredVertex) {
+        stats.waterAuthoredSurfaceVertexDrawCalls += 1;
+      }
+      if (pipelineRecord.failed) {
+        stats.waterAuthoredSurfaceFallbacks += 1;
+        stats.waterAuthoredSurfaceFallbackReason = waterState.waterAuthoredSurfacePipelineLastError;
+      }
+      var bindGroup = getWaterRenderBindGroupCached(system, waterState, device);
+      renderPass.setBindGroup(1, bindGroup);
+      renderPass.draw(system.vertexCount);
+      stats.waterDrawCalls += 1;
+      stats.waterDrawVertices += system.vertexCount;
+      if (system.waterSkyCubeLoaded) {
+        stats.waterSkyCubeTextureLoaded += 1;
+      } else if (system.waterSkyCubeRequested) {
+        stats.waterSkyCubeTextureFallbacks += 1;
+        if (system.waterSkyCubePending) stats.waterSkyCubeTexturePending += 1;
+        if (system.waterSkyCubeFailed) stats.waterSkyCubeTextureFailed += 1;
+      }
+      if (side === "below") {
+        stats.waterSurfaceBelowDrawCalls += 1;
+        stats.waterSurfaceBelowDrawVertices += system.vertexCount;
+      } else {
+        stats.waterSurfaceAboveDrawCalls += 1;
+        stats.waterSurfaceAboveDrawVertices += system.vertexCount;
+      }
+    }
+  }
+
+  function drawWaterSystemEntries(renderPass, records, frameBindGroup, camera, waterState: any, device: any) {
+    var stats = {
+      waterDrawCalls: 0,
+      waterDrawEntries: 0,
+      waterDrawVertices: 0,
+      waterSurfaceMeshResolution: 0,
+      waterSurfaceAboveDrawCalls: 0,
+      waterSurfaceAboveDrawVertices: 0,
+      waterSurfaceBelowDrawCalls: 0,
+      waterSurfaceBelowDrawVertices: 0,
+      waterAuthoredSurfaceSystems: 0,
+      waterAuthoredSurfaceDrawCalls: 0,
+      waterAuthoredSurfaceVertexDrawCalls: 0,
+      waterAuthoredSurfacePendingDrawCalls: 0,
+      waterAuthoredSurfaceFallbacks: 0,
+      waterAuthoredSurfaceFallbackReason: "",
+      waterSkyCubeTextureLoaded: 0,
+      waterSkyCubeTextureFallbacks: 0,
+      waterSkyCubeTexturePending: 0,
+      waterSkyCubeTextureFailed: 0,
+      // Surface pass routed through the generic descriptor-driven Selena
+      // WebGPU render path. See sceneWaterSurfaceUsesSelena/
+      // getWaterSurfaceSelenaDraw above.
+      waterSelenaSurfacePasses: 0,
+      waterSelenaSurfaceFallbacks: 0,
+    };
+    if (!Array.isArray(records) || records.length === 0) return stats;
+    for (var i = 0; i < records.length; i++) {
+      var system = records[i] && records[i].system;
+      if (system && system.vertexCount > 0) stats.waterDrawEntries += 1;
+    }
+    // A heightfield has no overhangs: from a camera clearly above or below
+    // its zero plane only one face can contribute. Previously both sides
+    // submitted the full tessellated grid and relied on face culling after
+    // vertex processing. That doubled the water vertex load precisely when
+    // compound objects (for example a glTF duck) also needed optical work.
+    // Keep both sides only in the narrow surface crossing band.
+    var waterCamera = sceneRenderCamera(camera);
+    var cameraY = sceneNumber(waterCamera && waterCamera.y, 0);
+    if (cameraY >= -0.025) drawWaterSurfaceSide(renderPass, records, frameBindGroup, "above", stats, camera, waterState, device);
+    if (cameraY <= 0.025) drawWaterSurfaceSide(renderPass, records, frameBindGroup, "below", stats, camera, waterState, device);
+    return stats;
   }

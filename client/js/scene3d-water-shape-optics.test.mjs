@@ -154,12 +154,12 @@ function textureHarness(failedPasses = 0, targetPass) {
     wgpuSceneWaterPoolShapeRounded: () => false,
     sceneColorRGBA: () => [0.5, 0.8, 0.9, 1],
     sceneWaterSpheresContextArray: () => [], sceneWaterKnotContextArray: () => [],
-    uniformState: { scratchSelenaViewProjection: new Float32Array(16) },
   });
+  const surfaceState = { uniformState: { scratchSelenaViewProjection: new Float32Array(16) } };
   return {
     system,
     frame: () => render([{ system }], {}, { meshObjects: [], camera: {} }, [], {}, {}, 800, 600, false),
-    enabled: () => surface(system, {}, "test").uniforms.meshTextureEnable,
+    enabled: () => surface(system, {}, "test", surfaceState).uniforms.meshTextureEnable,
   };
 }
 
