@@ -1833,10 +1833,10 @@ test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event
 
 test("Scene3D WebGPU timing initialization failure unlocks CPU-rAF fallback", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
-  const timingInit = webgpu.match(/function ensureGPUTiming\(\) \{[\s\S]*?\n    \}/);
+  const timingInit = webgpu.match(/function ensureGPUTiming\(timingState, device\) \{[\s\S]*?\n  \}/);
   assert.ok(timingInit, "WebGPU timing initialization seam should exist");
-  assert.match(timingInit[0], /catch \(error\) \{[\s\S]*candidateQuerySet\.destroy\(\)[\s\S]*candidateBuffer\.destroy\(\)[\s\S]*gpuTiming = false;\s*gpuTimingFailed = true;/);
-  assert.match(webgpu, /return \{ available: active, active: active, pending: pending, failed: gpuTimingFailed, source: "gpu-timestamp" \}/);
+  assert.match(timingInit[0], /catch \(error\) \{[\s\S]*candidateQuerySet\.destroy\(\)[\s\S]*candidateBuffer\.destroy\(\)[\s\S]*timingState\.gpuTiming = false;\s*timingState\.gpuTimingFailed = true;/);
+  assert.match(webgpu, /return \{ available: active, active: active, pending: pending, failed: timingState\.gpuTimingFailed, source: "gpu-timestamp" \}/);
 
   const fallback = createAdaptiveQualityHarness();
   fallback.renderer.pollPerformanceSample = function() { return null; };

@@ -6837,18 +6837,15 @@
     var frameStats: any = {}, spareFrameStats: any = {}, webGPULastError = "";
     var webGPUFrameProof: any = {};
     var webGPUFrameSeq = 0;
-    var gpuTiming = null;
-    var gpuTimingFailed = false;
-    // Standard pass timestamp writes bracket all commands in the frame encoder.
-    var gpuTimingEncodingAvailable = null;
-    var failedGPUTimings = [];
-    var lastGPUPerformanceSample = null;
-    // @ts-ignore TS7034 -- readback initializes the frame sample asynchronously.
-    var lastGPUCompletionSample = null;
-    var gpuTimingDisposed = false;
-    var gpuTimingFrameSeq = 0;
-    var deferredWaterTextureRetirements = [];
-    var deferredWaterSystemRetirements = [];
+    // gpuTimingEncodingAvailable: standard pass timestamp writes bracket all commands in the frame encoder.
+    var timingState: any = {
+      gpuTiming: null, gpuTimingFailed: false, gpuTimingEncodingAvailable: null,
+      failedGPUTimings: [], lastGPUPerformanceSample: null, lastGPUCompletionSample: null,
+      gpuTimingDisposed: false, gpuTimingFrameSeq: 0,
+      deferredWaterTextureRetirements: [], deferredWaterSystemRetirements: [],
+      gpuPassTiming: null, gpuPassTimingSlot: null, gpuPassTimingShadowUsed: false,
+      lastGPUPassSample: null, mount: telemetryMount, queue: queueWebGPUAttribute,
+    };
     var webGPUEssentialAttributeCache = Object.create(null);
     var webGPUPendingAttributes = Object.create(null);
     var webGPUAttributeMount = null;
@@ -6925,394 +6922,6 @@
     // webGPUBundleCache holds the cached GPURenderBundle and the command stream
     // it was built from. Created on the first eligible frame.
     var webGPUBundleCache = null;
-
-    function ensureGPUTiming() {
-      if (gpuTimingDisposed) return false;
-      if (gpuTiming !== null) return gpuTiming;
-      gpuTiming = false;
-      var candidateQuerySet = null;
-      var candidateBuffers = [];
-      try {
-        var supportsTimestamps = device && device.features && typeof device.features.has === "function" && device.features.has("timestamp-query");
-        if (!supportsTimestamps || typeof device.createQuerySet !== "function") {
-          // timestamp-query is optional in WebGPU and Edge/D3D commonly omits
-          // it even while the renderer is submitting healthy GPU work. Keep
-          // the timing capability distinct from renderer activity so a
-          // missing hardware timer is never reported as "GPU unsupported".
-          if (telemetryMount) queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-timing", "timer-unavailable");
-          return gpuTiming;
-        }
-        candidateQuerySet = device.createQuerySet({ type: "timestamp", count: 6 });
-        var slots = [];
-        for (var i = 0; i < 3; i++) {
-          var resolveBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
-          candidateBuffers.push(resolveBuffer);
-          var readbackBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-          candidateBuffers.push(readbackBuffer);
-          slots.push({
-            resolve: resolveBuffer,
-            readback: readbackBuffer,
-            pending: false,
-            mapping: false,
-            frameSeq: 0,
-          });
-        }
-        gpuTiming = {
-          querySet: candidateQuerySet,
-          slots: slots,
-        };
-        gpuTimingEncodingAvailable = null;
-        gpuTimingFailed = false;
-        if (telemetryMount) queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-timing", "pending");
-      } catch (error) {
-        if (candidateQuerySet && typeof candidateQuerySet.destroy === "function") candidateQuerySet.destroy();
-        for (var candidateIndex = 0; candidateIndex < candidateBuffers.length; candidateIndex++) {
-          var candidateBuffer = candidateBuffers[candidateIndex];
-          if (candidateBuffer && typeof candidateBuffer.destroy === "function") candidateBuffer.destroy();
-        }
-        gpuTiming = false;
-        gpuTimingFailed = true;
-        lastGPUPerformanceSample = null;
-        if (telemetryMount) queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-timing", "failed");
-      }
-      return gpuTiming;
-    }
-
-    function disableGPUTiming(timing) {
-      if (!timing || timing === false) return;
-      if (gpuTiming === timing) gpuTiming = false;
-      gpuTimingFailed = true;
-      lastGPUCompletionSample = null;
-      failedGPUTimings.push({ timing: timing, retireAfterFrame: gpuTimingFrameSeq + 3 });
-      lastGPUPerformanceSample = null;
-      if (telemetryMount) queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-timing", "failed");
-    }
-
-    function drainDeferredGPUResources(force) {
-      for (var i = failedGPUTimings.length - 1; i >= 0; i--) {
-        if (!force && gpuTimingFrameSeq < failedGPUTimings[i].retireAfterFrame) continue;
-        destroyGPUTimingResources(failedGPUTimings[i].timing);
-        failedGPUTimings.splice(i, 1);
-      }
-      for (var j = deferredWaterTextureRetirements.length - 1; j >= 0; j--) {
-        var retirement = deferredWaterTextureRetirements[j];
-        if (!force && gpuTimingFrameSeq < retirement.retireAfterFrame) continue;
-        for (var k = 0; k < retirement.textures.length; k++) {
-          destroyRendererGPUResource(retirement.textures[k]);
-        }
-        deferredWaterTextureRetirements.splice(j, 1);
-      }
-      for (var l = deferredWaterSystemRetirements.length - 1; l >= 0; l--) {
-        var systemRetirement = deferredWaterSystemRetirements[l];
-        if (!force && gpuTimingFrameSeq < systemRetirement.retireAfterFrame) continue;
-        if (systemRetirement.system && typeof systemRetirement.system.dispose === "function") {
-          try { systemRetirement.system.dispose(); } catch (_err) {}
-        }
-        deferredWaterSystemRetirements.splice(l, 1);
-      }
-    }
-
-    function pollGPUTimingReadback() {
-      var timing = ensureGPUTiming();
-      if (!timing) return;
-      for (var i = 0; i < timing.slots.length; i++) {
-        var slot = timing.slots[i];
-        if (!slot.pending || slot.mapping) continue;
-        if (!slot.readback || typeof slot.readback.mapAsync !== "function") continue;
-        slot.mapping = true;
-        (function(activeTiming, activeSlot) {
-          activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
-            if (!activeSlot.readback || typeof activeSlot.readback.getMappedRange !== "function") return;
-            var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
-            if (gpuTiming === activeTiming && values.length >= 2 && values[1] > values[0]) {
-              lastGPUPerformanceSample = {
-                source: "gpu-timestamp",
-                scope: "frame",
-                frameSeq: activeSlot.frameSeq,
-                gpuMS: Number(values[1] - values[0]) / 1000000,
-                atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
-              };
-              wgpuEmitGPUTiming(lastGPUPerformanceSample);
-              // @ts-ignore TS7005 -- readback initializes the frame sample asynchronously.
-              lastGPUCompletionSample = sceneLatestGPUCompletion(lastGPUCompletionSample, lastGPUPerformanceSample);
-              if (telemetryMount) {
-                queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPerformanceSample.gpuMS.toFixed(3));
-                queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured");
-              }
-            }
-            activeSlot.readback.unmap();
-            activeSlot.pending = false;
-            activeSlot.mapping = false;
-          }).catch(function() {
-            activeSlot.pending = false;
-            activeSlot.mapping = false;
-            if (gpuTiming === activeTiming) disableGPUTiming(activeTiming);
-          });
-        })(timing, slot);
-        break;
-      }
-    }
-
-    function beginGPUFrameTiming(encoder) {
-      pollGPUTimingReadback();
-      var timing = ensureGPUTiming();
-      if (!timing || !encoder) return null;
-      if (typeof encoder.beginComputePass !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
-        gpuTimingEncodingAvailable = false;
-        if (telemetryMount) queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-timing", "timer-unavailable");
-        return null;
-      }
-      var startIndex = gpuTimingFrameSeq % timing.slots.length;
-      for (var i = 0; i < timing.slots.length; i++) {
-        var slotIndex = (startIndex + i) % timing.slots.length;
-        var slot = timing.slots[slotIndex];
-        if (!slot || slot.pending || slot.mapping) continue;
-        try {
-          encoder.beginComputePass({ label: "gosx-frame-timer-start", timestampWrites: {
-            querySet: timing.querySet, beginningOfPassWriteIndex: slotIndex * 2,
-          } }).end();
-          gpuTimingEncodingAvailable = true;
-          return { timing: timing, slot: slot, slotIndex: slotIndex };
-        } catch (_timestampBeginError) {
-          disableGPUTiming(timing);
-          return null;
-        }
-      }
-      return null;
-    }
-
-    function endGPUFrameTiming(encoder, token) {
-      if (!token) return;
-      try {
-        encoder.beginComputePass({ label: "gosx-frame-timer-end", timestampWrites: {
-          querySet: token.timing.querySet, endOfPassWriteIndex: token.slotIndex * 2 + 1,
-        } }).end();
-        encoder.resolveQuerySet(token.timing.querySet, token.slotIndex * 2, 2, token.slot.resolve, 0);
-        encoder.copyBufferToBuffer(token.slot.resolve, 0, token.slot.readback, 0, 16);
-        token.slot.pending = true;
-        token.slot.frameSeq = gpuTimingFrameSeq;
-      } catch (_timestampEndError) {
-        token.slot.pending = false;
-        token.slot.mapping = false;
-        disableGPUTiming(token.timing);
-      }
-    }
-
-    // Per-pass GPU timing.
-    // These optional pass counters describe shadow and main draws only.
-    // The frame timer also includes compute, water, picking and post effects.
-    // Slot layout, per ring entry:
-    //   0 shadow begin   1 shadow end   2 main begin   3 main end
-    var SCENE_WEBGPU_PASS_STAMPS = 4;
-    var SCENE_WEBGPU_PASS_RING = 3;
-    var gpuPassTiming = null;
-    var gpuPassTimingSlot = null;
-    var gpuPassTimingShadowUsed = false;
-    var lastGPUPassSample = null;
-
-    function ensureGPUPassTiming() {
-      if (!((typeof window !== "undefined" && window.__gosx_scene3d_webgpu_pass_timing === true) || webGPUPerformanceTelemetry())) return false;
-      if (gpuPassTiming !== null) return gpuPassTiming;
-      gpuPassTiming = false;
-      var querySet = null;
-      var buffers = [];
-      try {
-        var supported = device && device.features && typeof device.features.has === "function" && device.features.has("timestamp-query");
-        if (!supported || typeof device.createQuerySet !== "function") {
-          if (telemetryMount) queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "timer-unavailable");
-          return gpuPassTiming;
-        }
-        querySet = device.createQuerySet({
-          type: "timestamp",
-          count: SCENE_WEBGPU_PASS_STAMPS * SCENE_WEBGPU_PASS_RING,
-        });
-        var slots = [];
-        for (var i = 0; i < SCENE_WEBGPU_PASS_RING; i++) {
-          var resolve = device.createBuffer({
-            label: "gosx-pass-timing-resolve",
-            size: SCENE_WEBGPU_PASS_STAMPS * 8,
-            usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
-          });
-          var readback = device.createBuffer({
-            label: "gosx-pass-timing-readback",
-            size: SCENE_WEBGPU_PASS_STAMPS * 8,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-          });
-          buffers.push(resolve, readback);
-          slots.push({ resolve: resolve, readback: readback, pending: false, mapping: false, frameSeq: 0, hasShadow: false });
-        }
-        gpuPassTiming = {
-          querySet: querySet,
-          slots: slots,
-        };
-        if (telemetryMount) queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "pending");
-      } catch (_passTimingError) {
-        if (querySet && typeof querySet.destroy === "function") querySet.destroy();
-        for (var b = 0; b < buffers.length; b++) {
-          if (buffers[b] && typeof buffers[b].destroy === "function") buffers[b].destroy();
-        }
-        gpuPassTiming = false;
-        if (telemetryMount) queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "failed");
-      }
-      return gpuPassTiming;
-    }
-
-    // beginGPUPassTimingFrame picks the ring slot this frame writes into. It
-    // returns null when no slot is free, so a frame never overwrites a slot whose
-    // readback is still in flight.
-    function beginGPUPassTimingFrame() {
-      gpuPassTimingSlot = null;
-      gpuPassTimingShadowUsed = false;
-      var timing = ensureGPUPassTiming();
-      if (!timing) return;
-      var start = gpuTimingFrameSeq % timing.slots.length;
-      for (var i = 0; i < timing.slots.length; i++) {
-        var index = (start + i) % timing.slots.length;
-        var slot = timing.slots[index];
-        if (!slot || slot.pending || slot.mapping) continue;
-        slot.hasShadow = false;
-        gpuPassTimingSlot = { timing: timing, slot: slot, index: index };
-        return;
-      }
-    }
-
-    // gpuPassTimestampWrites returns the timestampWrites field for one pass, or
-    // null. Spread it into the beginRenderPass descriptor only when it is not
-    // null: a null field is a validation error on some implementations.
-    //
-    // Only the FIRST shadow pass is stamped. A second directional light opens a
-    // second shadow pass, and the ring holds one pair, so stamping both would
-    // report the second pass and hide the first.
-    function gpuPassTimestampWrites(passName) {
-      if (!gpuPassTimingSlot) return null;
-      var base = gpuPassTimingSlot.index * SCENE_WEBGPU_PASS_STAMPS;
-      if (passName === "shadow") {
-        if (gpuPassTimingShadowUsed) return null;
-        gpuPassTimingShadowUsed = true;
-        gpuPassTimingSlot.slot.hasShadow = true;
-        return { querySet: gpuPassTimingSlot.timing.querySet, beginningOfPassWriteIndex: base, endOfPassWriteIndex: base + 1 };
-      }
-      if (passName === "main") {
-        return { querySet: gpuPassTimingSlot.timing.querySet, beginningOfPassWriteIndex: base + 2, endOfPassWriteIndex: base + 3 };
-      }
-      return null;
-    }
-
-    // endGPUPassTimingFrame resolves the slot into its readback buffer. Call it
-    // once, after the last timed pass and before submit.
-    function endGPUPassTimingFrame(encoder) {
-      if (!gpuPassTimingSlot || !encoder) return;
-      if (typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
-        gpuPassTimingSlot = null;
-        return;
-      }
-      var token = gpuPassTimingSlot;
-      gpuPassTimingSlot = null;
-      try {
-        encoder.resolveQuerySet(
-          token.timing.querySet,
-          token.index * SCENE_WEBGPU_PASS_STAMPS,
-          SCENE_WEBGPU_PASS_STAMPS,
-          token.slot.resolve,
-          0
-        );
-        encoder.copyBufferToBuffer(token.slot.resolve, 0, token.slot.readback, 0, SCENE_WEBGPU_PASS_STAMPS * 8);
-        token.slot.pending = true;
-        token.slot.frameSeq = gpuTimingFrameSeq;
-      } catch (_passResolveError) {
-        token.slot.pending = false;
-        token.slot.mapping = false;
-        gpuPassTiming = false;
-      }
-    }
-
-    function pollGPUPassTimingReadback() {
-      var timing = gpuPassTiming;
-      if (!timing) return;
-      for (var i = 0; i < timing.slots.length; i++) {
-        var slot = timing.slots[i];
-        if (!slot.pending || slot.mapping || gpuTimingFrameSeq - slot.frameSeq < 2) continue;
-        if (!slot.readback || typeof slot.readback.mapAsync !== "function") continue;
-        slot.mapping = true;
-        (function(activeTiming, activeSlot) {
-          activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
-            if (activeSlot.readback && typeof activeSlot.readback.getMappedRange === "function") {
-              var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
-              recordGPUPassSample(activeSlot, values);
-              activeSlot.readback.unmap();
-            }
-            activeSlot.pending = false;
-            activeSlot.mapping = false;
-          }).catch(function() {
-            activeSlot.pending = false;
-            activeSlot.mapping = false;
-          });
-        })(timing, slot);
-        break;
-      }
-    }
-
-    // recordGPUPassSample turns four raw timestamps into milliseconds. A zero or
-    // decreasing pair means the implementation did not write that stamp, so the
-    // reading is dropped rather than published as 0.
-    function recordGPUPassSample(slot, values) {
-      if (!values || values.length < SCENE_WEBGPU_PASS_STAMPS) return;
-      var toMS = function(begin, end) {
-        if (end <= begin) return -1;
-        return Number(end - begin) / 1000000;
-      };
-      var shadowMS = slot.hasShadow ? toMS(values[0], values[1]) : 0;
-      var mainMS = toMS(values[2], values[3]);
-      if (mainMS < 0) return;
-      // The whole-scene span runs from the first stamped pass to the end of the
-      // main pass, so it includes the gap between passes — which is real GPU
-      // time the frame spent.
-      var sceneBegin = slot.hasShadow ? values[0] : values[2];
-      var sceneMS = toMS(sceneBegin, values[3]);
-      lastGPUPassSample = {
-        source: "gpu-timestamp", scope: "passes", frameSeq: slot.frameSeq,
-        shadowMS: shadowMS < 0 ? 0 : shadowMS,
-        mainMS: mainMS,
-        sceneMS: sceneMS < 0 ? mainMS : sceneMS,
-        atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
-      };
-      wgpuEmitGPUTiming(lastGPUPassSample);
-      if (telemetryMount) {
-        queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-pass-shadow-ms", lastGPUPassSample.shadowMS.toFixed(3));
-        queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-pass-main-ms", lastGPUPassSample.mainMS.toFixed(3));
-        queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-pass-scene-ms", lastGPUPassSample.sceneMS.toFixed(3));
-        queueWebGPUAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "measured");
-      }
-
-    }
-
-    function destroyGPUPassTimingResources() {
-      var timing = gpuPassTiming;
-      gpuPassTiming = null;
-      gpuPassTimingSlot = null;
-      destroyGPUTimingResources(timing);
-    }
-
-    function pollPerformanceSample() {
-      pollGPUTimingReadback();
-      pollGPUPassTimingReadback();
-      var sample = lastGPUPerformanceSample;
-      lastGPUPerformanceSample = null;
-      return sample;
-    }
-
-    function getFrameTiming() {
-      pollGPUTimingReadback();
-      // @ts-ignore TS7005 -- readback initializes the frame sample asynchronously.
-      return sceneWebGPUCompletionSnapshot(getPerformanceTimingStatus(), lastGPUCompletionSample, gpuTimingDisposed, lastDeviceLostInfo);
-    }
-
-    function getPerformanceTimingStatus() {
-      var timing = ensureGPUTiming();
-      var active = Boolean(timing && timing !== false && Array.isArray(timing.slots) && gpuTimingEncodingAvailable === true);
-      var pending = active && gpuTiming.slots.some(function(slot) { return slot && (slot.pending || slot.mapping); });
-      return { available: active, active: active, pending: pending, failed: gpuTimingFailed, source: "gpu-timestamp" };
-    }
 
     // Shadow pass buffer.
     var shadowPositionBuffer = null;
@@ -10132,9 +9741,9 @@
       if (device && device.queue && typeof device.queue.onSubmittedWorkDone === "function") {
         device.queue.onSubmittedWorkDone().then(destroyAll).catch(destroyAll);
       } else {
-        deferredWaterTextureRetirements.push({
+        timingState.deferredWaterTextureRetirements.push({
           textures: list,
-          retireAfterFrame: gpuTimingFrameSeq + 3,
+          retireAfterFrame: timingState.gpuTimingFrameSeq + 3,
         });
       }
     }
@@ -10258,7 +9867,7 @@
         });
         return;
       }
-      deferredWaterSystemRetirements.push({ system: system, retireAfterFrame: gpuTimingFrameSeq + 3 });
+      timingState.deferredWaterSystemRetirements.push({ system: system, retireAfterFrame: timingState.gpuTimingFrameSeq + 3 });
     }
 
     function disposeWaterSystems() {
@@ -13639,7 +13248,7 @@
           depthStoreOp: "store",
         },
       };
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var shadowStamps = gpuPassTimestampWrites("shadow");
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var shadowStamps = gpuPassTimestampWrites(timingState, "shadow");
       if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
       var pass = encoder.beginRenderPass(shadowPassDescriptor);
       pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
@@ -15533,13 +15142,13 @@
       var activeShadowCount = 0;
 
       var encoder = device.createCommandEncoder({ label: "gosx-frame" }), crowdEncoder = encoder;
-      gpuTimingFrameSeq += 1;
-      drainDeferredGPUResources(false);
-      var gpuTimingToken = beginGPUFrameTiming(encoder);
+      timingState.gpuTimingFrameSeq += 1;
+      drainDeferredGPUResources(timingState, false);
+      var gpuTimingToken = beginGPUFrameTiming(timingState, device, encoder);
       // Per-pass stamps ride on the render-pass descriptors, so the slot must be
       // chosen before the shadow pass opens.
-      pollGPUPassTimingReadback();
-      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
+      pollGPUPassTimingReadback(timingState);
+      beginGPUPassTimingFrame(timingState, device); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUFrameTiming(timingState, encoder, gpuTimingToken); endGPUPassTimingFrame(timingState, encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
       sceneWebGPUSelenaSurfaceFrame(selenaSurfaces);
@@ -15734,7 +15343,7 @@
           depthStoreOp: "store",
         },
       };
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites("main");
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites(timingState, "main");
       if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
       crowd.prepareMainPass(mainPassDescriptor);
       gpuDriven.prepareMainPass(mainPassDescriptor);
@@ -16113,14 +15722,14 @@
         Object.assign(frameStats, postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: temporalAA.velocityView() } }), temporalAA.stats(), autoExposure.stats());
       }
 
-      endGPUFrameTiming(encoder, gpuTimingToken);
-      endGPUPassTimingFrame(encoder);
+      endGPUFrameTiming(timingState, encoder, gpuTimingToken);
+      endGPUPassTimingFrame(timingState, encoder);
       gpuDriven.finishEncoding(encoder);
       crowd.finishEncoding(encoder);
       if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; }
       device.queue.submit([encoder.finish()]);
       Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink), crowd.endFrame());
-      pollGPUTimingReadback();
+      pollGPUTimingReadback(timingState, device);
       // Pick readback starts after submit and does not wait in this frame.
       if (scenePicker) scenePicker.finishReadback();
       webGPUSweepRetainedMeshBuffers();
@@ -16149,23 +15758,23 @@
       if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null; window.__gosx_scene3d_crowd_api?.dispose(device);
       skyResources.renderer = null;
 
-      gpuTimingDisposed = true;
-      lastGPUCompletionSample = null;
-      try { destroyGPUTimingResources(gpuTiming); } catch (_err) {}
-      try { destroyGPUPassTimingResources(); } catch (_err) {}
+      timingState.gpuTimingDisposed = true;
+      timingState.lastGPUCompletionSample = null;
+      try { destroyGPUTimingResources(timingState.gpuTiming); } catch (_err) {}
+      try { destroyGPUPassTimingResources(timingState); } catch (_err) {}
       if (webGPUBundleCache) {
         try { webGPUBundleCache.invalidate(); } catch (_err) {}
       }
       webGPUBundleCache = null;
-      gpuTiming = null;
-      for (var failedTimingIndex = 0; failedTimingIndex < failedGPUTimings.length; failedTimingIndex++) {
-        try { destroyGPUTimingResources(failedGPUTimings[failedTimingIndex].timing); } catch (_err) {}
+      timingState.gpuTiming = null;
+      for (var failedTimingIndex = 0; failedTimingIndex < timingState.failedGPUTimings.length; failedTimingIndex++) {
+        try { destroyGPUTimingResources(timingState.failedGPUTimings[failedTimingIndex].timing); } catch (_err) {}
       }
-      failedGPUTimings.length = 0;
-      try { drainDeferredGPUResources(true); } catch (_err) {}
-      deferredWaterTextureRetirements.length = 0;
-      deferredWaterSystemRetirements.length = 0;
-      lastGPUPerformanceSample = null;
+      timingState.failedGPUTimings.length = 0;
+      try { drainDeferredGPUResources(timingState, true); } catch (_err) {}
+      timingState.deferredWaterTextureRetirements.length = 0;
+      timingState.deferredWaterSystemRetirements.length = 0;
+      timingState.lastGPUPerformanceSample = null;
       if (scenePicker) {
         try { scenePicker.dispose(); } catch (_err) {}
       }
@@ -16489,9 +16098,9 @@
       prepareCrowdMotionShaders: function() { return webGPUCrowdHost().prepareCrowdMotionShaders(); }, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace, retryFailed) },
       queuePick: queuePick,
       setLifecycle: setLifecycle,
-      pollPerformanceSample: pollPerformanceSample,
-      getPerformanceTimingStatus: getPerformanceTimingStatus,
-      getFrameTiming: getFrameTiming,
+      pollPerformanceSample: function() { return pollPerformanceSample(timingState, device); },
+      getPerformanceTimingStatus: function() { return getPerformanceTimingStatus(timingState, device); },
+      getFrameTiming: function() { return getFrameTiming(timingState, device, lastDeviceLostInfo); },
       diagnostics: diagnostics,
       getFrameProgress: function() { return webGPUFrameProof; }, shaderPrograms: function() { return { total: pipelineGuard.created, pending: pipelineGuard.pending, failed: pipelineGuard.failures.length }; },
       render: pipelineGuard.wrapFrame(render, endWebGPUErrorScope),

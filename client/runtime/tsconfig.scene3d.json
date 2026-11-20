@@ -28,6 +28,7 @@
     "scene3d/webgpu-shadows.ts",
     "scene3d/webgpu-helpers.ts",
     "scene3d/webgpu-water.ts",
+    "scene3d/webgpu-passes.ts",
     "scene3d/webgpu.ts",
     "scene3d/pipeline-recovery.ts",
     "scene3d/model-pose-data.ts",
