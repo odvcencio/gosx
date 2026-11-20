@@ -29,12 +29,12 @@ const {
 test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", () => {
   const source = readSceneRendererBackendSrc("webgpu");
 
-  assert.match(source, /function ensurePointsUniformGPUBuffer\(owner, uniformData\)/);
-  assert.match(source, /function ensurePointsParticleVertexGPUBuffer\(entry, particleData\)/);
+  assert.match(source, /function ensurePointsUniformGPUBuffer\(meshState\s*, device\s*, owner, uniformData\)/);
+  assert.match(source, /function ensurePointsParticleVertexGPUBuffer\(meshState\s*, device\s*, entry, particleData\)/);
   assert.doesNotMatch(source, /function ensurePointsParticleGPUBuffer\(/);
   assert.match(source, /sceneCachedBuffer\(owner,\s*typedArray/);
-  assert.match(source, /ensurePointsUniformGPUBuffer\(entry,\s*puF\)/);
-  assert.match(source, /ensurePointsParticleVertexGPUBuffer\(entry,\s*particleData\)/);
+  assert.match(source, /ensurePointsUniformGPUBuffer\(meshState,\s*device,\s*entry,\s*puF\)/);
+  assert.match(source, /ensurePointsParticleVertexGPUBuffer\(meshState,\s*device,\s*entry,\s*particleData\)/);
   assert.match(source, /resource: \{ buffer: system\.renderBuffer \}/);
   assert.doesNotMatch(source, /var\s+pointsUniformBuffer\s*=\s*device\.createBuffer/);
   assert.doesNotMatch(source, /device\.queue\.writeBuffer\(pointsUniformBuffer,\s*0/);
@@ -42,7 +42,7 @@ test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", ()
 
 test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buffers", () => {
   const source = readSceneRendererBackendSrc("webgpu");
-  const sceneBuffers = source.slice(source.indexOf("function ensurePBRSceneAttributeBuffers"), source.indexOf("// -----------------------------------------------------------------------\n    // Draw list construction"));
+  const sceneBuffers = source.slice(source.indexOf("function ensurePBRSceneAttributeBuffers"), source.indexOf("function wgpuSameItems"));
   const bindSceneBuffer = source.slice(source.indexOf("function webGPUBindSceneMeshVertexBuffer"), source.indexOf("function buildDrawList"));
   const shadowPass = source.slice(source.indexOf("function renderShadowPass"), source.indexOf("// -----------------------------------------------------------------------\n    // PBR object drawing"));
   const drawPBR = source.slice(source.indexOf("function drawPBRObjects"), source.indexOf("function instancedMeshTransformData"));
@@ -54,10 +54,10 @@ test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buf
   // -- `bundle` is a brand-new object every render() call, so an
   // owner-identity cache keyed on it can never hit; see
   // pbrSceneAttributeCache's declaration for the full rationale).
-  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\("positions",\s*positions\)/);
-  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\("normals",\s*normals\)/);
-  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\("uvs",\s*uvs\)/);
-  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\("tangents",\s*tangents\)/);
+  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\(meshState,\s*device,\s*"positions",\s*positions\)/);
+  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\(meshState,\s*device,\s*"normals",\s*normals\)/);
+  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\(meshState,\s*device,\s*"uvs",\s*uvs\)/);
+  assert.match(sceneBuffers, /wgpuStablePBRAttributeBuffer\(meshState,\s*device,\s*"tangents",\s*tangents\)/);
   assert.match(bindSceneBuffer, /byteOffset = offset \* components \* 4/);
   assert.match(bindSceneBuffer, /pass\.setVertexBuffer\(slot,\s*record\.buffer,\s*byteOffset,\s*byteSize\)/);
 
@@ -81,7 +81,7 @@ test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buf
   // belongs to the vertex stream and uploads once, not every frame.
   assert.match(skinnedBind, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
   assert.match(skinnedBind, /pass\.setVertexBuffer\(1,\s*outputBuffer,\s*paddedCount \* 12,\s*vec3Bytes\)/);
-  assert.match(skinnedBind, /webGPUBindSkinnedUVBuffer\(pass,\s*2,\s*obj,\s*count\)/);
+  assert.match(skinnedBind, /webGPUBindSkinnedUVBuffer\(meshState,\s*device,\s*pass,\s*2,\s*obj,\s*count\)/);
   assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedUVs"/);
   assert.match(skinnedBind, /pass\.setVertexBuffer\(3,\s*outputBuffer,\s*paddedCount \* 24,\s*Math\.max\(4,\s*count \* 4 \* 4\)\)/);
   assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedNormals"/);
@@ -264,10 +264,10 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   assert.match(source, /elioSkinningKernel: "m31labs\.dev\/elio\/stdlib\.Skin"/);
   assert.match(source, /@compute @workgroup_size\(64\)/);
   assert.match(source, /wgpuCreateValidatedPipeline\(device, "compute", \{[\s\S]*label: "gosx-elio-skin-lbs"/);
-  assert.match(source, /updateElioSkinnedMeshes\(bundle, encoder\)/);
+  assert.match(source, /updateElioSkinnedMeshes\(meshState, device, bundle, encoder\)/);
   assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
   assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
-  assert.match(source, /webGPUBindElioSkinnedBuffers\(pass, obj, count\)/);
+  assert.match(source, /webGPUBindElioSkinnedBuffers\(meshState, device, pass, obj, count\)/);
   assert.match(source, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-dispatches/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-kernel/);
@@ -1833,7 +1833,7 @@ test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event
 
 test("Scene3D WebGPU timing initialization failure unlocks CPU-rAF fallback", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
-  const timingInit = webgpu.match(/function ensureGPUTiming\(timingState, device\) \{[\s\S]*?\n  \}/);
+  const timingInit = webgpu.match(/function ensureGPUTiming\(timingState\s*, device\s*\) \{[\s\S]*?\n  \}/);
   assert.ok(timingInit, "WebGPU timing initialization seam should exist");
   assert.match(timingInit[0], /catch \(error\) \{[\s\S]*candidateQuerySet\.destroy\(\)[\s\S]*candidateBuffer\.destroy\(\)[\s\S]*timingState\.gpuTiming = false;\s*timingState\.gpuTimingFailed = true;/);
   assert.match(webgpu, /return \{ available: active, active: active, pending: pending, failed: timingState\.gpuTimingFailed, source: "gpu-timestamp" \}/);

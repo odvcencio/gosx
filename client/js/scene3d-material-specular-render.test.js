@@ -1300,7 +1300,8 @@ function makeGPUHarness(context, textureStates) {
     if (!state.view) state.view = { __view: url };
     return { loaded: true, view: state.view };
   };
-  context.wgpuCachedTrackedBuffer = function (owner, slot) {
+  context.meshState = {};
+  context.wgpuCachedTrackedBuffer = function (meshState, device, owner, slot) {
     if (!owner[slot]) {
       const buffer = { __buffer: slot };
       owner[slot] = buffer;

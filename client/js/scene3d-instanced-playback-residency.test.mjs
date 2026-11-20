@@ -502,7 +502,7 @@ for(const backend of ['WebGL','WebGPU']) for(const representation of ['typed','n
    compile(renderer.slice(renderer.indexOf('function uploadInstancedStream('),renderer.indexOf('function bindInstancedVertexAttribute(')));
   }else{
    const renderer=readSceneRendererBackendSrc('webgpu');
-   Object.assign(context,{pointsEntryGPUBuffers:new Set(),pbrSceneAttributeCache:{},instancedCacheOwnerEpoch:0,GPUBufferUsage:{VERTEX:1,COPY_DST:2},device:{
+   Object.assign(context,{meshState:{pointsEntryGPUBuffers:new Set(),pbrSceneAttributeCache:{},instancedCacheOwnerEpoch:0},GPUBufferUsage:{VERTEX:1,COPY_DST:2},device:{
     createBuffer({size}){const value={size,getMappedRange(){return storage.get(value).buffer;},unmap(){},destroy(){storage.delete(value);}};storage.set(value,new Uint8Array(size));return value;},
     queue:{writeBuffer(value,offset,data){storage.get(value).set(new Uint8Array(data.buffer,data.byteOffset,data.byteLength),offset);writes++;}}}});
    const planner=fs.readFileSync(path.join(root,'client/js/bootstrap-src/15b-scene-planner.ts'),'utf8');
@@ -516,7 +516,7 @@ for(const backend of ['WebGL','WebGPU']) for(const representation of ['typed','n
    let source=matrix;if(representation==='numeric-array'){source=sources.get(matrix);if(!source){source=Array.from(matrix);sources.set(matrix,source);}for(let i=0;i<16;i++)source[i]=matrix[i];}
    const prepared=context.scenePrepareInstancedTransforms(owner,source);let current;
    if(backend==='WebGL'){context.instancedStreamEpoch++;current=context.uploadInstancedStream({id:'generic'},0,'transforms',prepared,16);}
-   else{context.instancedCacheOwnerEpoch++;current=context.wgpuStablePBRAttributeBuffer('pose-snapshot',prepared,owner,'pose-buffer');}
+   else{context.meshState.instancedCacheOwnerEpoch++;current=context.wgpuStablePBRAttributeBuffer(context.meshState,context.device,'pose-snapshot',prepared,owner,'pose-buffer');}
    if(buffer)assert.equal(current,buffer,'warm GPU buffer changed');buffer=current;
    assert.deepEqual(Array.from(new Float32Array(storage.get(buffer).buffer)),Array.from(matrix),'GPU payload went stale on frame '+frame);
   }

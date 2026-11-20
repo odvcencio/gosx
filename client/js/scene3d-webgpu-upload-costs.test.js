@@ -142,8 +142,8 @@ function uploadHelperHarness() {
     const next = /\n\s*function [\w$]+\(/.exec(text.slice(start + 1));
     return text.slice(start, next ? start + 1 + next.index : text.length);
   }
-  const fake = makeFakeGPUDevice({}), context = vm.createContext({ device: fake.device, GPUBufferUsage: { VERTEX: 32, COPY_DST: 8 },
-    pointsEntryGPUBuffers: new Set(), pbrSceneAttributeCache: {}, instancedCacheOwnerEpoch: 1, scans: 0 });
+  const fake = makeFakeGPUDevice({}), meshState = { pointsEntryGPUBuffers: new Set(), pbrSceneAttributeCache: {}, instancedCacheOwnerEpoch: 1 },
+    context = vm.createContext({ device: fake.device, GPUBufferUsage: { VERTEX: 32, COPY_DST: 8 }, meshState, scans: 0 });
   vm.runInContext([...["wgpuArrayContentsMatch", "wgpuAlignUp", "wgpuCreateBuffer", "wgpuCreateTrackedBuffer", "wgpuTrackedBufferSize", "wgpuUploadTrackedBuffer", "wgpuStablePBRAttributeBuffer", "wgpuCachedTrackedBuffer"].map(n => take(source, n)),
     take(planner, "sceneCachedBuffer"), take(planner, "sceneCachedSlotBuffer"),
     "var match = wgpuArrayContentsMatch; wgpuArrayContentsMatch = function(a,b) { scans++; return match(a,b); };"].join("\n"), context);
@@ -152,13 +152,13 @@ function uploadHelperHarness() {
 
 test("WebGPU upload snapshots scan once per frame and identity, reuse storage, and upload changed bytes", () => {
   const { fake, context: c, F32 } = uploadHelperHarness(), owner = {}, values = new F32(16000);
-  const upload = data => c.wgpuStablePBRAttributeBuffer("positions", data, owner, "positionsB");
+  const upload = data => c.wgpuStablePBRAttributeBuffer(c.meshState, c.device, "positions", data, owner, "positionsB");
   upload(values);
   const snapshot = owner.positions;
   upload(values); upload(values); upload(values);
   assert.equal(c.scans, 1, "main, shadows and bundle recording share one content scan");
   assert.equal(fake.state.writeBufferCalls.length, 1);
-  c.instancedCacheOwnerEpoch++;
+  c.meshState.instancedCacheOwnerEpoch++;
   values[12] = 3;
   upload(values); upload(values); upload(values);
   assert.equal(c.scans, 2);
@@ -169,13 +169,13 @@ test("WebGPU upload snapshots scan once per frame and identity, reuse storage, a
   upload(equal);
   assert.equal(c.scans, 3, "a different data identity is checked in the same frame");
   assert.equal(fake.state.writeBufferCalls.length, 2);
-  c.instancedCacheOwnerEpoch++;
+  c.meshState.instancedCacheOwnerEpoch++;
   equal[12] = 4; upload(equal);
   assert.equal(fake.state.writeBufferCalls.at(-1).data[12], 4);
   const grown = new F32(32000); grown.set(equal); upload(grown);
   assert.notEqual(owner.positions, snapshot);
   assert.equal(fake.state.writeBufferCalls.at(-1).data.length, grown.length);
-  c.pointsEntryGPUBuffers.clear(); upload(grown);
+  c.meshState.pointsEntryGPUBuffers.clear(); upload(grown);
   assert.equal(fake.state.writeBufferCalls.length, 5, "a stale renderer buffer is recreated even in the cached frame");
 });
 
