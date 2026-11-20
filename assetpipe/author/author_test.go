@@ -284,3 +284,25 @@ func TestHex(t *testing.T) {
 		t.Fatal("accepted a colour without #")
 	}
 }
+
+func TestASmallTargetIsWrittenSparse(t *testing.T) {
+	sk, mesh := legRig(t)
+	mesh.AddTarget("knob", 0, func(i int, p Vec3) Vec3 {
+		if i == 3 {
+			return Vec3{.01, 0, -.02}
+		}
+		return Vec3{}
+	})
+	d, err := (&Model{Generator: "test", MeshName: "body", Skeleton: sk, Mesh: mesh, Clips: []Clip{bendClip(30)}}).Document()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := d.Meshes[0].Primitives[0].Targets[0]["POSITION"]
+	if a := d.Accessors[index]; len(a.Sparse) == 0 || a.BufferView != nil {
+		t.Fatalf("target accessor %+v is not sparse", a)
+	}
+	vals, _, err := d.ReadAccessor(index)
+	if err != nil || len(vals) != 3*len(mesh.P) || math.Abs(vals[9]-.01) > 1e-7 || math.Abs(vals[11]+.02) > 1e-7 || vals[0] != 0 {
+		t.Fatalf("target values %v %v", vals[:12], err)
+	}
+}

@@ -609,6 +609,39 @@ graph.Rig = animgraph.Rig{
 }
 ```
 
+### One model, many bodies
+
+Players who share one GLB can each have their own build. Author the shapes
+as morph targets, name them in `mesh.extras.targetNames`, and give each
+`scene.Model` its weights:
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    MorphWeights: map[string]float64{"mass": .8, "belly": .4, "pads": .5}}
+```
+
+Every model with `MorphWeights` and the same `Src` shares one loaded copy
+that keeps its targets; each folds its own weights into its own vertices
+before skinning, so every clip and IK chain still fits. Declare a weight of
+0 for each target a model may use later: a model declared with no weights
+loads its GLB without targets.
+
+`scene.PatchModelsCommand` changes a mounted model in place on the next
+frame, without loading it again: its morph weights, scale and visibility.
+A game whose models show different players from play to play patches only
+the models whose player changed:
+
+```go
+cmd := scene.PatchModelsCommand([]scene.ModelPatch{{
+    ID:           "home-03",
+    MorphWeights: map[string]float64{"mass": -.4, "pads": -.6},
+    Scale:        &scene.Vector3{X: .97, Y: .97, Z: .97},
+}})
+```
+
+Targets a patch does not name return to their authored weight. Instanced
+crowds (`InstancedGLBMesh`) do not read `MorphWeights`.
+
 ### Clip names and durations
 
 `gltfclip.Read(glb)` returns each animation's name and duration from the

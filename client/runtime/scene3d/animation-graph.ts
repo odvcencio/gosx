@@ -852,7 +852,8 @@
     graph.pose = function(rec: any) {
       const m = agModelFor(graph, rec);
       if (!m || !holder.data) return fallback ? fallback.pose(rec) : false;
-      if ((rec.morphTargets && rec.morphTargets.length > 0) || (rec.nodeAnimTargets && rec.nodeAnimTargets.length > 0)) return false;
+      if (rec.nodeAnimTargets && rec.nodeAnimTargets.length > 0) return false;
+      if (rec.morphTargets && rec.morphTargets.length > 0 && !agFoldSkinnedMorphs(rec)) return false;
       agEvaluate(m, holder);
       return true;
     };
@@ -874,6 +875,20 @@
     };
     record.clipSampler = graph;
     return graph;
+  }
+
+  // A graph model's skinned morph targets carry only the model's own weights
+  // (Model.MorphWeights): a clip never animates them, and they fold in
+  // primitive-local space before skinning, so the allocation-free pose path
+  // keeps them. Returns false when an entry is rigid and needs the general
+  // path's node transforms.
+  function agFoldSkinnedMorphs(rec: any) {
+    const entries = rec.morphTargets;
+    for (let i = 0; i < entries.length; i++) if (!entries[i] || !entries[i].skinned) return false;
+    const api = window.__gosx_scene3d_gltf_api || rec.morphApi;
+    if (!api || typeof api.applyMorphPose !== "function") return false;
+    api.applyMorphPose(entries, null, null, rec.model && rec.model.morphWeights);
+    return true;
   }
 
   function agModelFor(graph: any, record: any) {

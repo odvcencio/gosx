@@ -1594,6 +1594,7 @@
       animationSeq: typeof current.animationSeq === "string" ? current.animationSeq : "",
       clipSampled: sceneBool(current.clipSampled, false),
       rootMotion: sceneBool(current.rootMotion, false),
+      morphWeights: current.morphWeights && typeof current.morphWeights === "object" && !Array.isArray(current.morphWeights) ? current.morphWeights : null,
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       interactive: sceneBool(current.interactive, false),
       label: typeof current.label === "string" ? current.label.trim() : "",
@@ -4385,6 +4386,7 @@
   // must never be renumbered.
   const SCENE_CMD_SET_POST_UNIFORMS = 14;
   const SCENE_CMD_SET_GROUPS = 15;
+  const SCENE_CMD_PATCH_MODELS = 16;
 
   function applySceneCommands(state, commands) {
     if (!state || !Array.isArray(commands) || commands.length === 0) return;
@@ -4463,6 +4465,8 @@
       case SCENE_CMD_SET_POST_UNIFORMS:
         applyScenePostUniformsCommand(state, command.data);
         return;
+      case SCENE_CMD_PATCH_MODELS:
+        return typeof applyScenePatchModelsCommand === "function" ? applyScenePatchModelsCommand(state, command.data) : null;
       default:
         return;
     }

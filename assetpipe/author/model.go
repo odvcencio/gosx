@@ -47,13 +47,6 @@ func (m *Model) Document() (*gltfedit.Document, error) {
 	}
 	d := gltfedit.New(m.Generator)
 	const vtx = gltfedit.TargetArrayBuffer
-	flat := func(v []Vec3) []float64 {
-		out := make([]float64, 0, 3*len(v))
-		for _, p := range v {
-			out = append(out, p[0], p[1], p[2])
-		}
-		return out
-	}
 	var uv, weights []float64
 	var joints []int32
 	for i := range mesh.P {
@@ -110,11 +103,11 @@ func (m *Model) Document() (*gltfedit.Document, error) {
 			for i := range mn {
 				dn[i] = mn[i].Sub(normals[i])
 			}
-			pa, err := d.AddAccessor(flat(t.Delta), "VEC3", gltfedit.ComponentFloat, false, vtx)
+			pa, err := targetAccessor(d, t.Delta, vtx)
 			if err != nil {
 				return nil, err
 			}
-			na, err := d.AddAccessor(flat(dn), "VEC3", gltfedit.ComponentFloat, false, vtx)
+			na, err := targetAccessor(d, dn, vtx)
 			if err != nil {
 				return nil, err
 			}
@@ -321,4 +314,29 @@ func LinkImage(d *gltfedit.Document, uri string, data []byte, mime string) error
 		uri = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
 	}
 	return d.SetSection("images", []map[string]any{{"uri": uri, "mimeType": mime}})
+}
+
+// flat lays vectors out as glTF reads them.
+func flat(v []Vec3) []float64 {
+	out := make([]float64, 0, 3*len(v))
+	for _, p := range v {
+		out = append(out, p[0], p[1], p[2])
+	}
+	return out
+}
+
+// targetAccessor writes one morph target channel. A target that moves under
+// two thirds of the vertices is written sparse (only the moved vertices),
+// which keeps a target that moves part of a body small.
+func targetAccessor(d *gltfedit.Document, delta []Vec3, target int) (int, error) {
+	moved := 0
+	for _, v := range delta {
+		if v != (Vec3{}) {
+			moved++
+		}
+	}
+	if 3*moved < 2*len(delta) {
+		return d.AddSparseAccessor(flat(delta), "VEC3")
+	}
+	return d.AddAccessor(flat(delta), "VEC3", gltfedit.ComponentFloat, false, target)
 }

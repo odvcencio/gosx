@@ -2495,6 +2495,7 @@
           generation: previewGeneration,
           modelID: entry.model.id || "",
           modelIndex: entry.index,
+          morphWeights: entry.model.morphWeights || null,
           stage: "progressive-preload",
           variantScope,
         }).then(function(asset) {
@@ -2597,9 +2598,14 @@
     const variantScope = hydrationMeta && hydrationMeta.variantScope
       ? hydrationMeta.variantScope
       : (hydrationMeta && hydrationMeta.state ? hydrationMeta.state._modelTextureVariantScope : null);
+    // A model with its own morph weights needs the morph targets kept after
+    // load (each instance folds its weights at run time), so it loads a copy
+    // of its own, shared by every such model of the same Src.
+    const retainMorphs = (format === "glb" || format === "gltf") && Boolean(hydrationMeta && hydrationMeta.morphWeights);
+    const assetKey = retainMorphs ? key + "\u0000morph" : key;
     const cacheKey = (format === "glb" || format === "gltf") && variantScope && variantScope.key
-      ? String(variantScope.key) + "\u0000" + key
-      : key;
+      ? String(variantScope.key) + "\u0000" + assetKey
+      : assetKey;
     if (variantScope && variantScope.retired) throw new Error("Scene3D model texture scope retired");
     if ((format === "glb" || format === "gltf") && variantScope && variantScope.modelCacheKeys)
       variantScope.modelCacheKeys.add(cacheKey);
@@ -2629,7 +2635,7 @@
             var gltfApi = await ensureGLTFFeatureLoaded();
             const variantContext = variantScope ? variantScope.ready : null;
             const asset = parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(
-              await gltfApi.sceneLoadGLTFModel(key, variantContext),
+              await gltfApi.sceneLoadGLTFModel(key, variantContext, retainMorphs),
               key
             ), key);
             // Explicit WebGL scene prewarms include palette/bounds work before
@@ -2749,6 +2755,12 @@
   // True when any parsed animation channel drives rigid node TRS, so a
   // non-skinned, weights-free model still needs a mixer record and per-frame
   // pose ticks (one record per model, shared with skins/morphs).
+  // True when the model sets its own morph weights and the asset kept morph
+  // targets for them: the model needs a record that folds its weights.
+  function sceneModelHasOwnMorphs(asset, model) {
+    return Boolean(model && model.morphWeights && asset && Array.isArray(asset.objects) && asset.objects.some(o => o && o._morphAnim));
+  }
+
   function sceneModelHasNodeAnimations(asset) {
     const animations = asset && Array.isArray(asset.animations) ? asset.animations : [];
     for (let index = 0; index < animations.length; index += 1) {
@@ -2878,7 +2890,7 @@
     if (hasMorphTargets) {
       const morphApi = (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api) || record.morphApi;
       if (morphApi && typeof morphApi.applyMorphPose === "function") {
-        morphApi.applyMorphPose(record.morphTargets, animatedTransforms, localNodeTransforms);
+        morphApi.applyMorphPose(record.morphTargets, animatedTransforms, localNodeTransforms, record.model && record.model.morphWeights);
       }
     }
     // Rigid node TRS playback for every emitted geometry kind. Mesh entries
@@ -2949,7 +2961,7 @@
   }
 
   async function scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs, stagedObjects, stagedPoints) {
-    if ((!sceneModelHasSkins(skinInstances) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset))
+    if ((!sceneModelHasSkins(skinInstances) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset) && !sceneModelHasOwnMorphs(asset, instanceModel))
       || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
     }
@@ -3650,6 +3662,7 @@
         crowd: model._instancedGLB === true,
         modelID: model.id || "",
         modelIndex,
+        morphWeights: model.morphWeights || null,
         stage: "load",
         variantScope: state && state._modelTextureVariantScope,
       });
@@ -3781,7 +3794,7 @@
         }
       }
       stage = "skin";
-      if (sceneModelHasSkins(skinInstances) || sceneModelHasWeightAnimations(asset) || sceneModelHasNodeAnimations(asset)) {
+      if (sceneModelHasSkins(skinInstances) || sceneModelHasWeightAnimations(asset) || sceneModelHasNodeAnimations(asset) || sceneModelHasOwnMorphs(asset, instanceModel)) {
         // ONE record per model: the playback record is the live record, the
         // same way skinned models already receive live patches. Registering
         // an additional static/live record under the same model ID would let

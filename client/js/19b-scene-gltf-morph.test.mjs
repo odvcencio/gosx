@@ -880,3 +880,73 @@ test("reflected shear reverses complete triangles and preserves the tangent fram
   ];
   assert.ok(face[0] * n[0] + face[1] * n[1] + face[2] * n[2] > 0, "reflected face stays front-facing");
 });
+
+// --- per-model morph weights (Model.MorphWeights) -----------------------------
+
+test("a retained load keeps morph targets and their names for per-model weights", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const result = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var plainScene = gltfExtractScene(morphDoc, buffer);
+    var kept = gltfExtractScene(morphDoc, buffer, true);
+    var after = gltfExtractScene(morphDoc, buffer);
+    ({
+      plainMeta: Boolean(plainScene.objects[0]._morphAnim),
+      keptNames: kept.objects[0]._morphAnim && kept.objects[0]._morphAnim.targetNames,
+      keptDefaults: kept.objects[0]._morphAnim && kept.objects[0]._morphAnim.defaults,
+      samePositions: JSON.stringify(Array.from(kept.objects[0].vertices.positions)) === JSON.stringify(Array.from(plainScene.objects[0].vertices.positions)),
+      afterMeta: Boolean(after.objects[0]._morphAnim),
+    });
+  `));
+  assert.equal(result.plainMeta, false, "a plain load folds static targets and drops them");
+  assert.deepEqual(result.keptNames, ["mass", "belly"]);
+  assert.deepEqual(result.keptDefaults, [0.5, 0.25]);
+  assert.equal(result.samePositions, true, "the kept copy starts at the authored shape");
+  assert.equal(result.afterMeta, false, "the flag does not leak into the next load");
+});
+
+test("per-model morph weights fold per instance, by name or index, and only when they change", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const result = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    function entry() {
+      // As the mount builds it: the extracted, authored fold.
+      return { meta: meta, vertices: { positions: gltfFoldAnimatedMorphStreams(meta, meta.defaults).positions }, skinned: true, lastWeights: meta.defaults.slice() };
+    }
+    function fold(weights) { return Array.from(gltfFoldAnimatedMorphStreams(meta, weights).positions); }
+    var a = entry(), b = entry();
+    var heavy = { mass: 1 };
+    gltfApplyAnimatedMorphPose([a], null, null, heavy);
+    gltfApplyAnimatedMorphPose([b], null, null, null);
+    var aHeavy = Array.from(a.vertices.positions);
+    var bAuthored = Array.from(b.vertices.positions);
+    var heavyArray = a.vertices.positions;
+    gltfApplyAnimatedMorphPose([a], null, null, heavy);
+    var unchanged = a.vertices.positions === heavyArray;
+    gltfApplyAnimatedMorphPose([a], null, null, { mass: 0, belly: 0 });
+    var slim = Array.from(a.vertices.positions);
+    gltfApplyAnimatedMorphPose([a], null, null, { nope: 1, mass: NaN });
+    var ignored = Array.from(a.vertices.positions);
+    var animated = new Map([[meta.nodeIndex, { weights: [0.75, 0.25] }]]);
+    var c = entry();
+    gltfApplyAnimatedMorphPose([c], animated, null, heavy);
+    var clipWins = Array.from(c.vertices.positions);
+    meta.targetNames = null;
+    var d = entry();
+    gltfApplyAnimatedMorphPose([d], null, null, { "0": 1 });
+    var byIndex = Array.from(d.vertices.positions);
+    ({ aHeavy, bAuthored, unchanged, slim, ignored, clipWins, byIndex,
+       wantHeavy: fold([1, 0.25]), wantSlim: fold([0, 0]), wantAuthored: fold([0.5, 0.25]), wantClip: fold([0.75, 0.25]) });
+  `));
+  const r6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
+  assert.deepEqual(r6(result.aHeavy), r6(result.wantHeavy), "mass overrides target 0; belly keeps its authored weight");
+  assert.deepEqual(r6(result.bAuthored), r6(result.wantAuthored), "an instance without weights keeps the authored shape");
+  assert.equal(result.unchanged, true, "the same weights object does not fold again");
+  assert.deepEqual(r6(result.slim), r6(result.wantSlim));
+  assert.deepEqual(r6(result.ignored), r6(result.wantAuthored), "unknown names and non-finite values fall back to authored");
+  assert.deepEqual(r6(result.clipWins), r6(result.wantClip), "an animated weight wins over the model's own");
+  assert.deepEqual(r6(result.byIndex), r6(result.wantHeavy), "without names a whole-number key picks by index");
+});

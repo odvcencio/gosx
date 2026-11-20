@@ -1296,10 +1296,27 @@ type Model struct {
 	// skin. Vertical (Y) translation is kept, so crouches and hip height still
 	// animate. Rotation and scale are never altered.
 	RootMotion bool
-	Transition Transition
-	InState    *ModelProps
-	OutState   *ModelProps
-	Live       []string
+	// MorphWeights sets morph-target weights for this model alone, so models
+	// that share one GLB can have different shapes (a heavier or a slimmer
+	// body, say). Each key is a morph target name from the mesh's
+	// extras.targetNames, the usual glTF convention. If a mesh has no
+	// targetNames, a key that is a whole number ("0", "1") picks the target
+	// by index instead. A listed target takes the given weight in place of
+	// the weight the GLB authors; targets that are not listed keep the
+	// authored weight. Names that match no target are ignored. A clip that
+	// animates a target's weight wins over this value.
+	//
+	// Every model with MorphWeights and the same Src shares one loaded copy
+	// that keeps the morph targets; each model folds its own weights into
+	// its own vertices, before skinning. PatchModelsCommand changes them
+	// later without loading the model again. Models with no MorphWeights
+	// share the GLB's authored shape, as before. Instanced crowds
+	// (InstancedGLBMesh) do not read this field.
+	MorphWeights map[string]float64
+	Transition   Transition
+	InState      *ModelProps
+	OutState     *ModelProps
+	Live         []string
 }
 
 // Decal projects a planar texture or color marker into the scene. The initial
@@ -3837,6 +3854,7 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.Loop = model.Loop
 	record.ClipSampled = model.ClipSampled
 	record.RootMotion = model.ClipSampled && model.RootMotion
+	record.MorphWeights = finiteMorphWeights(model.MorphWeights)
 	l.models = append(l.models, record)
 	l.anchors[id] = world
 }

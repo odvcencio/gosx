@@ -343,26 +343,27 @@ type ObjectIR struct {
 // ModelIR is the typed compatibility record for one scene model instance.
 type ModelIR struct {
 	ObjectIR
-	Src                string   `json:"src,omitempty"`
-	PreviewSrc         string   `json:"previewSrc,omitempty"`
-	FullSrc            string   `json:"fullSrc,omitempty"`
-	Progressive        bool     `json:"progressive,omitempty"`
-	ScaleX             float64  `json:"scaleX,omitempty"`
-	ScaleY             float64  `json:"scaleY,omitempty"`
-	ScaleZ             float64  `json:"scaleZ,omitempty"`
-	Bounds             float64  `json:"bounds,omitempty"`
-	Fit                string   `json:"fit,omitempty"`
-	FitAlign           string   `json:"fitAlign,omitempty"`
-	Static             *bool    `json:"static,omitempty"`
-	Animation          string   `json:"animation,omitempty"`
-	AnimationSeq       string   `json:"animationSeq,omitempty"`
-	AnimationSpeed     *float64 `json:"animationSpeed,omitempty"`
-	AnimationWeight    *float64 `json:"animationWeight,omitempty"`
-	AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
-	AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
-	Loop               *bool    `json:"loop,omitempty"`
-	ClipSampled        bool     `json:"clipSampled,omitempty"`
-	RootMotion         bool     `json:"rootMotion,omitempty"`
+	Src                string             `json:"src,omitempty"`
+	PreviewSrc         string             `json:"previewSrc,omitempty"`
+	FullSrc            string             `json:"fullSrc,omitempty"`
+	Progressive        bool               `json:"progressive,omitempty"`
+	ScaleX             float64            `json:"scaleX,omitempty"`
+	ScaleY             float64            `json:"scaleY,omitempty"`
+	ScaleZ             float64            `json:"scaleZ,omitempty"`
+	Bounds             float64            `json:"bounds,omitempty"`
+	Fit                string             `json:"fit,omitempty"`
+	FitAlign           string             `json:"fitAlign,omitempty"`
+	Static             *bool              `json:"static,omitempty"`
+	Animation          string             `json:"animation,omitempty"`
+	AnimationSeq       string             `json:"animationSeq,omitempty"`
+	AnimationSpeed     *float64           `json:"animationSpeed,omitempty"`
+	AnimationWeight    *float64           `json:"animationWeight,omitempty"`
+	AnimationFadeInMS  *int               `json:"animationFadeInMS,omitempty"`
+	AnimationFadeOutMS *int               `json:"animationFadeOutMS,omitempty"`
+	Loop               *bool              `json:"loop,omitempty"`
+	ClipSampled        bool               `json:"clipSampled,omitempty"`
+	RootMotion         bool               `json:"rootMotion,omitempty"`
+	MorphWeights       map[string]float64 `json:"morphWeights,omitempty"`
 }
 
 // MarshalJSON emits both the embedded ObjectIR fields AND the ModelIR
@@ -385,26 +386,27 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 	type objectAlias ObjectIR
 	type modelWire struct {
 		objectAlias
-		Src                string   `json:"src,omitempty"`
-		PreviewSrc         string   `json:"previewSrc,omitempty"`
-		FullSrc            string   `json:"fullSrc,omitempty"`
-		Progressive        bool     `json:"progressive,omitempty"`
-		ScaleX             float64  `json:"scaleX,omitempty"`
-		ScaleY             float64  `json:"scaleY,omitempty"`
-		ScaleZ             float64  `json:"scaleZ,omitempty"`
-		Bounds             float64  `json:"bounds,omitempty"`
-		Fit                string   `json:"fit,omitempty"`
-		FitAlign           string   `json:"fitAlign,omitempty"`
-		Static             *bool    `json:"static,omitempty"`
-		Animation          string   `json:"animation,omitempty"`
-		AnimationSeq       string   `json:"animationSeq,omitempty"`
-		AnimationSpeed     *float64 `json:"animationSpeed,omitempty"`
-		AnimationWeight    *float64 `json:"animationWeight,omitempty"`
-		AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
-		AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
-		Loop               *bool    `json:"loop,omitempty"`
-		ClipSampled        bool     `json:"clipSampled,omitempty"`
-		RootMotion         bool     `json:"rootMotion,omitempty"`
+		Src                string             `json:"src,omitempty"`
+		PreviewSrc         string             `json:"previewSrc,omitempty"`
+		FullSrc            string             `json:"fullSrc,omitempty"`
+		Progressive        bool               `json:"progressive,omitempty"`
+		ScaleX             float64            `json:"scaleX,omitempty"`
+		ScaleY             float64            `json:"scaleY,omitempty"`
+		ScaleZ             float64            `json:"scaleZ,omitempty"`
+		Bounds             float64            `json:"bounds,omitempty"`
+		Fit                string             `json:"fit,omitempty"`
+		FitAlign           string             `json:"fitAlign,omitempty"`
+		Static             *bool              `json:"static,omitempty"`
+		Animation          string             `json:"animation,omitempty"`
+		AnimationSeq       string             `json:"animationSeq,omitempty"`
+		AnimationSpeed     *float64           `json:"animationSpeed,omitempty"`
+		AnimationWeight    *float64           `json:"animationWeight,omitempty"`
+		AnimationFadeInMS  *int               `json:"animationFadeInMS,omitempty"`
+		AnimationFadeOutMS *int               `json:"animationFadeOutMS,omitempty"`
+		Loop               *bool              `json:"loop,omitempty"`
+		ClipSampled        bool               `json:"clipSampled,omitempty"`
+		RootMotion         bool               `json:"rootMotion,omitempty"`
+		MorphWeights       map[string]float64 `json:"morphWeights,omitempty"`
 	}
 	return json.Marshal(modelWire{
 		objectAlias:        objectAlias(m.ObjectIR),
@@ -428,6 +430,7 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		Loop:               m.Loop,
 		ClipSampled:        m.ClipSampled,
 		RootMotion:         m.RootMotion,
+		MorphWeights:       finiteMorphWeights(m.MorphWeights),
 	})
 }
 
@@ -2386,6 +2389,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	}
 	if item.RootMotion {
 		record["rootMotion"] = true
+	}
+	if weights := finiteMorphWeights(item.MorphWeights); len(weights) > 0 {
+		record["morphWeights"] = weights
 	}
 	if item.Loop != nil {
 		record["loop"] = *item.Loop

@@ -278,47 +278,48 @@ type IRGroupNode struct{}
 
 // IRMeshNode describes a single mesh primitive or model instance.
 type IRMeshNode struct {
-	Kind               string      `json:"kind,omitempty"`
-	Src                string      `json:"src,omitempty"`
-	PreviewSrc         string      `json:"previewSrc,omitempty"`
-	FullSrc            string      `json:"fullSrc,omitempty"`
-	Progressive        bool        `json:"progressive,omitempty"`
-	Bounds             float64     `json:"bounds,omitempty"`
-	Fit                string      `json:"fit,omitempty"`
-	FitAlign           string      `json:"fitAlign,omitempty"`
-	Size               float64     `json:"size,omitempty"`
-	Width              float64     `json:"width,omitempty"`
-	Height             float64     `json:"height,omitempty"`
-	Depth              float64     `json:"depth,omitempty"`
-	Radius             float64     `json:"radius,omitempty"`
-	Segments           int         `json:"segments,omitempty"`
-	Points             []IRVector3 `json:"points,omitempty"`
-	LineSegments       [][2]int    `json:"lineSegments,omitempty"`
-	LineWidth          float64     `json:"lineWidth,omitempty"`
-	RadiusTop          float64     `json:"radiusTop,omitempty"`
-	RadiusBottom       float64     `json:"radiusBottom,omitempty"`
-	Tube               float64     `json:"tube,omitempty"`
-	RadialSegments     int         `json:"radialSegments,omitempty"`
-	TubularSegments    int         `json:"tubularSegments,omitempty"`
-	CastShadow         bool        `json:"castShadow,omitempty"`
-	ReceiveShadow      bool        `json:"receiveShadow,omitempty"`
-	PlanarReflection   *bool       `json:"planarReflection,omitempty"`
-	Pickable           *bool       `json:"pickable,omitempty"`
-	Visible            *bool       `json:"visible,omitempty"`
-	LODGroup           string      `json:"lodGroup,omitempty"`
-	LODLevel           int         `json:"lodLevel,omitempty"`
-	LODMinDistance     float64     `json:"lodMinDistance,omitempty"`
-	LODMaxDistance     float64     `json:"lodMaxDistance,omitempty"`
-	Static             *bool       `json:"static,omitempty"`
-	Animation          string      `json:"animation,omitempty"`
-	AnimationSeq       string      `json:"animationSeq,omitempty"`
-	AnimationSpeed     *float64    `json:"animationSpeed,omitempty"`
-	AnimationWeight    *float64    `json:"animationWeight,omitempty"`
-	AnimationFadeInMS  *int        `json:"animationFadeInMS,omitempty"`
-	AnimationFadeOutMS *int        `json:"animationFadeOutMS,omitempty"`
-	Loop               *bool       `json:"loop,omitempty"`
-	ClipSampled        bool        `json:"clipSampled,omitempty"`
-	RootMotion         bool        `json:"rootMotion,omitempty"`
+	Kind               string             `json:"kind,omitempty"`
+	Src                string             `json:"src,omitempty"`
+	PreviewSrc         string             `json:"previewSrc,omitempty"`
+	FullSrc            string             `json:"fullSrc,omitempty"`
+	Progressive        bool               `json:"progressive,omitempty"`
+	Bounds             float64            `json:"bounds,omitempty"`
+	Fit                string             `json:"fit,omitempty"`
+	FitAlign           string             `json:"fitAlign,omitempty"`
+	Size               float64            `json:"size,omitempty"`
+	Width              float64            `json:"width,omitempty"`
+	Height             float64            `json:"height,omitempty"`
+	Depth              float64            `json:"depth,omitempty"`
+	Radius             float64            `json:"radius,omitempty"`
+	Segments           int                `json:"segments,omitempty"`
+	Points             []IRVector3        `json:"points,omitempty"`
+	LineSegments       [][2]int           `json:"lineSegments,omitempty"`
+	LineWidth          float64            `json:"lineWidth,omitempty"`
+	RadiusTop          float64            `json:"radiusTop,omitempty"`
+	RadiusBottom       float64            `json:"radiusBottom,omitempty"`
+	Tube               float64            `json:"tube,omitempty"`
+	RadialSegments     int                `json:"radialSegments,omitempty"`
+	TubularSegments    int                `json:"tubularSegments,omitempty"`
+	CastShadow         bool               `json:"castShadow,omitempty"`
+	ReceiveShadow      bool               `json:"receiveShadow,omitempty"`
+	PlanarReflection   *bool              `json:"planarReflection,omitempty"`
+	Pickable           *bool              `json:"pickable,omitempty"`
+	Visible            *bool              `json:"visible,omitempty"`
+	LODGroup           string             `json:"lodGroup,omitempty"`
+	LODLevel           int                `json:"lodLevel,omitempty"`
+	LODMinDistance     float64            `json:"lodMinDistance,omitempty"`
+	LODMaxDistance     float64            `json:"lodMaxDistance,omitempty"`
+	Static             *bool              `json:"static,omitempty"`
+	Animation          string             `json:"animation,omitempty"`
+	AnimationSeq       string             `json:"animationSeq,omitempty"`
+	AnimationSpeed     *float64           `json:"animationSpeed,omitempty"`
+	AnimationWeight    *float64           `json:"animationWeight,omitempty"`
+	AnimationFadeInMS  *int               `json:"animationFadeInMS,omitempty"`
+	AnimationFadeOutMS *int               `json:"animationFadeOutMS,omitempty"`
+	Loop               *bool              `json:"loop,omitempty"`
+	ClipSampled        bool               `json:"clipSampled,omitempty"`
+	RootMotion         bool               `json:"rootMotion,omitempty"`
+	MorphWeights       map[string]float64 `json:"morphWeights,omitempty"`
 }
 
 // IRPointsNode describes a static point cloud.
@@ -1283,6 +1284,7 @@ func modelToIRNode(model ModelIR, materialIndex int) IRNode {
 	node.Mesh.Loop = model.Loop
 	node.Mesh.ClipSampled = model.ClipSampled
 	node.Mesh.RootMotion = model.RootMotion
+	node.Mesh.MorphWeights = finiteMorphWeights(model.MorphWeights)
 	return node
 }
 
