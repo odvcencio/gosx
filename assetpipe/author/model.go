@@ -14,6 +14,10 @@ type Material struct {
 	DoubleSided bool
 	Roughness   float64
 	Metallic    float64
+	// MetallicRoughness reads roughness (green) and metalness (blue) per texel
+	// from image 1, scaled by Roughness and Metallic. Image 0 stays the base
+	// colour. Give both with SetImages.
+	MetallicRoughness bool
 }
 
 // Model is a skinned model ready to write: one mesh, one skeleton, its
@@ -68,7 +72,8 @@ func (m *Model) Document() (*gltfedit.Document, error) {
 		}
 		attr[name], err = d.AddAccessor(values, kind, gltfedit.ComponentFloat, false, vtx)
 	}
-	normals := Normals(mesh.P, mesh.Tri)
+	seams := mesh.seamGroups()
+	normals := weldNormals(Normals(mesh.P, mesh.Tri), seams)
 	add("POSITION", flat(mesh.P), "VEC3")
 	add("NORMAL", flat(normals), "VEC3")
 	add("TEXCOORD_0", uv, "VEC2")
@@ -100,7 +105,7 @@ func (m *Model) Document() (*gltfedit.Document, error) {
 			for i, p := range mesh.P {
 				morphed[i] = p.Add(t.Delta[i])
 			}
-			mn := Normals(morphed, mesh.Tri)
+			mn := weldNormals(Normals(morphed, mesh.Tri), seams)
 			dn := make([]Vec3, len(mn))
 			for i := range mn {
 				dn[i] = mn[i].Sub(normals[i])
@@ -218,11 +223,16 @@ func (m *Model) Document() (*gltfedit.Document, error) {
 	}
 
 	mat := m.Material
-	if err := d.SetSection("materials", []map[string]any{{"name": mat.Name, "doubleSided": mat.DoubleSided,
-		"pbrMetallicRoughness": map[string]any{"baseColorTexture": map[string]int{"index": 0}, "roughnessFactor": mat.Roughness, "metallicFactor": mat.Metallic}}}); err != nil {
+	pbr := map[string]any{"baseColorTexture": map[string]int{"index": 0}, "roughnessFactor": mat.Roughness, "metallicFactor": mat.Metallic}
+	textures := []map[string]int{{"source": 0, "sampler": 0}}
+	if mat.MetallicRoughness {
+		pbr["metallicRoughnessTexture"] = map[string]int{"index": 1}
+		textures = append(textures, map[string]int{"source": 1, "sampler": 0})
+	}
+	if err := d.SetSection("materials", []map[string]any{{"name": mat.Name, "doubleSided": mat.DoubleSided, "pbrMetallicRoughness": pbr}}); err != nil {
 		return nil, err
 	}
-	if err := d.SetSection("textures", []map[string]int{{"source": 0, "sampler": 0}}); err != nil {
+	if err := d.SetSection("textures", textures); err != nil {
 		return nil, err
 	}
 	if err := d.SetSection("samplers", []map[string]int{{"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071}}); err != nil {
