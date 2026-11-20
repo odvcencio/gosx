@@ -18,6 +18,6 @@
   "scene3d/webgl.ts": 1034,
   "scene3d/webgpu-helpers.ts": 183,
   "scene3d/webgpu-passes.ts": 77,
-  "scene3d/webgpu-water.ts": 159,
-  "scene3d/webgpu.ts": 937
+  "scene3d/webgpu-water.ts": 220,
+  "scene3d/webgpu.ts": 852
 }

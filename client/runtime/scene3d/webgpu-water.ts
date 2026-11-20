@@ -1318,3 +1318,1057 @@
     system.stateTextureSyncSeq = Math.max(0, Math.floor(sceneNumber(system.stateTextureSyncSeq, 0))) + 1;
     return 1;
   }
+  function sceneWaterObjectState(system, entry, timeSeconds, poolWidth, poolLength) {
+    var kind = sceneWaterObjectKind(entry);
+    if (!kind) {
+      if (system) {
+        system.waterObjectMoved = system.waterObjectActive === true;
+        system.waterObjectKind = 0;
+        system.waterObjectLabel = "";
+        system.waterObjectActive = false;
+        system.waterObjectSphereCount = 0;
+        system.waterObjectHalfSize = { x: 0, y: 0, z: 0 };
+        system.waterObjectCenter = { x: 0, y: 0, z: 0 };
+        system.waterObjectDisplacementScale = 0;
+        system.waterObjectSpheres = [];
+      }
+      return {
+        kind: 0,
+        center: { x: 0, y: 0, z: 0 },
+        previous: { x: 0, y: 0, z: 0 },
+        halfSize: { x: 0, y: 0, z: 0 },
+        radius: 0,
+        displacementScale: 0,
+        subtype: 0,
+        spheres: [],
+      };
+    }
+    var currentWorld = sceneWaterObjectCenter(entry, timeSeconds);
+    var current = sceneWaterNormalizeObjectCenter(currentWorld, poolWidth, poolLength);
+    var signature = sceneWaterObjectMotionSignature(entry, kind);
+    var lastCenter = system && system.waterObjectPrevious;
+    var objectMoved = !lastCenter || system.waterObjectSignature !== signature ||
+      current.x !== lastCenter.x || current.y !== lastCenter.y || current.z !== lastCenter.z;
+    var previous = current;
+    var explicitPreviousSignature = sceneWaterObjectExplicitPreviousSignature(entry, kind);
+    if (system && explicitPreviousSignature && system.waterObjectExplicitPreviousSignature !== explicitPreviousSignature) {
+      previous = sceneWaterNormalizeObjectCenter({
+        x: sceneNumber(entry && entry.objectPreviousX, currentWorld.x),
+        y: sceneNumber(entry && entry.objectPreviousY, currentWorld.y),
+        z: sceneNumber(entry && entry.objectPreviousZ, currentWorld.z),
+      }, poolWidth, poolLength);
+      system.waterObjectExplicitPreviousSignature = explicitPreviousSignature;
+    } else if (system && system.waterObjectSignature === signature && system.waterObjectPrevious) {
+      previous = system.waterObjectPrevious;
+    }
+    var halfWidth = Math.max(0.0001, poolWidth);
+    var halfLength = Math.max(0.0001, poolLength);
+    var radius = sceneNumber(entry && entry.objectRadius, 0);
+    if (radius <= 0) radius = kind === 1 ? 0.25 : 0.31;
+    var halfSizeX = sceneNumber(entry && entry.objectHalfSizeX, 0);
+    var halfSizeY = sceneNumber(entry && entry.objectHalfSizeY, 0);
+    var halfSizeZ = sceneNumber(entry && entry.objectHalfSizeZ, 0);
+    if (kind === 2) {
+      if (halfSizeX <= 0) halfSizeX = radius;
+      if (halfSizeY <= 0) halfSizeY = radius;
+      if (halfSizeZ <= 0) halfSizeZ = radius;
+    }
+    var spheres = kind === 3 ? sceneWaterDisplacementSpheres(entry, poolWidth, poolLength) : [];
+    var subtype = sceneWaterObjectSubtype(entry, kind);
+    var active = kind === 1 || kind === 2 || spheres.length > 0;
+    var normalizedHalfSize = {
+      x: Math.max(0, halfSizeX) / halfWidth,
+      y: Math.max(0, halfSizeY),
+      z: Math.max(0, halfSizeZ) / halfLength,
+    };
+    var normalizedDisplacementScale = Math.max(0, sceneNumber(entry && entry.objectDisplacementScale, 1));
+    if (system) {
+      system.waterObjectMoved = objectMoved;
+      system.waterObjectSignature = signature;
+      system.waterObjectPrevious = current;
+      system.waterObjectKind = active ? kind : 0;
+      system.waterObjectActive = active;
+      system.waterObjectSphereCount = spheres.length;
+      system.waterObjectSubtype = active ? subtype : 0;
+      system.waterObjectRadius = active ? Math.max(0.0001, radius) : 0;
+      system.waterObjectLabel = kind === 1 ? "sphere" : kind === 2 ? "cube" : subtype === 1 ? "torus-knot" : subtype === 2 ? "mesh" : "compound";
+      // Selena general-pass render-context support (surface/surfaceBelow/
+      // caustics/compound-shadow context fields: objectHalf/objectCenter/
+      // spheres[]): cache these the same way waterObjectRadius/waterObjectKind
+      // already are, so per-pass Selena render-context builders read live
+      // per-frame values instead of recomputing this function's math.
+      system.waterObjectHalfSize = normalizedHalfSize;
+      system.waterObjectCenter = current;
+      system.waterObjectDisplacementScale = normalizedDisplacementScale;
+      system.waterObjectSpheres = spheres;
+    }
+    return {
+      kind: kind,
+      center: current,
+      previous: previous,
+      halfSize: normalizedHalfSize,
+      radius: Math.max(0.0001, radius) / halfLength,
+      displacementScale: normalizedDisplacementScale,
+      subtype: subtype,
+      spheres: spheres,
+    };
+  }
+
+  function dispatchWaterObjectDisplacementEvents(system, entry, encoder, pipeline, currentTime, waterState: any, device: any, dispatchWaterComputeStage: any) {
+    if (!system || !encoder || !pipeline) {
+      return { dispatches: 0, selena: 0, selenaFallback: 0, lastID: Math.max(0, Math.floor(sceneNumber(system && system.lastObjectDisplacementEventID, 0))) };
+    }
+    var events = sceneWaterObjectDisplacementEvents(entry);
+    if (!events.length) {
+      return { dispatches: 0, selena: 0, selenaFallback: 0, lastID: Math.max(0, Math.floor(sceneNumber(system.lastObjectDisplacementEventID, 0))) };
+    }
+    var lastID = Math.max(0, Math.floor(sceneNumber(system.lastObjectDisplacementEventID, 0)));
+    var nextLastID = lastID;
+    var dispatches = 0;
+    var selenaDispatches = 0;
+    var selenaFallbacks = 0;
+    for (var i = 0; i < events.length; i++) {
+      var event = events[i];
+      var id = sceneWaterObjectDisplacementEventID(event);
+      if (id <= lastID) continue;
+      var eventEntry = sceneWaterObjectDisplacementEventEntry(entry, event);
+      var kind = sceneWaterObjectKind(eventEntry);
+      if (!kind) {
+        nextLastID = Math.max(nextLastID, id);
+        continue;
+      }
+      device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, eventEntry, 0, currentTime, { transientObject: true }, waterState, device));
+      // Routed through dispatchWaterComputeStage (not dispatchWaterPass
+      // directly) so a per-event displacement dispatch ALSO gets the
+      // descriptor-driven Selena compute path, using system.
+      // _waterComputeObjectState -- freshly stashed by the
+      // sceneWaterUniformData call immediately above -- for this event's
+      // own object state (see sceneWaterDisplacementSelenaRenderContext).
+      var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "displacement", pipeline);
+      var eventDispatches = eventResult.dispatches;
+      selenaDispatches += eventResult.selena;
+      selenaFallbacks += eventResult.selenaFallback;
+      if (eventDispatches > 0) {
+        dispatches += eventDispatches;
+        nextLastID = Math.max(nextLastID, id);
+      }
+    }
+    if (nextLastID > lastID) system.lastObjectDisplacementEventID = nextLastID;
+    return { dispatches: dispatches, selena: selenaDispatches, selenaFallback: selenaFallbacks, lastID: nextLastID };
+  }
+
+  // dispatchWaterDropEvents mirrors dispatchWaterObjectDisplacementEvents
+  // immediately above, but for the queued-drop trail (see
+  // sceneManagedFluidObjectQueueDrop in 19b-scene-control-forms.ts): a fast
+  // pointer stroke can fire several drops between two rendered frames, and
+  // upstream (evanw) injects one per DOM event, so a single-slot scalar
+  // (entry.dropEventID/dropX/dropZ) would silently coalesce a burst into
+  // one ripple. entry.dropEvents carries every drop queued since the last
+  // consumed id; each gets its own per-event uniform write + "drop" compute
+  // dispatch, same shape as the per-event displacement path. The legacy
+  // scalar dispatch below (entry.dropEventID) stays intact as the fallback
+  // for any caller that still only supplies the single-shot fields.
+
+  function dispatchWaterDropEvents(system, entry, encoder, pipeline, currentTime, waterState: any, device: any, dispatchWaterComputeStage: any) {
+    if (!system || !encoder || !pipeline) {
+      return { dispatches: 0, selena: 0, selenaFallback: 0, lastID: Math.max(0, Math.floor(sceneNumber(system && system.lastDropEventID, 0))) };
+    }
+    var events = sceneWaterDropEvents(entry);
+    if (!events.length) {
+      return { dispatches: 0, selena: 0, selenaFallback: 0, lastID: Math.max(0, Math.floor(sceneNumber(system.lastDropEventID, 0))) };
+    }
+    var lastID = Math.max(0, Math.floor(sceneNumber(system.lastDropEventID, 0)));
+    var nextLastID = lastID;
+    var dispatches = 0;
+    var selenaDispatches = 0;
+    var selenaFallbacks = 0;
+    for (var i = 0; i < events.length; i++) {
+      var event = events[i];
+      var id = sceneWaterDropEventID(event);
+      if (id <= lastID) continue;
+      var eventEntry = sceneWaterDropEventEntry(entry, event);
+      device.queue.writeBuffer(system.uniformBuffer, 0, sceneWaterUniformData(system, eventEntry, 0, currentTime, { transientObject: true }, waterState, device));
+      var eventResult = dispatchWaterComputeStage(encoder, system, eventEntry, "drop", pipeline);
+      var eventDispatches = eventResult.dispatches;
+      selenaDispatches += eventResult.selena;
+      selenaFallbacks += eventResult.selenaFallback;
+      if (eventDispatches > 0) {
+        dispatches += eventDispatches;
+        nextLastID = Math.max(nextLastID, id);
+      }
+    }
+    if (nextLastID > lastID) system.lastDropEventID = nextLastID;
+    return { dispatches: dispatches, selena: selenaDispatches, selenaFallback: selenaFallbacks, lastID: nextLastID };
+  }
+
+  // M6 per-frame churn audit (water-parity-campaign), noted but NOT fixed
+  // here: like the uniform "commit" write (see waterUniformSnapshotChanged),
+  // this re-uploads objectSphereBuffer unconditionally on EVERY
+  // sceneWaterUniformData call (both the per-frame {transientObject:true}
+  // pack and the per-tick "commit" pack, i.e. up to twice a tick) even when
+  // the compound-sphere layout hasn't moved. Deferring a dedup here rather
+  // than bolting on a second ad hoc snapshot comparator: this buffer is
+  // consumed as a STORAGE binding (sceneSelenaLiveBuffer's "objectSpheres"
+  // case) by more than one pass with different freshness requirements (the
+  // continuous per-frame object-displacement dispatch above legitimately
+  // needs it live while dragging), and getting that gating wrong silently
+  // corrupts a live displacement compute run rather than just staling a
+  // cosmetic shimmer term the way the uniform-block skip's fallback-only
+  // tradeoff does. Worth a follow-up with dedicated verification, not a
+  // same-pass copy-paste of this file's other dedup.
+  function sceneWaterWriteObjectSphereBuffer(system, spheres, waterState: any, device: any) {
+    if (!system || !system.objectSphereBuffer) return;
+    waterState.waterObjectSphereScratch.fill(0);
+    var source = Array.isArray(spheres) ? spheres : [];
+    for (var i = 0; i < source.length && i < WATER_MAX_DISPLACEMENT_SPHERES; i++) {
+      var sphere = source[i] || {};
+      var offset = i * 4;
+      waterState.waterObjectSphereScratch[offset] = sceneNumber(sphere.x, 0);
+      waterState.waterObjectSphereScratch[offset + 1] = sceneNumber(sphere.y, 0);
+      waterState.waterObjectSphereScratch[offset + 2] = sceneNumber(sphere.z, 0);
+      waterState.waterObjectSphereScratch[offset + 3] = Math.max(0.0001, sceneNumber(sphere.radius, 0));
+    }
+    device.queue.writeBuffer(system.objectSphereBuffer, 0, waterState.waterObjectSphereScratch);
+  }
+
+  // sceneWaterManifestShaderSources/sceneWaterManifestShaderSourceStats/
+  // sceneWaterShaderSourcesFromEntries/sceneHydrateWaterEntriesFromSources
+  // remain as a generic bundle/manifest water-source diagnostic layer (they
+  // still report on any of the 14 legacy hand-written WGSL field names that
+  // happen to show up on a bundle/manifest entry). They are no longer
+  // consulted to build/select a render or compute pipeline -- that "authored
+  // data-prop WGSL" resolution tier (sceneWaterAuthoredShaderSource and the
+  // per-pass sceneWaterAuthored*Pipeline builders) has been removed now that
+  // every WebGPU water pass resolves Selena-primary -> builtin-fallback (see
+  // getWaterPoolPipeline / getWaterRenderPipeline / renderWaterCausticsPass /
+  // renderWaterObjectShadowPass / renderWaterObjectMeshShadowPass /
+  // dispatchWaterComputeStage below).
+  function sceneWaterManifestShaderSources(waterState: any, canvas: any) {
+    if (waterState.waterManifestShaderSourcesByID && waterState.waterManifestShaderSourcesByID.size > 0) return waterState.waterManifestShaderSourcesByID;
+    var mountSources = canvas && (canvas.__gosxScene3DWaterShaderSources || (canvas.parentNode && canvas.parentNode.__gosxScene3DWaterShaderSources));
+    var published = mountSources || (typeof window !== "undefined" ? window.__gosx_scene3d_water_shader_sources_by_id : null);
+    var doc = canvas && canvas.ownerDocument
+      ? canvas.ownerDocument
+      : (typeof window !== "undefined" && window.document
+        ? window.document
+        : (typeof document !== "undefined" ? document : null));
+    var scan = doc && doc.querySelectorAll;
+    var manifestScript = scan && doc.getElementById ? doc.getElementById("gosx-manifest") : null;
+    // The bootstrap runtime publishes its manifest parse; reusing it skips a
+    // re-parse, and on a page that opted into data-gosx-release the DOM text
+    // is empty and the published parse is the only remaining copy.
+    var manifestMemo = typeof window !== "undefined" ? window.__gosx_manifest : null;
+    var scripts = scan ? (doc.scripts || doc.querySelectorAll("script")) : null;
+    // The scan reads the manifest text (megabytes with a large crowd), so an empty result is kept too, until the
+    // published map or its size, the manifest element or its parse, or the page's script count changes.
+    var key = waterState.waterManifestScanKey, size = published && typeof published === "object" ? Object.keys(published).length : 0;
+    var memoValue = manifestMemo && manifestMemo.value, scriptCount = scripts ? scripts.length : -1;
+    if (waterState.waterManifestShaderSourcesByID && key[0] === published && key[1] === size && key[2] === manifestScript && key[3] === memoValue && key[4] === scriptCount) return waterState.waterManifestShaderSourcesByID;
+    key[0] = published; key[1] = size; key[2] = manifestScript; key[3] = memoValue; key[4] = scriptCount;
+    waterState.waterManifestShaderSourcesByID = new Map();
+    if (published && typeof published === "object") {
+      var ids = Object.keys(published);
+      for (var pi = 0; pi < ids.length; pi += 1) {
+        var publishedRecord = published[ids[pi]];
+        if (publishedRecord && typeof publishedRecord === "object") {
+          waterState.waterManifestShaderSourcesByID.set(ids[pi], publishedRecord);
+        }
+      }
+      if (waterState.waterManifestShaderSourcesByID.size > 0) return waterState.waterManifestShaderSourcesByID;
+    }
+    if (!scan) return waterState.waterManifestShaderSourcesByID;
+    var fields = [
+      "seedWGSL", "dropWGSL", "displacementWGSL", "simulationWGSL", "normalWGSL", "causticsWGSL",
+      "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
+      "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
+    ];
+    function ingestManifestValue(manifest) {
+      try {
+        var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
+        for (var ei = 0; ei < engines.length; ei += 1) {
+          var scene = engines[ei] && engines[ei].props && engines[ei].props.scene;
+          var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : [];
+          for (var wi = 0; wi < systems.length; wi += 1) {
+            var water = systems[wi];
+            if (!water || typeof water !== "object") continue;
+            var id = typeof water.id === "string" && water.id ? water.id : ("scene-water-" + wi);
+            var record = waterState.waterManifestShaderSourcesByID.get(id) || {};
+            for (var fi = 0; fi < fields.length; fi += 1) {
+              var name = fields[fi];
+              if (typeof water[name] === "string" && water[name].trim()) record[name] = water[name];
+            }
+            waterState.waterManifestShaderSourcesByID.set(id, record);
+          }
+        }
+      } catch (_err) {}
+    }
+    function ingestManifestText(text) {
+      if (!text || text.indexOf("waterSystems") < 0 || text.indexOf("WGSL") < 0) return;
+      try { ingestManifestValue(JSON.parse(text)); } catch (_err) {}
+    }
+    if (manifestScript && manifestMemo && manifestMemo.element === manifestScript && manifestMemo.value) {
+      ingestManifestValue(manifestMemo.value);
+      if (waterState.waterManifestShaderSourcesByID.size > 0) return waterState.waterManifestShaderSourcesByID;
+    }
+    ingestManifestText(manifestScript && manifestScript.textContent || "");
+    if (waterState.waterManifestShaderSourcesByID.size > 0) return waterState.waterManifestShaderSourcesByID;
+    for (var si = 0; si < scripts.length; si += 1) {
+      ingestManifestText(scripts[si] && scripts[si].textContent || "");
+    }
+    return waterState.waterManifestShaderSourcesByID;
+  }
+
+  function sceneWaterManifestShaderSourceStats(waterState: any, canvas: any) {
+    var sourceMap = sceneWaterManifestShaderSources(waterState, canvas);
+    var stats = { systems: 0, fields: 0, causticSourceBytes: 0, surfaceSourceBytes: 0 };
+    sourceMap.forEach(function(record) {
+      stats.systems += 1;
+      for (var name in record) {
+        if (!Object.prototype.hasOwnProperty.call(record, name)) continue;
+        if (typeof record[name] !== "string" || !record[name].trim()) continue;
+        stats.fields += 1;
+        if (name === "causticsWGSL") {
+          stats.causticSourceBytes = Math.max(stats.causticSourceBytes, record[name].trim().length);
+        }
+      }
+      stats.surfaceSourceBytes = Math.max(stats.surfaceSourceBytes, sceneWaterSurfaceSourceBytes(record));
+    });
+    return stats;
+  }
+
+  function sceneWaterUniformData(system, entry, deltaTime, timeSeconds, options, waterState: any, device: any) {
+    var transientObject = !!(options && options.transientObject);
+    var resolution = system && system.resolution ? system.resolution : sceneWaterResolution(entry && entry.resolution);
+    var cellCount = resolution * resolution;
+    var light = sceneWaterLightVector(entry, { x: 0.3, y: 0.9, z: 0.45 });
+    var lightLen = Math.sqrt(light.x * light.x + light.y * light.y + light.z * light.z) || 1;
+    var shallow = sceneColorRGBA(entry && entry.shallowColor, [0.48, 0.82, 0.92, 1]);
+    var deep = sceneColorRGBA(entry && entry.deepColor, [0.03, 0.18, 0.34, 1]);
+    var poolWidth = Math.max(0.01, sceneNumber(entry && entry.poolWidth, 1.0));
+    var poolHeight = Math.max(0.01, sceneNumber(entry && entry.poolHeight, 1.0));
+    var poolLength = Math.max(0.01, sceneNumber(entry && entry.poolLength, 1.0));
+    var rounded = wgpuSceneWaterPoolShapeRounded(entry);
+    var maxCornerRadius = Math.max(0, Math.min(poolWidth, poolLength) - 0.001);
+    var cornerRadius = rounded ? Math.max(0, Math.min(maxCornerRadius, sceneNumber(entry && entry.cornerRadius, 0))) : 0;
+    var objectState = sceneWaterObjectState(transientObject ? null : system, entry, timeSeconds, poolWidth, poolLength);
+    var optics = sceneWaterOpticsFlags(entry, objectState);
+    if (system) {
+      system.waterResolution = resolution;
+      system.waterPoolWidth = poolWidth;
+      system.waterPoolHeight = poolHeight;
+      system.waterPoolLength = poolLength;
+      system.waterCornerRadius = cornerRadius;
+      system.waterLightDir = { x: light.x / lightLen, y: light.y / lightLen, z: light.z / lightLen };
+      // Selena general-pass render-context support (surface/surfaceBelow/
+      // caustics context fields: opticsEnable): cache the SAME optics flags
+      // object computed for the hand-written WaterUniforms pack, the same
+      // way waterLightDir already is, so per-pass Selena render-context
+      // builders read it instead of recomputing sceneWaterOpticsFlags.
+      system.waterOpticsFlags = optics;
+      // Selena feedback-compute render-context support (displacement
+      // kernel's objectKind/displacementScale/objectCenter/objectPrevCenter/
+      // objectRadius/objectHalfSize/sphereCount/spheres context fields):
+      // stash the JUST-COMPUTED objectState verbatim rather than re-deriving
+      // it from the waterObject* fields above, which are NOT updated during
+      // a one-shot displacement event (sceneWaterObjectState skips all
+      // system-field mutation when called with transientObject:true, i.e.
+      // system param null). This stash is always fresh at the point a
+      // displacement dispatch is issued because every call site invokes
+      // sceneWaterUniformData immediately before it (see
+      // dispatchWaterObjectDisplacementEvents and the per-frame continuous
+      // displacement dispatch in updateWaterSystems).
+      system._waterComputeObjectState = objectState;
+    }
+    waterState.waterUniformScratchU[0] = resolution;
+    waterState.waterUniformScratchU[1] = cellCount;
+    waterState.waterUniformScratchU[2] = Math.max(0, Math.floor(sceneNumber(entry && entry.seedDrops, 7)));
+    waterState.waterUniformScratchU[3] = Math.max(0, Math.floor(system && system.frameIndex || 0));
+    waterState.waterUniformScratchF[4] = Math.max(0, Math.min(0.1, sceneNumber(deltaTime, 0)));
+    waterState.waterUniformScratchF[5] = sceneNumber(timeSeconds, 0);
+    waterState.waterUniformScratchF[6] = Math.max(0, Math.min(2, sceneNumber(entry && entry.waveSpeed, 1.0)));
+    waterState.waterUniformScratchF[7] = Math.max(0, Math.min(1, sceneNumber(entry && entry.damping, 0.995)));
+    waterState.waterUniformScratchF[8] = Math.max(0.0001, Math.min(0.5, sceneNumber(entry && entry.dropRadius, 0.03)));
+    waterState.waterUniformScratchF[9] = Math.max(-1, Math.min(1, sceneNumber(entry && entry.dropStrength, 0.01)));
+    waterState.waterUniformScratchF[10] = Math.max(0.01, Math.min(16, sceneNumber(entry && entry.normalScale, 1.0)));
+    waterState.waterUniformScratchF[11] = poolWidth;
+    waterState.waterUniformScratchF[12] = poolHeight;
+    waterState.waterUniformScratchF[13] = poolLength;
+    waterState.waterUniformScratchF[14] = cornerRadius;
+    waterState.waterUniformScratchF[15] = rounded ? 1 : 0;
+    waterState.waterUniformScratchF[16] = light.x / lightLen;
+    waterState.waterUniformScratchF[17] = light.y / lightLen;
+    waterState.waterUniformScratchF[18] = light.z / lightLen;
+    waterState.waterUniformScratchF[19] = 1;
+    waterState.waterUniformScratchF[20] = shallow[0];
+    waterState.waterUniformScratchF[21] = shallow[1];
+    waterState.waterUniformScratchF[22] = shallow[2];
+    waterState.waterUniformScratchF[23] = shallow[3];
+    waterState.waterUniformScratchF[24] = deep[0];
+    waterState.waterUniformScratchF[25] = deep[1];
+    waterState.waterUniformScratchF[26] = deep[2];
+    waterState.waterUniformScratchF[27] = deep[3];
+    waterState.waterUniformScratchF[28] = objectState.center.x;
+    waterState.waterUniformScratchF[29] = objectState.center.y;
+    waterState.waterUniformScratchF[30] = objectState.center.z;
+    waterState.waterUniformScratchF[31] = 1;
+    waterState.waterUniformScratchF[32] = objectState.previous.x;
+    waterState.waterUniformScratchF[33] = objectState.previous.y;
+    waterState.waterUniformScratchF[34] = objectState.previous.z;
+    waterState.waterUniformScratchF[35] = 1;
+    waterState.waterUniformScratchF[36] = objectState.halfSize.x;
+    waterState.waterUniformScratchF[37] = objectState.halfSize.y;
+    waterState.waterUniformScratchF[38] = objectState.halfSize.z;
+    waterState.waterUniformScratchF[39] = objectState.radius;
+    waterState.waterUniformScratchF[40] = objectState.kind;
+    waterState.waterUniformScratchF[41] = objectState.displacementScale;
+    waterState.waterUniformScratchF[42] = Math.min(WATER_MAX_DISPLACEMENT_SPHERES, objectState.spheres ? objectState.spheres.length : 0);
+    waterState.waterUniformScratchF[43] = objectState.subtype || 0;
+    waterState.waterUniformScratchF[44] = optics.caustics ? 1 : 0;
+    waterState.waterUniformScratchF[45] = optics.reflection ? 1 : 0;
+    waterState.waterUniformScratchF[46] = optics.refraction ? 1 : 0;
+    waterState.waterUniformScratchF[47] = optics.object ? 1 : 0;
+    waterState.waterUniformScratchF[48] = Math.max(-1, Math.min(1, sceneNumber(entry && entry.dropX, 0)));
+    waterState.waterUniformScratchF[49] = Math.max(-1, Math.min(1, sceneNumber(entry && entry.dropZ, 0)));
+    waterState.waterUniformScratchF[50] = Math.max(0.0001, Math.min(0.5, sceneNumber(entry && entry.dropEventRadius, sceneNumber(entry && entry.dropRadius, 0.03))));
+    waterState.waterUniformScratchF[51] = Math.max(-1, Math.min(1, sceneNumber(entry && entry.dropEventStrength, sceneNumber(entry && entry.dropStrength, 0.01))));
+    waterState.waterUniformScratchF[52] = Math.max(0, sceneNumber(system && system.seedSalt, 0));
+    sceneWaterWriteObjectSphereBuffer(system, objectState.spheres, waterState, device);
+    return waterState.waterUniformScratch;
+  }
+
+  // M6 per-frame churn audit (water-parity-campaign). The "commit" write in
+  // updateWaterSystems (device.queue.writeBuffer(system.uniformBuffer, 0,
+  // sceneWaterUniformData(...)), inside its `if (hasSimulationTick)` block)
+  // re-packs and re-uploads this 256-byte WaterUniforms block every
+  // simulation tick, even when the only thing that changed is the header:
+  // word indices [0,6) are resolution/cellCount/seedDrops/frameIndex/
+  // deltaTime/timeSeconds (WATER_UNIFORM_VOLATILE_WORDS), which are either
+  // near-static or -- frameIndex/deltaTime/timeSeconds -- LITERALLY always
+  // different every tick by construction. waterUniformSnapshotChanged
+  // compares everything FROM word index 6 onward (waveSpeed, damping, drop
+  // params, pool/light/shallow/deep-color/object/optics/drop-event fields,
+  // seedSalt, plus any future field appended to the struct) against the
+  // system's last-written snapshot using raw Uint32 bit comparison (NaN-safe,
+  // no float-equality edge cases), and the caller skips the GPU writeBuffer
+  // call entirely when nothing in that range moved -- which, per M5's
+  // at-rest gating, is the common case once a system settles (config/object
+  // state stays put for many consecutive ticks even though the clock keeps
+  // advancing).
+  //
+  // Deliberately NOT applied to the OTHER writeBuffer call at this same call
+  // site's sibling (the `{transientObject: true}` pack immediately above the
+  // hasSimulationTick block): that write primes uniforms a one-shot drop/
+  // displacement compute dispatch reads in the SAME frame it's issued, so
+  // it's write-then-immediately-consumed, not a steady-state re-upload.
+  //
+  // Tradeoff, documented rather than silently accepted: system.uniformBuffer
+  // is read ONLY by the hand-written fallback compute/render pipelines
+  // (createWaterComputeBindGroup/createWaterRenderBindGroup/
+  // createWaterCausticsBindGroup bind binding 0 to it) -- every Selena
+  // render pass gets its own uniform buffer via sceneSelenaUniformData with
+  // its own live `time` context field (selenaFrame.time), unaffected by
+  // this skip. Selena is the sole primary path (the demo's own tests assert
+  // zero authored/fallback occurrences in the golden path), so skipping this
+  // upload is a no-op almost always; IF a backend ever falls all the way
+  // through to the hand-written pipelines, a skipped tick leaves that
+  // fallback's params.time-driven effects (e.g. the caustics fallback
+  // fragment's shimmer term) one tick stale until the next real change --
+  // a minor cosmetic staleness in an already-degraded emergency tier, not a
+  // functional break.
+  function waterUniformSnapshotChanged(system, waterState: any) {
+    if (!system) return true;
+    var last = system.waterUniformLastWords;
+    if (!last || last.length !== waterState.waterUniformScratchU.length) {
+      system.waterUniformLastWords = new Uint32Array(waterState.waterUniformScratchU.length);
+      system.waterUniformLastWords.set(waterState.waterUniformScratchU);
+      return true;
+    }
+    var changed = false;
+    for (var i = WATER_UNIFORM_VOLATILE_WORDS; i < waterState.waterUniformScratchU.length; i++) {
+      if (last[i] !== waterState.waterUniformScratchU[i]) { changed = true; break; }
+    }
+    if (changed) last.set(waterState.waterUniformScratchU);
+    return changed;
+  }
+
+  function createWaterComputeBindGroup(system, readBuffer, writeBuffer, waterState: any, device: any) {
+    return device.createBindGroup({
+      label: "gosx-water-compute-bg",
+      layout: waterState.waterComputeBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: system.uniformBuffer } },
+        { binding: 1, resource: { buffer: readBuffer } },
+        { binding: 2, resource: { buffer: writeBuffer } },
+        { binding: 3, resource: { buffer: system.objectSphereBuffer } },
+      ],
+    });
+  }
+
+  function createWaterRenderBindGroup(system, buffer, waterState: any, device: any) {
+    var entry = system && system.entry || {};
+    var cubeRecord = entry.cubeMap ? wgpuLoadCubeTexture(device, entry.cubeMap, waterState.gpuRes.textureCache) : null;
+    var cubeLoaded = Boolean(cubeRecord && cubeRecord.loaded && cubeRecord.view);
+    var cubePending = Boolean(cubeRecord && cubeRecord.pending && !cubeRecord.loaded && !cubeRecord.failed);
+    var cubeFailed = Boolean(cubeRecord && cubeRecord.failed);
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+    var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, waterState.gpuRes.textureCache) : null;
+    var tileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
+    var tilePending = Boolean(tileRecord && tileRecord.pending && !tileRecord.loaded && !tileRecord.failed);
+    var tileFailed = Boolean(tileRecord && tileRecord.failed);
+    if (system) {
+      system.waterSkyCubeRequested = !!(entry && entry.cubeMap);
+      system.waterSkyCubeLoaded = cubeLoaded;
+      system.waterSkyCubePending = cubePending;
+      system.waterSkyCubeFailed = cubeFailed;
+      system.waterSurfaceTileRequested = !!tileURL;
+      system.waterSurfaceTileLoaded = tileLoaded;
+      system.waterSurfaceTilePending = tilePending;
+      system.waterSurfaceTileFailed = tileFailed;
+    }
+    return device.createBindGroup({
+      label: "gosx-water-render-bg",
+      layout: waterState.waterRenderBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: system.uniformBuffer } },
+        { binding: 1, resource: { buffer: buffer } },
+        { binding: 2, resource: waterState.gpuRes.linearSampler },
+        { binding: 3, resource: system.causticsView || waterState.gpuRes.placeholderView },
+        { binding: 4, resource: system.objectReflectionView || waterState.gpuRes.placeholderView },
+        { binding: 5, resource: system.objectClippedReflectionView || waterState.gpuRes.placeholderView },
+        { binding: 6, resource: system.objectRefractionView || waterState.gpuRes.placeholderView },
+        { binding: 7, resource: cubeRecord && cubeRecord.view ? cubeRecord.view : waterState.gpuRes.placeholderCubeView },
+        { binding: 8, resource: { buffer: system.objectTextureMatrixBuffer } },
+        { binding: 9, resource: tileLoaded ? tileRecord.view : waterState.gpuRes.placeholderView },
+        { binding: 10, resource: { buffer: system.objectSphereBuffer } },
+      ],
+    });
+  }
+
+  // Per-frame leak guard: the surface (cubemap path) and pool bind groups were
+  // rebuilt EVERY frame, and WebGPU bind groups have no destroy() (GC-only), so
+  // at 60fps they accumulated until the device OOM'd ("not enough memory left").
+  // Their resources are stable per-system except the ping-pong buffer (2 variants)
+  // and the async sky-cube / tile views — so cache 2 variants and rebuild only
+  // when those async views change (a handful of times, not per frame).
+  function getWaterRenderBindGroupCached(system, waterState: any, device: any) {
+    var entry = system && system.entry || {};
+    if (!entry.cubeMap) return system.renderBindGroups[system.activeIndex];
+    var cubeRecord = wgpuLoadCubeTexture(device, entry.cubeMap, waterState.gpuRes.textureCache);
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+    var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, waterState.gpuRes.textureCache) : null;
+    var cubeView = (cubeRecord && cubeRecord.view) || null;
+    var tileView = (tileRecord && tileRecord.view) || null;
+    var cache = system._cubemapRenderBindGroups;
+    if (!cache || cache.cubeView !== cubeView || cache.tileView !== tileView) {
+      cache = system._cubemapRenderBindGroups = {
+        cubeView: cubeView,
+        tileView: tileView,
+        groups: [
+          createWaterRenderBindGroup(system, system.bufferA, waterState, device),
+          createWaterRenderBindGroup(system, system.bufferB, waterState, device),
+        ],
+      };
+    }
+    return cache.groups[system.activeIndex];
+  }
+
+  function getWaterPoolBindGroupCached(system, waterState: any, device: any) {
+    if (!system) return null;
+    var entry = system.entry || {};
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+    var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, waterState.gpuRes.textureCache) : null;
+    var tileView = (tileRecord && tileRecord.view) || null;
+    var cache = system._poolBindGroups;
+    if (!cache || cache.tileView !== tileView) {
+      cache = system._poolBindGroups = {
+        tileView: tileView,
+        groups: [
+          createWaterPoolBindGroup(system, system.bufferA, waterState, device),
+          createWaterPoolBindGroup(system, system.bufferB, waterState, device),
+        ],
+      };
+    }
+    return cache.groups[system.activeIndex];
+  }
+
+  function writeWaterObjectTextureMatrices(system, waterState: any, uniformState: any, device: any) {
+    if (!system || !system.objectTextureMatrixBuffer) return;
+    var viewMatrix = system.objectViewProjectionReady ? system.objectViewProjectionMatrix : null;
+    waterState.waterObjectTextureMatrixScratch.set(viewMatrix || uniformState.scratchSelenaViewProjection, 0);
+    var reflectionMatrix = system.objectReflectionViewProjectionReady ? system.objectReflectionViewProjectionMatrix : null;
+    waterState.waterObjectTextureMatrixScratch.set(reflectionMatrix || uniformState.scratchSelenaViewProjection, 16);
+    device.queue.writeBuffer(system.objectTextureMatrixBuffer, 0, waterState.waterObjectTextureMatrixScratch);
+  }
+
+  function createWaterPoolBindGroup(system, buffer, waterState: any, device: any) {
+    if (!system) return null;
+    var activeBuffer = buffer || (system.activeIndex === 0 ? system.bufferA : system.bufferB);
+    var entry = system.entry || {};
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var tileURL = typeof entry.tileTexture === "string" ? entry.tileTexture.trim() : "";
+    var tileRecord = tileURL ? wgpuLoadTexture(device, tileURL, waterState.gpuRes.textureCache) : null;
+    var tileLoaded = Boolean(tileRecord && tileRecord.loaded && tileRecord.view);
+    var tilePending = Boolean(tileRecord && tileRecord.pending && !tileRecord.loaded && !tileRecord.failed);
+    var tileFailed = Boolean(tileRecord && tileRecord.failed);
+    system.waterPoolTileRequested = !!tileURL;
+    system.waterPoolTileLoaded = tileLoaded;
+    system.waterPoolTilePending = tilePending;
+    system.waterPoolTileFailed = tileFailed;
+    return device.createBindGroup({
+      label: "gosx-water-pool-bg",
+      layout: waterState.waterPoolBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: system.uniformBuffer } },
+        { binding: 1, resource: { buffer: activeBuffer } },
+        { binding: 2, resource: waterState.waterTileSampler || waterState.gpuRes.linearSampler },
+        { binding: 3, resource: system.causticsView || waterState.gpuRes.placeholderView },
+        { binding: 4, resource: system.objectShadowView || waterState.gpuRes.placeholderView },
+        { binding: 5, resource: tileLoaded ? tileRecord.view : waterState.gpuRes.placeholderView },
+      ],
+    });
+  }
+
+  function createWaterCausticsBindGroup(system, buffer, waterState: any, device: any) {
+    return device.createBindGroup({
+      label: "gosx-water-caustics-bg",
+      layout: waterState.waterCausticsBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: system.uniformBuffer } },
+        { binding: 1, resource: { buffer: buffer } },
+        { binding: 2, resource: { buffer: system.objectSphereBuffer } },
+        { binding: 3, resource: waterState.gpuRes.linearSampler },
+        { binding: 4, resource: system.objectShadowView || waterState.gpuRes.placeholderView },
+      ],
+    });
+  }
+
+  function createWaterObjectTextureBindGroup(system, waterState: any, device: any) {
+    return device.createBindGroup({
+      label: "gosx-water-object-textures-bg",
+      layout: waterState.waterObjectTextureBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: system.uniformBuffer } },
+        { binding: 1, resource: { buffer: system.objectSphereBuffer } },
+      ],
+    });
+  }
+
+  function createWaterObjectMeshShadowBindGroup(system, waterState: any, device: any) {
+    if (!system || !system.objectMeshShadowUniformBuffer || !waterState.waterObjectMeshShadowBindGroupLayout) return null;
+    return device.createBindGroup({
+      label: "gosx-water-object-mesh-shadow-bg",
+      layout: waterState.waterObjectMeshShadowBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: system.objectMeshShadowUniformBuffer } },
+      ],
+    });
+  }
+
+  function sceneWaterObjectMeshShadowUniformData(system, waterState: any) {
+    var entry = system && system.entry || {};
+    var light = sceneWaterLightVector(entry, { x: 0.3, y: 0.9, z: 0.45 });
+    var lightLen = Math.sqrt(light.x * light.x + light.y * light.y + light.z * light.z) || 1;
+    var poolWidth = Math.max(0.001, sceneNumber(entry && entry.poolWidth, 1.0));
+    var poolLength = Math.max(0.001, sceneNumber(entry && entry.poolLength, 1.0));
+    waterState.waterObjectMeshShadowUniformScratch[0] = light.x / lightLen;
+    waterState.waterObjectMeshShadowUniformScratch[1] = light.y / lightLen;
+    waterState.waterObjectMeshShadowUniformScratch[2] = light.z / lightLen;
+    waterState.waterObjectMeshShadowUniformScratch[3] = 1;
+    waterState.waterObjectMeshShadowUniformScratch[4] = Math.max(0.0001, poolWidth);
+    waterState.waterObjectMeshShadowUniformScratch[5] = Math.max(0.0001, poolLength);
+    waterState.waterObjectMeshShadowUniformScratch[6] = 0;
+    waterState.waterObjectMeshShadowUniformScratch[7] = 0;
+    return waterState.waterObjectMeshShadowUniformScratch;
+  }
+
+  function createSceneWaterSystem(scopedDevice, entry, width, height, waterState: any, meshState: any, device: any) {
+    var resolution = sceneWaterResolution(entry && entry.resolution);
+    var authoredSurfaceResolution = sceneWaterSurfaceResolution(entry, resolution);
+    var causticsResolution = sceneWaterCausticsResolution(entry);
+    var objectTextureSize = sceneWaterObjectTextureTargetSize(entry, width, height);
+    var objectTextureWidth = objectTextureSize.width;
+    var objectTextureHeight = objectTextureSize.height;
+    var objectTextureResolution = objectTextureSize.resolution;
+    var objectShadowResolution = sceneWaterObjectShadowResolution(entry);
+    var cellCount = resolution * resolution;
+    var stateBytes = cellCount * 16;
+    var stateBufferUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    var bufferA = wgpuCreateTrackedBuffer(meshState, device, stateBufferUsage, stateBytes);
+    var bufferB = wgpuCreateTrackedBuffer(meshState, device, stateBufferUsage, stateBytes);
+    var stateTextureUsage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST;
+    var stateTextureA = scopedDevice.createTexture({
+      label: "gosx-water-state-sampled-a",
+      size: [resolution, resolution, 1],
+      format: "rgba32float",
+      usage: stateTextureUsage,
+    });
+    var stateTextureB = scopedDevice.createTexture({
+      label: "gosx-water-state-sampled-b",
+      size: [resolution, resolution, 1],
+      format: "rgba32float",
+      usage: stateTextureUsage,
+    });
+    var uniformBuffer = wgpuCreateTrackedBuffer(meshState, device, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 256);
+    var objectSphereBuffer = wgpuCreateTrackedBuffer(meshState, device, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, WATER_MAX_DISPLACEMENT_SPHERES * 16);
+    var objectTextureMatrixBuffer = wgpuCreateTrackedBuffer(meshState, device, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 128);
+    var objectMeshShadowUniformBuffer = wgpuCreateTrackedBuffer(meshState, device, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 32);
+    var causticsTexture = scopedDevice.createTexture({
+      label: "gosx-water-caustics-target",
+      size: [causticsResolution, causticsResolution, 1],
+      format: WATER_CAUSTICS_TEXTURE_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    var causticsView = causticsTexture.createView();
+    var objectReflectionTexture = scopedDevice.createTexture({
+      label: "gosx-water-object-reflection-target",
+      size: [objectTextureWidth, objectTextureHeight, 1],
+      format: WATER_OBJECT_TEXTURE_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    var objectClippedReflectionTexture = scopedDevice.createTexture({
+      label: "gosx-water-object-clipped-reflection-target",
+      size: [objectTextureWidth, objectTextureHeight, 1],
+      format: WATER_OBJECT_TEXTURE_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    var objectRefractionTexture = scopedDevice.createTexture({
+      label: "gosx-water-object-refraction-target",
+      size: [objectTextureWidth, objectTextureHeight, 1],
+      format: WATER_OBJECT_TEXTURE_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    var objectTextureDepthTexture = scopedDevice.createTexture({
+      label: "gosx-water-object-texture-depth",
+      size: [objectTextureWidth, objectTextureHeight, 1],
+      format: "depth24plus",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    var objectShadowTexture = scopedDevice.createTexture({
+      label: "gosx-water-object-shadow-target",
+      size: [objectShadowResolution, objectShadowResolution, 1],
+      format: WATER_OBJECT_TEXTURE_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    var system = {
+      entry: entry,
+      resolution: resolution,
+      qualityTier: "full",
+      qualityRevision: 0,
+      qualityDPRCap: 1,
+      qualityAllocationPending: false,
+      qualityAllocationFailures: 0,
+      qualityAllocationConsecutiveFailures: 0,
+      qualityAllocationNextFrame: 0,
+      qualityAllocationDesiredKey: "",
+      authoredSurfaceResolution: authoredSurfaceResolution,
+      surfaceResolution: authoredSurfaceResolution,
+      expensivePassCadence: 1,
+      causticsResolution: causticsResolution,
+      objectTextureResolution: objectTextureResolution,
+      objectTextureWidth: objectTextureWidth,
+      objectTextureHeight: objectTextureHeight,
+      objectTextureResolutionMode: objectTextureSize.mode,
+      objectTexturePixelBudget: objectTextureSize.pixelBudget,
+      objectShadowResolution: objectShadowResolution,
+      cellCount: cellCount,
+      vertexCount: Math.max(0, (authoredSurfaceResolution - 1) * (authoredSurfaceResolution - 1) * 6),
+      bufferA: bufferA,
+      bufferB: bufferB,
+      stateTextureA: stateTextureA,
+      stateTextureB: stateTextureB,
+      stateTextureViewA: stateTextureA.createView(),
+      stateTextureViewB: stateTextureB.createView(),
+      stateTextureSyncSeq: 0,
+      uniformBuffer: uniformBuffer,
+      objectSphereBuffer: objectSphereBuffer,
+      objectTextureMatrixBuffer: objectTextureMatrixBuffer,
+      objectViewProjectionMatrix: new Float32Array(16),
+      objectViewProjectionReady: false,
+      objectReflectionViewProjectionMatrix: new Float32Array(16),
+      objectReflectionViewProjectionReady: false,
+      objectMeshShadowUniformBuffer: objectMeshShadowUniformBuffer,
+      causticsTexture: causticsTexture,
+      causticsView: causticsView,
+      objectReflectionTexture: objectReflectionTexture,
+      objectReflectionView: objectReflectionTexture.createView(),
+      objectClippedReflectionTexture: objectClippedReflectionTexture,
+      objectClippedReflectionView: objectClippedReflectionTexture.createView(),
+      objectRefractionTexture: objectRefractionTexture,
+      objectRefractionView: objectRefractionTexture.createView(),
+      objectTextureDepthTexture: objectTextureDepthTexture,
+      objectTextureDepthView: objectTextureDepthTexture.createView(),
+      objectShadowTexture: objectShadowTexture,
+      objectShadowView: objectShadowTexture.createView(),
+      activeIndex: 0,
+      frameIndex: 0,
+      waterClock: {},
+      waterNormalDispatchSeq: 0,
+      waterExpensiveCadenceBucket: null,
+      waterObjectTextureFrameSeq: 0,
+      seeded: false,
+      seedSalt: Number.isFinite(Number(entry && entry.seedSalt)) ? Number(entry.seedSalt) : Math.random() * 4096,
+      lastDropEventID: 0,
+      dropDispatchCount: 0,
+      // M5 at-rest gating -- see WATER_REST_ENERGY_EPSILON's comment above.
+      // A freshly created system starts AWAKE (energy 1.0, no quiet time
+      // banked yet): seedDrops (default 20) fires on the first tick below,
+      // so it should decay/settle like any other disturbance rather than
+      // being born already "at rest".
+      waterRestEnergy: 1.0,
+      waterLastDisturbanceMS: 0,
+      waterAtRest: false,
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ dispose: function() {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (system._gosxDisposed) return;
+        system._gosxDisposed = true;
+        if (bufferA && typeof bufferA.destroy === "function") {
+          meshState.pointsEntryGPUBuffers.delete(bufferA);
+          bufferA.destroy();
+        }
+        if (bufferB && typeof bufferB.destroy === "function") {
+          meshState.pointsEntryGPUBuffers.delete(bufferB);
+          bufferB.destroy();
+        }
+        if (stateTextureA && typeof stateTextureA.destroy === "function") stateTextureA.destroy();
+        if (stateTextureB && typeof stateTextureB.destroy === "function") stateTextureB.destroy();
+        if (uniformBuffer && typeof uniformBuffer.destroy === "function") {
+          meshState.pointsEntryGPUBuffers.delete(uniformBuffer);
+          uniformBuffer.destroy();
+        }
+        if (objectSphereBuffer && typeof objectSphereBuffer.destroy === "function") {
+          meshState.pointsEntryGPUBuffers.delete(objectSphereBuffer);
+          objectSphereBuffer.destroy();
+        }
+        if (objectTextureMatrixBuffer && typeof objectTextureMatrixBuffer.destroy === "function") {
+          meshState.pointsEntryGPUBuffers.delete(objectTextureMatrixBuffer);
+          objectTextureMatrixBuffer.destroy();
+        }
+        if (objectMeshShadowUniformBuffer && typeof objectMeshShadowUniformBuffer.destroy === "function") {
+          meshState.pointsEntryGPUBuffers.delete(objectMeshShadowUniformBuffer);
+          objectMeshShadowUniformBuffer.destroy();
+        }
+        if (system.causticsTexture && typeof system.causticsTexture.destroy === "function") {
+          system.causticsTexture.destroy();
+        }
+        if (system.objectReflectionTexture && typeof system.objectReflectionTexture.destroy === "function") {
+          system.objectReflectionTexture.destroy();
+        }
+        if (system.objectClippedReflectionTexture && typeof system.objectClippedReflectionTexture.destroy === "function") {
+          system.objectClippedReflectionTexture.destroy();
+        }
+        if (system.objectRefractionTexture && typeof system.objectRefractionTexture.destroy === "function") {
+          system.objectRefractionTexture.destroy();
+        }
+        if (system.objectTextureDepthTexture && typeof system.objectTextureDepthTexture.destroy === "function") {
+          system.objectTextureDepthTexture.destroy();
+        }
+        if (system.objectShadowTexture && typeof system.objectShadowTexture.destroy === "function") {
+          system.objectShadowTexture.destroy();
+        }
+      },
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ };
+    system.computeBindGroups = [
+      createWaterComputeBindGroup(system, bufferA, bufferB, waterState, device),
+      createWaterComputeBindGroup(system, bufferB, bufferA, waterState, device),
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ ];
+    system.renderBindGroups = [
+      createWaterRenderBindGroup(system, bufferA, waterState, device),
+      createWaterRenderBindGroup(system, bufferB, waterState, device),
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ ];
+    system.causticsBindGroups = [
+      createWaterCausticsBindGroup(system, bufferA, waterState, device),
+      createWaterCausticsBindGroup(system, bufferB, waterState, device),
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ ];
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ system.objectTextureBindGroup = createWaterObjectTextureBindGroup(system, waterState, device);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ system.objectMeshShadowBindGroup = createWaterObjectMeshShadowBindGroup(system, waterState, device);
+    system._qualityResourceKey = [causticsResolution, objectShadowResolution, objectTextureWidth, objectTextureHeight, objectTextureSize.pixelBudget].join("|");
+    return system;
+  }
+
+  function retireWaterRenderTextures(textures, timingState: any, device: any) {
+    var list = (textures || []).filter(Boolean);
+    if (!list.length) return;
+    function destroyAll() {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && typeof list[i].destroy === "function") list[i].destroy();
+      }
+    }
+    if (device && device.queue && typeof device.queue.onSubmittedWorkDone === "function") {
+      device.queue.onSubmittedWorkDone().then(destroyAll).catch(destroyAll);
+    } else {
+      timingState.deferredWaterTextureRetirements.push({
+        textures: list,
+        retireAfterFrame: timingState.gpuTimingFrameSeq + 3,
+      });
+    }
+  }
+
+  function applySceneWaterQualityProfile(system, profile, revision, width, height, waterState: any, timingState: any, device: any) {
+    if (!system) return;
+    var source = profile && typeof profile === "object" ? profile : {};
+    var tier = source.tier === "survival" || source.tier === "balanced" ? source.tier : "full";
+    var authoredSurfaceResolution = Math.max(2, Math.floor(sceneNumber(system.authoredSurfaceResolution, system.resolution)));
+    var surfaceResolution = Math.max(2, Math.min(authoredSurfaceResolution, Math.floor(sceneNumber(source.surfaceResolution, tier === "survival" ? 96 : tier === "balanced" ? 128 : authoredSurfaceResolution))));
+    var authoredCausticsResolution = sceneWaterCausticsResolution(system.entry);
+    var authoredObjectShadowResolution = sceneWaterObjectShadowResolution(system.entry);
+    var causticsResolution = Math.max(64, Math.min(authoredCausticsResolution, Math.floor(sceneNumber(source.causticsResolution, authoredCausticsResolution))));
+    var objectShadowResolution = Math.max(64, Math.min(authoredObjectShadowResolution, Math.floor(sceneNumber(source.objectShadowResolution, authoredObjectShadowResolution))));
+    var baseObjectSize = sceneWaterObjectTextureTargetSize(system.entry, width, height);
+    var objectMaxSide = Math.max(64, Math.floor(sceneNumber(source.objectTextureMaxSide, Math.max(baseObjectSize.width, baseObjectSize.height))));
+    var objectScale = Math.min(1, objectMaxSide / Math.max(1, baseObjectSize.width, baseObjectSize.height));
+    var objectTextureSize = sceneWaterObjectTextureClampToPixelBudget({
+      mode: baseObjectSize.mode,
+      width: Math.max(1, Math.floor(baseObjectSize.width * objectScale)),
+      height: Math.max(1, Math.floor(baseObjectSize.height * objectScale)),
+    }, Math.max(0, Math.floor(sceneNumber(source.objectTexturePixelBudget, baseObjectSize.pixelBudget))));
+    var profileRevision = Math.max(0, Math.floor(sceneNumber(revision, 0)));
+    var key = [causticsResolution, objectShadowResolution, objectTextureSize.width, objectTextureSize.height, objectTextureSize.pixelBudget].join("|");
+    system.qualityTier = tier;
+    system.qualityRevision = profileRevision;
+    system.qualityDPRCap = Math.max(0.25, sceneNumber(source.dprCap, 1));
+    system.surfaceResolution = surfaceResolution;
+    system.vertexCount = Math.max(0, (surfaceResolution - 1) * (surfaceResolution - 1) * 6);
+    system.expensivePassCadence = Math.max(1, Math.floor(sceneNumber(source.expensivePassCadence, tier === "survival" ? 3 : tier === "balanced" ? 2 : 1)));
+    if (system._qualityResourceKey === key) {
+      system.qualityAllocationPending = false;
+      system.qualityAllocationConsecutiveFailures = 0;
+      system.qualityAllocationNextFrame = 0;
+      system.qualityAllocationDesiredKey = key;
+      return;
+    }
+    if (system.qualityAllocationDesiredKey !== key) {
+      system.qualityAllocationDesiredKey = key;
+      system.qualityAllocationConsecutiveFailures = 0;
+      system.qualityAllocationNextFrame = 0;
+    }
+    if (system.qualityAllocationPending && timingState.webGPUFrameSeq < system.qualityAllocationNextFrame) return;
+
+    var oldState = {
+      causticsTexture: system.causticsTexture, causticsView: system.causticsView,
+      objectReflectionTexture: system.objectReflectionTexture, objectReflectionView: system.objectReflectionView,
+      objectClippedReflectionTexture: system.objectClippedReflectionTexture, objectClippedReflectionView: system.objectClippedReflectionView,
+      objectRefractionTexture: system.objectRefractionTexture, objectRefractionView: system.objectRefractionView,
+      objectTextureDepthTexture: system.objectTextureDepthTexture, objectTextureDepthView: system.objectTextureDepthView,
+      objectShadowTexture: system.objectShadowTexture, objectShadowView: system.objectShadowView,
+      causticsResolution: system.causticsResolution, objectShadowResolution: system.objectShadowResolution,
+      objectTextureWidth: system.objectTextureWidth, objectTextureHeight: system.objectTextureHeight,
+      objectTextureResolution: system.objectTextureResolution, objectTexturePixelBudget: system.objectTexturePixelBudget,
+      renderBindGroups: system.renderBindGroups, causticsBindGroups: system.causticsBindGroups,
+    };
+    var candidates = [];
+    function createCandidateTexture(desc) {
+      var texture = device.createTexture(desc);
+      candidates.push(texture);
+      return texture;
+    }
+    function objectColorTarget(label) {
+      return createCandidateTexture({ label: label, size: [objectTextureSize.width, objectTextureSize.height, 1], format: WATER_OBJECT_TEXTURE_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    }
+    try {
+      system.causticsTexture = createCandidateTexture({ label: "gosx-water-caustics-target", size: [causticsResolution, causticsResolution, 1], format: WATER_CAUSTICS_TEXTURE_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+      system.causticsView = system.causticsTexture.createView();
+      system.objectReflectionTexture = objectColorTarget("gosx-water-object-reflection-target");
+      system.objectReflectionView = system.objectReflectionTexture.createView();
+      system.objectClippedReflectionTexture = objectColorTarget("gosx-water-object-clipped-reflection-target");
+      system.objectClippedReflectionView = system.objectClippedReflectionTexture.createView();
+      system.objectRefractionTexture = objectColorTarget("gosx-water-object-refraction-target");
+      system.objectRefractionView = system.objectRefractionTexture.createView();
+      system.objectTextureDepthTexture = createCandidateTexture({ label: "gosx-water-object-texture-depth", size: [objectTextureSize.width, objectTextureSize.height, 1], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT });
+      system.objectTextureDepthView = system.objectTextureDepthTexture.createView();
+      system.objectShadowTexture = createCandidateTexture({ label: "gosx-water-object-shadow-target", size: [objectShadowResolution, objectShadowResolution, 1], format: WATER_OBJECT_TEXTURE_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+      system.objectShadowView = system.objectShadowTexture.createView();
+      system.causticsResolution = causticsResolution;
+      system.objectShadowResolution = objectShadowResolution;
+      system.objectTextureWidth = objectTextureSize.width;
+      system.objectTextureHeight = objectTextureSize.height;
+      system.objectTextureResolution = objectTextureSize.resolution;
+      system.objectTexturePixelBudget = objectTextureSize.pixelBudget;
+      system.renderBindGroups = [createWaterRenderBindGroup(system, system.bufferA, waterState, device), createWaterRenderBindGroup(system, system.bufferB, waterState, device)];
+      system.causticsBindGroups = [createWaterCausticsBindGroup(system, system.bufferA, waterState, device), createWaterCausticsBindGroup(system, system.bufferB, waterState, device)];
+    } catch (qualityResourceError) {
+      Object.keys(oldState).forEach(function(name) { system[name] = oldState[name]; });
+      candidates.forEach(function(texture) { if (texture && typeof texture.destroy === "function") texture.destroy(); });
+      system.qualityAllocationFailures += 1;
+      system.qualityAllocationConsecutiveFailures += 1;
+      system.qualityAllocationPending = true;
+      system.qualityAllocationNextFrame = timingState.webGPUFrameSeq + Math.min(60,
+        Math.pow(2, Math.min(6, system.qualityAllocationConsecutiveFailures - 1)));
+      return;
+    }
+    system._cubemapRenderBindGroups = null;
+    system._poolBindGroups = null;
+    system.waterObjectTextureSubject = null;
+    system.waterObjectShadowSignature = null;
+    system.waterExpensiveCadenceBucket = null;
+    system._qualityResourceKey = key;
+    system.qualityAllocationPending = false;
+    system.qualityAllocationConsecutiveFailures = 0;
+    system.qualityAllocationNextFrame = 0;
+    system.qualityAllocationDesiredKey = key;
+    retireWaterRenderTextures([
+      oldState.causticsTexture, oldState.objectReflectionTexture, oldState.objectClippedReflectionTexture,
+      oldState.objectRefractionTexture, oldState.objectTextureDepthTexture, oldState.objectShadowTexture,
+    ], timingState, device);
+  }
+
+  function retireWaterSystem(system, waterState: any, timingState: any, device: any) {
+    if (!system || typeof system.dispose !== "function" || system._gosxDisposed) return;
+    system._gosxRetireSerial = ++waterState.waterSystemRetireSerial;
+    if (device && device.queue && typeof device.queue.onSubmittedWorkDone === "function") {
+      device.queue.onSubmittedWorkDone().then(function() {
+        system.dispose();
+      }).catch(function() {
+        system.dispose();
+      });
+      return;
+    }
+    timingState.deferredWaterSystemRetirements.push({ system: system, retireAfterFrame: timingState.gpuTimingFrameSeq + 3 });
+  }
+
+  function disposeWaterSystems(waterState: any) {
+    for (const record of waterState.waterSystems.values()) {
+      if (record && record.system && typeof record.system.dispose === "function") {
+        try { record.system.dispose(); } catch (_err) {}
+      }
+    }
+    waterState.waterSystems.clear();
+    waterState.lastWaterTimeSeconds = null;
+  }
+
+  function syncWaterSystems(entries, width, height, waterState: any, meshState: any, timingState: any, device: any) {
+    var activeIds = new Set();
+    var records = [];
+    var sourceEntries = Array.isArray(entries) ? entries : [];
+    for (var i = 0; i < sourceEntries.length; i++) {
+      var entry = sourceEntries[i];
+      if (!entry || typeof entry !== "object") continue;
+      var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-water-" + i);
+      var record = waterState.waterSystems.get(id);
+      var signature = sceneWaterSystemSignature(entry, width, height);
+      activeIds.add(id);
+      if (!record || record.signature !== signature) {
+        if (record && record.system && typeof record.system.dispose === "function") {
+          retireWaterSystem(record.system, waterState, timingState, device);
+        }
+        record = {
+          signature: signature,
+          system: createSceneWaterSystem(device, entry, width, height, waterState, meshState, device),
+        };
+        if (record.system) record.system.id = id;
+        waterState.waterSystems.set(id, record);
+      } else if (record.system) {
+        record.system.entry = entry;
+        record.system.id = id;
+      }
+      if (record && record.system) {
+        records.push(record);
+      }
+    }
+    for (const [id, record] of waterState.waterSystems.entries()) {
+      if (!activeIds.has(id)) {
+        if (record && record.system && typeof record.system.dispose === "function") {
+          retireWaterSystem(record.system, waterState, timingState, device);
+        }
+        waterState.waterSystems.delete(id);
+      }
+    }
+    return records;
+  }

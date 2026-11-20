@@ -378,7 +378,7 @@ test("P4-M3 motion mixer: grow-and-retick passes dt=0 to avoid double clock adva
 test("Scene3D WebGPU water retires replaced systems after submitted work drains", () => {
   assert.match(
     scene3DWebGPUBackendSource,
-    /function retireWaterSystem\(system\) \{/,
+    /function retireWaterSystem\(system, waterState\s*, timingState\s*, device\s*\) \{/,
     "water runtime should centralize delayed disposal for replaced systems"
   );
   assert.match(
@@ -388,7 +388,7 @@ test("Scene3D WebGPU water retires replaced systems after submitted work drains"
   );
   assert.match(
     scene3DWebGPUBackendSource,
-    /retireWaterSystem\(record\.system\);/,
+    /retireWaterSystem\(record\.system, waterState, timingState, device\);/,
     "syncWaterSystems should not immediately destroy resources for signature changes"
   );
   assert.match(

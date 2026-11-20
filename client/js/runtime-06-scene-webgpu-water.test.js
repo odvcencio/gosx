@@ -215,7 +215,8 @@ test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
   const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /function publishWebGPUFrameStats\(stats\s*\)/);
-  assert.match(source, /var webGPUFrameSeq = 0/);
+  assert.match(source, /gpuTimingFrameSeq: 0, webGPUFrameSeq: 0/);
+  assert.match(source, /timingState\.webGPUFrameSeq \+= 1/);
   assert.match(source, /data-gosx-scene3d-webgpu-frame-seq/);
   assert.match(source, /data-gosx-scene3d-webgpu-frame-at/);
   assert.match(source, /__gosxScene3DWebGPUStats = published/);
@@ -459,7 +460,7 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.match(webgpu, /system\.waterSurfaceTileFailed = tileFailed/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-pending/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-failed/);
-  assert.match(webgpu, /\{ binding: 9, resource: tileLoaded \? tileRecord\.view : gpuRes\.placeholderView \}/);
+  assert.match(webgpu, /\{ binding: 9, resource: tileLoaded \? tileRecord\.view : waterState\.gpuRes\.placeholderView \}/);
   assert.match(webgpu, /\{ binding: 10, resource: \{ buffer: system\.objectSphereBuffer \} \}/);
   assert.match(webgpu, /objectTextureMatrixBuffer/);
   assert.match(webgpu, /function writeWaterObjectTextureMatrices/);
@@ -482,7 +483,7 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.doesNotMatch(webgpu, /authoredVertex: !!vertexSource/);
   assert.match(webgpu, /authoredVertex: false/);
   assert.doesNotMatch(webgpu, /waterAuthoredSurfacePipelineFailures/);
-  assert.match(webgpu, /waterAuthoredSurfacePipelineLastError = ""/);
+  assert.match(webgpu, /waterAuthoredSurfacePipelineLastError: ""/);
   assert.doesNotMatch(webgpu, /var validationDevice = authored \? device : null/);
   assert.doesNotMatch(webgpu, /validationDevice\.pushErrorScope\("validation"\)/);
   assert.match(webgpu, /var pipeline = wgpuCreateValidatedPipeline\(device, "render", descriptor\)/);
@@ -531,7 +532,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /waterPoolPipelineLayout = device\.createPipelineLayout/);
   assert.match(webgpu, /waterPoolVertexModule = device\.createShaderModule/);
   assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin\)/);
-  assert.match(webgpu, /function createWaterPoolBindGroup\(system, buffer\)/);
+  assert.match(webgpu, /function createWaterPoolBindGroup\(system, buffer, waterState\s*, device\s*\)/);
   // The hand-written data-prop-authored pool pipeline tier
   // (sceneWaterAuthoredPoolVertexSource/FragmentSource, sceneWaterAuthoredShaderSource,
   // waterAuthoredPoolPipelineCache/Failures) has been retired: the pool pass
@@ -1000,7 +1001,7 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
   // (sceneWaterAuthoredShaderSource, sceneWaterAuthoredCausticsSource/Pipeline,
   // waterAuthoredCausticsPipelineCache) has been retired -- caustics resolves
   // Selena-primary falling through directly to the builtin waterCausticsPipeline.
-  assert.match(webgpu, /waterAuthoredCausticsPipelineLastError = ""/);
+  assert.match(webgpu, /waterAuthoredCausticsPipelineLastError: ""/);
   assert.match(webgpu, /waterManifestShaderSourcesByID = null/);
   assert.match(webgpu, /activeWaterShaderSourcesByID = null/);
   assert.doesNotMatch(webgpu, /function sceneWaterAuthoredShaderSource/);
@@ -1850,11 +1851,11 @@ test("Scene3D WebGPU timing initialization failure unlocks CPU-rAF fallback", ()
 
 test("Scene3D WebGPU quality allocation retries with bounded backoff and publishes telemetry", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
-  const applyQuality = webgpu.match(/function applySceneWaterQualityProfile\([\s\S]*?\n    \}\n\n    function retireWaterSystem/);
+  const applyQuality = webgpu.match(/function applySceneWaterQualityProfile\([\s\S]*?\n  \}\n\n  function retireWaterSystem/);
   assert.ok(applyQuality, "WebGPU quality allocation seam should exist");
-  assert.match(applyQuality[0], /system\.qualityAllocationPending && webGPUFrameSeq < system\.qualityAllocationNextFrame/);
+  assert.match(applyQuality[0], /system\.qualityAllocationPending && timingState\.webGPUFrameSeq < system\.qualityAllocationNextFrame/);
   assert.match(applyQuality[0], /system\.qualityAllocationFailures \+= 1;[\s\S]*system\.qualityAllocationConsecutiveFailures \+= 1;/);
-  assert.match(applyQuality[0], /system\.qualityAllocationNextFrame = webGPUFrameSeq \+ Math\.min\(60,\s*Math\.pow\(2, Math\.min\(6, system\.qualityAllocationConsecutiveFailures - 1\)\)\)/);
+  assert.match(applyQuality[0], /system\.qualityAllocationNextFrame = timingState\.webGPUFrameSeq \+ Math\.min\(60,\s*Math\.pow\(2, Math\.min\(6, system\.qualityAllocationConsecutiveFailures - 1\)\)\)/);
   assert.match(webgpu, /proof\.waterQualityAllocationPending = stats\.waterQualityAllocationPending \|\| 0;[\s\S]*proof\.waterQualityAllocationFailures = stats\.waterQualityAllocationFailures \|\| 0;[\s\S]*proof\.waterQualityAllocationRetryFrame = stats\.waterQualityAllocationRetryFrame \|\| 0;/);
   assert.match(webgpu, /wgpuUpdateFrameProof\(published, webGPUFrameProof\)/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-pending/);

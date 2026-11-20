@@ -275,10 +275,10 @@ test("water projected targets wait for deferred model texture decode and GPU upl
 });
 
 test("water invalidates retained optics when quality allocation replaces target textures", () => {
-  const start = source.indexOf("    function applySceneWaterQualityProfile(");
-  const end = source.indexOf("    function retireWaterSystem(", start);
+  const start = source.indexOf("  function applySceneWaterQualityProfile(");
+  const end = source.indexOf("  function retireWaterSystem(", start);
   const quality = source.slice(start, end);
-  const committed = quality.slice(quality.indexOf("      system._cubemapRenderBindGroups = null;"));
+  const committed = quality.slice(quality.indexOf("    system._cubemapRenderBindGroups = null;"));
   assert.match(committed, /system\.waterObjectTextureSubject = null;/);
   assert.match(committed, /system\.waterObjectShadowSignature = null;/);
   const h = textureHarness();
