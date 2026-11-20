@@ -1315,6 +1315,15 @@ type Model struct {
 	MorphWeights map[string]float64
 	// Attachments fix gear meshes to joints of this model's skin (Attachment).
 	Attachments []Attachment
+	// JointScales scales joints of this model's skin alone, by joint (node)
+	// name, so models that share one GLB and one rig can differ in the size
+	// of a part: a larger head on a heavier body, say. Each factor scales the
+	// joint's local frame evenly on all three axes, on top of the pose, so it
+	// scales the vertices the joint moves, the gear fixed to it
+	// (Attachments) and every joint below it. Names that match no node and
+	// factors that are not positive are ignored. PatchModelsCommand changes
+	// them later.
+	JointScales map[string]float64
 	Transition  Transition
 	InState     *ModelProps
 	OutState    *ModelProps
@@ -3858,6 +3867,7 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.RootMotion = model.ClipSampled && model.RootMotion
 	record.MorphWeights = finiteMorphWeights(model.MorphWeights)
 	record.Attachments = lowerAttachments(model.Attachments)
+	record.JointScales = positiveJointScales(model.JointScales)
 	l.models = append(l.models, record)
 	l.anchors[id] = world
 }

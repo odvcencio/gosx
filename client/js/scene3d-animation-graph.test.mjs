@@ -725,6 +725,44 @@ test("bone scale enlarges a bone and carries its children", () => {
   near([eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]], [0.06, 0.2, 0.16], 1e-6, "eye carried");
 });
 
+test("a model's own joint scales act like bone scale, and a new table poses again", () => {
+  const { api } = loadChunk();
+  const table = new Float64Array(13).fill(1);
+  table[9] = 2;
+  const { m, holder, record } = setup(api, base([]), { record: { jointScales: table } });
+  api.evaluate(m, holder);
+  const w = m.world, o = 9 * 16;
+  near(Math.hypot(w[o], w[o + 1], w[o + 2]), 2, 1e-6, "head scale");
+  const head = pos(m, 9), eye = pos(m, 10);
+  near([eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]], [0.06, 0.2, 0.16], 1e-6, "eye carried");
+  // Same frame, new table (a PatchModels command): the model poses again.
+  record.jointScales = null;
+  api.evaluate(m, holder);
+  near(Math.hypot(w[o], w[o + 1], w[o + 2]), 1, 1e-6, "head back to its size");
+});
+
+test("a joint with an authored matrix keeps its place and turn when its model scales it", () => {
+  const { api } = loadChunk();
+  // Head: 90 degrees about Y and 0.5 up, as a matrix with no TRS.
+  const head = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 1];
+  const shape = () => { const h = humanoid(); h.nodes[9] = { name: "Head", matrix: head.slice(), children: [10] }; return h; };
+  const table = new Float64Array(13).fill(1);
+  table[9] = 2;
+  const plain = setup(api, base([]));
+  const scaled = setup(api, base([]), { record: { jointScales: table } });
+  for (const f of [plain, scaled]) {
+    const h = shape();
+    f.record.nodes = h.nodes;
+    f.m = api.createModel(f.record, clips());
+    api.evaluate(f.m, f.holder);
+  }
+  near(pos(scaled.m, 9), pos(plain.m, 9), 1e-6, "the head stays where its matrix puts it");
+  const w = scaled.m.world, o = 9 * 16;
+  near([w[o], w[o + 1], w[o + 2]], [0, 0, -2], 1e-6, "turned 90 degrees and twice the size");
+  const head0 = pos(scaled.m, 9), eye = pos(scaled.m, 10), head1 = pos(plain.m, 9), eye1 = pos(plain.m, 10);
+  near([eye[0] - head0[0], eye[1] - head0[1], eye[2] - head0[2]], [2 * (eye1[0] - head1[0]), 2 * (eye1[1] - head1[1]), 2 * (eye1[2] - head1[2])], 1e-6, "the eye is carried twice as far");
+});
+
 test("keep proportions drops non-root translation keys from the model's clips", () => {
   const { api } = loadChunk();
   const play = base([{ name: "Detail", time: 0, weight: 1 }]);

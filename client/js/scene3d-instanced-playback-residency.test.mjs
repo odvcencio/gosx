@@ -331,6 +331,7 @@ test('incompatible lazy animation APIs leave skin playback disabled', async () =
       ensureAnimationFeatureLoaded: async () => api,
       sceneModelHasSkins: () => true,
       sceneModelRootNodes: () => [0],
+      sceneModelJointScales: () => null,
       sceneModelTransformMatrix: () => new Float32Array(16),
       sceneCloneModelAnimations: () => [],
       sceneApplyModelSkinPose: record => { record.sampled = true; },

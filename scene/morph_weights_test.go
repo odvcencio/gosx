@@ -49,3 +49,23 @@ func TestAttachmentsLowerAndPatch(t *testing.T) {
 		t.Fatalf("patch %s", cmd)
 	}
 }
+
+func TestJointScalesLowerAndPatch(t *testing.T) {
+	ir := NewGraph(Model{ID: "p", Src: "/a.glb", JointScales: map[string]float64{"head": 1.08, "": 2, "neck": -1, "foot": math.NaN()}}).SceneIR()
+	if got := ir.Models[0].JointScales; len(got) != 1 || got["head"] != 1.08 {
+		t.Fatalf("joint scales %v", got)
+	}
+	raw, err := json.Marshal(ir.Models[0])
+	if err != nil || !strings.Contains(string(raw), `"jointScales":{"head":1.08}`) {
+		t.Fatalf("model json %s %v", raw, err)
+	}
+	cmd, _ := json.Marshal(PatchModelsCommand([]ModelPatch{
+		{ID: "p", JointScales: map[string]float64{"head": 1.1, "neck": 0}},
+		{ID: "q", JointScales: map[string]float64{}},
+		{ID: "r"},
+	}))
+	want := `{"kind":16,"data":{"models":[{"id":"p","jointScales":{"head":1.1}},{"id":"q","jointScales":{}},{"id":"r"}]}}`
+	if string(cmd) != want {
+		t.Fatalf("patch\n%s\nwant\n%s", cmd, want)
+	}
+}

@@ -2886,7 +2886,7 @@
     const hasMorphTargets = record.morphTargets && record.morphTargets.length > 0;
     const hasNodeAnimTargets = record.nodeAnimTargets && record.nodeAnimTargets.length > 0;
     const localNodeTransforms = hasMorphTargets || hasNodeAnimTargets
-      ? record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, null, record.rootNodes)
+      ? record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, null, record.rootNodes, record.jointScales)
       : null;
     if (hasMorphTargets) {
       const morphApi = (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api) || record.morphApi;
@@ -2913,7 +2913,7 @@
         nodeAnimApi.applyNodeAnimPose(record.nodeAnimTargets, localNodeTransforms);
       }
     }
-    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform, record.rootNodes);
+    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform, record.rootNodes, record.jointScales);
     for (let index = 0; index < record.skins.length; index += 1) {
       const skin = record.skins[index];
       if (!skin) {
@@ -2985,6 +2985,7 @@
       objectIDs: Array.isArray(objectIDs) ? objectIDs.slice() : [],
       nodes: asset.nodes,
       rootNodes: sceneModelRootNodes(asset.nodes),
+      jointScales: sceneModelJointScales(asset.nodes, instanceModel.jointScales),
       skins: skinInstances,
       animatedTransforms: new Map(),
       rootTransform: sceneModelTransformMatrix(instanceModel),

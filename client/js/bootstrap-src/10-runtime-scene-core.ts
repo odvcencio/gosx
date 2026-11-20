@@ -1609,6 +1609,7 @@
       rootMotion: sceneBool(current.rootMotion, false),
       morphWeights: current.morphWeights && typeof current.morphWeights === "object" && !Array.isArray(current.morphWeights) ? current.morphWeights : null,
       attachments: sceneNormalizeModelAttachments(current.attachments),
+      jointScales: current.jointScales && typeof current.jointScales === "object" && !Array.isArray(current.jointScales) ? current.jointScales : null,
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       interactive: sceneBool(current.interactive, false),
       label: typeof current.label === "string" ? current.label.trim() : "",

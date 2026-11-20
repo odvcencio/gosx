@@ -178,3 +178,26 @@ test('a patch sets material values on the model\'s own objects, not on gear with
   assert.deepEqual(JSON.parse(run("JSON.stringify(state.objects.get('home-00/visor/1').customUniforms)")), { tint: 1 });
   assert.deepEqual(JSON.parse(run("JSON.stringify(state.models[0].materialOverride.customUniforms)")), { skin: [0.4, 0.25, 0.18], jersey: [0, 0, 1] }, 'the declared model keeps the patch');
 });
+
+test('a patch gives a model its own joint scales by joint name and poses it', () => {
+  const run = fixture();
+  run("lineman.nodes = [{ name: 'hips' }, { name: 'head' }, { name: 'eye' }]");
+  run("applySceneCommands(state, [{ kind: 16, data: { models: [{ id: 'home-00', jointScales: { head: 1.08, eye: 1, nose: 2, hips: -1 } }] } }])");
+  assert.deepEqual(Array.from(run('lineman.jointScales')), [1, 1.08, 1], 'a factor per node; unnamed nodes, 1 and bad factors stay 1');
+  assert.deepEqual({ ...run('state.models[0].jointScales') }, { head: 1.08, eye: 1, nose: 2, hips: -1 }, 'the declared model keeps the patch');
+  assert.equal(run('lineman.poseDirty'), true);
+  assert.deepEqual([...run('poses')], ['home-00']);
+  run("applySceneCommands(state, [{ kind: 16, data: { models: [{ id: 'home-00', jointScales: {} }] } }])");
+  assert.equal(run('lineman.jointScales'), null, 'an empty map clears them');
+  assert.deepEqual(Array.from(run("sceneModelJointScales([{ name: 'head' }], { head: 1.1 })")), [1.1]);
+  assert.equal(run("sceneModelJointScales([{ name: 'head' }], null)"), null);
+});
+
+test('a patch with joint scales and a new scale poses once, at the new placement', () => {
+  const run = fixture();
+  run("lineman.nodes = [{ name: 'hips' }, { name: 'head' }]");
+  run("sceneApplyModelSkinPose = record => poses.push(record.model.scaleY)");
+  run("applySceneCommands(state, [{ kind: 16, data: { models: [{ id: 'home-00', jointScales: { head: 1.05 }, morphWeights: { mass: 1 }, scaleX: 1.05, scaleY: 1.05, scaleZ: 1.05 }] } }])");
+  assert.deepEqual([...run('poses')], [1.05], 'one pose, after the scale');
+});
+

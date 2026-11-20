@@ -365,6 +365,7 @@ type ModelIR struct {
 	RootMotion         bool               `json:"rootMotion,omitempty"`
 	MorphWeights       map[string]float64 `json:"morphWeights,omitempty"`
 	Attachments        []AttachmentIR     `json:"attachments,omitempty"`
+	JointScales        map[string]float64 `json:"jointScales,omitempty"`
 }
 
 // MarshalJSON emits both the embedded ObjectIR fields AND the ModelIR
@@ -409,6 +410,7 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		RootMotion         bool               `json:"rootMotion,omitempty"`
 		MorphWeights       map[string]float64 `json:"morphWeights,omitempty"`
 		Attachments        []AttachmentIR     `json:"attachments,omitempty"`
+		JointScales        map[string]float64 `json:"jointScales,omitempty"`
 	}
 	return json.Marshal(modelWire{
 		objectAlias:        objectAlias(m.ObjectIR),
@@ -434,6 +436,7 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		RootMotion:         m.RootMotion,
 		MorphWeights:       finiteMorphWeights(m.MorphWeights),
 		Attachments:        m.Attachments,
+		JointScales:        positiveJointScales(m.JointScales),
 	})
 }
 
@@ -2398,6 +2401,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	}
 	if len(item.Attachments) > 0 {
 		record["attachments"] = item.Attachments
+	}
+	if scales := positiveJointScales(item.JointScales); len(scales) > 0 {
+		record["jointScales"] = scales
 	}
 	if item.Loop != nil {
 		record["loop"] = *item.Loop

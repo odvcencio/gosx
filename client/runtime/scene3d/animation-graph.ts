@@ -629,7 +629,8 @@
       const node = order[k], o = node * 16;
       const p = parent[node];
       if (m.flags[node] === 0 && m.hasMatrix[node]) {
-        for (let e = 0; e < 16; e++) local[e] = m.matrix[o + e];
+        const f = m.record.jointScales ? m.record.jointScales[node] : 1;
+        for (let e = 0; e < 16; e++) local[e] = m.matrix[o + e] * (f !== 1 && e < 11 && (e & 3) !== 3 ? f : 1);
       } else {
         agTRS(local, 0, m.t, node * 3, m.r, node * 4, m.s, node * 3);
       }
@@ -650,7 +651,8 @@
     const data = holder.data;
     const root = m.record.rootTransform || null;
     m.root = root;
-    if (!force && m.posed && m.posedSerial === holder.serial && m.posedRig === data.rigHash) {
+    const own = m.record.jointScales || null;
+    if (!force && m.posed && m.posedSerial === holder.serial && m.posedRig === data.rigHash && m.posedScales === own) {
       // Same pose, new placement: joint = root * (model-space joint), one
       // multiply per joint. World matrices and feedback keep the last full
       // evaluation.
@@ -704,6 +706,16 @@
         m.flags[node] |= 4;
       }
     }
+    // The model's own joint scales (scene.Model.JointScales), on top of the
+    // rig's: in the scale IK sees, except on a joint with an authored matrix,
+    // whose frame agWorldRange scales instead.
+    for (let node = 0; own && node < n; node++) {
+      const f = own[node], o = node * 3;
+      if (f === 1 || (m.hasMatrix[node] && !m.flags[node])) continue;
+      m.s[o] *= f; m.s[o + 1] *= f; m.s[o + 2] *= f;
+      m.flags[node] |= 4;
+    }
+    m.posedScales = own;
     agWorldRange(m, 0, m.order.length, root);
     agSolveIK(m, holder, rig);
     agSkin(m, root);
@@ -867,7 +879,9 @@
         if (!f) continue;
         let entry = entries[node];
         if (!entry) entry = entries[node] = { translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] };
-        for (let k = 0; k < 3; k++) { entry.translation[k] = m.t[node * 3 + k]; entry.scale[k] = m.s[node * 3 + k]; }
+        // The general walk applies the model's own joint scales itself.
+        const own = record.jointScales ? record.jointScales[node] : 1;
+        for (let k = 0; k < 3; k++) { entry.translation[k] = m.t[node * 3 + k]; entry.scale[k] = m.s[node * 3 + k] / own; }
         for (let k = 0; k < 4; k++) entry.rotation[k] = m.r[node * 4 + k];
         output.set(node, entry);
       }

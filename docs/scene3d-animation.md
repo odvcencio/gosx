@@ -627,7 +627,8 @@ before skinning, so every clip and IK chain still fits. Declare a weight of
 loads its GLB without targets.
 
 `scene.PatchModelsCommand` changes a mounted model in place on the next
-frame, without loading it again: its morph weights, scale and visibility.
+frame, without loading it again: its morph weights, joint scales, scale and
+visibility.
 A game whose models show different players from play to play patches only
 the models whose player changed:
 
@@ -672,6 +673,25 @@ model's texture atlas takes its colours. A hidden piece costs no draw, and
 a model can carry every piece its players might wear and show the pieces
 this player wears. `assetpipe/author.PropSet` writes such a gear file: one
 unskinned mesh and node per piece.
+
+### Bigger or smaller parts
+
+`Model.JointScales` scales joints of one model's skin, by joint name, so
+players who share one GLB and one rig can differ in the size of a part: a
+larger head and helmet on a heavier lineman, say.
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    JointScales: map[string]float64{"head": 1.06}}
+```
+
+Each factor multiplies the joint's own scale on all three axes, on top of
+the pose, the same way `animgraph.Rig.BoneScale` does for every model on a
+rig. It scales the vertices the joint moves, the gear fixed to it
+(`Attachments`) and every joint below it, about the joint's origin. Use the
+joint that a part hangs from: a head scaled at its base grows upward and
+keeps the neck where it was. `ModelPatch.JointScales` changes the scales of
+a mounted model on the next frame; an empty map clears them.
 
 ### Clip names and durations
 

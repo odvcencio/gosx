@@ -1,13 +1,13 @@
 // Per-model looks of mounted Scene3D models: their own morph weights
-// (scene.Model.MorphWeights), gear on their joints (scene.Attachment),
-// material values (a Selena material's params) and in-place changes to a
-// mounted model (scene.PatchModelsCommand). The functions share the model
-// mount's scope in
-// the scene3d bundles.
+// (scene.Model.MorphWeights) and joint scales (scene.Model.JointScales),
+// gear on their joints (scene.Attachment), material values (a Selena
+// material's params) and in-place changes to a mounted model
+// (scene.PatchModelsCommand). The functions share the model mount's scope
+// in the scene3d bundles.
 
   // PatchModels (command 16, scene.PatchModelsCommand) changes mounted models
-  // in place: their own morph weights, scale, visibility, material values
-  // and the visibility of their attachments. The declared model list takes
+  // in place: their own morph weights, joint scales, scale, visibility,
+  // material values and the visibility of their attachments. The declared model list takes
   // the patch too, so a later reload keeps it. Returns the
   // reload's promise when a model must load again to keep its morph targets.
   function applyScenePatchModelsCommand(state: any, data: any) {
@@ -22,10 +22,18 @@
       for (let r = 0; r < records.length; r += 1) {
         const record = records[r];
         if (!record || record.id !== patch.id || !record.model) continue;
-        if (sceneOwns(patch, "morphWeights")) reload = scenePatchModelMorphs(state, record, declared.morphWeights) || reload;
+        let repose = false;
+        if (sceneOwns(patch, "morphWeights")) {
+          const retained = scenePatchModelMorphs(record, declared.morphWeights);
+          reload = (!retained && Boolean(declared.morphWeights)) || reload;
+          repose = retained;
+        }
+        if (sceneOwns(patch, "jointScales")) repose = scenePatchModelJoints(record, declared.jointScales) || repose;
         if (sceneOwns(patch, "attachments")) scenePatchModelAttachments(state, record, declared.attachments);
         if (sceneIsPlainObject(patch.uniforms)) scenePatchModelUniforms(state, record, patch.uniforms);
         sceneApplyModelLivePatch(state, record, patch);
+        // Every field first, then one pose at the record's new placement.
+        if (repose) sceneReposeModel(state, record);
       }
     }
     return reload && !state._modelHydrationPromise ? sceneRehydrateModelsAfterCommand(state) : null;
@@ -44,6 +52,7 @@
     for (const key of ["scaleX", "scaleY", "scaleZ"]) {
       if (sceneOwns(patch, key)) next[key] = sceneNumber(patch[key], next[key]);
     }
+    if (sceneOwns(patch, "jointScales")) next.jointScales = sceneIsPlainObject(patch.jointScales) ? Object.assign({}, patch.jointScales) : null;
     if (sceneOwns(patch, "visible")) next.visible = sceneBool(patch.visible, true);
     if (sceneIsPlainObject(patch.uniforms) && sceneIsPlainObject(next.materialOverride)) {
       const values = Object.assign({}, next.materialOverride.customUniforms, patch.uniforms);
@@ -58,17 +67,44 @@
     return next;
   }
 
-  // scenePatchModelMorphs gives a mounted record new morph weights. The
-  // next pose folds them. Returns true when the record kept no morph
+  // scenePatchModelMorphs gives a mounted record new morph weights; the
+  // next pose folds them. Returns false when the record kept no morph
   // targets (it was declared without weights) and must load again.
-  function scenePatchModelMorphs(state: any, record: any, weights: any) {
-    const retained = Array.isArray(record.morphTargets) && record.morphTargets.length > 0;
+  function scenePatchModelMorphs(record: any, weights: any) {
     record.model.morphWeights = weights;
-    if (!retained) return Boolean(weights);
+    return Array.isArray(record.morphTargets) && record.morphTargets.length > 0;
+  }
+
+  // The next frame poses record again; a record no clip animates poses now.
+  function sceneReposeModel(state: any, record: any) {
     record.poseDirty = true;
     const animated = Array.isArray(state._modelAnimations) && state._modelAnimations.indexOf(record) >= 0;
     if (!animated) sceneApplyModelSkinPose(record, 0, false);
-    return false;
+  }
+
+  // A model's own joint scales (scene.Model.JointScales) as a factor per
+  // node (1 for none) for the pose paths in animation.ts and
+  // animation-graph.ts, or null when no node is scaled. A new table
+  // replaces the old one; the graph notices the change by reference.
+  function sceneModelJointScales(nodes: any, scales: any) {
+    if (!sceneIsPlainObject(scales) || !Array.isArray(nodes)) return null;
+    const table = new Float64Array(nodes.length).fill(1);
+    let any = false;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const name = nodes[i] && nodes[i].name;
+      const f = typeof name === "string" && sceneOwns(scales, name) ? Number(scales[name]) : NaN;
+      if (f > 0 && Number.isFinite(f) && f !== 1) { table[i] = f; any = true; }
+    }
+    return any ? table : null;
+  }
+
+  // scenePatchModelJoints gives a mounted record new joint scales. Returns
+  // true when the record has a skeleton to pose again.
+  function scenePatchModelJoints(record: any, scales: any) {
+    record.model.jointScales = scales;
+    if (!Array.isArray(record.nodes)) return false;
+    record.jointScales = sceneModelJointScales(record.nodes, scales);
+    return true;
   }
 
 
