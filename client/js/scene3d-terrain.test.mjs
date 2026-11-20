@@ -218,7 +218,7 @@ test("the shipped renderer fragments still carry every patch anchor", () => {
   const gpu = readSceneRendererBackendSrc("webgpu"), gl = readSceneRendererBackendSrc("webgl");
   for (const anchor of ["@fragment fn fragmentMain(in: VertexOutput)", "fn gosxPBRColor(in: VertexOutput) -> vec4f {", "    let V = normalize(frame.cameraPos - in.worldPos);"]) assert.ok(gpu.includes(anchor), anchor);
   for (const anchor of ["void main() {", "    vec3 V = normalize(u_cameraPosition - v_worldPosition);"]) assert.ok(gl.includes(anchor), anchor);
-  assert.match(gpu, /window\.__gosx_scene3d_terrain_api\?\.webgpu\(terrainResources, mainPass/);
+  assert.match(gpu, /window\.__gosx_scene3d_terrain_api\?\.webgpu\(s\.terrainResources, mainPass/);
   assert.match(gl, /window\.__gosx_scene3d_terrain_api\?\.webgl\(terrainResources, gl/);
 });
 

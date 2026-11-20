@@ -252,7 +252,7 @@ test("Scene3D WebGPU ignores popErrorScope lifecycle drops", () => {
 
   assert.match(source, /function isWebGPUErrorScopeLifecycleMessage\(message\)/);
   assert.match(source, /function wgpuPopScopedErrorScope\(scopedDevice\)/);
-  assert.match(source, /rendererDeviceStillActive\(device,\s*scopedDevice\)/);
+  assert.match(source, /rendererDeviceStillActive\(s\.device,\s*scopedDevice\)/);
   assert.match(source, /indexOf\("instance dropped"\) >= 0/);
   assert.match(source, /indexOf\("poperrorscope"\) >= 0/);
   assert.match(source, /\.catch\(function\(error\) \{[\s\S]*if \(isWebGPUErrorScopeLifecycleMessage\(message\)\) return;[\s\S]*reportWebGPUFrameError\(telemetryState, message\);[\s\S]*\}\);/);
@@ -265,7 +265,7 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   assert.match(source, /elioSkinningKernel: "m31labs\.dev\/elio\/stdlib\.Skin"/);
   assert.match(source, /@compute @workgroup_size\(64\)/);
   assert.match(source, /wgpuCreateValidatedPipeline\(device, "compute", \{[\s\S]*label: "gosx-elio-skin-lbs"/);
-  assert.match(source, /updateElioSkinnedMeshes\(meshState, device, bundle, encoder\)/);
+  assert.match(source, /updateElioSkinnedMeshes\(meshState, s\.device, bundle, encoder\)/);
   assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
   assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
   assert.match(source, /webGPUBindElioSkinnedBuffers\(drawState\.meshState, device, pass, obj, count\)/);
@@ -529,7 +529,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /SCENE_WATER_POOL_VERTEX_SOURCE/);
   assert.match(webgpu, /SCENE_WATER_POOL_FRAGMENT_SOURCE/);
   assert.match(webgpu, /label: "gosx-water-pool"/);
-  assert.match(webgpu, /waterPoolPipelineLayout = device\.createPipelineLayout/);
+  assert.match(webgpu, /waterPoolPipelineLayout = s\.device\.createPipelineLayout/);
   assert.match(webgpu, /waterPoolVertexModule = device\.createShaderModule/);
   assert.match(webgpu, /function getWaterPoolPipeline\(system, forceBuiltin, waterState\s*, device\s*\)/);
   assert.match(webgpu, /function createWaterPoolBindGroup\(system, buffer, waterState\s*, device\s*\)/);
@@ -563,7 +563,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /var rounded = wgpuSceneWaterPoolShapeRounded\(entry\) && sceneNumber\(entry\.cornerRadius, 0\) > 0\.0001/);
   assert.match(webgpu, /renderPass\.draw\(vertexCount\)/);
   assert.match(webgpu, /stats\.waterPoolDrawVertices \+= vertexCount/);
-  assert.match(webgpu, /drawWaterPoolEntries\(mainPass, waterUpdateStats\.records, frameBindGroup, waterState, device\)/);
+  assert.match(webgpu, /drawWaterPoolEntries\(mainPass, waterUpdateStats\.records, frameBindGroup, waterState, s\.device\)/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-passes/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-loaded/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-pool-passes/);
@@ -984,8 +984,8 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
   assert.match(webgpu, /SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE/);
   assert.match(webgpu, /WATER_CAUSTICS_TEXTURE_FORMAT = "rgba8unorm"/);
   assert.match(webgpu, /WATER_CAUSTICS_TEXTURE_SIZE = 1024/);
-  assert.match(webgpu, /waterCausticsBindGroupLayout = device\.createBindGroupLayout/);
-  assert.match(webgpu, /waterCausticsPipelineLayout = device\.createPipelineLayout/);
+  assert.match(webgpu, /waterCausticsBindGroupLayout = s\.device\.createBindGroupLayout/);
+  assert.match(webgpu, /waterCausticsPipelineLayout = s\.device\.createPipelineLayout/);
   assert.match(webgpu, /waterCausticsPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
   assert.match(webgpu, /label: "gosx-water-caustics-pass"/);
   assert.match(webgpu, /format: WATER_CAUSTICS_TEXTURE_FORMAT/);
@@ -1090,10 +1090,10 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /WATER_OBJECT_TEXTURE_FORMAT = "rgba8unorm"/);
   assert.match(webgpu, /WATER_OBJECT_TEXTURE_SIZE = 256/);
   assert.match(webgpu, /WATER_OBJECT_SHADOW_TEXTURE_SIZE = 256/);
-  assert.match(webgpu, /waterObjectTextureBindGroupLayout = device\.createBindGroupLayout/);
-  assert.match(webgpu, /waterObjectMeshShadowBindGroupLayout = device\.createBindGroupLayout/);
-  assert.match(webgpu, /waterObjectTexturePipelineLayout = device\.createPipelineLayout/);
-  assert.match(webgpu, /waterObjectMeshShadowPipelineLayout = device\.createPipelineLayout/);
+  assert.match(webgpu, /waterObjectTextureBindGroupLayout = s\.device\.createBindGroupLayout/);
+  assert.match(webgpu, /waterObjectMeshShadowBindGroupLayout = s\.device\.createBindGroupLayout/);
+  assert.match(webgpu, /waterObjectTexturePipelineLayout = s\.device\.createPipelineLayout/);
+  assert.match(webgpu, /waterObjectMeshShadowPipelineLayout = s\.device\.createPipelineLayout/);
   assert.match(webgpu, /waterObjectTexturePipeline = wgpuCreateValidatedPipeline\(device, "render",/);
   assert.match(webgpu, /waterObjectShadowPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
   assert.match(webgpu, /waterObjectMeshShadowPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
@@ -1286,7 +1286,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /renderWaterObjectMeshShadowPass\(encoder, system, objectList, pbrBuffers, waterState, device\)/);
   assert.match(webgpu, /renderWaterObjectSceneTexturePasses\(/);
   assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(waterState\.uniformState, waterState\.gpuRes, device, bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
-  assert.match(webgpu, /updateWaterSystems\(bundle\.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH, waterState, device\)/);
+  assert.match(webgpu, /updateWaterSystems\(bundle\.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH, waterState, s\.device\)/);
   assert.match(webgpu, /waterObjectTexturePasses/);
   assert.match(webgpu, /waterObjectTextureTargets/);
   assert.match(webgpu, /waterObjectTextureMeshPasses/);

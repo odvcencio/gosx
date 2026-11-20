@@ -1065,17 +1065,17 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The dispatch hook must call updateInstancedCullSystems.
-  assert.match(webgpu, /updateInstancedCullSystems\(drawState,\s*device,\s*bundle\.instancedMeshes,\s*encoder,\s*uniformState\.scratchSelenaViewProjection\)/,
+  assert.match(webgpu, /updateInstancedCullSystems\(drawState,\s*s\.device,\s*bundle\.instancedMeshes,\s*encoder,\s*uniformState\.scratchSelenaViewProjection\)/,
     "frame loop must call updateInstancedCullSystems with instancedMeshes, encoder, and scratchSelenaViewProjection");
 
   // The frame loop must call it AFTER uploadFrameUniforms (so VP is ready) and
   // BEFORE the shadow and main render passes.
   const uploadPos = webgpu.indexOf("var cam = uploadFrameUniforms(");
-  const cullPos   = webgpu.indexOf("updateInstancedCullSystems(drawState, device, bundle.instancedMeshes");
+  const cullPos   = webgpu.indexOf("updateInstancedCullSystems(drawState, s.device, bundle.instancedMeshes");
   // Use the call site, not the function definition — the definition appears first
   // in the file but runs only when invoked. The call constructs a shadow-view
   // descriptor; the definition only names its shadowResource parameter.
-  const shadowPos = webgpu.indexOf("renderLightShadowCascades(encoder, light, li, activeShadowCount");
+  const shadowPos = webgpu.indexOf("renderLightShadowCascades(s, encoder, light, li, activeShadowCount");
   // The main color pass is identified by `var mainPass = encoder.beginRenderPass(`
   // to avoid matching earlier shadow/utility beginRenderPass calls.
   const mainPassPos = webgpu.indexOf("var mainPass = encoder.beginRenderPass(");

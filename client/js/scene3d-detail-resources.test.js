@@ -22,7 +22,7 @@ function detailRenderer() {
     frameBindGroupLayout: {}, materialBindGroupLayout: {}, WGSL_PBR_FRAGMENT: "",
     GPUShaderStage: { FRAGMENT: 2 }, GPUTextureUsage: { TEXTURE_BINDING: 1, RENDER_ATTACHMENT: 2 },
     GPUBufferUsage: { UNIFORM: 1, COPY_DST: 2 }, wgpuLoadTexture: () => null });
-  c.pipeState = { detailResources: undefined, detailEnabled: true };
+  c.s = { device }; c.pipeState = { detailResources: undefined, detailEnabled: true };
   c.gpuRes = { textureCache: c.textureCache, placeholderView: c.placeholderView, frameBindGroupLayout: c.frameBindGroupLayout, materialBindGroupLayout: c.materialBindGroupLayout };
   for (const file of ["client/js/bootstrap-src/10-runtime-primitives.ts", "client/js/bootstrap-src/10-runtime-scene-utils.ts", "client/js/bootstrap-src/11-scene-math.ts", "client/js/bootstrap-src/13-scene-material.ts", "client/js/bootstrap-src/16c1-scene-detail.ts"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "../..", file), "utf8"), c);
@@ -31,10 +31,10 @@ function detailRenderer() {
   vm.runInContext(renderer, c);
   c.sceneWebGPUBakeDetailAtlas = () => {};
   c.wgpuLoadTexture = () => null;
-  const start = renderer.indexOf("      pipeState.detailResources = sceneWebGPUPrepareDetailFrame");
-  const end = renderer.indexOf("      var frameNowMS", start);
+  const start = renderer.indexOf("    pipeState.detailResources = sceneWebGPUPrepareDetailFrame");
+  const end = renderer.indexOf("    var frameNowMS", start);
   assert.ok(start >= 0 && end > start);
-  const prepare = renderer.indexOf("      pipeState.detailResources = sceneWebGPUEnsureDetailResources");
+  const prepare = renderer.indexOf("    pipeState.detailResources = sceneWebGPUEnsureDetailResources");
   const prepareEnd = renderer.indexOf("\n", prepare);
   const frame = new vm.Script(renderer.slice(prepare, prepareEnd) + "\npipeState.detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;\n" + renderer.slice(start, end));
   return { c, buffers, textures, writes, render(materials) { c.bundle = { materials }; frame.runInContext(c); } };

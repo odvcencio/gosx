@@ -6507,6 +6507,1039 @@
   }
   function wgpuInstancedCullReady(cullSys: any, surface: any) { return Boolean(cullSys && cullSys.isReady() && !surface); }
 
+  // renderLightShadowCascades fills one shadow slot (webgpu-shadows module)
+  // and renders every cascade layer. Casters cull once per light against its
+  // full-scene fit, a superset of every cascade; each cascade writes its own
+  // shadow-matrix arena slot, so no pass overwrites another's matrix.
+  function renderLightShadowCascades(s: any, encoder: any, light: any, lightIndex: number, slot: number, rawLightMatrix: any, bounds: any, frame: any) { var uniformState = s.uniformState, drawState = s.drawState;
+    var cascades = sceneWebGPUShadowCascadeCount(light, frame.camera);
+    var size = Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024)));
+    // The authored memory cap covers every cascade layer of the light.
+    size = resolveShadowSize(size, frame.maxPixels > 0 ? frame.maxPixels / cascades : frame.maxPixels);
+    var shadowSlot = drawState.shadowSlots[slot] = wgpuFitShadowSlot(wgpuEnsureShadowSlot(s.device, drawState.shadowSlots[slot], size, cascades, destroyRendererGPUResource), light, rawLightMatrix,
+      { view: uniformState.scratchViewMatrix, camera: frame.camera, aspect: frame.aspect, bounds: bounds });
+    var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
+    frame.matrices[slot] = lightMatrix;
+    frame.indices[slot] = lightIndex;
+    frame.gpuDriven.lightView(encoder, lightMatrix, slot);
+    frame.crowd.lightView(frame.crowdEncoder, lightMatrix, slot);
+    for (var c = 0; c < cascades; c++) {
+      renderShadowPass(drawState, s.device, encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
+    }
+  }
+  function render(s: any, bundle, viewport, frameMeta) { var timingState = s.timingState, meshState = s.meshState, uniformState = s.uniformState, pipeState = s.pipeState, selenaState = s.selenaState, waterState = s.waterState, drawState = s.drawState, telemetryState = s.telemetryState, gpuRes = s.gpuRes, pipelineGuard = s.pipelineGuard;
+    if (typeof inflateSceneShaderLib === "function") {
+      inflateSceneShaderLib(bundle);
+    }
+    adaptOrtho2DBoardBundle(bundle);
+    if (!s.device) {
+      startInit();
+      return "pending";
+    }
+    if (s.initFailed || pipelineGuard.coreError) return "failed";
+    if (pipelineGuard.pending) return "pending";
+    if (!bundle) return "empty";
+
+    var hasPBRData = Boolean(
+      bundle.worldMeshPositions &&
+      bundle.worldMeshNormals &&
+      Array.isArray(bundle.meshObjects) &&
+      bundle.meshObjects.length > 0
+    );
+    var hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
+      (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
+    var hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
+    var hasWorldLines = hasWorldLineData(bundle);
+    var hasScreenLines = hasScreenLineData(bundle);
+    var hasSurfaces = hasSurfaceData(bundle);
+    var hasLabels = hasLabelData(bundle);
+    var hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
+    var incomingWaterShaderSourcesByID = bundle && bundle.waterShaderSourcesByID && typeof bundle.waterShaderSourcesByID === "object" && Object.keys(bundle.waterShaderSourcesByID).length > 0
+      ? bundle.waterShaderSourcesByID
+      : sceneWaterShaderSourcesFromEntries(bundle && bundle.waterSystems);
+    if (s.canvas && s.canvas.parentNode && typeof s.canvas.parentNode.setAttribute === "function") {
+      var incomingWaterEntryCausticBytes = 0;
+      var incomingWaterEntries = Array.isArray(bundle && bundle.waterSystems) ? bundle.waterSystems : [];
+      for (var iwe = 0; iwe < incomingWaterEntries.length; iwe += 1) {
+        var iweEntry = incomingWaterEntries[iwe];
+        incomingWaterEntryCausticBytes = Math.max(incomingWaterEntryCausticBytes, iweEntry && typeof iweEntry.causticsWGSL === "string" ? iweEntry.causticsWGSL.trim().length : 0);
+      }
+      var incomingSourceKeys = incomingWaterShaderSourcesByID && typeof incomingWaterShaderSourcesByID === "object" ? Object.keys(incomingWaterShaderSourcesByID) : [];
+      queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-incoming-entry-caustic-source-bytes", String(incomingWaterEntryCausticBytes));
+      queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-incoming-shader-systems", String(incomingSourceKeys.length));
+    }
+    if (bundle && Array.isArray(bundle.waterSystems)) {
+      bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
+      bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
+    }
+    var preparedScene = typeof prepareScene === "function"
+      ? prepareScene(bundle, bundle.camera, viewport, s.lastPreparedScene, {
+        mount: s.canvas && s.canvas.parentNode || null,
+        sentinels: s.canvas && s.canvas.parentNode && s.canvas.parentNode.__gosxScene3DSentinels || null,
+      })
+      : null;
+    if (preparedScene) {
+      var waterShaderSourcesByID = bundle && bundle.waterShaderSourcesByID;
+      s.lastPreparedScene = preparedScene;
+      bundle = preparedScene.ir || bundle;
+      if (waterShaderSourcesByID && Object.keys(waterShaderSourcesByID).length > 0 && bundle) {
+        bundle.waterShaderSourcesByID = waterShaderSourcesByID;
+      }
+      if (bundle && Array.isArray(bundle.waterSystems)) {
+        bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
+        if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
+          bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
+        }
+      }
+      if (s.canvas && s.canvas.parentNode) {
+        s.canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
+      }
+      hasPBRData = Boolean(
+        bundle.worldMeshPositions &&
+        bundle.worldMeshNormals &&
+        Array.isArray(bundle.meshObjects) &&
+        bundle.meshObjects.length > 0
+      );
+      hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
+        (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
+      hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
+      hasWorldLines = hasWorldLineData(bundle);
+      hasScreenLines = hasScreenLineData(bundle);
+      hasSurfaces = hasSurfaceData(bundle);
+      hasLabels = hasLabelData(bundle);
+      hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
+    }
+    webGPUBeginRetainedMeshFrame(meshState, bundle);
+    webGPUPrepareMaterialFrame(uniformState.materialFrame, s.device, bundle, meshState.retainedMeshAttributeEpoch, function(usage, size) { return wgpuCreateTrackedBuffer(meshState, s.device, usage, size); }, destroyRendererGPUResource, meshState.pointsEntryGPUBuffers);
+    meshState.instancedCacheOwnerEpoch += 1;
+    webGPUSweepInstancedCacheOwners(drawState, s.device);
+    if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !s.skyResources.renderer && !s.oceanResources.renderer) {
+      webGPUSweepRetainedMeshBuffers(meshState);
+      return "empty";
+    }
+
+    var width = s.canvas.width;
+    var height = s.canvas.height;
+    if (width <= 0 || height <= 0) return "empty";
+
+    // Opt-in perf instrumentation. Mirrors the WebGL renderer: when
+    // window.__gosx_scene3d_perf is truthy, emit performance.mark +
+    // measure pairs so a PerformanceObserver (installed by gosx perf's
+    // instrument.js) can collect per-frame wall-clock durations.
+    var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
+    if (perfEnabled) {
+      performance.mark("scene3d-render-start");
+    }
+
+    // Reconfigure the context ONLY if the surface actually changed (see
+    // configureWebGPUCanvas: an unconditional configure() here was a per-frame
+    // swapchain re-creation and a hard stall on Metal).
+    configureWebGPUCanvas(telemetryState, s.device, s.canvas);
+
+    // Determine post-processing. postFXForceDisabled (set by
+    // disablePostProcessing(), the frame-error resilience "demote" step)
+    // permanently overrides the authored post-FX chain for this renderer
+    // instance — a scene that persistently fails post-FX allocation/
+    // validation retries RAW rendering instead of drawing dead frames
+    // forever with a poisoned post-FX target.
+    bundle = sceneAtmosphereBundle(bundle, frameMeta);
+    var postEffects = (Array.isArray(bundle.postEffects) ? bundle.postEffects : []).filter(function(effect) { return !pipelineGuard.disabled.has(effect.kind); });
+    postEffects = sceneSpecularBloomEffects(bundle, postEffects, "webgpu", hasWorldLines || hasScreenLines || hasSurfaces || hasPointsData || hasWaterData || !!(bundle.environment && (bundle.environment.ocean || bundle.environment.clouds)), s.canvas.parentNode);
+    var authoredPostEffects = postEffects.length > 0;
+    var hasTransmission = sceneTransmissionPresent(bundle);
+    var transmissionSettings = sceneTransmissionSettings(frameMeta, s.canvas.parentNode);
+    transmissionSettings.screen = transmissionSettings.screen && hasTransmission && !s.postFXForceDisabled && !pipelineGuard.disabled.has("post");
+    if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
+    var usePostProcessing = postEffects.length > 0 && !s.postFXForceDisabled && !pipelineGuard.disabled.has("post");
+    pipeState.targetFormat = usePostProcessing ? "rgba16float" : s.presentationFormat;
+    pipeState.selectiveBloom = usePostProcessing && sceneSpecularBloomRequested(postEffects);
+
+    // Compute scaled render-target dimensions (PostFX memory cap).
+    var postFXMaxPixels = typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
+    var postfxFactor = usePostProcessing
+      ? resolvePostFXFactor(postFXMaxPixels, width * height)
+      : 1;
+    var scaledW = Math.max(1, Math.floor(width * postfxFactor));
+    var scaledH = Math.max(1, Math.floor(height * postfxFactor));
+    var sampleCount = resolveWebGPUSampleCount(drawState, bundle);
+    pipeState.activeSampleCount = sampleCount;
+    pipeState.detailResources = sceneWebGPUEnsureDetailResources(s.device, pipeState.detailResources, bundle.materials, gpuRes.frameBindGroupLayout, gpuRes.materialBindGroupLayout, WGSL_PBR_FRAGMENT);
+    pipeState.detailEnabled = frameMeta?.detailEnabled !== false;
+    if (pipeState.detailEnabled && pipeState.detailResources) sceneWebGPUDetailBakeResources(s.device, pipeState.detailResources, gpuRes.placeholderView);
+    if (drawState.scenePicker && drawState.scenePicker.hasPending()) drawState.scenePicker.preparePipelines();
+    prepareBundlePipelines(s, s.device, bundle, preparedScene, postEffects, usePostProcessing, frameMeta?.warmup); s.temporalAA.prepare(postEffects, usePostProcessing, sampleCount); s.autoExposure.prepare(bundle.environment, usePostProcessing);
+    if (pipelineGuard.coreError) return "failed";
+    if (pipelineGuard.pending) return "pending";
+    // The standard mesh, shadow and post variants are prepared above. Other
+    // feature renderers can discover pipelines while encoding; defer their
+    // canvas commands until the entire frame has encoded successfully.
+    pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost(drawState, s.device).present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
+      bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds || bundle.environment.autoExposure || bundle.environment.terrain) ||
+      (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
+      postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST || effect.kind === "taa"; }));
+
+    // Upload per-frame uniforms (use scaled dims so point sprites and
+    // projection aspect match the actual render target, not the canvas).
+    var cam = uploadFrameUniforms(uniformState, gpuRes, s.device,
+      bundle.camera,
+      scaledW,
+      scaledH,
+      wgpuToneMapMode(bundle.environment, usePostProcessing)
+    );
+    uploadLights(uniformState, gpuRes, s.device, bundle.lights);
+    uploadFogUniforms(uniformState, gpuRes, s.device, bundle.environment);
+    uploadEnvUniforms(uniformState, gpuRes, s.device, selenaState.frame, bundle.environment);
+    if (s.temporalAA.beginFrame(postEffects, { postProcessing: usePostProcessing, perspective: !!cam && cam.kind !== "orthographic" && !(bundle.camera && bundle.camera.mode === "ortho2d"), width: scaledW, height: scaledH, samples: sampleCount, view: uniformState.scratchViewMatrix, projection: uniformState._frameUniformF, projectionOffset: 16, viewProjection: uniformState.scratchSelenaViewProjection, now: performance.now() })) s.device.queue.writeBuffer(gpuRes.frameUniformBuffer, 64, uniformState._frameUniformF, 16, 16);
+
+    // --- Shadow Pass ---
+    var shadowLightMatrices = [null, null];
+    var shadowLightIndices = [-1, -1];
+    var activeShadowCount = 0;
+
+    var encoder = s.device.createCommandEncoder({ label: "gosx-frame" }), crowdEncoder = encoder;
+    timingState.gpuTimingFrameSeq += 1;
+    drainDeferredGPUResources(timingState, false);
+    var gpuTimingToken = beginGPUFrameTiming(timingState, s.device, encoder);
+    // Per-pass stamps ride on the render-pass descriptors, so the slot must be
+    // chosen before the shadow pass opens.
+    pollGPUPassTimingReadback(timingState);
+    beginGPUPassTimingFrame(timingState, s.device); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { s.device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUFrameTiming(timingState, encoder, gpuTimingToken); endGPUPassTimingFrame(timingState, encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
+    var scopedFrameErrors = beginWebGPUErrorScope(telemetryState, s.device);
+    // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
+    sceneWebGPUSelenaSurfaceFrame(pipeState.selenaSurfaces);
+    pipeState.detailResources = sceneWebGPUPrepareDetailFrame(s.device, pipeState.detailResources, bundle.materials, gpuRes.textureCache, {
+      placeholderView: gpuRes.placeholderView, enabled: pipeState.detailEnabled,
+    });
+    // Reuse uniforms when color or detail controls change; retire buffers and
+    // atlases that no longer belong to the active draw set.
+
+    var frameNowMS = Number.isFinite(frameMeta?.nowMS)
+      ? frameMeta.nowMS
+      : performance.now();
+    var frameActive = frameMeta?.active !== false;
+    var frameQualityEnabled = frameMeta?.qualityEnabled === true;
+    var frameQualityProfile = frameQualityEnabled && frameMeta.qualityProfile
+      ? frameMeta.qualityProfile
+      : null;
+    var frameQualityRevision = frameQualityEnabled
+      ? (Number.isFinite(frameMeta.qualityRevision)
+        ? frameMeta.qualityRevision
+        : (frameQualityProfile && Number.isFinite(frameQualityProfile.revision)
+          ? frameQualityProfile.revision
+          : (Number.isFinite(frameMeta.revision) ? frameMeta.revision : 0)))
+      : 0;
+    var frameTimeSeconds = frameNowMS / 1000;
+    // Shader time is seekable; telemetry and compute retain wall time.
+    selenaState.frame.time = frameMeta?.sceneTime ?? frameTimeSeconds;
+    selenaState.frame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
+    var computeParticleRecords = updateComputeParticleSystems(drawState, s.device, bundle.computeParticles, encoder, frameTimeSeconds);
+    var computedMorphStats = updateComputedMorphMeshes(meshState, s.device, bundle, encoder);
+    s.temporalAA.capturePreviousSkins(encoder, bundle.meshObjects); var elioSkinStats = updateElioSkinnedMeshes(meshState, s.device, bundle, encoder); window.__gosx_scene3d_ocean_fft_api?.frame(s.oceanResources, { device: s.device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaState.frame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
+    var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(meshState, s.device, bundle) : null;
+    drawState.activePickMeshPositions = pbrSceneBuffers;
+    if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
+      bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
+      bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
+    }
+    var waterDebugMode = sceneWebGPUWaterDebugMode(s.canvas);
+    var waterUpdateStats = sceneWebGPUWaterDebugSkipsUpdate(waterDebugMode)
+      ? updateWaterSystems([], encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH, waterState, s.device)
+      : updateWaterSystems(bundle.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH, waterState, s.device);
+    // After frame uniform upload, cull before render passes.
+    // Meshes without a cull kernel retain draw-all behavior.
+    var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+    var instancedDrawList = hasInstancedData
+      ? buildInstancedDrawList(drawState, s.device, bundle, materials)
+      : { opaque: [], alpha: [], additive: [] };
+    var gpuDriven = webGPUGPUDrivenHost(drawState, s.device);
+    gpuDriven.beginFrame(bundle, encoder, { viewProjection: uniformState.scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: pipeState.targetFormat, specular: pipeState.selectiveBloom, opaque: pipeState.detailResources ? instancedDrawList.opaque.filter(function(mesh = Object.create(null)) {
+      var material = instancedMeshMaterial(mesh, bundle.materials);
+      return !material || !material.detail;
+    }) : instancedDrawList.opaque });
+    var crowd = webGPUCrowdHost(drawState, s.device);
+    // The crowd's frustum cull passes (the camera's and each light's) go in a command buffer of their own, submitted before the
+    // frame's: on Metal (Apple M4 Pro, Chrome 157) a command buffer that holds them and the frame-end timestamp fails with "Insufficient
+    // Memory" and loses the device. Dawn records each submit as one Metal command buffer. The occlusion cull reads this frame's depth.
+    crowdEncoder = bundle.gpuDriven ? s.device.createCommandEncoder({ label: "gosx-crowd-cull" }) : encoder;
+    crowd.beginFrame(bundle, crowdEncoder, { now: selenaState.frame.time, viewProjection: uniformState.scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: pipeState.targetFormat, specular: pipeState.selectiveBloom });
+    updateInstancedCullSystems(drawState, s.device, bundle.instancedMeshes, encoder, uniformState.scratchSelenaViewProjection);
+    var webGPUCullTotals = webGPUSummarizeCullSystems(drawState, s.device);
+
+    var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
+    var sceneBounds = null;
+    var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
+    var shadowFrame = { bundle: bundle, camera: cam, maxPixels: shadowMaxPixels, gpuDriven: gpuDriven, crowd: crowd, crowdEncoder: crowdEncoder, aspect: scaledW / scaledH, buffers: pbrSceneBuffers, matrices: shadowLightMatrices, indices: shadowLightIndices };
+
+    for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
+      var light = lightArray[li];
+      if (!wgpuShadowCaster(light)) continue;
+
+      if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(drawState, s.device, bundle);
+
+      // Projection validation happens before authored-order slot selection.
+      // A malformed or unsupported spot consumes no slot and cannot crowd
+      // out a later eligible light.
+      var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+      if (!rawLightMatrix) continue;
+
+      renderLightShadowCascades(s, encoder, light, li, activeShadowCount, rawLightMatrix, sceneBounds, shadowFrame);
+      activeShadowCount++;
+    }
+
+    // A light removal or newly invalid spot releases its no-longer-active
+    // texture immediately. This mirrors WebGL slot retirement instead of
+    // retaining stale GPU allocations until whole-renderer disposal.
+    for (var staleShadowSlot = activeShadowCount; staleShadowSlot < drawState.shadowSlots.length; staleShadowSlot++) {
+      if (drawState.shadowSlots[staleShadowSlot]) {
+        destroyRendererGPUResource(drawState.shadowSlots[staleShadowSlot].texture);
+        drawState.shadowSlots[staleShadowSlot] = null;
+      }
+    }
+
+    pipeState.pbrShadowsActive = activeShadowCount > 0;
+    uploadShadowUniforms(uniformState, gpuRes, s.device, drawState.shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights); sceneSelenaFrameLighting(selenaState.frame, cam, uniformState.scratchViewMatrix, bundle, drawState.shadowSlots, shadowLightIndices, shadowLightMatrices, "gpu");
+
+    // Create frame bind group.
+    var shadowView0 = drawState.shadowSlots[0] ? drawState.shadowSlots[0].view : null;
+    var shadowView1 = drawState.shadowSlots[1] ? drawState.shadowSlots[1].view : null;
+    if (!uniformState.transmissionResources) uniformState.transmissionResources = wgpuCreateTransmissionResources(s.device);
+    uniformState.transmissionView = uniformState.transmissionResources.prepare(scaledW, scaledH, pipeState.targetFormat, transmissionSettings);
+    if (!uniformState.transmissionView) uniformState.transmissionResources.fallback();
+    sceneTransmissionPublish(s.canvas.parentNode, hasTransmission ? uniformState.transmissionView ? "screen" : "environment" : "none");
+    var frameBindGroup = createFrameBindGroup(uniformState, gpuRes, s.device, shadowView0, shadowView1);
+    var waterObjectSceneTextureStats = sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)
+      ? renderWaterObjectSceneTexturePasses([], encoder, bundle, materials, frameBindGroup, pbrSceneBuffers, scaledW, scaledH, !usePostProcessing, waterState, s.device)
+      : renderWaterObjectSceneTexturePasses(
+        waterUpdateStats.records,
+        encoder,
+        bundle,
+        materials,
+        frameBindGroup,
+        pbrSceneBuffers,
+        scaledW,
+        scaledH,
+        !usePostProcessing, waterState, s.device
+      );
+    waterUpdateStats.waterObjectTexturePasses += waterObjectSceneTextureStats.waterObjectTexturePasses;
+    waterUpdateStats.waterObjectTextureTargets += waterObjectSceneTextureStats.waterObjectTextureTargets;
+    waterUpdateStats.waterObjectTexturePixels += waterObjectSceneTextureStats.waterObjectTexturePixels;
+    waterUpdateStats.waterObjectTextureWidth = Math.max(waterUpdateStats.waterObjectTextureWidth || 0, waterObjectSceneTextureStats.waterObjectTextureWidth || 0);
+    waterUpdateStats.waterObjectTextureHeight = Math.max(waterUpdateStats.waterObjectTextureHeight || 0, waterObjectSceneTextureStats.waterObjectTextureHeight || 0);
+    waterUpdateStats.waterObjectTexturePixelBudget = Math.max(waterUpdateStats.waterObjectTexturePixelBudget || 0, waterObjectSceneTextureStats.waterObjectTexturePixelBudget || 0);
+    waterUpdateStats.waterObjectTextureMeshPasses += waterObjectSceneTextureStats.waterObjectTextureMeshPasses;
+    waterUpdateStats.waterObjectTextureMeshDrawCalls += waterObjectSceneTextureStats.waterObjectTextureMeshDrawCalls;
+    waterUpdateStats.waterObjectTextureSelenaDrawCalls += waterObjectSceneTextureStats.waterObjectTextureSelenaDrawCalls;
+    waterUpdateStats.waterObjectTextureFallbackPasses += waterObjectSceneTextureStats.waterObjectTextureFallbackPasses;
+    waterUpdateStats.waterObjectTextureCandidateObjects += waterObjectSceneTextureStats.waterObjectTextureCandidateObjects;
+    waterUpdateStats.waterObjectTextureSelectedObjects += waterObjectSceneTextureStats.waterObjectTextureSelectedObjects;
+    waterUpdateStats.waterObjectTextureFallbackMissingObjects += waterObjectSceneTextureStats.waterObjectTextureFallbackMissingObjects;
+    waterUpdateStats.waterObjectTextureFallbackMissingResources += waterObjectSceneTextureStats.waterObjectTextureFallbackMissingResources;
+    waterUpdateStats.waterObjectTextureCandidateProfile = waterObjectSceneTextureStats.waterObjectTextureCandidateProfile || waterUpdateStats.waterObjectTextureCandidateProfile;
+
+    // --- Main Render Target ---
+    // @ts-ignore TS7034 -- target handles are nullable before the post/direct branch selects them.
+    var mainColorView;
+    // @ts-ignore TS7034 -- the optional MSAA resolve handle is assigned by the target branch.
+    var mainResolveView = null;
+    // @ts-ignore TS7034 -- depth handle follows the selected main target.
+    var mainDepthTargetView;
+    var postTarget = null;
+
+    if (usePostProcessing) {
+      if (!s.postProcessor) {
+        s.postProcessor = wgpuCreatePostProcessor(s.device, s.presentationFormat, function(message: any) { reportWebGPUFrameError(telemetryState, message); }, function(material, owner, renderContext) {
+          return sceneSelenaUniformData(material, owner, renderContext, selenaState.frame);
+        });
+      }
+      postTarget = s.postProcessor.getSceneTarget(scaledW, scaledH);
+      if (sampleCount > 1) {
+        mainColorView = ensureMSAAColor(pipeState, s.device, pipeState.targetFormat, scaledW, scaledH, sampleCount);
+        mainResolveView = postTarget.colorView;
+        ensureMainDepth(pipeState, s.device, scaledW, scaledH, sampleCount);
+        mainDepthTargetView = pipeState.mainDepthView;
+      } else {
+        mainColorView = postTarget.colorView;
+        mainDepthTargetView = postTarget.depthView;
+      }
+    } else {
+      var currentView = wgpuDeferredCanvasView(pipelineGuard, s.gpuCtx);
+      if (sampleCount > 1) {
+        mainColorView = ensureMSAAColor(pipeState, s.device, pipeState.targetFormat, width, height, sampleCount);
+        mainResolveView = currentView;
+      } else {
+        mainColorView = currentView;
+      }
+      ensureMainDepth(pipeState, s.device, width, height, sampleCount);
+      mainDepthTargetView = pipeState.mainDepthView;
+    }
+
+    // Clear color.
+    var bg = sceneRenderBackground(bundle.background, usePostProcessing && !authoredPostEffects ? postEffects[0] : null);
+
+
+    var mainColorAttachment = {
+      view: mainColorView,
+      loadOp: "clear",
+      storeOp: "store",
+      clearValue: { r: bg[0], g: bg[1], b: bg[2], a: bg[3] },
+    };
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (mainResolveView) {
+      mainColorAttachment.resolveTarget = mainResolveView;
+    }
+
+    const specularAttachment = s.specularTarget.prepare(scaledW, scaledH, sampleCount, pipeState.selectiveBloom);
+    if (s.postProcessor) s.postProcessor.setSpecularSource(s.specularTarget.view());
+    var mainPassDescriptor = {
+      colorAttachments: specularAttachment ? [mainColorAttachment, specularAttachment] : [mainColorAttachment],
+      depthStencilAttachment: {
+        view: mainDepthTargetView,
+        depthLoadOp: "clear",
+        depthClearValue: 1.0,
+        depthStoreOp: "store",
+      },
+    };
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites(timingState, "main");
+    if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
+    crowd.prepareMainPass(mainPassDescriptor);
+    gpuDriven.prepareMainPass(mainPassDescriptor);
+    var mainPass = encoder.beginRenderPass(mainPassDescriptor);
+    var skyState = "none";
+    if (bundle.environment && bundle.environment.sky) {
+      if (!s.skyResources.renderer) s.skyResources.renderer = wgpuCreateSkyRenderer(s.device, gpuRes.textureCache, gpuRes.placeholderView, gpuRes.placeholderCubeView);
+      skyState = s.skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: uniformState.scratchViewMatrix, camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom });
+    }
+    sceneCloudWebGPUDraw(s.skyResources, s.device, mainPass, { environment: bundle.environment, meta: frameMeta, view: uniformState.scratchViewMatrix, camera: cam, aspect: scaledW/scaledH, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, timeSeconds: frameTimeSeconds });
+    if (s.canvas.parentNode) queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-sky", skyState);
+
+
+    var drawList = hasPBRData
+      ? (preparedScene && preparedScene.pbrPasses ? preparedScene.pbrPasses : buildDrawList(bundle))
+      : { opaque: [], alpha: [], additive: [] };
+    var thickLineRecord = hasWorldLines ? webGPUThickLineRecord(drawState, bundle) : null;
+    var worldLineEntries = hasWorldLines && !thickLineRecord ? webGPUWorldLinePasses(drawState, bundle) : [];
+    var pointStats = webGPUPlannedPointStats(bundle, computeParticleRecords);
+    var customMaterialStats = webGPUCustomMaterialStats(materials);
+    wgpuResetFrameStats(telemetryState.frameStats, telemetryState.webGPUFrameProof);
+    telemetryState.frameStats.renderer = "webgpu";
+    telemetryState.frameStats.pointEntries = pointStats.pointEntries;
+    telemetryState.frameStats.pointInstances = pointStats.pointInstances;
+    telemetryState.frameStats.computeParticleEntries = pointStats.computeParticleEntries;
+    telemetryState.frameStats.computeParticleInstances = pointStats.computeParticleInstances;
+    telemetryState.frameStats.meshObjects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects.length : 0;
+    telemetryState.frameStats.retainedMeshObjects = sceneNumber(bundle.retainedMeshObjectCount, 0);
+    telemetryState.frameStats.retainedMeshVertices = sceneNumber(bundle.retainedMeshVertexCount, 0);
+    telemetryState.frameStats.worldBakedMeshObjects = sceneNumber(bundle.worldBakedMeshObjectCount, 0);
+    telemetryState.frameStats.worldBakedMeshVertices = sceneNumber(bundle.worldBakedMeshVertexCount, 0);
+    telemetryState.frameStats.bundleBuildCPUms = sceneNumber(bundle.bundleBuildCPUms, 0);
+    telemetryState.frameStats.plannerCPUms = sceneNumber(bundle.plannerTelemetry && bundle.plannerTelemetry.lastPlannerCPUms, 0);
+    telemetryState.frameStats.plannerFullVertexHashScans = sceneNumber(bundle.plannerTelemetry && bundle.plannerTelemetry.fullVertexHashScans, 0);
+      // meshDrawCalls is filled in below by drawPBRObjects (mutated in place
+      // across the opaque/alpha/additive passes, mirroring how waterUpdateStats
+      // accumulates across many draw functions within one frame) -- it counts
+      // actual pass.draw() dispatches, i.e. SUBMITTED mesh objects only.
+      // meshViewCulled is the CPU-frustum-culled complement: bundle.meshObjects
+      // entries buildDrawList excluded via obj.viewCulled before drawPBRObjects
+      // ever saw them. meshObjects (above) counts BOTH -- see the comment on
+      // webGPUCountViewCulledMeshObjects for why that ambiguity is the bug this
+      // pair of counters exists to close.
+    telemetryState.frameStats.meshDrawCalls = 0;
+    telemetryState.frameStats.meshViewCulled = webGPUCountViewCulledMeshObjects(bundle);
+    telemetryState.frameStats.meshUndrawable = webGPUCountUndrawableMeshObjects(bundle);
+    telemetryState.frameStats.skinnedMeshObjects = webGPUCountSkinnedMeshes(bundle);
+    telemetryState.frameStats.computedMorphDispatches = computedMorphStats.computedMorphDispatches;
+    telemetryState.frameStats.computedMorphVertices = computedMorphStats.computedMorphVertices;
+    telemetryState.frameStats.computedMorphKernel = computedMorphStats.computedMorphKernel;
+    telemetryState.frameStats.elioSkinningDispatches = elioSkinStats.elioSkinningDispatches;
+    telemetryState.frameStats.elioSkinningVertices = elioSkinStats.elioSkinningVertices;
+    telemetryState.frameStats.elioSkinningKernel = elioSkinStats.elioSkinningKernel;
+    telemetryState.frameStats.instancedMeshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
+    telemetryState.frameStats.instancedInstances = webGPUPlannedInstanceCount(bundle.instancedMeshes);
+    telemetryState.frameStats.cullDispatches = webGPUCullTotals.dispatches;
+    telemetryState.frameStats.cullSkippedDispatches = webGPUCullTotals.skipped;
+    telemetryState.frameStats.cullBuiltinSystems = webGPUCullTotals.builtin;
+    telemetryState.frameStats.lineEntries = thickLineRecord ? 1 : worldLineEntries.length;
+    telemetryState.frameStats.surfaceEntries = Array.isArray(bundle.surfaces) ? bundle.surfaces.length : 0;
+    telemetryState.frameStats.waterSystems = waterUpdateStats.waterSystems;
+    telemetryState.frameStats.waterCells = waterUpdateStats.waterCells;
+    telemetryState.frameStats.waterVertices = waterUpdateStats.waterVertices;
+    telemetryState.frameStats.waterComputeDispatches = waterUpdateStats.waterComputeDispatches;
+    telemetryState.frameStats.waterSimulationTicks = waterUpdateStats.waterSimulationTicks;
+    telemetryState.frameStats.waterSolverSubsteps = waterUpdateStats.waterSolverSubsteps;
+    telemetryState.frameStats.waterDroppedTicks = waterUpdateStats.waterDroppedTicks;
+    telemetryState.frameStats.waterDroppedTicksThisFrame = waterUpdateStats.waterDroppedTicksThisFrame;
+    telemetryState.frameStats.waterSimulationCatchUpCap = waterUpdateStats.waterSimulationCatchUpCap;
+    telemetryState.frameStats.waterSimulationTickSeq = waterUpdateStats.waterSimulationTickSeq;
+    telemetryState.frameStats.waterSolverSubstepSeq = waterUpdateStats.waterSolverSubstepSeq;
+    telemetryState.frameStats.waterNormalDispatches = waterUpdateStats.waterNormalDispatches;
+    telemetryState.frameStats.waterNormalDispatchSeq = waterUpdateStats.waterNormalDispatchSeq;
+    telemetryState.frameStats.waterSampledStateCopies = waterUpdateStats.waterSampledStateCopies;
+    telemetryState.frameStats.waterSampledStateSyncSeq = waterUpdateStats.waterSampledStateSyncSeq;
+    // Publish the at-rest and upload counters returned by updateWaterSystems.
+    telemetryState.frameStats.waterAtRestSystems = waterUpdateStats.waterAtRestSystems;
+    telemetryState.frameStats.waterRestSubstepsSkipped = waterUpdateStats.waterRestSubstepsSkipped;
+    telemetryState.frameStats.waterUniformUploads = waterUpdateStats.waterUniformUploads;
+    telemetryState.frameStats.waterUniformUploadsSkipped = waterUpdateStats.waterUniformUploadsSkipped;
+    telemetryState.frameStats.waterQualityTier = waterUpdateStats.waterQualityTier;
+    telemetryState.frameStats.waterQualityRevision = waterUpdateStats.waterQualityRevision;
+    telemetryState.frameStats.waterSurfaceResolution = waterUpdateStats.waterSurfaceResolution;
+    telemetryState.frameStats.waterActiveCausticsResolution = waterUpdateStats.waterActiveCausticsResolution;
+    telemetryState.frameStats.waterActiveObjectShadowResolution = waterUpdateStats.waterActiveObjectShadowResolution;
+    telemetryState.frameStats.waterActiveObjectTextureWidth = waterUpdateStats.waterActiveObjectTextureWidth;
+    telemetryState.frameStats.waterActiveObjectTextureHeight = waterUpdateStats.waterActiveObjectTextureHeight;
+    telemetryState.frameStats.waterActiveObjectTexturePixelBudget = waterUpdateStats.waterActiveObjectTexturePixelBudget;
+    telemetryState.frameStats.waterQualityAllocationPending = waterUpdateStats.waterQualityAllocationPending;
+    telemetryState.frameStats.waterQualityAllocationFailures = waterUpdateStats.waterQualityAllocationFailures;
+    telemetryState.frameStats.waterQualityAllocationRetryFrame = waterUpdateStats.waterQualityAllocationRetryFrame;
+    telemetryState.frameStats.waterQualityDPRCap = waterUpdateStats.waterQualityDPRCap;
+    telemetryState.frameStats.waterExpensivePassCadence = waterUpdateStats.waterExpensivePassCadence;
+    telemetryState.frameStats.waterAuthoredComputeSystems = waterUpdateStats.waterAuthoredComputeSystems;
+    telemetryState.frameStats.waterAuthoredComputeDispatches = waterUpdateStats.waterAuthoredComputeDispatches;
+    telemetryState.frameStats.waterAuthoredComputeFallbacks = waterUpdateStats.waterAuthoredComputeFallbacks;
+    telemetryState.frameStats.waterSelenaComputeSystems = waterUpdateStats.waterSelenaComputeSystems;
+    telemetryState.frameStats.waterSelenaComputeDispatches = waterUpdateStats.waterSelenaComputeDispatches;
+    telemetryState.frameStats.waterSelenaComputeFallbacks = waterUpdateStats.waterSelenaComputeFallbacks;
+    telemetryState.frameStats.waterDropDispatches = waterUpdateStats.waterDropDispatches;
+    telemetryState.frameStats.waterDropDispatchTotal = waterUpdateStats.waterDropDispatchTotal;
+    telemetryState.frameStats.waterLastDropEventID = waterUpdateStats.waterLastDropEventID;
+    telemetryState.frameStats.waterObjectSystems = waterUpdateStats.waterObjectSystems;
+    telemetryState.frameStats.waterObjectDispatches = waterUpdateStats.waterObjectDispatches;
+    telemetryState.frameStats.waterObjectEventDispatches = waterUpdateStats.waterObjectEventDispatches;
+    telemetryState.frameStats.waterLastObjectDisplacementEventID = waterUpdateStats.waterLastObjectDisplacementEventID;
+    telemetryState.frameStats.waterObjectSpheres = waterUpdateStats.waterObjectSpheres;
+    telemetryState.frameStats.waterRoundedSystems = waterUpdateStats.waterRoundedSystems;
+    telemetryState.frameStats.waterCornerRadius = waterUpdateStats.waterCornerRadius;
+    telemetryState.frameStats.waterLightDirX = waterUpdateStats.waterLightDirX;
+    telemetryState.frameStats.waterLightDirY = waterUpdateStats.waterLightDirY;
+    telemetryState.frameStats.waterLightDirZ = waterUpdateStats.waterLightDirZ;
+    telemetryState.frameStats.waterCausticSystems = waterUpdateStats.waterCausticSystems;
+    telemetryState.frameStats.waterCausticPasses = waterUpdateStats.waterCausticPasses;
+    telemetryState.frameStats.waterCausticTexturePixels = waterUpdateStats.waterCausticTexturePixels;
+    telemetryState.frameStats.waterAuthoredCausticSystems = waterUpdateStats.waterAuthoredCausticSystems;
+    telemetryState.frameStats.waterAuthoredCausticPasses = waterUpdateStats.waterAuthoredCausticPasses;
+    telemetryState.frameStats.waterAuthoredCausticFallbacks = waterUpdateStats.waterAuthoredCausticFallbacks;
+    telemetryState.frameStats.waterAuthoredCausticFallbackReason = waterUpdateStats.waterAuthoredCausticFallbackReason;
+    telemetryState.frameStats.waterAuthoredCausticSourceBytes = waterUpdateStats.waterAuthoredCausticSourceBytes;
+    telemetryState.frameStats.waterEntryCausticSourceBytes = waterUpdateStats.waterEntryCausticSourceBytes;
+    telemetryState.frameStats.waterResolvedCausticSourceBytes = waterUpdateStats.waterResolvedCausticSourceBytes;
+    telemetryState.frameStats.waterAuthoredSurfaceSourceBytes = waterUpdateStats.waterAuthoredSurfaceSourceBytes;
+    telemetryState.frameStats.waterEntrySurfaceSourceBytes = waterUpdateStats.waterEntrySurfaceSourceBytes;
+    telemetryState.frameStats.waterResolvedSurfaceSourceBytes = waterUpdateStats.waterResolvedSurfaceSourceBytes;
+    telemetryState.frameStats.waterManifestShaderSystems = waterUpdateStats.waterManifestShaderSystems;
+    telemetryState.frameStats.waterManifestShaderFields = waterUpdateStats.waterManifestShaderFields;
+    telemetryState.frameStats.waterManifestCausticSourceBytes = waterUpdateStats.waterManifestCausticSourceBytes;
+    telemetryState.frameStats.waterManifestSurfaceSourceBytes = waterUpdateStats.waterManifestSurfaceSourceBytes;
+    telemetryState.frameStats.waterBundleShaderSystems = waterUpdateStats.waterBundleShaderSystems;
+    telemetryState.frameStats.waterBundleCausticSourceBytes = waterUpdateStats.waterBundleCausticSourceBytes;
+    telemetryState.frameStats.waterBundleSurfaceSourceBytes = waterUpdateStats.waterBundleSurfaceSourceBytes;
+    telemetryState.frameStats.waterObjectTexturePasses = waterUpdateStats.waterObjectTexturePasses;
+    telemetryState.frameStats.waterObjectTextureTargets = waterUpdateStats.waterObjectTextureTargets;
+    telemetryState.frameStats.waterObjectTexturePixels = waterUpdateStats.waterObjectTexturePixels;
+    telemetryState.frameStats.waterObjectTextureWidth = waterUpdateStats.waterObjectTextureWidth;
+    telemetryState.frameStats.waterObjectTextureHeight = waterUpdateStats.waterObjectTextureHeight;
+    telemetryState.frameStats.waterObjectTexturePixelBudget = waterUpdateStats.waterObjectTexturePixelBudget;
+    telemetryState.frameStats.waterObjectTextureMeshPasses = waterUpdateStats.waterObjectTextureMeshPasses;
+    telemetryState.frameStats.waterObjectTextureMeshDrawCalls = waterUpdateStats.waterObjectTextureMeshDrawCalls;
+    telemetryState.frameStats.waterObjectTextureSelenaDrawCalls = waterUpdateStats.waterObjectTextureSelenaDrawCalls;
+    telemetryState.frameStats.waterObjectTextureFallbackPasses = waterUpdateStats.waterObjectTextureFallbackPasses;
+    telemetryState.frameStats.waterObjectTextureCandidateObjects = waterUpdateStats.waterObjectTextureCandidateObjects;
+    telemetryState.frameStats.waterObjectTextureSelectedObjects = waterUpdateStats.waterObjectTextureSelectedObjects;
+    telemetryState.frameStats.waterObjectTextureFallbackMissingObjects = waterUpdateStats.waterObjectTextureFallbackMissingObjects;
+    telemetryState.frameStats.waterObjectTextureFallbackMissingResources = waterUpdateStats.waterObjectTextureFallbackMissingResources;
+    telemetryState.frameStats.waterObjectTextureCandidateProfile = waterUpdateStats.waterObjectTextureCandidateProfile;
+    telemetryState.frameStats.waterObjectShadowPasses = waterUpdateStats.waterObjectShadowPasses;
+    telemetryState.frameStats.waterObjectShadowTexturePixels = waterUpdateStats.waterObjectShadowTexturePixels;
+    telemetryState.frameStats.waterObjectShadowMeshPasses = waterUpdateStats.waterObjectShadowMeshPasses;
+    telemetryState.frameStats.waterObjectShadowMeshDrawCalls = waterUpdateStats.waterObjectShadowMeshDrawCalls;
+    telemetryState.frameStats.waterAuthoredObjectShadowPasses = waterUpdateStats.waterAuthoredObjectShadowPasses;
+    telemetryState.frameStats.waterAuthoredObjectShadowFallbacks = waterUpdateStats.waterAuthoredObjectShadowFallbacks;
+    telemetryState.frameStats.waterAuthoredObjectMeshShadowPasses = waterUpdateStats.waterAuthoredObjectMeshShadowPasses;
+    telemetryState.frameStats.waterAuthoredObjectMeshShadowFallbacks = waterUpdateStats.waterAuthoredObjectMeshShadowFallbacks;
+    telemetryState.frameStats.waterObjectShadowFallbackPasses = waterUpdateStats.waterObjectShadowFallbackPasses;
+    telemetryState.frameStats.waterObjectShadowFallbackMissingObjects = waterUpdateStats.waterObjectShadowFallbackMissingObjects;
+    telemetryState.frameStats.waterObjectShadowFallbackMissingResources = waterUpdateStats.waterObjectShadowFallbackMissingResources;
+    telemetryState.frameStats.waterReflectionSystems = waterUpdateStats.waterReflectionSystems;
+    telemetryState.frameStats.waterRefractionSystems = waterUpdateStats.waterRefractionSystems;
+    telemetryState.frameStats.waterObjectOpticsSystems = waterUpdateStats.waterObjectOpticsSystems;
+    telemetryState.frameStats.waterSelenaCausticPasses = waterUpdateStats.waterSelenaCausticPasses;
+    telemetryState.frameStats.waterSelenaCausticFallbacks = waterUpdateStats.waterSelenaCausticFallbacks;
+    telemetryState.frameStats.waterSelenaObjectShadowPasses = waterUpdateStats.waterSelenaObjectShadowPasses;
+    telemetryState.frameStats.waterSelenaObjectShadowFallbacks = waterUpdateStats.waterSelenaObjectShadowFallbacks;
+    telemetryState.frameStats.waterSelenaObjectMeshShadowPasses = waterUpdateStats.waterSelenaObjectMeshShadowPasses;
+    telemetryState.frameStats.waterSelenaObjectMeshShadowFallbacks = waterUpdateStats.waterSelenaObjectMeshShadowFallbacks;
+    telemetryState.frameStats.customMaterialFallbacks = customMaterialStats.customMaterialFallbacks;
+    telemetryState.frameStats.customWGSLFallbacks = customMaterialStats.customWGSLFallbacks;
+    telemetryState.frameStats.customUniformFallbacks = customMaterialStats.customUniformFallbacks;
+
+    // --- Render bundle decision ---
+    //
+    // Non-bundleable paths retain the direct encoder.
+    var bundleableDraws = (hasPBRData && (drawList.opaque.length + drawList.alpha.length + drawList.additive.length) > 0) ||
+      (hasInstancedData && (instancedDrawList.opaque.length + instancedDrawList.alpha.length + instancedDrawList.additive.length) > 0);
+    var bundleReason = sceneWebGPUBundleIneligibleReason({
+      // Both halves must exist. An implementation that can build a bundle but
+      // not replay one would leave the frame blank.
+      disabled: Boolean(frameMeta?.frameRequest) || pipeState.selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() || Boolean(bundle.environment && bundle.environment.wind) ||
+        typeof s.device.createRenderBundleEncoder !== "function" ||
+        typeof mainPass.executeBundles !== "function",
+      gpuDrivenSplit: gpuDriven.splitsMainPass(),
+      hasWater: hasWaterData || Boolean(bundle.environment && bundle.environment.ocean),
+      hasPoints: hasPointsData,
+      hasLabels: hasLabels,
+      hasScreenLines: hasScreenLines,
+      hasSurfaces: hasSurfaces,
+      hasWorldLines: hasWorldLines,
+      hasDynamicMeshes: sceneWebGPUDrawListHasDynamicMesh(drawList, function(obj) {
+        return webGPUObjectBlocksBundle(obj, materials);
+      }),
+      hasBundleableDraws: bundleableDraws,
+    });
+    telemetryState.frameStats.bundleState = "direct";
+    telemetryState.frameStats.bundleReason = bundleReason;
+    telemetryState.frameStats.bundleEncodes = 0;
+    telemetryState.frameStats.bundleReplays = 0;
+    telemetryState.frameStats.bundleDraws = 0;
+
+    if (bundleReason === "") {
+      if (!s.webGPUBundleCache) s.webGPUBundleCache = createSceneWebGPUBundleCache();
+      var bundleLayoutKey = sceneWebGPUBundleLayoutKey(pipeState.targetFormat, "depth24plus", sampleCount);
+      var bundleContext = {
+        drawList: drawList,
+        instancedDrawList: instancedDrawList,
+        bundle: bundle,
+        materials: materials,
+        frameBindGroup: frameBindGroup,
+        pbrBuffers: pbrSceneBuffers,
+      };
+      var verdict = s.webGPUBundleCache.plan(bundleLayoutKey, function(recorder) {
+        encodeBundleableSceneDraws(drawState, s.device, recorder, bundleContext);
+      });
+      if (!verdict.eligible) {
+        bundleReason = verdict.reason;
+        telemetryState.frameStats.bundleReason = bundleReason;
+      } else if (verdict.reusable) {
+        mainPass.executeBundles([s.webGPUBundleCache.bundle()]);
+        s.webGPUBundleCache.markReplayed();
+        telemetryState.frameStats.bundleState = "replayed";
+      } else {
+        var bundleEncoder = s.device.createRenderBundleEncoder({
+          label: "gosx-scene-bundle",
+          colorFormats: [pipeState.targetFormat],
+          depthStencilFormat: "depth24plus",
+          sampleCount: sampleCount,
+        });
+        encodeBundleableSceneDraws(drawState, s.device, bundleEncoder, bundleContext);
+        var finishedBundle = bundleEncoder.finish({ label: "gosx-scene-bundle" });
+        s.webGPUBundleCache.adopt(bundleLayoutKey, finishedBundle);
+        mainPass.executeBundles([finishedBundle]);
+        telemetryState.frameStats.bundleState = "encoded";
+      }
+      if (telemetryState.frameStats.bundleState !== "direct") {
+        var bundleStats = s.webGPUBundleCache.stats();
+        telemetryState.frameStats.bundleEncodes = bundleStats.encodes;
+        telemetryState.frameStats.bundleReplays = bundleStats.replays;
+        telemetryState.frameStats.bundleDraws = bundleStats.draws;
+      }
+    }
+
+    // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
+    var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: function(name: any, value: any) { queueWebGPUAttribute(telemetryState, name, value); }, device: s.device, environment: bundle.environment, camera: cam, meta: frameMeta, view: uniformState.scratchViewMatrix, aspect: scaledW/scaledH, viewProj: uniformState.scratchSelenaViewProjection, timeSeconds: selenaState.frame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, textureCache: gpuRes.textureCache, frameBindGroup: frameBindGroup, mount: s.canvas.parentNode, drawn: false, reflection: {} }; window.__gosx_scene3d_terrain_api?.webgpu(s.terrainResources, mainPass, { device: s.device, environment: bundle.environment, camera: cam, viewProj: uniformState.scratchSelenaViewProjection, height: scaledH, frameGroup: frameBindGroup, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: function(m: any, r: any) { return materialUniformData(uniformState, m, r); }, time: selenaState.frame.time, frameBuffer: gpuRes.frameUniformBuffer, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom, textureCache: gpuRes.textureCache, load: wgpuLoadTexture, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, attr: function(name: any, value: any) { queueWebGPUAttribute(telemetryState, name, value); } });
+    // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
+    const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(s.oceanResources, s.device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: uniformState.scratchViewMatrix, proj: uniformState.scratchProjMatrix, camera: cam, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: uniformState._frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(uniformState, gpuRes, s.device, [shadowView0, shadowView1, uniformState.iblResources.active && uniformState.iblResources.irradiance && uniformState.iblResources.irradiance.view, uniformState.iblResources.active && uniformState.iblResources.radiance && uniformState.iblResources.radiance.view, uniformState.iblResources.active && uniformState.iblResources.brdfLUT && uniformState.iblResources.brdfLUT.view, uniformState.envMapResources.active && uniformState.envMapResources.record && uniformState.envMapResources.record.view], buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(pipeState, s.device, "opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(drawState, s.device, pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; }; window.__gosx_scene3d_crowd_api?.webgpu(mainPass, { device: s.device, environment: bundle.environment, camera: cam, proj: uniformState.scratchProjMatrix, viewProj: uniformState.scratchSelenaViewProjection, height: scaledH, time: bundle.timeSeconds, frameGroup: frameBindGroup, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: function(m: any, r: any) { return materialUniformData(uniformState, m, r); }, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, mount: s.canvas.parentNode }); // Environment.Crowds (crowd-wgsl.ts)
+    if (telemetryState.frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
+      // Opaque pass.
+      if (drawList.opaque.length > 0) {
+        drawPBRObjects(drawState, s.device, mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, telemetryState.frameStats, frameMeta?.frameRequest);
+      }
+      telemetryState.frameStats.meshDrawCalls += crowd.drawColor(mainPass, frameBindGroup, materials);
+      if (instancedDrawList.opaque.length > 0) {
+        mainPass.setBindGroup(0, frameBindGroup);
+        drawInstancedMeshes(drawState, s.device, mainPass, instancedDrawList.opaque, materials, "opaque", true);
+      }
+      if (hasSurfaces) {
+        drawSurfaceEntries(drawState, s.device, mainPass, bundle, materials, "opaque", frameBindGroup);
+      }
+      if (thickLineRecord) {
+        drawThickWorldLineEntries(drawState, s.device, mainPass, thickLineRecord, "opaque", frameBindGroup);
+      } else if (worldLineEntries.length > 0) {
+        drawWorldLineEntries(drawState, s.device, mainPass, worldLineEntries, "opaque", frameBindGroup);
+      }
+
+      // Two-phase occlusion: end the early pass, cull against its depth, and
+      // draw the newly visible instances in a late pass that loads it.
+      mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
+      mainPass = crowd.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials);
+
+      prepareOceanReflection();
+      // The water surface writes depth before translucent world surfaces.
+      // A stele in front of the tide must remain visible after its HTML
+      // texture is composited, while rocks behind the tide stay occluded.
+      if (hasWaterData && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
+        Object.assign(telemetryState.frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup, waterState, s.device));
+        Object.assign(telemetryState.frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam, waterState, s.device));
+        waterDrawnBeforeAlpha = true;
+      }
+      oceanOpts.drawn = wgpuOceanDraw(s.oceanResources, mainPass, oceanOpts);
+      if (uniformState.transmissionView && postTarget) {
+        mainPass.end();
+        uniformState.transmissionResources.capture(encoder, postTarget.colorView);
+        gpuDriven.resumeMainPass(mainPassDescriptor);
+        crowd.resumeMainPass(mainPassDescriptor);
+        mainColorAttachment.loadOp = "load";
+        if (specularAttachment) specularAttachment.loadOp = "load";
+        mainPassDescriptor.depthStencilAttachment.depthLoadOp = "load";
+        delete mainPassDescriptor["timestampWrites"];
+        mainPass = encoder.beginRenderPass(mainPassDescriptor);
+      }
+
+      // Alpha pass.
+      if (drawList.alpha.length > 0) {
+        drawPBRObjects(drawState, s.device, mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, telemetryState.frameStats, frameMeta?.frameRequest);
+      }
+      if (instancedDrawList.alpha.length > 0) {
+        mainPass.setBindGroup(0, frameBindGroup);
+        drawInstancedMeshes(drawState, s.device, mainPass, instancedDrawList.alpha, materials, "alpha", false);
+      }
+      if (hasSurfaces) {
+        drawSurfaceEntries(drawState, s.device, mainPass, bundle, materials, "alpha", frameBindGroup);
+      }
+      if (thickLineRecord) {
+        drawThickWorldLineEntries(drawState, s.device, mainPass, thickLineRecord, "alpha", frameBindGroup);
+      } else if (worldLineEntries.length > 0) {
+        drawWorldLineEntries(drawState, s.device, mainPass, worldLineEntries, "alpha", frameBindGroup);
+      }
+
+      // Additive pass.
+      if (drawList.additive.length > 0) {
+        drawPBRObjects(drawState, s.device, mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, telemetryState.frameStats, frameMeta?.frameRequest);
+      }
+      if (instancedDrawList.additive.length > 0) {
+        mainPass.setBindGroup(0, frameBindGroup);
+        drawInstancedMeshes(drawState, s.device, mainPass, instancedDrawList.additive, materials, "additive", false);
+      }
+      if (hasSurfaces) {
+        drawSurfaceEntries(drawState, s.device, mainPass, bundle, materials, "additive", frameBindGroup);
+      }
+      if (thickLineRecord) {
+        drawThickWorldLineEntries(drawState, s.device, mainPass, thickLineRecord, "additive", frameBindGroup);
+      } else if (worldLineEntries.length > 0) {
+        drawWorldLineEntries(drawState, s.device, mainPass, worldLineEntries, "additive", frameBindGroup);
+      }
+    }
+
+    if (hasWaterData && !waterDrawnBeforeAlpha && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
+      Object.assign(telemetryState.frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup, waterState, s.device), drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam, waterState, s.device));
+    }
+    if (!oceanOpts.drawn) { prepareOceanReflection(); wgpuOceanDraw(s.oceanResources, mainPass, oceanOpts); }
+
+    // Board label glyphs (M1 GPU-text slice 2). Drawn after the opaque/alpha
+    // board fills so the alpha-blended glyphs composite over the rects. Lives
+    // outside the (hasPBRData || …) block above so a labels-only board still
+    // paints text. blendMode "alpha", depthWriteEnabled false.
+    if (hasLabels) {
+      drawBoardLabels(drawState, s.device, mainPass, bundle, "alpha", false);
+    }
+
+    if (hasScreenLines) {
+      drawScreenLines(drawState, s.device, mainPass, bundle, frameBindGroup);
+    }
+
+    // Draw points.
+    if (hasPointsData) {
+      mainPass.setBindGroup(0, frameBindGroup);
+      // Create a dummy material bind group for group 1 (points pipeline layout requires it).
+      var dummyMatBG = createMaterialBindGroup(uniformState, gpuRes, meshState, s.device, null, false, gpuRes.defaultMaterialOwner);
+      mainPass.setBindGroup(1, dummyMatBG, [0]);
+      Object.assign(telemetryState.frameStats, drawPointsEntries(drawState, s.device, mainPass, bundle, cam, selenaState.frame.time));
+      mainPass = s.drawComputeParticlePasses(encoder, mainPass, mainPassDescriptor, frameBindGroup, computeParticleRecords, bundle.environment, frameTimeSeconds, mainDepthTargetView);
+    }
+
+    mainPass.end();
+
+    // GPU pick pass. Records only when a pick waits, and only ever touches
+    // its own ID and depth textures. Runs after the main pass so every vertex
+    // and instance-transform buffer the pick draws from already exists.
+    // Pick coordinates map onto the main render target, so use the same
+    // width/height the main pass used: scaled dimensions under post-FX,
+    // canvas dimensions otherwise.
+    if (drawState.scenePicker && drawState.scenePicker.hasPending()) {
+      drawState.scenePicker.recordPickPass(
+        encoder,
+        bundle,
+        usePostProcessing ? scaledW : width,
+        usePostProcessing ? scaledH : height
+      );
+    }
+
+    // Post-processing.
+    if (usePostProcessing && s.postProcessor) {
+      var screenView = wgpuDeferredCanvasView(pipelineGuard, s.gpuCtx);
+      var chain = s.temporalAA.resolve(encoder, postEffects, { colorView: postTarget.colorView, colorFormat: pipeState.targetFormat, depthView: mainDepthTargetView, samples: sampleCount, objects: bundle.meshObjects, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle }); s.autoExposure.apply(encoder, bundle.environment, postTarget, cam, frameNowMS);
+      Object.assign(telemetryState.frameStats, s.postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: uniformState.scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: s.temporalAA.velocityView() } }), s.temporalAA.stats(), s.autoExposure.stats());
+    }
+
+    endGPUFrameTiming(timingState, encoder, gpuTimingToken);
+    endGPUPassTimingFrame(timingState, encoder);
+    gpuDriven.finishEncoding(encoder);
+    crowd.finishEncoding(encoder);
+    if (crowdEncoder !== encoder) { s.device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; }
+    s.device.queue.submit([encoder.finish()]);
+    Object.assign(telemetryState.frameStats, gpuDriven.endFrame(s.webGPUAttributeSink), crowd.endFrame());
+    pollGPUTimingReadback(timingState, s.device);
+    // Pick readback starts after submit and does not wait in this frame.
+    if (drawState.scenePicker) drawState.scenePicker.finishReadback();
+    webGPUSweepRetainedMeshBuffers(meshState);
+    Object.assign(telemetryState.frameStats, webGPURetainedMeshFrameStats(meshState));
+    publishWebGPUFrameStats(telemetryState, telemetryState.frameStats);
+    if (scopedFrameErrors) endWebGPUErrorScope(telemetryState, s.device, true);
+
+    if (perfEnabled) {
+      performance.mark("scene3d-render-end");
+      performance.measure("scene3d-render", "scene3d-render-start", "scene3d-render-end");
+      performance.clearMarks("scene3d-render-start");
+      performance.clearMarks("scene3d-render-end");
+    }
+    s.initialPipelinesReady = true;
+    return "submitted";
+  }
+  function dispose(s: any) { var timingState = s.timingState, meshState = s.meshState, uniformState = s.uniformState, pipeState = s.pipeState, selenaState = s.selenaState, waterState = s.waterState, drawState = s.drawState, telemetryState = s.telemetryState, gpuRes = s.gpuRes, pipelineGuard = s.pipelineGuard; pipelineGuard.release(s.rawDevice);
+    if (telemetryState.rendererResourcesDisposed) return;
+    telemetryState.rendererResourcesDisposed = true; clearTimeout(telemetryState.webGPUAttributeTimer); telemetryState.webGPUAttributeTimer = null;
+    if (s.skyResources.renderer) s.skyResources.renderer.dispose(); s.terrainResources.dispose?.(); sceneCloudDispose(s.skyResources); if (s.oceanResources.renderer) s.oceanResources.renderer.dispose(); s.oceanResources.fft?.dispose(); sceneReflectDispose(s.oceanResources);
+    if (uniformState.transmissionResources) uniformState.transmissionResources.dispose(); uniformState.transmissionResources = null; uniformState.transmissionView = null; window.__gosx_scene3d_crowd_api?.dispose(s.device);
+    s.skyResources.renderer = null;
+
+    timingState.gpuTimingDisposed = true;
+    timingState.lastGPUCompletionSample = null;
+    try { destroyGPUTimingResources(timingState.gpuTiming); } catch (_err) {}
+    try { destroyGPUPassTimingResources(timingState); } catch (_err) {}
+    if (s.webGPUBundleCache) {
+      try { s.webGPUBundleCache.invalidate(); } catch (_err) {}
+    }
+    s.webGPUBundleCache = null;
+    timingState.gpuTiming = null;
+    for (var failedTimingIndex = 0; failedTimingIndex < timingState.failedGPUTimings.length; failedTimingIndex++) {
+      try { destroyGPUTimingResources(timingState.failedGPUTimings[failedTimingIndex].timing); } catch (_err) {}
+    }
+    timingState.failedGPUTimings.length = 0;
+    try { drainDeferredGPUResources(timingState, true); } catch (_err) {}
+    timingState.deferredWaterTextureRetirements.length = 0;
+    timingState.deferredWaterSystemRetirements.length = 0;
+    timingState.lastGPUPerformanceSample = null;
+    if (drawState.scenePicker) {
+      try { drawState.scenePicker.dispose(); } catch (_err) {}
+    }
+    drawState.scenePicker = null;
+    drawState.activePickMeshPositions = null;
+    for (const pair of Array.from(meshState.retainedMeshAttributeCache.entries())) {
+      webGPURetireRetainedMeshEntry(meshState, pair[0], pair[1]);
+    }
+
+    destroyRendererGPUResource(gpuRes.frameUniformBuffer);
+    gpuRes.frameUniformBuffer = null;
+    destroyRendererGPUResource(gpuRes.lightStorageBuffer);
+    gpuRes.lightStorageBuffer = null;
+    // Release the light buffers that capacity growth replaced.
+    for (var retiredLight = 0; retiredLight < uniformState._retiredLightBuffers.length; retiredLight++) {
+      destroyRendererGPUResource(uniformState._retiredLightBuffers[retiredLight]);
+    }
+    uniformState._retiredLightBuffers.length = 0;
+    destroyRendererGPUResource(gpuRes.fogUniformBuffer);
+    gpuRes.fogUniformBuffer = null;
+    destroyRendererGPUResource(gpuRes.envUniformBuffer);
+    gpuRes.envUniformBuffer = null;
+    destroyRendererGPUResource(gpuRes.shadowUniformBuffer);
+    gpuRes.shadowUniformBuffer = null;
+    destroyRendererGPUResource(meshState.positionBuffer);
+    meshState.positionBuffer = null;
+    destroyRendererGPUResource(meshState.normalBuffer);
+    meshState.normalBuffer = null;
+    destroyRendererGPUResource(s.uvBuffer);
+    s.uvBuffer = null;
+    destroyRendererGPUResource(meshState.tangentBuffer);
+    meshState.tangentBuffer = null;
+    destroyRendererGPUResource(s.shadowPositionBuffer);
+    s.shadowPositionBuffer = null;
+    destroyRendererGPUResource(drawState.shadowFrameBuffer);
+    drawState.shadowFrameBuffer = null; drawState.shadowFrameBindGroups.length = 0;
+    meshState.pointsEntryGPUBuffers.forEach(function(buffer) {
+      destroyRendererGPUResource(buffer);
+    });
+    meshState.pointsEntryGPUBuffers.clear();
+    uniformState.materialFrame.resources.clear(); uniformState.materialFrame.groups = []; uniformState.materialFrame.buffer = uniformState.materialFrame.data = null;
+    // Board glyph atlases are textures (not tracked in pointsEntryGPUBuffers);
+    // destroy them explicitly. The per-label glyph buffers are tracked buffers,
+    drawState.boardGlyphAtlases.forEach(function(a) {
+      if (a) destroyRendererGPUResource(a.texture);
+    });
+    drawState.boardGlyphAtlases.clear();
+    drawState.boardTextOwners.clear();
+    disposeComputeParticleSystems(drawState);
+    disposeWaterSystems(waterState);
+    for (const record of drawState.instancedCullSystems.values()) {
+      if (record && record.system && typeof record.system.dispose === "function") {
+        try { record.system.dispose(); } catch (_err) {}
+      }
+    }
+    drawState.instancedCullSystems.clear();
+    drawState.instancedCacheOwners.clear();
+    drawState.gpuDrivenHosts.forEach(function(host) { host.dispose(); });
+    drawState.gpuDrivenHosts.clear();
+    waterState.waterRenderPipelineCache.clear();
+    drawState.pointsAuthoredPipelineCache.clear();
+    drawState.pointsAuthoredLayerFailed.clear();
+    waterState.waterPoolPipelineCache = {};
+    pipeState.waterObjectMeshPipelineCache = {};
+
+    destroyRendererGPUResource(pipeState.mainDepthTexture);
+    pipeState.mainDepthTexture = null;
+    pipeState.mainDepthView = null;
+    destroyRendererGPUResource(pipeState.mainMSAATexture);
+    pipeState.mainMSAATexture = null;
+    pipeState.mainMSAAView = null;
+    destroyRendererGPUResource(s.dummyShadowTex);
+    s.dummyShadowTex = null;
+    gpuRes.dummyShadowView = gpuRes.dummyShadowArrayView = null;
+    destroyRendererGPUResource(s.placeholderTex);
+    s.placeholderTex = null;
+    gpuRes.placeholderView = null;
+    destroyRendererGPUResource(s.placeholderCubeTex);
+    s.placeholderCubeTex = null;
+    gpuRes.placeholderCubeView = null;
+
+    for (var si = 0; si < drawState.shadowSlots.length; si++) {
+      if (drawState.shadowSlots[si]) destroyRendererGPUResource(drawState.shadowSlots[si].texture);
+      drawState.shadowSlots[si] = null;
+    }
+    gpuRes.textureCache._gosxGeneration.disposed = true; gpuRes.textureCache._gosxGeneration.onResourceReady();
+    for (var record of gpuRes.textureCache.values()) {
+      if (record) {
+        record.disposed = true;
+        if (record.image) {
+          record.image.onload = null;
+          record.image.onerror = null;
+        }
+        destroyRendererGPUResource(record.texture);
+      }
+    }
+    sceneWebGPUDisposeDetail(pipeState.detailResources); pipeState.detailResources = null; sceneWebGPUDisposeSelenaSurfaces(pipeState.selenaSurfaces);
+    gpuRes.textureCache.clear();
+    selenaState.pipelineCache.clear();
+    selenaState.computePipelineCache.clear();
+    selenaState.postPipelineCache.clear();
+    pipeState.pipelineCache = {};
+    drawState.instancedGeometryCache = {};
+    // Buffers cached on these owners are registered in
+    // pointsEntryGPUBuffers and were destroyed before the owner objects are
+    // replaced, so no current tracked buffer is orphaned.
+    meshState.pbrSceneAttributeCache = {};
+    telemetryState.webGPUEssentialAttributeCache = Object.create(null);
+    gpuRes.defaultMaterialOwner = {};
+    drawState.thickLineOwner = {};
+    drawState.screenLineOwner = {};
+    uniformState._frameBindGroupCache = null;
+    s.lastPreparedScene = null;
+    telemetryState.lastWebGPUFrameStats = null;
+    waterState.waterManifestShaderSourcesByID = null;
+    waterState.activeWaterShaderSourcesByID = null;
+
+    if (s.postProcessor) {
+      try { s.postProcessor.dispose(); s.specularTarget.dispose(); } catch (_err) {}
+      s.postProcessor = null;
+    }
+
+    s.device = null;
+    telemetryState.configuredSurfaceKey = "";
+    s.postFXForceDisabled = false;
+  }
+  function diagnostics(s: any) { var timingState = s.timingState, meshState = s.meshState, uniformState = s.uniformState, pipeState = s.pipeState, selenaState = s.selenaState, waterState = s.waterState, drawState = s.drawState, telemetryState = s.telemetryState, gpuRes = s.gpuRes, pipelineGuard = s.pipelineGuard;
+    var base = typeof sceneWebGPUDiagnostics === "function"
+      ? sceneWebGPUDiagnostics()
+      : {};
+    var out = {};
+    for (var key in base) {
+      if (Object.prototype.hasOwnProperty.call(base, key)) {
+        out[key] = base[key];
+      }
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.renderer = "webgpu";
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.targetFormat = pipeState.targetFormat;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.activeSampleCount = pipeState.activeSampleCount;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationAlphaMode = s.activePresentation.alphaMode;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationColorSpace = s.activePresentation.colorSpace;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationToneMappingMode = s.activePresentation.toneMappingMode;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.powerPreference = s.activePowerPreference;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.ready = !!s.device && !s.initFailed;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.initFailed = !!s.initFailed;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.initError = s.initError || "";
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.resourcesDisposed = telemetryState.rendererResourcesDisposed;
+    out.resourceCacheEntries = (
+      drawState.pointsAuthoredPipelineCache.size +
+      drawState.pointsAuthoredLayerFailed.size +
+      drawState.computeParticleSystems.size +
+      waterState.waterSystems.size +
+      drawState.instancedCullSystems.size +
+      gpuRes.textureCache.size +
+      selenaState.pipelineCache.size +
+      selenaState.computePipelineCache.size +
+      selenaState.postPipelineCache.size +
+      Object.keys(pipeState.pipelineCache).length +
+      Object.keys(waterState.waterPoolPipelineCache).length +
+      Object.keys(pipeState.waterObjectMeshPipelineCache).length
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ );
+    out.deviceLost = !!s.lastDeviceLostInfo || !!(base && base.lost);
+    // Prefer THIS renderer's own lastDeviceLostInfo (set synchronously by
+    // the device.lost handler above, never cleared) over the shared probe
+    // snapshot (base.lost), which a successful re-probe nulls out the
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // moment it recovers — often before a watchdog poll gets to read it.
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.deviceLostInfo = s.lastDeviceLostInfo || (base && base.lost ? base.lost : null);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameSeq = timingState.webGPUFrameSeq;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameAt = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.frameAt || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.lastError = telemetryState.webGPULastError;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSimulationTickSeq = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterSimulationTickSeq || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSolverSubstepSeq = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterSolverSubstepSeq || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterDroppedTicks = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterDroppedTicks || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterNormalDispatchSeq = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSampledStateSyncSeq = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
+    out.postProcessing = !!s.postProcessor; pipelineGuard.snapshot(out); Object.assign(out, { initialPipelinesReady: s.initialPipelinesReady });
+    // Frame-error resilience state (see reportWebGPUFrameError /
+    // disablePostProcessing / enablePostProcessing above and
+    // 20-scene-mount.js's checkSceneWebGPUFrameErrorWatchdog, the poller
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // that acts on these).
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameErrorStreak = telemetryState.webGPUConsecutiveFrameErrors;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameCleanStreak = telemetryState.webGPUConsecutiveCleanFrames;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.postFXDisabled = s.postFXForceDisabled;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.customMaterialFallbacks = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.customMaterialFallbacks || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.skinnedMeshObjects = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.skinnedMeshObjects || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphDispatches = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.computedMorphDispatches || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphVertices = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.computedMorphVertices || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphKernel = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.computedMorphKernel || "";
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.elioSkinningDispatches = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.elioSkinningDispatches || 0;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.elioSkinningVertices = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.elioSkinningVertices || 0;
+    out.elioSkinningKernel = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.elioSkinningKernel || "";
+    // GPU picking. gpuPicking stays true whether or not a pick has run yet —
+    // it reports the renderer capability, matching the gpu-picking cell in
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // 16a-scene-webgpu.capabilities.json.
+    out.gpuPicking = true;
+    if (drawState.scenePicker) Object.assign(out, drawState.scenePicker.diagnostics());
+    // Render truth: implementation identity, the post-chain dispatch record
+    // and the event journal, so a single diagnostics() call is a complete
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var truthApi = renderTruth();
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.implementation = truthApi.implementation(out.adapterInfo || {});
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.browserEngine = typeof truthApi.browserEngine === "function" ? truthApi.browserEngine() : "";
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.renderTruthEvents = typeof truthApi.events === "function" ? truthApi.events() : [];
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.shaderDiagnostics = typeof truthApi.shaderCounts === "function" ? truthApi.shaderCounts() : { messages: 0, errors: 0 };
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.postChain = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.postChain || null;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.uniformTime = selenaState.frame.time;
+    out.textureVariantContext = {
+      backend: s.textureVariantContext.backend,
+      uploadReady: s.textureVariantContext.uploadReady,
+      tokens: s.textureVariantContext.tokens.slice(),
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ };
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.ibl = Object.assign({}, uniformState.iblResources.diagnostics);
+    out.retainedGeometry = webGPURetainedMeshBufferStats(meshState);
+    return out;
+  }
   function createSceneWebGPURenderer(canvas, options) {
     if (typeof navigator === "undefined" || !navigator.gpu) return sceneWebGPUFactoryFailure(canvas, "navigator-gpu-unavailable");
     if (!canvas || typeof canvas.getContext !== "function") return sceneWebGPUFactoryFailure(canvas, "canvas-context-unavailable");
@@ -6526,7 +7559,7 @@
     var adapter = probe.adapter;
     var rawDevice = probe.device;
     var pipelineGuard = wgpuCreatePipelineGuard(canvas);
-    var device = wgpuGuardDevice(rawDevice, pipelineGuard);
+    var s: any = { device: wgpuGuardDevice(rawDevice, pipelineGuard), lastDeviceLostInfo: null, canvas: canvas, rawDevice: rawDevice, pipelineGuard: pipelineGuard };
     var rendererOptions = options && typeof options === "object" ? options : {};
     // lastDeviceLostInfo: { reason, message } captured by the device.lost
     // handler below (see initGPUResources), read back by diagnostics().
@@ -6535,7 +7568,6 @@
     // (16z-scene-webgpu-probe.ts's _webgpuDeviceLostInfo) the moment it
     // recovers — often before the mount-level watchdog's next poll — so
     // reading the shared snapshot lost the detail exactly when it mattered.
-    var lastDeviceLostInfo = null;
 
     // Only NOW taint the canvas with a WebGPU context. If any of the
     // checks above failed we never reached this line, so the canvas
@@ -6544,14 +7576,12 @@
     if (!gpuCtx) return sceneWebGPUFactoryFailure(canvas, "canvas-webgpu-context-unavailable");
 
     // initFailed remains for runtime device-loss recovery.
-    var initFailed = false;
-    var initError = "";
     var presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-    var s: any = { pipelineGuard: pipelineGuard, specularTarget: sceneWebGPUSpecularTarget(device), postProcessor: null, postFXForceDisabled: false, initialPipelinesPrepared: false, initialPipelinesReady: false, preparedPipelineKey: "" };
+    Object.assign(s, { drawComputeParticlePasses: drawComputeParticlePasses, initFailed: false, initError: "", gpuCtx: gpuCtx, presentationFormat: presentationFormat, specularTarget: sceneWebGPUSpecularTarget(s.device), postProcessor: null, postFXForceDisabled: false, initialPipelinesPrepared: false, initialPipelinesReady: false, preparedPipelineKey: "" });
     var presentationOptions = rendererOptions.presentation && typeof rendererOptions.presentation === "object" ? rendererOptions.presentation : {};
     var probeOptions = probe.probeOptions && typeof probe.probeOptions === "object" ? probe.probeOptions : {};
-    var activePowerPreference = sceneWebGPUCanvasPowerPreference(probeOptions.powerPreference);
-    var activePresentation = {
+    s.activePowerPreference = sceneWebGPUCanvasPowerPreference(probeOptions.powerPreference);
+    s.activePresentation = {
       alphaMode: sceneWebGPUCanvasAlphaMode(presentationOptions.alphaMode),
       colorSpace: sceneWebGPUCanvasColorSpace(presentationOptions.colorSpace),
       toneMappingMode: sceneWebGPUCanvasToneMappingMode(presentationOptions.toneMappingMode),
@@ -6601,7 +7631,7 @@
     // picks pays nothing — no textures, no pipelines, no extra pass.
 
     // Persistent GPU buffers.
-    var uvBuffer = null;
+    s.uvBuffer = null;
 
     // Points buffers.
     //
@@ -6620,7 +7650,7 @@
       positionBuffer: null, normalBuffer: null, tangentBuffer: null,
       elioSkinBindGroupLayout: null, computedMorphBindGroupLayout: null,
       elioSkinPipeline: null, computedMorphPipeline: null,
-      ensureElioSkinPipeline: function() { return ensureElioSkinPipeline(pipeState, meshState, device); }, ensureComputedMorphPipeline: function() { return ensureComputedMorphPipeline(pipeState, meshState, device); },
+      ensureElioSkinPipeline: function() { return ensureElioSkinPipeline(pipeState, meshState, s.device); }, ensureComputedMorphPipeline: function() { return ensureComputedMorphPipeline(pipeState, meshState, s.device); },
     };
     // Hoisted scratches so uniform uploads don't allocate fresh 128-byte
     // ArrayBuffers per entry per frame. The WGSL PointsUniforms layout is
@@ -6628,22 +7658,22 @@
     // vec4 fog color. Wrapped Float32Array / Uint32Array views are created
     // once for the same underlying storage.
     var pointsUniformScratch = new ArrayBuffer(128);
-    var temporalAA = wgpuPostfxTemporalAA(function() {
-      return { device: device, linearSampler: gpuRes.linearSampler, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, pointsLayout: drawState.pointsBindGroupLayout, pointsVertex: pipeState.pointsVertexModule,
-        materialGroup: function() { return createMaterialBindGroup(uniformState, gpuRes, meshState, device, null, false, gpuRes.defaultMaterialOwner); }, previousSkin: function(obj: any) { return webGPUObjectResourceOwner(obj)._gosxTAAPreviousSkin || null; },
+    s.temporalAA = wgpuPostfxTemporalAA(function() {
+      return { device: s.device, linearSampler: gpuRes.linearSampler, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, pointsLayout: drawState.pointsBindGroupLayout, pointsVertex: pipeState.pointsVertexModule,
+        materialGroup: function() { return createMaterialBindGroup(uniformState, gpuRes, meshState, s.device, null, false, gpuRes.defaultMaterialOwner); }, previousSkin: function(obj: any) { return webGPUObjectResourceOwner(obj)._gosxTAAPreviousSkin || null; },
         // The owner's buffer, so the capture before this frame's dispatch sees last frame's skin.
         skinBuffer: function(obj: any) { return webGPUObjectIsSkinned(obj) && webGPUObjectSkinOutputBuffer(meshState, obj) || null; },
-        bindPositions: function(pass: any, slot: number, obj: any) { return webGPUBindRetainedMeshAttribute(meshState, device, pass, slot, obj, "positions", 3); },
-        bindIndices: function(pass: any, obj: any) { return webGPUBindRetainedMeshIndexBuffer(meshState, device, pass, obj); } };
+        bindPositions: function(pass: any, slot: number, obj: any) { return webGPUBindRetainedMeshAttribute(meshState, s.device, pass, slot, obj, "positions", 3); },
+        bindIndices: function(pass: any, obj: any) { return webGPUBindRetainedMeshIndexBuffer(meshState, s.device, pass, obj); } };
     });
-    var autoExposure = wgpuPostfxAutoExposure(function() { return { device: device }; });
-    var softParticles = wgpuCreateSoftParticles(function() {
-      return { device: device, frame: gpuRes.frameBindGroupLayout, material: gpuRes.materialBindGroupLayout, points: drawState.pointsBindGroupLayout, vertex: pipeState.pointsVertexModule,
-        scratchF: drawState.pointsUniformScratchF, scratchU: drawState.pointsUniformScratchU, format: pipeState.targetFormat, samples: pipeState.activeSampleCount, bindGroup: function(owner: any, slot: string, layout: any, entries: any) { return wgpuCachedBindGroup(device, owner, slot, layout, entries); },
-        buffer: function(owner: any, data: Float32Array) { return wgpuCachedTrackedBuffer(meshState, device, owner, "_gosxWGPUSoftPointsUniformBuffer", data, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true); },
-        materialGroup: function() { return createMaterialBindGroup(uniformState, gpuRes, meshState, device, null, false, gpuRes.defaultMaterialOwner); } };
+    s.autoExposure = wgpuPostfxAutoExposure(function() { return { device: s.device }; });
+    s.softParticles = wgpuCreateSoftParticles(function() {
+      return { device: s.device, frame: gpuRes.frameBindGroupLayout, material: gpuRes.materialBindGroupLayout, points: drawState.pointsBindGroupLayout, vertex: pipeState.pointsVertexModule,
+        scratchF: drawState.pointsUniformScratchF, scratchU: drawState.pointsUniformScratchU, format: pipeState.targetFormat, samples: pipeState.activeSampleCount, bindGroup: function(owner: any, slot: string, layout: any, entries: any) { return wgpuCachedBindGroup(s.device, owner, slot, layout, entries); },
+        buffer: function(owner: any, data: Float32Array) { return wgpuCachedTrackedBuffer(meshState, s.device, owner, "_gosxWGPUSoftPointsUniformBuffer", data, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true); },
+        materialGroup: function() { return createMaterialBindGroup(uniformState, gpuRes, meshState, s.device, null, false, gpuRes.defaultMaterialOwner); } };
     });
-    var lastPreparedScene = null;
+    s.lastPreparedScene = null;
     // gpuTimingEncodingAvailable: standard pass timestamp writes bracket all commands in the frame encoder.
     var timingState: any = {
       gpuTiming: null, gpuTimingFailed: false, gpuTimingEncodingAvailable: null,
@@ -6655,14 +7685,14 @@
     };
     // Helper renderers publish through the same queue as the main renderer.
     var telemetryState: any = {
-      canvas: canvas, timing: timingState, sink: null, draw: null, rawDevice: rawDevice, gpuCtx: gpuCtx, presentationFormat: presentationFormat, activePresentation: activePresentation, pipelineGuard: pipelineGuard,
+      canvas: canvas, timing: timingState, sink: null, draw: null, rawDevice: rawDevice, gpuCtx: gpuCtx, presentationFormat: presentationFormat, activePresentation: s.activePresentation, pipelineGuard: pipelineGuard,
       configuredSurfaceKey: "", rendererResourcesDisposed: false, webGPUEssentialAttributeCache: Object.create(null), webGPUPendingAttributes: Object.create(null), webGPUAttributeMount: null,
       lastWebGPUDiagnosticAttributeAt: null, webGPUAttributeTimer: null, webGPUAttributeFormatting: false, webGPUFrameAttributesSeeded: false,
       frameStats: {}, lastWebGPUFrameStats: null, spareFrameStats: {}, webGPULastError: "", webGPUFrameProof: {},
       pendingWebGPUErrorScope: false, webGPUErrorReportCount: 0, webGPUConsecutiveFrameErrors: 0, webGPUConsecutiveCleanFrames: 0,
     };
-    var webGPUAttributeSink = { setAttribute: function(name: any, value: any) { queueWebGPUAttribute(telemetryState, name, value); } };
-    telemetryState.sink = webGPUAttributeSink;
+    s.webGPUAttributeSink = { setAttribute: function(name: any, value: any) { queueWebGPUAttribute(telemetryState, name, value); } };
+    telemetryState.sink = s.webGPUAttributeSink;
 
     // Cull telemetry: frame counter for throttling readback (~every 30 frames)
     // and the last aggregated survivor snapshot written to the mount attribute.
@@ -6687,13 +7717,13 @@
     // a fresh mount/renderer swap replaces this closure entirely.
     // webGPUBundleCache holds the cached GPURenderBundle and the command stream
     // it was built from. Created on the first eligible frame.
-    var webGPUBundleCache = null;
+    s.webGPUBundleCache = null;
 
     // Shadow pass buffer.
-    var shadowPositionBuffer = null;
+    s.shadowPositionBuffer = null;
 
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
-    var dummyShadowTex = null;
+    s.dummyShadowTex = null;
 
     // Water simulation resources.
     var _waterUniformBuf = new ArrayBuffer(256);
@@ -6735,10 +7765,10 @@
         }
       },
     };
-    var placeholderTex = null, placeholderCubeTex = null;
+    s.placeholderTex = null; s.placeholderCubeTex = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
-    var selenaState: any = { pipelineCache: new Map(), computePipelineCache: new Map(), postPipelineCache: new Map(), frame: { viewProjection: uniformState.scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: [0, 0, 0, 0] }, textureContext: null, waterPostBGL: null, waterPostDepthSampler: null, waterSystems: waterState.waterSystems, gpuRes: gpuRes, instancedCacheOwner: function(meshId?: any, fallback?: any, namespace?: any) { return webGPUInstancedCacheOwner(drawState, device, meshId, fallback, namespace); } }; waterState.selenaState = selenaState; waterState.uniformState = uniformState;
+    s.skyResources = { renderer: null }; s.oceanResources = { renderer: null, failed: false }; s.terrainResources = {};
+    var selenaState: any = { pipelineCache: new Map(), computePipelineCache: new Map(), postPipelineCache: new Map(), frame: { viewProjection: uniformState.scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: [0, 0, 0, 0] }, textureContext: null, waterPostBGL: null, waterPostDepthSampler: null, waterSystems: waterState.waterSystems, gpuRes: gpuRes, instancedCacheOwner: function(meshId?: any, fallback?: any, namespace?: any) { return webGPUInstancedCacheOwner(drawState, s.device, meshId, fallback, namespace); } }; waterState.selenaState = selenaState; waterState.uniformState = uniformState;
     var drawState: any = {
       meshState: meshState, pipeState: pipeState, uniformState: uniformState, gpuRes: gpuRes, selenaState: selenaState, timingState: timingState, pipelineGuard: pipelineGuard,
       shadowSlots: [null, null], shadowFrameBindGroups: [], instancedGeometryCache: {}, modelDynamicOffsets: [0],
@@ -6753,7 +7783,7 @@
       pointsAuthoredPipelineCache: new Map(), /* keyed by "wgsl|blend|depth|format|samples" */ pointsAuthoredLayerFailed: new Map(), /* layerID → true: the authored pipeline failed; fall back to builtin and warn once */
       worldDrawScratch: typeof createSceneWorldDrawScratch === "function" ? createSceneWorldDrawScratch() : null, thickLineScratch: typeof createSceneThickLineScratch === "function" ? createSceneThickLineScratch() : null, thickLineOwner: {}, screenLineOwner: {},
       pointsUniformScratchF: new Float32Array(pointsUniformScratch), pointsUniformScratchU: new Uint32Array(pointsUniformScratch), computeParticleSystems: new Map(), lastComputeParticleTimeSeconds: null,
-      boardGlyphAtlases: new Map(), boardTextOwners: new Map(), scenePicker: null, activePickMeshPositions: null, rendererOptions: rendererOptions, deviceStillActive: function(scopedDevice: any) { return rendererDeviceStillActive(device, scopedDevice); },
+      boardGlyphAtlases: new Map(), boardTextOwners: new Map(), scenePicker: null, activePickMeshPositions: null, rendererOptions: rendererOptions, deviceStillActive: function(scopedDevice: any) { return rendererDeviceStillActive(s.device, scopedDevice); },
     }; telemetryState.draw = drawState; s.timingState = timingState; s.pipeState = pipeState; s.meshState = meshState; s.gpuRes = gpuRes; s.selenaState = selenaState; s.telemetryState = telemetryState; s.waterState = waterState; s.drawState = drawState; s.uniformState = uniformState;
 
     // Everything below used to be inside the .then() chain after
@@ -6774,25 +7804,25 @@
         // real loss as two against WEBGPU_LOST_REPROBE_MAX_PER_WINDOW,
         // arming its reprobe backoff after a single device loss instead of
         // the intended three.
-        device.lost.then(function(info) {
+        s.device.lost.then(function(info) {
           console.warn("[gosx] WebGPU device lost:", info && info.message);
           // Journal the loss with a timestamp. A device that mounts healthy and
           // dies seconds later (observed on Firefox under GPU-memory pressure)
           // is indistinguishable from "never had WebGPU" in any single sample;
           // only an ordered timeline separates the two.
           renderTruth().record("device-lost", (info && info.reason ? info.reason + " " : "") + String(info && info.message || ""));
-          lastDeviceLostInfo = {
+          s.lastDeviceLostInfo = {
             reason: (info && info.reason) || "",
             message: (info && info.message) || "",
           };
-          initFailed = true;
+          s.initFailed = true;
           // Eagerly free every renderer-owned resource and logical cache. The
           // probe-based recovery path
           // (gosx:scene3d:webgpu-probe-ready → recoverSceneWebGPURenderer in
           // 20-scene-mount.js) creates a fresh renderer whose first render()
           // call rebuilds resources on the new device. dispose() shares this
           // idempotent path, so mount teardown after the loss is a safe no-op.
-          dispose();
+          dispose(s);
         }).catch(function() {});
 
         if (typeof rawDevice.addEventListener === "function") {
@@ -6802,12 +7832,12 @@
         }
         renderTruth().record("webgpu-device-ready", renderTruth().implementation(webGPUAdapterInfoSnapshot()));
 /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
-        configureWebGPUCanvas(telemetryState, device);
+        configureWebGPUCanvas(telemetryState, s.device);
 
         // Create bind group layouts.
-        gpuRes.frameBindGroupLayout = wgpuCreateFrameBindGroupLayout(device);
-        gpuRes.materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(device, true);
-        meshState.elioSkinBindGroupLayout = device.createBindGroupLayout({
+        gpuRes.frameBindGroupLayout = wgpuCreateFrameBindGroupLayout(s.device);
+        gpuRes.materialBindGroupLayout = wgpuCreateMaterialBindGroupLayout(s.device, true);
+        meshState.elioSkinBindGroupLayout = s.device.createBindGroupLayout({
           label: "gosx-elio-skin-lbs",
           entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
@@ -6815,7 +7845,7 @@
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
           ],
         });
-        meshState.computedMorphBindGroupLayout = device.createBindGroupLayout({
+        meshState.computedMorphBindGroupLayout = s.device.createBindGroupLayout({
           label: "gosx-computed-morph",
           entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
@@ -6826,7 +7856,7 @@
             { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
           ],
         });
-        waterState.waterComputeBindGroupLayout = device.createBindGroupLayout({
+        waterState.waterComputeBindGroupLayout = s.device.createBindGroupLayout({
           label: "gosx-water-compute",
           entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
@@ -6835,7 +7865,7 @@
             { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
           ],
         });
-        waterState.waterRenderBindGroupLayout = device.createBindGroupLayout({
+        waterState.waterRenderBindGroupLayout = s.device.createBindGroupLayout({
           label: "gosx-water-render",
           entries: [
             { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
@@ -6851,7 +7881,7 @@
             { binding: 10, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
           ],
         });
-        waterState.waterPoolBindGroupLayout = device.createBindGroupLayout({
+        waterState.waterPoolBindGroupLayout = s.device.createBindGroupLayout({
           label: "gosx-water-pool",
           entries: [
             { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
@@ -6862,7 +7892,7 @@
             { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
           ],
         });
-        waterState.waterCausticsBindGroupLayout = device.createBindGroupLayout({
+        waterState.waterCausticsBindGroupLayout = s.device.createBindGroupLayout({
           label: "gosx-water-caustics",
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
@@ -6872,131 +7902,131 @@
             { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
           ],
         });
-        waterState.waterObjectTextureBindGroupLayout = device.createBindGroupLayout({
+        waterState.waterObjectTextureBindGroupLayout = s.device.createBindGroupLayout({
           label: "gosx-water-object-textures",
           entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
           ],
         });
-        waterState.waterObjectMeshShadowBindGroupLayout = device.createBindGroupLayout({
+        waterState.waterObjectMeshShadowBindGroupLayout = s.device.createBindGroupLayout({
           label: "gosx-water-object-mesh-shadow",
           entries: [
             { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
           ],
         });
-        drawState.pointsBindGroupLayout = wgpuCreatePointsBindGroupLayout(device);
-        drawState.pointsUniformBindGroupLayout = wgpuCreatePointsUniformBindGroupLayout(device);
+        drawState.pointsBindGroupLayout = wgpuCreatePointsBindGroupLayout(s.device);
+        drawState.pointsUniformBindGroupLayout = wgpuCreatePointsUniformBindGroupLayout(s.device);
         // Simple uniform BGL for authored user uniforms at group(1).
-        drawState.pointsAuthoredUserUniformBGL = device.createBindGroupLayout({
+        drawState.pointsAuthoredUserUniformBGL = s.device.createBindGroupLayout({
           label: "gosx-points-authored-user",
           entries: [{ binding: 0, visibility: (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT : 3), buffer: { type: "uniform" } }],
         });
-        drawState.pointsAuthoredVertexPipelineLayout = device.createPipelineLayout({
+        drawState.pointsAuthoredVertexPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, drawState.pointsAuthoredUserUniformBGL, drawState.pointsUniformBindGroupLayout],
         });
-        drawState.pointsAuthoredStoragePipelineLayout = device.createPipelineLayout({
+        drawState.pointsAuthoredStoragePipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, drawState.pointsAuthoredUserUniformBGL, drawState.pointsBindGroupLayout],
         });
-        pipeState.shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(device);
+        pipeState.shadowBindGroupLayout = wgpuCreateShadowBindGroupLayout(s.device);
 
         // Pipeline layouts.
-        pipeState.pbrPipelineLayout = device.createPipelineLayout({
+        pipeState.pbrPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, gpuRes.materialBindGroupLayout],
         });
-        pipeState.elioSkinPipelineLayout = device.createPipelineLayout({
+        pipeState.elioSkinPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [meshState.elioSkinBindGroupLayout],
         });
-        pipeState.computedMorphPipelineLayout = device.createPipelineLayout({
+        pipeState.computedMorphPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [meshState.computedMorphBindGroupLayout],
         });
-        waterState.waterComputePipelineLayout = device.createPipelineLayout({
+        waterState.waterComputePipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [waterState.waterComputeBindGroupLayout],
         });
-        waterState.waterRenderPipelineLayout = device.createPipelineLayout({
+        waterState.waterRenderPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, waterState.waterRenderBindGroupLayout],
         });
-        waterState.waterPoolPipelineLayout = device.createPipelineLayout({
+        waterState.waterPoolPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, waterState.waterPoolBindGroupLayout],
         });
-        waterState.waterCausticsPipelineLayout = device.createPipelineLayout({
+        waterState.waterCausticsPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [waterState.waterCausticsBindGroupLayout],
         });
-        waterState.waterObjectTexturePipelineLayout = device.createPipelineLayout({
+        waterState.waterObjectTexturePipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [waterState.waterObjectTextureBindGroupLayout],
         });
-        waterState.waterObjectMeshShadowPipelineLayout = device.createPipelineLayout({
+        waterState.waterObjectMeshShadowPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [waterState.waterObjectMeshShadowBindGroupLayout],
         });
-        pipeState.pointsPipelineLayout = device.createPipelineLayout({
+        pipeState.pointsPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, gpuRes.materialBindGroupLayout, drawState.pointsBindGroupLayout],
         });
-        pipeState.pointsVertexPipelineLayout = device.createPipelineLayout({
+        pipeState.pointsVertexPipelineLayout = s.device.createPipelineLayout({
           bindGroupLayouts: [gpuRes.frameBindGroupLayout, gpuRes.materialBindGroupLayout, drawState.pointsUniformBindGroupLayout],
         });
 
         // Compile shader modules.
-        pipeState.pbrVertexModule = device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
-        pipeState.pbrInstancedVertexModule = device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
-        pipeState.pbrInstancedCullVertexModule = device.createShaderModule({ label: "pbr-instanced-cull-vert", code: WGSL_PBR_INSTANCED_CULL_VERTEX });
-        pipeState.pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT }); pipeState.pbrUnshadowedFragmentModule = null;
-        pipeState.shadowVertexModule = device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
-        pipeState.shadowInstancedVertexModule = device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
-        pipeState.shadowFragmentModule = device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
-        pipeState.sceneWorldColorVertexModule = device.createShaderModule({ label: "scene-world-color-vert", code: WGSL_SCENE_WORLD_COLOR_VERTEX });
-        pipeState.sceneClipColorVertexModule = device.createShaderModule({ label: "scene-clip-color-vert", code: WGSL_SCENE_CLIP_COLOR_VERTEX });
-        pipeState.sceneColorFragmentModule = device.createShaderModule({ label: "scene-color-frag", code: WGSL_SCENE_COLOR_FRAGMENT });
-        pipeState.surfaceVertexModule = device.createShaderModule({ label: "surface-vert", code: WGSL_SURFACE_VERTEX });
-        pipeState.surfaceFragmentModule = device.createShaderModule({ label: "surface-frag", code: WGSL_SURFACE_FRAGMENT });
-        pipeState.thickLineVertexModule = device.createShaderModule({ label: "thick-line-vert", code: WGSL_THICK_LINE_VERTEX });
-        pipeState.thickLineFragmentModule = device.createShaderModule({ label: "thick-line-frag", code: WGSL_THICK_LINE_FRAGMENT });
-        pipeState.pointsVertexModule = device.createShaderModule({ label: "points-vert", code: WGSL_POINTS_VERTEX });
-        pipeState.pointsInstancedVertexModule = device.createShaderModule({ label: "points-instanced-vert", code: WGSL_POINTS_INSTANCED_VERTEX });
-        pipeState.pointsFragmentModule = device.createShaderModule({ label: "points-frag", code: WGSL_POINTS_FRAGMENT });
+        pipeState.pbrVertexModule = s.device.createShaderModule({ label: "pbr-vert", code: WGSL_PBR_VERTEX });
+        pipeState.pbrInstancedVertexModule = s.device.createShaderModule({ label: "pbr-instanced-vert", code: WGSL_PBR_INSTANCED_VERTEX });
+        pipeState.pbrInstancedCullVertexModule = s.device.createShaderModule({ label: "pbr-instanced-cull-vert", code: WGSL_PBR_INSTANCED_CULL_VERTEX });
+        pipeState.pbrFragmentModule = s.device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT }); pipeState.pbrUnshadowedFragmentModule = null;
+        pipeState.shadowVertexModule = s.device.createShaderModule({ label: "shadow-vert", code: WGSL_SHADOW_VERTEX });
+        pipeState.shadowInstancedVertexModule = s.device.createShaderModule({ label: "shadow-instanced-vert", code: WGSL_SHADOW_INSTANCED_VERTEX });
+        pipeState.shadowFragmentModule = s.device.createShaderModule({ label: "shadow-frag", code: WGSL_SHADOW_FRAGMENT });
+        pipeState.sceneWorldColorVertexModule = s.device.createShaderModule({ label: "scene-world-color-vert", code: WGSL_SCENE_WORLD_COLOR_VERTEX });
+        pipeState.sceneClipColorVertexModule = s.device.createShaderModule({ label: "scene-clip-color-vert", code: WGSL_SCENE_CLIP_COLOR_VERTEX });
+        pipeState.sceneColorFragmentModule = s.device.createShaderModule({ label: "scene-color-frag", code: WGSL_SCENE_COLOR_FRAGMENT });
+        pipeState.surfaceVertexModule = s.device.createShaderModule({ label: "surface-vert", code: WGSL_SURFACE_VERTEX });
+        pipeState.surfaceFragmentModule = s.device.createShaderModule({ label: "surface-frag", code: WGSL_SURFACE_FRAGMENT });
+        pipeState.thickLineVertexModule = s.device.createShaderModule({ label: "thick-line-vert", code: WGSL_THICK_LINE_VERTEX });
+        pipeState.thickLineFragmentModule = s.device.createShaderModule({ label: "thick-line-frag", code: WGSL_THICK_LINE_FRAGMENT });
+        pipeState.pointsVertexModule = s.device.createShaderModule({ label: "points-vert", code: WGSL_POINTS_VERTEX });
+        pipeState.pointsInstancedVertexModule = s.device.createShaderModule({ label: "points-instanced-vert", code: WGSL_POINTS_INSTANCED_VERTEX });
+        pipeState.pointsFragmentModule = s.device.createShaderModule({ label: "points-frag", code: WGSL_POINTS_FRAGMENT });
 
         // Create persistent uniform buffers.
         // FrameUniforms: 2*mat4 + vec3 + u32 + 2*f32 + 2*u32 = 128+16+16 = ~160 bytes.
-        gpuRes.frameUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        gpuRes.frameUniformBuffer = s.device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         // Lights start at the minimum capacity and grow in uploadLights.
-        gpuRes.lightStorageBuffer = device.createBuffer({
+        gpuRes.lightStorageBuffer = s.device.createBuffer({
           label: "gosx-lights",
           size: uniformState._lightCapacity * SCENE_WEBGPU_LIGHT_BYTES,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
-        gpuRes.fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        gpuRes.envUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        gpuRes.shadowUniformBuffer = device.createBuffer({ size: SCENE_WEBGPU_SHADOW_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        gpuRes.fogUniformBuffer = s.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        gpuRes.envUniformBuffer = s.device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        gpuRes.shadowUniformBuffer = s.device.createBuffer({ size: SCENE_WEBGPU_SHADOW_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         drawState.shadowFrameBufferStride = Math.max(
           256,
-          Math.floor(sceneNumber(device && device.limits && device.limits.minUniformBufferOffsetAlignment, 256))
+          Math.floor(sceneNumber(s.device && s.device.limits && s.device.limits.minUniformBufferOffsetAlignment, 256))
         );
         drawState.shadowFrameBufferCapacity = 1;
-        drawState.shadowFrameBuffer = device.createBuffer({
+        drawState.shadowFrameBuffer = s.device.createBuffer({
           size: drawState.shadowFrameBufferStride,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
         // Create samplers.
-        gpuRes.linearSampler = device.createSampler({
+        gpuRes.linearSampler = s.device.createSampler({
           magFilter: "linear",
           minFilter: "linear",
           mipmapFilter: "linear",
           addressModeU: "clamp-to-edge",
           addressModeV: "clamp-to-edge",
         });
-        waterState.waterTileSampler = device.createSampler({
+        waterState.waterTileSampler = s.device.createSampler({
           magFilter: "linear",
           minFilter: "linear",
           mipmapFilter: "linear",
           addressModeU: "repeat",
           addressModeV: "repeat",
         });
-        gpuRes.comparisonSampler = device.createSampler({
+        gpuRes.comparisonSampler = s.device.createSampler({
           compare: "less",
           magFilter: "linear",
           minFilter: "linear",
         });
-        gpuRes.envMapSampler = device.createSampler({
+        gpuRes.envMapSampler = s.device.createSampler({
           magFilter: "linear",
           minFilter: "linear",
           mipmapFilter: "linear",
@@ -7005,15 +8035,15 @@
         });
 
         // Create 1x1 dummy shadow depth texture.
-        dummyShadowTex = device.createTexture({
+        s.dummyShadowTex = s.device.createTexture({
           size: [1, 1, 1],
           format: "depth24plus",
           usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
-        gpuRes.dummyShadowView = dummyShadowTex.createView(); gpuRes.dummyShadowArrayView = dummyShadowTex.createView({ dimension: "2d-array" });
+        gpuRes.dummyShadowView = s.dummyShadowTex.createView(); gpuRes.dummyShadowArrayView = s.dummyShadowTex.createView({ dimension: "2d-array" });
 
         // Clear the dummy shadow texture to depth 1.0.
-        var initEncoder = device.createCommandEncoder();
+        var initEncoder = s.device.createCommandEncoder();
         initEncoder.beginRenderPass({
           colorAttachments: [],
           depthStencilAttachment: {
@@ -7023,23 +8053,23 @@
             depthStoreOp: "store",
           },
         }).end();
-        device.queue.submit([initEncoder.finish()]);
+        s.device.queue.submit([initEncoder.finish()]);
 
         // Placeholder texture.
-        placeholderTex = device.createTexture({
+        s.placeholderTex = s.device.createTexture({
           size: [1, 1, 1],
           format: "rgba8unorm",
           usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
         });
-        device.queue.writeTexture(
-          { texture: placeholderTex },
+        s.device.queue.writeTexture(
+          { texture: s.placeholderTex },
           new Uint8Array([255, 255, 255, 255]),
           { bytesPerRow: 4 },
           [1, 1, 1]
         );
-        gpuRes.placeholderView = placeholderTex.createView();
-        placeholderCubeTex = wgpuCreatePlaceholderCubeTexture(device);
-        gpuRes.placeholderCubeView = placeholderCubeTex.createView({ dimension: "cube" });
+        gpuRes.placeholderView = s.placeholderTex.createView();
+        s.placeholderCubeTex = wgpuCreatePlaceholderCubeTexture(s.device);
+        gpuRes.placeholderCubeView = s.placeholderCubeTex.createView({ dimension: "cube" });
       } catch (err) {
         // Synchronous GPU resource setup failed — the probe said the
         // device was good, but something in the texture/buffer/shader
@@ -7048,14 +8078,14 @@
         // already called getContext("webgpu") above), so the mount
         // code can't fall back to WebGL — but at least we log loudly
         // and stop doing broken work.
-        initError = String(err && (err.message || err) || "unknown error");
+        s.initError = String(err && (err.message || err) || "unknown error");
         console.warn("[gosx] WebGPU synchronous init failed:", err);
-        initFailed = true;
+        s.initFailed = true;
       }
     })();
 
     selenaState.textureContext = {
-      device, textureCache: gpuRes.textureCache, iblResources: uniformState.iblResources, placeholderCubeView: gpuRes.placeholderCubeView, placeholderView: gpuRes.placeholderView,
+      device: s.device, textureCache: gpuRes.textureCache, iblResources: uniformState.iblResources, placeholderCubeView: gpuRes.placeholderCubeView, placeholderView: gpuRes.placeholderView,
       envMapSampler: gpuRes.envMapSampler, linearSampler: gpuRes.linearSampler, liveView: function(m: any, t: any) { return sceneSelenaLiveTextureView(selenaState, m, t); }, url: wgpuSceneSelenaTextureURL, frame: selenaState.frame,
     };
 
@@ -7092,26 +8122,6 @@
 
 
 
-    // renderLightShadowCascades fills one shadow slot (webgpu-shadows module)
-    // and renders every cascade layer. Casters cull once per light against its
-    // full-scene fit, a superset of every cascade; each cascade writes its own
-    // shadow-matrix arena slot, so no pass overwrites another's matrix.
-    function renderLightShadowCascades(encoder: any, light: any, lightIndex: number, slot: number, rawLightMatrix: any, bounds: any, frame: any) {
-      var cascades = sceneWebGPUShadowCascadeCount(light, frame.camera);
-      var size = Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024)));
-      // The authored memory cap covers every cascade layer of the light.
-      size = resolveShadowSize(size, frame.maxPixels > 0 ? frame.maxPixels / cascades : frame.maxPixels);
-      var shadowSlot = drawState.shadowSlots[slot] = wgpuFitShadowSlot(wgpuEnsureShadowSlot(device, drawState.shadowSlots[slot], size, cascades, destroyRendererGPUResource), light, rawLightMatrix,
-        { view: uniformState.scratchViewMatrix, camera: frame.camera, aspect: frame.aspect, bounds: bounds });
-      var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
-      frame.matrices[slot] = lightMatrix;
-      frame.indices[slot] = lightIndex;
-      frame.gpuDriven.lightView(encoder, lightMatrix, slot);
-      frame.crowd.lightView(frame.crowdEncoder, lightMatrix, slot);
-      for (var c = 0; c < cascades; c++) {
-        renderShadowPass(drawState, device, encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
-      }
-    }
 
     // -----------------------------------------------------------------------
     // PBR object drawing
@@ -7120,12 +8130,12 @@
     // drawComputeParticlePasses draws hard systems in the main pass, then soft
     // systems in the read-only depth continuation pass when any exist.
     function drawComputeParticlePasses(encoder: any, pass: any, descriptor: any, frameGroup: any, records: any[], environment: any, timeSeconds: number, depthView: any) {
-      var soft = softParticles.plan(records, depthView);
-      Object.assign(telemetryState.frameStats, drawComputeParticleEntries(drawState, device, pass, soft ? softParticles.hard(records) : records, environment, timeSeconds));
+      var soft = s.softParticles.plan(records, depthView);
+      Object.assign(telemetryState.frameStats, drawComputeParticleEntries(drawState, s.device, pass, soft ? s.softParticles.hard(records) : records, environment, timeSeconds));
       if (!soft) return pass;
-      pass = softParticles.beginPass(encoder, pass, descriptor);
+      pass = s.softParticles.beginPass(encoder, pass, descriptor);
       pass.setBindGroup(0, frameGroup);
-      wgpuSoftParticleMergeStats(telemetryState.frameStats, softParticles.draw(pass, records, environment, timeSeconds, depthView));
+      wgpuSoftParticleMergeStats(telemetryState.frameStats, s.softParticles.draw(pass, records, environment, timeSeconds, depthView));
       return pass;
     }
 
@@ -7133,935 +8143,11 @@
     // Main render function
     // -----------------------------------------------------------------------
 
-    function render(bundle, viewport, frameMeta) {
-      if (typeof inflateSceneShaderLib === "function") {
-        inflateSceneShaderLib(bundle);
-      }
-      adaptOrtho2DBoardBundle(bundle);
-      if (!device) {
-        startInit();
-        return "pending";
-      }
-      if (initFailed || pipelineGuard.coreError) return "failed";
-      if (pipelineGuard.pending) return "pending";
-      if (!bundle) return "empty";
-
-      var hasPBRData = Boolean(
-        bundle.worldMeshPositions &&
-        bundle.worldMeshNormals &&
-        Array.isArray(bundle.meshObjects) &&
-        bundle.meshObjects.length > 0
-      );
-      var hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
-        (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
-      var hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
-      var hasWorldLines = hasWorldLineData(bundle);
-      var hasScreenLines = hasScreenLineData(bundle);
-      var hasSurfaces = hasSurfaceData(bundle);
-      var hasLabels = hasLabelData(bundle);
-      var hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
-      var incomingWaterShaderSourcesByID = bundle && bundle.waterShaderSourcesByID && typeof bundle.waterShaderSourcesByID === "object" && Object.keys(bundle.waterShaderSourcesByID).length > 0
-        ? bundle.waterShaderSourcesByID
-        : sceneWaterShaderSourcesFromEntries(bundle && bundle.waterSystems);
-      if (canvas && canvas.parentNode && typeof canvas.parentNode.setAttribute === "function") {
-        var incomingWaterEntryCausticBytes = 0;
-        var incomingWaterEntries = Array.isArray(bundle && bundle.waterSystems) ? bundle.waterSystems : [];
-        for (var iwe = 0; iwe < incomingWaterEntries.length; iwe += 1) {
-          var iweEntry = incomingWaterEntries[iwe];
-          incomingWaterEntryCausticBytes = Math.max(incomingWaterEntryCausticBytes, iweEntry && typeof iweEntry.causticsWGSL === "string" ? iweEntry.causticsWGSL.trim().length : 0);
-        }
-        var incomingSourceKeys = incomingWaterShaderSourcesByID && typeof incomingWaterShaderSourcesByID === "object" ? Object.keys(incomingWaterShaderSourcesByID) : [];
-        queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-incoming-entry-caustic-source-bytes", String(incomingWaterEntryCausticBytes));
-        queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-incoming-shader-systems", String(incomingSourceKeys.length));
-      }
-      if (bundle && Array.isArray(bundle.waterSystems)) {
-        bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
-        bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
-      }
-      var preparedScene = typeof prepareScene === "function"
-        ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
-          mount: canvas && canvas.parentNode || null,
-          sentinels: canvas && canvas.parentNode && canvas.parentNode.__gosxScene3DSentinels || null,
-        })
-        : null;
-      if (preparedScene) {
-        var waterShaderSourcesByID = bundle && bundle.waterShaderSourcesByID;
-        lastPreparedScene = preparedScene;
-        bundle = preparedScene.ir || bundle;
-        if (waterShaderSourcesByID && Object.keys(waterShaderSourcesByID).length > 0 && bundle) {
-          bundle.waterShaderSourcesByID = waterShaderSourcesByID;
-        }
-        if (bundle && Array.isArray(bundle.waterSystems)) {
-          bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
-          if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
-            bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
-          }
-        }
-        if (canvas && canvas.parentNode) {
-          canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
-        }
-        hasPBRData = Boolean(
-          bundle.worldMeshPositions &&
-          bundle.worldMeshNormals &&
-          Array.isArray(bundle.meshObjects) &&
-          bundle.meshObjects.length > 0
-        );
-        hasPointsData = (Array.isArray(bundle.points) && bundle.points.length > 0) ||
-          (Array.isArray(bundle.computeParticles) && bundle.computeParticles.length > 0);
-        hasInstancedData = Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0;
-        hasWorldLines = hasWorldLineData(bundle);
-        hasScreenLines = hasScreenLineData(bundle);
-        hasSurfaces = hasSurfaceData(bundle);
-        hasLabels = hasLabelData(bundle);
-        hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
-      }
-      webGPUBeginRetainedMeshFrame(meshState, bundle);
-      webGPUPrepareMaterialFrame(uniformState.materialFrame, device, bundle, meshState.retainedMeshAttributeEpoch, function(usage, size) { return wgpuCreateTrackedBuffer(meshState, device, usage, size); }, destroyRendererGPUResource, meshState.pointsEntryGPUBuffers);
-      meshState.instancedCacheOwnerEpoch += 1;
-      webGPUSweepInstancedCacheOwners(drawState, device);
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.terrain)) && !skyResources.renderer && !oceanResources.renderer) {
-        webGPUSweepRetainedMeshBuffers(meshState);
-        return "empty";
-      }
-
-      var width = canvas.width;
-      var height = canvas.height;
-      if (width <= 0 || height <= 0) return "empty";
-
-      // Opt-in perf instrumentation. Mirrors the WebGL renderer: when
-      // window.__gosx_scene3d_perf is truthy, emit performance.mark +
-      // measure pairs so a PerformanceObserver (installed by gosx perf's
-      // instrument.js) can collect per-frame wall-clock durations.
-      var perfEnabled = typeof window !== "undefined" && window.__gosx_scene3d_perf === true;
-      if (perfEnabled) {
-        performance.mark("scene3d-render-start");
-      }
-
-      // Reconfigure the context ONLY if the surface actually changed (see
-      // configureWebGPUCanvas: an unconditional configure() here was a per-frame
-      // swapchain re-creation and a hard stall on Metal).
-      configureWebGPUCanvas(telemetryState, device, canvas);
-
-      // Determine post-processing. postFXForceDisabled (set by
-      // disablePostProcessing(), the frame-error resilience "demote" step)
-      // permanently overrides the authored post-FX chain for this renderer
-      // instance — a scene that persistently fails post-FX allocation/
-      // validation retries RAW rendering instead of drawing dead frames
-      // forever with a poisoned post-FX target.
-      bundle = sceneAtmosphereBundle(bundle, frameMeta);
-      var postEffects = (Array.isArray(bundle.postEffects) ? bundle.postEffects : []).filter(function(effect) { return !pipelineGuard.disabled.has(effect.kind); });
-      postEffects = sceneSpecularBloomEffects(bundle, postEffects, "webgpu", hasWorldLines || hasScreenLines || hasSurfaces || hasPointsData || hasWaterData || !!(bundle.environment && (bundle.environment.ocean || bundle.environment.clouds)), canvas.parentNode);
-      var authoredPostEffects = postEffects.length > 0;
-      var hasTransmission = sceneTransmissionPresent(bundle);
-      var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
-      transmissionSettings.screen = transmissionSettings.screen && hasTransmission && !s.postFXForceDisabled && !pipelineGuard.disabled.has("post");
-      if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
-      var usePostProcessing = postEffects.length > 0 && !s.postFXForceDisabled && !pipelineGuard.disabled.has("post");
-      pipeState.targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
-      pipeState.selectiveBloom = usePostProcessing && sceneSpecularBloomRequested(postEffects);
-
-      // Compute scaled render-target dimensions (PostFX memory cap).
-      var postFXMaxPixels = typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
-      var postfxFactor = usePostProcessing
-        ? resolvePostFXFactor(postFXMaxPixels, width * height)
-        : 1;
-      var scaledW = Math.max(1, Math.floor(width * postfxFactor));
-      var scaledH = Math.max(1, Math.floor(height * postfxFactor));
-      var sampleCount = resolveWebGPUSampleCount(drawState, bundle);
-      pipeState.activeSampleCount = sampleCount;
-      pipeState.detailResources = sceneWebGPUEnsureDetailResources(device, pipeState.detailResources, bundle.materials, gpuRes.frameBindGroupLayout, gpuRes.materialBindGroupLayout, WGSL_PBR_FRAGMENT);
-      pipeState.detailEnabled = frameMeta?.detailEnabled !== false;
-      if (pipeState.detailEnabled && pipeState.detailResources) sceneWebGPUDetailBakeResources(device, pipeState.detailResources, gpuRes.placeholderView);
-      if (drawState.scenePicker && drawState.scenePicker.hasPending()) drawState.scenePicker.preparePipelines();
-      prepareBundlePipelines(s, device, bundle, preparedScene, postEffects, usePostProcessing, frameMeta?.warmup); temporalAA.prepare(postEffects, usePostProcessing, sampleCount); autoExposure.prepare(bundle.environment, usePostProcessing);
-      if (pipelineGuard.coreError) return "failed";
-      if (pipelineGuard.pending) return "pending";
-      // The standard mesh, shadow and post variants are prepared above. Other
-      // feature renderers can discover pipelines while encoding; defer their
-      // canvas commands until the entire frame has encoded successfully.
-      pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost(drawState, device).present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
-        bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds || bundle.environment.autoExposure || bundle.environment.terrain) ||
-        (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
-        postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST || effect.kind === "taa"; }));
-
-      // Upload per-frame uniforms (use scaled dims so point sprites and
-      // projection aspect match the actual render target, not the canvas).
-      var cam = uploadFrameUniforms(uniformState, gpuRes, device,
-        bundle.camera,
-        scaledW,
-        scaledH,
-        wgpuToneMapMode(bundle.environment, usePostProcessing)
-      );
-      uploadLights(uniformState, gpuRes, device, bundle.lights);
-      uploadFogUniforms(uniformState, gpuRes, device, bundle.environment);
-      uploadEnvUniforms(uniformState, gpuRes, device, selenaState.frame, bundle.environment);
-      if (temporalAA.beginFrame(postEffects, { postProcessing: usePostProcessing, perspective: !!cam && cam.kind !== "orthographic" && !(bundle.camera && bundle.camera.mode === "ortho2d"), width: scaledW, height: scaledH, samples: sampleCount, view: uniformState.scratchViewMatrix, projection: uniformState._frameUniformF, projectionOffset: 16, viewProjection: uniformState.scratchSelenaViewProjection, now: performance.now() })) device.queue.writeBuffer(gpuRes.frameUniformBuffer, 64, uniformState._frameUniformF, 16, 16);
-
-      // --- Shadow Pass ---
-      var shadowLightMatrices = [null, null];
-      var shadowLightIndices = [-1, -1];
-      var activeShadowCount = 0;
-
-      var encoder = device.createCommandEncoder({ label: "gosx-frame" }), crowdEncoder = encoder;
-      timingState.gpuTimingFrameSeq += 1;
-      drainDeferredGPUResources(timingState, false);
-      var gpuTimingToken = beginGPUFrameTiming(timingState, device, encoder);
-      // Per-pass stamps ride on the render-pass descriptors, so the slot must be
-      // chosen before the shadow pass opens.
-      pollGPUPassTimingReadback(timingState);
-      beginGPUPassTimingFrame(timingState, device); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUFrameTiming(timingState, encoder, gpuTimingToken); endGPUPassTimingFrame(timingState, encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
-      var scopedFrameErrors = beginWebGPUErrorScope(telemetryState, device);
-      // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
-      sceneWebGPUSelenaSurfaceFrame(pipeState.selenaSurfaces);
-      pipeState.detailResources = sceneWebGPUPrepareDetailFrame(device, pipeState.detailResources, bundle.materials, gpuRes.textureCache, {
-        placeholderView: gpuRes.placeholderView, enabled: pipeState.detailEnabled,
-      });
-      // Reuse uniforms when color or detail controls change; retire buffers and
-      // atlases that no longer belong to the active draw set.
-
-      var frameNowMS = Number.isFinite(frameMeta?.nowMS)
-        ? frameMeta.nowMS
-        : performance.now();
-      var frameActive = frameMeta?.active !== false;
-      var frameQualityEnabled = frameMeta?.qualityEnabled === true;
-      var frameQualityProfile = frameQualityEnabled && frameMeta.qualityProfile
-        ? frameMeta.qualityProfile
-        : null;
-      var frameQualityRevision = frameQualityEnabled
-        ? (Number.isFinite(frameMeta.qualityRevision)
-          ? frameMeta.qualityRevision
-          : (frameQualityProfile && Number.isFinite(frameQualityProfile.revision)
-            ? frameQualityProfile.revision
-            : (Number.isFinite(frameMeta.revision) ? frameMeta.revision : 0)))
-        : 0;
-      var frameTimeSeconds = frameNowMS / 1000;
-      // Shader time is seekable; telemetry and compute retain wall time.
-      selenaState.frame.time = frameMeta?.sceneTime ?? frameTimeSeconds;
-      selenaState.frame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
-      var computeParticleRecords = updateComputeParticleSystems(drawState, device, bundle.computeParticles, encoder, frameTimeSeconds);
-      var computedMorphStats = updateComputedMorphMeshes(meshState, device, bundle, encoder);
-      temporalAA.capturePreviousSkins(encoder, bundle.meshObjects); var elioSkinStats = updateElioSkinnedMeshes(meshState, device, bundle, encoder); window.__gosx_scene3d_ocean_fft_api?.frame(oceanResources, { device: device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaState.frame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
-      var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(meshState, device, bundle) : null;
-      drawState.activePickMeshPositions = pbrSceneBuffers;
-      if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
-        bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
-        bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
-      }
-      var waterDebugMode = sceneWebGPUWaterDebugMode(canvas);
-      var waterUpdateStats = sceneWebGPUWaterDebugSkipsUpdate(waterDebugMode)
-        ? updateWaterSystems([], encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH, waterState, device)
-        : updateWaterSystems(bundle.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH, waterState, device);
-      // After frame uniform upload, cull before render passes.
-      // Meshes without a cull kernel retain draw-all behavior.
-      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
-      var instancedDrawList = hasInstancedData
-        ? buildInstancedDrawList(drawState, device, bundle, materials)
-        : { opaque: [], alpha: [], additive: [] };
-      var gpuDriven = webGPUGPUDrivenHost(drawState, device);
-      gpuDriven.beginFrame(bundle, encoder, { viewProjection: uniformState.scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: pipeState.targetFormat, specular: pipeState.selectiveBloom, opaque: pipeState.detailResources ? instancedDrawList.opaque.filter(function(mesh = Object.create(null)) {
-        var material = instancedMeshMaterial(mesh, bundle.materials);
-        return !material || !material.detail;
-      }) : instancedDrawList.opaque });
-      var crowd = webGPUCrowdHost(drawState, device);
-      // The crowd's frustum cull passes (the camera's and each light's) go in a command buffer of their own, submitted before the
-      // frame's: on Metal (Apple M4 Pro, Chrome 157) a command buffer that holds them and the frame-end timestamp fails with "Insufficient
-      // Memory" and loses the device. Dawn records each submit as one Metal command buffer. The occlusion cull reads this frame's depth.
-      crowdEncoder = bundle.gpuDriven ? device.createCommandEncoder({ label: "gosx-crowd-cull" }) : encoder;
-      crowd.beginFrame(bundle, crowdEncoder, { now: selenaState.frame.time, viewProjection: uniformState.scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: pipeState.targetFormat, specular: pipeState.selectiveBloom });
-      updateInstancedCullSystems(drawState, device, bundle.instancedMeshes, encoder, uniformState.scratchSelenaViewProjection);
-      var webGPUCullTotals = webGPUSummarizeCullSystems(drawState, device);
-
-      var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
-      var sceneBounds = null;
-      var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
-      var shadowFrame = { bundle: bundle, camera: cam, maxPixels: shadowMaxPixels, gpuDriven: gpuDriven, crowd: crowd, crowdEncoder: crowdEncoder, aspect: scaledW / scaledH, buffers: pbrSceneBuffers, matrices: shadowLightMatrices, indices: shadowLightIndices };
-
-      for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
-        var light = lightArray[li];
-        if (!wgpuShadowCaster(light)) continue;
-
-        if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(drawState, device, bundle);
-
-        // Projection validation happens before authored-order slot selection.
-        // A malformed or unsupported spot consumes no slot and cannot crowd
-        // out a later eligible light.
-        var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
-        if (!rawLightMatrix) continue;
-
-        renderLightShadowCascades(encoder, light, li, activeShadowCount, rawLightMatrix, sceneBounds, shadowFrame);
-        activeShadowCount++;
-      }
-
-      // A light removal or newly invalid spot releases its no-longer-active
-      // texture immediately. This mirrors WebGL slot retirement instead of
-      // retaining stale GPU allocations until whole-renderer disposal.
-      for (var staleShadowSlot = activeShadowCount; staleShadowSlot < drawState.shadowSlots.length; staleShadowSlot++) {
-        if (drawState.shadowSlots[staleShadowSlot]) {
-          destroyRendererGPUResource(drawState.shadowSlots[staleShadowSlot].texture);
-          drawState.shadowSlots[staleShadowSlot] = null;
-        }
-      }
-
-      pipeState.pbrShadowsActive = activeShadowCount > 0;
-      uploadShadowUniforms(uniformState, gpuRes, device, drawState.shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights); sceneSelenaFrameLighting(selenaState.frame, cam, uniformState.scratchViewMatrix, bundle, drawState.shadowSlots, shadowLightIndices, shadowLightMatrices, "gpu");
-
-      // Create frame bind group.
-      var shadowView0 = drawState.shadowSlots[0] ? drawState.shadowSlots[0].view : null;
-      var shadowView1 = drawState.shadowSlots[1] ? drawState.shadowSlots[1].view : null;
-      if (!uniformState.transmissionResources) uniformState.transmissionResources = wgpuCreateTransmissionResources(device);
-      uniformState.transmissionView = uniformState.transmissionResources.prepare(scaledW, scaledH, pipeState.targetFormat, transmissionSettings);
-      if (!uniformState.transmissionView) uniformState.transmissionResources.fallback();
-      sceneTransmissionPublish(canvas.parentNode, hasTransmission ? uniformState.transmissionView ? "screen" : "environment" : "none");
-      var frameBindGroup = createFrameBindGroup(uniformState, gpuRes, device, shadowView0, shadowView1);
-      var waterObjectSceneTextureStats = sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)
-        ? renderWaterObjectSceneTexturePasses([], encoder, bundle, materials, frameBindGroup, pbrSceneBuffers, scaledW, scaledH, !usePostProcessing, waterState, device)
-        : renderWaterObjectSceneTexturePasses(
-          waterUpdateStats.records,
-          encoder,
-          bundle,
-          materials,
-          frameBindGroup,
-          pbrSceneBuffers,
-          scaledW,
-          scaledH,
-          !usePostProcessing, waterState, device
-        );
-      waterUpdateStats.waterObjectTexturePasses += waterObjectSceneTextureStats.waterObjectTexturePasses;
-      waterUpdateStats.waterObjectTextureTargets += waterObjectSceneTextureStats.waterObjectTextureTargets;
-      waterUpdateStats.waterObjectTexturePixels += waterObjectSceneTextureStats.waterObjectTexturePixels;
-      waterUpdateStats.waterObjectTextureWidth = Math.max(waterUpdateStats.waterObjectTextureWidth || 0, waterObjectSceneTextureStats.waterObjectTextureWidth || 0);
-      waterUpdateStats.waterObjectTextureHeight = Math.max(waterUpdateStats.waterObjectTextureHeight || 0, waterObjectSceneTextureStats.waterObjectTextureHeight || 0);
-      waterUpdateStats.waterObjectTexturePixelBudget = Math.max(waterUpdateStats.waterObjectTexturePixelBudget || 0, waterObjectSceneTextureStats.waterObjectTexturePixelBudget || 0);
-      waterUpdateStats.waterObjectTextureMeshPasses += waterObjectSceneTextureStats.waterObjectTextureMeshPasses;
-      waterUpdateStats.waterObjectTextureMeshDrawCalls += waterObjectSceneTextureStats.waterObjectTextureMeshDrawCalls;
-      waterUpdateStats.waterObjectTextureSelenaDrawCalls += waterObjectSceneTextureStats.waterObjectTextureSelenaDrawCalls;
-      waterUpdateStats.waterObjectTextureFallbackPasses += waterObjectSceneTextureStats.waterObjectTextureFallbackPasses;
-      waterUpdateStats.waterObjectTextureCandidateObjects += waterObjectSceneTextureStats.waterObjectTextureCandidateObjects;
-      waterUpdateStats.waterObjectTextureSelectedObjects += waterObjectSceneTextureStats.waterObjectTextureSelectedObjects;
-      waterUpdateStats.waterObjectTextureFallbackMissingObjects += waterObjectSceneTextureStats.waterObjectTextureFallbackMissingObjects;
-      waterUpdateStats.waterObjectTextureFallbackMissingResources += waterObjectSceneTextureStats.waterObjectTextureFallbackMissingResources;
-      waterUpdateStats.waterObjectTextureCandidateProfile = waterObjectSceneTextureStats.waterObjectTextureCandidateProfile || waterUpdateStats.waterObjectTextureCandidateProfile;
-
-      // --- Main Render Target ---
-      // @ts-ignore TS7034 -- target handles are nullable before the post/direct branch selects them.
-      var mainColorView;
-      // @ts-ignore TS7034 -- the optional MSAA resolve handle is assigned by the target branch.
-      var mainResolveView = null;
-      // @ts-ignore TS7034 -- depth handle follows the selected main target.
-      var mainDepthTargetView;
-      var postTarget = null;
-
-      if (usePostProcessing) {
-        if (!s.postProcessor) {
-          s.postProcessor = wgpuCreatePostProcessor(device, presentationFormat, function(message: any) { reportWebGPUFrameError(telemetryState, message); }, function(material, owner, renderContext) {
-            return sceneSelenaUniformData(material, owner, renderContext, selenaState.frame);
-          });
-        }
-        postTarget = s.postProcessor.getSceneTarget(scaledW, scaledH);
-        if (sampleCount > 1) {
-          mainColorView = ensureMSAAColor(pipeState, device, pipeState.targetFormat, scaledW, scaledH, sampleCount);
-          mainResolveView = postTarget.colorView;
-          ensureMainDepth(pipeState, device, scaledW, scaledH, sampleCount);
-          mainDepthTargetView = pipeState.mainDepthView;
-        } else {
-          mainColorView = postTarget.colorView;
-          mainDepthTargetView = postTarget.depthView;
-        }
-      } else {
-        var currentView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
-        if (sampleCount > 1) {
-          mainColorView = ensureMSAAColor(pipeState, device, pipeState.targetFormat, width, height, sampleCount);
-          mainResolveView = currentView;
-        } else {
-          mainColorView = currentView;
-        }
-        ensureMainDepth(pipeState, device, width, height, sampleCount);
-        mainDepthTargetView = pipeState.mainDepthView;
-      }
-
-      // Clear color.
-      var bg = sceneRenderBackground(bundle.background, usePostProcessing && !authoredPostEffects ? postEffects[0] : null);
-
-
-      var mainColorAttachment = {
-        view: mainColorView,
-        loadOp: "clear",
-        storeOp: "store",
-        clearValue: { r: bg[0], g: bg[1], b: bg[2], a: bg[3] },
-      };
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (mainResolveView) {
-        mainColorAttachment.resolveTarget = mainResolveView;
-      }
-
-      const specularAttachment = s.specularTarget.prepare(scaledW, scaledH, sampleCount, pipeState.selectiveBloom);
-      if (s.postProcessor) s.postProcessor.setSpecularSource(s.specularTarget.view());
-      var mainPassDescriptor = {
-        colorAttachments: specularAttachment ? [mainColorAttachment, specularAttachment] : [mainColorAttachment],
-        depthStencilAttachment: {
-          view: mainDepthTargetView,
-          depthLoadOp: "clear",
-          depthClearValue: 1.0,
-          depthStoreOp: "store",
-        },
-      };
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites(timingState, "main");
-      if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
-      crowd.prepareMainPass(mainPassDescriptor);
-      gpuDriven.prepareMainPass(mainPassDescriptor);
-      var mainPass = encoder.beginRenderPass(mainPassDescriptor);
-      var skyState = "none";
-      if (bundle.environment && bundle.environment.sky) {
-        if (!skyResources.renderer) skyResources.renderer = wgpuCreateSkyRenderer(device, gpuRes.textureCache, gpuRes.placeholderView, gpuRes.placeholderCubeView);
-        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: uniformState.scratchViewMatrix, camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom });
-      }
-      sceneCloudWebGPUDraw(skyResources, device, mainPass, { environment: bundle.environment, meta: frameMeta, view: uniformState.scratchViewMatrix, camera: cam, aspect: scaledW/scaledH, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, timeSeconds: frameTimeSeconds });
-      if (canvas.parentNode) queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-sky", skyState);
-
-
-      var drawList = hasPBRData
-        ? (preparedScene && preparedScene.pbrPasses ? preparedScene.pbrPasses : buildDrawList(bundle))
-        : { opaque: [], alpha: [], additive: [] };
-      var thickLineRecord = hasWorldLines ? webGPUThickLineRecord(drawState, bundle) : null;
-      var worldLineEntries = hasWorldLines && !thickLineRecord ? webGPUWorldLinePasses(drawState, bundle) : [];
-      var pointStats = webGPUPlannedPointStats(bundle, computeParticleRecords);
-      var customMaterialStats = webGPUCustomMaterialStats(materials);
-      wgpuResetFrameStats(telemetryState.frameStats, telemetryState.webGPUFrameProof);
-      telemetryState.frameStats.renderer = "webgpu";
-      telemetryState.frameStats.pointEntries = pointStats.pointEntries;
-      telemetryState.frameStats.pointInstances = pointStats.pointInstances;
-      telemetryState.frameStats.computeParticleEntries = pointStats.computeParticleEntries;
-      telemetryState.frameStats.computeParticleInstances = pointStats.computeParticleInstances;
-      telemetryState.frameStats.meshObjects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects.length : 0;
-      telemetryState.frameStats.retainedMeshObjects = sceneNumber(bundle.retainedMeshObjectCount, 0);
-      telemetryState.frameStats.retainedMeshVertices = sceneNumber(bundle.retainedMeshVertexCount, 0);
-      telemetryState.frameStats.worldBakedMeshObjects = sceneNumber(bundle.worldBakedMeshObjectCount, 0);
-      telemetryState.frameStats.worldBakedMeshVertices = sceneNumber(bundle.worldBakedMeshVertexCount, 0);
-      telemetryState.frameStats.bundleBuildCPUms = sceneNumber(bundle.bundleBuildCPUms, 0);
-      telemetryState.frameStats.plannerCPUms = sceneNumber(bundle.plannerTelemetry && bundle.plannerTelemetry.lastPlannerCPUms, 0);
-      telemetryState.frameStats.plannerFullVertexHashScans = sceneNumber(bundle.plannerTelemetry && bundle.plannerTelemetry.fullVertexHashScans, 0);
-        // meshDrawCalls is filled in below by drawPBRObjects (mutated in place
-        // across the opaque/alpha/additive passes, mirroring how waterUpdateStats
-        // accumulates across many draw functions within one frame) -- it counts
-        // actual pass.draw() dispatches, i.e. SUBMITTED mesh objects only.
-        // meshViewCulled is the CPU-frustum-culled complement: bundle.meshObjects
-        // entries buildDrawList excluded via obj.viewCulled before drawPBRObjects
-        // ever saw them. meshObjects (above) counts BOTH -- see the comment on
-        // webGPUCountViewCulledMeshObjects for why that ambiguity is the bug this
-        // pair of counters exists to close.
-      telemetryState.frameStats.meshDrawCalls = 0;
-      telemetryState.frameStats.meshViewCulled = webGPUCountViewCulledMeshObjects(bundle);
-      telemetryState.frameStats.meshUndrawable = webGPUCountUndrawableMeshObjects(bundle);
-      telemetryState.frameStats.skinnedMeshObjects = webGPUCountSkinnedMeshes(bundle);
-      telemetryState.frameStats.computedMorphDispatches = computedMorphStats.computedMorphDispatches;
-      telemetryState.frameStats.computedMorphVertices = computedMorphStats.computedMorphVertices;
-      telemetryState.frameStats.computedMorphKernel = computedMorphStats.computedMorphKernel;
-      telemetryState.frameStats.elioSkinningDispatches = elioSkinStats.elioSkinningDispatches;
-      telemetryState.frameStats.elioSkinningVertices = elioSkinStats.elioSkinningVertices;
-      telemetryState.frameStats.elioSkinningKernel = elioSkinStats.elioSkinningKernel;
-      telemetryState.frameStats.instancedMeshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
-      telemetryState.frameStats.instancedInstances = webGPUPlannedInstanceCount(bundle.instancedMeshes);
-      telemetryState.frameStats.cullDispatches = webGPUCullTotals.dispatches;
-      telemetryState.frameStats.cullSkippedDispatches = webGPUCullTotals.skipped;
-      telemetryState.frameStats.cullBuiltinSystems = webGPUCullTotals.builtin;
-      telemetryState.frameStats.lineEntries = thickLineRecord ? 1 : worldLineEntries.length;
-      telemetryState.frameStats.surfaceEntries = Array.isArray(bundle.surfaces) ? bundle.surfaces.length : 0;
-      telemetryState.frameStats.waterSystems = waterUpdateStats.waterSystems;
-      telemetryState.frameStats.waterCells = waterUpdateStats.waterCells;
-      telemetryState.frameStats.waterVertices = waterUpdateStats.waterVertices;
-      telemetryState.frameStats.waterComputeDispatches = waterUpdateStats.waterComputeDispatches;
-      telemetryState.frameStats.waterSimulationTicks = waterUpdateStats.waterSimulationTicks;
-      telemetryState.frameStats.waterSolverSubsteps = waterUpdateStats.waterSolverSubsteps;
-      telemetryState.frameStats.waterDroppedTicks = waterUpdateStats.waterDroppedTicks;
-      telemetryState.frameStats.waterDroppedTicksThisFrame = waterUpdateStats.waterDroppedTicksThisFrame;
-      telemetryState.frameStats.waterSimulationCatchUpCap = waterUpdateStats.waterSimulationCatchUpCap;
-      telemetryState.frameStats.waterSimulationTickSeq = waterUpdateStats.waterSimulationTickSeq;
-      telemetryState.frameStats.waterSolverSubstepSeq = waterUpdateStats.waterSolverSubstepSeq;
-      telemetryState.frameStats.waterNormalDispatches = waterUpdateStats.waterNormalDispatches;
-      telemetryState.frameStats.waterNormalDispatchSeq = waterUpdateStats.waterNormalDispatchSeq;
-      telemetryState.frameStats.waterSampledStateCopies = waterUpdateStats.waterSampledStateCopies;
-      telemetryState.frameStats.waterSampledStateSyncSeq = waterUpdateStats.waterSampledStateSyncSeq;
-      // Publish the at-rest and upload counters returned by updateWaterSystems.
-      telemetryState.frameStats.waterAtRestSystems = waterUpdateStats.waterAtRestSystems;
-      telemetryState.frameStats.waterRestSubstepsSkipped = waterUpdateStats.waterRestSubstepsSkipped;
-      telemetryState.frameStats.waterUniformUploads = waterUpdateStats.waterUniformUploads;
-      telemetryState.frameStats.waterUniformUploadsSkipped = waterUpdateStats.waterUniformUploadsSkipped;
-      telemetryState.frameStats.waterQualityTier = waterUpdateStats.waterQualityTier;
-      telemetryState.frameStats.waterQualityRevision = waterUpdateStats.waterQualityRevision;
-      telemetryState.frameStats.waterSurfaceResolution = waterUpdateStats.waterSurfaceResolution;
-      telemetryState.frameStats.waterActiveCausticsResolution = waterUpdateStats.waterActiveCausticsResolution;
-      telemetryState.frameStats.waterActiveObjectShadowResolution = waterUpdateStats.waterActiveObjectShadowResolution;
-      telemetryState.frameStats.waterActiveObjectTextureWidth = waterUpdateStats.waterActiveObjectTextureWidth;
-      telemetryState.frameStats.waterActiveObjectTextureHeight = waterUpdateStats.waterActiveObjectTextureHeight;
-      telemetryState.frameStats.waterActiveObjectTexturePixelBudget = waterUpdateStats.waterActiveObjectTexturePixelBudget;
-      telemetryState.frameStats.waterQualityAllocationPending = waterUpdateStats.waterQualityAllocationPending;
-      telemetryState.frameStats.waterQualityAllocationFailures = waterUpdateStats.waterQualityAllocationFailures;
-      telemetryState.frameStats.waterQualityAllocationRetryFrame = waterUpdateStats.waterQualityAllocationRetryFrame;
-      telemetryState.frameStats.waterQualityDPRCap = waterUpdateStats.waterQualityDPRCap;
-      telemetryState.frameStats.waterExpensivePassCadence = waterUpdateStats.waterExpensivePassCadence;
-      telemetryState.frameStats.waterAuthoredComputeSystems = waterUpdateStats.waterAuthoredComputeSystems;
-      telemetryState.frameStats.waterAuthoredComputeDispatches = waterUpdateStats.waterAuthoredComputeDispatches;
-      telemetryState.frameStats.waterAuthoredComputeFallbacks = waterUpdateStats.waterAuthoredComputeFallbacks;
-      telemetryState.frameStats.waterSelenaComputeSystems = waterUpdateStats.waterSelenaComputeSystems;
-      telemetryState.frameStats.waterSelenaComputeDispatches = waterUpdateStats.waterSelenaComputeDispatches;
-      telemetryState.frameStats.waterSelenaComputeFallbacks = waterUpdateStats.waterSelenaComputeFallbacks;
-      telemetryState.frameStats.waterDropDispatches = waterUpdateStats.waterDropDispatches;
-      telemetryState.frameStats.waterDropDispatchTotal = waterUpdateStats.waterDropDispatchTotal;
-      telemetryState.frameStats.waterLastDropEventID = waterUpdateStats.waterLastDropEventID;
-      telemetryState.frameStats.waterObjectSystems = waterUpdateStats.waterObjectSystems;
-      telemetryState.frameStats.waterObjectDispatches = waterUpdateStats.waterObjectDispatches;
-      telemetryState.frameStats.waterObjectEventDispatches = waterUpdateStats.waterObjectEventDispatches;
-      telemetryState.frameStats.waterLastObjectDisplacementEventID = waterUpdateStats.waterLastObjectDisplacementEventID;
-      telemetryState.frameStats.waterObjectSpheres = waterUpdateStats.waterObjectSpheres;
-      telemetryState.frameStats.waterRoundedSystems = waterUpdateStats.waterRoundedSystems;
-      telemetryState.frameStats.waterCornerRadius = waterUpdateStats.waterCornerRadius;
-      telemetryState.frameStats.waterLightDirX = waterUpdateStats.waterLightDirX;
-      telemetryState.frameStats.waterLightDirY = waterUpdateStats.waterLightDirY;
-      telemetryState.frameStats.waterLightDirZ = waterUpdateStats.waterLightDirZ;
-      telemetryState.frameStats.waterCausticSystems = waterUpdateStats.waterCausticSystems;
-      telemetryState.frameStats.waterCausticPasses = waterUpdateStats.waterCausticPasses;
-      telemetryState.frameStats.waterCausticTexturePixels = waterUpdateStats.waterCausticTexturePixels;
-      telemetryState.frameStats.waterAuthoredCausticSystems = waterUpdateStats.waterAuthoredCausticSystems;
-      telemetryState.frameStats.waterAuthoredCausticPasses = waterUpdateStats.waterAuthoredCausticPasses;
-      telemetryState.frameStats.waterAuthoredCausticFallbacks = waterUpdateStats.waterAuthoredCausticFallbacks;
-      telemetryState.frameStats.waterAuthoredCausticFallbackReason = waterUpdateStats.waterAuthoredCausticFallbackReason;
-      telemetryState.frameStats.waterAuthoredCausticSourceBytes = waterUpdateStats.waterAuthoredCausticSourceBytes;
-      telemetryState.frameStats.waterEntryCausticSourceBytes = waterUpdateStats.waterEntryCausticSourceBytes;
-      telemetryState.frameStats.waterResolvedCausticSourceBytes = waterUpdateStats.waterResolvedCausticSourceBytes;
-      telemetryState.frameStats.waterAuthoredSurfaceSourceBytes = waterUpdateStats.waterAuthoredSurfaceSourceBytes;
-      telemetryState.frameStats.waterEntrySurfaceSourceBytes = waterUpdateStats.waterEntrySurfaceSourceBytes;
-      telemetryState.frameStats.waterResolvedSurfaceSourceBytes = waterUpdateStats.waterResolvedSurfaceSourceBytes;
-      telemetryState.frameStats.waterManifestShaderSystems = waterUpdateStats.waterManifestShaderSystems;
-      telemetryState.frameStats.waterManifestShaderFields = waterUpdateStats.waterManifestShaderFields;
-      telemetryState.frameStats.waterManifestCausticSourceBytes = waterUpdateStats.waterManifestCausticSourceBytes;
-      telemetryState.frameStats.waterManifestSurfaceSourceBytes = waterUpdateStats.waterManifestSurfaceSourceBytes;
-      telemetryState.frameStats.waterBundleShaderSystems = waterUpdateStats.waterBundleShaderSystems;
-      telemetryState.frameStats.waterBundleCausticSourceBytes = waterUpdateStats.waterBundleCausticSourceBytes;
-      telemetryState.frameStats.waterBundleSurfaceSourceBytes = waterUpdateStats.waterBundleSurfaceSourceBytes;
-      telemetryState.frameStats.waterObjectTexturePasses = waterUpdateStats.waterObjectTexturePasses;
-      telemetryState.frameStats.waterObjectTextureTargets = waterUpdateStats.waterObjectTextureTargets;
-      telemetryState.frameStats.waterObjectTexturePixels = waterUpdateStats.waterObjectTexturePixels;
-      telemetryState.frameStats.waterObjectTextureWidth = waterUpdateStats.waterObjectTextureWidth;
-      telemetryState.frameStats.waterObjectTextureHeight = waterUpdateStats.waterObjectTextureHeight;
-      telemetryState.frameStats.waterObjectTexturePixelBudget = waterUpdateStats.waterObjectTexturePixelBudget;
-      telemetryState.frameStats.waterObjectTextureMeshPasses = waterUpdateStats.waterObjectTextureMeshPasses;
-      telemetryState.frameStats.waterObjectTextureMeshDrawCalls = waterUpdateStats.waterObjectTextureMeshDrawCalls;
-      telemetryState.frameStats.waterObjectTextureSelenaDrawCalls = waterUpdateStats.waterObjectTextureSelenaDrawCalls;
-      telemetryState.frameStats.waterObjectTextureFallbackPasses = waterUpdateStats.waterObjectTextureFallbackPasses;
-      telemetryState.frameStats.waterObjectTextureCandidateObjects = waterUpdateStats.waterObjectTextureCandidateObjects;
-      telemetryState.frameStats.waterObjectTextureSelectedObjects = waterUpdateStats.waterObjectTextureSelectedObjects;
-      telemetryState.frameStats.waterObjectTextureFallbackMissingObjects = waterUpdateStats.waterObjectTextureFallbackMissingObjects;
-      telemetryState.frameStats.waterObjectTextureFallbackMissingResources = waterUpdateStats.waterObjectTextureFallbackMissingResources;
-      telemetryState.frameStats.waterObjectTextureCandidateProfile = waterUpdateStats.waterObjectTextureCandidateProfile;
-      telemetryState.frameStats.waterObjectShadowPasses = waterUpdateStats.waterObjectShadowPasses;
-      telemetryState.frameStats.waterObjectShadowTexturePixels = waterUpdateStats.waterObjectShadowTexturePixels;
-      telemetryState.frameStats.waterObjectShadowMeshPasses = waterUpdateStats.waterObjectShadowMeshPasses;
-      telemetryState.frameStats.waterObjectShadowMeshDrawCalls = waterUpdateStats.waterObjectShadowMeshDrawCalls;
-      telemetryState.frameStats.waterAuthoredObjectShadowPasses = waterUpdateStats.waterAuthoredObjectShadowPasses;
-      telemetryState.frameStats.waterAuthoredObjectShadowFallbacks = waterUpdateStats.waterAuthoredObjectShadowFallbacks;
-      telemetryState.frameStats.waterAuthoredObjectMeshShadowPasses = waterUpdateStats.waterAuthoredObjectMeshShadowPasses;
-      telemetryState.frameStats.waterAuthoredObjectMeshShadowFallbacks = waterUpdateStats.waterAuthoredObjectMeshShadowFallbacks;
-      telemetryState.frameStats.waterObjectShadowFallbackPasses = waterUpdateStats.waterObjectShadowFallbackPasses;
-      telemetryState.frameStats.waterObjectShadowFallbackMissingObjects = waterUpdateStats.waterObjectShadowFallbackMissingObjects;
-      telemetryState.frameStats.waterObjectShadowFallbackMissingResources = waterUpdateStats.waterObjectShadowFallbackMissingResources;
-      telemetryState.frameStats.waterReflectionSystems = waterUpdateStats.waterReflectionSystems;
-      telemetryState.frameStats.waterRefractionSystems = waterUpdateStats.waterRefractionSystems;
-      telemetryState.frameStats.waterObjectOpticsSystems = waterUpdateStats.waterObjectOpticsSystems;
-      telemetryState.frameStats.waterSelenaCausticPasses = waterUpdateStats.waterSelenaCausticPasses;
-      telemetryState.frameStats.waterSelenaCausticFallbacks = waterUpdateStats.waterSelenaCausticFallbacks;
-      telemetryState.frameStats.waterSelenaObjectShadowPasses = waterUpdateStats.waterSelenaObjectShadowPasses;
-      telemetryState.frameStats.waterSelenaObjectShadowFallbacks = waterUpdateStats.waterSelenaObjectShadowFallbacks;
-      telemetryState.frameStats.waterSelenaObjectMeshShadowPasses = waterUpdateStats.waterSelenaObjectMeshShadowPasses;
-      telemetryState.frameStats.waterSelenaObjectMeshShadowFallbacks = waterUpdateStats.waterSelenaObjectMeshShadowFallbacks;
-      telemetryState.frameStats.customMaterialFallbacks = customMaterialStats.customMaterialFallbacks;
-      telemetryState.frameStats.customWGSLFallbacks = customMaterialStats.customWGSLFallbacks;
-      telemetryState.frameStats.customUniformFallbacks = customMaterialStats.customUniformFallbacks;
-
-      // --- Render bundle decision ---
-      //
-      // Non-bundleable paths retain the direct encoder.
-      var bundleableDraws = (hasPBRData && (drawList.opaque.length + drawList.alpha.length + drawList.additive.length) > 0) ||
-        (hasInstancedData && (instancedDrawList.opaque.length + instancedDrawList.alpha.length + instancedDrawList.additive.length) > 0);
-      var bundleReason = sceneWebGPUBundleIneligibleReason({
-        // Both halves must exist. An implementation that can build a bundle but
-        // not replay one would leave the frame blank.
-        disabled: Boolean(frameMeta?.frameRequest) || pipeState.selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() || Boolean(bundle.environment && bundle.environment.wind) ||
-          typeof device.createRenderBundleEncoder !== "function" ||
-          typeof mainPass.executeBundles !== "function",
-        gpuDrivenSplit: gpuDriven.splitsMainPass(),
-        hasWater: hasWaterData || Boolean(bundle.environment && bundle.environment.ocean),
-        hasPoints: hasPointsData,
-        hasLabels: hasLabels,
-        hasScreenLines: hasScreenLines,
-        hasSurfaces: hasSurfaces,
-        hasWorldLines: hasWorldLines,
-        hasDynamicMeshes: sceneWebGPUDrawListHasDynamicMesh(drawList, function(obj) {
-          return webGPUObjectBlocksBundle(obj, materials);
-        }),
-        hasBundleableDraws: bundleableDraws,
-      });
-      telemetryState.frameStats.bundleState = "direct";
-      telemetryState.frameStats.bundleReason = bundleReason;
-      telemetryState.frameStats.bundleEncodes = 0;
-      telemetryState.frameStats.bundleReplays = 0;
-      telemetryState.frameStats.bundleDraws = 0;
-
-      if (bundleReason === "") {
-        if (!webGPUBundleCache) webGPUBundleCache = createSceneWebGPUBundleCache();
-        var bundleLayoutKey = sceneWebGPUBundleLayoutKey(pipeState.targetFormat, "depth24plus", sampleCount);
-        var bundleContext = {
-          drawList: drawList,
-          instancedDrawList: instancedDrawList,
-          bundle: bundle,
-          materials: materials,
-          frameBindGroup: frameBindGroup,
-          pbrBuffers: pbrSceneBuffers,
-        };
-        var verdict = webGPUBundleCache.plan(bundleLayoutKey, function(recorder) {
-          encodeBundleableSceneDraws(drawState, device, recorder, bundleContext);
-        });
-        if (!verdict.eligible) {
-          bundleReason = verdict.reason;
-          telemetryState.frameStats.bundleReason = bundleReason;
-        } else if (verdict.reusable) {
-          mainPass.executeBundles([webGPUBundleCache.bundle()]);
-          webGPUBundleCache.markReplayed();
-          telemetryState.frameStats.bundleState = "replayed";
-        } else {
-          var bundleEncoder = device.createRenderBundleEncoder({
-            label: "gosx-scene-bundle",
-            colorFormats: [pipeState.targetFormat],
-            depthStencilFormat: "depth24plus",
-            sampleCount: sampleCount,
-          });
-          encodeBundleableSceneDraws(drawState, device, bundleEncoder, bundleContext);
-          var finishedBundle = bundleEncoder.finish({ label: "gosx-scene-bundle" });
-          webGPUBundleCache.adopt(bundleLayoutKey, finishedBundle);
-          mainPass.executeBundles([finishedBundle]);
-          telemetryState.frameStats.bundleState = "encoded";
-        }
-        if (telemetryState.frameStats.bundleState !== "direct") {
-          var bundleStats = webGPUBundleCache.stats();
-          telemetryState.frameStats.bundleEncodes = bundleStats.encodes;
-          telemetryState.frameStats.bundleReplays = bundleStats.replays;
-          telemetryState.frameStats.bundleDraws = bundleStats.draws;
-        }
-      }
-
-      // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: function(name: any, value: any) { queueWebGPUAttribute(telemetryState, name, value); }, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: uniformState.scratchViewMatrix, aspect: scaledW/scaledH, viewProj: uniformState.scratchSelenaViewProjection, timeSeconds: selenaState.frame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, textureCache: gpuRes.textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} }; window.__gosx_scene3d_terrain_api?.webgpu(terrainResources, mainPass, { device: device, environment: bundle.environment, camera: cam, viewProj: uniformState.scratchSelenaViewProjection, height: scaledH, frameGroup: frameBindGroup, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: function(m: any, r: any) { return materialUniformData(uniformState, m, r); }, time: selenaState.frame.time, frameBuffer: gpuRes.frameUniformBuffer, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom, textureCache: gpuRes.textureCache, load: wgpuLoadTexture, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, attr: function(name: any, value: any) { queueWebGPUAttribute(telemetryState, name, value); } });
-      // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
-      const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: uniformState.scratchViewMatrix, proj: uniformState.scratchProjMatrix, camera: cam, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: uniformState._frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(uniformState, gpuRes, device, [shadowView0, shadowView1, uniformState.iblResources.active && uniformState.iblResources.irradiance && uniformState.iblResources.irradiance.view, uniformState.iblResources.active && uniformState.iblResources.radiance && uniformState.iblResources.radiance.view, uniformState.iblResources.active && uniformState.iblResources.brdfLUT && uniformState.iblResources.brdfLUT.view, uniformState.envMapResources.active && uniformState.envMapResources.record && uniformState.envMapResources.record.view], buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(pipeState, device, "opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(drawState, device, pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; }; window.__gosx_scene3d_crowd_api?.webgpu(mainPass, { device: device, environment: bundle.environment, camera: cam, proj: uniformState.scratchProjMatrix, viewProj: uniformState.scratchSelenaViewProjection, height: scaledH, time: bundle.timeSeconds, frameGroup: frameBindGroup, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: function(m: any, r: any) { return materialUniformData(uniformState, m, r); }, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, mount: canvas.parentNode }); // Environment.Crowds (crowd-wgsl.ts)
-      if (telemetryState.frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
-        // Opaque pass.
-        if (drawList.opaque.length > 0) {
-          drawPBRObjects(drawState, device, mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, telemetryState.frameStats, frameMeta?.frameRequest);
-        }
-        telemetryState.frameStats.meshDrawCalls += crowd.drawColor(mainPass, frameBindGroup, materials);
-        if (instancedDrawList.opaque.length > 0) {
-          mainPass.setBindGroup(0, frameBindGroup);
-          drawInstancedMeshes(drawState, device, mainPass, instancedDrawList.opaque, materials, "opaque", true);
-        }
-        if (hasSurfaces) {
-          drawSurfaceEntries(drawState, device, mainPass, bundle, materials, "opaque", frameBindGroup);
-        }
-        if (thickLineRecord) {
-          drawThickWorldLineEntries(drawState, device, mainPass, thickLineRecord, "opaque", frameBindGroup);
-        } else if (worldLineEntries.length > 0) {
-          drawWorldLineEntries(drawState, device, mainPass, worldLineEntries, "opaque", frameBindGroup);
-        }
-
-        // Two-phase occlusion: end the early pass, cull against its depth, and
-        // draw the newly visible instances in a late pass that loads it.
-        mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
-        mainPass = crowd.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials);
-
-        prepareOceanReflection();
-        // The water surface writes depth before translucent world surfaces.
-        // A stele in front of the tide must remain visible after its HTML
-        // texture is composited, while rocks behind the tide stay occluded.
-        if (hasWaterData && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
-          Object.assign(telemetryState.frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup, waterState, device));
-          Object.assign(telemetryState.frameStats, drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam, waterState, device));
-          waterDrawnBeforeAlpha = true;
-        }
-        oceanOpts.drawn = wgpuOceanDraw(oceanResources, mainPass, oceanOpts);
-        if (uniformState.transmissionView && postTarget) {
-          mainPass.end();
-          uniformState.transmissionResources.capture(encoder, postTarget.colorView);
-          gpuDriven.resumeMainPass(mainPassDescriptor);
-          crowd.resumeMainPass(mainPassDescriptor);
-          mainColorAttachment.loadOp = "load";
-          if (specularAttachment) specularAttachment.loadOp = "load";
-          mainPassDescriptor.depthStencilAttachment.depthLoadOp = "load";
-          delete mainPassDescriptor["timestampWrites"];
-          mainPass = encoder.beginRenderPass(mainPassDescriptor);
-        }
-
-        // Alpha pass.
-        if (drawList.alpha.length > 0) {
-          drawPBRObjects(drawState, device, mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, telemetryState.frameStats, frameMeta?.frameRequest);
-        }
-        if (instancedDrawList.alpha.length > 0) {
-          mainPass.setBindGroup(0, frameBindGroup);
-          drawInstancedMeshes(drawState, device, mainPass, instancedDrawList.alpha, materials, "alpha", false);
-        }
-        if (hasSurfaces) {
-          drawSurfaceEntries(drawState, device, mainPass, bundle, materials, "alpha", frameBindGroup);
-        }
-        if (thickLineRecord) {
-          drawThickWorldLineEntries(drawState, device, mainPass, thickLineRecord, "alpha", frameBindGroup);
-        } else if (worldLineEntries.length > 0) {
-          drawWorldLineEntries(drawState, device, mainPass, worldLineEntries, "alpha", frameBindGroup);
-        }
-
-        // Additive pass.
-        if (drawList.additive.length > 0) {
-          drawPBRObjects(drawState, device, mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, telemetryState.frameStats, frameMeta?.frameRequest);
-        }
-        if (instancedDrawList.additive.length > 0) {
-          mainPass.setBindGroup(0, frameBindGroup);
-          drawInstancedMeshes(drawState, device, mainPass, instancedDrawList.additive, materials, "additive", false);
-        }
-        if (hasSurfaces) {
-          drawSurfaceEntries(drawState, device, mainPass, bundle, materials, "additive", frameBindGroup);
-        }
-        if (thickLineRecord) {
-          drawThickWorldLineEntries(drawState, device, mainPass, thickLineRecord, "additive", frameBindGroup);
-        } else if (worldLineEntries.length > 0) {
-          drawWorldLineEntries(drawState, device, mainPass, worldLineEntries, "additive", frameBindGroup);
-        }
-      }
-
-      if (hasWaterData && !waterDrawnBeforeAlpha && !sceneWebGPUWaterDebugSkipsDraw(waterDebugMode)) {
-        Object.assign(telemetryState.frameStats, drawWaterPoolEntries(mainPass, waterUpdateStats.records, frameBindGroup, waterState, device), drawWaterSystemEntries(mainPass, waterUpdateStats.records, frameBindGroup, cam, waterState, device));
-      }
-      if (!oceanOpts.drawn) { prepareOceanReflection(); wgpuOceanDraw(oceanResources, mainPass, oceanOpts); }
-
-      // Board label glyphs (M1 GPU-text slice 2). Drawn after the opaque/alpha
-      // board fills so the alpha-blended glyphs composite over the rects. Lives
-      // outside the (hasPBRData || …) block above so a labels-only board still
-      // paints text. blendMode "alpha", depthWriteEnabled false.
-      if (hasLabels) {
-        drawBoardLabels(drawState, device, mainPass, bundle, "alpha", false);
-      }
-
-      if (hasScreenLines) {
-        drawScreenLines(drawState, device, mainPass, bundle, frameBindGroup);
-      }
-
-      // Draw points.
-      if (hasPointsData) {
-        mainPass.setBindGroup(0, frameBindGroup);
-        // Create a dummy material bind group for group 1 (points pipeline layout requires it).
-        var dummyMatBG = createMaterialBindGroup(uniformState, gpuRes, meshState, device, null, false, gpuRes.defaultMaterialOwner);
-        mainPass.setBindGroup(1, dummyMatBG, [0]);
-        Object.assign(telemetryState.frameStats, drawPointsEntries(drawState, device, mainPass, bundle, cam, selenaState.frame.time));
-        mainPass = drawComputeParticlePasses(encoder, mainPass, mainPassDescriptor, frameBindGroup, computeParticleRecords, bundle.environment, frameTimeSeconds, mainDepthTargetView);
-      }
-
-      mainPass.end();
-
-      // GPU pick pass. Records only when a pick waits, and only ever touches
-      // its own ID and depth textures. Runs after the main pass so every vertex
-      // and instance-transform buffer the pick draws from already exists.
-      // Pick coordinates map onto the main render target, so use the same
-      // width/height the main pass used: scaled dimensions under post-FX,
-      // canvas dimensions otherwise.
-      if (drawState.scenePicker && drawState.scenePicker.hasPending()) {
-        drawState.scenePicker.recordPickPass(
-          encoder,
-          bundle,
-          usePostProcessing ? scaledW : width,
-          usePostProcessing ? scaledH : height
-        );
-      }
-
-      // Post-processing.
-      if (usePostProcessing && s.postProcessor) {
-        var screenView = wgpuDeferredCanvasView(pipelineGuard, gpuCtx);
-        var chain = temporalAA.resolve(encoder, postEffects, { colorView: postTarget.colorView, colorFormat: pipeState.targetFormat, depthView: mainDepthTargetView, samples: sampleCount, objects: bundle.meshObjects, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle }); autoExposure.apply(encoder, bundle.environment, postTarget, cam, frameNowMS);
-        Object.assign(telemetryState.frameStats, s.postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: uniformState.scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: temporalAA.velocityView() } }), temporalAA.stats(), autoExposure.stats());
-      }
-
-      endGPUFrameTiming(timingState, encoder, gpuTimingToken);
-      endGPUPassTimingFrame(timingState, encoder);
-      gpuDriven.finishEncoding(encoder);
-      crowd.finishEncoding(encoder);
-      if (crowdEncoder !== encoder) { device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; }
-      device.queue.submit([encoder.finish()]);
-      Object.assign(telemetryState.frameStats, gpuDriven.endFrame(webGPUAttributeSink), crowd.endFrame());
-      pollGPUTimingReadback(timingState, device);
-      // Pick readback starts after submit and does not wait in this frame.
-      if (drawState.scenePicker) drawState.scenePicker.finishReadback();
-      webGPUSweepRetainedMeshBuffers(meshState);
-      Object.assign(telemetryState.frameStats, webGPURetainedMeshFrameStats(meshState));
-      publishWebGPUFrameStats(telemetryState, telemetryState.frameStats);
-      if (scopedFrameErrors) endWebGPUErrorScope(telemetryState, device, true);
-
-      if (perfEnabled) {
-        performance.mark("scene3d-render-end");
-        performance.measure("scene3d-render", "scene3d-render-start", "scene3d-render-end");
-        performance.clearMarks("scene3d-render-start");
-        performance.clearMarks("scene3d-render-end");
-      }
-      s.initialPipelinesReady = true;
-      return "submitted";
-    }
 
     // -----------------------------------------------------------------------
     // Dispose
     // -----------------------------------------------------------------------
 
-    function dispose() { pipelineGuard.release(rawDevice);
-      if (telemetryState.rendererResourcesDisposed) return;
-      telemetryState.rendererResourcesDisposed = true; clearTimeout(telemetryState.webGPUAttributeTimer); telemetryState.webGPUAttributeTimer = null;
-      if (skyResources.renderer) skyResources.renderer.dispose(); terrainResources.dispose?.(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); oceanResources.fft?.dispose(); sceneReflectDispose(oceanResources);
-      if (uniformState.transmissionResources) uniformState.transmissionResources.dispose(); uniformState.transmissionResources = null; uniformState.transmissionView = null; window.__gosx_scene3d_crowd_api?.dispose(device);
-      skyResources.renderer = null;
-
-      timingState.gpuTimingDisposed = true;
-      timingState.lastGPUCompletionSample = null;
-      try { destroyGPUTimingResources(timingState.gpuTiming); } catch (_err) {}
-      try { destroyGPUPassTimingResources(timingState); } catch (_err) {}
-      if (webGPUBundleCache) {
-        try { webGPUBundleCache.invalidate(); } catch (_err) {}
-      }
-      webGPUBundleCache = null;
-      timingState.gpuTiming = null;
-      for (var failedTimingIndex = 0; failedTimingIndex < timingState.failedGPUTimings.length; failedTimingIndex++) {
-        try { destroyGPUTimingResources(timingState.failedGPUTimings[failedTimingIndex].timing); } catch (_err) {}
-      }
-      timingState.failedGPUTimings.length = 0;
-      try { drainDeferredGPUResources(timingState, true); } catch (_err) {}
-      timingState.deferredWaterTextureRetirements.length = 0;
-      timingState.deferredWaterSystemRetirements.length = 0;
-      timingState.lastGPUPerformanceSample = null;
-      if (drawState.scenePicker) {
-        try { drawState.scenePicker.dispose(); } catch (_err) {}
-      }
-      drawState.scenePicker = null;
-      drawState.activePickMeshPositions = null;
-      for (const pair of Array.from(meshState.retainedMeshAttributeCache.entries())) {
-        webGPURetireRetainedMeshEntry(meshState, pair[0], pair[1]);
-      }
-
-      destroyRendererGPUResource(gpuRes.frameUniformBuffer);
-      gpuRes.frameUniformBuffer = null;
-      destroyRendererGPUResource(gpuRes.lightStorageBuffer);
-      gpuRes.lightStorageBuffer = null;
-      // Release the light buffers that capacity growth replaced.
-      for (var retiredLight = 0; retiredLight < uniformState._retiredLightBuffers.length; retiredLight++) {
-        destroyRendererGPUResource(uniformState._retiredLightBuffers[retiredLight]);
-      }
-      uniformState._retiredLightBuffers.length = 0;
-      destroyRendererGPUResource(gpuRes.fogUniformBuffer);
-      gpuRes.fogUniformBuffer = null;
-      destroyRendererGPUResource(gpuRes.envUniformBuffer);
-      gpuRes.envUniformBuffer = null;
-      destroyRendererGPUResource(gpuRes.shadowUniformBuffer);
-      gpuRes.shadowUniformBuffer = null;
-      destroyRendererGPUResource(meshState.positionBuffer);
-      meshState.positionBuffer = null;
-      destroyRendererGPUResource(meshState.normalBuffer);
-      meshState.normalBuffer = null;
-      destroyRendererGPUResource(uvBuffer);
-      uvBuffer = null;
-      destroyRendererGPUResource(meshState.tangentBuffer);
-      meshState.tangentBuffer = null;
-      destroyRendererGPUResource(shadowPositionBuffer);
-      shadowPositionBuffer = null;
-      destroyRendererGPUResource(drawState.shadowFrameBuffer);
-      drawState.shadowFrameBuffer = null; drawState.shadowFrameBindGroups.length = 0;
-      meshState.pointsEntryGPUBuffers.forEach(function(buffer) {
-        destroyRendererGPUResource(buffer);
-      });
-      meshState.pointsEntryGPUBuffers.clear();
-      uniformState.materialFrame.resources.clear(); uniformState.materialFrame.groups = []; uniformState.materialFrame.buffer = uniformState.materialFrame.data = null;
-      // Board glyph atlases are textures (not tracked in pointsEntryGPUBuffers);
-      // destroy them explicitly. The per-label glyph buffers are tracked buffers,
-      drawState.boardGlyphAtlases.forEach(function(a) {
-        if (a) destroyRendererGPUResource(a.texture);
-      });
-      drawState.boardGlyphAtlases.clear();
-      drawState.boardTextOwners.clear();
-      disposeComputeParticleSystems(drawState);
-      disposeWaterSystems(waterState);
-      for (const record of drawState.instancedCullSystems.values()) {
-        if (record && record.system && typeof record.system.dispose === "function") {
-          try { record.system.dispose(); } catch (_err) {}
-        }
-      }
-      drawState.instancedCullSystems.clear();
-      drawState.instancedCacheOwners.clear();
-      drawState.gpuDrivenHosts.forEach(function(host) { host.dispose(); });
-      drawState.gpuDrivenHosts.clear();
-      waterState.waterRenderPipelineCache.clear();
-      drawState.pointsAuthoredPipelineCache.clear();
-      drawState.pointsAuthoredLayerFailed.clear();
-      waterState.waterPoolPipelineCache = {};
-      pipeState.waterObjectMeshPipelineCache = {};
-
-      destroyRendererGPUResource(pipeState.mainDepthTexture);
-      pipeState.mainDepthTexture = null;
-      pipeState.mainDepthView = null;
-      destroyRendererGPUResource(pipeState.mainMSAATexture);
-      pipeState.mainMSAATexture = null;
-      pipeState.mainMSAAView = null;
-      destroyRendererGPUResource(dummyShadowTex);
-      dummyShadowTex = null;
-      gpuRes.dummyShadowView = gpuRes.dummyShadowArrayView = null;
-      destroyRendererGPUResource(placeholderTex);
-      placeholderTex = null;
-      gpuRes.placeholderView = null;
-      destroyRendererGPUResource(placeholderCubeTex);
-      placeholderCubeTex = null;
-      gpuRes.placeholderCubeView = null;
-
-      for (var si = 0; si < drawState.shadowSlots.length; si++) {
-        if (drawState.shadowSlots[si]) destroyRendererGPUResource(drawState.shadowSlots[si].texture);
-        drawState.shadowSlots[si] = null;
-      }
-      gpuRes.textureCache._gosxGeneration.disposed = true; gpuRes.textureCache._gosxGeneration.onResourceReady();
-      for (var record of gpuRes.textureCache.values()) {
-        if (record) {
-          record.disposed = true;
-          if (record.image) {
-            record.image.onload = null;
-            record.image.onerror = null;
-          }
-          destroyRendererGPUResource(record.texture);
-        }
-      }
-      sceneWebGPUDisposeDetail(pipeState.detailResources); pipeState.detailResources = null; sceneWebGPUDisposeSelenaSurfaces(pipeState.selenaSurfaces);
-      gpuRes.textureCache.clear();
-      selenaState.pipelineCache.clear();
-      selenaState.computePipelineCache.clear();
-      selenaState.postPipelineCache.clear();
-      pipeState.pipelineCache = {};
-      drawState.instancedGeometryCache = {};
-      // Buffers cached on these owners are registered in
-      // pointsEntryGPUBuffers and were destroyed before the owner objects are
-      // replaced, so no current tracked buffer is orphaned.
-      meshState.pbrSceneAttributeCache = {};
-      telemetryState.webGPUEssentialAttributeCache = Object.create(null);
-      gpuRes.defaultMaterialOwner = {};
-      drawState.thickLineOwner = {};
-      drawState.screenLineOwner = {};
-      uniformState._frameBindGroupCache = null;
-      lastPreparedScene = null;
-      telemetryState.lastWebGPUFrameStats = null;
-      waterState.waterManifestShaderSourcesByID = null;
-      waterState.activeWaterShaderSourcesByID = null;
-
-      if (s.postProcessor) {
-        try { s.postProcessor.dispose(); s.specularTarget.dispose(); } catch (_err) {}
-        s.postProcessor = null;
-      }
-
-      device = null;
-      telemetryState.configuredSurfaceKey = "";
-      s.postFXForceDisabled = false;
-    }
 
     // Device + GPU resources were already initialized synchronously
     // above (using the pre-probed device from 16z). If that setup
@@ -8072,20 +8158,20 @@
     // The probe in 16z is what prevents us from ever reaching this
     // state on broken backends — it verifies device creation works
     // before we're allowed to construct a renderer at all.
-    if (initFailed && !pipelineGuard.coreError && !pipelineGuard.pending) return sceneWebGPUFactoryFailure(canvas, "init-failed: " + initError);
+    if (s.initFailed && !pipelineGuard.coreError && !pipelineGuard.pending) return sceneWebGPUFactoryFailure(canvas, "init-failed: " + s.initError);
 
     var textureVariantTokens = [];
     try {
       if (typeof window !== "undefined" && typeof window.__gosx_scene3d_texture_tokens === "function") {
         textureVariantTokens = window.__gosx_scene3d_texture_tokens(
           "webgpu",
-          device && device.features ? Array.from(device.features) : []
+          s.device && s.device.features ? Array.from(s.device.features) : []
         );
       }
     } catch (_textureVariantError) {
       textureVariantTokens = [];
     }
-    var textureVariantContext = {
+    s.textureVariantContext = {
       backend: "webgpu",
       // wgpuUploadKTX2Texture is this renderer's concrete upload path. The
       // reader/parser module may load later with glTF, so construction must not
@@ -8094,116 +8180,27 @@
       tokens: Array.isArray(textureVariantTokens) ? textureVariantTokens.slice().sort() : [],
     };
 
-    function diagnostics() {
-      var base = typeof sceneWebGPUDiagnostics === "function"
-        ? sceneWebGPUDiagnostics()
-        : {};
-      var out = {};
-      for (var key in base) {
-        if (Object.prototype.hasOwnProperty.call(base, key)) {
-          out[key] = base[key];
-        }
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.renderer = "webgpu";
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.targetFormat = pipeState.targetFormat;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.activeSampleCount = pipeState.activeSampleCount;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationAlphaMode = activePresentation.alphaMode;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationColorSpace = activePresentation.colorSpace;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.presentationToneMappingMode = activePresentation.toneMappingMode;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.powerPreference = activePowerPreference;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.ready = !!device && !initFailed;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.initFailed = !!initFailed;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.initError = initError || "";
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.resourcesDisposed = telemetryState.rendererResourcesDisposed;
-      out.resourceCacheEntries = (
-        drawState.pointsAuthoredPipelineCache.size +
-        drawState.pointsAuthoredLayerFailed.size +
-        drawState.computeParticleSystems.size +
-        waterState.waterSystems.size +
-        drawState.instancedCullSystems.size +
-        gpuRes.textureCache.size +
-        selenaState.pipelineCache.size +
-        selenaState.computePipelineCache.size +
-        selenaState.postPipelineCache.size +
-        Object.keys(pipeState.pipelineCache).length +
-        Object.keys(waterState.waterPoolPipelineCache).length +
-        Object.keys(pipeState.waterObjectMeshPipelineCache).length
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ );
-      out.deviceLost = !!lastDeviceLostInfo || !!(base && base.lost);
-      // Prefer THIS renderer's own lastDeviceLostInfo (set synchronously by
-      // the device.lost handler above, never cleared) over the shared probe
-      // snapshot (base.lost), which a successful re-probe nulls out the
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // moment it recovers — often before a watchdog poll gets to read it.
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.deviceLostInfo = lastDeviceLostInfo || (base && base.lost ? base.lost : null);
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameSeq = timingState.webGPUFrameSeq;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameAt = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.frameAt || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.lastError = telemetryState.webGPULastError;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSimulationTickSeq = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterSimulationTickSeq || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSolverSubstepSeq = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterSolverSubstepSeq || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterDroppedTicks = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterDroppedTicks || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterNormalDispatchSeq = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSampledStateSyncSeq = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
-      out.postProcessing = !!s.postProcessor; pipelineGuard.snapshot(out); Object.assign(out, { initialPipelinesReady: s.initialPipelinesReady });
-      // Frame-error resilience state (see reportWebGPUFrameError /
-      // disablePostProcessing / enablePostProcessing above and
-      // 20-scene-mount.js's checkSceneWebGPUFrameErrorWatchdog, the poller
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // that acts on these).
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameErrorStreak = telemetryState.webGPUConsecutiveFrameErrors;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.frameCleanStreak = telemetryState.webGPUConsecutiveCleanFrames;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.postFXDisabled = s.postFXForceDisabled;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.customMaterialFallbacks = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.customMaterialFallbacks || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.customMaterialFallbackReason = out.customMaterialFallbacks > 0 ? "custom-wgsl-hooks-unsupported" : "";
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.skinnedMeshObjects = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.skinnedMeshObjects || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphDispatches = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.computedMorphDispatches || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphVertices = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.computedMorphVertices || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.computedMorphKernel = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.computedMorphKernel || "";
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.elioSkinningDispatches = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.elioSkinningDispatches || 0;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.elioSkinningVertices = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.elioSkinningVertices || 0;
-      out.elioSkinningKernel = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.elioSkinningKernel || "";
-      // GPU picking. gpuPicking stays true whether or not a pick has run yet —
-      // it reports the renderer capability, matching the gpu-picking cell in
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // 16a-scene-webgpu.capabilities.json.
-      out.gpuPicking = true;
-      if (drawState.scenePicker) Object.assign(out, drawState.scenePicker.diagnostics());
-      // Render truth: implementation identity, the post-chain dispatch record
-      // and the event journal, so a single diagnostics() call is a complete
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var truthApi = renderTruth();
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.implementation = truthApi.implementation(out.adapterInfo || {});
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.browserEngine = typeof truthApi.browserEngine === "function" ? truthApi.browserEngine() : "";
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.renderTruthEvents = typeof truthApi.events === "function" ? truthApi.events() : [];
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.shaderDiagnostics = typeof truthApi.shaderCounts === "function" ? truthApi.shaderCounts() : { messages: 0, errors: 0 };
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.postChain = telemetryState.lastWebGPUFrameStats && telemetryState.lastWebGPUFrameStats.postChain || null;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.uniformTime = selenaState.frame.time;
-      out.textureVariantContext = {
-        backend: textureVariantContext.backend,
-        uploadReady: textureVariantContext.uploadReady,
-        tokens: textureVariantContext.tokens.slice(),
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ };
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.ibl = Object.assign({}, uniformState.iblResources.diagnostics);
-      out.retainedGeometry = webGPURetainedMeshBufferStats(meshState);
-      return out;
-    }
 
     return {
       kind: "webgpu",
       type: "webgpu",
       supportsRetainedGeometry: true,
       supportsBundle: supportsBundle,
-      prepareCrowdAtlas: function(atlas: any) { return webGPUCrowdHost(drawState, device).prepareCrowdAtlas(atlas); },
-      prepareCrowdMotionShaders: function() { return webGPUCrowdHost(drawState, device).prepareCrowdMotionShaders(); }, texturePreparation: { generation: gpuRes.textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => wgpuLoadTexture(device, url, gpuRes.textureCache, descriptor, role, colorSpace, retryFailed) },
-      queuePick: function(x: any, y: any, width: any, height: any, callback: any) { return queuePick(drawState, device, x, y, width, height, callback); },
+      prepareCrowdAtlas: function(atlas: any) { return webGPUCrowdHost(drawState, s.device).prepareCrowdAtlas(atlas); },
+      prepareCrowdMotionShaders: function() { return webGPUCrowdHost(drawState, s.device).prepareCrowdMotionShaders(); }, texturePreparation: { generation: gpuRes.textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => wgpuLoadTexture(s.device, url, gpuRes.textureCache, descriptor, role, colorSpace, retryFailed) },
+      queuePick: function(x: any, y: any, width: any, height: any, callback: any) { return queuePick(drawState, s.device, x, y, width, height, callback); },
       setLifecycle: function(state: any) { return setLifecycle(waterState, state); },
-      pollPerformanceSample: function() { return pollPerformanceSample(timingState, device); },
-      getPerformanceTimingStatus: function() { return getPerformanceTimingStatus(timingState, device); },
-      getFrameTiming: function() { return getFrameTiming(timingState, device, lastDeviceLostInfo); },
-      diagnostics: diagnostics,
+      pollPerformanceSample: function() { return pollPerformanceSample(timingState, s.device); },
+      getPerformanceTimingStatus: function() { return getPerformanceTimingStatus(timingState, s.device); },
+      getFrameTiming: function() { return getFrameTiming(timingState, s.device, s.lastDeviceLostInfo); },
+      diagnostics: function() { return diagnostics(s); },
       getFrameProgress: function() { return telemetryState.webGPUFrameProof; }, shaderPrograms: function() { return { total: pipelineGuard.created, pending: pipelineGuard.pending, failed: pipelineGuard.failures.length }; },
-      render: pipelineGuard.wrapFrame(render, function() { endWebGPUErrorScope(telemetryState, device); }),
+      render: pipelineGuard.wrapFrame(function(bundle: any, viewport: any, frameMeta: any) { return render(s, bundle, viewport, frameMeta); }, function() { endWebGPUErrorScope(telemetryState, s.device); }),
       getFailureReason: function() { return pipelineGuard.coreError ? "webgpu-pipeline-failed" : ""; },
-      dispose: dispose,
+      dispose: function() { return dispose(s); },
       disablePostProcessing: function() { return disablePostProcessing(s); },
       enablePostProcessing: function() { return enablePostProcessing(s); },
-      textureVariantContext: textureVariantContext,
+      textureVariantContext: s.textureVariantContext,
     };
   }
 

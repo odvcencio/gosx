@@ -433,7 +433,7 @@ test("renderer hooks stay single statements on existing lines", () => {
   assert.equal(gl.match(/window\.__gosx_scene3d_crowd_api\?\.webgl\(gl, \{/g).length, 1);
   assert.equal(gpu.match(/window\.__gosx_scene3d_crowd_api\?\.webgpu\(mainPass, \{/g).length, 1);
   assert.equal(gl.match(/window\.__gosx_scene3d_crowd_api\?\.dispose\(gl\)/g).length, 1);
-  assert.equal(gpu.match(/window\.__gosx_scene3d_crowd_api\?\.dispose\(device\)/g).length, 1);
+  assert.equal(gpu.match(/window\.__gosx_scene3d_crowd_api\?\.dispose\(s\.device\)/g).length, 1);
   // The anchors the fragment patches need.
   assert.ok(gl.includes("void gosxApplyCustomFragment(inout vec3 color, inout float opacity, vec3 normal, vec3 worldPosition, vec2 uv) {}"));
   assert.equal(gpu.match(/gosxPBRColor\(in\)/g).length, 2, "two fragment entry points call gosxPBRColor(in)");
