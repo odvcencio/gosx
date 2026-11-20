@@ -145,7 +145,7 @@ function textureHarness(failedPasses = 0, targetPass) {
       : { passes: 1, drawCalls: 1, selenaDrawCalls: 1 }),
     addWaterObjectTextureStats: () => {},
     uploadFrameUniforms: () => {}, uploadWaterReflectionFrameUniforms: () => {}, uploadLights: () => {},
-    uniformState: { scratchSelenaViewProjection: new Float32Array(16) }, gpuRes: {}, device: {}, WATER_OBJECT_TEXTURE_SIZE: 128,
+    WATER_OBJECT_TEXTURE_SIZE: 128,
   };
   const render = rendererFunction("renderWaterObjectSceneTexturePasses", globals);
   const surface = rendererFunction("sceneWaterSurfaceSelenaRenderContext", {
@@ -158,7 +158,7 @@ function textureHarness(failedPasses = 0, targetPass) {
   const surfaceState = { uniformState: { scratchSelenaViewProjection: new Float32Array(16) } };
   return {
     system,
-    frame: () => render([{ system }], {}, { meshObjects: [], camera: {} }, [], {}, {}, 800, 600, false),
+    frame: () => render([{ system }], {}, { meshObjects: [], camera: {} }, [], {}, {}, 800, 600, false, { uniformState: { scratchSelenaViewProjection: new Float32Array(16) }, gpuRes: {} }, {}),
     enabled: () => surface(system, {}, "test", surfaceState).uniforms.meshTextureEnable,
   };
 }
@@ -230,7 +230,7 @@ test("water projected targets wait for deferred model texture decode and GPU upl
   const draw = rendererFunction("drawWaterObjectMeshObjects", {
     sceneNumber,
     scenePBRObjectRenderPass: () => "opaque",
-    pipeState: {}, selenaState: {}, meshState: {}, device, getSelenaPipeline: () => resource,
+    getSelenaPipeline: () => resource,
     WATER_OBJECT_TEXTURE_FORMAT: "rgba8unorm",
     wgpuRequirePipeline: value => value,
     sceneWaterObjectSelenaTexturesPending: (...args) => rendererFunction("sceneWaterObjectSelenaTexturesPending", g)(...args),
@@ -239,7 +239,7 @@ test("water projected targets wait for deferred model texture decode and GPU upl
   });
   const pass = { setPipeline() {}, setBindGroup() {}, draw() { draws++; } };
   const h = textureHarness(0, () => {
-    const result = draw(pass, [{ vertexCount: 3 }], {}, [material], {}, {}, 1, {});
+    const result = draw(pass, [{ vertexCount: 3 }], {}, [material], {}, {}, 1, {}, { pipeState: {}, selenaState: {}, meshState: {}, gpuRes: { textureCache } }, device);
     return { passes: result.drawCalls ? 1 : 0, ...result };
   });
   h.frame(); h.frame();
@@ -292,13 +292,13 @@ test("water invalidates retained optics when quality allocation replaces target 
 });
 
 test("water invalidates a compound shadow once when None is selected, even without caustics", () => {
-  const start = source.indexOf("        if (optics.object || optics.caustics");
-  const end = source.indexOf("        if (optics.caustics && refreshExpensivePasses)", start);
+  const start = source.indexOf("      if (optics.object || optics.caustics");
+  const end = source.indexOf("      if (optics.caustics && refreshExpensivePasses)", start);
   assert.ok(start >= 0 && end > start);
   let clears = 0;
   const system = { waterObjectShadowSignature: "duck" };
   const globals = {
-    waterSystemHasObjectTextureSubject: () => false,
+    waterState: {}, device: {}, waterSystemHasObjectTextureSubject: () => false,
     sceneWaterObjectMeshList: () => [],
     sceneWaterObjectRenderSignature: () => "none",
     renderWaterObjectMeshShadowPass: () => { throw new Error("None must not draw a mesh shadow"); },
