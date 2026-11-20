@@ -146,7 +146,7 @@ function textureHarness(failedPasses = 0, targetPass) {
       : { passes: 1, drawCalls: 1, selenaDrawCalls: 1 }),
     addWaterObjectTextureStats: () => {},
     uploadFrameUniforms: () => {}, uploadWaterReflectionFrameUniforms: () => {}, uploadLights: () => {},
-    scratchSelenaViewProjection: new Float32Array(16), WATER_OBJECT_TEXTURE_SIZE: 128,
+    uniformState: { scratchSelenaViewProjection: new Float32Array(16) }, gpuRes: {}, device: {}, WATER_OBJECT_TEXTURE_SIZE: 128,
   };
   const render = rendererFunction("renderWaterObjectSceneTexturePasses", globals);
   const surface = rendererFunction("sceneWaterSurfaceSelenaRenderContext", {
@@ -155,7 +155,7 @@ function textureHarness(failedPasses = 0, targetPass) {
     wgpuSceneWaterPoolShapeRounded: () => false,
     sceneColorRGBA: () => [0.5, 0.8, 0.9, 1],
     sceneWaterSpheresContextArray: () => [], sceneWaterKnotContextArray: () => [],
-    scratchSelenaViewProjection: new Float32Array(16),
+    uniformState: { scratchSelenaViewProjection: new Float32Array(16) },
   });
   return {
     system,
@@ -210,7 +210,7 @@ test("water projected targets wait for deferred model texture decode and GPU upl
   const textureCache = new Map();
   textureCache._gosxGeneration = { onResourceReady() { settled++; } };
   const g = {
-    sceneNumber, device, textureCache,
+    sceneNumber, device, textureCache, gpuRes: { textureCache },
     GPUTextureUsage: { TEXTURE_BINDING: 1, COPY_DST: 2, RENDER_ATTACHMENT: 4 },
     Image: class { constructor() { image = this; this.width = this.height = 512; } },
     createImageBitmap: () => decoded,

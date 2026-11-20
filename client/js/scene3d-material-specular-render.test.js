@@ -266,7 +266,7 @@ test("imported PBR factors reach single-skin and GPU palette crowd uniforms", ()
 
   const gpu = setupWebGPURenderer();
   const packProfile = (profile) => callIn(gpu.context,
-    "materialUniformData(" + JSON.stringify(JSON.parse(JSON.stringify(profile))) + ", false, null, null)");
+    "materialUniformData(uniformState, " + JSON.stringify(JSON.parse(JSON.stringify(profile))) + ", false)");
   const gpuBlack = packProfile(importAndUpload(0, "single").profile);
   assert.strictEqual(gpuBlack.u[54], 1);
   assert.deepStrictEqual([gpuBlack.data[56], gpuBlack.data[57], gpuBlack.data[58]], [0, 0, 0]);
@@ -965,7 +965,8 @@ test("WebGL PBR shader samples the specular-color map RGB-only before the metall
 
 function setupWebGPURenderer() {
   const source = readSceneRendererBackendSrc("webgpu");
-  const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
+  const bufMatch = source.match(/_materialUniformBuf\s*=\s*new ArrayBuffer\(\d+\)/);
+  const bufferDecls = "var " + bufMatch[0] + ";\nvar uniformState = { _materialUniformF: new Float32Array(_materialUniformBuf), _materialUniformU: new Uint32Array(_materialUniformBuf) };";
   const context = createSceneCoreContext();
   runFragment(context, [
     bufferDecls,
@@ -1015,7 +1016,7 @@ test("sceneNormalizeMaterialAlphaCutoff bridges from the base chunk into the Web
 test("WebGPU materialUniformData normalizes alphaCutoff into slot 42", () => {
   const { context } = setupWebGPURenderer();
   const pack = (literal) => callIn(context,
-    "materialUniformData(" + literal + ", false, null, null)");
+    "materialUniformData(uniformState, " + literal + ", false)");
   const cutoff = (literal) => pack("{ alphaCutoff: " + literal + " }").data[42];
   for (const bad of ["undefined", "null", "-0.25", "NaN", "Infinity", "false",
     "'oops'", "'var(--accent)'"]) {
@@ -1032,7 +1033,7 @@ test("WebGPU materialUniformData normalizes alphaCutoff into slot 42", () => {
 test("WebGPU material scratch buffer resets and neighbor slots stay put", () => {
   const { context } = setupWebGPURenderer();
   const pack = (literal) => callIn(context,
-    "materialUniformData(" + literal + ", false, null, null)");
+    "materialUniformData(uniformState, " + literal + ", false)");
   const dirty = pack("{ alphaCutoff: 0.5, specularIntensity: 0.75 }");
   assert.ok(close6(dirty.data[42], 0.5));
   const clean = pack("{}");
@@ -1103,12 +1104,12 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
   const { source, context } = setupWebGPURenderer();
   // The material buffer grew for the aligned vec3f plus the F90 scalar; the
   // earlier 176-byte layout must be gone.
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(288\);/);
-  assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(192\);/);
-  assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
+  assert.match(source, /_materialUniformBuf\s*=\s*new ArrayBuffer\(288\)/);
+  assert.doesNotMatch(source, /_materialUniformBuf\s*=\s*new ArrayBuffer\(192\)/);
+  assert.doesNotMatch(source, /_materialUniformBuf\s*=\s*new ArrayBuffer\(176\)/);
 
   const pack = (literal) => callIn(context,
-    "materialUniformData(" + literal + ", false, null, null)");
+    "materialUniformData(uniformState, " + literal + ", false)");
 
   const def = pack("{}");
   assert.strictEqual(def.data.length, 72);
@@ -1266,8 +1267,8 @@ test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => 
 function setupWebGPUMaterialBinding() {
   const source = readSceneRendererBackendSrc("webgpu");
   const context = createSceneCoreContext();
-  context.materialFrame = { buffer: null };
-  const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
+  const bufMatch = source.match(/_materialUniformBuf\s*=\s*new ArrayBuffer\(\d+\)/);
+  const bufferDecls = "var " + bufMatch[0] + ";\nvar uniformState = { _materialUniformF: new Float32Array(_materialUniformBuf), _materialUniformU: new Uint32Array(_materialUniformBuf), materialFrame: { buffer: null } };";
   runFragment(context, [
     bufferDecls,
     sliceBetween(source, "function wgpuTextureDescriptor", "function wgpuLoadTexture"),
@@ -1275,7 +1276,7 @@ function setupWebGPUMaterialBinding() {
     sliceBetween(source, "function sceneWebGPUDielectricF0", "function webGPUObjectVertexCount"),
     sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
     sliceBetween(source, "function wgpuCachedBindGroup", "function createMaterialBindGroup"),
-    sliceBetween(source, "function createMaterialBindGroup", "    // _frameBindGroupCache memoizes"),
+    sliceBetween(source, "function createMaterialBindGroup", "function createFrameBindGroup"),
   ].join("\n"), "webgpu-material-bind-extract.js");
   return { source, context };
 }
@@ -1291,6 +1292,7 @@ function makeGPUHarness(context, textureStates) {
   context.textureCache = {};
   context.defaultMaterialOwner = {};
   context.materialBindGroupLayout = { __layout: "material" };
+  context.gpuRes = { placeholderView: context.placeholderView, linearSampler: context.linearSampler, textureCache: context.textureCache, defaultMaterialOwner: context.defaultMaterialOwner, materialBindGroupLayout: context.materialBindGroupLayout };
   context.wgpuLoadTexture = function (device, url, cache, descriptor, role, colorSpace) {
     calls.loads.push({ url, role, colorSpace });
     const state = textureStates[url];
@@ -1346,14 +1348,14 @@ test("WebGPU specular-intensity map stays neutral while missing, pending or fail
 
   // No map at all: flag 0, placeholder bound.
   context.material = {};
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[41], 0);
   assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
 
   // Pending load: pending flag consumed, hasSpecularIntensityMap stays 0 and
   // the neutral placeholder is bound.
   context.material = { textureDescriptors: { specularIntensity: { uri: "pending.png" } } };
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[41], 0);
   assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
   assert.strictEqual(calls.loads[calls.loads.length - 1].role, "specular-intensity");
@@ -1361,7 +1363,7 @@ test("WebGPU specular-intensity map stays neutral while missing, pending or fail
 
   // Failed load: identical neutral treatment.
   context.material = { textureDescriptors: { specularIntensity: { uri: "failed.png" } } };
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[41], 0);
   assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
 });
@@ -1373,7 +1375,7 @@ test("WebGPU specular-intensity loaded map binds the real view and reuses the bi
   context.material = { textureDescriptors: { specularIntensity: { uri: "spec.png" } } };
   context.owner = {};
 
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[41], 1);
   assert.strictEqual(lastBoundResource(calls, 13), view);
   assert.deepEqual(JSON.parse(JSON.stringify(lastBoundResource(calls, 14).descriptor)), { addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge", magFilter: "linear", minFilter: "linear", mipmapFilter: "linear", maxAnisotropy: 8 }, "material textures get their own anisotropic sampler, not the shared linearSampler");
@@ -1384,7 +1386,7 @@ test("WebGPU specular-intensity loaded map binds the real view and reuses the bi
 
   // Same view again: the bind group is reused, not recreated.
   const created = calls.bindGroups.length;
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(calls.bindGroups.length, created);
   // The created bind group carries exactly the group1 uniform/texture/sampler
   // pairs, including the new specular-intensity texture and sampler.
@@ -1401,7 +1403,7 @@ test("WebGPU specular-intensity late load and new view invalidate the cached bin
   context.material = { textureDescriptors: { specularIntensity: { uri: "late.png" } } };
   context.owner = {};
 
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[41], 0);
   assert.strictEqual(calls.bindGroups.length, 1);
 
@@ -1409,19 +1411,19 @@ test("WebGPU specular-intensity late load and new view invalidate the cached bin
   const lateView = { __view: "late-loaded" };
   state.loaded = true;
   state.view = lateView;
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[41], 1);
   assert.strictEqual(calls.bindGroups.length, 2);
   assert.strictEqual(lastBoundResource(calls, 13), lateView);
 
   // Same view: reuse, no new bind group.
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(calls.bindGroups.length, 2);
 
   // A different view for the same URL invalidates again.
   const otherView = { __view: "late-loaded-2" };
   state.view = otherView;
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(calls.bindGroups.length, 3);
   assert.strictEqual(lastBoundResource(calls, 13), otherView);
 });
@@ -1454,7 +1456,7 @@ test("WebGPU material bind group layout declares specular-intensity texture and 
 
 test("WebGPU packed log coefficients reconstruct clamped reflectance numerically", () => {
   const { context } = setupWebGPURenderer();
-  const pack = (literal) => callIn(context, "materialUniformData(" + literal + ", false, null, null)");
+  const pack = (literal) => callIn(context, "materialUniformData(uniformState, " + literal + ", false)");
   const TOL = 1e-6;
 
   // JS reconstruction of the production WGSL expression
@@ -1512,7 +1514,7 @@ test("WebGPU specular-color map binds at 15/16 with srgb role and flags 41/51 in
   // Both maps together: independent flags and views.
   context.material = { textureDescriptors: {
     specularIntensity: { uri: "i.png" }, specularColor: { uri: "c.png" } } };
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[41], 1);
   assert.strictEqual(context.__lastUniform.u[51], 1);
   assert.strictEqual(lastBoundResource(calls, 13), iView);
@@ -1525,7 +1527,7 @@ test("WebGPU specular-color map binds at 15/16 with srgb role and flags 41/51 in
   // Descriptor URI wins over the legacy prop.
   context.material = { specularColorMap: "legacy.png",
     textureDescriptors: { specularColor: { uri: "c.png" } } };
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   const lastLoad = calls.loads[calls.loads.length - 1];
   assert.strictEqual(lastLoad.url, "c.png");
   assert.strictEqual(lastLoad.role, "specular-color");
@@ -1534,20 +1536,20 @@ test("WebGPU specular-color map binds at 15/16 with srgb role and flags 41/51 in
 
   // Legacy prop alone works.
   context.material = { specularColorMap: "c.png" };
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[51], 1);
   assert.strictEqual(lastBoundResource(calls, 15), cView);
 
   // Missing / pending / failed stay neutral: flag 0, placeholder view at 15.
   context.material = {};
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[51], 0);
   assert.strictEqual(lastBoundResource(calls, 15), context.placeholderView);
   context.material = { textureDescriptors: { specularColor: { uri: "pending-c.png" } } };
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[51], 0);
   context.material = { textureDescriptors: { specularColor: { uri: "failed-c.png" } } };
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[51], 0);
   assert.strictEqual(lastBoundResource(calls, 15), context.placeholderView);
 });
@@ -1559,23 +1561,23 @@ test("WebGPU specular-color late load and new view invalidate the cached bind gr
   context.material = { textureDescriptors: { specularColor: { uri: "late-c.png" } } };
   context.owner = {};
 
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[51], 0);
   assert.strictEqual(calls.bindGroups.length, 1);
 
   const lateView = { __view: "late-color" };
   state.loaded = true;
   state.view = lateView;
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(context.__lastUniform.u[51], 1);
   assert.strictEqual(calls.bindGroups.length, 2);
   assert.strictEqual(lastBoundResource(calls, 15), lateView);
 
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(calls.bindGroups.length, 2);
 
   state.view = { __view: "late-color-2" };
-  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  callIn(context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)");
   assert.strictEqual(calls.bindGroups.length, 3);
   assert.strictEqual(lastBoundResource(calls, 15), state.view);
 });
@@ -1600,7 +1602,7 @@ test("signed and zero normal scales survive glTF, object profiles and both rende
     const expected = scale || [1, 1];
     assert.deepEqual(Array.from(result.scale), expected);
     gpuBackend.context.material = JSON.parse(JSON.stringify(result.profile));
-    callIn(gpuBackend.context, "createMaterialBindGroup(material, false, material, null)");
+    callIn(gpuBackend.context, "createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, material)");
     const packed = gpuBackend.context.__lastUniform.data;
     assert.deepEqual([packed[39], packed[43]], expected);
     assert.deepEqual(JSON.parse(JSON.stringify(lastBoundResource(calls, 4).descriptor)), {
@@ -1669,7 +1671,7 @@ test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidat
     assert.ok(parameters.some(([axis, value]) => axis === 0x84FE && value === 4), "anisotropy is min(8, device maximum)");
     gpu.context.material = JSON.parse(JSON.stringify(profile));
     gpu.context.owner = owner;
-    const group = callIn(gpu.context, 'createMaterialBindGroup(material, false, owner, null)');
+    const group = callIn(gpu.context, 'createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)');
     assert.notEqual(group, previousGroup, "sampler changes invalidate the bind group even with the same views");
     previousGroup = group;
     for (const binding of [2, 4]) {
@@ -1677,7 +1679,7 @@ test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidat
       assert.equal(sampler.descriptor.addressModeU, u);
       assert.equal(sampler.descriptor.addressModeV, v);
     }
-    assert.equal(callIn(gpu.context, 'createMaterialBindGroup(material, false, owner, null)'), group, "unchanged samplers reuse the bind group");
+    assert.equal(callIn(gpu.context, 'createMaterialBindGroup(uniformState, gpuRes, meshState, device, material, false, owner)'), group, "unchanged samplers reuse the bind group");
   }
   assert.equal(context.cache.size, 4, "one URI with different wrap modes needs distinct WebGL textures");
   assert.equal(mipmaps, 4, "NPOT mipmaps stay enabled in WebGL2");

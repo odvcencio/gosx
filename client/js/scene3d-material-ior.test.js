@@ -691,8 +691,8 @@ test("WebGPU material uniform packing carries the effective specular factors wit
     const flagLine = indexOfMatch(source, new RegExp('"\\s+' + flag + ': u32,"'));
     assert.ok(flagLine > structStart && flagLine < matrixLine, flag + " texture-flag slot preserved");
   }
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(288\);/);
-  assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
+  assert.match(source, /_materialUniformBuf\s*=\s*new ArrayBuffer\(288\)/);
+  assert.doesNotMatch(source, /_materialUniformBuf\s*=\s*new ArrayBuffer\(176\)/);
   // Fragment shader consumes the effective specular factors; the fixed 0.04
   // default is gone.
   // Production legitimately declares a mutable var: the color-texture slice
@@ -704,10 +704,12 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   // Execute the production packing function against the production buffer
   // declarations (whitespace-tolerant) with the real shared numeric/color
   // helpers — no hand copies of the buffer views or the math.
-  const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
-  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(288\);/);
-  assert.match(bufferDecls, /var\s+_materialUniformF\s*=/);
-  assert.match(bufferDecls, /var\s+_materialUniformU\s*=/);
+  const bufMatch = source.match(/_materialUniformBuf\s*=\s*new ArrayBuffer\(\d+\)/);
+  assert.ok(bufMatch, "_materialUniformBuf allocation present");
+  assert.match(bufMatch[0], /new ArrayBuffer\(288\)/);
+  assert.match(source, /_materialUniformF:\s*new Float32Array\(_materialUniformBuf\)/);
+  assert.match(source, /_materialUniformU:\s*new Uint32Array\(_materialUniformBuf\)/);
+  const bufferDecls = "var " + bufMatch[0] + ";\nvar uniformState = { _materialUniformF: new Float32Array(_materialUniformBuf), _materialUniformU: new Uint32Array(_materialUniformBuf) };";
   const context = createSceneCoreContext();
   runFragment(context, [
     bufferDecls,
@@ -720,7 +722,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   // F0 equals the IOR F0 in all three channels and F90 is 1.
   const effectiveF0At = (materialLiteral, expected) => {
     const packed = callIn(context,
-      "materialUniformData(" + materialLiteral + ", false, null, null)");
+      "materialUniformData(uniformState, " + materialLiteral + ", false)");
     for (let c = 0; c < 3; c++) {
       assert.ok(Math.abs(packed.data[44 + c] - expected) <= 1e-6,
         "specularF0[" + c + "] = " + packed.data[44 + c] + ", want " + expected);
@@ -737,7 +739,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   effectiveF0At("{ ior: 1e300 }", 1);
 
   const packed = callIn(context,
-    'materialUniformData({ color: "#ffffff", roughness: 0.25, metalness: 0.5, ior: 2.42 }, true, null, null)');
+    'materialUniformData(uniformState, { color: "#ffffff", roughness: 0.25, metalness: 0.5, ior: 2.42 }, true)');
   assert.strictEqual(packed.data.length, 72);
   // PBR scalars keep their slots.
   assert.ok(Math.abs(packed.data[3] - 0.25) <= 1e-6);
@@ -792,7 +794,8 @@ test("WebGPU material uniform packing carries the effective specular factors wit
 
 test("WebGPU materialUniformData packs an authored emissive colour and rim term", () => {
   const source = readSceneRendererBackendSrc("webgpu");
-  const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
+  const bufMatch = source.match(/_materialUniformBuf\s*=\s*new ArrayBuffer\(\d+\)/);
+  const bufferDecls = "var " + bufMatch[0] + ";\nvar uniformState = { _materialUniformF: new Float32Array(_materialUniformBuf), _materialUniformU: new Uint32Array(_materialUniformBuf) };";
   const context = createSceneCoreContext();
   runFragment(context, [
     bufferDecls,
@@ -802,8 +805,8 @@ test("WebGPU materialUniformData packs an authored emissive colour and rim term"
   ].join("\n"), "webgpu-material-extract-emissive.js");
 
   const packed = callIn(context,
-    'materialUniformData({ color: "#ffffff", emissiveColor: [1, 0, 0], emissive: 3, ' +
-    'normalScale: 0.5, occlusionStrength: 0.25, rimColor: [0, 1, 0], rimPower: 4, rimStrength: 0.6 }, false, null, null)');
+    'materialUniformData(uniformState, { color: "#ffffff", emissiveColor: [1, 0, 0], emissive: 3, ' +
+    'normalScale: 0.5, occlusionStrength: 0.25, rimColor: [0, 1, 0], rimPower: 4, rimStrength: 0.6 }, false)');
   const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) <= 1e-6, label + ": got " + actual + ", want " + expected);
   near(packed.data[52], 0.5, "normalScale carries the authored value");
   near(packed.data[53], 0.25, "occlusionStrength carries the authored value");

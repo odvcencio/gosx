@@ -1086,3 +1086,576 @@
       vertexCount: vertexCount,
     };
   }
+  function uploadFrameUniforms(uniformState: any, gpuRes: any, device: any, camera: any, width: any, height: any, toneMapMode: any) {
+    var cam;
+    var camPosZ;
+    if (camera && camera.mode === "ortho2d") {
+      // 2D board path — mirrors the Mode branch at the top of the native
+      // computeMVP (render/bundle/math.go). The RAW RenderCamera wire
+      // fields are read directly: x/y carry the pan, z carries the zoom,
+      // near/far are -1/1. This MUST run before sceneRenderCamera — the
+      // normalizer strips `mode`, applies 3D defaults (z→6, near→0.05,
+      // far→128), and treats z as a position, which would silently
+      // mangle the 2D camera.
+      sceneMat4Ortho2DView(camera, uniformState.scratchViewMatrix);
+      sceneMat4Ortho2DProj(camera, width, height, uniformState.scratchProjMatrix);
+      // Returned cam: render()'s only downstream consumer of the return
+      // value is drawPointsEntries, which never reads its cam parameter
+      // (and 2D bundles carry no points — Configure2DBundle strips
+      // lights/env/postFX and the board adapter emits only
+      // meshObjects/materials/background). z is 0 because camera.z
+      // carries the zoom, not a position — the cameraPos uniform below
+      // must not inherit it; with no lights in 2D bundles cameraPos is
+      // inert anyway.
+      cam = {
+        mode: "ortho2d",
+        x: sceneNumber(camera.x, 0),
+        y: sceneNumber(camera.y, 0),
+        z: 0,
+      };
+      camPosZ = 0;
+    } else {
+      cam = sceneRenderCamera(camera);
+      var aspect = Math.max(0.0001, width / Math.max(1, height));
+      scenePBRViewMatrix(cam, uniformState.scratchViewMatrix);
+      if (typeof scenePBRProjectionMatrixForCamera === "function") {
+        scenePBRProjectionMatrixForCamera(cam, aspect, uniformState.scratchProjMatrix);
+      } else {
+        scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, uniformState.scratchProjMatrix);
+      }
+      camPosZ = cam.z; // cameraPos.z is the world-space eye position.
+    }
+
+    // scenePBRProjectionMatrix and sceneMat4Ortho2DProj produce a
+    // WebGL-convention matrix whose clip-z range is [-w, w]. WebGPU's
+    // clip volume keeps z in [0, w], so without this remap every
+    // primitive in the front half of the frustum is silently clipped.
+    // Pre-multiplying by the depth-remap matrix R (row 2 = 0.5 *
+    // (row 2 + row 3)) converts to WebGPU clip space. Affects every
+    // WebGPU pipeline that consumes frame.projMatrix (PBR meshes, world
+    // lines, surfaces, points, compute particles). For the ortho-2D
+    // board (near=-1, far=1) the board plane z=0 lands at clip z=0.5.
+    uniformState.scratchProjMatrix[2]  = 0.5 * (uniformState.scratchProjMatrix[2]  + uniformState.scratchProjMatrix[3]);
+    uniformState.scratchProjMatrix[6]  = 0.5 * (uniformState.scratchProjMatrix[6]  + uniformState.scratchProjMatrix[7]);
+    uniformState.scratchProjMatrix[10] = 0.5 * (uniformState.scratchProjMatrix[10] + uniformState.scratchProjMatrix[11]);
+    uniformState.scratchProjMatrix[14] = 0.5 * (uniformState.scratchProjMatrix[14] + uniformState.scratchProjMatrix[15]);
+    sceneMat4MultiplyInto(uniformState.scratchSelenaViewProjection, uniformState.scratchProjMatrix, uniformState.scratchViewMatrix);
+
+    // FrameUniforms layout (std140):
+    // mat4x4f viewMatrix:  0  (64 bytes)
+    // mat4x4f projMatrix:  64 (64 bytes)
+    // vec3f cameraPos:     128 (12 bytes)
+    // u32 lightCount:      140 (4 bytes)
+    // f32 viewportWidth:   144 (4 bytes)
+    // f32 viewportHeight:  148 (4 bytes)
+    // u32 toneMap:         152 (4 bytes)
+    // u32 _pad:            156 (4 bytes)
+    var f = uniformState._frameUniformF;
+    var u = uniformState._frameUniformU;
+    f.set(uniformState.scratchViewMatrix, 0);          // offset 0
+    f.set(uniformState.scratchProjMatrix, 16);         // offset 64
+    f[32] = cam.x;                         // cameraPos.x
+    f[33] = cam.y;                         // cameraPos.y
+    f[34] = camPosZ;                       // cameraPos.z (3D: world eye; ortho2d: 0 — z carries zoom)
+    // lightCount set below in uploadLights
+    f[36] = width;                          // viewportWidth
+    f[37] = height;                         // viewportHeight
+    u[38] = Math.max(0, Math.min(4, Math.floor(sceneNumber(toneMapMode, 1)))); // toneMap/output mode
+    u[39] = 0;                              // pad
+
+    device.queue.writeBuffer(gpuRes.frameUniformBuffer, 0, f);
+    return cam;
+  }
+
+  function uploadWaterReflectionFrameUniforms(uniformState: any, gpuRes: any, device: any, camera: any, width: any, height: any, toneMap: any) {
+    if (camera && camera.mode === "ortho2d") {
+      return uploadFrameUniforms(uniformState, gpuRes, device, camera, width, height, toneMap);
+    }
+    var cam = sceneRenderCamera(camera);
+    var aspect = Math.max(0.0001, width / Math.max(1, height));
+    var position = sceneWaterCameraWorldPosition(cam);
+    var direction = sceneWaterCameraWorldDirection(cam);
+    var target = {
+      x: position.x + direction.x,
+      y: position.y + direction.y,
+      z: position.z + direction.z,
+    };
+    var eye = sceneWaterMirrorWaterPoint(position);
+    var reflectedTarget = sceneWaterMirrorWaterPoint(target);
+    var reflectedUp = sceneWaterReflectionCameraUp(camera);
+    sceneWaterLookAtViewMatrix(eye, reflectedTarget, reflectedUp, uniformState.scratchViewMatrix);
+    if (typeof scenePBRProjectionMatrixForCamera === "function") {
+      scenePBRProjectionMatrixForCamera(cam, aspect, uniformState.scratchProjMatrix);
+    } else {
+      scenePBRProjectionMatrix(cam.fov, aspect, cam.near, cam.far, uniformState.scratchProjMatrix);
+    }
+
+    uniformState.scratchProjMatrix[2]  = 0.5 * (uniformState.scratchProjMatrix[2]  + uniformState.scratchProjMatrix[3]);
+    uniformState.scratchProjMatrix[6]  = 0.5 * (uniformState.scratchProjMatrix[6]  + uniformState.scratchProjMatrix[7]);
+    uniformState.scratchProjMatrix[10] = 0.5 * (uniformState.scratchProjMatrix[10] + uniformState.scratchProjMatrix[11]);
+    uniformState.scratchProjMatrix[14] = 0.5 * (uniformState.scratchProjMatrix[14] + uniformState.scratchProjMatrix[15]);
+    sceneMat4MultiplyInto(uniformState.scratchSelenaViewProjection, uniformState.scratchProjMatrix, uniformState.scratchViewMatrix);
+
+    var f = uniformState._frameUniformF;
+    var u = uniformState._frameUniformU;
+    f.set(uniformState.scratchViewMatrix, 0);
+    f.set(uniformState.scratchProjMatrix, 16);
+    f[32] = eye.x;
+    f[33] = eye.y;
+    f[34] = eye.z;
+    f[36] = width;
+    f[37] = height;
+    u[38] = toneMap ? 1 : 0;
+    u[39] = 0;
+    device.queue.writeBuffer(gpuRes.frameUniformBuffer, 0, f);
+    return {
+      kind: cam.kind,
+      x: eye.x,
+      y: eye.y,
+      z: eye.z,
+      fov: cam.fov,
+      near: cam.near,
+      far: cam.far,
+    };
+  }
+
+  // ensureLightCapacity grows the light storage buffer to hold capacity
+  // lights. The frame bind group is rebuilt every frame after uploadLights,
+  // so the new buffer reaches the shader on the same frame it appears.
+  function ensureLightCapacity(uniformState: any, gpuRes: any, device: any, capacity: any) {
+    if (capacity <= uniformState._lightCapacity && gpuRes.lightStorageBuffer) {
+      return;
+    }
+    if (gpuRes.lightStorageBuffer) {
+      uniformState._retiredLightBuffers.push(gpuRes.lightStorageBuffer);
+    }
+    uniformState._lightCapacity = capacity;
+    uniformState._lightDataF = new Float32Array(capacity * SCENE_WEBGPU_LIGHT_FLOATS);
+    gpuRes.lightStorageBuffer = device.createBuffer({
+      label: "gosx-lights",
+      size: capacity * SCENE_WEBGPU_LIGHT_BYTES,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  // reportLightIssuesOnce forwards each new diagnostic exactly once.
+  function reportLightIssuesOnce(uniformState: any, issues: any) {
+    for (var i = 0; i < issues.length; i++) {
+      var issue = issues[i];
+      var key = issue.code + "|" + issue.message;
+      if (uniformState._lightIssuesReported[key]) {
+        continue;
+      }
+      uniformState._lightIssuesReported[key] = true;
+      sceneWebGPUReportLightingIssue({
+        scope: "scene3d",
+        type: "lighting",
+        source: "webgpu",
+        code: issue.code,
+        message: issue.message,
+      });
+    }
+  }
+
+  function uploadLights(uniformState: any, gpuRes: any, device: any, lights: any) {
+    var lightArray = Array.isArray(lights) ? lights : [];
+    ensureLightCapacity(uniformState, gpuRes, device, sceneWebGPULightCapacityFor(lightArray.length));
+    var count = Math.min(lightArray.length, uniformState._lightCapacity);
+
+    // Write lightCount into frame uniform buffer at byte offset 140.
+    uniformState._lightCountBuf[0] = count;
+    device.queue.writeBuffer(gpuRes.frameUniformBuffer, 140, uniformState._lightCountBuf);
+
+    var census = sceneWebGPUPackLights(lightArray, count, uniformState._lightDataF, uniformState._lightColorCache);
+    reportLightIssuesOnce(uniformState, sceneWebGPULightIssues(census, lightArray.length, uniformState._lightCapacity));
+
+    if (count > 0) {
+      // Write only the used prefix. The shader stops at lightCount, so stale
+      // floats past that point never reach a fragment.
+      device.queue.writeBuffer(
+        gpuRes.lightStorageBuffer,
+        0,
+        uniformState._lightDataF,
+        0,
+        count * SCENE_WEBGPU_LIGHT_FLOATS,
+      );
+    }
+    return census;
+  }
+
+  function uploadFogUniforms(uniformState: any, gpuRes: any, device: any, environment: any) {
+    var env = environment || {};
+    var fogDensity = sceneNumber(env.fogDensity, 0);
+    var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+
+    // FogUniforms: vec3f fogColor(12) + f32 density(4) + u32 hasFog(4) + pad(12) = 32 bytes.
+    var f = uniformState._fogUniformF;
+    var u = uniformState._fogUniformU;
+    f[0] = fogColorRGBA[0];
+    f[1] = fogColorRGBA[1];
+    f[2] = fogColorRGBA[2];
+    f[3] = fogDensity;
+    u[4] = fogDensity > 0 ? 1 : 0;
+    u[5] = 0;
+    u[6] = 0;
+    u[7] = 0;
+    device.queue.writeBuffer(gpuRes.fogUniformBuffer, 0, f);
+  }
+
+  function syncEnvironmentIBL(uniformState: any, gpuRes: any, device: any, environment: any) {
+    var env = environment || {};
+    var ibl = env.ibl && typeof env.ibl === "object" ? env.ibl : null;
+    if (!ibl) {
+      uniformState.iblResources.active = false;
+      uniformState.iblResources.diagnostics = { requested: false, active: false, state: "not-requested", reason: "", radianceMipLevels: 0 };
+      return uniformState.iblResources;
+    }
+    var radiance = webGPUIBLProduct(ibl, "radiance", "environment-radiance", "cube", "rgba16f");
+    var irradiance = webGPUIBLProduct(ibl, "irradiance", "environment-irradiance", "cube", "rgba16f");
+    var brdf = webGPUIBLProduct(ibl, "brdfLUT", "brdf-lut", "2d", "rg16f");
+    var model = typeof ibl.brdfModel === "string" ? ibl.brdfModel.trim() : "";
+    var diag = { requested: true, active: false, state: "validating", reason: "", radianceMipLevels: 0 };
+    if (!radiance || !irradiance || !brdf) {
+      diag.state = "unsupported";
+      diag.reason = "descriptor-role-color-view-format";
+    } else if (model !== SCENE_WEBGPU_IBL_BRDF_MODEL) {
+      diag.state = "unsupported";
+      diag.reason = "brdf-model:" + (model || "missing");
+    } else if (!webGPUIBLRoughnessMappingValid(ibl, radiance.mipLevels)) {
+      diag.state = "unsupported";
+      diag.reason = "roughness-mip-mapping";
+    } else if (!wgpuKTX2API()) {
+      diag.state = "unsupported";
+      diag.reason = "ktx2-loader-unavailable";
+    } else {
+      var key = [radiance.uri, irradiance.uri, brdf.uri, model].join("\u0000");
+      if (uniformState.iblResources.key !== key) {
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ uniformState.iblResources.key = key;
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ uniformState.iblResources.radiance = wgpuLoadTexture(device, radiance.uri, gpuRes.textureCache, radiance);
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ uniformState.iblResources.irradiance = wgpuLoadTexture(device, irradiance.uri, gpuRes.textureCache, irradiance);
+        uniformState.iblResources.brdfLUT = wgpuLoadTexture(device, brdf.uri, gpuRes.textureCache, brdf);
+      }
+      var failed = [uniformState.iblResources.radiance, uniformState.iblResources.irradiance, uniformState.iblResources.brdfLUT].some(function(record) {
+        return record && record.failed;
+      });
+      var active = webGPUIBLRecordValid(uniformState.iblResources.radiance, radiance, model) &&
+        webGPUIBLRecordValid(uniformState.iblResources.irradiance, irradiance, "lambert-sh9") &&
+        webGPUIBLRecordValid(uniformState.iblResources.brdfLUT, brdf, model);
+      if (active) {
+        diag.active = true;
+        diag.state = "active";
+        diag.radianceMipLevels = Math.max(1, uniformState.iblResources.radiance.levels || radiance.mipLevels || 1);
+      } else {
+        var allLoaded = [uniformState.iblResources.radiance, uniformState.iblResources.irradiance, uniformState.iblResources.brdfLUT].every(function(record) {
+          return record && record.loaded;
+        });
+        diag.state = failed || allLoaded ? "failed" : "loading";
+        diag.reason = failed ? "product-upload" : (allLoaded ? "product-container-metadata" : "product-pending");
+      }
+    }
+    uniformState.iblResources.active = diag.active;
+    uniformState.iblResources.diagnostics = diag;
+    if ((diag.state === "unsupported" || diag.state === "failed") && uniformState.iblResources.lastWarning !== diag.reason) {
+      uniformState.iblResources.lastWarning = diag.reason;
+      try { console.warn("[gosx] WebGPU IBL " + diag.state + ": " + diag.reason); } catch (_error) {}
+      renderTruth().record("ibl-" + diag.state, diag.reason);
+    }
+    return uniformState.iblResources;
+  }
+
+  // syncEnvironmentMap loads the legacy equirectangular Environment.EnvironmentMap
+  // image through the shared 2D texture cache/loader (wgpuLoadTexture), the
+  // same path material albedo maps use. IBL wins: iblActive (ibl.active from
+  // syncEnvironmentIBL, not merely "requested") suppresses this, matching
+  // 16-scene-webgl.js's scenePBRUploadEnvironmentMap status machine, which
+  // only zeroes hasEnvMap once iblStatus.active is true.
+  function syncEnvironmentMap(uniformState: any, gpuRes: any, device: any, environment: any, iblActive: any) {
+    var env = environment || {};
+    var url = typeof env.envMap === "string" ? env.envMap.trim() : "";
+    if (!url || iblActive) {
+      uniformState.envMapResources.active = false;
+      return uniformState.envMapResources;
+    }
+    if (uniformState.envMapResources.key !== url) {
+      uniformState.envMapResources.key = url;
+      // Legacy equirect PNG/JPEG is sRGB, as in WebGL2; uploading it as
+      // linear skipped decoding and made samples about 2.2x too bright.
+      uniformState.envMapResources.record = wgpuLoadTexture(device, url, gpuRes.textureCache, null, "environment-radiance", "srgb");
+    }
+    var record = uniformState.envMapResources.record;
+    uniformState.envMapResources.active = Boolean(record && record.loaded && !record.failed);
+    return uniformState.envMapResources;
+  }
+
+  function uploadEnvUniforms(uniformState: any, gpuRes: any, device: any, selenaFrame: any, environment: any) {
+    var env = environment || {};
+    var ibl = syncEnvironmentIBL(uniformState, gpuRes, device, env);
+    var envMap = syncEnvironmentMap(uniformState, gpuRes, device, env, ibl.active);
+    selenaFrame.environmentInfo = sceneWebGPUSelenaEnvironmentInfo(ibl, env);
+    var ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
+    var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
+    var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
+    // 80-byte EnvUniforms, matching WGSL.
+    var data = uniformState._envUniformF;
+    var words = uniformState._envUniformU;
+    data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
+    data[3] = sceneNumber(env.ambientIntensity, 0);
+    data[4] = skyColorRGBA[0]; data[5] = skyColorRGBA[1]; data[6] = skyColorRGBA[2];
+    data[7] = sceneNumber(env.skyIntensity, 0);
+    data[8] = groundColorRGBA[0]; data[9] = groundColorRGBA[1]; data[10] = groundColorRGBA[2];
+    data[11] = sceneNumber(env.groundIntensity, 0);
+    data[12] = Math.max(0, sceneNumber(env.envIntensity, 1));
+    data[13] = sceneNumber(env.envRotation, 0);
+    words[14] = ibl.active ? 1 : 0;
+    words[15] = ibl.active ? Math.max(1, ibl.diagnostics.radianceMipLevels | 0) : 0;
+    words[16] = envMap.active ? 1 : 0;
+    data[17] = wgpuEnvMapMaxLod(envMap);
+    words[18] = 0; words[19] = 0;
+    device.queue.writeBuffer(gpuRes.envUniformBuffer, 0, data);
+  }
+  // uploadShadowUniforms packs every slot's cascades (webgpu-shadows module).
+  // shadowLightMatrices is kept for callers that read the one-map matrices.
+  function uploadShadowUniforms(uniformState: any, gpuRes: any, device: any, shadowSlots: any, shadowLightMatrices: any, shadowLightIndices: any, lights: any) {
+    var span = wgpuPackShadowUniforms(uniformState._shadowUniformF, uniformState._shadowUniformI, shadowSlots, shadowLightIndices, Array.isArray(lights) ? lights : []); if (span) device.queue.writeBuffer(gpuRes.shadowUniformBuffer, span[0] * 4, uniformState._shadowUniformF.subarray(span[0], span[1]));
+  }
+
+  function materialUniformData(uniformState: any, material: any, receiveShadow: any) {
+    var mat = material || {};
+    var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
+
+    // Stable material fields retain their ABI; model transforms use the frame arena.
+    var f = uniformState._materialUniformF;
+    var u = uniformState._materialUniformU;
+
+    f[0] = sceneWebGPUSRGBChannelToLinear(albedoRGBA[0]);
+    f[1] = sceneWebGPUSRGBChannelToLinear(albedoRGBA[1]);
+    f[2] = sceneWebGPUSRGBChannelToLinear(albedoRGBA[2]);
+    f[3] = sceneNumber(mat.roughness, 0.5);
+    f[4] = sceneNumber(mat.metalness, 0);
+    f[5] = sceneNumber(mat.emissive, 0);
+    f[6] = clamp01(sceneNumber(mat.opacity, 1));
+    f[7] = clamp01(sceneNumber(mat.clearcoat, 0));
+    f[8] = clamp01(sceneNumber(mat.sheen, 0));
+    f[9] = clamp01(sceneNumber(mat.transmission, 0));
+    f[10] = clamp01(sceneNumber(mat.iridescence, 0));
+    f[11] = Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0)));
+    u[12] = (mat.unlit || mat.kind === "flat" || mat.materialKind === "flat") ? 1 : 0;
+    u[13] = 0; u[14] = 0; u[15] = 0; u[16] = 0; u[17] = 0;
+    u[18] = receiveShadow ? 1 : 0;
+    u[19] = 0; // hasOcclusionMap, set by createMaterialBindGroup
+    for (var mi = 0; mi < 16; mi++) f[20 + mi] = mi % 5 === 0 ? 1 : 0; if (mat.wind && window.__gosx_scene3d_terrain_api) f.set(window.__gosx_scene3d_terrain_api.windFor(mat.wind), 20); // wind sway (scene/wind.go): material.modelMatrix is otherwise unused
+    f[36] = f[37] = f[38] = 1;
+    f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1; // modelScaleSigns.w: normal-map U scale
+    f[40] = sceneWebGPUDielectricF0(mat.ior);
+    f[41] = 0; // hasSpecularIntensityMap, set by createMaterialBindGroup
+    var alphaCutoff = sceneNormalizeMaterialAlphaCutoff(mat.alphaCutoff, null);
+    f[42] = (typeof alphaCutoff === "number" && Number.isFinite(alphaCutoff) && alphaCutoff >= 0)
+      ? (alphaCutoff <= 1 ? Math.fround(alphaCutoff) : 2)
+      : (["alpha", "additive"].includes(mat.renderPass || mat.blendMode) ? -2 : -1); // -2 preserves texel alpha for BLEND; -1 keeps OPAQUE semantics.
+    f[43] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[1], 1) : 1; // normalUVScaleV
+    var specular = sceneWebGPUSpecularFactors(mat);
+    f[44] = specular.f0[0];
+    f[45] = specular.f0[1];
+    f[46] = specular.f0[2];
+    f[47] = specular.f90;
+    var colorLogs = sceneWebGPUSpecularColorLogs(mat);
+    f[48] = colorLogs[0];
+    f[49] = colorLogs[1];
+    f[50] = colorLogs[2];
+    u[51] = 0; // hasSpecularColorMap, set by createMaterialBindGroup
+    f[52] = sceneNumber(mat.normalScale, 1);
+    f[53] = clamp01(sceneNumber(mat.occlusionStrength, 1));
+    u[54] = sceneWebGPUHasEmissiveColor(mat) ? 1 : 0;
+    f[55] = Math.max(0.0001, sceneNumber(mat.rimPower, 2));
+    var emissiveColor = sceneWebGPUEmissiveColor(mat);
+    f[56] = emissiveColor[0];
+    f[57] = emissiveColor[1];
+    f[58] = emissiveColor[2];
+    f[59] = Math.max(0, sceneNumber(mat.rimStrength, 0));
+    var rimColor = sceneWebGPURimColor(mat);
+    f[60] = rimColor[0];
+    f[61] = rimColor[1];
+    f[62] = rimColor[2];
+    var aa = mat.specularAA || {};
+    f[63] = clamp01(sceneNumber(aa.variance, 0));
+    f.set(sceneTransmissionVolume(mat), 64);
+    f[67] = clamp01(sceneNumber(aa.threshold, 0));
+    u[71] = 0; // thickness texture ready flag; existing padding, no buffer growth
+    return { data: f, u: u };
+  }
+
+  // Memoized bind group on an owner slot. Bind groups reference their
+  // resources by identity, so one stays valid while the device, the layout,
+  // and every bound resource are unchanged. Recreating them per frame
+  // churned thousands of GPU wrapper objects per second across the point
+  // layers; WebKit frees the backing Metal objects only on JS garbage
+  // collection, so the churn grows the GPU process between collections
+  // (iOS jetsam pressure). Identity source per entry: `resource.buffer`
+  // for buffer bindings, the resource itself for views and samplers.
+  function wgpuCachedBindGroup(device: any, owner: any, slot: any, layout: any, entries: any) {
+    var cache = owner[slot];
+    if (cache && cache.device === device && cache.layout === layout && cache.ids.length === entries.length) {
+      var match = true;
+      for (var ci = 0; ci < entries.length && match; ci++) {
+        var res = entries[ci].resource;
+        if (cache.ids[ci] !== (res && res.buffer ? res.buffer : res)) match = false;
+      }
+      if (match) return cache.bg;
+    }
+    var ids = [];
+    for (var ii = 0; ii < entries.length; ii++) {
+      var r = entries[ii].resource;
+      ids.push(r && r.buffer ? r.buffer : r);
+    }
+    var bg = device.createBindGroup({ layout: layout, entries: entries });
+    owner[slot] = { device: device, layout: layout, ids: ids, bg: bg };
+    return bg;
+  }
+
+  function createMaterialBindGroup(uniformState: any, gpuRes: any, meshState: any, device: any, material: any, receiveShadow: any, cacheOwner: any) {
+    var mat = material || {};
+    var uniform = materialUniformData(uniformState, mat, receiveShadow);
+    var u = uniform.u;
+    // Texture records.
+    var textureMaps = [
+      { prop: "texture", descriptor: "baseColor", role: "base-color", colorSpace: "srgb", index: 13 },
+      { prop: "normalMap", descriptor: "normal", role: "normal", colorSpace: "linear", index: 14 },
+      { prop: "roughnessMap", descriptor: "roughness", role: "roughness", colorSpace: "linear", index: 15 },
+      { prop: "metalnessMap", descriptor: "metalness", role: "metalness", colorSpace: "linear", index: 16 },
+      { prop: "emissiveMap", descriptor: "emissive", role: "emissive", colorSpace: "srgb", index: 17 },
+      { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", index: 19 },
+      { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", index: 41 },
+      { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", index: 51 },
+      { prop: "thicknessMap", descriptor: "thickness", role: "data", colorSpace: "linear", index: 71 },
+    ];
+    var texViews = [];
+    var texSamplers = [];
+    for (var ti = 0; ti < textureMaps.length; ti++) {
+      var tm = textureMaps[ti];
+      var descriptor = mat.textureDescriptors && mat.textureDescriptors[tm.descriptor];
+      var url = descriptor && typeof descriptor.uri === "string" && descriptor.uri.trim()
+        ? descriptor.uri.trim()
+        : mat[tm.prop];
+      var record = url ? wgpuLoadTexture(device, url, gpuRes.textureCache, descriptor, tm.role, tm.colorSpace) : null;
+      var loaded = Boolean(record && record.loaded);
+      u[tm.index] = loaded ? 1 : 0;
+      texViews.push(loaded ? record.view : gpuRes.placeholderView);
+      texSamplers.push(wgpuMaterialSampler(device, gpuRes.linearSampler, descriptor, tm.role));
+    }
+    var owner = (cacheOwner && typeof cacheOwner === "object")
+      ? cacheOwner
+      : ((material && typeof material === "object") ? material : gpuRes.defaultMaterialOwner);
+    var slot = receiveShadow ? "_gosxWGPUMaterialShadowUniform" : "_gosxWGPUMaterialUniform";
+    var materialBuffer = wgpuCachedTrackedBuffer(meshState, device,
+      owner,
+      slot,
+      uniform.data,
+      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      true
+    );
+    // Memoize the bind group. The material uniform buffer is written above
+    // (dynamic=true) and referenced by identity in the bind group, so the
+    // same bind group remains valid across frames as long as the material
+    // buffer and texture views are unchanged. Invalidate on device change
+    // (device-loss recovery) or when a texture finishes async loading.
+    var bgCacheSlot = receiveShadow ? "_gosxWGPUMatBGCacheS" : "_gosxWGPUMatBGCache";
+    var bgCache = owner[bgCacheSlot];
+    if (bgCache && bgCache.device === device && bgCache.materialBuffer === materialBuffer &&
+        bgCache.modelBuffer === uniformState.materialFrame.buffer) {
+      var viewsMatch = true;
+      for (var ti2 = 0; ti2 < texViews.length && viewsMatch; ti2++) {
+        if (bgCache.texViews[ti2] !== texViews[ti2] || bgCache.texSamplers[ti2] !== texSamplers[ti2]) viewsMatch = false;
+      }
+      if (viewsMatch) return bgCache.bg;
+    }
+    // Create bind group with texture views and sampler.
+    var entries: any[] = [{ binding: 0, resource: { buffer: materialBuffer } }];
+    for (var textureIndex = 0; textureIndex < texViews.length; textureIndex++) entries.push(
+      { binding: textureIndex * 2 + 1, resource: texViews[textureIndex] },
+      { binding: textureIndex * 2 + 2, resource: texSamplers[textureIndex] });
+    var modelBuffer = uniformState.materialFrame.buffer;
+    if (modelBuffer) entries.push({ binding: 19, resource: { buffer: modelBuffer, size: SCENE_WEBGPU_CUTAWAY_SLOT_BYTES } });
+    var matBG = device.createBindGroup({ layout: gpuRes.materialBindGroupLayout, entries: entries });
+    owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews,
+      texSamplers: texSamplers, modelBuffer: modelBuffer, bg: matBG };
+    return matBG;
+  }
+
+  function createFrameBindGroup(uniformState: any, gpuRes: any, device: any, shadowView0: any, shadowView1: any) {
+    var view0 = shadowView0 || gpuRes.dummyShadowArrayView;
+    var view1 = shadowView1 || gpuRes.dummyShadowArrayView;
+    var iblIrradianceView = uniformState.iblResources.active && uniformState.iblResources.irradiance ? uniformState.iblResources.irradiance.view : gpuRes.placeholderCubeView;
+    var iblRadianceView = uniformState.iblResources.active && uniformState.iblResources.radiance ? uniformState.iblResources.radiance.view : gpuRes.placeholderCubeView;
+    var iblBRDFView = uniformState.iblResources.active && uniformState.iblResources.brdfLUT ? uniformState.iblResources.brdfLUT.view : gpuRes.placeholderView;
+    var envMapView = uniformState.envMapResources.active && uniformState.envMapResources.record ? uniformState.envMapResources.record.view : gpuRes.placeholderView;
+    var cache = uniformState._frameBindGroupCache;
+    if (
+      cache &&
+      cache.device === device &&
+      cache.layout === gpuRes.frameBindGroupLayout &&
+      cache.frame === gpuRes.frameUniformBuffer &&
+      cache.lights === gpuRes.lightStorageBuffer &&
+      cache.fog === gpuRes.fogUniformBuffer &&
+      cache.env === gpuRes.envUniformBuffer &&
+      cache.view0 === view0 &&
+      cache.view1 === view1 &&
+      cache.sampler === gpuRes.comparisonSampler &&
+      cache.shadow === gpuRes.shadowUniformBuffer &&
+      cache.iblIrradiance === iblIrradianceView &&
+      cache.iblRadiance === iblRadianceView &&
+      cache.iblBRDF === iblBRDFView &&
+      cache.iblSampler === gpuRes.linearSampler &&
+      cache.envMap === envMapView &&
+      cache.envMapSampler === gpuRes.envMapSampler && cache.transmission === uniformState.transmissionView
+    ) {
+      return cache.bindGroup;
+    }
+    var bindGroup = _createFrameBindGroupUncached(uniformState, gpuRes, device, [view0, view1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView]);
+    uniformState._frameBindGroupCache = {
+      device: device,
+      layout: gpuRes.frameBindGroupLayout,
+      frame: gpuRes.frameUniformBuffer,
+      lights: gpuRes.lightStorageBuffer,
+      fog: gpuRes.fogUniformBuffer,
+      env: gpuRes.envUniformBuffer,
+      view0: view0,
+      view1: view1,
+      sampler: gpuRes.comparisonSampler,
+      shadow: gpuRes.shadowUniformBuffer,
+      iblIrradiance: iblIrradianceView,
+      iblRadiance: iblRadianceView,
+      iblBRDF: iblBRDFView,
+      iblSampler: gpuRes.linearSampler,
+      envMap: envMapView,
+      envMapSampler: gpuRes.envMapSampler,
+      transmission: uniformState.transmissionView,
+      bindGroup: bindGroup,
+    };
+    return bindGroup;
+  }
+
+  function _createFrameBindGroupUncached(uniformState: any, gpuRes: any, device: any, views: any[], reflectionFrame = false) { var shadowView0 = views[0], shadowView1 = views[1], iblIrradianceView = views[2], iblRadianceView = views[3], iblBRDFView = views[4], envMapView = views[5];
+    return device.createBindGroup({
+      layout: gpuRes.frameBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: reflectionFrame || gpuRes.frameUniformBuffer } },
+        { binding: 1, resource: { buffer: gpuRes.lightStorageBuffer } },
+        { binding: 2, resource: { buffer: gpuRes.fogUniformBuffer } },
+        { binding: 3, resource: { buffer: gpuRes.envUniformBuffer } },
+        { binding: 4, resource: shadowView0 || gpuRes.dummyShadowArrayView },
+        { binding: 5, resource: gpuRes.comparisonSampler },
+        { binding: 6, resource: shadowView1 || gpuRes.dummyShadowArrayView },
+        { binding: 7, resource: gpuRes.comparisonSampler },
+        { binding: 8, resource: { buffer: gpuRes.shadowUniformBuffer } },
+        { binding: 9, resource: iblIrradianceView || gpuRes.placeholderCubeView },
+        { binding: 10, resource: iblRadianceView || gpuRes.placeholderCubeView },
+        { binding: 11, resource: iblBRDFView || gpuRes.placeholderView },
+        { binding: 12, resource: gpuRes.linearSampler },
+        { binding: 13, resource: envMapView || gpuRes.placeholderView },
+        { binding: 14, resource: gpuRes.envMapSampler },
+        { binding: 15, resource: uniformState.transmissionView || gpuRes.placeholderView },
+        { binding: 16, resource: uniformState.transmissionResources.sampler },
+        { binding: 17, resource: { buffer: uniformState.transmissionResources.uniform } },
+      ],
+    });
+  }

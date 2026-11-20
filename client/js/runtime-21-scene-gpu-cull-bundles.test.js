@@ -1022,8 +1022,10 @@ test("gpu-cull T4a: no cullKernelWGSL → draw-all (direct pass.draw, not drawIn
     "draw-all must be in the else branch of the cull ready check");
 
   // The draw-indirect call must be in the if-branch (ready cull path).
-  assert.match(webgpu, /if\s*\(cullSys\s*&&\s*cullSys\.isReady\(\)\)/,
-    "drawIndirect path must be gated by cullSys.isReady()");
+  assert.match(webgpu, /function wgpuInstancedCullReady\([^)]*\)\s*\{[^}]*cullSys\s*&&\s*cullSys\.isReady\(\)/,
+    "wgpuInstancedCullReady must gate on cullSys && cullSys.isReady()");
+  assert.match(webgpu, /if\s*\(wgpuInstancedCullReady\(cullSys,\s*surface\)\)/,
+    "drawIndirect path must be gated by wgpuInstancedCullReady(cullSys, surface)");
 
   // Ensure the indirect draw call exists inside the if-branch.
   assert.match(webgpu, /pass\.drawIndirect\(cullSys\.drawArgsBuf,\s*0\)/,
@@ -1063,7 +1065,7 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The dispatch hook must call updateInstancedCullSystems.
-  assert.match(webgpu, /updateInstancedCullSystems\(bundle\.instancedMeshes,\s*encoder,\s*scratchSelenaViewProjection\)/,
+  assert.match(webgpu, /updateInstancedCullSystems\(bundle\.instancedMeshes,\s*encoder,\s*uniformState\.scratchSelenaViewProjection\)/,
     "frame loop must call updateInstancedCullSystems with instancedMeshes, encoder, and scratchSelenaViewProjection");
 
   // The frame loop must call it AFTER uploadFrameUniforms (so VP is ready) and

@@ -420,13 +420,13 @@ test("uploadLights grows the storage buffer before it writes", () => {
   assert.notEqual(start, -1, "ensureLightCapacity must exist");
   assert.notEqual(end, -1);
   const body = webgpuSource.slice(start, end);
-  const grow = body.indexOf("ensureLightCapacity(sceneWebGPULightCapacityFor(lightArray.length))");
+  const grow = body.indexOf("ensureLightCapacity(uniformState, gpuRes, device, sceneWebGPULightCapacityFor(lightArray.length))");
   const pack = body.indexOf("sceneWebGPUPackLights(");
-  const write = body.indexOf("writeBuffer(\n          lightStorageBuffer");
+  const write = body.indexOf("writeBuffer(\n        gpuRes.lightStorageBuffer");
   assert.ok(grow !== -1, "uploadLights must resize before it counts");
   assert.ok(pack > grow, "packing must follow the resize");
   assert.ok(write > pack, "the upload must follow the packing");
-  assert.match(body, /_retiredLightBuffers\.push\(lightStorageBuffer\)/,
+  assert.match(body, /uniformState\._retiredLightBuffers\.push\(gpuRes\.lightStorageBuffer\)/,
     "a replaced buffer must be retired, not destroyed while commands may still read it");
 });
 
@@ -488,8 +488,8 @@ test("the renderer reports each lighting issue once, not once per frame", () => 
   const start = webgpuSource.indexOf("function reportLightIssuesOnce(");
   assert.notEqual(start, -1);
   const body = webgpuSource.slice(start, start + 900);
-  assert.match(body, /_lightIssuesReported\[key\]/);
-  assert.match(webgpuSource, /reportLightIssuesOnce\(sceneWebGPULightIssues\(census, lightArray\.length, _lightCapacity\)\)/);
+  assert.match(body, /uniformState\._lightIssuesReported\[key\]/);
+  assert.match(webgpuSource, /reportLightIssuesOnce\(uniformState, sceneWebGPULightIssues\(census, lightArray\.length, uniformState\._lightCapacity\)\)/);
   assert.match(webgpuSource, /window\.__gosx\.reportIssue\(record\)/);
 });
 
@@ -503,8 +503,8 @@ test("the renderer reports each lighting issue once, not once per frame", () => 
 
 function loadUploadLights() {
   const { context, sandbox } = createContext();
-  const startMark = "    // ensureLightCapacity grows the light storage buffer";
-  const endMark = "      return census;\n    }";
+  const startMark = "  // ensureLightCapacity grows the light storage buffer";
+  const endMark = "    return census;\n  }";
   const start = webgpuSource.indexOf(startMark);
   assert.notEqual(start, -1, "the uploadLights block moved; update this loader");
   const end = webgpuSource.indexOf(endMark, start);
@@ -547,24 +547,29 @@ function loadUploadLights() {
   const harness = vm.runInContext(
     [
       "(function(device, frameUniformBuffer) {",
-      "  var lightStorageBuffer = device.createBuffer({",
-      "    label: \"gosx-lights\",",
-      "    size: SCENE_WEBGPU_LIGHT_CAPACITY_MIN * SCENE_WEBGPU_LIGHT_BYTES,",
-      "    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,",
-      "  });",
-      "  var _lightCapacity = SCENE_WEBGPU_LIGHT_CAPACITY_MIN;",
-      "  var _lightCountBuf = new Uint32Array(1);",
-      "  var _lightDataF = new Float32Array(_lightCapacity * SCENE_WEBGPU_LIGHT_FLOATS);",
-      "  var _lightColorCache = {};",
-      "  var _retiredLightBuffers = [];",
-      "  var _lightIssuesReported = Object.create(null);",
+      "  var gpuRes = {",
+      "    frameUniformBuffer: frameUniformBuffer,",
+      "    lightStorageBuffer: device.createBuffer({",
+      "      label: \"gosx-lights\",",
+      "      size: SCENE_WEBGPU_LIGHT_CAPACITY_MIN * SCENE_WEBGPU_LIGHT_BYTES,",
+      "      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,",
+      "    }),",
+      "  };",
+      "  var uniformState = {",
+      "    _lightCapacity: SCENE_WEBGPU_LIGHT_CAPACITY_MIN,",
+      "    _lightCountBuf: new Uint32Array(1),",
+      "    _lightDataF: new Float32Array(SCENE_WEBGPU_LIGHT_CAPACITY_MIN * SCENE_WEBGPU_LIGHT_FLOATS),",
+      "    _lightColorCache: {},",
+      "    _retiredLightBuffers: [],",
+      "    _lightIssuesReported: Object.create(null),",
+      "  };",
       body,
       "  return {",
-      "    uploadLights: uploadLights,",
-      "    buffer: function() { return lightStorageBuffer; },",
-      "    capacity: function() { return _lightCapacity; },",
-      "    retired: function() { return _retiredLightBuffers; },",
-      "    data: function() { return _lightDataF; },",
+      "    uploadLights: function(lights) { return uploadLights(uniformState, gpuRes, device, lights); },",
+      "    buffer: function() { return gpuRes.lightStorageBuffer; },",
+      "    capacity: function() { return uniformState._lightCapacity; },",
+      "    retired: function() { return uniformState._retiredLightBuffers; },",
+      "    data: function() { return uniformState._lightDataF; },",
       "  };",
       "})",
     ].join("\n"),

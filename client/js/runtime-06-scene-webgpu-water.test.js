@@ -459,18 +459,18 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.match(webgpu, /system\.waterSurfaceTileFailed = tileFailed/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-pending/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-pool-tile-texture-failed/);
-  assert.match(webgpu, /\{ binding: 9, resource: tileLoaded \? tileRecord\.view : placeholderView \}/);
+  assert.match(webgpu, /\{ binding: 9, resource: tileLoaded \? tileRecord\.view : gpuRes\.placeholderView \}/);
   assert.match(webgpu, /\{ binding: 10, resource: \{ buffer: system\.objectSphereBuffer \} \}/);
   assert.match(webgpu, /objectTextureMatrixBuffer/);
   assert.match(webgpu, /function writeWaterObjectTextureMatrices/);
   assert.match(webgpu, /objectViewProjectionMatrix/);
   assert.match(webgpu, /objectReflectionViewProjectionMatrix/);
-  assert.match(webgpu, /system\.objectViewProjectionMatrix\.set\(scratchSelenaViewProjection\)/);
-  assert.match(webgpu, /system\.objectReflectionViewProjectionMatrix\.set\(scratchSelenaViewProjection\)/);
+  assert.match(webgpu, /system\.objectViewProjectionMatrix\.set\(uniformState\.scratchSelenaViewProjection\)/);
+  assert.match(webgpu, /system\.objectReflectionViewProjectionMatrix\.set\(uniformState\.scratchSelenaViewProjection\)/);
   assert.match(webgpu, /var viewMatrix = system\.objectViewProjectionReady \? system\.objectViewProjectionMatrix : null/);
   assert.doesNotMatch(webgpu, /system\.objectViewProjectionReady = false;[\s\S]*system\.objectReflectionViewProjectionReady = false/,
     "retained duck targets must keep the projection matrices they were rendered with across cadence skips");
-  assert.match(webgpu, /if \(passSlot === 0\) \{[\s\S]*system\.objectViewProjectionMatrix\.set\(scratchSelenaViewProjection\)[\s\S]*\} else \{[\s\S]*system\.objectReflectionViewProjectionMatrix\.set\(scratchSelenaViewProjection\)/,
+  assert.match(webgpu, /if \(passSlot === 0\) \{[\s\S]*system\.objectViewProjectionMatrix\.set\(uniformState\.scratchSelenaViewProjection\)[\s\S]*\} else \{[\s\S]*system\.objectReflectionViewProjectionMatrix\.set\(uniformState\.scratchSelenaViewProjection\)/,
     "each alternating target must update only its matching retained projection matrix");
   assert.match(webgpu, /function getWaterRenderPipeline\(system, surfaceSide, forceBuiltin\)/);
   assert.doesNotMatch(webgpu, /var entry = forceBuiltin \? \{\} : \(system && system\.entry \|\| \{\}\)/);
@@ -555,7 +555,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /fn waterPoolRoundedBoundaryNormal/);
   assert.match(webgpu, /fn waterPoolRoundedVertex/);
   assert.match(webgpu, /roundedPoolVertexCount = 44 \* 9/);
-  assert.match(webgpu, /tileRecord = tileURL \? wgpuLoadTexture\(device, tileURL, textureCache\) : null/);
+  assert.match(webgpu, /tileRecord = tileURL \? wgpuLoadTexture\(device, tileURL, gpuRes\.textureCache\) : null/);
   assert.match(webgpu, /textureSample\(tileTexture, poolSampler, in\.tileUV\)/);
   assert.match(webgpu, /textureSample\(causticTexture, poolSampler, causticUV\)/);
   assert.match(webgpu, /textureSample\(objectShadowTexture, poolSampler, waterUV\)/);
@@ -1180,9 +1180,9 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-object-texture-pixel-budget/);
   assert.match(webgpu, /var targetWidth = Math\.max\(1, system\.objectTextureWidth \|\| system\.objectTextureResolution \|\| WATER_OBJECT_TEXTURE_SIZE\)/);
   assert.match(webgpu, /var targetHeight = Math\.max\(1, system\.objectTextureHeight \|\| system\.objectTextureResolution \|\| WATER_OBJECT_TEXTURE_SIZE\)/);
-  assert.match(webgpu, /uploadFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
-  assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
-  assert.doesNotMatch(webgpu, /uploadFrameUniforms\(sceneWaterReflectionCamera\(bundle && bundle\.camera\), targetWidth, targetHeight, false\)/);
+  assert.match(webgpu, /uploadFrameUniforms\(uniformState, gpuRes, device, bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
+  assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(uniformState, gpuRes, device, bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
+  assert.doesNotMatch(webgpu, /uploadFrameUniforms\((?:uniformState, gpuRes, device, )?sceneWaterReflectionCamera\(bundle && bundle\.camera\), targetWidth, targetHeight, false\)/);
   assert.match(webgpu, /var objectShadowResolution = sceneWaterObjectShadowResolution\(entry\)/);
   assert.match(webgpu, /qualityTier: "full",[\s\S]*surfaceResolution: authoredSurfaceResolution,[\s\S]*causticsResolution: causticsResolution,[\s\S]*objectTexturePixelBudget: objectTextureSize\.pixelBudget,[\s\S]*objectShadowResolution: objectShadowResolution/);
   assert.match(core, /causticsResolution: Math\.max\(0, Math\.floor\(sceneNumber\(item\.causticsResolution/);
@@ -1261,7 +1261,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /var eye = sceneWaterMirrorWaterPoint\(position\)/);
   assert.match(webgpu, /var reflectedTarget = sceneWaterMirrorWaterPoint\(target\)/);
   assert.match(webgpu, /var reflectedUp = sceneWaterReflectionCameraUp\(camera\)/);
-  assert.match(webgpu, /sceneWaterLookAtViewMatrix\(eye, reflectedTarget, reflectedUp, scratchViewMatrix\)/);
+  assert.match(webgpu, /sceneWaterLookAtViewMatrix\(eye, reflectedTarget, reflectedUp, uniformState\.scratchViewMatrix\)/);
   assert.match(webgpu, /function uploadWaterReflectionFrameUniforms/);
   assert.match(webgpu, /f\[33\] = eye\.y/);
   assert.match(webgpu, /f\[34\] = eye\.z/);
@@ -1284,7 +1284,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /renderWaterObjectShadowPass\(encoder, system\)/);
   assert.match(webgpu, /renderWaterObjectMeshShadowPass\(encoder, system, objectList, pbrBuffers\)/);
   assert.match(webgpu, /renderWaterObjectSceneTexturePasses\(/);
-  assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
+  assert.match(webgpu, /uploadWaterReflectionFrameUniforms\(uniformState, gpuRes, device, bundle && bundle\.camera, targetWidth, targetHeight, false\)/);
   assert.match(webgpu, /updateWaterSystems\(bundle\.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH\)/);
   assert.match(webgpu, /waterObjectTexturePasses/);
   assert.match(webgpu, /waterObjectTextureTargets/);
@@ -1604,7 +1604,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
   // same value on selenaFrame, the object it hands to the module-scope uniform
   // packer in 16a1-scene-webgpu-selena-uniforms.ts.
   assert.match(webgl, /var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;/);
-  assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: \[0, 0, 0, 0\] \};/);
+  assert.match(webgpu, /var selenaFrame = \{ viewProjection: uniformState\.scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: \[0, 0, 0, 0\] \};/);
 
   // time is a forced reserved auto-uniform: both resolvers return the clock for
   // name === "time" before user values can shadow it.

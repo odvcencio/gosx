@@ -273,7 +273,7 @@ test("WebGPU consumes the same split-sum contract and keeps color/data texture f
   assert.match(source, /@group\(0\) @binding\(10\) var iblRadiance: texture_cube<f32>/);
   assert.match(source, /@group\(0\) @binding\(11\) var iblBRDFLUT: texture_2d<f32>/);
   assert.match(source, /@group\(1\) @binding\(11\) var occlusionTex: texture_2d<f32>/);
-  assert.match(source, /out\.ibl = Object\.assign\(\{\}, iblResources\.diagnostics\)/);
+  assert.match(source, /out\.ibl = Object\.assign\(\{\}, uniformState\.iblResources\.diagnostics\)/);
   assert.match(source, /renderTruth\(\)\.record\("ibl-" \+ diag\.state, diag\.reason\)/);
   assert.match(source, /frame\.toneMap != 4u/);
   assert.match(source, /webGPUIBLRoughnessMappingValid/);
