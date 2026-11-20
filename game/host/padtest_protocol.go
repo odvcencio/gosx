@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 )
@@ -142,7 +143,8 @@ func DecodePadMessage(data []byte) (PadMessage, error) {
 	if err := dec.Decode(&m); err != nil {
 		return PadMessage{}, fmt.Errorf("host: bad pad message: %w", err)
 	}
-	if dec.More() {
+	// Nothing may follow the object, not even a stray closing brace.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return PadMessage{}, errors.New("host: trailing data after pad message")
 	}
 	switch m.Type {

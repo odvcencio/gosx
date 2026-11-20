@@ -191,6 +191,12 @@ func (s *PadTestSource) BeginFrame() uint64 {
 	s.inFrame = true
 	s.sampled = false
 	for len(s.queue) > 0 {
+		if s.unacked != 0 {
+			// A change latched earlier is not acknowledged yet (no read has
+			// happened since). Latching another now would drop its receipt, so
+			// the queue waits for the first reading frame.
+			break
+		}
 		q := s.queue[0]
 		if !q.Next {
 			if q.Frame > s.frame {

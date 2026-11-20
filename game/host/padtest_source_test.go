@@ -350,6 +350,26 @@ func TestPadTestSessionProtocol(t *testing.T) {
 		t.Fatalf("hello %+v", h)
 	}
 	set := host.PadMessage{Type: host.PadMsgSet, Seq: 1, At: host.PadAtNext, Pads: host.PadWireFrom([]host.GamepadState{pad(0, "A")})}
+	for _, early := range []host.PadMessage{set, {Type: host.PadMsgWatch, Watch: 1}} {
+		if _, err := sess.Receive(early); !errors.Is(err, host.ErrPadProtocol) {
+			t.Fatalf("%s before ready: %v", early.Type, err)
+		}
+	}
+	if _, err := sess.Receive(host.PadMessage{Type: host.PadMsgReady, Version: host.PadTestProtocolVersion + 1}); !errors.Is(err, host.ErrPadProtocol) || sess.Ready() {
+		t.Fatalf("wrong version accepted: %v", err)
+	}
+	sess = host.NewPadTestSession(src, "tok")
+	if _, err := sess.Receive(host.PadMessage{Type: host.PadMsgReady, Version: host.PadTestProtocolVersion}); err != nil || !sess.Ready() {
+		t.Fatalf("ready: %v", err)
+	}
+	if _, err := sess.Receive(host.PadMessage{Type: host.PadMsgReady, Version: host.PadTestProtocolVersion}); !errors.Is(err, host.ErrPadProtocol) {
+		t.Fatalf("duplicate ready: %v", err)
+	}
+	for _, wrong := range []string{host.PadMsgHello, host.PadMsgApplied, host.PadMsgRejected, host.PadMsgProgress} {
+		if _, err := sess.Receive(host.PadMessage{Type: wrong}); !errors.Is(err, host.ErrPadProtocol) {
+			t.Fatalf("%s from the server: %v", wrong, err)
+		}
+	}
 	if out := sess.Handle(set); len(out) != 0 {
 		t.Fatalf("set replied %+v", out)
 	}
@@ -430,5 +450,42 @@ func TestPadTestEndpoint(t *testing.T) {
 	}
 	if got := host.PadTestWebSocketURL(9); got != "ws://127.0.0.1:9/gosx-padtest" {
 		t.Fatal(got)
+	}
+}
+
+func TestDecodePadMessageRequiresEOF(t *testing.T) {
+	for _, bad := range []string{`{"type":"ready"}}`, `{"type":"ready"} {"type":"ready"}`, `{"type":"ready"}x`} {
+		if _, err := host.DecodePadMessage([]byte(bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	if _, err := host.DecodePadMessage([]byte(` {"type":"ready","version":1} `)); err != nil {
+		t.Errorf("rejected clean message: %v", err)
+	}
+}
+
+// A change latched on a frame nobody sampled is acknowledged by the first later
+// sampling frame; a second change queued behind it waits, so no receipt is lost.
+func TestPadTestSourceUnsampledChangeNotOverwritten(t *testing.T) {
+	src := host.NewPadTestSource()
+	src.Enqueue(host.PadSet{Seq: 1, Next: true, Pads: []host.GamepadState{pad(0, "A")}})
+	src.Enqueue(host.PadSet{Seq: 2, Next: true, Pads: []host.GamepadState{pad(0, "B")}})
+	src.BeginFrame()
+	if r := src.EndFrame(); r.Seq != 0 {
+		t.Fatalf("unsampled frame acknowledged %d", r.Seq)
+	}
+	src.BeginFrame()
+	if got := src.Gamepads(); got[0].ID != "A" {
+		t.Fatalf("second change overwrote the unacknowledged first: %+v", got)
+	}
+	if r := src.EndFrame(); r.Seq != 1 || r.LatchedFrame != 1 {
+		t.Fatalf("receipt %+v, want seq 1 latched on frame 1", r)
+	}
+	src.BeginFrame()
+	if got := src.Gamepads(); got[0].ID != "B" {
+		t.Fatalf("second change never applied: %+v", got)
+	}
+	if r := src.EndFrame(); r.Seq != 2 {
+		t.Fatalf("receipt %+v, want seq 2", r)
 	}
 }

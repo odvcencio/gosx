@@ -2,6 +2,7 @@ package host
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -13,12 +14,13 @@ import (
 // The frame loop drives the source directly (BeginFrame, the game's reads,
 // then Session.EndFrame in place of Source.EndFrame).
 type PadTestSession struct {
-	mu      sync.Mutex
-	src     *PadTestSource
-	token   string
-	ready   bool
-	lastSeq uint64
-	watches []padWatch
+	mu       sync.Mutex
+	src      *PadTestSource
+	token    string
+	ready    bool
+	gotReady bool
+	lastSeq  uint64
+	watches  []padWatch
 }
 
 type padWatch struct {
@@ -43,34 +45,64 @@ func (s *PadTestSession) Ready() bool {
 	return s.ready
 }
 
-// Handle processes one server message and returns the replies to send now.
+// ErrPadProtocol is wrapped by every error Receive returns for a message the
+// page must not accept.
+var ErrPadProtocol = errors.New("host: pad test protocol violation")
+
+// Handle processes one server message and returns the replies to send now. It
+// drops a message Receive refuses; a browser adapter calls Receive and ends the
+// session on the error.
 func (s *PadTestSession) Handle(m PadMessage) []PadMessage {
+	replies, _ := s.Receive(m)
+	return replies
+}
+
+// Receive processes one server message. The page accepts only what a server
+// sends, in order: one ready, with this protocol's version, and then set and
+// watch. A set or watch before ready, a second ready, a wrong version, and a
+// type the page itself sends (hello, applied, rejected, progress) return an
+// error wrapping ErrPadProtocol, change nothing and send nothing.
+func (s *PadTestSession) Receive(m PadMessage) ([]PadMessage, error) {
 	switch m.Type {
 	case PadMsgReady:
 		s.mu.Lock()
-		s.ready = m.Version == PadTestProtocolVersion
-		s.mu.Unlock()
-	case PadMsgSet:
-		return s.handleSet(m)
-	case PadMsgWatch:
-		drawn, sampled := s.src.Counts()
-		w := padWatch{id: m.Watch, drawn: m.Drawn, sampled: m.Sampled}
-		if m.Relative {
-			if w.drawn != 0 {
-				w.drawn += drawn
-			}
-			if w.sampled != 0 {
-				w.sampled += sampled
-			}
+		defer s.mu.Unlock()
+		if s.gotReady {
+			return nil, fmt.Errorf("%w: second ready", ErrPadProtocol)
 		}
-		if (w.drawn == 0 || drawn >= w.drawn) && (w.sampled == 0 || sampled >= w.sampled) {
-			return []PadMessage{s.progress(w.id)}
+		s.gotReady = true
+		if m.Version != PadTestProtocolVersion {
+			return nil, fmt.Errorf("%w: server speaks version %d, page speaks %d", ErrPadProtocol, m.Version, PadTestProtocolVersion)
 		}
-		s.mu.Lock()
-		s.watches = append(s.watches, w)
-		s.mu.Unlock()
+		s.ready = true
+		return nil, nil
+	case PadMsgSet, PadMsgWatch:
+		if !s.Ready() {
+			return nil, fmt.Errorf("%w: %s before ready", ErrPadProtocol, m.Type)
+		}
+	default:
+		return nil, fmt.Errorf("%w: %q is not a server message", ErrPadProtocol, m.Type)
 	}
-	return nil
+	if m.Type == PadMsgSet {
+		return s.handleSet(m), nil
+	}
+	drawn, sampled := s.src.Counts()
+	w := padWatch{id: m.Watch, drawn: m.Drawn, sampled: m.Sampled}
+	if m.Relative {
+		if w.drawn != 0 {
+			w.drawn += drawn
+		}
+		if w.sampled != 0 {
+			w.sampled += sampled
+		}
+	}
+	if (w.drawn == 0 || drawn >= w.drawn) && (w.sampled == 0 || sampled >= w.sampled) {
+		return []PadMessage{s.progress(w.id)}, nil
+	}
+	s.mu.Lock()
+	s.watches = append(s.watches, w)
+	s.mu.Unlock()
+	return nil, nil
 }
 
 func (s *PadTestSession) handleSet(m PadMessage) []PadMessage {
