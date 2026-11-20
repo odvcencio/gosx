@@ -395,8 +395,8 @@ test("Scene3D WebGPU water clips rounded box surfaces with a shader SDF", () => 
 
   assert.match(webgpu, /cornerRadius: f32/);
   assert.match(webgpu, /poolShape: f32/);
-  assert.match(webgpu, /function sceneWaterPoolShapeRounded/);
-  assert.match(webgpu, /sceneWaterPoolShapeRounded\(entry\)/);
+  assert.match(webgpu, /function wgpuSceneWaterPoolShapeRounded/);
+  assert.match(webgpu, /wgpuSceneWaterPoolShapeRounded\(entry\)/);
   assert.match(webgpu, /waterUniformScratchF\[14\] = cornerRadius/);
   assert.match(webgpu, /waterUniformScratchF\[15\] = rounded \? 1 : 0/);
   assert.match(webgpu, /fn roundedPoolSDF\(point: vec2f, halfSize: vec2f, radius: f32\)/);
@@ -559,7 +559,7 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
   assert.match(webgpu, /textureSample\(tileTexture, poolSampler, in\.tileUV\)/);
   assert.match(webgpu, /textureSample\(causticTexture, poolSampler, causticUV\)/);
   assert.match(webgpu, /textureSample\(objectShadowTexture, poolSampler, waterUV\)/);
-  assert.match(webgpu, /var rounded = sceneWaterPoolShapeRounded\(entry\) && sceneNumber\(entry\.cornerRadius, 0\) > 0\.0001/);
+  assert.match(webgpu, /var rounded = wgpuSceneWaterPoolShapeRounded\(entry\) && sceneNumber\(entry\.cornerRadius, 0\) > 0\.0001/);
   assert.match(webgpu, /renderPass\.draw\(vertexCount\)/);
   assert.match(webgpu, /stats\.waterPoolDrawVertices \+= vertexCount/);
   assert.match(webgpu, /drawWaterPoolEntries\(mainPass, waterUpdateStats\.records, frameBindGroup\)/);

@@ -53,7 +53,7 @@ function materialPackingHarness() {
     waterSystems: new Map([[system.id, { system }]]),
     sceneWaterResolution: () => 256,
     sceneWaterObjectKind: () => 0, sceneWaterObjectSubtype: () => 0,
-    sceneWaterPoolShapeRounded: () => false,
+    wgpuSceneWaterPoolShapeRounded: () => false,
     sceneWaterLightVector: () => ({ x: 1, y: 1, z: 1 }),
     sceneSelenaLightingValue: () => undefined,
     selenaFrame: {},
@@ -152,7 +152,7 @@ function textureHarness(failedPasses = 0, targetPass) {
   const surface = rendererFunction("sceneWaterSurfaceSelenaRenderContext", {
     sceneNumber, waterSystemHasObjectTextureSubject, sceneWaterObjectTextureTargetSlots,
     sceneWaterCameraPosFromCam: () => ({ x: 0, y: 2, z: 3 }),
-    sceneWaterPoolShapeRounded: () => false,
+    wgpuSceneWaterPoolShapeRounded: () => false,
     sceneColorRGBA: () => [0.5, 0.8, 0.9, 1],
     sceneWaterSpheresContextArray: () => [], sceneWaterKnotContextArray: () => [],
     scratchSelenaViewProjection: new Float32Array(16),
