@@ -252,7 +252,7 @@ test("Scene3D WebGPU ignores popErrorScope lifecycle drops", () => {
 
   assert.match(source, /function isWebGPUErrorScopeLifecycleMessage\(message\)/);
   assert.match(source, /function wgpuPopScopedErrorScope\(scopedDevice\)/);
-  assert.match(source, /rendererDeviceStillActive\(scopedDevice\)/);
+  assert.match(source, /rendererDeviceStillActive\(device,\s*scopedDevice\)/);
   assert.match(source, /indexOf\("instance dropped"\) >= 0/);
   assert.match(source, /indexOf\("poperrorscope"\) >= 0/);
   assert.match(source, /\.catch\(function\(error\) \{[\s\S]*if \(isWebGPUErrorScopeLifecycleMessage\(message\)\) return;[\s\S]*reportWebGPUFrameError\(telemetryState, message\);[\s\S]*\}\);/);

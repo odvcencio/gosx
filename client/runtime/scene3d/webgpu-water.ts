@@ -4258,3 +4258,107 @@
     if (!Number.isFinite(stats.waterQualityDPRCap)) stats.waterQualityDPRCap = 1;
     return stats;
   }
+  function ensureWaterPipelines(waterState: any, pipeState: any, device: any) {
+    if (waterState.waterComputeShaderModule) return;
+    waterState.waterComputeShaderModule = device.createShaderModule({ label: "gosx-water-compute", code: SCENE_WATER_COMPUTE_SOURCE });
+    waterState.waterSeedPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+      label: "gosx-water-seed-drops",
+      layout: waterState.waterComputePipelineLayout,
+      compute: { module: waterState.waterComputeShaderModule, entryPoint: "seedDrops" },
+    });
+    waterState.waterDropPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+      label: "gosx-water-add-drop",
+      layout: waterState.waterComputePipelineLayout,
+      compute: { module: waterState.waterComputeShaderModule, entryPoint: "addDrop" },
+    });
+    waterState.waterDisplacementPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+      label: "gosx-water-displace-object",
+      layout: waterState.waterComputePipelineLayout,
+      compute: { module: waterState.waterComputeShaderModule, entryPoint: "displaceObject" },
+    });
+    waterState.waterStepPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+      label: "gosx-water-step",
+      layout: waterState.waterComputePipelineLayout,
+      compute: { module: waterState.waterComputeShaderModule, entryPoint: "stepSimulation" },
+    });
+    waterState.waterNormalPipeline = wgpuCreateValidatedPipeline(device, "compute", {
+      label: "gosx-water-normals",
+      layout: waterState.waterComputePipelineLayout,
+      compute: { module: waterState.waterComputeShaderModule, entryPoint: "updateNormals" },
+    });
+    waterState.waterRenderVertexModule = device.createShaderModule({ label: "gosx-water-render-vert", code: SCENE_WATER_RENDER_VERTEX_SOURCE });
+    waterState.waterRenderFragmentModule = device.createShaderModule({ label: "gosx-water-render-frag", code: SCENE_WATER_RENDER_FRAGMENT_SOURCE });
+    waterState.waterRenderBelowFragmentModule = device.createShaderModule({ label: "gosx-water-render-below-frag", code: SCENE_WATER_RENDER_BELOW_FRAGMENT_SOURCE });
+    waterState.waterPoolVertexModule = device.createShaderModule({ label: "gosx-water-pool-vert", code: SCENE_WATER_POOL_VERTEX_SOURCE });
+    waterState.waterPoolFragmentModule = device.createShaderModule({ label: "gosx-water-pool-frag", code: SCENE_WATER_POOL_FRAGMENT_SOURCE });
+    waterState.waterCausticsVertexModule = device.createShaderModule({ label: "gosx-water-caustics-vert", code: SCENE_WATER_CAUSTICS_VERTEX_SOURCE });
+    waterState.waterCausticsFragmentModule = device.createShaderModule({ label: "gosx-water-caustics-frag", code: SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE });
+    waterState.waterCausticsPipeline = wgpuCreateValidatedPipeline(device, "render", {
+      label: "gosx-water-caustics-pass",
+      layout: waterState.waterCausticsPipelineLayout,
+      vertex: { module: waterState.waterCausticsVertexModule, entryPoint: "vertexMain", buffers: [] },
+      fragment: {
+        module: waterState.waterCausticsFragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{ format: WATER_CAUSTICS_TEXTURE_FORMAT }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    waterState.waterObjectTextureVertexModule = device.createShaderModule({ label: "gosx-water-object-texture-vert", code: SCENE_WATER_OBJECT_TEXTURE_VERTEX_SOURCE });
+    waterState.waterObjectTextureFragmentModule = device.createShaderModule({ label: "gosx-water-object-texture-frag", code: SCENE_WATER_OBJECT_TEXTURE_FRAGMENT_SOURCE });
+    waterState.waterObjectShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-shadow-frag", code: SCENE_WATER_OBJECT_SHADOW_FRAGMENT_SOURCE });
+    waterState.waterObjectMeshShadowVertexModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-vert", code: SCENE_WATER_OBJECT_MESH_SHADOW_VERTEX_SOURCE });
+    waterState.waterObjectMeshShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-frag", code: SCENE_WATER_OBJECT_MESH_SHADOW_FRAGMENT_SOURCE });
+    pipeState.waterObjectMeshRefractionFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-texture-frag", code: sceneWaterObjectMeshFragmentSource(1) });
+    pipeState.waterObjectMeshClippedFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-clipped-frag", code: sceneWaterObjectMeshFragmentSource(2) });
+    waterState.waterObjectTexturePipeline = wgpuCreateValidatedPipeline(device, "render", {
+      label: "gosx-water-object-texture-pass",
+      layout: waterState.waterObjectTexturePipelineLayout,
+      vertex: { module: waterState.waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
+      fragment: {
+        module: waterState.waterObjectTextureFragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [
+          { format: WATER_OBJECT_TEXTURE_FORMAT },
+          { format: WATER_OBJECT_TEXTURE_FORMAT },
+          { format: WATER_OBJECT_TEXTURE_FORMAT },
+        ],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    waterState.waterObjectShadowPipeline = wgpuCreateValidatedPipeline(device, "render", {
+      label: "gosx-water-object-shadow-pass",
+      layout: waterState.waterObjectTexturePipelineLayout,
+      vertex: { module: waterState.waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
+      fragment: {
+        module: waterState.waterObjectShadowFragmentModule,
+        entryPoint: "shadowMain",
+        targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    waterState.waterObjectMeshShadowPipeline = wgpuCreateValidatedPipeline(device, "render", {
+      label: "gosx-water-object-mesh-shadow-pass",
+      layout: waterState.waterObjectMeshShadowPipelineLayout,
+      vertex: { module: waterState.waterObjectMeshShadowVertexModule, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
+      fragment: {
+        module: waterState.waterObjectMeshShadowFragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{ format: WATER_OBJECT_TEXTURE_FORMAT }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "none" },
+    });
+  }
+  function setLifecycle(waterState: any, state: any) {
+    var lifecycle = state && typeof state === "object" ? state : {};
+    var nowMS = Number.isFinite(lifecycle.nowMS)
+      ? lifecycle.nowMS
+      : ((typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now());
+    var active = lifecycle.active !== false && lifecycle.disposed !== true;
+    var paused = lifecycle.paused === true || lifecycle.disposed === true;
+    for (var record of waterState.waterSystems.values()) {
+      var system = record && record.system;
+      if (!system || !system.waterClock) continue;
+      waterState.waterClockAPI.sceneWaterResetClock(system.waterClock, nowMS, active, paused || sceneBool(system.entry && system.entry.paused, false));
+    }
+  }

@@ -4142,3 +4142,142 @@
       reportWebGPUFrameError(telemetryState, message);
     }
   }
+  function sceneWebGPUFactoryFailure(canvas: any, reason) {
+    var text = String(reason || "unknown");
+    try {
+      if (typeof window !== "undefined") {
+        var rect = canvas && typeof canvas.getBoundingClientRect === "function" ? canvas.getBoundingClientRect() : null;
+        window.__gosx_scene3d_webgpu_factory_error = text;
+        window.__gosx_scene3d_webgpu_factory_context = {
+          reason: text,
+          canvasChildren: canvas && canvas.childNodes ? canvas.childNodes.length : -1,
+          canvasParent: canvas && canvas.parentNode && canvas.parentNode.tagName ? canvas.parentNode.tagName : "",
+          canvasWidth: canvas && Number(canvas.width) || 0,
+          canvasHeight: canvas && Number(canvas.height) || 0,
+          canvasConnected: !!(canvas && canvas.isConnected),
+          canvasRectWidth: rect ? Number(rect.width) || 0 : 0,
+          canvasRectHeight: rect ? Number(rect.height) || 0 : 0,
+        };
+      }
+    } catch (_err) {}
+    console.warn("[gosx] WebGPU factory unavailable:", text);
+    return null;
+  }
+  function rendererDeviceStillActive(device: any, scopedDevice) {
+    return !!device && device === scopedDevice;
+  }
+  function sceneWebGPUWaterDebugMode(canvas: any) {
+    var raw = "";
+    try {
+      if (typeof window !== "undefined" && window.location && window.location.search && typeof URLSearchParams === "function") {
+        raw = new URLSearchParams(window.location.search).get("gosx-water-debug") || "";
+      }
+    } catch (_err) {}
+    if (!raw && canvas && typeof canvas.getAttribute === "function") {
+      raw = canvas.getAttribute("data-gosx-scene3d-water-debug") || "";
+    }
+    return String(raw || "").trim().toLowerCase();
+  }
+  // Synchronous device initialization — device was already obtained
+  // by the main-bundle probe (16z). Previously this was a two-stage
+  // async sequence (requestAdapter → requestDevice → set up GPU
+  // resources), but the probe now owns the adapter+device lifecycle
+  // so we can do all the GPU-resource setup synchronously at factory
+  // construction time, ensuring the renderer is never returned in a
+  // half-initialized state.
+  //
+  // startInit is retained as a no-op for the existing call site in
+  // render() ("if (!device) startInit()") to keep the diff tight;
+  // the first render call falls straight through since device is
+  // already set.
+  function startInit() { /* no-op: device already initialized */ }
+  function prepareBundlePipelines(s: any, device: any, bundle: any, prepared: any, effects: any[], post: boolean, warmup?: any) { if (warmup) prepareBundlePipelines(s, device, warmup, warmup.prepared, [], false); // Props.ShaderWarmup variants (pipeline-warmup.ts)
+    var materials = bundle.materials || [];
+    var instancedVariants = (bundle.instancedMeshes || []).map(function(mesh: any) {
+      var material = instancedMeshMaterial(mesh, materials), blend = scenePBRObjectRenderPass(mesh, material);
+      return [blend, sceneTransmissionDepthWrite(mesh, material, blend === "opaque"), Boolean(material && material.detail), instancedMeshUsesCull(mesh)].join(":");
+    }).sort().join(",");
+    var key = prepared ? [prepared.pipelineVariantHash, prepared.materialsHash, prepared.shadowPassHash, instancedVariants, (bundle.instancedMeshes || []).length, (bundle.waterSystems || []).length, s.pipeState.targetFormat, s.pipeState.activeSampleCount, s.pipeState.selectiveBloom, post, effects.map(function(effect: any) { return effect.kind + ":" + effect.mode; }).join(",")].join("|") : "";
+    if (key && key === s.preparedPipelineKey) return;
+    var passes = prepared && prepared.pbrPasses || buildDrawList(bundle);
+    var shadows = Array.isArray(bundle.lights) && bundle.lights.some(function(light: any) { return light.castShadow; });
+    s.pipeState.pbrShadowsActive = shadows && bundle.lights.some(wgpuShadowCaster);
+    if (shadows) getShadowPipeline(s.pipeState, device, false);
+    for (var blend of ["opaque", "alpha", "additive"]) {
+      var objects = passes[blend] || [];
+      var depth = blend === "opaque";
+      for (var object of objects) {
+        var material = materials[object.materialIndex];
+        var reflected = sceneWebGPUObjectReflected(object);
+        if (!getObjectSelenaPipeline(function(m: any, b: any, d: any, o: any) { return getSelenaPipeline(s.pipeState, s.selenaState, device, m, b, d, o); }, object, material, blend, depth)) getPBRPipeline(s.pipeState, device, blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", pbrVariant(s.pipeState, s.gpuRes, device, material));
+        if (shadows && object.castShadow) getShadowPipeline(s.pipeState, device, reflected);
+        if (webGPUObjectIsSkinned(object)) ensureElioSkinPipeline(s.pipeState, s.meshState, device);
+        if (object.computedMorph) ensureComputedMorphPipeline(s.pipeState, s.meshState, device);
+      }
+    }
+    for (var mesh of bundle.instancedMeshes || []) {
+      var material = instancedMeshMaterial(mesh, materials);
+      var meshBlend = scenePBRObjectRenderPass(mesh, material);
+      var meshDepth = sceneTransmissionDepthWrite(mesh, material, meshBlend === "opaque"), meshDetail = pbrVariant(s.pipeState, s.gpuRes, device, material);
+      getPBRInstancedPipeline(s.pipeState, device, meshBlend, meshDepth, meshDetail);
+      if (instancedMeshUsesCull(mesh)) getPBRInstancedCullPipeline(s.pipeState, device, meshBlend, meshDepth, meshDetail === true);
+      if (shadows && mesh.castShadow) getShadowInstancedPipeline(s.pipeState, device);
+    }
+    if (bundle.waterSystems && bundle.waterSystems.length) ensureWaterPipelines(s.waterState, s.pipeState, device);
+    if (post) {
+      if (!s.postProcessor) s.postProcessor = wgpuCreatePostProcessor(device, s.telemetryState.presentationFormat, function(message: any) { reportWebGPUFrameError(s.telemetryState, message); }, function(material: any, owner: any, context: any) {
+        return sceneSelenaUniformData(material, owner, context, s.selenaState.frame);
+      });
+      s.postProcessor.preparePipelines(effects, s.pipeState.activeSampleCount);
+    }
+    s.initialPipelinesPrepared = true;
+    s.preparedPipelineKey = key;
+  }
+  function supportsBundle(bundle) {
+    if (webGPUUnsupportedLineStyles(bundle)) {
+      return false;
+    }
+    if (!webGPUCanUseThickWorldLines(bundle)) {
+      return false;
+    }
+    return true;
+  }
+  // disablePostProcessing: the frame-error resilience "demote" step (see
+  // the mount's checkSceneWebGPUFrameErrorWatchdog). Tears down the
+  // post-FX chain's GPU resources (HDR scene target, bloom ping-pong,
+  // depth, cached pipelines/bind groups — everything wgpuCreatePostProcessor
+  // owns) and permanently stops rebuilding them for this renderer instance,
+  // so a scene whose post-FX allocation/validation is persistently failing
+  // (memory-tight browser, poisoned target) falls back to raw rendering
+  // instead of resubmitting the same broken frame forever. Idempotent —
+  // returns false if already demoted (nothing to do).
+  function disablePostProcessing(s: any) {
+    if (s.postFXForceDisabled) return false;
+    s.postFXForceDisabled = true;
+    if (s.postProcessor) {
+      try { s.postProcessor.dispose(); s.specularTarget.dispose(); } catch (_err) {}
+      s.postProcessor = null;
+    }
+    // Give raw rendering a fresh error-streak window: if post-FX really
+    // was the problem, this resets the counter the fallback threshold
+    // compares against, so the mount only escalates to a full backend
+    // swap if raw rendering ALSO keeps failing.
+    s.telemetryState.webGPUConsecutiveFrameErrors = 0;
+    return true;
+  }
+  // enablePostProcessing: the frame-error resilience "restore" step — the
+  // way back that disablePostProcessing (above) never had. Called by
+  // the mount's checkSceneWebGPUFrameErrorResilience once a
+  // demoted renderer has produced enough consecutive clean frames (see
+  // diagnostics().frameCleanStreak). Clears postFXForceDisabled so the
+  // very next render() call with a non-empty bundle.postEffects rebuilds
+  // the post-FX chain itself (usePostProcessing below, and the lazy
+  // `if (!postProcessor) postProcessor = wgpuCreatePostProcessor(...)`
+  // in render()) — no GPU resource construction happens here; this
+  // function only flips the gate. Idempotent — returns false if post-FX
+  // is not currently force-disabled (nothing to do).
+  function enablePostProcessing(s: any) {
+    if (!s.postFXForceDisabled || s.pipelineGuard.disabled.has("post")) return false;
+    s.postFXForceDisabled = false;
+    return true;
+  }

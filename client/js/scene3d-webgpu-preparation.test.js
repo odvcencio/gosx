@@ -42,21 +42,22 @@ test("pass wrappers are cached and preserve missing optional methods", () => {
 
 test("pipeline preparation hits across orbit and resize and invalidates material variants", () => {
   let pbrCalls = 0;
-  const api = loadSection("    function prepareBundlePipelines", "    function renderLightShadowCascades", {
-    initialPipelinesPrepared: false, preparedPipelineKey: "", pipeState: { targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false, pbrShadowsActive: false }, gpuRes: {}, device: {}, getSelenaPipeline: () => null,
+  const api = loadSection("  function prepareBundlePipelines", "  function supportsBundle", {
+    getSelenaPipeline: () => null,
     getObjectSelenaPipeline: () => null, getPBRPipeline: () => { pbrCalls++; return {}; }, getShadowPipeline: () => ({}),
     pbrVariant: (_ps, _gr, _dev, material) => Boolean(material && material.detail),
     sceneAffineDeterminant: () => 1, sceneWebGPUObjectReflected: () => false,
     sceneTransmissionDepthWrite: (_object, _material, depth) => depth,
     webGPUObjectIsSkinned: () => false, pipelineGuard: { pending: 0 },
   });
+  const s = { initialPipelinesPrepared: false, preparedPipelineKey: "", pipeState: { targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false, pbrShadowsActive: false }, gpuRes: {}, meshState: {}, telemetryState: {} }, device = {};
   const bundle = { materials: [{}], lights: [], instancedMeshes: [], waterSystems: [] };
   const prepared = { signature: "camera-one", materialsHash: "material-one", shadowPassHash: "shadow-one", pipelineVariantHash: "opaque-ccw", pbrPasses: { opaque: [{ materialIndex: 0 }], alpha: [], additive: [] } };
-  api.prepareBundlePipelines(bundle, prepared, [], false);
+  api.prepareBundlePipelines(s, device, bundle, prepared, [], false);
   const first = pbrCalls;
-  api.prepareBundlePipelines(bundle, { ...prepared, signature: "orbit-and-resize" }, [], false);
+  api.prepareBundlePipelines(s, device, bundle, { ...prepared, signature: "orbit-and-resize" }, [], false);
   assert.equal(pbrCalls, first, "camera and viewport changes must not walk every draw again");
-  api.prepareBundlePipelines(bundle, { ...prepared, materialsHash: "material-two" }, [], false);
+  api.prepareBundlePipelines(s, device, bundle, { ...prepared, materialsHash: "material-two" }, [], false);
   assert.ok(pbrCalls > first);
 });
 
@@ -86,8 +87,8 @@ test("deferred canvas replay preserves optional methods and snapshots dynamic of
 test("preparation selects drawn reflection, Selena, skin+morph and instanced cull variants", () => {
   const calls = [];
   const pipeState = { targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false, pbrShadowsActive: false }, gpuRes = {}, device = {}, getSelenaPipeline = () => null;
-  const api = loadSection("    function prepareBundlePipelines", "    function renderLightShadowCascades", {
-    initialPipelinesPrepared: false, preparedPipelineKey: "", pipeState, gpuRes, device, getSelenaPipeline,
+  const api = loadSection("  function prepareBundlePipelines", "  function supportsBundle", {
+    getSelenaPipeline,
     getObjectSelenaPipeline: (_getSelena, _object, material) => material.selena ? {} : null,
     getPBRPipeline: (_ps, _dev, ...args) => calls.push(["pbr", ...args]), getShadowPipeline: (...args) => calls.push(["shadow", ...args]),
     pbrVariant: (_ps, _gr, _dev, material) => Boolean(material && material.detail),
@@ -99,20 +100,21 @@ test("preparation selects drawn reflection, Selena, skin+morph and instanced cul
     instancedMeshUsesCull: mesh => !!mesh.cull,
     getPBRInstancedPipeline: (_ps, _dev, ...args) => calls.push(["instanced", ...args]), getPBRInstancedCullPipeline: (_ps, _dev, ...args) => calls.push(["cull", ...args]),
     getShadowInstancedPipeline: () => calls.push(["shadow-instanced"]), pipelineGuard: { pending: 0 },
-    meshState: {}, wgpuShadowCaster: light => !!light.castShadow,
+    wgpuShadowCaster: light => !!light.castShadow,
   });
+  const s = { initialPipelinesPrepared: false, preparedPipelineKey: "", pipeState, gpuRes, meshState: {}, telemetryState: {} };
   const bundle = { materials: [{}, { selena: true }], lights: [{ castShadow: true }], instancedMeshes: [{ materialIndex: 0, cull: true, depthWrite: true }] };
   const prepared = { pipelineVariantHash: "variants", materialsHash: "materials", shadowPassHash: "shadow", pbrPasses: {
     opaque: [{ materialIndex: 0, negative: true, castShadow: true }, { materialIndex: 1, skin: {}, computedMorph: {} }],
     alpha: [{ materialIndex: 0, negative: true, directVertices: true }], additive: [],
   } };
-  api.prepareBundlePipelines(bundle, prepared, [], false);
+  api.prepareBundlePipelines(s, device, bundle, prepared, [], false);
   assert.deepEqual(calls.filter(c => c[0] === "pbr"), [["pbr", "opaque", true, "ccw", false], ["pbr", "alpha", false, "cw", false]]);
   assert.ok(calls.some(c => c[0] === "skin")); assert.ok(calls.some(c => c[0] === "morph"));
   assert.ok(calls.some(c => c[0] === "cull" && c[2] === true));
   const first = calls.length;
   bundle.instancedMeshes[0].depthWrite = false;
-  api.prepareBundlePipelines(bundle, prepared, [], false);
+  api.prepareBundlePipelines(s, device, bundle, prepared, [], false);
   assert.ok(calls.length > first, "instanced variant changes invalidate preparation at the same mesh count");
 });
 
