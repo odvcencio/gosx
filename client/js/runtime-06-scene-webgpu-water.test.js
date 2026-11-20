@@ -1216,7 +1216,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /function drawWaterObjectMeshObjects/);
   assert.match(webgpu, /function bindWaterObjectMeshVertexBuffers/);
   assert.match(webgpu, /function bindWaterObjectSelenaAttributes/);
-  assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, \{\s*targetFormat: WATER_OBJECT_TEXTURE_FORMAT/);
+  assert.match(webgpu, /getSelenaPipeline\(pipeState, selenaState, device, mat, blendMode, depthWrite, \{\s*targetFormat: WATER_OBJECT_TEXTURE_FORMAT/);
   assert.match(webgpu, /function sceneWaterObjectTextureSelenaUniforms/);
   assert.match(webgpu, /system\.waterPoolWidth = poolWidth/);
   assert.match(webgpu, /system\.waterLightDir = \{ x: light\.x \/ lightLen, y: light\.y \/ lightLen, z: light\.z \/ lightLen \}/);
@@ -1236,7 +1236,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /"gosx-water-object-mesh-reflection-pass",\s*"reflection"/);
   assert.match(webgpu, /"gosx-water-object-mesh-clipped-reflection-pass",\s*"clipped-reflection"/);
   assert.match(webgpu, /record\.system\.id = id/);
-  assert.match(webgpu, /createSelenaBindGroup\(mat, selenaResource, obj, renderContext\)/);
+  assert.match(webgpu, /createSelenaBindGroup\(meshState, selenaState, device, mat, selenaResource, obj, renderContext\)/);
   assert.doesNotMatch(webgpu, /_gosxWaterObjectTexturePassMode/);
   assert.match(webgpu, /function drawWaterObjectProjectedShadowObjects/);
   assert.match(webgpu, /function renderWaterObjectMeshTargetPass/);
@@ -1584,11 +1584,11 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   assert.match(webgl, /obj && obj\.directVertices === true[\s\S]{0,120}return obj\.modelMatrix \|\| identityModelMatrix/);
   assert.match(webgl, /if \(name === "modelMatrix"\) return webGLSelenaObjectModelMatrix\(owner\);/);
 
-  assert.match(webgpu, /function getSelenaPipeline\(material, blendMode, depthWrite, options\)/);
+  assert.match(webgpu, /function getSelenaPipeline\(pipeState\s*, selenaState\s*, device\s*, material, blendMode, depthWrite, options\)/);
   assert.match(webgpu, /entryPoint: "vertexMain"/);
   assert.match(webgpu, /entryPoint: "fragmentMain"/);
-  assert.match(webgpu, /function createSelenaBindGroup\(material, resource, cacheOwner, renderContext = sceneWaterMainSelenaContext\(material\)\)/);
-  assert.match(webgpu, /createSelenaBindGroup\(mat, selenaResource, obj\)/);
+  assert.match(webgpu, /function createSelenaBindGroup\(meshState\s*, selenaState\s*, device\s*, material, resource, cacheOwner, renderContext = sceneWaterMainSelenaContext\(selenaState, material\)\)/);
+  assert.match(webgpu, /createSelenaBindGroup\(meshState, selenaState, device, mat, selenaResource, obj\)/);
   assert.match(webgpu, /function sceneSelenaRenderContextUniformValue/);
   assert.match(webgpu, /function sceneSelenaUniformBufferSlot/);
   assert.match(webgpu, /var vectorValue = Array\.isArray\(value\) \|\| \(value && typeof value\.length === "number"\)/);
@@ -1604,7 +1604,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
   // same value on selenaFrame, the object it hands to the module-scope uniform
   // packer in 16a1-scene-webgpu-selena-uniforms.ts.
   assert.match(webgl, /var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;/);
-  assert.match(webgpu, /var selenaFrame = \{ viewProjection: uniformState\.scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: \[0, 0, 0, 0\] \};/);
+  assert.match(webgpu, /frame: \{ viewProjection: uniformState\.scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: \[0, 0, 0, 0\] \}/);
 
   // time is a forced reserved auto-uniform: both resolvers return the clock for
   // name === "time" before user values can shadow it.
@@ -1614,7 +1614,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
 
   // Shader time and wall time are distinct. Stateful water retains the wall
   // clock, while declarative materials receive the mounted scene playhead.
-  assert.match(webgpu, /selenaFrame\.time = frameMeta\?\.sceneTime \?\?/);
+  assert.match(webgpu, /selenaState\.frame\.time = frameMeta\?\.sceneTime \?\?/);
   assert.match(webgl, /sceneSelenaFrameTime = frameMeta\?\.sceneTime \?\?/);
 });
 
@@ -1625,7 +1625,7 @@ test("Scene3D selena camera proximity auto-uniform is renderer-owned on both bac
   assert.match(webgl, /var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;/);
   assert.match(webgpu, /cameraProximity: 0/);
   assert.match(webgl, /sceneSelenaFrameProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
-  assert.match(webgpu, /selenaFrame\.cameraProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
+  assert.match(webgpu, /selenaState\.frame\.cameraProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
 
   const webglResolver = webgl.match(/function selenaUniformValue[\s\S]*?\n    }/)[0];
   const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]*?\n  }/)[0];
@@ -1986,17 +1986,17 @@ test("Scene3D WebGPU Selena materials can bind live water resources", () => {
   assert.match(webgpu, /trimmed\.indexOf\("gosx:"\) === 0/);
   assert.match(webgpu, /function sceneSelenaParseResourceRef\(ref\)/);
   assert.match(webgpu, /parts\[0\] !== "water"/);
-  assert.match(webgpu, /function sceneSelenaLiveTextureView\(material, texture\)/);
+  assert.match(webgpu, /function sceneSelenaLiveTextureView\(selenaState\s*, material, texture\)/);
   assert.match(webgpu, /case "caustics":[\s\S]{0,120}return resolved\.system\.causticsView/);
   assert.match(webgpu, /case "refraction":[\s\S]{0,160}return resolved\.system\.objectRefractionView/);
-  assert.match(webgpu, /function sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
+  assert.match(webgpu, /function sceneSelenaLiveBuffer\(selenaState\s*, material, bufferDescriptor\)/);
   assert.match(webgpu, /case "heightfield":[\s\S]{0,180}resolved\.system\.activeIndex === 0 \? resolved\.system\.bufferA : resolved\.system\.bufferB/);
   assert.match(webgpu, /function sceneSelenaStorageBufferDescriptors\(layout\)/);
   assert.match(webgpu, /buffer: \{ type: "read-only-storage" \}/);
-  assert.match(webgpu, /liveView: sceneSelenaLiveTextureView, url: wgpuSceneSelenaTextureURL/);
+  assert.match(webgpu, /liveView: function\(m\s*, t\s*\) \{ return sceneSelenaLiveTextureView\(selenaState, m, t\); \}, url: wgpuSceneSelenaTextureURL/);
   assert.match(webgpu, /var liveView = environmentSlot \? \(environmentRecord && environmentRecord\.view\) : \(sceneSelenaShadowMapView\(context, tex\) \|\| sceneDataTextureView\(context, material, tex\) \|\| context\.liveView\(material, tex\)\)/);
-  assert.match(webgpu, /sceneWebGPUAppendSelenaTextures\(selenaTextureContext, material, textures, entries, cacheViews\)/);
-  assert.match(webgpu, /var buffer = sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
+  assert.match(webgpu, /sceneWebGPUAppendSelenaTextures\(selenaState\.textureContext, material, textures, entries, cacheViews\)/);
+  assert.match(webgpu, /var buffer = sceneSelenaLiveBuffer\(selenaState, material, bufferDescriptor\)/);
 });
 
 test("Scene3D WebGPU Selena materials expose object matrices as auto-uniforms", () => {
@@ -2010,5 +2010,5 @@ test("Scene3D WebGPU Selena materials expose object matrices as auto-uniforms", 
   assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)/);
   assert.match(webgpu, /obj && obj\.directVertices === true[\s\S]{0,120}return webGPUObjectModelMatrix\(obj\)/);
   assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)[\s\S]{0,220}return selenaIdentityMatrix4;/);
-  assert.match(webgpu, /sceneSelenaUniformData\(material, cacheOwner, renderContext, selenaFrame\)/);
+  assert.match(webgpu, /sceneSelenaUniformData\(material, cacheOwner, renderContext, selenaState\.frame\)/);
 });

@@ -50,13 +50,12 @@ function materialPackingHarness() {
     ] } },
   };
   const g = { sceneNumber,
-    waterSystems: new Map([[system.id, { system }]]),
+    selenaState: { waterSystems: new Map([[system.id, { system }]]), frame: {} },
     sceneWaterResolution: () => 256,
     sceneWaterObjectKind: () => 0, sceneWaterObjectSubtype: () => 0,
     wgpuSceneWaterPoolShapeRounded: () => false,
     sceneWaterLightVector: () => ({ x: 1, y: 1, z: 1 }),
     sceneSelenaLightingValue: () => undefined,
-    selenaFrame: {},
   };
   for (const name of [
     "sceneSelenaMaterialLayout", "sceneSelenaFloatCount", "sceneSelenaUniformDefault",
@@ -78,7 +77,7 @@ function materialPackingHarness() {
   return {
     system, material,
     context: mode => g.sceneWaterObjectTextureSelenaContext(system, mode, "test"),
-    pack: context => { create(material, {}, {}, context); return Array.from(packed); },
+    pack: context => { create({}, g.selenaState, {}, material, {}, {}, context); return Array.from(packed); },
   };
 }
 
@@ -231,7 +230,7 @@ test("water projected targets wait for deferred model texture decode and GPU upl
   const draw = rendererFunction("drawWaterObjectMeshObjects", {
     sceneNumber,
     scenePBRObjectRenderPass: () => "opaque",
-    getSelenaPipeline: () => resource,
+    pipeState: {}, selenaState: {}, meshState: {}, device, getSelenaPipeline: () => resource,
     WATER_OBJECT_TEXTURE_FORMAT: "rgba8unorm",
     wgpuRequirePipeline: value => value,
     sceneWaterObjectSelenaTexturesPending: (...args) => rendererFunction("sceneWaterObjectSelenaTexturesPending", g)(...args),

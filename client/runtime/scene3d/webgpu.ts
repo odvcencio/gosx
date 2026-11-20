@@ -6677,7 +6677,6 @@
       pointsVertexModule: null, pointsInstancedVertexModule: null, pointsFragmentModule: null,
       detailResources: new Map().get("active"), detailEnabled: true, selenaSurfaces: sceneWebGPUSelenaSurfaceResources(),
     };
-    var selenaPipelineCache = new Map();
     // Per-layer / per-system authored pipeline cache (keyed by "wgsl|blend|depth|format|samples").
     var pointsAuthoredPipelineCache = new Map();
     // Per-layer / per-system failure flag: layerID → true means the authored
@@ -6946,7 +6945,7 @@
     var modelDynamicOffsets = [0], placeholderTex = null, placeholderCubeTex = null, postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
     var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false }, terrainResources: any = {};
-    var selenaFrame = { viewProjection: uniformState.scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: [0, 0, 0, 0] };
+    var selenaState: any = { pipelineCache: new Map(), computePipelineCache: new Map(), postPipelineCache: new Map(), frame: { viewProjection: uniformState.scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: [0, 0, 0, 0] }, textureContext: null, waterPostBGL: null, waterPostDepthSampler: null, waterSystems: waterSystems, gpuRes: gpuRes, instancedCacheOwner: webGPUInstancedCacheOwner };
 
     // Synchronous device initialization — device was already obtained
     // by the main-bundle probe (16z). Previously this was a two-stage
@@ -7260,9 +7259,9 @@
       }
     })();
 
-    const selenaTextureContext = {
+    selenaState.textureContext = {
       device, textureCache: gpuRes.textureCache, iblResources: uniformState.iblResources, placeholderCubeView: gpuRes.placeholderCubeView, placeholderView: gpuRes.placeholderView,
-      envMapSampler: gpuRes.envMapSampler, linearSampler: gpuRes.linearSampler, liveView: sceneSelenaLiveTextureView, url: wgpuSceneSelenaTextureURL, frame: selenaFrame,
+      envMapSampler: gpuRes.envMapSampler, linearSampler: gpuRes.linearSampler, liveView: function(m: any, t: any) { return sceneSelenaLiveTextureView(selenaState, m, t); }, url: wgpuSceneSelenaTextureURL, frame: selenaState.frame,
     };
 
     function ensureWaterPipelines() {
@@ -7376,7 +7375,7 @@
         for (var object of objects) {
           var material = materials[object.materialIndex];
           var reflected = sceneWebGPUObjectReflected(object);
-          if (!getObjectSelenaPipeline(getSelenaPipeline, object, material, blend, depth)) getPBRPipeline(pipeState, device, blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", pbrVariant(pipeState, gpuRes, device, material));
+          if (!getObjectSelenaPipeline(function(m: any, b: any, d: any, o: any) { return getSelenaPipeline(pipeState, selenaState, device, m, b, d, o); }, object, material, blend, depth)) getPBRPipeline(pipeState, device, blend, sceneTransmissionDepthWrite(object, material, depth), reflected ? "cw" : "ccw", pbrVariant(pipeState, gpuRes, device, material));
           if (shadows && object.castShadow) getShadowPipeline(pipeState, device, reflected);
           if (webGPUObjectIsSkinned(object)) ensureElioSkinPipeline(pipeState, meshState, device);
           if (object.computedMorph) ensureComputedMorphPipeline(pipeState, meshState, device);
@@ -7393,733 +7392,12 @@
       if (bundle.waterSystems && bundle.waterSystems.length) ensureWaterPipelines();
       if (post) {
         if (!postProcessor) postProcessor = wgpuCreatePostProcessor(device, presentationFormat, reportWebGPUFrameError, function(material: any, owner: any, context: any) {
-          return sceneSelenaUniformData(material, owner, context, selenaFrame);
+          return sceneSelenaUniformData(material, owner, context, selenaState.frame);
         });
         postProcessor.preparePipelines(effects, pipeState.activeSampleCount);
       }
       initialPipelinesPrepared = true;
       preparedPipelineKey = key;
-    }
-
-    function sceneSelenaWaterSystem(ref) {
-      var parsed = sceneSelenaParseResourceRef(ref);
-      if (!parsed || parsed.kind !== "water") return null;
-      var record = waterSystems && typeof waterSystems.get === "function" ? waterSystems.get(parsed.id) : null;
-      return record && record.system ? { system: record.system, slot: parsed.slot } : null;
-    }
-
-    function sceneSelenaLiveTextureView(material, texture) {
-      var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, texture));
-      if (!resolved || !resolved.system) return null;
-      switch (resolved.slot) {
-      case "state":
-      case "waterState":
-      case "height":
-      case "heightfield":
-        return resolved.system.activeIndex === 0
-          ? resolved.system.stateTextureViewA || null
-          : resolved.system.stateTextureViewB || null;
-      case "caustics":
-      case "caustic":
-        return resolved.system.causticsView || null;
-      case "reflection":
-      case "objectReflection":
-        return resolved.system.objectReflectionView || null;
-      case "clippedReflection":
-      case "objectClippedReflection":
-        return resolved.system.objectClippedReflectionView || null;
-      case "refraction":
-      case "objectRefraction":
-        return resolved.system.objectRefractionView || null;
-      case "shadow":
-      case "objectShadow":
-        return resolved.system.objectShadowView || null;
-      default:
-        return null;
-      }
-    }
-
-    function sceneSelenaLiveBuffer(material, bufferDescriptor) {
-      var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, bufferDescriptor));
-      if (!resolved || !resolved.system) return null;
-      switch (resolved.slot) {
-      case "state":
-      case "waterState":
-      case "height":
-      case "heightfield":
-        return resolved.system.activeIndex === 0 ? resolved.system.bufferA : resolved.system.bufferB;
-      case "objectSpheres":
-        return resolved.system.objectSphereBuffer || null;
-      case "uniforms":
-      case "params":
-        return resolved.system.uniformBuffer || null;
-      default:
-        return null;
-      }
-    }
-
-    function sceneSelenaBindGroupLayout(device, layout) {
-      var visibility = typeof GPUShaderStage !== "undefined"
-        ? (GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT)
-        : 3;
-      var entries = [{
-        binding: sceneNumber(layout && layout.wgsl && layout.wgsl.binding, 0),
-        visibility: visibility,
-        buffer: { type: "uniform", minBindingSize: Math.max(16, Math.floor(sceneNumber(layout && layout.uniformBlock && layout.uniformBlock.size, 16))) },
-      }];
-      var textures = wgpuSceneSelenaTextureDescriptors(layout);
-      for (var i = 0; i < textures.length; i++) {
-        var wgsl = textures[i] && textures[i].wgsl || {};
-        var texLayout = sceneSelenaWGPUTextureLayout(textures[i]);
-        var textureVisibility = textures[i] && textures[i].vertexStage === true
-          ? visibility
-          : (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2);
-        entries.push({
-          binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
-          texture: texLayout,
-        });
-        entries.push({
-          binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
-          sampler: { type: texLayout.sampleType === "unfilterable-float" ? "non-filtering" : "filtering" },
-        });
-      }
-      var storageBuffers = sceneSelenaStorageBufferDescriptors(layout);
-      for (var b = 0; b < storageBuffers.length; b++) {
-        var bufferWGSL = storageBuffers[b] && storageBuffers[b].wgsl || {};
-        entries.push({
-          binding: sceneNumber(bufferWGSL.binding, 1 + textures.length * 2 + b),
-          /* @ts-expect-error TS2741 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: visibility,
-          buffer: { type: "read-only-storage" },
-        });
-      }
-      // Selena `state` statefield support (mesh+state kind, e.g. water pool's
-      // `state height`): a StateGrid uniform followed by the resource kind the
-      // compiler descriptor declares. Render materials currently emit
-      // stateAt(uv) as textureLoad(_inState, ...), while feedback materials use
-      // storage buffers. Treating both as storage made otherwise-valid Selena
-      // WGSL fail WebGPU bind-group validation and silently erased refraction,
-      // displaced surfaces, and caustics.
-      var grid = layout && layout.grid;
-      var states = sceneSelenaStateDescriptors(layout);
-      var afterCoreBindingCount = 1 + textures.length * 2 + storageBuffers.length;
-      if (grid && grid.wgsl) {
-        entries.push({
-          binding: sceneNumber(grid.wgsl.binding, afterCoreBindingCount),
-          visibility: visibility,
-          buffer: { type: "uniform", minBindingSize: 8 },
-        });
-      }
-      for (var s = 0; s < states.length; s++) {
-        var stateWGSL = states[s] && states[s].wgsl || {};
-        var stateEntry = {
-          binding: sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + s),
-          visibility: visibility,
-        };
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (String(stateWGSL.inKind || "storage").toLowerCase() === "texture") {
-          stateEntry.texture = { sampleType: "unfilterable-float", viewDimension: "2d" };
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ } else {
-          stateEntry.buffer = { type: "read-only-storage" };
-        /* @ts-expect-error TS2345 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ }
-        entries.push(stateEntry);
-        var outBinding = sceneNumber(stateWGSL.outBinding, -1);
-        if (outBinding >= 0) {
-          entries.push({
-            binding: outBinding,
-            /* @ts-expect-error TS2741 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: visibility,
-            buffer: { type: "storage" },
-          });
-        }
-      }
-      return device.createBindGroupLayout({ label: "gosx-selena-material", entries: entries });
-    }
-
-    function getSelenaPipeline(material, blendMode, depthWrite, options) {
-      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
-      var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : pipeState.targetFormat;
-      const selective = pipeState.selectiveBloom && !(options && options.targetFormat);
-      var pipelineSampleCount = Math.max(1, Math.floor(sceneNumber(
-        options && options.sampleCount != null ? options.sampleCount : pipeState.activeSampleCount,
-        pipeState.activeSampleCount || 1
-      )));
-      var pipelineLabelSuffix = options && options.labelSuffix ? String(options.labelSuffix) + "-" : "";
-      // cullMode defaults to "back" when the caller passes no options (or
-      // options.cullMode is absent/falsy) -- unchanged from before options.cullMode
-      // existed. Water pool geometry is authored with inward-facing wall
-      // triangles so it can use the same back-face culling contract as
-      // upstream. This is important visually: drawing both sides turns the
-      // pool into an opaque exterior shell instead of an open vessel viewed
-      // through its rim. drawPBRObjects (this file) is the other caller that
-      // passes options: it requests cullMode:"none" for mesh objects with
-      // obj.doubleSided === true, leaving every other object on the "back"
-      // default -- see the winding-hazard note above that call.
-      var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
-      var pipelineFrontFace = selenaPipelineFrontFace(options);
-      // depthStencil defaults to true (every existing caller relies on this
-      // default and never passes the option, so behavior there is unchanged):
-      // the pipeline gets a depth24plus depthStencil state, matching every
-      // render pass this generic path has ever drawn into (the main scene
-      // pass, the object-texture RTT reflection/refraction passes -- all of
-      // which DO have a depth attachment). Pass {depthStencil:false} for a
-      // render target with NO depth attachment at all (e.g. the water
-      // caustics/object-mesh-shadow offscreen RTT passes): WebGPU requires a
-      // render pipeline's depthStencil state to exactly match whether the
-      // render pass it's used in has a depthStencilAttachment.
-      var pipelineDepthStencil = options?.depthStencil !== false;
-      // Per-material memo (perf): getSelenaPipeline is called once PER OBJECT
-      // PER FRAME, and the content key below stringifies the whole shader (~1.2KB)
-      // + JSON.stringify(layout) on every call. Board frames are fresh-parsed,
-      // so a material object lives one frame but is shared by every object that
-      // references it (N rects → one BoardFill material). Stamping the resolved
-      // key+resource on the material collapses that to ONE key-build per MATERIAL
-      // per frame (a handful) instead of per object (hundreds). The stamp is a
-      // memo IN FRONT of selenaPipelineCache, not a replacement: the content-keyed
-      // Map still backs it so materials across bundles that share a shader share
-      // one pipeline. We revalidate the pass-variant inputs (blend/depth/format/
-      // samples) cheaply so a material drawn in two passes still resolves
-      // correctly; only when they differ do we fall through to the key build.
-      var memo = material._gosxWGPUSelenaResource;
-      if (
-        memo && memo.specular === selective &&
-        memo.blendMode === blendMode &&
-        memo.depthWrite === depthWrite &&
-        memo.targetFormat === pipelineTargetFormat &&
-        memo.sampleCount === pipelineSampleCount &&
-        memo.cullMode === pipelineCullMode &&
-        memo.frontFace === pipelineFrontFace &&
-        memo.depthStencil === pipelineDepthStencil
-      ) {
-        return memo.failed ? null : memo.resource;
-      }
-      var layout = sceneSelenaMaterialLayout(material);
-      var shader = selective ? material.specularFragmentWGSL : sceneSelenaWGSLSource(material);
-      // Cache key = the pipeline's actual inputs (shader source + binding
-      // layout + blend/depth/format/samples) — NOT the material identity.
-      // Uniform VALUES live in per-object bind groups (createSelenaBindGroup),
-      // so N materials sharing one shader (e.g. N board fills differing only
-      // in customUniforms.baseColor) share ONE pipeline with N bind groups
-      // instead of compiling N identical pipelines.
-      var key = [
-        "selena",
-        shader,
-        JSON.stringify(layout),
-        blendMode,
-        depthWrite ? "1" : "0",
-        pipelineTargetFormat,
-        pipelineSampleCount,
-        pipelineCullMode,
-        pipelineFrontFace,
-        pipelineDepthStencil ? "ds1" : "ds0",
-      ].join("|");
-      function stamp(resource, failed) {
-        material._gosxWGPUSelenaResource = {
-          blendMode: blendMode,
-          depthWrite: depthWrite,
-          specular: selective, targetFormat: pipelineTargetFormat,
-          sampleCount: pipelineSampleCount,
-          cullMode: pipelineCullMode,
-          frontFace: pipelineFrontFace,
-          depthStencil: pipelineDepthStencil,
-          resource: resource,
-          failed: failed,
-        };
-      }
-      var cached = selenaPipelineCache.get(key);
-      if (cached) {
-        // Memoize the resolved (key-derived) result on the material so the next
-        // object referencing it this frame skips the key build entirely.
-        stamp(cached.failed ? null : cached, !!cached.failed);
-        return cached.failed ? null : cached;
-      }
-      try {
-        var bindGroupLayout = sceneSelenaBindGroupLayout(device, layout);
-        var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
-        var module = device.createShaderModule({ label: "selena-material", code: shader });
-        renderTruth().captureShaderInfo(module, "selena-material");
-        var attrs = sceneSelenaPipelineAttributes(layout);
-        var buffers = attrs.map(function(attr) {
-          return {
-            arrayStride: attr.components * 4,
-            stepMode: "vertex",
-            attributes: [{ format: attr.format, offset: 0, shaderLocation: attr.shaderLocation }],
-          };
-        });
-        var pipelineDescriptor = {
-          label: "gosx-selena-" + pipelineLabelSuffix + (layout.material || "material") + "-" + blendMode,
-          layout: pipelineLayout,
-          vertex: { module: module, entryPoint: "vertexMain", buffers: buffers },
-          fragment: sceneWebGPUColorFragment(module, sceneWebGPUColorTarget(pipelineTargetFormat, selective), wgpuBlendState(blendMode)),
-          primitive: { topology: "triangle-list", cullMode: pipelineCullMode, frontFace: pipelineFrontFace },
-          multisample: { count: pipelineSampleCount },
-        };
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (pipelineDepthStencil) {
-          pipelineDescriptor.depthStencil = { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" };
-        }
-        var pipeline = wgpuCreateValidatedPipeline(device, "render", pipelineDescriptor);
-        cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout, attrs: attrs };
-        selenaPipelineCache.set(key, cached);
-        stamp(cached, false);
-        return cached;
-      } catch (err) {
-        console.warn("[gosx] Selena WebGPU shader pipeline failed; falling back to PBR material.", err);
-        selenaPipelineCache.set(key, { failed: true });
-        // Memoize the failure too — a broken shader must not re-attempt (and
-        // re-warn) once per object per frame.
-        stamp(null, true);
-        return null;
-      }
-    }
-
-    function sceneWaterMainSelenaContext(material) {
-      var water = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, { name: "causticTexture" }));
-      return water ? sceneWaterObjectTextureSelenaContext(water.system, 0, "scene") : undefined;
-    }
-
-    function createSelenaBindGroup(material, resource, cacheOwner, renderContext = sceneWaterMainSelenaContext(material)) {
-      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext, selenaFrame);
-      if (!uniformData || !resource) return null;
-      var owner = cacheOwner?.id
-        ? webGPUInstancedCacheOwner(cacheOwner.id, undefined, "selena")
-        : (cacheOwner?.resourceOwner || cacheOwner || material);
-      var uniformSlot = sceneSelenaUniformBufferSlot(renderContext);
-      var uniformBuffer = wgpuCachedTrackedBuffer(meshState, device,
-        owner,
-        uniformSlot,
-        uniformData,
-        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        true
-      );
-      var entries = [{
-        binding: sceneNumber(resource.layout && resource.layout.wgsl && resource.layout.wgsl.binding, 0),
-        resource: { buffer: uniformBuffer },
-      }];
-      var textures = wgpuSceneSelenaTextureDescriptors(resource.layout);
-      var cacheViews = [];
-      sceneWebGPUAppendSelenaTextures(selenaTextureContext, material, textures, entries, cacheViews);
-      var storageBuffers = sceneSelenaStorageBufferDescriptors(resource.layout);
-      var cacheStorages = [];
-      for (var b = 0; b < storageBuffers.length; b++) {
-        var bufferDescriptor = storageBuffers[b] || {};
-        var bufferWGSL = bufferDescriptor.wgsl || {};
-        var buffer = sceneSelenaLiveBuffer(material, bufferDescriptor);
-        if (!buffer) return null;
-        entries.push({
-          binding: sceneNumber(bufferWGSL.binding, 1 + textures.length * 2 + b),
-          resource: { buffer: buffer },
-        });
-        cacheStorages.push(buffer);
-      }
-      // Selena `state` statefield support (see sceneSelenaStateDescriptors /
-      // sceneSelenaBindGroupLayout above): a StateGrid uniform sized from
-      // renderContext.grid, then one live storage buffer per statefield
-      // resolved via the SAME gosx:water:<id>:<slot> resource-ref mechanism
-      // textures/storage buffers already use (sceneSelenaLiveBuffer keys off
-      // the statefield's descriptor `name`, e.g. water pool's `state height`
-      // resolves via customUniforms.height). Both are appended into the SAME
-      // cacheStorages identity list used for bind-group memoization below, so
-      // a ping-pong state buffer swap (or a resolution change recreating the
-      // grid buffer) correctly invalidates the cached bind group.
-      var grid = resource.layout && resource.layout.grid;
-      var states = sceneSelenaStateDescriptors(resource.layout);
-      var afterCoreBindingCount = 1 + textures.length * 2 + storageBuffers.length;
-      if (grid && grid.wgsl) {
-        var gridData = sceneSelenaGridUniformData(material, renderContext);
-        if (!gridData) return null;
-        var gridBuffer = wgpuCachedTrackedBuffer(meshState, device,
-          owner,
-          uniformSlot + "_grid",
-          gridData,
-          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          true
-        );
-        entries.push({
-          binding: sceneNumber(grid.wgsl.binding, afterCoreBindingCount),
-          resource: { buffer: gridBuffer },
-        });
-        cacheStorages.push(gridBuffer);
-      }
-      for (var st = 0; st < states.length; st++) {
-        var stateDescriptor = states[st] || {};
-        var stateWGSL = stateDescriptor.wgsl || {};
-        var stateBinding = sceneNumber(stateWGSL.inBinding, afterCoreBindingCount + 1 + st);
-        if (String(stateWGSL.inKind || "storage").toLowerCase() === "texture") {
-          var stateView = sceneSelenaLiveTextureView(material, stateDescriptor);
-          if (!stateView) return null;
-          entries.push({ binding: stateBinding, resource: stateView });
-          cacheViews.push(stateView);
-        } else {
-          var stateBuffer = sceneSelenaLiveBuffer(material, stateDescriptor);
-          if (!stateBuffer) return null;
-          entries.push({ binding: stateBinding, resource: { buffer: stateBuffer } });
-          cacheStorages.push(stateBuffer);
-        }
-      }
-      // Uniform contents change while resource identities stay stable.
-      // Keep at most four variants for ping-pong storage or resized resources;
-      // device changes reject groups from the previous renderer.
-      var bgPoolSlot = "_gosxWGPUSBGC" + uniformSlot;
-      var pool = owner[bgPoolSlot];
-      if (!Array.isArray(pool)) { pool = []; owner[bgPoolSlot] = pool; }
-      for (var pi = 0; pi < pool.length; pi++) {
-        var pc = pool[pi];
-        if (!pc || pc.device !== device || pc.layout !== resource.bindGroupLayout || pc.uniformBuffer !== uniformBuffer) continue;
-        if (pc.views.length !== cacheViews.length || pc.storages.length !== cacheStorages.length) continue;
-        var match = true;
-        for (var vi = 0; vi < cacheViews.length && match; vi++) {
-          if (pc.views[vi] !== cacheViews[vi]) match = false;
-        }
-        for (var si = 0; si < cacheStorages.length && match; si++) {
-          if (pc.storages[si] !== cacheStorages[si]) match = false;
-        }
-        if (match) return pc.bg;
-      }
-      var newBG = device.createBindGroup({ layout: resource.bindGroupLayout, entries: entries });
-      if (pool.length >= 4) pool.shift();
-      pool.push({ device: device, layout: resource.bindGroupLayout, uniformBuffer: uniformBuffer, views: cacheViews, storages: cacheStorages, bg: newBG });
-      return newBG;
-    }
-
-    // -----------------------------------------------------------------------
-    // Generic Selena "feedback" kind COMPUTE path (getSelenaComputePipeline /
-    // createSelenaComputeBindGroup): closes gap G2 from the context-uniform
-    // design (selena-context-uniform-design.md 3.4.2) -- there was previously
-    // no descriptor-driven host path for a `kind feedback` material's single
-    // @compute module. Binding contract (see emit/wgsl/wgsl.go emitFeedback,
-    // and bindings.Layout's Grid/States/UniformBlock fields):
-    //   @group(0) @binding(grid.wgsl.binding)      GridUniforms  (uniform, {gridWidth,gridLen})
-    //   @group(0) @binding(states[0].wgsl.inBinding)  inState   (read-only-storage)
-    //   @group(0) @binding(states[0].wgsl.outBinding) outState  (storage)
-    //   @group(0) @binding(layout.wgsl.binding)    UserUniforms  (uniform; present
-    //     only when uniformBlock.fields is non-empty -- Selena's WGSL emitter
-    //     omits the whole UserUniforms struct+binding when a feedback material
-    //     declares no param/context fields at all, e.g. the water "normal"
-    //     kernel; see emitFeedback's `if (len(m.Uniforms)>0 || ...)` guard).
-    // This is the compute analogue of getSelenaPipeline/createSelenaBindGroup
-    // above: same per-material pipeline memo, same content-keyed pipeline
-    // cache, same cached-bind-group-pool-by-buffer-identity pattern (so the
-    // ping-pong in/out buffer swap each dispatch converges on 2 pooled bind
-    // groups per kernel, exactly like the render path's ping-pong texture).
-    // -----------------------------------------------------------------------
-
-    var selenaComputePipelineCache = new Map();
-
-    // sceneSelenaComputeBindGroupLayout builds the @group(0) bind-group layout
-    // for a feedback material's descriptor: grid uniform, in/out storage
-    // buffers, and (when present) the UserUniforms uniform. Mirrors
-    // sceneSelenaBindGroupLayout's structure but for the feedback binding
-    // contract (no textures/vertex attributes/mesh-state exist on a feedback
-    // material -- only grid+state+one optional uniform block).
-    function sceneSelenaComputeBindGroupLayout(device, layout) {
-      var computeVisibility = typeof GPUShaderStage !== "undefined" ? GPUShaderStage.COMPUTE : 4;
-      var entries = [];
-      var grid = layout && layout.grid;
-      if (grid && grid.wgsl) {
-        entries.push({
-          binding: sceneNumber(grid.wgsl.binding, 0),
-          visibility: computeVisibility,
-          buffer: { type: "uniform", minBindingSize: 8 },
-        });
-      }
-      var state = sceneSelenaStateDescriptors(layout)[0];
-      if (state) {
-        var stateWGSL = state.wgsl || {};
-        entries.push({
-          binding: sceneNumber(stateWGSL.inBinding, 1),
-          visibility: computeVisibility,
-          buffer: { type: "read-only-storage" },
-        });
-        var outBinding = sceneNumber(stateWGSL.outBinding, -1);
-        if (outBinding >= 0) {
-          entries.push({
-            binding: outBinding,
-            visibility: computeVisibility,
-            buffer: { type: "storage" },
-          });
-        }
-      }
-      if (layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.fields) && layout.uniformBlock.fields.length > 0) {
-        entries.push({
-          binding: sceneNumber(layout.wgsl && layout.wgsl.binding, 3),
-          visibility: computeVisibility,
-          buffer: { type: "uniform", minBindingSize: Math.max(16, Math.floor(sceneNumber(layout.uniformBlock.size, 16))) },
-        });
-      }
-      return device.createBindGroupLayout({ label: "gosx-selena-compute-material", entries: entries });
-    }
-
-    // getSelenaComputePipeline mirrors getSelenaPipeline (mesh/mesh+state
-    // render kind) for a `kind feedback` Selena material: one @compute entry
-    // point (layout.entryPoints.compute, always "computeMain" per
-    // emitFeedback), no blend/depth/format/sampleCount variance to key on (a
-    // compute pipeline has none of those), so the per-material memo is simpler
-    // than the render path's.
-    function getSelenaComputePipeline(material) {
-      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
-      var memo = material._gosxWGPUSelenaComputeResource;
-      if (memo) return memo.failed ? null : memo.resource;
-      var layout = sceneSelenaMaterialLayout(material);
-      var shader = sceneSelenaWGSLSource(material);
-      var key = ["selena-compute", shader, JSON.stringify(layout)].join("|");
-      var cached = selenaComputePipelineCache.get(key);
-      if (cached) {
-        material._gosxWGPUSelenaComputeResource = { resource: cached.failed ? null : cached, failed: !!cached.failed };
-        return cached.failed ? null : cached;
-      }
-      try {
-        var bindGroupLayout = sceneSelenaComputeBindGroupLayout(device, layout);
-        var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
-        var module = device.createShaderModule({ label: "selena-compute-material", code: shader });
-        renderTruth().captureShaderInfo(module, "selena-compute-material");
-        var entryPoint = (layout.entryPoints && layout.entryPoints.compute) || "computeMain";
-        var pipeline = wgpuCreateValidatedPipeline(device, "compute", {
-          label: "gosx-selena-compute-" + (layout.material || "material"),
-          layout: pipelineLayout,
-          compute: { module: module, entryPoint: entryPoint },
-        });
-        cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout };
-        selenaComputePipelineCache.set(key, cached);
-        material._gosxWGPUSelenaComputeResource = { resource: cached, failed: false };
-        return cached;
-      } catch (err) {
-        console.warn("[gosx] Selena WebGPU compute pipeline failed; falling back to hardcoded kernel.", err);
-        selenaComputePipelineCache.set(key, { failed: true });
-        material._gosxWGPUSelenaComputeResource = { resource: null, failed: true };
-        return null;
-      }
-    }
-
-    // createSelenaComputeBindGroup builds the @group(0) bind group for one
-    // feedback-kind dispatch: the grid uniform (from system.resolution/
-    // cellCount), the ping-pong in/out storage buffers (inBuf/outBuf, the
-    // WaterSystem's bufferA/bufferB in whichever order this step reads/writes),
-    // and (when the descriptor declares any) the UserUniforms uniform packed
-    // via the SAME sceneSelenaUniformData the render path uses -- so the G1
-    // array-uniform packing fix (context{spheres}/context{drops}) applies here
-    // for free. renderContext.uniforms carries the per-kernel per-frame value
-    // map (see sceneWaterSeedSelenaRenderContext etc. below); `system` is both
-    // the live-buffer cache owner (mirrors createSelenaBindGroup's cacheOwner)
-    // and the source of the grid dimensions.
-    function createSelenaComputeBindGroup(system, resource, inBuf, outBuf, renderContext) {
-      if (!system || !resource || !inBuf || !outBuf) return null;
-      var layout = resource.layout;
-      if (!layout) return null;
-      var state = sceneSelenaStateDescriptors(layout)[0];
-      if (!state) return null;
-      var stateWGSL = state.wgsl || {};
-      var grid = layout.grid;
-      var uniformSlot = sceneSelenaUniformBufferSlot(renderContext);
-      var entries = [];
-      var cacheBuffers = [inBuf, outBuf];
-      if (grid && grid.wgsl) {
-        var gridData = sceneSelenaComputeGridUniformData(system);
-        var gridBuffer = wgpuCachedTrackedBuffer(meshState, device,
-          system,
-          uniformSlot + "_grid",
-          gridData,
-          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          true
-        );
-        entries.push({ binding: sceneNumber(grid.wgsl.binding, 0), resource: { buffer: gridBuffer } });
-        cacheBuffers.push(gridBuffer);
-      }
-      entries.push({ binding: sceneNumber(stateWGSL.inBinding, 1), resource: { buffer: inBuf } });
-      entries.push({ binding: sceneNumber(stateWGSL.outBinding, 2), resource: { buffer: outBuf } });
-      var hasUniforms = layout.uniformBlock && Array.isArray(layout.uniformBlock.fields) && layout.uniformBlock.fields.length > 0;
-      if (hasUniforms) {
-        var uniformData = sceneSelenaUniformData({ shaderLayout: layout }, system, renderContext, selenaFrame);
-        if (!uniformData) return null;
-        var uniformBuffer = wgpuCachedTrackedBuffer(meshState, device,
-          system,
-          uniformSlot,
-          uniformData,
-          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          true
-        );
-        entries.push({ binding: sceneNumber(layout.wgsl && layout.wgsl.binding, 3), resource: { buffer: uniformBuffer } });
-        cacheBuffers.push(uniformBuffer);
-      }
-      // Memoize the bind group exactly like createSelenaBindGroup: a pool
-      // keyed by buffer identity (inBuf/outBuf/gridBuffer/uniformBuffer), so
-      // the ping-pong swap converges on (at most) 2 stable bind groups per
-      // kernel per system instead of allocating one every dispatch.
-      var bgPoolSlot = "_gosxWGPUSCBGC" + uniformSlot;
-      var pool = system[bgPoolSlot];
-      if (!Array.isArray(pool)) { pool = []; system[bgPoolSlot] = pool; }
-      for (var pi = 0; pi < pool.length; pi++) {
-        var pc = pool[pi];
-        if (!pc || pc.device !== device || pc.buffers.length !== cacheBuffers.length) continue;
-        var match = true;
-        for (var bi = 0; bi < cacheBuffers.length && match; bi++) {
-          if (pc.buffers[bi] !== cacheBuffers[bi]) match = false;
-        }
-        if (match) return pc.bg;
-      }
-      var newComputeBG = device.createBindGroup({ layout: resource.bindGroupLayout, entries: entries });
-      if (pool.length >= 4) pool.shift();
-      pool.push({ device: device, buffers: cacheBuffers.slice(), bg: newComputeBG });
-      return newComputeBG;
-    }
-
-    // -----------------------------------------------------------------------
-    // Generic Selena "post" kind render path (getSelenaPostPipeline /
-    // createSelenaPostBindGroup): the mesh/mesh+state generic path above
-    // (getSelenaPipeline / createSelenaBindGroup) cannot draw a kind:"post"
-    // Selena material -- its fixed @group(0) contract (binding 0=sceneColor
-    // texture, 1=its sampler, 2=sceneDepth texture, 3=its sampler, 4=the
-    // UserUniforms uniform block; see the "post" kind comment on
-    // wgpuCreateSelenaPostBGL/getSelenaPostBGL above) differs from the mesh
-    // kind's plain "uniform block first" layout, and post-kind pipelines never
-    // have vertex buffers or a depth-stencil attachment: they draw a
-    // hand-rolled 3-vertex fullscreen triangle from @builtin(vertex_index),
-    // matching every post-kind WGSL Selena emits (emitPost's
-    // `_postPositions`/`_postUVs` arrays).
-    //
-    // getSelenaWaterPostBGL() below builds the exact bind group layout every
-    // kind:"post" material needs (the SAME fixed contract
-    // wgpuCreatePostProcessor's private getSelenaPostBGL/buildCustomPostPipelineAsync
-    // use for the main-scene custom-post-effect chain, duplicated here because
-    // that factory's closure isn't reachable from water's earlier render
-    // phase -- see the comment on getSelenaWaterPostBGL); this generalizes it
-    // into a SYNC, memoized, target-format-configurable pipeline builder so a
-    // water-system-owned RTT pass (object-shadow/compound-shadow, rendered
-    // into their own small offscreen target -- NOT the main swapchain) can
-    // use it exactly like getSelenaPipeline is used for mesh-kind passes.
-    //
-    // Materials with additional textures/storage/state beyond the fixed 5
-    // bindings are out of scope (no current post-kind water material needs
-    // one; the water surface/caustics context arrays route through the
-    // MESH-kind path instead) -- createSelenaPostBindGroup only ever writes
-    // the fixed 5 entries.
-    var selenaPostPipelineCache = new Map();
-
-    // getSelenaWaterPostBGL/getSelenaWaterPostDepthSampler are LOCAL
-    // equivalents of wgpuCreatePostProcessor's private getSelenaPostBGL/
-    // getDepthSampler (defined inside that SEPARATE factory function's own
-    // closure, at module scope above -- NOT reachable from here: postProcessor
-    // itself is only lazily constructed inside render() when postFX effects
-    // are present, long after the water passes below need a post-kind bind
-    // group layout). The fixed 5-entry contract is identical (see the
-    // wgpuCreatePostProcessor comment above); duplicated here rather than
-    // threading a lazily-created object through water's earlier render phase.
-    var selenaWaterPostBGL = null;
-    function getSelenaWaterPostBGL() {
-      if (!selenaWaterPostBGL) {
-        selenaWaterPostBGL = device.createBindGroupLayout({
-          label: "gosx-selena-water-post",
-          entries: [
-            { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
-            { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, sampler: {} },
-            { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
-            { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-            { binding: 4, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
-          ],
-        });
-      }
-      return selenaWaterPostBGL;
-    }
-
-    var selenaWaterPostDepthSampler = null;
-    function getSelenaWaterPostDepthSampler() {
-      if (!selenaWaterPostDepthSampler) {
-        selenaWaterPostDepthSampler = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
-      }
-      return selenaWaterPostDepthSampler;
-    }
-
-    function getSelenaPostPipeline(material, options) {
-      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
-      var layout = sceneSelenaMaterialLayout(material);
-      if (!layout || layout.kind !== "post") return null;
-      var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : pipeState.targetFormat;
-      var pipelineLabelSuffix = options && options.labelSuffix ? String(options.labelSuffix) + "-" : "";
-      var memo = material._gosxWGPUSelenaPostResource;
-      if (memo && memo.targetFormat === pipelineTargetFormat) {
-        return memo.failed ? null : memo.resource;
-      }
-      var shader = sceneSelenaWGSLSource(material);
-      var key = ["selena-post", shader, JSON.stringify(layout), pipelineTargetFormat].join("|");
-      var cached = selenaPostPipelineCache.get(key);
-      if (cached) {
-        material._gosxWGPUSelenaPostResource = {
-          targetFormat: pipelineTargetFormat,
-          resource: cached.failed ? null : cached,
-          failed: !!cached.failed,
-        };
-        return cached.failed ? null : cached;
-      }
-      try {
-        var bgl = getSelenaWaterPostBGL();
-        var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bgl] });
-        var module = device.createShaderModule({ label: "selena-post-material", code: shader });
-        renderTruth().captureShaderInfo(module, "selena-post-material");
-        var pipeline = wgpuCreateValidatedPipeline(device, "render", {
-          label: "gosx-selena-post-" + pipelineLabelSuffix + (layout.material || "material"),
-          layout: pipelineLayout,
-          vertex: { module: module, entryPoint: "vertexMain", buffers: [] },
-          fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: pipelineTargetFormat }] },
-          primitive: { topology: "triangle-list" },
-        });
-        cached = { pipeline: pipeline, bindGroupLayout: bgl, layout: layout };
-        selenaPostPipelineCache.set(key, cached);
-        material._gosxWGPUSelenaPostResource = { targetFormat: pipelineTargetFormat, resource: cached, failed: false };
-        return cached;
-      } catch (err) {
-        console.warn("[gosx] Selena WebGPU post pipeline failed; falling back.", err);
-        selenaPostPipelineCache.set(key, { failed: true });
-        material._gosxWGPUSelenaPostResource = { targetFormat: pipelineTargetFormat, resource: null, failed: true };
-        return null;
-      }
-    }
-
-    // createSelenaPostBindGroup mirrors createSelenaBindGroup's uniform
-    // packing + bind-group memoization for the fixed post-kind @group(0)
-    // contract. renderContext.sceneColorView/sceneDepthView let a FUTURE
-    // post-kind water pass sample the real rendered scene; today's
-    // object-shadow/compound-shadow materials don't reference
-    // _sceneColorTex/_sceneDepthTex in their WGSL body at all (every @group/
-    // @binding var Selena's "post" kind emits is module-scope, but neither
-    // material's vertexMain/fragmentMain calls into them -- confirmed by
-    // TestWaterSelenaWGSLValidatesWithNaga's naga validation of the emitted
-    // WGSL), so the placeholder views are never actually sampled -- they exist
-    // purely to satisfy the fixed bind group layout's entry count/kind.
-    function createSelenaPostBindGroup(material, resource, cacheOwner, renderContext) {
-      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext, selenaFrame);
-      if (!uniformData || !resource) return null;
-      var owner = (cacheOwner && typeof cacheOwner === "object") ? cacheOwner : material;
-      var uniformSlot = sceneSelenaUniformBufferSlot(renderContext) + "_post";
-      var uniformBuffer = wgpuCachedTrackedBuffer(meshState, device,
-        owner,
-        uniformSlot,
-        uniformData,
-        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        true
-      );
-      var sceneColorView = (renderContext && renderContext.sceneColorView) || gpuRes.placeholderView;
-      var sceneDepthView = (renderContext && renderContext.sceneDepthView) || dummyShadowView;
-      var bgPoolSlot = "_gosxWGPUSPBGC" + uniformSlot;
-      var pool = owner[bgPoolSlot];
-      if (!Array.isArray(pool)) { pool = []; owner[bgPoolSlot] = pool; }
-      for (var pi = 0; pi < pool.length; pi++) {
-        var pc = pool[pi];
-        if (!pc || pc.device !== device || pc.uniformBuffer !== uniformBuffer) continue;
-        if (pc.sceneColorView !== sceneColorView || pc.sceneDepthView !== sceneDepthView) continue;
-        return pc.bg;
-      }
-      var newBG = device.createBindGroup({
-        label: "gosx-selena-post-bg",
-        layout: resource.bindGroupLayout,
-        entries: [
-          { binding: 0, resource: sceneColorView },
-          { binding: 1, resource: gpuRes.linearSampler },
-          { binding: 2, resource: sceneDepthView },
-          { binding: 3, resource: getSelenaWaterPostDepthSampler() },
-          { binding: 4, resource: { buffer: uniformBuffer } },
-        ],
-      });
-      if (pool.length >= 4) pool.shift();
-      pool.push({ device: device, uniformBuffer: uniformBuffer, sceneColorView: sceneColorView, sceneDepthView: sceneDepthView, bg: newBG });
-      return newBG;
     }
 
     // -----------------------------------------------------------------------
@@ -8332,7 +7610,7 @@
     // ensurePointsAuthoredUserUniformBuffer: allocates / updates a per-layer
     // user-uniform buffer from entry.customUniforms and shaderLayout.
     function ensurePointsAuthoredUserUniformBuffer(entry, ownerKey, uniforms, layout) {
-      var uniformData = sceneSelenaUniformData({ customUniforms: uniforms, shaderLayout: layout }, null, null, selenaFrame);
+      var uniformData = sceneSelenaUniformData({ customUniforms: uniforms, shaderLayout: layout }, null, null, selenaState.frame);
       if (!uniformData || uniformData.byteLength === 0) {
         // No user uniforms — create a minimal 16-byte placeholder so group(1) is always bound.
         uniformData = new Float32Array(4);
@@ -9609,7 +8887,7 @@
         var renderPassKind = scenePBRObjectRenderPass(obj, mat);
         var blendMode = renderPassKind === "additive" ? "additive" : "alpha";
         var depthWrite = renderPassKind !== "alpha" && renderPassKind !== "additive";
-        var selenaResource = getSelenaPipeline(mat, blendMode, depthWrite, {
+        var selenaResource = getSelenaPipeline(pipeState, selenaState, device, mat, blendMode, depthWrite, {
           targetFormat: WATER_OBJECT_TEXTURE_FORMAT,
           sampleCount: 1,
           labelSuffix: "water-object-texture",
@@ -9623,7 +8901,7 @@
             lastMaterialIndex = -1;
             lastReceiveShadow = null;
           }
-          var selenaBG = createSelenaBindGroup(mat, selenaResource, obj, renderContext);
+          var selenaBG = createSelenaBindGroup(meshState, selenaState, device, mat, selenaResource, obj, renderContext);
           if (selenaBG && bindWaterObjectSelenaAttributes(pass, selenaResource, obj, pbrBuffers)) {
             pass.setBindGroup(0, selenaBG);
             pass.draw(obj.vertexCount);
@@ -10612,9 +9890,9 @@
       var opts = pipelineOptions || {};
       var blendMode = typeof opts.blendMode === "string" && opts.blendMode ? opts.blendMode : "opaque";
       var depthWrite = Object.prototype.hasOwnProperty.call(opts, "depthWrite") ? opts.depthWrite : true;
-      var selenaResource = getSelenaPipeline(material, blendMode, depthWrite, opts);
+      var selenaResource = getSelenaPipeline(pipeState, selenaState, device, material, blendMode, depthWrite, opts);
       if (!selenaResource) return null;
-      var bindGroup = createSelenaBindGroup(material, selenaResource, system, renderContext);
+      var bindGroup = createSelenaBindGroup(meshState, selenaState, device, material, selenaResource, system, renderContext);
       if (!bindGroup) return null;
       // attrs is forwarded (not just pipeline/bindGroup) so a per-object draw
       // loop with its own vertex-buffer binding convention (e.g.
@@ -10628,9 +9906,9 @@
     // Selena water pass (object-shadow/compound-shadow below).
     function getWaterSelenaPostDraw(material, renderContext, system, pipelineOptions) {
       if (!material) return null;
-      var selenaResource = getSelenaPostPipeline(material, pipelineOptions);
+      var selenaResource = getSelenaPostPipeline(pipeState, selenaState, device, material, pipelineOptions);
       if (!selenaResource) return null;
-      var bindGroup = createSelenaPostBindGroup(material, selenaResource, system, renderContext);
+      var bindGroup = createSelenaPostBindGroup(meshState, selenaState, device, dummyShadowView, material, selenaResource, system, renderContext);
       if (!bindGroup) return null;
       return { pipeline: selenaResource.pipeline, bindGroup: bindGroup };
     }
@@ -10853,7 +10131,7 @@
           opticsEnable: optics.caustics ? 1 : 0,
           gridResolution: sceneNumber(system && system.surfaceResolution, 201),
           resolution: sceneNumber(system && system.waterResolution, 256),
-          time: selenaFrame.time,
+          time: selenaState.frame.time,
           objectKind: sceneNumber(system && system.waterObjectKind, 0),
           objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
           lightDir: [sceneNumber(light.x, 0.3), sceneNumber(light.y, 0.9), sceneNumber(light.z, 0.45)],
@@ -10975,9 +10253,9 @@
     // hardcoded pipeline). Mirrors getWaterSelenaMeshDraw/getWaterSelenaPostDraw.
     function getWaterSelenaComputeDraw(material, renderContext, system, inBuf, outBuf) {
       if (!material) return null;
-      var selenaResource = getSelenaComputePipeline(material);
+      var selenaResource = getSelenaComputePipeline(selenaState, device, material);
       if (!selenaResource) return null;
-      var bindGroup = createSelenaComputeBindGroup(system, selenaResource, inBuf, outBuf, renderContext);
+      var bindGroup = createSelenaComputeBindGroup(meshState, selenaState, device, system, selenaResource, inBuf, outBuf, renderContext);
       if (!bindGroup) return null;
       return { pipeline: selenaResource.pipeline, bindGroup: bindGroup };
     }
@@ -10987,7 +10265,7 @@
       for (var stage of ["seed", "drop", "displacement", "simulation", "normal"]) {
         var fields = sceneWaterComputeStageFields(stage);
         var material = sceneWaterSelenaMaterial(system, entry, fields.wgslField, fields.descKey, fields.memoSlot);
-        var resource = material && getSelenaComputePipeline(material);
+        var resource = material && getSelenaComputePipeline(selenaState, device, material);
         if (resource) resources.push(resource.pipeline);
       }
       for (var pipeline of resources) wgpuRequirePipeline(pipeline);
@@ -11762,7 +11040,7 @@
         var hasDetail = Boolean(material && material.detail), variant = pbrVariant(pipeState, gpuRes, device, material), surface = variant === true ? null : variant;
         var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : (surface ? surface.key + ":" : "") + sceneWebGPUPipelineKind(reflected, "pbr");
         kind += ":" + objectDepthWrite + uv1;
-        if (surface && surface.groupLayout) pass.setBindGroup(2, sceneWebGPUSelenaSurfaceGroup(device, pipeState.selenaSurfaces, material, surface, selenaFrame));
+        if (surface && surface.groupLayout) pass.setBindGroup(2, sceneWebGPUSelenaSurfaceGroup(device, pipeState.selenaSurfaces, material, surface, selenaState.frame));
         if (currentPipelineKind === kind) return;
         pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(pipeState, device, blendMode, objectDepthWrite, reflected ? "cw" : "ccw", variant, uv1)));
         pass.setBindGroup(0, frameBindGroup);
@@ -11822,7 +11100,7 @@
         // three settings. See client/js/12-scene-geometry-winding.test.mjs for
         // the winding numbers.
         var reflectedDirect = sceneWebGPUObjectReflected(obj);
-        var selenaResource = getObjectSelenaPipeline(getSelenaPipeline, obj, mat, blendMode, depthWrite);
+        var selenaResource = getObjectSelenaPipeline(function(m: any, b: any, d: any, o: any) { return getSelenaPipeline(pipeState, selenaState, device, m, b, d, o); }, obj, mat, blendMode, depthWrite);
         if (selenaResource) {
           worldBuffersBound = false;
           var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + sceneWebGPUSelenaPipelineSuffix(obj, reflectedDirect);
@@ -11830,7 +11108,7 @@
             pass.setPipeline(wgpuRequirePipeline(selenaResource.pipeline));
             currentPipelineKind = selenaKey;
           }
-          var selenaBG = createSelenaBindGroup(mat, selenaResource, obj);
+          var selenaBG = createSelenaBindGroup(meshState, selenaState, device, mat, selenaResource, obj);
           if (selenaBG) {
             pass.setBindGroup(0, selenaBG);
             var allBound = true;
@@ -12087,7 +11365,7 @@
         var meshDepthWrite = sceneTransmissionDepthWrite(mesh, mat, depthWrite);
         pass.setBindGroup(1, createMaterialBindGroup(uniformState, gpuRes, meshState, device, mesh.wind ? Object.assign({}, mat, { wind: mesh.wind }) : mat, !!mesh.receiveShadow, webGPUInstancedCacheOwner(mesh.id) || mesh), [0]);
         if (mat && mat.detail) pass.setBindGroup(2, sceneWebGPUUploadDetail(device, pipeState.detailResources, mat, pipeState.detailEnabled));
-        else wgpuBindInstancedSurfaceGroup(pass, device, pipeState.selenaSurfaces, mat, surface, selenaFrame);
+        else wgpuBindInstancedSurfaceGroup(pass, device, pipeState.selenaSurfaces, mat, surface, selenaState.frame);
         if (webGPUGPUDrivenHost().drawMesh(pass, mesh, meshDepthWrite)) continue;
 
         // Indirect draw via GPU cull (D3: ready cull record → drawIndirect;
@@ -12884,7 +12162,7 @@
           pointsDrawn: published.pointDrawEntries || 0,
           pointInstancesSubmitted: published.pointInstances || 0,
           pointInstancesDrawn: published.pointDrawInstances || 0,
-          uniformTime: selenaFrame.time,
+          uniformTime: selenaState.frame.time,
           adapterInfo: webGPUAdapterInfoSnapshot(),
         });
       }
@@ -13147,7 +12425,7 @@
     function drawBoardLabels(pass, bundle, blendMode, depthWrite) {
       var labels = Array.isArray(bundle.labels) ? bundle.labels : [];
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!labels.length) return;
-      var resource = getSelenaPipeline(boardTextMaterial, blendMode, depthWrite);
+      var resource = getSelenaPipeline(pipeState, selenaState, device, boardTextMaterial, blendMode, depthWrite);
       if (!resource) return;
 
       var cam = bundle.camera || {};
@@ -13236,7 +12514,7 @@
           var ownerKey = (typeof label.id === "string" && label.id) ? label.id : ("__bt:" + font + ":" + li);
           var owner = boardTextOwners.get(ownerKey);
           if (!owner) { owner = {}; boardTextOwners.set(ownerKey, owner); }
-          var uniformData = sceneSelenaUniformData(boardTextMaterial, null, null, selenaFrame);
+          var uniformData = sceneSelenaUniformData(boardTextMaterial, null, null, selenaState.frame);
           var uniformBuffer = wgpuCachedTrackedBuffer(meshState, device,
             owner, "_gosxBoardTextUniform", uniformData,
             GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true
@@ -13519,7 +12797,7 @@
       );
       uploadLights(uniformState, gpuRes, device, bundle.lights);
       uploadFogUniforms(uniformState, gpuRes, device, bundle.environment);
-      uploadEnvUniforms(uniformState, gpuRes, device, selenaFrame, bundle.environment);
+      uploadEnvUniforms(uniformState, gpuRes, device, selenaState.frame, bundle.environment);
       if (temporalAA.beginFrame(postEffects, { postProcessing: usePostProcessing, perspective: !!cam && cam.kind !== "orthographic" && !(bundle.camera && bundle.camera.mode === "ortho2d"), width: scaledW, height: scaledH, samples: sampleCount, view: uniformState.scratchViewMatrix, projection: uniformState._frameUniformF, projectionOffset: 16, viewProjection: uniformState.scratchSelenaViewProjection, now: performance.now() })) device.queue.writeBuffer(gpuRes.frameUniformBuffer, 64, uniformState._frameUniformF, 16, 16);
 
       // --- Shadow Pass ---
@@ -13561,11 +12839,11 @@
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
       // Shader time is seekable; telemetry and compute retain wall time.
-      selenaFrame.time = frameMeta?.sceneTime ?? frameTimeSeconds;
-      selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
+      selenaState.frame.time = frameMeta?.sceneTime ?? frameTimeSeconds;
+      selenaState.frame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(meshState, device, bundle, encoder);
-      temporalAA.capturePreviousSkins(encoder, bundle.meshObjects); var elioSkinStats = updateElioSkinnedMeshes(meshState, device, bundle, encoder); window.__gosx_scene3d_ocean_fft_api?.frame(oceanResources, { device: device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaFrame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
+      temporalAA.capturePreviousSkins(encoder, bundle.meshObjects); var elioSkinStats = updateElioSkinnedMeshes(meshState, device, bundle, encoder); window.__gosx_scene3d_ocean_fft_api?.frame(oceanResources, { device: device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaState.frame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
       var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(meshState, device, bundle) : null;
       activePickMeshPositions = pbrSceneBuffers;
       if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
@@ -13592,7 +12870,7 @@
       // frame's: on Metal (Apple M4 Pro, Chrome 157) a command buffer that holds them and the frame-end timestamp fails with "Insufficient
       // Memory" and loses the device. Dawn records each submit as one Metal command buffer. The occlusion cull reads this frame's depth.
       crowdEncoder = bundle.gpuDriven ? device.createCommandEncoder({ label: "gosx-crowd-cull" }) : encoder;
-      crowd.beginFrame(bundle, crowdEncoder, { now: selenaFrame.time, viewProjection: uniformState.scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: pipeState.targetFormat, specular: pipeState.selectiveBloom });
+      crowd.beginFrame(bundle, crowdEncoder, { now: selenaState.frame.time, viewProjection: uniformState.scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: pipeState.targetFormat, specular: pipeState.selectiveBloom });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, uniformState.scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
@@ -13628,7 +12906,7 @@
       }
 
       pipeState.pbrShadowsActive = activeShadowCount > 0;
-      uploadShadowUniforms(uniformState, gpuRes, device, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights); sceneSelenaFrameLighting(selenaFrame, cam, uniformState.scratchViewMatrix, bundle, shadowSlots, shadowLightIndices, shadowLightMatrices, "gpu");
+      uploadShadowUniforms(uniformState, gpuRes, device, shadowSlots, shadowLightMatrices, shadowLightIndices, bundle.lights); sceneSelenaFrameLighting(selenaState.frame, cam, uniformState.scratchViewMatrix, bundle, shadowSlots, shadowLightIndices, shadowLightMatrices, "gpu");
 
       // Create frame bind group.
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
@@ -13679,7 +12957,7 @@
       if (usePostProcessing) {
         if (!postProcessor) {
           postProcessor = wgpuCreatePostProcessor(device, presentationFormat, reportWebGPUFrameError, function(material, owner, renderContext) {
-            return sceneSelenaUniformData(material, owner, renderContext, selenaFrame);
+            return sceneSelenaUniformData(material, owner, renderContext, selenaState.frame);
           });
         }
         postTarget = postProcessor.getSceneTarget(scaledW, scaledH);
@@ -13973,7 +13251,7 @@
       }
 
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: uniformState.scratchViewMatrix, aspect: scaledW/scaledH, viewProj: uniformState.scratchSelenaViewProjection, timeSeconds: selenaFrame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, textureCache: gpuRes.textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} }; window.__gosx_scene3d_terrain_api?.webgpu(terrainResources, mainPass, { device: device, environment: bundle.environment, camera: cam, viewProj: uniformState.scratchSelenaViewProjection, height: scaledH, frameGroup: frameBindGroup, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: function(m: any, r: any) { return materialUniformData(uniformState, m, r); }, time: selenaFrame.time, frameBuffer: gpuRes.frameUniformBuffer, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom, textureCache: gpuRes.textureCache, load: wgpuLoadTexture, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, attr: queueWebGPUAttribute });
+      var waterDrawnBeforeAlpha = false, oceanOpts = { publishAttribute: queueWebGPUAttribute, device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: uniformState.scratchViewMatrix, aspect: scaledW/scaledH, viewProj: uniformState.scratchSelenaViewProjection, timeSeconds: selenaState.frame.time, quality: frameMeta?.oceanTier, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, textureCache: gpuRes.textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} }; window.__gosx_scene3d_terrain_api?.webgpu(terrainResources, mainPass, { device: device, environment: bundle.environment, camera: cam, viewProj: uniformState.scratchSelenaViewProjection, height: scaledH, frameGroup: frameBindGroup, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: function(m: any, r: any) { return materialUniformData(uniformState, m, r); }, time: selenaState.frame.time, frameBuffer: gpuRes.frameUniformBuffer, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom, textureCache: gpuRes.textureCache, load: wgpuLoadTexture, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, attr: queueWebGPUAttribute });
       // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
       const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: uniformState.scratchViewMatrix, proj: uniformState.scratchProjMatrix, camera: cam, linear: usePostProcessing, format: pipeState.targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: uniformState._frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(uniformState, gpuRes, device, [shadowView0, shadowView1, uniformState.iblResources.active && uniformState.iblResources.irradiance && uniformState.iblResources.irradiance.view, uniformState.iblResources.active && uniformState.iblResources.radiance && uniformState.iblResources.radiance.view, uniformState.iblResources.active && uniformState.iblResources.brdfLUT && uniformState.iblResources.brdfLUT.view, uniformState.envMapResources.active && uniformState.envMapResources.record && uniformState.envMapResources.record.view], buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(pipeState, device, "opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; }; window.__gosx_scene3d_crowd_api?.webgpu(mainPass, { device: device, environment: bundle.environment, camera: cam, proj: uniformState.scratchProjMatrix, viewProj: uniformState.scratchSelenaViewProjection, height: scaledH, time: bundle.timeSeconds, frameGroup: frameBindGroup, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, fragment: WGSL_PBR_FRAGMENT, frameStructs: WGSL_FRAME_STRUCTS, material: function(m: any, r: any) { return materialUniformData(uniformState, m, r); }, format: pipeState.targetFormat, samples: sampleCount, specular: pipeState.selectiveBloom, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, mount: canvas.parentNode }); // Environment.Crowds (crowd-wgsl.ts)
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
@@ -14080,7 +13358,7 @@
         // Create a dummy material bind group for group 1 (points pipeline layout requires it).
         var dummyMatBG = createMaterialBindGroup(uniformState, gpuRes, meshState, device, null, false, gpuRes.defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG, [0]);
-        Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, selenaFrame.time));
+        Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, selenaState.frame.time));
         mainPass = drawComputeParticlePasses(encoder, mainPass, mainPassDescriptor, frameBindGroup, computeParticleRecords, bundle.environment, frameTimeSeconds, mainDepthTargetView);
       }
 
@@ -14259,9 +13537,9 @@
       }
       sceneWebGPUDisposeDetail(pipeState.detailResources); pipeState.detailResources = null; sceneWebGPUDisposeSelenaSurfaces(pipeState.selenaSurfaces);
       gpuRes.textureCache.clear();
-      selenaPipelineCache.clear();
-      selenaComputePipelineCache.clear();
-      selenaPostPipelineCache.clear();
+      selenaState.pipelineCache.clear();
+      selenaState.computePipelineCache.clear();
+      selenaState.postPipelineCache.clear();
       pipeState.pipelineCache = {};
       instancedGeometryCache = {};
       // Buffers cached on these owners are registered in
@@ -14412,9 +13690,9 @@
         waterSystems.size +
         instancedCullSystems.size +
         gpuRes.textureCache.size +
-        selenaPipelineCache.size +
-        selenaComputePipelineCache.size +
-        selenaPostPipelineCache.size +
+        selenaState.pipelineCache.size +
+        selenaState.computePipelineCache.size +
+        selenaState.postPipelineCache.size +
         Object.keys(pipeState.pipelineCache).length +
         Object.keys(waterPoolPipelineCache).length +
         Object.keys(pipeState.waterObjectMeshPipelineCache).length
@@ -14463,7 +13741,7 @@
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.renderTruthEvents = typeof truthApi.events === "function" ? truthApi.events() : [];
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.shaderDiagnostics = typeof truthApi.shaderCounts === "function" ? truthApi.shaderCounts() : { messages: 0, errors: 0 };
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.postChain = lastWebGPUFrameStats && lastWebGPUFrameStats.postChain || null;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.uniformTime = selenaFrame.time;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.uniformTime = selenaState.frame.time;
       out.textureVariantContext = {
         backend: textureVariantContext.backend,
         uploadReady: textureVariantContext.uploadReady,

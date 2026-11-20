@@ -94,8 +94,8 @@ test("WebGPU Selena reuses IBL views, updates bind groups on readiness/replaceme
   const source = readSceneRendererBackendSrc("webgpu");
   const buffer={}, cube={}, image={}, sampler={}, groups=[];
   const context=vm.createContext({
-    meshState:{}, webGPUInstancedCacheOwner:()=>{throw Error("unexpected mesh ID");},
-    selenaFrame:{}, iblResources:{active:false}, placeholderCubeView:cube,placeholderView:image,
+    meshState:{},
+    iblResources:{active:false}, placeholderCubeView:cube,placeholderView:image,
     envMapSampler:sampler,linearSampler:{},GPUBufferUsage:{UNIFORM:1,COPY_DST:2},
     device:{createBindGroup:d=>{groups.push(d);return d;}},
     sceneNumber:(v,f)=>Number.isFinite(v)?v:f,
@@ -107,28 +107,29 @@ test("WebGPU Selena reuses IBL views, updates bind groups on readiness/replaceme
     sceneSelenaTextureURL:()=>{throw Error("IBL resource passed to URL loader");},
   });
   vm.runInContext(["sceneWebGPUSelenaEnvironmentSlot","sceneWebGPUAppendSelenaTextures","createSelenaBindGroup"].map(n=>fn(source,n)).join("\n"),context);
-  context.selenaTextureContext={
+  context.selenaState={frame:{},instancedCacheOwner:()=>{throw Error("unexpected mesh ID");},textureContext:null};
+  context.selenaState.textureContext={
     device:context.device,textureCache:{},iblResources:context.iblResources,
     placeholderCubeView:cube,placeholderView:image,envMapSampler:sampler,linearSampler:context.linearSampler,
     liveView:context.sceneSelenaLiveTextureView,url:context.sceneSelenaTextureURL,
   };
   const mat=material(), owner={}, resource={layout:{textures:[texture]},bindGroupLayout:{}};
-  const pending=context.createSelenaBindGroup(mat,resource,owner);
+  const pending=context.createSelenaBindGroup(context.meshState,context.selenaState,context.device,mat,resource,owner);
   assert.equal(pending.entries[1].resource,cube);
   assert.equal(pending.entries[2].resource,sampler,"explicit mip sampling must use the environment sampler");
   const view={}; Object.assign(context.iblResources,{active:true,radiance:{view}});
-  const ready=context.createSelenaBindGroup(mat,resource,owner);
+  const ready=context.createSelenaBindGroup(context.meshState,context.selenaState,context.device,mat,resource,owner);
   assert.equal(ready.entries[1].resource,view);
   assert.notEqual(ready,pending);
-  assert.equal(context.createSelenaBindGroup(mat,resource,owner),ready,"steady frames must reuse bind groups");
+  assert.equal(context.createSelenaBindGroup(context.meshState,context.selenaState,context.device,mat,resource,owner),ready,"steady frames must reuse bind groups");
   context.iblResources.radiance={view:{}};
-  assert.notEqual(context.createSelenaBindGroup(mat,resource,owner),ready,"replacement environment must not keep stale bindings");
+  assert.notEqual(context.createSelenaBindGroup(context.meshState,context.selenaState,context.device,mat,resource,owner),ready,"replacement environment must not keep stale bindings");
   context.iblResources.active=false;
-  assert.equal(context.createSelenaBindGroup(mat,resource,owner),pending);
+  assert.equal(context.createSelenaBindGroup(context.meshState,context.selenaState,context.device,mat,resource,owner),pending);
   assert.equal(groups.length,3);
   const waterView={};
-  context.selenaTextureContext.liveView=()=>waterView;
-  const water=context.createSelenaBindGroup({customUniforms:{environment:"gosx:water:pool:caustics"}},
+  context.selenaState.textureContext.liveView=()=>waterView;
+  const water=context.createSelenaBindGroup(context.meshState,context.selenaState,context.device,{customUniforms:{environment:"gosx:water:pool:caustics"}},
     {layout:{textures:[{...texture,dimension:"2d"}]},bindGroupLayout:{}},{});
   assert.equal(water.entries[1].resource,waterView,"the shared binder must preserve live water resources");
   assert.equal(water.entries[2].resource,context.linearSampler,"water retains its ordinary sampler");
