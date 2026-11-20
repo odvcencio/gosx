@@ -2626,3 +2626,1077 @@
       }
     }
   }
+  // -----------------------------------------------------------------------
+  // Authored Points / ComputeParticle render pipelines
+  // -----------------------------------------------------------------------
+  // Per-layer/system authored pipeline caches. Each cache entry is either a
+  // {pipeline} object or {failed:true} sentinel. Failure is one-shot: once
+  // an authored shader fails validation the layer falls back to builtin for
+  // the rest of the session with a single console.warn.
+  //
+  // Binding contract for authored Points layers (drawPointsEntries):
+  //   @group(0) @binding(0)  FrameUniforms (uniform)
+  //   @group(1) @binding(0)  UserUniforms  (authored uniforms, uniform)
+  //   @group(2) @binding(0)  PointsUniforms (uniform)
+  //   vertex buffer slot 0: per-instance (position:vec3f, size:f32, color:vec4f, stride=32)
+  //
+  // Binding contract for authored ComputeParticle render (drawComputeParticleEntries):
+  //   @group(0) @binding(0)  FrameUniforms (uniform)
+  //   @group(1) @binding(0)  UserUniforms  (authored uniforms, uniform)
+  //   @group(2) @binding(0)  PointsUniforms (uniform)
+  //   @group(2) @binding(1)  particles array<ParticleInstance> (storage read)
+  //   no vertex buffers (instance index reads from storage)
+
+  // buildAuthoredPointsVertexPipeline: for Points layers, uses vertex buffer (instanced path).
+  function buildAuthoredPointsVertexPipelineAsync(drawState: any, device: any, entry, blendMode, depthWrite, systemID) {
+    // The joined cache key embeds both WGSL sources (~13 KB). This function
+    // runs per layer per frame, and rebuilding the key allocated ~29 MB/s
+    // of transient strings across 19 layers. Memoize the trimmed sources
+    // and the key on the entry; the raw source identities plus the
+    // pipeline parameters validate the memo. Reusing one key string also
+    // keeps the Map lookup cheap (the string hash is computed once).
+    var rawVert = (typeof entry.customVertexWGSL === "string") ? entry.customVertexWGSL : "";
+    var rawFrag = (typeof entry.customFragmentWGSL === "string") ? entry.customFragmentWGSL : "";
+    var memo = entry._gosxWGPUPointsPipelineKeyMemo;
+    if (!memo || memo.rawVert !== rawVert || memo.rawFrag !== rawFrag ||
+        memo.blendMode !== blendMode || memo.depthWrite !== depthWrite ||
+        memo.targetFormat !== drawState.pipeState.targetFormat || memo.sampleCount !== drawState.pipeState.activeSampleCount) {
+      var trimmedVert = rawVert.trim();
+      var trimmedFrag = rawFrag.trim();
+      memo = {
+        rawVert: rawVert,
+        rawFrag: rawFrag,
+        blendMode: blendMode,
+        depthWrite: depthWrite,
+        targetFormat: drawState.pipeState.targetFormat,
+        sampleCount: drawState.pipeState.activeSampleCount,
+        vertWGSL: trimmedVert,
+        fragWGSL: trimmedFrag,
+        key: (trimmedVert && trimmedFrag)
+          ? [trimmedVert, trimmedFrag, blendMode, depthWrite ? "1" : "0", drawState.pipeState.targetFormat, drawState.pipeState.activeSampleCount].join("|")
+          : "",
+      };
+      entry._gosxWGPUPointsPipelineKeyMemo = memo;
+    }
+    var vertWGSL = memo.vertWGSL;
+    var fragWGSL = memo.fragWGSL;
+    if (!vertWGSL || !fragWGSL) return null; // no authored shader
+    var cacheKey = memo.key;
+    var cached = drawState.pointsAuthoredPipelineCache.get(cacheKey);
+    if (cached) return cached.failed ? null : cached;
+
+    var pending = { pending: true };
+    drawState.pointsAuthoredPipelineCache.set(cacheKey, pending);
+    var scopedDevice = device;
+    if (!scopedDevice) {
+      drawState.pointsAuthoredPipelineCache.delete(cacheKey);
+      return null;
+    }
+    var vertMod = scopedDevice.createShaderModule({ label: "points-authored-vert", code: vertWGSL });
+    renderTruth().captureShaderInfo(vertMod, "points-authored-vert");
+    var fragMod = scopedDevice.createShaderModule({ label: "points-authored-frag", code: fragWGSL });
+    renderTruth().captureShaderInfo(fragMod, "points-authored-frag");
+
+    function markFailed(reason) {
+      sceneReportPipelineFailure("points", systemID, reason);
+      if (!drawState.pointsAuthoredLayerFailed.get(systemID)) {
+        drawState.pointsAuthoredLayerFailed.set(systemID, true);
+        console.warn("[gosx] Points authored pipeline failed for layer '" + systemID + "'; falling back to builtin.", reason);
+      }
+      drawState.pointsAuthoredPipelineCache.set(cacheKey, { failed: true });
+    }
+
+    // This is the site the mis-pairing bug hit hardest: 19 point layers on
+    // one page build here, all overlapping, all previously sharing one
+    // device error scope stack. Validation is now per object.
+    scopedDevice.createRenderPipelineAsync({
+      label: "gosx-points-authored-" + blendMode,
+      layout: drawState.pointsAuthoredVertexPipelineLayout,
+      vertex: { module: vertMod, entryPoint: "vertexMain", buffers: WGPU_POINTS_INSTANCE_VERTEX_LAYOUT },
+      fragment: { module: fragMod, entryPoint: "fragmentMain", targets: [{ format: drawState.pipeState.targetFormat, blend: wgpuBlendState(blendMode) }] },
+      primitive: { topology: "triangle-list" },
+      multisample: { count: Math.max(1, Math.floor(drawState.pipeState.activeSampleCount || 1)) },
+      depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
+    }).then(function(pipeline) {
+      return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
+        if (!drawState.deviceStillActive(scopedDevice)) return;
+        if (compileErr) {
+          markFailed(compileErr);
+          return;
+        }
+        drawState.pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
+      });
+    }).catch(function(err) {
+      return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
+        if (!drawState.deviceStillActive(scopedDevice)) return;
+        markFailed(compileErr || err);
+      });
+    });
+    return null; // pending first frame — builtin fallback used
+  }
+
+  // buildAuthoredParticleRenderPipelineAsync: for ComputeParticles render, reads from storage.
+  function buildAuthoredParticleRenderPipelineAsync(drawState: any, device: any, entry, blendMode, depthWrite, systemID) {
+    // Same per-frame key memoization as buildAuthoredPointsVertexPipelineAsync.
+    var rawVert = (typeof entry.renderVertexWGSL === "string") ? entry.renderVertexWGSL : "";
+    var rawFrag = (typeof entry.renderFragmentWGSL === "string") ? entry.renderFragmentWGSL : "";
+    var memo = entry._gosxWGPUCPRenderPipelineKeyMemo;
+    if (!memo || memo.rawVert !== rawVert || memo.rawFrag !== rawFrag ||
+        memo.blendMode !== blendMode || memo.depthWrite !== depthWrite ||
+        memo.targetFormat !== drawState.pipeState.targetFormat || memo.sampleCount !== drawState.pipeState.activeSampleCount) {
+      var trimmedVert = rawVert.trim();
+      var trimmedFrag = rawFrag.trim();
+      memo = {
+        rawVert: rawVert,
+        rawFrag: rawFrag,
+        blendMode: blendMode,
+        depthWrite: depthWrite,
+        targetFormat: drawState.pipeState.targetFormat,
+        sampleCount: drawState.pipeState.activeSampleCount,
+        vertWGSL: trimmedVert,
+        fragWGSL: trimmedFrag,
+        key: (trimmedVert && trimmedFrag)
+          ? ["cr", trimmedVert, trimmedFrag, blendMode, depthWrite ? "1" : "0", drawState.pipeState.targetFormat, drawState.pipeState.activeSampleCount].join("|")
+          : "",
+      };
+      entry._gosxWGPUCPRenderPipelineKeyMemo = memo;
+    }
+    var vertWGSL = memo.vertWGSL;
+    var fragWGSL = memo.fragWGSL;
+    if (!vertWGSL || !fragWGSL) return null;
+    var cacheKey = memo.key;
+    var cached = drawState.pointsAuthoredPipelineCache.get(cacheKey);
+    if (cached) return cached.failed ? null : cached;
+
+    // Selena points modules may expose dual entries:
+    //   vertexStorageMain — reads particle state from a storage buffer (preferred for
+    //                       ComputeParticles render path which has no vertex buffers)
+    //   vertexMain        — attribute variant (fallback)
+    // Check the WGSL source first; also accept shaderLayout.entryPoints.vertexStorage.
+    var vertEntry = "vertexMain";
+    var renderLayout = entry.renderShaderLayout && typeof entry.renderShaderLayout === "object"
+      ? entry.renderShaderLayout
+      : entry.shaderLayout;
+    if (vertWGSL.indexOf("vertexStorageMain") !== -1) {
+      vertEntry = "vertexStorageMain";
+    } else if (renderLayout && renderLayout.entryPoints && renderLayout.entryPoints.vertexStorage) {
+      vertEntry = renderLayout.entryPoints.vertexStorage;
+    }
+
+    var pending = { pending: true };
+    drawState.pointsAuthoredPipelineCache.set(cacheKey, pending);
+    var scopedDevice = device;
+    if (!scopedDevice) {
+      drawState.pointsAuthoredPipelineCache.delete(cacheKey);
+      return null;
+    }
+    var vertMod = scopedDevice.createShaderModule({ label: "particle-render-authored-vert", code: vertWGSL });
+    renderTruth().captureShaderInfo(vertMod, "particle-render-authored-vert");
+    var fragMod = scopedDevice.createShaderModule({ label: "particle-render-authored-frag", code: fragWGSL });
+    renderTruth().captureShaderInfo(fragMod, "particle-render-authored-frag");
+
+    function markFailed(reason) {
+      sceneReportPipelineFailure("particle-render", systemID, reason);
+      if (!drawState.pointsAuthoredLayerFailed.get(systemID)) {
+        drawState.pointsAuthoredLayerFailed.set(systemID, true);
+        console.warn("[gosx] ComputeParticle authored render pipeline failed for system '" + systemID + "'; falling back to builtin.", reason);
+      }
+      drawState.pointsAuthoredPipelineCache.set(cacheKey, { failed: true });
+    }
+
+    // Per-object validation; no device error scope. This build overlaps the
+    // compute kernel build for the SAME system, which is exactly the pairing
+    // that reported a rejected kernel against a healthy render pipeline.
+    scopedDevice.createRenderPipelineAsync({
+      label: "gosx-particle-render-authored-" + blendMode,
+      layout: drawState.pointsAuthoredStoragePipelineLayout,
+      vertex: { module: vertMod, entryPoint: vertEntry, buffers: [] },
+      fragment: { module: fragMod, entryPoint: "fragmentMain", targets: [{ format: drawState.pipeState.targetFormat, blend: wgpuBlendState(blendMode) }] },
+      primitive: { topology: "triangle-list" },
+      multisample: { count: Math.max(1, Math.floor(drawState.pipeState.activeSampleCount || 1)) },
+      depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
+    }).then(function(pipeline) {
+      return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
+        if (!drawState.deviceStillActive(scopedDevice)) return;
+        if (compileErr) {
+          markFailed(compileErr);
+          return;
+        }
+        drawState.pointsAuthoredPipelineCache.set(cacheKey, { pipeline: pipeline });
+      });
+    }).catch(function(err) {
+      return sceneShaderModuleError([vertMod, fragMod]).then(function(compileErr) {
+        if (!drawState.deviceStillActive(scopedDevice)) return;
+        markFailed(compileErr || err);
+      });
+    });
+    return null;
+  }
+
+  // ensurePointsAuthoredUserUniformBuffer: allocates / updates a per-layer
+  // user-uniform buffer from entry.customUniforms and shaderLayout.
+  function ensurePointsAuthoredUserUniformBuffer(drawState: any, device: any, entry, ownerKey, uniforms, layout) {
+    var uniformData = sceneSelenaUniformData({ customUniforms: uniforms, shaderLayout: layout }, null, null, drawState.selenaState.frame);
+    if (!uniformData || uniformData.byteLength === 0) {
+      // No user uniforms — create a minimal 16-byte placeholder so group(1) is always bound.
+      uniformData = new Float32Array(4);
+    }
+    var cacheOwner = entry;
+    var buffer = wgpuCachedTrackedBuffer(drawState.meshState, device,
+      cacheOwner,
+      ownerKey,
+      uniformData,
+      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      true
+    );
+    return buffer;
+  }
+
+  function disposeComputeParticleSystems(drawState: any) {
+    for (const record of drawState.computeParticleSystems.values()) {
+      if (record && record.system && typeof record.system.dispose === "function") {
+        try { record.system.dispose(); } catch (_err) {}
+      }
+    }
+    drawState.computeParticleSystems.clear();
+    drawState.lastComputeParticleTimeSeconds = null;
+  }
+
+  function syncComputeParticleSystems(drawState: any, device: any, entries) {
+    var activeIds = new Set();
+    var records = [];
+    var sourceEntries = Array.isArray(entries) ? entries : [];
+    for (var i = 0; i < sourceEntries.length; i++) {
+      var entry = sourceEntries[i];
+      if (!entry || typeof entry !== "object") continue;
+      var id = typeof entry.id === "string" && entry.id ? entry.id : ("scene-particles-" + i);
+      var signature = sceneComputeSystemSignature(entry);
+      activeIds.add(id);
+      var record = drawState.computeParticleSystems.get(id);
+      if (!record || record.signature !== signature) {
+        if (record && record.system && typeof record.system.dispose === "function") {
+          record.system.dispose();
+        }
+        record = {
+          signature: signature,
+          system: createSceneParticleSystem(device, entry),
+        };
+        drawState.computeParticleSystems.set(id, record);
+      } else if (record.system) {
+        record.system.entry = entry;
+      }
+      if (record && record.system) {
+        records.push(record);
+      }
+    }
+    for (const [id, record] of drawState.computeParticleSystems.entries()) {
+      if (!activeIds.has(id)) {
+        if (record && record.system && typeof record.system.dispose === "function") {
+          record.system.dispose();
+        }
+        drawState.computeParticleSystems.delete(id);
+      }
+    }
+    return records;
+  }
+
+  function updateComputeParticleSystems(drawState: any, device: any, entries, encoder, timeSeconds) {
+    var currentTime = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+    var deltaTime = drawState.lastComputeParticleTimeSeconds == null
+      ? 0
+      : Math.max(0, Math.min(0.1, currentTime - drawState.lastComputeParticleTimeSeconds));
+    drawState.lastComputeParticleTimeSeconds = currentTime;
+    var records = syncComputeParticleSystems(drawState, device, entries);
+    for (var i = 0; i < records.length; i++) {
+      if (records[i].system && typeof records[i].system.update === "function") {
+        records[i].system.update(device, encoder, deltaTime, currentTime);
+      }
+    }
+    return records;
+  }
+
+  function colorPrimitiveOwner(drawState: any, name) {
+    if (!drawState.screenLineOwner[name]) drawState.screenLineOwner[name] = {};
+    return drawState.screenLineOwner[name];
+  }
+
+  function drawColorPrimitive(drawState: any, device: any, renderPass, entry, frameBindGroup) {
+    if (!entry || !entry.vertexCount) return false;
+    var owner = entry.owner || colorPrimitiveOwner(drawState, entry.name || "primitive");
+    var positions = toSceneFloat32Array(entry.positions);
+    var colors = toSceneFloat32Array(entry.colors);
+    var materials = entry.materials ? toSceneFloat32Array(entry.materials) : fallbackMaterialData(owner, entry.vertexCount);
+    var vertexCount = primitiveVertexCount(positions, colors, materials, entry.vertexCount);
+    if (vertexCount <= 0) return false;
+
+    var blend = entry.blend === "alpha" || entry.blend === "additive" ? entry.blend : "opaque";
+    var topology = entry.topology === "triangle-list" ? "triangle-list" : "line-list";
+    var depthWrite = typeof entry.depthWrite === "boolean" ? entry.depthWrite : linePassDepthWrite(blend);
+    renderPass.setPipeline(wgpuRequirePipeline(getSceneColorPipeline(drawState.pipeState, drawState.gpuRes, device, entry.space === "clip" ? "clip" : "world", topology, blend, depthWrite)));
+    renderPass.setBindGroup(0, frameBindGroup);
+    renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUPrimitivePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUPrimitiveColors", colors, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.setVertexBuffer(2, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUPrimitiveMaterials", materials, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.draw(vertexCount);
+    return true;
+  }
+
+  function webGPUWorldLinePasses(drawState: any, bundle) {
+    if (!hasWorldLineData(bundle)) return [];
+    if (typeof buildSceneWorldDrawPlan === "function") {
+      if (!drawState.worldDrawScratch && typeof createSceneWorldDrawScratch === "function") {
+        drawState.worldDrawScratch = createSceneWorldDrawScratch();
+      }
+      var drawPlan = buildSceneWorldDrawPlan(bundle, drawState.worldDrawScratch);
+      if (drawPlan) {
+        return [
+          { name: "world-static-opaque", owner: drawPlan, positions: drawPlan.staticOpaquePositions, colors: drawPlan.staticOpaqueColors, materials: drawPlan.staticOpaqueMaterials, vertexCount: drawPlan.staticOpaqueVertexCount, blend: "opaque", space: "world", topology: "line-list" },
+          { name: "world-dynamic-opaque", owner: drawPlan, positions: drawPlan.dynamicOpaquePositions, colors: drawPlan.dynamicOpaqueColors, materials: drawPlan.dynamicOpaqueMaterials, vertexCount: drawPlan.dynamicOpaqueVertexCount, blend: "opaque", space: "world", topology: "line-list" },
+          { name: "world-alpha", owner: drawPlan.alphaPositions ? drawPlan : null, positions: drawPlan.alphaPositions, colors: drawPlan.alphaColors, materials: drawPlan.alphaMaterials, vertexCount: drawPlan.alphaVertexCount, blend: "alpha", space: "world", topology: "line-list", depthWrite: false },
+          { name: "world-additive", owner: drawPlan.additivePositions ? drawPlan : null, positions: drawPlan.additivePositions, colors: drawPlan.additiveColors, materials: drawPlan.additiveMaterials, vertexCount: drawPlan.additiveVertexCount, blend: "additive", space: "world", topology: "line-list", depthWrite: false },
+        ];
+      }
+    }
+    var vertexCount = Math.max(0, Math.floor(sceneNumber(bundle.worldVertexCount, 0)));
+    return [{
+      name: "world-fallback",
+      owner: bundle,
+      positions: bundle.worldPositions,
+      colors: bundle.worldColors,
+      materials: fallbackMaterialData(bundle, vertexCount),
+      vertexCount: vertexCount,
+      blend: "alpha",
+      space: "world",
+      topology: "line-list",
+      depthWrite: false,
+    }];
+  }
+
+  function drawWorldLineEntries(drawState: any, device: any, renderPass, entries, passName, frameBindGroup) {
+    var drew = false;
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (!entry || entry.blend !== passName) continue;
+      drew = drawColorPrimitive(drawState, device, renderPass, entry, frameBindGroup) || drew;
+    }
+    return drew;
+  }
+
+  function webGPUThickLineRecord(drawState: any, bundle) {
+    if (!webGPUHasThickWorldLines(bundle) || !webGPUCanUseThickWorldLines(bundle)) return null;
+    if (!bundle.worldPositions || !bundle.worldColors) return null;
+    if (!drawState.thickLineScratch && typeof createSceneThickLineScratch === "function") {
+      drawState.thickLineScratch = createSceneThickLineScratch();
+    }
+    if (!drawState.thickLineScratch || typeof expandSceneThickLineIntoScratch !== "function") return null;
+    var segmentCount = webGPUWorldLineSegmentCount(bundle);
+    if (segmentCount <= 0 || segmentCount > 16384) return null;
+    var usedSegments = expandSceneThickLineIntoScratch(
+      drawState.thickLineScratch,
+      bundle.worldPositions,
+      bundle.worldColors,
+      bundle.worldLineWidths,
+      bundle.worldLinePasses,
+      segmentCount
+    );
+    if (usedSegments <= 0) return null;
+    return {
+      scratch: drawState.thickLineScratch,
+      usedVerts: usedSegments * 4,
+      owner: drawState.thickLineOwner,
+    };
+  }
+
+  function drawThickWorldLineEntries(drawState: any, device: any, renderPass, record, passName, frameBindGroup) {
+    var scratch = record && record.scratch;
+    var usedVerts = record && record.usedVerts || 0;
+    if (!scratch || usedVerts <= 0) return false;
+    var indexData = thickLinePassIndexData(record, passName);
+    if (!indexData || indexData.count <= 0) return false;
+    var owner = record.owner || drawState.thickLineOwner;
+    var blend = passName === "alpha" || passName === "additive" ? passName : "opaque";
+    renderPass.setPipeline(wgpuRequirePipeline(getThickLinePipeline(drawState.pipeState, drawState.gpuRes, device, blend, linePassDepthWrite(blend))));
+    renderPass.setBindGroup(0, frameBindGroup);
+    renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUThickLinePositionA", scratch.positionsA.subarray(0, usedVerts * 3), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUThickLinePositionB", scratch.positionsB.subarray(0, usedVerts * 3), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.setVertexBuffer(2, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUThickLineColorA", scratch.colorsA.subarray(0, usedVerts * 4), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.setVertexBuffer(3, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUThickLineColorB", scratch.colorsB.subarray(0, usedVerts * 4), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.setVertexBuffer(4, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUThickLineSide", scratch.sides.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.setVertexBuffer(5, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUThickLineEndpoint", scratch.endpoints.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    renderPass.setVertexBuffer(6, wgpuCachedTrackedBuffer(drawState.meshState, device, owner, "_gosxWGPUThickLineWidth", scratch.widths.subarray(0, usedVerts), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+    var indexBuffer = wgpuCachedTrackedBuffer(drawState.meshState, device, owner, indexData.slot, indexData.data, GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST, true);
+    renderPass.setIndexBuffer(indexBuffer, "uint16");
+    renderPass.drawIndexed(indexData.count);
+    return true;
+  }
+
+  function drawScreenLines(drawState: any, device: any, renderPass, bundle, frameBindGroup) {
+    if (!hasScreenLineData(bundle)) return false;
+    var vertexCount = Math.max(0, Math.floor(sceneNumber(bundle.vertexCount, 0)));
+    return drawColorPrimitive(drawState, device, renderPass, {
+      name: "screen-lines",
+      owner: bundle,
+      positions: screenLinePositionData(bundle),
+      colors: bundle.colors,
+      materials: fallbackMaterialData(bundle, vertexCount),
+      vertexCount: vertexCount,
+      blend: "alpha",
+      space: "clip",
+      topology: "line-list",
+      depthWrite: false,
+    }, frameBindGroup);
+  }
+
+  function drawSurfaceEntries(drawState: any, device: any, renderPass, bundle, materials, passName, frameBindGroup) {
+    var entries = surfaceEntries(bundle, passName);
+    if (!entries.length) return false;
+    var blend = passName === "alpha" || passName === "additive" ? passName : "opaque";
+    renderPass.setPipeline(wgpuRequirePipeline(getSurfacePipeline(drawState.pipeState, device, blend, blend === "opaque")));
+    renderPass.setBindGroup(0, frameBindGroup);
+    var drew = false;
+    for (var i = 0; i < entries.length; i++) {
+      var surface = entries[i];
+      var mat = materials[sceneNumber(surface.materialIndex, 0)] || null;
+      var positions = toSceneFloat32Array(surface.positions);
+      var uvs = toSceneFloat32Array(surface.uv);
+      var vertexCount = Math.min(Math.floor(positions.length / 3), Math.floor(uvs.length / 2), Math.max(0, Math.floor(sceneNumber(surface.vertexCount, 0))));
+      if (vertexCount <= 0) continue;
+      renderPass.setBindGroup(1, createMaterialBindGroup(drawState.uniformState, drawState.gpuRes, drawState.meshState, device, mat, false, surface), [0]);
+      renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(drawState.meshState, device, surface, "_gosxWGPUSurfacePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(drawState.meshState, device, surface, "_gosxWGPUSurfaceUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      renderPass.draw(vertexCount);
+      drew = true;
+    }
+    return drew;
+  }
+
+  function resolveWebGPUSampleCount(drawState: any, bundle) {
+    var requested = sceneNumber(bundle && (bundle.msaaSamples != null ? bundle.msaaSamples : bundle.sampleCount), sceneNumber(drawState.rendererOptions.msaaSamples, 0));
+    if (requested <= 1 && (drawState.rendererOptions.antialias === true || sceneBool(bundle && bundle.antialias, false) || sceneBool(bundle && bundle.msaa, false))) {
+      requested = 4;
+    }
+    if (requested >= 4) return 4;
+    return 1;
+  }
+
+  // -----------------------------------------------------------------------
+  // Points drawing (instanced billboard quads)
+  // -----------------------------------------------------------------------
+
+  function drawPointsEntries(drawState: any, device: any, pass, bundle, cam, timeSeconds) {
+    var stats = webGPUEmptyPointDrawStats();
+    var pointsArray = Array.isArray(bundle.points) ? bundle.points : [];
+    if (pointsArray.length === 0) return stats;
+
+    var env = bundle.environment || {};
+    var fogDensity = sceneNumber(env.fogDensity, 0);
+    var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+
+    var _pointsModelMat = new Float32Array(16);
+    var _pointsTilt = new Float32Array(16);
+    var _pointsSpin = new Float32Array(16);
+
+    for (var i = 0; i < pointsArray.length; i++) {
+      var entry = pointsArray[i];
+      var count = sceneNumber(entry.count, 0);
+      if (count <= 0) {
+        stats.pointSkippedEmpty += 1;
+        continue;
+      }
+
+      // Compute model matrix (same logic as WebGL2 backend).
+      var px = sceneNumber(entry.x, 0);
+      var py = sceneNumber(entry.y, 0);
+      var pz = sceneNumber(entry.z, 0);
+      var rx = sceneNumber(entry.rotationX, 0);
+      var ry = sceneNumber(entry.rotationY, 0);
+      var rz = sceneNumber(entry.rotationZ, 0);
+      var hasSpin = sceneNumber(entry.spinX, 0) !== 0 || sceneNumber(entry.spinY, 0) !== 0 || sceneNumber(entry.spinZ, 0) !== 0;
+
+      if (hasSpin) {
+        var spx = sceneNumber(entry.spinX, 0) * timeSeconds;
+        var spy = sceneNumber(entry.spinY, 0) * timeSeconds;
+        var spz = sceneNumber(entry.spinZ, 0) * timeSeconds;
+        sceneEulerMatrixInto(_pointsSpin, spx, spy, spz, 0, 0, 0);
+        sceneEulerMatrixInto(_pointsTilt, rx, ry, rz, px, py, pz);
+        sceneMat4MultiplyInto(_pointsModelMat, _pointsTilt, _pointsSpin);
+      } else {
+        sceneEulerMatrixInto(_pointsModelMat, rx, ry, rz, px, py, pz);
+      }
+
+      var pointsModelMat = sceneWebGPUPointModelMatrix(entry, _pointsTilt, _pointsModelMat);
+
+      // Build PointsUniforms buffer.
+      // Layout: mat4x4f(64) + vec4 defaultColorAndSize(16) +
+      // vec4u flags(16) + vec4 params(16) + vec4 fogColor(16) = 128.
+      drawState.pointsUniformScratchF.fill(0);
+      var puF = drawState.pointsUniformScratchF;
+      var puU = drawState.pointsUniformScratchU;
+
+      puF.set(pointsModelMat, 0);   // modelMatrix @ 0
+      var defaultColorRGBA = sceneColorRGBA(entry.color, [1, 1, 1, 1]);
+      puF[16] = defaultColorRGBA[0]; // defaultColorAndSize.r @ 64
+      puF[17] = defaultColorRGBA[1];
+      puF[18] = defaultColorRGBA[2];
+      puF[19] = sceneNumber(entry.size, 1); // defaultColorAndSize.w/defaultSize
+      puU[20] = 0; // flags.x: hasPerVertexColor
+      puU[21] = 0; // flags.y: hasPerVertexSize
+      puU[22] = entry.attenuation ? 1 : 0; // flags.z: sizeAttenuation
+      puU[23] = scenePointStyleCode(entry.style); // flags.w: pointStyle
+      puF[24] = clamp01(sceneNumber(entry.opacity, 1)); // params.x: opacity
+      puF[25] = fogDensity > 0 ? 1 : 0; // params.y: hasFog
+      puF[26] = fogDensity; // params.z: fogDensity
+      puF[27] = sceneNumber(entry.maxPixelSize, 0); // params.w: maxPixelSize
+      puF[28] = fogColorRGBA[0]; // fogColor.r @ 112
+      puF[29] = fogColorRGBA[1];
+      puF[30] = fogColorRGBA[2];
+      puF[31] = sceneNumber(entry.minPixelSize, 0); // fogColor.a carries minPixelSize for points.
+
+      // Cache particle typed arrays on entry.
+      var rawPositions = entry.positions;
+      if (!entry._cachedPos && rawPositions && (Array.isArray(rawPositions) || sceneIsNumericTypedArray(rawPositions)) && rawPositions.length >= count * 3) {
+        entry._cachedPos = rawPositions instanceof Float32Array ? rawPositions : new Float32Array(rawPositions);
+      }
+      var rawSizes = entry.sizes;
+      if (!entry._cachedSizes && rawSizes && (Array.isArray(rawSizes) || sceneIsNumericTypedArray(rawSizes)) && rawSizes.length >= count) {
+        entry._cachedSizes = rawSizes instanceof Float32Array ? rawSizes : new Float32Array(rawSizes);
+      }
+      var rawColors = entry.colors;
+      if (!entry._cachedColors && rawColors && (Array.isArray(rawColors) || sceneIsNumericTypedArray(rawColors)) && rawColors.length >= count) {
+        if (Array.isArray(rawColors) && typeof rawColors[0] === "string") {
+          entry._cachedColors = new Float32Array(count * 4);
+          for (var ci = 0; ci < count; ci++) {
+            var crgba = sceneColorRGBA(rawColors[ci], [1, 1, 1, 1]);
+            entry._cachedColors[ci * 4] = crgba[0];
+            entry._cachedColors[ci * 4 + 1] = crgba[1];
+            entry._cachedColors[ci * 4 + 2] = crgba[2];
+            entry._cachedColors[ci * 4 + 3] = crgba[3];
+          }
+        } else if (rawColors.length >= count * 4) {
+          entry._cachedColors = new Float32Array(rawColors);
+        } else if (rawColors.length >= count * 3) {
+          entry._cachedColors = new Float32Array(count * 4);
+          for (var ci2 = 0; ci2 < count; ci2++) {
+            entry._cachedColors[ci2 * 4] = rawColors[ci2 * 3];
+            entry._cachedColors[ci2 * 4 + 1] = rawColors[ci2 * 3 + 1];
+            entry._cachedColors[ci2 * 4 + 2] = rawColors[ci2 * 3 + 2];
+            entry._cachedColors[ci2 * 4 + 3] = 1;
+          }
+        }
+      }
+
+      if (!entry._cachedPos) {
+        stats.pointSkippedNoPositions += 1;
+        continue;
+      }
+
+      var hasSizes = !!entry._cachedSizes;
+      var hasColors = !!entry._cachedColors;
+      puU[20] = hasColors ? 1 : 0;
+      puU[21] = hasSizes ? 1 : 0;
+
+      var pointsUniformBuffer = ensurePointsUniformGPUBuffer(drawState.meshState, device, entry, puF);
+
+      // Build particle instance vertex buffer.
+      // Each particle: vec3f position(12) + f32 size(4) + vec4f color(16) = 32 bytes.
+      var particleData = ensurePointsParticleData(entry, count, hasSizes, hasColors, defaultColorRGBA);
+      var pointsParticleBuffer = ensurePointsParticleVertexGPUBuffer(drawState.meshState, device, entry, particleData);
+
+      // Select pipeline: authored (async-validated) when shader fields present,
+      // else builtin instanced-vertex pipeline.
+      var blendMode = typeof entry.blendMode === "string" ? entry.blendMode.toLowerCase() : "";
+      var depthWrite = entry.depthWrite !== false;
+      var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
+
+      // Truthiness only — the pipeline builder trims and validates once,
+      // memoized on the entry. Trimming ~6 KB WGSL strings here allocated
+      // per layer per frame.
+      var hasAuthoredWGSL = (typeof entry.customVertexWGSL === "string" && entry.customVertexWGSL) &&
+                            (typeof entry.customFragmentWGSL === "string" && entry.customFragmentWGSL);
+      var layerID = entry.id || ("points-" + i);
+      var authoredResource = hasAuthoredWGSL && !drawState.pointsAuthoredLayerFailed.get(layerID)
+        ? buildAuthoredPointsVertexPipelineAsync(drawState, device, entry, validBlend, depthWrite, layerID)
+        : null;
+      var useAuthored = authoredResource && !authoredResource.failed && !authoredResource.pending && authoredResource.pipeline;
+
+      var pointsBG, pipeline;
+      if (useAuthored) {
+        // Authored path: bind group 1 = user uniforms, group 2 = PointsUniforms.
+        var userUnifBuf = ensurePointsAuthoredUserUniformBuffer(drawState, device, entry, "_gosxWGPUPointsUserUniform", entry.customUniforms, entry.shaderLayout);
+        var userUnifBG = wgpuCachedBindGroup(device, entry, "_gosxWGPUPointsUserUniformBG", drawState.pointsAuthoredUserUniformBGL, [
+          { binding: 0, resource: { buffer: userUnifBuf } },
+        ]);
+        pointsBG = wgpuCachedBindGroup(device, entry, "_gosxWGPUPointsUniformBG", drawState.pointsUniformBindGroupLayout, [
+          { binding: 0, resource: { buffer: pointsUniformBuffer } },
+        ]);
+        pipeline = authoredResource.pipeline;
+        pass.setPipeline(wgpuRequirePipeline(pipeline));
+        pass.setVertexBuffer(0, pointsParticleBuffer);
+        pass.setBindGroup(1, userUnifBG);
+        pass.setBindGroup(2, pointsBG);
+      } else {
+        // Builtin path.
+        pointsBG = wgpuCachedBindGroup(device, entry, "_gosxWGPUPointsUniformBG", drawState.pointsUniformBindGroupLayout, [
+          { binding: 0, resource: { buffer: pointsUniformBuffer } },
+        ]);
+        pipeline = getPointsVertexPipeline(drawState.pipeState, device, validBlend, depthWrite);
+        pass.setPipeline(wgpuRequirePipeline(pipeline));
+        pass.setVertexBuffer(0, pointsParticleBuffer);
+        pass.setBindGroup(1, createMaterialBindGroup(drawState.uniformState, drawState.gpuRes, drawState.meshState, device, null, false, drawState.gpuRes.defaultMaterialOwner), [0]);
+        pass.setBindGroup(2, pointsBG);
+      }
+      pass.draw(6, count); // 6 vertices per quad, count instances
+      stats.pointDrawEntries += 1;
+      stats.pointDrawInstances += count;
+      stats.pointDrawCalls += 1;
+      if (useAuthored) {
+        stats.pointAuthoredDrawEntries += 1;
+        stats.pointAuthoredDrawInstances += count;
+        stats.pointAuthoredDrawCalls += 1;
+      }
+    }
+    return stats;
+  }
+
+  function drawComputeParticleEntries(drawState: any, device: any, pass: any, records: any[], environment: any, timeSeconds: number) {
+    var stats = {
+      computeParticleDrawEntries: 0,
+      computeParticleDrawInstances: 0,
+      computeParticleDrawCalls: 0,
+      computeParticleAuthoredDrawEntries: 0,
+      computeParticleAuthoredDrawInstances: 0,
+      computeParticleAuthoredDrawCalls: 0,
+      computeParticleAuthoredCandidateEntries: 0,
+      computeParticleAuthoredPendingEntries: 0,
+      computeParticleAuthoredFailedEntries: 0,
+      computeParticleSkippedNotReady: 0,
+      computeParticleSkippedEmpty: 0,
+    };
+    if (!Array.isArray(records) || records.length === 0) return stats;
+
+    var env = environment || {};
+    var fogDensity = sceneNumber(env.fogDensity, 0);
+    var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+    var _computeModelMat = new Float32Array(16);
+    var _computeTilt = new Float32Array(16);
+    var _computeSpin = new Float32Array(16);
+
+    for (var i = 0; i < records.length; i++) {
+      var record = records[i];
+      var system = record && record.system;
+      if (!system || !system.renderBuffer || system.count <= 0) {
+        stats.computeParticleSkippedEmpty += 1;
+        continue;
+      }
+      if (typeof system.isReady === "function" && !system.isReady()) {
+        stats.computeParticleSkippedNotReady += 1;
+        continue;
+      }
+
+      var entry = system.entry && typeof system.entry === "object" ? system.entry : {};
+      var material = entry.material && typeof entry.material === "object" ? entry.material : {};
+      var emitter = entry.emitter && typeof entry.emitter === "object" ? entry.emitter : {};
+
+      wgpuComputeParticleModelMatrix(emitter, timeSeconds, _computeModelMat, _computeTilt, _computeSpin);
+
+      var puF = wgpuComputeParticlePointsUniforms(drawState.pointsUniformScratchF, drawState.pointsUniformScratchU, entry, material, _computeTilt, _computeModelMat, fogDensity, fogColorRGBA);
+
+      var blendMode = typeof material.blendMode === "string" ? material.blendMode.toLowerCase() : "";
+      var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
+      var depthWrite = entry.depthWrite === true || (validBlend === "opaque" && entry.depthWrite !== false);
+
+      // Authored render path: check for renderVertexWGSL/renderFragmentWGSL
+      // on the entry. Truthiness only — the pipeline builder trims and
+      // validates once, memoized on the entry.
+      var hasAuthoredRender = (typeof entry.renderVertexWGSL === "string" && entry.renderVertexWGSL) &&
+                              (typeof entry.renderFragmentWGSL === "string" && entry.renderFragmentWGSL);
+      var pointsUniformBuffer = ensurePointsUniformGPUBuffer(drawState.meshState, device, system, puF);
+      var cpSystemID = (entry && typeof entry.id === "string") ? entry.id : ("cp-" + i);
+      if (hasAuthoredRender) {
+        stats.computeParticleAuthoredCandidateEntries += 1;
+      }
+      if (hasAuthoredRender && drawState.pointsAuthoredLayerFailed.get(cpSystemID)) {
+        stats.computeParticleAuthoredFailedEntries += 1;
+      }
+      var cpAuthoredResource = hasAuthoredRender && !drawState.pointsAuthoredLayerFailed.get(cpSystemID)
+        ? buildAuthoredParticleRenderPipelineAsync(drawState, device, entry, validBlend, depthWrite, cpSystemID)
+        : null;
+      if (cpAuthoredResource && cpAuthoredResource.pending) {
+        stats.computeParticleAuthoredPendingEntries += 1;
+      }
+      var useCPAuthored = cpAuthoredResource && !cpAuthoredResource.failed && !cpAuthoredResource.pending && cpAuthoredResource.pipeline;
+
+      var pipeline, pointsBG;
+      if (useCPAuthored) {
+        // Authored render: group 1 = user uniforms, group 2 = PointsUniforms + particles storage.
+        var cpUserUnifBuf = ensurePointsAuthoredUserUniformBuffer(drawState, device, system, "_gosxWGPUCPRenderUserUniform", entry.renderUniforms, entry.renderShaderLayout);
+        var cpUserUnifBG = wgpuCachedBindGroup(device, system, "_gosxWGPUCPRenderUserUniformBG", drawState.pointsAuthoredUserUniformBGL, [
+          { binding: 0, resource: { buffer: cpUserUnifBuf } },
+        ]);
+        pointsBG = wgpuCachedBindGroup(device, system, "_gosxWGPUCPPointsBG", drawState.pointsBindGroupLayout, [
+          { binding: 0, resource: { buffer: pointsUniformBuffer } },
+          { binding: 1, resource: { buffer: system.renderBuffer } },
+        ]);
+        pipeline = cpAuthoredResource.pipeline;
+        pass.setPipeline(wgpuRequirePipeline(pipeline));
+        pass.setBindGroup(1, cpUserUnifBG);
+        pass.setBindGroup(2, pointsBG);
+      } else {
+        // Builtin render path.
+        pointsBG = wgpuCachedBindGroup(device, system, "_gosxWGPUCPPointsBG", drawState.pointsBindGroupLayout, [
+          { binding: 0, resource: { buffer: pointsUniformBuffer } },
+          { binding: 1, resource: { buffer: system.renderBuffer } },
+        ]);
+        pipeline = getPointsPipeline(drawState.pipeState, device, validBlend, depthWrite);
+        pass.setPipeline(wgpuRequirePipeline(pipeline));
+        pass.setBindGroup(1, createMaterialBindGroup(drawState.uniformState, drawState.gpuRes, drawState.meshState, device, null, false, drawState.gpuRes.defaultMaterialOwner), [0]);
+        pass.setBindGroup(2, pointsBG);
+      }
+      pass.draw(6, system.count);
+      stats.computeParticleDrawEntries += 1;
+      stats.computeParticleDrawInstances += system.count;
+      stats.computeParticleDrawCalls += 1;
+      if (useCPAuthored) {
+        stats.computeParticleAuthoredDrawEntries += 1;
+        stats.computeParticleAuthoredDrawInstances += system.count;
+        stats.computeParticleAuthoredDrawCalls += 1;
+      }
+    }
+    return stats;
+  }
+
+  // -----------------------------------------------------------------------
+  // Board labels (M1 GPU-text slice 2): render canvas-board LABEL text as GPU
+  // glyphs through the BoardText Selena material. Canonical material source is
+  // render/boardgpu/board_text.sel → render/boardgpu/board_text.go (host-side
+  // tested). The WGSL + shaderLayout below are copied verbatim from that Go
+  // file's boardTextWGSL / boardTextShaderLayout; do NOT diverge from them (and
+  // do NOT change the RenderBundle Go schema in this slice).
+  // -----------------------------------------------------------------------
+  var BOARD_TEXT_WGSL = "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  textColor : vec3<f32>,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\n@group(0) @binding(1) var atlas : texture_2d<f32>;\n@group(0) @binding(2) var atlasSampler : sampler;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(in.position, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let coverage = textureSample(atlas, atlasSampler, in.vUv).a;\n  return vec4<f32>(u.textColor.r, u.textColor.g, u.textColor.b, coverage);\n}\n";
+
+  // Only the fields the WebGPU Selena pipeline path reads are kept here
+  // (attributes, uniformBlock, textures[].wgsl, wgsl.binding, material). The gl/
+  // metal/schemaVersion/etc. fields in render/boardgpu/board_text.go's full
+  // boardTextShaderLayout are for the GLSL/Metal backends and are inert in JS.
+  var BOARD_TEXT_LAYOUT = {
+    material: "BoardText",
+    attributes: [
+      { name: "position", type: "vec3", location: 0 },
+      { name: "uv", type: "vec2", location: 1 },
+    ],
+    uniformBlock: {
+      size: 128,
+      fields: [
+        { name: "mvp", type: "mat4", offset: 0, size: 64 },
+        { name: "normalMatrix", type: "mat3", offset: 64, size: 48 },
+        { name: "textColor", type: "vec3", offset: 112, size: 12 },
+      ],
+      defaults: [{ name: "textColor", type: "vec3", values: [0.902, 0.929, 0.953] }],
+    },
+    textures: [{ name: "atlas", wgsl: { group: 0, textureBinding: 1, samplerBinding: 2 } }],
+    wgsl: { group: 0, binding: 0 },
+  };
+
+  // A synthetic Selena "material" object so the BoardText draw reuses the exact
+  // pipeline path (getSelenaPipeline) that BoardFill rects use. textColor is
+  // overwritten per-label before the bind group is built.
+  var boardTextMaterial = {
+    shaderBackend: "selena",
+    customVertexWGSL: BOARD_TEXT_WGSL,
+    customFragmentWGSL: BOARD_TEXT_WGSL,
+    shaderLayout: BOARD_TEXT_LAYOUT,
+    customUniforms: { textColor: [0.902, 0.929, 0.953] },
+  };
+
+  // Per-font glyph atlas cache. Key = CSS font string. Each entry holds the
+  // uploaded GPUTexture/view, atlas pixel dims, font ascent/descent (CSS px),
+  // and a glyph map char → { u0,v0,u1,v1, w (cell width CSS px), advance CSS px }.
+
+  // Stable per-label GPU-buffer owners, keyed by the label's id. Board bundles
+  // are re-parsed every dirty frame, so the label objects are fresh each frame;
+  // keying the tracked-buffer cache on a persistent owner (not the per-frame
+  // object) lets wgpuCachedTrackedBuffer REUSE the uniform/pos/uv buffers across
+  // frames instead of reallocating (and leaking) 3×N buffers per pan/zoom frame.
+
+  // ensureBoardGlyphAtlas builds (and caches) a coverage atlas for `font`
+  // covering `chars` (a string of needed glyphs). White-on-transparent so the
+  // texture alpha = glyph coverage, matching the BoardText fragment's .a read.
+  // Returns null when canvas rasterization is unavailable (e.g. node tests).
+  function ensureBoardGlyphAtlas(drawState: any, device: any, font, chars) {
+    var entry = drawState.boardGlyphAtlases.get(font);
+    var needed = "";
+    for (var ci = 0; ci < chars.length; ci++) {
+      var ch = chars[ci];
+      if (entry && entry.glyphs[ch]) continue;
+      if (needed.indexOf(ch) === -1) needed += ch;
+    }
+    if (entry && needed === "") return entry;
+    if (typeof OffscreenCanvas === "undefined" && typeof document === "undefined") return null;
+
+    // Union of previously-cached chars + newly needed ones (rebuild whole atlas).
+    var allChars = needed;
+    if (entry) {
+      for (var k in entry.glyphs) {
+        if (entry.glyphs.hasOwnProperty(k) && allChars.indexOf(k) === -1) allChars += k;
+      }
+    }
+    if (allChars === "") return entry || null;
+
+    var sizePx = parseBoardFontSizePx(font);
+    var pad = 2;
+    var measureCanvas = boardCreateCanvas(8, 8);
+    if (!measureCanvas) return null;
+    var mctx = measureCanvas.getContext("2d");
+    // Need a real text-capable 2D context. The node test harness's fake
+    // context lacks fillText/measureText, so glyph rasterization degrades to
+    // null there (no GPU text) — the documented node-harness behavior; the
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // DOM-overlay label path still runs unaffected.
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (!mctx || typeof mctx.fillText !== "function" || typeof mctx.measureText !== "function") return null;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ mctx.font = font;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ mctx.textBaseline = "alphabetic";
+    var mm = mctx.measureText("Mg");
+    var ascent = (mm && mm.actualBoundingBoxAscent > 0) ? mm.actualBoundingBoxAscent : sizePx * 0.8;
+    var descent = (mm && mm.actualBoundingBoxDescent > 0) ? mm.actualBoundingBoxDescent : sizePx * 0.2;
+    var cellH = Math.ceil(ascent + descent) + pad * 2;
+
+    // Lay glyphs left-to-right in a single row.
+    var metrics = [];
+    var totalW = 0;
+    for (var gi = 0; gi < allChars.length; gi++) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var g = allChars[gi];
+      var adv = mctx.measureText(g).width;
+      var cellW = Math.ceil(adv) + pad * 2;
+      metrics.push({ ch: g, advance: adv, x: totalW, w: cellW });
+      totalW += cellW;
+    }
+    var atlasW = Math.max(1, totalW);
+    var atlasH = Math.max(1, cellH);
+
+    var atlasCanvas = boardCreateCanvas(atlasW, atlasH);
+    if (!atlasCanvas) return null;
+    var actx = atlasCanvas.getContext("2d");
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (!actx) return null;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ actx.clearRect(0, 0, atlasW, atlasH);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ actx.font = font;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ actx.textBaseline = "alphabetic";
+    actx.fillStyle = "#ffffff";
+    var glyphs = {};
+    for (var mi = 0; mi < metrics.length; mi++) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var me = metrics[mi];
+      actx.fillText(me.ch, me.x + pad, pad + ascent);
+      glyphs[me.ch] = {
+        u0: me.x / atlasW,
+        v0: 0,
+        u1: (me.x + me.w) / atlasW,
+        v1: 1,
+        w: me.w,
+        advance: me.advance,
+      };
+    }
+
+    var texture = device.createTexture({
+      size: [atlasW, atlasH, 1],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    device.queue.copyExternalImageToTexture(
+      { source: atlasCanvas },
+      { texture: texture },
+      [atlasW, atlasH]
+    );
+    if (entry && entry.texture && typeof entry.texture.destroy === "function") {
+      entry.texture.destroy();
+    }
+    var built = {
+      texture: texture,
+      view: texture.createView(),
+      width: atlasW,
+      height: atlasH,
+      ascent: ascent,
+      descent: descent,
+      pad: pad,
+      glyphs: glyphs,
+    };
+    drawState.boardGlyphAtlases.set(font, built);
+    return built;
+  }
+
+  // drawBoardLabels lays out one position+uv quad per glyph per label and draws
+  // them through the BoardText Selena pipeline. Glyph world size = pixelSize /
+  // zoom (camera.z) so on-screen text stays a constant pixel size regardless of
+  // zoom — mirroring the line-width /zoom trick in render/boardgpu/boardgpu.go.
+  // The frame MVP (scratchSelenaViewProjection, the same ortho2D MVP BoardFill
+  // rects use) is consumed via sceneSelenaUniformData("mvp").
+  function drawBoardLabels(drawState: any, device: any, pass, bundle, blendMode, depthWrite) {
+    var labels = Array.isArray(bundle.labels) ? bundle.labels : [];
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (!labels.length) return;
+    var resource = getSelenaPipeline(drawState.pipeState, drawState.selenaState, device, boardTextMaterial, blendMode, depthWrite);
+    if (!resource) return;
+
+    var cam = bundle.camera || {};
+    var zoom = (typeof cam.z === "number" && cam.z > 0) ? cam.z : 1;
+
+    // Group labels by font so each distinct font hits one atlas.
+    var byFont = {};
+    var fontOrder = [];
+    for (var i = 0; i < labels.length; i++) {
+      var lb = labels[i] || {};
+      var fnt = (typeof lb.font === "string" && lb.font !== "") ? lb.font : "14px system-ui, sans-serif";
+      if (!byFont[fnt]) { byFont[fnt] = []; fontOrder.push(fnt); }
+      byFont[fnt].push(lb);
+    }
+
+    var pipelineSet = false;
+    for (var fi = 0; fi < fontOrder.length; fi++) {
+      var font = fontOrder[fi];
+      var group = byFont[font];
+      var chars = "";
+      for (var gi = 0; gi < group.length; gi++) {
+        var t = String(group[gi].text == null ? "" : group[gi].text);
+        for (var ti = 0; ti < t.length; ti++) {
+          if (chars.indexOf(t[ti]) === -1) chars += t[ti];
+        }
+      }
+      if (chars === "") continue;
+      var atlas = ensureBoardGlyphAtlas(drawState, device, font, chars);
+      if (!atlas) continue;
+
+      // World units per CSS px (constant on-screen text → divide by zoom).
+      var wpp = 1 / zoom;
+      var ascentW = atlas.ascent * wpp;
+      var descentW = atlas.descent * wpp;
+      // The glyph ink sits `pad` px inside its atlas cell; shift the cell left
+      // by that so the ink lands at the true pen advance (26b1 fillText parity).
+      var padW = (atlas.pad || 0) * wpp;
+
+      for (var li = 0; li < group.length; li++) {
+        var label = group[li];
+        var text = String(label.text == null ? "" : label.text);
+        if (text === "") continue;
+        var pos = label.position || {};
+        var baseX = (typeof pos.x === "number" ? pos.x : 0);
+        var baseY = (typeof pos.y === "number" ? pos.y : 0);
+
+        var positions = [];
+        var uvs = [];
+        var penX = baseX;
+        for (var c = 0; c < text.length; c++) {
+          var glyph = atlas.glyphs[text[c]];
+          if (!glyph) continue;
+          var cellW = glyph.w * wpp;
+          // Quad spans the glyph cell: vertically [baseline-descent, baseline+ascent].
+          var x0 = penX - padW;
+          var x1 = x0 + cellW;
+          // The cell extends `pad` px beyond the ink ascent/descent (top & bottom),
+          // so the quad must too — otherwise the coverage texels stretch.
+          // Quad spans the glyph cell: vertically [baseline-descent, baseline
+          // +ascent] in the board's +Y-up world. The atlas row 0 (v=0) is the
+          // glyph top, so v=0 maps to yTop and v=1 to yBot — glyphs upright.
+          var yTop = baseY + ascentW + padW;
+          var yBot = baseY - descentW - padW;
+          positions.push(
+            x0, yBot, 0, x1, yBot, 0, x1, yTop, 0,
+            x0, yBot, 0, x1, yTop, 0, x0, yTop, 0
+          );
+          uvs.push(
+            glyph.u0, glyph.v1, glyph.u1, glyph.v1, glyph.u1, glyph.v0,
+            glyph.u0, glyph.v1, glyph.u1, glyph.v0, glyph.u0, glyph.v0
+          );
+          penX += glyph.advance * wpp;
+        }
+        var vertexCount = positions.length / 3;
+        if (vertexCount === 0) continue;
+
+        // textColor uniform (default #e6edf3 → BoardText default), parsed to RGB.
+        var rgba = sceneColorRGBA(
+          (typeof label.color === "string" && label.color !== "") ? label.color : "#e6edf3",
+          [0.902, 0.929, 0.953]
+        );
+        boardTextMaterial.customUniforms.textColor = [rgba[0], rgba[1], rgba[2]];
+
+        // Stable owner keyed by label id so the tracked buffers persist and are
+        // reused across frames (the label object itself is re-parsed per frame).
+        var ownerKey = (typeof label.id === "string" && label.id) ? label.id : ("__bt:" + font + ":" + li);
+        var owner = drawState.boardTextOwners.get(ownerKey);
+        if (!owner) { owner = {}; drawState.boardTextOwners.set(ownerKey, owner); }
+        var uniformData = sceneSelenaUniformData(boardTextMaterial, null, null, drawState.selenaState.frame);
+        var uniformBuffer = wgpuCachedTrackedBuffer(drawState.meshState, device,
+          owner, "_gosxBoardTextUniform", uniformData,
+          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true
+        );
+        var posBuffer = wgpuCachedTrackedBuffer(drawState.meshState, device,
+          owner, "_gosxBoardTextPos", new Float32Array(positions),
+          GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true
+        );
+        var uvBuffer = wgpuCachedTrackedBuffer(drawState.meshState, device,
+          owner, "_gosxBoardTextUV", new Float32Array(uvs),
+          GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true
+        );
+        if (!uniformBuffer || !posBuffer || !uvBuffer) continue;
+
+        var bindGroup = device.createBindGroup({
+          layout: resource.bindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: uniformBuffer } },
+            { binding: 1, resource: atlas.view },
+            { binding: 2, resource: drawState.gpuRes.linearSampler },
+          ],
+        });
+
+        if (!pipelineSet) {
+          pass.setPipeline(wgpuRequirePipeline(resource.pipeline));
+          pipelineSet = true;
+        }
+        pass.setBindGroup(0, bindGroup);
+        pass.setVertexBuffer(0, posBuffer);
+        pass.setVertexBuffer(1, uvBuffer);
+        pass.draw(vertexCount);
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // GPU picking wiring
+  // -----------------------------------------------------------------------
+
+  // The world-space mesh attribute record for the frame in flight. render()
+  // sets it; the pick adapter reads it so the pick pass binds the very same
+  // vertex buffer the main pass drew from.
+
+  function ensureScenePicker(drawState: any, device: any) {
+    if (drawState.scenePicker || !device) return drawState.scenePicker;
+    drawState.scenePicker = createSceneWebGPUPicker(device, {
+      viewProjection: function() { return drawState.uniformState.scratchSelenaViewProjection; },
+      meshPositions: function() { return drawState.activePickMeshPositions && drawState.activePickMeshPositions.positions || null; },
+      bindMeshPositions: function(pass, slot, record, vertexOffset, vertexCount, obj) {
+        if (obj && obj.retainedGeometry) {
+          return webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, slot, obj, "positions", 3);
+        }
+        return webGPUBindSceneMeshVertexBuffer(pass, slot, record, vertexOffset, vertexCount);
+      },
+      instancedGeometry: function(mesh: any) { return getInstancedGeometry(drawState, device, mesh); },
+      instancedGeometryBuffer: function(geom: any, slot: any, data: any) { return ensureInstancedGeometryGPUBuffer(drawState, device, geom, slot, data); },
+      instancedTransformBuffer: function(mesh: any, data: any) { return ensureInstancedTransformGPUBuffer(drawState, device, mesh, data); },
+      instancedCount: instancedMeshCount,
+      instancedTransforms: function(mesh: any, count: any) { return instancedMeshTransformData(drawState, device, mesh, count); },
+      // Do NOT route pick failures through reportWebGPUFrameError. That
+      // counter drives the mount watchdog that falls the whole scene back to
+      // WebGL. A pick that cannot allocate must degrade picking alone.
+      onError: function(message) { console.warn("[gosx] WebGPU pick unavailable:", message); },
+    });
+    return drawState.scenePicker;
+  }
+
+  // queuePick schedules one GPU pick. x, y, width, and height are pointer-
+  // space values — pass the same numbers you pass sceneScreenToRay. The
+  // callback receives a hit record shaped exactly like sceneRaycastPick's, or
+  // null for background. It runs one to two frames later; nothing blocks.
+  function queuePick(drawState: any, device: any, x, y, width, height, callback) {
+    var picker = ensureScenePicker(drawState, device);
+    if (!picker) {
+      if (typeof callback === "function") callback(null);
+      return false;
+    }
+    return picker.queuePick(x, y, width, height, callback);
+  }

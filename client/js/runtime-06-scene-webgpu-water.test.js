@@ -33,8 +33,8 @@ test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", ()
   assert.match(source, /function ensurePointsParticleVertexGPUBuffer\(meshState\s*, device\s*, entry, particleData\)/);
   assert.doesNotMatch(source, /function ensurePointsParticleGPUBuffer\(/);
   assert.match(source, /sceneCachedBuffer\(owner,\s*typedArray/);
-  assert.match(source, /ensurePointsUniformGPUBuffer\(meshState,\s*device,\s*entry,\s*puF\)/);
-  assert.match(source, /ensurePointsParticleVertexGPUBuffer\(meshState,\s*device,\s*entry,\s*particleData\)/);
+  assert.match(source, /ensurePointsUniformGPUBuffer\(drawState\.meshState,\s*device,\s*entry,\s*puF\)/);
+  assert.match(source, /ensurePointsParticleVertexGPUBuffer\(drawState\.meshState,\s*device,\s*entry,\s*particleData\)/);
   assert.match(source, /resource: \{ buffer: system\.renderBuffer \}/);
   assert.doesNotMatch(source, /var\s+pointsUniformBuffer\s*=\s*device\.createBuffer/);
   assert.doesNotMatch(source, /device\.queue\.writeBuffer\(pointsUniformBuffer,\s*0/);

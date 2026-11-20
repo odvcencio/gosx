@@ -42,7 +42,7 @@ test("pass wrappers are cached and preserve missing optional methods", () => {
 
 test("pipeline preparation hits across orbit and resize and invalidates material variants", () => {
   let pbrCalls = 0;
-  const api = loadSection("    function prepareBundlePipelines", "    // Authored Points / ComputeParticle render pipelines", {
+  const api = loadSection("    function prepareBundlePipelines", "    function renderLightShadowCascades", {
     initialPipelinesPrepared: false, preparedPipelineKey: "", pipeState: { targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false, pbrShadowsActive: false }, gpuRes: {}, device: {}, getSelenaPipeline: () => null,
     getObjectSelenaPipeline: () => null, getPBRPipeline: () => { pbrCalls++; return {}; }, getShadowPipeline: () => ({}),
     pbrVariant: (_ps, _gr, _dev, material) => Boolean(material && material.detail),
@@ -86,7 +86,7 @@ test("deferred canvas replay preserves optional methods and snapshots dynamic of
 test("preparation selects drawn reflection, Selena, skin+morph and instanced cull variants", () => {
   const calls = [];
   const pipeState = { targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false, pbrShadowsActive: false }, gpuRes = {}, device = {}, getSelenaPipeline = () => null;
-  const api = loadSection("    function prepareBundlePipelines", "    // Authored Points / ComputeParticle render pipelines", {
+  const api = loadSection("    function prepareBundlePipelines", "    function renderLightShadowCascades", {
     initialPipelinesPrepared: false, preparedPipelineKey: "", pipeState, gpuRes, device, getSelenaPipeline,
     getObjectSelenaPipeline: (_getSelena, _object, material) => material.selena ? {} : null,
     getPBRPipeline: (_ps, _dev, ...args) => calls.push(["pbr", ...args]), getShadowPipeline: (...args) => calls.push(["shadow", ...args]),
