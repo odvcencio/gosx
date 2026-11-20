@@ -97,7 +97,7 @@ test("bootstrap renders WebGPU Scene3D static points from instanced vertex buffe
   assert.match(source, /stepMode: "instance"[\s\S]*shaderLocation: 0[\s\S]*shaderLocation: 2/);
   assert.match(source, /function wgpuCreatePointsUniformBindGroupLayout\(device\)/);
   assert.match(source, /function wgpuCreatePointsVertexPipeline/);
-  assert.match(source, /function getPointsVertexPipeline\(blendMode, depthWrite\)/);
+  assert.match(source, /function getPointsVertexPipeline\(pipeState\s*, device\s*, blendMode\s*, depthWrite\s*\)/);
   assert.match(source, /GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
   assert.match(source, /pass\.setVertexBuffer\(0,\s*pointsParticleBuffer\)/);
   assert.match(source, /pass\.draw\(6,\s*count\)/);

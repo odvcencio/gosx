@@ -77,8 +77,8 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.match(webgpu, /bindPBRPipeline\(reflectedDirect, mat\)/);
-  assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -activeSampleCount : activeSampleCount\)/);
-  assert.match(webgpu, /getPBRPipeline\(blendMode, objectDepthWrite, reflected \? "cw" : "ccw", variant, uv1\)/);
+  assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -pipeState\.activeSampleCount : pipeState\.activeSampleCount\)/);
+  assert.match(webgpu, /getPBRPipeline\(pipeState, device, blendMode, objectDepthWrite, reflected \? "cw" : "ccw", variant, uv1\)/);
 });
 
 test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {
@@ -112,7 +112,7 @@ test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
   assert.match(webgpu, /buildSceneWorldDrawPlan\(bundle, worldDrawScratch\)/);
   assert.match(webgpu, /expandSceneThickLineIntoScratch\(/);
   assert.match(webgpu, /setIndexBuffer\(indexBuffer, "uint16"\)/);
-  assert.match(webgpu, /getSceneColorPipeline\(entry\.space === "clip" \? "clip" : "world", topology, blend, depthWrite\)/);
+  assert.match(webgpu, /getSceneColorPipeline\(pipeState, gpuRes, device, entry\.space === "clip" \? "clip" : "world", topology, blend, depthWrite\)/);
   assert.doesNotMatch(webgpu, /Array\.isArray\(bundle && bundle\.surfaces\)[\s\S]{0,120}return false/);
   assert.doesNotMatch(webgpu, /Array\.isArray\(bundle && bundle\.lines\)[\s\S]{0,120}return false/);
   assert.doesNotMatch(mount, /sceneNumber\(entry\.lineWidth/);

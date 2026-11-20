@@ -505,7 +505,7 @@ test("the bundle encoder is created with the same formats the main pass uses", (
   const start = webgpuSource.indexOf("device.createRenderBundleEncoder({");
   assert.notEqual(start, -1, "the renderer must create a render bundle encoder");
   const body = webgpuSource.slice(start, start + 400);
-  assert.match(body, /colorFormats: \[targetFormat\]/);
+  assert.match(body, /colorFormats: \[pipeState\.targetFormat\]/);
   assert.match(body, /depthStencilFormat: "depth24plus"/);
   assert.match(body, /sampleCount: sampleCount/);
   // The PBR pipelines are keyed on the same render-target values plus the
@@ -517,7 +517,7 @@ test("the bundle encoder is created with the same formats the main pass uses", (
   );
   assert.match(
     webgpuSource,
-    /wgpuPipelineKey\(\(detail === true \? sceneDetailVariantKey\(kind, true\) : variant \? variant\.key \+ ":" \+ kind : kind\) \+ \(uv1 \? ":uv1" \+ uv1 : ""\), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
+    /wgpuPipelineKey\(\(detail === true \? sceneDetailVariantKey\(kind, true\) : variant \? variant\.key \+ ":" \+ kind : kind\) \+ \(uv1 \? ":uv1" \+ uv1 : ""\), blendMode, depthWrite, pipeState\.targetFormat, "depth24plus", pipeState\.activeSampleCount\)/,
   );
 });
 

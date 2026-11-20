@@ -42,10 +42,10 @@ test("pass wrappers are cached and preserve missing optional methods", () => {
 
 test("pipeline preparation hits across orbit and resize and invalidates material variants", () => {
   let pbrCalls = 0;
-  const api = loadSection("    function prepareBundlePipelines", "    // Get or create a PBR pipeline", {
-    initialPipelinesPrepared: false, preparedPipelineKey: "", targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false,
+  const api = loadSection("    function prepareBundlePipelines", "    function sceneSelenaWaterSystem", {
+    initialPipelinesPrepared: false, preparedPipelineKey: "", pipeState: { targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false, pbrShadowsActive: false }, gpuRes: {}, device: {}, getSelenaPipeline: () => null,
     getObjectSelenaPipeline: () => null, getPBRPipeline: () => { pbrCalls++; return {}; }, getShadowPipeline: () => ({}),
-    pbrVariant: material => Boolean(material && material.detail),
+    pbrVariant: (_ps, _gr, _dev, material) => Boolean(material && material.detail),
     sceneAffineDeterminant: () => 1, sceneWebGPUObjectReflected: () => false,
     sceneTransmissionDepthWrite: (_object, _material, depth) => depth,
     webGPUObjectIsSkinned: () => false, pipelineGuard: { pending: 0 },
@@ -85,21 +85,21 @@ test("deferred canvas replay preserves optional methods and snapshots dynamic of
 
 test("preparation selects drawn reflection, Selena, skin+morph and instanced cull variants", () => {
   const calls = [];
-  const api = loadSection("    function prepareBundlePipelines", "    // Get or create a PBR pipeline", {
-    initialPipelinesPrepared: false, preparedPipelineKey: "", targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false,
-    getObjectSelenaPipeline: (_object, material) => material.selena ? {} : null,
-    getPBRPipeline: (...args) => calls.push(["pbr", ...args]), getShadowPipeline: (...args) => calls.push(["shadow", ...args]),
-    pbrVariant: material => Boolean(material && material.detail),
+  const pipeState = { targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false, pbrShadowsActive: false }, gpuRes = {}, device = {}, getSelenaPipeline = () => null;
+  const api = loadSection("    function prepareBundlePipelines", "    function sceneSelenaWaterSystem", {
+    initialPipelinesPrepared: false, preparedPipelineKey: "", pipeState, gpuRes, device, getSelenaPipeline,
+    getObjectSelenaPipeline: (_getSelena, _object, material) => material.selena ? {} : null,
+    getPBRPipeline: (_ps, _dev, ...args) => calls.push(["pbr", ...args]), getShadowPipeline: (...args) => calls.push(["shadow", ...args]),
+    pbrVariant: (_ps, _gr, _dev, material) => Boolean(material && material.detail),
     sceneWebGPUObjectReflected: object => !!object.directVertices && object.negative,
     sceneTransmissionDepthWrite: (object, _material, depth) => object.depthWrite ?? depth,
     webGPUObjectIsSkinned: object => !!object.skin,
     ensureElioSkinPipeline: () => calls.push(["skin"]), ensureComputedMorphPipeline: () => calls.push(["morph"]),
     instancedMeshMaterial: (mesh, materials) => materials[mesh.materialIndex], scenePBRObjectRenderPass: () => "alpha",
     instancedMeshUsesCull: mesh => !!mesh.cull,
-    getPBRInstancedPipeline: (...args) => calls.push(["instanced", ...args]), getPBRInstancedCullPipeline: (...args) => calls.push(["cull", ...args]),
+    getPBRInstancedPipeline: (_ps, _dev, ...args) => calls.push(["instanced", ...args]), getPBRInstancedCullPipeline: (_ps, _dev, ...args) => calls.push(["cull", ...args]),
     getShadowInstancedPipeline: () => calls.push(["shadow-instanced"]), pipelineGuard: { pending: 0 },
-    pipeState: {}, meshState: {}, device: {},
-    wgpuShadowCaster: light => !!light.castShadow, pbrShadowsActive: false,
+    meshState: {}, wgpuShadowCaster: light => !!light.castShadow,
   });
   const bundle = { materials: [{}, { selena: true }], lights: [{ castShadow: true }], instancedMeshes: [{ materialIndex: 0, cull: true, depthWrite: true }] };
   const prepared = { pipelineVariantHash: "variants", materialsHash: "materials", shadowPassHash: "shadow", pbrPasses: {

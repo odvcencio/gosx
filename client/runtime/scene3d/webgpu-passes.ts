@@ -1737,3 +1737,107 @@
     pipeState.shadowInstancedPipeline = wgpuCreateShadowInstancedPipeline(device, pipeState.shadowBindGroupLayout, pipeState.shadowInstancedVertexModule, pipeState.shadowFragmentModule);
     return pipeState.shadowInstancedPipeline;
   }
+  // pbrFragment picks the PBR fragment module: the detail module, the full
+  // module while a shadow slot is active, or the unshadowed module.
+  function pbrFragment(pipeState: any, device: any, detail: boolean) {
+    if (detail) return pipeState.detailResources.fragment;
+    if (pipeState.pbrShadowsActive) return pipeState.pbrFragmentModule;
+    if (!pipeState.pbrUnshadowedFragmentModule) pipeState.pbrUnshadowedFragmentModule = device.createShaderModule({ label: "pbr-frag-unshadowed", code: wgpuUnshadowedPBRFragment(WGSL_PBR_FRAGMENT) });
+    return pipeState.pbrUnshadowedFragmentModule;
+  }
+
+  function pbrKeyPrefix(pipeState: any, detail: boolean) { return (pipeState.selectiveBloom ? "specular|" : "") + (detail || pipeState.pbrShadowsActive ? "" : "unshadowed|"); }
+
+  // Get or create a PBR pipeline for the given blend mode.
+  // PBR variant: true for detail, a Selena surface variant, else false.
+  function pbrVariant(pipeState: any, gpuRes: any, device: any, material: any) { return material && material.detail ? true : sceneWebGPUSelenaSurfaceVariant(device, pipeState.selenaSurfaces, material, gpuRes.frameBindGroupLayout, gpuRes.materialBindGroupLayout, WGSL_PBR_FRAGMENT) || false; }
+
+  function getPBRPipeline(pipeState: any, device: any, blendMode: any, depthWrite: any, frontFace: any, detail: any = false, uv1: any = "") {
+    var reflected = frontFace === "cw", variant = detail === true ? pipeState.detailResources : detail || null, kind = sceneWebGPUPipelineKind(reflected, "pbr");
+    var key = pbrKeyPrefix(pipeState, !!variant) + wgpuPipelineKey((detail === true ? sceneDetailVariantKey(kind, true) : variant ? variant.key + ":" + kind : kind) + (uv1 ? ":uv1" + uv1 : ""), blendMode, depthWrite, pipeState.targetFormat, "depth24plus", pipeState.activeSampleCount);
+    if (pipeState.pipelineCache[key]) return pipeState.pipelineCache[key];
+    var uv1Modules = uv1 ? window.__gosx_scene3d_asset_ext.uv1.gpuModules(device, WGSL_PBR_VERTEX, WGSL_PBR_FRAGMENT, uv1) : null; var pipeline = wgpuCreatePBRPipeline(device, variant ? variant.pipelineLayout : pipeState.pbrPipelineLayout, uv1Modules ? uv1Modules.vertex : pipeState.pbrVertexModule, variant ? variant.fragment : uv1Modules ? uv1Modules.fragment : pbrFragment(pipeState, device, false), blendMode, depthWrite, sceneWebGPUColorTarget(pipeState.targetFormat, pipeState.selectiveBloom), reflected ? -pipeState.activeSampleCount : pipeState.activeSampleCount);
+    pipeState.pipelineCache[key] = pipeline;
+    return pipeline;
+  }
+
+  // detail: true for the detail variant, a Selena surface variant object, or false.
+  function getPBRInstancedPipeline(pipeState: any, device: any, blendMode: any, depthWrite: any, detail: any = false) {
+    var parts = wgpuInstancedPipelineParts(detail, pipeState.pbrPipelineLayout, pipeState.detailResources, function(d: any) { return pbrFragment(pipeState, device, d); });
+    var key = pbrKeyPrefix(pipeState, !!detail) + wgpuPipelineKey(parts.name, blendMode, depthWrite, pipeState.targetFormat, "depth24plus", pipeState.activeSampleCount);
+    if (pipeState.pipelineCache[key]) return pipeState.pipelineCache[key];
+    var pipeline = wgpuCreatePBRInstancedPipeline(device, parts.layout, pipeState.pbrInstancedVertexModule, parts.fragment, blendMode, depthWrite, sceneWebGPUColorTarget(pipeState.targetFormat, pipeState.selectiveBloom), pipeState.activeSampleCount);
+    pipeState.pipelineCache[key] = pipeline;
+    return pipeline;
+  }
+
+  function getPBRInstancedCullPipeline(pipeState: any, device: any, blendMode: any, depthWrite: any, detail: any = false) {
+    var key = pbrKeyPrefix(pipeState, detail) + wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, pipeState.targetFormat, "depth24plus", pipeState.activeSampleCount);
+    if (pipeState.pipelineCache[key]) return pipeState.pipelineCache[key];
+    var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? pipeState.detailResources.pipelineLayout : pipeState.pbrPipelineLayout, pipeState.pbrInstancedCullVertexModule, pbrFragment(pipeState, device, detail), blendMode, depthWrite, sceneWebGPUColorTarget(pipeState.targetFormat, pipeState.selectiveBloom), pipeState.activeSampleCount);
+    pipeState.pipelineCache[key] = pipeline;
+    return pipeline;
+  }
+
+  function getSceneColorPipeline(pipeState: any, gpuRes: any, device: any, space: any, topology: any, blendMode: any, depthWrite: any) {
+    var normalizedSpace = space === "clip" ? "clip" : "world";
+    var normalizedTopology = topology === "triangle-list" ? "triangle-list" : "line-list";
+    var key = wgpuPipelineKey("scene-color-" + normalizedSpace + "-" + normalizedTopology, blendMode, depthWrite, pipeState.targetFormat, "depth24plus", pipeState.activeSampleCount);
+    if (pipeState.pipelineCache[key]) return pipeState.pipelineCache[key];
+    var vertexModule = normalizedSpace === "clip" ? pipeState.sceneClipColorVertexModule : pipeState.sceneWorldColorVertexModule;
+    var pipeline = wgpuCreateSceneColorPipeline(device, device.createPipelineLayout({ bindGroupLayouts: [gpuRes.frameBindGroupLayout] }), vertexModule, pipeState.sceneColorFragmentModule, normalizedTopology, blendMode, depthWrite, pipeState.targetFormat, pipeState.activeSampleCount);
+    pipeState.pipelineCache[key] = pipeline;
+    return pipeline;
+  }
+
+  function getSurfacePipeline(pipeState: any, device: any, blendMode: any, depthWrite: any) {
+    var key = wgpuPipelineKey("surface", blendMode, depthWrite, pipeState.targetFormat, "depth24plus", pipeState.activeSampleCount);
+    if (pipeState.pipelineCache[key]) return pipeState.pipelineCache[key];
+    var pipeline = wgpuCreateSurfacePipeline(device, pipeState.pbrPipelineLayout, pipeState.surfaceVertexModule, pipeState.surfaceFragmentModule, blendMode, depthWrite, pipeState.targetFormat, pipeState.activeSampleCount);
+    pipeState.pipelineCache[key] = pipeline;
+    return pipeline;
+  }
+
+  function getThickLinePipeline(pipeState: any, gpuRes: any, device: any, blendMode: any, depthWrite: any) {
+    var key = wgpuPipelineKey("thick-line", blendMode, depthWrite, pipeState.targetFormat, "depth24plus", pipeState.activeSampleCount);
+    if (pipeState.pipelineCache[key]) return pipeState.pipelineCache[key];
+    var pipeline = wgpuCreateThickLinePipeline(device, device.createPipelineLayout({ bindGroupLayouts: [gpuRes.frameBindGroupLayout] }), pipeState.thickLineVertexModule, pipeState.thickLineFragmentModule, blendMode, depthWrite, pipeState.targetFormat, pipeState.activeSampleCount);
+    pipeState.pipelineCache[key] = pipeline;
+    return pipeline;
+  }
+
+  // Get or create a points pipeline for the given blend mode.
+  function getPointsPipeline(pipeState: any, device: any, blendMode: any, depthWrite: any) {
+    var key = wgpuPipelineKey("points", blendMode, depthWrite, pipeState.targetFormat, "depth24plus", pipeState.activeSampleCount);
+    if (pipeState.pipelineCache[key]) return pipeState.pipelineCache[key];
+    var pipeline = wgpuCreatePointsPipeline(device, pipeState.pointsPipelineLayout, pipeState.pointsVertexModule, pipeState.pointsFragmentModule, blendMode, depthWrite, pipeState.targetFormat, pipeState.activeSampleCount);
+    pipeState.pipelineCache[key] = pipeline;
+    return pipeline;
+  }
+
+  function getPointsVertexPipeline(pipeState: any, device: any, blendMode: any, depthWrite: any) {
+    var key = wgpuPipelineKey("points-vertex", blendMode, depthWrite, pipeState.targetFormat, "depth24plus", pipeState.activeSampleCount);
+    if (pipeState.pipelineCache[key]) return pipeState.pipelineCache[key];
+    var pipeline = wgpuCreatePointsVertexPipeline(device, pipeState.pointsVertexPipelineLayout, pipeState.pointsInstancedVertexModule, pipeState.pointsFragmentModule, blendMode, depthWrite, pipeState.targetFormat, pipeState.activeSampleCount);
+    pipeState.pipelineCache[key] = pipeline;
+    return pipeline;
+  }
+
+  function getObjectSelenaPipeline(getSelenaPipeline: any, object: any, material: any, blend: string, depth: boolean) {
+    if (!sceneWebGPUIsSelenaMaterial(material)) return null;
+    var options = sceneWebGPUSelenaPipelineOptions(object, sceneWebGPUObjectReflected(object));
+    return getSelenaPipeline(material, blend, depth, options);
+  }
+
+  function getWaterObjectMeshPipeline(pipeState: any, device: any, texturePassMode: any, blendMode: any, depthWrite: any) {
+    var normalizedMode = texturePassMode === 2 ? 2 : 1;
+    var normalizedBlend = blendMode === "alpha" || blendMode === "additive" ? blendMode : "alpha";
+    var normalizedDepthWrite = depthWrite !== false;
+    var key = wgpuPipelineKey("water-object-mesh-" + normalizedMode, normalizedBlend, normalizedDepthWrite, WATER_OBJECT_TEXTURE_FORMAT, "depth24plus", 1);
+    if (pipeState.waterObjectMeshPipelineCache[key]) return pipeState.waterObjectMeshPipelineCache[key];
+    var fragmentModule = normalizedMode === 2 ? pipeState.waterObjectMeshClippedFragmentModule : pipeState.waterObjectMeshRefractionFragmentModule;
+    if (!fragmentModule) return null;
+    var pipeline = wgpuCreatePBRPipeline(device, pipeState.pbrPipelineLayout, pipeState.pbrVertexModule, fragmentModule, normalizedBlend, normalizedDepthWrite, WATER_OBJECT_TEXTURE_FORMAT, 1);
+    pipeState.waterObjectMeshPipelineCache[key] = pipeline;
+    return pipeline;
+  }

@@ -138,20 +138,20 @@ test("WebGPU instanced pipelines take a surface variant's layout and fragment", 
   assert.ok(start >= 0 && end > start);
   const created = [];
   const c = createContext({}).context;
-  c.pipelineCache = {}; c.targetFormat = "rgba8unorm"; c.activeSampleCount = 1; c.selectiveBloom = false; c.pbrShadowsActive = true;
-  c.device = {}; c.pbrPipelineLayout = "pbr-layout"; c.detailResources = { pipelineLayout: "detail-layout" }; c.pbrInstancedVertexModule = "instanced-vertex";
-  c.pbrKeyPrefix = () => ""; c.pbrFragment = (detail) => detail ? "detail-frag" : "pbr-frag";
+  c.pipeState = { pipelineCache: {}, targetFormat: "rgba8unorm", activeSampleCount: 1, selectiveBloom: false, pbrShadowsActive: true, pbrPipelineLayout: "pbr-layout", detailResources: { pipelineLayout: "detail-layout" }, pbrInstancedVertexModule: "instanced-vertex" };
+  c.device = {};
+  c.pbrKeyPrefix = () => ""; c.pbrFragment = (_ps, _dev, detail) => detail ? "detail-frag" : "pbr-frag";
   c.wgpuPipelineKey = (...parts) => parts.join("|"); c.sceneWebGPUColorTarget = (format) => format;
   c.wgpuCreatePBRInstancedPipeline = (...args) => (created.push(args), { n: created.length });
   // The variant choice lives in top-level helpers outside the renderer closure.
   const helpers = source.slice(source.indexOf("function wgpuInstancedSurface("), source.indexOf("function createSceneWebGPURenderer("));
   vm.runInContext(ts.transpileModule(helpers + source.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, c);
   const surface = { key: "surface0", pipelineLayout: "surface-layout", fragment: "surface-frag" };
-  const plain = c.getPBRInstancedPipeline("alpha", false, false), detail = c.getPBRInstancedPipeline("alpha", false, true), hooked = c.getPBRInstancedPipeline("alpha", false, surface);
+  const plain = c.getPBRInstancedPipeline(c.pipeState, c.device, "alpha", false, false), detail = c.getPBRInstancedPipeline(c.pipeState, c.device, "alpha", false, true), hooked = c.getPBRInstancedPipeline(c.pipeState, c.device, "alpha", false, surface);
   assert.deepEqual(created.map((args) => [args[1], args[3]]), [["pbr-layout", "pbr-frag"], ["detail-layout", "detail-frag"], ["surface-layout", "surface-frag"]]);
   assert.ok(created.every((args) => args[2] === "instanced-vertex"), "every variant uses the instanced vertex stage");
   assert.equal(created[2][4], "alpha", "the blend mode reaches the pipeline");
-  assert.equal(c.getPBRInstancedPipeline("alpha", false, surface), hooked, "one pipeline per variant");
+  assert.equal(c.getPBRInstancedPipeline(c.pipeState, c.device, "alpha", false, surface), hooked, "one pipeline per variant");
   assert.equal(new Set([plain, detail, hooked]).size, 3);
   // The surface fragment reads these vertex outputs; the instanced vertex stage must declare them.
   const c2 = rendererContext("webgpu"), vertex = vm.runInContext("WGSL_PBR_INSTANCED_VERTEX", c2);
