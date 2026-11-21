@@ -774,3 +774,29 @@ test(
     }
   },
 );
+
+// --- Physical light model ---------------------------------------------------
+
+test("the physical light model decodes light colours from sRGB to linear", () => {
+  const scene = api();
+  const light = { kind: "hemisphere", color: "#808080", groundColor: "#ff0000", intensity: 1 };
+  const legacy = new Float32Array(scene.SCENE_WEBGPU_LIGHT_FLOATS);
+  scene.sceneWebGPUPackLights([light], 1, legacy, {});
+  const physical = new Float32Array(scene.SCENE_WEBGPU_LIGHT_FLOATS);
+  scene.sceneWebGPUPackLights([light], 1, physical, {}, true);
+  assert.ok(Math.abs(legacy[8] - 128 / 255) < 1e-6, "legacy keeps the encoded value");
+  assert.ok(Math.abs(physical[8] - 0.2158605) < 1e-5, "mid grey decodes to 0.216 linear");
+  assert.equal(physical[16], 1, "a saturated channel stays 1");
+  assert.equal(physical[17], 0);
+});
+
+test("the physical light model lights ambient and hemisphere terms as indirect diffuse on both backends", () => {
+  assert.match(webgpuSource, /lightModel: u32,/, "EnvUniforms carries the light model");
+  assert.match(webgpuSource, /if \(env\.lightModel == 1u\) \{ indirectLight = indirectLight \+ lightColor \* intensity; \}/);
+  assert.match(webgpuSource, /if \(env\.lightModel == 1u\) \{ ambient = ambient \+ indirectLight \* albedo \* \(1\.0 - metalness\) \* \(1\.0 - transmission\); \} ambient = ambient \* ambientOcclusion;"/,
+    "indirect light joins the ambient term before ambient occlusion");
+  assert.match(webgpuSource, /words\[18\] = physical \? 1 : 0;/, "the environment upload sets the flag");
+  assert.match(webglSource, /uniform int u_lightModel;/, "the WebGL shader declares the light model");
+  assert.match(webglSource, /if \(u_lightModel == 1\) \{ ambient \+= indirectLight \* albedo \* \(1\.0 - metalness\) \* \(1\.0 - transmission\); \}/);
+  assert.match(webglSource, /scenePBRLightColor\(colorCache, env\.fogColor, \[0\.5, 0\.5, 0\.5, 1\], physical\)/);
+});

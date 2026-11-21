@@ -3744,7 +3744,7 @@
     }
     if (restoredFrame) {
       uploadFrameUniforms(waterState.uniformState, waterState.gpuRes, device, bundle && bundle.camera, width, height, toneMap);
-      uploadLights(waterState.uniformState, waterState.gpuRes, device, bundle && bundle.lights);
+      uploadLights(waterState.uniformState, waterState.gpuRes, device, bundle && bundle.lights, wgpuBundlePhysicalLights(bundle));
     }
     return stats;
   }

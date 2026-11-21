@@ -1195,6 +1195,7 @@ type EnvironmentIR struct {
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
 	ToneMapping      string         `json:"toneMapping,omitempty"`
+	LightModel       string         `json:"lightModel,omitempty"`
 	FogColor         string         `json:"fogColor,omitempty"`
 	FogDensity       float64        `json:"fogDensity,omitempty"`
 	Crowds           []CrowdIR      `json:"crowds,omitempty"`
@@ -3420,6 +3421,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
 		item.ToneMapping == "" &&
+		item.LightModel == "" &&
 		item.FogColor == "" &&
 		item.FogDensity == 0 &&
 		len(item.Crowds) == 0 &&
@@ -3466,6 +3468,7 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
 	setString(record, "toneMapping", item.ToneMapping)
+	setString(record, "lightModel", item.LightModel)
 	setString(record, "fogColor", item.FogColor)
 	setNumeric(record, "fogDensity", item.FogDensity)
 	if len(item.Crowds) > 0 {
@@ -3495,6 +3498,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,
 		ToneMapping:      strings.TrimSpace(environment.ToneMapping),
+		LightModel:       strings.TrimSpace(environment.LightModel),
 		FogColor:         strings.TrimSpace(environment.FogColor),
 		FogDensity:       environment.FogDensity,
 		Crowds:           normalizeCrowds(environment.Crowds),

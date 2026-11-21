@@ -128,6 +128,7 @@ type IREnvironment struct {
 	Background       string         `json:"background,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
 	ToneMapping      string         `json:"toneMapping,omitempty"`
+	LightModel       string         `json:"lightModel,omitempty"`
 	FogColor         string         `json:"fogColor,omitempty"`
 	FogDensity       float64        `json:"fogDensity,omitempty"`
 }
@@ -1058,6 +1059,7 @@ func environmentToIR(background string, environment EnvironmentIR) IREnvironment
 		Background:       strings.TrimSpace(background),
 		Exposure:         environment.Exposure,
 		ToneMapping:      environment.ToneMapping,
+		LightModel:       strings.TrimSpace(environment.LightModel),
 		FogColor:         environment.FogColor,
 		FogDensity:       environment.FogDensity,
 	}

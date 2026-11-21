@@ -1272,6 +1272,7 @@
     h = scenePBRLightsHashNumber(h, sceneNumber(env.envRotation, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(env.fogDensity, 0));
     h = scenePBRLightsHashString(h, env.fogColor);
+    h = scenePBRLightsHashString(h, env.lightModel);
     return h;
   }
 

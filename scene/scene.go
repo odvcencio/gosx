@@ -106,8 +106,13 @@ type Environment struct {
 	// keeps Exposure fixed. See exposure.go.
 	AutoExposure *AutoExposure
 	ToneMapping  string // "aces", "reinhard", "linear", "" (default = aces)
-	FogColor     string
-	FogDensity   float64 // for exponential fog (0 = no fog)
+	// LightModel "physical" decodes light, ambient, hemisphere and fog colours
+	// from sRGB to linear, and lights ambient and hemisphere terms as indirect
+	// diffuse: no light on metals, and darkened by ambient occlusion. Empty
+	// (default): the legacy flat model.
+	LightModel string
+	FogColor   string
+	FogDensity float64 // for exponential fog (0 = no fog)
 	// Crowds are stadium, arena and concert audiences. See crowd.go and
 	// docs/scene3d-crowd.md.
 	Crowds     []Crowd

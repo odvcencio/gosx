@@ -455,7 +455,7 @@
     "    radianceMipLevels: u32,",
     "    hasEnvMap: u32,",
     "    envMapMaxLod: f32,",
-    "    _pad2: u32,",
+    "    lightModel: u32,",
     "    _pad3: u32,",
     "};",
     "",
@@ -2089,7 +2089,7 @@
     // Accumulate direct lighting.
     "    let transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
     "    let gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
-    "    var Lo = vec3f(0.0);",
+    "    var Lo = vec3f(0.0); var indirectLight = vec3f(0.0);",
     "",
     // arrayLength bounds the loop against the storage buffer the JS side sized
     // this frame. No compile-time light cap remains.
@@ -2109,7 +2109,7 @@
     // Ambient light (type 0): flat contribution, no BRDF. A light probe
     // arrives here too; see sceneWebGPULightTypeCode.
     "        if (lightType == 0u) {",
-    "            Lo = Lo + albedo * lightColor * intensity;",
+    "            if (env.lightModel == 1u) { indirectLight = indirectLight + lightColor * intensity; } else { Lo = Lo + albedo * lightColor * intensity; }",
     "            continue;",
     "        }",
     "",
@@ -2118,7 +2118,7 @@
     "        if (lightType == 4u) {",
     "            let hBlend = N.y * 0.5 + 0.5;",
     "            let hemiColor = mix(light.groundPenumbra.rgb, lightColor, hBlend);",
-    "            Lo = Lo + albedo * hemiColor * intensity;",
+    "            if (env.lightModel == 1u) { indirectLight = indirectLight + hemiColor * intensity; } else { Lo = Lo + albedo * hemiColor * intensity; }",
     "            continue;",
     "        }",
     "",
@@ -2191,7 +2191,7 @@
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
     "                       + env.skyColor * env.skyIntensity * hemi",
     "                       + env.groundColor * env.groundIntensity * (1.0 - hemi);",
-    "        let hemiLit = gosxCoatOver(GosxLit(envDiffuse * albedo * (1.0 - transmission), vec3f(0.0)), envDiffuse, NoV, gosxLayer);",
+    "        let hemiLit = gosxCoatOver(GosxLit(envDiffuse * albedo * (1.0 - transmission) * select(1.0, 1.0 - metalness, env.lightModel == 1u), vec3f(0.0)), envDiffuse, NoV, gosxLayer);",
     "        ambient = hemiLit.color;",
     "        specularEnvironment = hemiLit.specular;",
     "    }",
@@ -2200,7 +2200,7 @@
     "        ambient += reflectedTransmission;",
     "        specularEnvironment += reflectedTransmission;",
     "    }",
-    "    ambient = ambient * ambientOcclusion;",
+    "    if (env.lightModel == 1u) { ambient = ambient + indirectLight * albedo * (1.0 - metalness) * (1.0 - transmission); } ambient = ambient * ambientOcclusion;",
     "    gosxSpecularRadiance += specularEnvironment * ambientOcclusion;",
     "",
     // Emissive contribution.
@@ -5714,7 +5714,7 @@
   // invents a value the other does not have. That includes angle: an unset
   // cone angle stays 0 on both backends, which draws nothing. The caller
   // reports that case instead of silently widening the cone here.
-  function sceneWebGPUPackLights(lightArray, count, out, colorCache) {
+  function sceneWebGPUPackLights(lightArray, count, out, colorCache, physical = false) {
     var census = {
       count: 0,
       spot: 0,
@@ -5746,9 +5746,9 @@
 
       // color.rgb + range
       var lc = sceneWebGPUCachedColor(light.color, [1, 1, 1, 1], colorCache);
-      out[base + 8] = lc[0];
-      out[base + 9] = lc[1];
-      out[base + 10] = lc[2];
+      out[base + 8] = wgpuLightChannel(lc[0], physical);
+      out[base + 9] = wgpuLightChannel(lc[1], physical);
+      out[base + 10] = wgpuLightChannel(lc[2], physical);
       out[base + 11] = sceneNumber(light.range, 0);
 
       // params: decay, shadowBias, castShadow, spot cone angle
@@ -5759,9 +5759,9 @@
 
       // groundPenumbra: hemisphere ground color + spot penumbra
       var gc = sceneWebGPUCachedColor(light.groundColor, [0, 0, 0, 1], colorCache);
-      out[base + 16] = gc[0];
-      out[base + 17] = gc[1];
-      out[base + 18] = gc[2];
+      out[base + 16] = wgpuLightChannel(gc[0], physical);
+      out[base + 17] = wgpuLightChannel(gc[1], physical);
+      out[base + 18] = wgpuLightChannel(gc[2], physical);
       out[base + 19] = clamp01(sceneNumber(light.penumbra, 0));
 
       // areaHalfWidth / areaHalfHeight: rect-area edge vectors, else zero.
@@ -6686,7 +6686,7 @@
       scaledH,
       wgpuToneMapMode(bundle.environment, usePostProcessing)
     );
-    uploadLights(uniformState, gpuRes, s.device, bundle.lights);
+    uploadLights(uniformState, gpuRes, s.device, bundle.lights, wgpuPhysicalLights(bundle.environment));
     uploadFogUniforms(uniformState, gpuRes, s.device, bundle.environment);
     uploadEnvUniforms(uniformState, gpuRes, s.device, selenaState.frame, bundle.environment);
     if (s.temporalAA.beginFrame(postEffects, { postProcessing: usePostProcessing, perspective: !!cam && cam.kind !== "orthographic" && !(bundle.camera && bundle.camera.mode === "ortho2d"), width: scaledW, height: scaledH, samples: sampleCount, view: uniformState.scratchViewMatrix, projection: uniformState._frameUniformF, projectionOffset: 16, viewProjection: uniformState.scratchSelenaViewProjection, now: performance.now() })) s.device.queue.writeBuffer(gpuRes.frameUniformBuffer, 64, uniformState._frameUniformF, 16, 16);

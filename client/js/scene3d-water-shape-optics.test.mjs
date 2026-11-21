@@ -144,7 +144,7 @@ function textureHarness(failedPasses = 0, targetPass) {
       ? { passes: 0, drawCalls: 0, selenaDrawCalls: 0 }
       : { passes: 1, drawCalls: 1, selenaDrawCalls: 1 }),
     addWaterObjectTextureStats: () => {},
-    uploadFrameUniforms: () => {}, uploadWaterReflectionFrameUniforms: () => {}, uploadLights: () => {},
+    uploadFrameUniforms: () => {}, uploadWaterReflectionFrameUniforms: () => {}, uploadLights: () => {}, wgpuBundlePhysicalLights: () => false,
     WATER_OBJECT_TEXTURE_SIZE: 128,
   };
   const render = rendererFunction("renderWaterObjectSceneTexturePasses", globals);

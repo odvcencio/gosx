@@ -1289,7 +1289,7 @@
     }
   }
 
-  function uploadLights(uniformState: any, gpuRes: any, device: any, lights: any) {
+  function uploadLights(uniformState: any, gpuRes: any, device: any, lights: any, physical = false) {
     var lightArray = Array.isArray(lights) ? lights : [];
     ensureLightCapacity(uniformState, gpuRes, device, sceneWebGPULightCapacityFor(lightArray.length));
     var count = Math.min(lightArray.length, uniformState._lightCapacity);
@@ -1298,7 +1298,7 @@
     uniformState._lightCountBuf[0] = count;
     device.queue.writeBuffer(gpuRes.frameUniformBuffer, 140, uniformState._lightCountBuf);
 
-    var census = sceneWebGPUPackLights(lightArray, count, uniformState._lightDataF, uniformState._lightColorCache);
+    var census = sceneWebGPUPackLights(lightArray, count, uniformState._lightDataF, uniformState._lightColorCache, physical);
     reportLightIssuesOnce(uniformState, sceneWebGPULightIssues(census, lightArray.length, uniformState._lightCapacity));
 
     if (count > 0) {
@@ -1318,14 +1318,14 @@
   function uploadFogUniforms(uniformState: any, gpuRes: any, device: any, environment: any) {
     var env = environment || {};
     var fogDensity = sceneNumber(env.fogDensity, 0);
-    var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]);
+    var fogColorRGBA = sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1]); var physical = wgpuPhysicalLights(env);
 
     // FogUniforms: vec3f fogColor(12) + f32 density(4) + u32 hasFog(4) + pad(12) = 32 bytes.
     var f = uniformState._fogUniformF;
     var u = uniformState._fogUniformU;
-    f[0] = fogColorRGBA[0];
-    f[1] = fogColorRGBA[1];
-    f[2] = fogColorRGBA[2];
+    f[0] = wgpuLightChannel(fogColorRGBA[0], physical);
+    f[1] = wgpuLightChannel(fogColorRGBA[1], physical);
+    f[2] = wgpuLightChannel(fogColorRGBA[2], physical);
     f[3] = fogDensity;
     u[4] = fogDensity > 0 ? 1 : 0;
     u[5] = 0;
@@ -1426,15 +1426,15 @@
     selenaFrame.environmentInfo = sceneWebGPUSelenaEnvironmentInfo(ibl, env);
     var ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
     var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
-    var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
+    var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]); var physical = wgpuPhysicalLights(env);
     // 80-byte EnvUniforms, matching WGSL.
     var data = uniformState._envUniformF;
     var words = uniformState._envUniformU;
-    data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
+    data[0] = wgpuLightChannel(ambientColorRGBA[0], physical); data[1] = wgpuLightChannel(ambientColorRGBA[1], physical); data[2] = wgpuLightChannel(ambientColorRGBA[2], physical);
     data[3] = sceneNumber(env.ambientIntensity, 0);
-    data[4] = skyColorRGBA[0]; data[5] = skyColorRGBA[1]; data[6] = skyColorRGBA[2];
+    data[4] = wgpuLightChannel(skyColorRGBA[0], physical); data[5] = wgpuLightChannel(skyColorRGBA[1], physical); data[6] = wgpuLightChannel(skyColorRGBA[2], physical);
     data[7] = sceneNumber(env.skyIntensity, 0);
-    data[8] = groundColorRGBA[0]; data[9] = groundColorRGBA[1]; data[10] = groundColorRGBA[2];
+    data[8] = wgpuLightChannel(groundColorRGBA[0], physical); data[9] = wgpuLightChannel(groundColorRGBA[1], physical); data[10] = wgpuLightChannel(groundColorRGBA[2], physical);
     data[11] = sceneNumber(env.groundIntensity, 0);
     data[12] = Math.max(0, sceneNumber(env.envIntensity, 1));
     data[13] = sceneNumber(env.envRotation, 0);
@@ -1442,7 +1442,7 @@
     words[15] = ibl.active ? Math.max(1, ibl.diagnostics.radianceMipLevels | 0) : 0;
     words[16] = envMap.active ? 1 : 0;
     data[17] = wgpuEnvMapMaxLod(envMap);
-    words[18] = 0; words[19] = 0;
+    words[18] = physical ? 1 : 0; words[19] = 0;
     device.queue.writeBuffer(gpuRes.envUniformBuffer, 0, data);
   }
   // uploadShadowUniforms packs every slot's cascades (webgpu-shadows module).
