@@ -40,3 +40,11 @@ func TestFadeTailEndsInSilence(t *testing.T) {
 		t.Fatalf("faded = %v", ch)
 	}
 }
+
+func TestRepeatKeepsAValidHeader(t *testing.T) {
+	one := PCM16(2, 22050, 5, func(f, c int) int16 { return int16(f) })
+	three := Repeat(one, 3)
+	if Frames(three, 2) != 15 || binary.LittleEndian.Uint32(three[40:]) != 60 || binary.LittleEndian.Uint32(three[4:]) != uint32(len(three)-8) {
+		t.Fatalf("frames %d, header %v", Frames(three, 2), three[:44])
+	}
+}

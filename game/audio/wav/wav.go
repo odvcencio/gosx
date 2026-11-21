@@ -62,3 +62,21 @@ func FadeTail(n int, channels ...[]float64) {
 		}
 	}
 }
+
+// Frames is the number of sample frames in a WAV that PCM16 made with the
+// given number of channels.
+func Frames(wav []byte, channels int) int { return (len(wav) - 44) / (2 * channels) }
+
+// Repeat returns a WAV that PCM16 made, played k times over, as one WAV: for
+// a loop that must be resampled with its join intact, say.
+func Repeat(wav []byte, k int) []byte {
+	data := wav[44:]
+	out := make([]byte, 44, 44+k*len(data))
+	copy(out, wav[:44])
+	for range k {
+		out = append(out, data...)
+	}
+	binary.LittleEndian.PutUint32(out[4:], uint32(len(out)-8))
+	binary.LittleEndian.PutUint32(out[40:], uint32(len(out)-44))
+	return out
+}
