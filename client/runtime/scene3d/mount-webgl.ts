@@ -1445,11 +1445,15 @@
     if (sharedGeometry) instanced.vertices = null;
     const normalized = normalizeSceneObject(instanced, prefix, sharedGeometry ? {vertices: sharedGeometry} : null);
     sceneApplyModelMaterialName(normalized, model);
-    if (!morphMeta && !nodeAnimSource && normalized && normalized.vertices) {
+    if (!nodeAnimSource && normalized && normalized.vertices && (!morphMeta || hasSkin)) {
       // Imported rigid and skeletal bind streams own immutable snapshots.
-      // Joint playback changes matrices; morph and node streams stay mutable.
-      // Retain attributes rather than rebuilding and hashing every triangle.
-      // Live rigid transforms advance the revision when geometry is rebaked.
+      // Joint playback changes matrices; rigid morph and node streams stay
+      // mutable. Retain attributes rather than rebuilding and hashing every
+      // triangle. Live rigid transforms advance the revision when geometry is
+      // rebaked. A skinned morph stream changes only when the morph fold
+      // writes new weights (gltfApplyAnimatedMorphPose), and that fold
+      // advances the revision, so the planner hashes it once per fold and not
+      // once per frame.
       normalized.vertices.immutable = true;
       normalized.vertices.revision = 0;
     }

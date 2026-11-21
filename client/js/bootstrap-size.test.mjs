@@ -1105,7 +1105,9 @@ const budgets = [
     // Per-model joint scales for athletes (owner-approved 20 Nov 2026): measured bootstrap.js gzip 613881; the target rises by exactly the measured overage (597101 -> 597497), allowance unchanged.
     // GPU-time quality governor (adaptiveBudget "gpu") and the render-pass GPU span when the frame timer reads 0 on Metal (coordinator-approved 20 Nov 2026): measured bootstrap.js raw 2193673; the target rises by exactly the measured overage (2127226 -> 2128137), allowance unchanged.
     // The same change: measured bootstrap.js gzip 613927; the target rises by exactly the measured overage (597497 -> 597543), allowance unchanged.
-    file: "bootstrap.js", raw: 2128137, gzip: 597543,
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap.js raw 2193793; the target rises by exactly the measured overage (2128137 -> 2128257), allowance unchanged.
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap.js.gz gzip 613991; the target rises by exactly the measured overage (597543 -> 597607), allowance unchanged.
+    file: "bootstrap.js", raw: 2128257, gzip: 597607,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1128,7 +1130,8 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, step 6b: the PBR, colour, surface, line and points pipeline getters leave the renderer closure on the pipeline state object): measured bootstrap.js.br brotli 499191; only this exhausted target moves (482656 -> 482807), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured bootstrap.js.br brotli 499335; only this exhausted target moves (482807 -> 482951), allowance unchanged.
     // GPU-time quality governor and the render-pass GPU span fallback (coordinator-approved 20 Nov 2026): measured bootstrap.js.br brotli 499628; the target rises by exactly the measured overage (482951 -> 483244), allowance unchanged.
-    brotli: 483244 },
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap.js.br brotli 499814; the target rises by exactly the measured overage (483244 -> 483430), allowance unchanged.
+    brotli: 483430 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1750,7 +1753,8 @@ const budgets = [
     // Per-model joint scales for athletes, review fixes (owner-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js raw 699951; the target rises by exactly the measured overage (666592 -> 666621), allowance unchanged.
     // Per-model joint scales for athletes, review fixes (owner-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js gzip 201124; the target rises by exactly the measured overage (191398 -> 191554), allowance unchanged.
     // GPU-time quality governor and the render-pass GPU span fallback (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js raw 700114; the target rises by exactly the measured overage (666621 -> 666782), allowance unchanged.
-    file: "bootstrap-feature-scene3d.js", raw: 666782, gzip: 191554,
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap-feature-scene3d.js raw 700190; the target rises by exactly the measured overage (666782 -> 666850), allowance unchanged.
+    file: "bootstrap-feature-scene3d.js", raw: 666850, gzip: 191554,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
@@ -1768,7 +1772,8 @@ const budgets = [
     // Per-model joint scales for athletes (owner-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js brotli 170635; the target rises by exactly the measured overage (162314 -> 162519), allowance unchanged.
     // Per-model joint scales for athletes, review fixes (owner-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js brotli 170686; the target rises by exactly the measured overage (162519 -> 162560), allowance unchanged.
     // GPU-time quality governor and the render-pass GPU span fallback (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js.br brotli 170862; the target rises by exactly the measured overage (162560 -> 162734), allowance unchanged.
-    brotli: 162734 },
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap-feature-scene3d.js.br brotli 170913; the target rises by exactly the measured overage (162734 -> 162776), allowance unchanged.
+    brotli: 162776 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -2153,7 +2158,10 @@ const budgets = [
   // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured bootstrap-feature-scene3d-gltf.js raw 63154; the target rises by exactly the measured overage (59385 -> 60184), allowance unchanged.
   // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured bootstrap-feature-scene3d-gltf.js brotli 20059; the target rises by exactly the measured overage (18853 -> 19035), allowance unchanged.
   // 19 November 2026 (per-model morph weights for athletes, owner-approved 19 Nov 2026): measured bootstrap-feature-scene3d-gltf.js gzip 21911; the target rises by exactly the measured overage (20653 -> 20878), allowance unchanged.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 60184, gzip: 20878, brotli: 19035 },
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap-feature-scene3d-gltf.js raw 63198; the target rises by exactly the measured overage (60184 -> 60188), allowance unchanged.
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap-feature-scene3d-gltf.js.gz gzip 21933; the target rises by exactly the measured overage (20878 -> 20889), allowance unchanged.
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap-feature-scene3d-gltf.js.br brotli 20063; the target rises by exactly the measured overage (19035 -> 19039), allowance unchanged.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 60188, gzip: 20889, brotli: 19039 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
@@ -3006,7 +3014,8 @@ const routeBudgets = [
     // Per-model joint scales for athletes (owner-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1374912; the target rises by exactly the measured overage (1308867 -> 1309468), allowance unchanged.
     // Per-model joint scales for athletes, review fixes (owner-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1374968; the target rises by exactly the measured overage (1309468 -> 1309494), allowance unchanged.
     // GPU-time quality governor and the render-pass GPU span fallback (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1375131; the target rises by exactly the measured overage (1309494 -> 1309656), allowance unchanged.
-    raw: 1309656,
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1375207; the target rises by exactly the measured overage (1309656 -> 1309724), allowance unchanged.
+    raw: 1309724,
     // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 385941 bytes; only this exhausted target moves (369041 -> 369557), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 392100; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Safari and Firefox route (WebGL, with labels) gzip measures 388236 bytes; only this exhausted target moves (369557 -> 371852), allowance unchanged.
@@ -3050,7 +3059,8 @@ const routeBudgets = [
     // Per-model joint scales for athletes (owner-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 343069; the target rises by exactly the measured overage (326533 -> 326742), allowance unchanged.
     // Per-model joint scales for athletes, review fixes (owner-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 343120; the target rises by exactly the measured overage (326742 -> 326782), allowance unchanged.
     // GPU-time quality governor and the render-pass GPU span fallback (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 343296; the target rises by exactly the measured overage (326782 -> 326956), allowance unchanged.
-    brotli: 326956,
+    // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 343347; the target rises by exactly the measured overage (326956 -> 326999), allowance unchanged.
+    brotli: 326999,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.

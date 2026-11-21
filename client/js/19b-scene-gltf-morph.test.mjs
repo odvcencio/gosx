@@ -950,3 +950,28 @@ test("per-model morph weights fold per instance, by name or index, and only when
   assert.deepEqual(r6(result.clipWins), r6(result.wantClip), "an animated weight wins over the model's own");
   assert.deepEqual(r6(result.byIndex), r6(result.wantHeavy), "without names a whole-number key picks by index");
 });
+
+test("a skinned morph snapshot advances its revision only when a fold writes new streams", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const result = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    function entry(vertices) {
+      vertices.positions = gltfFoldAnimatedMorphStreams(meta, meta.defaults).positions;
+      return { meta: meta, vertices: vertices, skinned: true, lastWeights: meta.defaults.slice() };
+    }
+    var snap = entry({ immutable: true, revision: 0 }), loose = entry({});
+    var heavy = { mass: 1 };
+    var revisions = [];
+    gltfApplyAnimatedMorphPose([snap, loose], null, null, heavy);
+    revisions.push(snap.vertices.revision);
+    gltfApplyAnimatedMorphPose([snap, loose], null, null, heavy);
+    revisions.push(snap.vertices.revision);
+    gltfApplyAnimatedMorphPose([snap, loose], null, null, { mass: 0 });
+    revisions.push(snap.vertices.revision);
+    ({ revisions: revisions, looseRevision: loose.vertices.revision });
+  `));
+  assert.deepEqual(result.revisions, [1, 1, 2], "one revision per fold, none for the same weights");
+  assert.equal(result.looseRevision, undefined, "a mutable stream keeps no revision");
+});

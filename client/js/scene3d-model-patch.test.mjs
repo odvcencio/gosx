@@ -176,6 +176,8 @@ test('a patch sets material values on the model\'s own objects, not on gear with
   assert.deepEqual(JSON.parse(run("JSON.stringify(state.objects.get('home-00/body/0').customUniforms)")), { skin: [0.4, 0.25, 0.18], jersey: [0, 0, 1] });
   assert.equal(run("state.objects.get('home-00/body/0').customUniforms !== before"), true, 'a new values object, so the material profile sees the change');
   assert.deepEqual(JSON.parse(run("JSON.stringify(state.objects.get('home-00/visor/1').customUniforms)")), { tint: 1 });
+  assert.equal(run("state.objects.get('home-00/body/0')._matRev"), 1, 'the patch advances the body\'s material revision, which the material profile cache trusts');
+  assert.equal(run("state.objects.get('home-00/visor/1')._matRev"), undefined, 'gear with its own material keeps none');
   assert.deepEqual(JSON.parse(run("JSON.stringify(state.models[0].materialOverride.customUniforms)")), { skin: [0.4, 0.25, 0.18], jersey: [0, 0, 1] }, 'the declared model keeps the patch');
 });
 

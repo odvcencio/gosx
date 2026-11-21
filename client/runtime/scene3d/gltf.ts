@@ -1628,6 +1628,9 @@
         entry.vertices.positions = skinnedFold.positions;
         entry.vertices.normals = skinnedFold.normals;
         entry.vertices.tangents = skinnedFold.tangents;
+        // A skinned morph stream is a revisioned snapshot (revision starts
+        // at 0): the planner and the upload re-read it only after a fold.
+        entry.vertices.immutable && entry.vertices.revision++;
         gltfDropVertexCaches(entry.vertices);
         entry.lastWeights = effective;
         entry.lastFolded = skinnedFold;

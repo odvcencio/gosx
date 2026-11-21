@@ -192,5 +192,6 @@
       const object = state.objects && state.objects.get ? state.objects.get(ids[i]) : null;
       if (!object || !object.customUniforms || typeof object.customUniforms !== "object" || object._attachmentMaterial) continue;
       object.customUniforms = Object.assign({}, object.customUniforms, uniforms);
+      object._matRev = ~~object._matRev + 1;
     }
   }
