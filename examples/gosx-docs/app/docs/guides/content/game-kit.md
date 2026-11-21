@@ -88,6 +88,43 @@ Importing `m31labs.dev/gosx` in browser code links the compiler back in. A minim
 - Local multiplayer: `NewRouter(p1Map, p2Map)`, `Join(device)` on a first press from a new device, then `Feed` and `Update` on the router. Devices are `keyboard`, `mouse` and `pad:N`.
 - `actions/bridge.Publisher` copies action state into a `game.Input` for systems that read it.
 
+### Fixed-step simulation
+
+A simulation that steps at a fixed rate runs on some frames and not others. `actions.NewTicks(m, actions.TickOptions{})` hears every edge the Map resolves and hands them to the next step, so each press and release reaches exactly one step, in order, and a step that runs twice in a frame sees them once:
+
+```go
+ticks := actions.NewTicks(in, actions.TickOptions{})
+// each frame: in.Update(dt); then for each fixed step:
+ticks.Tick()
+if ticks.Pressed("jump") { /* ... */ }
+if st := ticks.State("throw"); st.Released && !st.Canceled { bullet := !st.Tapped; _ = bullet }
+```
+
+- A tap between two steps reads `Pressed` and `Released` together, with the release's `Tapped` and `HeldFor`; `Edges()` lists them in order. `Down` and `Value` are the levels now.
+- `Pulse(name)` sends a page command (a button on the panel) to the next step; read it with `Pulsed`. `Clear()` drops what waits, at a whistle or a dialog.
+- `actions.Flick` turns a stick into one-shot directional presses, with a fire and a rearm line.
+
+### Repeat and screen changes
+
+- `ActionDef.Repeat{Delay, Interval}` makes a held button read `Repeated` again and again on the Map clock (at most one repeat per `Update`, so a slow frame does not burst). Without it `Repeated` equals `Pressed`.
+- `Map.SuppressHeld()` withdraws everything held now until it is let go, as a context change does, for a screen change that is not a context change. `Map.Neutral(actions.Rest{})` reports whether every key, button and stick is at rest.
+
+### Gamepad makers and glyphs
+
+`actions.ParsePadID(id)` reads Chrome's, Firefox's and Safari's ids for a pad: vendor and product numbers, the maker, and the names its buttons wear (`PadXbox`, `PadPlayStation`, `PadNintendo`, or `PadGeneric` for a pad whose id names no console). `actions.ButtonGlyph(style, n)` is the short name and drawing hints for button `n` of the standard mapping ("A", "✕" with cap "cross" in the south slot, "ZR"). `PadPoller.PollStates(list, sink)` takes one poll read once, so several consumers share it; a pad that leaves releases what it held as canceled.
+
+### The device in hand and prompts
+
+`hand.NewTracker(hand.Rules{})` follows the last device used: tee every event into it (`actions.Tee(in, tracker)`), give it each poll with `Pads`, attach `hand.AttachPointers` for fingers and the mouse, and call `Frame()` once per frame. A stick takes the hand only when it is pushed across the line from inside it, so a resting or drifting stick never does; the mouse takes it only when `Rules` say so. `hand.Start` guesses the hand before the first use (a plugged pad, the remembered name, a touch-only screen). `prompt.Table` writes texts such as `"Snap ball · {act}"` for the hand: `Expand`, `Parts` and `ExpandGlyphs`, which draws each control as a `kbd.glyph` element with `data-kind`, `data-pad`, `data-cap` and `data-slot`.
+
+### Gamepad focus on GoSX pages
+
+`focus.Scope{Root: menu}` walks the page's buttons and menus with the D-pad: `Move(focus.Down)`, `Accept()` (a button clicks; a select steps to its next choice and a slider one step, each with one bubbling `change` event). The open `dialog[open]` holds the focus while it is up, and a roving row (`Row`, `Member`) is one stop that Left and Right move inside. `focus.Activate`, `StepMenu` and `StepSlider` work on a control that does not have the focus.
+
+### Seats
+
+`seats.New(seats.Config{NewMap: newMap})` runs local multiplayer seats: a fresh press of Enter or Space on the keyboard, or A on a pad, claims a seat; a pad that leaves (or a new id in its slot) makes its seat wait, and only a waiting seat can be claimed until it is filled again; every change disarms the seats, and a seat arms again on a frame its device rests through. Each frame: `SyncPads(list)`, feed the poller's and the keyboard's events through a `Tee` that includes the seats, then `Update(dt)`. Read gameplay from `Map(i)` (or `Ticks(i)`) only while `Armed(i)`.
+
 ### Touch
 
 On a touch screen the page draws its own stick and buttons, and they are input sources like a key: `actions.TouchAxis("steer", false)`, `actions.TouchAxis("steer", true)` (y grows downward, as on a gamepad) and `actions.TouchButton("sprint")`. Mark the elements and attach once:

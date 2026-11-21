@@ -23,6 +23,17 @@
 - The particle compute shader no longer declares the reserved WGSL word `meta`. Go tests now guard WGSL embedded in Go against reserved identifiers.
 - WebGPU auto exposure compiled again. Its measure shader declared `let target`, a reserved WGSL word that Chrome rejects, so any scene that set `Environment.AutoExposure` fell back to WebGL2. A new test scans the Scene3D runtime's WGSL for reserved words (#851).
 
+### Game input
+
+- `actions.Ticks` hands a Map's edges to a fixed-step simulation: every press and release reaches exactly one step, in order, with the release's `Tapped`, `Canceled` and `HeldFor`; `Pulse` sends page commands to the next step; `actions.Flick` turns a stick into one-shot directions. The Map now resolves a release before the next press when a key is let go and pressed again between two frames, and a context leaving the stack with an action held releases it as canceled once.
+- `ActionDef.Repeat` and `State.Repeated` repeat a held button on the Map clock. `Map.SuppressHeld` withdraws every held input until it is let go; `Map.Neutral(Rest)` reports whether every input is at rest.
+- Fix: a key pressed and released between two frames just before a context change no longer swallows the next press of that key.
+- `actions.ParsePadID` reads a pad's vendor, product, maker and button style from Chrome, Firefox and Safari ids; `PadStyle` gains `PadNintendo` (the existing styles' `Label` results are unchanged); `ButtonName`, `ButtonGlyph` and `KeyGlyph` give short names and drawing hints.
+- `PadPoller.PollStates` polls a list read once. A pad that leaves, a new id in a slot, or a button list that shrinks now releases what was held as canceled. A value that creeps by less than the poller's epsilon per poll still arrives, and rest is always sent.
+- `GamepadReader` reads a slot's id and mapping again after a `gamepadconnected` or `gamepaddisconnected` event, so a pad that takes another's slot between two polls is reported with its own id.
+- `actions.Tee` feeds several sinks from one keyboard or pad poll.
+- New packages: `game/actions/hand` (the device in hand), `game/actions/prompt` (control prompts and glyph markup for that device), `game/actions/seats` (claim by press, loss and reclaim, held-input disarming for local multiplayer) and `game/focus` (gamepad focus walking and menu, slider and button activation on GoSX pages).
+
 ### Server and islands
 
 - Mounts under `/gosx/` take precedence over the runtime handler for matching paths, including runtime assets (#880). Use exact paths or a narrow prefix.
