@@ -61,6 +61,11 @@ func (NavigatorSource) Gamepads() []GamepadState {
 // you keep. game/gamepad.Poller copies. A GamepadReader is not safe for
 // concurrent use.
 //
+// A pad can leave and another take its slot between two polls. The reader
+// listens for the window's gamepadconnected and gamepaddisconnected events
+// and reads a slot's id and mapping again after either (gamepad_js.go does
+// the same in an ordinary build).
+//
 // In a build with the gosx_padtest tag, and only when the page URL carries the
 // pad test query field, the reader returns the test driver's pads instead (see
 // padtest_js.go). Its method set and its real-pad behaviour do not change.
@@ -69,6 +74,8 @@ type GamepadReader struct {
 	nav      js.Value
 	slots    []gamepadSlot
 	out      []GamepadState
+	changed  []int
+	listen   js.Func
 }
 
 type gamepadSlot struct {
@@ -95,6 +102,18 @@ func (r *GamepadReader) Gamepads() []GamepadState {
 		nav := js.Global().Get("navigator")
 		if nav.Truthy() && nav.Get("getGamepads").Type() == js.TypeFunction {
 			r.nav = nav
+			r.listen = js.FuncOf(func(_ js.Value, args []js.Value) any {
+				if len(args) > 0 {
+					if pad := args[0].Get("gamepad"); pad.Truthy() {
+						r.changed = append(r.changed, pad.Get("index").Int())
+					}
+				}
+				return nil
+			})
+			if win := js.Global(); win.Get("addEventListener").Type() == js.TypeFunction {
+				win.Call("addEventListener", "gamepadconnected", r.listen)
+				win.Call("addEventListener", "gamepaddisconnected", r.listen)
+			}
 		}
 	}
 	if !r.nav.Truthy() {
@@ -107,6 +126,13 @@ func (r *GamepadReader) Gamepads() []GamepadState {
 	for i := range r.slots {
 		r.slots[i].seen = false
 	}
+	for _, i := range r.changed {
+		if i >= 0 && i < len(r.slots) {
+			r.slots[i].present = false
+			r.slots[i].timestamp = 0
+		}
+	}
+	r.changed = r.changed[:0]
 	count := pads.Length()
 	for i := 0; i < count; i++ {
 		pad := pads.Index(i)
