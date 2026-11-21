@@ -57,6 +57,26 @@ func (n *Namespaced) key(key string) string {
 	return n.prefix + "." + key
 }
 
+// Reader is a Backend that can tell an absent key from storage it cannot
+// read (private browsing, a disabled store). BrowserStore is one.
+type Reader interface {
+	Read(key string) (value string, found bool, err error)
+}
+
+// Read returns the stored value for key, whether it was found, and an error
+// when the backend cannot be read at all. A backend that is not a Reader
+// reports no error; a nil backend reports ErrNoBackend.
+func (n *Namespaced) Read(key string) (string, bool, error) {
+	if n == nil || n.backend == nil {
+		return "", false, ErrNoBackend
+	}
+	if r, ok := n.backend.(Reader); ok {
+		return r.Read(n.key(key))
+	}
+	value, found := n.backend.Get(n.key(key))
+	return value, found, nil
+}
+
 // Get returns the stored string value for key.
 func (n *Namespaced) Get(key string) (string, bool) {
 	if n == nil || n.backend == nil {
