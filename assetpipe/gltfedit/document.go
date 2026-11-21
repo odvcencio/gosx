@@ -308,7 +308,7 @@ func (d *Document) ReadAccessor(index int) ([]float64, int, error) {
 	}
 	accessor := d.Accessors[index]
 	if len(accessor.Sparse) > 0 {
-		return nil, 0, fmt.Errorf("%w: sparse accessor %d", ErrUnsupported, index)
+		return d.readSparse(index)
 	}
 	components, err := TypeComponents(accessor.Type)
 	if err != nil {

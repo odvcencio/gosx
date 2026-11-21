@@ -9,6 +9,10 @@
 // blob such as a compiled score; this package loads them, posts commands,
 // returns the message buffer, and reports position and state.
 //
+// The processor loads from a server that mounts worklet.Handler
+// (Config.ProcessorPrefix) or, in a static export with no server, from the
+// copy compiled into the program (Config.InlineProcessor).
+//
 // Start and its siblings are available only under GOOS=js GOARCH=wasm and
 // must run in a goroutine, never inside a syscall/js callback. The message
 // protocol itself (worklet.State, worklet.Event) builds on every platform and

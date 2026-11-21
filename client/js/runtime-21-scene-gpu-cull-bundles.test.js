@@ -1022,8 +1022,10 @@ test("gpu-cull T4a: no cullKernelWGSL → draw-all (direct pass.draw, not drawIn
     "draw-all must be in the else branch of the cull ready check");
 
   // The draw-indirect call must be in the if-branch (ready cull path).
-  assert.match(webgpu, /if\s*\(cullSys\s*&&\s*cullSys\.isReady\(\)\)/,
-    "drawIndirect path must be gated by cullSys.isReady()");
+  assert.match(webgpu, /function wgpuInstancedCullReady\([^)]*\)\s*\{[^}]*cullSys\s*&&\s*cullSys\.isReady\(\)/,
+    "wgpuInstancedCullReady must gate on cullSys && cullSys.isReady()");
+  assert.match(webgpu, /if\s*\(wgpuInstancedCullReady\(cullSys,\s*surface\)\)/,
+    "drawIndirect path must be gated by wgpuInstancedCullReady(cullSys, surface)");
 
   // Ensure the indirect draw call exists inside the if-branch.
   assert.match(webgpu, /pass\.drawIndirect\(cullSys\.drawArgsBuf,\s*0\)/,
@@ -1063,17 +1065,17 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The dispatch hook must call updateInstancedCullSystems.
-  assert.match(webgpu, /updateInstancedCullSystems\(bundle\.instancedMeshes,\s*encoder,\s*scratchSelenaViewProjection\)/,
+  assert.match(webgpu, /updateInstancedCullSystems\(drawState,\s*s\.device,\s*bundle\.instancedMeshes,\s*encoder,\s*uniformState\.scratchSelenaViewProjection\)/,
     "frame loop must call updateInstancedCullSystems with instancedMeshes, encoder, and scratchSelenaViewProjection");
 
   // The frame loop must call it AFTER uploadFrameUniforms (so VP is ready) and
   // BEFORE the shadow and main render passes.
   const uploadPos = webgpu.indexOf("var cam = uploadFrameUniforms(");
-  const cullPos   = webgpu.indexOf("updateInstancedCullSystems(bundle.instancedMeshes");
+  const cullPos   = webgpu.indexOf("updateInstancedCullSystems(drawState, s.device, bundle.instancedMeshes");
   // Use the call site, not the function definition — the definition appears first
   // in the file but runs only when invoked. The call constructs a shadow-view
   // descriptor; the definition only names its shadowResource parameter.
-  const shadowPos = webgpu.indexOf("renderLightShadowCascades(encoder, light, li, activeShadowCount");
+  const shadowPos = webgpu.indexOf("renderLightShadowCascades(s, encoder, light, li, activeShadowCount");
   // The main color pass is identified by `var mainPass = encoder.beginRenderPass(`
   // to avoid matching earlier shadow/utility beginRenderPass calls.
   const mainPassPos = webgpu.indexOf("var mainPass = encoder.beginRenderPass(");
@@ -1838,8 +1840,8 @@ test("telemetry T6: 16a pollSurvivors is called BEFORE requestSurvivorReadback i
 
   // Use the LAST occurrence of "return instancedCullSystems;" as the block boundary
   // (there is an earlier early-return for the empty-meshes case that must be excluded).
-  const gcEnd = webgpu.lastIndexOf("return instancedCullSystems;");
-  assert.ok(gcEnd > 0, "must find return instancedCullSystems");
+  const gcEnd = webgpu.lastIndexOf("return drawState.instancedCullSystems;");
+  assert.ok(gcEnd > 0, "must find return drawState.instancedCullSystems");
   const telemetryRegion = webgpu.slice(0, gcEnd);
 
   // Use lastIndexOf so we find the occurrences inside the telemetry block (not

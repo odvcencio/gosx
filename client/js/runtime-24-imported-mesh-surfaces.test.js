@@ -691,7 +691,9 @@ test("ordinary skeletal retention rejects authored mutable or unversioned snapsh
                         object => { object.vertices.revision = null; }]) {
     const object = h.instantiate("mutable");
     mutate(object);
-    assert.equal(h.build([object]).meshObjects[0].retainedGeometry, false);
+    const record = h.build([object]).meshObjects[0];
+    assert.equal(record.retainedGeometry, false);
+    assert.equal(record.resourceOwner, object, "the per-frame record still names its owner for per-object GPU state");
   }
   h.renderer.dispose();
 });

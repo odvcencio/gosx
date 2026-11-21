@@ -199,7 +199,14 @@ func reconcileNodePair(w *diffWalk, ops *[]PatchOp, prevIdx, nextIdx int) {
 		return
 	}
 	pair, ok := resolveNodePair(w.prev, w.next, prevIdx, nextIdx)
-	if !ok || shouldSkipReconcileNode(pair.next, nextIdx, w.static) {
+	if !ok {
+		return
+	}
+	// The static mask says a program node never changes. That licenses
+	// skipping it against its own previous self only. When the index-by-index
+	// walk pairs it with a different program node (a sibling block grew or
+	// shrank ahead of it), the pair carries a real change.
+	if sameProgramNode(pair.prev, pair.next) && shouldSkipReconcileNode(pair.next, nextIdx, w.static) {
 		return
 	}
 	if isLeafNodePair(pair.prev, pair.next) {
@@ -211,6 +218,16 @@ func reconcileNodePair(w *diffWalk, ops *[]PatchOp, prevIdx, nextIdx int) {
 		return
 	}
 	reconcileElementNodePair(w, ops, pair.prev, pair.next)
+}
+
+// sameProgramNode reports whether two resolved nodes came from the same
+// program node. Nodes without a source are treated as the same, which keeps the
+// old pairing for trees built outside the VM.
+func sameProgramNode(prev, next *ResolvedNode) bool {
+	if !prev.HasSource || !next.HasSource {
+		return true
+	}
+	return prev.Source == next.Source
 }
 
 type resolvedNodePair struct {

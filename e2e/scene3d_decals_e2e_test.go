@@ -34,7 +34,7 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/scene"
 )
 
@@ -178,7 +178,7 @@ func mustJSON(t *testing.T, v any) string {
 
 func decalBrowser(t *testing.T, backend string) (context.Context, func()) {
 	t.Helper()
-	browser, err := chrometest.Start(t.Context(), e2eChromePath(t), "--no-sandbox", "--mute-audio", "--window-size=900,520")
+	browser, err := browsertest.Start(t.Context(), e2eChromePath(t), "--no-sandbox", "--mute-audio", "--window-size=900,520")
 	if err != nil {
 		t.Skipf("chrome unavailable: %v", err)
 	}

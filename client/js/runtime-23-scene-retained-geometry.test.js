@@ -1041,3 +1041,62 @@ for (const fresh of [true, false]) {
     harness.renderer.dispose();
   });
 }
+
+test("Scene3D keeps a skinned mesh's shadow-casting flag in the draw bundle", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const skinned = (castShadow) => {
+    const object = retainedTriangle({ id: "skinned-" + castShadow, castShadow }, F32);
+    object.vertices = {
+      ...object.vertices,
+      joints: new F32([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      weights: new F32([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+    };
+    object.skin = { jointMatrices: new F32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+    return renderBundle(api, object, 0).meshObjects[0];
+  };
+  assert.equal(skinned(true).castShadow, true, "a skinned caster reaches the shadow passes");
+  assert.equal(skinned(false).castShadow, false, "a skinned mesh that does not cast stays out of them");
+});
+
+test("Scene3D never frustum-culls a skinned shadow caster, so players just off screen still cast", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const farOff = { z: 50, castShadow: true }; // behind the camera at z 6, which looks down -z
+  const plain = renderBundle(api, retainedTriangle({ id: "far-plain", ...farOff }, F32), 0).meshObjects[0];
+  const skinned = retainedTriangle({ id: "far-skinned", ...farOff }, F32);
+  skinned.vertices = {
+    ...skinned.vertices,
+    joints: new F32(12),
+    weights: new F32([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+  };
+  skinned.skin = { jointMatrices: new F32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+  const record = renderBundle(api, skinned, 0).meshObjects[0];
+  assert.equal(plain.viewCulled, true, "the control: an ordinary mesh behind the camera is culled from the camera view");
+  assert.equal(record.viewCulled, false, "a skinned mesh is not, so the shadow passes can still draw it");
+  assert.equal(record.castShadow, true);
+});
+
+test("Scene3D retains a skinned morph mesh whose snapshot is revisioned, and no other morph mesh", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const morphed = (skinnedEntry) => {
+    const object = retainedTriangle({ id: "morphed-" + skinnedEntry }, F32);
+    object.vertices = { ...object.vertices, joints: new F32(12), weights: new F32([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]) };
+    object.skin = { jointMatrices: new F32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+    object._morphAnim = { skinned: skinnedEntry };
+    return renderBundle(api, object, 0).meshObjects[0];
+  };
+  assert.equal(morphed(true).retainedGeometry, true, "the skinned fold bumps the revision, so the mesh is a retained snapshot");
+  assert.equal(morphed(false).retainedGeometry, false, "a rigid morph changes its streams every pose and stays live");
+});
+
+test("Scene3D publishes the planner's live counters on window.__gosx_scene3d_counters", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const before = vm.runInContext("window.__gosx_scene3d_counters.planner.cssRecordHashes", env.context);
+  assert.equal(typeof before, "number");
+  renderBundle(api, retainedTriangle({ id: "counted" }, vm.runInContext("Float32Array", env.context)), 0);
+  const planner = vm.runInContext("window.__gosx_scene3d_counters.planner", env.context);
+  assert.equal(typeof planner.plans, "number");
+  assert.equal(typeof planner.fullVertexHashScans, "number");
+});

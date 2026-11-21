@@ -683,6 +683,43 @@ test("Scene3D tier and rung governors shed sustained CPU work even with fast GPU
   }
 });
 
+test("Scene3D adaptiveBudget gpu keeps quality on CPU-bound frames and still sheds GPU-bound ones", () => {
+  for (const h of [createAdaptiveQualityHarness({ qualityTier: "full", adaptiveBudget: "gpu" }),
+    createQualityLadderHarness(THREE_RUNG_LADDER, { qualityStartRung: 2, adaptiveBudget: "gpu" })]) {
+    const initial = h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier;
+    for (let i = 0; i < 40; i++) {
+      h.clock.now += 34;
+      h.renderer.sample = { source: "gpu-pass-timestamp", gpuMS: 7, atMS: h.clock.now };
+      h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 30, h.clock.now, h.renderer);
+    }
+    assert.equal(h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier, initial, "30 ms of CPU work with 7 ms of GPU time keeps quality");
+    assert.equal(h.state.measurement, "gpu-pass-timestamp");
+    assert.equal(h.state.lastMeasurement.durationMS, 7);
+    assert.equal(h.state.lastMeasurement.cpuDurationMS, 30, "the CPU time stays on the sample");
+    for (let i = 0; i < 24; i++) {
+      h.clock.now += 16;
+      h.renderer.sample = { source: "gpu-pass-timestamp", gpuMS: 36, atMS: h.clock.now };
+      h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 3, h.clock.now, h.renderer);
+    }
+    assert.notEqual(h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier, initial, "GPU-bound frames still shed quality");
+  }
+});
+
+test("Scene3D adaptiveBudget gpu never falls back to display timing while a GPU timer is present", () => {
+  for (const h of [createAdaptiveQualityHarness({ qualityTier: "full", adaptiveBudget: "gpu" }),
+    createQualityLadderHarness(THREE_RUNG_LADDER, { qualityStartRung: 2, adaptiveBudget: "gpu" })]) {
+    const initial = h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier;
+    h.renderer.pollPerformanceSample = function() { return null; };
+    h.renderer.getPerformanceTimingStatus = function() { return { available: true, active: true, pending: true, source: "gpu-pass-timestamp" }; };
+    for (let i = 0; i < 60; i++) {
+      h.clock.now += 80;
+      h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 30, h.clock.now, h.renderer);
+    }
+    assert.equal(h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier, initial, "slow display frames without GPU samples keep quality");
+    assert.notEqual(h.state.measurement, "cpu-raf-stale-renderer-timing");
+  }
+});
+
 test("Scene3D CPU work sampling honors an authored 30 FPS cadence", () => {
   const h = createAdaptiveQualityHarness({ maxFrameRate: 30 });
   for (let i = 0; i < 30; i++) {
@@ -1205,4 +1242,24 @@ test("Scene3D adaptiveQuality+QualityLadder warning fires only for explicit tier
   const noAdaptive = await mountWithProps("scene-ladder-warn-none", { qualityLadder: ladder }, {});
   assert.equal(ladderWarnings(noAdaptive.warnLog).length, 0,
     "no adaptiveQuality authored + ladder must NOT warn");
+});
+
+test("Scene3D publishes the renderer's image-lighting result for page checks", () => {
+  const h = createAdaptiveQualityHarness({ qualityTier: "full" });
+  let ibl = { requested: true, active: false, state: "loading", reason: "product-pending", radianceMipLevels: 0 };
+  h.renderer.iblStatus = () => ibl;
+  for (let i = 0; i < 31; i++) h.sample(5);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-state"), "loading");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-reason"), "product-pending");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-radiance-mips"), "0");
+  ibl = { requested: true, active: true, state: "active", reason: "", radianceMipLevels: 7 };
+  for (let i = 0; i < 31; i++) h.sample(5);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-state"), "active");
+  assert.ok(!h.mount.getAttribute("data-gosx-scene3d-ibl-reason"), "no reason once active");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-radiance-mips"), "7");
+  // A failure names its reason and binds no mips.
+  h.renderer.iblStatus = () => ({ state: "failed", reason: "product-upload", active: false });
+  for (let i = 0; i < 31; i++) h.sample(5);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-state"), "failed");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-reason"), "product-upload");
 });

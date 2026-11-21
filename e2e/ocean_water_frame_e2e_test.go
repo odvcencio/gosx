@@ -24,7 +24,7 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/scene"
 )
 
@@ -84,7 +84,7 @@ func TestWaterFrameOnTheGPU(t *testing.T) {
 
 	for _, backend := range []string{"webgpu", "webgl2"} {
 		t.Run(backend, func(t *testing.T) {
-			browser, err := chrometest.Start(t.Context(), chrome, "--no-sandbox", "--mute-audio", "--window-size=900,520")
+			browser, err := browsertest.Start(t.Context(), chrome, "--no-sandbox", "--mute-audio", "--window-size=900,520")
 			if err != nil {
 				t.Skipf("chrome unavailable: %v", err)
 			}

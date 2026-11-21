@@ -1468,6 +1468,19 @@
     });
   }
 
+  // A model's attachments (scene.Attachment): plain records, each with
+  // its own material as an override bag, as a model's material is.
+  function sceneNormalizeModelAttachments(list) {
+    if (!Array.isArray(list)) return null;
+    const out = [];
+    for (const entry of list) {
+      if (!sceneIsPlainObject(entry) || typeof entry.name !== "string" || typeof entry.src !== "string" || typeof entry.joint !== "string") continue;
+      const material = sceneIsPlainObject(entry.material) ? normalizeSceneModel(Object.assign({}, entry.material, { src: entry.src }), 0).materialOverride : null;
+      out.push({ name: entry.name, src: entry.src.trim(), mesh: typeof entry.mesh === "string" ? entry.mesh : "", joint: entry.joint, hidden: entry.hidden === true, material });
+    }
+    return out.length ? out : null;
+  }
+
   function normalizeSceneModel(item, index) {
     const current = item && typeof item === "object" ? item : {};
     const previewSrc = typeof current.previewSrc === "string" && current.previewSrc.trim() ? current.previewSrc.trim() : "";
@@ -1594,6 +1607,9 @@
       animationSeq: typeof current.animationSeq === "string" ? current.animationSeq : "",
       clipSampled: sceneBool(current.clipSampled, false),
       rootMotion: sceneBool(current.rootMotion, false),
+      morphWeights: current.morphWeights && typeof current.morphWeights === "object" && !Array.isArray(current.morphWeights) ? current.morphWeights : null,
+      attachments: sceneNormalizeModelAttachments(current.attachments),
+      jointScales: current.jointScales && typeof current.jointScales === "object" && !Array.isArray(current.jointScales) ? current.jointScales : null,
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       interactive: sceneBool(current.interactive, false),
       label: typeof current.label === "string" ? current.label.trim() : "",
@@ -3277,7 +3293,7 @@
       envRotation: scalar("envRotation", Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
       exposure: sceneClampNumberOrCSSVar(has("exposure") ? source.exposure : undefined, sceneNumber(base.exposure, 1) || 1, 0.05, 4),
       autoExposure: autoExposure && typeof autoExposure === "object" ? autoExposure : null,
-      toneMapping: text("toneMapping"),
+      toneMapping: text("toneMapping"), lightModel: text("lightModel"),
       fogColor: text("fogColor"),
       fogDensity: scalar("fogDensity", 0, Number.POSITIVE_INFINITY),
       crowds: sceneEnvironmentCrowds(has("crowds") ? source.crowds : base.crowds),
@@ -3329,7 +3345,7 @@
         envRotation: sceneClampNumberOrCSSVar(environment.envRotation, 0, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
         exposure: sceneClampNumberOrCSSVar(environment.exposure, 1, 0.05, 4),
         autoExposure: environment.autoExposure || null,
-        toneMapping: sceneEnvironmentText(environment, "toneMapping"),
+        toneMapping: sceneEnvironmentText(environment, "toneMapping"), lightModel: sceneEnvironmentText(environment, "lightModel"),
         fogColor: sceneEnvironmentText(environment, "fogColor"),
         fogDensity: sceneClampNumberOrCSSVar(environment.fogDensity, 0, 0, Number.POSITIVE_INFINITY),
         crowds: environment.crowds || null,
@@ -4385,6 +4401,7 @@
   // must never be renumbered.
   const SCENE_CMD_SET_POST_UNIFORMS = 14;
   const SCENE_CMD_SET_GROUPS = 15;
+  const SCENE_CMD_PATCH_MODELS = 16;
 
   function applySceneCommands(state, commands) {
     if (!state || !Array.isArray(commands) || commands.length === 0) return;
@@ -4463,6 +4480,8 @@
       case SCENE_CMD_SET_POST_UNIFORMS:
         applyScenePostUniformsCommand(state, command.data);
         return;
+      case SCENE_CMD_PATCH_MODELS:
+        return typeof applyScenePatchModelsCommand === "function" ? applyScenePatchModelsCommand(state, command.data) : null;
       default:
         return;
     }
@@ -7623,7 +7642,7 @@
       // must still be hashed and uploaded after their contents change.
       const retained = Boolean(bundle.retainedGeometryEnabled && vertices.immutable === true &&
         geometryRevision !== null && vertices.dynamic !== true &&
-        !object.computedMorph && !object._morphAnim && !object._nodeAnimLive &&
+        !object.computedMorph && !(object._morphAnim && !object._morphAnim.skinned) && !object._nodeAnimLive &&
         !(object.dynamicGeometry || object.geometryDynamic || object.geometryDirty) &&
         !(vertices.dirty || vertices.needsUpdate));
       const meshRecord = {
@@ -7635,7 +7654,7 @@
         _renderPassDerived: (object && object._renderPassDerived) === true,
         texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
         static: false,
-        castShadow: false,
+        castShadow: Boolean(object.castShadow),
         receiveShadow: Boolean(object.receiveShadow),
         planarReflection: object.planarReflection !== false,
         depthWrite: object.depthWrite,
@@ -7649,7 +7668,10 @@
         vertices: vertices,
         directVertices: true,
         retainedGeometry: retained,
-        resourceOwner: retained ? resourceOwner : undefined,
+        // This record is rebuilt every frame; the scene object behind it is
+        // not. Renderers key per-object GPU state (the skin output buffer and
+        // its bind group, TAA history) on resourceOwner, retained or not.
+        resourceOwner: resourceOwner,
         geometryRevision: retained ? geometryRevision : undefined,
         modelMatrix: sceneObjectModelMatrix(object, timeSeconds),
         vertexOffset: 0,

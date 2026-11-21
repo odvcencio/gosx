@@ -39,10 +39,16 @@ const webGLChunkName = "bootstrap-feature-scene3d-webgl.js"
 // webGLPrivatePropertyNames returns the names on the rename list.
 func webGLPrivatePropertyNames(t *testing.T) []string {
 	t.Helper()
-	body, ok := strings.CutPrefix(webGLPrivatePropertyPattern, "^(")
+	return privatePropertyNames(t, webGLPrivatePropertyPattern)
+}
+
+// privatePropertyNames splits a rename pattern into its names.
+func privatePropertyNames(t *testing.T, pattern string) []string {
+	t.Helper()
+	body, ok := strings.CutPrefix(pattern, "^(")
 	body, closed := strings.CutSuffix(body, ")$")
 	if !ok || !closed || strings.ContainsAny(body, `()[]\.*+?`) {
-		t.Fatalf("webGLPrivatePropertyPattern must stay a plain list of whole names, ^(a|b|c)$; got %q", webGLPrivatePropertyPattern)
+		t.Fatalf("a rename pattern must stay a plain list of whole names, ^(a|b|c)$; got %q", pattern)
 	}
 	return strings.Split(body, "|")
 }
@@ -51,11 +57,11 @@ func webGLPrivatePropertyNames(t *testing.T) []string {
 // property name. It asks esbuild, because esbuild does the renaming: a dotted
 // access, an object key, a shorthand key, a quoted key and a destructuring key
 // all count, and a string value or a local variable does not.
-func renamedProperties(name, code string) ([]string, error) {
+func renamedProperties(name, code, pattern string) ([]string, error) {
 	result := esbuild.Transform(code, esbuild.TransformOptions{
 		Loader:       esbuild.LoaderJS,
 		Sourcefile:   name,
-		MangleProps:  webGLPrivatePropertyPattern,
+		MangleProps:  pattern,
 		MangleQuoted: esbuild.MangleQuotedTrue,
 		MangleCache:  map[string]interface{}{},
 	})
@@ -86,23 +92,28 @@ type webGLRenameLeak struct {
 // names, which is consistent with itself; what matters is the code that can
 // meet the renamed chunk on one page.
 func webGLRenameLeaks(dir string, entries []output) ([]webGLRenameLeak, error) {
-	inWebGL := map[string]bool{}
+	return renameLeaks(dir, entries, webGLChunkName, webGLPrivatePropertyPattern)
+}
+
+// renameLeaks is webGLRenameLeaks for any chunk and its rename pattern.
+func renameLeaks(dir string, entries []output, chunkName, pattern string) ([]webGLRenameLeak, error) {
+	inChunk := map[string]bool{}
 	for _, entry := range entries {
-		if entry.name != webGLChunkName {
+		if entry.name != chunkName {
 			continue
 		}
 		for _, src := range entry.sources {
-			inWebGL[src.rel] = true
+			inChunk[src.rel] = true
 		}
 	}
 	var leaks []webGLRenameLeak
 	for _, entry := range entries {
-		if entry.name == webGLChunkName {
+		if entry.name == chunkName {
 			continue
 		}
 		bodies := make([]string, len(entry.sources))
 		for i, src := range entry.sources {
-			if inWebGL[src.rel] {
+			if inChunk[src.rel] {
 				continue
 			}
 			data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
@@ -115,7 +126,7 @@ func webGLRenameLeaks(dir string, entries []output) ([]webGLRenameLeak, error) {
 		if err != nil {
 			return nil, fmt.Errorf("transpile %s without the WebGL chunk's sources: %w", entry.name, err)
 		}
-		names, err := renamedProperties(entry.name, code)
+		names, err := renamedProperties(entry.name, code, pattern)
 		if err != nil {
 			return nil, err
 		}
@@ -141,7 +152,18 @@ func webGLRenameLeaks(dir string, entries []output) ([]webGLRenameLeak, error) {
 // exception here: whether two same-named properties are "really" the same
 // object is exactly the judgment that failed before.
 func TestWebGLRenamedPropertiesStayInsideTheWebGLChunk(t *testing.T) {
-	leaks, err := webGLRenameLeaks(shippedClientJS(t), outputs)
+	checkRenamedPropertiesStayInside(t, webGLChunkName, webGLPrivatePropertyPattern)
+}
+
+// TestWebGPURenamedPropertiesStayInsideTheWebGPUChunk is the same gate for the
+// WebGPU chunk and webGPUPrivatePropertyPattern.
+func TestWebGPURenamedPropertiesStayInsideTheWebGPUChunk(t *testing.T) {
+	checkRenamedPropertiesStayInside(t, webGPUChunkName, webGPUPrivatePropertyPattern)
+}
+
+func checkRenamedPropertiesStayInside(t *testing.T, chunkName, pattern string) {
+	t.Helper()
+	leaks, err := renameLeaks(shippedClientJS(t), outputs, chunkName, pattern)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +177,7 @@ func TestWebGLRenamedPropertiesStayInsideTheWebGLChunk(t *testing.T) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		t.Errorf("%s renames the property %q, and other chunks use that name too:\n  %s", webGLChunkName, name, strings.Join(byName[name], "\n  "))
+		t.Errorf("%s renames the property %q, and other chunks use that name too:\n  %s", chunkName, name, strings.Join(byName[name], "\n  "))
 	}
 }
 
@@ -163,9 +185,21 @@ func TestWebGLRenamedPropertiesStayInsideTheWebGLChunk(t *testing.T) {
 // direction: a name the WebGL chunk no longer uses renames nothing, and it
 // would start renaming the day another file adopts the word.
 func TestWebGLRenameListHasNoUnusedName(t *testing.T) {
+	checkRenameListHasNoUnusedName(t, webGLChunkName, webGLPrivatePropertyPattern)
+}
+
+// TestWebGPURenameListHasNoUnusedName is the same check for the WebGPU list.
+func TestWebGPURenameListHasNoUnusedName(t *testing.T) {
+	checkRenameListHasNoUnusedName(t, webGPUChunkName, webGPUPrivatePropertyPattern)
+}
+
+const webGPUChunkName = "bootstrap-feature-scene3d-webgpu.js"
+
+func checkRenameListHasNoUnusedName(t *testing.T, chunkName, pattern string) {
+	t.Helper()
 	dir := shippedClientJS(t)
 	for _, entry := range outputs {
-		if entry.name != webGLChunkName {
+		if entry.name != chunkName {
 			continue
 		}
 		bodies := make([]string, len(entry.sources))
@@ -180,7 +214,7 @@ func TestWebGLRenameListHasNoUnusedName(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		used, err := renamedProperties(entry.name, code)
+		used, err := renamedProperties(entry.name, code, pattern)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,14 +222,14 @@ func TestWebGLRenameListHasNoUnusedName(t *testing.T) {
 		for _, name := range used {
 			isUsed[name] = true
 		}
-		for _, name := range webGLPrivatePropertyNames(t) {
+		for _, name := range privatePropertyNames(t, pattern) {
 			if !isUsed[name] {
-				t.Errorf("webGLPrivatePropertyPattern lists %q, but %s has no property of that name", name, webGLChunkName)
+				t.Errorf("the rename list for %s names %q, but the chunk has no property of that name", chunkName, name)
 			}
 		}
 		return
 	}
-	t.Fatalf("the chunk table has no %s", webGLChunkName)
+	t.Fatalf("the chunk table has no %s", chunkName)
 }
 
 // TestWebGLRenameLeakIsReported proves the check on a chunk table small enough

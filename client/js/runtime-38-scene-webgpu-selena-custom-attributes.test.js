@@ -41,7 +41,7 @@ function makeSandbox() {
   };
   const code = [
     "sceneSelenaAttributeComponents",
-    "sceneSelenaAttributeSource",
+    "wgpuSelenaAttributeSource",
     "sceneSelenaPipelineAttributes",
     "webGPUDirectAttribute",
   ].map((name) => extractFn(webgpuSrc, name)).join("\n");

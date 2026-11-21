@@ -4,12 +4,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createBoardWebGPUHarness, bundleBoxes, flushAsyncWork, deviceCallSnapshot, bundleMeshScene } = require("./runtime-test-harness.js");
 
-async function setup({ post = false, timing = false, optIn = false, asyncScopes = false, perf = false, mesh = false, postTail = "toneMapping" } = {}) {
+async function setup({ zeroFrameStamps = false, post = false, timing = false, optIn = false, asyncScopes = false, perf = false, mesh = false, postTail = "toneMapping" } = {}) {
   let now = 0;
   const resolves = [];
   const writes = [];
   const h = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false,
-    performanceNow: () => now, fakeDeviceOptions: { timestampQuery: timing },
+    performanceNow: () => now, fakeDeviceOptions: { timestampQuery: timing, zeroFrameStamps },
     configureDevice(device, state, env) {
       env.context.__gosx_scene3d_webgpu_pass_timing = optIn;
       if (asyncScopes) device.popErrorScope = () => Promise.resolve(null);
@@ -201,5 +201,33 @@ test("gosx perf collects a GPU frame sample for every measured frame and opts in
     assert.equal(passes.length, 60, "delayed pass ring still yields one sample per steady frame");
     assert.ok(h.resolves.slice(resolves).includes(4));
     assert.ok(h.writes.filter(([name]) => name.endsWith("webgpu-gpu-ms")).length < 10);
+  } finally { h.renderer.dispose(); }
+});
+
+test("WebGPU frame timer that writes zero stamps falls back to the render-pass span", async () => {
+  const h = await setup({ timing: true, zeroFrameStamps: true });
+  try {
+    for (let i = 0; i < 6; i++) await h.frame(192 + i * 16);
+    const status = h.renderer.getPerformanceTimingStatus();
+    assert.equal(status.source, "gpu-pass-timestamp");
+    assert.equal(status.available, true);
+    let sample = null;
+    for (let i = 0; i < 6 && !sample; i++) { await h.frame(300 + i * 16); sample = h.renderer.pollPerformanceSample(); }
+    assert.ok(sample, "the pass span arrives as the performance sample");
+    assert.equal(sample.source, "gpu-pass-timestamp");
+    assert.equal(sample.gpuMS, 4, "shadow begin to main end in the fake ramp");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "pass-span");
+    const before = h.fake.state.computePasses.length;
+    await h.frame(600);
+    const labels = h.fake.state.computePasses.slice(before).map(p => p.descriptor && p.descriptor.label);
+    assert.ok(!labels.includes("gosx-frame-timer-start"), "an unusable frame timer stops stamping");
+  } finally { h.renderer.dispose(); }
+});
+
+test("WebGPU frame timer with real stamps keeps the frame scope", async () => {
+  const h = await setup({ timing: true });
+  try {
+    await h.frame(192);
+    assert.equal(h.renderer.getPerformanceTimingStatus().source, "gpu-timestamp");
   } finally { h.renderer.dispose(); }
 });

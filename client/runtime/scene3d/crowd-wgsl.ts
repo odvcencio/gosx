@@ -314,6 +314,20 @@ function sceneCrowdGPUPipeline(res: any, o: any, tier: number, material: any): a
   return pipeline;
 }
 
+// sceneCrowdGPUWarm builds every level of detail's pipelines with a crowd's
+// first draw, instead of on the first frame a level has fans to draw: the full
+// level usually first appears mid-play, when the camera nears the stands, and
+// a pipeline that is still building holds the whole frame back.
+function sceneCrowdGPUWarm(res: any, o: any, gpu: any, materials: any): void {
+  const key = o.format + "|" + o.samples + "|" + (o.specular ? 1 : 0);
+  if (gpu.warmed === key) return;
+  gpu.warmed = key;
+  for (let tier = 0; tier < 3; tier++) {
+    sceneCrowdGPUPipeline(res, o, tier, materials.fan);
+    if (gpu.packed.propBlocks) sceneCrowdGPUPipeline(res, o, tier, materials.props);
+  }
+}
+
 // sceneCrowdGPUDraw is the renderer's per-frame entry; it returns the state it
 // publishes as data-gosx-scene3d-crowd: none, pending, ready or failed.
 function sceneCrowdGPUDraw(pass: any, o: any): string {
@@ -337,6 +351,7 @@ function sceneCrowdGPUDraw(pass: any, o: any): string {
       stats.fans += gpu.packed.count; stats.full += pick.fans[0]; stats.low += pick.fans[1]; stats.impostor += pick.fans[2];
       o.device.queue.writeBuffer(gpu.uniform, 0, sceneCrowdUniforms(ir, store, res.bake, gpu.model, now, gpu.uniforms));
       const materials = sceneCrowdMaterials(ir);
+      sceneCrowdGPUWarm(res, o, gpu, materials);
       for (let tier = 0; tier < 3; tier++) {
         const ranges = pick.ranges[tier];
         if (!ranges.length) continue;

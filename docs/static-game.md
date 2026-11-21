@@ -9,6 +9,9 @@ a game jam platform, itch.io-style host, or CDN bucket expects.
 ```sh
 gosx export --zip          # dist/static/ and dist/static.zip
 gosx export --zip=game.zip # archive at a path you choose
+gosx export --out=site     # also write the bundle to ./site
+gosx export --precompressed=false   # no .gz or .br copies in the folder
+gosx export --single-file  # also write dist/static.html, one file (see "One file")
 ```
 
 `gosx export` runs the same production pipeline as `gosx build --prod`: the
@@ -21,7 +24,84 @@ copy that ships inside TinyGo. If neither exists it prints an install hint
 The zip holds `index.html` at its root, plus every page, script, WASM file, and
 public asset. It leaves out the `.gz` and `.br` copies, because a host can
 compress on its own. The folder keeps them for hosts that serve precompressed
-files.
+files, unless you pass `--precompressed=false`.
+
+| Option | What it does |
+|---|---|
+| `--zip[=path]` | Writes the archive. Default path `dist/static.zip`. |
+| `--out=<dir>` | Also writes the static bundle to `<dir>`. A relative path is relative to the current directory. The folder is created. It must be missing, empty, or a previous export (it has an `index.html`); a previous export's files are replaced, not merged. A folder that is not empty and has no `index.html`, one that holds a `go.mod`, the project folder or a parent of it, and `dist/static` are refused, before the build starts. The last line reads `gosx export: static bundle in <dir>`. |
+| `--precompressed=false` | Leaves the `.gz` and `.br` copies out of the exported folder: `<dir>` with `--out`, else `dist/static`. Use it for a host that rejects them. Only a `.gz` or `.br` file that sits beside its original is dropped, so an app's own `data.gz` stays. Default `true`. |
+| `--single-file[=path]` | Also writes the bundle as one HTML file. Default path `dist/static.html`. A relative path is relative to the current directory. |
+| `--go-tags=a,b` | Builds the project's `build.goWASM` entries with these Go build tags (letters, digits, underscore). The runtime and the server build do not get them. The build summary lists them. |
+
+Tested: the flag parsing, the `--out` folder rule, the copy that skips the
+copies, and one real export of the starter app with all three options. Not
+tested: `--out` on Windows, and `--out` onto a symbolic link.
+
+## One file
+
+`--single-file` packs the whole bundle into one `.html` file. Double-click it
+and the game runs from disk (`file://`) with no server and no network. The same
+file also works when a host serves it from any path.
+
+How it works. The file holds a small loader page and, inside it, every file of
+the bundle in one gzip block (base64). The loader's `<title>`, `lang`,
+viewport and `theme-color` come from your `index.html`, so the loading screen
+looks like the app. On open, the loader unpacks the block with
+`DecompressionStream`, makes one blob URL per file, rewrites the paths in
+`index.html` (attributes and the inline JSON) to those URLs, and writes the page
+with `document.open/write/close`. A stylesheet gets its `url(...)` and `@import`
+paths rewritten before its blob is made. A `fetch` of a path that names a
+bundled file is answered from memory; every other request goes to the real
+`fetch`. glTF and GLB paths stay as written in the markup and are served the
+same way through `fetch`, because the scene loader picks its parser from the
+path and resolves a model's buffers and textures against it. A worker or a
+worklet that starts from a relative path to a bundled script gets the blob (or
+`data:`) URL. The output is deterministic: sorted paths, a fixed MIME table, and
+a gzip header with no timestamp. The same bytes in give the same file out (with
+one Go version; the compressor may differ between Go versions).
+
+The file holds every file except `.gz`, `.br`, `.map` and `.html` pages other
+than `index.html`. A single file holds one page: if the bundle has pages besides
+`index.html` and `404.html`, `gosx export` prints a warning that names them. The
+loader shows a status line while it unpacks. If the browser lacks
+`DecompressionStream` or WebAssembly, or the unpack fails, it shows a plain
+message instead. It makes no external request.
+
+What does not work (each is pinned by the browser test):
+
+- `import()` from a bundled script, a `<script type="module">` that imports
+  another file by relative path, and `importScripts()` inside a worker. A blob
+  URL is no base for a relative path, so these fail. Bundle the module graph into
+  one script before you export (for example with esbuild).
+- `XMLHttpRequest`, and `fetch` inside a worker, are not wrapped, so they go to the real network (not tested).
+- A path built at run time (`"models/" + name`) works through `fetch`, but not as
+  an `<img src>` set from script: only paths written in `index.html` are
+  rewritten.
+- The unpack needs the whole file in memory: the loader holds the base64 text,
+  the bytes and the blobs at once.
+
+Tested in Chrome for Testing 1248 (headless, Linux), on a small fixture
+(a stylesheet with `@import` and `url()`, an image, a classic script, an inline
+JSON manifest, a bundled JSON file, a WebAssembly module loaded with
+`instantiateStreaming(fetch(...))`, a glTF with a separate buffer, a worker, and
+an audio worklet): opened with `file://` while every `http://` and `https://`
+request was blocked, and served over HTTP from `/deep/sub/` (the server saw no
+request for a bundled file). Not tested: Firefox and Safari, Windows `file://`
+paths, and any game other than the fixture and one real export below. The
+fixture packs to 10,466 bytes. A real game with 65 files (3D models, textures,
+WebAssembly, runtime scripts), 20.7 MB of files without the `.gz` and
+`.br` copies, packs to 11,599,640 bytes (11.1 MiB).
+
+## A WASM audio kernel in a static game
+
+A game that plays a WASM audio kernel (`game/audio/kernel`, for example
+Cicada's music engine) has no server to mount `worklet.Handler()` on. Set
+`kernel.Config.InlineProcessor`: the processor then loads from the copy
+compiled into the game, as a `data:` URL, in the folder and in the single file.
+Put the kernel module and its data in `public/` and fetch them with
+`audio.HTTPLoader` and a relative path; in the single file those requests are
+answered from memory.
 
 ## What "any path" means
 

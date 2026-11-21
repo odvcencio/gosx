@@ -120,6 +120,37 @@ test("a moving retained mesh and a skinned mesh draw motion vectors; still meshe
   assert.deepEqual(log.filter((entry) => entry[0] === "pass").map((entry) => entry[1]), ["gosx-taa-velocity", "gosx-taa-resolve", "gosx-taa-copy"]);
 });
 
+test("a skinned mesh keeps one previous-skin copy on its owner while its draw record is rebuilt each frame", () => {
+  const made = [];
+  const sized = () => {
+    const device = stubDevice(), create = device.createBuffer;
+    device.createBuffer = (desc) => { const buffer = create(desc); buffer.size = desc.size; made.push(buffer); return buffer; };
+    return device;
+  };
+  let device = sized();
+  const skin = { size: 96 }, owner = { id: "runner" };
+  const temporal = api.wgpuCreateTemporalAA(() => ({
+    device, linearSampler: {}, materialGroup: () => ({}), previousSkin: (obj) => (obj.resourceOwner || obj)._gosxTAAPreviousSkin || null,
+    skinBuffer: (obj) => obj.skinned ? skin : null, bindPositions: () => true, bindIndices: () => 0,
+  }));
+  const effects = [{ kind: "taa" }];
+  const copies = () => made.filter((buffer) => buffer.desc && buffer.desc.label === "gosx-taa-previous-skin");
+  const step = (i) => {
+    // The scene hands the renderer a new draw record for the same owner every frame.
+    const record = { id: "runner", skinned: true, resourceOwner: owner, modelMatrix: identity(), vertexCount: 900 };
+    temporal.beginFrame(effects, frame(identity(), { now: i * 16 }));
+    temporal.capturePreviousSkins(stubEncoder([]), [record]);
+    temporal.resolve(stubEncoder([]), effects, { colorView: {}, colorFormat: "rgba16float", depthView: {}, samples: 1, objects: [record], particles: [], frameGroup: {}, bundle: {} });
+  };
+  for (let i = 0; i < 4; i++) step(i);
+  assert.equal(copies().length, 1, "one previous-skin buffer for the owner, not one per frame");
+  assert.strictEqual(owner._gosxTAAPreviousSkin, copies()[0]);
+  device = sized();
+  step(4);
+  assert.equal(copies().length, 2, "a new device gets its own previous-skin buffer");
+  assert.strictEqual(owner._gosxTAAPreviousSkin, copies()[1]);
+});
+
 test("history resets on a camera cut, a resize and a long gap", () => {
   const device = stubDevice();
   const temporal = api.wgpuCreateTemporalAA(() => ({ device, linearSampler: {}, materialGroup: () => ({}), previousSkin: () => null, skinBuffer: () => null, bindPositions: () => true, bindIndices: () => 0 }));

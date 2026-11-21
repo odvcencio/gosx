@@ -99,6 +99,8 @@ type layerState struct {
 	weight        float64
 	playing       float64
 	runtimeWeight float64
+	// sampled is true while SetLayerSamples owns this layer's samples.
+	sampled bool
 }
 
 // Instance is one character's animation state. It is not safe for
@@ -125,6 +127,9 @@ type Instance struct {
 	// the frame dt the renderer uses for smoothing, also across frames that
 	// LOD skips.
 	sinceEncode float64
+	// root is the model placement sent with each frame while hasRoot is set.
+	root    Pose
+	hasRoot bool
 }
 
 // New creates an Instance for the Scene3D model with the given ID. The model
@@ -169,7 +174,8 @@ func (in *Instance) ID() string { return in.id }
 func (in *Instance) Program() *Program { return in.prog }
 
 // Reset restores parameter defaults, enters each layer's entry state at time
-// zero, and clears events. IK inputs and layer weights are kept.
+// zero, and clears events. Sampled layers return to their state machines. IK
+// inputs, layer weights and the root placement are kept.
 func (in *Instance) Reset() {
 	for i, param := range in.prog.params {
 		in.params[i] = param.Default
@@ -182,6 +188,7 @@ func (in *Instance) Reset() {
 		ls.n = 0
 		ls.fading = false
 		ls.sampleCount = 0
+		ls.sampled = false
 		in.actions[li] = actionState{}
 		in.push(li, in.prog.layers[li].machine.entry, 0)
 		ls.stack[0].weight = 1
@@ -254,6 +261,96 @@ func (in *Instance) LayerWeight(layer int) float64 {
 	}
 	return in.layers[layer].weight
 }
+
+// SetLayerSamples makes layer a sampled layer: the renderer samples exactly
+// these clips at these times, blended by their relative weights, and the
+// layer's state machine, actions and clip events stop. Use it when your
+// simulation owns time (a replay you can scrub, rollback netcode): the pose
+// is then a function of the samples you pass and nothing else.
+//
+// Sample.Clip is a Program.ClipID. Times must be finite and not negative; a
+// time past the clip's end wraps when Sample.Loop is set and holds the last
+// key otherwise. Weights must be finite and not negative. A layer takes at
+// most MaxLayerSamples samples. It reports false and changes nothing when an
+// argument is out of range. The samples are copied, and they stay in effect
+// until the next call, ReleaseLayerSamples or Reset. Curves and IK weight
+// curves follow the samples. SetLayerWeight and the layer's WeightParam still
+// scale the layer.
+func (in *Instance) SetLayerSamples(layer int, samples ...Sample) bool {
+	if layer < 0 || layer >= len(in.layers) || len(samples) > MaxLayerSamples {
+		return false
+	}
+	for i := range samples {
+		s := &samples[i]
+		if s.Clip < 0 || s.Clip >= len(in.prog.clips) || !finite(s.Time) || s.Time < 0 || !finite(s.Weight) || s.Weight < 0 {
+			return false
+		}
+	}
+	ls := &in.layers[layer]
+	ls.sampled = true
+	ls.sampleCount = copy(ls.samples[:], samples)
+	in.actions[layer] = actionState{}
+	ls.weight = in.sampledWeight(layer)
+	in.updateCurves()
+	return true
+}
+
+// ReleaseLayerSamples returns a sampled layer to its state machine, which
+// resumes from the state it held before SetLayerSamples. It does nothing for
+// a layer that is not sampled.
+func (in *Instance) ReleaseLayerSamples(layer int) {
+	if layer < 0 || layer >= len(in.layers) || !in.layers[layer].sampled {
+		return
+	}
+	in.layers[layer].sampled = false
+	in.buildSamples(layer)
+	in.updateCurves()
+}
+
+// LayerSampled reports whether SetLayerSamples owns a layer.
+func (in *Instance) LayerSampled(layer int) bool {
+	return layer >= 0 && layer < len(in.layers) && in.layers[layer].sampled
+}
+
+// sampledWeight is a sampled layer's weight: its run-time weight and weight
+// parameter, or zero while it has no weighted sample.
+func (in *Instance) sampledWeight(li int) float64 {
+	ls := &in.layers[li]
+	total := 0.0
+	for i := 0; i < ls.sampleCount; i++ {
+		total += ls.samples[i].Weight
+	}
+	if total <= 0 {
+		ls.playing = 0
+		return 0
+	}
+	ls.playing = 1
+	return clamp01(in.layerScale(li))
+}
+
+// SetRoot places the model in the scene: every frame sent while a root is set
+// carries this position and yaw, and the renderer moves the model and poses
+// it in the same frame. It replaces the model's declared position and its
+// rotation about +Y; rotation about the other axes and scale stay as
+// declared. Non-finite values are ignored.
+//
+// Without a root the frame leaves the model where the scene put it, and you
+// move it with scene commands. A level-of-detail schedule does not delay a
+// root: pass every instance to Dispatch and the ones whose pose is not due
+// send their placement alone.
+func (in *Instance) SetRoot(p Pose) {
+	if !finite(p.X) || !finite(p.Y) || !finite(p.Z) || !finite(p.Yaw) {
+		return
+	}
+	in.root, in.hasRoot = p, true
+}
+
+// ClearRoot stops sending a placement. The model stays where the last frame
+// put it.
+func (in *Instance) ClearRoot() { in.hasRoot = false }
+
+// Root returns the placement SetRoot stored, and whether one is set.
+func (in *Instance) Root() (Pose, bool) { return in.root, in.hasRoot }
 
 // Step advances every layer by dt seconds: crossfades, clip times, events,
 // then at most one transition per layer. Negative or non-finite dt counts as
@@ -430,6 +527,11 @@ func (in *Instance) SetLookAt(chain int, target [3]float64, weight float64) {
 
 func (in *Instance) stepLayer(li int, dt float64) {
 	ls := &in.layers[li]
+	if ls.sampled {
+		// The caller owns the samples; only the layer weight follows Step.
+		ls.weight = in.sampledWeight(li)
+		return
+	}
 	machine := &in.prog.layers[li].machine
 	if ls.fading {
 		ls.fadeElapsed += dt

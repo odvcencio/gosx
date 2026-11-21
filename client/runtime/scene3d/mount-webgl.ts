@@ -250,6 +250,7 @@
           world: world, ibl: world.ibl || null, compositeCPUFrameMS: compositeMS,
         });
       },
+      iblStatus: function() { return worldRenderer?.iblStatus?.() || null; },
       resize: function(viewport: any) {
         worldRenderer?.resize?.(viewport);
         waterRenderer.resize?.(viewport);
@@ -770,6 +771,7 @@
 
   function sceneModelEffectivelyHidden(model, object) {
     return Boolean(model && model.visible === false)
+      || Boolean(model && model.attachments && sceneModelAttachmentHidden(model, object))
       || sceneModelMaxScale(model) <= 0.0015
       || sceneModelZeroOpacityHidesObject(model, object);
   }
@@ -1444,11 +1446,15 @@
     if (sharedGeometry) instanced.vertices = null;
     const normalized = normalizeSceneObject(instanced, prefix, sharedGeometry ? {vertices: sharedGeometry} : null);
     sceneApplyModelMaterialName(normalized, model);
-    if (!morphMeta && !nodeAnimSource && normalized && normalized.vertices) {
+    if (!nodeAnimSource && normalized && normalized.vertices && (!morphMeta || hasSkin)) {
       // Imported rigid and skeletal bind streams own immutable snapshots.
-      // Joint playback changes matrices; morph and node streams stay mutable.
-      // Retain attributes rather than rebuilding and hashing every triangle.
-      // Live rigid transforms advance the revision when geometry is rebaked.
+      // Joint playback changes matrices; rigid morph and node streams stay
+      // mutable. Retain attributes rather than rebuilding and hashing every
+      // triangle. Live rigid transforms advance the revision when geometry is
+      // rebaked. A skinned morph stream changes only when the morph fold
+      // writes new weights (gltfApplyAnimatedMorphPose), and that fold
+      // advances the revision, so the planner hashes it once per fold and not
+      // once per frame.
       normalized.vertices.immutable = true;
       normalized.vertices.revision = 0;
     }
@@ -1499,6 +1505,8 @@
         lastModelMatrix: null,
       };
     }
+    // Material inputs change only through scenePatchModelUniforms, which advances this.
+    if (normalized) normalized._matRev = 0;
     return normalized;
   }
 
@@ -2495,6 +2503,7 @@
           generation: previewGeneration,
           modelID: entry.model.id || "",
           modelIndex: entry.index,
+          morphWeights: entry.model.morphWeights || null,
           stage: "progressive-preload",
           variantScope,
         }).then(function(asset) {
@@ -2597,9 +2606,14 @@
     const variantScope = hydrationMeta && hydrationMeta.variantScope
       ? hydrationMeta.variantScope
       : (hydrationMeta && hydrationMeta.state ? hydrationMeta.state._modelTextureVariantScope : null);
+    // A model with its own morph weights needs the morph targets kept after
+    // load (each instance folds its weights at run time), so it loads a copy
+    // of its own, shared by every such model of the same Src.
+    const retainMorphs = (format === "glb" || format === "gltf") && Boolean(hydrationMeta && hydrationMeta.morphWeights);
+    const assetKey = retainMorphs ? key + "\u0000morph" : key;
     const cacheKey = (format === "glb" || format === "gltf") && variantScope && variantScope.key
-      ? String(variantScope.key) + "\u0000" + key
-      : key;
+      ? String(variantScope.key) + "\u0000" + assetKey
+      : assetKey;
     if (variantScope && variantScope.retired) throw new Error("Scene3D model texture scope retired");
     if ((format === "glb" || format === "gltf") && variantScope && variantScope.modelCacheKeys)
       variantScope.modelCacheKeys.add(cacheKey);
@@ -2629,7 +2643,7 @@
             var gltfApi = await ensureGLTFFeatureLoaded();
             const variantContext = variantScope ? variantScope.ready : null;
             const asset = parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(
-              await gltfApi.sceneLoadGLTFModel(key, variantContext),
+              await gltfApi.sceneLoadGLTFModel(key, variantContext, retainMorphs),
               key
             ), key);
             // Explicit WebGL scene prewarms include palette/bounds work before
@@ -2749,6 +2763,12 @@
   // True when any parsed animation channel drives rigid node TRS, so a
   // non-skinned, weights-free model still needs a mixer record and per-frame
   // pose ticks (one record per model, shared with skins/morphs).
+  // True when the model sets its own morph weights and the asset kept morph
+  // targets for them: the model needs a record that folds its weights.
+  function sceneModelHasOwnMorphs(asset, model) {
+    return Boolean(model && model.morphWeights && asset && Array.isArray(asset.objects) && asset.objects.some(o => o && o._morphAnim));
+  }
+
   function sceneModelHasNodeAnimations(asset) {
     const animations = asset && Array.isArray(asset.animations) ? asset.animations : [];
     for (let index = 0; index < animations.length; index += 1) {
@@ -2873,12 +2893,12 @@
     const hasMorphTargets = record.morphTargets && record.morphTargets.length > 0;
     const hasNodeAnimTargets = record.nodeAnimTargets && record.nodeAnimTargets.length > 0;
     const localNodeTransforms = hasMorphTargets || hasNodeAnimTargets
-      ? record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, null, record.rootNodes)
+      ? record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, null, record.rootNodes, record.jointScales)
       : null;
     if (hasMorphTargets) {
       const morphApi = (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api) || record.morphApi;
       if (morphApi && typeof morphApi.applyMorphPose === "function") {
-        morphApi.applyMorphPose(record.morphTargets, animatedTransforms, localNodeTransforms);
+        morphApi.applyMorphPose(record.morphTargets, animatedTransforms, localNodeTransforms, record.model && record.model.morphWeights);
       }
     }
     // Rigid node TRS playback for every emitted geometry kind. Mesh entries
@@ -2900,7 +2920,7 @@
         nodeAnimApi.applyNodeAnimPose(record.nodeAnimTargets, localNodeTransforms);
       }
     }
-    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform, record.rootNodes);
+    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform, record.rootNodes, record.jointScales);
     for (let index = 0; index < record.skins.length; index += 1) {
       const skin = record.skins[index];
       if (!skin) {
@@ -2949,7 +2969,7 @@
   }
 
   async function scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs, stagedObjects, stagedPoints) {
-    if ((!sceneModelHasSkins(skinInstances) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset))
+    if ((!sceneModelHasSkins(skinInstances) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset) && !sceneModelHasOwnMorphs(asset, instanceModel))
       || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
     }
@@ -2972,6 +2992,7 @@
       objectIDs: Array.isArray(objectIDs) ? objectIDs.slice() : [],
       nodes: asset.nodes,
       rootNodes: sceneModelRootNodes(asset.nodes),
+      jointScales: sceneModelJointScales(asset.nodes, instanceModel.jointScales),
       skins: skinInstances,
       animatedTransforms: new Map(),
       rootTransform: sceneModelTransformMatrix(instanceModel),
@@ -3650,6 +3671,7 @@
         crowd: model._instancedGLB === true,
         modelID: model.id || "",
         modelIndex,
+        morphWeights: model.morphWeights || null,
         stage: "load",
         variantScope: state && state._modelTextureVariantScope,
       });
@@ -3745,6 +3767,8 @@
         staged.objects.push(object);
         objectIDs.push(object.id);
       }
+      stage = "attachments";
+      if (Array.isArray(instanceModel.attachments)) await sceneInstantiateModelAttachments(state, generation, instanceModel, asset, skinInstances, prefix, staged, objectIDs);
       stage = "points";
       for (let i = 0; i < asset.points.length; i += 1) {
         const point = sceneInstantiateModelPointsEntry(asset.points[i], instanceModel, prefix, i);
@@ -3781,7 +3805,7 @@
         }
       }
       stage = "skin";
-      if (sceneModelHasSkins(skinInstances) || sceneModelHasWeightAnimations(asset) || sceneModelHasNodeAnimations(asset)) {
+      if (sceneModelHasSkins(skinInstances) || sceneModelHasWeightAnimations(asset) || sceneModelHasNodeAnimations(asset) || sceneModelHasOwnMorphs(asset, instanceModel)) {
         // ONE record per model: the playback record is the live record, the
         // same way skinned models already receive live patches. Registering
         // an additional static/live record under the same model ID would let
@@ -5121,6 +5145,7 @@
     const minDevicePixelRatio = Math.max(1, Math.min(2, sceneNumber(minProp, 1)));
     const warmupFrames = Math.max(0, Math.floor(sceneNumber(props && props.adaptiveWarmupFrames, 24)));
     const adaptivePostFX = sceneBool(props && props.adaptivePostFX, true);
+    const gpuBudget = String((props && props.adaptiveBudget) || adaptiveConfig.budget || "").trim().toLowerCase() === "gpu"; // "gpu": govern by GPU time alone, so a CPU-bound frame keeps its resolution and effects.
     const authoredFrameIntervalMS = Math.max(0, sceneNumber(props && props.frameIntervalMS, 0));
     // Key precedence MUST mirror sceneAnimationFrameIntervalMS in mount.ts:
     // frameIntervalMS, then maxFrameRate, then maxFPS. This read once skipped
@@ -5193,7 +5218,7 @@
     const state = {
       enabled: tierEnabled,
       targetFrameMS,
-      cpuRAFBudgetMS,
+      cpuRAFBudgetMS, gpuBudget,
       minDevicePixelRatio,
       warmupFrames,
       adaptivePostFX,
@@ -5375,7 +5400,7 @@
     return scratch[Math.max(0, Math.ceil(count * 0.95) - 1)];
   }
 
-  function sceneAdaptiveRendererSample(renderer, nowMS, cpuDurationMS = 0) {
+  function sceneAdaptiveRendererSample(renderer, nowMS, cpuDurationMS = 0, gpuBudget = false) {
     if (!renderer || typeof renderer.pollPerformanceSample !== "function") return null;
     let sample = null;
     try { sample = renderer.pollPerformanceSample(); } catch (e) { return null; }
@@ -5386,12 +5411,13 @@
     if (!(durationMS > 0) || !Number.isFinite(durationMS)) return null;
     const cpuMS = Math.max(0, sceneNumber(cpuDurationMS, 0));
     const source = String(sample.source || sample.measurement || "renderer");
+    const gpuOnly = gpuBudget === true && source.indexOf("gpu") === 0;
     return {
       // CPU and GPU work overlap. Govern by the slower stage, preserving the
       // renderer duration separately so a CPU-bound frame is never called GPU time.
-      durationMS: Math.max(durationMS, cpuMS),
+      durationMS: gpuOnly ? durationMS : Math.max(durationMS, cpuMS),
       rendererDurationMS: durationMS,
-      source: cpuMS > durationMS ? "cpu-work+" + source : source,
+      source: !gpuOnly && cpuMS > durationMS ? "cpu-work+" + source : source,
       atMS: sceneNumber(sample.atMS, nowMS),
       rafIntervalMS: 0,
       cpuDurationMS: cpuMS,
@@ -5408,7 +5434,23 @@
     }
   }
 
+  // sceneMirrorIBLState publishes what the renderer did with Environment.IBL
+  // (not what was asked) for page checks, every 30th frame: ibl-state is
+  // not-requested, validating, loading, active, unsupported or failed; ibl-reason
+  // names a failure; ibl-radiance-mips is the bound radiance level count.
+  function sceneMirrorIBLState(mount, renderer) {
+    if (!mount || !renderer || typeof renderer.iblStatus !== "function") return;
+    mount.__gosxIBLMirrorFrame = ((mount.__gosxIBLMirrorFrame || 0) + 1) % 30;
+    if (mount.__gosxIBLMirrorFrame !== 1) return;
+    let ibl = null;
+    try { ibl = renderer.iblStatus(); } catch (_iblStatusError) { return; }
+    setAttrValue(mount, "data-gosx-scene3d-ibl-state", ibl && ibl.state ? String(ibl.state) : "not-requested");
+    setAttrValue(mount, "data-gosx-scene3d-ibl-reason", ibl && ibl.reason ? String(ibl.reason) : "");
+    setAttrValue(mount, "data-gosx-scene3d-ibl-radiance-mips", String(ibl && ibl.active ? (ibl.radianceMipLevels || 0) : 0));
+  }
+
   function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
+    sceneMirrorIBLState(mount, renderer);
     if (state && viewport && viewport.devicePixelRatio > 0 && state.renderDevicePixelRatio !== viewport.devicePixelRatio) {
       state.renderDevicePixelRatio = viewport.devicePixelRatio;
       applySceneAdaptiveQualityState(mount, state, frameNowMS, true);
@@ -5426,12 +5468,12 @@
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
-    let sample = sceneAdaptiveRendererSample(renderer, now, cpuDurationMS);
+    let sample = sceneAdaptiveRendererSample(renderer, now, cpuDurationMS, state.gpuBudget === true);
     if (sample) state.missingRendererSamples = 0;
     else if (rendererTimingLocked) state.missingRendererSamples += 1;
     else state.missingRendererSamples = 0;
     const rendererTimingStale = rendererTimingLocked && state.missingRendererSamples >= state.rendererTimingFallbackFrames;
-    if (!sample && (!rendererTimingLocked || rendererTimingStale) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
+    if (!sample && (!rendererTimingLocked || (rendererTimingStale && state.gpuBudget !== true)) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
       sample = {
         durationMS: Math.max(rafIntervalMS, cpuDurationMS),
         rendererDurationMS: 0,

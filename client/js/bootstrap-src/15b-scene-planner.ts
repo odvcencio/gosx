@@ -7,9 +7,13 @@
     rebuilds: 0,
     fullVertexHashScans: 0,
     retainedHashFastPaths: 0,
+    cssRecordHashes: 0,
     plannerCPUms: 0,
     lastPlannerCPUms: 0,
   };
+  // The planner's live counters, for tests and tools: plans, cache hits, rebuilds,
+  // full vertex hashes and records hashed key by key.
+  (window.__gosx_scene3d_counters = window.__gosx_scene3d_counters || {}).planner = scenePlannerTelemetryState;
 
   function scenePlannerNow() {
     return typeof performance !== "undefined" && typeof performance.now === "function"
@@ -485,6 +489,7 @@
       const fingerprint = sceneRetainedMeshCSSInputFingerprint(record);
       if (fingerprint > 0) return scenePlannerHashNumber(hash, fingerprint);
     }
+    scenePlannerTelemetryState.cssRecordHashes += 1;
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
       // Absent properties have no CSS input to invalidate. Most retained

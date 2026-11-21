@@ -15,6 +15,8 @@
     // Same rule: the rigid node TRS playback entry point must be re-exported
     // or the split-bundle load silently drops it.
     applyNodeAnimPose: gltfApplyNodeAnimPose,
+    // Gear merged into a skinned body by the model loader.
+    mergeGear: gltfMergeGear,
   };
 
   // Mark chunk loaded for dev tooling / coverage inspection.

@@ -266,7 +266,7 @@
     "uniform vec3 u_lightGroundColors[8];",
     "",
     // Environment
-    "uniform vec3 u_ambientColor;",
+    "uniform vec3 u_ambientColor; uniform int u_lightModel;",
     "uniform float u_ambientIntensity;",
     "uniform vec3 u_skyColor;",
     "uniform float u_skyIntensity;",
@@ -597,7 +597,7 @@
     // Accumulate direct lighting.
     "    float transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
     "    GosxLayer gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
-    "    vec3 Lo = vec3(0.0);",
+    "    vec3 Lo = vec3(0.0); vec3 indirectLight = vec3(0.0);",
     "    vec3 specularRadiance = vec3(0.0);",
     "    vec3 specularEnvironment = vec3(0.0);",
     "",
@@ -616,7 +616,7 @@
     "",
     // Ambient light (type 0): add flat contribution, no BRDF.
     "        if (lightType == 0) {",
-    "            Lo += albedo * lightColor * intensity;",
+    "            if (u_lightModel == 1) { indirectLight += lightColor * intensity; } else { Lo += albedo * lightColor * intensity; }",
     "            continue;",
     "        }",
     "",
@@ -624,7 +624,7 @@
     "        if (lightType == 4) {",
     "            float hBlend = N.y * 0.5 + 0.5;",
     "            vec3 hemiColor = mix(u_lightGroundColors[i], lightColor, hBlend);",
-    "            Lo += albedo * hemiColor * intensity;",
+    "            if (u_lightModel == 1) { indirectLight += hemiColor * intensity; } else { Lo += albedo * hemiColor * intensity; }",
     "            continue;",
     "        }",
     "",
@@ -707,7 +707,7 @@
     "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
     "                        + u_skyColor * u_skyIntensity * hemi",
     "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
-    "        ambient = gosxCoatOver(envDiffuse * albedo * (1.0 - transmission), envDiffuse, NoV, gosxLayer, specularEnvironment);",
+    "        ambient = gosxCoatOver(envDiffuse * albedo * (1.0 - transmission) * (u_lightModel == 1 ? 1.0 - metalness : 1.0), envDiffuse, NoV, gosxLayer, specularEnvironment);",
     "    }",
     "    if (!u_hasEnvMap) {",
     "#if GOSX_HDR_IBL",
@@ -720,6 +720,7 @@
     "        }",
     "#endif",
     "    }",
+    "    if (u_lightModel == 1) { ambient += indirectLight * albedo * (1.0 - metalness) * (1.0 - transmission); }",
     "#if GOSX_HDR_IBL",
     "    ambient *= ambientOcclusion;",
     "    specularEnvironment *= ambientOcclusion;",
@@ -5074,6 +5075,10 @@
           gl.generateMipmap(gl.TEXTURE_2D);
           record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          // The extension is queried once per context; the cache key is an expando on gl.
+          if (gl._gosxAniso === undefined) gl._gosxAniso = typeof gl.getExtension === "function" ? gl.getExtension("EXT_texture_filter_anisotropic") : null;
+          var aniso = gl._gosxAniso;
+          if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1));
         } else {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         }
@@ -5372,7 +5377,7 @@
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
 
-    var uniforms = Object.assign(scenePBRUniformLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness specularAA thicknessMap hasThicknessMap metalness clearcoat sheen transmission volume attenuationColor transmissionScene transmissionCapture iridescence anisotropy emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap lightCount ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor"), {
+    var uniforms = Object.assign(scenePBRUniformLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness specularAA thicknessMap hasThicknessMap metalness clearcoat sheen transmission volume attenuationColor transmissionScene transmissionCapture iridescence anisotropy emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap lightCount lightModel ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor"), {
       alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
       cut: gl.getUniformLocation(program, "u_cut"),
       specularF0: gl.getUniformLocation(program, "u_specularF0"),
@@ -6886,6 +6891,10 @@
     return result;
   }
 
+  // Environment.LightModel "physical": light and environment colours decode from sRGB to linear.
+  function scenePBRLightColor(cache, color, fallback, physical) { var c = scenePBRCachedLightColor(cache, color, fallback); var lin = function(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return physical ? [lin(c[0]), lin(c[1]), lin(c[2]), c[3]] : c; }
+  function scenePBRUploadLightModel(gl, uniforms, environment) { const physical = String((environment && environment.lightModel) || "").trim().toLowerCase() === "physical"; if (uniforms.lightModel) gl.uniform1i(uniforms.lightModel, physical ? 1 : 0); return physical; }
+
   function scenePBRUploadLights(gl, uniforms, lights, environment, precomputedHash) {
 
     const contentHash = (typeof precomputedHash === "number")
@@ -6903,7 +6912,7 @@
     // when multiple lights share the same color string within a single frame.
     var colorCache = {};
 
-    gl.uniform1i(uniforms.lightCount, count);
+    gl.uniform1i(uniforms.lightCount, count); const physical = scenePBRUploadLightModel(gl, uniforms, environment);
 
     for (var i = 0; i < count; i++) {
       const light = lightArray[i];
@@ -6938,7 +6947,7 @@
         sceneNumber(light.directionZ, 0)
       );
 
-      var lightColorRGBA = scenePBRCachedLightColor(colorCache, light.color, [1, 1, 1, 1]);
+      var lightColorRGBA = scenePBRLightColor(colorCache, light.color, [1, 1, 1, 1], physical);
       gl.uniform3f(uniforms.lightColors[i], lightColorRGBA[0], lightColorRGBA[1], lightColorRGBA[2]);
       gl.uniform1f(uniforms.lightIntensities[i], sceneNumber(light.intensity, 1));
       gl.uniform1f(uniforms.lightRanges[i], sceneNumber(light.range, 0));
@@ -6947,7 +6956,7 @@
       gl.uniform1f(uniforms.lightPenumbras[i], sceneNumber(light.penumbra, 0));
 
       // Hemisphere ground color (uses color cache).
-      var gcRGBA = scenePBRCachedLightColor(colorCache, light.groundColor, [0, 0, 0, 1]);
+      var gcRGBA = scenePBRLightColor(colorCache, light.groundColor, [0, 0, 0, 1], physical);
       gl.uniform3f(uniforms.lightGroundColors[i], gcRGBA[0], gcRGBA[1], gcRGBA[2]);
     }
 
@@ -6967,15 +6976,15 @@
 
     // Environment uniforms — also use the per-call cache.
     const env = environment || {};
-    var ambientColorRGBA = scenePBRCachedLightColor(colorCache, env.ambientColor, [1, 1, 1, 1]);
+    var ambientColorRGBA = scenePBRLightColor(colorCache, env.ambientColor, [1, 1, 1, 1], physical);
     gl.uniform3f(uniforms.ambientColor, ambientColorRGBA[0], ambientColorRGBA[1], ambientColorRGBA[2]);
     gl.uniform1f(uniforms.ambientIntensity, sceneNumber(env.ambientIntensity, 0));
 
-    var skyColorRGBA = scenePBRCachedLightColor(colorCache, env.skyColor, [0.88, 0.94, 1, 1]);
+    var skyColorRGBA = scenePBRLightColor(colorCache, env.skyColor, [0.88, 0.94, 1, 1], physical);
     gl.uniform3f(uniforms.skyColor, skyColorRGBA[0], skyColorRGBA[1], skyColorRGBA[2]);
     gl.uniform1f(uniforms.skyIntensity, sceneNumber(env.skyIntensity, 0));
 
-    var groundColorRGBA = scenePBRCachedLightColor(colorCache, env.groundColor, [0.12, 0.16, 0.22, 1]);
+    var groundColorRGBA = scenePBRLightColor(colorCache, env.groundColor, [0.12, 0.16, 0.22, 1], physical);
     gl.uniform3f(uniforms.groundColor, groundColorRGBA[0], groundColorRGBA[1], groundColorRGBA[2]);
     gl.uniform1f(uniforms.groundIntensity, sceneNumber(env.groundIntensity, 0));
 
@@ -6983,7 +6992,7 @@
     var fogDensity = sceneNumber(env.fogDensity, 0);
     gl.uniform1i(uniforms.hasFog, fogDensity > 0 ? 1 : 0);
     gl.uniform1f(uniforms.fogDensity, fogDensity);
-    var fogColorRGBA = scenePBRCachedLightColor(colorCache, env.fogColor, [0.5, 0.5, 0.5, 1]);
+    var fogColorRGBA = scenePBRLightColor(colorCache, env.fogColor, [0.5, 0.5, 0.5, 1], physical);
     gl.uniform3f(uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
   }
 
@@ -10679,11 +10688,14 @@
           };
         }
         if (scenePBRObjectRenderPass(mesh, mat) !== renderPass) continue;
-        ip = mat && mat.detail ? sceneWebGLDetailProgram(gl, detailResources, "instanced") : ensureInstancedProgram();
+        var surfaceIP = sceneWebGLSelenaSurfaceProgram(gl, selenaSurfacePrograms, mat, "instanced");
+        if (surfaceIP === false) continue;
+        ip = surfaceIP || (mat && mat.detail ? sceneWebGLDetailProgram(gl, detailResources, "instanced") : ensureInstancedProgram());
         if (!ip) continue;
         gl.useProgram(ip.program); uploadInstancedFrame(ip);
         gl.depthMask(sceneTransmissionDepthWrite(mesh, mat, renderPass === "opaque"));
         uploadMaterial(gl, ip.uniforms, mat, textureCache); sceneWebGLWindUpload(gl, ip, mesh.wind);
+        sceneWebGLUploadSelenaSurface(gl, surfaceIP, mat, selenaUniformValue);
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.
@@ -11018,7 +11030,7 @@
       drawnPostEffects: function() { return lastPostEffects; },
       renderSurfaces: renderSurfaces,
       dispose: function() { frameTimer.dispose(); dispose(); },
-      diagnostics: diagnostics, shaderPrograms: function() { const q = scenePBRCompileContext(gl); return { total: q.total, pending: q.pending.size, failed: q.failed }; },
+      diagnostics: diagnostics, iblStatus: function() { return uniforms._gosxIBLDiagnostics || null; }, shaderPrograms: function() { const q = scenePBRCompileContext(gl); return { total: q.total, pending: q.pending.size, failed: q.failed }; },
       type: "webgl-pbr",
       textureVariantContext: textureVariantContext,
     };

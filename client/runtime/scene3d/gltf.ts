@@ -1006,6 +1006,8 @@
       targetPositions: [],
       targetNormals: [],
       targetTangents: [],
+      // Target names (extras.targetNames), for per-model weights by name.
+      targetNames: null as string[] | null,
     };
     function readTargetDeltas(accessorIndex) {
       if (accessorIndex == null || !gltf.accessors || !gltf.accessors[accessorIndex]) {
@@ -1280,10 +1282,38 @@
   // Animated morph weights — per-frame fold driven by the motion mixers
   // ---------------------------------------------------------------------------
 
+  // Morph target names for one primitive: extras.targetNames on the mesh, or
+  // on the primitive, the usual glTF convention; null when neither has them.
+  function gltfMorphTargetNames(mesh: any, primitive: any) {
+    var names = mesh && mesh.extras && mesh.extras.targetNames;
+    if (!Array.isArray(names)) names = primitive && primitive.extras && primitive.extras.targetNames;
+    return Array.isArray(names) ? names.slice() : null;
+  }
+
+  // A model's own weights ({name: weight}, Model.MorphWeights) as one value
+  // per target of meta, NaN where the model names no weight. A key matches a
+  // target name; without names a whole-number key picks a target by index.
+  // Returns null when the model names no target of this primitive.
+  function gltfMorphOverrideWeights(meta: any, weights: any) {
+    if (!weights || typeof weights !== "object") return null;
+    var names = meta.targetNames, out = null;
+    for (var t = 0; t < meta.defaults.length; t++) {
+      var key = names ? names[t] : String(t);
+      if (typeof key !== "string" || !Object.prototype.hasOwnProperty.call(weights, key)) continue;
+      var value = weights[key];
+      if (typeof value !== "number" || !isFinite(value)) continue;
+      if (!out) out = new Array(meta.defaults.length).fill(NaN);
+      out[t] = value;
+    }
+    return out;
+  }
+
   // Resolve the effective weight vector for one morph meta against the
-  // decoded mixer pose. Finite numbers only (no coercion). Returns null when
-  // the effective vector already matches lastWeights.
-  function gltfMorphEffectiveWeights(meta, animatedWeights, lastWeights) {
+  // decoded mixer pose. Finite numbers only (no coercion). An animated weight
+  // wins, then the model's own weight (override, from
+  // gltfMorphOverrideWeights), then the authored one. Returns null when the
+  // effective vector already matches lastWeights.
+  function gltfMorphEffectiveWeights(meta, animatedWeights, lastWeights, override?: number[] | null) {
     var defaults = meta.defaults;
     var count = defaults.length;
     if (!count) {
@@ -1299,6 +1329,9 @@
     var changed = !lastWeights || lastWeights.length !== count;
     for (var t = 0; t < count; t++) {
       var raw = values && t < values.length ? values[t] : NaN;
+      if ((typeof raw !== "number" || !isFinite(raw)) && override) {
+        raw = override[t];
+      }
       if (typeof raw !== "number" || !isFinite(raw)) {
         raw = defaults[t];
       }
@@ -1425,6 +1458,71 @@
   }
 
   // Cache keys the bounds/snapshot layers attach to vertices objects.
+  // Gear that wears a model's own material joins the body's vertex streams, so
+  // a player is one skinned mesh and one draw. entry is a skinned morph entry;
+  // pieces are normalized vertex sets bound to their joints. The body's streams
+  // are kept in entry.body (the morph fold keeps writing the body part there)
+  // and the live vertices hold the body followed by the pieces. An empty list
+  // restores the body alone.
+  var GLTF_MERGE_STREAMS: any[] = [["positions", 3, 0], ["normals", 3, 0], ["uvs", 2, 0], ["tangents", 4, 0], ["joints", 4, 0], ["weights", 4, 0]];
+  function gltfMergeGear(entry, pieces) {
+    var v = entry.vertices;
+    if (!entry.body) {
+      entry.body = { count: v.count, positions: v.positions, normals: v.normals, uvs: v.uvs, uvs1: v.uvs1, tangents: v.tangents, joints: v.joints, weights: v.weights, indices: v.indices };
+    }
+    entry.tail = pieces || [];
+    gltfRebuildMerged(entry);
+  }
+
+  function gltfRebuildMerged(entry) {
+    var v = entry.vertices, body = entry.body, parts: any[] = [body].concat(entry.tail || []);
+    var total = 0, p, s;
+    for (p = 0; p < parts.length; p++) total += parts[p].count;
+    for (s = 0; s < GLTF_MERGE_STREAMS.length; s++) {
+      var name = GLTF_MERGE_STREAMS[s][0], stride = GLTF_MERGE_STREAMS[s][1];
+      if (parts.length === 1) { v[name] = body[name]; continue; }
+      var out = new Float32Array(total * stride), at = 0;
+      for (p = 0; p < parts.length; p++) {
+        var src = parts[p][name], n = parts[p].count * stride;
+        if (src && src.length >= n) out.set(n === src.length ? src : src.subarray(0, n), at);
+        else if (name === "tangents") for (var t = 0; t < parts[p].count; t++) out.set([1, 0, 0, 1], at + t * 4);
+        else if (name === "normals") for (var u = 0; u < parts[p].count; u++) out[at + u * 3 + 1] = 1;
+        at += n;
+      }
+      v[name] = out;
+    }
+    if (body.uvs1) {
+      if (parts.length === 1) v.uvs1 = body.uvs1;
+      else {
+        var uv1 = new Float32Array(total * 2), at1 = 0;
+        for (p = 0; p < parts.length; p++) {
+          var n1 = parts[p].count * 2;
+          if (parts[p].uvs1 && parts[p].uvs1.length >= n1) uv1.set(parts[p].uvs1.subarray(0, n1), at1);
+          at1 += n1;
+        }
+        v.uvs1 = uv1;
+      }
+    }
+    var indexed = false;
+    for (p = 0; p < parts.length; p++) if (parts[p].indices && parts[p].indices.length) indexed = true;
+    if (!indexed || parts.length === 1) v.indices = body.indices;
+    else {
+      var length = 0;
+      for (p = 0; p < parts.length; p++) length += parts[p].indices && parts[p].indices.length ? parts[p].indices.length : parts[p].count;
+      var idx = new Uint32Array(length), ia = 0, base = 0;
+      for (p = 0; p < parts.length; p++) {
+        var pi = parts[p].indices;
+        if (pi && pi.length) for (var k = 0; k < pi.length; k++) idx[ia++] = pi[k] + base;
+        else for (var j = 0; j < parts[p].count; j++) idx[ia++] = base + j;
+        base += parts[p].count;
+      }
+      v.indices = idx;
+    }
+    v.count = total;
+    v.immutable && v.revision++;
+    gltfDropVertexCaches(v);
+  }
+
   var GLTF_MORPH_CACHE_KEYS = ["_skinnedLocalBounds", "_localBounds", "_bounds"];
 
   function gltfDropVertexCaches(vertices) {
@@ -1559,33 +1657,74 @@
     }
   }
 
+  // Skinned morph folds are about 2.5 ms of script each, so a frame folds at
+  // most GLTF_FOLDS_PER_FRAME of them; the rest wait for the next pose.
+  var GLTF_FOLDS_PER_FRAME = 4;
+  var gltfFoldBudget = { frame: -1, used: 0 };
+  function gltfFoldBudgetTake() {
+    if (typeof performance === "undefined") return true;
+    var frame = Math.floor(performance.now() / 12);
+    if (frame !== gltfFoldBudget.frame) {
+      gltfFoldBudget.frame = frame;
+      gltfFoldBudget.used = 0;
+    }
+    return gltfFoldBudget.used++ < GLTF_FOLDS_PER_FRAME;
+  }
+
   // Published per-frame entry point (window.__gosx_scene3d_gltf_api.
   // applyMorphPose). nodeTransforms (optional) is the model-local node map
   // from sceneAnimBuildNodeTransforms(nodes, pose, null, rootNodes): animated
   // node TRS WITHOUT the model/root transform, so the model transform below
   // is applied exactly once and skinning/instancing are unaffected.
-  function gltfApplyAnimatedMorphPose(entries, animatedWeights, nodeTransforms) {
+  // modelWeights (optional) is the model's own {name: weight} record
+  // (Model.MorphWeights). A new record object re-folds; the same object with
+  // no animated weights costs one comparison per entry.
+  function gltfApplyAnimatedMorphPose(entries, animatedWeights, nodeTransforms, modelWeights?: any) {
     if (!Array.isArray(entries)) {
       return;
     }
+    var weightsOwner = modelWeights || null;
     for (var i = 0; i < entries.length; i++) {
       var entry = entries[i];
       if (!entry || !entry.meta || !entry.vertices) {
         continue;
       }
       var meta = entry.meta;
-      var effective = gltfMorphEffectiveWeights(meta, animatedWeights, entry.lastWeights);
+      if (entry.overrideFrom !== weightsOwner || entry.override === undefined) {
+        entry.override = gltfMorphOverrideWeights(meta, weightsOwner);
+        entry.overrideFrom = weightsOwner;
+      } else if (entry.skinned && !animatedWeights) {
+        continue;
+      }
+      var effective = gltfMorphEffectiveWeights(meta, animatedWeights, entry.lastWeights, entry.override);
       if (entry.skinned) {
         // Skinned instances stay primitive-local: node and model transforms
         // fold in at skin time through the joint matrices.
         if (!effective) {
           continue;
         }
+        if (!gltfFoldBudgetTake()) {
+          // Too many models fold in this frame (the first pose of 22 players is one
+          // task of about 80 ms): this one folds on the next pose.
+          entry.overrideFrom = undefined;
+          continue;
+        }
         var skinnedFold = gltfFoldAnimatedMorphStreams(meta, effective);
-        entry.vertices.positions = skinnedFold.positions;
-        entry.vertices.normals = skinnedFold.normals;
-        entry.vertices.tangents = skinnedFold.tangents;
-        gltfDropVertexCaches(entry.vertices);
+        if (entry.body) {
+          // Gear is merged into the vertices: the fold is the body part.
+          entry.body.positions = skinnedFold.positions;
+          entry.body.normals = skinnedFold.normals;
+          entry.body.tangents = skinnedFold.tangents;
+          gltfRebuildMerged(entry);
+        } else {
+          entry.vertices.positions = skinnedFold.positions;
+          entry.vertices.normals = skinnedFold.normals;
+          entry.vertices.tangents = skinnedFold.tangents;
+          // A skinned morph stream is a revisioned snapshot (revision starts
+          // at 0): the planner and the upload re-read it only after a fold.
+          entry.vertices.immutable && entry.vertices.revision++;
+          gltfDropVertexCaches(entry.vertices);
+        }
         entry.lastWeights = effective;
         entry.lastFolded = skinnedFold;
         continue;
@@ -2287,7 +2426,7 @@
       return;
     }
     var suffix = idSuffix || "";
-    var animateMorph = nodeIndex != null && gltfNodeHasWeightAnimation(gltf, nodeIndex);
+    var animateMorph = gltfRetainMorphs || (nodeIndex != null && gltfNodeHasWeightAnimation(gltf, nodeIndex));
     var animateTRS = animateTRSFlag === true;
 
     var skin = skinIndex != null && result.skins ? result.skins[skinIndex] : null;
@@ -2471,6 +2610,7 @@
       }
 
       if (geometry.morphMeta) {
+        geometry.morphMeta.targetNames = gltfMorphTargetNames(mesh, primitive);
         // Private internal morph metadata (never a public morphTargets /
         // morphWeights field): the mount layer reads it at instantiation.
         // Immutable and shared by every clone; the GLB binary and glTF graph
@@ -2811,7 +2951,25 @@
     return missing;
   }
 
-  function gltfExtractScene(gltf, binaryBuffer) {
+  // True while an extraction keeps every morph target for per-model weights
+  // (see gltfExtractScene). Extraction is synchronous, so a module flag set
+  // for one call stands in for a parameter threaded through every helper.
+  var gltfRetainMorphs = false;
+
+  // retainMorphs keeps each primitive's morph targets after load, as animated
+  // morphs do, so a model can fold its own weights per instance at run time
+  // (Model.MorphWeights). Without it static targets fold once and are dropped.
+  function gltfExtractScene(gltf: any, binaryBuffer: any, retainMorphs?: boolean) {
+    var previous = gltfRetainMorphs;
+    gltfRetainMorphs = retainMorphs === true;
+    try {
+      return gltfExtractSceneOnce(gltf, binaryBuffer);
+    } finally {
+      gltfRetainMorphs = previous;
+    }
+  }
+
+  function gltfExtractSceneOnce(gltf: any, binaryBuffer: any) {
     gltfEmbeddedImageURLs.set(gltf, new Map());
     gltfReportUnsupportedRequiredExtensions(gltf);
     var result = {
@@ -3407,7 +3565,7 @@
     return "";
   }
 
-  async function sceneLoadGLTFModel(url, variantContext) {
+  async function sceneLoadGLTFModel(url, variantContext, retainMorphs?: boolean) {
     var isGLB = sceneGLTFAssetFormat(url) === "glb";
     var assetURL = gltfAbsoluteURL(url);
     var response;
@@ -3434,14 +3592,14 @@
         gltfResolveExternalImageURIs(baseParsed.json, baseURL, await variantContextPromise);
         var baseBuffers = await baseBufferPromise;
         var parsedBuffers = await parsedBufferPromise;
-        var baseScene = gltfExtractScene(baseParsed.json, baseBuffers);
+        var baseScene = gltfExtractScene(baseParsed.json, baseBuffers, retainMorphs);
         gltfApplyPointOverlay(baseScene, gltfCollectPointOverlay(parsed.json, parsedBuffers));
         // A layer that exists only in this rotation — a phenomenon absent from
         // the reference geometry — ships as a full mesh in the overlay. Those
         // extract standalone here; append the ones the base does not already
         // carry so presence drift adds content instead of dropping it.
         // Attribute-only overlay meshes have no POSITION and never extract.
-        var overlayScene = gltfExtractScene(parsed.json, parsedBuffers);
+        var overlayScene = gltfExtractScene(parsed.json, parsedBuffers, retainMorphs);
         if (overlayScene.points && overlayScene.points.length) {
           var basePointIDs = {};
           for (var bi = 0; bi < baseScene.points.length; bi++) {
@@ -3456,7 +3614,7 @@
         return baseScene;
       }
       gltfResolveExternalImageURIs(parsed.json, assetURL, await variantContextPromise);
-      return gltfExtractScene(parsed.json, await parsedBufferPromise);
+      return gltfExtractScene(parsed.json, await parsedBufferPromise, retainMorphs);
     }
 
     // .gltf JSON file.
@@ -3471,7 +3629,7 @@
     bufferPromise.catch(function() {});
     gltfResolveExternalImageURIs(json, assetURL, await variantContextPromise);
     var bufferData = await bufferPromise;
-    return gltfExtractScene(json, bufferData);
+    return gltfExtractScene(json, bufferData, retainMorphs);
   }
 
   // ---------------------------------------------------------------------------
@@ -3508,6 +3666,7 @@
       sceneLoadGLTFModel: sceneLoadGLTFModel,
       gltfSceneToModelAsset: gltfSceneToModelAsset,
       applyMorphPose: gltfApplyAnimatedMorphPose,
+      mergeGear: gltfMergeGear,
       applyNodeAnimPose: gltfApplyNodeAnimPose,
     };
     window.__gosx_scene3d_gltf_loaded = true;

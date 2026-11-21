@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"m31labs.dev/gosx/game"
 )
@@ -12,6 +13,10 @@ import (
 // ErrVoiceDropped is returned by SFX.Play when every voice slot is held by
 // an equal or higher priority sound, so the new sound was not started.
 var ErrVoiceDropped = errors.New("audio: sfx voice limit reached")
+
+// ErrVoiceLate is returned by SFX.Play when the request is later than its
+// MaxLate allows.
+var ErrVoiceLate = errors.New("audio: sfx cue too late")
 
 // SFXConfig sets the pool's limits. A zero field takes its default.
 type SFXConfig struct {
@@ -34,6 +39,11 @@ type SFXRequest struct {
 	// lowest priority voice if its priority is at least as high; among equals
 	// it steals the oldest. Default 0.
 	Priority int
+	// Asked is when the game wanted the sound, and MaxLate how late it may still
+	// start: a cue whose clip loaded too slowly no longer matches what is on
+	// screen, and Play drops it with ErrVoiceLate. A zero MaxLate never drops.
+	Asked   time.Time
+	MaxLate time.Duration
 }
 
 // SFXVoice is one playing one-shot.
@@ -94,6 +104,12 @@ func NewSFX(mixer *Mixer, player *Player, cfg SFXConfig) *SFX {
 // Position and the host cannot position sounds.
 func (s *SFX) Play(req SFXRequest) (*SFXVoice, error) {
 	pb := req.Playback
+	if req.MaxLate > 0 && !req.Asked.IsZero() && time.Since(req.Asked) > req.MaxLate {
+		s.mu.Lock()
+		s.dropped++
+		s.mu.Unlock()
+		return nil, ErrVoiceLate
+	}
 	s.player.mu.Lock()
 	clip, ok := s.player.clips[pb.Clip]
 	s.player.mu.Unlock()

@@ -2441,6 +2441,177 @@ test("16a skinned LBS output survives renderer disposal with a fresh bind group 
   assert.deepEqual(Object.keys(bound), ["0"]);
 });
 
+test("16a skinned meshes keep no CPU copy of the packed skin input and rebuild it on a new renderer", async () => {
+  // The packed skin input (72 bytes a vertex) used to stay in memory after
+  // its upload, on the geometry: 22 athletes of 25,856 padded vertices kept
+  // 41 MB. The source attributes rebuild it when a new renderer (after a
+  // device loss) needs it.
+  const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const vertices = {
+    count: 3,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    joints: new Float32Array(12),
+    weights: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+    uvs: new Float32Array([0, 0, 1, 0, 0, 1]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    tangents: new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]),
+  };
+  const owner = { id: "keeper" };
+  const skin = { jointMatrices: identity };
+  const bundle = () => ({
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [{ kind: "standard", color: "#ffffff" }],
+    meshObjects: [{ id: "keeper", kind: "gltf-mesh", materialIndex: 0, vertexOffset: 0, vertexCount: 3, viewCulled: false,
+      depthCenter: 4, directVertices: true, modelMatrix: identity, skin, vertices, resourceOwner: owner }],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+  });
+  const packedBytes = 64 * 72;
+  // Every array buffer two property levels under the geometry, except the source attributes.
+  function held(value, depth, out) {
+    if (!value || typeof value !== "object" || depth > 2) return out;
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) { out.push(value.byteLength); return out; }
+    for (const key of Object.keys(value)) {
+      if (depth === 0 && ["positions", "joints", "weights", "uvs", "normals", "tangents"].includes(key)) continue;
+      held(value[key], depth + 1, out);
+    }
+    return out;
+  }
+  function inputBuffer(state, from) {
+    for (const pass of state.computePasses.slice(from)) {
+      if (!pass.dispatches.some((d) => d.pipeline && d.pipeline.label === "gosx-elio-skin-lbs")) continue;
+      for (const record of pass.bindGroups) {
+        const entry = record.group.desc.entries.find((e) => e.binding === 1);
+        if (entry) return entry.resource.buffer;
+      }
+    }
+    return null;
+  }
+
+  const first = await createBoardWebGPUHarness({ fresh: true });
+  await renderPreparedFrame(first.renderer, bundle(), {});
+  const input = inputBuffer(first.fake.state, 0);
+  assert.ok(input, "the LBS dispatch reads a packed input buffer");
+  assert.equal(input.size, packedBytes);
+  assert.deepEqual(held(vertices, 0, []).filter((n) => n === packedBytes), [], "no packed copy stays on the geometry after the upload");
+  const from = first.fake.state.computePasses.length;
+  for (let frame = 0; frame < 2; frame += 1) await renderPreparedFrame(first.renderer, bundle(), {});
+  assert.strictEqual(inputBuffer(first.fake.state, from), input, "later frames reuse the uploaded input");
+  assert.equal(first.fake.state.writeBufferCalls.filter((c) => c.buffer === input).length, 1, "the input uploads once");
+  first.renderer.dispose();
+
+  // A new renderer, as after a device loss: the input is packed again from the source attributes.
+  const second = await createBoardWebGPUHarness({ fresh: true });
+  await renderPreparedFrame(second.renderer, bundle(), {});
+  const rebuilt = inputBuffer(second.fake.state, 0);
+  assert.ok(rebuilt && rebuilt !== input && !rebuilt.destroyed, "the new renderer uploads its own live input");
+  const write = second.fake.state.writeBufferCalls.find((c) => c.buffer === rebuilt);
+  assert.ok(write, "the rebuilt input is uploaded");
+  const view = new DataView(write.data.buffer, write.data.byteOffset, write.data.byteLength);
+  assert.deepEqual([view.getFloat32(72, true), view.getFloat32(76, true), view.getFloat32(144 + 4, true)], [1, 0, 1],
+    "the rebuilt input carries the source positions");
+  assert.deepEqual(held(vertices, 0, []).filter((n) => n === packedBytes), []);
+  second.renderer.dispose();
+});
+
+test("16a skinned draw records rebuilt every frame keep one LBS output, bind group and UV buffer per owner", async () => {
+  // createSceneRenderBundle pushes a fresh draw record for every mesh each
+  // frame; resourceOwner is the scene object behind it. Skin state cached on
+  // the record was lost every frame: each skinned mesh made a new LBS output
+  // buffer and compute bind group and re-uploaded its UVs into a new buffer,
+  // and none of those buffers were destroyed. The two owners share one vertex
+  // stream, as instances of one character model do.
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  const vertices = {
+    count: 3,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    joints: new Float32Array(12),
+    weights: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+    uvs: new Float32Array([0, 0, 1, 0, 0, 1]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    tangents: new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]),
+  };
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  selenaMaterial.shaderLayout.attributes = [
+    { name: "uv", type: "vec2", location: 4 },
+    { name: "position", type: "vec3", location: 0 },
+  ];
+  for (const field of ["customVertexWGSL", "customFragmentWGSL"]) {
+    selenaMaterial[field] = selenaMaterial[field].replace("struct VertexInput {",
+      "struct VertexInput { @location(4) uv : vec2<f32>,");
+  }
+
+  async function runCase(label, material, uvSlot) {
+    const harness = await createBoardWebGPUHarness({ fresh: true });
+    const state = harness.fake.state;
+    const owners = [{ id: label + "-a" }, { id: label + "-b" }];
+    const skins = owners.map(() => ({ jointMatrices: identity }));
+    const frames = [];
+    for (let frame = 0; frame < 4; frame += 1) {
+      const start = { compute: state.computePasses.length, render: state.renderPasses.length,
+        bindGroups: state.bindGroups.length, writes: state.writeBufferCalls.length };
+      const bundle = {
+        camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+        environment: {},
+        materials: [material],
+        meshObjects: owners.map((owner, i) => ({
+          id: owner.id, kind: "gltf-mesh", materialIndex: 0, vertexOffset: 0, vertexCount: 3,
+          viewCulled: false, depthCenter: 4 + i, directVertices: true, modelMatrix: identity,
+          skin: skins[i], vertices, resourceOwner: owner,
+        })),
+        objects: [],
+        worldPositions: new Float32Array(0),
+        worldColors: new Float32Array(0),
+        worldMeshPositions: new Float32Array(0),
+        worldMeshNormals: new Float32Array(0),
+      };
+      await renderPreparedFrame(harness.renderer, bundle, {});
+      const outputs = new Set();
+      for (const pass of state.computePasses.slice(start.compute)) {
+        if (!pass.dispatches.some((d) => d.pipeline && d.pipeline.label === "gosx-elio-skin-lbs")) continue;
+        for (const record of pass.bindGroups) {
+          const entry = record.group.desc.entries.find((e) => e.binding === 2);
+          if (entry) outputs.add(entry.resource.buffer);
+        }
+      }
+      const uvBuffers = new Set();
+      for (const pass of mainRenderPasses({ state: { renderPasses: state.renderPasses.slice(start.render) } })) {
+        for (const vb of pass.vertexBuffers) if (vb.slot === uvSlot) uvBuffers.add(vb.buffer);
+      }
+      frames.push({ outputs: [...outputs], uvBuffers: [...uvBuffers],
+        bindGroups: state.bindGroups.slice(start.bindGroups), writes: state.writeBufferCalls.slice(start.writes) });
+    }
+
+    const outputs = frames[0].outputs;
+    assert.equal(outputs.length, 2, label + ": each owner has its own LBS output");
+    assert.equal(frames[0].uvBuffers.length, 1, label + ": both owners draw the shared stream's one UV buffer");
+    const uvBuffer = frames[0].uvBuffers[0];
+    assert.ok(!outputs.includes(uvBuffer), label + ": UVs ride their own buffer, never the packed output");
+    for (let frame = 1; frame < frames.length; frame += 1) {
+      const f = frames[frame];
+      assert.deepEqual(f.outputs, outputs, label + " frame " + frame + ": the LBS dispatch reuses each owner's output buffer");
+      assert.deepEqual(f.uvBuffers, [uvBuffer], label + " frame " + frame + ": the draw reuses the UV buffer");
+      assert.equal(f.bindGroups.filter((bg) => bg.desc && bg.desc.entries.some((e) => e.resource && outputs.includes(e.resource.buffer))).length, 0,
+        label + " frame " + frame + ": no new compute bind group around an output buffer");
+      assert.equal(f.writes.filter((w) => w.buffer === uvBuffer).length, 0, label + " frame " + frame + ": unchanged UVs are not uploaded again");
+    }
+    assert.strictEqual(owners[0]._gosxWGPUElioSkinRecord.outputBuffer, outputs[0], label + ": the skin record lives on the owner");
+    harness.renderer.dispose();
+  }
+
+  await runCase("selena", selenaMaterial, 0);
+  await runCase("pbr", { kind: "standard", color: "#ffffff" }, 2);
+});
+
 test("Scene3D completion timestamps enclose water and post without encoder.writeTimestamp", async () => {
   const waiting = [];
   const harness = await createBoardWebGPUHarness({ fresh: true, configureDevice(device) {

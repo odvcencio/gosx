@@ -218,7 +218,7 @@ test("the shipped renderer fragments still carry every patch anchor", () => {
   const gpu = readSceneRendererBackendSrc("webgpu"), gl = readSceneRendererBackendSrc("webgl");
   for (const anchor of ["@fragment fn fragmentMain(in: VertexOutput)", "fn gosxPBRColor(in: VertexOutput) -> vec4f {", "    let V = normalize(frame.cameraPos - in.worldPos);"]) assert.ok(gpu.includes(anchor), anchor);
   for (const anchor of ["void main() {", "    vec3 V = normalize(u_cameraPosition - v_worldPosition);"]) assert.ok(gl.includes(anchor), anchor);
-  assert.match(gpu, /window\.__gosx_scene3d_terrain_api\?\.webgpu\(terrainResources, mainPass/);
+  assert.match(gpu, /window\.__gosx_scene3d_terrain_api\?\.webgpu\(s\.terrainResources, mainPass/);
   assert.match(gl, /window\.__gosx_scene3d_terrain_api\?\.webgl\(terrainResources, gl/);
 });
 
@@ -267,7 +267,7 @@ test("both renderers sway instanced batches from the shared wind without breakin
   assert.match(gpu, /"    let world = gosxWindSway\(model, in\.position\);"/);
   assert.match(gpu, /@group\(1\) @binding\(0\) var<uniform> material: MaterialUniforms;", "fn gosxWindSway/);
   assert.match(gpu, /f\.set\(window\.__gosx_scene3d_terrain_api\.windFor\(mat\.wind\), 20\)/);
-  assert.match(gpu, /createMaterialBindGroup\(mesh\.wind \? Object\.assign\(\{\}, mat, \{ wind: mesh\.wind \}\) : mat/);
+  assert.match(gpu, /createMaterialBindGroup\(drawState\.uniformState, drawState\.gpuRes, drawState\.meshState, device, mesh\.wind \? Object\.assign\(\{\}, mat, \{ wind: mesh\.wind \}\) : mat/);
   // The GPU-driven variant still finds its model and colour anchors.
   assert.match(gpu, /"    let model = mat4x4f\(in\.instanceMatrix0, in\.instanceMatrix1, in\.instanceMatrix2, in\.instanceMatrix3\);"/);
   // The crowd variant still finds its world-position anchor.

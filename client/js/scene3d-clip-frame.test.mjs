@@ -394,6 +394,47 @@ test("the allocation-free pose path is bit-equal to the general node-transform p
   }
 });
 
+test("a model's own joint scales scale the joint's frame and its children on both paths", () => {
+  const fast = poseFixture();
+  const slow = poseFixture();
+  const scales = Float64Array.from([1, 2, 1]); // hips (node 1) twice its size
+  fast.record.jointScales = scales;
+  const layers = [layer("walk", 0.5)];
+  fast.record.sampledLayers = layers; fast.record.sampledLayerCount = 1;
+  assert.equal(fast.sampler.pose(fast.record), true);
+  const output = new Map();
+  slow.sampler.sample(layers, 1, output);
+  const expected = slow.api.computeJointMatrices(slow.skin, slow.api.buildNodeTransforms(slow.nodes, output, null, [0], scales));
+  assert.deepEqual(Array.from(fast.skin.jointMatrices), Array.from(expected), "fast and general paths agree");
+  // At t=0 the hips sit at (0,1,0) and the arm 1 to the right of them; with the
+  // hips scaled 2x the arm joint moves to (2,1,0) and a point 1 beyond it on
+  // the arm (bind (2,1,0)) lands at (4,1,0).
+  output.clear();
+  slow.sampler.sample([layer("walk", 0)], 1, output);
+  const m = slow.api.computeJointMatrices(slow.skin, slow.api.buildNodeTransforms(slow.nodes, output, null, [0], scales));
+  near(apply(joint(m, 0), 0, 1, 0), [0, 1, 0], "the hips stay where they are");
+  near(apply(joint(m, 0), 0, 2, 0), [0, 3, 0], "a point on the hips moves out twice as far");
+  near(apply(joint(m, 1), 2, 1, 0), [4, 1, 0], "the arm is carried and scaled");
+});
+
+test("with a joint scale that is not a power of two, the fast path stays bit-equal to the general path", () => {
+  const rnd = lcg(5);
+  const scales = Float64Array.from([1, 1.08, 0.93]);
+  const fast = poseFixture();
+  const slow = poseFixture();
+  fast.record.jointScales = scales;
+  const output = new Map();
+  for (let n = 0; n < 200; n++) {
+    const layers = [layer(rnd() < 0.5 ? "walk" : "pop", rnd() * 3, 0.2 + rnd(), rnd() < 0.5)];
+    fast.record.sampledLayers = layers; fast.record.sampledLayerCount = 1;
+    assert.equal(fast.sampler.pose(fast.record), true);
+    output.clear();
+    slow.sampler.sample(layers, 1, output);
+    const expected = slow.api.computeJointMatrices(slow.skin, slow.api.buildNodeTransforms(slow.nodes, output, null, [0], scales));
+    assert.deepEqual(Array.from(fast.skin.jointMatrices), Array.from(expected), `frame ${n}`);
+  }
+});
+
 test("pose declines models with morph or rigid node-animation targets", () => {
   const f = poseFixture();
   f.record.morphTargets = [{}];

@@ -218,6 +218,9 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu-cutaway.ts"),
 			sourceFile("../runtime/scene3d/webgpu-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-helpers.ts"),
+			sourceFile("../runtime/scene3d/webgpu-water.ts"),
+			sourceFile("../runtime/scene3d/webgpu-passes.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -251,6 +254,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
 			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
+			sourceFile("../runtime/scene3d/model-looks.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
 			sourceFile("../runtime/scene3d/mount-viewport.ts"),
@@ -568,6 +572,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
 			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
+			sourceFile("../runtime/scene3d/model-looks.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
 			sourceFile("../runtime/scene3d/mount-viewport.ts"),
@@ -679,6 +684,9 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu-cutaway.ts"),
 			sourceFile("../runtime/scene3d/webgpu-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-helpers.ts"),
+			sourceFile("../runtime/scene3d/webgpu-water.ts"),
+			sourceFile("../runtime/scene3d/webgpu-passes.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -1465,6 +1473,9 @@ func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 	}
 	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
 		options.MangleProps = webGLPrivatePropertyPattern
+		options.MangleQuoted = esbuild.MangleQuotedTrue
+	} else if entry.name == "bootstrap-feature-scene3d-webgpu.js" {
+		options.MangleProps = webGPUPrivatePropertyPattern
 		options.MangleQuoted = esbuild.MangleQuotedTrue
 	}
 	result := esbuild.Transform(input, options)

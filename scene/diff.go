@@ -31,6 +31,8 @@ const (
 	CommandSetEnvironment
 	CommandSetPostUniforms
 	CommandSetGroups
+	// CommandPatchModels changes mounted models in place (PatchModelsCommand).
+	CommandPatchModels
 	// commandKindCount is one past the last declared kind. It lets a test walk
 	// every kind and prove each one is either emitted by a Diff function or
 	// recorded as constructor-only. Keep it last.
@@ -86,6 +88,9 @@ var commandKindOrigins = map[CommandKind]struct {
 	CommandSetPostUniforms: {originConstructorOnly, "A uniform patch keeps compiled shader pipeline " +
 		"identity, which a diff of two whole post chains cannot prove. Only the caller knows that it " +
 		"changed nothing but uniform values, so only the caller may claim it."},
+	CommandPatchModels: {originConstructorOnly, "A model patch changes a mounted model without loading it " +
+		"again. A diff of two scenes sees a new model record and cannot tell a reload from an in-place " +
+		"change, so only the caller may claim one."},
 }
 
 // Command is a server-authored Scene3D mutation. Send a JSON array of Commands

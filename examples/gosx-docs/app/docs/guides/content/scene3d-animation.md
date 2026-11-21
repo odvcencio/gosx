@@ -332,6 +332,69 @@ player.StopAction(0, 0.2)    // or let a non-looping clip end by itself
 The action's clip events fire like a state's. `Action(layer)` reports its
 clip, time and weight.
 
+### Placement
+
+`SetRoot` puts a character in the scene from the same frame that poses it:
+
+```go
+player.SetRoot(animgraph.Pose{X: p.X, Y: 0, Z: p.Z, Yaw: p.Heading})
+player.Step(dt)
+_ = animgraph.Dispatch("scene", player)
+```
+
+The renderer moves the model and writes its joints in one step, so a
+character never draws one frame behind its own pose. `SetRoot` replaces the
+model's declared position and its rotation about +Y. Rotation about the other
+axes and scale stay as declared on `scene.Model`. A yaw of 0 faces +Z.
+
+The root goes out with every frame until `ClearRoot`. After `ClearRoot` the
+model stays where its last frame put it, and scene commands move it again.
+A model that reloads (for example after `scene.SetModelsCommand` changes its
+source) starts at its last root, not at its declared position.
+
+Without `SetRoot`, move the model with scene commands, as before.
+
+### Sampled layers
+
+By default a layer's state machine picks clips and advances their time.
+When your simulation owns time (a replay the player can scrub, rollback
+netcode, a recorded play stepped one frame at a time) set the samples
+yourself:
+
+```go
+run, sprint := prog.ClipID("Run"), prog.ClipID("Sprint")
+player.SetLayerSamples(0,
+    animgraph.Sample{Clip: run, Time: stride * runSeconds, Weight: 1 - t, Loop: true},
+    animgraph.Sample{Clip: sprint, Time: stride * sprintSeconds, Weight: t, Loop: true},
+)
+```
+
+The layer is then a sampled layer: the renderer samples exactly those clips
+at those times and blends them by their relative weights. The same samples
+give the same pose, whatever was sent before, so seeking a replay backwards
+needs no history.
+
+| Rule | Detail |
+|---|---|
+| What stops | The layer's state machine, its actions and its clip events. Other layers run as usual. |
+| What still applies | `SetLayerWeight`, the layer's `WeightParam`, its mask, additive mode, IK, look-at and level of detail. Curves follow the samples. |
+| Limits | At most 16 samples per layer. `Time` is finite and not negative; past the clip's end it wraps when `Loop` is set and holds the last key otherwise. `Weight` is finite and not negative. A call with a bad argument returns false and changes nothing. |
+| How long it lasts | Until the next `SetLayerSamples`, `ReleaseLayerSamples` or `Reset`. An empty sample list is valid: the layer contributes nothing. |
+| Going back | `ReleaseLayerSamples` returns the layer to its state machine, in the state it held before. |
+
+A character that is only ever sampled still declares a layer. Give its state
+machine one state with no clip:
+
+```go
+Layers: []animgraph.Layer{{Name: "body", Machine: animgraph.StateMachine{
+    States: []animgraph.State{{Name: "sampled"}},
+}}},
+```
+
+`Step` does not move a sampled layer's clips, but call it anyway: it carries
+the frame time the renderer uses to smooth IK, and it advances the other
+layers and the level-of-detail fades.
+
 ### IK
 
 All positions are world space. Feedback reports the same frame's results.
@@ -458,8 +521,8 @@ move, err := animgraph.StartPaired(clip, attacker, defender, animgraph.PairStart
 move.Step(dt) // before the instances' Step: sets rates and contact IK
 attacker.Step(dt)
 defender.Step(dt)
-setModelPose("attacker", move.Root(0)) // your scene update: position and yaw
-setModelPose("defender", move.Root(1))
+attacker.SetRoot(move.Root(0)) // position and yaw, applied with the pose
+defender.SetRoot(move.Root(1))
 _ = animgraph.Dispatch("scene", attacker, defender) // together, for contact IK
 ```
 
@@ -495,6 +558,17 @@ sched := &animgraph.LODScheduler{FullBudget: 6} // at most 6 characters at level
 // every frame, after stepping every instance:
 due := sched.Update(dt, animgraph.LODCamera{Position: camPos, FOVY: fovY, ViewportHeight: canvasHeight}, targets)
 _ = animgraph.Dispatch("scene", due...)
+```
+
+For characters placed with `SetRoot`, pass every instance to `Dispatch`, not
+only `due`. A character whose pose is not due then sends its placement alone
+(25 bytes plus its ID), and the renderer moves it with one matrix multiply
+per joint. It keeps moving every frame while its pose updates at the reduced
+rate:
+
+```go
+sched.Update(dt, cam, targets)
+_ = animgraph.Dispatch("scene", all...) // due poses in full, the rest placement only
 ```
 
 Nothing pops: a level changes only once the character is 15% past the
@@ -565,16 +639,20 @@ synchronously and re-skin the named models; a model the frame does not name
 keeps its pose. Frames for models that are still loading are held and applied
 when the model hydrates.
 
-The frame layout is documented on `animgraph.FrameEncoder`. A golden fixture
-(`motion/animgraph/testdata/frame.golden.hex`) pins the encoder, and the
-browser decoder test reads the same bytes.
+The frame layout is documented on `animgraph.FrameEncoder`. Two golden
+fixtures pin the encoder, and the browser decoder test reads the same bytes:
+`motion/animgraph/testdata/frame.golden.hex` (layers, IK, look-at) and
+`frame-root.golden.hex` (a root placement, a sampled layer and a
+placement-only model).
 
 ### Limits
 
 - **Root motion stays in the renderer.** By default the hips' horizontal clip
-  motion is removed and your simulation moves the character; set
-  `scene.Model.RootMotion` to keep it. The graph does not report root-motion
-  deltas to Go.
+  motion is removed and your simulation moves the character (with `SetRoot`
+  or scene commands); set `scene.Model.RootMotion` to keep it. The graph does
+  not report root-motion deltas to Go.
+- **Placement is ground-plane.** `SetRoot` carries a position and a yaw. A
+  character that leans, falls or rolls does so in its clips.
 - **Morph targets.** Clip channels that animate morph weights (facial
   shapes) do not play through the graph; skeletal channels do. A model with
   morph targets keeps its default weights.
