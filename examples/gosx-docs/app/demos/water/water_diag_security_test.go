@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 )
 
 func waterDiagSource(t *testing.T) []byte {
@@ -115,7 +115,7 @@ func TestWaterDiagRendersQueryAndAttributeValuesAsText(t *testing.T) {
 		browserContext, cancelBrowser = chromedp.NewContext(allocator)
 		defer cancelBrowser()
 	} else {
-		browser, err := chrometest.Start(browserContext, chromePath,
+		browser, err := browsertest.Start(browserContext, chromePath,
 			"--no-sandbox",
 			"--disable-gpu",
 		)

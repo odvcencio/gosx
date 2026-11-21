@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 )
 
 func testSections(t *testing.T, binary []byte) ([]byte, map[byte][]byte) {
@@ -139,7 +139,7 @@ func TestModuleBrowserValidation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	browser, err := chrometest.Start(ctx, executable, "--no-sandbox")
+	browser, err := browsertest.Start(ctx, executable, "--no-sandbox")
 	if err != nil {
 		t.Fatal(err)
 	}

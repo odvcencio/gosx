@@ -211,6 +211,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `browser` | internal-use | yes | Supplies the authoring marker used by GoSX island handlers for browser-owned effects. |
+| `browsertest` | experimental | yes | Runs browser checks from go test: it starts Chrome with a bounded, retried startup (Start, Launch), opens a page with the emulation a check needs (Open), and drives it with waits that stretch when the page draws slowly (Page). |
 | `cmd/gosx` | stable | yes | The GoSX compiler and development tool. |
 | `cmd/gosx-detlint` | internal-use | yes | Reports code that can give different bits on js/wasm, amd64 and arm64, in packages marked //gosx:deterministic. |
 | `cmd/gosx-grammar-blob` | internal-use | yes | Regenerates the embedded GSX grammar blob. |

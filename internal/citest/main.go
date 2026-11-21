@@ -48,6 +48,7 @@ type raceSkipTarget struct {
 // and by the full race run on protected-branch pushes.
 var prRaceTargets = []raceTarget{
 	{"auth", "concurrent in-memory credential and observer stores"},
+	{"browsertest", "Chrome startup, pipe draining, cancellation, and cleanup goroutines"},
 	{"client/bridge", "cross-frame and canvas event atomics"},
 	{"client/vm", "shared host, material, and render caches"},
 	{"crdt", "concurrent documents and vector quantizer cache"},
@@ -57,7 +58,6 @@ var prRaceTargets = []raceTarget{
 	{"game/loop", "frame scheduling, observer admission, and concurrent stop/restart"},
 	{"hub", "websocket client pumps and shared connection state"},
 	{"hub/scene3d", "authoritative shared Scene3D state"},
-	{"internal/chrometest", "Chrome startup, pipe draining, cancellation, and cleanup goroutines"},
 	{"physics", "shared physics acceleration data"},
 	{"render/bundle", "parallel render-bundle assembly"},
 	{"route", "shared parser, source, and metadata caches"},

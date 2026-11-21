@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 )
 
 type renderSmokeResult struct {
@@ -161,7 +161,7 @@ func findChrome(t *testing.T) string {
 
 func newChromeContext(t *testing.T, chrome string) (context.Context, context.CancelFunc) {
 	t.Helper()
-	browser, err := chrometest.Start(t.Context(), chrome,
+	browser, err := browsertest.Start(t.Context(), chrome,
 		"--no-sandbox", "--use-angle=swiftshader", "--enable-webgl", "--mute-audio")
 	if err != nil {
 		t.Fatalf("start Chrome for render smoke: %v", err)

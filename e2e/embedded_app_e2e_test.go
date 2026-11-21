@@ -21,7 +21,7 @@ import (
 	"m31labs.dev/gosx/action"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/hub"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/server"
 	"m31labs.dev/gosx/session"
 )
@@ -99,7 +99,7 @@ func TestEmbeddedAppUnderPrefix(t *testing.T) {
 	if chrome == "" {
 		chrome = e2eChromePath(t)
 	}
-	browser, err := chrometest.Start(t.Context(), chrome, "--no-sandbox", "--ignore-certificate-errors", "--disable-site-isolation-trials")
+	browser, err := browsertest.Start(t.Context(), chrome, "--no-sandbox", "--ignore-certificate-errors", "--disable-site-isolation-trials")
 	if err != nil {
 		t.Fatal(err)
 	}

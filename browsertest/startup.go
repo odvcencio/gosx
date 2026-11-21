@@ -1,7 +1,4 @@
-// Package chrometest provides bounded Chrome startup for browser tests.
-// It is internal test infrastructure and is not part of the GoSX product
-// runtime or browser asset surface.
-package chrometest
+package browsertest
 
 import (
 	"context"

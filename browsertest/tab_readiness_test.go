@@ -1,4 +1,4 @@
-package chrometest
+package browsertest
 
 import (
 	"context"

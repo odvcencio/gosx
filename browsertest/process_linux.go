@@ -1,6 +1,6 @@
 //go:build linux
 
-package chrometest
+package browsertest
 
 import (
 	"os"

@@ -23,7 +23,7 @@ import (
 	cdppage "github.com/chromedp/cdproto/page"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/internal/humanoidtest"
 	"m31labs.dev/gosx/motion/animgraph"
 	"m31labs.dev/gosx/motion/animgraph/gltfclip"
@@ -212,7 +212,7 @@ func animBrowser(t *testing.T, chrome, backend string) context.Context {
 	if !animGPURunner() {
 		args = append(args, "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--disable-features=WebGPU")
 	}
-	browser, err := chrometest.Start(t.Context(), chrome, args...)
+	browser, err := browsertest.Start(t.Context(), chrome, args...)
 	if err != nil {
 		t.Skipf("chrome unavailable: %v", err)
 	}

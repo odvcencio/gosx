@@ -1,4 +1,12 @@
-# Chrome startup for tests
+# browsertest: browser checks from go test
+
+| Call | Does |
+|---|---|
+| `Launch(t, Options{})` | A bound, active tab in a Chrome it starts (with `Start`, below), or in a running browser named by `Options.Endpoint`; closed when the test ends. Skips the test when no Chrome is found (`FindChrome`). |
+| `Open(path, OpenOptions{...})` | Loads a file or URL with the viewport, touch, focus, offline and init scripts a check asks for. `CountFrames` installs `FrameCounter`. |
+| `NewPage(t, tab, budget)` | `Run`, `Eval`, `Text`, `WaitFor`, `TryWait`, `Frames`, `WaitFrames`, `Screenshot`, with a deadline that `Stretch` and `MeasureFrameRate` move when the page draws slowly. |
+
+## Chrome startup
 
 `Start(t.Context(), chromePath, flags...)` returns a browser whose empty tab is
 already bound and active. Create navigation/assertion deadlines from `browser.Context`

@@ -69,6 +69,7 @@ e2e/...                        tools        internal-use
 browser/...                    tools        internal-use
 gameboy/...                    tools        internal-use
 islandtest/...                 tools        internal-use
+browsertest/...                tools        experimental
 scripts/...                    tools        internal-use
 auth/redis                     web          stable
 

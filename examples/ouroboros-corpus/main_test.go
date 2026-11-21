@@ -22,7 +22,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
 	"m31labs.dev/gosx/hydrate"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/island/program"
 	ouroboros "m31labs.dev/gosx/perf/ouroboros"
 )
@@ -245,7 +245,7 @@ func TestFixtureMP4BrowserLoadsMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	browser, err := chrometest.Start(t.Context(), chrome,
+	browser, err := browsertest.Start(t.Context(), chrome,
 		"--no-sandbox", "--autoplay-policy=no-user-gesture-required")
 	if err != nil {
 		t.Fatalf("start Chrome for media metadata: %v", err)
@@ -1017,7 +1017,7 @@ func newChromeContext(t *testing.T, chrome string, timeout time.Duration) (conte
 func newAuditedChromeContext(t *testing.T, chrome string, timeout time.Duration) (context.Context, context.CancelFunc, *chromeAudit) {
 	t.Helper()
 	audit := &chromeAudit{}
-	browser, err := chrometest.Start(t.Context(), chrome,
+	browser, err := browsertest.Start(t.Context(), chrome,
 		"--no-sandbox", "--autoplay-policy=no-user-gesture-required")
 	if err != nil {
 		t.Fatalf("start Chrome for fixture: %v", err)
