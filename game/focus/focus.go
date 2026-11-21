@@ -10,6 +10,12 @@
 // hidden, the disabled and those taken out of the Tab order
 // (tabindex="-1"). A roving row (a radio-like group whose one member holds
 // tabindex 0) is one stop in that walk, and Left and Right move inside it.
+//
+// Two helpers keep a keyboard or a controller from being left with the
+// focus on nothing. When asks for the focus on a control an island has not
+// drawn yet and gets it once the control is drawn and enabled (the engine
+// calls Step once a frame). Keep rewrites a panel's markup and puts the focus
+// back on the same control, or on the panel's main button.
 package focus
 
 import "math"

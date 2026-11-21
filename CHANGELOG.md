@@ -33,6 +33,7 @@
 - `GamepadReader` reads a slot's id and mapping again after a `gamepadconnected` or `gamepaddisconnected` event, so a pad that takes another's slot between two polls is reported with its own id.
 - `actions.Tee` feeds several sinks from one keyboard or pad poll.
 - New packages: `game/actions/hand` (the device in hand), `game/actions/prompt` (control prompts and glyph markup for that device), `game/actions/seats` (claim by press, loss and reclaim, held-input disarming for local multiplayer) and `game/focus` (gamepad focus walking and menu, slider and button activation on GoSX pages).
+- `focus.When` focuses a control once an island has drawn it (one request at a time, tried once per frame through `focus.Step`), and `focus.Keep` rewrites a panel's markup and puts the focus back on the same control or the panel's main button. `focus.Ready` is the one test for "in the page, enabled and drawn".
 
 ### Server and islands
 
