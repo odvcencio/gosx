@@ -8195,7 +8195,7 @@
       pollPerformanceSample: function() { return pollPerformanceSample(timingState, s.device); },
       getPerformanceTimingStatus: function() { return getPerformanceTimingStatus(timingState, s.device); },
       getFrameTiming: function() { return getFrameTiming(timingState, s.device, s.lastDeviceLostInfo); },
-      diagnostics: function() { return diagnostics(s); },
+      diagnostics: function() { return diagnostics(s); }, iblStatus: function() { return wgpuIBLStatus(s); },
       getFrameProgress: function() { return telemetryState.webGPUFrameProof; }, shaderPrograms: function() { return { total: pipelineGuard.created, pending: pipelineGuard.pending, failed: pipelineGuard.failures.length }; },
       render: pipelineGuard.wrapFrame(function(bundle: any, viewport: any, frameMeta: any) { return render(s, bundle, viewport, frameMeta); }, function() { endWebGPUErrorScope(telemetryState, s.device); }),
       getFailureReason: function() { return pipelineGuard.coreError ? "webgpu-pipeline-failed" : ""; },

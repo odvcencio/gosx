@@ -1243,3 +1243,23 @@ test("Scene3D adaptiveQuality+QualityLadder warning fires only for explicit tier
   assert.equal(ladderWarnings(noAdaptive.warnLog).length, 0,
     "no adaptiveQuality authored + ladder must NOT warn");
 });
+
+test("Scene3D publishes the renderer's image-lighting result for page checks", () => {
+  const h = createAdaptiveQualityHarness({ qualityTier: "full" });
+  let ibl = { requested: true, active: false, state: "loading", reason: "product-pending", radianceMipLevels: 0 };
+  h.renderer.iblStatus = () => ibl;
+  for (let i = 0; i < 31; i++) h.sample(5);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-state"), "loading");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-reason"), "product-pending");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-radiance-mips"), "0");
+  ibl = { requested: true, active: true, state: "active", reason: "", radianceMipLevels: 7 };
+  for (let i = 0; i < 31; i++) h.sample(5);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-state"), "active");
+  assert.ok(!h.mount.getAttribute("data-gosx-scene3d-ibl-reason"), "no reason once active");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-radiance-mips"), "7");
+  // A failure names its reason and binds no mips.
+  h.renderer.iblStatus = () => ({ state: "failed", reason: "product-upload", active: false });
+  for (let i = 0; i < 31; i++) h.sample(5);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-state"), "failed");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ibl-reason"), "product-upload");
+});

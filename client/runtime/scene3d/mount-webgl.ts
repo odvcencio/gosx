@@ -250,6 +250,7 @@
           world: world, ibl: world.ibl || null, compositeCPUFrameMS: compositeMS,
         });
       },
+      iblStatus: function() { return worldRenderer?.iblStatus?.() || null; },
       resize: function(viewport: any) {
         worldRenderer?.resize?.(viewport);
         waterRenderer.resize?.(viewport);
@@ -5431,7 +5432,23 @@
     }
   }
 
+  // sceneMirrorIBLState publishes what the renderer did with Environment.IBL
+  // (not what was asked) for page checks, every 30th frame: ibl-state is
+  // not-requested, validating, loading, active, unsupported or failed; ibl-reason
+  // names a failure; ibl-radiance-mips is the bound radiance level count.
+  function sceneMirrorIBLState(mount, renderer) {
+    if (!mount || !renderer || typeof renderer.iblStatus !== "function") return;
+    mount.__gosxIBLMirrorFrame = ((mount.__gosxIBLMirrorFrame || 0) + 1) % 30;
+    if (mount.__gosxIBLMirrorFrame !== 1) return;
+    let ibl = null;
+    try { ibl = renderer.iblStatus(); } catch (_iblStatusError) { return; }
+    setAttrValue(mount, "data-gosx-scene3d-ibl-state", ibl && ibl.state ? String(ibl.state) : "not-requested");
+    setAttrValue(mount, "data-gosx-scene3d-ibl-reason", ibl && ibl.reason ? String(ibl.reason) : "");
+    setAttrValue(mount, "data-gosx-scene3d-ibl-radiance-mips", String(ibl && ibl.active ? (ibl.radianceMipLevels || 0) : 0));
+  }
+
   function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
+    sceneMirrorIBLState(mount, renderer);
     if (state && viewport && viewport.devicePixelRatio > 0 && state.renderDevicePixelRatio !== viewport.devicePixelRatio) {
       state.renderDevicePixelRatio = viewport.devicePixelRatio;
       applySceneAdaptiveQualityState(mount, state, frameNowMS, true);

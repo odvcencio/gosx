@@ -1116,7 +1116,9 @@ const budgets = [
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.gz gzip 615292; the target rises by exactly the measured overage (598150 -> 598908), allowance unchanged.
     // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js raw 2197911; the target rises by exactly the measured overage (2132323 -> 2132375), allowance unchanged.
     // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.gz gzip 615401; the target rises by exactly the measured overage (598908 -> 599017), allowance unchanged.
-    file: "bootstrap.js", raw: 2132375, gzip: 599017,
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap.js raw 2198599; the target rises by exactly the measured overage (2132375 -> 2133063), allowance unchanged.
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap.js.gz gzip 615594; the target rises by exactly the measured overage (599017 -> 599210), allowance unchanged.
+    file: "bootstrap.js", raw: 2133063, gzip: 599210,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1143,7 +1145,8 @@ const budgets = [
     // Opt-in physical light model, on top of the lag fix: measured bootstrap.js.br brotli 500258; the target rises by exactly the measured overage (483430 -> 483874), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.br brotli 500605; the target rises by exactly the measured overage (483874 -> 484221), allowance unchanged.
     // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.br brotli 500887; the target rises by exactly the measured overage (484221 -> 484503), allowance unchanged.
-    brotli: 484503 },
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap.js.br brotli 500969; the target rises by exactly the measured overage (484503 -> 484585), allowance unchanged.
+    brotli: 484585 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1578,7 +1581,8 @@ const budgets = [
     // Opt-in physical light model (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d-webgl.js raw 313547; the target rises by exactly the measured overage (298103 -> 298641), allowance unchanged.
     // The same change: measured bootstrap-feature-scene3d-webgl.js.gz gzip 93610; the target rises by exactly the measured overage (89027 -> 89158), allowance unchanged.
     // The same change: measured bootstrap-feature-scene3d-webgl.js.br brotli 81142; the target rises by exactly the measured overage (77092 -> 77287), allowance unchanged.
-    file: "bootstrap-feature-scene3d-webgl.js", raw: 298641, gzip: 89158, brotli: 77287 },
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d-webgl.js raw 313604; the target rises by exactly the measured overage (298641 -> 298671), allowance unchanged.
+    file: "bootstrap-feature-scene3d-webgl.js", raw: 298671, gzip: 89158, brotli: 77287 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1777,7 +1781,10 @@ const budgets = [
     // GPU budget keeps quality when the GPU timer is late: measured bootstrap-feature-scene3d.js.gz gzip 201179; the target rises by exactly the measured overage (191589 -> 191599), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d.js raw 700955; the target rises by exactly the measured overage (666982 -> 667605), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d.js.gz gzip 201377; the target rises by exactly the measured overage (191599 -> 191797), allowance unchanged.
-    file: "bootstrap-feature-scene3d.js", raw: 667605, gzip: 191797,
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js raw 701439; the target rises by exactly the measured overage (667605 -> 668058), allowance unchanged.
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js.gz gzip 201511; the target rises by exactly the measured overage (191797 -> 191921), allowance unchanged.
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js.gz gzip 201521; the target rises by exactly the measured overage (191921 -> 191924), allowance unchanged.
+    file: "bootstrap-feature-scene3d.js", raw: 668058, gzip: 191924,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
@@ -1798,7 +1805,8 @@ const budgets = [
     // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap-feature-scene3d.js.br brotli 170913; the target rises by exactly the measured overage (162734 -> 162776), allowance unchanged.
     // 20 November 2026 (skinned players cast shadows: the planner keeps their cast flag, gear never casts, a shadow-caster draw counter; needed by the fidelity lane): measured bootstrap-feature-scene3d.js.br brotli 171040; the target rises by exactly the measured overage (162776 -> 162901), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d.js.br brotli 171127; the target rises by exactly the measured overage (162901 -> 162981), allowance unchanged.
-    brotli: 162981 },
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d.js.br brotli 171199; the target rises by exactly the measured overage (162981 -> 163049), allowance unchanged.
+    brotli: 163049 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -2115,7 +2123,9 @@ const budgets = [
     // 20 November 2026 (skinned players cast shadows: the planner keeps their cast flag, gear never casts, a shadow-caster draw counter; needed by the fidelity lane): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 144722; the target rises by exactly the measured overage (137752 -> 137834), allowance unchanged.
     // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js raw 541732; the target rises by exactly the measured overage (515909 -> 515936), allowance unchanged.
     // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 144858; the target rises by exactly the measured overage (137834 -> 137966), allowance unchanged.
-    raw: 515936, gzip: 137966,
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d-webgpu.js raw 541868; the target rises by exactly the measured overage (515936 -> 516071), allowance unchanged.
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 144878; the target rises by exactly the measured overage (137966 -> 137979), allowance unchanged.
+    raw: 516071, gzip: 137979,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -2148,7 +2158,8 @@ const budgets = [
     // The same change: measured bootstrap-feature-scene3d-webgpu.js.br brotli 121952; the target rises by exactly the measured overage (115902 -> 116156), allowance unchanged.
     // Opt-in physical light model: measured bootstrap-feature-scene3d-webgpu.js.br brotli 121983; the target rises by exactly the measured overage (116156 -> 116175), allowance unchanged.
     // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js.br brotli 122097; the target rises by exactly the measured overage (116175 -> 116288), allowance unchanged.
-    brotli: 116288 },
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d-webgpu.js.br brotli 122290; the target rises by exactly the measured overage (116288 -> 116475), allowance unchanged.
+    brotli: 116475 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -3054,7 +3065,9 @@ const routeBudgets = [
     // Opt-in physical light model, on top of the lag fix (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1375850; the target rises by exactly the measured overage (1309724 -> 1310363), allowance unchanged.
     // GPU budget keeps quality when the GPU timer is late (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1375912; the target rises by exactly the measured overage (1310363 -> 1310393), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1376537; the target rises by exactly the measured overage (1310393 -> 1311017), allowance unchanged.
-    raw: 1311017,
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1377021; the target rises by exactly the measured overage (1311017 -> 1311485), allowance unchanged.
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1377085; the target rises by exactly the measured overage (1311485 -> 1311549), allowance unchanged.
+    raw: 1311549,
     // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 385941 bytes; only this exhausted target moves (369041 -> 369557), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 392100; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Safari and Firefox route (WebGL, with labels) gzip measures 388236 bytes; only this exhausted target moves (369557 -> 371852), allowance unchanged.
@@ -3079,7 +3092,9 @@ const routeBudgets = [
     // 20 November 2026 (skinned players cast shadows: the planner keeps their cast flag, gear never casts, a shadow-caster draw counter; needed by the fidelity lane): measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 396186; the target rises by exactly the measured overage (379797 -> 379802), allowance unchanged.
     // GPU budget keeps quality when the GPU timer is late: measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 396196; the target rises by exactly the measured overage (379802 -> 379812), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 396394; the target rises by exactly the measured overage (379812 -> 380010), allowance unchanged.
-    gzip: 380010,
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 396528; the target rises by exactly the measured overage (380010 -> 380144), allowance unchanged.
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 396532; the target rises by exactly the measured overage (380144 -> 380148), allowance unchanged.
+    gzip: 380148,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
@@ -3107,7 +3122,8 @@ const routeBudgets = [
     // Opt-in physical light model, on top of the lag fix: measured Scene3D Safari and Firefox route (WebGL, with labels) brotli 343426; the target rises by exactly the measured overage (326999 -> 327076), allowance unchanged.
     // 20 November 2026 (skinned players cast shadows: the planner keeps their cast flag, gear never casts, a shadow-caster draw counter; needed by the fidelity lane): measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 343677; the target rises by exactly the measured overage (327076 -> 327323), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 343764; the target rises by exactly the measured overage (327323 -> 327397), allowance unchanged.
-    brotli: 327397,
+    // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 343775; the target rises by exactly the measured overage (327397 -> 327405), allowance unchanged.
+    brotli: 327405,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.

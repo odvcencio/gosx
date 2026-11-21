@@ -11030,7 +11030,7 @@
       drawnPostEffects: function() { return lastPostEffects; },
       renderSurfaces: renderSurfaces,
       dispose: function() { frameTimer.dispose(); dispose(); },
-      diagnostics: diagnostics, shaderPrograms: function() { const q = scenePBRCompileContext(gl); return { total: q.total, pending: q.pending.size, failed: q.failed }; },
+      diagnostics: diagnostics, iblStatus: function() { return uniforms._gosxIBLDiagnostics || null; }, shaderPrograms: function() { const q = scenePBRCompileContext(gl); return { total: q.total, pending: q.pending.size, failed: q.failed }; },
       type: "webgl-pbr",
       textureVariantContext: textureVariantContext,
     };

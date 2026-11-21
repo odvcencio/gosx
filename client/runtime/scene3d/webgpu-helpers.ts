@@ -32,6 +32,7 @@
 
   // Environment.LightModel "physical": light and environment colours decode from sRGB to linear.
   function wgpuLightChannel(c: number, physical: boolean) { return !physical ? c : c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+  function wgpuIBLStatus(s: any) { var r = s && s.uniformState && s.uniformState.iblResources; return r && r.diagnostics || null; }
   function wgpuBundlePhysicalLights(bundle: any) { return wgpuPhysicalLights(bundle && bundle.environment); }
   function wgpuPhysicalLights(environment: any) { return Boolean(environment && String(environment.lightModel || "").trim().toLowerCase() === "physical"); }
   function destroyGPUTimingResources(timing) {
