@@ -216,3 +216,25 @@ test('gear in the model\'s own material joins the body mesh; gear with its own m
   run("scenePatchModelAttachments(state, lineman, [{ name: 'mask', hidden: true }, { name: 'visor', hidden: false }, { name: 'tail', hidden: true }])");
   assert.deepEqual(JSON.parse(run('JSON.stringify(staged.objects[0]._morphAnim.merged)')), [[3], []], 'hiding the mask takes it out of the body again');
 });
+
+test('the WebGPU material signature is rebuilt only when a field of the material changed, in place or nested', () => {
+  const source = createRequire(import.meta.url)('./scene3d-renderer-source-set.js').readSceneRendererBackendSrc('webgpu');
+  const from = source.indexOf('  var webGPUSignatureReads');
+  const to = source.indexOf('  function webGPUPrepareMaterialFrame(');
+  assert.ok(from > 0 && to > from);
+  const context = vm.createContext({ window: { __gosx_scene3d_counters: {} }, JSON, Object, WeakMap, Array });
+  vm.runInContext('var materialCacheFields = ["color", "roughness", "textureDescriptors"];' + source.slice(from, to).replace(/: any\)/g, ')').replace(/\): string \{/g, ') {').replace(/value: any/g, 'value'), context);
+  const sign = (m) => vm.runInContext('webGPUMaterialSignature', context)(m);
+  const builds = () => context.window.__gosx_scene3d_counters.materialSignatures;
+  const material = { color: '#fff', roughness: 0.5, textureDescriptors: { albedo: { wrap: 'repeat' } } };
+  const first = sign(material);
+  assert.equal(sign(material), first);
+  assert.equal(sign(material), first);
+  assert.equal(builds(), 1, 'an unchanged material is not rebuilt');
+  material.color = '#000';
+  const second = sign(material);
+  assert.notEqual(second, first, 'an edit in place shows');
+  material.textureDescriptors.albedo.wrap = 'clamp';
+  assert.notEqual(sign(material), second, 'an edit of a nested descriptor shows');
+  assert.equal(builds(), 3);
+});

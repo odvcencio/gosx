@@ -1506,7 +1506,7 @@
       };
     }
     // Material inputs change only through scenePatchModelUniforms, which advances this.
-    if (normalized) normalized._matRev = 0;
+    if (normalized && hasSkin) normalized._matRev = 0;
     return normalized;
   }
 

@@ -8258,11 +8258,26 @@
   }
   // Exact material signatures also catch mutable callers without revisions.
   var materialCacheFields = "kind materialKind color roughness metalness emissive opacity clearcoat sheen transmission iridescence anisotropy unlit normalUVScale ior alphaCutoff specularIntensity specularColor normalScale occlusionStrength emissiveColor rimPower rimStrength rimColor specularAA thickness attenuationDistance attenuationColor texture normalMap roughnessMap metalnessMap emissiveMap occlusionMap specularIntensityMap specularColorMap thicknessMap textureDescriptors blendMode renderPass revision version".split(" ");
+  // The signature of a material is read from its fields every frame, so an edit of
+  // the material in place still shows. A material whose fields (an object field
+  // by its JSON) equal the last read keeps its last signature string, which
+  // spares the JSON of the whole field list and its allocations.
+  var webGPUSignatureReads = new WeakMap();
   function webGPUMaterialSignature(material: any): string {
     var counters = window.__gosx_scene3d_counters;
+    var mat = material || {}, last = material && typeof material === "object" ? webGPUSignatureReads.get(material) : undefined;
+    var values = new Array(materialCacheFields.length), same = Boolean(last);
+    for (var i = 0; i < values.length; i++) {
+      var value = mat[materialCacheFields[i]];
+      if (value !== null && typeof value === "object") value = JSON.stringify(value);
+      values[i] = value;
+      if (same && !Object.is(value, last.values[i])) same = false;
+    }
+    if (same) return last.signature;
     if (counters) counters.materialSignatures = (counters.materialSignatures || 0) + 1;
-    var mat = material || {};
-    return JSON.stringify(materialCacheFields.map(key => mat[key]));
+    var signature = JSON.stringify(materialCacheFields.map(key => mat[key]));
+    if (material && typeof material === "object") webGPUSignatureReads.set(material, { values: values, signature: signature });
+    return signature;
   }
   function webGPUPrepareMaterialFrame(materialFrame: any, device: any, bundle: any, epoch: number, createBuffer: any, destroyBuffer: any, buffers: Set<any>) {
     materialFrame.epoch = epoch;
