@@ -154,6 +154,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `game/audio/speech/loudness` | experimental | yes | Measures and normalizes mono speech clips: ITU-R BS.1770-4 loudness, 4x true peak, silence trimming, a peak-safe limiter, resampling and WAV reading and writing. |
 | `game/audio/speech/voice` | experimental | yes | Plays speech.Sequencer timelines on the mixer's voice bus. |
 | `game/audio/speech/voicerender` | experimental | yes | Turns a speech.RenderManifest into voice clips: it asks a text-to-speech Provider for each phrase variant, trims silence, normalizes loudness, packs the clips into one atlas per voice and writes the clip manifest the runtime loads. |
+| `game/audio/wav` | experimental | yes | Writes PCM WAV files from Go samples and prepares sound that loops: what a game needs to synthesize a cue in Go and hand it to audio.Player (through audio.Library and audio.FetchBytes) or to bake it to a file. |
 | `game/audio/worklet` | experimental | yes | Supplies GoSX's browser processor for WASM audio reactors. |
 | `game/boot` | experimental | yes | The loading and readiness gate of a game. |
 | `game/boot/bootpage` | experimental | yes | Renders the server-side parts of the boot gate: preload links for the Go WASM module and its wasm_exec script, and a small JavaScript watchdog that runs before the framework scripts. |
