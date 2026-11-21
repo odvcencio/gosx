@@ -1458,6 +1458,71 @@
   }
 
   // Cache keys the bounds/snapshot layers attach to vertices objects.
+  // Gear that wears a model's own material joins the body's vertex streams, so
+  // a player is one skinned mesh and one draw. entry is a skinned morph entry;
+  // pieces are normalized vertex sets bound to their joints. The body's streams
+  // are kept in entry.body (the morph fold keeps writing the body part there)
+  // and the live vertices hold the body followed by the pieces. An empty list
+  // restores the body alone.
+  var GLTF_MERGE_STREAMS: any[] = [["positions", 3, 0], ["normals", 3, 0], ["uvs", 2, 0], ["tangents", 4, 0], ["joints", 4, 0], ["weights", 4, 0]];
+  function gltfMergeGear(entry, pieces) {
+    var v = entry.vertices;
+    if (!entry.body) {
+      entry.body = { count: v.count, positions: v.positions, normals: v.normals, uvs: v.uvs, uvs1: v.uvs1, tangents: v.tangents, joints: v.joints, weights: v.weights, indices: v.indices };
+    }
+    entry.tail = pieces || [];
+    gltfRebuildMerged(entry);
+  }
+
+  function gltfRebuildMerged(entry) {
+    var v = entry.vertices, body = entry.body, parts: any[] = [body].concat(entry.tail || []);
+    var total = 0, p, s;
+    for (p = 0; p < parts.length; p++) total += parts[p].count;
+    for (s = 0; s < GLTF_MERGE_STREAMS.length; s++) {
+      var name = GLTF_MERGE_STREAMS[s][0], stride = GLTF_MERGE_STREAMS[s][1];
+      if (parts.length === 1) { v[name] = body[name]; continue; }
+      var out = new Float32Array(total * stride), at = 0;
+      for (p = 0; p < parts.length; p++) {
+        var src = parts[p][name], n = parts[p].count * stride;
+        if (src && src.length >= n) out.set(n === src.length ? src : src.subarray(0, n), at);
+        else if (name === "tangents") for (var t = 0; t < parts[p].count; t++) out.set([1, 0, 0, 1], at + t * 4);
+        else if (name === "normals") for (var u = 0; u < parts[p].count; u++) out[at + u * 3 + 1] = 1;
+        at += n;
+      }
+      v[name] = out;
+    }
+    if (body.uvs1) {
+      if (parts.length === 1) v.uvs1 = body.uvs1;
+      else {
+        var uv1 = new Float32Array(total * 2), at1 = 0;
+        for (p = 0; p < parts.length; p++) {
+          var n1 = parts[p].count * 2;
+          if (parts[p].uvs1 && parts[p].uvs1.length >= n1) uv1.set(parts[p].uvs1.subarray(0, n1), at1);
+          at1 += n1;
+        }
+        v.uvs1 = uv1;
+      }
+    }
+    var indexed = false;
+    for (p = 0; p < parts.length; p++) if (parts[p].indices && parts[p].indices.length) indexed = true;
+    if (!indexed || parts.length === 1) v.indices = body.indices;
+    else {
+      var length = 0;
+      for (p = 0; p < parts.length; p++) length += parts[p].indices && parts[p].indices.length ? parts[p].indices.length : parts[p].count;
+      var idx = new Uint32Array(length), ia = 0, base = 0;
+      for (p = 0; p < parts.length; p++) {
+        var pi = parts[p].indices;
+        if (pi && pi.length) for (var k = 0; k < pi.length; k++) idx[ia++] = pi[k] + base;
+        else for (var j = 0; j < parts[p].count; j++) idx[ia++] = base + j;
+        base += parts[p].count;
+      }
+      v.indices = idx;
+    }
+    v.count = total;
+    v.immutable && v.revision++;
+    gltfDropVertexCaches(v);
+  }
+
   var GLTF_MORPH_CACHE_KEYS = ["_skinnedLocalBounds", "_localBounds", "_bounds"];
 
   function gltfDropVertexCaches(vertices) {
@@ -1625,13 +1690,21 @@
           continue;
         }
         var skinnedFold = gltfFoldAnimatedMorphStreams(meta, effective);
-        entry.vertices.positions = skinnedFold.positions;
-        entry.vertices.normals = skinnedFold.normals;
-        entry.vertices.tangents = skinnedFold.tangents;
-        // A skinned morph stream is a revisioned snapshot (revision starts
-        // at 0): the planner and the upload re-read it only after a fold.
-        entry.vertices.immutable && entry.vertices.revision++;
-        gltfDropVertexCaches(entry.vertices);
+        if (entry.body) {
+          // Gear is merged into the vertices: the fold is the body part.
+          entry.body.positions = skinnedFold.positions;
+          entry.body.normals = skinnedFold.normals;
+          entry.body.tangents = skinnedFold.tangents;
+          gltfRebuildMerged(entry);
+        } else {
+          entry.vertices.positions = skinnedFold.positions;
+          entry.vertices.normals = skinnedFold.normals;
+          entry.vertices.tangents = skinnedFold.tangents;
+          // A skinned morph stream is a revisioned snapshot (revision starts
+          // at 0): the planner and the upload re-read it only after a fold.
+          entry.vertices.immutable && entry.vertices.revision++;
+          gltfDropVertexCaches(entry.vertices);
+        }
         entry.lastWeights = effective;
         entry.lastFolded = skinnedFold;
         continue;
@@ -3573,6 +3646,7 @@
       sceneLoadGLTFModel: sceneLoadGLTFModel,
       gltfSceneToModelAsset: gltfSceneToModelAsset,
       applyMorphPose: gltfApplyAnimatedMorphPose,
+      mergeGear: gltfMergeGear,
       applyNodeAnimPose: gltfApplyNodeAnimPose,
     };
     window.__gosx_scene3d_gltf_loaded = true;

@@ -203,3 +203,16 @@ test('a patch with joint scales and a new scale poses once, at the new placement
   assert.deepEqual([...run('poses')], [1.05], 'one pose, after the scale');
 });
 
+
+test('gear in the model\'s own material joins the body mesh; gear with its own material stays an object', async () => {
+  const run = attachFixture();
+  run("window.__gosx_scene3d_gltf_api = { mergeGear(entry, pieces) { entry.merged.push(pieces.map(p => p.count)); } }");
+  run("staged.objects.push({ id: 'home-00/body', skin: skins[0], vertices: { count: 6 }, _morphAnim: { merged: [] } })");
+  await run('sceneInstantiateModelAttachments({}, 1, model, asset, skins, "home-00", staged, ids)');
+  assert.deepEqual([...run('ids')], ['home-00/visor/1'], 'only the visor, which has its own material, is an object of its own');
+  assert.deepEqual(JSON.parse(run('JSON.stringify(staged.objects[0]._morphAnim.merged)')), [[3]], 'the shown mask joins the body; the hidden visor is not merged');
+  run("lineman = { id: 'home-00', model, objectIDs: ['home-00/body'] }");
+  run("state = { objects: new Map([['home-00/body', staged.objects[0]]]) }");
+  run("scenePatchModelAttachments(state, lineman, [{ name: 'mask', hidden: true }, { name: 'visor', hidden: false }, { name: 'tail', hidden: true }])");
+  assert.deepEqual(JSON.parse(run('JSON.stringify(staged.objects[0]._morphAnim.merged)')), [[3], []], 'hiding the mask takes it out of the body again');
+});

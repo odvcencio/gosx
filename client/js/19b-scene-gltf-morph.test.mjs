@@ -975,3 +975,45 @@ test("a skinned morph snapshot advances its revision only when a fold writes new
   assert.deepEqual(result.revisions, [1, 1, 2], "one revision per fold, none for the same weights");
   assert.equal(result.looseRevision, undefined, "a mutable stream keeps no revision");
 });
+
+test("gear merged into a skinned morph entry rides after the body and survives a fold", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const r = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    var f0 = gltfFoldAnimatedMorphStreams(meta, meta.defaults);
+    var n = f0.positions.length / 3;
+    var vertices = { count: n, positions: f0.positions, normals: f0.normals, tangents: f0.tangents, uvs: new Float32Array(n * 2).fill(0.5),
+      joints: new Float32Array(n * 4), weights: new Float32Array(n * 4).fill(1), indices: null, immutable: true, revision: 0 };
+    var entry = { meta: meta, vertices: vertices, skinned: true, lastWeights: meta.defaults.slice() };
+    var piece = { count: 3, positions: new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9]), normals: new Float32Array(9).fill(0.25), uvs: new Float32Array(6).fill(0.75),
+      joints: new Float32Array(12).fill(2), weights: new Float32Array(12).fill(1), tangents: null, indices: null };
+    gltfMergeGear(entry, [piece]);
+    var merged = { count: vertices.count, positions: Array.from(vertices.positions), tail: Array.from(vertices.positions.slice(n * 3)),
+      tailJoints: Array.from(vertices.joints.slice(n * 4, n * 4 + 4)), tailUV: Array.from(vertices.uvs.slice(n * 2, n * 2 + 2)),
+      tailTangent: Array.from(vertices.tangents.slice(n * 4, n * 4 + 4)), revision: vertices.revision, n: n, body: Array.from(f0.positions) };
+    gltfApplyAnimatedMorphPose([entry], null, null, { mass: 1 });
+    var heavy = gltfFoldAnimatedMorphStreams(meta, [1, 0.25]);
+    var folded = { count: vertices.count, head: Array.from(vertices.positions.slice(0, n * 3)), tail: Array.from(vertices.positions.slice(n * 3)),
+      revision: vertices.revision, want: Array.from(heavy.positions) };
+    gltfMergeGear(entry, []);
+    var restored = { count: vertices.count, positions: Array.from(vertices.positions), revision: vertices.revision };
+    ({ merged: merged, folded: folded, restored: restored });
+  `));
+  const r6 = (a) => a.map((v) => Math.round(v * 1e6) / 1e6);
+  assert.equal(r.merged.count, r.merged.n + 3);
+  assert.deepEqual(r6(r.merged.positions.slice(0, r.merged.n * 3)), r6(r.merged.body), "the body part is untouched");
+  assert.deepEqual(r.merged.tail, [1, 2, 3, 4, 5, 6, 7, 8, 9], "the gear follows the body");
+  assert.deepEqual(r.merged.tailJoints, [2, 2, 2, 2], "the gear keeps its own joint");
+  assert.deepEqual(r.merged.tailUV, [0.75, 0.75]);
+  assert.deepEqual(r.merged.tailTangent, [1, 0, 0, 1], "a piece without tangents gets a default");
+  assert.equal(r.merged.revision, 1);
+  assert.equal(r.folded.count, r.merged.n + 3);
+  assert.deepEqual(r6(r.folded.head), r6(r.folded.want), "a fold rewrites the body part");
+  assert.deepEqual(r.folded.tail, [1, 2, 3, 4, 5, 6, 7, 8, 9], "and leaves the gear alone");
+  assert.equal(r.folded.revision, 2);
+  assert.equal(r.restored.count, r.merged.n, "no gear leaves the body alone");
+  assert.deepEqual(r6(r.restored.positions), r6(r.folded.want));
+  assert.equal(r.restored.revision, 3);
+});

@@ -116,6 +116,7 @@
     for (let i = 0; i < ids.length; i += 1) {
       const object = state.objects && state.objects.get ? state.objects.get(ids[i]) : null;
       if (object && object._attachment) sceneApplyModelObjectHiddenState(object, record.model);
+      if (object && object._gearPieces) sceneMergeModelGear(object, attachments);
     }
   }
 
@@ -125,6 +126,11 @@
   // pose the body pose it, on the same frame, with no per-frame work.
   async function sceneInstantiateModelAttachments(state: any, generation: any, model: any, asset: any, skinInstances: any, prefix: any, staged: any, objectIDs: any) {
     const list = Array.isArray(model.attachments) ? model.attachments : [];
+    // Gear in the model's own material joins the body's vertices (one skinned mesh, one
+    // draw per player); gear with a material of its own stays an object.
+    const host = staged.objects.find(function(o: any) { return o && o._morphAnim && o.skin && o.vertices; });
+    const gltfApi = window.__gosx_scene3d_gltf_api;
+    const merging = Boolean(host && gltfApi && typeof gltfApi.mergeGear === "function");
     for (let a = 0; a < list.length; a += 1) {
       const attach = list[a];
       const bind = attach ? sceneAttachmentJoint(asset, skinInstances, attach.joint) : null;
@@ -142,12 +148,32 @@
         if (!raw || !raw.vertices || raw.skin || (attach.mesh && String(raw.id || "").indexOf(attach.mesh + "-prim-") !== 0)) continue;
         const object = sceneInstantiateModelObject(sceneAttachmentBound(raw, bind), owner, prefix + "/" + attach.name, i, skinInstances);
         if (!object) continue;
+        if (merging && !attach.material) {
+          const pieces = host._gearPieces || (host._gearPieces = {});
+          (pieces[attach.name] || (pieces[attach.name] = [])).push(object.vertices);
+          continue;
+        }
         object._attachment = attach.name;
         if (attach.material) object._attachmentMaterial = true;
         staged.objects.push(object);
         objectIDs.push(object.id);
       }
     }
+    if (merging && host._gearPieces) sceneMergeModelGear(host, list);
+  }
+
+  // sceneMergeModelGear makes the body's vertices the body and every shown piece of
+  // gear in the model's own material.
+  function sceneMergeModelGear(host: any, attachments: any) {
+    const api = window.__gosx_scene3d_gltf_api;
+    if (!api || typeof api.mergeGear !== "function" || !host._morphAnim) return;
+    const pieces: any[] = [];
+    const list = Array.isArray(attachments) ? attachments : [];
+    for (let a = 0; a < list.length; a += 1) {
+      const shown = list[a] && !list[a].hidden && host._gearPieces[list[a].name];
+      if (shown) for (let p = 0; p < shown.length; p += 1) pieces.push(shown[p]);
+    }
+    api.mergeGear(host._morphAnim, pieces);
   }
 
   // The skin and joint slot of the node named joint, or null.
