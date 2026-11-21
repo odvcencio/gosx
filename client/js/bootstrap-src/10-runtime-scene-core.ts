@@ -7642,7 +7642,7 @@
       // must still be hashed and uploaded after their contents change.
       const retained = Boolean(bundle.retainedGeometryEnabled && vertices.immutable === true &&
         geometryRevision !== null && vertices.dynamic !== true &&
-        !object.computedMorph && !object._morphAnim && !object._nodeAnimLive &&
+        !object.computedMorph && !(object._morphAnim && !object._morphAnim.skinned) && !object._nodeAnimLive &&
         !(object.dynamicGeometry || object.geometryDynamic || object.geometryDirty) &&
         !(vertices.dirty || vertices.needsUpdate));
       const meshRecord = {

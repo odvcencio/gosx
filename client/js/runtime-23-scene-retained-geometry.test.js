@@ -1076,3 +1076,17 @@ test("Scene3D never frustum-culls a skinned shadow caster, so players just off s
   assert.equal(record.viewCulled, false, "a skinned mesh is not, so the shadow passes can still draw it");
   assert.equal(record.castShadow, true);
 });
+
+test("Scene3D retains a skinned morph mesh whose snapshot is revisioned, and no other morph mesh", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const morphed = (skinnedEntry) => {
+    const object = retainedTriangle({ id: "morphed-" + skinnedEntry }, F32);
+    object.vertices = { ...object.vertices, joints: new F32(12), weights: new F32([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]) };
+    object.skin = { jointMatrices: new F32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+    object._morphAnim = { skinned: skinnedEntry };
+    return renderBundle(api, object, 0).meshObjects[0];
+  };
+  assert.equal(morphed(true).retainedGeometry, true, "the skinned fold bumps the revision, so the mesh is a retained snapshot");
+  assert.equal(morphed(false).retainedGeometry, false, "a rigid morph changes its streams every pose and stays live");
+});
