@@ -37,6 +37,14 @@ type SceneFrameSource struct {
 	fallback        *FrameSourceJS
 	fallbackPending int // handle of the fallback request, 0 if none
 	fallbackFire    func(float64)
+
+	// stall watch (FallBackAfter): runs the waiting callbacks on the fallback
+	// clock while an attached renderer draws no frames.
+	watch        int
+	watchPending int
+	watchFire    func(float64)
+	drawn, seen  uint64
+	stale        int
 }
 
 // NewSceneFrameSource creates a FrameSource driven by the Scene3D mounted on
@@ -45,6 +53,7 @@ func NewSceneFrameSource(target string) *SceneFrameSource {
 	s := &SceneFrameSource{target: target, fallback: NewFrameSourceJS()}
 	s.fallback.quiet = true
 	s.fallbackFire = s.onFallback
+	s.watchFire = s.onWatch
 	return s
 }
 
@@ -53,11 +62,15 @@ func (s *SceneFrameSource) RequestFrame(cb func(timestampMS float64)) int {
 	s.mu.Lock()
 	handle := s.queue.add(cb)
 	if s.attached || s.firing {
+		arm := s.armWatchLocked()
 		s.mu.Unlock()
+		s.armWatch(arm)
 		return handle
 	}
 	if s.tryAttachLocked() {
+		arm := s.armWatchLocked()
 		s.mu.Unlock()
+		s.armWatch(arm)
 		return handle
 	}
 	needFallback := s.fallbackPending == 0
@@ -80,6 +93,9 @@ func (s *SceneFrameSource) CancelFrame(handle int) {
 	fallback := 0
 	if idle {
 		fallback, s.fallbackPending = s.fallbackPending, 0
+		watch := s.watchPending
+		s.watchPending = 0
+		defer s.cancelWatch(watch)
 		s.detachLocked()
 	}
 	s.mu.Unlock()
@@ -116,6 +132,7 @@ func (s *SceneFrameSource) Release() {
 	hook, hasHook := s.hook, s.hasHook
 	s.hook, s.hasHook = js.Func{}, false
 	s.fallbackPending = 0
+	s.watchPending = 0
 	s.mu.Unlock()
 	padRelease(s)
 	s.fallback.Release()
@@ -194,6 +211,9 @@ func (s *SceneFrameSource) onHook(_ js.Value, args []js.Value) any {
 	if len(args) > 0 {
 		now = args[0].Float()
 	}
+	s.mu.Lock()
+	s.drawn++
+	s.mu.Unlock()
 	s.run(now)
 	s.mu.Lock()
 	alpha := s.alpha

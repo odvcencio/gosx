@@ -112,3 +112,41 @@ func TestSceneFrameSourceUnregistersWhenIdle(t *testing.T) {
 		t.Fatalf("ran %d, attached %v: a frame that asks for no next frame must unregister", ran, source.Attached())
 	}
 }
+
+func TestSceneFrameSourceStepsWhileTheRendererStopsDrawing(t *testing.T) {
+	mount, raf := fakeScenePage(t)
+	handle := installHandle(mount)
+	source := NewSceneFrameSource("arena")
+	t.Cleanup(source.Release)
+	source.FallBackAfter(2)
+	var times []float64
+	var step func(float64)
+	step = func(now float64) { times = append(times, now); source.RequestFrame(step) }
+	source.RequestFrame(step)
+	if !source.Attached() || len(raf) != 1 {
+		t.Fatalf("attached %v with %d rAF requests; the watch keeps one beside the renderer", source.Attached(), len(raf))
+	}
+	hook := handle.Get("hook")
+	// The renderer draws: the watch sees it and runs nothing itself.
+	hook.Invoke(16, 16)
+	fireRAF(t, raf, 16)
+	hook.Invoke(33, 17)
+	fireRAF(t, raf, 33)
+	if len(times) != 2 {
+		t.Fatalf("frames %v: while the renderer draws, it alone runs the callbacks", times)
+	}
+	// The canvas is hidden: the renderer draws nothing. After two frames
+	// without a draw the watch runs the callbacks every frame.
+	for _, now := range []float64{50, 66, 83, 100} {
+		fireRAF(t, raf, now)
+	}
+	if len(times) != 5 || times[2] != 66 || times[4] != 100 {
+		t.Fatalf("frames %v: the watch must step the game from the second silent frame on", times)
+	}
+	// The renderer draws again: it takes over and the watch goes quiet.
+	hook.Invoke(116, 16)
+	fireRAF(t, raf, 116)
+	if len(times) != 6 || times[5] != 116 || !source.Attached() {
+		t.Fatalf("frames %v: once the renderer draws again it must be the only frame owner", times)
+	}
+}
