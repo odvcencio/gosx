@@ -246,11 +246,11 @@ test("gpu pass timing: the shadow and main passes carry timestampWrites", async 
     p.descriptor.timestampWrites.beginningOfPassWriteIndex,
     p.descriptor.timestampWrites.endOfPassWriteIndex,
   ]);
-  // Six stamps per ring entry: shadow begin/end at base+0/1, main begin/end at
-  // base+2/3, the frame-end marker at base+4/5. The base depends on which ring
-  // slot the frame took.
+  // Eight stamps per ring entry: shadow begin/end at base+0/1, main begin/end
+  // at base+2/3, the frame-end marker at base+4/5, skinning at base+6/7. The
+  // base depends on which ring slot the frame took.
   const base = indices[0][0];
-  assert.equal(base % 6, 0, "the shadow pair must start on a ring boundary");
+  assert.equal(base % 8, 0, "the shadow pair must start on a ring boundary");
   assert.deepEqual(indices.slice(0, 2), [[base, base + 1], [base + 2, base + 3]]);
   const querySets = new Set(stamped.map((p) => p.descriptor.timestampWrites.querySet));
   assert.equal(querySets.size, 1, "both passes must write into one query set");

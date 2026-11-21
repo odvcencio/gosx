@@ -6738,7 +6738,7 @@
     selenaState.frame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
     var computeParticleRecords = updateComputeParticleSystems(drawState, s.device, bundle.computeParticles, encoder, frameTimeSeconds);
     var computedMorphStats = updateComputedMorphMeshes(meshState, s.device, bundle, encoder);
-    s.temporalAA.capturePreviousSkins(encoder, bundle.meshObjects); var elioSkinStats = updateElioSkinnedMeshes(meshState, s.device, bundle, encoder); window.__gosx_scene3d_ocean_fft_api?.frame(s.oceanResources, { device: s.device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaState.frame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
+    s.temporalAA.capturePreviousSkins(encoder, bundle.meshObjects); var elioSkinStats = updateElioSkinnedMeshes(meshState, s.device, bundle, encoder, function() { return gpuPassTimestampWrites(timingState, "skin"); }); window.__gosx_scene3d_ocean_fft_api?.frame(s.oceanResources, { device: s.device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaState.frame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
     var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(meshState, s.device, bundle) : null;
     drawState.activePickMeshPositions = pbrSceneBuffers;
     if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {

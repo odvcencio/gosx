@@ -265,7 +265,7 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   assert.match(source, /elioSkinningKernel: "m31labs\.dev\/elio\/stdlib\.Skin"/);
   assert.match(source, /@compute @workgroup_size\(64\)/);
   assert.match(source, /wgpuCreateValidatedPipeline\(device, "compute", \{[\s\S]*label: "gosx-elio-skin-lbs"/);
-  assert.match(source, /updateElioSkinnedMeshes\(meshState, s\.device, bundle, encoder\)/);
+  assert.match(source, /updateElioSkinnedMeshes\(meshState, s\.device, bundle, encoder[,)]/);
   assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
   assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
   assert.match(source, /webGPUBindElioSkinnedBuffers\(drawState\.meshState, device, pass, obj, count\)/);

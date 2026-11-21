@@ -8,7 +8,12 @@
   //   wrote, the GPU runs it after post; an independent pass is not ordered on
   //   tile GPUs (Apple), where a one-texel stamp pass ran early. 5 minus the
   //   first stamped begin is the frame from the shadow pass to the image.
-  const SCENE_WEBGPU_PASS_STAMPS = 6;
+  //   6, 7 the skinning compute pass (gosx-elio-skin-lbs), the work before the
+  //   shadow pass that every animated model needs. It has dispatches, so Metal
+  //   writes real stamps (it writes 0 for an empty compute pass). Reported on
+  //   its own (skinMS), and as the span from its begin to the marker's end
+  //   (submittedMS); the governor keeps the frame span.
+  const SCENE_WEBGPU_PASS_STAMPS = 8;
   const SCENE_WEBGPU_PASS_RING = 3;
 
   function ensureGPUTiming(timingState: any, device: any) {
@@ -231,7 +236,7 @@
           usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
         });
         buffers.push(resolve, readback);
-        slots.push({ resolve: resolve, readback: readback, pending: false, mapping: false, frameSeq: 0, hasShadow: false, hasFrameEnd: false });
+        slots.push({ resolve: resolve, readback: readback, pending: false, mapping: false, frameSeq: 0, hasShadow: false, hasFrameEnd: false, hasSkin: false });
       }
       timingState.gpuPassTiming = {
         querySet: querySet,
@@ -264,6 +269,7 @@
       if (!slot || slot.pending || slot.mapping) continue;
       slot.hasShadow = false;
       slot.hasFrameEnd = false;
+      slot.hasSkin = false;
       timingState.gpuPassTimingSlot = { timing: timing, slot: slot, index: index };
       return;
     }
@@ -287,6 +293,10 @@
     }
     if (passName === "main") {
       return { querySet: timingState.gpuPassTimingSlot.timing.querySet, beginningOfPassWriteIndex: base + 2, endOfPassWriteIndex: base + 3 };
+    }
+    if (passName === "skin") {
+      timingState.gpuPassTimingSlot.slot.hasSkin = true;
+      return { querySet: timingState.gpuPassTimingSlot.timing.querySet, beginningOfPassWriteIndex: base + 6, endOfPassWriteIndex: base + 7 };
     }
     return null;
   }
@@ -388,21 +398,28 @@
     var frameMS = markerEnd ? toMS(sceneBegin, values[5]) : -1;
     var tailMS = markerEnd ? Number(values[5] - values[3]) / 1000000 : -1;
     var markerLeadMS = slot.hasFrameEnd ? Number(values[4] - values[3]) / 1000000 : null;
+    // The skinning pass, and the span from its begin to the marker's end: the
+    // frame's GPU work including the skinning before the shadow pass.
+    var skinMS = slot.hasSkin ? toMS(values[6], values[7]) : -1;
+    var submittedMS = skinMS >= 0 && markerEnd && values[6] < values[5] ? toMS(values[6], values[5]) : -1;
     timingState.lastGPUPassSample = {
       source: "gpu-timestamp", scope: "passes", frameSeq: slot.frameSeq,
       shadowMS: shadowMS < 0 ? 0 : shadowMS,
       mainMS: mainMS,
       sceneMS: sceneMS < 0 ? mainMS : sceneMS,
-      frameMS: frameMS, tailMS: tailMS, markerLeadMS: markerLeadMS,
+      frameMS: frameMS, tailMS: tailMS, markerLeadMS: markerLeadMS, skinMS: skinMS, submittedMS: submittedMS,
       atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
     };
     wgpuEmitGPUTiming(timingState.lastGPUPassSample);
     if (timingState.gpuFrameTimerUnusable) {
+      // The adaptive governor reads the frame span when the frame-end marker
+      // measured one (shadows through post), else the scene span.
+      var governed = frameMS > 0 ? frameMS : timingState.lastGPUPassSample.sceneMS;
       timingState.lastGPUPerformanceSample = {
-        source: "gpu-pass-timestamp", scope: "passes", frameSeq: slot.frameSeq,
-        gpuMS: timingState.lastGPUPassSample.sceneMS, atMS: timingState.lastGPUPassSample.atMS,
+        source: "gpu-pass-timestamp", scope: frameMS > 0 ? "frame-end-marker" : "passes", frameSeq: slot.frameSeq,
+        gpuMS: governed, atMS: timingState.lastGPUPassSample.atMS,
       };
-      if (timingState.mount) timingState.queue("data-gosx-scene3d-webgpu-gpu-ms", timingState.lastGPUPassSample.sceneMS.toFixed(3));
+      if (timingState.mount) timingState.queue("data-gosx-scene3d-webgpu-gpu-ms", governed.toFixed(3));
     }
     if (timingState.mount) {
       timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-shadow-ms", timingState.lastGPUPassSample.shadowMS.toFixed(3));
@@ -412,6 +429,8 @@
         timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-frame-ms", frameMS.toFixed(3));
         timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-tail-ms", tailMS.toFixed(3));
       }
+      if (skinMS >= 0) timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-skin-ms", skinMS.toFixed(3));
+      if (submittedMS > 0) timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-submitted-ms", submittedMS.toFixed(3));
       timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-timing", "measured");
     }
 
@@ -925,7 +944,9 @@
     return record;
   }
 
-  function updateElioSkinnedMeshes(meshState: any, device: any, bundle, encoder) {
+  // stamps, when given, returns the skinning pass's timestampWrites (or null);
+  // it is asked only when the pass is really begun.
+  function updateElioSkinnedMeshes(meshState: any, device: any, bundle, encoder, stamps?: () => any) {
     var stats = {
       elioSkinningDispatches: 0,
       elioSkinningVertices: 0,
@@ -940,7 +961,8 @@
       var record = webGPUElioSkinRecord(meshState, device, obj);
       if (!record) continue;
       if (!pass) {
-        pass = encoder.beginComputePass({ label: "gosx-elio-skin-lbs" });
+        var skinWrites = stamps ? stamps() : null;
+        pass = encoder.beginComputePass(skinWrites ? { label: "gosx-elio-skin-lbs", timestampWrites: skinWrites } : { label: "gosx-elio-skin-lbs" });
         pass.setPipeline(wgpuRequirePipeline(meshState.elioSkinPipeline));
       }
       pass.setBindGroup(0, record.bindGroup);

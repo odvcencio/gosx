@@ -2658,3 +2658,27 @@ test("Scene3D completion timestamps enclose water and post without encoder.write
   assert.equal(harness.renderer.getFrameTiming().status, "disposed");
   assert.equal(harness.renderer.getFrameTiming().gpuMS, null);
 });
+
+test("Pass timing stamps the skinning compute pass and reports it beside the frame span", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true, fakeDeviceOptions: { timestampQuery: true, zeroFrameStamps: true },
+    configureDevice(device, state, env) { env.context.__gosx_scene3d_webgpu_pass_timing = true; } });
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const skinned = {
+    id: "skin", kind: "gltf-mesh", materialIndex: 0, vertexOffset: 0, vertexCount: 3, viewCulled: false, depthCenter: 4,
+    directVertices: true, modelMatrix: identity, skin: { jointMatrices: identity },
+    vertices: { count: 3, positions: new Float32Array(9), joints: new Float32Array(12), weights: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]) },
+  };
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 }, environment: {}, materials: [selenaMaterial], meshObjects: [skinned],
+    objects: [], worldPositions: new Float32Array(0), worldColors: new Float32Array(0), worldMeshPositions: new Float32Array(0), worldMeshNormals: new Float32Array(0),
+  };
+  for (let i = 0; i < 10; i++) { await renderPreparedFrame(harness.renderer, bundle, { nowMS: i * 16, active: true }); await flushAsyncWork(); }
+  const skins = harness.fake.state.computePasses.filter(p => p.descriptor && p.descriptor.label === "gosx-elio-skin-lbs" && p.descriptor.timestampWrites);
+  assert.ok(skins.length > 0, "the skinning pass carries stamps once pass timing is on");
+  const writes = skins.at(-1).descriptor.timestampWrites;
+  assert.equal(writes.beginningOfPassWriteIndex % 8, 6, "skinning takes stamps 6 and 7 of its ring entry");
+  assert.equal(writes.endOfPassWriteIndex, writes.beginningOfPassWriteIndex + 1);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-skin-ms"), "0.400", "the fake ramp's 0.4 ms of skinning");
+  harness.renderer.dispose();
+});

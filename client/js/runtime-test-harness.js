@@ -3973,6 +3973,9 @@ function makeFakeGPUDevice(options) {
   const renderBundles = Boolean(options && options.renderBundles);
   // zeroFrameStamps models Metal: an empty compute pass writes 0 for its stamps.
   const zeroFrameStamps = Boolean(options && options.zeroFrameStamps);
+  // passStampsMS replaces the per-pass ramp below: six stamps in ms (shadow
+  // begin and end, main begin and end, frame-end marker begin and end).
+  const passStampsMS = options && Array.isArray(options.passStampsMS) ? options.passStampsMS : null;
   function validateBindGroupLayoutDesc(desc) {
     if (!validateBindings) return;
     const entries = (desc && desc.entries) || [];
@@ -4359,6 +4362,9 @@ function makeFakeGPUDevice(options) {
               values[3] = 4_000_000n;
               // The frame-end marker after post: begins 0.5 ms and ends 1 ms after main; frame 5 ms.
               if (values.length >= 6) { values[4] = 4_500_000n; values[5] = 5_000_000n; }
+              // Skinning, before the shadow pass: 0.4 ms.
+              if (values.length >= 8) { values[6] = 0n; values[7] = 400_000n; }
+              if (passStampsMS) for (let k = 0; k < Math.min(values.length, passStampsMS.length); k++) values[k] = BigInt(Math.round(passStampsMS[k] * 1e6));
             } else {
               values[0] = 0n;
               values[1] = zeroFrameStamps ? 0n : 4_000_000n;
