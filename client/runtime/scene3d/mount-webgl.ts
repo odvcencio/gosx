@@ -5454,7 +5454,7 @@
     else if (rendererTimingLocked) state.missingRendererSamples += 1;
     else state.missingRendererSamples = 0;
     const rendererTimingStale = rendererTimingLocked && state.missingRendererSamples >= state.rendererTimingFallbackFrames;
-    if (!sample && (!rendererTimingLocked || rendererTimingStale) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
+    if (!sample && (!rendererTimingLocked || (rendererTimingStale && state.gpuBudget !== true)) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
       sample = {
         durationMS: Math.max(rafIntervalMS, cpuDurationMS),
         rendererDurationMS: 0,

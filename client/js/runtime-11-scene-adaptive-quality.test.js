@@ -705,6 +705,21 @@ test("Scene3D adaptiveBudget gpu keeps quality on CPU-bound frames and still she
   }
 });
 
+test("Scene3D adaptiveBudget gpu never falls back to display timing while a GPU timer is present", () => {
+  for (const h of [createAdaptiveQualityHarness({ qualityTier: "full", adaptiveBudget: "gpu" }),
+    createQualityLadderHarness(THREE_RUNG_LADDER, { qualityStartRung: 2, adaptiveBudget: "gpu" })]) {
+    const initial = h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier;
+    h.renderer.pollPerformanceSample = function() { return null; };
+    h.renderer.getPerformanceTimingStatus = function() { return { available: true, active: true, pending: true, source: "gpu-pass-timestamp" }; };
+    for (let i = 0; i < 60; i++) {
+      h.clock.now += 80;
+      h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 30, h.clock.now, h.renderer);
+    }
+    assert.equal(h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier, initial, "slow display frames without GPU samples keep quality");
+    assert.notEqual(h.state.measurement, "cpu-raf-stale-renderer-timing");
+  }
+});
+
 test("Scene3D CPU work sampling honors an authored 30 FPS cadence", () => {
   const h = createAdaptiveQualityHarness({ maxFrameRate: 30 });
   for (let i = 0; i < 30; i++) {
