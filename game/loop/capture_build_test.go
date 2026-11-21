@@ -16,7 +16,7 @@ func TestCaptureClockOnlyInTaggedWasm(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds two wasm programs")
 	}
-	needles := []string{"gosxCaptureStep", "gosxCaptureGrant", "gosxCaptureDone"}
+	needles := []string{"gosxCaptureStep", "gosxCaptureGrant", "gosxCaptureDone", "gosx-capture"}
 	for _, tagged := range []bool{false, true} {
 		out := filepath.Join(t.TempDir(), "page.wasm")
 		args := []string{"build", "-o", out}
