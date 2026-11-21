@@ -47,7 +47,7 @@
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
-    let sample = sceneAdaptiveRendererSample(renderer, now, cpuDurationMS);
+    let sample = sceneAdaptiveRendererSample(renderer, now, cpuDurationMS, state.gpuBudget === true);
     if (sample) state.missingRendererSamples = 0;
     else if (rendererTimingLocked) state.missingRendererSamples += 1;
     else state.missingRendererSamples = 0;

@@ -683,6 +683,28 @@ test("Scene3D tier and rung governors shed sustained CPU work even with fast GPU
   }
 });
 
+test("Scene3D adaptiveBudget gpu keeps quality on CPU-bound frames and still sheds GPU-bound ones", () => {
+  for (const h of [createAdaptiveQualityHarness({ qualityTier: "full", adaptiveBudget: "gpu" }),
+    createQualityLadderHarness(THREE_RUNG_LADDER, { qualityStartRung: 2, adaptiveBudget: "gpu" })]) {
+    const initial = h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier;
+    for (let i = 0; i < 40; i++) {
+      h.clock.now += 34;
+      h.renderer.sample = { source: "gpu-pass-timestamp", gpuMS: 7, atMS: h.clock.now };
+      h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 30, h.clock.now, h.renderer);
+    }
+    assert.equal(h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier, initial, "30 ms of CPU work with 7 ms of GPU time keeps quality");
+    assert.equal(h.state.measurement, "gpu-pass-timestamp");
+    assert.equal(h.state.lastMeasurement.durationMS, 7);
+    assert.equal(h.state.lastMeasurement.cpuDurationMS, 30, "the CPU time stays on the sample");
+    for (let i = 0; i < 24; i++) {
+      h.clock.now += 16;
+      h.renderer.sample = { source: "gpu-pass-timestamp", gpuMS: 36, atMS: h.clock.now };
+      h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 3, h.clock.now, h.renderer);
+    }
+    assert.notEqual(h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier, initial, "GPU-bound frames still shed quality");
+  }
+});
+
 test("Scene3D CPU work sampling honors an authored 30 FPS cadence", () => {
   const h = createAdaptiveQualityHarness({ maxFrameRate: 30 });
   for (let i = 0; i < 30; i++) {

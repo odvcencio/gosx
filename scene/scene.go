@@ -280,11 +280,15 @@ type Props struct {
 	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
 	AdaptiveWarmupFrames  int     `json:"adaptiveWarmupFrames,omitempty"`
 	AdaptivePostFX        *bool   `json:"adaptivePostFX,omitempty"`
-	MSAASamples           int     `json:"msaaSamples,omitempty"`
-	WebGPUAlphaMode       string  `json:"webgpuAlphaMode,omitempty"`
-	WebGPUColorSpace      string  `json:"webgpuColorSpace,omitempty"`
-	WebGPUToneMapping     string  `json:"webgpuToneMapping,omitempty"`
-	WebGPUPowerPreference string  `json:"webgpuPowerPreference,omitempty"`
+	// AdaptiveBudget "gpu" governs AdaptiveQuality by GPU time alone when the
+	// renderer has a GPU timer, so a frame that is slow on the CPU keeps its
+	// resolution and effects. Empty (default): the slower of CPU and GPU time.
+	AdaptiveBudget        string `json:"adaptiveBudget,omitempty"`
+	MSAASamples           int    `json:"msaaSamples,omitempty"`
+	WebGPUAlphaMode       string `json:"webgpuAlphaMode,omitempty"`
+	WebGPUColorSpace      string `json:"webgpuColorSpace,omitempty"`
+	WebGPUToneMapping     string `json:"webgpuToneMapping,omitempty"`
+	WebGPUPowerPreference string `json:"webgpuPowerPreference,omitempty"`
 	Camera                PerspectiveCamera
 	OrthographicCamera    *OrthographicCamera
 	Stats                 *bool `json:"stats,omitempty"`
@@ -2172,6 +2176,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "adaptiveTargetFrameMS", p.AdaptiveTargetFrameMS)
 	setInt(out, "adaptiveWarmupFrames", p.AdaptiveWarmupFrames)
 	setBool(out, "adaptivePostFX", p.AdaptivePostFX)
+	setString(out, "adaptiveBudget", p.AdaptiveBudget)
 	setInt(out, "msaaSamples", p.MSAASamples)
 	setString(out, "webgpuAlphaMode", p.WebGPUAlphaMode)
 	setString(out, "webgpuColorSpace", p.WebGPUColorSpace)

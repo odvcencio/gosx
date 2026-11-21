@@ -7681,7 +7681,7 @@
       gpuTimingDisposed: false, gpuTimingFrameSeq: 0, webGPUFrameSeq: 0,
       deferredWaterTextureRetirements: [], deferredWaterSystemRetirements: [],
       gpuPassTiming: null, gpuPassTimingSlot: null, gpuPassTimingShadowUsed: false,
-      lastGPUPassSample: null, mount: telemetryMount, queue: function(name: any, value: any) { queueWebGPUAttribute(telemetryState, name, value); },
+      lastGPUPassSample: null, gpuFrameTimerZeroReads: 0, gpuFrameTimerUnusable: false, mount: telemetryMount, queue: function(name: any, value: any) { queueWebGPUAttribute(telemetryState, name, value); },
     };
     // Helper renderers publish through the same queue as the main renderer.
     var telemetryState: any = {

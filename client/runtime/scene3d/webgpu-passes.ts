@@ -92,6 +92,21 @@
     }
   }
 
+  // The frame timer stamps with empty compute passes. Metal (Chrome 157,
+  // Apple M4 Pro) writes 0 for both stamps of an empty pass, so the frame
+  // timer never measures there, and a stamp pass that does work does not span
+  // the render passes on that tile GPU either. After three unusable reads the
+  // renderer stops stamping the frame and publishes the render-pass span
+  // (shadow begin to main end) as its GPU time instead; post effects are not
+  // in that span.
+  function noteGPUFrameTimerMiss(timingState: any) {
+    if (timingState.gpuFrameTimerUnusable) return;
+    timingState.gpuFrameTimerZeroReads = (timingState.gpuFrameTimerZeroReads || 0) + 1;
+    if (timingState.gpuFrameTimerZeroReads < 3) return;
+    timingState.gpuFrameTimerUnusable = true;
+    if (timingState.mount) timingState.queue("data-gosx-scene3d-webgpu-gpu-timing", "pass-span");
+  }
+
   function pollGPUTimingReadback(timingState: any, device: any) {
     var timing = ensureGPUTiming(timingState, device);
     if (!timing) return;
@@ -104,7 +119,11 @@
         activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
           if (!activeSlot.readback || typeof activeSlot.readback.getMappedRange !== "function") return;
           var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
+          if (timingState.gpuTiming === activeTiming && values.length >= 2 && values[1] <= values[0]) {
+            noteGPUFrameTimerMiss(timingState);
+          }
           if (timingState.gpuTiming === activeTiming && values.length >= 2 && values[1] > values[0]) {
+            timingState.gpuFrameTimerZeroReads = 0;
             timingState.lastGPUPerformanceSample = {
               source: "gpu-timestamp",
               scope: "frame",
@@ -136,7 +155,7 @@
   function beginGPUFrameTiming(timingState: any, device: any, encoder) {
     pollGPUTimingReadback(timingState, device);
     var timing = ensureGPUTiming(timingState, device);
-    if (!timing || !encoder) return null;
+    if (!timing || !encoder || timingState.gpuFrameTimerUnusable) return null;
     if (typeof encoder.beginComputePass !== "function" || typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
       timingState.gpuTimingEncodingAvailable = false;
       if (timingState.mount) timingState.queue("data-gosx-scene3d-webgpu-gpu-timing", "timer-unavailable");
@@ -179,7 +198,7 @@
   }
 
   function ensureGPUPassTiming(timingState: any, device: any) {
-    if (!((typeof window !== "undefined" && window.__gosx_scene3d_webgpu_pass_timing === true) || webGPUPerformanceTelemetry())) return false;
+    if (!((typeof window !== "undefined" && window.__gosx_scene3d_webgpu_pass_timing === true) || webGPUPerformanceTelemetry() || timingState.gpuFrameTimerUnusable === true)) return false;
     if (timingState.gpuPassTiming !== null) return timingState.gpuPassTiming;
     timingState.gpuPassTiming = false;
     var querySet = null;
@@ -345,6 +364,13 @@
       atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
     };
     wgpuEmitGPUTiming(timingState.lastGPUPassSample);
+    if (timingState.gpuFrameTimerUnusable) {
+      timingState.lastGPUPerformanceSample = {
+        source: "gpu-pass-timestamp", scope: "passes", frameSeq: slot.frameSeq,
+        gpuMS: timingState.lastGPUPassSample.sceneMS, atMS: timingState.lastGPUPassSample.atMS,
+      };
+      if (timingState.mount) timingState.queue("data-gosx-scene3d-webgpu-gpu-ms", timingState.lastGPUPassSample.sceneMS.toFixed(3));
+    }
     if (timingState.mount) {
       timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-shadow-ms", timingState.lastGPUPassSample.shadowMS.toFixed(3));
       timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-main-ms", timingState.lastGPUPassSample.mainMS.toFixed(3));
@@ -377,6 +403,12 @@
 
   function getPerformanceTimingStatus(timingState: any, device: any) {
     var timing = ensureGPUTiming(timingState, device);
+    if (timingState.gpuFrameTimerUnusable) {
+      var passTiming = timingState.gpuPassTiming;
+      var passActive = Boolean(passTiming && passTiming !== false && Array.isArray(passTiming.slots));
+      var passPending = passActive && passTiming.slots.some(function(slot: any) { return slot && (slot.pending || slot.mapping); });
+      return { available: passActive, active: passActive, pending: passPending, failed: !passActive, source: "gpu-pass-timestamp" };
+    }
     var active = Boolean(timing && timing !== false && Array.isArray(timing.slots) && timingState.gpuTimingEncodingAvailable === true);
     var pending = active && timingState.gpuTiming.slots.some(function(slot) { return slot && (slot.pending || slot.mapping); });
     return { available: active, active: active, pending: pending, failed: timingState.gpuTimingFailed, source: "gpu-timestamp" };

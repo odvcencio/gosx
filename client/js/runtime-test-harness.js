@@ -3971,6 +3971,8 @@ function makeFakeGPUDevice(options) {
   // test can model that exact implementation.
   const encoderWriteTimestamp = !options || options.writeTimestamp !== false;
   const renderBundles = Boolean(options && options.renderBundles);
+  // zeroFrameStamps models Metal: an empty compute pass writes 0 for its stamps.
+  const zeroFrameStamps = Boolean(options && options.zeroFrameStamps);
   function validateBindGroupLayoutDesc(desc) {
     if (!validateBindings) return;
     const entries = (desc && desc.entries) || [];
@@ -4357,7 +4359,7 @@ function makeFakeGPUDevice(options) {
               values[3] = 4_000_000n;
             } else {
               values[0] = 0n;
-              values[1] = 4_000_000n;
+              values[1] = zeroFrameStamps ? 0n : 4_000_000n;
             }
           }
         },
