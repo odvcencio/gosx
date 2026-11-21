@@ -49,12 +49,13 @@ type Driver struct {
 	callback func(float64)
 	observer Observer
 	now      func() time.Time
+	capture  *captureClock // nil unless built with gosx_capture (capture.go)
 }
 
 // New creates a Driver for runtime, riding source. It does not start
 // scheduling frames — call Start.
 func New(runtime *game.Runtime, source FrameSource) *Driver {
-	return &Driver{runtime: runtime, source: source, now: time.Now}
+	return &Driver{runtime: runtime, source: source, now: time.Now, capture: newCaptureClock()}
 }
 
 // Start begins scheduling frames and calls render, which may be nil, after
@@ -164,6 +165,15 @@ func (d *Driver) advanceFrame(epoch uint64, timestampMS float64) (Observer, Fram
 	observer, render, onError := d.observer, d.render, d.OnError
 	d.mu.Unlock()
 	interval := time.Duration(deltaMS * float64(time.Millisecond))
+	if d.capture != nil {
+		step, run := d.capture.next()
+		if !run {
+			return nil, FrameEvent{}
+		}
+		if step > 0 {
+			interval = step
+		}
+	}
 	var start time.Time
 	if observer != nil {
 		start = d.now()
