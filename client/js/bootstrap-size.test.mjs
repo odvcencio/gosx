@@ -1120,7 +1120,8 @@ const budgets = [
     // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap.js.gz gzip 615594; the target rises by exactly the measured overage (599017 -> 599210), allowance unchanged.
     // 20 November 2026 (retain skinned morph meshes, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js raw 2198641; the target rises by exactly the measured overage (2133063 -> 2133105), allowance unchanged.
     // 20 November 2026 (retain skinned morph meshes, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.gz gzip 615634; the target rises by exactly the measured overage (599210 -> 599250), allowance unchanged.
-    file: "bootstrap.js", raw: 2133105, gzip: 599250,
+    // 21 November 2026 (skinned morph folds limited per frame, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js raw 2198863; the target rises by exactly the measured overage (2133105 -> 2133327), allowance unchanged.
+    file: "bootstrap.js", raw: 2133327, gzip: 599250,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -2214,7 +2215,10 @@ const budgets = [
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js raw 64799; the target rises by exactly the measured overage (60188 -> 61789), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js.gz gzip 22457; the target rises by exactly the measured overage (20889 -> 21412), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js.br brotli 20584; the target rises by exactly the measured overage (19039 -> 19560), allowance unchanged.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 61789, gzip: 21412, brotli: 19560 },
+    // 21 November 2026 (skinned morph folds limited per frame, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js raw 65015; the target rises by exactly the measured overage (61789 -> 61925), allowance unchanged.
+    // 21 November 2026 (skinned morph folds limited per frame, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js.gz gzip 22549; the target rises by exactly the measured overage (21412 -> 21478), allowance unchanged.
+    // 21 November 2026 (skinned morph folds limited per frame, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js.br brotli 20660; the target rises by exactly the measured overage (19560 -> 19636), allowance unchanged.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 61925, gzip: 21478, brotli: 19636 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the

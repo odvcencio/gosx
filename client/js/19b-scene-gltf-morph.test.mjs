@@ -1017,3 +1017,29 @@ test("gear merged into a skinned morph entry rides after the body and survives a
   assert.deepEqual(r6(r.restored.positions), r6(r.folded.want));
   assert.equal(r.restored.revision, 3);
 });
+
+test("a frame folds at most four skinned morph entries and the rest fold on the next pose", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const r = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    function entry() {
+      return { meta: meta, vertices: { positions: gltfFoldAnimatedMorphStreams(meta, meta.defaults).positions }, skinned: true, lastWeights: meta.defaults.slice() };
+    }
+    var heavy = { mass: 1 };
+    var entries = [];
+    for (var i = 0; i < 6; i++) entries.push(entry());
+    var folded = function() { return entries.filter(function(e) { return e.lastFolded; }).length; };
+    var now = 1000;
+    globalThis.performance = { now: function() { return now; } };
+    for (var i = 0; i < 6; i++) gltfApplyAnimatedMorphPose([entries[i]], null, null, heavy);
+    var first = folded();
+    now += 20;
+    for (var i = 0; i < 6; i++) gltfApplyAnimatedMorphPose([entries[i]], null, null, heavy);
+    var second = folded();
+    ({ first: first, second: second });
+  `));
+  assert.equal(r.first, 4, "four fold in the first frame");
+  assert.equal(r.second, 6, "the other two fold in the next frame");
+});

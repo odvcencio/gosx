@@ -1657,6 +1657,20 @@
     }
   }
 
+  // Skinned morph folds are about 2.5 ms of script each, so a frame folds at
+  // most GLTF_FOLDS_PER_FRAME of them; the rest wait for the next pose.
+  var GLTF_FOLDS_PER_FRAME = 4;
+  var gltfFoldBudget = { frame: -1, used: 0 };
+  function gltfFoldBudgetTake() {
+    if (typeof performance === "undefined") return true;
+    var frame = Math.floor(performance.now() / 12);
+    if (frame !== gltfFoldBudget.frame) {
+      gltfFoldBudget.frame = frame;
+      gltfFoldBudget.used = 0;
+    }
+    return gltfFoldBudget.used++ < GLTF_FOLDS_PER_FRAME;
+  }
+
   // Published per-frame entry point (window.__gosx_scene3d_gltf_api.
   // applyMorphPose). nodeTransforms (optional) is the model-local node map
   // from sceneAnimBuildNodeTransforms(nodes, pose, null, rootNodes): animated
@@ -1687,6 +1701,12 @@
         // Skinned instances stay primitive-local: node and model transforms
         // fold in at skin time through the joint matrices.
         if (!effective) {
+          continue;
+        }
+        if (!gltfFoldBudgetTake()) {
+          // Too many models fold in this frame (the first pose of 22 players is one
+          // task of about 80 ms): this one folds on the next pose.
+          entry.overrideFrom = undefined;
           continue;
         }
         var skinnedFold = gltfFoldAnimatedMorphStreams(meta, effective);
