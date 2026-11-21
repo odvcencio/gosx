@@ -1090,3 +1090,13 @@ test("Scene3D retains a skinned morph mesh whose snapshot is revisioned, and no 
   assert.equal(morphed(true).retainedGeometry, true, "the skinned fold bumps the revision, so the mesh is a retained snapshot");
   assert.equal(morphed(false).retainedGeometry, false, "a rigid morph changes its streams every pose and stays live");
 });
+
+test("Scene3D publishes the planner's live counters on window.__gosx_scene3d_counters", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const before = vm.runInContext("window.__gosx_scene3d_counters.planner.cssRecordHashes", env.context);
+  assert.equal(typeof before, "number");
+  renderBundle(api, retainedTriangle({ id: "counted" }, vm.runInContext("Float32Array", env.context)), 0);
+  const planner = vm.runInContext("window.__gosx_scene3d_counters.planner", env.context);
+  assert.equal(typeof planner.plans, "number");
+  assert.equal(typeof planner.fullVertexHashScans, "number");
+});

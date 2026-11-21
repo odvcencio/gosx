@@ -775,7 +775,17 @@
   }
 
   function sceneWebGPURequestDevice(adapter, descriptor) {
-    return descriptor ? adapter.requestDevice(descriptor) : adapter.requestDevice();
+    return (descriptor ? adapter.requestDevice(descriptor) : adapter.requestDevice()).then(sceneWebGPUCountWrites);
+  }
+
+  // Counts the device queue's writeBuffer calls in window.__gosx_scene3d_counters,
+  // which tests and tools read to see how much a frame uploads.
+  function sceneWebGPUCountWrites(device) {
+    const counters = window.__gosx_scene3d_counters = window.__gosx_scene3d_counters || {};
+    counters.writeBuffers = 0;
+    const queue = device && device.queue, write = queue && queue.writeBuffer;
+    if (typeof write === "function") queue.writeBuffer = function() { counters.writeBuffers++; return write.apply(queue, arguments); };
+    return device;
   }
 
   function sceneWebGPUDeviceLostSnapshot(info) {

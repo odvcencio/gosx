@@ -8259,6 +8259,8 @@
   // Exact material signatures also catch mutable callers without revisions.
   var materialCacheFields = "kind materialKind color roughness metalness emissive opacity clearcoat sheen transmission iridescence anisotropy unlit normalUVScale ior alphaCutoff specularIntensity specularColor normalScale occlusionStrength emissiveColor rimPower rimStrength rimColor specularAA thickness attenuationDistance attenuationColor texture normalMap roughnessMap metalnessMap emissiveMap occlusionMap specularIntensityMap specularColorMap thicknessMap textureDescriptors blendMode renderPass revision version".split(" ");
   function webGPUMaterialSignature(material: any): string {
+    var counters = window.__gosx_scene3d_counters;
+    if (counters) counters.materialSignatures = (counters.materialSignatures || 0) + 1;
     var mat = material || {};
     return JSON.stringify(materialCacheFields.map(key => mat[key]));
   }
