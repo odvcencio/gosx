@@ -116,6 +116,19 @@ __THEME_META__<title>__TITLE__</title>
         constructor(url, options) { super(bundledUrl(url), options); }
       };
     }
+    // An image the app loads later by path (a texture named in a scene
+    // command, say) gets the bundled file's blob URL too. Image loads do not
+    // go through fetch, and the markup rewrite below only sees the first page.
+    const imageSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+    if (imageSrc && imageSrc.set) {
+      Object.defineProperty(HTMLImageElement.prototype, "src", {
+        configurable: true, enumerable: imageSrc.enumerable, get: imageSrc.get,
+        set(value) {
+          const path = typeof value === "string" && !/^(?:blob|data):/i.test(value) ? pathOf(value) : null;
+          imageSrc.set.call(this, path ? blobOf(path).url : value);
+        },
+      });
+    }
     if (window.Worklet) {
       const addModule = Worklet.prototype.addModule;
       Worklet.prototype.addModule = function (url, options) {

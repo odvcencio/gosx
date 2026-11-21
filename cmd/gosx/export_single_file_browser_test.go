@@ -79,6 +79,7 @@ func openPacked(t *testing.T, chrome, url string, blockNetwork bool) (title stri
 	// import must have applied (border-top-width 7px on #out).
 	var dom struct {
 		PicWidth   int    `json:"picWidth"`
+		LateWidth  int    `json:"lateWidth"`
 		BgWidth    int    `json:"bgWidth"`
 		BgURL      string `json:"bgUrl"`
 		BorderTop  string `json:"borderTop"`
@@ -89,7 +90,9 @@ func openPacked(t *testing.T, chrome, url string, blockNetwork bool) (title stri
 	  const url = (bg.match(/url\("?([^")]+)"?\)/) || [])[1] || '';
 	  const img = new Image();
 	  const loaded = url ? await new Promise(r => { img.onload = () => r(img.naturalWidth); img.onerror = () => r(0); img.src = url; }) : 0;
-	  return {picWidth: document.getElementById('pic').naturalWidth, bgWidth: loaded, bgUrl: url,
+	  const late = new Image();
+	  const lateWidth = await new Promise(r => { late.onload = () => r(late.naturalWidth); late.onerror = () => r(0); late.src = '/img/bg.png'; });
+	  return {picWidth: document.getElementById('pic').naturalWidth, lateWidth, bgWidth: loaded, bgUrl: url,
 	    borderTop: getComputedStyle(document.getElementById('out')).borderTopWidth,
 	    statusLeft: document.getElementById('status') !== null};
 	})()`
@@ -100,6 +103,11 @@ func openPacked(t *testing.T, chrome, url string, blockNetwork bool) (title stri
 	}
 	if dom.PicWidth != 3 {
 		t.Errorf("img naturalWidth = %d, want 3", dom.PicWidth)
+	}
+	// An image the page loads after start-up by a bundled path, as a scene
+	// command names a texture, must load from the bundle too.
+	if dom.LateWidth != 3 {
+		t.Errorf("an image loaded later by path: naturalWidth = %d, want 3", dom.LateWidth)
 	}
 	if dom.BgWidth != 3 || !strings.HasPrefix(dom.BgURL, "blob:") {
 		t.Errorf("background image: loaded width %d from %q, want 3 from a blob: URL", dom.BgWidth, dom.BgURL)
