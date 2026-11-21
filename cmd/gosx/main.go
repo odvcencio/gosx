@@ -152,7 +152,7 @@ func commandUsage(cmd string, w io.Writer) bool {
 		fmt.Fprintf(w, `gosx build - Build GoSX applications
 
 Usage:
-  gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>
+  gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] [--go-tags a,b] <dir>
 
 `)
 	case "build-runtime":
@@ -199,7 +199,7 @@ runs from any path on any static host. Fails when a page cannot be exported.
 
 Usage:
   gosx export [--zip[=path]] [--out=dir] [--precompressed=false]
-              [--single-file[=path]] [dir]
+              [--single-file[=path]] [--go-tags=a,b] [dir]
 
 Flags:
   --zip                    also write dist/static.zip (index.html at the archive root)
@@ -212,6 +212,8 @@ Flags:
   --single-file            also write one HTML file that runs from disk (file://)
                            or any HTTP path: dist/static.html
   --single-file=path       write that file to path
+  --go-tags=a,b            build the project's build.goWASM entries with these Go build
+                           tags (the runtime and server builds do not get them)
 
 `)
 	case "init":
@@ -354,7 +356,7 @@ Init templates:
 
 func cmdBuild() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] [--go-tags a,b] <dir>")
 		os.Exit(1)
 	}
 	opts := BuildOptions{Dev: true}
@@ -368,6 +370,18 @@ func cmdBuild() {
 			opts.Dev = false
 		case "--go-wasm-only":
 			opts.GoWASMOnly = true
+		case "--go-tags":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --go-tags requires tags")
+				os.Exit(1)
+			}
+			tags, err := parseGoTags(os.Args[i])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "build error:", err)
+				os.Exit(1)
+			}
+			opts.GoTags = tags
 		case "--output":
 			i++
 			if i >= len(os.Args) {
@@ -431,6 +445,15 @@ func cmdBuild() {
 			}
 			if strings.HasPrefix(arg, "--appinstaller=") {
 				opts.AppInstallerURI = strings.TrimPrefix(arg, "--appinstaller=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--go-tags=") {
+				tags, err := parseGoTags(strings.TrimPrefix(arg, "--go-tags="))
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "build error:", err)
+					os.Exit(1)
+				}
+				opts.GoTags = tags
 				continue
 			}
 			if strings.HasPrefix(arg, "--scene-budget=") {
@@ -517,6 +540,15 @@ func parseExportArgs(args []string) (string, ExportOptions, error) {
 			return "", opts, fmt.Errorf("--single-file= needs a path; use --single-file for dist/static.html")
 		case strings.HasPrefix(arg, "--single-file="):
 			opts.SingleFile = strings.TrimPrefix(arg, "--single-file=")
+		case strings.HasPrefix(arg, "--go-tags"):
+			if !strings.HasPrefix(arg, "--go-tags=") {
+				return "", opts, fmt.Errorf("unknown flag %s", arg)
+			}
+			tags, err := parseGoTags(strings.TrimPrefix(arg, "--go-tags="))
+			if err != nil {
+				return "", opts, err
+			}
+			opts.GoTags = tags
 		case strings.HasPrefix(arg, "-"):
 			return "", opts, fmt.Errorf("unknown flag %s", arg)
 		default:

@@ -294,3 +294,72 @@ func TestGoWASMOnlyCustomOutputAndMissingConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestGoTagsFlagParsing(t *testing.T) {
+	_, opts, err := parseExportArgs([]string{"--go-tags=gosx_padtest,foo_1", "proj"})
+	if err != nil || !slices.Equal(opts.GoTags, []string{"gosx_padtest", "foo_1"}) {
+		t.Fatalf("accepted tags: %v, %v", opts.GoTags, err)
+	}
+	for _, bad := range []string{"--go-tags", "--go-tags=", "--go-tags=a,,b", "--go-tags=a b", "--go-tags=a-b", "--go-tags=,", "--go-tagsx=a"} {
+		if _, _, err := parseExportArgs([]string{bad}); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+	if _, opts, err := parseExportArgs(nil); err != nil || opts.GoTags != nil {
+		t.Fatalf("default tags: %v, %v", opts.GoTags, err)
+	}
+}
+
+func TestGoWASMModuleBuildArgsTags(t *testing.T) {
+	base := goWASMModuleBuildArgs("m.wasm", "./cmd/browser", true)
+	for _, a := range base {
+		if strings.HasPrefix(a, "-tags") {
+			t.Fatalf("tags without flag: %v", base)
+		}
+	}
+	args := goWASMModuleBuildArgs("m.wasm", "./cmd/browser", true, "a", "b")
+	count := 0
+	for _, a := range args {
+		if a == "-tags=a,b" {
+			count++
+		}
+	}
+	if count != 1 || len(args) != len(base)+1 {
+		t.Fatalf("args %v", args)
+	}
+	for _, a := range base {
+		if !slices.Contains(args, a) {
+			t.Fatalf("lost %q in %v", a, args)
+		}
+	}
+	if args[len(args)-1] != "./cmd/browser" {
+		t.Fatalf("package not last: %v", args)
+	}
+}
+
+func TestGoWASMBuildTagsSelectSource(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/tagged\n\ngo 1.24\n")
+	mustWriteFile(t, filepath.Join(dir, "cmd", "app", "on.go"), "//go:build foo\n\npackage main\n\nconst marker = \"TAGGED-MARKER-ON-7f3a\"\n")
+	mustWriteFile(t, filepath.Join(dir, "cmd", "app", "off.go"), "//go:build !foo\n\npackage main\n\nconst marker = \"TAGGED-MARKER-OFF-9c1d\"\n")
+	mustWriteFile(t, filepath.Join(dir, "cmd", "app", "main.go"), "package main\n\nfunc main() { println(marker) }\n")
+	entries := map[string]string{"app": "./cmd/app"}
+	build := func(out string, tags ...string) string {
+		assets, err := buildGoWASMAssetsWithOptions(dir, filepath.Join(dir, out), entries, false, tags...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, out, "assets", "go-wasm", assets["app"].File))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	plain, tagged := build("plain"), build("tagged", "foo")
+	if !strings.Contains(tagged, "TAGGED-MARKER-ON-7f3a") || strings.Contains(tagged, "TAGGED-MARKER-OFF-9c1d") {
+		t.Fatal("tagged build did not select the foo source")
+	}
+	if strings.Contains(plain, "TAGGED-MARKER-ON-7f3a") || !strings.Contains(plain, "TAGGED-MARKER-OFF-9c1d") {
+		t.Fatal("untagged build selected the foo source")
+	}
+}

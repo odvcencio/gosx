@@ -26,6 +26,8 @@ type ExportOptions struct {
 	// SingleFile also writes the bundle as one HTML file that runs from disk.
 	// "auto" means dist/static.html.
 	SingleFile string
+	// GoTags are extra Go build tags for the project's build.goWASM entries only.
+	GoTags []string
 }
 
 func (o ExportOptions) keepPrecompressed() bool {
@@ -50,7 +52,7 @@ func RunExportWithOptions(dir string, opts ExportOptions) error {
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
 	}
-	buildOpts := BuildOptions{StaticOnly: true}
+	buildOpts := BuildOptions{StaticOnly: true, GoTags: opts.GoTags}
 	if z := strings.TrimSpace(opts.Zip); z != "" {
 		if z == "-" || z == "auto" {
 			z = filepath.Join(absDir, "dist", "static.zip")
