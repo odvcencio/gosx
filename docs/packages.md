@@ -144,6 +144,9 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `game` | experimental | yes | Provides a first-class runtime foundation for interactive simulations, games, and scientific visualizations in GoSX. |
 | `game/actions` | experimental | yes | Maps keyboard, mouse, pointer-lock, gamepad and touch input onto named game actions. |
 | `game/actions/bridge` | experimental | yes | Publishes action state from package actions to a game.Input, so systems that read game.Input see the same actions. |
+| `game/actions/hand` | experimental | yes | Tracks which device the player has in hand: the keyboard, a gamepad or the touch screen. |
+| `game/actions/prompt` | experimental | yes | Writes a game's control prompts for the device in hand. |
+| `game/actions/seats` | experimental | yes | Runs the seats of a local multiplayer game: each player claims a device by pressing a button on it, and from then on that device's input reaches only that player's actions.Map. |
 | `game/audio` | experimental | yes | A small WebAudio bus graph and one-shot player for a browser game client. |
 | `game/audio/host` | experimental | yes | Exposes typed browser audio nodes and lifecycle controls without importing the game runtime or manifest player. |
 | `game/audio/kernel` | experimental | yes | Hosts a WASM audio kernel, such as Cicada's music engine, in an AudioWorklet and routes its output to a mixer bus. |
@@ -156,8 +159,10 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `game/boot/bootpage` | experimental | yes | Renders the server-side parts of the boot gate: preload links for the Go WASM module and its wasm_exec script, and a small JavaScript watchdog that runs before the framework scripts. |
 | `game/camera` | experimental | yes | Camera rigs, poses and a director for game cameras. |
 | `game/flow` | experimental | yes | Runs a game's top-level states (boot, title, lobby, play, pause, results) as a stack, and ties the stack to the simulation pause flag and to the input context stack. |
+| `game/focus` | experimental | yes | Moves the keyboard focus over a page's controls with a gamepad, the way a console menu does: the D-pad walks the buttons and menus on screen, A presses the one with the focus (or steps a menu to its next choice, or a slider one step), and B goes back. |
 | `game/gamepad` | experimental | yes | Polls the browser Gamepad API and feeds the result into a game.Input's existing bindings. |
 | `game/host` | experimental | yes | Provides typed browser gamepad snapshots and animation-frame ownership without depending on game.Runtime, server hubs, or the compiler. |
+| `game/host/hosttest` | experimental | yes | Drives a page's gamepads from a native Go test. |
 | `game/kitui` | experimental | yes | Renders the screens every game needs (pause menu, settings, key rebinding, loading, error) as GoSX nodes. |
 | `game/loop` | experimental | yes | Owns the browser's requestAnimationFrame driver so a game does not have to call js.FuncOf/requestAnimationFrame itself. |
 | `game/netsync` | experimental | yes | The client side of package room: it connects a GoSX game to a server-authoritative room, predicts the local player on a local copy of the simulation, and reconciles with the server's snapshots. |
