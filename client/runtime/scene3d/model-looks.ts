@@ -135,7 +135,7 @@
       const gear = await loadSceneModelAsset(attach.src, state && state._modelStatusMount, {
         state, generation, modelID: model.id || "", stage: "attachment", variantScope: state && state._modelTextureVariantScope,
       });
-      const owner = Object.assign({}, model, { _attachment: attach.name }, attach.material ? { materialOverride: attach.material } : null);
+      const owner = Object.assign({}, model, { _attachment: attach.name, castShadow: false }, attach.material ? { materialOverride: attach.material } : null);
       const objects = gear && Array.isArray(gear.objects) ? gear.objects : [];
       for (let i = 0; i < objects.length; i += 1) {
         const raw = objects[i];

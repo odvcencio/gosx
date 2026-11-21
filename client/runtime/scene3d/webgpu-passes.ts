@@ -2103,6 +2103,7 @@
     pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
     var currentShadowPipeline = "";
     var retainedShadowMatrixSlot = baseSlot + 1;
+    var casterDraws = 0;
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
@@ -2121,6 +2122,7 @@
         var skinnedShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
         if (skinnedShadowIndexCount > 0) pass.drawIndexed(skinnedShadowIndexCount);
         else pass.draw(obj.vertexCount);
+        casterDraws++;
         continue;
       }
 
@@ -2135,6 +2137,7 @@
         var morphShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
         if (morphShadowIndexCount > 0) pass.drawIndexed(morphShadowIndexCount);
         else pass.draw(obj.vertexCount);
+        casterDraws++;
         continue;
       }
 
@@ -2162,6 +2165,7 @@
         pass.setBindGroup(0, shadowBG, [casterMatrixOffset]);
         if (casterIndexCount > 0) pass.drawIndexed(casterIndexCount);
         else pass.draw(obj.vertexCount);
+        casterDraws++;
         continue;
       }
 
@@ -2173,11 +2177,13 @@
       pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
       if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
       pass.draw(obj.vertexCount);
+      casterDraws++;
     }
 
     pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
     webGPUCrowdHost(drawState, device).drawShadow(pass, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
     drawInstancedShadowMeshes(drawState, device, pass, bundle, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
+    drawState.shadowCasterDraws = (drawState.shadowCasterDraws || 0) + casterDraws;
     pass.end();
   }
 
@@ -4046,6 +4052,7 @@
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-mesh-draw-calls", String(published.meshDrawCalls || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-mesh-view-culled", String(published.meshViewCulled || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-skinned-mesh-objects", String(published.skinnedMeshObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-shadow-caster-draws", String(published.shadowCasterDraws || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-dispatches", String(published.computedMorphDispatches || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-vertices", String(published.computedMorphVertices || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-kernel", String(published.computedMorphKernel || ""));

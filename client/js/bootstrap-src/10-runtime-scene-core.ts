@@ -7654,7 +7654,7 @@
         _renderPassDerived: (object && object._renderPassDerived) === true,
         texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
         static: false,
-        castShadow: false,
+        castShadow: Boolean(object.castShadow),
         receiveShadow: Boolean(object.receiveShadow),
         planarReflection: object.planarReflection !== false,
         depthWrite: object.depthWrite,

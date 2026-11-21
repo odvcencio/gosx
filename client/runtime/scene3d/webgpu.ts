@@ -6946,6 +6946,9 @@
     telemetryState.frameStats.meshViewCulled = webGPUCountViewCulledMeshObjects(bundle);
     telemetryState.frameStats.meshUndrawable = webGPUCountUndrawableMeshObjects(bundle);
     telemetryState.frameStats.skinnedMeshObjects = webGPUCountSkinnedMeshes(bundle);
+    // Draws the shadow passes made for casters this frame, over every cascade.
+    telemetryState.frameStats.shadowCasterDraws = drawState.shadowCasterDraws || 0;
+    drawState.shadowCasterDraws = 0;
     telemetryState.frameStats.computedMorphDispatches = computedMorphStats.computedMorphDispatches;
     telemetryState.frameStats.computedMorphVertices = computedMorphStats.computedMorphVertices;
     telemetryState.frameStats.computedMorphKernel = computedMorphStats.computedMorphKernel;

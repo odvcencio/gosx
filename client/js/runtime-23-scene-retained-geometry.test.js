@@ -1041,3 +1041,20 @@ for (const fresh of [true, false]) {
     harness.renderer.dispose();
   });
 }
+
+test("Scene3D keeps a skinned mesh's shadow-casting flag in the draw bundle", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const skinned = (castShadow) => {
+    const object = retainedTriangle({ id: "skinned-" + castShadow, castShadow }, F32);
+    object.vertices = {
+      ...object.vertices,
+      joints: new F32([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      weights: new F32([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+    };
+    object.skin = { jointMatrices: new F32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+    return renderBundle(api, object, 0).meshObjects[0];
+  };
+  assert.equal(skinned(true).castShadow, true, "a skinned caster reaches the shadow passes");
+  assert.equal(skinned(false).castShadow, false, "a skinned mesh that does not cast stays out of them");
+});
