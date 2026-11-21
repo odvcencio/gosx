@@ -1114,7 +1114,9 @@ const budgets = [
     // GPU budget keeps quality when the GPU timer is late (coordinator-approved 20 Nov 2026): measured bootstrap.js raw 2195638; the target rises by exactly the measured overage (2130066 -> 2130102), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js raw 2197859; the target rises by exactly the measured overage (2130102 -> 2132323), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.gz gzip 615292; the target rises by exactly the measured overage (598150 -> 598908), allowance unchanged.
-    file: "bootstrap.js", raw: 2132323, gzip: 598908,
+    // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js raw 2197911; the target rises by exactly the measured overage (2132323 -> 2132375), allowance unchanged.
+    // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.gz gzip 615401; the target rises by exactly the measured overage (598908 -> 599017), allowance unchanged.
+    file: "bootstrap.js", raw: 2132375, gzip: 599017,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1140,7 +1142,8 @@ const budgets = [
     // 20 November 2026 (lag fix: skinned morph snapshots and model material revisions, after the owner's lag report): measured bootstrap.js.br brotli 499814; the target rises by exactly the measured overage (483244 -> 483430), allowance unchanged.
     // Opt-in physical light model, on top of the lag fix: measured bootstrap.js.br brotli 500258; the target rises by exactly the measured overage (483430 -> 483874), allowance unchanged.
     // 20 November 2026 (gear merged into the skinned body: one mesh and one draw per player; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.br brotli 500605; the target rises by exactly the measured overage (483874 -> 484221), allowance unchanged.
-    brotli: 484221 },
+    // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.br brotli 500887; the target rises by exactly the measured overage (484221 -> 484503), allowance unchanged.
+    brotli: 484503 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -2110,7 +2113,9 @@ const budgets = [
     // The same change: measured bootstrap-feature-scene3d-webgpu.js.gz gzip 144632; the target rises by exactly the measured overage (137597 -> 137752), allowance unchanged.
     // 20 November 2026 (skinned players cast shadows: the planner keeps their cast flag, gear never casts, a shadow-caster draw counter; needed by the fidelity lane): measured bootstrap-feature-scene3d-webgpu.js raw 541695; the target rises by exactly the measured overage (515711 -> 515909), allowance unchanged.
     // 20 November 2026 (skinned players cast shadows: the planner keeps their cast flag, gear never casts, a shadow-caster draw counter; needed by the fidelity lane): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 144722; the target rises by exactly the measured overage (137752 -> 137834), allowance unchanged.
-    raw: 515909, gzip: 137834,
+    // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js raw 541732; the target rises by exactly the measured overage (515909 -> 515936), allowance unchanged.
+    // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 144858; the target rises by exactly the measured overage (137834 -> 137966), allowance unchanged.
+    raw: 515936, gzip: 137966,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -2142,7 +2147,8 @@ const budgets = [
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured bootstrap-feature-scene3d-webgpu.js.br brotli 123322; only this exhausted target moves (116909 -> 117449), allowance unchanged.
     // The same change: measured bootstrap-feature-scene3d-webgpu.js.br brotli 121952; the target rises by exactly the measured overage (115902 -> 116156), allowance unchanged.
     // Opt-in physical light model: measured bootstrap-feature-scene3d-webgpu.js.br brotli 121983; the target rises by exactly the measured overage (116156 -> 116175), allowance unchanged.
-    brotli: 116175 },
+    // 20 November 2026 (shadow caster and skinning counters per pass; the shadow pass split into helpers; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js.br brotli 122097; the target rises by exactly the measured overage (116175 -> 116288), allowance unchanged.
+    brotli: 116288 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only

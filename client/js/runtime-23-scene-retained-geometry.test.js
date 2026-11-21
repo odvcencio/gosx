@@ -1058,3 +1058,21 @@ test("Scene3D keeps a skinned mesh's shadow-casting flag in the draw bundle", ()
   assert.equal(skinned(true).castShadow, true, "a skinned caster reaches the shadow passes");
   assert.equal(skinned(false).castShadow, false, "a skinned mesh that does not cast stays out of them");
 });
+
+test("Scene3D never frustum-culls a skinned shadow caster, so players just off screen still cast", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const farOff = { z: 50, castShadow: true }; // behind the camera at z 6, which looks down -z
+  const plain = renderBundle(api, retainedTriangle({ id: "far-plain", ...farOff }, F32), 0).meshObjects[0];
+  const skinned = retainedTriangle({ id: "far-skinned", ...farOff }, F32);
+  skinned.vertices = {
+    ...skinned.vertices,
+    joints: new F32(12),
+    weights: new F32([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+  };
+  skinned.skin = { jointMatrices: new F32([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+  const record = renderBundle(api, skinned, 0).meshObjects[0];
+  assert.equal(plain.viewCulled, true, "the control: an ordinary mesh behind the camera is culled from the camera view");
+  assert.equal(record.viewCulled, false, "a skinned mesh is not, so the shadow passes can still draw it");
+  assert.equal(record.castShadow, true);
+});

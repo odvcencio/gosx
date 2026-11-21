@@ -892,6 +892,7 @@
     var stats = {
       elioSkinningDispatches: 0,
       elioSkinningVertices: 0,
+      elioSkinningOutputBytes: 0,
       elioSkinningKernel: "m31labs.dev/elio/stdlib.Skin",
     };
     var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
@@ -909,6 +910,8 @@
       pass.dispatchWorkgroups(record.workgroups);
       stats.elioSkinningDispatches += 1;
       stats.elioSkinningVertices += record.count;
+      // Position, normal and tangent: 40 bytes a vertex, padded to the workgroup.
+      stats.elioSkinningOutputBytes += record.paddedCount * 40;
     }
     if (pass) pass.end();
     return stats;
@@ -2076,6 +2079,31 @@
     return Boolean(drawState.shadowFrameBuffer);
   }
 
+  // drawSharedBufferShadowCaster draws a caster whose positions live in a
+  // buffer the renderer owns: the skinning output or a computed morph. It
+  // returns the draws made, or -1 when obj is neither.
+  function drawSharedBufferShadowCaster(drawState: any, device: any, pass: any, shadowBG: any, baseMatrixOffset: any, sp: any, shadowState: any, obj: any) {
+    var skinnedBuffer = null, morphRecord = null;
+    if (webGPUObjectIsSkinned(obj)) {
+      skinnedBuffer = obj._gosxWGPUElioSkinOutputBuffer;
+      if (!skinnedBuffer) return 0;
+    } else {
+      morphRecord = webGPUObjectComputedMorphDrawRecord(obj);
+      if (!morphRecord) return -1;
+    }
+    if (shadowState.pipeline !== "static") {
+      pass.setPipeline(wgpuRequirePipeline(sp));
+      shadowState.pipeline = "static";
+    }
+    pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+    if (skinnedBuffer) pass.setVertexBuffer(0, skinnedBuffer);
+    else if (!webGPUBindComputedMorphBuffer(pass, 0, morphRecord.positionBuffer, obj.vertexCount, 3)) return 0;
+    var indexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
+    if (indexCount > 0) pass.drawIndexed(indexCount);
+    else pass.draw(obj.vertexCount);
+    return 1;
+  }
+
   function renderShadowPass(drawState: any, device: any, encoder: any, lightMatrix: any, bundle: any, shadowResource: any, pbrBuffers: any) {
     var sp = getShadowPipeline(drawState.pipeState, device);
     if (!sp) return;
@@ -2101,7 +2129,7 @@
     if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
     var pass = encoder.beginRenderPass(shadowPassDescriptor);
     pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
-    var currentShadowPipeline = "";
+    var shadowState = { pipeline: "" };
     var retainedShadowMatrixSlot = baseSlot + 1;
     var casterDraws = 0;
     for (var i = 0; i < objects.length; i++) {
@@ -2110,34 +2138,9 @@
       if (!obj.castShadow) continue;
       if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
       if (obj._crowdBatch === true || obj._crowdSkin) continue;
-      if (webGPUObjectIsSkinned(obj)) {
-        var skinnedPositionBuffer = obj._gosxWGPUElioSkinOutputBuffer;
-        if (!skinnedPositionBuffer) continue;
-        if (currentShadowPipeline !== "static") {
-          pass.setPipeline(wgpuRequirePipeline(sp));
-          currentShadowPipeline = "static";
-        }
-        pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
-        pass.setVertexBuffer(0, skinnedPositionBuffer);
-        var skinnedShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
-        if (skinnedShadowIndexCount > 0) pass.drawIndexed(skinnedShadowIndexCount);
-        else pass.draw(obj.vertexCount);
-        casterDraws++;
-        continue;
-      }
-
-      var computedMorphRecord = webGPUObjectComputedMorphDrawRecord(obj);
-      if (computedMorphRecord) {
-        if (currentShadowPipeline !== "static") {
-          pass.setPipeline(wgpuRequirePipeline(sp));
-          currentShadowPipeline = "static";
-        }
-        pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
-        if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
-        var morphShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
-        if (morphShadowIndexCount > 0) pass.drawIndexed(morphShadowIndexCount);
-        else pass.draw(obj.vertexCount);
-        casterDraws++;
+      var sharedBufferDraws = drawSharedBufferShadowCaster(drawState, device, pass, shadowBG, baseMatrixOffset, sp, shadowState, obj);
+      if (sharedBufferDraws >= 0) {
+        casterDraws += sharedBufferDraws;
         continue;
       }
 
@@ -2147,9 +2150,9 @@
         // draw. The shadow uniform carries the light view-projection alone,
         // so every model-space caster folds in its own transform per draw.
         var reflectedCaster = sceneWebGPUObjectReflected(obj), retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
-        if (currentShadowPipeline !== retainedPipelineKind) {
+        if (shadowState.pipeline !== retainedPipelineKind) {
           pass.setPipeline(wgpuRequirePipeline(getShadowPipeline(drawState.pipeState, device, reflectedCaster)));
-          currentShadowPipeline = retainedPipelineKind;
+          shadowState.pipeline = retainedPipelineKind;
         }
         if (!webGPUBindRetainedMeshAttribute(drawState.meshState, device, pass, 0, obj, "positions", 3)) continue;
         var casterIndexCount = webGPUBindRetainedMeshIndexBuffer(drawState.meshState, device, pass, obj);
@@ -2169,9 +2172,9 @@
         continue;
       }
 
-      if (currentShadowPipeline !== "static") {
+      if (shadowState.pipeline !== "static") {
         pass.setPipeline(wgpuRequirePipeline(sp));
-        currentShadowPipeline = "static";
+        shadowState.pipeline = "static";
       }
 
       pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
@@ -2183,8 +2186,8 @@
     pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
     webGPUCrowdHost(drawState, device).drawShadow(pass, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
     drawInstancedShadowMeshes(drawState, device, pass, bundle, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
-    drawState.shadowCasterDraws = (drawState.shadowCasterDraws || 0) + casterDraws;
     pass.end();
+    return casterDraws;
   }
 
   function drawPBRObjects(drawState: any, device: any, pass: any, objectList: any, bundle: any, materials: any, frameBindGroup: any, blendMode: any, depthWrite: any, pbrBuffers: any, stats: any, frameRequest = null) {
@@ -3844,6 +3847,19 @@
     mirrorWebGPUFrameAttributes(telemetryState);
   }
 
+  // mirrorWebGPUSkinAttributes publishes the skinning and shadow-caster counts.
+  function mirrorWebGPUSkinAttributes(telemetryState: any, published: any) {
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-skinned-mesh-objects", String(published.skinnedMeshObjects || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-shadow-caster-draws", String(published.shadowCasterDraws || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-dispatches", String(published.computedMorphDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-vertices", String(published.computedMorphVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-kernel", String(published.computedMorphKernel || ""));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-dispatches", String(published.elioSkinningDispatches || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-vertices", String(published.elioSkinningVertices || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-output-bytes", String(published.elioSkinningOutputBytes || 0));
+    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-kernel", String(published.elioSkinningKernel || ""));
+  }
+
   function mirrorWebGPUFrameAttributes(telemetryState: any) {
     var mount = telemetryState.canvas && telemetryState.canvas.parentNode;
     if (!mount || typeof mount.setAttribute !== "function") return;
@@ -4051,14 +4067,7 @@
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-mesh-objects", String(published.meshObjects || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-mesh-draw-calls", String(published.meshDrawCalls || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-mesh-view-culled", String(published.meshViewCulled || 0));
-    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-skinned-mesh-objects", String(published.skinnedMeshObjects || 0));
-    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-shadow-caster-draws", String(published.shadowCasterDraws || 0));
-    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-dispatches", String(published.computedMorphDispatches || 0));
-    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-vertices", String(published.computedMorphVertices || 0));
-    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-kernel", String(published.computedMorphKernel || ""));
-    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-dispatches", String(published.elioSkinningDispatches || 0));
-    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-vertices", String(published.elioSkinningVertices || 0));
-    queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-elio-skinning-kernel", String(published.elioSkinningKernel || ""));
+    mirrorWebGPUSkinAttributes(telemetryState, published);
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-instanced-meshes", String(published.instancedMeshes || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-instanced-instances", String(published.instancedInstances || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-line-entries", String(published.lineEntries || 0));

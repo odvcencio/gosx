@@ -6523,9 +6523,13 @@
     frame.indices[slot] = lightIndex;
     frame.gpuDriven.lightView(encoder, lightMatrix, slot);
     frame.crowd.lightView(frame.crowdEncoder, lightMatrix, slot);
+    var casterDraws = 0;
     for (var c = 0; c < cascades; c++) {
-      renderShadowPass(drawState, s.device, encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
+      casterDraws += renderShadowPass(drawState, s.device, encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
     }
+    // Draws the shadow passes made for casters this frame, over every cascade and light.
+    var casterStats = s.telemetryState.frameStats;
+    casterStats.shadowCasterDraws = (lightIndex === 0 ? 0 : casterStats.shadowCasterDraws || 0) + casterDraws;
   }
   function render(s: any, bundle, viewport, frameMeta) { var timingState = s.timingState, meshState = s.meshState, uniformState = s.uniformState, pipeState = s.pipeState, selenaState = s.selenaState, waterState = s.waterState, drawState = s.drawState, telemetryState = s.telemetryState, gpuRes = s.gpuRes, pipelineGuard = s.pipelineGuard;
     if (typeof inflateSceneShaderLib === "function") {
@@ -6946,15 +6950,10 @@
     telemetryState.frameStats.meshViewCulled = webGPUCountViewCulledMeshObjects(bundle);
     telemetryState.frameStats.meshUndrawable = webGPUCountUndrawableMeshObjects(bundle);
     telemetryState.frameStats.skinnedMeshObjects = webGPUCountSkinnedMeshes(bundle);
-    // Draws the shadow passes made for casters this frame, over every cascade.
-    telemetryState.frameStats.shadowCasterDraws = drawState.shadowCasterDraws || 0;
-    drawState.shadowCasterDraws = 0;
     telemetryState.frameStats.computedMorphDispatches = computedMorphStats.computedMorphDispatches;
     telemetryState.frameStats.computedMorphVertices = computedMorphStats.computedMorphVertices;
     telemetryState.frameStats.computedMorphKernel = computedMorphStats.computedMorphKernel;
-    telemetryState.frameStats.elioSkinningDispatches = elioSkinStats.elioSkinningDispatches;
-    telemetryState.frameStats.elioSkinningVertices = elioSkinStats.elioSkinningVertices;
-    telemetryState.frameStats.elioSkinningKernel = elioSkinStats.elioSkinningKernel;
+    Object.assign(telemetryState.frameStats, elioSkinStats);
     telemetryState.frameStats.instancedMeshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0;
     telemetryState.frameStats.instancedInstances = webGPUPlannedInstanceCount(bundle.instancedMeshes);
     telemetryState.frameStats.cullDispatches = webGPUCullTotals.dispatches;
