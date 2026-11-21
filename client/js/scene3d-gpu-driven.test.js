@@ -124,7 +124,7 @@ async function gpuDrivenHarness(options) {
 }
 
 const label = (buffer) => buffer && buffer.label;
-const mainPasses = (fake) => fake.state.renderPasses.filter((pass) => pass.descriptor && pass.descriptor.colorAttachments && pass.descriptor.colorAttachments.length > 0);
+const mainPasses = (fake) => fake.state.renderPasses.filter((pass) => pass.descriptor && pass.descriptor.colorAttachments && pass.descriptor.colorAttachments.length > 0 && pass.descriptor.label !== "gosx-frame-end-marker");
 const shadowPasses = (fake) => fake.state.renderPasses.filter((pass) => pass.descriptor && pass.descriptor.colorAttachments && pass.descriptor.colorAttachments.length === 0);
 const cullPasses = (fake) => fake.state.computePasses.filter((pass) => pass.descriptor && pass.descriptor.label === "gosx-gpu-driven-cull");
 

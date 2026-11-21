@@ -62,7 +62,7 @@ for (const optIn of [false, true]) test(`WebGPU per-pass query resolves require 
     await h.frame(192);
     const resolves = h.resolves.slice(before);
     assert.ok(resolves.includes(2), "adaptive quality retains frame timestamps");
-    assert.equal(resolves.includes(4), optIn);
+    assert.equal(resolves.includes(6), optIn);
   } finally { h.renderer.dispose(); }
 });
 
@@ -199,7 +199,7 @@ test("gosx perf collects a GPU frame sample for every measured frame and opts in
     assert.equal(frames.length, 60);
     assert.equal(new Set(frames.map(e => e.detail.frameSeq)).size, 60);
     assert.equal(passes.length, 60, "delayed pass ring still yields one sample per steady frame");
-    assert.ok(h.resolves.slice(resolves).includes(4));
+    assert.ok(h.resolves.slice(resolves).includes(6), "six pass stamps: shadow, main and the frame-end marker");
     assert.ok(h.writes.filter(([name]) => name.endsWith("webgpu-gpu-ms")).length < 10);
   } finally { h.renderer.dispose(); }
 });
@@ -229,5 +229,26 @@ test("WebGPU frame timer with real stamps keeps the frame scope", async () => {
   try {
     await h.frame(192);
     assert.equal(h.renderer.getPerformanceTimingStatus().source, "gpu-timestamp");
+  } finally { h.renderer.dispose(); }
+});
+
+test("WebGPU pass timing ends the frame with a marker that loads the presented image", async () => {
+  const h = await setup({ timing: true, zeroFrameStamps: true, post: true });
+  try {
+    let sample = null;
+    for (let i = 0; i < 12 && !(sample && sample.source === "gpu-pass-timestamp"); i++) { await h.frame(300 + i * 16); sample = h.renderer.pollPerformanceSample(); }
+    assert.ok(sample, "a pass sample arrives");
+    assert.equal(sample.gpuMS, 4, "the governor still reads the scene span");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-frame-ms"), "5.000");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-tail-ms"), "0.500");
+    const before = h.fake.state.renderPasses.length;
+    await h.frame(700);
+    const passes = h.fake.state.renderPasses.slice(before);
+    const marker = passes.at(-1).descriptor;
+    assert.equal(marker.label, "gosx-frame-end-marker", "the marker is the frame's last render pass");
+    assert.equal(marker.colorAttachments[0].loadOp, "load", "it keeps the presented image");
+    assert.equal(marker.colorAttachments[0].storeOp, "store");
+    const post = passes.filter(p => p.descriptor && p.descriptor.label !== "gosx-frame-end-marker").at(-1).descriptor;
+    assert.equal(marker.colorAttachments[0].view, post.colorAttachments[0].view, "it loads the view post-processing wrote last");
   } finally { h.renderer.dispose(); }
 });

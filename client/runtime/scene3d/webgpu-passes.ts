@@ -3,7 +3,12 @@
   // The frame timer also includes compute, water, picking and post effects.
   // Slot layout, per ring entry:
   //   0 shadow begin   1 shadow end   2 main begin   3 main end
-  const SCENE_WEBGPU_PASS_STAMPS = 4;
+  //   4, 5 the frame-end marker: an empty render pass that loads and stores
+  //   the presented image after post-processing. Because it reads what post
+  //   wrote, the GPU runs it after post; an independent pass is not ordered on
+  //   tile GPUs (Apple), where a one-texel stamp pass ran early. 5 minus the
+  //   first stamped begin is the frame from the shadow pass to the image.
+  const SCENE_WEBGPU_PASS_STAMPS = 6;
   const SCENE_WEBGPU_PASS_RING = 3;
 
   function ensureGPUTiming(timingState: any, device: any) {
@@ -226,7 +231,7 @@
           usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
         });
         buffers.push(resolve, readback);
-        slots.push({ resolve: resolve, readback: readback, pending: false, mapping: false, frameSeq: 0, hasShadow: false });
+        slots.push({ resolve: resolve, readback: readback, pending: false, mapping: false, frameSeq: 0, hasShadow: false, hasFrameEnd: false });
       }
       timingState.gpuPassTiming = {
         querySet: querySet,
@@ -258,6 +263,7 @@
       var slot = timing.slots[index];
       if (!slot || slot.pending || slot.mapping) continue;
       slot.hasShadow = false;
+      slot.hasFrameEnd = false;
       timingState.gpuPassTimingSlot = { timing: timing, slot: slot, index: index };
       return;
     }
@@ -285,9 +291,24 @@
     return null;
   }
 
+  // wgpuFrameEndMarker encodes the frame-end marker (stamps 4 and 5) on the
+  // presented view. It draws nothing; the load and store keep the image.
+  function wgpuFrameEndMarker(token: any, encoder: any, finalView: any) {
+    if (!finalView || typeof encoder.beginRenderPass !== "function") return false;
+    var base = token.index * SCENE_WEBGPU_PASS_STAMPS;
+    try {
+      encoder.beginRenderPass({ label: "gosx-frame-end-marker", colorAttachments: [{ view: finalView, loadOp: "load", storeOp: "store" }],
+        timestampWrites: { querySet: token.timing.querySet, beginningOfPassWriteIndex: base + 4, endOfPassWriteIndex: base + 5 } }).end();
+      return true;
+    } catch (_frameEndMarkerError) {
+      return false;
+    }
+  }
+
   // endGPUPassTimingFrame resolves the slot into its readback buffer. Call it
-  // once, after the last timed pass and before submit.
-  function endGPUPassTimingFrame(timingState: any, encoder) {
+  // once, after the last timed pass and before submit. finalView, when given,
+  // is the presented image, and the frame-end marker is encoded on it.
+  function endGPUPassTimingFrame(timingState: any, encoder, finalView?: any) {
     if (!timingState.gpuPassTimingSlot || !encoder) return;
     if (typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
       timingState.gpuPassTimingSlot = null;
@@ -296,6 +317,7 @@
     var token = timingState.gpuPassTimingSlot;
     timingState.gpuPassTimingSlot = null;
     try {
+      token.slot.hasFrameEnd = wgpuFrameEndMarker(token, encoder, finalView);
       encoder.resolveQuerySet(
         token.timing.querySet,
         token.index * SCENE_WEBGPU_PASS_STAMPS,
@@ -356,11 +378,17 @@
     // time the frame spent.
     var sceneBegin = slot.hasShadow ? values[0] : values[2];
     var sceneMS = toMS(sceneBegin, values[3]);
+    // The frame span runs to the end of the frame-end marker; the tail runs
+    // from the main pass's end to the marker's begin (picking and post). Both
+    // are -1 when the frame had no marker or its stamps are out of order.
+    var frameMS = slot.hasFrameEnd && values[4] >= values[3] ? toMS(sceneBegin, values[5]) : -1;
+    var tailMS = frameMS > 0 ? Number(values[4] - values[3]) / 1000000 : -1;
     timingState.lastGPUPassSample = {
       source: "gpu-timestamp", scope: "passes", frameSeq: slot.frameSeq,
       shadowMS: shadowMS < 0 ? 0 : shadowMS,
       mainMS: mainMS,
       sceneMS: sceneMS < 0 ? mainMS : sceneMS,
+      frameMS: frameMS, tailMS: tailMS,
       atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
     };
     wgpuEmitGPUTiming(timingState.lastGPUPassSample);
@@ -375,6 +403,10 @@
       timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-shadow-ms", timingState.lastGPUPassSample.shadowMS.toFixed(3));
       timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-main-ms", timingState.lastGPUPassSample.mainMS.toFixed(3));
       timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-scene-ms", timingState.lastGPUPassSample.sceneMS.toFixed(3));
+      if (frameMS > 0) {
+        timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-frame-ms", frameMS.toFixed(3));
+        timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-tail-ms", tailMS.toFixed(3));
+      }
       timingState.queue("data-gosx-scene3d-webgpu-gpu-pass-timing", "measured");
     }
 

@@ -6707,7 +6707,7 @@
     // Per-pass stamps ride on the render-pass descriptors, so the slot must be
     // chosen before the shadow pass opens.
     pollGPUPassTimingReadback(timingState);
-    beginGPUPassTimingFrame(timingState, s.device); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { s.device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUFrameTiming(timingState, encoder, gpuTimingToken); endGPUPassTimingFrame(timingState, encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
+    beginGPUPassTimingFrame(timingState, s.device); pipelineGuard.frameCleanup = function() { if (crowdEncoder !== encoder) { s.device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; } endGPUPassTimingFrame(timingState, encoder); endGPUFrameTiming(timingState, encoder, gpuTimingToken); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
     var scopedFrameErrors = beginWebGPUErrorScope(telemetryState, s.device);
     // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
     sceneWebGPUSelenaSurfaceFrame(pipeState.selenaSurfaces);
@@ -7279,8 +7279,12 @@
       Object.assign(telemetryState.frameStats, s.postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: uniformState.scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: s.temporalAA.velocityView() } }), s.temporalAA.stats(), s.autoExposure.stats());
     }
 
+    // The frame-end marker loads the view post-processing presented; a frame
+    // that records its commands until its pipelines are ready (the encoder is
+    // then the tracking proxy) gets the canvas view patched in on replay, as
+    // post-processing does. It is frame work, so the frame timer ends after it.
+    endGPUPassTimingFrame(timingState, encoder, usePostProcessing && s.postProcessor ? screenView : null);
     endGPUFrameTiming(timingState, encoder, gpuTimingToken);
-    endGPUPassTimingFrame(timingState, encoder);
     gpuDriven.finishEncoding(encoder);
     crowd.finishEncoding(encoder);
     if (crowdEncoder !== encoder) { s.device.queue.submit([crowdEncoder.finish()]); crowdEncoder = encoder; }
