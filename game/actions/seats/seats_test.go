@@ -132,12 +132,8 @@ func TestClaimByPressAndArmAfterRest(t *testing.T) {
 	r.key("Space", false)
 	r.button(0, 0, 0)
 	r.frame()
-	if r.s.Armed(0) || r.s.Armed(1) {
-		t.Fatal("a frame in which the device sent something does not arm it")
-	}
-	r.frame()
 	if !r.s.Armed(0) || !r.s.Armed(1) {
-		t.Fatal("a frame at rest arms both")
+		t.Fatal("a frame that ends at rest, with only releases in it, arms both")
 	}
 	r.key("Space", true)
 	r.frame()

@@ -20,7 +20,8 @@
 //  4. Every change of who holds what (a claim, a loss, a swap, a modal
 //     opening or closing, the window losing the focus, leaving) disarms
 //     every seat: a seat's held input is withdrawn, and the seat arms again
-//     only on a frame in which its device was at rest and sent nothing. A
+//     on a frame that ends with its device at rest and in which nothing on
+//     it went down (a tap between two frames waits one more frame). A
 //     button held through the change does nothing until it is let go and
 //     pressed again. A disarmed seat's Map still reads presses (a claimed
 //     Start can close the pause menu); a game reads gameplay from armed
@@ -133,14 +134,16 @@ type pad struct {
 
 // Seats is the seats of one local session. It is not safe for concurrent use.
 type Seats struct {
-	cfg     Config
-	router  *actions.Router
-	maps    []*actions.Map
-	ticks   []*actions.Ticks
-	seat    []*Device
-	lost    []*Device
-	armed   []bool
-	touched []bool
+	cfg    Config
+	router *actions.Router
+	maps   []*actions.Map
+	ticks  []*actions.Ticks
+	seat   []*Device
+	lost   []*Device
+	armed  []bool
+	// pressed is true for a seat whose device had something go down since
+	// the last Update.
+	pressed []bool
 	// levels are the physical levels from the events fed, by route and
 	// source, for every route, claimed or not.
 	levels  map[routeSrc]float64
@@ -182,7 +185,7 @@ func New(cfg Config) (*Seats, error) {
 		}
 	}
 	s.seat, s.lost = make([]*Device, n), make([]*Device, n)
-	s.armed, s.touched = make([]bool, n), make([]bool, n)
+	s.armed, s.pressed = make([]bool, n), make([]bool, n)
 	return s, nil
 }
 
@@ -405,8 +408,8 @@ func (s *Seats) Feed(ev actions.Event) {
 			s.levels[k] = ev.Value
 		}
 		fresh = math.Abs(was) < actions.DefaultThreshold && math.Abs(ev.Value) >= actions.DefaultThreshold
-		if seat, ok := s.SeatFor(ev.Device); ok {
-			s.touched[seat] = true
+		if seat, ok := s.SeatFor(ev.Device); ok && fresh {
+			s.pressed[seat] = true
 		}
 	}
 	if _, held := s.SeatFor(ev.Device); held {
@@ -502,14 +505,16 @@ func (s *Seats) SetModal(open bool) {
 }
 
 // Update advances every seat's Map by dt, then arms each claimed seat whose
-// device was at rest through the frame: nothing held, nothing sent.
+// device ends the frame at rest with nothing on it gone down in the frame:
+// a release arms at once, so the next press counts, but a tap that came and
+// went between two frames does not act on the frame that arms.
 func (s *Seats) Update(dt time.Duration) {
 	s.router.Update(dt)
 	for i, d := range s.seat {
-		if !s.armed[i] && !s.modal && d != nil && !s.touched[i] && s.atRest(*d) {
+		if !s.armed[i] && !s.modal && d != nil && !s.pressed[i] && s.atRest(*d) {
 			s.armed[i] = true
 		}
-		s.touched[i] = false
+		s.pressed[i] = false
 	}
 }
 
