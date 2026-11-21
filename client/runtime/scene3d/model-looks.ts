@@ -43,7 +43,7 @@
   // new declared model, or null when no model has the patch's ID.
   function scenePatchDeclaredModel(state: any, patch: any) {
     const models = state && Array.isArray(state.models) ? state.models : [];
-    const at = models.findIndex(function(model) { return model && model.id === patch.id; });
+    const at = models.findIndex(function(model: any) { return model && model.id === patch.id; });
     if (at < 0) return null;
     const next = Object.assign({}, models[at]);
     if (sceneOwns(patch, "morphWeights")) {
