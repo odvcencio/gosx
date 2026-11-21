@@ -16,27 +16,30 @@ const (
 	PadXbox
 	// PadPlayStation uses Cross, Circle, Square, Triangle, L1, R1, Create, Options.
 	PadPlayStation
+	// PadNintendo uses B, A, Y, X (A and B, and X and Y, sit the other way
+	// round from the standard mapping's names), L, R, ZL, ZR, Minus, Plus.
+	PadNintendo
 )
 
-var padButtonNames = [...][3]string{
-	// generic, xbox, playstation; indexes follow the W3C standard mapping
-	0:  {"Button 0", "A", "Cross"},
-	1:  {"Button 1", "B", "Circle"},
-	2:  {"Button 2", "X", "Square"},
-	3:  {"Button 3", "Y", "Triangle"},
-	4:  {"Left Bumper", "LB", "L1"},
-	5:  {"Right Bumper", "RB", "R1"},
-	6:  {"Left Trigger", "LT", "L2"},
-	7:  {"Right Trigger", "RT", "R2"},
-	8:  {"Back", "View", "Create"},
-	9:  {"Start", "Menu", "Options"},
-	10: {"Left Stick Click", "LS Click", "L3"},
-	11: {"Right Stick Click", "RS Click", "R3"},
-	12: {"D-pad Up", "D-pad Up", "D-pad Up"},
-	13: {"D-pad Down", "D-pad Down", "D-pad Down"},
-	14: {"D-pad Left", "D-pad Left", "D-pad Left"},
-	15: {"D-pad Right", "D-pad Right", "D-pad Right"},
-	16: {"Home", "Guide", "PS"},
+var padButtonNames = [...][4]string{
+	// generic, xbox, playstation, nintendo; indexes follow the W3C standard mapping
+	0:  {"Button 0", "A", "Cross", "B"},
+	1:  {"Button 1", "B", "Circle", "A"},
+	2:  {"Button 2", "X", "Square", "Y"},
+	3:  {"Button 3", "Y", "Triangle", "X"},
+	4:  {"Left Bumper", "LB", "L1", "L"},
+	5:  {"Right Bumper", "RB", "R1", "R"},
+	6:  {"Left Trigger", "LT", "L2", "ZL"},
+	7:  {"Right Trigger", "RT", "R2", "ZR"},
+	8:  {"Back", "View", "Create", "Minus"},
+	9:  {"Start", "Menu", "Options", "Plus"},
+	10: {"Left Stick Click", "LS Click", "L3", "Left Stick Click"},
+	11: {"Right Stick Click", "RS Click", "R3", "Right Stick Click"},
+	12: {"D-pad Up", "D-pad Up", "D-pad Up", "D-pad Up"},
+	13: {"D-pad Down", "D-pad Down", "D-pad Down", "D-pad Down"},
+	14: {"D-pad Left", "D-pad Left", "D-pad Left", "D-pad Left"},
+	15: {"D-pad Right", "D-pad Right", "D-pad Right", "D-pad Right"},
+	16: {"Home", "Guide", "PS", "Home"},
 }
 
 var keyNames = map[string]string{
@@ -109,7 +112,10 @@ func Label(s Source, style PadStyle) string {
 		if err != nil || n < 0 || n >= len(padButtonNames) || padButtonNames[n][0] == "" {
 			return "Button " + strings.TrimPrefix(s.Code, "button")
 		}
-		return padButtonNames[n][style%3]
+		if int(style) >= len(padButtonNames[n]) {
+			style = PadGeneric
+		}
+		return padButtonNames[n][style]
 	case KindPadAxis:
 		n, err := strconv.Atoi(strings.TrimPrefix(s.Code, "axis"))
 		if err != nil || n < 0 || n >= len(axisNames) {

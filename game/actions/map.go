@@ -41,6 +41,21 @@ type ActionDef struct {
 	// DoubleTap is the longest gap between the starts of two taps that
 	// counts as a double tap. Zero disables double tap.
 	DoubleTap time.Duration
+	// Repeat makes a held button read State.Repeated again and again, as a
+	// held arrow key steps through a list. The zero value repeats nothing.
+	Repeat Repeat
+}
+
+// Repeat is how a held button repeats. It runs on the Map's clock (the sum
+// of the dt given to Update), so it repeats at the same times at any frame
+// rate. An Update reports at most one repeat, however long its frame was:
+// a slow frame does not fire a burst.
+type Repeat struct {
+	// Delay is how long the button is held before the first repeat. Zero
+	// turns repeating off.
+	Delay time.Duration
+	// Interval is the time between later repeats. Zero selects Delay.
+	Interval time.Duration
 }
 
 // Context is a named set of actions that can be pushed on the stack.
@@ -78,6 +93,9 @@ type State struct {
 	HoldStarted bool
 	// Holding is true from HoldStarted until release.
 	Holding bool
+	// Repeated is true on the frame of a press and on each frame the held
+	// press repeats (ActionDef.Repeat). Without a Repeat it equals Pressed.
+	Repeated bool
 	// HeldFor is how long the current press has lasted.
 	HeldFor time.Duration
 }
@@ -90,6 +108,8 @@ type actionDef struct {
 	holdDone bool
 	lastTap  time.Duration
 	haveTap  bool
+	// nextRepeat is when the held press repeats next.
+	nextRepeat time.Duration
 }
 
 type context struct {
@@ -123,6 +143,9 @@ type Map struct {
 
 	pendDX, pendDY, pendWX, pendWY float64
 	dx, dy, wx, wy                 float64
+
+	// ticks are the tick buffers that hear this Map's edges.
+	ticks []*Ticks
 
 	capturing bool
 	captured  Source
@@ -253,13 +276,70 @@ func (m *Map) recompute() {
 			break
 		}
 	}
-	for _, s := range m.src {
-		if s.value != 0 || s.latch != 0 {
-			s.suppressed = true
-			s.latch = 0
+	m.suppressHeld(false)
+}
+
+// suppressHeld withdraws every held source until it is let go. A press that
+// came and went since the last Update is dropped and leaves nothing held
+// back, so the next press of that key counts. canceled marks the releases
+// it causes as not the player's.
+func (m *Map) suppressHeld(canceled bool) bool {
+	withdrew := false
+	for src, s := range m.src {
+		if src.Kind == KindMouseMotion || (s.value == 0 && s.latch == 0) || s.suppressed {
+			s.lifted = false
+			continue
 		}
-		s.lifted = false
+		withdrew = true
+		s.latch, s.lifted = 0, false
+		s.suppressed = s.value != 0
+		if canceled {
+			s.canceled = true
+		}
 	}
+	return withdrew
+}
+
+// SuppressHeld withdraws every key, button, axis and on-screen control held
+// now until it is let go, as a context change does, without changing the
+// context stack. Call it when the game moves to a new screen that is not a
+// new context: the press that ended the last screen, still held, must not
+// press anything on the next one, while a fresh press acts at once. An
+// action held at the call reads Released and Canceled on the next Update. A
+// press that came and went since the last Update is dropped. It reports
+// whether anything was withdrawn.
+func (m *Map) SuppressHeld() bool { return m.suppressHeld(true) }
+
+// Rest says when a source counts as at rest for Neutral. A level whose
+// magnitude is below Button (keys, mouse, pad and on-screen buttons,
+// analog triggers) or Axis (sticks, on-screen sticks) is at rest. Zero
+// means exactly 0: the pad poller's radial deadzone already reports a
+// resting stick as 0, but an analog trigger may rest a little above it.
+type Rest struct {
+	Button, Axis float64
+}
+
+// Neutral reports whether every key, button, axis and on-screen control is
+// at rest, by its physical level: whether or not an action uses it and
+// whether or not it is suppressed. Mouse motion and the wheel are never
+// held. A Map fed by several devices cannot tell which one is held; a
+// seat's Map, fed by one device, can.
+func (m *Map) Neutral(r Rest) bool {
+	for src, s := range m.src {
+		v := math.Abs(s.value)
+		switch {
+		case src.Kind == KindMouseMotion || v == 0:
+		case src.Kind == KindPadAxis || src.Kind == KindTouchAxis:
+			if v >= r.Axis {
+				return false
+			}
+		default:
+			if v >= r.Button {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (m *Map) lookup(name string) *actionDef {
@@ -439,9 +519,9 @@ func (m *Map) Update(dt time.Duration) {
 		}
 		for _, d := range c.defs {
 			if on {
-				m.updateDef(d)
+				m.updateDef(c, d)
 			} else {
-				d.deactivate()
+				m.deactivate(c, d)
 			}
 		}
 	}
@@ -493,14 +573,18 @@ func (m *Map) repressed(d *actionDef) bool {
 	return found
 }
 
-func (d *actionDef) deactivate() {
+func (m *Map) deactivate(c *context, d *actionDef) {
 	was := d.state.Down
 	// The context left the stack with the action held: not the player's release.
 	d.state = State{Released: was, Canceled: was}
+	if was {
+		d.state.HeldFor = m.now - d.pressAt
+		m.emit(Edge{Context: c.Name, Name: d.Name, Kind: ReleaseEdge, At: m.now, HeldFor: d.state.HeldFor, Canceled: true})
+	}
 	d.holdDone, d.haveTap = false, false
 }
 
-func (m *Map) updateDef(d *actionDef) {
+func (m *Map) updateDef(c *context, d *actionDef) {
 	var sum float64
 	for _, b := range d.Bindings {
 		sum += m.read(b, d.Deadzone)
@@ -539,12 +623,16 @@ func (m *Map) updateDef(d *actionDef) {
 		} else {
 			d.haveTap = false
 		}
+		// The press before this one ended between the two frames.
+		m.emit(Edge{Context: c.Name, Name: d.Name, Kind: ReleaseEdge, At: m.now, HeldFor: m.now - d.pressAt, Tapped: st.Tapped})
 	}
 	switch {
 	case st.Pressed:
 		d.pressAt = m.now
 		d.holdDone = false
 		st.Holding = false
+		st.Repeated = true
+		d.nextRepeat = m.now + d.Repeat.Delay
 		if d.DoubleTap > 0 && d.haveTap && m.now-d.lastTap <= d.DoubleTap {
 			st.DoubleTapped = true
 			d.haveTap = false
@@ -565,13 +653,31 @@ func (m *Map) updateDef(d *actionDef) {
 	default:
 		st.Holding = false
 	}
+	if down && !st.Pressed && d.Repeat.Delay > 0 && m.now >= d.nextRepeat {
+		st.Repeated = true
+		every := d.Repeat.Interval
+		if every <= 0 {
+			every = d.Repeat.Delay
+		}
+		// Skip the repeats a long frame passed over: one per Update.
+		d.nextRepeat += (m.now-d.nextRepeat)/every*every + every
+	}
 	if down {
 		st.HeldFor = m.now - d.pressAt
 		if d.Hold > 0 && !d.holdDone && st.HeldFor >= d.Hold {
 			d.holdDone = true
 			st.HoldStarted = true
+			m.emit(Edge{Context: c.Name, Name: d.Name, Kind: HoldEdge, At: m.now, HeldFor: st.HeldFor})
 		}
 		st.Holding = d.holdDone
+	}
+	switch {
+	case st.Pressed:
+		m.emit(Edge{Context: c.Name, Name: d.Name, Kind: PressEdge, At: m.now, DoubleTapped: st.DoubleTapped})
+	case st.Released:
+		m.emit(Edge{Context: c.Name, Name: d.Name, Kind: ReleaseEdge, At: m.now, HeldFor: st.HeldFor, Tapped: st.Tapped, Canceled: st.Canceled})
+	case st.Repeated:
+		m.emit(Edge{Context: c.Name, Name: d.Name, Kind: RepeatEdge, At: m.now, HeldFor: st.HeldFor})
 	}
 	d.state = st
 }
@@ -603,6 +709,9 @@ func (m *Map) Tapped(name string) bool { return m.State(name).Tapped }
 
 // DoubleTapped reports the second press of a double tap on this frame.
 func (m *Map) DoubleTapped(name string) bool { return m.State(name).DoubleTapped }
+
+// Repeated reports a press or a repeat of a held press on this frame.
+func (m *Map) Repeated(name string) bool { return m.State(name).Repeated }
 
 // Holding reports that the press has lasted at least the action's Hold time.
 func (m *Map) Holding(name string) bool { return m.State(name).Holding }
