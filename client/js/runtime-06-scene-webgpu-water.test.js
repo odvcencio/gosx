@@ -1399,7 +1399,7 @@ test("Scene3D static GLB models can receive live motion patches", () => {
   assert.match(source, /object\.vertices\.positions = sceneModelTransformMeshFloats\(local\.positions/);
   assert.match(
     source,
-    /if \(sceneModelHasSkins\(skinInstances\) \|\| sceneModelHasWeightAnimations\(asset\) \|\| sceneModelHasNodeAnimations\(asset\)\) \{/
+    /if \(sceneModelHasSkins\(skinInstances\) \|\| sceneModelHasWeightAnimations\(asset\) \|\| sceneModelHasNodeAnimations\(asset\) \|\| sceneModelHasOwnMorphs\(asset, instanceModel\)\) \{/
   );
   assert.match(
     source,
