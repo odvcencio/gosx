@@ -240,7 +240,7 @@ test("WebGPU pass timing ends the frame with a marker that loads the presented i
     assert.ok(sample, "a pass sample arrives");
     assert.equal(sample.gpuMS, 4, "the governor still reads the scene span");
     assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-frame-ms"), "5.000");
-    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-tail-ms"), "0.500");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-tail-ms"), "1.000", "main end to marker end");
     const before = h.fake.state.renderPasses.length;
     await h.frame(700);
     const passes = h.fake.state.renderPasses.slice(before);

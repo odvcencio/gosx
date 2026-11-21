@@ -379,16 +379,21 @@
     var sceneBegin = slot.hasShadow ? values[0] : values[2];
     var sceneMS = toMS(sceneBegin, values[3]);
     // The frame span runs to the end of the frame-end marker; the tail runs
-    // from the main pass's end to the marker's begin (picking and post). Both
-    // are -1 when the frame had no marker or its stamps are out of order.
-    var frameMS = slot.hasFrameEnd && values[4] >= values[3] ? toMS(sceneBegin, values[5]) : -1;
-    var tailMS = frameMS > 0 ? Number(values[4] - values[3]) / 1000000 : -1;
+    // from the main pass's end to the marker's end (picking, post and the
+    // marker's own load and store). Only the marker's end is ordered after
+    // post: on a tile GPU a pass can begin before the one ahead of it ends, so
+    // its begin stamp is reported (markerLeadMS) but not used. Both spans are
+    // -1 when the frame had no marker or its end is not after the main pass.
+    var markerEnd = slot.hasFrameEnd && values[5] > values[3];
+    var frameMS = markerEnd ? toMS(sceneBegin, values[5]) : -1;
+    var tailMS = markerEnd ? Number(values[5] - values[3]) / 1000000 : -1;
+    var markerLeadMS = slot.hasFrameEnd ? Number(values[4] - values[3]) / 1000000 : null;
     timingState.lastGPUPassSample = {
       source: "gpu-timestamp", scope: "passes", frameSeq: slot.frameSeq,
       shadowMS: shadowMS < 0 ? 0 : shadowMS,
       mainMS: mainMS,
       sceneMS: sceneMS < 0 ? mainMS : sceneMS,
-      frameMS: frameMS, tailMS: tailMS,
+      frameMS: frameMS, tailMS: tailMS, markerLeadMS: markerLeadMS,
       atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
     };
     wgpuEmitGPUTiming(timingState.lastGPUPassSample);

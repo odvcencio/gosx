@@ -4357,7 +4357,7 @@ function makeFakeGPUDevice(options) {
               values[1] = 1_000_000n;
               values[2] = 1_500_000n;
               values[3] = 4_000_000n;
-              // The frame-end marker after post: tail 0.5 ms, frame 5 ms.
+              // The frame-end marker after post: begins 0.5 ms and ends 1 ms after main; frame 5 ms.
               if (values.length >= 6) { values[4] = 4_500_000n; values[5] = 5_000_000n; }
             } else {
               values[0] = 0n;

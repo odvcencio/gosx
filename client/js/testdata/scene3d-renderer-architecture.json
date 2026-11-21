@@ -1144,7 +1144,7 @@
         "../runtime/scene3d/webgpu-postfx.ts",
         "../runtime/scene3d/webgpu-crowd.ts"
       ],
-      "maxLines": 23071,
+      "maxLines": 23076,
       "maxFileLines": 8388
     }
   },
@@ -1200,7 +1200,7 @@
     "../runtime/scene3d/webgpu-cutaway.ts": 74,
     "../runtime/scene3d/webgpu-helpers.ts": 2030,
     "../runtime/scene3d/webgpu-water.ts": 4364,
-    "../runtime/scene3d/webgpu-passes.ts": 4363,
+    "../runtime/scene3d/webgpu-passes.ts": 4368,
     "../runtime/scene3d/webgl-points.ts": 161,
     "../runtime/scene3d/dof-gl.ts": 51,
     "../runtime/scene3d/taa-motion-gl.ts": 301,
