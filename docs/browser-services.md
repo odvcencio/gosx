@@ -12,6 +12,7 @@ These packages do not replace application rules, simulation or wire protocols.
 | Timers and attributes | `client/browser.Timeout`, `Interval`, `ObserveAttributes` | Stop timers and dispose observers on unmount. |
 | HTTP | `client/browser.Fetch` | Pass a component context; cancellation aborts the request. |
 | Storage | `game/storage.Local`, `Session` | `Read` distinguishes a missing key from denied access; `Keys` is a bounded snapshot. |
+| Files the viewer keeps or brings | `client/browser.SaveFile`, `OpenFile`, `OpenFileContext` | Open the picker from a click or key press; `done` runs on its own goroutine. |
 | WebSocket | `hub/socket.Dial` | Call `Dispose` on replacement/unmount; copy borrowed binary bytes before retention. |
 | Hub protocol | `hub/client` | Uses the same socket transport; retains the Hub protocol and reconnect behavior. |
 | Audio | `game/audio/host` | Close the host; stop/disconnect owned voices and graphs when their lifetimes end. |
@@ -51,6 +52,46 @@ installs that service before mounting engines. Other runtime/lite pages do not
 fetch it. Its hot forwarding path stays in JavaScript and preserves native
 arguments and receivers. Dispose the guard to remove only its own policy.
 Telemetry opt-out drops queued events and prevents unload beacons.
+
+## Files the viewer keeps or brings
+
+`SaveFile` hands the viewer a file, for example a saved replay or a bug
+report. The browser downloads the bytes under the name you give; where the
+file goes, and whether the browser asks first, is the browser's choice.
+
+```go
+data, _ := json.Marshal(clip)
+if err := browser.SaveFile("play-12.json", "application/json", data); err != nil {
+	browser.LogError(err.Error())
+}
+```
+
+`OpenFile` shows the browser's file picker and reads the chosen file whole.
+Call it in reaction to a click or a key press: a browser opens the picker only
+while a user gesture holds, and it does not count a controller's button as one.
+`done` runs on its own goroutine, so hand the file to your frame loop instead of
+drawing from it. Closing the picker gives `browser.ErrNoFile`; a file over
+`FileRequest.MaxBytes` (64 MiB by default) gives `browser.ErrFileTooLarge` and
+is not read. `OpenFileContext` gives up when its context ends.
+
+```go
+opened := make(chan browser.File, 1)
+browser.OpenFile(browser.FileRequest{Accept: ".json"}, func(file browser.File, err error) {
+	if err == nil {
+		opened <- file
+	}
+})
+// In the frame loop:
+select {
+case file := <-opened:
+	load(file.Data)
+default:
+}
+```
+
+Neither call runs Go code inside a call into JavaScript: the picker's listeners
+are a promise's native resolve function, and the download link is detached, so
+no page listener sees its click. Native builds return an error.
 
 ## Go callbacks and calls into JavaScript
 
