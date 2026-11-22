@@ -5,6 +5,7 @@
 | `Launch(t, Options{})` | A bound, active tab in a Chrome it starts (with `Start`, below), or in a running browser named by `Options.Endpoint`; closed when the test ends. Skips the test when no Chrome is found (`FindChrome`). |
 | `Open(path, OpenOptions{...})` | Loads a file or URL with the viewport, touch, focus, offline and init scripts a check asks for. `CountFrames` installs `FrameCounter`. |
 | `NewPage(t, tab, budget)` | `Run`, `Eval`, `Text`, `WaitFor`, `TryWait`, `Frames`, `WaitFrames`, `Screenshot`, with a deadline that `Stretch` and `MeasureFrameRate` move when the page draws slowly. |
+| `Page.Step`, `Page.Shots` | Each `Run` has a deadline of its own (default `DefaultStep`, 60 s, times `Slow`, ending `StepMargin` before the page's deadline; `-1` for none). A failed `Run` or `WaitFor` names the action it was on (`Describe`), describes the page and saves a picture (see Failures). |
 
 ## Chrome startup
 
@@ -59,3 +60,14 @@ startup. These run in the ordinary and focused race CI partitions. POSIX process
 fixtures run on Linux/macOS; portable endpoint/diagnostic tests also compile and
 run on Windows. Set `GOSX_CHROME_BIN` to run the three-launch real Chrome smoke,
 including visible-page and animation-frame polling checks.
+
+## Failures
+
+A failed `Run` or `WaitFor` ends the test with four things:
+
+1. the stage and, for `Run`, the action it was on: `press snap (action 2 of 3, query [data-control=snap]): not done within the step limit of 1m42s: context deadline exceeded`;
+2. `page:`, the check's own `Snapshot`, when it set one;
+3. `look:`, the page's ready state, visibility, hash, focused element and frame count, and for a query what its selector matches: how many, whether the first is shown and enabled, its size and place, and the element over its centre when another one covers it;
+4. `picture:`, the path of a PNG of the viewport, in `Page.Shots`, else `BROWSERTEST_SHOTS`, else `browsertest-failures` in the temporary folder.
+
+The look and the picture run on a context of their own with a 15-second limit, so they work after the page's deadline has cancelled `Page.Ctx`. A step that sticks fails at its own limit, at least `StepMargin` before the page's deadline, so a `Snapshot` that uses `Page.Ctx` still answers.

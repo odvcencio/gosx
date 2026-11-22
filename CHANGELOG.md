@@ -63,6 +63,7 @@
 
 ### Tooling and CI
 
+- `browsertest.Page.Run` gives each step a deadline of its own (`Page.Step`, default `DefaultStep`, 60 s, stretched by `Slow`; on a page from `NewPage` it ends `StepMargin`, 10 s, before the page's deadline). A step that sticks, such as a click on a button that never becomes enabled, now fails at that limit, not at the end of the whole check, and names the action it was on (`Describe`: a click or wait by its selector, as `query .choice[data-call="2"]`). Every `Run` and `WaitFor` failure also describes the page (ready state, focus, frames, and what the failed query matches: count, shown, enabled, size, and what covers it) and saves a picture to `Page.Shots`, `BROWSERTEST_SHOTS` or `browsertest-failures` in the temporary folder, both on a context of their own, so they work after the page's deadline too; before, the failure snapshot ran on the cancelled context and showed nothing. `Step: -1` keeps the old single deadline. The checks with a real Chrome run with `GOSX_CHROME_BIN`.
 - The Scene3D v1 corpus contract test now knows all four Node test groups (`runtime`, `scene3d`, `scene3d-b`, `other`) and rejects evidence whose file the cited job does not run (#866). `gltf-cubic-trs-morph` cited `js-tests-b`, which no longer runs `scene3d-cubic-spline.test.mjs`; it now cites `js-tests-scene3d`. A Node test path that no group runs, or an owner command with no readable `NODE_TEST_GROUP`, now fails the check.
 
 ## v0.60.0

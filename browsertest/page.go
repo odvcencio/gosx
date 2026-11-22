@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,11 +98,31 @@ type Page struct {
 	Slow float64
 	// Snapshot, when set, describes the page in failure messages.
 	Snapshot func() string
+	// Step is the longest one Run may take, stretched by Slow. Zero means
+	// DefaultStep; a negative Step leaves Run with the page's deadline only.
+	// On a page made by NewPage a step also ends StepMargin before the page's
+	// deadline, so the page can still be described when it fails.
+	Step time.Duration
+	// Shots is the folder for the picture a failure saves. Empty means the
+	// BROWSERTEST_SHOTS environment variable, else browsertest-failures in
+	// the temporary folder.
+	Shots string
 
 	started  time.Time
 	budget   time.Duration
 	deadline *time.Timer
+	ends     time.Time // when deadline fires
 }
+
+// DefaultStep is the longest one Run may take when Page.Step is zero, before
+// the Slow stretch.
+const DefaultStep = 60 * time.Second
+
+// StepMargin is how long before the page's deadline a step ends.
+const StepMargin = 10 * time.Second
+
+// lookLimit bounds the description and the picture a failure takes.
+const lookLimit = 15 * time.Second
 
 // NewPage drives tab with a deadline of budget, after which every action
 // fails. The deadline is a timer that cancels a child context, not a
@@ -106,6 +130,7 @@ type Page struct {
 func NewPage(t testing.TB, tab context.Context, budget time.Duration) *Page {
 	ctx, cancel := context.WithCancel(tab)
 	p := &Page{T: t, Ctx: ctx, Slow: 1, started: time.Now(), budget: budget}
+	p.ends = p.started.Add(budget)
 	p.deadline = time.AfterFunc(budget, cancel)
 	t.Cleanup(func() { p.deadline.Stop(); cancel() })
 	return p
@@ -116,8 +141,28 @@ func NewPage(t testing.TB, tab context.Context, budget time.Duration) *Page {
 func (p *Page) Stretch(slow float64) {
 	p.Slow = slow
 	if p.deadline != nil {
-		p.deadline.Reset(time.Duration(float64(p.budget)*max(1, slow)) - time.Since(p.started))
+		total := time.Duration(float64(p.budget) * max(1, slow))
+		p.ends = p.started.Add(total)
+		p.deadline.Reset(total - time.Since(p.started))
 	}
+}
+
+// stepLimit is how long the next Run may take; zero means no limit of its own.
+func (p *Page) stepLimit() time.Duration {
+	step := p.Step
+	if step == 0 {
+		step = DefaultStep
+	}
+	if step < 0 {
+		return 0
+	}
+	limit := time.Duration(float64(step) * max(1, p.Slow))
+	if p.deadline != nil {
+		if left := time.Until(p.ends) - StepMargin; left < limit {
+			limit = max(left, time.Second)
+		}
+	}
+	return limit
 }
 
 // MeasureFrameRate counts the frames the page draws in one second (the page
@@ -137,12 +182,84 @@ func (p *Page) MeasureFrameRate(want int) int {
 	return fps
 }
 
-// Run runs actions, and fails the test naming stage when one fails.
+// Run runs actions in order, each one at a time, within the step limit
+// (Step). When one fails or the limit passes, it fails the test naming stage
+// and the action it was on (a query's selector), with a description and a
+// picture of the page.
 func (p *Page) Run(stage string, actions ...chromedp.Action) {
 	p.T.Helper()
-	if err := chromedp.Run(p.Ctx, actions...); err != nil {
-		p.T.Fatalf("%s: %v%s", stage, err, p.describe())
+	ctx, cancel := p.Ctx, context.CancelFunc(func() {})
+	limit := p.stepLimit()
+	if limit > 0 {
+		ctx, cancel = context.WithTimeout(p.Ctx, limit)
 	}
+	defer cancel()
+	flat := flatten(actions)
+	for i, a := range flat {
+		err := chromedp.Run(ctx, a)
+		if err == nil {
+			continue
+		}
+		at := Describe(a)
+		if len(flat) > 1 {
+			at = fmt.Sprintf("action %d of %d, %s", i+1, len(flat), at)
+		}
+		switch {
+		case p.Ctx.Err() != nil:
+			err = fmt.Errorf("the page's deadline passed: %w", err)
+		case ctx.Err() != nil:
+			err = fmt.Errorf("not done within the step limit of %v: %w", limit.Round(time.Second), err)
+		}
+		p.fail(a, "%s (%s): %v", stage, at, err)
+	}
+}
+
+// flatten lists the actions of nested chromedp.Tasks in the order they run.
+func flatten(actions []chromedp.Action) []chromedp.Action {
+	var out []chromedp.Action
+	for _, a := range actions {
+		if tasks, ok := a.(chromedp.Tasks); ok {
+			out = append(out, flatten(tasks)...)
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// Describe names an action for a failure message: a query (a click, a wait,
+// a text) by its selector, any other action by its type.
+func Describe(a chromedp.Action) string {
+	if sel, ok := querySelector(a); ok {
+		return "query " + sel
+	}
+	return fmt.Sprintf("%T", a)
+}
+
+// querySelector is the selector of a chromedp query (a click, a wait, a
+// text). chromedp keeps it unexported; TestDescribeNamesAQuerysSelector
+// notices when that changes.
+func querySelector(a chromedp.Action) (string, bool) {
+	s, ok := a.(*chromedp.Selector)
+	if !ok || s == nil {
+		return "", false
+	}
+	v := reflect.ValueOf(s).Elem().FieldByName("sel")
+	if !v.IsValid() || v.Kind() != reflect.Interface || v.Elem().Kind() != reflect.String {
+		return "", false
+	}
+	return v.Elem().String(), true
+}
+
+// fail ends the test with msg, a description of the page and a picture of
+// it. Both are taken on a context of their own, which outlives the page's
+// deadline: after it p.Ctx is cancelled and shows nothing.
+func (p *Page) fail(at chromedp.Action, format string, args ...any) {
+	p.T.Helper()
+	msg := fmt.Sprintf(format, args...)
+	look, cancel := context.WithTimeout(context.WithoutCancel(p.Ctx), lookLimit)
+	defer cancel()
+	p.T.Fatalf("%s%s%s%s", msg, p.describe(), p.lookAt(look, at), p.picture(look))
 }
 
 func (p *Page) describe() string {
@@ -150,6 +267,72 @@ func (p *Page) describe() string {
 		return ""
 	}
 	return "\npage: " + p.Snapshot()
+}
+
+// lookJS describes the page and, when it is a CSS selector, what the failed
+// query matched. It leaves out paths and query strings.
+const lookJS = `((sel) => {
+  const name = (e) => !e ? "none" : e.tagName.toLowerCase() + (e.id ? "#" + e.id : "") +
+    (typeof e.className === "string" && e.className.trim() ? "." + e.className.trim().split(/\s+/).join(".") : "");
+  let out = "ready " + document.readyState + ", " + document.visibilityState + ", hash " + (location.hash || "none") +
+    ", focus " + name(document.activeElement) + ", frames " + (window.__frames ?? "not counted");
+  if (sel) {
+    let all;
+    try { all = document.querySelectorAll(sel); } catch (err) { return out + "; the query is not a CSS selector"; }
+    out += "; the query matches " + all.length;
+    if (all.length) {
+      const e = all[0], r = e.getBoundingClientRect(), st = getComputedStyle(e);
+      const shown = r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none";
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      out += ", the first " + name(e) + (shown ? " shown" : " not shown") + (e.disabled || e.getAttribute("aria-disabled") === "true" ? ", disabled" : ", enabled") +
+        ", " + Math.round(r.width) + "x" + Math.round(r.height) + " at " + Math.round(r.left) + "," + Math.round(r.top) +
+        (at && at !== e && !e.contains(at) ? ", covered by " + name(at) : "");
+    }
+  }
+  return out;
+})(%s)`
+
+// lookAt describes the page on ctx: its state, the focus, and what the failed
+// action's selector matches.
+func (p *Page) lookAt(ctx context.Context, at chromedp.Action) string {
+	sel := "null"
+	if q, ok := querySelector(at); ok {
+		sel = strconv.Quote(q)
+	}
+	var s string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(fmt.Sprintf(lookJS, sel), &s)); err != nil {
+		return "\nlook: none (" + err.Error() + ")"
+	}
+	return "\nlook: " + s
+}
+
+// picture saves a picture of the viewport on ctx and names its file.
+func (p *Page) picture(ctx context.Context) string {
+	dir := p.Shots
+	if dir == "" {
+		dir = os.Getenv("BROWSERTEST_SHOTS")
+	}
+	if dir == "" {
+		dir = filepath.Join(os.TempDir(), "browsertest-failures")
+	}
+	var png []byte
+	if err := chromedp.Run(ctx, chromedp.CaptureScreenshot(&png)); err != nil {
+		return "\npicture: none (" + err.Error() + ")"
+	}
+	name := strings.Map(func(r rune) rune {
+		if r == '/' || r == ' ' || r == ':' || r == '\\' {
+			return '_'
+		}
+		return r
+	}, p.T.Name()) + "-" + time.Now().Format("150405.000") + ".png"
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "\npicture: none (" + err.Error() + ")"
+	}
+	if err := os.WriteFile(path, png, 0o644); err != nil {
+		return "\npicture: none (" + err.Error() + ")"
+	}
+	return "\npicture: " + path
 }
 
 // Eval reports whether expr is true. An expression that fails is false.
@@ -171,11 +354,12 @@ func (p *Page) Text(selector string) string {
 }
 
 // WaitFor polls expr until it is true, and fails the test naming stage when
-// it is not true within d (stretched by Slow).
+// it is not true within d (stretched by Slow), with a description and a
+// picture of the page.
 func (p *Page) WaitFor(stage, expr string, d time.Duration) {
 	p.T.Helper()
 	if !p.TryWait(expr, d) {
-		p.T.Fatalf("%s: condition never held within %v: %s%s", stage, d, expr, p.describe())
+		p.fail(nil, "%s: condition never held within %v: %s", stage, d, expr)
 	}
 }
 
