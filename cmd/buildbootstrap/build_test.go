@@ -334,6 +334,63 @@ func TestCheckWritesNothing(t *testing.T) {
 	}
 }
 
+// TestASidecarFromAnotherCPUIsCurrent covers a sidecar that is correct but not
+// this machine's bytes. Brotli and zopfli cost their choices in floating
+// point, so the same compressor writes some bundles a few bytes differently on
+// arm64 than on amd64 v1 (sidecarServes). --check accepts such a sidecar and a
+// rebuild keeps it; a sidecar far larger than this machine's is still stale.
+func TestASidecarFromAnotherCPUIsCurrent(t *testing.T) {
+	f, large, _ := buildFixture(t)
+	if err := runTool(t, "-dir", f.dir); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	code := f.read(large)
+
+	// The same gzip stream with another OS byte in its header.
+	gz := append([]byte(nil), f.read(large+".gz")...)
+	gz[9] ^= 0xff
+	// The same payload in a brotli stream that names a smaller window.
+	var br bytes.Buffer
+	w := brotli.NewWriterOptions(&br, brotli.WriterOptions{Quality: brotli.BestCompression, LGWin: 16})
+	if _, err := w.Write(code); err != nil {
+		t.Fatalf("brotli: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("brotli: %v", err)
+	}
+	if bytes.Equal(br.Bytes(), f.read(large+".br")) {
+		t.Fatal("fixture: the smaller window wrote the same brotli bytes, so this case proves nothing")
+	}
+	f.overwrite(large+".gz", string(gz))
+	f.overwrite(large+".br", br.String())
+	if err := runTool(t, "-dir", f.dir, "--check"); err != nil {
+		t.Fatalf("--check reports stale for sidecars that decode to the bundle: %v", err)
+	}
+	if err := runTool(t, "-dir", f.dir); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	if !bytes.Equal(f.read(large+".gz"), gz) || !bytes.Equal(f.read(large+".br"), br.Bytes()) {
+		t.Error("a rebuild rewrote sidecars that already serve the bundle")
+	}
+
+	// A stored gzip decodes to the bundle but is far larger than this machine's.
+	var stored bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&stored, gzip.NoCompression)
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	if _, err := zw.Write(code); err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	f.overwrite(large+".gz", stored.String())
+	if err := runTool(t, "-dir", f.dir, "--check"); err == nil || !strings.Contains(err.Error(), large) {
+		t.Fatalf("--check accepted a stored gzip of %d bytes for a %d-byte bundle; got %v", stored.Len(), len(code), err)
+	}
+}
+
 // TestChunkManifestListsEveryChunkAndSource pins the machine-readable manifest.
 // The JS size gates and the acorn cross-check read chunks.json, so a manifest
 // that drifts from the table sends those tools at the wrong file list.
