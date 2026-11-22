@@ -166,9 +166,12 @@ func (d *Driver) advanceFrame(epoch uint64, timestampMS float64) (Observer, Fram
 	d.mu.Unlock()
 	interval := time.Duration(deltaMS * float64(time.Millisecond))
 	if d.capture != nil {
-		step, run := d.capture.next()
+		step, run, align := d.capture.next()
 		if !run {
 			return nil, FrameEvent{}
+		}
+		if align {
+			d.runtime.AlignStep()
 		}
 		if step > 0 {
 			interval = step

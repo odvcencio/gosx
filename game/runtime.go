@@ -146,6 +146,17 @@ func (c *Clock) SetPaused(paused bool) {
 // Paused reports whether the clock is paused.
 func (c *Clock) Paused() bool { return c != nil && c.paused }
 
+// AlignStep drops the part of a fixed step the clock has gathered and not yet
+// run, so the next frame starts on a step boundary: after a frame of whole
+// steps its Alpha is 0. The capture clock calls it when a host takes the
+// clock (game/loop), so a film's frames lie at the same share of a step on
+// every page, however long the page ran on its own time before.
+func (c *Clock) AlignStep() {
+	if c != nil {
+		c.accumulator = 0
+	}
+}
+
 // SetTimeScale sets how much game time passes per unit of real time: 2 is
 // double speed, 0.5 half speed, 0 stops time. Negative, infinite and NaN
 // values are ignored.
@@ -754,6 +765,13 @@ func (r *Runtime) applyNetworkInput(playerID string, data []byte) {
 func (r *Runtime) SetPaused(paused bool) {
 	if r != nil {
 		r.clock.SetPaused(paused)
+	}
+}
+
+// AlignStep starts the next frame on a fixed step (Clock.AlignStep).
+func (r *Runtime) AlignStep() {
+	if r != nil {
+		r.clock.AlignStep()
 	}
 }
 

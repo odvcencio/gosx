@@ -62,11 +62,18 @@ type captureClock struct {
 	host      captureHost
 	done      uint64
 	announced uint64
+	// stepping is true once a granted frame has run since the host set the
+	// clock, until the host gives the time back.
+	stepping bool
 }
 
 // next decides the frame under way. run is false when the game holds; when it
 // runs, interval is the time to step, or zero to keep the frame source's own.
-func (c *captureClock) next() (interval time.Duration, run bool) {
+// align is true on the first granted frame after the host takes the clock:
+// the Driver drops the share of a step the page gathered on its own time
+// (game.Runtime.AlignStep), so the film's frames lie at the same share of a
+// step on every page and two pages of one take draw the same picture.
+func (c *captureClock) next() (interval time.Duration, run, align bool) {
 	// The previous granted frame was stepped in an earlier callback, and the
 	// renderer drew it before this callback, so it is announced now.
 	if c.announced != c.done {
@@ -75,14 +82,17 @@ func (c *captureClock) next() (interval time.Duration, run bool) {
 	}
 	set, stepMS, granted := c.host.read()
 	if !set {
-		return 0, false
+		return 0, false, false
 	}
 	if !(stepMS > 0) {
-		return 0, true
+		c.stepping = false
+		return 0, true, false
 	}
 	if granted <= c.done {
-		return 0, false
+		return 0, false, false
 	}
 	c.done++
-	return time.Duration(stepMS * float64(time.Millisecond)), true
+	align = !c.stepping
+	c.stepping = true
+	return time.Duration(stepMS * float64(time.Millisecond)), true, align
 }
