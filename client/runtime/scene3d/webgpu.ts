@@ -6531,6 +6531,17 @@
     var casterStats = s.telemetryState.frameStats;
     casterStats.shadowCasterDraws = (lightIndex === 0 ? 0 : casterStats.shadowCasterDraws || 0) + casterDraws;
   }
+  // Post-processing, then the frame-end marker: it loads the view post-processing presented (on replay of a frame recorded until its
+  // pipelines were ready, the canvas view is patched in as post-processing does); it is frame work, so the caller ends the frame timer after it.
+  function encodeWebGPUPostAndFrameEnd(s: any, encoder: any, usePostProcessing: any, f: any) {
+    var screenView: any = null;
+    if (usePostProcessing && s.postProcessor) {
+      screenView = wgpuDeferredCanvasView(s.pipelineGuard, s.gpuCtx);
+      var chain = s.temporalAA.resolve(encoder, f.postEffects, { colorView: f.postTarget.colorView, colorFormat: s.pipeState.targetFormat, depthView: f.depthView, samples: f.samples, objects: f.bundle.meshObjects, particles: f.particles, frameGroup: f.frameGroup, bundle: f.bundle }); s.autoExposure.apply(encoder, f.bundle.environment, f.postTarget, f.cam, f.now);
+      Object.assign(s.telemetryState.frameStats, s.postProcessor.apply(encoder, chain, f.scaledW, f.scaledH, f.width, f.height, screenView, f.bundle.camera, { lights: f.bundle.lights, environment: f.bundle.environment, camera: f.cam, viewProj: s.uniformState.scratchSelenaViewProjection, depthView: f.depthView, samples: f.samples, meta: f.meta, motion: { velocityView: s.temporalAA.velocityView() } }), s.temporalAA.stats(), s.autoExposure.stats());
+    }
+    endGPUPassTimingFrame(s.timingState, encoder, screenView);
+  }
   function render(s: any, bundle, viewport, frameMeta) { var timingState = s.timingState, meshState = s.meshState, uniformState = s.uniformState, pipeState = s.pipeState, selenaState = s.selenaState, waterState = s.waterState, drawState = s.drawState, telemetryState = s.telemetryState, gpuRes = s.gpuRes, pipelineGuard = s.pipelineGuard;
     if (typeof inflateSceneShaderLib === "function") {
       inflateSceneShaderLib(bundle);
@@ -7272,18 +7283,7 @@
       );
     }
 
-    // Post-processing.
-    if (usePostProcessing && s.postProcessor) {
-      var screenView = wgpuDeferredCanvasView(pipelineGuard, s.gpuCtx);
-      var chain = s.temporalAA.resolve(encoder, postEffects, { colorView: postTarget.colorView, colorFormat: pipeState.targetFormat, depthView: mainDepthTargetView, samples: sampleCount, objects: bundle.meshObjects, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle }); s.autoExposure.apply(encoder, bundle.environment, postTarget, cam, frameNowMS);
-      Object.assign(telemetryState.frameStats, s.postProcessor.apply(encoder, chain, scaledW, scaledH, width, height, screenView, bundle.camera, { lights: bundle.lights, environment: bundle.environment, camera: cam, viewProj: uniformState.scratchSelenaViewProjection, depthView: mainDepthTargetView, samples: sampleCount, meta: frameMeta, motion: { velocityView: s.temporalAA.velocityView() } }), s.temporalAA.stats(), s.autoExposure.stats());
-    }
-
-    // The frame-end marker loads the view post-processing presented; a frame
-    // that records its commands until its pipelines are ready (the encoder is
-    // then the tracking proxy) gets the canvas view patched in on replay, as
-    // post-processing does. It is frame work, so the frame timer ends after it.
-    endGPUPassTimingFrame(timingState, encoder, usePostProcessing && s.postProcessor ? screenView : null);
+    encodeWebGPUPostAndFrameEnd(s, encoder, usePostProcessing, { postEffects: postEffects, postTarget: postTarget, depthView: mainDepthTargetView, samples: sampleCount, particles: computeParticleRecords, frameGroup: frameBindGroup, bundle: bundle, cam: cam, now: frameNowMS, scaledW: scaledW, scaledH: scaledH, width: width, height: height, meta: frameMeta });
     endGPUFrameTiming(timingState, encoder, gpuTimingToken);
     gpuDriven.finishEncoding(encoder);
     crowd.finishEncoding(encoder);
