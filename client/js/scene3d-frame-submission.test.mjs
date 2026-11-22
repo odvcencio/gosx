@@ -164,6 +164,7 @@ function completedFrame(outcome,checkEmpty=false,covered=true) {
     publishMetrics(){},recordSceneWaterFrame:step('water'),maybeEmitRenderEmpty:step('empty'),
     renderSceneLayers:step('layers'),statsOverlay:{update:step('stats')},inspectorOverlay:{update:step('inspector')},
     sceneUpdateAdaptiveQuality(){trace.push('quality');return true;},scheduleRender:step('schedule'),
+    frameOwner:{},sceneFrameNowMS(){return 12;},sceneFrameMeterRecord:step('meter'),
     publishReady:step('ready'),publishRevealed:step('revealed'),notifySceneProgressiveModelRenderCommitted:step('progressive'),
     scheduleNextAnimationFrame:step('next')});
   const mount=source('mount.ts');
@@ -174,7 +175,7 @@ function completedFrame(outcome,checkEmpty=false,covered=true) {
 
 test("shared completion preserves runtime/native ordering, overlays, quality and submission admission", () => {
   const common=['coverage','sentinels','meta','render','water'];
-  const finish=['layers','stats','inspector','quality','schedule','ready','revealed','progressive','next'];
+  const finish=['layers','stats','inspector','quality','schedule','meter','ready','revealed','progressive','next'];
   for(const native of [false,true]) {
     const {h,trace}=completedFrame('submitted',native);
     assert.deepEqual(trace,[...common,...(native?['empty']:[]),...finish]);
@@ -183,7 +184,7 @@ test("shared completion preserves runtime/native ordering, overlays, quality and
   }
   for(const outcome of ['pending','empty','failed',undefined]) {
     const {h,trace}=completedFrame(outcome,true);
-    assert.deepEqual(trace,[...common,'empty','layers','stats','inspector','quality','schedule','next']);
+    assert.deepEqual(trace,[...common,'empty','layers','stats','inspector','quality','schedule','meter','next']);
     assert.equal(h.events.length,0);
   }
   assert.deepEqual(completedFrame('submitted',true,false).trace,['coverage','next']);

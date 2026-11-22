@@ -150,3 +150,18 @@ func HardwareConcurrency() int {
 	}
 	return max(0, value.Int())
 }
+
+// UserAgent reports the browser's user agent string (navigator.userAgent),
+// for a report a player sends about his own machine. Empty when the browser
+// does not publish one.
+func UserAgent() string {
+	nav := js.Global().Get("navigator")
+	if !nav.Truthy() {
+		return ""
+	}
+	value := nav.Get("userAgent")
+	if value.Type() != js.TypeString {
+		return ""
+	}
+	return value.String()
+}

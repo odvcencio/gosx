@@ -3079,6 +3079,7 @@
         viewportDirty = true;
         scheduleRender("quality-transition");
       }
+      sceneFrameMeterRecord(frameOwner, now, frameStart, sceneFrameNowMS(), adaptiveQuality);
       if (finishSceneSubmission(frameOutcome, frameMeta)) {
         publishMetrics();
         publishReady();
@@ -3573,6 +3574,8 @@
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
         return currentMountedSceneCamera();
       },
+      // getFrameStats() is the frame meter's window (frame-owner.ts): what a player's own readout shows.
+      getFrameStats() { return sceneFrameMeterStats(frameOwner, mount.__gosxScene3DRenderBackendTruth, mount.__gosxScene3DQualityState, viewport); },
       getTelemetry() {
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return {
           camera: currentMountedSceneCamera(),

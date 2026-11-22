@@ -109,6 +109,70 @@ function sceneFrameOwnerTelemetry() {
   return { frameHook: owner.hook ? { alpha: owner.alpha } : null, bundle: { builds: owner.builds, reuses: owner.reuses } };
 }
 
+// The frame meter: the mount's last SCENE_FRAME_METER_SIZE drawn frames, for a
+// readout a player can turn on (handle.getFrameStats, Go
+// scene.Surface.FrameStats). Each frame keeps its time, the main thread's
+// work from the frame's start (the engine hook included) to its submission,
+// and the GPU time when the renderer's timer reported one this frame. The
+// governor polls that timer (sceneUpdateAdaptiveQuality keeps its sample on
+// the quality state as rendererSample); the meter takes it from there and
+// clears it. Recording is a few stores a frame; statistics are worked out
+// only when read.
+const SCENE_FRAME_METER_SIZE = 120;
+
+// sceneFrameMeterRecord(owner, frameMS, startMS, endMS, qualityState).
+function sceneFrameMeterRecord() {
+  const owner = arguments[0], quality = arguments[4], size = SCENE_FRAME_METER_SIZE;
+  const m = owner.meter || (owner.meter = { at: new Float64Array(size), cpu: new Float64Array(size), gpu: new Float64Array(size), n: 0, next: 0, timer: "" });
+  const sample = quality ? quality.rendererSample : null;
+  if (quality) quality.rendererSample = null;
+  const source = sample && typeof sample.source === "string" ? sample.source.replace("cpu-work+", "") : "";
+  const gpu = sample && (source.indexOf("gpu") === 0 || source.indexOf("timer") >= 0) ? Number(sample.rendererDurationMS) : 0;
+  m.at[m.next] = Number(arguments[1]);
+  m.cpu[m.next] = Math.max(0, Number(arguments[3]) - Number(arguments[2])) || 0;
+  m.gpu[m.next] = gpu > 0 && Number.isFinite(gpu) ? gpu : 0;
+  if (m.gpu[m.next] > 0) m.timer = source;
+  m.next = (m.next + 1) % size;
+  m.n = Math.min(size, m.n + 1);
+}
+
+// sceneFrameMeterStats(owner, backendTruth, qualityState, viewport) is what
+// handle.getFrameStats returns: the window's frames a second, the mean and
+// 95th percentile of the time between frames, of the main thread's work and
+// of the GPU time, which renderer draws on which GPU, and the governor's tier.
+function sceneFrameMeterStats() {
+  const m = arguments[0].meter, truth = arguments[1] || {}, quality = arguments[2] || null, viewport = arguments[3] || {};
+  const size = SCENE_FRAME_METER_SIZE, n = m ? m.n : 0, first = m ? (m.next - n + size) % size : 0;
+  const gaps = [], cpu = [], gpu = [];
+  for (let k = 0; k < n; k++) {
+    const i = (first + k) % size;
+    if (k > 0) gaps.push(m.at[i] - m.at[(i - 1 + size) % size]);
+    cpu.push(m.cpu[i]);
+    if (m.gpu[i] > 0) gpu.push(m.gpu[i]);
+  }
+  const span = sceneFrameMeterMean(gaps) * gaps.length;
+  return {
+    backend: String(truth.backend || ""), adapter: String(truth.adapter || ""), fallbackReason: String(truth.fallbackReason || ""),
+    tier: quality ? String((quality.mode === "ladder" ? quality.rungName : quality.activeTier) || "") : "", governed: Boolean(quality && quality.enabled),
+    frames: n, fps: span > 0 ? gaps.length * 1000 / span : 0, frameMS: sceneFrameMeterMean(gaps), frameP95MS: sceneFrameMeterP95(gaps),
+    cpuMS: sceneFrameMeterMean(cpu), cpuP95MS: sceneFrameMeterP95(cpu),
+    gpuMS: sceneFrameMeterMean(gpu), gpuP95MS: sceneFrameMeterP95(gpu), gpuSamples: gpu.length, gpuTimer: gpu.length > 0 ? m.timer : "",
+    pixelRatio: Number(viewport.devicePixelRatio) || 0, width: Math.round(Number(viewport.cssWidth) || 0), height: Math.round(Number(viewport.cssHeight) || 0),
+  };
+}
+
+function sceneFrameMeterMean() {
+  const values = arguments[0];
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) sum += values[i];
+  return values.length > 0 ? sum / values.length : 0;
+}
+
+function sceneFrameMeterP95() {
+  const sorted = Float64Array.from(arguments[0]).sort();
+  return sorted.length > 0 ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] : 0;
+}
+
 // Shallow equality of two plain records. A rebuilt nested value counts as a
 // change, which costs one bundle build.
 function sceneFrameOwnerSameRecord() {

@@ -162,6 +162,27 @@ func (s *Surface) OnGraphicsReset(handler func(GraphicsReset)) (cancel func(), e
 	return cancel, nil
 }
 
+// FrameStats reads the mount's frame meter: frames a second, the main
+// thread's and the GPU's time a frame, the renderer, the GPU and the quality
+// tier, over the last drawn frames. Read it a few times a second at most; a
+// worker-hosted surface cannot reach the mount and returns an error.
+func (s *Surface) FrameStats() (stats FrameStats, err error) {
+	defer surfaceRecover(&err)
+	if _, ok := workerBridge(); ok {
+		return stats, errWorkerDOM
+	}
+	handle, err := s.renderer()
+	if err != nil {
+		return stats, err
+	}
+	if handle.Get("getFrameStats").Type() != js.TypeFunction {
+		return stats, errors.New("scene: renderer has no frame meter")
+	}
+	raw := js.Global().Get("JSON").Call("stringify", handle.Call("getFrameStats")).String()
+	err = json.Unmarshal([]byte(raw), &stats)
+	return stats, err
+}
+
 // CancelFrameRequest cancels only the matching pending request on this mount.
 func (s *Surface) CancelFrameRequest(id string) (err error) {
 	defer surfaceRecover(&err)

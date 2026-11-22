@@ -163,3 +163,29 @@ Per-frame data takes binary paths. Avoid the JSON ones in a frame loop:
 
 `game.Runtime.Step` itself allocates nothing in steady state, and it runs the
 scene builder only after `InvalidateScene` (see `game/README.md`).
+
+### A frame-rate readout for the player
+
+The mount keeps a frame meter over its last 120 drawn frames (about two
+seconds at 60 frames a second): when each frame was drawn, the main thread's
+work for it (from the frame's start, the engine's hook included, until the
+renderer submitted it), and the GPU's time whenever the renderer's GPU timer
+reported one (WebGPU timestamps, or `EXT_disjoint_timer_query_webgl2` on
+WebGL). Recording costs a few stores a frame; the statistics are worked out
+only when read. A game reads it to show the player his own numbers:
+
+```go
+surface := scene.NewSurface("arena")
+stats, err := surface.FrameStats() // twice a second is plenty
+if err == nil {
+	line := fmt.Sprintf("%.0f fps · CPU %.1f ms · GPU %.1f ms · %s · %s",
+		stats.FPS, stats.CPUMS, stats.GPUMS, stats.Tier, stats.Backend)
+	_ = line
+}
+```
+
+`GPUTimer` is empty, and the GPU times are 0, when the browser exposes no GPU
+timer. `Adapter` is the GPU as the browser names it, `Tier` the quality tier
+the governor chose. The GPU time is sampled only while the mount has a quality
+governor (`AdaptiveBudget` or a quality ladder), because the governor polls the
+timer and the meter keeps what it read.
