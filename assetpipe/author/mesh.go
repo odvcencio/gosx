@@ -22,6 +22,12 @@ type Shell struct {
 	First, End int // vertex range [First, End)
 	Rings, N   int // ring count and vertices per ring; 0 when irregular
 	Tube       bool
+	// Surface joins shells into one surface for shading: shells that name
+	// the same non-empty Surface share a normal wherever their vertices lie
+	// at one place, as a seam's two columns do, so two pieces lofted ring on
+	// ring (a seat and the legs that hang from it) show no crease where they
+	// meet. Each piece keeps its own UVs.
+	Surface string
 }
 
 // MorphTarget is a named per-vertex displacement, written as a glTF morph

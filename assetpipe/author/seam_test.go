@@ -32,3 +32,38 @@ func TestSeamStack(t *testing.T) {
 		t.Fatalf("seam normal %v does not face +Z", n[13])
 	}
 }
+
+// Two pieces lofted ring on ring are one surface for shading when they name
+// one Surface: the ring they share gets one normal on both, and each keeps
+// its own UVs. Without it each piece's normal there leans its own way.
+func TestSurfaceJoinsShells(t *testing.T) {
+	build := func(surface string) (*Mesh, Shell, Shell) {
+		m := &Mesh{}
+		// A drum whose top ring is the bottom ring of a cone above it.
+		low := m.SeamStack("low", 0, 0, []Ring{{Vec3{0, 0, 0}, .2, .2}, {Vec3{0, .2, 0}, .2, .2}}, 12)
+		high := m.SeamStack("high", 0, 1, []Ring{{Vec3{0, .2, 0}, .2, .2}, {Vec3{0, .4, 0}, .1, .1}}, 12)
+		m.Shells[0].Surface, m.Shells[1].Surface = surface, surface
+		return m, low, high
+	}
+	for _, joined := range []bool{false, true} {
+		surface := ""
+		if joined {
+			surface = "garment"
+		}
+		m, low, high := build(surface)
+		n := weldNormals(Normals(m.P, m.Tri), m.seamGroups())
+		for j := 0; j < 13; j++ {
+			a, b := low.First+13+j, high.First+j
+			if m.P[a] != m.P[b] {
+				t.Fatalf("column %d: the shared ring is not at one place", j)
+			}
+			same := n[a].Sub(n[b]).Len() < 1e-12
+			if same != joined {
+				t.Fatalf("surface %q, column %d: normals %v and %v (one normal: %v)", surface, j, n[a], n[b], same)
+			}
+			if m.UV[a] == m.UV[b] && j > 0 {
+				t.Fatalf("column %d: the pieces' UVs were merged", j)
+			}
+		}
+	}
+}

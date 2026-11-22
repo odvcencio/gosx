@@ -70,17 +70,37 @@ func ProfileV(rings []Ring) []float64 {
 }
 
 // seamGroups returns the vertices that share an exact position inside one
-// shell: the columns a seam repeats.
+// shell, or inside the shells joined by one Surface: the columns a seam
+// repeats, and the rings joined pieces share.
 func (m *Mesh) seamGroups() [][]int {
 	var groups [][]int
-	for _, s := range m.Shells {
-		at := map[Vec3][]int{}
-		for i := s.First; i < s.End && i < len(m.P); i++ {
-			at[m.P[i]] = append(at[m.P[i]], i)
+	done := map[string]bool{}
+	for k, s := range m.Shells {
+		// The shells grouped with s: itself, or every shell of its surface.
+		unit := []Shell{s}
+		if s.Surface != "" {
+			if done[s.Surface] {
+				continue
+			}
+			done[s.Surface] = true
+			unit = unit[:0]
+			for _, o := range m.Shells[k:] {
+				if o.Surface == s.Surface {
+					unit = append(unit, o)
+				}
+			}
 		}
-		for i := s.First; i < s.End && i < len(m.P); i++ {
-			if g := at[m.P[i]]; len(g) > 1 && g[0] == i {
-				groups = append(groups, g)
+		at := map[Vec3][]int{}
+		for _, u := range unit {
+			for i := u.First; i < u.End && i < len(m.P); i++ {
+				at[m.P[i]] = append(at[m.P[i]], i)
+			}
+		}
+		for _, u := range unit {
+			for i := u.First; i < u.End && i < len(m.P); i++ {
+				if g := at[m.P[i]]; len(g) > 1 && g[0] == i {
+					groups = append(groups, g)
+				}
 			}
 		}
 	}
