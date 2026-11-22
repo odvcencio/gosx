@@ -844,7 +844,7 @@
     var buffer = cache && meshState.pointsEntryGPUBuffers.has(cache.buffer) ? cache.buffer : null;
     if (buffer && wgpuSameItems(cache.key, key)) return buffer;
     var bytes = wgpuPackElioSkinVertices(key, count, paddedCount, jointCount);
-    if (buffer && wgpuTrackedBufferSize(buffer) < bytes.byteLength) { meshState.pointsEntryGPUBuffers.delete(buffer); buffer.destroy(); buffer = null; }
+    if (buffer && wgpuTrackedBufferSize(buffer) !== bytes.byteLength) { meshState.pointsEntryGPUBuffers.delete(buffer); buffer.destroy(); buffer = null; } // exact size: the kernel counts vertices by arrayLength(&verts)
     if (!buffer) buffer = wgpuCreateTrackedBuffer(meshState, device, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, bytes.byteLength);
     device.queue.writeBuffer(buffer, 0, bytes);
     vertices._gosxWGPUElioSkinVertexData = { key: key, buffer: buffer };

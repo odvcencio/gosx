@@ -132,3 +132,34 @@ test("fake async pipeline compilation settles and rejects in a microtask", async
   points.device.createRenderPipeline = () => { throw new Error("invalid render"); };
   await assert.rejects(points.device.createRenderPipelineAsync({ label: "gosx-pbr-opaque" }), /invalid render/);
 });
+
+test("the skin input buffer is exactly the packed size, so a player whose gear shrinks does not read his normals from the wrong region", () => {
+  // The skin kernel takes its vertex count from arrayLength(&verts) and puts the
+  // normal and tangent regions at count and 2 * count; the draw reads them at the
+  // padded count it packed. A buffer left larger after the count shrank (gear
+  // taken off in a substitution) made the two disagree: flat, blocky shading.
+  const written = [];
+  const tracked = new Set();
+  const meshState = { pointsEntryGPUBuffers: tracked };
+  const stream = (count, tuple) => new Float32Array(count * tuple);
+  const vertices = (count) => ({ count, positions: stream(count, 3), joints: stream(count, 4), weights: stream(count, 4), normals: stream(count, 3), tangents: stream(count, 4) });
+  const api = loadSection("  function webGPUElioSkinVertexBuffer", "  function webGPUElioEnsureOutputBuffer", {
+    GPUBufferUsage: { STORAGE: 1, COPY_DST: 2 },
+    webGPUDirectAttribute: (obj, key) => obj.vertices[key],
+    webGPUDefaultAttributeData: (_state, obj, key) => obj.vertices[key],
+    wgpuSameItems: (a, b) => a.length === b.length && a.every((item, i) => item === b[i]),
+    wgpuPackElioSkinVertices: (_key, _count, padded) => new Uint8Array(padded * 72),
+    wgpuTrackedBufferSize: (buffer) => buffer.size,
+    wgpuCreateTrackedBuffer: (state, _device, _usage, size) => { const buffer = { size, destroyed: false, destroy() { this.destroyed = true; } }; state.pointsEntryGPUBuffers.add(buffer); return buffer; },
+  });
+  const device = { queue: { writeBuffer: (buffer, _at, bytes) => written.push([buffer.size, bytes.byteLength]) } };
+  const object = { vertices: vertices(100) };
+  const first = api.webGPUElioSkinVertexBuffer(meshState, device, object, 100, 128, 5);
+  assert.equal(first.size, 128 * 72);
+  object.vertices = Object.assign(vertices(60), { _gosxWGPUElioSkinVertexData: object.vertices._gosxWGPUElioSkinVertexData });
+  const smaller = api.webGPUElioSkinVertexBuffer(meshState, device, object, 60, 64, 5);
+  assert.equal(smaller.size, 64 * 72, "the buffer is the new packed size, not the old larger one");
+  assert.equal(first.destroyed, true, "the larger buffer is released");
+  assert.ok(!tracked.has(first));
+  assert.deepEqual(written.at(-1), [64 * 72, 64 * 72]);
+});

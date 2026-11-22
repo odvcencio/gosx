@@ -1043,3 +1043,49 @@ test("a frame folds at most four skinned morph entries and the rest fold on the 
   assert.equal(r.first, 4, "four fold in the first frame");
   assert.equal(r.second, 6, "the other two fold in the next frame");
 });
+
+test("merged normals and tangents equal the unmerged ones for the body and for the gear, after a merge, a fold and a substitution", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const r = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    var f0 = gltfFoldAnimatedMorphStreams(meta, meta.defaults);
+    var n = f0.positions.length / 3;
+    var vertices = { count: n, positions: f0.positions, normals: f0.normals, tangents: f0.tangents, uvs: new Float32Array(n * 2),
+      joints: new Float32Array(n * 4), weights: new Float32Array(n * 4).fill(1), indices: null, immutable: true, revision: 0 };
+    var entry = { meta: meta, vertices: vertices, skinned: true, lastWeights: meta.defaults.slice() };
+    function piece(count, normal, tangent) {
+      var normals = new Float32Array(count * 3), tangents = new Float32Array(count * 4);
+      for (var i = 0; i < count; i++) { normals.set(normal, i * 3); tangents.set(tangent, i * 4); }
+      return { count: count, positions: new Float32Array(count * 3), normals: normals, uvs: new Float32Array(count * 2),
+        joints: new Float32Array(count * 4), weights: new Float32Array(count * 4).fill(1), tangents: tangents, indices: null };
+    }
+    function parts() { return { head: Array.from(vertices.normals.slice(0, n * 3)), headT: Array.from(vertices.tangents.slice(0, n * 4)),
+      tail: Array.from(vertices.normals.slice(n * 3)), tailT: Array.from(vertices.tangents.slice(n * 4)), count: vertices.count }; }
+    var mask = piece(3, [0, 0, 1], [1, 0, 0, -1]), glove = piece(2, [0, 1, 0], [0, 0, 1, 1]);
+    gltfMergeGear(entry, [mask]);
+    var afterMerge = parts();
+    gltfApplyAnimatedMorphPose([entry], null, null, { mass: 1 });
+    var heavy = gltfFoldAnimatedMorphStreams(meta, [1, 0.25]);
+    var afterFold = parts();
+    gltfMergeGear(entry, [glove, mask]);
+    var afterSwap = parts();
+    gltfMergeGear(entry, []);
+    var bare = parts();
+    ({ n: n, base: Array.from(f0.normals), baseT: Array.from(f0.tangents), heavy: Array.from(heavy.normals), heavyT: Array.from(heavy.tangents),
+       afterMerge: afterMerge, afterFold: afterFold, afterSwap: afterSwap, bare: bare });
+  `));
+  const r6 = (a) => a.map((v) => Math.round(v * 1e6) / 1e6);
+  assert.deepEqual(r6(r.afterMerge.head), r6(r.base), "the body normals survive the merge");
+  assert.deepEqual(r6(r.afterMerge.headT), r6(r.baseT), "and its tangents");
+  assert.deepEqual(r.afterMerge.tail, [0, 0, 1, 0, 0, 1, 0, 0, 1], "the gear keeps its own normals");
+  assert.deepEqual(r.afterMerge.tailT, [1, 0, 0, -1, 1, 0, 0, -1, 1, 0, 0, -1], "and tangent handedness");
+  assert.deepEqual(r6(r.afterFold.head), r6(r.heavy), "a fold rewrites the body normals");
+  assert.deepEqual(r6(r.afterFold.headT), r6(r.heavyT), "and tangents");
+  assert.deepEqual(r.afterFold.tail, r.afterMerge.tail, "and leaves the gear alone");
+  assert.deepEqual(r.afterSwap.tail, [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1], "a substitution brings the new gear's normals in order");
+  assert.deepEqual(r6(r.afterSwap.head), r6(r.heavy), "the body keeps its folded normals through it");
+  assert.equal(r.bare.count, r.n);
+  assert.deepEqual(r6(r.bare.head), r6(r.heavy), "bare again, the body normals are the folded ones");
+});
