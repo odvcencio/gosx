@@ -1476,6 +1476,31 @@ test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
   assert.match(webgpu, /sceneWebGPUToneMapMode\(effect\.mode\)/);
 });
 
+test("Scene3D gt tone mapping runs Uchimura's curve with its contrast, the exact sRGB encode and a one-code dither on both backends", () => {
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
+  for (const [source, mapper] of [[webgl, "scenePostToneMapMode"], [webgpu, "sceneWebGPUToneMapMode"]]) {
+    assert.match(source, new RegExp(`function ${mapper}[\\s\\S]*?normalized === "gt"\\) return 5;`));
+    assert.match(source, /float l0 = 0\.78 \* 0\.4 \/ a|let l0 = 0\.78 \* 0\.4 \/ a/, "P 1, middle from .22 for .4 of the range");
+    assert.match(source, /pow\(max\(x, vec3f?\(0\.0\)\) \/ 0\.22, vec3f?\(1\.33\)\)/, "toe power 1.33");
+    assert.match(source, /1\.055 \* pow\(color, vec3f?\(1\.0 \/ 2\.4\)\) - 0\.055, color \* 12\.92/, "exact sRGB encode");
+    assert.match(source, /- 0\.5\) \/ 255\.0/, "zero-mean dither of one code");
+  }
+  assert.match(webgl, /"u_toneContrast"\), sceneNumber\(effect\.contrast, 1\.0\)/);
+  assert.match(webgpu, /sceneWebGPUToneMapMode\(effect\.mode\), sceneNumber\(effect\.contrast, 1\.0\), 0\]/);
+  // Uchimura's curve (P 1, m .22, l .4, c 1.33, b 0) at contrast 1.1, the
+  // values the shaders compute: continuous at both joins and below white.
+  const gt = (x, a) => {
+    const l0 = 0.78 * 0.4 / a, s0 = 0.22 + l0, s1 = 0.22 + a * l0;
+    const t = Math.min(Math.max(x / 0.22, 0), 1), w0 = 1 - t * t * (3 - 2 * t), w2 = x >= s0 ? 1 : 0;
+    return Math.min(Math.max(0.22 * Math.pow(Math.max(x, 0) / 0.22, 1.33) * w0 + (0.22 + a * (x - 0.22)) * (1 - w0 - w2) + (1 - (1 - s1) * Math.exp(-a / (1 - s1) * (x - s0))) * w2, 0), 1);
+  };
+  const s0 = 0.22 + 0.78 * 0.4 / 1.1;
+  assert.ok(Math.abs(gt(s0 - 1e-6, 1.1) - gt(s0, 1.1)) < 1e-4, "the shoulder joins the middle");
+  assert.ok(gt(4, 1.1) < 1 && gt(4, 1.1) > 0.99, "white is approached, not clipped, four times above the middle's end");
+  assert.ok(Math.abs(gt(0.5, 1.1) - (0.22 + 1.1 * 0.28)) < 1e-9, "the middle is a straight line of slope 1.1");
+});
+
 test("Scene3D WebGPU bloom blur avoids sparse radius tap grids", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
 

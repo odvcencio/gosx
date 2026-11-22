@@ -1659,6 +1659,7 @@
     "uniform float u_exposure;",
     "uniform vec4 u_background;",
     "uniform int u_toneMapMode;",
+    "uniform float u_toneContrast;",
     "out vec4 fragColor;",
     "",
     "vec3 aces(vec3 x) {",
@@ -1679,6 +1680,14 @@
     "    return clamp((x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06), 0.0, 1.0);",
     "}",
     "",
+    // Uchimura's tone curve, as in the WebGPU pass (webgpu.ts gtCurve).
+    "vec3 gtCurve(vec3 x, float a) {",
+    "    float l0 = 0.78 * 0.4 / a; float s0 = 0.22 + l0; float s1 = 0.22 + a * l0;",
+    "    vec3 w0 = vec3(1.0) - smoothstep(0.0, 0.22, x); vec3 w2 = step(vec3(s0), x); vec3 w1 = vec3(1.0) - w0 - w2;",
+    "    vec3 toe = 0.22 * pow(max(x, vec3(0.0)) / 0.22, vec3(1.33)); vec3 shoulder = vec3(1.0) - (1.0 - s1) * exp(-a / (1.0 - s1) * (x - vec3(s0)));",
+    "    return clamp(toe * w0 + (vec3(0.22) + a * (x - vec3(0.22))) * w1 + shoulder * w2, 0.0, 1.0);",
+    "}",
+    "",
     "void main() {",
     "    vec4 texColor = texture(u_texture, v_uv);",
     "    if (u_background.a >= 0.0 && texColor.a == 0.0) { fragColor = u_background; return; }",
@@ -1690,6 +1699,11 @@
     "        color = reinhard(color);",
     "    } else if (u_toneMapMode == 3) {",
     "        color = filmic(color);",
+    "    } else if (u_toneMapMode == 5) {",
+    "        color = gtCurve(color, max(u_toneContrast, 0.01));",
+    "        color = mix(1.055 * pow(color, vec3(1.0 / 2.4)) - 0.055, color * 12.92, vec3(lessThanEqual(color, vec3(0.0031308))));",
+    "        fragColor = vec4(color + vec3(fract(52.9829189 * fract(dot(floor(gl_FragCoord.xy), vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0, texColor.a);",
+    "        return;",
     "    } else {",
     "        color = aces(color);",
     "    }",
@@ -4282,6 +4296,17 @@
 
   function sceneWebGLDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webglRun(state, effect, i, ...rest) : rest[0]; }
   function sceneWebGLDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
+  // The WebGL2 post chain's tone mapping name to u_toneMapMode (no closure state).
+  function scenePostToneMapMode(mode) {
+    if (typeof mode === "string") {
+      var normalized = mode.trim().toLowerCase();
+      if (normalized === "linear" || normalized === "none") return 0;
+      if (normalized === "reinhard") return 2;
+      if (normalized === "filmic") return 3;
+      if (normalized === "gt") return 5;
+    }
+    return 1;
+  }
   function createScenePostProcessor(gl, resolveSelenaUniform) {
 
     var quad = createSceneFullscreenQuad(gl);
@@ -4459,16 +4484,6 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
-    function scenePostToneMapMode(mode) {
-      if (typeof mode === "string") {
-        var normalized = mode.trim().toLowerCase();
-        if (normalized === "linear" || normalized === "none") return 0;
-        if (normalized === "reinhard") return 2;
-        if (normalized === "filmic") return 3;
-      }
-      return 1;
-    }
-
     // Apply the authored tone mapping curve.
     function applyToneMapping(inputTex, effect, targetFBO, w, h) {
       var prog = getProgram("toneMapping", SCENE_POST_TONEMAPPING_SOURCE);
@@ -4476,6 +4491,7 @@
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
       gl.uniform1i(sceneWaterUniformLocation(gl, prog.program, "u_toneMapMode"), scenePostToneMapMode(effect.mode));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_toneContrast"), sceneNumber(effect.contrast, 1.0));
       gl.uniform4fv(sceneWaterUniformLocation(gl, prog.program, "u_background"), effect.background || [0, 0, 0, -1]);
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;

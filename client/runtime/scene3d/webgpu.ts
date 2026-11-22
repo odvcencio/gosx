@@ -2601,7 +2601,7 @@
     "struct ToneMappingParams {",
     "    exposure: f32,",
     "    toneMapMode: f32,",
-    "    _pad1: f32,",
+    "    contrast: f32,",
     "    _pad2: f32,",
     "};",
     "",
@@ -2627,6 +2627,15 @@
     "    return clamp((y * (6.2 * y + vec3f(0.5))) / (y * (6.2 * y + vec3f(1.7)) + vec3f(0.06)), vec3f(0.0), vec3f(1.0));",
     "}",
     "",
+    // Uchimura's tone curve (P 1, middle from .22 for .4 of the range,
+    // toe power 1.33): the middle's slope a is the contrast.
+    "fn gtCurve(x: vec3f, a: f32) -> vec3f {",
+    "    let l0 = 0.78 * 0.4 / a; let s0 = 0.22 + l0; let s1 = 0.22 + a * l0;",
+    "    let w0 = vec3f(1.0) - smoothstep(vec3f(0.0), vec3f(0.22), x); let w2 = step(vec3f(s0), x); let w1 = vec3f(1.0) - w0 - w2;",
+    "    let toe = 0.22 * pow(max(x, vec3f(0.0)) / 0.22, vec3f(1.33)); let shoulder = vec3f(1.0) - (1.0 - s1) * exp(-a / (1.0 - s1) * (x - vec3f(s0)));",
+    "    return clamp(toe * w0 + (vec3f(0.22) + a * (x - vec3f(0.22))) * w1 + shoulder * w2, vec3f(0.0), vec3f(1.0));",
+    "}",
+    "",
     "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
     "    let inputColor = textureSample(inputTex, inputSamp, uv);",
     "    var color = inputColor.rgb;",
@@ -2638,6 +2647,12 @@
     "        color = reinhard(color);",
     "    } else if (mode == 3) {",
     "        color = filmic(color);",
+    "    } else if (mode == 5) {",
+    // The exact sRGB encode, then a screen-fixed, zero-mean dither of one code.
+    "        color = gtCurve(color, max(params.contrast, 0.01));",
+    "        color = select(1.055 * pow(color, vec3f(1.0 / 2.4)) - 0.055, color * 12.92, color <= vec3f(0.0031308));",
+    "        let px = floor(uv * vec2f(textureDimensions(inputTex)));",
+    "        return vec4f(color + vec3f(fract(52.9829189 * fract(dot(px, vec2f(0.06711056, 0.00583715)))) - 0.5) / 255.0, inputColor.a);",
     "    } else {",
     "        color = aces(color);",
     "    }",
@@ -2653,6 +2668,7 @@
       if (normalized === "linear" || normalized === "none") return 0;
       if (normalized === "reinhard") return 2;
       if (normalized === "filmic") return 3;
+      if (normalized === "gt") return 5;
     }
     return 1;
   }
@@ -4513,7 +4529,7 @@
             case SCENE_POST_TONE_MAPPING: {
               var pipeline = getPipeline("toneMapping", WGSL_POST_TONEMAPPING_FRAGMENT, getPostParamsLayout(), outputFormat);
               var buf = getParamBuffer("toneMapping", 16);
-              device.queue.writeBuffer(buf, 0, new Float32Array([sceneNumber(effect.exposure, 1.0), sceneWebGPUToneMapMode(effect.mode), 0, 0]));
+              device.queue.writeBuffer(buf, 0, new Float32Array([sceneNumber(effect.exposure, 1.0), sceneWebGPUToneMapMode(effect.mode), sceneNumber(effect.contrast, 1.0), 0]));
               var bg = device.createBindGroup({
                 layout: getPostParamsLayout(),
                 entries: [

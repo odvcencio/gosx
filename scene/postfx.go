@@ -81,12 +81,20 @@ const (
 	TonemapFilmic
 	// TonemapAgX uses the AgX log-space sigmoid, with colour-preserving highlights.
 	TonemapAgX
+	// TonemapGT is Uchimura's tone curve per channel: a toe, a straight
+	// middle whose slope is Tonemap.Contrast, and a smooth shoulder that reaches
+	// white only far above it, so bright fabric keeps its shading. Its post pass
+	// writes the exact sRGB encode with a one-code dither.
+	TonemapGT
 )
 
 // Tonemap maps HDR scene colors into the displayable [0,1] range.
 type Tonemap struct {
 	Mode     TonemapMode
 	Exposure float32 // multiplier applied before the curve (default 1.0)
+	// Contrast is the slope of TonemapGT's straight middle (default 1). Other
+	// modes ignore it.
+	Contrast float32
 }
 
 func (Tonemap) isPostEffect() {}

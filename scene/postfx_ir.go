@@ -135,8 +135,9 @@ func decodePostEffectIRList(raw []json.RawMessage) ([]PostEffectIR, error) {
 //
 //	{kind: "toneMapping", exposure: 1.0}
 type TonemapIR struct {
-	Mode     string  // "aces" | "reinhard" | "filmic" | "agx"
+	Mode     string  // "aces" | "reinhard" | "filmic" | "agx" | "gt"
 	Exposure float64 // multiplier applied before the curve
+	Contrast float64 // "gt" only: the slope of the straight middle; zero means 1
 }
 
 func (ir TonemapIR) legacyProps() map[string]any {
@@ -148,6 +149,9 @@ func (ir TonemapIR) legacyProps() map[string]any {
 	}
 	if ir.Mode != "" {
 		out["mode"] = ir.Mode
+	}
+	if ir.Contrast != 0 {
+		out["contrast"] = ir.Contrast
 	}
 	return out
 }
@@ -167,6 +171,10 @@ func (ir TonemapIR) MarshalJSON() ([]byte, error) {
 	if ir.Mode != "" {
 		b.WriteString(`,"mode":`)
 		b.WriteString(jsonString(ir.Mode))
+	}
+	if ir.Contrast != 0 {
+		b.WriteString(`,"contrast":`)
+		b.WriteString(strconv.FormatFloat(ir.Contrast, 'f', -1, 64))
 	}
 	b.WriteByte('}')
 	return []byte(b.String()), nil
@@ -639,6 +647,7 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 			out = append(out, TonemapIR{
 				Mode:     tonemapModeString(ev.Mode),
 				Exposure: float64(ev.Exposure),
+				Contrast: float64(ev.Contrast),
 			})
 		case Bloom:
 			out = append(out, BloomIR{
@@ -859,6 +868,8 @@ func tonemapModeString(m TonemapMode) string {
 		return "agx"
 	case TonemapFilmic:
 		return "filmic"
+	case TonemapGT:
+		return "gt"
 	case TonemapACES:
 		fallthrough
 	default:

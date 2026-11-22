@@ -1135,7 +1135,9 @@ const budgets = [
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.gz gzip 616523; the target rises by exactly the measured overage (599875 -> 600139), allowance unchanged.
     // 21 November 2026 (skin input buffer sized exactly; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js raw 2201277; the target rises by exactly the measured overage (2135739 -> 2135741), allowance unchanged.
     // 21 November 2026 (skin input buffer sized exactly; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.gz gzip 616525; the target rises by exactly the measured overage (600139 -> 600141), allowance unchanged.
-    file: "bootstrap.js", raw: 2135741, gzip: 600141,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap.js raw 2203152; the target rises by exactly the measured overage (2135741 -> 2137616), allowance unchanged.
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.gz gzip 617045; the target rises by exactly the measured overage (600141 -> 600661), allowance unchanged.
+    file: "bootstrap.js", raw: 2137616, gzip: 600661,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1166,7 +1168,8 @@ const budgets = [
     // 20 November 2026 (retain skinned morph meshes, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.br brotli 501418; the target rises by exactly the measured overage (484585 -> 485034), allowance unchanged.
     // whole-frame GPU timing on tile GPUs, a frame-end marker that loads the presented image (measured overage, approved by the coordinator under decision 0019): measured bootstrap.js.br brotli 501470; the target rises by exactly the measured overage (485034 -> 485086), allowance unchanged.
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 502070; the target rises by exactly the measured overage (485086 -> 485686), allowance unchanged.
-    brotli: 485686 },
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 502162; the target rises by exactly the measured overage (485686 -> 485778), allowance unchanged.
+    brotli: 485778 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1602,7 +1605,10 @@ const budgets = [
     // The same change: measured bootstrap-feature-scene3d-webgl.js.gz gzip 93610; the target rises by exactly the measured overage (89027 -> 89158), allowance unchanged.
     // The same change: measured bootstrap-feature-scene3d-webgl.js.br brotli 81142; the target rises by exactly the measured overage (77092 -> 77287), allowance unchanged.
     // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured bootstrap-feature-scene3d-webgl.js raw 313604; the target rises by exactly the measured overage (298641 -> 298671), allowance unchanged.
-    file: "bootstrap-feature-scene3d-webgl.js", raw: 298671, gzip: 89158, brotli: 77287 },
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgl.js raw 314468; the target rises by exactly the measured overage (298671 -> 299534), allowance unchanged.
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgl.js.gz gzip 93853; the target rises by exactly the measured overage (89158 -> 89395), allowance unchanged.
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgl.js.br brotli 81291; the target rises by exactly the measured overage (77287 -> 77426), allowance unchanged.
+    file: "bootstrap-feature-scene3d-webgl.js", raw: 299534, gzip: 89395, brotli: 77426 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -2162,7 +2168,9 @@ const budgets = [
     // the governor reads the frame-end span on tile GPUs; skinning pass stamps (measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js.gz gzip 145316; the target rises by exactly the measured overage (138327 -> 138399), allowance unchanged.
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgpu.js raw 543824; the target rises by exactly the measured overage (517610 -> 517943), allowance unchanged.
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgpu.js.gz gzip 145644; the target rises by exactly the measured overage (138399 -> 138724), allowance unchanged.
-    raw: 517943, gzip: 138724,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgpu.js raw 544690; the target rises by exactly the measured overage (517943 -> 518792), allowance unchanged.
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgpu.js.gz gzip 145799; the target rises by exactly the measured overage (138724 -> 138862), allowance unchanged.
+    raw: 518792, gzip: 138862,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     // 2026-11-09 Selena scene lighting: the WebGPU chunk gains the on-demand lighting loader and the shadow-map texture binding; brotli measures 111475 bytes; only this exhausted target moves (106069 -> 106166), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap-feature-scene3d-webgpu.js brotli 120625; only the exhausted targets move, to their exact minima under the unchanged allowance.
@@ -2199,7 +2207,8 @@ const budgets = [
     // 21 November 2026 (memoized WebGPU material signatures, a revision for skinned model objects only; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js.br brotli 122342; the target rises by exactly the measured overage (116475 -> 116518), allowance unchanged.
     // whole-frame GPU timing on tile GPUs, a frame-end marker that loads the presented image (measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-webgpu.js.br brotli 122497; the target rises by exactly the measured overage (116518 -> 116671), allowance unchanged.
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgpu.js.br brotli 122795; the target rises by exactly the measured overage (116671 -> 116961), allowance unchanged.
-    brotli: 116961 },
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-webgpu.js.br brotli 123011; the target rises by exactly the measured overage (116961 -> 117162), allowance unchanged.
+    brotli: 117162 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -2829,7 +2838,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 13: telemetry attributes, frame statistics, error scopes and canvas configuration leave the renderer closure with an explicit telemetry state object): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 448406; only this exhausted target moves (431537 -> 432022), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14a: the closure's remaining helpers, lifecycle and post-processing toggles leave the renderer closure on the state objects): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 448781; only this exhausted target moves (432022 -> 432397), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured Scene3D Chromium route (WebGPU, with labels).gz gzip 448851; only this exhausted target moves (432397 -> 432467), allowance unchanged.
-    gzip: 432467,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).gz gzip 448923; the target rises by exactly the measured overage (432467 -> 432539), allowance unchanged.
+    gzip: 432539,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2867,7 +2877,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured Scene3D Chromium route (WebGPU, with labels).br brotli 385230; only this exhausted target moves (368279 -> 368846), allowance unchanged.
     // whole-frame GPU timing on tile GPUs, a frame-end marker that loads the presented image (measured overage, approved by the coordinator under decision 0019): measured Scene3D Chromium route (WebGPU, with labels).br brotli 385235; the target rises by exactly the measured overage (368846 -> 368851), allowance unchanged.
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).br brotli 385533; the target rises by exactly the measured overage (368851 -> 369149), allowance unchanged.
-    brotli: 369149,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).br brotli 385749; the target rises by exactly the measured overage (369149 -> 369365), allowance unchanged.
+    brotli: 369365,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -3115,7 +3126,8 @@ const routeBudgets = [
     // 20 November 2026 (retain skinned morph meshes, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1377127; the target rises by exactly the measured overage (1311549 -> 1311591), allowance unchanged.
     // 21 November 2026 (planner, material-signature and upload counters; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1377504; the target rises by exactly the measured overage (1311591 -> 1311968), allowance unchanged.
     // 21 November 2026 (memoized WebGPU material signatures, a revision for skinned model objects only; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1377507; the target rises by exactly the measured overage (1311968 -> 1311971), allowance unchanged.
-    raw: 1311971,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1378371; the target rises by exactly the measured overage (1311971 -> 1312835), allowance unchanged.
+    raw: 1312835,
     // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 385941 bytes; only this exhausted target moves (369041 -> 369557), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 392100; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Safari and Firefox route (WebGL, with labels) gzip measures 388236 bytes; only this exhausted target moves (369557 -> 371852), allowance unchanged.
@@ -3145,7 +3157,8 @@ const routeBudgets = [
     // 20 November 2026 (retain skinned morph meshes, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 396557; the target rises by exactly the measured overage (380148 -> 380173), allowance unchanged.
     // 21 November 2026 (planner, material-signature and upload counters; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 396726; the target rises by exactly the measured overage (380173 -> 380342), allowance unchanged.
     // 21 November 2026 (memoized WebGPU material signatures, a revision for skinned model objects only; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 396728; the target rises by exactly the measured overage (380342 -> 380344), allowance unchanged.
-    gzip: 380344,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 396977; the target rises by exactly the measured overage (380344 -> 380593), allowance unchanged.
+    gzip: 380593,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
@@ -3176,7 +3189,8 @@ const routeBudgets = [
     // IBL state on the mount for page checks (coordinator-approved 20 Nov 2026): measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 343775; the target rises by exactly the measured overage (327397 -> 327405), allowance unchanged.
     // 20 November 2026 (retain skinned morph meshes, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 343844; the target rises by exactly the measured overage (327405 -> 327473), allowance unchanged.
     // 21 November 2026 (planner, material-signature and upload counters; measured overage, approved by the coordinator under decision 0019): measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 344006; the target rises by exactly the measured overage (327473 -> 327632), allowance unchanged.
-    brotli: 327632,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 344029; the target rises by exactly the measured overage (327632 -> 327647), allowance unchanged.
+    brotli: 327647,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -3459,7 +3473,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 14a: the closure's remaining helpers, lifecycle and post-processing toggles leave the renderer closure on the state objects): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 542251; only this exhausted target moves (525492 -> 525867), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 542321; only this exhausted target moves (525867 -> 525937), allowance unchanged.
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 542372; the target rises by exactly the measured overage (525937 -> 525988), allowance unchanged.
-    gzip: 525988,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 542776; the target rises by exactly the measured overage (525988 -> 526392), allowance unchanged.
+    gzip: 526392,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -3497,7 +3512,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 466169; only this exhausted target moves (449218 -> 449785), allowance unchanged.
     // whole-frame GPU timing on tile GPUs, a frame-end marker that loads the presented image (measured overage, approved by the coordinator under decision 0019): measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 466316; the target rises by exactly the measured overage (449785 -> 449932), allowance unchanged.
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 466614; the target rises by exactly the measured overage (449932 -> 450230), allowance unchanged.
-    brotli: 450230,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 467040; the target rises by exactly the measured overage (450230 -> 450656), allowance unchanged.
+    brotli: 450656,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -3757,7 +3773,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 13: telemetry attributes, frame statistics, error scopes and canvas configuration leave the renderer closure with an explicit telemetry state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 404209; only this exhausted target moves (387340 -> 387825), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14a: the closure's remaining helpers, lifecycle and post-processing toggles leave the renderer closure on the state objects): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 404584; only this exhausted target moves (387825 -> 388200), allowance unchanged.
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 404654; only this exhausted target moves (388200 -> 388270), allowance unchanged.
-    gzip: 388270,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 404726; the target rises by exactly the measured overage (388270 -> 388342), allowance unchanged.
+    gzip: 388342,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
@@ -3793,7 +3810,8 @@ const routeBudgets = [
     // 19 November 2026 (WebGPU renderer split, step 14b: render, dispose, diagnostics and the device handle leave the renderer closure on the root state object): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 344912; only this exhausted target moves (327961 -> 328528), allowance unchanged.
     // whole-frame GPU timing on tile GPUs, a frame-end marker that loads the presented image (measured overage, approved by the coordinator under decision 0019): measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 344917; the target rises by exactly the measured overage (328528 -> 328533), allowance unchanged.
     // Render split (encodeWebGPUPostAndFrameEnd moves post-processing and the frame-end marker out of render), measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 345215; the target rises by exactly the measured overage (328533 -> 328831), allowance unchanged.
-    brotli: 328831,
+    // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 345431; the target rises by exactly the measured overage (328831 -> 329047), allowance unchanged.
+    brotli: 329047,
   },
 
 ];

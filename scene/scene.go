@@ -105,7 +105,7 @@ type Environment struct {
 	// AutoExposure adapts exposure to the scene's brightness over time. Nil
 	// keeps Exposure fixed. See exposure.go.
 	AutoExposure *AutoExposure
-	ToneMapping  string // "aces", "reinhard", "linear", "" (default = aces)
+	ToneMapping  string // "aces", "reinhard", "filmic", "agx", "gt", "linear", "" (default = aces)
 	// LightModel "physical" decodes light, ambient, hemisphere and fog colours
 	// from sRGB to linear, and lights ambient and hemisphere terms as indirect
 	// diffuse: no light on metals, and darkened by ambient occlusion. Empty
