@@ -33,6 +33,11 @@
 // (Suppress). The action then reads Released and Canceled together, so logic
 // that acts on a release can tell the two apart.
 //
+// A fixed-step simulation reads input through Ticks (each press reaches one
+// step), Queue (one command per step, the others wait in order), Releases
+// (a button that acts when it is let go, soft after a tap) and Prefix (a
+// button that changes the next press, held with it or pressed just before).
+//
 // The package does not import package game. Use package game/actions/bridge
 // to publish action state to a game.Input, and the js/wasm Attach function to
 // read the browser keyboard and mouse.
