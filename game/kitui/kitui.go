@@ -1,5 +1,6 @@
 // Package kitui renders the screens every game needs (pause menu, settings,
-// key rebinding, loading, error) as GoSX nodes.
+// key rebinding, loading, error, and a dialog the game writes into) as GoSX
+// nodes.
 //
 // The output is plain HTML with data attributes and ARIA roles, so it works
 // in a static export: render it at build time, or call markup.RenderHTML (or

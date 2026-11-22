@@ -165,7 +165,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `game/gamepad` | experimental | yes | Polls the browser Gamepad API and feeds the result into a game.Input's existing bindings. |
 | `game/host` | experimental | yes | Provides typed browser gamepad snapshots and animation-frame ownership without depending on game.Runtime, server hubs, or the compiler. |
 | `game/host/hosttest` | experimental | yes | Drives a page's gamepads from a native Go test. |
-| `game/kitui` | experimental | yes | Renders the screens every game needs (pause menu, settings, key rebinding, loading, error) as GoSX nodes. |
+| `game/kitui` | experimental | yes | Renders the screens every game needs (pause menu, settings, key rebinding, loading, error, and a dialog the game writes into) as GoSX nodes. |
 | `game/loop` | experimental | yes | Owns the browser's requestAnimationFrame driver so a game does not have to call js.FuncOf/requestAnimationFrame itself. |
 | `game/netsync` | experimental | yes | The client side of package room: it connects a GoSX game to a server-authoritative room, predicts the local player on a local copy of the simulation, and reconciles with the server's snapshots. |
 | `game/physicsys` | experimental | yes | Connects the physics package's gameplay features to game.Runtime: it drives character controllers at the fixed step and delivers trigger events to game code. |
