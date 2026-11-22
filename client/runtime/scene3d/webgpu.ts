@@ -6543,9 +6543,9 @@
     for (var c = 0; c < cascades; c++) {
       casterDraws += renderShadowPass(drawState, s.device, encoder, shadowSlot.cascades[c].lightMatrix, frame.bundle, { view: shadowSlot.layerViews[c], lightSlot: slot, arenaSlot: c * 2 + slot, arenaSlots: 8 }, frame.buffers);
     }
-    // Draws the shadow passes made for casters this frame, over every cascade and light.
-    var casterStats = s.telemetryState.frameStats;
-    casterStats.shadowCasterDraws = (lightIndex === 0 ? 0 : casterStats.shadowCasterDraws || 0) + casterDraws;
+    // Caster draws of this frame's shadow passes, over every cascade and light. The passes are encoded before
+    // the frame's stats are reset, so the count waits on the telemetry state until the frame is published.
+    s.telemetryState.shadowCasterDraws = (slot === 0 ? 0 : s.telemetryState.shadowCasterDraws || 0) + casterDraws;
   }
   // Post-processing, then the frame-end marker: it loads the view post-processing presented (on replay of a frame recorded until its
   // pipelines were ready, the canvas view is patched in as post-processing does); it is frame work, so the caller ends the frame timer after it.
@@ -6951,7 +6951,7 @@
     var pointStats = webGPUPlannedPointStats(bundle, computeParticleRecords);
     var customMaterialStats = webGPUCustomMaterialStats(materials);
     wgpuResetFrameStats(telemetryState.frameStats, telemetryState.webGPUFrameProof);
-    telemetryState.frameStats.renderer = "webgpu";
+    telemetryState.frameStats.renderer = "webgpu"; telemetryState.frameStats.sampleCount = sampleCount; telemetryState.frameStats.targetFormat = pipeState.targetFormat;
     telemetryState.frameStats.pointEntries = pointStats.pointEntries;
     telemetryState.frameStats.pointInstances = pointStats.pointInstances;
     telemetryState.frameStats.computeParticleEntries = pointStats.computeParticleEntries;

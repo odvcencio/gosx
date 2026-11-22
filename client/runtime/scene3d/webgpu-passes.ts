@@ -3891,7 +3891,7 @@
     var mount = telemetryState.canvas && telemetryState.canvas.parentNode;
     if (!mount) return;
     telemetryState.timing.webGPUFrameSeq += 1;
-    var published = stats;
+    var published = stats; published.shadowCasterDraws = telemetryState.shadowCasterDraws; telemetryState.shadowCasterDraws = 0;
     // Render only into the unpublished buffer, including frames that abort.
     telemetryState.frameStats = telemetryState.lastWebGPUFrameStats || telemetryState.spareFrameStats;
     published.lastError = telemetryState.webGPULastError || undefined;
@@ -3906,8 +3906,11 @@
     mirrorWebGPUFrameAttributes(telemetryState);
   }
 
-  // mirrorWebGPUSkinAttributes publishes the skinning and shadow-caster counts.
+  // mirrorWebGPUSkinAttributes publishes the skinning and shadow-caster counts, and the samples and format the frame drew with
+  // (the renderer-state attributes are written before the first frame chooses them).
   function mirrorWebGPUSkinAttributes(telemetryState: any, published: any) {
+    if (published.sampleCount) queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-sample-count", String(published.sampleCount));
+    if (published.targetFormat) queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-target-format", String(published.targetFormat));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-skinned-mesh-objects", String(published.skinnedMeshObjects || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-shadow-caster-draws", String(published.shadowCasterDraws || 0));
     queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-computed-morph-dispatches", String(published.computedMorphDispatches || 0));

@@ -86,6 +86,42 @@ test("WebGPU steady frames avoid DOM writes and reuse frame stats", async () => 
   } finally { h.renderer.dispose(); }
 });
 
+test("WebGPU frame stats count the shadow passes' caster draws", async () => {
+  const h = await setup({ mesh: true });
+  try {
+    // Three boxes cast into one directional light's shadow map. The shadow passes are
+    // encoded before the frame's stats are reset, so the count must survive the reset.
+    for (const object of h.bundle.meshObjects) object.castShadow = true;
+    await h.frame(192); await h.frame(208);
+    const casters = h.mount.__gosxScene3DWebGPUStats.shadowCasterDraws;
+    assert.ok(casters >= 3, `the published frame counts its caster draws, got ${casters}`);
+    await h.frame(224);
+    assert.equal(h.mount.__gosxScene3DWebGPUStats.shadowCasterDraws, casters, "both stats buffers carry the count");
+    await h.frame(512);
+    assert.equal(Number(h.mount.getAttribute("data-gosx-scene3d-webgpu-shadow-caster-draws")), casters);
+    h.bundle.lights[0].castShadow = false;
+    await h.frame(528); await h.frame(544);
+    assert.equal(h.mount.__gosxScene3DWebGPUStats.shadowCasterDraws || 0, 0, "a frame without a shadow pass counts none");
+  } finally { h.renderer.dispose(); }
+});
+
+test("WebGPU frame attributes report the samples and target format the frame drew with", async () => {
+  const h = await setup({ post: true });
+  try {
+    // The renderer-state attributes are written before the first frame chooses its samples and target.
+    h.bundle.msaaSamples = 4;
+    for (let t = 512; t <= 576; t += 16) await h.frame(t);
+    await h.frame(1024);
+    assert.equal(h.mount.__gosxScene3DWebGPUStats.sampleCount, 4);
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "4");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-target-format"), "rgba16float", "post processing draws into a float target");
+    h.bundle.msaaSamples = 1; h.bundle.postEffects = [];
+    for (let t = 1040; t <= 1104; t += 16) await h.frame(t);
+    await h.frame(1536);
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "1");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-target-format"), h.configureCalls.at(-1).format, "without post processing the frame draws into the canvas format");
+  } finally { h.renderer.dispose(); }
+});
 
 test("WebGPU scaled and unknown trailing effects retain the present blit", async () => {
   const h = await setup({ post: true });
