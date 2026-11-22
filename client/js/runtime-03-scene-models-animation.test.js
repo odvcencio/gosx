@@ -1063,6 +1063,54 @@ test("bootstrap uploads a 128-joint rig through the WebGL joint palette texture"
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+// A skinned model that casts a shadow must draw into the WebGL shadow map in its
+// animated pose: the depth pass skins it with the same joint palette as the colour pass.
+test("bootstrap casts a skinned GLB's WebGL shadow through the joint palette", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-skinned-shadow-root";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: { "/models/rig.glb": { bytes: buildSkinnedGLBBytes() } },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-model-skinned-shadow",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-model-skinned-shadow-root",
+        props: {
+          width: 640, height: 360, autoRotate: false,
+          camera: { x: 0, y: 1, z: 6, near: 0.1, far: 100, fov: 60 },
+          scene: { lights: [{ id: "sun", kind: "directional", castShadow: true, shadowSize: 256, directionX: 0.2, directionY: -1, directionZ: -0.35 }] },
+          models: [{ id: "rig", src: "/models/rig.glb", animation: "bend", loop: true, castShadow: true, receiveShadow: true }],
+        },
+      }],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const gl = mount.children[0].getContext("webgl2");
+  const shadowDraws = gl.ops.filter((e) => (e[0] === "drawArrays" || e[0] === "drawElements") && (() => {
+    const source = gl.programShaderSources(gl.programs.find((p) => p.id === e[e.length - 1]));
+    return source.includes("u_lightViewProjection") && source.includes("a_joints");
+  })());
+  assert.ok(shadowDraws.length > 0, "the skinned model draws into the shadow map with a skinning depth program");
+  const depth = gl.programs.find((p) => /u_lightViewProjection/.test(gl.programShaderSources(p)) && /a_joints/.test(gl.programShaderSources(p)));
+  let active = null;
+  const paletteInDepth = gl.ops.some((e) => {
+    if (e[0] === "useProgram") active = e[1];
+    return active === depth.id && e[0] === "uniformMatrix4fv" && e[1] === "u_jointMatrices[0]" && e[3] === 32;
+  });
+  assert.ok(paletteInDepth, "the depth pass uploads the joint palette to its own program");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("bootstrap renders a skinned GLB through the Selena material (default flip keystone)", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-model-skinned-selena-webgl-root";

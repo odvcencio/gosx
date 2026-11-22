@@ -1437,6 +1437,8 @@
         // depth metrics constant must still invalidate the shadow map.
         for (var k = 0; k < 16; k++) h += o.modelMatrix[k] || 0;
       }
+      // A skinned caster's pose moves its shadow without moving its bounds.
+      if (o.skin && o.skin.jointMatrices) h += sceneShadowSkinHash(o.skin.jointMatrices);
       // A crowd batch record holds one matrix; its revision tracks every agent.
       if (o._crowdBatch === true) {
         h += (o.crowdRevision || 0) * 13.0 + (o.instanceCount || 0) * 7.0;
@@ -1447,6 +1449,12 @@
       casterCount++;
     }
     h += casterCount * 17.0;
+    return h;
+  }
+
+  function sceneShadowSkinHash(m) {
+    var h = 0;
+    for (var i = 0; i < m.length; i++) h += (m[i] || 0) * ((i % 61) + 1);
     return h;
   }
 
@@ -1520,6 +1528,7 @@
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
       if (!obj.castShadow) continue;
+      if (objectIsSkinned(obj) && drawSceneSkinnedShadowCaster(gl, shadowState, obj, lightMatrix, shadowProgram)) continue;
       if (typeof drawInstancedCaster === "function" && drawInstancedCaster(obj, lightMatrix)) continue;
 
       if (obj.directVertices || (obj._worldBakedUpload && obj._worldBakedUpload.resident === true)) {
@@ -1572,6 +1581,46 @@
     gl.disable(gl.CULL_FACE);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  // Skinned casters draw their animated pose: the depth program applies the colour pass's joint palette to the
+  // caster's own streams, bound through the renderer's direct-mesh helpers that shadowState carries. False keeps the
+  // ordinary caster path.
+  function drawSceneSkinnedShadowCaster(gl, shadowState, obj, lightMatrix, shadowProgram) {
+    if (shadowState.skinnedProgram === undefined) shadowState.skinnedProgram = createSceneSkinnedShadowProgram(gl) || null;
+    var sp = shadowState.skinnedProgram, count = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
+    if (!sp || !scenePBRPassReady(gl, sp) || count <= 0 || typeof shadowState.attribute !== "function") return false;
+    gl.useProgram(sp.program);
+    gl.uniformMatrix4fv(sp.uniforms.lightViewProjection, false, lightMatrix);
+    gl.uniformMatrix4fv(sp.uniforms.modelMatrix, false, obj.modelMatrix || SHADOW_IDENTITY_MODEL_MATRIX);
+    sceneUploadSkinJoints(gl, sp.uniforms, obj.skin);
+    var streams: any[] = [["position", "positions", 3], ["joints", "joints", 4], ["weights", "weights", 4]];
+    var bound = streams.every(function(stream: any) {
+      return shadowState.attribute(obj, stream[1], sp.attributes[stream[0]], stream[2], shadowState.data(obj.vertices, stream[1], count, stream[2]));
+    });
+    if (bound) {
+      var indexCount = shadowState.indices(obj);
+      gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);
+      if (indexCount > 0) gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_INT, 0);
+      else gl.drawArrays(gl.TRIANGLES, 0, count);
+      gl.frontFace(gl.CCW);
+    }
+    if (sp.attributes.joints >= 0) gl.disableVertexAttribArray(sp.attributes.joints);
+    if (sp.attributes.weights >= 0) gl.disableVertexAttribArray(sp.attributes.weights);
+    gl.useProgram(shadowProgram.program);
+    return bound;
+  }
+
+  // The depth program of skinned casters: the shadow vertex shader with the joint palette.
+  function createSceneSkinnedShadowProgram(gl) {
+    var skin = "(a_weights.x * gosxJointMatrix(int(a_joints.x)) + a_weights.y * gosxJointMatrix(int(a_joints.y)) + a_weights.z * gosxJointMatrix(int(a_joints.z)) + a_weights.w * gosxJointMatrix(int(a_joints.w)))";
+    var source = SCENE_SHADOW_VERTEX_SOURCE.replace("void main() {", "in vec4 a_joints;\nin vec4 a_weights;\n" + SCENE_GLSL_JOINT_PALETTE + "\nvoid main() {")
+      .replace("(u_modelMatrix * vec4", "(u_modelMatrix * " + skin + " * vec4");
+    return scenePBRCreateShaderProgram(gl, source, SCENE_SHADOW_FRAGMENT_SOURCE, "Skinned shadow shader", function(program: any, vertexShader: any, fragmentShader: any) {
+      var uniforms = scenePBRProgramLocations(gl, program, "lightViewProjection modelMatrix jointTexture jointTexCount");
+      uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
+      return { program, vertexShader, fragmentShader, attributes: scenePBRProgramLocations(gl, program, "position joints weights", true), uniforms };
+    });
   }
 
   // Compile the shadow depth shader program.
@@ -8489,7 +8538,7 @@
 
     // Persistent shadow pass state — reuses one GL buffer and one scratch
     // Float32Array across all objects and lights, grown as needed.
-    var shadowState = { buffer: gl.createBuffer(), scratch: null };
+    var shadowState = { buffer: gl.createBuffer(), scratch: null, attribute: bindScenePBRDirectAttribute, data: scenePBRDirectAttribute, indices: bindScenePBRDirectIndexBuffer };
 
 	    // Pre-allocated scratch buffers for view/projection matrices (Fix 8).
 	    var scratchViewMatrix = new Float32Array(16);
