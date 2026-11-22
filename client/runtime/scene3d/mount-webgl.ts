@@ -3460,11 +3460,12 @@
     const keys = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ"];
     const hasComputedPose = sceneOwns(patch, "computedPose");
     let changed = sceneApplyModelLiveOpacity(state, record, patch);
+    let shown = false;
     if (sceneOwns(patch, "visible")) {
       const nextVisible = sceneBool(patch.visible, true);
       if (record.model.visible !== nextVisible) {
         record.model.visible = nextVisible;
-        changed = true;
+        changed = shown = true;
       }
     }
     for (let index = 0; index < keys.length; index += 1) {
@@ -3478,7 +3479,9 @@
       }
       record.model[key] = next;
       changed = true;
+      shown = shown || key.indexOf("scale") === 0;
     }
+    if (shown) sceneApplyModelRecordHiddenState(state, record);
     if (!changed && !hasComputedPose) {
       return false;
     }
@@ -3496,6 +3499,18 @@
     }
     record.poseDirty = true;
     return true;
+  }
+
+  // sceneApplyModelRecordHiddenState shows or hides every object of a mounted
+  // model after its visibility or scale changed. A static model re-reads it
+  // with its transform; an animated or skinned one keeps its objects, so
+  // without this a hidden player still skinned, drew and cast a shadow.
+  function sceneApplyModelRecordHiddenState(state, record) {
+    const ids = Array.isArray(record.objectIDs) ? record.objectIDs : [];
+    for (let i = 0; i < ids.length; i += 1) {
+      const object = state.objects && state.objects.get ? state.objects.get(ids[i]) : null;
+      if (object) sceneApplyModelObjectHiddenState(object, record.model);
+    }
   }
 
   function sceneApplyModelLiveEvent(state, eventName, payload) {

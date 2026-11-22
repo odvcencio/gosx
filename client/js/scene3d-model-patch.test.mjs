@@ -103,6 +103,17 @@ test('scale and visibility patch the record and its root transform', () => {
   assert.equal(run('poses.length'), 0, 'no weights, no fold');
 });
 
+test('a visibility patch hides and shows an animated model\'s objects', () => {
+  const run = fixture();
+  run("lineman.objectIDs = ['home-00/0', 'home-00/1']; state.objects.set('home-00/0', { id: 'home-00/0', skin: {} }); state.objects.set('home-00/1', { id: 'home-00/1', _attachment: true });");
+  run("applySceneCommands(state, [{ kind: 16, data: { models: [{ id: 'home-00', visible: false }] } }])");
+  assert.equal(run("state.objects.get('home-00/0')._modelHidden"), true, 'the skinned body leaves the frame');
+  assert.equal(run("state.objects.get('home-00/1')._modelHidden"), true, 'its gear goes with it');
+  run("applySceneCommands(state, [{ kind: 16, data: { models: [{ id: 'home-00', visible: true }] } }])");
+  assert.equal(run("state.objects.get('home-00/0')._modelHidden"), false, 'shown again');
+  assert.equal(run("state.objects.get('home-00/1')._modelHidden"), false);
+});
+
 // --- attachments (scene.Attachment) -------------------------------------------
 
 function attachFixture() {

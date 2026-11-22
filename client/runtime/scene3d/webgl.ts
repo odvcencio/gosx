@@ -1452,7 +1452,7 @@
     return h;
   }
 
-  function sceneShadowSkinHash(m) {
+  function sceneShadowSkinHash(m: any) {
     var h = 0;
     for (var i = 0; i < m.length; i++) h += (m[i] || 0) * ((i % 61) + 1);
     return h;
@@ -1586,7 +1586,7 @@
   // Skinned casters draw their animated pose: the depth program applies the colour pass's joint palette to the
   // caster's own streams, bound through the renderer's direct-mesh helpers that shadowState carries. False keeps the
   // ordinary caster path.
-  function drawSceneSkinnedShadowCaster(gl, shadowState, obj, lightMatrix, shadowProgram) {
+  function drawSceneSkinnedShadowCaster(gl: any, shadowState: any, obj: any, lightMatrix: any, shadowProgram: any) {
     if (shadowState.skinnedProgram === undefined) shadowState.skinnedProgram = createSceneSkinnedShadowProgram(gl) || null;
     var sp = shadowState.skinnedProgram, count = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
     if (!sp || !scenePBRPassReady(gl, sp) || count <= 0 || typeof shadowState.attribute !== "function") return false;
@@ -1612,7 +1612,7 @@
   }
 
   // The depth program of skinned casters: the shadow vertex shader with the joint palette.
-  function createSceneSkinnedShadowProgram(gl) {
+  function createSceneSkinnedShadowProgram(gl: any) {
     var skin = "(a_weights.x * gosxJointMatrix(int(a_joints.x)) + a_weights.y * gosxJointMatrix(int(a_joints.y)) + a_weights.z * gosxJointMatrix(int(a_joints.z)) + a_weights.w * gosxJointMatrix(int(a_joints.w)))";
     var source = SCENE_SHADOW_VERTEX_SOURCE.replace("void main() {", "in vec4 a_joints;\nin vec4 a_weights;\n" + SCENE_GLSL_JOINT_PALETTE + "\nvoid main() {")
       .replace("(u_modelMatrix * vec4", "(u_modelMatrix * " + skin + " * vec4");
