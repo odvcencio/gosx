@@ -285,7 +285,7 @@ function taaDrawMovers(st: any, r: any, pass: any, objects: any[]) {
     var obj = objects[i];
     if (!obj || obj.viewCulled || !obj.id) continue;
     // Skinned output is already in world space; retained meshes carry a model matrix.
-    var skin = r.skinBuffer(obj);
+    var skin = r.skinRecord(obj);
     var model = skin ? SCENE_WEBGPU_TAA_IDENTITY : obj.modelMatrix && obj.modelMatrix.length >= 16 ? obj.modelMatrix : null;
     if (!model || (!obj.retainedGeometry && !skin)) continue;
     seen.add(obj.id);
@@ -309,8 +309,10 @@ function taaDrawMovers(st: any, r: any, pass: any, objects: any[]) {
     r.device.queue.writeBuffer(st.moverBuffer, m * 256, data, 0, 32);
     pass.setBindGroup(0, group, [m * 256]);
     if (item.skin) {
-      pass.setVertexBuffer(0, item.skin);
-      pass.setVertexBuffer(1, r.previousSkin(item.obj) || item.skin);
+      const size = item.skin.count * 12;
+      const current = item.skin.outputBuffer, previous = r.previousSkin(item.obj);
+      pass.setVertexBuffer(0, current, 0, size);
+      pass.setVertexBuffer(1, previous?.size === size ? previous : current, 0, size);
     } else if (!r.bindPositions(pass, 0, item.obj) || !r.bindPositions(pass, 1, item.obj)) continue;
     var indexCount = r.bindIndices(pass, item.obj);
     if (indexCount > 0) pass.drawIndexed(indexCount); else pass.draw(item.obj.vertexCount);
@@ -419,12 +421,16 @@ function taaCapturePreviousSkins(st: any, encoder: any, objects: any[]) {
   if (!st.active || !st.valid) return;
   var r = st.resources();
   for (var i = 0; i < (objects || []).length; i++) {
-    var obj = objects[i], skin = obj && r.skinBuffer(obj), owner = skin && (obj.resourceOwner || obj), previous = owner && owner._gosxTAAPreviousSkin;
+    const obj = objects[i], skin = obj && !obj.viewCulled && r.skinRecord(obj);
     if (!skin) continue;
-    if (!previous || previous.size !== skin.size || owner._gosxTAAPreviousSkinDevice !== r.device) {
-      previous = owner._gosxTAAPreviousSkin = r.device.createBuffer({ label: "gosx-taa-previous-skin", size: skin.size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }); owner._gosxTAAPreviousSkinDevice = r.device;
+    const size = skin.count * 12; // The first stream is packed float32x3 positions.
+    const owner = obj.resourceOwner || obj;
+    let previous = owner._gosxTAAPreviousSkin;
+    if (!previous || previous.size !== size || owner._gosxTAAPreviousSkinDevice !== r.device) {
+      previous?.destroy();
+      previous = owner._gosxTAAPreviousSkin = r.device.createBuffer({ label: "gosx-taa-previous-skin", size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }); owner._gosxTAAPreviousSkinDevice = r.device;
     }
-    encoder.copyBufferToBuffer(skin, 0, previous, 0, skin.size);
+    encoder.copyBufferToBuffer(skin.outputBuffer, 0, previous, 0, size);
   }
 }
 

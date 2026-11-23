@@ -868,20 +868,23 @@
       record.bindGroup = null;
     }
     if (record.outputBuffer && wgpuTrackedBufferSize(record.outputBuffer) >= bytes) return record.outputBuffer;
-    if (record.outputBuffer && typeof record.outputBuffer.destroy === "function") {
-      meshState.pointsEntryGPUBuffers.delete(record.outputBuffer);
-      record.outputBuffer.destroy();
+    const retired = record.outputBuffer;
+    if (retired) {
+      meshState.pointsEntryGPUBuffers.delete(retired);
+      // The current render calls submit synchronously. Its velocity copy can
+      // still reference the old output until that call returns.
+      queueMicrotask(() => retired.destroy());
     }
     record.outputBuffer = wgpuCreateTrackedBuffer(meshState, device, GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC, bytes);
     return record.outputBuffer;
   }
 
-  // webGPUObjectSkinOutputBuffer returns the skin output buffer the owner
-  // holds on this device, before or after this frame's dispatch.
-  function webGPUObjectSkinOutputBuffer(meshState: any, obj: any) {
+  // webGPUObjectSkinOutputRecord returns the owner's packed output and its
+  // logical vertex count, before or after this frame's dispatch.
+  function webGPUObjectSkinOutputRecord(meshState: any, obj: any) {
     var owner = webGPUObjectResourceOwner(obj);
     var record = owner && owner._gosxWGPUElioSkinRecord;
-    return record && record.outputBuffer && meshState.pointsEntryGPUBuffers.has(record.outputBuffer) ? record.outputBuffer : null;
+    return record && record.outputBuffer && meshState.pointsEntryGPUBuffers.has(record.outputBuffer) ? record : null;
   }
 
   function webGPUElioSkinRecord(meshState: any, device: any, obj) {

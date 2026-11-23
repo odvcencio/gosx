@@ -7684,7 +7684,7 @@
       return { device: s.device, linearSampler: gpuRes.linearSampler, frameLayout: gpuRes.frameBindGroupLayout, materialLayout: gpuRes.materialBindGroupLayout, pointsLayout: drawState.pointsBindGroupLayout, pointsVertex: pipeState.pointsVertexModule,
         materialGroup: function() { return createMaterialBindGroup(uniformState, gpuRes, meshState, s.device, null, false, gpuRes.defaultMaterialOwner); }, previousSkin: function(obj: any) { return webGPUObjectResourceOwner(obj)._gosxTAAPreviousSkin || null; },
         // The owner's buffer, so the capture before this frame's dispatch sees last frame's skin.
-        skinBuffer: function(obj: any) { return webGPUObjectIsSkinned(obj) && webGPUObjectSkinOutputBuffer(meshState, obj) || null; },
+        skinRecord: function(obj: any) { return webGPUObjectIsSkinned(obj) && webGPUObjectSkinOutputRecord(meshState, obj) || null; },
         bindPositions: function(pass: any, slot: number, obj: any) { return webGPUBindRetainedMeshAttribute(meshState, s.device, pass, slot, obj, "positions", 3); },
         bindIndices: function(pass: any, obj: any) { return webGPUBindRetainedMeshIndexBuffer(meshState, s.device, pass, obj); } };
     });

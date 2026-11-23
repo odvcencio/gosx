@@ -250,6 +250,8 @@ declare var sceneFrameOwnerDispose: any;
 declare var sceneFrameOwnerCanReuse: any;
 declare var sceneFrameOwnerRetain: any;
 declare var sceneFrameOwnerTelemetry: any;
+declare function sceneFrameMeterRecord(owner: unknown, frameMS: number, startMS: number, endMS: number, quality: unknown): void;
+declare function sceneFrameMeterStats(owner: unknown, backend: unknown, quality: unknown, viewport: unknown): unknown;
 declare var syncSceneNodeFocusProxies: any;
 declare var dispatchSceneNodeFocusPointer: any;
 declare var disposeSceneNodeFocusProxies: any;
