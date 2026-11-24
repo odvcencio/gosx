@@ -1149,7 +1149,9 @@ const budgets = [
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.gz gzip 617685; the target rises by exactly the measured overage (601257 -> 601301), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js raw 2207261; the target rises by exactly the measured overage (2139928 -> 2141725), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.gz gzip 618325; the target rises by exactly the measured overage (601301 -> 601941), allowance unchanged.
-    file: "bootstrap.js", raw: 2141725, gzip: 601941,
+    // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js raw 2207652; the target rises by exactly the measured overage (2141725 -> 2142116), allowance unchanged.
+    // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.gz gzip 618456; the target rises by exactly the measured overage (601941 -> 602072), allowance unchanged.
+    file: "bootstrap.js", raw: 2142116, gzip: 602072,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1183,7 +1185,8 @@ const budgets = [
     // Uchimura (GT) tone curve with the exact sRGB encode and a one-code dither on both renderers, measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 502162; the target rises by exactly the measured overage (485686 -> 485778), allowance unchanged.
     // WebGL skinned shadow casters (22 Nov 2026): skinned casters draw their animated pose into the WebGL shadow maps; measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 502255; the target rises by exactly the measured overage (485778 -> 485871), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 502880; the target rises by exactly the measured overage (485871 -> 486496), allowance unchanged.
-    brotli: 486553 },
+    // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 503413; the target rises by exactly the measured overage (486553 -> 487029), allowance unchanged.
+    brotli: 487029 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -2284,7 +2287,10 @@ const budgets = [
     // 21 November 2026 (skinned morph folds limited per frame, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js raw 65015; the target rises by exactly the measured overage (61789 -> 61925), allowance unchanged.
     // 21 November 2026 (skinned morph folds limited per frame, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js.gz gzip 22549; the target rises by exactly the measured overage (21412 -> 21478), allowance unchanged.
     // 21 November 2026 (skinned morph folds limited per frame, a revision for every model object; measured overage, approved by the coordinator under decision 0019): measured bootstrap-feature-scene3d-gltf.js.br brotli 20660; the target rises by exactly the measured overage (19560 -> 19636), allowance unchanged.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 61925, gzip: 21478, brotli: 19636 },
+    // measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-gltf.js raw 65434; the target rises by exactly the measured overage (61925 -> 62337), allowance unchanged.
+    // measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-gltf.js.gz gzip 22693; the target rises by exactly the measured overage (21478 -> 21619), allowance unchanged.
+    // measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d-gltf.js.br brotli 20757; the target rises by exactly the measured overage (19636 -> 19733), allowance unchanged.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 62337, gzip: 21619, brotli: 19733 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the

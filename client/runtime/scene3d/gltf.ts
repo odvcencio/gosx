@@ -2275,8 +2275,7 @@
     // the spec defaults when missing or malformed. The texture inputs resolve
     // through the shared descriptor path above — intensity samples the alpha
     // channel in linear space, the colour is sRGB RGB — but the extension
-    // still stays off GLTF_SUPPORTED_EXTENSIONS until renderer sampling and
-    // the broader textureInfo semantics are validated.
+    // is on GLTF_SUPPORTED_EXTENSIONS because the loader maps it.
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (specular) {
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.specularIntensity = gltfExtensionStrictFactor(specular, "specularFactor", 1, 0, 1);
       record.specularColor = gltfExtensionColor3(specular, "specularColorFactor") || [1, 1, 1];
@@ -2909,7 +2908,8 @@
   // Extensions this loader reads. KHR_materials_* map onto StandardMaterial
   // fields the PBR shaders already consume. KHR_texture_transform bakes into
   // the UV buffer. Everything absent from this list is ignored, and the
-  // compression extensions raise a named error at the point of use.
+  // compression extensions raise a named error at the point of use. A file
+  // that requires an extension absent from this list fails to load.
   var GLTF_SUPPORTED_EXTENSIONS = [
     // A quantized accessor is an ordinary accessor with a narrow component
     // type. gltfReadAccessor already reads every legal type and honours the
@@ -2926,29 +2926,44 @@
     "KHR_materials_iridescence",
     "KHR_materials_anisotropy",
     "KHR_materials_unlit",
+    "KHR_materials_specular",
     "KHR_texture_transform",
     "KHR_lights_punctual",
     "GOSX_texture_variants",
     "EXT_meshopt_compression",
   ];
 
-  // Warn once per load about required extensions the loader ignores. A required
-  // extension the loader drops changes how the asset looks, so name it.
-  function gltfReportUnsupportedRequiredExtensions(gltf) {
-    var required = gltf && Array.isArray(gltf.extensionsRequired) ? gltf.extensionsRequired : null;
-    if (!required || !required.length) {
-      return [];
-    }
-    var missing = [];
+  // An extension the loader neither lists nor rejects at the point of use.
+  // Draco is refused by name when a primitive uses it, so the file check
+  // leaves it to that message.
+  function gltfExtensionIsUnsupported(name) {
+    return GLTF_SUPPORTED_EXTENSIONS.indexOf(name) === -1 && name !== "KHR_draco_mesh_compression";
+  }
+
+  // A required extension the loader lacks fails the load, naming its JSON path
+  // and the extension: the asset would otherwise show wrong. An extension that
+  // is only used (the asset has a fallback) loads, with one warning.
+  function gltfCheckExtensions(gltf) {
+    var required = gltf && Array.isArray(gltf.extensionsRequired) ? gltf.extensionsRequired : [];
+    var failures = [];
     for (var i = 0; i < required.length; i++) {
-      if (GLTF_SUPPORTED_EXTENSIONS.indexOf(required[i]) === -1) {
-        missing.push(required[i]);
+      if (gltfExtensionIsUnsupported(required[i])) {
+        failures.push("extensionsRequired[" + i + "] " + JSON.stringify(required[i]));
       }
     }
-    if (missing.length) {
-      console.warn("[gosx] glTF requires extensions this loader ignores: " + missing.join(", "));
+    if (failures.length) {
+      throw new Error(
+        "glTF requires an extension this loader does not support: " + failures.join(", ") + ". " +
+        "Re-export the asset without it, or remove it from extensionsRequired if the asset is acceptable without it."
+      );
     }
-    return missing;
+    var used = gltf && Array.isArray(gltf.extensionsUsed) ? gltf.extensionsUsed : [];
+    var ignored = used.filter(function (name) {
+      return required.indexOf(name) === -1 && gltfExtensionIsUnsupported(name);
+    });
+    if (ignored.length) {
+      console.warn("[gosx] glTF uses extensions this loader ignores: " + ignored.join(", "));
+    }
   }
 
   // True while an extraction keeps every morph target for per-model weights
@@ -2971,7 +2986,7 @@
 
   function gltfExtractSceneOnce(gltf: any, binaryBuffer: any) {
     gltfEmbeddedImageURLs.set(gltf, new Map());
-    gltfReportUnsupportedRequiredExtensions(gltf);
+    gltfCheckExtensions(gltf);
     var result = {
       objects: [],
       points: [],

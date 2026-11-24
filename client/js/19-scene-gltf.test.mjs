@@ -1558,23 +1558,26 @@ test("KHR_texture_basisu degrades to no texture and warns", () => {
   );
 });
 
-test("extensionsRequired names every extension the loader ignores", () => {
+test("extensionsRequired names every extension the loader lacks, by index", () => {
   // EXT_mesh_gpu_instancing moved off this list once the loader learned to read
   // it. KHR_materials_variants stays: the loader still ignores it.
-  const { context, warnings } = createLoaderContext();
-  const missing = plain(call(context, `
-    gltfReportUnsupportedRequiredExtensions({
-      extensionsRequired: ["KHR_materials_clearcoat", "KHR_materials_variants", "KHR_xmp_json_ld"]
-    });
-  `));
-  assert.deepEqual(missing, ["KHR_materials_variants", "KHR_xmp_json_ld"]);
-  assert.ok(warnings.some((line) => line.includes("KHR_materials_variants")));
+  const { context } = createLoaderContext();
+  assert.throws(
+    () => call(context, `
+      gltfCheckExtensions({
+        extensionsRequired: ["KHR_materials_clearcoat", "KHR_materials_variants", "KHR_xmp_json_ld"]
+      });
+    `),
+    (err) =>
+      err.message.includes('extensionsRequired[1] "KHR_materials_variants"') &&
+      err.message.includes('extensionsRequired[2] "KHR_xmp_json_ld"') &&
+      !err.message.includes("KHR_materials_clearcoat"),
+  );
 });
 
 test("a document with no required extensions warns about nothing", () => {
   const { context, warnings } = createLoaderContext();
-  const missing = plain(call(context, `gltfReportUnsupportedRequiredExtensions({ asset: { version: "2.0" } })`));
-  assert.deepEqual(missing, []);
+  call(context, `gltfCheckExtensions({ asset: { version: "2.0" } })`);
   assert.deepEqual(warnings, []);
 });
 
@@ -1716,7 +1719,7 @@ test("KHR_mesh_quantization decodes positions through the node scale", () => {
 test("KHR_mesh_quantization in extensionsRequired raises no warning", () => {
   const { context, warnings } = createLoaderContext();
   call(context, `
-    gltfReportUnsupportedRequiredExtensions({
+    gltfCheckExtensions({
       extensionsRequired: ["KHR_mesh_quantization", "EXT_mesh_gpu_instancing"]
     });
   `);
