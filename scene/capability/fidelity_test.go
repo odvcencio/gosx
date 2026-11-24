@@ -2,7 +2,6 @@ package capability
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -67,8 +66,17 @@ func (e *lobeEvidence) want() Level {
 	return Exact
 }
 
+// agreedReadings records each (lobe, backend) pair that assertAgrees checked,
+// so the coverage check compares what was read with the lobe list and not
+// with a second hand-written list. A test that wants the record sets it to an
+// empty map first.
+var agreedReadings map[[2]string]bool
+
 func (e *lobeEvidence) assertAgrees(why string) {
 	e.t.Helper()
+	if agreedReadings != nil {
+		agreedReadings[[2]string{string(e.lobe), string(e.backend)}] = true
+	}
 	e.assertLevelIs(FidelityOf(e.lobe, e.backend).Level, why)
 }
 
@@ -190,6 +198,8 @@ const (
 // each label against it. Symbols marked "future" below name what a landing must
 // add to raise a label; they are absent today, and that absence is the evidence.
 func TestFidelityLabelsMatchRendererSource(t *testing.T) {
+	agreedReadings = map[[2]string]bool{}
+	defer func() { agreedReadings = nil }()
 	gpu := readRenderer(t, webgpuRendererPath)
 	gl := readRenderer(t, webglRendererPath)
 	mbGPU := readRenderer(t, motionBlurWebGPUPath)
@@ -202,16 +212,17 @@ func TestFidelityLabelsMatchRendererSource(t *testing.T) {
 	// Clear coat: a GGX coat lobe with its own Fresnel and energy loss is
 	// present, but the roughness is the constant 0.04 and the scene API carries
 	// only a weight. A coat roughness input reaches the shader as
-	// clearcoatRoughness (future).
+	// clearcoatRoughness and a coat normal as clearcoatNormal (both future);
+	// the label is exact only when both are read.
 	lobeEvidenceFor(t, LobeClearcoat, BackendWebGPU).
 		core(gpuSrc.path, gpu, "fn gosxLayerSetup", "fn gosxCoatOver").
 		standIn(gpuSrc.path, gpu, "surfaceClearcoatRoughness = 0.04").
-		full(gpuSrc.path, gpu, "material.clearcoatRoughness").
+		full(gpuSrc.path, gpu, "material.clearcoatRoughness", "clearcoatNormal").
 		assertAgrees("The coat lobe is real, but surfaceClearcoatRoughness is pinned at 0.04 and no coat normal exists.")
 	lobeEvidenceFor(t, LobeClearcoat, BackendWebGL).
 		core(glSrc.path, gl, "vec3 gosxCoatOver(", "GosxLayer gosxLayerSetup(").
 		standIn(glSrc.path, gl, "surfaceClearcoatRoughness = 0.04").
-		full(glSrc.path, gl, "u_clearcoatRoughness").
+		full(glSrc.path, gl, "u_clearcoatRoughness", "clearcoatNormal").
 		assertAgrees("The coat lobe is real, but surfaceClearcoatRoughness is pinned at 0.04 and no coat normal exists.")
 
 	// Sheen: a view-angle rim, not the Charlie cloth lobe. gosxSheenLobe and
@@ -326,15 +337,13 @@ func TestFidelityLabelsMatchRendererSource(t *testing.T) {
 		core(motionBlurWebGLPath, mbGL, "velocityView").
 		assertAgrees("The WebGL2 blur reprojects depth through the previous camera and reads no per-object velocity, so a moving object on a still camera stays sharp.")
 
-	// Every label in the table carries a reading above; a lobe added to the table
-	// without one is caught by the completeness test, and the readings above
-	// cover AllLobes by construction. Keep the lists in step.
-	covered := []Lobe{LobeClearcoat, LobeSheen, LobeSpecular, LobeIridescence, LobeAnisotropy,
-		LobeTransmission, LobeDispersion, LobeDiffuseTransmit, LobeSubsurface, LobeObjectMotionBlur}
-	sort.Slice(covered, func(i, j int) bool { return covered[i] < covered[j] })
-	listed := append([]Lobe(nil), AllLobes...)
-	sort.Slice(listed, func(i, j int) bool { return listed[i] < listed[j] })
-	if fmt.Sprint(covered) != fmt.Sprint(listed) {
-		t.Fatalf("this test reads %v but AllLobes lists %v; read the renderer for every lobe", covered, listed)
+	// Every label in the table must carry a reading above: compare the pairs
+	// assertAgrees recorded with every lobe on both backends.
+	for _, lobe := range AllLobes {
+		for _, backend := range []Backend{BackendWebGPU, BackendWebGL} {
+			if !agreedReadings[[2]string{string(lobe), string(backend)}] {
+				t.Errorf("no reading of the renderer source checks Fidelity[%s][%s]; read the renderer for it", lobe, backend)
+			}
+		}
 	}
 }
